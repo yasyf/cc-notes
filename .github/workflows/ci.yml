@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache-dependency-glob: uv.lock
+
+      - name: Sync (dev)
+        run: uv sync --extra dev
+
+      - name: Type check (ty, warnings only)
+        continue-on-error: true
+        run: uvx prek run ty --all-files
+
+      - name: Test (pytest)
+        run: uv run pytest
+
+      - name: Build + smoke-test wheel in a fresh venv
+        run: |
+          uv build
+          rm -rf .wheel-smoke
+          uv venv --seed .wheel-smoke
+          uv pip install --python .wheel-smoke/bin/python dist/*.whl
+          .wheel-smoke/bin/cc-notes --help

@@ -1,0 +1,89 @@
+name: Release (PyPI)
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-pypi
+  cancel-in-progress: false
+
+jobs:
+  verify-tag-on-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify the tagged commit is on main
+        env:
+          TAG_SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags --quiet origin main
+          if git merge-base --is-ancestor "$TAG_SHA" FETCH_HEAD; then
+            echo "✓ ${GITHUB_REF_NAME} (${TAG_SHA}) is on main."
+          else
+            echo "::error title=Tag not on main::${GITHUB_REF_NAME} points at ${TAG_SHA}, which is not on main. Versioned releases must come from main — delete this tag, merge the commit to main, then re-tag the commit that landed on main."
+            exit 1
+          fi
+
+  build:
+    needs: verify-tag-on-main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          python-version: "3.14"
+          cache-dependency-glob: uv.lock
+
+      - name: Set version from tag
+        run: uv version --frozen "${GITHUB_REF_NAME#v}"
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh release create "${GITHUB_REF_NAME}"
+          --title "${GITHUB_REF_NAME}"
+          --generate-notes
+          --latest
+          --repo "${{ github.repository }}"
+          dist/*
