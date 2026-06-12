@@ -189,10 +189,12 @@ func (e *engine) reconcile(ctx context.Context, remoteView map[string]model.SHA)
 
 // consolidate repairs the wake of a promote: it groups every local task ref
 // by entity id, folds the union of each group's tips to find the live
-// branch, and folds every sibling tip into refs.Task(liveBranch, id) —
-// creating it when absent — so no op stranded on a dead sibling ref is ever
-// lost. Dead siblings keep their refs: liveness is folded branch == ref
-// branch, never ref deletion.
+// branch, folds every sibling tip into refs.Task(liveBranch, id) — creating
+// it when absent — and then converges every other sibling to the resulting
+// union tip, so no op stranded on a dead sibling ref is ever lost and every
+// sibling folds to the same branch: exactly one ref satisfies liveness, even
+// after racing promotes to different destinations. Dead siblings keep their
+// refs: liveness is folded branch == ref branch, never ref deletion.
 func (e *engine) consolidate(ctx context.Context) error {
 	local, err := e.store.Repo.ListPrefix(ctx, namespace)
 	if err != nil {
@@ -237,6 +239,22 @@ func (e *engine) consolidateEntity(ctx context.Context, id model.EntityID, group
 	liveRef := refs.Task(task.Branch, id)
 	for _, tip := range frontier {
 		if err := e.ensure(ctx, liveRef, tip); err != nil {
+			return fmt.Errorf("consolidate task %s: %w", id.Short(), err)
+		}
+	}
+	// Converge the siblings to the live ref's union tip — not each to the
+	// raw frontier, which would mint mirrored merge commits per sibling and
+	// never settle. Every sibling tip is dominated by the union tip, so this
+	// is a fast-forward unless a concurrent writer moved the sibling.
+	union, err := e.store.Repo.Tip(ctx, liveRef)
+	if err != nil {
+		return fmt.Errorf("consolidate task %s: %w", id.Short(), err)
+	}
+	for _, ref := range group {
+		if ref == liveRef {
+			continue
+		}
+		if err := e.ensure(ctx, ref, union); err != nil {
 			return fmt.Errorf("consolidate task %s: %w", id.Short(), err)
 		}
 	}

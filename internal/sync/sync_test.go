@@ -468,6 +468,104 @@ func TestPromoteStaleClone(t *testing.T) {
 	}
 }
 
+// syncUntilQuiescent alternates syncs across the clones until every clone
+// reports a clean pass — nothing created, fast-forwarded, merged, or pushed —
+// failing the test when they never settle. The terminating pass doubles as
+// proof that a further sync is a no-op.
+func syncUntilQuiescent(t *testing.T, stores ...*store.Store) {
+	t.Helper()
+	quiet := ccsync.Report{Rounds: 1}
+	for range 8 {
+		settled := true
+		for _, s := range stores {
+			if sync(t, s) != quiet {
+				settled = false
+			}
+		}
+		if settled {
+			return
+		}
+	}
+	t.Fatal("clones never quiesced")
+}
+
+// liveBranches returns the branches whose task ref for id folds live: the
+// folded branch equals the branch encoded in the ref path.
+func liveBranches(t *testing.T, s *store.Store, id model.EntityID) []model.Branch {
+	t.Helper()
+	var live []model.Branch
+	for name := range ccRefs(t, s.Git.Dir) {
+		parsed, err := refs.Parse(name)
+		if err != nil {
+			t.Fatalf("Parse(%s): %v", name, err)
+		}
+		if parsed.Kind != refs.KindTask || parsed.ID != id {
+			continue
+		}
+		if loadTask(t, s, name).Branch == parsed.Branch {
+			live = append(live, parsed.Branch)
+		}
+	}
+	return live
+}
+
+// TestRacingPromotesConverge pins the repair for racing promotes: A promotes
+// alpha→bravo while B promotes alpha→charlie. Consolidation must converge
+// every sibling ref — not just the fold winner's — to the union history;
+// otherwise the loser's destination ref contains only its own promote, folds
+// to its own namespace, and stays live forever on every replica.
+func TestRacingPromotesConverge(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	task := createTask(t, a, "contested promote", "alpha")
+	sync(t, a)
+	sync(t, b)
+
+	if err := ccsync.Promote(t.Context(), a, "alpha", "bravo", []model.EntityID{task.ID}); err != nil {
+		t.Fatalf("A Promote: %v", err)
+	}
+	if err := ccsync.Promote(t.Context(), b, "alpha", "charlie", []model.EntityID{task.ID}); err != nil {
+		t.Fatalf("B Promote: %v", err)
+	}
+	syncUntilQuiescent(t, a, b)
+
+	liveA, liveB := liveBranches(t, a, task.ID), liveBranches(t, b, task.ID)
+	if len(liveA) != 1 || len(liveB) != 1 {
+		t.Fatalf("live refs: A = %v, B = %v, want exactly one each", liveA, liveB)
+	}
+	if liveA[0] != liveB[0] {
+		t.Fatalf("clones disagree on winner: A = %q, B = %q", liveA[0], liveB[0])
+	}
+	winner := liveA[0]
+	if winner != "bravo" && winner != "charlie" {
+		t.Fatalf("winner = %q, want a promote destination", winner)
+	}
+	for name, s := range map[string]*store.Store{"A": a, "B": b} {
+		for _, branch := range []model.Branch{"alpha", "bravo", "charlie"} {
+			mustGit(t, s.Git.Dir, "rev-parse", "--verify", refs.Task(branch, task.ID))
+			got := listTasks(t, s, branch)
+			switch {
+			case branch == winner && (len(got) != 1 || got[0].ID != task.ID):
+				t.Errorf("%s ListTasks(%s) = %+v, want the promoted task", name, branch, got)
+			case branch != winner && len(got) != 0:
+				t.Errorf("%s ListTasks(%s) = %+v, want empty", name, branch, got)
+			}
+		}
+	}
+
+	tipsA, tipsB := ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir)
+	if !reflect.DeepEqual(tipsA, tipsB) {
+		t.Errorf("tips diverge after quiescence: A = %v, B = %v", tipsA, tipsB)
+	}
+	if got, want := sync(t, a), (ccsync.Report{Rounds: 1}); got != want {
+		t.Errorf("A settle sync report = %+v, want %+v", got, want)
+	}
+	if got := ccRefs(t, a.Git.Dir); !reflect.DeepEqual(got, tipsA) {
+		t.Errorf("A tips moved on settle sync: %v -> %v", tipsA, got)
+	}
+}
+
 func TestSyncNoRemote(t *testing.T) {
 	scrubGitEnv(t)
 	dir := t.TempDir()
