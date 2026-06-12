@@ -25,7 +25,9 @@ const (
 // slash.
 const NotesPrefix = namespace + "notes/"
 
-const tasksRoot = namespace + "tasks/"
+// TasksRoot is the ref namespace holding every branch's tasks, including
+// the trailing slash.
+const TasksRoot = namespace + "tasks/"
 
 var (
 	// ErrNotCCNotes reports a ref outside the cc-notes namespaces.
@@ -66,7 +68,7 @@ func Task(branch model.Branch, id model.EntityID) string {
 // TasksPrefix returns the ref namespace holding one branch's tasks,
 // including the trailing slash.
 func TasksPrefix(branch model.Branch) string {
-	return tasksRoot + string(branch) + "/"
+	return TasksRoot + string(branch) + "/"
 }
 
 // Parse decodes a cc-notes ref name. Parsing is positional from the right:

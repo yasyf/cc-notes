@@ -107,6 +107,18 @@ func (s *Store) signature(ctx context.Context) (gitobj.Signature, model.Actor, e
 	return gitobj.Signature{Name: name, Email: email, When: s.now()}, model.Actor(name + " <" + email + ">"), nil
 }
 
+// Actor returns the identity that signs this store's writes — the
+// CC_NOTES_ACTOR override when set, otherwise git's author identity — as
+// "Name <email>". Ops that embed an actor (claim) must carry exactly this
+// value.
+func (s *Store) Actor(ctx context.Context) (model.Actor, error) {
+	name, email, err := s.actor(ctx)
+	if err != nil {
+		return "", err
+	}
+	return model.Actor(name + " <" + email + ">"), nil
+}
+
 func (s *Store) actor(ctx context.Context) (name, email string, err error) {
 	if value, ok := os.LookupEnv(actorEnv); ok {
 		return parseActor(value)

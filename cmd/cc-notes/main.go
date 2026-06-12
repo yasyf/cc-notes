@@ -17,7 +17,8 @@ func main() {
 	defer stop()
 
 	if err := cli.NewRootCmd().ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "%s: %s\n", cli.Label(err), err)
+		stop()
+		os.Exit(cli.ExitCode(err))
 	}
 }
