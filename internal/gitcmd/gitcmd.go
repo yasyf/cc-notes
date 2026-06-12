@@ -143,11 +143,15 @@ func (g Git) DeleteRef(ctx context.Context, ref string, old model.SHA) error {
 	return nil
 }
 
-// Fetch downloads from remote using the given refspecs, with the user's
-// credential and SSH configuration. A rejected update — a non-forced
-// refspec that does not fast-forward — wraps ErrNonFastForward.
+// Fetch downloads from remote using exactly the given refspecs, with the
+// user's credential and SSH configuration. --refmap= keeps git from also
+// mapping the fetched refs through the configured remote.<r>.fetch refspecs:
+// that opportunistic update would force-clobber a diverged local entity ref
+// in a repo wired by Install before sync could union-merge it. A rejected
+// update — a non-forced refspec that does not fast-forward — wraps
+// ErrNonFastForward.
 func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error {
-	_, err := g.run(ctx, "", append([]string{"fetch", remote}, refspecs...)...)
+	_, err := g.run(ctx, "", append([]string{"fetch", "--refmap=", remote}, refspecs...)...)
 	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
 		return fmt.Errorf("fetch %s: %w", remote, err)
 	}

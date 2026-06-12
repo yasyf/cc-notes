@@ -699,6 +699,49 @@ func TestPlainFetchClobberReflog(t *testing.T) {
 	}
 }
 
+// TestSyncPreservesDivergedOpsAfterInstall pins that Sync's own fetch never
+// applies the forced fetch refspec Install wrote: git maps an
+// explicit-refspec fetch through the configured remote.<r>.fetch refspecs
+// opportunistically, which would clobber a diverged local entity tip before
+// reconcile could union-merge it, stranding the local ops in the reflog.
+func TestSyncPreservesDivergedOpsAfterInstall(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	for _, s := range []*store.Store{a, b} {
+		if err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+	}
+	task := createTask(t, a, "diverged", "main")
+	taskRef := refs.Task("main", task.ID)
+	sync(t, a)
+	sync(t, b)
+
+	appendOps(t, a, taskRef, model.AddComment{Body: "from alice"})
+	sync(t, a)
+	appendOps(t, b, taskRef, model.AddComment{Body: "from bob"})
+
+	if got, want := sync(t, b), (ccsync.Report{Merged: 1, Pushed: 1, Rounds: 1}); got != want {
+		t.Fatalf("B diverged sync report = %+v, want %+v", got, want)
+	}
+	sync(t, a)
+	for _, s := range []*store.Store{a, b} {
+		merged := loadTask(t, s, taskRef)
+		bodies := make([]string, len(merged.Comments))
+		for i, c := range merged.Comments {
+			bodies[i] = c.Body
+		}
+		slices.Sort(bodies)
+		if want := []string{"from alice", "from bob"}; !slices.Equal(bodies, want) {
+			t.Errorf("converged comments in %s = %v, want %v", s.Git.Dir, bodies, want)
+		}
+	}
+	if tipsA, tipsB := ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir); !reflect.DeepEqual(tipsA, tipsB) {
+		t.Errorf("tips diverge: A = %v, B = %v", tipsA, tipsB)
+	}
+}
+
 func TestSyncNoRemote(t *testing.T) {
 	scrubGitEnv(t)
 	dir := t.TempDir()
