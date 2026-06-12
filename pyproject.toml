@@ -1,0 +1,115 @@
+[project]
+name = "cc-notes"
+version = "0.1.0"
+description = "Notes and tasks layer for agents."
+readme = "README.md"
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Yasyf Mohamedali", email = "yasyfm@gmail.com" }]
+keywords = []
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Typing :: Typed",
+]
+requires-python = ">=3.13"
+dependencies = [
+    "click>=8",
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "anyio>=4",
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[project.scripts]
+cc-notes = "cc_notes.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/yasyf/cc-notes"
+Documentation = "https://yasyf.github.io/cc-notes/"
+Repository = "https://github.com/yasyf/cc-notes"
+Issues = "https://github.com/yasyf/cc-notes/issues"
+Changelog = "https://github.com/yasyf/cc-notes/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "cc_notes"
+module-root = ""
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+anyio_mode = "auto"
+addopts = ["-ra", "--strict-markers", "--tb=short", "-q"]
+markers = [
+    "unit: Pure unit tests",
+    "integration: Integration tests",
+]
+
+# ty (Astral) is the default type checker. It runs on every commit via the prek
+# hook (astral-sh/ty-pre-commit — the hook rev pins the ty version) and in CI,
+# warnings only, never blocking. Ad hoc: `uvx prek run ty --all-files`.
+# It is fast, understands modern syntax, and avoids the strict-pyright false
+# positives on pydantic/attrs-style dynamic defaults and PK-type overrides.
+[tool.ty.rules]
+# Every diagnostic surfaces as a warning: ty exits 0 and never blocks a commit or CI.
+all = "warn"
+# Keep cross-checker `# type: ignore` / `# pyright: ignore` comments from tripping ty.
+unused-type-ignore-comment = "ignore"
+unresolved-import = "ignore"
+
+# pyright is kept as a secondary checker (editors / `uvx pyright`). Basic mode plus
+# a few disables covers the noise; ty is the default checker, surfaced as warnings
+# at commit time and in CI.
+[tool.pyright]
+pythonVersion = "3.13"
+typeCheckingMode = "basic"
+include = ["cc_notes"]
+venvPath = "."
+venv = ".venv"
+reportImplicitOverride = "none"
+reportIncompatibleVariableOverride = "none"
+reportUnknownVariableType = "none"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportUnknownLambdaType = "none"
+reportMissingTypeArgument = "none"
+reportPrivateImportUsage = "none"
+reportUnusedCallResult = "none"
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+src = [".", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py re-exports the public API via plain imports (`from .foo import
+# Bar`; no `as` alias, no __all__). F401 stays active in every other module.
+"__init__.py" = ["F401"]
+
+[dependency-groups]
+docs = [
+    # great-docs imports griffe's 2.x module layout; griffelib is the modern
+    # griffe (2.x) distribution, overriding the legacy griffe<2 pin great-docs
+    # itself still declares.
+    "griffelib>=2.0",
+    # Tracking great-docs main: main carries build-time GitHub widget stats
+    # (embedded via the CI GITHUB_TOKEN), which drop the navbar widget's
+    # client-side API calls — the source of GitHub 403 errors on the published
+    # site. Not in any PyPI release as of 0.13.1; revert to a PyPI pin
+    # (`great-docs>=0.14`) once a release ships it.
+    "great-docs @ git+https://github.com/posit-dev/great-docs@main",
+]
