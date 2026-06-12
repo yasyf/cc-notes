@@ -321,6 +321,31 @@ func TestStrippedOTruncRewrite(t *testing.T) {
 	}
 }
 
+// TestMtimeChangesPerVersion pins the NFS cache-invalidation contract: a
+// same-second commit must still change the reported mtime (via its
+// per-version nanosecond component), or FUSE-T's client keeps serving its
+// own written pages over the differing canonical render.
+func TestMtimeChangesPerVersion(t *testing.T) {
+	f, s := newTestFS(t)
+	note := createNote(t, s, "Versioned", "v1\n")
+	p := "/notes/" + NoteFilename(note)
+
+	var before fuse.Stat_t
+	if errc := f.Getattr(p, &before, invalidFh); errc != 0 {
+		t.Fatalf("Getattr = %d", errc)
+	}
+	if _, err := s.Append(t.Context(), refs.Note(note.ID), []model.Op{model.SetBody{Body: "v2\n"}}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	var after fuse.Stat_t
+	if errc := f.Getattr(p, &after, invalidFh); errc != 0 {
+		t.Fatalf("Getattr = %d", errc)
+	}
+	if before.Mtim == after.Mtim {
+		t.Errorf("mtime unchanged across versions: %+v", after.Mtim)
+	}
+}
+
 // TestFsyncSurfacesParseError pins that a bad document fails at fsync —
 // the only error channel FUSE-T's NFS client reliably reports.
 func TestFsyncSurfacesParseError(t *testing.T) {

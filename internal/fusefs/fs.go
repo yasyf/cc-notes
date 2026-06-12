@@ -41,7 +41,8 @@ type rendered struct {
 
 // handle is one open file: an entity edit buffer or a scratch buffer.
 // base is the open-time snapshot diffs run against; it is nil (and ref
-// empty) for scratch and pending files.
+// empty) for scratch and pending files. mnsec carries the per-version
+// mtime nanoseconds (see versionNsec).
 type handle struct {
 	path    string
 	ref     string
@@ -49,6 +50,7 @@ type handle struct {
 	buf     []byte
 	ino     uint64
 	mtime   int64
+	mnsec   int64
 	birth   int64
 	dirty   bool
 	flushed bool
@@ -143,7 +145,7 @@ func (f *FS) Getattr(p string, stat *fuse.Stat_t, fh uint64) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if h := f.handleFor(p, fh, true); h != nil {
-		f.fillStat(stat, fuse.S_IFREG|0o644, h.ino, int64(len(h.buf)), h.mtime, h.birth)
+		f.fillStat(stat, fuse.S_IFREG|0o644, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime, Nsec: h.mnsec}, h.birth)
 		return 0
 	}
 	return f.statPath(p, stat)
@@ -165,7 +167,10 @@ func (f *FS) Open(p string, flags int) (int, uint64) {
 		return errc, invalidFh
 	}
 	created, updated := snapshotTimes(r.snapshot)
-	h := &handle{path: p, ref: ref, base: r.snapshot, buf: slices.Clone(r.data), ino: idIno(r.snapshot.EntityID()), mtime: updated, birth: created}
+	h := &handle{
+		path: p, ref: ref, base: r.snapshot, buf: slices.Clone(r.data),
+		ino: idIno(r.snapshot.EntityID()), mtime: updated, mnsec: versionNsec(headOf(r.snapshot)), birth: created,
+	}
 	truncateOnOpen(h, flags)
 	return 0, f.newHandle(h)
 }
@@ -470,7 +475,7 @@ func (f *FS) commitHandle(h *handle) int {
 			f.cacheRender(snap)
 			h.base = snap
 			created, updated := snapshotTimes(snap)
-			h.birth, h.mtime = created, updated
+			h.birth, h.mtime, h.mnsec = created, updated, versionNsec(headOf(snap))
 		}
 		h.dirty = false
 		return 0
@@ -835,7 +840,7 @@ func snapshotTimes(snap model.Snapshot) (created, updated int64) {
 // statPath fills stat for a path with no open handle.
 func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 	if sc, ok := f.scratch[p]; ok {
-		f.fillStat(stat, fuse.S_IFREG|0o644, pathIno(p), int64(len(sc.data)), sc.mtime.Unix(), sc.mtime.Unix())
+		f.fillStat(stat, fuse.S_IFREG|0o644, pathIno(p), int64(len(sc.data)), fuse.Timespec{Sec: sc.mtime.Unix(), Nsec: int64(sc.mtime.Nanosecond())}, sc.mtime.Unix())
 		return 0
 	}
 	if ref, ok := f.aliases[p]; ok {
@@ -1027,7 +1032,8 @@ func subdirsOf(set map[model.Branch]bool, dir model.Branch) []string {
 
 func (f *FS) fillEntityStat(stat *fuse.Stat_t, r rendered) {
 	created, updated := snapshotTimes(r.snapshot)
-	f.fillStat(stat, fuse.S_IFREG|0o644, idIno(r.snapshot.EntityID()), int64(len(r.data)), updated, created)
+	mtime := fuse.Timespec{Sec: updated, Nsec: versionNsec(headOf(r.snapshot))}
+	f.fillStat(stat, fuse.S_IFREG|0o644, idIno(r.snapshot.EntityID()), int64(len(r.data)), mtime, created)
 }
 
 func (f *FS) fillDirStat(stat *fuse.Stat_t, p string) {
@@ -1047,7 +1053,7 @@ func (f *FS) fillDirStat(stat *fuse.Stat_t, p string) {
 
 // fillStat synthesizes a file stat. st_size MUST equal the bytes a read
 // returns — FUSE-T's NFS layer truncates reads past the advertised size.
-func (f *FS) fillStat(stat *fuse.Stat_t, mode uint32, ino uint64, size, mtime, birth int64) {
+func (f *FS) fillStat(stat *fuse.Stat_t, mode uint32, ino uint64, size int64, mtime fuse.Timespec, birth int64) {
 	*stat = fuse.Stat_t{
 		Ino:      ino,
 		Mode:     mode,
@@ -1055,14 +1061,25 @@ func (f *FS) fillStat(stat *fuse.Stat_t, mode uint32, ino uint64, size, mtime, b
 		Uid:      f.uid,
 		Gid:      f.gid,
 		Size:     size,
-		Atim:     fuse.Timespec{Sec: mtime},
-		Mtim:     fuse.Timespec{Sec: mtime},
-		Ctim:     fuse.Timespec{Sec: mtime},
+		Atim:     mtime,
+		Mtim:     mtime,
+		Ctim:     mtime,
 		Birthtim: fuse.Timespec{Sec: birth},
 		Blksize:  4096,
 		Blocks:   (size + 511) / 512,
 	}
 }
+
+// versionNsec derives the mtime's nanosecond component from the chain tip.
+// Entity timestamps have second granularity, so a save whose commit lands
+// in the same second would otherwise leave the mtime unchanged — and the
+// NFS client would keep serving its own written pages over the differing
+// canonical render (a save normalizes sets, stamps started_at, and so on).
+// A per-version sub-second component makes every commit a visible mtime
+// change, forcing the client to revalidate its data cache (live-smoke
+// finding: a same-second status edit read back as the written bytes padded
+// to the new render's size).
+func versionNsec(tip model.SHA) int64 { return int64(fnvHash("v:"+string(tip)) % 1_000_000_000) }
 
 // idIno derives a stable inode from the entity id, invariant across slug
 // renames; pathIno covers directories and scratch files.
