@@ -80,7 +80,11 @@ jobs:
         # native slice reports its version and that `mount` fails gracefully
         # with the install hint (exit 1, not a crash signal) rather than serving.
         run: |
-          brew uninstall fuse-t
+          # The cask uninstall can exit nonzero on CI runners and may leave the
+          # pkg-installed dylibs behind; remove them explicitly so the
+          # no-fuse-t assertion below stays strict.
+          brew uninstall fuse-t || true
+          sudo rm -f /usr/local/lib/libfuse-t*
           test ! -e /usr/local/lib/libfuse-t.dylib
           BIN=dist/cc-notes_darwin_arm64_fuse
           "$BIN" version | grep -q "${GITHUB_REF_NAME}"
