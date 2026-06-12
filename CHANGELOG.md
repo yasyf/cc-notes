@@ -20,8 +20,8 @@ Releases.
 - Agents-first CLI: `note` and `task` noun groups with lean tab-separated
   output, `--json` everywhere, and branchable exit codes — 0 ok, 1 error,
   2 usage, 3 not-found, 4 conflict, 5 ambiguous.
-- Task lifecycle: claim, ready, done, cancel, reopen, dependencies, and
-  branch-scoped `promote`.
+- Task lifecycle: claim, ready, done, cancel, dependencies, and branch-scoped
+  `promote`.
 - Sync: `cc-notes init` installs refspecs so plain `git push`/`git pull` carry
   the data; `cc-notes sync` converges diverged refs via union merge.
 - Optional FUSE layer: `cc-notes mount DIR` exposes notes as Markdown and tasks
@@ -30,7 +30,14 @@ Releases.
 - Release binaries: pure static builds plus FUSE variants for
   darwin/linux × amd64/arm64, with `scripts/install.sh` for installation.
 
+### Changed
+- README rewritten as a slim front door: pitch, install, quickstart, and
+  command pointers. The agent-contract, syncing, mounting, and architecture
+  deep dives are gone.
+
 ### Removed
 - The Python package and its PyPI release pipeline.
+- The Python-era documentation site (GitHub Pages) and the repo homepage link
+  that pointed at it.
 
 [Unreleased]: https://github.com/yasyf/cc-notes/commits/main
