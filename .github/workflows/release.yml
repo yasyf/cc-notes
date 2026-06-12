@@ -1,0 +1,183 @@
+name: Release
+
+# Tag-driven release. Pushing a vX.Y.Z tag cross-compiles the pure static
+# binaries (CGO off) plus the FUSE variants (cgo, -tags fuse), smoke-tests that
+# they run on a host WITHOUT a fuse library installed, then publishes them with
+# a SHA256SUMS manifest to the GitHub release for the tag. scripts/install.sh
+# downloads these assets, preferring the _fuse build where one exists.
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  pure:
+    name: pure ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [darwin, linux]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build static binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          COMMIT="$(git rev-parse --short HEAD)"
+          LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${GITHUB_REF_NAME} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT}"
+          mkdir -p dist
+          CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o "dist/cc-notes_${GOOS}_${GOARCH}" ./cmd/cc-notes
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cc-notes_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: dist/cc-notes_${{ matrix.goos }}_${{ matrix.goarch }}
+          if-no-files-found: error
+
+  fuse-macos:
+    name: fuse darwin (arm64 + amd64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build darwin fuse variants
+        run: |
+          COMMIT="$(git rev-parse --short HEAD)"
+          LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${GITHUB_REF_NAME} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT}"
+          mkdir -p dist
+          # Native arm64 slice.
+          CGO_ENABLED=1 GOARCH=arm64 go build -tags fuse -ldflags "$LDFLAGS" \
+            -o dist/cc-notes_darwin_arm64_fuse ./cmd/cc-notes
+          # amd64 slice cross-compiles against the fat macOS SDK.
+          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -tags fuse -ldflags "$LDFLAGS" \
+            -o dist/cc-notes_darwin_amd64_fuse ./cmd/cc-notes
+          # Ad-hoc signature is mandatory on arm64; sign both slices.
+          codesign --force -s - dist/cc-notes_darwin_arm64_fuse
+          codesign --force -s - dist/cc-notes_darwin_amd64_fuse
+      - name: Smoke (fuse binary without fuse-t)
+        # The fuse binary dlopens libfuse-t lazily, so it must run cleanly on a
+        # Mac that has no fuse-t. The runner is arm64 and has none — prove the
+        # native slice reports its version and that `mount` fails gracefully
+        # with the install hint (exit 1, not a crash signal) rather than serving.
+        run: |
+          test ! -e /usr/local/lib/libfuse-t.dylib
+          BIN=dist/cc-notes_darwin_arm64_fuse
+          "$BIN" version | grep -q "${GITHUB_REF_NAME}"
+          mkdir -p "$RUNNER_TEMP/ccn-mp"
+          set +e
+          out="$("$BIN" mount "$RUNNER_TEMP/ccn-mp" 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" -eq 1
+          echo "$out" | grep -qi fuse
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cc-notes_darwin_fuse
+          path: dist/cc-notes_darwin_*_fuse
+          if-no-files-found: error
+
+  fuse-linux:
+    name: fuse linux/amd64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install libfuse headers
+        run: sudo apt-get update && sudo apt-get install -y libfuse-dev
+      - name: Build linux/amd64 fuse variant
+        run: |
+          COMMIT="$(git rev-parse --short HEAD)"
+          LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${GITHUB_REF_NAME} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT}"
+          mkdir -p dist
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags fuse -ldflags "$LDFLAGS" \
+            -o dist/cc-notes_linux_amd64_fuse ./cmd/cc-notes
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cc-notes_linux_amd64_fuse
+          path: dist/cc-notes_linux_amd64_fuse
+          if-no-files-found: error
+
+  smoke-linux:
+    name: smoke linux (pure + fuse)
+    runs-on: ubuntu-latest
+    needs: [pure, fuse-linux]
+    steps:
+      - uses: actions/checkout@v6 # cwd is a git repo so mount can open the store
+      - uses: actions/download-artifact@v8
+        with:
+          name: cc-notes_linux_amd64
+          path: bin
+      - uses: actions/download-artifact@v8
+        with:
+          name: cc-notes_linux_amd64_fuse
+          path: bin
+      - name: Smoke both linux binaries
+        run: |
+          chmod +x bin/cc-notes_linux_amd64 bin/cc-notes_linux_amd64_fuse
+          for BIN in bin/cc-notes_linux_amd64 bin/cc-notes_linux_amd64_fuse; do
+            "$BIN" version | grep -q "${GITHUB_REF_NAME}"
+          done
+          # Pure binary: mount prints the install hint and exits 1.
+          set +e
+          out="$(bin/cc-notes_linux_amd64 mount /tmp/ccn-x 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" -eq 1
+          echo "$out" | grep -qi fuse
+          # Fuse binary: mount on a missing mountpoint fails gracefully (exit 1,
+          # no crash dump) without ever blocking on a live mount.
+          set +e
+          out="$(bin/cc-notes_linux_amd64_fuse mount /tmp/ccn-x 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" -eq 1
+
+  release:
+    name: publish release
+    runs-on: ubuntu-latest
+    needs: [pure, fuse-macos, fuse-linux, smoke-linux]
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Assemble dist and checksums
+        run: |
+          mkdir -p dist
+          find artifacts -type f -name 'cc-notes_*' -exec cp {} dist/ \;
+          cd dist
+          sha256sum cc-notes_* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PRERELEASE=""
+          case "$GITHUB_REF_NAME" in
+            *-*) PRERELEASE="--prerelease" ;;
+          esac
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" --generate-notes $PRERELEASE
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" dist/* --clobber
