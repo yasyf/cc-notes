@@ -9,36 +9,31 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+      - uses: actions/setup-go@v6
         with:
-          python-version: ${{ matrix.python-version }}
-          cache-dependency-glob: uv.lock
+          go-version: "1.26"
+          cache: true
 
-      - name: Sync (dev)
-        run: uv sync --extra dev
+      - name: go vet
+        run: go vet ./...
 
-      - name: Type check (ty, warnings only)
-        continue-on-error: true
-        run: uvx prek run ty --all-files
+      - name: Test
+        run: go test -race -count=1 ./...
 
-      - name: Test (pytest)
-        run: uv run pytest
+      - name: Build (default, pure Go)
+        run: go build ./...
 
-      - name: Build + smoke-test wheel in a fresh venv
-        run: |
-          uv build
-          rm -rf .wheel-smoke
-          uv venv --seed .wheel-smoke
-          uv pip install --python .wheel-smoke/bin/python dist/*.whl
-          .wheel-smoke/bin/cc-notes --help
+      - name: Cross-compile smoke (linux/amd64)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/cc-notes_linux_amd64 ./cmd/cc-notes
+
+      - name: Cross-compile smoke (darwin/arm64)
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/cc-notes_darwin_arm64 ./cmd/cc-notes
