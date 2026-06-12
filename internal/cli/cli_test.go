@@ -64,17 +64,22 @@ type taskJSON struct {
 	ClosedAt  *string `json:"closed_at"`
 }
 
+// gitEnvKeys are the environment knobs that could leak host git state into a
+// test; scrubGitEnv clears them in-process and binEnv strips them from
+// subprocess environments.
+var gitEnvKeys = []string{
+	"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+	"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
+	"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
+	"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
+	"GIT_EDITOR", "EMAIL", "CC_NOTES_ACTOR",
+}
+
 // scrubGitEnv clears every git environment knob that could leak host state
 // into a test and pins global/system config to /dev/null.
 func scrubGitEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{
-		"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-		"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
-		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
-		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-		"GIT_EDITOR", "EMAIL", "CC_NOTES_ACTOR",
-	} {
+	for _, key := range gitEnvKeys {
 		if value, ok := os.LookupEnv(key); ok {
 			t.Setenv(key, value)
 			os.Unsetenv(key)
