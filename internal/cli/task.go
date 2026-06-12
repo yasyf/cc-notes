@@ -9,7 +9,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
+	ccsync "github.com/yasyf/cc-notes/internal/sync"
 )
 
 var allStatuses = []model.Status{model.StatusOpen, model.StatusInProgress, model.StatusDone, model.StatusCancelled}
@@ -33,6 +35,7 @@ func newTaskCmd() *cobra.Command {
 		newTaskCommentCmd(),
 		newTaskDepCmd(),
 		newTaskUndepCmd(),
+		newTaskPromoteCmd(),
 	)
 	return cmd
 }
@@ -570,6 +573,83 @@ func newTaskUndepCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newTaskPromoteCmd() *cobra.Command {
+	var to, from string
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "promote --to BRANCH [ID]...",
+		Short: "Move tasks to another branch namespace",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if to == "" {
+				return &UsageError{Err: errors.New("required flag --to not set")}
+			}
+			ctx := cmd.Context()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			fromBranch, err := resolveBranch(ctx, s, from)
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, s.Git); err != nil {
+				return err
+			}
+			var ids []model.EntityID
+			if len(args) > 0 {
+				for _, prefix := range args {
+					_, task, err := loadTask(ctx, s, fromBranch, prefix)
+					if err != nil {
+						return err
+					}
+					ids = append(ids, task.ID)
+				}
+			} else {
+				tasks, err := s.ListTasks(ctx, fromBranch)
+				if err != nil {
+					return err
+				}
+				for _, task := range tasks {
+					if task.Status == model.StatusOpen || task.Status == model.StatusInProgress {
+						ids = append(ids, task.ID)
+					}
+				}
+			}
+			if err := ccsync.Promote(ctx, s, fromBranch, model.Branch(to), ids); err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if jsonOut {
+				live, err := liveTasks(ctx, s)
+				if err != nil {
+					return err
+				}
+				dtos := make([]taskDTO, len(ids))
+				for i, id := range ids {
+					snapshot, err := s.Load(ctx, refs.Task(model.Branch(to), id))
+					if err != nil {
+						return err
+					}
+					dtos[i] = newTaskDTO(snapshot.(model.Task), blocksFor(live, id))
+				}
+				return printJSON(out, dtos)
+			}
+			for _, id := range ids {
+				if _, err := fmt.Fprintf(out, "promoted: %s %s\n", id.Short(), to); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	flags := cmd.Flags()
+	flags.StringVar(&to, "to", "", "destination branch (required)")
+	flags.StringVar(&from, "from", "", "source branch (default: current branch)")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
