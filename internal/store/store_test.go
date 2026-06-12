@@ -356,6 +356,8 @@ func TestAppendContended(t *testing.T) {
 
 	blocked := t.TempDir()
 	mustGit(t, blocked, "init", "-q", "-b", "main")
+	mustGit(t, blocked, "config", "user.name", testName)
+	mustGit(t, blocked, "config", "user.email", testEmail)
 	alternates := filepath.Join(blocked, ".git", "objects", "info", "alternates")
 	if err := os.WriteFile(alternates, []byte(filepath.Join(s.Git.Dir, ".git", "objects")+"\n"), 0o644); err != nil {
 		t.Fatalf("write alternates: %v", err)
