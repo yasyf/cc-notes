@@ -435,6 +435,12 @@ func TestDetachedHead(t *testing.T) {
 	if out := mustRun(t, dir, "task", "list", "--branch", "main"); !strings.Contains(out, task.ID[:7]) {
 		t.Fatalf("task list --branch main = %q, want %s", out, task.ID[:7])
 	}
+	if out := mustRun(t, dir, "task", "show", task.ID, "--branch", "main"); !strings.Contains(out, "id: "+task.ID+"\n") {
+		t.Fatalf("task show --branch main = %q, want the task", out)
+	}
+	if out := mustRun(t, dir, "task", "comment", task.ID, "from detached", "--branch", "main"); !strings.HasPrefix(out, task.ID[:7]+"\t") {
+		t.Fatalf("task comment --branch main = %q, want the lean line", out)
+	}
 	mustRun(t, dir, "note", "list")
 }
 

@@ -221,6 +221,7 @@ func newTaskReadyCmd() *cobra.Command {
 }
 
 func newTaskShowCmd() *cobra.Command {
+	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "show ID",
@@ -232,7 +233,7 @@ func newTaskShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "")
+			b, err := resolveBranch(ctx, s, branch)
 			if err != nil {
 				return err
 			}
@@ -252,11 +253,14 @@ func newTaskShowCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags := cmd.Flags()
+	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskClaimCmd() *cobra.Command {
+	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "claim ID",
@@ -268,7 +272,7 @@ func newTaskClaimCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "")
+			b, err := resolveBranch(ctx, s, branch)
 			if err != nil {
 				return err
 			}
@@ -297,11 +301,14 @@ func newTaskClaimCmd() *cobra.Command {
 			return printTask(cmd, s, task, jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags := cmd.Flags()
+	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
+	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   use + " ID",
@@ -313,7 +320,7 @@ func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "")
+			b, err := resolveBranch(ctx, s, branch)
 			if err != nil {
 				return err
 			}
@@ -336,12 +343,14 @@ func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
 			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags := cmd.Flags()
+	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskEditCmd() *cobra.Command {
-	var title, desc, taskType, status, assignee, parent string
+	var title, desc, taskType, status, assignee, parent, branch string
 	var priority int
 	var unassign, noParent bool
 	var addLabels, rmLabels []string
@@ -363,7 +372,7 @@ func newTaskEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "")
+			b, err := resolveBranch(ctx, s, branch)
 			if err != nil {
 				return err
 			}
@@ -450,11 +459,13 @@ func newTaskEditCmd() *cobra.Command {
 	flags.StringArrayVar(&rmLabels, "rm-label", nil, "remove label (repeatable)")
 	flags.StringVar(&parent, "parent", "", "new parent task id prefix")
 	flags.BoolVar(&noParent, "no-parent", false, "clear the parent")
+	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskCommentCmd() *cobra.Command {
+	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "comment ID BODY",
@@ -466,7 +477,7 @@ func newTaskCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "")
+			b, err := resolveBranch(ctx, s, branch)
 			if err != nil {
 				return err
 			}
@@ -488,11 +499,14 @@ func newTaskCommentCmd() *cobra.Command {
 			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags := cmd.Flags()
+	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskDepCmd() *cobra.Command {
+	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "dep ID BLOCKER",
@@ -504,7 +518,7 @@ func newTaskDepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "")
+			b, err := resolveBranch(ctx, s, branch)
 			if err != nil {
 				return err
 			}
@@ -529,11 +543,14 @@ func newTaskDepCmd() *cobra.Command {
 			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags := cmd.Flags()
+	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskUndepCmd() *cobra.Command {
+	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "undep ID BLOCKER",
@@ -545,7 +562,7 @@ func newTaskUndepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "")
+			b, err := resolveBranch(ctx, s, branch)
 			if err != nil {
 				return err
 			}
@@ -567,7 +584,9 @@ func newTaskUndepCmd() *cobra.Command {
 			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags := cmd.Flags()
+	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 

@@ -469,6 +469,29 @@ func TestPromoteInvalidDestUsage(t *testing.T) {
 	}
 }
 
+// TestClaimDetachedHead pins the --branch escape hatch on branch-scoped
+// mutations: from a detached HEAD, claim without --branch fails with the
+// detached-HEAD message, and --branch main succeeds.
+func TestClaimDetachedHead(t *testing.T) {
+	dir := initRepo(t)
+	task := addTaskBin(t, dir, "On main")
+	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "c")
+	mustGit(t, dir, "checkout", "-q", "--detach")
+
+	res, err := execBin(dir, matrixActor, "task", "claim", task.ID)
+	if err != nil {
+		t.Fatalf("cc-notes task claim: %v", err)
+	}
+	if res.Code != 1 || res.Stdout != "" || res.Stderr != "error: detached HEAD; pass --branch\n" {
+		t.Fatalf("detached claim: exit %d stdout %q stderr %q, want exit 1 with the detached-HEAD line", res.Code, res.Stdout, res.Stderr)
+	}
+
+	out := mustBin(t, dir, matrixActor, "task", "claim", "--branch", "main", task.ID)
+	if want := task.ID[:7] + "\tin_progress\tP2\t" + matrixActor + "\tOn main\n"; out != want {
+		t.Fatalf("claim --branch main = %q, want %q", out, want)
+	}
+}
+
 // TestNoteLifecycleViaBinary drives the full note lifecycle through the
 // binary: add with anchors, search, edit, tag filters, and rm with --all
 // visibility.
