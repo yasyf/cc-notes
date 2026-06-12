@@ -583,6 +583,122 @@ func TestRacingPromotesConverge(t *testing.T) {
 	}
 }
 
+// TestSymmetricMergeRace pins an accepted tradeoff: two clones that each
+// union-merge the same divergence locally before either pushes mint mirrored
+// merge commits — parents [a,b] on one clone, [b,a] on the other — so the
+// tips cannot be byte-equal until sync joins them, possibly via a merge of
+// merges. What is pinned is fold equality and quiescence, never byte tips
+// mid-flight.
+func TestSymmetricMergeRace(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	task := createTask(t, a, "mirrored", "main")
+	taskRef := refs.Task("main", task.ID)
+	sync(t, a)
+	sync(t, b)
+
+	tipA := appendOps(t, a, taskRef, model.AddLabel{Label: "from-a"}).(model.Task).Head
+	tipB := appendOps(t, b, taskRef, model.SetStatus{Status: model.StatusInProgress}).(model.Task).Head
+
+	// Exchange objects clone-to-clone without moving refs, then mirror-merge
+	// the same divergence on both sides before either clone pushes.
+	mustGit(t, a.Git.Dir, "fetch", "-q", b.Git.Dir, taskRef)
+	mustGit(t, b.Git.Dir, "fetch", "-q", a.Git.Dir, taskRef)
+	if _, err := a.Merge(t.Context(), taskRef, tipA, tipB); err != nil {
+		t.Fatalf("A Merge: %v", err)
+	}
+	if _, err := b.Merge(t.Context(), taskRef, tipB, tipA); err != nil {
+		t.Fatalf("B Merge: %v", err)
+	}
+	syncUntilQuiescent(t, a, b)
+
+	taskA, taskB := loadTask(t, a, taskRef), loadTask(t, b, taskRef)
+	if !reflect.DeepEqual(taskA, taskB) {
+		t.Fatalf("clones diverge: A = %+v, B = %+v", taskA, taskB)
+	}
+	if want := []string{"from-a"}; !slices.Equal(taskA.Labels, want) {
+		t.Errorf("merged Labels = %v, want %v", taskA.Labels, want)
+	}
+	if taskA.Status != model.StatusInProgress {
+		t.Errorf("merged Status = %s, want in_progress", taskA.Status)
+	}
+}
+
+// TestPlainPushDivergedEntityRef pins the plain-git contract the README
+// states: a diverged entity ref makes `git push` exit 1, but refspecs fail
+// independently — the branch still lands on the remote, and the remote's
+// entity tip is never clobbered. Sync's union merge is the only path that
+// resolves the entity ref.
+func TestPlainPushDivergedEntityRef(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	for _, s := range []*store.Store{a, b} {
+		if err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+	}
+	mustGit(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+	task := createTask(t, a, "diverged", "main")
+	taskRef := refs.Task("main", task.ID)
+	mustGit(t, a.Git.Dir, "push", "-q", "origin")
+	mustGit(t, b.Git.Dir, "fetch", "-q", "origin")
+	mustGit(t, b.Git.Dir, "reset", "-q", "--hard", "origin/main")
+
+	appendOps(t, a, taskRef, model.AddLabel{Label: "from-a"})
+	mustGit(t, a.Git.Dir, "push", "-q", "origin")
+	remoteEntity := mustGit(t, bare, "rev-parse", taskRef)
+	appendOps(t, b, taskRef, model.AddComment{Body: "from b"})
+	mustGit(t, b.Git.Dir, "commit", "-q", "--allow-empty", "-m", "b work")
+	bHead := mustGit(t, b.Git.Dir, "rev-parse", "HEAD")
+
+	out, err := exec.Command("git", "-C", b.Git.Dir, "push", "origin").CombinedOutput()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		t.Fatalf("plain push with diverged entity ref: err = %v, want exit 1; output:\n%s", err, out)
+	}
+	if got := mustGit(t, bare, "rev-parse", "refs/heads/main"); got != bHead {
+		t.Errorf("remote main = %s, want B's commit %s: the branch must land despite the rejected entity ref", got, bHead)
+	}
+	if got := mustGit(t, bare, "rev-parse", taskRef); got != remoteEntity {
+		t.Errorf("remote %s = %s, want %s: a diverged entity ref must never clobber", taskRef, got, remoteEntity)
+	}
+}
+
+// TestPlainFetchClobberReflog pins the other half of the plain-git contract:
+// the installed fetch refspec is forced, so a diverged local entity tip is
+// clobbered to the remote's — and the reflog, enabled for all refs by
+// Install via core.logAllRefUpdates=always, keeps the old tip recoverable.
+func TestPlainFetchClobberReflog(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	for _, s := range []*store.Store{a, b} {
+		if err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+	}
+	task := createTask(t, a, "clobbered", "main")
+	taskRef := refs.Task("main", task.ID)
+	sync(t, a)
+	sync(t, b)
+
+	stranded := appendOps(t, b, taskRef, model.AddComment{Body: "stranded"}).(model.Task).Head
+	appendOps(t, a, taskRef, model.AddLabel{Label: "remote-wins"})
+	sync(t, a)
+	remoteTip := mustGit(t, bare, "rev-parse", taskRef)
+
+	mustGit(t, b.Git.Dir, "fetch", "-q", "origin")
+
+	if got := mustGit(t, b.Git.Dir, "rev-parse", taskRef); got != remoteTip {
+		t.Fatalf("after plain fetch, %s = %s, want force-clobbered to remote tip %s", taskRef, got, remoteTip)
+	}
+	if got := mustGit(t, b.Git.Dir, "rev-parse", taskRef+"@{1}"); got != string(stranded) {
+		t.Errorf("%s@{1} = %s, want pre-fetch tip %s recoverable from the reflog", taskRef, got, stranded)
+	}
+}
+
 func TestSyncNoRemote(t *testing.T) {
 	scrubGitEnv(t)
 	dir := t.TempDir()

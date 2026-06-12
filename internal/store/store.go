@@ -126,7 +126,10 @@ func parseActor(value string) (name, email string, err error) {
 	return name, email, nil
 }
 
-func backoff(ctx context.Context, attempt int) error {
+// Backoff sleeps the jittered, exponentially-growing delay for the given
+// retry attempt, honoring ctx cancellation. Append and internal/sync share
+// it between ref compare-and-swap attempts.
+func Backoff(ctx context.Context, attempt int) error {
 	limit := backoffBase << min(attempt, backoffCapShift)
 	select {
 	case <-ctx.Done():

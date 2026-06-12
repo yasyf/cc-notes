@@ -351,12 +351,17 @@ func (e *engine) ensure(ctx context.Context, ref string, tip model.SHA) error {
 	return nil
 }
 
-// ensureContains retries advance under compare-and-swap contention until
-// ref's chain contains tip, failing with ErrSyncContended when the ref
-// never settles.
+// ensureContains retries advance under compare-and-swap contention, with
+// jittered backoff between attempts, until ref's chain contains tip, failing
+// with ErrSyncContended when the ref never settles.
 func ensureContains(ctx context.Context, s *store.Store, ref string, tip model.SHA) (outcome, error) {
 	var lastErr error
-	for range maxRefAttempts {
+	for attempt := range maxRefAttempts {
+		if attempt > 0 {
+			if err := store.Backoff(ctx, attempt); err != nil {
+				return refKept, err
+			}
+		}
 		result, err := advance(ctx, s, ref, tip)
 		switch {
 		case err == nil:

@@ -87,7 +87,7 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 	var lastErr error
 	for attempt := range maxAttempts {
 		if attempt > 0 {
-			if err := backoff(ctx, attempt); err != nil {
+			if err := Backoff(ctx, attempt); err != nil {
 				return nil, fmt.Errorf("append to %s: %w", ref, err)
 			}
 		}
