@@ -43,7 +43,7 @@ func newNoteAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
 			text, err := bodyArg(cmd, body)
@@ -177,7 +177,7 @@ func newNoteEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
 			ref, _, err := loadNote(ctx, s, args[0])
@@ -218,7 +218,7 @@ func newNoteRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
 			ref, _, err := loadNote(ctx, s, args[0])

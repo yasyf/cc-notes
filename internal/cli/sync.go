@@ -21,7 +21,7 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := ccsync.Install(cmd.Context(), s.Git, remote); err != nil {
+			if _, err := ccsync.Install(cmd.Context(), s.Git, remote); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "initialized: refs/cc-notes/* refspecs installed for %s\n", remote)

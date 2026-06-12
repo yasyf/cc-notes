@@ -163,9 +163,22 @@ func listTasks(t *testing.T, s *store.Store, branch model.Branch) []model.Task {
 func TestInstallIdempotent(t *testing.T) {
 	bare := initBare(t)
 	s := clone(t, bare, "Alice", "alice@example.com")
+	wantAdded := []string{
+		"remote.origin.fetch=" + ccFetchRefspec,
+		"remote.origin.push=HEAD",
+		"remote.origin.push=" + ccPushRefspec,
+		"core.logAllRefUpdates=always",
+	}
 	for run := range 2 {
-		if err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
+		report, err := ccsync.Install(t.Context(), s.Git, "origin")
+		if err != nil {
 			t.Fatalf("Install run %d: %v", run, err)
+		}
+		if run == 0 && (!slices.Equal(report.Added, wantAdded) || !report.HeadPushAdded) {
+			t.Errorf("run 0 report = %+v, want Added %q with HeadPushAdded", report, wantAdded)
+		}
+		if run > 0 && (len(report.Added) != 0 || report.HeadPushAdded) {
+			t.Errorf("run %d report = %+v, want empty no-op report", run, report)
 		}
 		if got, want := configAll(t, s, "remote.origin.fetch"), []string{defaultFetch, ccFetchRefspec}; !slices.Equal(got, want) {
 			t.Errorf("run %d: fetch lines = %q, want %q", run, got, want)
@@ -185,8 +198,12 @@ func TestInstallPreservesExistingPushRefspec(t *testing.T) {
 	existing := "refs/heads/main:refs/heads/main"
 	mustGit(t, s.Git.Dir, "config", "remote.origin.push", existing)
 	for run := range 2 {
-		if err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
+		report, err := ccsync.Install(t.Context(), s.Git, "origin")
+		if err != nil {
 			t.Fatalf("Install run %d: %v", run, err)
+		}
+		if report.HeadPushAdded {
+			t.Errorf("run %d report = %+v, want HeadPushAdded false with an existing push refspec", run, report)
 		}
 		if got, want := configAll(t, s, "remote.origin.push"), []string{existing, ccPushRefspec}; !slices.Equal(got, want) {
 			t.Errorf("run %d: push lines = %q, want %q (no HEAD line)", run, got, want)
@@ -197,7 +214,7 @@ func TestInstallPreservesExistingPushRefspec(t *testing.T) {
 func TestInstallUnknownRemote(t *testing.T) {
 	bare := initBare(t)
 	s := clone(t, bare, "Alice", "alice@example.com")
-	err := ccsync.Install(t.Context(), s.Git, "upstream")
+	_, err := ccsync.Install(t.Context(), s.Git, "upstream")
 	if !errors.Is(err, ccsync.ErrRemoteNotFound) {
 		t.Fatalf("Install unknown remote: got %v, want ErrRemoteNotFound", err)
 	}
@@ -208,7 +225,7 @@ func TestPlainGitCarry(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	mustGit(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
 	head := mustGit(t, a.Git.Dir, "rev-parse", "HEAD")
-	if err := ccsync.Install(t.Context(), a.Git, "origin"); err != nil {
+	if _, err := ccsync.Install(t.Context(), a.Git, "origin"); err != nil {
 		t.Fatalf("Install A: %v", err)
 	}
 	note := createNote(t, a, "carried note")
@@ -228,7 +245,7 @@ func TestPlainGitCarry(t *testing.T) {
 	}
 
 	b := clone(t, bare, "Bob", "bob@example.com")
-	if err := ccsync.Install(t.Context(), b.Git, "origin"); err != nil {
+	if _, err := ccsync.Install(t.Context(), b.Git, "origin"); err != nil {
 		t.Fatalf("Install B: %v", err)
 	}
 	mustGit(t, b.Git.Dir, "fetch", "-q", "origin")
@@ -726,7 +743,7 @@ func TestPlainPushDivergedEntityRef(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	for _, s := range []*store.Store{a, b} {
-		if err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
+		if _, err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
 			t.Fatalf("Install: %v", err)
 		}
 	}
@@ -766,7 +783,7 @@ func TestPlainFetchClobberReflog(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	for _, s := range []*store.Store{a, b} {
-		if err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
+		if _, err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
 			t.Fatalf("Install: %v", err)
 		}
 	}
@@ -800,7 +817,7 @@ func TestSyncPreservesDivergedOpsAfterInstall(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	for _, s := range []*store.Store{a, b} {
-		if err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
+		if _, err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
 			t.Fatalf("Install: %v", err)
 		}
 	}

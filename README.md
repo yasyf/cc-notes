@@ -149,7 +149,7 @@ Notes are repo-global, with optional anchors tying them to what they describe: `
 
 After that, plain `git push` and `git pull` move notes and tasks alongside your branches. The remote stores the refs but they're effectively invisible: GitHub serves them to fetches yet shows no trace in the UI — no branches, no files, no PR noise. Verify they're there with `git ls-remote origin 'refs/cc-notes/*'`.
 
-Two sharp edges are worth knowing, both consequences of riding plain git:
+Three sharp edges are worth knowing, all consequences of riding plain git:
 
 1. **A diverged entity ref makes `git push` exit 1.** If someone else changed the same note or task since you last synced, your branch still pushes — only the entity ref is rejected:
 
@@ -169,6 +169,8 @@ Two sharp edges are worth knowing, both consequences of riding plain git:
    `cc-notes sync` is the convergence path: it union-merges the diverged history — both sides' changes survive, nothing is overwritten — and pushes the result.
 
 2. **A plain `git fetch` (or `git pull`) force-overwrites a diverged local entity ref** with the remote's version; the fetch refspec is forced so stale clones always converge. Your local changes are not folded in — they're parked in the reflog (`git rev-parse '<ref>@{1}'`), which `init` enabled for all refs. If you've made entity edits offline, run `cc-notes sync` instead of a bare fetch; sync merges instead of clobbering.
+
+3. **`push.default` no longer applies to the wired remote.** Git ignores `push.default` for any remote with an explicit push refspec, which is why `init` writes `push = HEAD` — plain `git push` keeps pushing the current branch to its same-named remote branch. If you'd tuned `push.default` (`upstream`, say), pushes to this remote follow the `HEAD` rule instead. Wiring also happens implicitly — the first mutating cc-notes command installs the same lines — and announces what it added on stderr.
 
 `cc-notes sync --remote <name>` targets a non-default remote; `--json` reports the created/fast-forwarded/merged/pushed counts.
 

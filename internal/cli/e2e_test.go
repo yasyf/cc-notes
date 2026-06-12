@@ -601,6 +601,38 @@ func TestTaskJSONContract(t *testing.T) {
 	}
 }
 
+// TestAutoInstallAnnouncesRefspecs pins the stderr disclosure contract: the
+// first mutating command in a wired clone announces the exact config lines
+// auto-install added — including the push.default override note — and every
+// later command stays silent.
+func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
+	scrubGitEnv(t)
+	root := t.TempDir()
+	bare := filepath.Join(root, "remote.git")
+	mustGit(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
+	dir := filepath.Join(root, "work")
+	mustGit(t, root, "clone", "-q", bare, "work")
+	mustGit(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	res, err := execBin(dir, actorA, "task", "add", "First write")
+	if err != nil {
+		t.Fatalf("cc-notes task add: %v", err)
+	}
+	if res.Code != 0 {
+		t.Fatalf("task add exit = %d (stderr %q)", res.Code, res.Stderr)
+	}
+	want := "cc-notes: installed refspecs in .git/config for \"origin\": " +
+		"remote.origin.fetch=+refs/cc-notes/*:refs/cc-notes/*; " +
+		"remote.origin.push=HEAD; " +
+		"remote.origin.push=refs/cc-notes/*:refs/cc-notes/*; " +
+		"core.logAllRefUpdates=always\n" +
+		"cc-notes: note: \"git push\" now pushes the current branch to its same-named remote branch (remote.origin.push overrides push.default)\n"
+	if res.Stderr != want {
+		t.Fatalf("first mutating command stderr = %q, want %q", res.Stderr, want)
+	}
+	mustBin(t, dir, actorA, "task", "add", "Second write")
+}
+
 // TestTwoCloneSyncRoundTrip round-trips a task through a bare remote: clone A
 // adds and syncs, clone B syncs and sees a byte-identical task list.
 func TestTwoCloneSyncRoundTrip(t *testing.T) {
@@ -617,6 +649,7 @@ func TestTwoCloneSyncRoundTrip(t *testing.T) {
 	}
 
 	cloneA := clone("a")
+	mustBin(t, cloneA, actorA, "init")
 	task := mustJSON[taskJSON](t, mustBin(t, cloneA, actorA, "task", "add", "Shared task", "--json"))
 	if out := mustBin(t, cloneA, actorA, "sync"); out != "pushed: 1\nrounds: 1\n" {
 		t.Fatalf("clone A sync = %q, want pushed: 1 / rounds: 1", out)

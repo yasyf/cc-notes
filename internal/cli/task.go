@@ -59,7 +59,7 @@ func newTaskAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
 			text, err := bodyArg(cmd, desc)
@@ -272,7 +272,7 @@ func newTaskClaimCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
 			ref, task, err := loadTask(ctx, s, b, args[0])
@@ -317,7 +317,7 @@ func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
 			ref, task, err := loadTask(ctx, s, b, args[0])
@@ -424,7 +424,7 @@ func newTaskEditCmd() *cobra.Command {
 			if len(ops) == 0 {
 				return &UsageError{Err: errors.New("task edit requires at least one flag")}
 			}
-			if err := autoInstall(ctx, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
 			ref, _, err := loadTask(ctx, s, b, args[0])
@@ -470,7 +470,7 @@ func newTaskCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
 			body, err := bodyArg(cmd, args[1])
@@ -508,7 +508,7 @@ func newTaskDepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
 			ref, task, err := loadTask(ctx, s, b, args[0])
@@ -549,7 +549,7 @@ func newTaskUndepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
 			ref, _, err := loadTask(ctx, s, b, args[0])
@@ -594,7 +594,7 @@ func newTaskPromoteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
 			var ids []model.EntityID

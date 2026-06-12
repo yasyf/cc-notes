@@ -55,10 +55,30 @@ func resolveBranch(ctx context.Context, s *store.Store, flag string) (model.Bran
 
 // autoInstall best-effort wires the default remote's refspecs before a
 // write: a repository without the remote is left alone, any other failure
-// is loud.
-func autoInstall(ctx context.Context, g gitcmd.Git) error {
-	if err := ccsync.Install(ctx, g, defaultRemote); err != nil && !errors.Is(err, ccsync.ErrRemoteNotFound) {
+// is loud. Config lines it actually added are announced once on stderr —
+// including the push.default override when the HEAD push refspec is new —
+// so the silent first mutating command never changes git push behavior
+// invisibly.
+func autoInstall(ctx context.Context, cmd *cobra.Command, g gitcmd.Git) error {
+	report, err := ccsync.Install(ctx, g, defaultRemote)
+	switch {
+	case errors.Is(err, ccsync.ErrRemoteNotFound):
+		return nil
+	case err != nil:
 		return err
+	case len(report.Added) == 0:
+		return nil
+	}
+	stderr := cmd.ErrOrStderr()
+	if _, err := fmt.Fprintf(stderr, "cc-notes: installed refspecs in .git/config for %q: %s\n",
+		defaultRemote, strings.Join(report.Added, "; ")); err != nil {
+		return err
+	}
+	if report.HeadPushAdded {
+		if _, err := fmt.Fprintf(stderr, "cc-notes: note: \"git push\" now pushes the current branch to its same-named remote branch (remote.%s.push overrides push.default)\n",
+			defaultRemote); err != nil {
+			return err
+		}
 	}
 	return nil
 }
