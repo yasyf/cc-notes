@@ -10,7 +10,14 @@ cc-notes gives agents a durable place to write things down between sessions: a n
 
 ## Install
 
-The install script picks the right binary for your platform (preferring the FUSE-capable variant when available) and drops it in `~/.local/bin`:
+```sh
+brew tap yasyf/cc-notes https://github.com/yasyf/cc-notes
+brew install yasyf/cc-notes/cc-notes
+```
+
+macOS and Linux. The formula installs the prebuilt binary for your platform, FUSE-capable wherever a FUSE (Filesystem in Userspace) build ships; `cc-notes mount` on macOS needs `brew install macos-fuse-t/cask/fuse-t` (on Linux, `fuse3`). Everything else works without it.
+
+No Homebrew? The install script picks the right binary for your platform (preferring the FUSE-capable variant when available) and drops it in `~/.local/bin`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh | sh
