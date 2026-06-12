@@ -191,3 +191,50 @@ jobs:
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --title "$GITHUB_REF_NAME" --generate-notes $PRERELEASE
           gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" dist/* --clobber
+
+  bump-formula:
+    runs-on: ubuntu-latest
+    needs: [release]
+    permissions:
+      contents: write
+    # Prerelease tags (v1.2.3-rc.1) publish assets but never touch the formula.
+    if: ${{ !contains(github.ref_name, '-') }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - name: Bump Formula to the release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release download "$GITHUB_REF_NAME" --pattern SHA256SUMS.txt --output sums.txt
+          sha() { awk -v a="$1" '$2 == a {print $1}' sums.txt; }
+          DARWIN_ARM64="$(sha cc-notes_darwin_arm64_fuse)"
+          DARWIN_AMD64="$(sha cc-notes_darwin_amd64_fuse)"
+          LINUX_AMD64="$(sha cc-notes_linux_amd64_fuse)"
+          LINUX_ARM64="$(sha cc-notes_linux_arm64)"
+          test -n "$DARWIN_ARM64" && test -n "$DARWIN_AMD64" && test -n "$LINUX_AMD64" && test -n "$LINUX_ARM64"
+          F=Formula/cc-notes.rb
+          # The urls interpolate v#{version}, so only the version line and the
+          # four marker-anchored shas need rewriting.
+          sed -i -E "s|^  version \"[^\"]+\"|  version \"${VERSION}\"|" "$F"
+          sed -i -E "s|sha256 \"[0-9a-f]{64}\" # darwin-arm64|sha256 \"${DARWIN_ARM64}\" # darwin-arm64|" "$F"
+          sed -i -E "s|sha256 \"[0-9a-f]{64}\" # darwin-amd64|sha256 \"${DARWIN_AMD64}\" # darwin-amd64|" "$F"
+          sed -i -E "s|sha256 \"[0-9a-f]{64}\" # linux-amd64|sha256 \"${LINUX_AMD64}\" # linux-amd64|" "$F"
+          sed -i -E "s|sha256 \"[0-9a-f]{64}\" # linux-arm64|sha256 \"${LINUX_ARM64}\" # linux-arm64|" "$F"
+          # Fail loud if a sed anchor stopped matching; allow idempotent re-runs.
+          grep -q "version \"${VERSION}\"" "$F"
+          grep -q "${DARWIN_ARM64}\" # darwin-arm64" "$F"
+          grep -q "${DARWIN_AMD64}\" # darwin-amd64" "$F"
+          grep -q "${LINUX_AMD64}\" # linux-amd64" "$F"
+          grep -q "${LINUX_ARM64}\" # linux-arm64" "$F"
+          if git diff --quiet; then
+            echo "formula already at ${GITHUB_REF_NAME}; nothing to push"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$F"
+          git commit -m "Formula: bump to ${GITHUB_REF_NAME}"
+          git push origin main
