@@ -1,14 +1,17 @@
 # cc-notes Development Guide
 
-Notes and tasks layer for agents. Published to PyPI as `cc-notes`; the CLI is `cc-notes`, run as `uvx cc-notes`.
+Git-native notes and tasks layer for agents, written in Go (module `github.com/yasyf/cc-notes`). Ships as a single static binary `cc-notes`, distributed via GitHub Release assets. All data lives as objects in the git ODB on `refs/cc-notes/*` — synced with the repo, invisible in checkouts.
 
 ## Repository Structure
 
 ```
 cc-notes/
-├── cc_notes/      # The package — Click CLI (note add/list commands)
-├── tests/            # Pytest suite
-├── .github/          # GitHub Actions workflows
+├── cmd/cc-notes/     # Binary entrypoint — signal-aware main, exit-code mapping
+├── internal/         # Go core (not importable outside the module)
+│   ├── cli/          #   cobra command tree: note/task noun groups, init, sync, mount
+│   └── version/      #   ldflags-injected build metadata
+├── scripts/          # install.sh and release helpers
+├── .github/          # GitHub Actions workflows (CI, tag-driven releases)
 ├── AGENTS.md         # This file — shared conventions
 └── README.md         # Project overview
 ```
@@ -81,13 +84,14 @@ Reach for your **LSP** when the answer must be *exhaustive* or *structural*:
 
 Reach for **`Grep`** only for material neither tool indexes: literal *content* of strings/comments/docstrings (error messages, hard-coded URLs, env-var names, TODOs) and non-source files (logs, JSON, YAML, fixtures). File-pattern questions ("all `*.json` under `src/`") go through `Glob`.
 
-## Python Style
+## Go Style
 
-Target Python 3.13+. Run `uv sync --extra dev`, `uv run pytest`, and `uv build`.
+Target Go 1.26+. Full rules live in STYLEGUIDE.md; the build/test loop:
 
-**Docstrings on the public API only.** User-facing surfaces carry Google-style docstrings; they render into the docs site via Great Docs. Internal helpers get none. No comments except TODOs, non-obvious workarounds, or disabled code.
-
-**Async-native from day 1.** Anything that touches I/O is `async def`, backed by a library with a native async API (e.g. `aiosqlite`) rather than a blocking call wrapped in `asyncio.to_thread`. Concurrency and tests run through `anyio`. See STYLEGUIDE.md § Async.
+- **Build**: `go build ./...` (pure Go, `CGO_ENABLED=0` for release binaries)
+- **Test**: `go test -race -count=1 ./...`
+- **Vet**: `go vet ./...` before every commit
+- **Fuse variant**: `go build -tags fuse ./...` needs cgo + a FUSE implementation (fuse-t on macOS, fuse3 on Linux); the default build must stay pure Go.
 
 @STYLEGUIDE.md
 
@@ -101,7 +105,7 @@ Target Python 3.13+. Run `uv sync --extra dev`, `uv run pytest`, and `uv build`.
 
 **Search before writing.** Before creating a helper, query the codebase via `semble.search` (intent or symbol queries both work). Sibling modules and base classes win over re-implementation.
 
-**Code stewardship.** When you touch a file, fix nearby bugs, style violations, and broken tests; don't wave them off as pre-existing or out of scope. Trivial type-checker noise is the exception (see § Python Style).
+**Code stewardship.** When you touch a file, fix nearby bugs, style violations, and broken tests; don't wave them off as pre-existing or out of scope. Mechanical lint noise is the exception (see § Mechanical linting).
 
 **Observe, don't infer.** Inspect actual data — read fixtures, dump objects, run the code — before reasoning from assumption.
 
@@ -117,14 +121,12 @@ Target Python 3.13+. Run `uv sync --extra dev`, `uv run pytest`, and `uv build`.
 
 **Don't contort code to satisfy a checker.** The type checker and linter serve the code, not the other way around. Don't reshape a data model, widen a type, or bolt on a `cast(...)` / narrowing-only `assert isinstance(...)` / blanket ignore just to silence a diagnostic. If a clean fix isn't obvious, leave the diagnostic — a visible diagnostic is preferable to scar tissue. (Most checker noise isn't worth acting on at all; act only when it flags a real bug.)
 
-**Mechanical linting.** The pre-commit hooks (prek: ruff + ty) auto-format, fix import order, and print whole-project type warnings on every `git commit` (ty never blocks a commit) — run `uvx prek install` once to activate them. Leave `ruff` to the hook and fix only what needs human judgment; clean everything up-front with `uvx prek run --all-files` if you want. When reviewing code, don't flag mechanical lint violations (line length, whitespace, import order, trailing commas).
+**Mechanical linting.** `gofmt` and `go vet` own formatting and mechanical issues (plus `golangci-lint` if a config lands). Run them before committing; fix only what needs human judgment. When reviewing code, don't flag mechanical lint violations (formatting, import order) — tooling owns them.
 
-**Testing.** The suite lives in `tests/`; run it with `uv run pytest`. Use strict assertions and mock external dependencies while leaving the code under test real. Databases and other stateful services are not mock boundaries — when a test needs one, run a real ephemeral instance via `testcontainers` instead of mocking the driver.
+**Testing.** Go tests live next to the code as `*_test.go`; run `go test -race -count=1 ./...` from the repo root. Table-driven with named cases, strict assertions against specific expected values. Git is not a mock boundary — tests that need a repository run real `git init` in `t.TempDir()` and operate on the real object database; mock only true externals (network, clock).
 
 **Writing docs.** When writing or revising docs, a README, a tutorial, a how-to, or reference, use the `writing-docs` skill (Diataxis modes, voice rules, and runnable code-sample rules) and run `slop-cop check <file> --lang=markdown` before you finish.
 
-**Docs.** Any public API change must keep `uv run great-docs build` green; run `uv sync --group docs` first.
-
 **Git.** Commits should be atomic and scoped. One logical change per commit.
 
-**Releases.** Tagging `v*` triggers `.github/workflows/release-pypi.yml`, which builds, publishes to PyPI via trusted publishing, and cuts a GitHub release. The version comes from the tag. The release refuses to run unless the tagged commit is on `main` — tag a merged commit (e.g. `git tag vX.Y.Z origin/main`), not a feature branch.
+**Releases.** Tagging `v*` triggers the release workflow, which cross-compiles platform binaries and uploads them as GitHub Release assets. The version comes from the tag, injected via `-ldflags` into `internal/version`. Tag merged commits on `main` (e.g. `git tag vX.Y.Z origin/main`), not a feature branch.
