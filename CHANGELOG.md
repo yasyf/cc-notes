@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-12
+
 cc-notes is now a Go program. The Python `note add/list` scaffold, published to
 PyPI as `cc-notes` 0.1.0, is superseded by prebuilt binaries from GitHub
 Releases.
@@ -29,6 +31,9 @@ Releases.
   Linux.
 - Release binaries: pure static builds plus FUSE variants for
   darwin/linux × amd64/arm64, with `scripts/install.sh` for installation.
+- Homebrew install: an in-repo tap formula
+  (`brew install yasyf/cc-notes/cc-notes`), auto-bumped by the release
+  workflow on stable tags.
 
 ### Changed
 - README rewritten as a slim front door: pitch, install, quickstart, and
@@ -40,4 +45,5 @@ Releases.
 - The Python-era documentation site (GitHub Pages) and the repo homepage link
   that pointed at it.
 
-[Unreleased]: https://github.com/yasyf/cc-notes/commits/main
+[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/yasyf/cc-notes/releases/tag/v0.2.0
