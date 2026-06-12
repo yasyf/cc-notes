@@ -1,0 +1,45 @@
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local environment
+.env*
+
+# Claude Code
+.context/
+.claude/settings.local.json
+
+# Python bytecode (guard hooks are Python even in non-Python repos)
+__pycache__/
+*.py[cod]
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtualenv / uv
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# CI wheel smoke test
+.wheel-smoke/
+
+# Great Docs build output
+great-docs/
