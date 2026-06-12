@@ -92,6 +92,11 @@ func noUnknownSubcommand(cmd *cobra.Command, args []string) error {
 	return &UsageError{Err: fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath())}
 }
 
+// runHelp makes a command group runnable so cobra validates its args —
+// rejecting unknown subcommands via noUnknownSubcommand — instead of
+// short-circuiting to help; a bare group invocation still prints help.
+func runHelp(cmd *cobra.Command, _ []string) error { return cmd.Help() }
+
 func parseStatus(value string) (model.Status, error) {
 	switch s := model.Status(value); s {
 	case model.StatusOpen, model.StatusInProgress, model.StatusDone, model.StatusCancelled:

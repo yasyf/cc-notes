@@ -1,5 +1,7 @@
 // Package cli wires the cobra command tree for cc-notes: the note and task
-// noun groups plus init, sync, and mount.
+// noun groups plus init, sync, and version. Output is agents-first — lean
+// deterministic lines or compact JSON on stdout, one labeled error line on
+// stderr, exit codes mapped from typed errors via ExitCode.
 package cli
 
 import (
@@ -14,9 +16,16 @@ func NewRootCmd() *cobra.Command {
 		Use:           "cc-notes",
 		Short:         "Git-native notes and tasks for agents",
 		Version:       version.String(),
+		Args:          noUnknownSubcommand,
+		RunE:          runHelp,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
+	root.CompletionOptions.DisableDefaultCmd = true
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return &UsageError{Err: err}
+	})
+	root.AddCommand(newNoteCmd(), newTaskCmd())
 	return root
 }
