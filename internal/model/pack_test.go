@@ -191,6 +191,8 @@ func TestDecodePackFailures(t *testing.T) {
 		{"bad anchor kind in create_note", `{"v":1,"lamport":1,"ops":[{"kind":"create_note","nonce":"00","title":"t","body":"","tags":[],"anchors":[{"kind":"tag","value":"v"}]}]}`, ErrInvalidValue},
 		{"bad priority in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":7,"branch":"main","parent":"","labels":[]}]}`, ErrInvalidValue},
 		{"bad type in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"story","priority":0,"branch":"main","parent":"","labels":[]}]}`, ErrInvalidValue},
+		{"empty promote from", `{"v":1,"lamport":1,"ops":[{"kind":"promote","from":"","to":"main"}]}`, ErrInvalidValue},
+		{"empty promote to", `{"v":1,"lamport":1,"ops":[{"kind":"promote","from":"main","to":""}]}`, ErrInvalidValue},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

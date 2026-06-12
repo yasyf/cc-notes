@@ -1,5 +1,7 @@
 package model
 
+import "fmt"
+
 // Op is a single immutable operation in an entity's history. Each op
 // serializes as a JSON object whose first field is the "kind" discriminator;
 // the set of kinds is closed and enforced by the pack codec.
@@ -226,3 +228,10 @@ type Promote struct {
 
 // OpKind returns "promote".
 func (Promote) OpKind() string { return "promote" }
+
+func (o Promote) validate() error {
+	if o.From == "" || o.To == "" {
+		return fmt.Errorf("%w: promote from %q to %q", ErrInvalidValue, o.From, o.To)
+	}
+	return nil
+}

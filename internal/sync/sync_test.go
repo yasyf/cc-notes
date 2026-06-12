@@ -468,6 +468,23 @@ func TestPromoteStaleClone(t *testing.T) {
 	}
 }
 
+func TestPromoteFromDeadRef(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	task := createTask(t, a, "moved on", "alpha")
+	if err := ccsync.Promote(t.Context(), a, "alpha", "bravo", []model.EntityID{task.ID}); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+
+	err := ccsync.Promote(t.Context(), a, "alpha", "charlie", []model.EntityID{task.ID})
+	if !errors.Is(err, ccsync.ErrNotLive) {
+		t.Fatalf("re-promote from dead ref: got %v, want ErrNotLive", err)
+	}
+	if got := loadTask(t, a, refs.Task("alpha", task.ID)).Branch; got != "bravo" {
+		t.Errorf("dead chain folds to %q after rejected promote, want %q untouched", got, "bravo")
+	}
+}
+
 // syncUntilQuiescent alternates syncs across the clones until every clone
 // reports a clean pass — nothing created, fast-forwarded, merged, or pushed —
 // failing the test when they never settle. The terminating pass doubles as
