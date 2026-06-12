@@ -8,9 +8,17 @@ Git-native notes and tasks layer for agents, written in Go (module `github.com/y
 cc-notes/
 ├── cmd/cc-notes/     # Binary entrypoint — signal-aware main, exit-code mapping
 ├── internal/         # Go core (not importable outside the module)
+│   ├── model/        #   entity ids, Note/Task snapshots, kind-tagged ops, pack codec
+│   ├── refs/         #   pure ref-name build/parse (notes global, tasks per-branch)
+│   ├── fold/         #   pure CRDT core — linearize + deterministic fold, LWW, claim rule
+│   ├── gitobj/       #   go-git object/ref layer, CheckAndSetReference CAS appends
+│   ├── gitcmd/       #   exec git — fetch/push with user credentials, config, update-ref
+│   ├── store/        #   entity store: create, append (CAS), load, list, resolve
+│   ├── sync/         #   refspec install, sync loop, union merge, promote consolidation
 │   ├── cli/          #   cobra command tree: note/task noun groups, init, sync, mount
+│   ├── fusefs/       #   FUSE mount (build tag fuse) — render/parse/diff + cgofuse ops
 │   └── version/      #   ldflags-injected build metadata
-├── scripts/          # install.sh and release helpers
+├── scripts/          # install.sh — curl-able release-binary installer
 ├── .github/          # GitHub Actions workflows (CI, tag-driven releases)
 ├── AGENTS.md         # This file — shared conventions
 └── README.md         # Project overview
@@ -129,4 +137,4 @@ Target Go 1.26+. Full rules live in STYLEGUIDE.md; the build/test loop:
 
 **Git.** Commits should be atomic and scoped. One logical change per commit.
 
-**Releases.** Tagging `v*` triggers the release workflow, which cross-compiles platform binaries and uploads them as GitHub Release assets. The version comes from the tag, injected via `-ldflags` into `internal/version`. Tag merged commits on `main` (e.g. `git tag vX.Y.Z origin/main`), not a feature branch.
+**Releases.** Tagging `v*` triggers the release workflow, which cross-compiles the platform binaries (`cc-notes_<os>_<arch>`, plus `_fuse` variants built with cgo and `-tags fuse`), generates `SHA256SUMS`, and uploads everything as GitHub Release assets; `scripts/install.sh` resolves the right asset per platform, preferring the `_fuse` variant. The version comes from the tag, injected via `-ldflags` into `internal/version`. Tag merged commits on `main` (e.g. `git tag vX.Y.Z origin/main`), not a feature branch.
