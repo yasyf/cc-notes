@@ -114,15 +114,19 @@ func newFS(ctx context.Context, s *store.Store) *FS {
 
 // errno maps an error onto the mount's errno contract: parse failures are
 // EINVAL, immutable-field edits EPERM, unresolved paths ENOENT, and
-// everything else EIO, logged to stderr — the mount is a foreground
-// daemon, so stderr is the operator channel.
+// everything else EIO. Rejected saves and store failures log to stderr —
+// the mount is a foreground daemon, so stderr is the operator channel, and
+// FUSE-T's NFS transport swallows commit errnos on their way to the editor
+// (live-smoke finding), making the log line the one reliable signal.
 func errno(err error) int {
 	switch {
 	case err == nil:
 		return 0
 	case errors.Is(err, ErrParse):
+		log.Printf("cc-notes mount: rejected save: %v", err)
 		return -fuse.EINVAL
 	case errors.Is(err, ErrImmutableField):
+		log.Printf("cc-notes mount: rejected save: %v", err)
 		return -fuse.EPERM
 	case errors.Is(err, ErrPath), errors.Is(err, gitobj.ErrRefNotFound):
 		return -fuse.ENOENT
@@ -138,7 +142,7 @@ func (f *FS) Getattr(p string, stat *fuse.Stat_t, fh uint64) int {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if h := f.handleFor(p, fh); h != nil {
+	if h := f.handleFor(p, fh, true); h != nil {
 		f.fillStat(stat, fuse.S_IFREG|0o644, h.ino, int64(len(h.buf)), h.mtime, h.birth)
 		return 0
 	}
@@ -188,7 +192,7 @@ func (f *FS) Read(p string, buff []byte, ofst int64, fh uint64) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var data []byte
-	if h := f.handleFor(p, fh); h != nil {
+	if h := f.handleFor(p, fh, true); h != nil {
 		data = h.buf
 	} else if sc, ok := f.scratch[p]; ok {
 		data = sc.data
@@ -208,7 +212,7 @@ func (f *FS) Read(p string, buff []byte, ofst int64, fh uint64) int {
 func (f *FS) Write(p string, buff []byte, ofst int64, fh uint64) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	h := f.handleFor(p, fh)
+	h := f.handleFor(p, fh, true)
 	if h == nil {
 		return -fuse.EBADF
 	}
@@ -228,7 +232,7 @@ func (f *FS) Truncate(p string, size int64, fh uint64) int {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if h := f.handleFor(p, fh); h != nil {
+	if h := f.handleFor(p, fh, false); h != nil {
 		if int64(len(h.buf)) != size {
 			h.buf = resize(h.buf, size)
 			h.dirty = true
@@ -278,7 +282,19 @@ func (f *FS) Release(p string, fh uint64) int {
 	return 0
 }
 
-func (f *FS) Fsync(p string, datasync bool, fh uint64) int { return 0 }
+// Fsync commits like Flush: FUSE-T's NFS client issues a COMMIT (fsync)
+// before the flush at close(2) and reports ITS failure to the writer,
+// while flush errors are swallowed — committing here is what makes a bad
+// save fail loudly at close (and at an editor's explicit fsync).
+func (f *FS) Fsync(p string, datasync bool, fh uint64) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	h := f.handles[fh]
+	if h == nil {
+		return 0
+	}
+	return f.commitHandle(h)
+}
 
 func (f *FS) Rename(oldpath string, newpath string) int {
 	if JunkName(path.Base(oldpath)) {
@@ -400,18 +416,22 @@ func (f *FS) newHandle(h *handle) uint64 {
 	return f.nextFh
 }
 
-// handleFor finds the handle for fh, falling back to the newest dirty
-// handle open at p: FUSE-T's NFS layer stats by path mid-write, and
+// handleFor finds the handle for fh, falling back to the newest handle
+// open at p: FUSE-T's NFS layer stats and truncates by path mid-write, and
 // serving the stale rendered size there truncates the write in flight
-// (cc-pool's getattrSnapshot lesson).
-func (f *FS) handleFor(p string, fh uint64) *handle {
+// (cc-pool's getattrSnapshot lesson). mustDirty restricts the fallback to
+// dirty handles — Getattr and Read keep external CLI edits visible through
+// clean paths — while Truncate must hit the just-opened clean handle that
+// a stripped O_TRUNC targets (FUSE-T drops the flag from open and issues a
+// path-based SETATTR size=0 instead).
+func (f *FS) handleFor(p string, fh uint64, mustDirty bool) *handle {
 	if h, ok := f.handles[fh]; ok {
 		return h
 	}
 	var newest *handle
 	var newestFh uint64
 	for id, h := range f.handles {
-		if h.path == p && h.dirty && id >= newestFh {
+		if h.path == p && (h.dirty || !mustDirty) && id >= newestFh {
 			newest, newestFh = h, id
 		}
 	}
@@ -432,7 +452,18 @@ func (f *FS) commitHandle(h *handle) int {
 		f.mu.Unlock()
 		snap, errc := f.appendDiff(ref, base, data)
 		f.mu.Lock()
-		if errc != 0 {
+		switch {
+		case errc == -fuse.EIO:
+			// Transient store failure: keep the buffer dirty so the
+			// Release backstop retries the commit.
+			return errc
+		case errc != 0:
+			// Deterministic content failure (parse error, immutable
+			// edit): revert to the last good render so the broken bytes
+			// don't shadow the entity for path-based readers — the editor
+			// holds its own copy of the rejected buffer.
+			h.buf = renderDocument(base)
+			h.dirty = false
 			return errc
 		}
 		if snap != nil {
@@ -447,6 +478,13 @@ func (f *FS) commitHandle(h *handle) int {
 	if _, _, ok := entityTarget(h.path); ok {
 		ref, snap, errc := f.commitDocument(h.path, data)
 		if errc != 0 {
+			// Preserve the draft: the scratch entry is the only copy of a
+			// pending document, so a failed create must not drop it. The
+			// next write re-dirties the handle and retries the create.
+			if sc := f.scratch[h.path]; sc != nil {
+				sc.data, sc.mtime = data, time.Now()
+			}
+			h.dirty = false
 			return errc
 		}
 		delete(f.scratch, h.path)

@@ -267,11 +267,81 @@ func TestParseErrorEINVAL(t *testing.T) {
 	if errc := f.Flush(p, fh); errc != -fuse.EINVAL {
 		t.Errorf("Flush = %d, want -EINVAL", errc)
 	}
+
+	// The rejected buffer reverts to the last good render so it cannot
+	// shadow the entity for path-based readers.
+	var st fuse.Stat_t
+	if errc := f.Getattr(p, &st, invalidFh); errc != 0 || st.Size != int64(len(RenderNote(note))) {
+		t.Errorf("Getattr after failed flush = %d size %d, want render size %d", errc, st.Size, len(RenderNote(note)))
+	}
 	f.Release(p, fh)
 
 	if after := mustTip(t, s, ref); after != before {
 		t.Errorf("failed parse advanced the tip")
 	}
+}
+
+// TestStrippedOTruncRewrite pins the FUSE-T NFS save sequence observed
+// live: open WITHOUT O_TRUNC, a path-based Truncate(0) with an invalid fh,
+// writes, then an fsync (COMMIT) that carries the errno — close-time flush
+// errors are swallowed by the NFS client.
+func TestStrippedOTruncRewrite(t *testing.T) {
+	f, s := newTestFS(t)
+	note := createNote(t, s, "Rewritten", "old body\n")
+	ref := refs.Note(note.ID)
+	p := "/notes/" + NoteFilename(note)
+
+	errc, fh := f.Open(p, fuse.O_RDWR)
+	if errc != 0 {
+		t.Fatalf("Open = %d", errc)
+	}
+	if errc := f.Truncate(p, 0, invalidFh); errc != 0 {
+		t.Fatalf("path-based Truncate = %d", errc)
+	}
+	edited := note
+	edited.Body = "new body\n"
+	doc := RenderNote(edited)
+	if n := f.Write(p, doc, 0, fh); n != len(doc) {
+		t.Fatalf("Write = %d", n)
+	}
+	if errc := f.Fsync(p, false, fh); errc != 0 {
+		t.Fatalf("Fsync = %d", errc)
+	}
+	if errc := f.Flush(p, fh); errc != 0 {
+		t.Fatalf("Flush = %d", errc)
+	}
+	f.Release(p, fh)
+
+	folded, err := s.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := folded.(model.Note).Body; got != "new body\n" {
+		t.Errorf("body = %q, want full replace (no splice over the old render)", got)
+	}
+}
+
+// TestFsyncSurfacesParseError pins that a bad document fails at fsync —
+// the only error channel FUSE-T's NFS client reliably reports.
+func TestFsyncSurfacesParseError(t *testing.T) {
+	f, s := newTestFS(t)
+	note := createNote(t, s, "Guarded", "body\n")
+	p := "/notes/" + NoteFilename(note)
+
+	errc, fh := f.Open(p, fuse.O_RDWR)
+	if errc != 0 {
+		t.Fatalf("Open = %d", errc)
+	}
+	if errc := f.Truncate(p, 0, invalidFh); errc != 0 {
+		t.Fatalf("Truncate = %d", errc)
+	}
+	if n := f.Write(p, []byte("garbage: [\n"), 0, fh); n != 11 {
+		t.Fatalf("Write = %d", n)
+	}
+	if errc := f.Fsync(p, false, fh); errc != -fuse.EINVAL {
+		t.Errorf("Fsync = %d, want -EINVAL", errc)
+	}
+	f.Release(p, fh)
 }
 
 func TestImmutableEditEPERM(t *testing.T) {
