@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -459,6 +460,38 @@ func TestOpenLinkedWorktree(t *testing.T) {
 	if got, err := open(t, sub).Tip(t.Context(), ref); err != nil || got != sha {
 		t.Errorf("Tip from worktree subdirectory = %s, %v; want %s, nil", got, err, sha)
 	}
+}
+
+// TestConcurrentAccess pins Repo's synchronization story: go-git's
+// filesystem storage caches are not thread-safe, so concurrent writes and
+// reads through one Repo must serialize internally (fails under -race
+// without the Repo mutex).
+func TestConcurrentAccess(t *testing.T) {
+	repo := open(t, initRepo(t))
+	root := write(t, repo, nil, t0, createPack)
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pack := model.Pack{Lamport: 2, Ops: []model.Op{model.AddTag{Tag: fmt.Sprintf("t%d", i)}}}
+			sha, err := repo.WriteOpsCommit(t.Context(), []model.SHA{root}, sigAt(t1), "m", pack)
+			if err != nil {
+				t.Errorf("WriteOpsCommit %d: %v", i, err)
+				return
+			}
+			chain, err := repo.ReadChain(t.Context(), sha)
+			if err != nil {
+				t.Errorf("ReadChain %d: %v", i, err)
+				return
+			}
+			if len(chain) != 2 || chain[0].SHA != sha || chain[1].SHA != root {
+				t.Errorf("chain %d = %+v, want [%s %s]", i, chain, sha, root)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func TestContextCancelled(t *testing.T) {

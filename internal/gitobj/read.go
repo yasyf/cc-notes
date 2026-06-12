@@ -23,6 +23,8 @@ func (r *Repo) ReadChain(ctx context.Context, tip model.SHA) ([]model.PackCommit
 	if !plumbing.IsHash(string(tip)) {
 		return nil, fmt.Errorf("invalid tip sha %q", tip)
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	start := plumbing.NewHash(string(tip))
 	queue := []plumbing.Hash{start}
 	seen := map[plumbing.Hash]bool{start: true}
@@ -61,6 +63,8 @@ func (r *Repo) Tip(ctx context.Context, ref string) (model.SHA, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	resolved, err := r.repo.Reference(plumbing.ReferenceName(ref), true)
 	if errors.Is(err, plumbing.ErrReferenceNotFound) {
 		return "", fmt.Errorf("%w: %s", ErrRefNotFound, ref)
@@ -77,6 +81,8 @@ func (r *Repo) ListPrefix(ctx context.Context, prefix string) (map[string]model.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	iter, err := r.repo.References()
 	if err != nil {
 		return nil, fmt.Errorf("list refs: %w", err)
@@ -105,6 +111,8 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b model.SHA) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	ancestor, err := r.commit(a)
 	if err != nil {
 		return false, err

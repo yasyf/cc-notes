@@ -9,6 +9,7 @@ package gitobj
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -39,7 +40,11 @@ type Signature struct {
 }
 
 // Repo is a read/object-write handle on a git repository, backed by go-git.
+// It is safe for concurrent use: go-git's filesystem storage builds lazy
+// caches (DotGit object/pack lists, ObjectStorage pack indexes) with no
+// locking of its own, so every method serializes on mu.
 type Repo struct {
+	mu   sync.Mutex
 	repo *gogit.Repository
 }
 

@@ -26,6 +26,8 @@ func (r *Repo) WriteOpsCommit(ctx context.Context, parents []model.SHA, sig Sign
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	parentHashes := make([]plumbing.Hash, len(parents))
 	for i, parent := range parents {
 		if !plumbing.IsHash(string(parent)) {
