@@ -55,6 +55,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install fuse-t (build-time headers only)
+        # cgofuse compiles against fuse.h; fuse-t ships the headers. The
+        # library itself is dlopened lazily at runtime, so it is uninstalled
+        # again before the smoke step below.
+        run: brew install macos-fuse-t/cask/fuse-t
       - name: Build darwin fuse variants
         run: |
           COMMIT="$(git rev-parse --short HEAD)"
@@ -75,6 +80,7 @@ jobs:
         # native slice reports its version and that `mount` fails gracefully
         # with the install hint (exit 1, not a crash signal) rather than serving.
         run: |
+          brew uninstall fuse-t
           test ! -e /usr/local/lib/libfuse-t.dylib
           BIN=dist/cc-notes_darwin_arm64_fuse
           "$BIN" version | grep -q "${GITHUB_REF_NAME}"
