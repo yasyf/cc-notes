@@ -15,31 +15,7 @@
 __pycache__/
 *.py[cod]
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-build/
+# Go build output
+bin/
 dist/
-*.egg-info/
-.eggs/
-
-# Virtualenv / uv
-.venv/
-venv/
-
-# Tooling caches
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
-
-# CI wheel smoke test
-.wheel-smoke/
-
-# Great Docs build output
-great-docs/
+/cc-notes
