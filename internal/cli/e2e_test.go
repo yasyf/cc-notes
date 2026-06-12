@@ -277,6 +277,14 @@ func TestExitCodeMatrix(t *testing.T) {
 			wantCode: 2,
 		},
 		{
+			name: "invalid --branch exits 2",
+			setup: func(_ *testing.T, _ string) ([]string, string) {
+				return []string{"task", "list", "--branch", "../evil"}, ""
+			},
+			wantCode:   2,
+			wantPrefix: "usage: invalid branch \"../evil\": ",
+		},
+		{
 			name:   "outside a git repository exits 1",
 			noRepo: true,
 			setup: func(_ *testing.T, _ string) ([]string, string) {
@@ -425,6 +433,39 @@ func TestBranchScopingAndPromote(t *testing.T) {
 	}
 	if out := mustBin(t, dir, actorA, "task", "list", "--branch", "feature/login/x"); out != "" {
 		t.Fatalf("feature/login/x list after promote = %q, want empty", out)
+	}
+}
+
+// TestPromoteInvalidDestUsage pins the CLI boundary for promote: an invalid
+// --to is a usage error (exit 2) raised before any write, so the task stays
+// listed on its branch and sync still converges.
+func TestPromoteInvalidDestUsage(t *testing.T) {
+	scrubGitEnv(t)
+	root := t.TempDir()
+	bare := filepath.Join(root, "remote.git")
+	mustGit(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
+	dir := filepath.Join(root, "work")
+	mustGit(t, root, "clone", "-q", bare, "work")
+	mustGit(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
+	mustBin(t, dir, actorA, "init")
+	task := addTaskBin(t, dir, "Survivor")
+	line := task.ID[:7] + "\topen\tP2\t-\tSurvivor\n"
+
+	res, err := execBin(dir, actorA, "task", "promote", "--to", "../evil", task.ID)
+	if err != nil {
+		t.Fatalf("cc-notes task promote: %v", err)
+	}
+	if res.Code != 2 || res.Stdout != "" {
+		t.Fatalf("promote --to ../evil: exit %d stdout %q, want exit 2 with empty stdout (stderr %q)", res.Code, res.Stdout, res.Stderr)
+	}
+	if want := "usage: invalid branch \"../evil\": "; !strings.HasPrefix(res.Stderr, want) {
+		t.Errorf("stderr = %q, want prefix %q", res.Stderr, want)
+	}
+	if out := mustBin(t, dir, actorA, "task", "list"); out != line {
+		t.Errorf("task list after failed promote = %q, want %q", out, line)
+	}
+	if out := mustBin(t, dir, actorA, "sync"); out != "pushed: 1\nrounds: 1\n" {
+		t.Errorf("sync after failed promote = %q, want pushed: 1 / rounds: 1", out)
 	}
 }
 

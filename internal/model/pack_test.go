@@ -193,6 +193,12 @@ func TestDecodePackFailures(t *testing.T) {
 		{"bad type in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"story","priority":0,"branch":"main","parent":"","labels":[]}]}`, ErrInvalidValue},
 		{"empty promote from", `{"v":1,"lamport":1,"ops":[{"kind":"promote","from":"","to":"main"}]}`, ErrInvalidValue},
 		{"empty promote to", `{"v":1,"lamport":1,"ops":[{"kind":"promote","from":"main","to":""}]}`, ErrInvalidValue},
+		{"traversal branch in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":"../evil","parent":"","labels":[]}]}`, ErrInvalidValue},
+		{"space in create_task branch", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":"feat ure","parent":"","labels":[]}]}`, ErrInvalidValue},
+		{"dot-leading create_task branch", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":".hidden","parent":"","labels":[]}]}`, ErrInvalidValue},
+		{"empty component in create_task branch", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":"a//b","parent":"","labels":[]}]}`, ErrInvalidValue},
+		{"trailing slash in promote from", `{"v":1,"lamport":1,"ops":[{"kind":"promote","from":"feature/","to":"main"}]}`, ErrInvalidValue},
+		{"trailing slash in promote to", `{"v":1,"lamport":1,"ops":[{"kind":"promote","from":"main","to":"feature/"}]}`, ErrInvalidValue},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

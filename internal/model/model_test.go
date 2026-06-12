@@ -24,3 +24,23 @@ func TestEntityIDShort(t *testing.T) {
 		t.Fatalf("Short() = %q, want %q", got, want)
 	}
 }
+
+func TestRefNameValid(t *testing.T) {
+	valid := []string{"main", "feature/x", "feature/sub/x", "feat{x}/y", "v1.0.0", "a.b/c.d"}
+	for _, name := range valid {
+		if !refNameValid(name) {
+			t.Errorf("refNameValid(%q) = false, want true", name)
+		}
+	}
+	invalid := []string{
+		"", "@", "a@{b", "a..b", "../evil", ".hidden", "a/.hidden",
+		"feat ure", "a~b", "a^b", "a:b", "a?b", "a*b", "a[b", `a\b`,
+		"a\x01b", "a\x7fb", "/a", "a/", "a//b", "a.", "a/b.",
+		"x.lock", "x.lock/y",
+	}
+	for _, name := range invalid {
+		if refNameValid(name) {
+			t.Errorf("refNameValid(%q) = true, want false", name)
+		}
+	}
+}

@@ -152,6 +152,23 @@ func TestUpdateRefEmptyNew(t *testing.T) {
 	}
 }
 
+func TestCheckRefFormat(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	for _, branch := range []string{"main", "feature/sub/x", "feat{x}/y", "v1.0.0"} {
+		if err := g.CheckRefFormat(ctx, branch); err != nil {
+			t.Errorf("CheckRefFormat(%q) = %v, want nil", branch, err)
+		}
+	}
+	// "@" is absent: check-ref-format --branch reads it as the HEAD
+	// shorthand and accepts it; the model's refNameValid still rejects it.
+	for _, branch := range []string{"../evil", "feat ure", ".hidden", "a//b", "feature/", "x.lock", "a..b", "ref~1", "HEAD^"} {
+		if err := g.CheckRefFormat(ctx, branch); err == nil {
+			t.Errorf("CheckRefFormat(%q) = nil, want error", branch)
+		}
+	}
+}
+
 func TestDeleteRef(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()

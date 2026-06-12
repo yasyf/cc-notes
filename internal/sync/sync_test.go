@@ -15,7 +15,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
@@ -465,6 +467,95 @@ func TestPromoteStaleClone(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir)) {
 		t.Errorf("clones diverge after settle: A = %v, B = %v", ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir))
+	}
+}
+
+// TestPromoteInvalidDestLeavesTaskUntouched pins the heal-safe ordering: a
+// destination git refuses fails on the destination ref create, before any
+// chain mutation, so the task stays live on its branch.
+func TestPromoteInvalidDestLeavesTaskUntouched(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	task := createTask(t, a, "kept", "main")
+	ref := refs.Task("main", task.ID)
+
+	if err := ccsync.Promote(t.Context(), a, "main", "../evil", []model.EntityID{task.ID}); err == nil {
+		t.Fatal("Promote to invalid branch: want error")
+	}
+	if got := mustGit(t, a.Git.Dir, "rev-parse", ref); got != string(task.Head) {
+		t.Errorf("old ref at %s, want untouched tip %s", got, task.Head)
+	}
+	if got := loadTask(t, a, ref).Branch; got != "main" {
+		t.Errorf("task folds to %q after failed promote, want main", got)
+	}
+	if got := ccRefs(t, a.Git.Dir); len(got) != 1 {
+		t.Errorf("refs after failed promote = %v, want only %s", got, ref)
+	}
+	if got := listTasks(t, a, "main"); len(got) != 1 || got[0].ID != task.ID {
+		t.Errorf("ListTasks(main) = %+v, want the untouched task", got)
+	}
+	sync(t, a)
+}
+
+// poisonChain appends a commit whose promote op would fail decode-side
+// validation — the marshal side never validates, so the write goes through —
+// leaving a chain every later read refuses.
+func poisonChain(t *testing.T, s *store.Store, ref string) {
+	t.Helper()
+	ctx := t.Context()
+	tip, err := s.Repo.Tip(ctx, ref)
+	if err != nil {
+		t.Fatalf("Tip(%s): %v", ref, err)
+	}
+	sig := gitobj.Signature{Name: "Mallory", Email: "mallory@example.com", When: time.Now()}
+	pack := model.Pack{Lamport: 2, Ops: []model.Op{model.Promote{From: "main", To: "../evil"}}}
+	sha, err := s.Repo.WriteOpsCommit(ctx, []model.SHA{tip}, sig, "cc-notes: promote", pack)
+	if err != nil {
+		t.Fatalf("WriteOpsCommit: %v", err)
+	}
+	if err := s.Git.UpdateRef(ctx, ref, sha, tip); err != nil {
+		t.Fatalf("UpdateRef(%s): %v", ref, err)
+	}
+}
+
+// TestConsolidatePoisonedEntityDoesNotAbortOthers pins consolidation
+// resilience: entities whose chains no longer decode must not stop the
+// others from consolidating, and every poisoned entity surfaces in the
+// joined error.
+func TestConsolidatePoisonedEntityDoesNotAbortOthers(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	ctx := t.Context()
+
+	// A task stranded mid-promote — the destination ref parked at the
+	// pre-promote tip, the promote op on the old chain — is exactly the
+	// state consolidate must repair.
+	healthy := createTask(t, a, "healthy", "alpha")
+	oldRef, destRef := refs.Task("alpha", healthy.ID), refs.Task("bravo", healthy.ID)
+	if err := a.Git.UpdateRef(ctx, destRef, healthy.Head, ""); err != nil {
+		t.Fatalf("UpdateRef(%s): %v", destRef, err)
+	}
+	promoted := appendOps(t, a, oldRef, model.Promote{From: "alpha", To: "bravo"}).(model.Task)
+
+	poisonedOne := createTask(t, a, "poisoned one", "main")
+	poisonedTwo := createTask(t, a, "poisoned two", "main")
+	poisonChain(t, a, refs.Task("main", poisonedOne.ID))
+	poisonChain(t, a, refs.Task("main", poisonedTwo.ID))
+
+	_, err := ccsync.Sync(ctx, a.Git.Dir, "origin")
+	if err == nil {
+		t.Fatal("Sync with poisoned entities: want error")
+	}
+	for _, id := range []model.EntityID{poisonedOne.ID, poisonedTwo.ID} {
+		if !strings.Contains(err.Error(), id.Short()) {
+			t.Errorf("error %q does not name poisoned task %s", err, id.Short())
+		}
+	}
+	if strings.Contains(err.Error(), healthy.ID.Short()) {
+		t.Errorf("error %q names the healthy task %s", err, healthy.ID.Short())
+	}
+	if got := mustGit(t, a.Git.Dir, "rev-parse", destRef); got != string(promoted.Head) {
+		t.Errorf("dest ref at %s, want consolidated to %s despite poisoned siblings", got, promoted.Head)
 	}
 }
 

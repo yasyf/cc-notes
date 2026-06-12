@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 )
 
 // SHA is the full hex object id of a git commit.
@@ -22,6 +23,37 @@ func (id EntityID) Short() string { return string(id)[:7] }
 
 // Branch names a git branch: the part after refs/heads/.
 type Branch string
+
+func (b Branch) validate() error {
+	if !refNameValid(string(b)) {
+		return fmt.Errorf("%w: branch %q", ErrInvalidValue, b)
+	}
+	return nil
+}
+
+// refNameValid reports whether name passes git's check-ref-format rules for
+// a branch name: non-empty components, no component starting with '.' or
+// ending in '.lock', no '..', no ASCII control characters, space, or any of
+// ~^:?*[\, no trailing '.', no '@{', and not the single character '@'.
+func refNameValid(name string) bool {
+	if name == "" || name == "@" || strings.HasSuffix(name, ".") {
+		return false
+	}
+	if strings.Contains(name, "..") || strings.Contains(name, "@{") || strings.ContainsAny(name, " ~^:?*[\\\x7f") {
+		return false
+	}
+	for i := range len(name) {
+		if name[i] < 0x20 {
+			return false
+		}
+	}
+	for component := range strings.SplitSeq(name, "/") {
+		if component == "" || strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".lock") {
+			return false
+		}
+	}
+	return true
+}
 
 // Actor identifies the author of an operation, taken from the git identity.
 type Actor string

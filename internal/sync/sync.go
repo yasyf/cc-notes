@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync/atomic"
 
@@ -210,12 +211,20 @@ func (e *engine) consolidate(ctx context.Context) error {
 			groups[parsed.ID] = append(groups[parsed.ID], name)
 		}
 	}
-	g, gctx := errgroup.WithContext(ctx)
+	// One poisoned entity must not stop the others from consolidating:
+	// every entity is attempted, and the failures come back joined.
+	ids := slices.Sorted(maps.Keys(groups))
+	errs := make([]error, len(ids))
+	var g errgroup.Group
 	g.SetLimit(refConcurrency)
-	for id, group := range groups {
-		g.Go(func() error { return e.consolidateEntity(gctx, id, group) })
+	for i, id := range ids {
+		g.Go(func() error {
+			errs[i] = e.consolidateEntity(ctx, id, groups[id])
+			return nil
+		})
 	}
-	return g.Wait()
+	_ = g.Wait() // always nil: the goroutines record into errs instead
+	return errors.Join(errs...)
 }
 
 func (e *engine) consolidateEntity(ctx context.Context, id model.EntityID, group []string) error {

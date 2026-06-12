@@ -1,7 +1,5 @@
 package model
 
-import "fmt"
-
 // Op is a single immutable operation in an entity's history. Each op
 // serializes as a JSON object whose first field is the "kind" discriminator;
 // the set of kinds is closed and enforced by the pack codec.
@@ -112,7 +110,10 @@ func (o CreateTask) validate() error {
 	if err := o.Type.validate(); err != nil {
 		return err
 	}
-	return o.Priority.validate()
+	if err := o.Priority.validate(); err != nil {
+		return err
+	}
+	return o.Branch.validate()
 }
 
 // SetDescription replaces the description of a task.
@@ -230,8 +231,8 @@ type Promote struct {
 func (Promote) OpKind() string { return "promote" }
 
 func (o Promote) validate() error {
-	if o.From == "" || o.To == "" {
-		return fmt.Errorf("%w: promote from %q to %q", ErrInvalidValue, o.From, o.To)
+	if err := o.From.validate(); err != nil {
+		return err
 	}
-	return nil
+	return o.To.validate()
 }

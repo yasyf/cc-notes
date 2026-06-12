@@ -587,6 +587,9 @@ func newTaskPromoteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := s.Git.CheckRefFormat(ctx, to); err != nil {
+				return &UsageError{Err: err}
+			}
 			fromBranch, err := resolveBranch(ctx, s, from)
 			if err != nil {
 				return err

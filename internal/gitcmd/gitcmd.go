@@ -143,6 +143,15 @@ func (g Git) DeleteRef(ctx context.Context, ref string, old model.SHA) error {
 	return nil
 }
 
+// CheckRefFormat validates branch as a branch name via
+// `git check-ref-format --branch`, surfacing git's own message on failure.
+func (g Git) CheckRefFormat(ctx context.Context, branch string) error {
+	if _, err := g.run(ctx, "", "check-ref-format", "--branch", branch); err != nil {
+		return fmt.Errorf("invalid branch %q: %w", branch, err)
+	}
+	return nil
+}
+
 // Fetch downloads from remote using exactly the given refspecs, with the
 // user's credential and SSH configuration. --refmap= keeps git from also
 // mapping the fetched refs through the configured remote.<r>.fetch refspecs:

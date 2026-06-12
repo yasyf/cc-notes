@@ -491,6 +491,8 @@ func TestUsageErrors(t *testing.T) {
 		{"note", "list", "--bogus"},
 		{"note", "show"},
 		{"task", "comment", "abc"},
+		{"task", "list", "--branch", "feat ure"},
+		{"task", "add", "T", "--branch", "../evil"},
 	} {
 		_, _, err := runCLI(t, dir, args...)
 		var usage *cli.UsageError
