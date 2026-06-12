@@ -229,12 +229,7 @@ func newNoteRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			note := snapshot.(model.Note)
-			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), newNoteDTO(note))
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "removed: %s\n", note.ID.Short())
-			return err
+			return printNote(cmd, snapshot.(model.Note), jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")

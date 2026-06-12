@@ -243,8 +243,12 @@ func TestNoteRmAndSearch(t *testing.T) {
 		}
 	}
 	rm := mustRun(t, dir, "note", "rm", parser.ID)
-	if want := "removed: " + parser.ID[:7] + "\n"; rm != want {
-		t.Fatalf("rm output = %q, want %q", rm, want)
+	tombstoned := mustJSON[noteJSON](t, mustRun(t, dir, "note", "show", parser.ID, "--json"))
+	if !tombstoned.Deleted {
+		t.Fatalf("note after rm = %+v, want deleted", tombstoned)
+	}
+	if want := fmt.Sprintf("%s\t%s\tbug\tParser bug\n", parser.ID[:7], dateOf(t, tombstoned.UpdatedAt)); rm != want {
+		t.Fatalf("rm output = %q, want the post-append lean line %q", rm, want)
 	}
 	if out := mustRun(t, dir, "note", "search", "parser"); out != "" {
 		t.Fatalf("search after rm = %q, want empty", out)
@@ -267,8 +271,8 @@ func TestTaskJSONRoundTrip(t *testing.T) {
 		t.Fatalf("task JSON field order broken: %q", out)
 	}
 	added := mustJSON[taskJSON](t, out)
-	if c := mustRun(t, dir, "task", "comment", added.ID, "hello"); c != "commented: "+added.ID[:7]+"\n" {
-		t.Fatalf("comment output = %q", c)
+	if c := mustRun(t, dir, "task", "comment", added.ID, "hello"); c != added.ID[:7]+"\topen\tP1\t-\tMain\n" {
+		t.Fatalf("comment output = %q, want the post-append lean line", c)
 	}
 	shown := mustJSON[taskJSON](t, mustRun(t, dir, "task", "show", added.ID, "--json"))
 	if shown.ID != added.ID || len(shown.ID) != 40 {

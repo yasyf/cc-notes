@@ -80,8 +80,8 @@ func TestTaskPromote(t *testing.T) {
 	mustRun(t, dir, "task", "done", closed.ID)
 
 	out := mustRun(t, dir, "task", "promote", "--to", "release/1.0")
-	if want := "promoted: " + task.ID[:7] + " release/1.0\n"; out != want {
-		t.Fatalf("promote output = %q, want %q (closed tasks stay)", out, want)
+	if want := task.ID[:7] + "\topen\tP2\t-\tShip it\n"; out != want {
+		t.Fatalf("promote output = %q, want the promoted lean line %q (closed tasks stay)", out, want)
 	}
 	if out := mustRun(t, dir, "task", "list", "--branch", "release/1.0"); !strings.HasPrefix(out, task.ID[:7]+"\t") {
 		t.Fatalf("destination list = %q, want %s", out, task.ID[:7])
@@ -114,9 +114,9 @@ func TestTaskPromoteExplicitIDsAndFrom(t *testing.T) {
 	two := addTask(t, dir, "Two", "--branch", "feature")
 	out := mustRun(t, dir, "task", "promote", "--from", "feature", "--to", "main", one.ID, two.ID)
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	want := []string{"promoted: " + one.ID[:7] + " main", "promoted: " + two.ID[:7] + " main"}
+	want := []string{one.ID[:7] + "\topen\tP2\t-\tOne", two.ID[:7] + "\topen\tP2\t-\tTwo"}
 	if !slices.Equal(lines, want) {
-		t.Fatalf("promote output = %v, want %v", lines, want)
+		t.Fatalf("promote output = %v, want lean lines %v", lines, want)
 	}
 	if out := mustRun(t, dir, "task", "list"); strings.Count(out, "\n") != 2 {
 		t.Fatalf("main list = %q, want both tasks", out)

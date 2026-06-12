@@ -485,12 +485,7 @@ func newTaskCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			task := snapshot.(model.Task)
-			if jsonOut {
-				return printTask(cmd, s, task, true)
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "commented: %s\n", task.ID.Short())
-			return err
+			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -639,7 +634,11 @@ func newTaskPromoteCmd() *cobra.Command {
 				return printJSON(out, dtos)
 			}
 			for _, id := range ids {
-				if _, err := fmt.Fprintf(out, "promoted: %s %s\n", id.Short(), to); err != nil {
+				snapshot, err := s.Load(ctx, refs.Task(model.Branch(to), id))
+				if err != nil {
+					return err
+				}
+				if _, err := fmt.Fprintln(out, leanTaskLine(snapshot.(model.Task))); err != nil {
 					return err
 				}
 			}
