@@ -49,7 +49,7 @@ func classify(err error) (int, string) {
 		return 5, "ambiguous"
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, gitobj.ErrRefNotFound):
 		return 3, "not-found"
-	case errors.As(err, &conflict), errors.Is(err, store.ErrContended), errors.Is(err, ccsync.ErrNotLive):
+	case errors.As(err, &conflict), errors.Is(err, store.ErrContended), errors.Is(err, ccsync.ErrNotLive), errors.Is(err, ccsync.ErrSyncContended):
 		return 4, "conflict"
 	default:
 		return 1, "error"

@@ -169,35 +169,6 @@ func TestCheckRefFormat(t *testing.T) {
 	}
 }
 
-func TestDeleteRef(t *testing.T) {
-	g := initRepo(t)
-	ctx := t.Context()
-	c1 := commitEmpty(t, g, "c1")
-	c2 := commitEmpty(t, g, "c2")
-	ref := "refs/cc-notes/notes/" + string(c1)
-	if err := g.UpdateRef(ctx, ref, c1, ""); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	if err := g.DeleteRef(ctx, ref, c2); !errors.Is(err, gitcmd.ErrCASMismatch) {
-		t.Fatalf("delete with wrong old: got %v, want ErrCASMismatch", err)
-	}
-	if got := resolve(t, g.Dir, ref); got != c1 {
-		t.Fatalf("failed delete moved ref to %s, want %s", got, c1)
-	}
-
-	if err := g.DeleteRef(ctx, ref, ""); err == nil || errors.Is(err, gitcmd.ErrCASMismatch) {
-		t.Fatalf("delete without old: got %v, want plain error", err)
-	}
-
-	if err := g.DeleteRef(ctx, ref, c1); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-	if out, err := exec.Command("git", "-C", g.Dir, "rev-parse", "--verify", ref).CombinedOutput(); err == nil {
-		t.Fatalf("ref still resolves after delete: %s", out)
-	}
-}
-
 func TestUpdateRefConcurrentRace(t *testing.T) {
 	g := initRepo(t)
 	mustGit(t, g.Dir, "config", "core.filesRefLockTimeout", "3000")

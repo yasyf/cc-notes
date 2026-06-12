@@ -128,21 +128,6 @@ func (g Git) UpdateRef(ctx context.Context, ref string, new, old model.SHA) erro
 	return nil
 }
 
-// DeleteRef removes ref, succeeding only if it currently equals old. old
-// must be the ref's current value; the unverified delete form is never
-// emitted. A CAS failure wraps ErrCASMismatch.
-func (g Git) DeleteRef(ctx context.Context, ref string, old model.SHA) error {
-	if isZero(old) {
-		return fmt.Errorf("delete ref %s: old sha required for verified delete", ref)
-	}
-	directive := fmt.Sprintf("delete %s\x00%s\x00", ref, old)
-	_, err := g.run(ctx, directive, "update-ref", "--stdin", "-z")
-	if err = classify(err, ErrCASMismatch, casPatterns); err != nil {
-		return fmt.Errorf("delete ref %s: %w", ref, err)
-	}
-	return nil
-}
-
 // CheckRefFormat validates branch as a branch name via
 // `git check-ref-format --branch`, surfacing git's own message on failure.
 func (g Git) CheckRefFormat(ctx context.Context, branch string) error {

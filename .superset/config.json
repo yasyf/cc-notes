@@ -3,7 +3,7 @@
     "cp -R $SUPERSET_ROOT_PATH/.env*",
     "echo 'DEBUG=1' >> .env",
     "direnv allow",
-    "uv sync --extra dev --inexact",
+    "go build ./...",
     "jj git init --git-repo .",
     "jj config set --user user.name \"Yasyf Mohamedali\"",
     "jj config set --user user.email \"yasyfm@gmail.com\""
