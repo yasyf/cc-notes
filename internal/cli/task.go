@@ -55,7 +55,7 @@ func newTaskAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, branch)
+			b, err := resolveBranch(ctx, s, "branch", branch)
 			if err != nil {
 				return err
 			}
@@ -132,7 +132,7 @@ func newTaskListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, branch)
+			b, err := resolveBranch(ctx, s, "branch", branch)
 			if err != nil {
 				return err
 			}
@@ -195,7 +195,7 @@ func newTaskReadyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, branch)
+			b, err := resolveBranch(ctx, s, "branch", branch)
 			if err != nil {
 				return err
 			}
@@ -233,7 +233,7 @@ func newTaskShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, branch)
+			b, err := resolveBranch(ctx, s, "branch", branch)
 			if err != nil {
 				return err
 			}
@@ -272,7 +272,7 @@ func newTaskClaimCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, branch)
+			b, err := resolveBranch(ctx, s, "branch", branch)
 			if err != nil {
 				return err
 			}
@@ -320,7 +320,7 @@ func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, branch)
+			b, err := resolveBranch(ctx, s, "branch", branch)
 			if err != nil {
 				return err
 			}
@@ -372,7 +372,7 @@ func newTaskEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, branch)
+			b, err := resolveBranch(ctx, s, "branch", branch)
 			if err != nil {
 				return err
 			}
@@ -477,7 +477,7 @@ func newTaskCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, branch)
+			b, err := resolveBranch(ctx, s, "branch", branch)
 			if err != nil {
 				return err
 			}
@@ -518,7 +518,7 @@ func newTaskDepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, branch)
+			b, err := resolveBranch(ctx, s, "branch", branch)
 			if err != nil {
 				return err
 			}
@@ -562,7 +562,7 @@ func newTaskUndepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, branch)
+			b, err := resolveBranch(ctx, s, "branch", branch)
 			if err != nil {
 				return err
 			}
@@ -609,7 +609,7 @@ func newTaskPromoteCmd() *cobra.Command {
 			if err := s.Git.CheckRefFormat(ctx, to); err != nil {
 				return &UsageError{Err: err}
 			}
-			fromBranch, err := resolveBranch(ctx, s, from)
+			fromBranch, err := resolveBranch(ctx, s, "from", from)
 			if err != nil {
 				return err
 			}

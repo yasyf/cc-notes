@@ -35,20 +35,20 @@ func openStore() (*store.Store, error) {
 	return store.Open(dir)
 }
 
-// resolveBranch returns flag verbatim when set — a name git's
+// resolveBranch returns value verbatim when set — a name git's
 // check-ref-format refuses is a UsageError before anything is written —
 // otherwise the branch HEAD points at. A detached HEAD is an error telling
-// the caller to pass --branch.
-func resolveBranch(ctx context.Context, s *store.Store, flag string) (model.Branch, error) {
-	if flag != "" {
-		if err := s.Git.CheckRefFormat(ctx, flag); err != nil {
+// the caller to pass the named flag (e.g. "branch" or "into").
+func resolveBranch(ctx context.Context, s *store.Store, flag, value string) (model.Branch, error) {
+	if value != "" {
+		if err := s.Git.CheckRefFormat(ctx, value); err != nil {
 			return "", &UsageError{Err: err}
 		}
-		return model.Branch(flag), nil
+		return model.Branch(value), nil
 	}
 	branch, err := s.Git.HeadBranch(ctx)
 	if errors.Is(err, gitcmd.ErrDetachedHead) {
-		return "", errors.New("detached HEAD; pass --branch")
+		return "", fmt.Errorf("detached HEAD; pass --%s", flag)
 	}
 	return branch, err
 }

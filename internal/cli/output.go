@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/model"
+	ccsync "github.com/yasyf/cc-notes/internal/sync"
 )
 
 // noteDTO fixes the JSON field order and formats for note output: full hex
@@ -61,6 +62,50 @@ type syncDTO struct {
 	Merged        int `json:"merged"`
 	Pushed        int `json:"pushed"`
 	Rounds        int `json:"rounds"`
+}
+
+// reconcileDTO fixes the JSON field order for a reconcile report: the target
+// branch, the scanned/merged/promoted tallies, and one nested entry per
+// scanned source branch.
+type reconcileDTO struct {
+	Into     string               `json:"into"`
+	Scanned  int                  `json:"scanned"`
+	Merged   int                  `json:"merged"`
+	Promoted int                  `json:"promoted"`
+	Branches []reconcileBranchDTO `json:"branches"`
+}
+
+// reconcileBranchDTO is one source branch in a reconcile report: its merged
+// verdict, the skip reason (empty when promoted), and the full-hex ids of the
+// open and in-progress tasks it carried.
+type reconcileBranchDTO struct {
+	Branch string   `json:"branch"`
+	Merged bool     `json:"merged"`
+	Reason string   `json:"reason"`
+	Tasks  []string `json:"tasks"`
+}
+
+func newReconcileDTO(r ccsync.ReconcileReport) reconcileDTO {
+	branches := make([]reconcileBranchDTO, len(r.Branches))
+	for i, b := range r.Branches {
+		ids := make([]string, len(b.Tasks))
+		for j, t := range b.Tasks {
+			ids[j] = string(t.ID)
+		}
+		branches[i] = reconcileBranchDTO{
+			Branch: string(b.Branch),
+			Merged: b.Merged,
+			Reason: b.Reason,
+			Tasks:  ids,
+		}
+	}
+	return reconcileDTO{
+		Into:     string(r.Into),
+		Scanned:  r.Scanned(),
+		Merged:   r.Merged(),
+		Promoted: r.Promoted(),
+		Branches: branches,
+	}
 }
 
 func newNoteDTO(n model.Note) noteDTO {

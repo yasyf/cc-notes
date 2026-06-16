@@ -1,0 +1,111 @@
+package cli
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/spf13/cobra"
+
+	"github.com/yasyf/cc-notes/internal/model"
+	ccsync "github.com/yasyf/cc-notes/internal/sync"
+)
+
+func newReconcileCmd() *cobra.Command {
+	var into string
+	var from []string
+	var force, dryRun, jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "reconcile",
+		Short: "Promote a merged branch's open tasks into the target branch",
+		Long: "Promote the open and in-progress tasks of each merged source branch into the\n" +
+			"target branch, then stop. A source branch counts as merged when its tip is an\n" +
+			"ancestor of the target — squash and rebase merges break that test, so name the\n" +
+			"source with --from --force to promote anyway. The step is idempotent: a promoted\n" +
+			"task is not promoted again.",
+		Args: exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			intoBranch, err := resolveBranch(ctx, s, "into", into)
+			if err != nil {
+				return err
+			}
+			if force && len(from) == 0 {
+				return &UsageError{Err: errors.New("--force requires --from")}
+			}
+			fromBranches := make([]model.Branch, 0, len(from))
+			for _, f := range from {
+				if err := s.Git.CheckRefFormat(ctx, f); err != nil {
+					return &UsageError{Err: err}
+				}
+				b := model.Branch(f)
+				if b == intoBranch {
+					return &UsageError{Err: fmt.Errorf("--from %q is the same branch as --into", f)}
+				}
+				fromBranches = append(fromBranches, b)
+			}
+			if !dryRun {
+				if err := autoInstall(ctx, cmd, s.Git); err != nil {
+					return err
+				}
+			}
+			report, err := ccsync.Reconcile(ctx, s, intoBranch, fromBranches, force, dryRun)
+			if err != nil {
+				return err
+			}
+			return printReconcile(cmd, report, jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	flags.StringVar(&into, "into", "", "target branch (default: current branch)")
+	flags.StringArrayVar(&from, "from", nil, "source branch to reconcile (repeatable; default: auto-discover)")
+	flags.BoolVar(&force, "force", false, "skip the merge-ancestry test (requires --from)")
+	flags.BoolVar(&dryRun, "dry-run", false, "compute and report the plan without writing")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+// printReconcile writes report as its JSON DTO or its lean view: the
+// verb:count tally skipping zeros, the target branch, then for each promoted
+// branch a header and one lean task line per promoted task.
+func printReconcile(cmd *cobra.Command, report ccsync.ReconcileReport, jsonOut bool) error {
+	out := cmd.OutOrStdout()
+	if jsonOut {
+		return printJSON(out, newReconcileDTO(report))
+	}
+	for _, line := range []struct {
+		verb  string
+		count int
+	}{
+		{"scanned", report.Scanned()},
+		{"merged", report.Merged()},
+		{"promoted", report.Promoted()},
+	} {
+		if line.count == 0 {
+			continue
+		}
+		if _, err := fmt.Fprintf(out, "%s: %d\n", line.verb, line.count); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(out, "into: %s\n", report.Into); err != nil {
+		return err
+	}
+	for _, b := range report.Branches {
+		if !b.Merged {
+			continue
+		}
+		if _, err := fmt.Fprintf(out, "%s:\n", b.Branch); err != nil {
+			return err
+		}
+		for _, t := range b.Tasks {
+			if _, err := fmt.Fprintln(out, leanTaskLine(t)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
