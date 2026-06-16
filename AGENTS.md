@@ -9,12 +9,12 @@ cc-notes/
 ├── cmd/cc-notes/     # Binary entrypoint — signal-aware main, exit-code mapping
 ├── internal/         # Go core (not importable outside the module)
 │   ├── model/        #   entity ids, Note/Task snapshots, kind-tagged ops, pack codec
-│   ├── refs/         #   pure ref-name build/parse (notes global, tasks per-branch)
-│   ├── fold/         #   pure CRDT core — linearize + deterministic fold, LWW, claim rule
+│   ├── refs/         #   pure ref-name build/parse (notes global, tasks global with an LWW branch attribute)
+│   ├── fold/         #   pure CRDT core — linearize + deterministic fold, LWW, claim rule, checkpoint replay
 │   ├── gitobj/       #   go-git object/ref layer, CheckAndSetReference CAS appends
 │   ├── gitcmd/       #   exec git — fetch/push with user credentials, config, update-ref
 │   ├── store/        #   entity store: create, append (CAS), load, list, resolve
-│   ├── sync/         #   refspec install, sync loop, union merge, promote consolidation
+│   ├── sync/         #   refspec install, sync loop, union merge, reconcile (relocate tasks on merge)
 │   ├── cli/          #   cobra command tree: note/task noun groups, init, sync, mount
 │   ├── fusefs/       #   FUSE mount (build tag fuse) — render/parse/diff + cgofuse ops
 │   └── version/      #   ldflags-injected build metadata

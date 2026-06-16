@@ -6,6 +6,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Tasks are now global. A task's branch is a folded attribute, not part of its
+ref, so one task crosses branches, merges, and machines while every agent shares
+a single backlog.
+
+### Added
+- Leases on claimed tasks: a claim opens a lease with a heartbeat, so a crashed
+  agent's grab never locks work forever. Any edit, comment, or
+  `cc-notes task renew` refreshes the heartbeat; `cc-notes task stale` lists
+  leases past the TTL, and `cc-notes task claim --steal` reclaims an expired one
+  — a holder who renewed in time keeps it. Set the threshold with
+  `cc-notes.leaseTTL` in git config.
+- Note verification as first-class state: every note is born verified against
+  the current HEAD with a witness snapshot of its anchored content.
+  `cc-notes note verify` re-confirms a fact, `cc-notes note supersede` records a
+  replacement and drops the old note from default listings, and
+  `cc-notes note review` flags decay as `DRIFTED`, `STALE`, or `UNVERIFIED` —
+  each verdict computed by the reader against a threshold, never stored.
+- `cc-notes reconcile`: carries a merged branch's open and in-progress tasks
+  onto the target branch by rewriting their branch attribute, idempotently.
+  It auto-discovers branches whose tip is an ancestor of the target; `--from`
+  with `--force` handles squash and rebase merges that break the ancestry test.
+  Wired into CI via the `reconcile.yml` workflow and, optionally, a git
+  post-merge hook installed by `cc-notes init --hook`.
+- Commit-to-task linkage: a `cc-task: <id>` git trailer or `cc-notes task done`
+  anchors a commit onto the task it implemented, and `cc-notes blame <sha>`
+  reads the link back to name the task(s) a commit built.
+- Compaction and garbage collection for long-lived entities:
+  `cc-notes compact` checkpoints an entity's op-log into a seed the fold replays
+  from for cheap reads, and `cc-notes gc` prunes the local fold cache, with
+  `--prune-remote` deleting tombstoned refs on the default remote.
+- A Claude Code plugin under `plugin/`: the `using-cc-notes` skill bundling the
+  full CLI reference, plus capt-hook enforcement hooks, installed by
+  `cc-notes skills install` and `cc-notes hooks install`.
+
+### Changed
+- Tasks live at one flat ref per id, `refs/cc-notes/tasks/<id>`, with a `branch`
+  attribute that folds last-write-wins. The branch-less backlog is the shared
+  cross-agent queue; `task list` and `task ready` default to the current branch,
+  `cc-notes task move` re-homes a task, and `cc-notes task start` claims a
+  backlog item and moves it onto your branch in one step.
+- `cc-notes sync` drives git directly, so it converges `refs/cc-notes/*` even
+  under jj, whose git bridge only carries `refs/heads/*`. reconcile and sync are
+  explicit commands, not git hooks, because jj fires no hooks and would silently
+  strand a merged branch's tasks.
+- README rewritten to the global-task model: coordinating across branches with
+  the backlog and leases, reconcile after a merge, and keeping notes honest.
+
+### Removed
+- The per-branch task model, where a task's branch was encoded in its ref name.
+- The branch-scoped `promote` command, replaced by `cc-notes reconcile`.
+
 ## [0.2.0] - 2026-06-12
 
 cc-notes is now a Go program. The Python `note add/list` scaffold, published to
