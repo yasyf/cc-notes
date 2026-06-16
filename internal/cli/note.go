@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"slices"
@@ -238,10 +239,12 @@ func newNoteRmCmd() *cobra.Command {
 
 func newNoteSearchCmd() *cobra.Command {
 	var tags []string
+	var author, anchorPath, anchorBranch, anchorCommit string
+	var limit int
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
-		Short: "Search notes by title, body, and tags",
+		Short: "Ranked search across note titles, tags, and bodies",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := openStore()
@@ -252,18 +255,80 @@ func newNoteSearchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			query := strings.ToLower(args[0])
-			notes = slices.DeleteFunc(notes, func(n model.Note) bool {
-				return !hasAll(n.Tags, tags) || !matchesQuery(n, query)
-			})
-			sortNotes(notes)
+			notes = rankNotes(notes, args[0], tags, author, anchorPath, anchorBranch, anchorCommit, limit)
 			return printNoteList(cmd, notes, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
 	flags.StringArrayVar(&tags, "tag", nil, "require tag (repeatable, ANDed)")
+	flags.IntVar(&limit, "limit", 20, "maximum results")
+	flags.StringVar(&author, "author", "", "require author")
+	flags.StringVar(&anchorPath, "anchor-path", "", "require path anchor")
+	flags.StringVar(&anchorBranch, "anchor-branch", "", "require branch anchor")
+	flags.StringVar(&anchorCommit, "anchor-commit", "", "require commit anchor")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
+}
+
+// rankNotes filters notes by tag, author, and anchors, keeps those matching
+// query in their title, a tag, or body, then orders by match tier
+// (title > tag > body), UpdatedAt descending, id ascending, truncated to limit.
+func rankNotes(notes []model.Note, query string, tags []string, author, anchorPath, anchorBranch, anchorCommit string, limit int) []model.Note {
+	q := strings.ToLower(query)
+	type scored struct {
+		note model.Note
+		tier int
+	}
+	var ranked []scored
+	for _, n := range notes {
+		if !hasAll(n.Tags, tags) ||
+			(author != "" && string(n.Author) != author) ||
+			(anchorPath != "" && !hasAnchor(n, model.AnchorPath, anchorPath)) ||
+			(anchorBranch != "" && !hasAnchor(n, model.AnchorBranch, anchorBranch)) ||
+			(anchorCommit != "" && !hasAnchor(n, model.AnchorCommit, anchorCommit)) {
+			continue
+		}
+		tier := noteTier(n, q)
+		if tier == 0 {
+			continue
+		}
+		ranked = append(ranked, scored{note: n, tier: tier})
+	}
+	slices.SortFunc(ranked, func(a, b scored) int {
+		if c := cmp.Compare(b.tier, a.tier); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(b.note.UpdatedAt, a.note.UpdatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.note.ID, b.note.ID)
+	})
+	if limit >= 0 && len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	out := make([]model.Note, len(ranked))
+	for i, r := range ranked {
+		out[i] = r.note
+	}
+	return out
+}
+
+// noteTier ranks how n matches q: a title substring is tier 3, a tag substring
+// tier 2, a body substring tier 1, and no match tier 0. The comparison is
+// case-insensitive; q must already be lowercased.
+func noteTier(n model.Note, q string) int {
+	if strings.Contains(strings.ToLower(n.Title), q) {
+		return 3
+	}
+	for _, tag := range n.Tags {
+		if strings.Contains(strings.ToLower(tag), q) {
+			return 2
+		}
+	}
+	if strings.Contains(strings.ToLower(n.Body), q) {
+		return 1
+	}
+	return 0
 }
 
 func printNoteList(cmd *cobra.Command, notes []model.Note, jsonOut bool) error {
@@ -281,15 +346,6 @@ func printNoteList(cmd *cobra.Command, notes []model.Note, jsonOut bool) error {
 		}
 	}
 	return nil
-}
-
-func matchesQuery(n model.Note, query string) bool {
-	if strings.Contains(strings.ToLower(n.Title), query) || strings.Contains(strings.ToLower(n.Body), query) {
-		return true
-	}
-	return slices.ContainsFunc(n.Tags, func(tag string) bool {
-		return strings.Contains(strings.ToLower(tag), query)
-	})
 }
 
 func hasAnchor(n model.Note, kind model.AnchorKind, value string) bool {

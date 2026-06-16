@@ -35,6 +35,9 @@ type commentDTO struct {
 // taskDTO fixes the JSON field order and formats for task output: full hex
 // ids, RFC3339 UTC timestamps, null for unset optionals, sorted set slices,
 // and the derived blocks reverse index.
+//
+// TODO(P2/P3): the committed task JSON shape also lists "lease" and "commits";
+// they land with note hygiene and coordination, not in P1.
 type taskDTO struct {
 	ID          string       `json:"id"`
 	Branch      string       `json:"branch"`
@@ -53,6 +56,43 @@ type taskDTO struct {
 	UpdatedAt   string       `json:"updated_at"`
 	StartedAt   *string      `json:"started_at"`
 	ClosedAt    *string      `json:"closed_at"`
+}
+
+// statusDTO fixes the JSON field order for a status report: the current
+// branch, the backlog and your-branch task slices, the in-progress tasks
+// grouped by assignee, and the note summary.
+type statusDTO struct {
+	Branch     string              `json:"branch"`
+	Backlog    []taskDTO           `json:"backlog"`
+	YourBranch []taskDTO           `json:"your_branch"`
+	InProgress []statusAssigneeDTO `json:"in_progress"`
+	Notes      statusNotesDTO      `json:"notes"`
+}
+
+// statusAssigneeDTO groups one assignee's in-progress tasks.
+type statusAssigneeDTO struct {
+	Assignee string           `json:"assignee"`
+	Tasks    []statusStaleDTO `json:"tasks"`
+}
+
+// statusStaleDTO embeds a taskDTO, inlining its fields, plus the reader-side
+// stale verdict.
+type statusStaleDTO struct {
+	taskDTO
+	Stale bool `json:"stale"`
+}
+
+// statusNotesDTO is the note summary: total notes and the count needing review.
+type statusNotesDTO struct {
+	Total       int `json:"total"`
+	NeedsReview int `json:"needs_review"`
+}
+
+// staleTaskDTO embeds a taskDTO, inlining its fields, plus the idle duration in
+// seconds for a stale task.
+type staleTaskDTO struct {
+	taskDTO
+	IdleSeconds int64 `json:"idle_seconds"`
 }
 
 // syncDTO fixes the JSON field order for a sync report.

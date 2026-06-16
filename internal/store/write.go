@@ -55,6 +55,7 @@ func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, err
 	if err := s.Git.UpdateRef(ctx, refFor(model.EntityID(sha)), sha, ""); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
+	s.cache.put(sha, snapshot)
 	return snapshot, nil
 }
 
@@ -109,6 +110,7 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 		}
 		switch err := s.Git.UpdateRef(ctx, ref, sha, tip); {
 		case err == nil:
+			s.cache.put(sha, snapshot)
 			return snapshot, nil
 		case errors.Is(err, gitcmd.ErrCASMismatch):
 			lastErr = err
@@ -154,11 +156,13 @@ func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
 	merge := model.PackCommit{SHA: sha, Parents: []model.SHA{ours, theirs}, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack}
-	if _, err := fold.Fold(append(combined, merge)); err != nil {
+	merged, err := fold.Fold(append(combined, merge))
+	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
 	if err := s.Git.UpdateRef(ctx, ref, sha, ours); err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
+	s.cache.put(sha, merged)
 	return sha, nil
 }

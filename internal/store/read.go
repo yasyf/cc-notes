@@ -26,6 +26,9 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
+	if snap, ok := s.cache.get(tip); ok {
+		return snap, nil
+	}
 	chain, err := s.Repo.ReadChain(ctx, tip)
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
@@ -34,6 +37,7 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
+	s.cache.put(tip, snapshot)
 	return snapshot, nil
 }
 
@@ -109,6 +113,12 @@ func foldAll[T model.Snapshot](ctx context.Context, s *Store, entries []tipEntry
 	g.SetLimit(listConcurrency)
 	for i, e := range entries {
 		g.Go(func() error {
+			if snap, ok := s.cache.get(e.tip); ok {
+				if t, ok := snap.(T); ok {
+					out[i] = t
+					return nil
+				}
+			}
 			chain, err := s.Repo.ReadChain(gctx, e.tip)
 			if err != nil {
 				return fmt.Errorf("load %s: %w", e.ref, err)
@@ -117,6 +127,7 @@ func foldAll[T model.Snapshot](ctx context.Context, s *Store, entries []tipEntry
 			if err != nil {
 				return fmt.Errorf("fold %s: %w", e.ref, err)
 			}
+			s.cache.put(e.tip, snapshot)
 			out[i] = snapshot
 			return nil
 		})

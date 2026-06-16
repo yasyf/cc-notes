@@ -20,7 +20,7 @@ listings print one lean line per entity.
 - **Ids are global**, so every id-addressed command (`show`, `claim`, `start`, `done`,
   `edit`, `comment`, `dep`, `move`, `renew`, …) resolves by id alone. There is **no
   `--branch` flag on id-addressed commands**. `--branch`, `--backlog`, and `--all-branches`
-  are reader filters on `list`/`ready` and setters on `add`/`move`/`edit`.
+  are reader filters on `list`/`ready` and setters on `add`/`move`.
 - **Notes are repo-global** with optional commit, path, and branch anchors pointing at the
   code they describe. A note records when it was last verified true; a superseded note
   points at its replacement and drops out of default listings.
@@ -399,7 +399,6 @@ not fit.
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--parent <id>` | Set parent |
 | `--no-parent` | Clear the parent |
-| `--branch <branch>` | Set the task's branch |
 | `--json` | Emit JSON |
 
 ### `cc-notes task stale`

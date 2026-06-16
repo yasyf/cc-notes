@@ -396,6 +396,42 @@ func TestRemotes(t *testing.T) {
 	}
 }
 
+func TestCommonDir(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	commitEmpty(t, g, "c1")
+
+	root, err := filepath.EvalSymlinks(g.Dir)
+	if err != nil {
+		t.Fatalf("eval symlinks: %v", err)
+	}
+	want := filepath.Join(root, ".git")
+
+	got, err := g.CommonDir(ctx)
+	if err != nil {
+		t.Fatalf("common dir: %v", err)
+	}
+	if gotEval, err := filepath.EvalSymlinks(got); err == nil {
+		got = gotEval
+	}
+	if got != want {
+		t.Fatalf("common dir: got %q, want %q", got, want)
+	}
+
+	linked := t.TempDir()
+	mustGit(t, g.Dir, "worktree", "add", "-q", linked)
+	gotLinked, err := (gitcmd.Git{Dir: linked}).CommonDir(ctx)
+	if err != nil {
+		t.Fatalf("common dir from linked worktree: %v", err)
+	}
+	if gotEval, err := filepath.EvalSymlinks(gotLinked); err == nil {
+		gotLinked = gotEval
+	}
+	if gotLinked != want {
+		t.Fatalf("linked worktree common dir: got %q, want %q", gotLinked, want)
+	}
+}
+
 func TestRoot(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()

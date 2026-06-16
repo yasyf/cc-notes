@@ -84,6 +84,10 @@ type Store struct {
 
 	// now stamps commit signatures; tests freeze it.
 	now func() time.Time
+	// cache is the local, tip-keyed fold accelerator; its directory resolves
+	// lazily on first use. It lives outside refs/cc-notes/* and is never
+	// pushed.
+	cache *foldCache
 }
 
 // Open opens the git repository containing dir, following worktree and
@@ -96,7 +100,9 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{Repo: repo, Git: gitcmd.Git{Dir: dir}, now: time.Now}, nil
+	s := &Store{Repo: repo, Git: gitcmd.Git{Dir: dir}, now: time.Now, cache: newFoldCache("", foldCacheCap)}
+	s.cache.commonDir = func() (string, error) { return s.Git.CommonDir(context.Background()) }
+	return s, nil
 }
 
 func (s *Store) signature(ctx context.Context) (gitobj.Signature, model.Actor, error) {

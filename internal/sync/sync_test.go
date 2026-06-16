@@ -111,7 +111,17 @@ func appendOps(t *testing.T, s *store.Store, ref string, ops ...model.Op) model.
 
 func sync(t *testing.T, s *store.Store) ccsync.Report {
 	t.Helper()
-	report, err := ccsync.Sync(t.Context(), s.Git.Dir, "origin")
+	return syncScope(t, s, false)
+}
+
+func syncFull(t *testing.T, s *store.Store) ccsync.Report {
+	t.Helper()
+	return syncScope(t, s, true)
+}
+
+func syncScope(t *testing.T, s *store.Store, full bool) ccsync.Report {
+	t.Helper()
+	report, err := ccsync.Sync(t.Context(), s.Git.Dir, "origin", full)
 	if err != nil {
 		t.Fatalf("Sync(%s): %v", s.Git.Dir, err)
 	}
@@ -308,7 +318,7 @@ func TestTwoCloneConvergence(t *testing.T) {
 	if got, want := sync(t, a), (ccsync.Report{Pushed: 2, Rounds: 1}); got != want {
 		t.Fatalf("A first sync report = %+v, want %+v", got, want)
 	}
-	if got, want := sync(t, b), (ccsync.Report{Created: 2, Rounds: 1}); got != want {
+	if got, want := sync(t, b), (ccsync.Report{Created: 2, Reconciled: 2, Rounds: 1}); got != want {
 		t.Fatalf("B first sync report = %+v, want %+v", got, want)
 	}
 	for _, ref := range []string{noteRef, taskRef} {
@@ -333,13 +343,13 @@ func TestTwoCloneConvergence(t *testing.T) {
 	mustGit(t, bare, "update-ref", taskRef, string(task.Head))
 	marker := writeGitStub(t, bare, taskRef, bTip)
 
-	if got, want := sync(t, a), (ccsync.Report{Merged: 1, Pushed: 1, Rounds: 2}); got != want {
+	if got, want := sync(t, a), (ccsync.Report{Merged: 1, Pushed: 1, Reconciled: 3, Rounds: 2}); got != want {
 		t.Fatalf("A contended sync report = %+v, want %+v", got, want)
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("git stub never injected the remote move: %v", err)
 	}
-	if got, want := sync(t, b), (ccsync.Report{FastForwarded: 1, Rounds: 1}); got != want {
+	if got, want := sync(t, b), (ccsync.Report{FastForwarded: 1, Reconciled: 1, Rounds: 1}); got != want {
 		t.Fatalf("B final sync report = %+v, want %+v", got, want)
 	}
 
@@ -588,7 +598,7 @@ func TestSyncPreservesDivergedOpsAfterInstall(t *testing.T) {
 	sync(t, a)
 	appendOps(t, b, taskRef, model.AddComment{Body: "from bob"})
 
-	if got, want := sync(t, b), (ccsync.Report{Merged: 1, Pushed: 1, Rounds: 1}); got != want {
+	if got, want := sync(t, b), (ccsync.Report{Merged: 1, Pushed: 1, Reconciled: 1, Rounds: 1}); got != want {
 		t.Fatalf("B diverged sync report = %+v, want %+v", got, want)
 	}
 	sync(t, a)
@@ -608,11 +618,151 @@ func TestSyncPreservesDivergedOpsAfterInstall(t *testing.T) {
 	}
 }
 
+// TestSyncUnchangedReconcilesNothing pins the scoped-sync payoff: once a
+// clone's tracking view matches the remote, a further sync folds and
+// reconciles nothing — before and after the fetch are identical, so the scope
+// is empty.
+func TestSyncUnchangedReconcilesNothing(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	createNote(t, a, "shared note")
+	createTask(t, a, "shared task", "main")
+	sync(t, a)
+	sync(t, b)
+	if got, want := sync(t, b), (ccsync.Report{Rounds: 1}); got != want {
+		t.Fatalf("unchanged sync report = %+v, want %+v (nothing reconciled)", got, want)
+	}
+}
+
+// TestSyncScopedReconcilesOnlyChanged moves exactly one remote ref and pins
+// that the next sync reconciles only that ref, leaving the unchanged ref out
+// of scope.
+func TestSyncScopedReconcilesOnlyChanged(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	createNote(t, a, "shared note")
+	task := createTask(t, a, "shared task", "main")
+	taskRef := refs.Task(task.ID)
+	sync(t, a)
+	sync(t, b)
+
+	appendOps(t, a, taskRef, model.AddLabel{Label: "urgent"})
+	sync(t, a)
+
+	got := sync(t, b)
+	if got.Reconciled != 1 {
+		t.Fatalf("scoped sync Reconciled = %d, want 1 (only the moved ref)", got.Reconciled)
+	}
+	if want := (ccsync.Report{FastForwarded: 1, Reconciled: 1, Rounds: 1}); got != want {
+		t.Fatalf("scoped sync report = %+v, want %+v", got, want)
+	}
+}
+
+// advanceTracking simulates a prior sync that fetched but never reconciled —
+// interrupted mid-reconcile by ctx cancel, contention, or a fold error. It
+// advances only the per-remote tracking refs to the remote tips, leaving the
+// canonical refs/cc-notes/ namespace behind, exactly the state a partial sync
+// leaves: tracking==remote, local stale.
+func advanceTracking(t *testing.T, s *store.Store) {
+	t.Helper()
+	mustGit(t, s.Git.Dir, "fetch", "-q", "origin", "+refs/cc-notes/*:refs/cc-notes-sync/origin/*")
+}
+
+// TestSyncScopedHealsBehindAfterInterruptedSync pins recovery from an
+// interrupted sync that advanced tracking past a behind local ref. Scoping on
+// the tracking delta alone would see before==after and skip the ref forever,
+// folding nothing while a stale push fails non-fast-forward every round. The
+// local-containment check pulls the ref back into scope so the next scoped sync
+// fast-forwards it with no --full.
+func TestSyncScopedHealsBehindAfterInterruptedSync(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	task := createTask(t, a, "shared task", "main")
+	taskRef := refs.Task(task.ID)
+	sync(t, a)
+	sync(t, b)
+
+	appendOps(t, a, taskRef, model.AddLabel{Label: "urgent"})
+	sync(t, a)
+
+	advanceTracking(t, b)
+
+	if got, want := sync(t, b), (ccsync.Report{FastForwarded: 1, Reconciled: 1, Rounds: 1}); got != want {
+		t.Fatalf("scoped heal report = %+v, want %+v", got, want)
+	}
+	got := loadTask(t, b, taskRef)
+	if want := []string{"urgent"}; !slices.Equal(got.Labels, want) {
+		t.Errorf("healed task Labels = %v, want %v", got.Labels, want)
+	}
+	if tipsA, tipsB := ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir); !reflect.DeepEqual(tipsA, tipsB) {
+		t.Errorf("tips diverge after heal: A = %v, B = %v", tipsA, tipsB)
+	}
+}
+
+// TestSyncScopedHealsDivergedAfterInterruptedSync is the data-loss case of the
+// same skip: tracking advanced past a local ref that itself diverged with
+// unpushed ops. Skipping it would strand those ops and loop ErrSyncContended;
+// the containment check union-merges instead, preserving both sides.
+func TestSyncScopedHealsDivergedAfterInterruptedSync(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	task := createTask(t, a, "shared task", "main")
+	taskRef := refs.Task(task.ID)
+	sync(t, a)
+	sync(t, b)
+
+	appendOps(t, a, taskRef, model.AddComment{Body: "from alice"})
+	sync(t, a)
+	appendOps(t, b, taskRef, model.AddComment{Body: "from bob"})
+
+	advanceTracking(t, b)
+
+	if got, want := sync(t, b), (ccsync.Report{Merged: 1, Pushed: 1, Reconciled: 1, Rounds: 1}); got != want {
+		t.Fatalf("scoped diverged heal report = %+v, want %+v", got, want)
+	}
+	sync(t, a)
+	for _, s := range []*store.Store{a, b} {
+		merged := loadTask(t, s, taskRef)
+		bodies := make([]string, len(merged.Comments))
+		for i, c := range merged.Comments {
+			bodies[i] = c.Body
+		}
+		slices.Sort(bodies)
+		if want := []string{"from alice", "from bob"}; !slices.Equal(bodies, want) {
+			t.Errorf("converged comments in %s = %v, want %v", s.Git.Dir, bodies, want)
+		}
+	}
+	if tipsA, tipsB := ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir); !reflect.DeepEqual(tipsA, tipsB) {
+		t.Errorf("tips diverge after heal: A = %v, B = %v", tipsA, tipsB)
+	}
+}
+
+// TestSyncFullForcesFullReconcile pins the --full escape hatch: even on an
+// unchanged remote, full reconciles every ref the remote knows.
+func TestSyncFullForcesFullReconcile(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	createNote(t, a, "shared note")
+	createTask(t, a, "shared task", "main")
+	sync(t, a)
+	sync(t, b)
+
+	got := syncFull(t, b)
+	if want := (ccsync.Report{Reconciled: 2, Rounds: 1}); got != want {
+		t.Fatalf("full sync report = %+v, want %+v (every ref reconciled, all no-ops)", got, want)
+	}
+}
+
 func TestSyncNoRemote(t *testing.T) {
 	scrubGitEnv(t)
 	dir := t.TempDir()
 	mustGit(t, dir, "init", "-q", "-b", "main")
-	_, err := ccsync.Sync(t.Context(), dir, "origin")
+	_, err := ccsync.Sync(t.Context(), dir, "origin", false)
 	if !errors.Is(err, ccsync.ErrRemoteNotFound) {
 		t.Fatalf("Sync without remote: got %v, want ErrRemoteNotFound", err)
 	}

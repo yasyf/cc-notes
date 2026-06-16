@@ -1,0 +1,206 @@
+package store
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+
+	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/internal/refs"
+)
+
+func TestFoldCacheHitMiss(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	note := create(t, s, noteOps("real")).(model.Note)
+	ref := refs.Note(note.ID)
+
+	if _, err := s.Load(ctx, ref); err != nil {
+		t.Fatalf("Load (populate): %v", err)
+	}
+	tip, err := s.Repo.Tip(ctx, ref)
+	if err != nil {
+		t.Fatalf("Tip: %v", err)
+	}
+
+	sentinel := note
+	sentinel.Title = "sentinel"
+	s.cache.put(tip, sentinel)
+
+	loaded, err := s.Load(ctx, ref)
+	if err != nil {
+		t.Fatalf("Load (cached): %v", err)
+	}
+	if got := loaded.(model.Note).Title; got != "sentinel" {
+		t.Fatalf("Load did not consult cache: title = %q, want %q", got, "sentinel")
+	}
+
+	if _, ok := s.cache.get(model.SHA("0000000000000000000000000000000000000000")); ok {
+		t.Fatal("get of unknown tip: want miss")
+	}
+}
+
+func TestFoldCacheRebuildAfterDelete(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	note := create(t, s, noteOps("rebuild")).(model.Note)
+	ref := refs.Note(note.ID)
+
+	if _, err := s.Load(ctx, ref); err != nil {
+		t.Fatalf("Load (populate): %v", err)
+	}
+	dir, err := s.cache.resolveDir()
+	if err != nil {
+		t.Fatalf("resolveDir: %v", err)
+	}
+	tip, err := s.Repo.Tip(ctx, ref)
+	if err != nil {
+		t.Fatalf("Tip: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, string(tip))); statErr != nil {
+		t.Fatalf("entry not written after Load: %v", statErr)
+	}
+
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("remove cache dir: %v", err)
+	}
+
+	loaded, err := s.Load(ctx, ref)
+	if err != nil {
+		t.Fatalf("Load after delete: %v", err)
+	}
+	if got := loaded.(model.Note).Title; got != "rebuild" {
+		t.Fatalf("Load after delete: title = %q, want %q", got, "rebuild")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, string(tip))); statErr != nil {
+		t.Fatalf("entry not repopulated after re-fold: %v", statErr)
+	}
+}
+
+func TestFoldCacheVersionBump(t *testing.T) {
+	dir := t.TempDir()
+	c := newFoldCache(dir, foldCacheCap)
+	tip := model.SHA("aaaa000000000000000000000000000000000000")
+
+	stale := append([]byte{byte('0' + foldCacheVersion - 1), ' '}, "note\n{\"id\":\"x\"}"...)
+	if err := os.WriteFile(filepath.Join(dir, string(tip)), stale, 0o644); err != nil {
+		t.Fatalf("write stale entry: %v", err)
+	}
+
+	if _, ok := c.get(tip); ok {
+		t.Fatal("get of version-mismatched entry: want miss")
+	}
+}
+
+func TestFoldCacheLRUEviction(t *testing.T) {
+	dir := t.TempDir()
+	c := newFoldCache(dir, 2)
+	tips := []model.SHA{
+		"1111111111111111111111111111111111111111",
+		"2222222222222222222222222222222222222222",
+		"3333333333333333333333333333333333333333",
+	}
+	for _, tip := range tips {
+		c.put(tip, model.Note{ID: model.EntityID(tip), Head: tip})
+	}
+
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	if len(ents) > 2 {
+		t.Fatalf("cache holds %d entries, want <= 2", len(ents))
+	}
+	if _, ok := c.get(tips[0]); ok {
+		t.Fatalf("oldest entry %s not evicted", tips[0])
+	}
+	for _, tip := range tips[1:] {
+		if _, ok := c.get(tip); !ok {
+			t.Fatalf("entry %s missing after eviction", tip)
+		}
+	}
+}
+
+func TestFoldCacheRoundTripBothKinds(t *testing.T) {
+	dir := t.TempDir()
+	c := newFoldCache(dir, foldCacheCap)
+
+	noteTip := model.SHA("aaaa111111111111111111111111111111111111")
+	note := model.Note{
+		ID:        "noteid",
+		Title:     "title",
+		Body:      "body",
+		Tags:      []string{"a", "b"},
+		Anchors:   []model.Anchor{{Kind: model.AnchorPath, Value: "x.go"}},
+		Author:    testActor,
+		CreatedAt: 100,
+		UpdatedAt: 200,
+		Head:      noteTip,
+	}
+	c.put(noteTip, note)
+	got, ok := c.get(noteTip)
+	if !ok {
+		t.Fatal("note round-trip: get miss")
+	}
+	if !reflect.DeepEqual(got, note) {
+		t.Fatalf("note round-trip: got %#v, want %#v", got, note)
+	}
+
+	taskTip := model.SHA("bbbb222222222222222222222222222222222222")
+	task := model.Task{
+		ID:        "taskid",
+		Branch:    "main",
+		Title:     "ship",
+		Type:      model.TypeTask,
+		Status:    model.StatusInProgress,
+		Priority:  1,
+		Assignee:  testActor,
+		Labels:    []string{"x"},
+		CreatedAt: 1,
+		UpdatedAt: 2,
+		StartedAt: 3,
+		Head:      taskTip,
+	}
+	c.put(taskTip, task)
+	gotTask, ok := c.get(taskTip)
+	if !ok {
+		t.Fatal("task round-trip: get miss")
+	}
+	if !reflect.DeepEqual(gotTask, task) {
+		t.Fatalf("task round-trip: got %#v, want %#v", gotTask, task)
+	}
+}
+
+func TestFoldCacheCorruptEntryIsMiss(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	note := create(t, s, noteOps("corrupt")).(model.Note)
+	ref := refs.Note(note.ID)
+
+	if _, err := s.Load(ctx, ref); err != nil {
+		t.Fatalf("Load (populate): %v", err)
+	}
+	dir, err := s.cache.resolveDir()
+	if err != nil {
+		t.Fatalf("resolveDir: %v", err)
+	}
+	tip, err := s.Repo.Tip(ctx, ref)
+	if err != nil {
+		t.Fatalf("Tip: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, string(tip)), []byte("not a cache entry"), 0o644); err != nil {
+		t.Fatalf("corrupt entry: %v", err)
+	}
+
+	if _, ok := s.cache.get(tip); ok {
+		t.Fatal("get of corrupt entry: want miss")
+	}
+	loaded, err := s.Load(ctx, ref)
+	if err != nil {
+		t.Fatalf("Load over corrupt entry: %v", err)
+	}
+	if got := loaded.(model.Note).Title; got != "corrupt" {
+		t.Fatalf("Load over corrupt entry: title = %q, want %q", got, "corrupt")
+	}
+}

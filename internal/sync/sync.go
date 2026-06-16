@@ -58,6 +58,9 @@ type Report struct {
 	// Pushed counts the refs that differed from the remote view when the
 	// final push succeeded: the refs that push created or updated.
 	Pushed int
+	// Reconciled counts the refs handed to ensure across every round: the
+	// scope the sync actually folded. An unchanged remote reconciles nothing.
+	Reconciled int
 	// Rounds counts fetch-reconcile-push rounds run; 1 is a clean pass.
 	Rounds int
 }
@@ -81,16 +84,19 @@ type engine struct {
 	created       atomic.Int64
 	fastForwarded atomic.Int64
 	merged        atomic.Int64
+	reconciled    atomic.Int64
 }
 
 // Sync converges the local refs/cc-notes/ namespace with remote and pushes
-// the result. Each round fetches the remote's entity refs into the tracking
-// namespace, reconciles every remote-known ref — create, fast-forward, or
-// union merge, never a clobber — and pushes whatever differs, unforced. A
-// non-fast-forward push means the remote moved mid-round: the next round
-// merges the new tips. Exhausting maxRounds fails wrapping ErrSyncContended;
-// an unconfigured remote fails wrapping ErrRemoteNotFound.
-func Sync(ctx context.Context, dir, remote string) (Report, error) {
+// the result. Each round captures the tracking view before and after the
+// fetch and reconciles only the refs the remote moved — plus any with no
+// local copy — folding through the store's cache; create, fast-forward, or
+// union merge, never a clobber. A non-fast-forward push means the remote
+// moved mid-round: the next round merges the new tips. full forces a
+// whole-namespace reconcile each round, the escape hatch when the scoped
+// scan is suspect. Exhausting maxRounds fails wrapping ErrSyncContended; an
+// unconfigured remote fails wrapping ErrRemoteNotFound.
+func Sync(ctx context.Context, dir, remote string, full bool) (Report, error) {
 	s, err := store.Open(dir)
 	if err != nil {
 		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
@@ -102,17 +108,28 @@ func Sync(ctx context.Context, dir, remote string) (Report, error) {
 	trackingPrefix := syncNamespace + remote + "/"
 	fetchSpec := "+" + namespace + "*:" + trackingPrefix + "*"
 	for round := 1; round <= maxRounds; round++ {
-		if err := s.Git.Fetch(ctx, remote, fetchSpec); err != nil {
-			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
-		}
-		remoteView, err := e.remoteView(ctx, trackingPrefix)
+		before, err := e.remoteView(ctx, trackingPrefix)
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		if err := e.reconcile(ctx, remoteView); err != nil {
+		if err := s.Git.Fetch(ctx, remote, fetchSpec); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		pending, err := e.pending(ctx, remoteView)
+		after, err := e.remoteView(ctx, trackingPrefix)
+		if err != nil {
+			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
+		}
+		scope := after
+		if !full {
+			scope, err = e.changed(ctx, before, after)
+			if err != nil {
+				return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
+			}
+		}
+		if err := e.reconcile(ctx, scope); err != nil {
+			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
+		}
+		pending, err := e.pending(ctx, after)
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
@@ -136,6 +153,7 @@ func (e *engine) report(rounds, pushed int) Report {
 		FastForwarded: int(e.fastForwarded.Load()),
 		Merged:        int(e.merged.Load()),
 		Pushed:        pushed,
+		Reconciled:    int(e.reconciled.Load()),
 		Rounds:        rounds,
 	}
 }
@@ -162,15 +180,55 @@ func (e *engine) remoteView(ctx context.Context, trackingPrefix string) (map[str
 	return view, nil
 }
 
-// reconcile converges every ref the remote knows. Local-only refs need no
-// work here: the push publishes them.
-func (e *engine) reconcile(ctx context.Context, remoteView map[string]model.SHA) error {
+// reconcile converges every ref in scope. Local-only refs need no work here:
+// the push publishes them. Each ref handed to ensure is tallied so the report
+// surfaces exactly what this run folded.
+func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) error {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(refConcurrency)
-	for ref, tip := range remoteView {
+	for ref, tip := range scope {
+		e.reconciled.Add(1)
 		g.Go(func() error { return e.ensure(gctx, ref, tip) })
 	}
 	return g.Wait()
+}
+
+// changed returns the subset of after whose tip differs from before, plus any
+// after-ref the local namespace does not already contain. On round one before
+// is empty, so every remote ref reconciles. The tracking==before==after case is
+// not proof the local ref already folded that tip: a prior sync interrupted
+// mid-reconcile (ctx cancel, ErrSyncContended under concurrent writers, any fold
+// error) advances tracking for every ref via the fetch but folds none, leaving
+// tracking ahead of a behind-or-diverged local ref. Scoping on the tracking
+// delta alone would skip such a ref forever — no fold, a stale non-fast-forward
+// push, and ErrSyncContended every round with no self-heal. So a ref whose
+// remote tip the local chain does not contain is always in scope, however
+// quiet the tracking delta: correctness over speed.
+func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA) (map[string]model.SHA, error) {
+	local, err := e.store.Repo.ListPrefix(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	scope := make(map[string]model.SHA, len(after))
+	for ref, tip := range after {
+		if before[ref] != tip {
+			scope[ref] = tip
+			continue
+		}
+		localTip, ok := local[ref]
+		if !ok {
+			scope[ref] = tip
+			continue
+		}
+		contains, err := e.store.Repo.IsAncestor(ctx, tip, localTip)
+		if err != nil {
+			return nil, err
+		}
+		if !contains {
+			scope[ref] = tip
+		}
+	}
+	return scope, nil
 }
 
 // pending counts local refs that differ from the remote view: the refs the

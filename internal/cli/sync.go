@@ -85,6 +85,7 @@ func installPostMergeHook(cmd *cobra.Command, g gitcmd.Git) (string, error) {
 func newSyncCmd() *cobra.Command {
 	var remote string
 	var jsonOut bool
+	var full bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Converge refs/cc-notes/* with a remote and push",
@@ -94,7 +95,7 @@ func newSyncCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("working directory: %w", err)
 			}
-			report, err := ccsync.Sync(cmd.Context(), dir, remote)
+			report, err := ccsync.Sync(cmd.Context(), dir, remote, full)
 			if err != nil {
 				return err
 			}
@@ -131,6 +132,7 @@ func newSyncCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&remote, "remote", defaultRemote, "remote to sync with")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags.BoolVar(&full, "full", false, "force a whole-namespace reconcile scan")
 	return cmd
 }
 

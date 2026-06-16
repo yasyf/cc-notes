@@ -252,6 +252,21 @@ func (g Git) Root(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// CommonDir returns the absolute shared git directory — the main repository's
+// .git — so linked worktrees resolve to one location. git answers relative to
+// the -C directory, so a relative path is joined back onto Dir.
+func (g Git) CommonDir(ctx context.Context) (string, error) {
+	out, err := g.run(ctx, "", "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", fmt.Errorf("common dir: %w", err)
+	}
+	path := strings.TrimSpace(out)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(g.Dir, path)
+	}
+	return path, nil
+}
+
 // HooksDir returns the absolute path of the repository's hooks directory,
 // honoring a configured core.hooksPath. git resolves the path relative to
 // the -C directory, so a relative answer is joined back onto Dir.

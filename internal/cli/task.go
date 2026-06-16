@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -26,6 +27,7 @@ func newTaskCmd() *cobra.Command {
 		newTaskAddCmd(),
 		newTaskListCmd(),
 		newTaskReadyCmd(),
+		newTaskBacklogCmd(),
 		newTaskShowCmd(),
 		newTaskClaimCmd(),
 		newTaskStatusCmd("done", model.StatusDone),
@@ -35,6 +37,8 @@ func newTaskCmd() *cobra.Command {
 		newTaskDepCmd(),
 		newTaskUndepCmd(),
 		newTaskMoveCmd(),
+		newTaskStaleCmd(),
+		newTaskArchivedCmd(),
 	)
 	return cmd
 }
@@ -126,13 +130,14 @@ func newTaskAddCmd() *cobra.Command {
 func newTaskListCmd() *cobra.Command {
 	var statusCSV, assignee, taskType, branch string
 	var labels []string
-	var all, allBranches, backlog, jsonOut bool
+	var all, allBranches, backlog, includeArchived, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List tasks, scoped to the current branch by default",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
+			now := time.Now()
 			s, err := openStore()
 			if err != nil {
 				return err
@@ -173,6 +178,12 @@ func newTaskListCmd() *cobra.Command {
 					(assigneeSet && string(t.Assignee) != assignee) ||
 					(taskType != "" && t.Type != tt)
 			})
+			if !includeArchived {
+				cutoff := now.Add(-defaultArchiveAge)
+				tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
+					return isArchived(t, cutoff)
+				})
+			}
 			sortTasks(tasks)
 			return printTaskList(cmd, s, tasks, jsonOut)
 		},
@@ -186,6 +197,7 @@ func newTaskListCmd() *cobra.Command {
 	flags.StringVar(&branch, "branch", "", "filter to branch (default: current branch)")
 	flags.BoolVar(&allBranches, "all-branches", false, "every branch")
 	flags.BoolVar(&backlog, "backlog", false, "only backlog tasks (no branch)")
+	flags.BoolVar(&includeArchived, "include-archived", false, "include archived (old done/cancelled) tasks")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
@@ -600,6 +612,109 @@ func newTaskMoveCmd() *cobra.Command {
 	return cmd
 }
 
+func newTaskBacklogCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "backlog",
+		Short: "List the open, branch-less backlog",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			tasks, err := s.ListTasks(ctx)
+			if err != nil {
+				return err
+			}
+			tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
+				return t.Branch != "" || t.Status != model.StatusOpen
+			})
+			sortTasks(tasks)
+			return printTaskList(cmd, s, tasks, jsonOut)
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newTaskStaleCmd() *cobra.Command {
+	var idleAfter string
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "stale",
+		Short: "List in-progress tasks idle past the lease threshold",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			now := time.Now()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			var ttl time.Duration
+			if cmd.Flags().Changed("idle-after") {
+				if ttl, err = parseDuration(idleAfter); err != nil {
+					return err
+				}
+			} else if ttl, err = leaseTTL(ctx, s.Git); err != nil {
+				return err
+			}
+			tasks, err := s.ListTasks(ctx)
+			if err != nil {
+				return err
+			}
+			tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
+				return !isStale(t, now, ttl)
+			})
+			sortTasks(tasks)
+			return printStaleTaskList(cmd, s, tasks, now, jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	flags.StringVar(&idleAfter, "idle-after", "", "idle threshold (default cc-notes.leaseTTL / CC_NOTES_LEASE_TTL or 1h)")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newTaskArchivedCmd() *cobra.Command {
+	var closedBefore string
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "archived",
+		Short: "List done and cancelled tasks closed before the threshold",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			now := time.Now()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			cutoff := now.Add(-defaultArchiveAge)
+			if cmd.Flags().Changed("closed-before") {
+				if cutoff, err = parseWhen(closedBefore, now); err != nil {
+					return err
+				}
+			}
+			tasks, err := s.ListTasks(ctx)
+			if err != nil {
+				return err
+			}
+			tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
+				return !isArchived(t, cutoff)
+			})
+			sortTasks(tasks)
+			return printTaskList(cmd, s, tasks, jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	flags.StringVar(&closedBefore, "closed-before", "", "archive cutoff (Go duration relative, or RFC3339 absolute; default 720h)")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
 // branchFilter resolves the branch-scoping flags into a predicate over a
 // task's folded branch. With no flag it scopes to HEAD; --all-branches
 // matches every task, --backlog the empty branch, and --branch=X branch X.
@@ -647,6 +762,32 @@ func printTaskList(cmd *cobra.Command, s *store.Store, tasks []model.Task, jsonO
 	}
 	for _, t := range tasks {
 		if _, err := fmt.Fprintln(out, leanTaskLine(t)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printStaleTaskList writes stale tasks as their JSON DTOs — each carrying the
+// idle duration in seconds — or one lean line per task with a trailing idle
+// marker.
+func printStaleTaskList(cmd *cobra.Command, s *store.Store, tasks []model.Task, now time.Time, jsonOut bool) error {
+	out := cmd.OutOrStdout()
+	if jsonOut {
+		live, err := allTasks(cmd.Context(), s)
+		if err != nil {
+			return err
+		}
+		dtos := make([]staleTaskDTO, len(tasks))
+		for i, t := range tasks {
+			idle := now.Sub(time.Unix(taskHeartbeat(t), 0))
+			dtos[i] = staleTaskDTO{taskDTO: newTaskDTO(t, blocksFor(live, t.ID)), IdleSeconds: int64(idle.Seconds())}
+		}
+		return printJSON(out, dtos)
+	}
+	for _, t := range tasks {
+		idle := now.Sub(time.Unix(taskHeartbeat(t), 0))
+		if _, err := fmt.Fprintf(out, "%s\t%s\n", leanTaskLine(t), formatIdle(idle)); err != nil {
 			return err
 		}
 	}
