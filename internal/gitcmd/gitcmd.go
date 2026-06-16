@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/yasyf/cc-notes/internal/model"
@@ -249,4 +250,19 @@ func (g Git) Root(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("worktree root: %w", err)
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// HooksDir returns the absolute path of the repository's hooks directory,
+// honoring a configured core.hooksPath. git resolves the path relative to
+// the -C directory, so a relative answer is joined back onto Dir.
+func (g Git) HooksDir(ctx context.Context) (string, error) {
+	out, err := g.run(ctx, "", "rev-parse", "--git-path", "hooks")
+	if err != nil {
+		return "", fmt.Errorf("hooks dir: %w", err)
+	}
+	path := strings.TrimSpace(out)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(g.Dir, path)
+	}
+	return path, nil
 }

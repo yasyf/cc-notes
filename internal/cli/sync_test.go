@@ -1,11 +1,13 @@
 package cli_test
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
-	"errors"
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
@@ -47,6 +49,37 @@ func TestInitNoRemote(t *testing.T) {
 	_, _, err := runCLI(t, dir, "init")
 	if !errors.Is(err, ccsync.ErrRemoteNotFound) || cli.ExitCode(err) != 1 {
 		t.Fatalf("init err = %v (exit %d), want ErrRemoteNotFound exit 1", err, cli.ExitCode(err))
+	}
+}
+
+func TestInitHookInstallsPostMerge(t *testing.T) {
+	dir, _ := initRepoWithRemote(t)
+	out := mustRun(t, dir, "init", "--hook")
+	hook := filepath.Join(dir, ".git", "hooks", "post-merge")
+	if !strings.Contains(out, "installed: post-merge hook at "+hook) {
+		t.Fatalf("init --hook output = %q, want a post-merge install line for %q", out, hook)
+	}
+	info, err := os.Stat(hook)
+	if err != nil {
+		t.Fatalf("stat post-merge hook: %v", err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("post-merge hook mode = %v, want executable", info.Mode().Perm())
+	}
+	body, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatalf("read post-merge hook: %v", err)
+	}
+	if want := "#!/bin/sh\nexec cc-notes reconcile\n"; string(body) != want {
+		t.Fatalf("post-merge hook body = %q, want %q", body, want)
+	}
+
+	_, _, err = runCLI(t, dir, "init", "--hook")
+	if cli.ExitCode(err) != 2 {
+		t.Fatalf("init --hook over existing hook err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
+	}
+	if again, _ := os.ReadFile(hook); string(again) != string(body) {
+		t.Fatalf("refused install still clobbered hook: %q", again)
 	}
 }
 

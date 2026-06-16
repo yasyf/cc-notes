@@ -1,21 +1,35 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/internal/version"
 )
 
+// postMergeHook is the body cc-notes init --hook writes to the repository's
+// post-merge hook: reconcile the merged branch's open tasks into the current
+// branch after every git merge that updates the worktree.
+const postMergeHook = "#!/bin/sh\nexec cc-notes reconcile\n"
+
 func newInitCmd() *cobra.Command {
 	var remote string
+	var hook bool
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Install refs/cc-notes/* refspecs on a remote",
-		Args:  exactArgs(0),
+		Long: "Install the refs/cc-notes/* fetch and push refspecs on a remote.\n\n" +
+			"--hook also installs a git post-merge hook that runs `cc-notes reconcile`\n" +
+			"after every merge. The hook is git-only: it does NOT fire under jj, a\n" +
+			"rebase, or a server-side squash merge. Treat it as a convenience — the\n" +
+			"explicit `cc-notes reconcile` command and a CI job are the real story.",
+		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := openStore()
 			if err != nil {
@@ -24,12 +38,48 @@ func newInitCmd() *cobra.Command {
 			if _, err := ccsync.Install(cmd.Context(), s.Git, remote); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "initialized: refs/cc-notes/* refspecs installed for %s\n", remote)
+			out := cmd.OutOrStdout()
+			if _, err := fmt.Fprintf(out, "initialized: refs/cc-notes/* refspecs installed for %s\n", remote); err != nil {
+				return err
+			}
+			if !hook {
+				return nil
+			}
+			path, err := installPostMergeHook(cmd, s.Git)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(out, "installed: post-merge hook at %s\n", path)
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&remote, "remote", defaultRemote, "remote to wire")
+	flags := cmd.Flags()
+	flags.StringVar(&remote, "remote", defaultRemote, "remote to wire")
+	flags.BoolVar(&hook, "hook", false, "also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj/rebase/server-side squash)")
 	return cmd
+}
+
+// installPostMergeHook writes an executable post-merge hook invoking
+// cc-notes reconcile and returns its path. An existing post-merge hook is a
+// UsageError rather than a clobber.
+func installPostMergeHook(cmd *cobra.Command, g gitcmd.Git) (string, error) {
+	dir, err := g.HooksDir(cmd.Context())
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "post-merge")
+	if _, err := os.Stat(path); err == nil {
+		return "", &UsageError{Err: fmt.Errorf("post-merge hook already exists at %s", path)}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("stat post-merge hook: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create hooks dir: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(postMergeHook), 0o755); err != nil {
+		return "", fmt.Errorf("write post-merge hook: %w", err)
+	}
+	return path, nil
 }
 
 func newSyncCmd() *cobra.Command {
