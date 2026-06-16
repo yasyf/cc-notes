@@ -43,7 +43,19 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			notes, err := s.ListNotes(ctx, false)
+			notes, err := s.ListNotes(ctx, false, false)
+			if err != nil {
+				return err
+			}
+			head, err := resolveHead(ctx, s)
+			if err != nil {
+				return err
+			}
+			staleAfter, err := noteStaleAfter(ctx, s.Git)
+			if err != nil {
+				return err
+			}
+			reviewCount, err := noteReviewCount(ctx, s, head, now, staleAfter)
 			if err != nil {
 				return err
 			}
@@ -77,9 +89,9 @@ func newStatusCmd() *cobra.Command {
 			}
 
 			if jsonOut {
-				return printStatusJSON(cmd, s, branch, backlog, yourBranch, assignees, groups, notes, now, ttl)
+				return printStatusJSON(cmd, s, branch, backlog, yourBranch, assignees, groups, notes, reviewCount, now, ttl)
 			}
-			return printStatusText(cmd, branch, backlog, yourBranch, assignees, groups, notes, now, ttl)
+			return printStatusText(cmd, branch, backlog, yourBranch, assignees, groups, notes, reviewCount, now, ttl)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -90,7 +102,7 @@ func openOrInProgress(s model.Status) bool {
 	return s == model.StatusOpen || s == model.StatusInProgress
 }
 
-func printStatusText(cmd *cobra.Command, branch model.Branch, backlog, yourBranch []model.Task, assignees []model.Actor, groups map[model.Actor][]model.Task, notes []model.Note, now time.Time, ttl time.Duration) error {
+func printStatusText(cmd *cobra.Command, branch model.Branch, backlog, yourBranch []model.Task, assignees []model.Actor, groups map[model.Actor][]model.Task, notes []model.Note, reviewCount int, now time.Time, ttl time.Duration) error {
 	var b strings.Builder
 	b.WriteString("backlog\n")
 	for _, t := range backlog {
@@ -112,12 +124,12 @@ func printStatusText(cmd *cobra.Command, branch model.Branch, backlog, yourBranc
 			fmt.Fprintf(&b, "  %s\t%s\t%s\n", a, t.ID.Short(), flag)
 		}
 	}
-	fmt.Fprintf(&b, "notes: %d total, %d need review\n", len(notes), noteReviewCount(notes))
+	fmt.Fprintf(&b, "notes: %d total, %d need review\n", len(notes), reviewCount)
 	_, err := fmt.Fprint(cmd.OutOrStdout(), b.String())
 	return err
 }
 
-func printStatusJSON(cmd *cobra.Command, s *store.Store, branch model.Branch, backlog, yourBranch []model.Task, assignees []model.Actor, groups map[model.Actor][]model.Task, notes []model.Note, now time.Time, ttl time.Duration) error {
+func printStatusJSON(cmd *cobra.Command, s *store.Store, branch model.Branch, backlog, yourBranch []model.Task, assignees []model.Actor, groups map[model.Actor][]model.Task, notes []model.Note, reviewCount int, now time.Time, ttl time.Duration) error {
 	live, err := allTasks(cmd.Context(), s)
 	if err != nil {
 		return err
@@ -127,7 +139,7 @@ func printStatusJSON(cmd *cobra.Command, s *store.Store, branch model.Branch, ba
 		Backlog:    taskDTOs(backlog, live),
 		YourBranch: taskDTOs(yourBranch, live),
 		InProgress: make([]statusAssigneeDTO, 0, len(assignees)),
-		Notes:      statusNotesDTO{Total: len(notes), NeedsReview: noteReviewCount(notes)},
+		Notes:      statusNotesDTO{Total: len(notes), NeedsReview: reviewCount},
 	}
 	for _, a := range assignees {
 		grp := groups[a]
@@ -149,8 +161,3 @@ func taskDTOs(tasks []model.Task, live map[model.EntityID]model.Task) []taskDTO 
 	}
 	return dtos
 }
-
-// noteReviewCount counts notes needing review. P1 has no note review state, so
-// it is always zero.
-// TODO(P2): count notes needing review once note verify/drift exists.
-func noteReviewCount(notes []model.Note) int { return 0 }

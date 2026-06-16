@@ -133,6 +133,9 @@ func (r *Repo) commit(sha model.SHA) (*object.Commit, error) {
 		return nil, fmt.Errorf("invalid sha %q", sha)
 	}
 	commit, err := object.GetCommit(r.repo.Storer, plumbing.NewHash(string(sha)))
+	if errors.Is(err, plumbing.ErrObjectNotFound) {
+		return nil, fmt.Errorf("%w: %s", ErrCommitNotFound, sha)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read commit %s: %w", sha, err)
 	}

@@ -38,6 +38,15 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 		{"add_anchor", AddAnchor{Anchor: Anchor{Kind: AnchorPath, Value: "internal/model/pack.go"}}},
 		{"remove_anchor", RemoveAnchor{Anchor: Anchor{Kind: AnchorBranch, Value: "main"}}},
 		{"delete_note", DeleteNote{}},
+		{"verify_note", VerifyNote{
+			Witness: []AnchorWitness{
+				{Anchor: Anchor{Kind: AnchorPath, Value: "docs/deploy.md"}, OID: "f1e2d3c4b5a60718293a4b5c6d7e8f90a1b2c3d4"},
+				{Anchor: Anchor{Kind: AnchorCommit, Value: testID}, OID: testID},
+			},
+			VerifiedCommit: testParent,
+		}},
+		{"add_superseded_by", AddSupersededBy{ID: testID}},
+		{"remove_superseded_by", RemoveSupersededBy{ID: testID}},
 		{"create_task", CreateTask{
 			Nonce:       testNonce,
 			Title:       "Fix flaky sync",
@@ -155,6 +164,22 @@ func TestPackGoldenBytes(t *testing.T) {
 			want: `{"v":1,"lamport":1,"ops":[{"kind":"create_note","nonce":"ffffffffffffffffffffffffffffffff","title":"Deploy runbook","body":"Ship from green main only.","tags":["ops"],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},{"kind":"path","value":"docs/deploy.md"}]},{"kind":"add_tag","tag":"runbook"}]}`,
 		},
 		{
+			name: "note hygiene pack",
+			pack: Pack{
+				Lamport: 4,
+				Ops: []Op{
+					VerifyNote{
+						Witness: []AnchorWitness{
+							{Anchor: Anchor{Kind: AnchorPath, Value: "docs/deploy.md"}, OID: "f1e2d3c4b5a60718293a4b5c6d7e8f90a1b2c3d4"},
+						},
+						VerifiedCommit: testID,
+					},
+					AddSupersededBy{ID: testParent},
+				},
+			},
+			want: `{"v":1,"lamport":4,"ops":[{"kind":"verify_note","witness":[{"anchor":{"kind":"path","value":"docs/deploy.md"},"oid":"f1e2d3c4b5a60718293a4b5c6d7e8f90a1b2c3d4"}],"verified_commit":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},{"kind":"add_superseded_by","id":"00112233445566778899aabbccddeeff00112233"}]}`,
+		},
+		{
 			name: "empty merge pack",
 			pack: Pack{Lamport: 9},
 			want: `{"v":1,"lamport":9,"ops":[]}`,
@@ -189,6 +214,7 @@ func TestDecodePackFailures(t *testing.T) {
 		{"bad task type", `{"v":1,"lamport":1,"ops":[{"kind":"set_type","type":"chore"}]}`, ErrInvalidValue},
 		{"bad anchor kind", `{"v":1,"lamport":1,"ops":[{"kind":"add_anchor","anchor":{"kind":"url","value":"https://x"}}]}`, ErrInvalidValue},
 		{"bad anchor kind in create_note", `{"v":1,"lamport":1,"ops":[{"kind":"create_note","nonce":"00","title":"t","body":"","tags":[],"anchors":[{"kind":"tag","value":"v"}]}]}`, ErrInvalidValue},
+		{"bad witness anchor kind in verify_note", `{"v":1,"lamport":1,"ops":[{"kind":"verify_note","witness":[{"anchor":{"kind":"url","value":"https://x"},"oid":"abc"}],"verified_commit":"def"}]}`, ErrInvalidValue},
 		{"bad priority in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":7,"branch":"main","parent":"","labels":[]}]}`, ErrInvalidValue},
 		{"bad type in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"story","priority":0,"branch":"main","parent":"","labels":[]}]}`, ErrInvalidValue},
 		{"traversal branch in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":"../evil","parent":"","labels":[]}]}`, ErrInvalidValue},

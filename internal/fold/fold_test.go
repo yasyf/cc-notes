@@ -31,15 +31,16 @@ func TestFoldNote(t *testing.T) {
 		),
 	}
 	want := model.Note{
-		ID:        "aaa",
-		Title:     "T2",
-		Body:      "B2",
-		Tags:      []string{"beta", "gamma"},
-		Anchors:   []model.Anchor{{Kind: model.AnchorCommit, Value: "deadbeef"}},
-		Author:    "alice",
-		CreatedAt: 100,
-		UpdatedAt: 300,
-		Head:      "ccc",
+		ID:           "aaa",
+		Title:        "T2",
+		Body:         "B2",
+		Tags:         []string{"beta", "gamma"},
+		Anchors:      []model.Anchor{{Kind: model.AnchorCommit, Value: "deadbeef"}},
+		Author:       "alice",
+		CreatedAt:    100,
+		UpdatedAt:    300,
+		SupersededBy: []model.EntityID{},
+		Head:         "ccc",
 	}
 	got, err := fold.Note(chain)
 	if err != nil {
@@ -132,14 +133,15 @@ func TestFoldDeterminismDiamond(t *testing.T) {
 		mk("ddd", []string{"bbb", "ccc"}, "dave", 300, 3),
 	}
 	want := model.Note{
-		ID:        "aaa",
-		Title:     "from-c",
-		Tags:      []string{},
-		Anchors:   []model.Anchor{},
-		Author:    "alice",
-		CreatedAt: 100,
-		UpdatedAt: 200,
-		Head:      "ddd",
+		ID:           "aaa",
+		Title:        "from-c",
+		Tags:         []string{},
+		Anchors:      []model.Anchor{},
+		Author:       "alice",
+		CreatedAt:    100,
+		UpdatedAt:    200,
+		SupersededBy: []model.EntityID{},
+		Head:         "ddd",
 	}
 	for i, input := range permutations(diamond) {
 		got, err := fold.Note(input)
@@ -527,17 +529,152 @@ func TestFoldCreateInLaterCommit(t *testing.T) {
 		t.Fatalf("Note() error = %v", err)
 	}
 	want := model.Note{
-		ID:        "aaa",
-		Title:     "late",
-		Tags:      []string{},
-		Anchors:   []model.Anchor{},
-		Author:    "bob",
-		CreatedAt: 100,
-		UpdatedAt: 200,
-		Head:      "bbb",
+		ID:           "aaa",
+		Title:        "late",
+		Tags:         []string{},
+		Anchors:      []model.Anchor{},
+		Author:       "bob",
+		CreatedAt:    100,
+		UpdatedAt:    200,
+		SupersededBy: []model.EntityID{},
+		Head:         "bbb",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Note() = %+v, want %+v", got, want)
+	}
+}
+
+func TestFoldNoteVerify(t *testing.T) {
+	witness := []model.AnchorWitness{
+		{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "x.go"}, OID: "0011"},
+	}
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateNote{
+			Nonce:   "n",
+			Title:   "T",
+			Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "x.go"}},
+		}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2, model.VerifyNote{
+			Witness:        witness,
+			VerifiedCommit: "headsha",
+		}),
+	}
+	want := model.Note{
+		ID:             "aaa",
+		Title:          "T",
+		Tags:           []string{},
+		Anchors:        []model.Anchor{{Kind: model.AnchorPath, Value: "x.go"}},
+		Author:         "alice",
+		CreatedAt:      100,
+		UpdatedAt:      200,
+		VerifiedAt:     200,
+		VerifiedBy:     "bob",
+		VerifiedCommit: "headsha",
+		Witness:        witness,
+		SupersededBy:   []model.EntityID{},
+		Head:           "bbb",
+	}
+	got, err := fold.Note(chain)
+	if err != nil {
+		t.Fatalf("Note() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Note() = %+v, want %+v", got, want)
+	}
+	// The verify is a second commit: the root sha (== EntityID) is untouched.
+	if got.ID != "aaa" {
+		t.Fatalf("EntityID = %q, want %q (verify must not change the root)", got.ID, "aaa")
+	}
+}
+
+func TestFoldVerifyLWW(t *testing.T) {
+	bWitness := []model.AnchorWitness{{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "x.go"}, OID: "bbbb"}}
+	cWitness := []model.AnchorWitness{{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "x.go"}, OID: "cccc"}}
+	cases := []struct {
+		name           string
+		bTime, cTime   int64
+		wantOID        model.SHA
+		wantCommit     model.SHA
+		wantVerifiedAt int64
+		wantBy         model.Actor
+	}{
+		{name: "later verify wins", bTime: 200, cTime: 250, wantOID: "cccc", wantCommit: "c-head", wantVerifiedAt: 250, wantBy: "carol"},
+		{name: "earlier verify loses", bTime: 250, cTime: 200, wantOID: "bbbb", wantCommit: "b-head", wantVerifiedAt: 250, wantBy: "bob"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diamond := []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateNote{Nonce: "n", Title: "t", Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "x.go"}}}),
+				mk("bbb", []string{"aaa"}, "bob", tc.bTime, 2, model.VerifyNote{Witness: bWitness, VerifiedCommit: "b-head"}),
+				mk("ccc", []string{"aaa"}, "carol", tc.cTime, 2, model.VerifyNote{Witness: cWitness, VerifiedCommit: "c-head"}),
+				mk("ddd", []string{"bbb", "ccc"}, "dave", 300, 3),
+			}
+			for i, input := range permutations(diamond) {
+				got, err := fold.Note(input)
+				if err != nil {
+					t.Fatalf("permutation %d: Note() error = %v", i, err)
+				}
+				if len(got.Witness) != 1 || got.Witness[0].OID != tc.wantOID {
+					t.Fatalf("permutation %d: Witness = %+v, want OID %q", i, got.Witness, tc.wantOID)
+				}
+				if got.VerifiedCommit != tc.wantCommit {
+					t.Fatalf("permutation %d: VerifiedCommit = %q, want %q", i, got.VerifiedCommit, tc.wantCommit)
+				}
+				if got.VerifiedAt != tc.wantVerifiedAt {
+					t.Fatalf("permutation %d: VerifiedAt = %d, want %d", i, got.VerifiedAt, tc.wantVerifiedAt)
+				}
+				if got.VerifiedBy != tc.wantBy {
+					t.Fatalf("permutation %d: VerifiedBy = %q, want %q", i, got.VerifiedBy, tc.wantBy)
+				}
+			}
+		})
+	}
+}
+
+func TestFoldSupersededConverges(t *testing.T) {
+	cases := []struct {
+		name         string
+		bTime, cTime int64
+		bOp, cOp     model.Op
+		want         []model.EntityID
+	}{
+		{
+			name:  "add after remove keeps edge",
+			bTime: 200, cTime: 250,
+			bOp: model.RemoveSupersededBy{ID: "newid"}, cOp: model.AddSupersededBy{ID: "newid"},
+			want: []model.EntityID{"newid"},
+		},
+		{
+			name:  "remove after add drops edge",
+			bTime: 250, cTime: 200,
+			bOp: model.RemoveSupersededBy{ID: "newid"}, cOp: model.AddSupersededBy{ID: "newid"},
+			want: []model.EntityID{},
+		},
+		{
+			name:  "concurrent adds dedupe and sort",
+			bTime: 200, cTime: 250,
+			bOp: model.AddSupersededBy{ID: "zzz"}, cOp: model.AddSupersededBy{ID: "aaa2"},
+			want: []model.EntityID{"aaa2", "zzz"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diamond := []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateNote{Nonce: "n", Title: "t"}),
+				mk("bbb", []string{"aaa"}, "bob", tc.bTime, 2, tc.bOp),
+				mk("ccc", []string{"aaa"}, "carol", tc.cTime, 2, tc.cOp),
+				mk("ddd", []string{"bbb", "ccc"}, "dave", 300, 3),
+			}
+			for i, input := range permutations(diamond) {
+				got, err := fold.Note(input)
+				if err != nil {
+					t.Fatalf("permutation %d: Note() error = %v", i, err)
+				}
+				if !reflect.DeepEqual(got.SupersededBy, tc.want) {
+					t.Fatalf("permutation %d: SupersededBy = %v, want %v", i, got.SupersededBy, tc.want)
+				}
+			}
+		})
 	}
 }
 
@@ -600,6 +737,24 @@ func TestFoldErrors(t *testing.T) {
 			commits: []model.PackCommit{
 				taskRoot,
 				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddTag{Tag: "x"}),
+			},
+			via:  taskErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "verify_note on a task chain",
+			commits: []model.PackCommit{
+				taskRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.VerifyNote{VerifiedCommit: "deadbeef"}),
+			},
+			via:  taskErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "add_superseded_by on a task chain",
+			commits: []model.PackCommit{
+				taskRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddSupersededBy{ID: "feedface"}),
 			},
 			via:  taskErr,
 			want: fold.ErrKindMismatch,

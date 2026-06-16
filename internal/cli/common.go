@@ -292,10 +292,11 @@ func hasAll(have, want []string) bool {
 	return true
 }
 
-// printNote writes n as its JSON DTO or its lean line.
+// printNote writes n as its JSON DTO or its lean line. A mutation echo carries
+// no drift verdict.
 func printNote(cmd *cobra.Command, n model.Note, jsonOut bool) error {
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newNoteDTO(n))
+		return printJSON(cmd.OutOrStdout(), newNoteDTO(n, ""))
 	}
 	_, err := fmt.Fprintln(cmd.OutOrStdout(), leanNoteLine(n))
 	return err

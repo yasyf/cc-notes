@@ -42,8 +42,10 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 }
 
 // ListNotes folds every note in the repository, ordered by creation time
-// then id. Tombstoned notes are skipped unless includeDeleted is set.
-func (s *Store) ListNotes(ctx context.Context, includeDeleted bool) ([]model.Note, error) {
+// then id. Tombstoned notes are skipped unless includeDeleted is set, and
+// superseded notes (those with any SupersededBy edge) are skipped unless
+// includeSuperseded is set.
+func (s *Store) ListNotes(ctx context.Context, includeDeleted, includeSuperseded bool) ([]model.Note, error) {
 	entries, err := s.children(ctx, refs.NotesPrefix)
 	if err != nil {
 		return nil, err
@@ -54,9 +56,13 @@ func (s *Store) ListNotes(ctx context.Context, includeDeleted bool) ([]model.Not
 	}
 	notes := make([]model.Note, 0, len(all))
 	for _, n := range all {
-		if includeDeleted || !n.Deleted {
-			notes = append(notes, n)
+		if !includeDeleted && n.Deleted {
+			continue
 		}
+		if !includeSuperseded && len(n.SupersededBy) > 0 {
+			continue
+		}
+		notes = append(notes, n)
 	}
 	slices.SortFunc(notes, func(a, b model.Note) int {
 		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {

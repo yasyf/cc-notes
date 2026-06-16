@@ -139,7 +139,7 @@ func TestCreateNoteRoundTrip(t *testing.T) {
 		t.Errorf("commit message = %q, want %q", msg, "cc-notes: note create")
 	}
 
-	list, err := s.ListNotes(t.Context(), false)
+	list, err := s.ListNotes(t.Context(), false, false)
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestListNotesDeleted(t *testing.T) {
 		t.Fatal("snapshot after delete_note is not Deleted")
 	}
 
-	live, err := s.ListNotes(t.Context(), false)
+	live, err := s.ListNotes(t.Context(), false, false)
 	if err != nil {
 		t.Fatalf("ListNotes(false): %v", err)
 	}
@@ -398,7 +398,7 @@ func TestListNotesDeleted(t *testing.T) {
 		t.Errorf("ListNotes(false) = %+v, want %+v", live, want)
 	}
 
-	all, err := s.ListNotes(t.Context(), true)
+	all, err := s.ListNotes(t.Context(), true, false)
 	if err != nil {
 		t.Fatalf("ListNotes(true): %v", err)
 	}
@@ -406,6 +406,67 @@ func TestListNotesDeleted(t *testing.T) {
 	slices.SortFunc(want, chronoNotes)
 	if !reflect.DeepEqual(all, want) {
 		t.Errorf("ListNotes(true) = %+v, want %+v", all, want)
+	}
+}
+
+func TestListNotesSuperseded(t *testing.T) {
+	s := initStore(t)
+	keep := create(t, s, noteOps("keep")).(model.Note)
+	old := create(t, s, noteOps("old")).(model.Note)
+
+	snapshot, err := s.Append(t.Context(), refs.Note(old.ID), []model.Op{model.AddSupersededBy{ID: keep.ID}})
+	if err != nil {
+		t.Fatalf("Append supersede: %v", err)
+	}
+	superseded := snapshot.(model.Note)
+	if want := []model.EntityID{keep.ID}; !slices.Equal(superseded.SupersededBy, want) {
+		t.Fatalf("SupersededBy = %v, want %v", superseded.SupersededBy, want)
+	}
+
+	live, err := s.ListNotes(t.Context(), false, false)
+	if err != nil {
+		t.Fatalf("ListNotes(false, false): %v", err)
+	}
+	if want := []model.Note{keep}; !reflect.DeepEqual(live, want) {
+		t.Errorf("ListNotes(false, false) = %+v, want only keep", live)
+	}
+
+	all, err := s.ListNotes(t.Context(), false, true)
+	if err != nil {
+		t.Fatalf("ListNotes(false, true): %v", err)
+	}
+	want := []model.Note{keep, superseded}
+	slices.SortFunc(want, chronoNotes)
+	if !reflect.DeepEqual(all, want) {
+		t.Errorf("ListNotes(false, true) = %+v, want both", all)
+	}
+}
+
+func TestVerifyNoteKeepsEntityID(t *testing.T) {
+	s := initStore(t)
+	note := create(t, s, noteOps("design")).(model.Note)
+	rootID := note.ID
+	if note.VerifiedAt != 0 {
+		t.Fatalf("fresh create VerifiedAt = %d, want 0", note.VerifiedAt)
+	}
+
+	witness := []model.AnchorWitness{{Anchor: model.Anchor{Kind: model.AnchorCommit, Value: "abc1234"}, OID: "abc1234"}}
+	snapshot, err := s.Append(t.Context(), refs.Note(rootID), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: "deadbeef"}})
+	if err != nil {
+		t.Fatalf("Append verify: %v", err)
+	}
+	verified := snapshot.(model.Note)
+	if verified.ID != rootID {
+		t.Errorf("verify changed id: %s, want root %s", verified.ID, rootID)
+	}
+	if verified.VerifiedAt == 0 || verified.VerifiedBy != testActor || verified.VerifiedCommit != "deadbeef" {
+		t.Errorf("verify fields = %d/%q/%q, want set/%q/deadbeef", verified.VerifiedAt, verified.VerifiedBy, verified.VerifiedCommit, testActor)
+	}
+	if !reflect.DeepEqual(verified.Witness, witness) {
+		t.Errorf("Witness = %+v, want %+v", verified.Witness, witness)
+	}
+	if verified.Head == model.SHA(rootID) {
+		t.Errorf("Head = %s, want the second commit, not the root", verified.Head)
 	}
 }
 

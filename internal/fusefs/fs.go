@@ -890,7 +890,7 @@ func (f *FS) listDir(p string) ([]string, int) {
 	case Root:
 		names["notes"], names["tasks"] = true, true
 	case NotesDir:
-		notes, err := f.store.ListNotes(f.ctx, false)
+		notes, err := f.store.ListNotes(f.ctx, false, false)
 		if err != nil {
 			return nil, errno(err)
 		}

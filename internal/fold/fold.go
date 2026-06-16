@@ -75,6 +75,8 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 	}
 	tags := map[string]bool{}
 	anchors := map[model.Anchor]bool{}
+	superseded := map[model.EntityID]bool{}
+	var witness []model.AnchorWitness
 	created := false
 	for _, c := range ordered {
 		for _, op := range c.Pack.Ops {
@@ -113,6 +115,15 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 				delete(anchors, o.Anchor)
 			case model.DeleteNote:
 				note.Deleted = true
+			case model.VerifyNote:
+				note.VerifiedAt = c.AuthorTime
+				note.VerifiedBy = c.Author
+				note.VerifiedCommit = o.VerifiedCommit
+				witness = o.Witness
+			case model.AddSupersededBy:
+				superseded[o.ID] = true
+			case model.RemoveSupersededBy:
+				delete(superseded, o.ID)
 			default:
 				return model.Note{}, fmt.Errorf("%w: %s on a note", ErrKindMismatch, op.OpKind())
 			}
@@ -126,6 +137,8 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 	}
 	note.Tags = sortedKeys(tags)
 	note.Anchors = sortedAnchors(anchors)
+	note.SupersededBy = sortedKeys(superseded)
+	note.Witness = witness
 	return note, nil
 }
 

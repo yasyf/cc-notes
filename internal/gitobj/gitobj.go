@@ -28,6 +28,9 @@ var (
 	// ErrCorruptCommit reports a chain commit whose tree has no ops.json
 	// entry: it was not written by cc-notes.
 	ErrCorruptCommit = errors.New("corrupt commit")
+	// ErrCommitNotFound reports a commit whose object is absent from the
+	// repository — distinct from a malformed sha, which is a caller error.
+	ErrCommitNotFound = errors.New("commit not found")
 )
 
 // Signature identifies the author and committer of an ops commit. When is

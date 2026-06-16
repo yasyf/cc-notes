@@ -89,6 +89,44 @@ type DeleteNote struct{}
 // OpKind returns "delete_note".
 func (DeleteNote) OpKind() string { return "delete_note" }
 
+// VerifyNote records that a note was reconfirmed true: the per-anchor content
+// witness and the HEAD commit it was checked against. Who and when come from
+// the carrying commit's identity, so this op stays a separate appended commit
+// and never folds into create_note (which would change the entity id).
+type VerifyNote struct {
+	Witness        []AnchorWitness `json:"witness"`
+	VerifiedCommit SHA             `json:"verified_commit"`
+}
+
+// OpKind returns "verify_note".
+func (VerifyNote) OpKind() string { return "verify_note" }
+
+func (o VerifyNote) validate() error {
+	for _, w := range o.Witness {
+		if err := w.Anchor.Kind.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AddSupersededBy records that the note is replaced by the note with the given
+// id; a note with any supersede edge is a soft tombstone.
+type AddSupersededBy struct {
+	ID EntityID `json:"id"`
+}
+
+// OpKind returns "add_superseded_by".
+func (AddSupersededBy) OpKind() string { return "add_superseded_by" }
+
+// RemoveSupersededBy removes a supersede edge.
+type RemoveSupersededBy struct {
+	ID EntityID `json:"id"`
+}
+
+// OpKind returns "remove_superseded_by".
+func (RemoveSupersededBy) OpKind() string { return "remove_superseded_by" }
+
 // CreateTask is the root operation of a task chain. The nonce makes
 // otherwise-identical creates hash to distinct entity ids; an empty Parent
 // means no parent.

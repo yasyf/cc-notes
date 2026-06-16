@@ -128,6 +128,21 @@ func marshalOp(op Op) ([]byte, error) {
 			Kind string `json:"kind"`
 			DeleteNote
 		}{o.OpKind(), o})
+	case VerifyNote:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			VerifyNote
+		}{o.OpKind(), o})
+	case AddSupersededBy:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			AddSupersededBy
+		}{o.OpKind(), o})
+	case RemoveSupersededBy:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			RemoveSupersededBy
+		}{o.OpKind(), o})
 	case CreateTask:
 		return json.Marshal(struct {
 			Kind string `json:"kind"`
@@ -219,28 +234,31 @@ func decodeOp(raw json.RawMessage) (Op, error) {
 // opDecoders maps each wire kind to its decoder; the round-trip test asserts
 // it covers every op struct.
 var opDecoders = map[string]func(json.RawMessage) (Op, error){
-	CreateNote{}.OpKind():     decodeAs[CreateNote],
-	SetTitle{}.OpKind():       decodeAs[SetTitle],
-	SetBody{}.OpKind():        decodeAs[SetBody],
-	AddTag{}.OpKind():         decodeAs[AddTag],
-	RemoveTag{}.OpKind():      decodeAs[RemoveTag],
-	AddAnchor{}.OpKind():      decodeAs[AddAnchor],
-	RemoveAnchor{}.OpKind():   decodeAs[RemoveAnchor],
-	DeleteNote{}.OpKind():     decodeAs[DeleteNote],
-	CreateTask{}.OpKind():     decodeAs[CreateTask],
-	SetDescription{}.OpKind(): decodeAs[SetDescription],
-	SetType{}.OpKind():        decodeAs[SetType],
-	SetPriority{}.OpKind():    decodeAs[SetPriority],
-	SetStatus{}.OpKind():      decodeAs[SetStatus],
-	SetAssignee{}.OpKind():    decodeAs[SetAssignee],
-	Claim{}.OpKind():          decodeAs[Claim],
-	AddLabel{}.OpKind():       decodeAs[AddLabel],
-	RemoveLabel{}.OpKind():    decodeAs[RemoveLabel],
-	AddDep{}.OpKind():         decodeAs[AddDep],
-	RemoveDep{}.OpKind():      decodeAs[RemoveDep],
-	SetParent{}.OpKind():      decodeAs[SetParent],
-	AddComment{}.OpKind():     decodeAs[AddComment],
-	SetBranch{}.OpKind():      decodeAs[SetBranch],
+	CreateNote{}.OpKind():         decodeAs[CreateNote],
+	SetTitle{}.OpKind():           decodeAs[SetTitle],
+	SetBody{}.OpKind():            decodeAs[SetBody],
+	AddTag{}.OpKind():             decodeAs[AddTag],
+	RemoveTag{}.OpKind():          decodeAs[RemoveTag],
+	AddAnchor{}.OpKind():          decodeAs[AddAnchor],
+	RemoveAnchor{}.OpKind():       decodeAs[RemoveAnchor],
+	DeleteNote{}.OpKind():         decodeAs[DeleteNote],
+	VerifyNote{}.OpKind():         decodeAs[VerifyNote],
+	AddSupersededBy{}.OpKind():    decodeAs[AddSupersededBy],
+	RemoveSupersededBy{}.OpKind(): decodeAs[RemoveSupersededBy],
+	CreateTask{}.OpKind():         decodeAs[CreateTask],
+	SetDescription{}.OpKind():     decodeAs[SetDescription],
+	SetType{}.OpKind():            decodeAs[SetType],
+	SetPriority{}.OpKind():        decodeAs[SetPriority],
+	SetStatus{}.OpKind():          decodeAs[SetStatus],
+	SetAssignee{}.OpKind():        decodeAs[SetAssignee],
+	Claim{}.OpKind():              decodeAs[Claim],
+	AddLabel{}.OpKind():           decodeAs[AddLabel],
+	RemoveLabel{}.OpKind():        decodeAs[RemoveLabel],
+	AddDep{}.OpKind():             decodeAs[AddDep],
+	RemoveDep{}.OpKind():          decodeAs[RemoveDep],
+	SetParent{}.OpKind():          decodeAs[SetParent],
+	AddComment{}.OpKind():         decodeAs[AddComment],
+	SetBranch{}.OpKind():          decodeAs[SetBranch],
 }
 
 func decodeAs[T Op](raw json.RawMessage) (Op, error) {

@@ -414,7 +414,7 @@ func TestAtomicSaveCreatesNote(t *testing.T) {
 		t.Fatalf("Rename = %d", errc)
 	}
 
-	notes, err := s.ListNotes(t.Context(), false)
+	notes, err := s.ListNotes(t.Context(), false, false)
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}

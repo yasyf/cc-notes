@@ -508,7 +508,7 @@ history is preserved. `--remove` undoes the edge.
 
 ```console
 $ cc-notes note supersede ebba9fb --by 7a3f10c
-7a3f10c	2026-06-16	design	Auth tokens expire after 30 minutes
+ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
 ```
 
 ### `cc-notes note review`
@@ -565,7 +565,7 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes
 ### `cc-notes note show ID`
 
 Show one note: a fixed-order header block (id, title, tags, anchors, author, created,
-updated, verified_at/by, superseded_by, drift verdict) then the body after a blank line.
+updated, verified_at/by, superseded_by, supersedes, drift verdict) then the body after a blank line.
 
 | Flag | Default | Meaning |
 |------|---------|---------|

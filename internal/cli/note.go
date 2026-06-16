@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/internal/refs"
 )
 
 func newNoteCmd() *cobra.Command {
@@ -26,6 +28,9 @@ func newNoteCmd() *cobra.Command {
 		newNoteEditCmd(),
 		newNoteRmCmd(),
 		newNoteSearchCmd(),
+		newNoteVerifyCmd(),
+		newNoteSupersedeCmd(),
+		newNoteReviewCmd(),
 	)
 	return cmd
 }
@@ -62,7 +67,20 @@ func newNoteAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printNote(cmd, snapshot.(model.Note), jsonOut)
+			note := snapshot.(model.Note)
+			head, err := resolveHead(ctx, s)
+			if err != nil {
+				return err
+			}
+			witness, err := buildWitness(ctx, s, head, note.Anchors)
+			if err != nil {
+				return err
+			}
+			verified, err := s.Append(ctx, refs.Note(note.ID), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}})
+			if err != nil {
+				return err
+			}
+			return printNote(cmd, verified.(model.Note), jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -78,7 +96,7 @@ func newNoteAddCmd() *cobra.Command {
 func newNoteListCmd() *cobra.Command {
 	var tags []string
 	var path, commit, branch string
-	var all, jsonOut bool
+	var all, includeSuperseded, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List notes",
@@ -88,7 +106,7 @@ func newNoteListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			notes, err := s.ListNotes(cmd.Context(), all)
+			notes, err := s.ListNotes(cmd.Context(), all, includeSuperseded)
 			if err != nil {
 				return err
 			}
@@ -107,7 +125,8 @@ func newNoteListCmd() *cobra.Command {
 	flags.StringVar(&path, "path", "", "require path anchor")
 	flags.StringVar(&commit, "commit", "", "require commit anchor")
 	flags.StringVar(&branch, "branch", "", "require branch anchor")
-	flags.BoolVar(&all, "all", false, "include deleted notes")
+	flags.BoolVar(&all, "all", false, "include tombstoned notes")
+	flags.BoolVar(&includeSuperseded, "include-superseded", false, "include superseded notes")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
@@ -119,18 +138,35 @@ func newNoteShowCmd() *cobra.Command {
 		Short: "Show one note",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
-			_, note, err := loadNote(cmd.Context(), s, args[0])
+			_, note, err := loadNote(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			head, err := resolveHead(ctx, s)
+			if err != nil {
+				return err
+			}
+			staleAfter, err := noteStaleAfter(ctx, s.Git)
+			if err != nil {
+				return err
+			}
+			verdict, err := noteVerdict(ctx, s, head, note, time.Now(), staleAfter)
+			if err != nil {
+				return err
+			}
+			supersedes, err := reverseSupersedes(ctx, s, note.ID)
 			if err != nil {
 				return err
 			}
 			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), newNoteDTO(note))
+				return printJSON(cmd.OutOrStdout(), newNoteDTO(note, verdict))
 			}
-			_, err = fmt.Fprint(cmd.OutOrStdout(), renderNoteShow(note))
+			_, err = fmt.Fprint(cmd.OutOrStdout(), renderNoteShow(note, verdict, supersedes))
 			return err
 		},
 	}
@@ -251,7 +287,7 @@ func newNoteSearchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			notes, err := s.ListNotes(cmd.Context(), false)
+			notes, err := s.ListNotes(cmd.Context(), false, false)
 			if err != nil {
 				return err
 			}
@@ -268,6 +304,160 @@ func newNoteSearchCmd() *cobra.Command {
 	flags.StringVar(&anchorCommit, "anchor-commit", "", "require commit anchor")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
+}
+
+func newNoteVerifyCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "verify ID",
+		Short: "Re-verify a note, refreshing its witness against current HEAD",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			ref, note, err := loadNote(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			head, err := resolveHead(ctx, s)
+			if err != nil {
+				return err
+			}
+			witness, err := buildWitness(ctx, s, head, note.Anchors)
+			if err != nil {
+				return err
+			}
+			snapshot, err := s.Append(ctx, ref, []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}})
+			if err != nil {
+				return err
+			}
+			return printNote(cmd, snapshot.(model.Note), jsonOut)
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newNoteSupersedeCmd() *cobra.Command {
+	var by string
+	var remove, jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "supersede OLD --by NEW",
+		Short: "Record that NEW replaces OLD (--remove undoes the edge)",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if by == "" {
+				return &UsageError{Err: errors.New("note supersede requires --by NEW")}
+			}
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			oldRef, _, err := loadNote(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			_, newNote, err := loadNote(ctx, s, by)
+			if err != nil {
+				return err
+			}
+			var op model.Op = model.AddSupersededBy{ID: newNote.ID}
+			if remove {
+				op = model.RemoveSupersededBy{ID: newNote.ID}
+			}
+			snapshot, err := s.Append(ctx, oldRef, []model.Op{op})
+			if err != nil {
+				return err
+			}
+			return printNote(cmd, snapshot.(model.Note), jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	flags.StringVar(&by, "by", "", "the replacement note (required)")
+	flags.BoolVar(&remove, "remove", false, "remove the supersede edge")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newNoteReviewCmd() *cobra.Command {
+	var staleAfterFlag string
+	var drift, unverified, jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "review",
+		Short: "Surface notes needing attention, each with a verdict",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			now := time.Now()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			staleAfter, err := resolveNoteStaleAfter(ctx, s.Git, staleAfterFlag)
+			if err != nil {
+				return err
+			}
+			head, err := resolveHead(ctx, s)
+			if err != nil {
+				return err
+			}
+			reviewed, err := reviewNotes(ctx, s, head, now, staleAfter)
+			if err != nil {
+				return err
+			}
+			return printNoteReview(cmd, filterVerdicts(reviewed, drift, unverified), jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	flags.StringVar(&staleAfterFlag, "stale-after", "", "staleness threshold (Go duration)")
+	flags.BoolVar(&drift, "drift", false, "limit to drifted notes")
+	flags.BoolVar(&unverified, "unverified", false, "limit to never-verified notes")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+// filterVerdicts restricts reviewed to a single verdict class when --drift or
+// --unverified is set; with neither, every flagged note passes.
+func filterVerdicts(reviewed []reviewedNote, drift, unverified bool) []reviewedNote {
+	var want string
+	switch {
+	case drift:
+		want = verdictDrifted
+	case unverified:
+		want = verdictUnverified
+	default:
+		return reviewed
+	}
+	return slices.DeleteFunc(reviewed, func(r reviewedNote) bool { return r.verdict != want })
+}
+
+// printNoteReview writes the review set as note DTOs carrying their verdict in
+// drift, or as lean lines with the verdict appended after a tab.
+func printNoteReview(cmd *cobra.Command, reviewed []reviewedNote, jsonOut bool) error {
+	out := cmd.OutOrStdout()
+	if jsonOut {
+		dtos := make([]noteDTO, len(reviewed))
+		for i, r := range reviewed {
+			dtos[i] = newNoteDTO(r.note, r.verdict)
+		}
+		return printJSON(out, dtos)
+	}
+	for _, r := range reviewed {
+		if _, err := fmt.Fprintf(out, "%s\t%s\n", leanNoteLine(r.note), r.verdict); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // rankNotes filters notes by tag, author, and anchors, keeps those matching
@@ -336,7 +526,7 @@ func printNoteList(cmd *cobra.Command, notes []model.Note, jsonOut bool) error {
 	if jsonOut {
 		dtos := make([]noteDTO, len(notes))
 		for i, n := range notes {
-			dtos[i] = newNoteDTO(n)
+			dtos[i] = newNoteDTO(n, "")
 		}
 		return printJSON(out, dtos)
 	}

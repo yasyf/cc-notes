@@ -29,6 +29,8 @@ var (
 	ErrNonFastForward = errors.New("non-fast-forward")
 	// ErrDetachedHead reports that HEAD is not a symbolic ref.
 	ErrDetachedHead = errors.New("detached HEAD")
+	// ErrPathNotFound reports a path absent at the requested rev.
+	ErrPathNotFound = errors.New("path not found at rev")
 )
 
 // casPatterns match git's ref-transaction failures across the files and
@@ -127,6 +129,22 @@ func (g Git) UpdateRef(ctx context.Context, ref string, new, old model.SHA) erro
 		return fmt.Errorf("update ref %s: %w", ref, err)
 	}
 	return nil
+}
+
+// PathOID returns the git object id of path's content at rev
+// (git rev-parse rev:path), for witnesses and drift detection. A path absent
+// at rev wraps ErrPathNotFound, which the reader treats as drift.
+func (g Git) PathOID(ctx context.Context, rev, path string) (string, error) {
+	out, err := g.run(ctx, "", "rev-parse", "--verify", "--quiet", rev+":"+path)
+	if err != nil {
+		var cmdErr *commandError
+		if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 {
+			// --quiet exits 1 with empty stdout when the object does not exist.
+			return "", fmt.Errorf("path %s at %s: %w", path, rev, ErrPathNotFound)
+		}
+		return "", fmt.Errorf("path oid %s:%s: %w", rev, path, err)
+	}
+	return strings.TrimSpace(out), nil
 }
 
 // CheckRefFormat validates branch as a branch name via

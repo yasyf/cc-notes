@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -30,13 +31,18 @@ type noteJSON struct {
 	Body    string   `json:"body"`
 	Tags    []string `json:"tags"`
 	Anchors []struct {
-		Kind  string `json:"kind"`
-		Value string `json:"value"`
+		Kind    string  `json:"kind"`
+		Value   string  `json:"value"`
+		Witness *string `json:"witness"`
 	} `json:"anchors"`
-	Author    string `json:"author"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	Deleted   bool   `json:"deleted"`
+	Author       string  `json:"author"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+	VerifiedAt   *string `json:"verified_at"`
+	VerifiedBy   *string `json:"verified_by"`
+	SupersededBy *string `json:"superseded_by"`
+	Drift        *string `json:"drift"`
+	Deleted      bool    `json:"deleted"`
 }
 
 // taskJSON mirrors the task output DTO for round-trip assertions.
@@ -110,6 +116,22 @@ func initRepo(t *testing.T) string {
 	mustGit(t, dir, "config", "user.email", "test@example.com")
 	t.Setenv("CC_NOTES_ACTOR", actorA)
 	return dir
+}
+
+// commitFile writes path under dir with content, commits it, and returns the
+// new HEAD sha. It gives note tests real anchored content to witness and drift.
+func commitFile(t *testing.T, dir, path, content string) string {
+	t.Helper()
+	full := filepath.Join(dir, path)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	mustGit(t, dir, "add", path)
+	mustGit(t, dir, "commit", "-q", "-m", "commit "+path)
+	return mustGit(t, dir, "rev-parse", "HEAD")
 }
 
 func runCLI(t *testing.T, dir string, args ...string) (string, string, error) {
@@ -206,17 +228,42 @@ func TestNoteJSONRoundTrip(t *testing.T) {
 	if strings.Join(gotAnchors, " ") != strings.Join(wantAnchors, " ") {
 		t.Errorf("anchors = %v, want %v", gotAnchors, wantAnchors)
 	}
+	for _, a := range shown.Anchors {
+		switch a.Kind {
+		case "commit":
+			if a.Witness == nil || *a.Witness != a.Value {
+				t.Errorf("commit anchor witness = %v, want its own oid %q", a.Witness, a.Value)
+			}
+		default:
+			if a.Witness != nil {
+				t.Errorf("%s anchor witness = %v, want null in an unborn repo", a.Kind, *a.Witness)
+			}
+		}
+	}
 	if shown.Author != actorA {
 		t.Errorf("author = %q, want %q", shown.Author, actorA)
 	}
 	if _, err := time.Parse(time.RFC3339, shown.CreatedAt); err != nil {
 		t.Errorf("created_at %q: %v", shown.CreatedAt, err)
 	}
-	if shown.UpdatedAt != shown.CreatedAt {
-		t.Errorf("updated_at = %q, want created_at %q", shown.UpdatedAt, shown.CreatedAt)
+	if shown.VerifiedAt == nil || *shown.VerifiedAt == "" {
+		t.Error("verified_at = null, want a born-verified timestamp")
+	}
+	if shown.VerifiedBy == nil || *shown.VerifiedBy != actorA {
+		t.Errorf("verified_by = %v, want %q", shown.VerifiedBy, actorA)
+	}
+	if shown.Drift != nil {
+		t.Errorf("drift = %v, want null on a fresh note", *shown.Drift)
+	}
+	if shown.SupersededBy != nil {
+		t.Errorf("superseded_by = %v, want null", *shown.SupersededBy)
 	}
 	if shown.Deleted {
 		t.Error("deleted = true, want false")
+	}
+	ref := "refs/cc-notes/notes/" + added.ID
+	if got := mustGit(t, dir, "rev-list", "--count", ref); got != "2" {
+		t.Errorf("note chain has %s commits, want 2 (create + born-verified)", got)
 	}
 }
 
@@ -513,5 +560,194 @@ func TestUsageErrors(t *testing.T) {
 	}
 	if _, _, err := runCLI(t, dir, "task", "edit", "x", "--assignee", "a", "--unassign"); cli.ExitCode(err) != 2 {
 		t.Errorf("conflicting edit flags err = %v, want exit 2", err)
+	}
+}
+
+func TestNoteVerify(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "f.go", "v1\n")
+	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Note", "--path", "f.go", "--json"))
+	ref := "refs/cc-notes/notes/" + added.ID
+	if got := mustGit(t, dir, "rev-list", "--count", ref); got != "2" {
+		t.Fatalf("after add: %s commits, want 2 (create + born-verified)", got)
+	}
+	verified := mustJSON[noteJSON](t, mustRun(t, dir, "note", "verify", added.ID, "--json"))
+	if verified.ID != added.ID {
+		t.Fatalf("verify id = %q, want %q (stable)", verified.ID, added.ID)
+	}
+	if verified.VerifiedAt == nil || verified.VerifiedBy == nil || *verified.VerifiedBy != actorA {
+		t.Fatalf("verify fields = %v/%v, want set and %q", verified.VerifiedAt, verified.VerifiedBy, actorA)
+	}
+	if got := mustGit(t, dir, "rev-list", "--count", ref); got != "3" {
+		t.Fatalf("after verify: %s commits, want 3", got)
+	}
+}
+
+func TestNoteReviewDrift(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "auth.go", "v1\n")
+	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Auth note", "--path", "auth.go", "--tag", "design", "--json"))
+	if out := mustRun(t, dir, "note", "review"); out != "" {
+		t.Fatalf("review of a fresh note = %q, want empty", out)
+	}
+
+	commitFile(t, dir, "auth.go", "v2\n")
+	review := mustRun(t, dir, "note", "review")
+	if !strings.HasPrefix(review, added.ID[:7]+"\t") || !strings.HasSuffix(review, "\tDRIFTED\n") {
+		t.Fatalf("review = %q, want %s...DRIFTED", review, added.ID[:7])
+	}
+	if out := mustRun(t, dir, "note", "review", "--drift"); !strings.HasSuffix(out, "\tDRIFTED\n") {
+		t.Fatalf("review --drift = %q, want the drifted note", out)
+	}
+	if out := mustRun(t, dir, "note", "review", "--unverified"); out != "" {
+		t.Fatalf("review --unverified = %q, want empty", out)
+	}
+	dj := mustJSON[[]noteJSON](t, mustRun(t, dir, "note", "review", "--json"))
+	if len(dj) != 1 || dj[0].Drift == nil || *dj[0].Drift != "DRIFTED" {
+		t.Fatalf("review --json = %+v, want one DRIFTED note", dj)
+	}
+
+	mustRun(t, dir, "note", "verify", added.ID)
+	if out := mustRun(t, dir, "note", "review"); out != "" {
+		t.Fatalf("review after verify = %q, want empty", out)
+	}
+}
+
+func TestNoteReviewStale(t *testing.T) {
+	dir := initRepo(t)
+	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Old note", "--json"))
+
+	t.Setenv("CC_NOTES_NOTE_STALE_AFTER", "1ns")
+	review := mustRun(t, dir, "note", "review")
+	if !strings.HasPrefix(review, added.ID[:7]+"\t") || !strings.HasSuffix(review, "\tSTALE\n") {
+		t.Fatalf("review = %q, want STALE", review)
+	}
+	if out := mustRun(t, dir, "note", "review", "--stale-after", "8760h"); out != "" {
+		t.Fatalf("review --stale-after 8760h = %q, want empty", out)
+	}
+}
+
+func TestNoteCommitAnchorDrift(t *testing.T) {
+	dir := initRepo(t)
+	base := commitFile(t, dir, "main.go", "base\n")
+	mustGit(t, dir, "checkout", "-q", "-b", "side")
+	side := commitFile(t, dir, "side.go", "side\n")
+	mustGit(t, dir, "checkout", "-q", "main")
+
+	drifted := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Side note", "--commit", side, "--json"))
+	mustRun(t, dir, "note", "add", "Base note", "--commit", base)
+
+	review := mustRun(t, dir, "note", "review")
+	if strings.Count(review, "\n") != 1 || !strings.HasPrefix(review, drifted.ID[:7]+"\t") || !strings.HasSuffix(review, "\tDRIFTED\n") {
+		t.Fatalf("review = %q, want only the non-ancestor commit anchor DRIFTED", review)
+	}
+}
+
+func TestNoteSupersede(t *testing.T) {
+	dir := initRepo(t)
+	old := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Old decision", "--tag", "design", "--json"))
+	neu := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "New decision", "--tag", "design", "--json"))
+
+	if _, _, err := runCLI(t, dir, "note", "supersede", old.ID); err == nil {
+		t.Fatal("supersede without --by, want UsageError")
+	} else {
+		var usage *cli.UsageError
+		if !errors.As(err, &usage) {
+			t.Fatalf("supersede without --by err = %v, want UsageError", err)
+		}
+	}
+
+	echo := mustRun(t, dir, "note", "supersede", old.ID, "--by", neu.ID)
+	if !strings.HasPrefix(echo, old.ID[:7]+"\t") {
+		t.Fatalf("supersede echo = %q, want the mutated OLD note line", echo)
+	}
+
+	if list := mustRun(t, dir, "note", "list"); strings.Contains(list, old.ID[:7]) || !strings.Contains(list, neu.ID[:7]) {
+		t.Fatalf("list = %q, want only NEW", list)
+	}
+	if out := mustRun(t, dir, "note", "search", "decision"); strings.Contains(out, old.ID[:7]) {
+		t.Fatalf("search = %q, want OLD dropped", out)
+	}
+	if out := mustRun(t, dir, "note", "list", "--include-superseded"); !strings.Contains(out, old.ID[:7]) {
+		t.Fatalf("list --include-superseded = %q, want OLD present", out)
+	}
+
+	shownOld := mustJSON[noteJSON](t, mustRun(t, dir, "note", "show", old.ID, "--json"))
+	if shownOld.SupersededBy == nil || *shownOld.SupersededBy != neu.ID {
+		t.Fatalf("OLD superseded_by = %v, want %s", shownOld.SupersededBy, neu.ID)
+	}
+	if out := mustRun(t, dir, "note", "show", neu.ID); !strings.Contains(out, "supersedes: "+old.ID[:7]) {
+		t.Fatalf("show NEW = %q, want a supersedes line for %s", out, old.ID[:7])
+	}
+
+	mustRun(t, dir, "note", "supersede", old.ID, "--by", neu.ID, "--remove")
+	if out := mustRun(t, dir, "note", "list"); !strings.Contains(out, old.ID[:7]) {
+		t.Fatalf("list after --remove = %q, want OLD restored", out)
+	}
+
+	mustRun(t, dir, "note", "supersede", old.ID, "--by", neu.ID)
+	mustRun(t, dir, "note", "rm", neu.ID)
+	review := mustRun(t, dir, "note", "review")
+	if !strings.Contains(review, old.ID[:7]) || !strings.HasSuffix(review, "\tDANGLING\n") {
+		t.Fatalf("review = %q, want OLD flagged DANGLING after NEW is tombstoned", review)
+	}
+}
+
+func TestNoteSupersedeChainNotDangling(t *testing.T) {
+	dir := initRepo(t)
+	a := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "A decision", "--tag", "design", "--json"))
+	b := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "B decision", "--tag", "design", "--json"))
+	c := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "C decision", "--tag", "design", "--json"))
+
+	mustRun(t, dir, "note", "supersede", a.ID, "--by", b.ID)
+	mustRun(t, dir, "note", "supersede", b.ID, "--by", c.ID)
+
+	review := mustRun(t, dir, "note", "review")
+	if strings.Contains(review, "DANGLING") {
+		t.Fatalf("review = %q, want no DANGLING for a live supersede chain A->B->C", review)
+	}
+	if strings.Contains(review, a.ID[:7]) || strings.Contains(review, b.ID[:7]) {
+		t.Fatalf("review = %q, want neither A nor B flagged while B and C are live", review)
+	}
+}
+
+func TestNoteJSONContract(t *testing.T) {
+	dir := initRepo(t)
+	base := commitFile(t, dir, "auth.go", "code\n")
+	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Auth note", "--body", "details",
+		"--tag", "design", "--path", "auth.go", "--commit", base, "--branch", "main", "--json"))
+
+	raw := mustRun(t, dir, "note", "show", added.ID, "--json")
+	if !strings.HasSuffix(raw, "\n") || strings.Count(raw, "\n") != 1 {
+		t.Fatalf("raw = %q, want one compact document with one trailing newline", raw)
+	}
+	if !strings.HasPrefix(raw, `{"id":"`) {
+		t.Fatalf("raw = %q, want id first", raw)
+	}
+	shown := mustJSON[noteJSON](t, raw)
+	remarshaled, err := json.Marshal(shown)
+	if err != nil {
+		t.Fatalf("remarshal: %v", err)
+	}
+	if string(remarshaled)+"\n" != raw {
+		t.Fatalf("note JSON shape drifted from the DTO contract:\n got  %q\n want %q", raw, string(remarshaled)+"\n")
+	}
+
+	for _, a := range shown.Anchors {
+		switch a.Kind {
+		case "path", "commit":
+			if a.Witness == nil {
+				t.Errorf("%s anchor witness = null, want a content oid", a.Kind)
+			}
+		case "branch":
+			if a.Witness != nil {
+				t.Errorf("branch anchor witness = %v, want null", *a.Witness)
+			}
+		}
+	}
+	for _, frag := range []string{`"verified_at":"`, `"verified_by":"`, `"superseded_by":null`, `"drift":null`} {
+		if !strings.Contains(raw, frag) {
+			t.Errorf("note JSON %q missing %q", raw, frag)
+		}
 	}
 }

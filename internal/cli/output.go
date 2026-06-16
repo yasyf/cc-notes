@@ -11,18 +11,32 @@ import (
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 )
 
+// anchorDTO is one note anchor with its content witness rendered as the git
+// object id at verify time, or null when the anchor carries no witness.
+type anchorDTO struct {
+	Kind    string  `json:"kind"`
+	Value   string  `json:"value"`
+	Witness *string `json:"witness"`
+}
+
 // noteDTO fixes the JSON field order and formats for note output: full hex
-// id, RFC3339 UTC timestamps, sorted set slices.
+// id, RFC3339 UTC timestamps, sorted set slices, per-anchor witnesses, the
+// verify metadata (null when never verified), the single replacement id (null
+// when not superseded), and the computed drift verdict (null when fresh).
 type noteDTO struct {
-	ID        string         `json:"id"`
-	Title     string         `json:"title"`
-	Body      string         `json:"body"`
-	Tags      []string       `json:"tags"`
-	Anchors   []model.Anchor `json:"anchors"`
-	Author    string         `json:"author"`
-	CreatedAt string         `json:"created_at"`
-	UpdatedAt string         `json:"updated_at"`
-	Deleted   bool           `json:"deleted"`
+	ID           string      `json:"id"`
+	Title        string      `json:"title"`
+	Body         string      `json:"body"`
+	Tags         []string    `json:"tags"`
+	Anchors      []anchorDTO `json:"anchors"`
+	Author       string      `json:"author"`
+	CreatedAt    string      `json:"created_at"`
+	UpdatedAt    string      `json:"updated_at"`
+	VerifiedAt   *string     `json:"verified_at"`
+	VerifiedBy   *string     `json:"verified_by"`
+	SupersededBy *string     `json:"superseded_by"`
+	Drift        *string     `json:"drift"`
+	Deleted      bool        `json:"deleted"`
 }
 
 // commentDTO is one task comment with its timestamp rendered RFC3339 UTC.
@@ -148,17 +162,36 @@ func newReconcileDTO(r ccsync.ReconcileReport) reconcileDTO {
 	}
 }
 
-func newNoteDTO(n model.Note) noteDTO {
+func newNoteDTO(n model.Note, drift string) noteDTO {
+	byAnchor := witnessIndex(n.Witness)
+	anchors := make([]anchorDTO, len(n.Anchors))
+	for i, a := range n.Anchors {
+		var witness *string
+		if w, ok := byAnchor[a]; ok {
+			oid := string(w.OID)
+			witness = &oid
+		}
+		anchors[i] = anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: witness}
+	}
+	var superseded *string
+	if len(n.SupersededBy) > 0 {
+		id := string(n.SupersededBy[0])
+		superseded = &id
+	}
 	return noteDTO{
-		ID:        string(n.ID),
-		Title:     n.Title,
-		Body:      n.Body,
-		Tags:      emptyNotNil(n.Tags),
-		Anchors:   emptyNotNilAnchors(n.Anchors),
-		Author:    string(n.Author),
-		CreatedAt: rfc3339(n.CreatedAt),
-		UpdatedAt: rfc3339(n.UpdatedAt),
-		Deleted:   n.Deleted,
+		ID:           string(n.ID),
+		Title:        n.Title,
+		Body:         n.Body,
+		Tags:         emptyNotNil(n.Tags),
+		Anchors:      anchors,
+		Author:       string(n.Author),
+		CreatedAt:    rfc3339(n.CreatedAt),
+		UpdatedAt:    rfc3339(n.UpdatedAt),
+		VerifiedAt:   optTime(n.VerifiedAt),
+		VerifiedBy:   optString(string(n.VerifiedBy)),
+		SupersededBy: superseded,
+		Drift:        optString(drift),
+		Deleted:      n.Deleted,
 	}
 }
 
@@ -201,9 +234,10 @@ func leanTaskLine(t model.Task) string {
 }
 
 // renderNoteShow renders the lean show view: the fixed-order header block,
-// then the body separated by a blank line. The deleted header appears only
-// on a tombstoned note.
-func renderNoteShow(n model.Note) string {
+// then the body separated by a blank line. The header carries the verify
+// metadata, the supersede edges in both directions, and the computed drift
+// verdict. The deleted header appears only on a tombstoned note.
+func renderNoteShow(n model.Note, drift string, supersedes []model.EntityID) string {
 	var b strings.Builder
 	header(&b, "id", string(n.ID))
 	header(&b, "title", n.Title)
@@ -214,6 +248,11 @@ func renderNoteShow(n model.Note) string {
 	header(&b, "author", string(n.Author))
 	header(&b, "created", rfc3339(n.CreatedAt))
 	header(&b, "updated", rfc3339(n.UpdatedAt))
+	header(&b, "verified_at", orDash(optTimeString(n.VerifiedAt)))
+	header(&b, "verified_by", orDash(string(n.VerifiedBy)))
+	header(&b, "superseded_by", csvOrDash(shortIDs(n.SupersededBy)))
+	header(&b, "supersedes", csvOrDash(shortIDs(supersedes)))
+	header(&b, "drift", orDash(drift))
 	if n.Deleted {
 		header(&b, "deleted", "true")
 	}
@@ -341,13 +380,6 @@ func emptyNotNil(items []string) []string {
 		return []string{}
 	}
 	return items
-}
-
-func emptyNotNilAnchors(anchors []model.Anchor) []model.Anchor {
-	if anchors == nil {
-		return []model.Anchor{}
-	}
-	return anchors
 }
 
 func anchorValues(anchors []model.Anchor, kind model.AnchorKind) []string {

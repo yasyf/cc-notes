@@ -464,3 +464,42 @@ func TestRoot(t *testing.T) {
 		t.Fatal("root outside a repo: want error")
 	}
 }
+
+func TestPathOID(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	path := "dir/file.txt"
+	if err := os.MkdirAll(filepath.Join(g.Dir, "dir"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("first\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, g.Dir, "add", path)
+	mustGit(t, g.Dir, "commit", "-q", "-m", "add file")
+
+	oid, err := g.PathOID(ctx, "HEAD", path)
+	if err != nil {
+		t.Fatalf("PathOID: %v", err)
+	}
+	if want := mustGit(t, g.Dir, "rev-parse", "HEAD:"+path); oid != want {
+		t.Fatalf("PathOID = %q, want %q", oid, want)
+	}
+
+	if _, err := g.PathOID(ctx, "HEAD", "missing.txt"); !errors.Is(err, gitcmd.ErrPathNotFound) {
+		t.Fatalf("PathOID on absent path = %v, want ErrPathNotFound", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("second\n"), 0o644); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	mustGit(t, g.Dir, "commit", "-q", "-am", "edit file")
+	edited, err := g.PathOID(ctx, "HEAD", path)
+	if err != nil {
+		t.Fatalf("PathOID after edit: %v", err)
+	}
+	if edited == oid {
+		t.Fatalf("PathOID after edit = %q, want a different oid than %q", edited, oid)
+	}
+}

@@ -137,6 +137,13 @@ type Anchor struct {
 	Value string     `json:"value"`
 }
 
+// AnchorWitness records the git oid of an anchor's content at verify time, so
+// the reader can detect drift without storing the verdict.
+type AnchorWitness struct {
+	Anchor Anchor `json:"anchor"`
+	OID    SHA    `json:"oid"`
+}
+
 // Comment is one append-only comment on a task. TS is unix seconds.
 type Comment struct {
 	Author Actor  `json:"author"`
@@ -147,17 +154,31 @@ type Comment struct {
 // Note is the folded snapshot of a note entity. Timestamps are unix seconds;
 // rendering to RFC3339 happens at output time. Tags is sorted; Head is the
 // chain tip the snapshot was folded from.
+//
+// VerifiedAt, VerifiedBy, VerifiedCommit, and Witness record the latest
+// verify_note: when and by whom the note was last reconfirmed true, the HEAD
+// commit it was checked against, and the per-anchor content witness. A
+// never-verified note has VerifiedAt==0. Witness comes back ordered to match
+// the anchors it was computed over (not re-sorted); SupersededBy comes back as
+// a sorted slice of the notes that replace this one. A note with any
+// SupersededBy edge is a soft tombstone. Drift and staleness verdicts are not
+// stored — the reader computes them from Witness and VerifiedAt at query time.
 type Note struct {
-	ID        EntityID `json:"id"`
-	Title     string   `json:"title"`
-	Body      string   `json:"body"`
-	Tags      []string `json:"tags"`
-	Anchors   []Anchor `json:"anchors"`
-	Author    Actor    `json:"author"`
-	CreatedAt int64    `json:"created_at"`
-	UpdatedAt int64    `json:"updated_at"`
-	Deleted   bool     `json:"deleted"`
-	Head      SHA      `json:"head"`
+	ID             EntityID        `json:"id"`
+	Title          string          `json:"title"`
+	Body           string          `json:"body"`
+	Tags           []string        `json:"tags"`
+	Anchors        []Anchor        `json:"anchors"`
+	Author         Actor           `json:"author"`
+	CreatedAt      int64           `json:"created_at"`
+	UpdatedAt      int64           `json:"updated_at"`
+	Deleted        bool            `json:"deleted"`
+	VerifiedAt     int64           `json:"verified_at"`
+	VerifiedBy     Actor           `json:"verified_by"`
+	VerifiedCommit SHA             `json:"verified_commit"`
+	Witness        []AnchorWitness `json:"witness"`
+	SupersededBy   []EntityID      `json:"superseded_by"`
+	Head           SHA             `json:"head"`
 }
 
 // Task is the folded snapshot of a task entity. Timestamps are unix seconds;

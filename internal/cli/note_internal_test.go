@@ -2,9 +2,63 @@ package cli
 
 import (
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-notes/internal/model"
 )
+
+func TestNoteVerdict(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	t.Run("never verified is UNVERIFIED before any git read", func(t *testing.T) {
+		// A zero VerifiedAt short-circuits, so the nil store is never touched.
+		got, err := noteVerdict(t.Context(), nil, "", model.Note{}, now, time.Hour)
+		if err != nil {
+			t.Fatalf("noteVerdict: %v", err)
+		}
+		if got != verdictUnverified {
+			t.Fatalf("verdict = %q, want %q", got, verdictUnverified)
+		}
+	})
+	t.Run("verified within threshold against unborn HEAD is fresh", func(t *testing.T) {
+		n := model.Note{VerifiedAt: now.Add(-time.Minute).Unix()}
+		got, err := noteVerdict(t.Context(), nil, "", n, now, time.Hour)
+		if err != nil {
+			t.Fatalf("noteVerdict: %v", err)
+		}
+		if got != "" {
+			t.Fatalf("verdict = %q, want fresh", got)
+		}
+	})
+	t.Run("verified past threshold is STALE", func(t *testing.T) {
+		n := model.Note{VerifiedAt: now.Add(-2 * time.Hour).Unix()}
+		got, err := noteVerdict(t.Context(), nil, "", n, now, time.Hour)
+		if err != nil {
+			t.Fatalf("noteVerdict: %v", err)
+		}
+		if got != verdictStale {
+			t.Fatalf("verdict = %q, want %q", got, verdictStale)
+		}
+	})
+}
+
+func TestFilterVerdicts(t *testing.T) {
+	reviewed := []reviewedNote{
+		{note: model.Note{ID: "a"}, verdict: verdictDrifted},
+		{note: model.Note{ID: "b"}, verdict: verdictStale},
+		{note: model.Note{ID: "c"}, verdict: verdictUnverified},
+	}
+	if got := filterVerdicts(append([]reviewedNote(nil), reviewed...), false, false); len(got) != 3 {
+		t.Fatalf("no flags kept %d, want all 3", len(got))
+	}
+	drift := filterVerdicts(append([]reviewedNote(nil), reviewed...), true, false)
+	if len(drift) != 1 || drift[0].verdict != verdictDrifted {
+		t.Fatalf("--drift = %+v, want only DRIFTED", drift)
+	}
+	unverified := filterVerdicts(append([]reviewedNote(nil), reviewed...), false, true)
+	if len(unverified) != 1 || unverified[0].verdict != verdictUnverified {
+		t.Fatalf("--unverified = %+v, want only UNVERIFIED", unverified)
+	}
+}
 
 func ids(notes []model.Note) []string {
 	out := make([]string, len(notes))
