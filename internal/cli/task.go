@@ -357,6 +357,9 @@ func newTaskClaimCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if steal && task.Status != model.StatusInProgress {
+				return &UsageError{Err: errors.New("--steal requires an in-progress task")}
+			}
 			if steal && task.Status == model.StatusInProgress {
 				return claimSteal(cmd, s, ref, task, me, jsonOut)
 			}

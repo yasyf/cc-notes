@@ -413,6 +413,25 @@ func TestTaskLifecycleConflicts(t *testing.T) {
 	}
 }
 
+func TestTaskClaimStealRequiresInProgress(t *testing.T) {
+	dir := initRepo(t)
+	task := addTask(t, dir, "Work")
+
+	_, _, err := runCLI(t, dir, "task", "claim", task.ID, "--steal")
+	var usage *cli.UsageError
+	if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
+		t.Fatalf("steal of open task err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
+	}
+	if want := "--steal requires an in-progress task"; usage.Err.Error() != want {
+		t.Fatalf("usage msg = %q, want %q", usage.Err.Error(), want)
+	}
+
+	shown := mustJSON[taskJSON](t, mustRun(t, dir, "task", "show", task.ID, "--json"))
+	if shown.Status != "open" || shown.Assignee != nil {
+		t.Fatalf("after rejected steal status/assignee = %q/%v, want open/null", shown.Status, shown.Assignee)
+	}
+}
+
 func TestTaskListFiltersAndOrder(t *testing.T) {
 	dir := initRepo(t)
 	urgent := addTask(t, dir, "Urgent", "--priority", "0")
