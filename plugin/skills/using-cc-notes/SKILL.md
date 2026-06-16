@@ -2,86 +2,143 @@
 name: using-cc-notes
 description: >-
   Use cc-notes to record durable tasks and notes that outlive a session, stored as
-  git objects on refs/cc-notes/*. Triggers when an agent needs to record a task or
-  note for later, asks what work is open or wants to claim a task, coordinates work
-  across branches or multiple agents, persists a design decision or durable fact,
-  syncs notes and tasks with a remote, or reconciles tasks after merging a branch.
-  Covers the distinction between the harness's ephemeral in-session todos and
-  cc-notes' durable, synced, branch-scoped tasks and repo-global notes, plus the
-  canonical add/ready/claim/done flow, note hygiene, and the reconcile-after-merge
-  step.
+  git objects on refs/cc-notes/*. Triggers when an agent records a task or note for
+  later; runs status to orient on the backlog and who holds what; claims or starts a
+  task; coordinates work across branches and multiple agents; manages leases and
+  reclaims stale claims; verifies or supersedes a durable fact; syncs tasks and notes
+  with a remote; reconciles tasks after merging a branch; or links commits to the task
+  they implemented.
 allowed-tools: Bash(cc-notes:*), Read
 ---
 
 # Using cc-notes
 
-cc-notes is a git-native notes and tasks layer for agents. Tasks and notes live as
-objects on hidden `refs/cc-notes/*` refs inside the repo's object database — versioned,
-synced by plain `git push`/`git pull`, and invisible in checkouts and diffs. Tasks are
-branch-scoped; notes are repo-global with optional anchors to a commit, path, or branch.
-Reach for cc-notes when work or knowledge must survive the current session or reach
-another agent. Keep in-session step tracking in the harness's own todo tool.
+cc-notes is a git-native notes and tasks layer for agents. Every entity — a note or a
+task — is an event-log CRDT: an append-only log of operation packs, one per git commit,
+on hidden `refs/cc-notes/*` refs inside the repo's object database. The data is versioned,
+synced by plain `git push`/`git pull`, and invisible in checkouts and diffs. A pure
+deterministic fold replays each log into a snapshot, so every replica reads the same state.
 
-## The distinction: native todos vs cc-notes task vs cc-notes note
+Reach for cc-notes when work or knowledge must survive the current session or reach another
+agent. Keep the moment-to-moment step tracking for what you are doing right now in the
+harness's own todo tool.
 
-This is the one thing to get right. Three tools, three lifetimes.
+## Three tools, three jobs
+
+This is the one distinction to get right. Native todos, cc-notes tasks, and cc-notes notes
+differ along two axes — how long the record lives and who can see it.
 
 | Tool | Lifetime | Scope | Use for |
 |------|----------|-------|---------|
-| Native todos (`TaskCreate`/`TaskUpdate`) | Ephemeral — this session only, gone at session end | This agent's private scratchpad | Decomposing the *current* task into in-session steps |
-| `cc-notes task` | Durable — git ODB, synced across machines and agents | Branch-scoped (`refs/cc-notes/tasks/<branch>/<id>`) | Work that outlives the session or coordinates agents: claim, deps, comments, priority, lifecycle |
-| `cc-notes note` | Durable — git ODB, synced | Repo-global, anchorable to commit/path/branch | Design decisions and durable facts, full-text searchable |
+| Native todos (`TaskCreate`/`TaskUpdate`) | Ephemeral — this session, gone at session end | This agent's private scratchpad | Decomposing the *current* task into in-session steps |
+| `cc-notes task` | Durable — git ODB, synced across machines and agents | Global: one flat ref per task, with a mutable `branch` attribute and a shared backlog every agent sees | Work that outlives the session or coordinates agents: claim, lease, deps, comments, priority, lifecycle |
+| `cc-notes note` | Durable — git ODB, synced | Repo-global, optionally anchored to a commit, path, or branch | Design decisions and durable facts, verified and searchable |
 
-cc-notes complements native todos rather than replacing them. Keep the in-session
-checklist for what you are doing right now in native todos. Capture work that must persist
-or be picked up by someone else as a `cc-notes task`. Record a decision or durable fact as
-a `cc-notes note`. When in doubt: if closing the session would lose something that matters,
-it belongs in cc-notes. See `references/tasks-vs-notes.md` for worked examples.
+Tasks are **global**. Each task is a single flat ref at `refs/cc-notes/tasks/<id>`, exactly
+like a note. Its branch is a *mutable attribute*, not part of its identity: `task list` and
+`task ready` default to the tasks on your current branch, the shared **backlog** is every
+task with no branch (`task add --backlog`, visible to every agent on every branch), and
+`task move <id> --to <branch>` (or `task start`, automatically) re-homes a task by setting
+that attribute. Because the id is global, every id-addressed command resolves by id alone —
+there is no `--branch` on `show`/`claim`/`start`/`done`/`move`/`renew`. `--branch`,
+`--backlog`, and `--all-branches` are reader filters on `list`/`ready` and setters on
+`add`/`move`/`edit`.
+
+Notes are repo-global. Each note records when it was last **verified** true; superseding a
+note points it at its replacement and drops it from default listings.
+
+The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, else your git
+`user.name`/`user.email`. Claims and leases key on that actor.
+
+See `references/tasks-vs-notes.md` for worked examples of choosing among the three.
 
 ## Canonical agent flow
 
-Run `init` once per repo, then capture, claim, and close durable work as you go.
+The spine of day-to-day use. Run `init` once per repo; everything else recurs as you work.
+
+**1. Initialize (once per repo).** Installs the refspecs so plain `git push`/`git pull`
+carry the cc-notes refs alongside your branches.
 
 ```console
 $ cc-notes init
 initialized: refs/cc-notes/* refspecs installed for origin
 ```
 
-`init` installs the refspecs so plain `git push` and `git pull` carry the refs alongside
-your branches. On a branch, capture work as you discover it:
+**2. Orient.** `cc-notes status` (alias `board`) is a read-only, sectioned view: the shared
+backlog, your current branch's open and in-progress tasks, every in-progress task across all
+branches grouped by assignee with a fresh/STALE lease flag, and how many notes need review.
+Run it before picking up work.
 
 ```console
+$ cc-notes status
+backlog
+  08118da	open	P1	-	build the widget
+  b932fd9	open	P2	-	test the widget
+your branch (feature/auth)
+  d82c087	in_progress	P1	ada <ada@example.com>	Add retry backoff to the API client
+in progress across branches
+  ada <ada@example.com>	d82c087	fresh
+  ben <ben@example.com>	7c1e3f0	STALE
+notes: 14 total, 3 need review
+```
+
+**3. Plan.** Capture shared work onto the backlog; capture branch-specific work plainly.
+
+```console
+$ cc-notes task add "build the widget" --backlog --priority 1
+08118da	open	P1	-	build the widget
 $ cc-notes task add "Add retry backoff to the API client" --priority 1 --label api
 d82c087	open	P1	-	Add retry backoff to the API client
 ```
 
-Every mutation echoes the entity's new state as a lean tab-separated line. List what an
-agent can pick up right now — open, unassigned, no open blockers — then claim and close:
+**4. Grab.** `task start` atomically claims the task (deterministic first-wins) and moves it
+onto your current branch, opening a lease.
 
 ```console
-$ cc-notes task ready
-d82c087	open	P1	-	Add retry backoff to the API client
-$ cc-notes task claim d82c087
+$ cc-notes task start d82c087
 d82c087	in_progress	P1	ada <ada@example.com>	Add retry backoff to the API client
+```
+
+**5. Stay alive.** Any change you make to a task refreshes its lease; for long silent
+stretches, `task renew <id>`. `task stale` surfaces in-progress tasks whose lease has expired
+— a crashed agent's abandoned claim — and `task claim <id> --steal` reclaims one.
+
+```console
+$ cc-notes task stale
+7c1e3f0	in_progress	P2	ben <ben@example.com>	Wire the gateway client	idle 2h14m
+$ cc-notes task claim 7c1e3f0 --steal
+7c1e3f0	in_progress	P2	ada <ada@example.com>	Wire the gateway client
+```
+
+**6. Work and link.** Commit code with plain git, adding a `cc-task: <id>` trailer so the
+commit links to the task (queryable with `git log --grep` and `cc-notes blame <sha>`).
+`task done` closes the task and anchors your HEAD commit onto it; `task show` then lists the
+commits that implemented it.
+
+```console
+$ git commit -m "Clamp API retry backoff at 30s
+
+cc-task: d82c087"
 $ cc-notes task done d82c087
 d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 ```
 
-Record a durable decision, anchored to the file it describes:
+**7. Record facts.** A note is born verified against the current HEAD. Re-confirm it later
+with `note verify`, and replace a changed decision with `note supersede`.
 
 ```console
-$ cc-notes note add "Auth tokens expire after 15 minutes" --path services/auth/login.go --tag design --body "Refresh client-side before expiry; the API returns 401 with no Retry-After header."
-ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes
+$ cc-notes note add "Retry backoff caps at 30s" --path internal/api/client.go --tag design --body "The server drops connections past 30s, so exponential backoff is clamped."
+b71e0d4	2026-06-16	design	Retry backoff caps at 30s
 ```
 
-Commit your code with plain git. After merging another branch into this one, promote the
-merged branch's open and in-progress tasks here, then converge with the remote:
+**8. Merge and reconcile.** Merge code with git or jj, then carry the merged branches'
+still-open tasks onto the target and converge with the remote. Both steps are idempotent.
 
 ```console
 $ cc-notes reconcile --into main
 scanned: 1
 merged: 1
-promoted: 2
+carried: 2
 into: main
 feature/x:
 08118da	open	P1	-	build the widget
@@ -91,51 +148,45 @@ pushed: 2
 rounds: 1
 ```
 
+**9. Maintain.** `note review` surfaces drifted, stale, and unverified facts; `task archived`
+hides long-closed work; `gc --prune-remote` (opt-in, best-effort) physically reclaims
+tombstoned refs.
+
 ## Command cheat-sheet
 
-The verbs you reach for most. Full surface, flags, and output shapes are in
+The verbs reached for most. The full surface — every flag, default, and output shape — is in
 `references/cli-reference.md`.
 
 | Command | Purpose |
 |---------|---------|
 | `cc-notes init` | Install the `refs/cc-notes/*` refspecs on a remote (once per repo) |
-| `cc-notes sync` | Converge all cc-notes refs with the remote and push |
-| `cc-notes reconcile --into <branch>` | Promote a merged branch's open tasks into the target branch |
-| `cc-notes task add "<title>"` | Capture durable work on the current branch |
-| `cc-notes task ready` | List unblocked, unassigned, open tasks — the pickup queue |
-| `cc-notes task list` | List tasks on a branch (defaults to open + in_progress) |
-| `cc-notes task claim <id>` | Take an open, unassigned task (sets assignee to the git user) |
-| `cc-notes task done <id>` | Close a task |
-| `cc-notes task dep <id> <blocker>` | Mark a task blocked by another |
-| `cc-notes task comment <id> "<text>"` | Append a comment for cross-agent context |
-| `cc-notes note add "<title>"` | Record a durable fact or decision |
-| `cc-notes note search "<query>"` | Full-text search notes by title, body, and tags |
-| `cc-notes note list` | List notes, filterable by tag or anchor |
+| `cc-notes status` | Orient: backlog, your branch's tasks, who holds what, notes needing review |
+| `cc-notes sync` | Union-merge the cc-notes refs with the remote and push, looping until stable |
+| `cc-notes reconcile --into <branch>` | Carry merged branches' open tasks onto the target |
+| `cc-notes blame <sha>` | List the task(s) a commit implemented |
+| `cc-notes task add "<title>"` | Capture branch work; add `--backlog` for shared work |
+| `cc-notes task ready` | List open, unassigned, unblocked tasks — the pickup queue |
+| `cc-notes task start <id>` | Claim a task and move it onto your current branch |
+| `cc-notes task claim <id> --steal` | Reclaim an in-progress task whose lease expired |
+| `cc-notes task renew <id>` | Refresh the lease heartbeat on a task you hold |
+| `cc-notes task done <id>` | Close a task and anchor HEAD onto it |
+| `cc-notes task move <id> --to <branch>` | Re-home a task by setting its branch |
+| `cc-notes note add "<title>"` | Record a durable fact, born verified against HEAD |
+| `cc-notes note verify <id>` | Record that a note is still true as of now |
+| `cc-notes note review` | Surface drifted, stale, and unverified notes |
+| `cc-notes note search "<query>"` | Ranked search over titles, tags, and bodies |
 
-Append `--json` to any note, task, sync, or reconcile command for a machine-readable
+Append `--json` to any note, task, sync, reconcile, or status command for a machine-readable
 record instead of the lean line.
-
-## Note hygiene
-
-Notes are durable, so stale ones mislead. Keep them honest:
-
-- **Supersede, don't accumulate.** When a decision changes, edit the note in place with
-  `cc-notes note edit <id> --body "…"` so the record reflects current reality. Retire a
-  note once it no longer applies with `cc-notes note rm <id>` (a tombstone — the history
-  survives, the note drops out of listings).
-- **Tag lifecycle state.** Adopt a `stale` or `superseded` tag convention via
-  `cc-notes note edit <id> --add-tag superseded` when you keep a note for context but it
-  no longer holds. Filter it out with the ANDed `--tag` flags on `list` and `search`.
-- **Anchor to a commit or path.** Attach `--commit <sha>` or `--path <file>` on
-  `note add` so a note is pinned to the code it describes. When that code moves or the
-  commit ages out, the drift is visible — an unanchored note silently rots.
 
 ## References
 
-- `references/cli-reference.md` — the complete command surface: every flag, default, and
-  the lean-line and `--json` output shape for each command.
-- `references/coordination.md` — how agents coordinate over time: branches as task
-  namespaces, claim and assignee, deps and blocking, promote vs reconcile, union-merge
-  sync, and what happens on branch merge, delete, and rename.
-- `references/tasks-vs-notes.md` — a deeper treatment of the three-way distinction with
-  worked examples of choosing native todo vs cc-notes task vs cc-notes note.
+- `references/cli-reference.md` — the complete command surface: every flag, default, and the
+  lean-line and `--json` output shape for each command.
+- `references/coordination.md` — how agents coordinate over time: the backlog and the branch
+  attribute, claims and leases, stale-claim recovery, deps and blocking, reconcile-on-merge,
+  and union-merge sync across a shared remote.
+- `references/tasks-vs-notes.md` — the three-way distinction with worked examples of choosing
+  native todo vs cc-notes task vs cc-notes note.
+- `references/lifecycle-and-hygiene.md` — keeping the record honest: task leases and
+  staleness, note verification, drift, and supersession, and the maintenance verbs.

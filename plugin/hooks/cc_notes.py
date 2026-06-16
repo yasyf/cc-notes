@@ -12,9 +12,12 @@ The teaching goal is the native-vs-durable distinction:
 
   * native ``TaskCreate``/``TaskUpdate`` — ephemeral, this-session-only, private
     scratchpad for decomposing the current task into in-session steps;
-  * ``cc-notes task`` — durable, git-synced, branch-scoped work that outlives the
-    session or coordinates multiple agents (claim, deps, lifecycle);
-  * ``cc-notes note`` — durable, git-synced, repo-global design decisions & facts.
+  * ``cc-notes task`` — durable, git-synced, GLOBAL work. The id is global; a
+    task's branch is a mutable attribute (the shared backlog is the unassigned
+    queue, ``Branch == ""``, visible to every agent), and ``task start`` claims
+    it under a lease while moving it onto your current branch;
+  * ``cc-notes note`` — durable, git-synced, repo-global decisions & facts, born
+    verified against HEAD with first-class drift/verify/supersede.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ NATIVE_TASK_MIRROR_THRESHOLD = 5
 
 GIT_MERGE_PULL = r"^git\s+(?:-\S+\s+)*(?:merge|pull)\b"
 GIT_COMMIT = r"^git\s+(?:-\S+\s+)*commit\b"
+CC_NOTES_CLAIM = r"^cc-notes\s+task\s+(?:claim|start)\b"
 
 
 class CcNotesAdopted(CustomCondition):
@@ -71,10 +75,54 @@ class ManyNativeTasks(CustomCondition):
 
 
 nudge(
-    "Merged-branch tasks live at refs/cc-notes/tasks/<merged-branch>/* and are invisible "
-    "here until promoted. Run `cc-notes reconcile` to promote the merged branch's open "
-    "tasks into this branch, then `cc-notes sync` to converge the refs with the remote. "
-    "Both are idempotent. (jj merges never fire git hooks — reconcile is the explicit step.)",
+    "Before picking up work, run `cc-notes status` to orient: the shared backlog "
+    "(unassigned work any agent can grab), your current branch's open and "
+    "in-progress tasks, who holds what across branches (each flagged fresh or "
+    "STALE), and notes needing review.",
+    only_if=[CcNotesAdopted()],
+    events=Event.UserPromptSubmit,
+    max_fires=1,
+    tests={
+        Input(prompt="let's start on the retry logic"): Warn(pattern="cc-notes status"),
+    },
+)
+
+
+nudge(
+    "Plan approved. Native TaskCreate/TaskUpdate is your private, this-session "
+    "scratchpad. Durable shared work goes in `cc-notes task add --backlog` (the "
+    "global queue every agent can see and claim) — or plain `cc-notes task add` "
+    "for work specific to your current branch. Capture decisions and durable "
+    "facts as `cc-notes note add`.",
+    only_if=[Tool("ExitPlanMode"), CcNotesAdopted()],
+    events=Event.PostToolUse,
+    tests={
+        Input(tool="ExitPlanMode"): Warn(pattern="cc-notes task add"),
+        Input(tool="Edit", file="m.py"): Allow(),
+    },
+)
+
+
+nudge(
+    "Commit landed. Add a `cc-task: <id>` trailer to link it to its task "
+    "(queryable with `git log --grep` and `cc-notes blame <sha>`). Capture any "
+    "durable decision behind it as `cc-notes note add \"...\" --tag design` (born "
+    "verified against HEAD), then `cc-notes sync` to share your refs.",
+    only_if=[Command(GIT_COMMIT), CcNotesAdopted()],
+    events=Event.PostToolUse,
+    tests={
+        Input(command="git commit -m 'add retry ceiling'"): Warn(pattern="cc-task:"),
+        Input(command="git commit --amend"): Warn(pattern="cc-notes sync"),
+        Input(command="git status"): Allow(),
+    },
+)
+
+
+nudge(
+    "A merged branch's still-open tasks stay on that branch until you carry them "
+    "over. Run `cc-notes reconcile --into <target>` to set them onto the target, "
+    "then `cc-notes sync` to converge with the remote. Both are idempotent. "
+    "(jj merges never fire git hooks — reconcile is the explicit step.)",
     only_if=[Command(GIT_MERGE_PULL), CcNotesAdopted()],
     events=Event.PostToolUse,
     max_fires=3,
@@ -89,40 +137,26 @@ nudge(
 
 
 nudge(
-    "Commit landed. Capture any durable decisions or facts behind it as "
-    "`cc-notes note add \"...\" --path <file> --tag design`, and run `cc-notes sync` to "
-    "share your task/note refs with collaborators (notes & tasks ride the same remote as "
-    "code, but only sync when you push them).",
-    only_if=[Command(GIT_COMMIT), CcNotesAdopted()],
+    "You hold a lease now. Run `cc-notes sync` so other agents see the claim, "
+    "`cc-notes task renew <id>` on long silent stretches, and `cc-notes task done "
+    "<id>` when finished. A crashed hold whose lease expired is reclaimable with "
+    "`cc-notes task claim <id> --steal`.",
+    only_if=[Command(CC_NOTES_CLAIM), CcNotesAdopted()],
     events=Event.PostToolUse,
+    max_fires=2,
     tests={
-        Input(command="git commit -m 'add retry ceiling'"): Warn(pattern="cc-notes note add"),
-        Input(command="git commit --amend"): Warn(pattern="cc-notes sync"),
-        Input(command="git status"): Allow(),
+        Input(command="cc-notes task start d82c087"): Warn(pattern="renew"),
+        Input(command="cc-notes task claim 08118da --steal"): Warn(pattern="renew"),
+        Input(command="cc-notes task list"): Allow(),
     },
 )
 
 
 nudge(
-    "Plan approved. Native TaskCreate/TaskUpdate is your private, this-session scratchpad "
-    "for the in-session steps. Anything durable or cross-branch — work another agent should "
-    "be able to find and claim — belongs in `cc-notes task add` (branch-scoped, synced); "
-    "design decisions and durable facts belong in `cc-notes note add` (repo-global, synced). "
-    "Use both: decompose a cc-notes task into native todos while you execute it.",
-    only_if=[Tool("ExitPlanMode"), CcNotesAdopted()],
-    events=Event.PostToolUse,
-    tests={
-        Input(tool="ExitPlanMode"): Warn(pattern="cc-notes task add"),
-        Input(tool="Edit", file="m.py"): Allow(),
-    },
-)
-
-
-nudge(
-    "Your native task list is getting large. Native tasks vanish at session end and are "
-    "private to this agent — mirror any that are durable or cross-branch (a bug to fix "
-    "later, work another agent should claim) into `cc-notes task add` so they survive and "
-    "coordinate. Keep the purely in-session steps as native todos.",
+    "Your native task list is getting large. Native tasks vanish at session end "
+    "and are private to this agent — mirror any that are durable or cross-agent "
+    "into `cc-notes task add` (`--backlog` if it's shared work anyone can claim). "
+    "Keep the purely in-session steps as native todos.",
     only_if=[Tool("TaskCreate"), ManyNativeTasks(), CcNotesAdopted()],
     events=Event.PostToolUse,
     max_fires=2,
