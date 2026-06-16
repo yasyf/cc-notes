@@ -122,6 +122,16 @@ func Mount(ctx context.Context, repoDir string, mountpoint string) error {
 	}()
 
 	if !waitMounted(mp, preDev, done, mountWait) {
+		// Capture the failure mode before Unmount: an already-closed done
+		// means the serving goroutine exited on its own (the mount failed
+		// outright), versus a true 8s timeout with the goroutine still
+		// blocked in host.Mount (the slow "Network Volumes" TCC grant).
+		exited := false
+		select {
+		case <-done:
+			exited = true
+		default:
+		}
 		host.Unmount()
 		select {
 		case <-done:
@@ -131,6 +141,9 @@ func Mount(ctx context.Context, repoDir string, mountpoint string) error {
 		case msg := <-panicked:
 			return fmt.Errorf("%w: %s (macOS: brew install fuse-t; Linux: apt install fuse3)", ErrFuseUnavailable, msg)
 		default:
+		}
+		if exited {
+			return fmt.Errorf("%w: %s (mount failed; check fuse-t is installed and `mount | grep cc-notes`)", ErrMountNotLive, mp)
 		}
 		return fmt.Errorf("%w: %s (macOS: grant the one-time \"Network Volumes\" access in System Settings > Privacy & Security, then retry)", ErrMountNotLive, mp)
 	}

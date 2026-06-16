@@ -107,6 +107,17 @@ func exactArgs(n int) cobra.PositionalArgs {
 	}
 }
 
+// maxArgs is cobra.MaximumNArgs returning a UsageError, so arity mistakes
+// exit 2 (cobra.MaximumNArgs would regress them to exit 1).
+func maxArgs(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) <= n {
+			return nil
+		}
+		return &UsageError{Err: fmt.Errorf("%s accepts at most %d arg(s), received %d", cmd.CommandPath(), n, len(args))}
+	}
+}
+
 // noUnknownSubcommand rejects positional arguments on a command group with
 // a UsageError, so unknown subcommands exit 2.
 func noUnknownSubcommand(cmd *cobra.Command, args []string) error {
