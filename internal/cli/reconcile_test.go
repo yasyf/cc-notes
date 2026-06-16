@@ -13,7 +13,7 @@ type reconcileJSON struct {
 	Into     string `json:"into"`
 	Scanned  int    `json:"scanned"`
 	Merged   int    `json:"merged"`
-	Promoted int    `json:"promoted"`
+	Carried  int    `json:"carried"`
 	Branches []struct {
 		Branch string   `json:"branch"`
 		Merged bool     `json:"merged"`
@@ -39,13 +39,13 @@ func mergedFeature(t *testing.T) (dir, taskID string) {
 func TestReconcileLean(t *testing.T) {
 	dir, taskID := mergedFeature(t)
 	out := mustRun(t, dir, "reconcile")
-	want := fmt.Sprintf("scanned: 1\nmerged: 1\npromoted: 1\ninto: main\nfeature/x:\n%s\topen\tP2\t-\topen task\n", taskID[:7])
+	want := fmt.Sprintf("scanned: 1\nmerged: 1\ncarried: 1\ninto: main\nfeature/x:\n%s\topen\tP2\t-\topen task\n", taskID[:7])
 	if out != want {
 		t.Fatalf("reconcile output = %q, want %q", out, want)
 	}
 	// The task now lives on main and no longer on feature/x.
 	if listed := mustRun(t, dir, "task", "list", "--branch", "main"); !strings.Contains(listed, taskID[:7]) {
-		t.Errorf("task list --branch main = %q, want the promoted task", listed)
+		t.Errorf("task list --branch main = %q, want the carried task", listed)
 	}
 	if listed := mustRun(t, dir, "task", "list", "--branch", "feature/x"); strings.TrimSpace(listed) != "" {
 		t.Errorf("task list --branch feature/x = %q, want empty", listed)
@@ -55,8 +55,8 @@ func TestReconcileLean(t *testing.T) {
 func TestReconcileJSON(t *testing.T) {
 	dir, taskID := mergedFeature(t)
 	dto := mustJSON[reconcileJSON](t, mustRun(t, dir, "reconcile", "--json"))
-	if dto.Into != "main" || dto.Scanned != 1 || dto.Merged != 1 || dto.Promoted != 1 {
-		t.Fatalf("reconcile DTO tallies = %+v, want into=main scanned/merged/promoted=1", dto)
+	if dto.Into != "main" || dto.Scanned != 1 || dto.Merged != 1 || dto.Carried != 1 {
+		t.Fatalf("reconcile DTO tallies = %+v, want into=main scanned/merged/carried=1", dto)
 	}
 	if len(dto.Branches) != 1 {
 		t.Fatalf("branches = %+v, want one", dto.Branches)
@@ -73,8 +73,8 @@ func TestReconcileJSON(t *testing.T) {
 func TestReconcileDryRunWritesNothing(t *testing.T) {
 	dir, taskID := mergedFeature(t)
 	dto := mustJSON[reconcileJSON](t, mustRun(t, dir, "reconcile", "--dry-run", "--json"))
-	if dto.Promoted != 1 {
-		t.Fatalf("dry-run Promoted = %d, want 1 (the plan)", dto.Promoted)
+	if dto.Carried != 1 {
+		t.Fatalf("dry-run Carried = %d, want 1 (the plan)", dto.Carried)
 	}
 	if listed := mustRun(t, dir, "task", "list", "--branch", "feature/x"); !strings.Contains(listed, taskID[:7]) {
 		t.Errorf("after dry-run, feature/x list = %q, want the task still there", listed)

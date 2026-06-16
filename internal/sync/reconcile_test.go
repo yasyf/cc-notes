@@ -72,7 +72,7 @@ func reconcile(t *testing.T, s *store.Store, into model.Branch, from []model.Bra
 	return report
 }
 
-func TestReconcileMergedPromotes(t *testing.T) {
+func TestReconcileMergedCarries(t *testing.T) {
 	s := reconcileClone(t)
 	dir := s.Git.Dir
 	branchFrom(t, dir, "feature/x")
@@ -89,8 +89,8 @@ func TestReconcileMergedPromotes(t *testing.T) {
 	if got, want := report.Merged(), 1; got != want {
 		t.Errorf("Merged = %d, want %d", got, want)
 	}
-	if got, want := report.Promoted(), 2; got != want {
-		t.Errorf("Promoted = %d, want %d", got, want)
+	if got, want := report.Carried(), 2; got != want {
+		t.Errorf("Carried = %d, want %d", got, want)
 	}
 	br := findBranch(t, report, "feature/x")
 	if !br.Merged || br.Reason != "" {
@@ -101,7 +101,7 @@ func TestReconcileMergedPromotes(t *testing.T) {
 		t.Errorf("ListTasks(main) ids = %v, want %v", got, want)
 	}
 	if got := listTasks(t, s, "feature/x"); len(got) != 0 {
-		t.Errorf("ListTasks(feature/x) = %+v, want empty after promote", got)
+		t.Errorf("ListTasks(feature/x) = %+v, want empty after reconcile", got)
 	}
 }
 
@@ -114,8 +114,8 @@ func TestReconcileNotMergedUntouched(t *testing.T) {
 
 	report := reconcile(t, s, "main", nil, false, false)
 
-	if got, want := report.Promoted(), 0; got != want {
-		t.Errorf("Promoted = %d, want %d", got, want)
+	if got, want := report.Carried(), 0; got != want {
+		t.Errorf("Carried = %d, want %d", got, want)
 	}
 	if got, want := report.Merged(), 0; got != want {
 		t.Errorf("Merged = %d, want %d", got, want)
@@ -136,17 +136,17 @@ func TestReconcileIdempotent(t *testing.T) {
 	s := reconcileClone(t)
 	dir := s.Git.Dir
 	branchFrom(t, dir, "feature/x")
-	task := createTask(t, s, "promote once", "feature/x")
+	task := createTask(t, s, "carry once", "feature/x")
 	mergeInto(t, dir, "main", "feature/x")
 
-	if got := reconcile(t, s, "main", nil, false, false).Promoted(); got != 1 {
-		t.Fatalf("first Promoted = %d, want 1", got)
+	if got := reconcile(t, s, "main", nil, false, false).Carried(); got != 1 {
+		t.Fatalf("first Carried = %d, want 1", got)
 	}
 	before := ccRefs(t, dir)
 
 	second := reconcile(t, s, "main", nil, false, false)
-	if got, want := second.Promoted(), 0; got != want {
-		t.Errorf("second Promoted = %d, want %d", got, want)
+	if got, want := second.Carried(), 0; got != want {
+		t.Errorf("second Carried = %d, want %d", got, want)
 	}
 	if got, want := second.Scanned(), 0; got != want {
 		t.Errorf("second Scanned = %d, want %d (the moved task no longer folds on the source branch)", got, want)
@@ -155,7 +155,7 @@ func TestReconcileIdempotent(t *testing.T) {
 		t.Errorf("refs moved on idempotent rerun: %v -> %v", before, got)
 	}
 	if got := taskIDs(listTasks(t, s, "main")); !slices.Equal(got, []model.EntityID{task.ID}) {
-		t.Errorf("ListTasks(main) = %v, want the single promoted task", got)
+		t.Errorf("ListTasks(main) = %v, want the single carried task", got)
 	}
 }
 
@@ -174,8 +174,8 @@ func TestReconcileStatusFilter(t *testing.T) {
 
 	report := reconcile(t, s, "main", nil, false, false)
 
-	if got, want := report.Promoted(), 2; got != want {
-		t.Errorf("Promoted = %d, want %d (only open + in_progress)", got, want)
+	if got, want := report.Carried(), 2; got != want {
+		t.Errorf("Carried = %d, want %d (only open + in_progress)", got, want)
 	}
 	wantMoved := slices.Sorted(slices.Values([]model.EntityID{open.ID, wip.ID}))
 	if got := taskIDs(listTasks(t, s, "main")); !slices.Equal(got, wantMoved) {
@@ -225,7 +225,7 @@ func TestReconcileIntoNamespace(t *testing.T) {
 		t.Errorf("Into = %q, want %q", got, want)
 	}
 	if got := taskIDs(listTasks(t, s, "release")); !slices.Equal(got, []model.EntityID{task.ID}) {
-		t.Errorf("ListTasks(release) = %v, want the promoted task", got)
+		t.Errorf("ListTasks(release) = %v, want the carried task", got)
 	}
 	if got := listTasks(t, s, "feature/r"); len(got) != 0 {
 		t.Errorf("ListTasks(feature/r) = %+v, want empty", got)
@@ -251,11 +251,11 @@ func TestReconcileForceSquash(t *testing.T) {
 	}
 
 	report := reconcile(t, s, "main", []model.Branch{"feature/z"}, true, false)
-	if got, want := report.Promoted(), 1; got != want {
-		t.Errorf("forced Promoted = %d, want %d", got, want)
+	if got, want := report.Carried(), 1; got != want {
+		t.Errorf("forced Carried = %d, want %d", got, want)
 	}
 	if got := taskIDs(listTasks(t, s, "main")); !slices.Equal(got, []model.EntityID{task.ID}) {
-		t.Errorf("ListTasks(main) = %v, want the force-promoted task", got)
+		t.Errorf("ListTasks(main) = %v, want the force-carried task", got)
 	}
 	if got := listTasks(t, s, "feature/z"); len(got) != 0 {
 		t.Errorf("ListTasks(feature/z) = %+v, want empty after force", got)
@@ -280,8 +280,8 @@ func TestReconcileDeletedSourceBranch(t *testing.T) {
 	}
 
 	forced := reconcile(t, s, "main", []model.Branch{"feature/x"}, true, false)
-	if got, want := forced.Promoted(), 1; got != want {
-		t.Errorf("forced Promoted = %d, want %d", got, want)
+	if got, want := forced.Carried(), 1; got != want {
+		t.Errorf("forced Carried = %d, want %d", got, want)
 	}
 	if got := taskIDs(listTasks(t, s, "main")); !slices.Equal(got, []model.EntityID{task.ID}) {
 		t.Errorf("ListTasks(main) = %v, want the recovered task", got)
@@ -316,8 +316,8 @@ func TestReconcileDryRun(t *testing.T) {
 
 	report := reconcile(t, s, "main", nil, false, true)
 
-	if got, want := report.Promoted(), 1; got != want {
-		t.Errorf("dry-run Promoted = %d, want %d (the plan)", got, want)
+	if got, want := report.Carried(), 1; got != want {
+		t.Errorf("dry-run Carried = %d, want %d (the plan)", got, want)
 	}
 	br := findBranch(t, report, "feature/x")
 	if !br.Merged || len(br.Tasks) != 1 || br.Tasks[0].ID != task.ID {

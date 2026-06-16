@@ -62,9 +62,9 @@ func (r ReconcileReport) Merged() int {
 	return n
 }
 
-// Promoted is the total number of tasks moved into the target across every
+// Carried is the total number of tasks moved into the target across every
 // merged branch — the plan's task count under dry-run.
-func (r ReconcileReport) Promoted() int {
+func (r ReconcileReport) Carried() int {
 	n := 0
 	for _, b := range r.Branches {
 		if b.Merged {

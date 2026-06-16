@@ -16,12 +16,12 @@ func newReconcileCmd() *cobra.Command {
 	var force, dryRun, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "reconcile",
-		Short: "Promote a merged branch's open tasks into the target branch",
-		Long: "Promote the open and in-progress tasks of each merged source branch into the\n" +
+		Short: "Carry a merged branch's open tasks onto the target branch",
+		Long: "Carry the open and in-progress tasks of each merged source branch onto the\n" +
 			"target branch, then stop. A source branch counts as merged when its tip is an\n" +
 			"ancestor of the target — squash and rebase merges break that test, so name the\n" +
-			"source with --from --force to promote anyway. The step is idempotent: a promoted\n" +
-			"task is not promoted again.",
+			"source with --from --force to carry anyway. The step is idempotent: a carried\n" +
+			"task is not carried again.",
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -69,8 +69,8 @@ func newReconcileCmd() *cobra.Command {
 }
 
 // printReconcile writes report as its JSON DTO or its lean view: the
-// verb:count tally skipping zeros, the target branch, then for each promoted
-// branch a header and one lean task line per promoted task.
+// verb:count tally skipping zeros, the target branch, then for each carried
+// branch a header and one lean task line per carried task.
 func printReconcile(cmd *cobra.Command, report ccsync.ReconcileReport, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
@@ -82,7 +82,7 @@ func printReconcile(cmd *cobra.Command, report ccsync.ReconcileReport, jsonOut b
 	}{
 		{"scanned", report.Scanned()},
 		{"merged", report.Merged()},
-		{"promoted", report.Promoted()},
+		{"carried", report.Carried()},
 	} {
 		if line.count == 0 {
 			continue

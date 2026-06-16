@@ -65,18 +65,18 @@ type syncDTO struct {
 }
 
 // reconcileDTO fixes the JSON field order for a reconcile report: the target
-// branch, the scanned/merged/promoted tallies, and one nested entry per
+// branch, the scanned/merged/carried tallies, and one nested entry per
 // scanned source branch.
 type reconcileDTO struct {
 	Into     string               `json:"into"`
 	Scanned  int                  `json:"scanned"`
 	Merged   int                  `json:"merged"`
-	Promoted int                  `json:"promoted"`
+	Carried  int                  `json:"carried"`
 	Branches []reconcileBranchDTO `json:"branches"`
 }
 
 // reconcileBranchDTO is one source branch in a reconcile report: its merged
-// verdict, the skip reason (empty when promoted), and the full-hex ids of the
+// verdict, the skip reason (empty when carried), and the full-hex ids of the
 // open and in-progress tasks it carried.
 type reconcileBranchDTO struct {
 	Branch string   `json:"branch"`
@@ -103,7 +103,7 @@ func newReconcileDTO(r ccsync.ReconcileReport) reconcileDTO {
 		Into:     string(r.Into),
 		Scanned:  r.Scanned(),
 		Merged:   r.Merged(),
-		Promoted: r.Promoted(),
+		Carried:  r.Carried(),
 		Branches: branches,
 	}
 }
