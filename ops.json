@@ -1,0 +1,1 @@
+{"v":1,"lamport":1,"ops":[{"kind":"create_note","nonce":"b1bf84f3d68408de23f78291286ab9e6","title":"Auth tokens expire after 15 minutes","body":"Refresh client-side before expiry; the API returns 401 with no Retry-After header.","tags":["design"],"anchors":[{"kind":"path","value":"services/auth/login.go"}]}]}
