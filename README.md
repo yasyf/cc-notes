@@ -6,7 +6,7 @@
 
 Notes and tasks for AI agents, stored inside your repo's git object database.
 
-cc-notes gives agents a durable place to write things down between sessions: a notes and task-tracking layer that lives on hidden `refs/cc-notes/*` refs in the repository itself. Everything is versioned in the object database, syncs with a plain `git push` and `git pull`, and never appears in checkouts, diffs, or the GitHub UI. No server, no sidecar database, no dotfile clutter — if you have the repo, you have the data.
+cc-notes gives agents a durable place to write things down between sessions: a notes and task-tracking layer that lives on hidden `refs/cc-notes/*` refs in the repository itself. Everything is versioned in the object database, syncs with a plain `git push` and `git pull` (or `cc-notes sync` under jj, whose git bridge skips the cc-notes refs), and never appears in checkouts, diffs, or the GitHub UI. No server, no sidecar database, no dotfile clutter — if you have the repo, you have the data.
 
 Tasks are global — one flat ref per task at `refs/cc-notes/tasks/<id>`, with a mutable `branch` attribute and a shared backlog (any task with no branch) that every agent on every branch can see; `task list` and `task ready` default to your current branch. Notes are repo-global, optionally anchored to commits, paths, or branches, and verified as first-class state: re-confirm a fact, supersede a changed one, and catch drift mechanically, not by eye. Under the hood, each entity is an event-log CRDT (conflict-free replicated data type) riding git as its transport — an approach pioneered by [git-bug](https://github.com/git-bug/git-bug).
 
@@ -90,7 +90,7 @@ pushed: 2
 rounds: 1
 ```
 
-After `init`, plain `git push` and `git pull` carry the refs alongside your branches too.
+After `init`, plain `git push` and `git pull` carry the refs alongside your branches too. Under jj it's different: `jj git push`/`jj git fetch` bridge only `refs/heads/*`, so the `refs/cc-notes/*` refs stay behind — use `cc-notes sync`, which drives git directly and carries them regardless.
 
 Verify the finished task's full record — every note, task, sync, reconcile, and status command takes `--json`:
 
@@ -105,7 +105,7 @@ Tasks are global, so several agents — across machines, sessions, or branches �
 
 A claim opens a **lease**, so a crashed agent's grab never locks work forever. Any edit, comment, or `cc-notes task renew <id>` refreshes the heartbeat; `cc-notes task stale` lists leases past the TTL, and `cc-notes task claim <id> --steal` reclaims one — a holder who renewed in time keeps it. Set the threshold with `cc-notes.leaseTTL` in git config, kept larger than your sync interval.
 
-Re-home a task by hand with `cc-notes task move <id> --to <branch>` (an empty `--to` sends it back to the backlog). After a merge, a merged branch's still-open tasks keep their old branch until you carry them onto the target with `cc-notes reconcile --into <target>`, then converge with `cc-notes sync`:
+Re-home a task by hand with `cc-notes task move <id> --to <branch>` (`--backlog` sends it back to the backlog). After a merge, a merged branch's still-open tasks keep their old branch until you carry them onto the target with `cc-notes reconcile --into <target>`, then converge with `cc-notes sync`:
 
 ```console
 $ cc-notes reconcile --into main

@@ -44,11 +44,15 @@ sorted set slices.
 ### `cc-notes init`
 
 Install the `refs/cc-notes/*` refspecs on a remote. Run once per repo. After init, plain
-`git push` and `git pull` carry the cc-notes refs alongside your branches.
+`git push` and `git pull` carry the cc-notes refs alongside your branches. Under jj that
+doesn't hold: `jj git push`/`jj git fetch` bridge only `refs/heads/*`, leaving the
+`refs/cc-notes/*` refs behind — run `cc-notes sync` (it drives the real git binary directly
+and carries the refs regardless of front-end) or real `git push`/`git pull`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--remote <name>` | `origin` | Remote to wire |
+| `--hook` | off | Also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj, rebase, and server-side squash) |
 
 ```console
 $ cc-notes init
@@ -194,6 +198,27 @@ $ cc-notes version
 v0.2.0 (dd02f2d)
 ```
 
+## Setup commands
+
+Wire the Claude Code integration into a repository. Both commands write into the repo and
+take `--dir` to redirect the destination, relative to the repo root.
+
+### `cc-notes hooks install`
+
+Install the capt-hook hook modules and wire them into `.claude/settings.json`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--dir <path>` | `.claude/hooks` | Destination directory, relative to the repo root |
+
+### `cc-notes skills install`
+
+Install the `using-cc-notes` skill into the repository.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--dir <path>` | `.claude/skills` | Destination directory, relative to the repo root |
+
 ## Task commands
 
 Tasks are global, addressed by id. Id-addressed commands take **no** `--branch`. `--branch`,
@@ -233,6 +258,7 @@ List tasks. Defaults to open and in-progress on your current branch. `--all-bran
 |------|---------|---------|
 | `--status <csv>` | `open,in_progress` | Status filter, comma-separated |
 | `--all` | off | Every status |
+| `--include-archived` | off | Include archived (old done/cancelled) tasks |
 | `--assignee <user>` | none | Require assignee |
 | `--label <label>` | none | Require label; repeatable, ANDed |
 | `--type <type>` | none | Require type |
@@ -345,12 +371,13 @@ Close a task as cancelled.
 
 ### `cc-notes task move ID --to <branch>`
 
-Set the task's `Branch` — handoff or re-home. A plain attribute write; pass an empty value
-to move it back to the backlog.
+Set the task's `Branch` — handoff or re-home. A plain attribute write; pass `--backlog`
+to move it back to the backlog. `--to` and `--backlog` are mutually exclusive.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--to <branch>` | (required) | Destination branch (empty string = backlog) |
+| `--to <branch>` | (required unless `--backlog`) | Destination branch |
+| `--backlog` | off | Move to the backlog (clear the branch) |
 | `--json` | off | Emit JSON |
 
 ```console
@@ -566,7 +593,9 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes
 ### `cc-notes note show ID`
 
 Show one note: a fixed-order header block (id, title, tags, anchors, author, created,
-updated, verified_at/by, superseded_by, supersedes, drift verdict) then the body after a blank line.
+updated, verified_at/by, superseded_by, supersedes, drift verdict) then the body after a
+blank line. `supersedes` is a text-only field — the computed reverse index of
+`superseded_by` — with no JSON counterpart, so don't parse it from `--json`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|

@@ -16,7 +16,8 @@ allowed-tools: Bash(cc-notes:*), Read
 cc-notes is a git-native notes and tasks layer for agents. Every entity — a note or a
 task — is an event-log CRDT: an append-only log of operation packs, one per git commit,
 on hidden `refs/cc-notes/*` refs inside the repo's object database. The data is versioned,
-synced by plain `git push`/`git pull`, and invisible in checkouts and diffs. A pure
+synced by plain `git push`/`git pull` (or `cc-notes sync` under jj, whose git bridge skips
+the cc-notes refs), and invisible in checkouts and diffs. A pure
 deterministic fold replays each log into a snapshot, so every replica reads the same state.
 
 Reach for cc-notes when work or knowledge must survive the current session or reach another
@@ -57,7 +58,10 @@ See `references/tasks-vs-notes.md` for worked examples of choosing among the thr
 The spine of day-to-day use. Run `init` once per repo; everything else recurs as you work.
 
 **1. Initialize (once per repo).** Installs the refspecs so plain `git push`/`git pull`
-carry the cc-notes refs alongside your branches.
+carry the cc-notes refs alongside your branches. Under jj that doesn't hold — `jj git
+push`/`jj git fetch` bridge only `refs/heads/*`, leaving the `refs/cc-notes/*` refs behind —
+so run `cc-notes sync`, which drives git directly and carries the refs regardless of
+front-end, or real `git push`/`git pull`.
 
 ```console
 $ cc-notes init

@@ -192,9 +192,12 @@ rounds: 1
 ```
 
 After `cc-notes init`, plain `git push` and `git pull` carry the cc-notes refs alongside
-your branches, so a normal git workflow keeps the data in step. `cc-notes sync` is the
-explicit converge-and-push when you want the refs reconciled without touching your branches;
-`--full` forces a whole-namespace scan instead of the default changed-refs-only pass.
+your branches, so a normal git workflow keeps the data in step. Under jj it does not: `jj
+git push`/`jj git fetch` bridge only `refs/heads/*`, so the `refs/cc-notes/*` refs never ride
+along — run `cc-notes sync`, which drives the real git binary directly and carries the refs
+regardless of front-end. `cc-notes sync` is the explicit converge-and-push when you want the
+refs reconciled without touching your branches; `--full` forces a whole-namespace scan
+instead of the default changed-refs-only pass.
 
 ## Linking commits to tasks
 
@@ -238,7 +241,11 @@ agents is needed, since the git remote is the whole coordination substrate.
 5. **Publish.** `cc-notes sync` shares your claims, edits, and closes; the next agent's sync
    sees them.
 
-Sync often enough that the ready queue reflects reality. The more agents share a remote, the
-more a stale local view risks two agents reaching for the same task before a claim
-propagates — and while the deterministic first-wins rule keeps that race from corrupting
-state, a fresh sync keeps both agents from wasting effort on the same work.
+Sync at the moments that keep the shared view honest: on **orient**, before you claim
+anything, so the ready queue reflects what other agents have already taken; after **start**,
+**claim**, or **done**, to broadcast your lease and progress to the next agent; after every
+`cc-notes reconcile`, to publish the carried tasks; and automatically from **CI**, where the
+merging Action runs sync on the shared remote. The more agents share a remote, the more a
+stale local view risks two agents reaching for the same task before a claim propagates — and
+while the deterministic first-wins rule keeps that race from corrupting state, a fresh sync
+keeps both agents from wasting effort on the same work.
