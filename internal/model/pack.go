@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // packVersion is the only wire format version this codec reads and writes.
@@ -233,8 +234,89 @@ func marshalOp(op Op) ([]byte, error) {
 			Kind string `json:"kind"`
 			SetBranch
 		}{o.OpKind(), o})
+	case Checkpoint:
+		return marshalCheckpoint(o)
 	}
 	return nil, fmt.Errorf("%w: %T", ErrUnknownKind, op)
+}
+
+// checkpointWire is the deterministic wire layout for a Checkpoint op: the
+// "kind" discriminator first, then the carried entity id, the snapshot kind
+// tag, the snapshot itself as raw JSON, the covered lamport, and the sorted
+// covered shas. CoversShas sorts ascending before marshaling — the order is
+// part of the storage format, so two replicas compacting the same frontier
+// encode identical bytes. Checkpoint cannot use the embedded-envelope pattern
+// the other ops use: State is an interface that needs kind-tagged decoding.
+type checkpointWire struct {
+	Kind          string          `json:"kind"`
+	EntityID      EntityID        `json:"entity_id"`
+	StateKind     string          `json:"state_kind"`
+	State         json.RawMessage `json:"state"`
+	CoversLamport Lamport         `json:"covers_lamport"`
+	CoversShas    []SHA           `json:"covers_shas"`
+}
+
+func marshalCheckpoint(o Checkpoint) ([]byte, error) {
+	var stateKind string
+	switch o.State.(type) {
+	case Note:
+		stateKind = "note"
+	case Task:
+		stateKind = "task"
+	default:
+		return nil, fmt.Errorf("%w: checkpoint state %T", ErrUnknownKind, o.State)
+	}
+	state, err := json.Marshal(o.State)
+	if err != nil {
+		return nil, err
+	}
+	shas := slices.Clone(o.CoversShas)
+	slices.Sort(shas)
+	return json.Marshal(checkpointWire{
+		Kind:          o.OpKind(),
+		EntityID:      o.EntityID,
+		StateKind:     stateKind,
+		State:         state,
+		CoversLamport: o.CoversLamport,
+		CoversShas:    shas,
+	})
+}
+
+// decodeCheckpoint reverses marshalCheckpoint, rebuilding the Snapshot from its
+// kind tag — decodeAs cannot, since a plain json.Unmarshal into Checkpoint
+// leaves the State interface field nil. An empty State or an unknown state_kind
+// fails with ErrInvalidValue (the op kind itself is known).
+func decodeCheckpoint(raw json.RawMessage) (Op, error) {
+	var wire checkpointWire
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, fmt.Errorf("unmarshal checkpoint: %w", err)
+	}
+	if len(wire.State) == 0 {
+		return nil, fmt.Errorf("%w: checkpoint state is empty", ErrInvalidValue)
+	}
+	var state Snapshot
+	switch wire.StateKind {
+	case "note":
+		var n Note
+		if err := json.Unmarshal(wire.State, &n); err != nil {
+			return nil, fmt.Errorf("unmarshal checkpoint note state: %w", err)
+		}
+		state = n
+	case "task":
+		var t Task
+		if err := json.Unmarshal(wire.State, &t); err != nil {
+			return nil, fmt.Errorf("unmarshal checkpoint task state: %w", err)
+		}
+		state = t
+	default:
+		return nil, fmt.Errorf("%w: checkpoint state_kind %q", ErrInvalidValue, wire.StateKind)
+	}
+	return Checkpoint{
+		EntityID:      wire.EntityID,
+		State:         state,
+		CoversLamport: wire.CoversLamport,
+		CoversShas:    wire.CoversShas,
+	}, nil
 }
 
 func decodeOp(raw json.RawMessage) (Op, error) {
@@ -283,6 +365,7 @@ var opDecoders = map[string]func(json.RawMessage) (Op, error){
 	SetParent{}.OpKind():          decodeAs[SetParent],
 	AddComment{}.OpKind():         decodeAs[AddComment],
 	SetBranch{}.OpKind():          decodeAs[SetBranch],
+	Checkpoint{}.OpKind():         decodeCheckpoint,
 }
 
 func decodeAs[T Op](raw json.RawMessage) (Op, error) {

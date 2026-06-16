@@ -30,6 +30,13 @@ var (
 // dispatching on the create op: a create_note chain folds to model.Note, a
 // create_task chain to model.Task. Set-valued snapshot fields come back as
 // non-nil sorted slices; anchors sort by (kind, value).
+//
+// A chain may contain Checkpoint commits. Fold receives the full chain (the
+// create commit is always the root); when the newest checkpoint is seed-safe it
+// starts the snapshot from Checkpoint.State and replays only the uncovered
+// suffix, otherwise it folds the full history with every checkpoint a no-op.
+// Either way the result equals folding the uncompacted history, so a compacted
+// fold and a full fold converge on every replica.
 func Fold(commits []model.PackCommit) (model.Snapshot, error) {
 	ordered, err := Linearize(commits)
 	if err != nil {
@@ -68,17 +75,37 @@ func Task(commits []model.PackCommit) (model.Task, error) {
 }
 
 func foldNote(ordered []model.PackCommit) (model.Note, error) {
-	note := model.Note{
-		ID:        model.EntityID(ordered[0].SHA),
-		CreatedAt: ordered[0].AuthorTime,
-		Head:      ordered[len(ordered)-1].SHA,
-	}
+	base, seedSHA, covered, seeded := selectSeed(ordered)
+	var note model.Note
 	tags := map[string]bool{}
 	anchors := map[model.Anchor]bool{}
 	superseded := map[model.EntityID]bool{}
 	var witness []model.AnchorWitness
 	created := false
+	if seeded {
+		seed, ok := base.State.(model.Note)
+		if !ok {
+			return model.Note{}, fmt.Errorf("%w: checkpoint over a task folded as a note", ErrKindMismatch)
+		}
+		note = seed
+		for _, t := range seed.Tags {
+			tags[t] = true
+		}
+		for _, a := range seed.Anchors {
+			anchors[a] = true
+		}
+		for _, id := range seed.SupersededBy {
+			superseded[id] = true
+		}
+		witness = seed.Witness
+		created = true
+	} else {
+		note = model.Note{ID: model.EntityID(ordered[0].SHA), CreatedAt: ordered[0].AuthorTime}
+	}
 	for _, c := range ordered {
+		if seeded && (c.SHA == seedSHA || covered[c.SHA]) {
+			continue
+		}
 		for _, op := range c.Pack.Ops {
 			if !created {
 				switch o := op.(type) {
@@ -99,6 +126,9 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 				continue
 			}
 			switch o := op.(type) {
+			case model.Checkpoint:
+				// A non-seed checkpoint is a fold no-op: its covered ops replay
+				// through their original commits, which remain in the chain.
 			case model.CreateNote, model.CreateTask:
 				return model.Note{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
@@ -128,7 +158,7 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 				return model.Note{}, fmt.Errorf("%w: %s on a note", ErrKindMismatch, op.OpKind())
 			}
 		}
-		if len(c.Pack.Ops) > 0 {
+		if hasNonCheckpointOp(c) {
 			note.UpdatedAt = c.AuthorTime
 		}
 	}
@@ -139,21 +169,41 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 	note.Anchors = sortedAnchors(anchors)
 	note.SupersededBy = sortedKeys(superseded)
 	note.Witness = witness
+	note.Head = ordered[len(ordered)-1].SHA
 	return note, nil
 }
 
 func foldTask(ordered []model.PackCommit) (model.Task, error) {
-	task := model.Task{
-		ID:        model.EntityID(ordered[0].SHA),
-		CreatedAt: ordered[0].AuthorTime,
-		Head:      ordered[len(ordered)-1].SHA,
-		Comments:  []model.Comment{},
-	}
+	base, seedSHA, covered, seeded := selectSeed(ordered)
+	var task model.Task
 	labels := map[string]bool{}
 	deps := map[model.EntityID]bool{}
 	commits := map[model.SHA]bool{}
 	created := false
+	if seeded {
+		seed, ok := base.State.(model.Task)
+		if !ok {
+			return model.Task{}, fmt.Errorf("%w: checkpoint over a note folded as a task", ErrKindMismatch)
+		}
+		task = seed
+		task.Comments = slices.Clone(seed.Comments)
+		for _, l := range seed.Labels {
+			labels[l] = true
+		}
+		for _, id := range seed.BlockedBy {
+			deps[id] = true
+		}
+		for _, sha := range seed.Commits {
+			commits[sha] = true
+		}
+		created = true
+	} else {
+		task = model.Task{ID: model.EntityID(ordered[0].SHA), CreatedAt: ordered[0].AuthorTime, Comments: []model.Comment{}}
+	}
 	for _, c := range ordered {
+		if seeded && (c.SHA == seedSHA || covered[c.SHA]) {
+			continue
+		}
 		for _, op := range c.Pack.Ops {
 			if !created {
 				switch o := op.(type) {
@@ -174,6 +224,9 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 				continue
 			}
 			switch o := op.(type) {
+			case model.Checkpoint:
+				// A non-seed checkpoint is a fold no-op: its covered ops replay
+				// through their original commits, which remain in the chain.
 			case model.CreateNote, model.CreateTask:
 				return model.Task{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
@@ -225,7 +278,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 				return model.Task{}, fmt.Errorf("%w: %s on a task", ErrKindMismatch, op.OpKind())
 			}
 		}
-		if len(c.Pack.Ops) > 0 {
+		if hasNonCheckpointOp(c) {
 			task.UpdatedAt = c.AuthorTime
 			if task.Assignee != "" && c.Author == task.Assignee {
 				task.HeartbeatAt = c.AuthorTime
@@ -239,6 +292,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 	task.Labels = sortedKeys(labels)
 	task.BlockedBy = sortedKeys(deps)
 	task.Commits = sortedKeys(commits)
+	task.Head = ordered[len(ordered)-1].SHA
 	return task, nil
 }
 
@@ -262,6 +316,74 @@ func firstOp(ordered []model.PackCommit) model.Op {
 		}
 	}
 	return nil
+}
+
+// selectSeed chooses the checkpoint a fold may start its snapshot from, plus
+// the set of commits its State already covers. It returns the checkpoint with
+// the greatest CoversLamport (sha tiebreak) only when that checkpoint is
+// seed-safe: every commit in ordered that is neither the checkpoint commit nor
+// in its CoversShas has Pack.Lamport > CoversLamport. That gate is the
+// load-bearing convergence guarantee — because Linearize orders by lamport
+// first and every covered op has lamport <= CoversLamport, a strictly-greater
+// uncovered lamport means every uncovered op sorts after every covered op, so
+// seeding from State and replaying only the uncovered suffix yields exactly the
+// full-history fold. When the gate fails (concurrent checkpoints over different
+// frontiers), it returns ok=false and the caller folds the full chain, where
+// every checkpoint is a no-op and the covered ops replay through their original
+// commits. The fallback is always available: compaction never deletes objects,
+// so covered commits remain in the chain.
+func selectSeed(ordered []model.PackCommit) (base model.Checkpoint, seedSHA model.SHA, covered map[model.SHA]bool, ok bool) {
+	found := false
+	for _, c := range ordered {
+		cp, isCheckpoint := checkpointOf(c)
+		if !isCheckpoint {
+			continue
+		}
+		if !found || cp.CoversLamport > base.CoversLamport ||
+			(cp.CoversLamport == base.CoversLamport && c.SHA > seedSHA) {
+			base, seedSHA, found = cp, c.SHA, true
+		}
+	}
+	if !found {
+		return model.Checkpoint{}, "", nil, false
+	}
+	covered = make(map[model.SHA]bool, len(base.CoversShas))
+	for _, s := range base.CoversShas {
+		covered[s] = true
+	}
+	for _, c := range ordered {
+		if c.SHA == seedSHA || covered[c.SHA] {
+			continue
+		}
+		if c.Pack.Lamport <= base.CoversLamport {
+			return model.Checkpoint{}, "", nil, false
+		}
+	}
+	return base, seedSHA, covered, true
+}
+
+// checkpointOf returns the Checkpoint a checkpoint commit carries. A checkpoint
+// commit holds exactly one op, the Checkpoint.
+func checkpointOf(c model.PackCommit) (model.Checkpoint, bool) {
+	if len(c.Pack.Ops) == 1 {
+		if cp, ok := c.Pack.Ops[0].(model.Checkpoint); ok {
+			return cp, true
+		}
+	}
+	return model.Checkpoint{}, false
+}
+
+// hasNonCheckpointOp reports whether c carries any op that is not a Checkpoint.
+// A checkpoint commit's compaction time and author are not the entity's, so it
+// must not stamp UpdatedAt or the lease heartbeat — only a commit with a real
+// op does.
+func hasNonCheckpointOp(c model.PackCommit) bool {
+	for _, op := range c.Pack.Ops {
+		if _, ok := op.(model.Checkpoint); !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func sortedKeys[K cmp.Ordered](set map[K]bool) []K {

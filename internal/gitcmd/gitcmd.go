@@ -133,6 +133,33 @@ func (g Git) UpdateRef(ctx context.Context, ref string, new, old model.SHA) erro
 	return nil
 }
 
+// DeleteRef atomically deletes ref locally under a real ref lock, succeeding
+// only if the ref currently equals old; an empty old deletes unconditionally.
+// This is the only ref delete in the system — physical prune calls it, outside
+// the sync path. A CAS failure wraps ErrCASMismatch.
+func (g Git) DeleteRef(ctx context.Context, ref string, old model.SHA) error {
+	directive := fmt.Sprintf("delete %s\x00%s\x00", ref, old)
+	_, err := g.run(ctx, directive, "update-ref", "--stdin", "-z")
+	if err = classify(err, ErrCASMismatch, casPatterns); err != nil {
+		return fmt.Errorf("delete ref %s: %w", ref, err)
+	}
+	return nil
+}
+
+// DeleteRemoteRef deletes ref on remote via `git push <remote> --delete <ref>`.
+// It is best-effort and non-convergent: a stale clone that still holds the ref
+// re-advertises it on its next push, so a delete never converges the way sync's
+// union merge does — which is why physical prune calls it deliberately and
+// outside the sync path. A rejected delete wraps ErrNonFastForward via the
+// shared push classification; the caller continues past per-ref failures.
+func (g Git) DeleteRemoteRef(ctx context.Context, remote, ref string) error {
+	_, err := g.run(ctx, "", "push", remote, "--delete", ref)
+	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
+		return fmt.Errorf("delete remote ref %s on %s: %w", ref, remote, err)
+	}
+	return nil
+}
+
 // PathOID returns the git object id of path's content at rev
 // (git rev-parse rev:path), for witnesses and drift detection. A path absent
 // at rev wraps ErrPathNotFound, which the reader treats as drift.

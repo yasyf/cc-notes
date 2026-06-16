@@ -319,3 +319,21 @@ func (o SetBranch) validate() error {
 	}
 	return o.Branch.validate()
 }
+
+// Checkpoint compacts an entity's history into a single seed. State is the
+// full folded snapshot of every commit in CoversShas, CoversLamport is the
+// lamport of the covered tip, and EntityID is the immutable root sha the
+// snapshot belongs to. Checkpoint is always appended, never a root, so it
+// never changes an entity id: a fold uses the newest seed-safe checkpoint as
+// its starting snapshot and treats every other checkpoint as a no-op. The pack
+// codec carries State kind-tagged (note or task) so it decodes back to the
+// concrete model.Note or model.Task; the snapshot's kind drives fold dispatch.
+type Checkpoint struct {
+	EntityID      EntityID
+	State         Snapshot
+	CoversLamport Lamport
+	CoversShas    []SHA
+}
+
+// OpKind returns "checkpoint".
+func (Checkpoint) OpKind() string { return "checkpoint" }

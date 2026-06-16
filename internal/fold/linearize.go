@@ -29,7 +29,9 @@ var (
 // replica therefore linearizes the same set of commits identically,
 // regardless of input order. The chain must contain exactly one root (the
 // create commit) and exactly one head (the tip), with every referenced
-// parent present. The input slice is not modified.
+// parent present. Checkpoint commits are ordinary internal commits with real
+// parents — they never become the root — so these guards keep masking corrupt
+// or shallow chains regardless of compaction. The input slice is not modified.
 func Linearize(commits []model.PackCommit) ([]model.PackCommit, error) {
 	if len(commits) == 0 {
 		return nil, ErrEmptyChain

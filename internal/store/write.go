@@ -121,6 +121,78 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 	return nil, fmt.Errorf("append to %s: %w: %w", ref, ErrContended, lastErr)
 }
 
+// Compact collapses ref's chain into a checkpoint commit: it folds the chain,
+// appends a Checkpoint op carrying the folded State, the covered tip lamport,
+// and every covered sha, then advances ref to the new commit under ref
+// compare-and-swap with the same bounded retry as Append. The entity id and
+// the folded State are preserved — compaction is a re-encoding that lets future
+// folds seed from the checkpoint instead of replaying every op, never a loss of
+// history: the covered objects stay in the object database. A lost race
+// re-reads the chain and retries; exhausting maxAttempts fails wrapping
+// ErrContended. It returns the post-compaction snapshot, equal to the pre-
+// compaction fold except for Head.
+func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error) {
+	name, email, err := s.actor(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("compact %s: %w", ref, err)
+	}
+	actor := model.Actor(name + " <" + email + ">")
+	var lastErr error
+	for attempt := range maxAttempts {
+		if attempt > 0 {
+			if err := Backoff(ctx, attempt); err != nil {
+				return nil, fmt.Errorf("compact %s: %w", ref, err)
+			}
+		}
+		tip, err := s.Repo.Tip(ctx, ref)
+		if err != nil {
+			return nil, fmt.Errorf("compact %s: %w", ref, err)
+		}
+		chain, err := s.Repo.ReadChain(ctx, tip)
+		if err != nil {
+			return nil, fmt.Errorf("compact %s: %w", ref, err)
+		}
+		snap, err := fold.Fold(chain)
+		if err != nil {
+			return nil, fmt.Errorf("compact %s: %w", ref, err)
+		}
+		coversShas := make([]model.SHA, len(chain))
+		for i, c := range chain {
+			coversShas[i] = c.SHA
+		}
+		checkpoint := model.Checkpoint{
+			EntityID:      snap.EntityID(),
+			State:         snap,
+			CoversLamport: nextLamport(chain) - 1,
+			CoversShas:    coversShas,
+		}
+		pack, err := roundTrip(model.Pack{Lamport: nextLamport(chain), Ops: []model.Op{checkpoint}})
+		if err != nil {
+			return nil, fmt.Errorf("compact %s: %w", ref, err)
+		}
+		sig := gitobj.Signature{Name: name, Email: email, When: s.now()}
+		sha, err := s.Repo.WriteOpsCommit(ctx, []model.SHA{tip}, sig, "cc-notes: compact", pack)
+		if err != nil {
+			return nil, fmt.Errorf("compact %s: %w", ref, err)
+		}
+		commit := model.PackCommit{SHA: sha, Parents: []model.SHA{tip}, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack}
+		snapshot, err := fold.Fold(append(chain, commit))
+		if err != nil {
+			return nil, fmt.Errorf("compact %s: %w", ref, err)
+		}
+		switch err := s.Git.UpdateRef(ctx, ref, sha, tip); {
+		case err == nil:
+			s.cache.put(sha, snapshot)
+			return snapshot, nil
+		case errors.Is(err, gitcmd.ErrCASMismatch):
+			lastErr = err
+		default:
+			return nil, fmt.Errorf("compact %s: %w", ref, err)
+		}
+	}
+	return nil, fmt.Errorf("compact %s: %w: %w", ref, ErrContended, lastErr)
+}
+
 // Merge writes the union merge commit joining ours and theirs — two tips of
 // the same entity — carrying an empty-ops pack at lamport max(both chains)+1,
 // then compare-and-swaps ref from ours to the merge. The union is folded

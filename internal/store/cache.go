@@ -220,6 +220,45 @@ func seedOrder(dir string) []model.SHA {
 	return order
 }
 
+// tips lists the chain tips currently cached on disk, best-effort: an
+// unresolvable or unreadable directory yields an empty slice. GCLocal walks it
+// to find entries orphaned by appends, compaction, and merges.
+func (c *foldCache) tips() []model.SHA {
+	dir, err := c.resolveDir()
+	if err != nil || dir == "" {
+		return nil
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	tips := make([]model.SHA, 0, len(ents))
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		tips = append(tips, model.SHA(e.Name()))
+	}
+	return tips
+}
+
+// delete removes the cache entry for tip and drops it from the LRU index. It is
+// best-effort: a missing file or unresolvable directory is a no-op. GCLocal and
+// physical prune call it to evict entries orphaned by appends, compaction,
+// merges, and tombstone removal.
+func (c *foldCache) delete(tip model.SHA) {
+	dir, err := c.resolveDir()
+	if err != nil || dir == "" {
+		return
+	}
+	os.Remove(filepath.Join(dir, string(tip)))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if i := slices.Index(c.order, tip); i >= 0 {
+		c.order = slices.Delete(c.order, i, i+1)
+	}
+}
+
 // encodeFoldEntry serializes a snapshot as a version-and-kind header line
 // followed by the snapshot's own JSON. The model types carry Head, so the
 // serialized form self-identifies its tip. An unknown concrete type returns

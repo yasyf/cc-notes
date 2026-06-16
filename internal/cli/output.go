@@ -126,6 +126,15 @@ type syncDTO struct {
 	Rounds        int `json:"rounds"`
 }
 
+// gcDTO fixes the JSON field order for a gc report: local entries tidied, and
+// the tombstoned refs pruned and failed under --prune-remote (both zero
+// without it).
+type gcDTO struct {
+	Tidied int `json:"tidied"`
+	Pruned int `json:"pruned"`
+	Failed int `json:"failed"`
+}
+
 // reconcileDTO fixes the JSON field order for a reconcile report: the target
 // branch, the scanned/merged/carried tallies, and one nested entry per
 // scanned source branch.

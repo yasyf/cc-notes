@@ -74,6 +74,17 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 		{"set_parent", SetParent{Parent: testParent}},
 		{"add_comment", AddComment{Body: "Taking this one."}},
 		{"set_branch", SetBranch{Branch: "feature/x"}},
+		{"checkpoint", Checkpoint{
+			EntityID: testID,
+			State: Note{
+				ID: testID, Title: "Deploy runbook", Body: "Ship from green main only.",
+				Tags: []string{"ops"}, Anchors: []Anchor{{Kind: AnchorCommit, Value: testID}},
+				Author: "ada <ada@example.com>", CreatedAt: 100, UpdatedAt: 200,
+				SupersededBy: []EntityID{}, Head: testParent,
+			},
+			CoversLamport: 5,
+			CoversShas:    []SHA{testParent, testID},
+		}},
 	}
 
 	if got, want := len(cases), len(opDecoders); got != want {
@@ -117,6 +128,40 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 				t.Fatalf("round-trip = %#v, want %#v", got, pack)
 			}
 		})
+	}
+}
+
+func TestPackRoundTripCheckpointTaskState(t *testing.T) {
+	op := Checkpoint{
+		EntityID: testID,
+		State: Task{
+			ID: testID, Branch: "main", Title: "Fix flaky sync", Description: "round-trip flakes",
+			Type: TypeBug, Status: StatusInProgress, Priority: 1, Assignee: "agent-7",
+			HeartbeatAt: 300, HeartbeatLamport: 4, Labels: []string{"ci"}, BlockedBy: []EntityID{},
+			Comments: []Comment{{Author: "agent-7", TS: 300, Body: "on it"}}, CreatedAt: 100,
+			UpdatedAt: 300, StartedAt: 200, Commits: []SHA{}, Head: testParent,
+		},
+		CoversLamport: 7,
+		CoversShas:    []SHA{testParent, testID},
+	}
+	pack := Pack{Lamport: 8, Ops: []Op{op}}
+	data, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got, err := DecodePack(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !reflect.DeepEqual(got, pack) {
+		t.Fatalf("round-trip = %#v, want %#v", got, pack)
+	}
+	cp, ok := got.Ops[0].(Checkpoint)
+	if !ok {
+		t.Fatalf("Ops[0] = %T, want Checkpoint", got.Ops[0])
+	}
+	if _, ok := cp.State.(Task); !ok {
+		t.Fatalf("decoded State = %T, want Task", cp.State)
 	}
 }
 
@@ -201,6 +246,43 @@ func TestPackGoldenBytes(t *testing.T) {
 			pack: Pack{Lamport: 9},
 			want: `{"v":1,"lamport":9,"ops":[]}`,
 		},
+		{
+			name: "checkpoint over a note",
+			pack: Pack{
+				Lamport: 6,
+				Ops: []Op{Checkpoint{
+					EntityID: testID,
+					State: Note{
+						ID: testID, Title: "Deploy runbook", Body: "Ship from green main only.",
+						Tags: []string{"ops"}, Anchors: []Anchor{{Kind: AnchorCommit, Value: testID}},
+						Author: "ada <ada@example.com>", CreatedAt: 100, UpdatedAt: 200,
+						SupersededBy: []EntityID{}, Head: testParent,
+					},
+					CoversLamport: 5,
+					CoversShas:    []SHA{testParent, testID},
+				}},
+			},
+			want: `{"v":1,"lamport":6,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"note","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Deploy runbook","body":"Ship from green main only.","tags":["ops"],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"}],"author":"ada \u003cada@example.com\u003e","created_at":100,"updated_at":200,"deleted":false,"verified_at":0,"verified_by":"","verified_commit":"","witness":null,"superseded_by":[],"head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":5,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+		{
+			name: "checkpoint over a task",
+			pack: Pack{
+				Lamport: 8,
+				Ops: []Op{Checkpoint{
+					EntityID: testID,
+					State: Task{
+						ID: testID, Branch: "main", Title: "Fix flaky sync", Description: "round-trip flakes",
+						Type: TypeBug, Status: StatusInProgress, Priority: 1, Assignee: "agent-7",
+						HeartbeatAt: 300, HeartbeatLamport: 4, Labels: []string{"ci"}, BlockedBy: []EntityID{},
+						Comments: []Comment{{Author: "agent-7", TS: 300, Body: "on it"}}, CreatedAt: 100,
+						UpdatedAt: 300, StartedAt: 200, Commits: []SHA{}, Head: testParent,
+					},
+					CoversLamport: 7,
+					CoversShas:    []SHA{testParent, testID},
+				}},
+			},
+			want: `{"v":1,"lamport":8,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"task","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","branch":"main","title":"Fix flaky sync","description":"round-trip flakes","type":"bug","status":"in_progress","priority":1,"assignee":"agent-7","heartbeat_at":300,"heartbeat_lamport":4,"labels":["ci"],"blocked_by":[],"parent":"","comments":[{"author":"agent-7","ts":300,"body":"on it"}],"created_at":100,"updated_at":300,"started_at":200,"closed_at":0,"commits":[],"head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":7,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -240,6 +322,8 @@ func TestDecodePackFailures(t *testing.T) {
 		{"empty component in create_task branch", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":"a//b","parent":"","labels":[]}]}`, ErrInvalidValue},
 		{"traversal branch in set_branch", `{"v":1,"lamport":1,"ops":[{"kind":"set_branch","branch":"../evil"}]}`, ErrInvalidValue},
 		{"trailing slash in set_branch", `{"v":1,"lamport":1,"ops":[{"kind":"set_branch","branch":"feature/"}]}`, ErrInvalidValue},
+		{"unknown checkpoint state_kind", `{"v":1,"lamport":1,"ops":[{"kind":"checkpoint","entity_id":"a1","state_kind":"epic","state":{"id":"a1"},"covers_lamport":1,"covers_shas":["a1"]}]}`, ErrInvalidValue},
+		{"missing checkpoint state", `{"v":1,"lamport":1,"ops":[{"kind":"checkpoint","entity_id":"a1","state_kind":"note","covers_lamport":1,"covers_shas":["a1"]}]}`, ErrInvalidValue},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
