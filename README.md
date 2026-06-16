@@ -91,9 +91,31 @@ $ cc-notes task show d82c087 --json
 {"id":"d82c087ca80fbb9c7956cec15dfdf8f01486d1e2","branch":"main","title":"Add retry backoff to the API client","description":"","type":"task","status":"done","priority":1,"assignee":"ada \u003cada@example.com\u003e","labels":["api"],"blocked_by":[],"blocks":[],"parent":null,"comments":[],"created_at":"2026-06-12T21:14:49Z","updated_at":"2026-06-12T21:15:11Z","started_at":"2026-06-12T21:15:11Z","closed_at":"2026-06-12T21:15:11Z"}
 ```
 
+## Coordinating across branches
+
+Tasks scope to the branch they're created on, so a merge carries the code over but leaves the merged branch's tasks behind on their own namespace. The canonical loop closes that gap: branch off, capture work with `cc-notes task add`, commit and merge as usual, then promote the merged branch's open tasks onto the target with `cc-notes reconcile` and converge with `cc-notes sync`.
+
+```console
+$ cc-notes reconcile --into main
+scanned: 1
+merged: 1
+promoted: 2
+into: main
+feature/x:
+08118da	open	P1	-	build the widget
+b932fd9	open	P2	-	test the widget
+$ cc-notes sync
+pushed: 2
+rounds: 1
+```
+
+`reconcile` auto-discovers the branches fully merged into the target and is idempotent — safe to re-run and to wire into CI.
+
+Keep notes honest as they age. Supersede a changed decision by editing it (`cc-notes note edit <id>`) or retire it with `cc-notes note rm <id>` (a tombstone — listings drop it, history keeps it); tag a context-only note `stale` or `superseded` to filter it out; and anchor each note to the commit or path it describes (`--commit`, `--path`) so drift stays visible.
+
 ## Going further
 
-Run `cc-notes task --help` and `cc-notes note --help` for the full command set: tasks add `list`, `edit`, `comment`, `dep`/`undep`, `cancel`, and `promote`; notes add `list`, `edit`, `search`, and `rm`. With a `_fuse` binary, `cc-notes mount DIR` exposes everything as an editable filesystem — notes as Markdown, tasks as JSON.
+Run `cc-notes task --help` and `cc-notes note --help` for the full command set: tasks add `list`, `edit`, `comment`, `dep`/`undep`, `cancel`, and `promote`; notes add `list`, `edit`, `search`, and `rm`. With a `_fuse` binary, `cc-notes mount [DIR]` exposes everything as an editable filesystem — notes as Markdown, tasks as JSON. `DIR` is created if it does not exist; omit it to use a managed per-repo default under `~/.cc-notes/mnt`.
 
 ## License
 
