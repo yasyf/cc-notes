@@ -15,7 +15,7 @@ const (
 	// foldCacheVersion prefixes every entry; bumping it invalidates every
 	// on-disk entry without touching the files, since a leading version
 	// mismatch reads as a miss.
-	foldCacheVersion = 2
+	foldCacheVersion = 3
 	// foldCacheCap bounds the number of on-disk entries; the least-recently
 	// used are evicted past it.
 	foldCacheCap = 1024

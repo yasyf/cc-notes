@@ -172,6 +172,65 @@ func TestFoldCacheRoundTripBothKinds(t *testing.T) {
 	}
 }
 
+func TestFoldCacheTaskP3FieldsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	c := newFoldCache(dir, foldCacheCap)
+
+	tip := model.SHA("cccc333333333333333333333333333333333333")
+	task := model.Task{
+		ID:               "taskid",
+		Branch:           "main",
+		Title:            "ship",
+		Type:             model.TypeTask,
+		Status:           model.StatusInProgress,
+		Assignee:         testActor,
+		HeartbeatAt:      1717000000,
+		HeartbeatLamport: 42,
+		Commits: []model.SHA{
+			"1111111111111111111111111111111111111111",
+			"2222222222222222222222222222222222222222",
+		},
+		CreatedAt: 1,
+		UpdatedAt: 2,
+		Head:      tip,
+	}
+	c.put(tip, task)
+
+	got, ok := c.get(tip)
+	if !ok {
+		t.Fatal("P3 task round-trip: get miss")
+	}
+	gotTask := got.(model.Task)
+	if gotTask.HeartbeatAt != task.HeartbeatAt {
+		t.Errorf("HeartbeatAt = %d, want %d", gotTask.HeartbeatAt, task.HeartbeatAt)
+	}
+	if gotTask.HeartbeatLamport != task.HeartbeatLamport {
+		t.Errorf("HeartbeatLamport = %d, want %d", gotTask.HeartbeatLamport, task.HeartbeatLamport)
+	}
+	if !reflect.DeepEqual(gotTask.Commits, task.Commits) {
+		t.Errorf("Commits = %v, want %v", gotTask.Commits, task.Commits)
+	}
+}
+
+func TestFoldCachePreP3EntryInvalidated(t *testing.T) {
+	dir := t.TempDir()
+	c := newFoldCache(dir, foldCacheCap)
+	tip := model.SHA("dddd444444444444444444444444444444444444")
+
+	// A valid task entry written by a pre-P3 binary under cache version 2: the
+	// JSON predates the heartbeat_at/heartbeat_lamport/commits fields. The body
+	// parses cleanly, so the version byte is the only thing that makes get miss;
+	// reverting foldCacheVersion to 2 turns this into a hit and fails the test.
+	preP3 := append([]byte{byte('0' + 2), ' '}, "task\n{\"id\":\"taskid\",\"branch\":\"main\",\"title\":\"old\",\"head\":\""+string(tip)+"\"}"...)
+	if err := os.WriteFile(filepath.Join(dir, string(tip)), preP3, 0o644); err != nil {
+		t.Fatalf("write pre-P3 entry: %v", err)
+	}
+
+	if _, ok := c.get(tip); ok {
+		t.Fatal("get of pre-P3 (version 2) task entry: want miss after bump to 3")
+	}
+}
+
 func TestFoldCacheCorruptEntryIsMiss(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
