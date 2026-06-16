@@ -125,6 +125,8 @@ func TestReaddirTreeSynthesis(t *testing.T) {
 	note := createNote(t, s, "Alpha Note", "body\n")
 	taskMain := createTask(t, s, "main", "On main")
 	taskNested := createTask(t, s, "feature/login", "On nested branch")
+	wantTasks := []string{TaskFilename(taskMain), TaskFilename(taskNested)}
+	slices.Sort(wantTasks)
 
 	for _, tc := range []struct {
 		dir  string
@@ -132,10 +134,7 @@ func TestReaddirTreeSynthesis(t *testing.T) {
 	}{
 		{"/", []string{"notes", "tasks"}},
 		{"/notes", []string{NoteFilename(note)}},
-		{"/tasks", []string{"feature", "main"}},
-		{"/tasks/feature", []string{"login"}},
-		{"/tasks/feature/login", []string{TaskFilename(taskNested)}},
-		{"/tasks/main", []string{TaskFilename(taskMain)}},
+		{"/tasks", wantTasks},
 	} {
 		if got := readNames(t, f, tc.dir); !slices.Equal(got, tc.want) {
 			t.Errorf("Readdir(%s) = %v, want %v", tc.dir, got, tc.want)
@@ -143,11 +142,11 @@ func TestReaddirTreeSynthesis(t *testing.T) {
 	}
 
 	var st fuse.Stat_t
-	if errc := f.Getattr("/tasks/feature", &st, invalidFh); errc != 0 || st.Mode&fuse.S_IFDIR == 0 {
-		t.Errorf("Getattr(/tasks/feature) = %d mode %o, want dir", errc, st.Mode)
+	if errc := f.Getattr("/tasks/"+TaskFilename(taskMain), &st, invalidFh); errc != 0 || st.Mode&fuse.S_IFREG == 0 {
+		t.Errorf("Getattr(/tasks/%s) = %d mode %o, want file", TaskFilename(taskMain), errc, st.Mode)
 	}
-	if errc := f.Getattr("/tasks/nope", &st, invalidFh); errc != -fuse.ENOENT {
-		t.Errorf("Getattr(/tasks/nope) = %d, want -ENOENT", errc)
+	if errc := f.Getattr("/tasks/deadbee.json", &st, invalidFh); errc != -fuse.ENOENT {
+		t.Errorf("Getattr(/tasks/deadbee.json) = %d, want -ENOENT", errc)
 	}
 }
 
@@ -158,7 +157,7 @@ func TestGetattrSizeMatchesRead(t *testing.T) {
 
 	for _, p := range []string{
 		"/notes/" + NoteFilename(note),
-		"/tasks/feature/login/" + TaskFilename(task),
+		"/tasks/" + TaskFilename(task),
 	} {
 		var st fuse.Stat_t
 		if errc := f.Getattr(p, &st, invalidFh); errc != 0 {
@@ -449,7 +448,7 @@ func TestPendingFlushCreatesTask(t *testing.T) {
 	f, s := newTestFS(t)
 	createTask(t, s, "main", "Existing")
 
-	p := "/tasks/main/draft.json"
+	p := "/tasks/draft.json"
 	errc, fh := f.Create(p, fuse.O_WRONLY, 0o644)
 	if errc != 0 {
 		t.Fatalf("Create = %d", errc)
@@ -463,7 +462,7 @@ func TestPendingFlushCreatesTask(t *testing.T) {
 	}
 	f.Release(p, fh)
 
-	tasks, err := s.ListTasks(t.Context(), "main")
+	tasks, err := s.ListTasks(t.Context())
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}

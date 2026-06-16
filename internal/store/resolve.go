@@ -3,7 +3,6 @@ package store
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -14,21 +13,17 @@ import (
 )
 
 // Resolve expands an entity id prefix — matched case-insensitively against
-// the lowercase hex ids in kind's namespace — into the full ref name. Tasks
-// resolve within branch's namespace only; branch is ignored for notes. No
-// match fails with ErrNotFound; several matches fail with an
-// *AmbiguousError carrying each candidate's id and title. Liveness is not
-// consulted: a promoted-away task still resolves on its old branch.
-func (s *Store) Resolve(ctx context.Context, kind refs.Kind, branch model.Branch, prefix string) (string, error) {
+// the lowercase hex ids in kind's namespace — into the full ref name. Ids
+// are globally unique, so a task resolves regardless of its folded branch.
+// No match fails with ErrNotFound; several matches fail with an
+// *AmbiguousError carrying each candidate's id and title.
+func (s *Store) Resolve(ctx context.Context, kind refs.Kind, prefix string) (string, error) {
 	var namespace string
 	switch kind {
 	case refs.KindNote:
 		namespace = refs.NotesPrefix
 	case refs.KindTask:
-		if branch == "" {
-			return "", errors.New("resolve task: empty branch")
-		}
-		namespace = refs.TasksPrefix(branch)
+		namespace = refs.TasksRoot
 	default:
 		return "", fmt.Errorf("resolve: unknown kind %q", kind)
 	}

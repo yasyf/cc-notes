@@ -15,9 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
@@ -153,9 +151,15 @@ func loadTask(t *testing.T, s *store.Store, ref string) model.Task {
 
 func listTasks(t *testing.T, s *store.Store, branch model.Branch) []model.Task {
 	t.Helper()
-	tasks, err := s.ListTasks(t.Context(), branch)
+	all, err := s.ListTasks(t.Context())
 	if err != nil {
-		t.Fatalf("ListTasks(%s): %v", branch, err)
+		t.Fatalf("ListTasks: %v", err)
+	}
+	var tasks []model.Task
+	for _, task := range all {
+		if task.Branch == branch {
+			tasks = append(tasks, task)
+		}
 	}
 	return tasks
 }
@@ -230,7 +234,7 @@ func TestPlainGitCarry(t *testing.T) {
 	}
 	note := createNote(t, a, "carried note")
 	task := createTask(t, a, "carried task", "main")
-	noteRef, taskRef := refs.Note(note.ID), refs.Task("main", task.ID)
+	noteRef, taskRef := refs.Note(note.ID), refs.Task(task.ID)
 
 	mustGit(t, a.Git.Dir, "push", "-q", "origin")
 
@@ -299,7 +303,7 @@ func TestTwoCloneConvergence(t *testing.T) {
 	b := clone(t, bare, "Bob", "bob@example.com")
 	note := createNote(t, a, "shared note")
 	task := createTask(t, a, "shared task", "main")
-	noteRef, taskRef := refs.Note(note.ID), refs.Task("main", task.ID)
+	noteRef, taskRef := refs.Note(note.ID), refs.Task(task.ID)
 
 	if got, want := sync(t, a), (ccsync.Report{Pushed: 2, Rounds: 1}); got != want {
 		t.Fatalf("A first sync report = %+v, want %+v", got, want)
@@ -375,7 +379,7 @@ func TestConcurrentSameFieldLWW(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "contested", "main")
-	taskRef := refs.Task("main", task.ID)
+	taskRef := refs.Task(task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -424,175 +428,6 @@ func TestConcurrentSameFieldLWW(t *testing.T) {
 	}
 }
 
-func TestPromoteStaleClone(t *testing.T) {
-	bare := initBare(t)
-	a := clone(t, bare, "Alice", "alice@example.com")
-	b := clone(t, bare, "Bob", "bob@example.com")
-	from, to := model.Branch("feature/x"), model.Branch("main")
-	task := createTask(t, a, "promoted", from)
-	oldRef, liveRef := refs.Task(from, task.ID), refs.Task(to, task.ID)
-	sync(t, a)
-	sync(t, b)
-
-	if err := ccsync.Promote(t.Context(), a, from, to, []model.EntityID{task.ID}); err != nil {
-		t.Fatalf("Promote: %v", err)
-	}
-	promoted := mustGit(t, a.Git.Dir, "rev-parse", oldRef)
-	if got := mustGit(t, a.Git.Dir, "rev-parse", liveRef); got != promoted {
-		t.Fatalf("dest ref at %s, want promote tip %s", got, promoted)
-	}
-	if got := listTasks(t, a, from); len(got) != 0 {
-		t.Fatalf("A ListTasks(%s) after promote = %+v, want empty", from, got)
-	}
-	sync(t, a)
-
-	// B is stale: it still appends to the old ref.
-	appendOps(t, b, oldRef, model.AddComment{Body: "stale comment"})
-	if got, want := sync(t, b), (ccsync.Report{Created: 1, FastForwarded: 1, Merged: 1, Pushed: 2, Rounds: 1}); got != want {
-		t.Fatalf("B stale sync report = %+v, want %+v", got, want)
-	}
-	sync(t, a)
-
-	for name, s := range map[string]*store.Store{"A": a, "B": b} {
-		live := listTasks(t, s, to)
-		if len(live) != 1 || live[0].ID != task.ID {
-			t.Fatalf("%s ListTasks(%s) = %+v, want the promoted task", name, to, live)
-		}
-		if len(live[0].Comments) != 1 || live[0].Comments[0].Body != "stale comment" {
-			t.Errorf("%s promoted task comments = %+v, want the stale comment", name, live[0].Comments)
-		}
-		if got := listTasks(t, s, from); len(got) != 0 {
-			t.Errorf("%s ListTasks(%s) = %+v, want empty", name, from, got)
-		}
-		mustGit(t, s.Git.Dir, "rev-parse", "--verify", oldRef)
-	}
-	mustGit(t, bare, "rev-parse", "--verify", oldRef)
-
-	// A third sync round on each side must change nothing: no resurrection.
-	tipsA, tipsB := ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir)
-	if got, want := sync(t, a), (ccsync.Report{Rounds: 1}); got != want {
-		t.Errorf("A settle sync report = %+v, want %+v", got, want)
-	}
-	if got, want := sync(t, b), (ccsync.Report{Rounds: 1}); got != want {
-		t.Errorf("B settle sync report = %+v, want %+v", got, want)
-	}
-	if got := ccRefs(t, a.Git.Dir); !reflect.DeepEqual(got, tipsA) {
-		t.Errorf("A tips moved on settle sync: %v -> %v", tipsA, got)
-	}
-	if got := ccRefs(t, b.Git.Dir); !reflect.DeepEqual(got, tipsB) {
-		t.Errorf("B tips moved on settle sync: %v -> %v", tipsB, got)
-	}
-	if !reflect.DeepEqual(ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir)) {
-		t.Errorf("clones diverge after settle: A = %v, B = %v", ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir))
-	}
-}
-
-// TestPromoteInvalidDestLeavesTaskUntouched pins the heal-safe ordering: a
-// destination git refuses fails on the destination ref create, before any
-// chain mutation, so the task stays live on its branch.
-func TestPromoteInvalidDestLeavesTaskUntouched(t *testing.T) {
-	bare := initBare(t)
-	a := clone(t, bare, "Alice", "alice@example.com")
-	task := createTask(t, a, "kept", "main")
-	ref := refs.Task("main", task.ID)
-
-	if err := ccsync.Promote(t.Context(), a, "main", "../evil", []model.EntityID{task.ID}); err == nil {
-		t.Fatal("Promote to invalid branch: want error")
-	}
-	if got := mustGit(t, a.Git.Dir, "rev-parse", ref); got != string(task.Head) {
-		t.Errorf("old ref at %s, want untouched tip %s", got, task.Head)
-	}
-	if got := loadTask(t, a, ref).Branch; got != "main" {
-		t.Errorf("task folds to %q after failed promote, want main", got)
-	}
-	if got := ccRefs(t, a.Git.Dir); len(got) != 1 {
-		t.Errorf("refs after failed promote = %v, want only %s", got, ref)
-	}
-	if got := listTasks(t, a, "main"); len(got) != 1 || got[0].ID != task.ID {
-		t.Errorf("ListTasks(main) = %+v, want the untouched task", got)
-	}
-	sync(t, a)
-}
-
-// poisonChain appends a commit whose promote op would fail decode-side
-// validation — the marshal side never validates, so the write goes through —
-// leaving a chain every later read refuses.
-func poisonChain(t *testing.T, s *store.Store, ref string) {
-	t.Helper()
-	ctx := t.Context()
-	tip, err := s.Repo.Tip(ctx, ref)
-	if err != nil {
-		t.Fatalf("Tip(%s): %v", ref, err)
-	}
-	sig := gitobj.Signature{Name: "Mallory", Email: "mallory@example.com", When: time.Now()}
-	pack := model.Pack{Lamport: 2, Ops: []model.Op{model.Promote{From: "main", To: "../evil"}}}
-	sha, err := s.Repo.WriteOpsCommit(ctx, []model.SHA{tip}, sig, "cc-notes: promote", pack)
-	if err != nil {
-		t.Fatalf("WriteOpsCommit: %v", err)
-	}
-	if err := s.Git.UpdateRef(ctx, ref, sha, tip); err != nil {
-		t.Fatalf("UpdateRef(%s): %v", ref, err)
-	}
-}
-
-// TestConsolidatePoisonedEntityDoesNotAbortOthers pins consolidation
-// resilience: entities whose chains no longer decode must not stop the
-// others from consolidating, and every poisoned entity surfaces in the
-// joined error.
-func TestConsolidatePoisonedEntityDoesNotAbortOthers(t *testing.T) {
-	bare := initBare(t)
-	a := clone(t, bare, "Alice", "alice@example.com")
-	ctx := t.Context()
-
-	// A task stranded mid-promote — the destination ref parked at the
-	// pre-promote tip, the promote op on the old chain — is exactly the
-	// state consolidate must repair.
-	healthy := createTask(t, a, "healthy", "alpha")
-	oldRef, destRef := refs.Task("alpha", healthy.ID), refs.Task("bravo", healthy.ID)
-	if err := a.Git.UpdateRef(ctx, destRef, healthy.Head, ""); err != nil {
-		t.Fatalf("UpdateRef(%s): %v", destRef, err)
-	}
-	promoted := appendOps(t, a, oldRef, model.Promote{From: "alpha", To: "bravo"}).(model.Task)
-
-	poisonedOne := createTask(t, a, "poisoned one", "main")
-	poisonedTwo := createTask(t, a, "poisoned two", "main")
-	poisonChain(t, a, refs.Task("main", poisonedOne.ID))
-	poisonChain(t, a, refs.Task("main", poisonedTwo.ID))
-
-	_, err := ccsync.Sync(ctx, a.Git.Dir, "origin")
-	if err == nil {
-		t.Fatal("Sync with poisoned entities: want error")
-	}
-	for _, id := range []model.EntityID{poisonedOne.ID, poisonedTwo.ID} {
-		if !strings.Contains(err.Error(), id.Short()) {
-			t.Errorf("error %q does not name poisoned task %s", err, id.Short())
-		}
-	}
-	if strings.Contains(err.Error(), healthy.ID.Short()) {
-		t.Errorf("error %q names the healthy task %s", err, healthy.ID.Short())
-	}
-	if got := mustGit(t, a.Git.Dir, "rev-parse", destRef); got != string(promoted.Head) {
-		t.Errorf("dest ref at %s, want consolidated to %s despite poisoned siblings", got, promoted.Head)
-	}
-}
-
-func TestPromoteFromDeadRef(t *testing.T) {
-	bare := initBare(t)
-	a := clone(t, bare, "Alice", "alice@example.com")
-	task := createTask(t, a, "moved on", "alpha")
-	if err := ccsync.Promote(t.Context(), a, "alpha", "bravo", []model.EntityID{task.ID}); err != nil {
-		t.Fatalf("Promote: %v", err)
-	}
-
-	err := ccsync.Promote(t.Context(), a, "alpha", "charlie", []model.EntityID{task.ID})
-	if !errors.Is(err, ccsync.ErrNotLive) {
-		t.Fatalf("re-promote from dead ref: got %v, want ErrNotLive", err)
-	}
-	if got := loadTask(t, a, refs.Task("alpha", task.ID)).Branch; got != "bravo" {
-		t.Errorf("dead chain folds to %q after rejected promote, want %q untouched", got, "bravo")
-	}
-}
-
 // syncUntilQuiescent alternates syncs across the clones until every clone
 // reports a clean pass — nothing created, fast-forwarded, merged, or pushed —
 // failing the test when they never settle. The terminating pass doubles as
@@ -614,83 +449,6 @@ func syncUntilQuiescent(t *testing.T, stores ...*store.Store) {
 	t.Fatal("clones never quiesced")
 }
 
-// liveBranches returns the branches whose task ref for id folds live: the
-// folded branch equals the branch encoded in the ref path.
-func liveBranches(t *testing.T, s *store.Store, id model.EntityID) []model.Branch {
-	t.Helper()
-	var live []model.Branch
-	for name := range ccRefs(t, s.Git.Dir) {
-		parsed, err := refs.Parse(name)
-		if err != nil {
-			t.Fatalf("Parse(%s): %v", name, err)
-		}
-		if parsed.Kind != refs.KindTask || parsed.ID != id {
-			continue
-		}
-		if loadTask(t, s, name).Branch == parsed.Branch {
-			live = append(live, parsed.Branch)
-		}
-	}
-	return live
-}
-
-// TestRacingPromotesConverge pins the repair for racing promotes: A promotes
-// alpha→bravo while B promotes alpha→charlie. Consolidation must converge
-// every sibling ref — not just the fold winner's — to the union history;
-// otherwise the loser's destination ref contains only its own promote, folds
-// to its own namespace, and stays live forever on every replica.
-func TestRacingPromotesConverge(t *testing.T) {
-	bare := initBare(t)
-	a := clone(t, bare, "Alice", "alice@example.com")
-	b := clone(t, bare, "Bob", "bob@example.com")
-	task := createTask(t, a, "contested promote", "alpha")
-	sync(t, a)
-	sync(t, b)
-
-	if err := ccsync.Promote(t.Context(), a, "alpha", "bravo", []model.EntityID{task.ID}); err != nil {
-		t.Fatalf("A Promote: %v", err)
-	}
-	if err := ccsync.Promote(t.Context(), b, "alpha", "charlie", []model.EntityID{task.ID}); err != nil {
-		t.Fatalf("B Promote: %v", err)
-	}
-	syncUntilQuiescent(t, a, b)
-
-	liveA, liveB := liveBranches(t, a, task.ID), liveBranches(t, b, task.ID)
-	if len(liveA) != 1 || len(liveB) != 1 {
-		t.Fatalf("live refs: A = %v, B = %v, want exactly one each", liveA, liveB)
-	}
-	if liveA[0] != liveB[0] {
-		t.Fatalf("clones disagree on winner: A = %q, B = %q", liveA[0], liveB[0])
-	}
-	winner := liveA[0]
-	if winner != "bravo" && winner != "charlie" {
-		t.Fatalf("winner = %q, want a promote destination", winner)
-	}
-	for name, s := range map[string]*store.Store{"A": a, "B": b} {
-		for _, branch := range []model.Branch{"alpha", "bravo", "charlie"} {
-			mustGit(t, s.Git.Dir, "rev-parse", "--verify", refs.Task(branch, task.ID))
-			got := listTasks(t, s, branch)
-			switch {
-			case branch == winner && (len(got) != 1 || got[0].ID != task.ID):
-				t.Errorf("%s ListTasks(%s) = %+v, want the promoted task", name, branch, got)
-			case branch != winner && len(got) != 0:
-				t.Errorf("%s ListTasks(%s) = %+v, want empty", name, branch, got)
-			}
-		}
-	}
-
-	tipsA, tipsB := ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir)
-	if !reflect.DeepEqual(tipsA, tipsB) {
-		t.Errorf("tips diverge after quiescence: A = %v, B = %v", tipsA, tipsB)
-	}
-	if got, want := sync(t, a), (ccsync.Report{Rounds: 1}); got != want {
-		t.Errorf("A settle sync report = %+v, want %+v", got, want)
-	}
-	if got := ccRefs(t, a.Git.Dir); !reflect.DeepEqual(got, tipsA) {
-		t.Errorf("A tips moved on settle sync: %v -> %v", tipsA, got)
-	}
-}
-
 // TestSymmetricMergeRace pins an accepted tradeoff: two clones that each
 // union-merge the same divergence locally before either pushes mint mirrored
 // merge commits — parents [a,b] on one clone, [b,a] on the other — so the
@@ -702,7 +460,7 @@ func TestSymmetricMergeRace(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "mirrored", "main")
-	taskRef := refs.Task("main", task.ID)
+	taskRef := refs.Task(task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -749,7 +507,7 @@ func TestPlainPushDivergedEntityRef(t *testing.T) {
 	}
 	mustGit(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
 	task := createTask(t, a, "diverged", "main")
-	taskRef := refs.Task("main", task.ID)
+	taskRef := refs.Task(task.ID)
 	mustGit(t, a.Git.Dir, "push", "-q", "origin")
 	mustGit(t, b.Git.Dir, "fetch", "-q", "origin")
 	mustGit(t, b.Git.Dir, "reset", "-q", "--hard", "origin/main")
@@ -788,7 +546,7 @@ func TestPlainFetchClobberReflog(t *testing.T) {
 		}
 	}
 	task := createTask(t, a, "clobbered", "main")
-	taskRef := refs.Task("main", task.ID)
+	taskRef := refs.Task(task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -822,7 +580,7 @@ func TestSyncPreservesDivergedOpsAfterInstall(t *testing.T) {
 		}
 	}
 	task := createTask(t, a, "diverged", "main")
-	taskRef := refs.Task("main", task.ID)
+	taskRef := refs.Task(task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -860,5 +618,32 @@ func TestSyncNoRemote(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "origin") {
 		t.Errorf("error %q does not name the remote", err)
+	}
+}
+
+// TestSetBranchConvergesAcrossClones pins LWW on the branch scalar across
+// clones: two clones each move the same task to a different branch, and after
+// sync both fold to the same branch — the linearization winner.
+func TestSetBranchConvergesAcrossClones(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	task := createTask(t, a, "contested branch", "main")
+	taskRef := refs.Task(task.ID)
+	sync(t, a)
+	sync(t, b)
+
+	appendOps(t, a, taskRef, model.SetBranch{Branch: "feature/a"})
+	appendOps(t, b, taskRef, model.SetBranch{Branch: "feature/b"})
+	sync(t, b)
+	sync(t, a)
+	sync(t, b)
+
+	taskA, taskB := loadTask(t, a, taskRef), loadTask(t, b, taskRef)
+	if !reflect.DeepEqual(taskA, taskB) {
+		t.Fatalf("clones diverge: A = %+v, B = %+v", taskA, taskB)
+	}
+	if taskA.Branch != "feature/a" && taskA.Branch != "feature/b" {
+		t.Fatalf("converged Branch = %q, want one of the two set_branch destinations", taskA.Branch)
 	}
 }

@@ -16,25 +16,22 @@ import (
 // Create roots a new entity chain: ops must begin with the create op, which
 // the caller stamps with a fresh nonce. The pack is written at lamport 1 as
 // a parentless commit whose sha becomes the entity id, then the entity ref —
-// refs.Note for a note, refs.Task on the create op's branch for a task — is
+// refs.Note for a note, refs.Task for a task — is
 // created atomically: a ref that already exists fails with
-// gitcmd.ErrCASMismatch. The pack is validated and folded before the ref is
-// created, so a bad op never publishes. It returns the folded snapshot.
+// gitcmd.ErrCASMismatch. Notes and tasks share a flat namespace keyed by
+// entity id. The pack is validated and folded before the ref is created, so
+// a bad op never publishes. It returns the folded snapshot.
 func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, error) {
 	if len(ops) == 0 {
 		return nil, errors.New("create: no ops")
 	}
 	var kind string
 	var refFor func(model.EntityID) string
-	switch o := ops[0].(type) {
+	switch ops[0].(type) {
 	case model.CreateNote:
 		kind, refFor = "note", refs.Note
 	case model.CreateTask:
-		if o.Branch == "" {
-			return nil, errors.New("create task: empty branch")
-		}
-		kind = "task"
-		refFor = func(id model.EntityID) string { return refs.Task(o.Branch, id) }
+		kind, refFor = "task", refs.Task
 	default:
 		return nil, fmt.Errorf("create: first op is %s, want create_note or create_task", ops[0].OpKind())
 	}

@@ -3,7 +3,6 @@ package store
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 
@@ -64,15 +63,10 @@ func (s *Store) ListNotes(ctx context.Context, includeDeleted bool) ([]model.Not
 	return notes, nil
 }
 
-// ListTasks folds every live task in branch's namespace, ordered by creation
-// time then id. A task ref is live only while its folded branch still equals
-// the ref's branch: a promote op moves the folded branch and tombstones the
-// old ref in place, so a promoted-away chain no longer lists here.
-func (s *Store) ListTasks(ctx context.Context, branch model.Branch) ([]model.Task, error) {
-	if branch == "" {
-		return nil, errors.New("list tasks: empty branch")
-	}
-	entries, err := s.children(ctx, refs.TasksPrefix(branch))
+// ListTasks folds every task in the repository, ordered by creation time
+// then id. Branch is a folded attribute; callers filter by it.
+func (s *Store) ListTasks(ctx context.Context) ([]model.Task, error) {
+	entries, err := s.children(ctx, refs.TasksRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -81,11 +75,7 @@ func (s *Store) ListTasks(ctx context.Context, branch model.Branch) ([]model.Tas
 		return nil, err
 	}
 	tasks := make([]model.Task, 0, len(all))
-	for _, t := range all {
-		if t.Branch == branch {
-			tasks = append(tasks, t)
-		}
-	}
+	tasks = append(tasks, all...)
 	slices.SortFunc(tasks, func(a, b model.Task) int {
 		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
 			return c
@@ -96,7 +86,7 @@ func (s *Store) ListTasks(ctx context.Context, branch model.Branch) ([]model.Tas
 }
 
 // children lists the refs that are immediate children of prefix, excluding
-// nested namespaces such as sub-branch task dirs.
+// nested namespaces.
 func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error) {
 	tips, err := s.Repo.ListPrefix(ctx, prefix)
 	if err != nil {

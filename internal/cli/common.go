@@ -6,14 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -159,7 +157,7 @@ func validatePriority(p int) (model.Priority, error) {
 
 // loadNote resolves a note id prefix and folds its chain.
 func loadNote(ctx context.Context, s *store.Store, prefix string) (string, model.Note, error) {
-	ref, err := s.Resolve(ctx, refs.KindNote, "", prefix)
+	ref, err := s.Resolve(ctx, refs.KindNote, prefix)
 	if err != nil {
 		return "", model.Note{}, err
 	}
@@ -170,10 +168,9 @@ func loadNote(ctx context.Context, s *store.Store, prefix string) (string, model
 	return ref, snapshot.(model.Note), nil
 }
 
-// loadTask resolves a task id prefix within branch's namespace and folds
-// its chain.
-func loadTask(ctx context.Context, s *store.Store, branch model.Branch, prefix string) (string, model.Task, error) {
-	ref, err := s.Resolve(ctx, refs.KindTask, branch, prefix)
+// loadTask resolves a task id prefix globally and folds its chain.
+func loadTask(ctx context.Context, s *store.Store, prefix string) (string, model.Task, error) {
+	ref, err := s.Resolve(ctx, refs.KindTask, prefix)
 	if err != nil {
 		return "", model.Task{}, err
 	}
@@ -184,40 +181,25 @@ func loadTask(ctx context.Context, s *store.Store, branch model.Branch, prefix s
 	return ref, snapshot.(model.Task), nil
 }
 
-// liveTasks folds every task ref in the repository and returns the live
-// ones — folded branch equals ref branch — keyed by entity id. It backs the
-// global blocker lookups and the derived blocks index.
-func liveTasks(ctx context.Context, s *store.Store) (map[model.EntityID]model.Task, error) {
-	tips, err := s.Repo.ListPrefix(ctx, refs.TasksRoot)
+// allTasks folds every task in the repository keyed by entity id. It backs
+// the global blocker lookups and the derived blocks index.
+func allTasks(ctx context.Context, s *store.Store) (map[model.EntityID]model.Task, error) {
+	tasks, err := s.ListTasks(ctx)
 	if err != nil {
 		return nil, err
 	}
-	tasks := make(map[model.EntityID]model.Task, len(tips))
-	for _, name := range slices.Sorted(maps.Keys(tips)) {
-		parsed, err := refs.Parse(name)
-		if err != nil {
-			return nil, fmt.Errorf("task ref: %w", err)
-		}
-		chain, err := s.Repo.ReadChain(ctx, tips[name])
-		if err != nil {
-			return nil, fmt.Errorf("load %s: %w", name, err)
-		}
-		task, err := fold.Task(chain)
-		if err != nil {
-			return nil, fmt.Errorf("fold %s: %w", name, err)
-		}
-		if task.Branch == parsed.Branch {
-			tasks[task.ID] = task
-		}
+	m := make(map[model.EntityID]model.Task, len(tasks))
+	for _, t := range tasks {
+		m[t.ID] = t
 	}
-	return tasks, nil
+	return m, nil
 }
 
-// resolveBlocker expands a task id prefix against every live task in the
-// repository, across all branch namespaces. It returns the live task map so
-// callers can reuse it for cycle checks.
+// resolveBlocker expands a task id prefix against every task in the
+// repository. It returns the task map so callers can reuse it for cycle
+// checks.
 func resolveBlocker(ctx context.Context, s *store.Store, prefix string) (model.EntityID, map[model.EntityID]model.Task, error) {
-	live, err := liveTasks(ctx, s)
+	live, err := allTasks(ctx, s)
 	if err != nil {
 		return "", nil, err
 	}
@@ -326,7 +308,7 @@ func printTask(cmd *cobra.Command, s *store.Store, t model.Task, jsonOut bool) e
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanTaskLine(t))
 		return err
 	}
-	live, err := liveTasks(cmd.Context(), s)
+	live, err := allTasks(cmd.Context(), s)
 	if err != nil {
 		return err
 	}

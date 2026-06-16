@@ -107,17 +107,8 @@ func TestParsePath(t *testing.T) {
 		{"/tasks", fusefs.TasksRoot{}},
 		{"/notes/a1b2c3d-fix-the-parser.md", fusefs.NoteFile{ShortID: "a1b2c3d"}},
 		{"/notes/a1b2c3d.md", fusefs.NoteFile{ShortID: "a1b2c3d"}},
-		{"/tasks/main", fusefs.TaskBranchDir{Branch: "main"}},
-		{"/tasks/feature", fusefs.TaskBranchDir{Branch: "feature"}},
-		{"/tasks/feature/login", fusefs.TaskBranchDir{Branch: "feature/login"}},
-		{"/tasks/main/0123abc.json", fusefs.TaskFile{Branch: "main", ShortID: "0123abc"}},
-		{"/tasks/feature/login/0123abc.json", fusefs.TaskFile{Branch: "feature/login", ShortID: "0123abc"}},
-		{"/tasks/main/0123abc-slug.json", fusefs.TaskFile{Branch: "main", ShortID: "0123abc"}},
-		// Depth-one .json names have no branch left over, so they read as a
-		// branch-dir candidate; a branch really can be named this way.
-		{"/tasks/0123abc.json", fusefs.TaskBranchDir{Branch: "0123abc.json"}},
-		// Non-id .json names under a branch stay branch-dir candidates too.
-		{"/tasks/main/notes.json", fusefs.TaskBranchDir{Branch: "main/notes.json"}},
+		{"/tasks/0123abc.json", fusefs.TaskFile{ShortID: "0123abc"}},
+		{"/tasks/0123abc-slug.json", fusefs.TaskFile{ShortID: "0123abc"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
@@ -137,6 +128,10 @@ func TestParsePathErrors(t *testing.T) {
 		"", "notes", "relative/path", "/unknown", "/notes/", "/tasks/",
 		"/notes/readme.md", "/notes/a1b2c3d.json", "/notes/deep/a1b2c3d.md",
 		"/tasks//main", "/tasks/./x", "/tasks/../x", "/notes/..",
+		// Tasks are flat: a non-id name, a non-.json name, and any nesting
+		// under /tasks all fail.
+		"/tasks/main", "/tasks/0123abc.md", "/tasks/main/0123abc.json",
+		"/tasks/feature/login/0123abc.json",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {

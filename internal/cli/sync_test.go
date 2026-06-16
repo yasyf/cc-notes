@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -106,15 +105,13 @@ func TestSyncLeanAndJSON(t *testing.T) {
 	}
 }
 
-func TestTaskPromote(t *testing.T) {
+func TestTaskMove(t *testing.T) {
 	dir := initRepo(t)
 	task := addTask(t, dir, "Ship it")
-	closed := addTask(t, dir, "Closed")
-	mustRun(t, dir, "task", "done", closed.ID)
 
-	out := mustRun(t, dir, "task", "promote", "--to", "release/1.0")
+	out := mustRun(t, dir, "task", "move", task.ID, "--to", "release/1.0")
 	if want := task.ID[:7] + "\topen\tP2\t-\tShip it\n"; out != want {
-		t.Fatalf("promote output = %q, want the promoted lean line %q (closed tasks stay)", out, want)
+		t.Fatalf("move output = %q, want the moved lean line %q", out, want)
 	}
 	if out := mustRun(t, dir, "task", "list", "--branch", "release/1.0"); !strings.HasPrefix(out, task.ID[:7]+"\t") {
 		t.Fatalf("destination list = %q, want %s", out, task.ID[:7])
@@ -124,35 +121,23 @@ func TestTaskPromote(t *testing.T) {
 	}
 	shown := mustJSON[[]taskJSON](t, mustRun(t, dir, "task", "list", "--branch", "release/1.0", "--json"))
 	if len(shown) != 1 || shown[0].Branch != "release/1.0" {
-		t.Fatalf("promoted branch = %q, want release/1.0", shown[0].Branch)
+		t.Fatalf("moved branch = %q, want release/1.0", shown[0].Branch)
 	}
 
-	_, _, err := runCLI(t, dir, "task", "promote", task.ID)
+	if out := mustRun(t, dir, "task", "move", task.ID, "--backlog"); !strings.HasPrefix(out, task.ID[:7]+"\t") {
+		t.Fatalf("move --backlog output = %q, want the moved lean line", out)
+	}
+	if shown := mustJSON[[]taskJSON](t, mustRun(t, dir, "task", "list", "--backlog", "--json")); len(shown) != 1 || shown[0].Branch != "" {
+		t.Fatalf("backlog list = %+v, want the single backlog task", shown)
+	}
+
+	_, _, err := runCLI(t, dir, "task", "move", task.ID)
 	if cli.ExitCode(err) != 2 {
-		t.Fatalf("promote without --to err = %v, want exit 2", err)
+		t.Fatalf("move without --to err = %v, want exit 2", err)
 	}
-	_, _, err = runCLI(t, dir, "task", "promote", "--to", "release/2.0", task.ID)
-	if !errors.Is(err, ccsync.ErrNotLive) || cli.ExitCode(err) != 4 {
-		t.Fatalf("promote promoted-away id err = %v (exit %d), want ErrNotLive exit 4", err, cli.ExitCode(err))
-	}
-	_, _, err = runCLI(t, dir, "task", "promote", "--to", "release/1.0", "feedfacefeedface")
+	_, _, err = runCLI(t, dir, "task", "move", "feedfacefeedface", "--to", "release/2.0")
 	if !errors.Is(err, store.ErrNotFound) || cli.ExitCode(err) != 3 {
-		t.Fatalf("promote unknown id err = %v (exit %d), want not-found exit 3", err, cli.ExitCode(err))
-	}
-}
-
-func TestTaskPromoteExplicitIDsAndFrom(t *testing.T) {
-	dir := initRepo(t)
-	one := addTask(t, dir, "One", "--branch", "feature")
-	two := addTask(t, dir, "Two", "--branch", "feature")
-	out := mustRun(t, dir, "task", "promote", "--from", "feature", "--to", "main", one.ID, two.ID)
-	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	want := []string{one.ID[:7] + "\topen\tP2\t-\tOne", two.ID[:7] + "\topen\tP2\t-\tTwo"}
-	if !slices.Equal(lines, want) {
-		t.Fatalf("promote output = %v, want lean lines %v", lines, want)
-	}
-	if out := mustRun(t, dir, "task", "list"); strings.Count(out, "\n") != 2 {
-		t.Fatalf("main list = %q, want both tasks", out)
+		t.Fatalf("move unknown id err = %v (exit %d), want not-found exit 3", err, cli.ExitCode(err))
 	}
 }
 

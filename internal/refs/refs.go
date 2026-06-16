@@ -1,11 +1,10 @@
 // Package refs defines the cc-notes ref naming scheme: pure build and parse
-// functions with no git access. Notes live at refs/cc-notes/notes/<id>;
-// tasks live at refs/cc-notes/tasks/<branch>/<id> with the branch embedded
-// verbatim — slashes included, since any branch is a valid ref path segment
-// by construction (it already exists under refs/heads/). Parsing is
-// positional from the right: the last component is always the entity id.
-// Sync-tracking refs shadow the namespace under refs/cc-notes-sync/<remote>/,
-// outside refs/cc-notes/ so the wildcard push refspec never republishes them.
+// functions with no git access. Notes live at refs/cc-notes/notes/<id> and
+// tasks at refs/cc-notes/tasks/<id>, both flat — the entity id is the only
+// component after the namespace, and a task's branch is a folded attribute,
+// not part of its ref name. Sync-tracking refs shadow the namespace under
+// refs/cc-notes-sync/<remote>/, outside refs/cc-notes/ so the wildcard push
+// refspec never republishes them.
 package refs
 
 import (
@@ -25,16 +24,13 @@ const (
 // slash.
 const NotesPrefix = namespace + "notes/"
 
-// TasksRoot is the ref namespace holding every branch's tasks, including
-// the trailing slash.
+// TasksRoot is the ref namespace holding every task, including the trailing
+// slash.
 const TasksRoot = namespace + "tasks/"
 
 var (
 	// ErrNotCCNotes reports a ref outside the cc-notes namespaces.
 	ErrNotCCNotes = errors.New("not a cc-notes ref")
-	// ErrEmptyBranch reports a task ref with no branch between the tasks
-	// prefix and the entity id.
-	ErrEmptyBranch = errors.New("empty branch in task ref")
 	// ErrMalformed reports a ref inside the cc-notes namespace that does not
 	// match the naming scheme.
 	ErrMalformed = errors.New("malformed cc-notes ref")
@@ -49,34 +45,22 @@ const (
 	KindTask Kind = "task"
 )
 
-// Ref is one parsed cc-notes ref name. Branch is empty for notes.
+// Ref is one parsed cc-notes ref name.
 type Ref struct {
-	Kind   Kind
-	Branch model.Branch
-	ID     model.EntityID
+	Kind Kind
+	ID   model.EntityID
 }
 
 // Note returns the ref name for the note with the given id.
 func Note(id model.EntityID) string { return NotesPrefix + string(id) }
 
-// Task returns the ref name for the task with the given id on the given
-// branch, with the branch embedded verbatim.
-func Task(branch model.Branch, id model.EntityID) string {
-	return TasksPrefix(branch) + string(id)
-}
+// Task returns the ref name for the task with the given id.
+func Task(id model.EntityID) string { return TasksRoot + string(id) }
 
-// TasksPrefix returns the ref namespace holding one branch's tasks,
-// including the trailing slash.
-func TasksPrefix(branch model.Branch) string {
-	return TasksRoot + string(branch) + "/"
-}
-
-// Parse decodes a cc-notes ref name. Parsing is positional from the right:
-// the last component is always the entity id, and for tasks everything
-// between the tasks prefix and the id is the branch verbatim. It returns
-// ErrNotCCNotes for refs outside refs/cc-notes/, ErrEmptyBranch for a task
-// ref with no branch, and ErrMalformed for anything else that does not match
-// the scheme, including ids that are not 40 or 64 lowercase hex characters.
+// Parse decodes a cc-notes ref name. The id is the only component after the
+// notes/ or tasks/ namespace. It returns ErrNotCCNotes for refs outside
+// refs/cc-notes/ and ErrMalformed for anything that does not match the
+// scheme, including ids that are not 40 or 64 lowercase hex characters.
 func Parse(ref string) (Ref, error) {
 	rest, ok := strings.CutPrefix(ref, namespace)
 	if !ok {
@@ -96,24 +80,20 @@ func Parse(ref string) (Ref, error) {
 		}
 		return Ref{Kind: KindNote, ID: model.EntityID(tail)}, nil
 	case "tasks":
-		i := strings.LastIndexByte(tail, '/')
-		if i <= 0 {
-			return Ref{}, fmt.Errorf("%w: %q", ErrEmptyBranch, ref)
+		if strings.ContainsRune(tail, '/') {
+			return Ref{}, fmt.Errorf("%w: nested components in task ref %q", ErrMalformed, ref)
 		}
-		branch, id := tail[:i], tail[i+1:]
-		if !validID(id) {
-			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, id, ref)
+		if !validID(tail) {
+			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
 		}
-		return Ref{Kind: KindTask, Branch: model.Branch(branch), ID: model.EntityID(id)}, nil
+		return Ref{Kind: KindTask, ID: model.EntityID(tail)}, nil
 	default:
 		return Ref{}, fmt.Errorf("%w: unknown namespace %q in %q", ErrMalformed, kind, ref)
 	}
 }
 
 // DirectChild reports whether ref names an immediate child of prefix: the
-// non-empty remainder after the prefix contains no further slash. Listing a
-// branch's tasks with DirectChild(TasksPrefix(branch), ref) excludes
-// sub-branch namespaces, so branch "a" does not pick up tasks on "a/b".
+// non-empty remainder after the prefix contains no further slash.
 func DirectChild(prefix, ref string) bool {
 	rest, ok := strings.CutPrefix(ref, prefix)
 	return ok && rest != "" && !strings.ContainsRune(rest, '/')

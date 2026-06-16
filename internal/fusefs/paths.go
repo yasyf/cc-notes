@@ -27,8 +27,8 @@ var junkNames = map[string]bool{
 	".localized":            true,
 }
 
-// Node is one parsed mount path: Root, NotesDir, TasksRoot, TaskBranchDir,
-// NoteFile, or TaskFile.
+// Node is one parsed mount path: Root, NotesDir, TasksRoot, NoteFile, or
+// TaskFile.
 type Node interface {
 	node()
 }
@@ -42,36 +42,23 @@ type NotesDir struct{}
 // TasksRoot is the /tasks directory.
 type TasksRoot struct{}
 
-// TaskBranchDir is a directory under /tasks. It is a syntactic candidate:
-// the path may name a branch, a parent prefix of nested branches (branch
-// feature/login puts a plain directory at /tasks/feature), or both at once
-// — only the ref list disambiguates, so the mount resolves Branch against
-// the known branches and their prefixes.
-type TaskBranchDir struct {
-	Branch model.Branch
-}
-
 // NoteFile is a note file under /notes, keyed by its short id prefix so a
 // stale slug still resolves.
 type NoteFile struct {
 	ShortID string
 }
 
-// TaskFile is a task file under a branch directory. It is the primary
-// syntactic reading: a branch may legally contain a ".json"-looking
-// component, so the mount resolves ShortID against Branch's live tasks
-// first and falls back to reading the whole path as a TaskBranchDir.
+// TaskFile is a task file directly under /tasks, keyed by its short id
+// prefix. Branch is a folded attribute, not part of the path.
 type TaskFile struct {
-	Branch  model.Branch
 	ShortID string
 }
 
-func (Root) node()          {}
-func (NotesDir) node()      {}
-func (TasksRoot) node()     {}
-func (TaskBranchDir) node() {}
-func (NoteFile) node()      {}
-func (TaskFile) node()      {}
+func (Root) node()      {}
+func (NotesDir) node()  {}
+func (TasksRoot) node() {}
+func (NoteFile) node()  {}
+func (TaskFile) node()  {}
 
 // NoteFilename names a note file "<short7>-<slug>.md", dropping the slug
 // part when the title yields none.
@@ -130,13 +117,10 @@ func JunkName(name string) bool {
 	return junkNames[name] || strings.HasPrefix(name, "._")
 }
 
-// ParsePath decodes an absolute mount path into its syntactic Node. Task
-// branch directories nest — branch feature/login lives at
-// /tasks/feature/login — so a path under /tasks reads as a TaskFile when
-// its last component carries a short id and the .json extension, and as a
-// TaskBranchDir otherwise; both are candidates the mount must resolve
-// against the ref list (see the TaskFile and TaskBranchDir docs). Paths
-// outside the tree shape fail with ErrPath.
+// ParsePath decodes an absolute mount path into its syntactic Node. Notes
+// and tasks are flat: a ".md" name under /notes is a NoteFile and a ".json"
+// name under /tasks is a TaskFile, both keyed by short id. Paths outside the
+// tree shape fail with ErrPath.
 func ParsePath(path string) (Node, error) {
 	if path == "/" {
 		return Root{}, nil
@@ -167,14 +151,18 @@ func ParsePath(path string) (Node, error) {
 			return nil, fmt.Errorf("%w: notes do not nest: %q", ErrPath, path)
 		}
 	case "tasks":
-		if len(tail) == 0 {
+		switch len(tail) {
+		case 0:
 			return TasksRoot{}, nil
+		case 1:
+			shortID, ok := ShortIDOf(tail[0])
+			if !ok || !strings.HasSuffix(tail[0], ".json") {
+				return nil, fmt.Errorf("%w: %q", ErrPath, path)
+			}
+			return TaskFile{ShortID: shortID}, nil
+		default:
+			return nil, fmt.Errorf("%w: tasks do not nest: %q", ErrPath, path)
 		}
-		last := tail[len(tail)-1]
-		if shortID, ok := ShortIDOf(last); ok && strings.HasSuffix(last, ".json") && len(tail) > 1 {
-			return TaskFile{Branch: model.Branch(strings.Join(tail[:len(tail)-1], "/")), ShortID: shortID}, nil
-		}
-		return TaskBranchDir{Branch: model.Branch(strings.Join(tail, "/"))}, nil
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrPath, path)
 	}

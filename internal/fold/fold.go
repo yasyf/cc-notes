@@ -192,8 +192,8 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 				task.Parent = o.Parent
 			case model.AddComment:
 				task.Comments = append(task.Comments, model.Comment{Author: c.Author, TS: c.AuthorTime, Body: o.Body})
-			case model.Promote:
-				task.Branch = o.To
+			case model.SetBranch:
+				task.Branch = o.Branch
 			default:
 				return model.Task{}, fmt.Errorf("%w: %s on a task", ErrKindMismatch, op.OpKind())
 			}

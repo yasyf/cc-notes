@@ -36,7 +36,6 @@ func TestExitCodeAndLabel(t *testing.T) {
 		{"not found ref", fmt.Errorf("load: %w", gitobj.ErrRefNotFound), 3, "not-found"},
 		{"conflict", &cli.ConflictError{Msg: "already done"}, 4, "conflict"},
 		{"contended", fmt.Errorf("append: %w", store.ErrContended), 4, "conflict"},
-		{"not live", fmt.Errorf("promote: %w", ccsync.ErrNotLive), 4, "conflict"},
 		{"sync contended", fmt.Errorf("sync: %w", ccsync.ErrSyncContended), 4, "conflict"},
 		{"ambiguous", fmt.Errorf("resolve: %w", ambiguous), 5, "ambiguous"},
 		{"remote missing", fmt.Errorf("sync: %w", ccsync.ErrRemoteNotFound), 1, "error"},

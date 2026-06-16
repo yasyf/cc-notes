@@ -15,7 +15,7 @@ import (
 type SHA string
 
 // EntityID identifies one note or task: the full hex oid of the root commit
-// of its chain. It never changes across merges or promotes.
+// of its chain. It never changes across merges or branch reassignments.
 type EntityID string
 
 // Short returns the 7-character display prefix of the id.

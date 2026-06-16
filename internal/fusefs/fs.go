@@ -65,8 +65,8 @@ type scratchFile struct {
 }
 
 // FS synthesizes the entity tree over a store: /notes/<short7>-<slug>.md
-// and /tasks/<branch.../>/<short7>.json, files rendered by render.go and
-// committed back through parse + diff.
+// and /tasks/<short7>.json, files rendered by render.go and committed back
+// through parse + diff.
 //
 // Locking: one mutex guards all state (handles, render cache, scratch,
 // aliases), held across store READS too — callbacks are short and the
@@ -318,7 +318,7 @@ func (f *FS) Rename(oldpath string, newpath string) int {
 		}
 		return -fuse.EPERM // entities and directories never move
 	}
-	if _, _, isEntity := entityTarget(newpath); isEntity {
+	if _, isEntity := entityTarget(newpath); isEntity {
 		// The atomic save: an editor wrote the full document to a scratch
 		// file and renames it onto the entity (or new-entity) name.
 		ref, _, errc := f.commitDocument(newpath, sc.data)
@@ -480,7 +480,7 @@ func (f *FS) commitHandle(h *handle) int {
 		h.dirty = false
 		return 0
 	}
-	if _, _, ok := entityTarget(h.path); ok {
+	if _, ok := entityTarget(h.path); ok {
 		ref, snap, errc := f.commitDocument(h.path, data)
 		if errc != 0 {
 			// Preserve the draft: the scratch entry is the only copy of a
@@ -553,11 +553,11 @@ func diffDocument(base model.Snapshot, data []byte) ([]model.Op, error) {
 // entity-shaped creates a new entity. Caller holds f.mu; the store writes
 // run with it released. It returns the entity's ref and folded snapshot.
 func (f *FS) commitDocument(p string, data []byte) (string, model.Snapshot, int) {
-	isNote, branch, ok := entityTarget(p)
+	isNote, ok := entityTarget(p)
 	if !ok {
 		panic("fusefs: commitDocument on non-entity path " + p)
 	}
-	ref, r, errc := f.resolveTarget(p, isNote, branch)
+	ref, r, errc := f.resolveTarget(p, isNote)
 	switch {
 	case errc == 0:
 		f.mu.Unlock()
@@ -575,7 +575,7 @@ func (f *FS) commitDocument(p string, data []byte) (string, model.Snapshot, int)
 	case errc != -fuse.ENOENT:
 		return "", nil, errc
 	}
-	ops, err := newEntityOps(isNote, branch, data)
+	ops, err := newEntityOps(isNote, data)
 	if err != nil {
 		return "", nil, errno(err)
 	}
@@ -592,7 +592,7 @@ func (f *FS) commitDocument(p string, data []byte) (string, model.Snapshot, int)
 // resolveTarget resolves a commit target: an alias first, then the short
 // id embedded in the filename. -ENOENT means "no such entity yet" — the
 // caller falls through to create.
-func (f *FS) resolveTarget(p string, isNote bool, branch model.Branch) (string, rendered, int) {
+func (f *FS) resolveTarget(p string, isNote bool) (string, rendered, int) {
 	if ref, ok := f.aliases[p]; ok {
 		tip, err := f.store.Repo.Tip(f.ctx, ref)
 		if err != nil {
@@ -615,7 +615,7 @@ func (f *FS) resolveTarget(p string, isNote bool, branch model.Branch) (string, 
 	if isNote {
 		ref, r, err = f.resolveNote(shortID)
 	} else {
-		ref, r, err = f.resolveTask(branch, shortID)
+		ref, r, err = f.resolveTask(shortID)
 	}
 	if err != nil {
 		return "", rendered{}, errno(err)
@@ -623,7 +623,7 @@ func (f *FS) resolveTarget(p string, isNote bool, branch model.Branch) (string, 
 	return ref, r, 0
 }
 
-func newEntityOps(isNote bool, branch model.Branch, data []byte) ([]model.Op, error) {
+func newEntityOps(isNote bool, data []byte) ([]model.Op, error) {
 	if isNote {
 		parsed, err := ParseNote(data)
 		if err != nil {
@@ -635,21 +635,21 @@ func newEntityOps(isNote bool, branch model.Branch, data []byte) ([]model.Op, er
 	if err != nil {
 		return nil, err
 	}
-	return NewTask(parsed, branch)
+	return NewTask(parsed, model.Branch(stringValue(parsed.Branch)))
 }
 
 // entityTarget classifies p as a committable entity path — a ".md" name
-// directly under /notes, or a ".json" name under a branch directory. ok is
+// directly under /notes or a ".json" name directly under /tasks. ok is
 // false for everything else; those paths stay in-memory scratch files.
-func entityTarget(p string) (isNote bool, branch model.Branch, ok bool) {
+func entityTarget(p string) (isNote, ok bool) {
 	dir, name := path.Dir(p), path.Base(p)
 	switch {
 	case dir == "/notes" && strings.HasSuffix(name, ".md") && name != ".md":
-		return true, "", true
-	case strings.HasPrefix(dir, "/tasks/") && strings.HasSuffix(name, ".json") && name != ".json":
-		return false, model.Branch(strings.TrimPrefix(dir, "/tasks/")), true
+		return true, true
+	case dir == "/tasks" && strings.HasSuffix(name, ".json") && name != ".json":
+		return false, true
 	}
-	return false, "", false
+	return false, false
 }
 
 func refFor(snap model.Snapshot) string {
@@ -657,7 +657,7 @@ func refFor(snap model.Snapshot) string {
 	case model.Note:
 		return refs.Note(s.ID)
 	case model.Task:
-		return refs.Task(s.Branch, s.ID)
+		return refs.Task(s.ID)
 	default:
 		panic(fmt.Sprintf("fusefs: unknown snapshot type %T", snap))
 	}
@@ -692,7 +692,7 @@ func (f *FS) openEntity(p string) (string, rendered, int) {
 		}
 		return ref, r, 0
 	case TaskFile:
-		ref, r, err := f.resolveTask(n.Branch, n.ShortID)
+		ref, r, err := f.resolveTask(n.ShortID)
 		if err != nil {
 			return "", rendered{}, errno(err)
 		}
@@ -724,11 +724,10 @@ func (f *FS) resolveNote(shortID string) (string, rendered, error) {
 	return ref, r, nil
 }
 
-// resolveTask maps a short id within branch's namespace to the live task
-// it names. A promoted-away chain — folded branch no longer the ref's —
-// reads as ErrPath: it is not live here.
-func (f *FS) resolveTask(branch model.Branch, shortID string) (string, rendered, error) {
-	ref, tip, err := f.resolveRef(refs.TasksPrefix(branch), shortID)
+// resolveTask maps a short id to the task it names in the flat task
+// namespace.
+func (f *FS) resolveTask(shortID string) (string, rendered, error) {
+	ref, tip, err := f.resolveRef(refs.TasksRoot, shortID)
 	if err != nil {
 		return "", rendered{}, err
 	}
@@ -736,12 +735,8 @@ func (f *FS) resolveTask(branch model.Branch, shortID string) (string, rendered,
 	if err != nil {
 		return "", rendered{}, err
 	}
-	task, ok := r.snapshot.(model.Task)
-	if !ok {
+	if _, ok := r.snapshot.(model.Task); !ok {
 		return "", rendered{}, fmt.Errorf("ref %s folds as %T, want task", ref, r.snapshot)
-	}
-	if task.Branch != branch {
-		return "", rendered{}, fmt.Errorf("%w: task %s promoted off %s", ErrPath, shortID, branch)
 	}
 	return ref, r, nil
 }
@@ -864,8 +859,6 @@ func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 	case Root, NotesDir, TasksRoot:
 		f.fillDirStat(stat, p)
 		return 0
-	case TaskBranchDir:
-		return f.statBranchDir(n.Branch, p, stat)
 	case NoteFile:
 		_, r, rerr := f.resolveNote(n.ShortID)
 		if rerr != nil {
@@ -874,42 +867,26 @@ func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 		f.fillEntityStat(stat, r)
 		return 0
 	case TaskFile:
-		_, r, rerr := f.resolveTask(n.Branch, n.ShortID)
-		if rerr == nil {
-			f.fillEntityStat(stat, r)
-			return 0
-		}
-		if !errors.Is(rerr, ErrPath) {
+		_, r, rerr := f.resolveTask(n.ShortID)
+		if rerr != nil {
 			return errno(rerr)
 		}
-		// A ".json" name may itself be a branch path component.
-		return f.statBranchDir(model.Branch(strings.TrimPrefix(p, "/tasks/")), p, stat)
+		f.fillEntityStat(stat, r)
+		return 0
 	default:
 		panic(fmt.Sprintf("fusefs: unknown node %T", node))
 	}
 }
 
-func (f *FS) statBranchDir(branch model.Branch, p string, stat *fuse.Stat_t) int {
-	set, err := f.branchSet()
-	if err != nil {
-		return errno(err)
-	}
-	if !branchDirExists(set, branch) {
-		return -fuse.ENOENT
-	}
-	f.fillDirStat(stat, p)
-	return 0
-}
-
-// listDir synthesizes dir p's entries: live entities and branch dirs plus
-// in-memory scratch files, sorted and deduplicated.
+// listDir synthesizes dir p's entries: live entities plus in-memory scratch
+// files, sorted and deduplicated.
 func (f *FS) listDir(p string) ([]string, int) {
 	node, err := ParsePath(p)
 	if err != nil {
 		return nil, -fuse.ENOENT
 	}
 	names := map[string]bool{}
-	switch n := node.(type) {
+	switch node.(type) {
 	case Root:
 		names["notes"], names["tasks"] = true, true
 	case NotesDir:
@@ -921,23 +898,12 @@ func (f *FS) listDir(p string) ([]string, int) {
 			names[NoteFilename(note)] = true
 		}
 	case TasksRoot:
-		set, err := f.branchSet()
+		tasks, err := f.store.ListTasks(f.ctx)
 		if err != nil {
 			return nil, errno(err)
 		}
-		for _, d := range subdirsOf(set, "") {
-			names[d] = true
-		}
-	case TaskBranchDir:
-		errc := f.listBranchDir(n.Branch, names)
-		if errc != 0 {
-			return nil, errc
-		}
-	case TaskFile:
-		// A ".json" name may itself be a branch path component.
-		errc := f.listBranchDir(model.Branch(strings.TrimPrefix(p, "/tasks/")), names)
-		if errc != 0 {
-			return nil, errc
+		for _, t := range tasks {
+			names[TaskFilename(t)] = true
 		}
 	default:
 		return nil, -fuse.ENOTDIR
@@ -948,84 +914,6 @@ func (f *FS) listDir(p string) ([]string, int) {
 		}
 	}
 	return slices.Sorted(maps.Keys(names)), 0
-}
-
-func (f *FS) listBranchDir(branch model.Branch, names map[string]bool) int {
-	set, err := f.branchSet()
-	if err != nil {
-		return errno(err)
-	}
-	if !branchDirExists(set, branch) {
-		return -fuse.ENOENT
-	}
-	for _, d := range subdirsOf(set, branch) {
-		names[d] = true
-	}
-	if set[branch] {
-		tasks, err := f.store.ListTasks(f.ctx, branch)
-		if err != nil {
-			return errno(err)
-		}
-		for _, t := range tasks {
-			names[TaskFilename(t)] = true
-		}
-	}
-	return 0
-}
-
-// branchSet returns every branch owning at least one task ref. Liveness is
-// not consulted: a branch whose tasks were all promoted away still shows
-// an empty directory until its refs are garbage-collected.
-func (f *FS) branchSet() (map[model.Branch]bool, error) {
-	tips, err := f.store.Repo.ListPrefix(f.ctx, refs.TasksRoot)
-	if err != nil {
-		return nil, err
-	}
-	set := make(map[model.Branch]bool, len(tips))
-	for name := range tips {
-		parsed, err := refs.Parse(name)
-		if err != nil {
-			return nil, fmt.Errorf("task ref: %w", err)
-		}
-		set[parsed.Branch] = true
-	}
-	return set, nil
-}
-
-// branchDirExists reports whether branch names a task branch dir: an exact
-// branch or a parent prefix of one (branch feature/login puts a plain
-// directory at /tasks/feature).
-func branchDirExists(set map[model.Branch]bool, branch model.Branch) bool {
-	if set[branch] {
-		return true
-	}
-	for known := range set {
-		if strings.HasPrefix(string(known), string(branch)+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-// subdirsOf returns the next path component under dir for every branch
-// nested below it; dir "" means /tasks itself.
-func subdirsOf(set map[model.Branch]bool, dir model.Branch) []string {
-	prefix := ""
-	if dir != "" {
-		prefix = string(dir) + "/"
-	}
-	names := map[string]bool{}
-	for b := range set {
-		rest, ok := strings.CutPrefix(string(b), prefix)
-		if !ok || rest == "" {
-			continue
-		}
-		if i := strings.IndexByte(rest, '/'); i >= 0 {
-			rest = rest[:i]
-		}
-		names[rest] = true
-	}
-	return slices.Sorted(maps.Keys(names))
 }
 
 // --- stat plumbing ---

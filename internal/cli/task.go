@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -9,9 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/model"
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
-	ccsync "github.com/yasyf/cc-notes/internal/sync"
 )
 
 var allStatuses = []model.Status{model.StatusOpen, model.StatusInProgress, model.StatusDone, model.StatusCancelled}
@@ -19,7 +18,7 @@ var allStatuses = []model.Status{model.StatusOpen, model.StatusInProgress, model
 func newTaskCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "task",
-		Short: "Branch-scoped tasks with claiming, deps, and lifecycle",
+		Short: "Tasks with claiming, deps, lifecycle, and a branch attribute",
 		Args:  noUnknownSubcommand,
 		RunE:  runHelp,
 	}
@@ -35,7 +34,7 @@ func newTaskCmd() *cobra.Command {
 		newTaskCommentCmd(),
 		newTaskDepCmd(),
 		newTaskUndepCmd(),
-		newTaskPromoteCmd(),
+		newTaskMoveCmd(),
 	)
 	return cmd
 }
@@ -44,20 +43,25 @@ func newTaskAddCmd() *cobra.Command {
 	var desc, taskType, parent, branch string
 	var priority int
 	var labels, blockedBy []string
-	var jsonOut bool
+	var backlog, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "add TITLE",
 		Short: "Create a task",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			if backlog && cmd.Flags().Changed("branch") {
+				return &UsageError{Err: errors.New("--backlog and --branch are mutually exclusive")}
+			}
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "branch", branch)
-			if err != nil {
-				return err
+			var b model.Branch
+			if !backlog {
+				if b, err = resolveBranch(ctx, s, "branch", branch); err != nil {
+					return err
+				}
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
@@ -76,7 +80,7 @@ func newTaskAddCmd() *cobra.Command {
 			}
 			var parentID model.EntityID
 			if parent != "" {
-				_, parentTask, err := loadTask(ctx, s, b, parent)
+				_, parentTask, err := loadTask(ctx, s, parent)
 				if err != nil {
 					return err
 				}
@@ -114,6 +118,7 @@ func newTaskAddCmd() *cobra.Command {
 	flags.StringVar(&parent, "parent", "", "parent task id prefix")
 	flags.StringArrayVar(&blockedBy, "blocked-by", nil, "blocker task id prefix (repeatable, resolved globally)")
 	flags.StringVar(&branch, "branch", "", "task branch (default: current branch)")
+	flags.BoolVar(&backlog, "backlog", false, "create on the backlog (no branch)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
@@ -121,10 +126,10 @@ func newTaskAddCmd() *cobra.Command {
 func newTaskListCmd() *cobra.Command {
 	var statusCSV, assignee, taskType, branch string
 	var labels []string
-	var all, jsonOut bool
+	var all, allBranches, backlog, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List tasks on a branch",
+		Short: "List tasks, scoped to the current branch by default",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -132,7 +137,7 @@ func newTaskListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "branch", branch)
+			inBranch, err := branchFilter(ctx, s, cmd, branch, allBranches, backlog)
 			if err != nil {
 				return err
 			}
@@ -156,13 +161,14 @@ func newTaskListCmd() *cobra.Command {
 					return err
 				}
 			}
-			tasks, err := s.ListTasks(ctx, b)
+			tasks, err := s.ListTasks(ctx)
 			if err != nil {
 				return err
 			}
 			assigneeSet := cmd.Flags().Changed("assignee")
 			tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
-				return !slices.Contains(statuses, t.Status) ||
+				return !inBranch(t) ||
+					!slices.Contains(statuses, t.Status) ||
 					!hasAll(t.Labels, labels) ||
 					(assigneeSet && string(t.Assignee) != assignee) ||
 					(taskType != "" && t.Type != tt)
@@ -177,14 +183,16 @@ func newTaskListCmd() *cobra.Command {
 	flags.StringArrayVar(&labels, "label", nil, "require label (repeatable, ANDed)")
 	flags.StringVar(&assignee, "assignee", "", "require assignee")
 	flags.StringVar(&taskType, "type", "", "require type")
-	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
+	flags.StringVar(&branch, "branch", "", "filter to branch (default: current branch)")
+	flags.BoolVar(&allBranches, "all-branches", false, "every branch")
+	flags.BoolVar(&backlog, "backlog", false, "only backlog tasks (no branch)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskReadyCmd() *cobra.Command {
 	var branch string
-	var jsonOut bool
+	var allBranches, backlog, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "ready",
 		Short: "List unblocked, unassigned open tasks",
@@ -195,33 +203,34 @@ func newTaskReadyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "branch", branch)
+			inBranch, err := branchFilter(ctx, s, cmd, branch, allBranches, backlog)
 			if err != nil {
 				return err
 			}
-			tasks, err := s.ListTasks(ctx, b)
+			tasks, err := s.ListTasks(ctx)
 			if err != nil {
 				return err
 			}
-			live, err := liveTasks(ctx, s)
+			live, err := allTasks(ctx, s)
 			if err != nil {
 				return err
 			}
 			tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
-				return t.Status != model.StatusOpen || t.Assignee != "" || !unblocked(live, t)
+				return !inBranch(t) || t.Status != model.StatusOpen || t.Assignee != "" || !unblocked(live, t)
 			})
 			sortTasks(tasks)
 			return printTaskList(cmd, s, tasks, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
+	flags.StringVar(&branch, "branch", "", "filter to branch (default: current branch)")
+	flags.BoolVar(&allBranches, "all-branches", false, "every branch")
+	flags.BoolVar(&backlog, "backlog", false, "only backlog tasks (no branch)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskShowCmd() *cobra.Command {
-	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "show ID",
@@ -233,15 +242,11 @@ func newTaskShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "branch", branch)
+			_, task, err := loadTask(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
-			_, task, err := loadTask(ctx, s, b, args[0])
-			if err != nil {
-				return err
-			}
-			live, err := liveTasks(ctx, s)
+			live, err := allTasks(ctx, s)
 			if err != nil {
 				return err
 			}
@@ -253,14 +258,11 @@ func newTaskShowCmd() *cobra.Command {
 			return err
 		},
 	}
-	flags := cmd.Flags()
-	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskClaimCmd() *cobra.Command {
-	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "claim ID",
@@ -272,14 +274,10 @@ func newTaskClaimCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "branch", branch)
-			if err != nil {
-				return err
-			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, b, args[0])
+			ref, task, err := loadTask(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -301,14 +299,11 @@ func newTaskClaimCmd() *cobra.Command {
 			return printTask(cmd, s, task, jsonOut)
 		},
 	}
-	flags := cmd.Flags()
-	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
-	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   use + " ID",
@@ -320,14 +315,10 @@ func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "branch", branch)
-			if err != nil {
-				return err
-			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, b, args[0])
+			ref, task, err := loadTask(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -343,14 +334,12 @@ func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
 			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
-	flags := cmd.Flags()
-	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskEditCmd() *cobra.Command {
-	var title, desc, taskType, status, assignee, parent, branch string
+	var title, desc, taskType, status, assignee, parent string
 	var priority int
 	var unassign, noParent bool
 	var addLabels, rmLabels []string
@@ -369,10 +358,6 @@ func newTaskEditCmd() *cobra.Command {
 				return &UsageError{Err: errors.New("--parent and --no-parent are mutually exclusive")}
 			}
 			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			b, err := resolveBranch(ctx, s, "branch", branch)
 			if err != nil {
 				return err
 			}
@@ -421,7 +406,7 @@ func newTaskEditCmd() *cobra.Command {
 				ops = append(ops, model.RemoveLabel{Label: label})
 			}
 			if flags.Changed("parent") {
-				_, parentTask, err := loadTask(ctx, s, b, parent)
+				_, parentTask, err := loadTask(ctx, s, parent)
 				if err != nil {
 					return err
 				}
@@ -436,7 +421,7 @@ func newTaskEditCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadTask(ctx, s, b, args[0])
+			ref, _, err := loadTask(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -459,13 +444,11 @@ func newTaskEditCmd() *cobra.Command {
 	flags.StringArrayVar(&rmLabels, "rm-label", nil, "remove label (repeatable)")
 	flags.StringVar(&parent, "parent", "", "new parent task id prefix")
 	flags.BoolVar(&noParent, "no-parent", false, "clear the parent")
-	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskCommentCmd() *cobra.Command {
-	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "comment ID BODY",
@@ -477,10 +460,6 @@ func newTaskCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "branch", branch)
-			if err != nil {
-				return err
-			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
@@ -488,7 +467,7 @@ func newTaskCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ref, _, err := loadTask(ctx, s, b, args[0])
+			ref, _, err := loadTask(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -499,14 +478,11 @@ func newTaskCommentCmd() *cobra.Command {
 			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
-	flags := cmd.Flags()
-	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskDepCmd() *cobra.Command {
-	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "dep ID BLOCKER",
@@ -518,14 +494,10 @@ func newTaskDepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "branch", branch)
-			if err != nil {
-				return err
-			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, b, args[0])
+			ref, task, err := loadTask(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -543,14 +515,11 @@ func newTaskDepCmd() *cobra.Command {
 			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
-	flags := cmd.Flags()
-	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
 func newTaskUndepCmd() *cobra.Command {
-	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "undep ID BLOCKER",
@@ -562,14 +531,10 @@ func newTaskUndepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := resolveBranch(ctx, s, "branch", branch)
-			if err != nil {
-				return err
-			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadTask(ctx, s, b, args[0])
+			ref, _, err := loadTask(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -584,100 +549,93 @@ func newTaskUndepCmd() *cobra.Command {
 			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
-	flags := cmd.Flags()
-	flags.StringVar(&branch, "branch", "", "branch (default: current branch)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
-func newTaskPromoteCmd() *cobra.Command {
-	var to, from string
-	var jsonOut bool
+func newTaskMoveCmd() *cobra.Command {
+	var to string
+	var backlog, jsonOut bool
 	cmd := &cobra.Command{
-		Use:   "promote --to BRANCH [ID]...",
-		Short: "Move tasks to another branch namespace",
-		Args:  cobra.ArbitraryArgs,
+		Use:   "move ID --to BRANCH",
+		Short: "Reassign a task to another branch",
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if to == "" {
+			ctx := cmd.Context()
+			switch {
+			case backlog && cmd.Flags().Changed("to"):
+				return &UsageError{Err: errors.New("--to and --backlog are mutually exclusive")}
+			case !backlog && to == "":
 				return &UsageError{Err: errors.New("required flag --to not set")}
 			}
-			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
-			if err := s.Git.CheckRefFormat(ctx, to); err != nil {
-				return &UsageError{Err: err}
-			}
-			fromBranch, err := resolveBranch(ctx, s, "from", from)
-			if err != nil {
-				return err
+			var dest model.Branch
+			if !backlog {
+				if err := s.Git.CheckRefFormat(ctx, to); err != nil {
+					return &UsageError{Err: err}
+				}
+				dest = model.Branch(to)
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			var ids []model.EntityID
-			if len(args) > 0 {
-				for _, prefix := range args {
-					_, task, err := loadTask(ctx, s, fromBranch, prefix)
-					if err != nil {
-						return err
-					}
-					ids = append(ids, task.ID)
-				}
-			} else {
-				tasks, err := s.ListTasks(ctx, fromBranch)
-				if err != nil {
-					return err
-				}
-				for _, task := range tasks {
-					if task.Status == model.StatusOpen || task.Status == model.StatusInProgress {
-						ids = append(ids, task.ID)
-					}
-				}
-			}
-			if err := ccsync.Promote(ctx, s, fromBranch, model.Branch(to), ids); err != nil {
+			ref, _, err := loadTask(ctx, s, args[0])
+			if err != nil {
 				return err
 			}
-			out := cmd.OutOrStdout()
-			if jsonOut {
-				live, err := liveTasks(ctx, s)
-				if err != nil {
-					return err
-				}
-				dtos := make([]taskDTO, len(ids))
-				for i, id := range ids {
-					snapshot, err := s.Load(ctx, refs.Task(model.Branch(to), id))
-					if err != nil {
-						return err
-					}
-					dtos[i] = newTaskDTO(snapshot.(model.Task), blocksFor(live, id))
-				}
-				return printJSON(out, dtos)
+			snapshot, err := s.Append(ctx, ref, []model.Op{model.SetBranch{Branch: dest}})
+			if err != nil {
+				return err
 			}
-			for _, id := range ids {
-				snapshot, err := s.Load(ctx, refs.Task(model.Branch(to), id))
-				if err != nil {
-					return err
-				}
-				if _, err := fmt.Fprintln(out, leanTaskLine(snapshot.(model.Task))); err != nil {
-					return err
-				}
-			}
-			return nil
+			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&to, "to", "", "destination branch (required)")
-	flags.StringVar(&from, "from", "", "source branch (default: current branch)")
+	flags.StringVar(&to, "to", "", "destination branch")
+	flags.BoolVar(&backlog, "backlog", false, "move to the backlog (clear branch)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
+}
+
+// branchFilter resolves the branch-scoping flags into a predicate over a
+// task's folded branch. With no flag it scopes to HEAD; --all-branches
+// matches every task, --backlog the empty branch, and --branch=X branch X.
+// The three flags are mutually exclusive.
+func branchFilter(ctx context.Context, s *store.Store, cmd *cobra.Command, branch string, allBranches, backlog bool) (func(model.Task) bool, error) {
+	set := 0
+	if cmd.Flags().Changed("branch") {
+		set++
+	}
+	if allBranches {
+		set++
+	}
+	if backlog {
+		set++
+	}
+	if set > 1 {
+		return nil, &UsageError{Err: errors.New("--branch, --all-branches, and --backlog are mutually exclusive")}
+	}
+	switch {
+	case allBranches:
+		return func(model.Task) bool { return true }, nil
+	case backlog:
+		return func(t model.Task) bool { return t.Branch == "" }, nil
+	default:
+		b, err := resolveBranch(ctx, s, "branch", branch)
+		if err != nil {
+			return nil, err
+		}
+		return func(t model.Task) bool { return t.Branch == b }, nil
+	}
 }
 
 func printTaskList(cmd *cobra.Command, s *store.Store, tasks []model.Task, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
-		live, err := liveTasks(cmd.Context(), s)
+		live, err := allTasks(cmd.Context(), s)
 		if err != nil {
 			return err
 		}

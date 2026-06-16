@@ -399,47 +399,47 @@ func TestClaimRaceConcurrentActors(t *testing.T) {
 	}
 }
 
-// TestBranchScopingAndPromote pins branch namespacing: tasks list only on
-// their branch, promote moves them (printing the post-promote lean line), and
-// slashed branch names nest correctly.
-func TestBranchScopingAndPromote(t *testing.T) {
+// TestBranchScopingAndMove pins the branch attribute: list scopes to a
+// branch by default and via --branch, move reassigns a task (printing the
+// post-move lean line), and slashed branch names round-trip.
+func TestBranchScopingAndMove(t *testing.T) {
 	dir := initRepo(t)
 	feature := addTaskBin(t, dir, "Feature work", "--branch", "feature/x", "--priority", "1")
 	featureLine := feature.ID[:7] + "\topen\tP1\t-\tFeature work\n"
 
 	if out := mustBin(t, dir, actorA, "task", "list"); out != "" {
-		t.Fatalf("main list = %q, want empty before promote", out)
+		t.Fatalf("main list = %q, want empty before move", out)
 	}
 	if out := mustBin(t, dir, actorA, "task", "list", "--branch", "feature/x"); out != featureLine {
 		t.Fatalf("feature/x list = %q, want %q", out, featureLine)
 	}
-	if out := mustBin(t, dir, actorA, "task", "promote", "--from", "feature/x", "--to", "main"); out != featureLine {
-		t.Fatalf("promote output = %q, want lean line %q", out, featureLine)
+	if out := mustBin(t, dir, actorA, "task", "move", feature.ID, "--to", "main"); out != featureLine {
+		t.Fatalf("move output = %q, want lean line %q", out, featureLine)
 	}
 	if out := mustBin(t, dir, actorA, "task", "list"); out != featureLine {
-		t.Fatalf("main list after promote = %q, want %q", out, featureLine)
+		t.Fatalf("main list after move = %q, want %q", out, featureLine)
 	}
 	if out := mustBin(t, dir, actorA, "task", "list", "--branch", "feature/x"); out != "" {
-		t.Fatalf("feature/x list after promote = %q, want empty", out)
+		t.Fatalf("feature/x list after move = %q, want empty", out)
 	}
 
 	slashed := addTaskBin(t, dir, "Login fix", "--branch", "feature/login/x")
 	slashedLine := slashed.ID[:7] + "\topen\tP2\t-\tLogin fix\n"
-	if out := mustBin(t, dir, actorA, "task", "promote", "--from", "feature/login/x", "--to", "main", slashed.ID); out != slashedLine {
-		t.Fatalf("slashed promote output = %q, want %q", out, slashedLine)
+	if out := mustBin(t, dir, actorA, "task", "move", slashed.ID, "--to", "main"); out != slashedLine {
+		t.Fatalf("slashed move output = %q, want %q", out, slashedLine)
 	}
 	if out := mustBin(t, dir, actorA, "task", "list"); out != featureLine+slashedLine {
 		t.Fatalf("main list = %q, want %q", out, featureLine+slashedLine)
 	}
 	if out := mustBin(t, dir, actorA, "task", "list", "--branch", "feature/login/x"); out != "" {
-		t.Fatalf("feature/login/x list after promote = %q, want empty", out)
+		t.Fatalf("feature/login/x list after move = %q, want empty", out)
 	}
 }
 
-// TestPromoteInvalidDestUsage pins the CLI boundary for promote: an invalid
-// --to is a usage error (exit 2) raised before any write, so the task stays
-// listed on its branch and sync still converges.
-func TestPromoteInvalidDestUsage(t *testing.T) {
+// TestMoveInvalidDestUsage pins the CLI boundary for move: an invalid --to is
+// a usage error (exit 2) raised before any write, so the task is untouched and
+// sync still converges.
+func TestMoveInvalidDestUsage(t *testing.T) {
 	scrubGitEnv(t)
 	root := t.TempDir()
 	bare := filepath.Join(root, "remote.git")
@@ -451,44 +451,36 @@ func TestPromoteInvalidDestUsage(t *testing.T) {
 	task := addTaskBin(t, dir, "Survivor")
 	line := task.ID[:7] + "\topen\tP2\t-\tSurvivor\n"
 
-	res, err := execBin(dir, actorA, "task", "promote", "--to", "../evil", task.ID)
+	res, err := execBin(dir, actorA, "task", "move", task.ID, "--to", "../evil")
 	if err != nil {
-		t.Fatalf("cc-notes task promote: %v", err)
+		t.Fatalf("cc-notes task move: %v", err)
 	}
 	if res.Code != 2 || res.Stdout != "" {
-		t.Fatalf("promote --to ../evil: exit %d stdout %q, want exit 2 with empty stdout (stderr %q)", res.Code, res.Stdout, res.Stderr)
+		t.Fatalf("move --to ../evil: exit %d stdout %q, want exit 2 with empty stdout (stderr %q)", res.Code, res.Stdout, res.Stderr)
 	}
 	if want := "usage: invalid branch \"../evil\": "; !strings.HasPrefix(res.Stderr, want) {
 		t.Errorf("stderr = %q, want prefix %q", res.Stderr, want)
 	}
 	if out := mustBin(t, dir, actorA, "task", "list"); out != line {
-		t.Errorf("task list after failed promote = %q, want %q", out, line)
+		t.Errorf("task list after failed move = %q, want %q", out, line)
 	}
 	if out := mustBin(t, dir, actorA, "sync"); out != "pushed: 1\nrounds: 1\n" {
-		t.Errorf("sync after failed promote = %q, want pushed: 1 / rounds: 1", out)
+		t.Errorf("sync after failed move = %q, want pushed: 1 / rounds: 1", out)
 	}
 }
 
-// TestClaimDetachedHead pins the --branch escape hatch on branch-scoped
-// mutations: from a detached HEAD, claim without --branch fails with the
-// detached-HEAD message, and --branch main succeeds.
+// TestClaimDetachedHead pins global id resolution for single-task commands:
+// claim finds a task by id regardless of HEAD, so it succeeds from a detached
+// HEAD with no --branch flag.
 func TestClaimDetachedHead(t *testing.T) {
 	dir := initRepo(t)
 	task := addTaskBin(t, dir, "On main")
 	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "c")
 	mustGit(t, dir, "checkout", "-q", "--detach")
 
-	res, err := execBin(dir, matrixActor, "task", "claim", task.ID)
-	if err != nil {
-		t.Fatalf("cc-notes task claim: %v", err)
-	}
-	if res.Code != 1 || res.Stdout != "" || res.Stderr != "error: detached HEAD; pass --branch\n" {
-		t.Fatalf("detached claim: exit %d stdout %q stderr %q, want exit 1 with the detached-HEAD line", res.Code, res.Stdout, res.Stderr)
-	}
-
-	out := mustBin(t, dir, matrixActor, "task", "claim", "--branch", "main", task.ID)
+	out := mustBin(t, dir, matrixActor, "task", "claim", task.ID)
 	if want := task.ID[:7] + "\tin_progress\tP2\t" + matrixActor + "\tOn main\n"; out != want {
-		t.Fatalf("claim --branch main = %q, want %q", out, want)
+		t.Fatalf("claim from detached HEAD = %q, want %q", out, want)
 	}
 }
 

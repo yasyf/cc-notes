@@ -12,6 +12,21 @@ import (
 	"github.com/yasyf/cc-notes/internal/store"
 )
 
+// openOnBranch selects the open and in-progress tasks folding to branch,
+// preserving the input order.
+func openOnBranch(tasks []model.Task, branch model.Branch) []model.Task {
+	var open []model.Task
+	for _, t := range tasks {
+		if t.Branch != branch {
+			continue
+		}
+		if t.Status == model.StatusOpen || t.Status == model.StatusInProgress {
+			open = append(open, t)
+		}
+	}
+	return open
+}
+
 // ReconcileReport is the outcome of a Reconcile run: the target branch plus one
 // BranchResult per source branch that held open or in-progress work.
 type ReconcileReport struct {
@@ -20,9 +35,9 @@ type ReconcileReport struct {
 }
 
 // BranchResult records what Reconcile found for one source branch: the
-// open and in-progress tasks it carried (as folded on the source branch),
-// whether it counted as merged into the target, and — when it did not
-// promote — why. Reason is empty for a branch that was promoted.
+// open and in-progress tasks folding to it, whether it counted as merged
+// into the target, and — when it did not merge — why. Reason is empty for a
+// merged branch.
 type BranchResult struct {
 	Branch model.Branch
 	Merged bool
@@ -35,8 +50,8 @@ type BranchResult struct {
 func (r ReconcileReport) Scanned() int { return len(r.Branches) }
 
 // Merged is the number of scanned branches that counted as merged into the
-// target — the branches whose tasks Reconcile promoted (or, under dry-run,
-// would promote).
+// target — the branches whose tasks Reconcile moved (or, under dry-run,
+// would move).
 func (r ReconcileReport) Merged() int {
 	n := 0
 	for _, b := range r.Branches {
@@ -47,8 +62,8 @@ func (r ReconcileReport) Merged() int {
 	return n
 }
 
-// Promoted is the total number of tasks promoted into the target across
-// every merged branch — the plan's task count under dry-run.
+// Promoted is the total number of tasks moved into the target across every
+// merged branch — the plan's task count under dry-run.
 func (r ReconcileReport) Promoted() int {
 	n := 0
 	for _, b := range r.Branches {
@@ -59,38 +74,29 @@ func (r ReconcileReport) Promoted() int {
 	return n
 }
 
-// Reconcile promotes each merged source branch's open and in-progress tasks
-// into the target branch. It is a discovery layer over Promote: it resolves
-// the target tip, selects source branches (the explicit from list, else the
-// branches that hold task refs minus the target), and for each one collects
-// its live open and in-progress tasks. A source branch counts as merged when
+// Reconcile reassigns each merged source branch's open and in-progress tasks
+// to the target branch. It resolves the target tip, selects source branches
+// (the explicit from list, else every branch that folded tasks claim minus
+// the target and the backlog), and for each one collects the open and
+// in-progress tasks folding to it. A source branch counts as merged when
 // force is set or its branch tip is an ancestor of — or equal to — the target
-// tip; only merged branches are promoted, and only when dryRun is false.
-// Promotion runs through Promote, the single writer, so the run is
-// idempotent: a promoted task no longer folds live on its old branch and is
-// not re-promoted on a later pass. Source branches are processed in sorted
-// order for deterministic output.
+// tip; only merged branches are moved, and only when dryRun is false. Each
+// moved task gets a SetBranch{into} op, so the run is idempotent: a moved
+// task folds to into and the next pass's source scan no longer finds it.
+// Source branches are processed in sorted order for deterministic output.
 func Reconcile(ctx context.Context, s *store.Store, into model.Branch, from []model.Branch, force, dryRun bool) (ReconcileReport, error) {
 	targetTip, err := s.Repo.Tip(ctx, "refs/heads/"+string(into))
 	if err != nil {
 		return ReconcileReport{}, fmt.Errorf("resolve target branch %s: %w", into, err)
 	}
-	sources, err := candidateBranches(ctx, s, into, from)
+	all, err := s.ListTasks(ctx)
 	if err != nil {
 		return ReconcileReport{}, err
 	}
+	sources := candidateBranches(all, into, from)
 	report := ReconcileReport{Into: into}
 	for _, b := range sources {
-		tasks, err := s.ListTasks(ctx, b)
-		if err != nil {
-			return ReconcileReport{}, err
-		}
-		var open []model.Task
-		for _, t := range tasks {
-			if t.Status == model.StatusOpen || t.Status == model.StatusInProgress {
-				open = append(open, t)
-			}
-		}
+		open := openOnBranch(all, b)
 		if len(open) == 0 {
 			continue
 		}
@@ -120,57 +126,32 @@ func Reconcile(ctx context.Context, s *store.Store, into model.Branch, from []mo
 		if !result.Merged || dryRun {
 			continue
 		}
-		ids := make([]model.EntityID, len(open))
-		for i, t := range open {
-			ids[i] = t.ID
-		}
-		if err := Promote(ctx, s, b, into, ids); err != nil {
-			return ReconcileReport{}, err
+		for _, t := range open {
+			if _, err := s.Append(ctx, refs.Task(t.ID), []model.Op{model.SetBranch{Branch: into}}); err != nil {
+				return ReconcileReport{}, fmt.Errorf("move task %s: %w", t.ID.Short(), err)
+			}
 		}
 	}
 	return report, nil
 }
 
 // candidateBranches returns the source branches to examine: the explicit
-// from list verbatim, or — when from is empty — every branch that holds task
-// refs except the target.
-func candidateBranches(ctx context.Context, s *store.Store, into model.Branch, from []model.Branch) ([]model.Branch, error) {
+// from list verbatim, or — when from is empty — every branch the folded
+// tasks claim, except the target and the backlog (the empty branch is not a
+// mergeable source).
+func candidateBranches(tasks []model.Task, into model.Branch, from []model.Branch) []model.Branch {
 	if len(from) > 0 {
-		return from, nil
+		return from
 	}
-	branches, err := taskBranches(ctx, s)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]model.Branch, 0, len(branches))
-	for _, b := range branches {
-		if b != into {
-			out = append(out, b)
-		}
-	}
-	return out, nil
-}
-
-// taskBranches enumerates the distinct branch namespaces that hold task refs
-// under refs.TasksRoot, sorted for deterministic iteration.
-func taskBranches(ctx context.Context, s *store.Store) ([]model.Branch, error) {
-	tips, err := s.Repo.ListPrefix(ctx, refs.TasksRoot)
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[model.Branch]bool, len(tips))
-	branches := make([]model.Branch, 0, len(tips))
-	for name := range tips {
-		parsed, err := refs.Parse(name)
-		if err != nil {
-			return nil, fmt.Errorf("parse task ref %s: %w", name, err)
-		}
-		if seen[parsed.Branch] {
+	seen := make(map[model.Branch]bool)
+	out := make([]model.Branch, 0)
+	for _, t := range tasks {
+		if t.Branch == "" || t.Branch == into || seen[t.Branch] {
 			continue
 		}
-		seen[parsed.Branch] = true
-		branches = append(branches, parsed.Branch)
+		seen[t.Branch] = true
+		out = append(out, t.Branch)
 	}
-	slices.Sort(branches)
-	return branches, nil
+	slices.Sort(out)
+	return out
 }

@@ -60,7 +60,7 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 		{"remove_dep", RemoveDep{ID: testID}},
 		{"set_parent", SetParent{Parent: testParent}},
 		{"add_comment", AddComment{Body: "Taking this one."}},
-		{"promote", Promote{From: "feature/sync", To: "main"}},
+		{"set_branch", SetBranch{Branch: "feature/x"}},
 	}
 
 	if got, want := len(cases), len(opDecoders); got != want {
@@ -191,20 +191,51 @@ func TestDecodePackFailures(t *testing.T) {
 		{"bad anchor kind in create_note", `{"v":1,"lamport":1,"ops":[{"kind":"create_note","nonce":"00","title":"t","body":"","tags":[],"anchors":[{"kind":"tag","value":"v"}]}]}`, ErrInvalidValue},
 		{"bad priority in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":7,"branch":"main","parent":"","labels":[]}]}`, ErrInvalidValue},
 		{"bad type in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"story","priority":0,"branch":"main","parent":"","labels":[]}]}`, ErrInvalidValue},
-		{"empty promote from", `{"v":1,"lamport":1,"ops":[{"kind":"promote","from":"","to":"main"}]}`, ErrInvalidValue},
-		{"empty promote to", `{"v":1,"lamport":1,"ops":[{"kind":"promote","from":"main","to":""}]}`, ErrInvalidValue},
 		{"traversal branch in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":"../evil","parent":"","labels":[]}]}`, ErrInvalidValue},
 		{"space in create_task branch", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":"feat ure","parent":"","labels":[]}]}`, ErrInvalidValue},
 		{"dot-leading create_task branch", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":".hidden","parent":"","labels":[]}]}`, ErrInvalidValue},
 		{"empty component in create_task branch", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":"a//b","parent":"","labels":[]}]}`, ErrInvalidValue},
-		{"trailing slash in promote from", `{"v":1,"lamport":1,"ops":[{"kind":"promote","from":"feature/","to":"main"}]}`, ErrInvalidValue},
-		{"trailing slash in promote to", `{"v":1,"lamport":1,"ops":[{"kind":"promote","from":"main","to":"feature/"}]}`, ErrInvalidValue},
+		{"traversal branch in set_branch", `{"v":1,"lamport":1,"ops":[{"kind":"set_branch","branch":"../evil"}]}`, ErrInvalidValue},
+		{"trailing slash in set_branch", `{"v":1,"lamport":1,"ops":[{"kind":"set_branch","branch":"feature/"}]}`, ErrInvalidValue},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := DecodePack([]byte(tc.input))
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("DecodePack(%s) error = %v, want errors.Is %v", tc.input, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDecodePackEmptyBranch(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  Op
+	}{
+		{
+			"set_branch to backlog",
+			`{"v":1,"lamport":1,"ops":[{"kind":"set_branch","branch":""}]}`,
+			SetBranch{Branch: ""},
+		},
+		{
+			"create_task on backlog",
+			`{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":"","parent":"","labels":[]}]}`,
+			CreateTask{Nonce: "00", Title: "t", Type: TypeTask, Priority: 0, Labels: []string{}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pack, err := DecodePack([]byte(tc.input))
+			if err != nil {
+				t.Fatalf("DecodePack(%s) error = %v, want nil", tc.input, err)
+			}
+			if len(pack.Ops) != 1 {
+				t.Fatalf("len(Ops) = %d, want 1", len(pack.Ops))
+			}
+			if !reflect.DeepEqual(pack.Ops[0], tc.want) {
+				t.Fatalf("Ops[0] = %#v, want %#v", pack.Ops[0], tc.want)
 			}
 		})
 	}

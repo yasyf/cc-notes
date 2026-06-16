@@ -4,14 +4,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/yasyf/cc-notes/internal/model"
 )
 
 const (
-	hex40      = "0123456789abcdef0123456789abcdef01234567"
-	otherHex40 = "fedcba9876543210fedcba9876543210fedcba98"
-	hex64      = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	hex40 = "0123456789abcdef0123456789abcdef01234567"
+	hex64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 )
 
 func TestBuildGolden(t *testing.T) {
@@ -23,10 +20,9 @@ func TestBuildGolden(t *testing.T) {
 		want string
 	}{
 		{"note", Note(hex40), "refs/cc-notes/notes/" + hex40},
-		{"task plain branch", Task("main", hex40), "refs/cc-notes/tasks/main/" + hex40},
-		{"task slashed branch", Task("feature/x", hex40), "refs/cc-notes/tasks/feature/x/" + hex40},
+		{"task", Task(hex40), "refs/cc-notes/tasks/" + hex40},
 		{"notes prefix", NotesPrefix, "refs/cc-notes/notes/"},
-		{"tasks prefix", TasksPrefix("feature/x"), "refs/cc-notes/tasks/feature/x/"},
+		{"tasks root", TasksRoot, "refs/cc-notes/tasks/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -45,19 +41,8 @@ func TestParseRoundTrip(t *testing.T) {
 	}{
 		{"note", Note(hex40), Ref{Kind: KindNote, ID: hex40}},
 		{"note sha256 id", Note(hex64), Ref{Kind: KindNote, ID: hex64}},
-		{"task plain branch", Task("main", hex40), Ref{Kind: KindTask, Branch: "main", ID: hex40}},
-		{"task slashed branch", Task("feature/x", hex40), Ref{Kind: KindTask, Branch: "feature/x", ID: hex40}},
-		{
-			"task branch whose last component is 40-hex",
-			Task(model.Branch("release/"+otherHex40), hex40),
-			Ref{Kind: KindTask, Branch: model.Branch("release/" + otherHex40), ID: hex40},
-		},
-		{
-			"task branch that is itself 40-hex",
-			Task(model.Branch(otherHex40), hex40),
-			Ref{Kind: KindTask, Branch: model.Branch(otherHex40), ID: hex40},
-		},
-		{"task sha256 id", Task("main", hex64), Ref{Kind: KindTask, Branch: "main", ID: hex64}},
+		{"task", Task(hex40), Ref{Kind: KindTask, ID: hex40}},
+		{"task sha256 id", Task(hex64), Ref{Kind: KindTask, ID: hex64}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,10 +74,9 @@ func TestParseRejects(t *testing.T) {
 		{"non-hex id", "refs/cc-notes/notes/" + strings.Repeat("z", 40), ErrMalformed},
 		{"nested note", "refs/cc-notes/notes/sub/" + hex40, ErrMalformed},
 		{"unknown namespace", "refs/cc-notes/widgets/" + hex40, ErrMalformed},
-		{"task missing branch", "refs/cc-notes/tasks/" + hex40, ErrEmptyBranch},
-		{"task empty branch", "refs/cc-notes/tasks//" + hex40, ErrEmptyBranch},
-		{"task missing id", "refs/cc-notes/tasks/main/", ErrMalformed},
-		{"task uppercase hex id", "refs/cc-notes/tasks/main/" + strings.ToUpper(hex40), ErrMalformed},
+		{"task missing id", "refs/cc-notes/tasks/", ErrMalformed},
+		{"nested task", "refs/cc-notes/tasks/sub/" + hex40, ErrMalformed},
+		{"task uppercase hex id", "refs/cc-notes/tasks/" + strings.ToUpper(hex40), ErrMalformed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,12 +99,9 @@ func TestDirectChild(t *testing.T) {
 		want   bool
 	}{
 		{"note under notes prefix", NotesPrefix, Note(hex40), true},
-		{"task under its branch prefix", TasksPrefix("a"), Task("a", hex40), true},
-		{"sub-branch task excluded from parent branch", TasksPrefix("a"), Task("a/b", hex40), false},
-		{"task under slashed branch prefix", TasksPrefix("a/b"), Task("a/b", hex40), true},
-		{"task not under notes prefix", NotesPrefix, Task("main", hex40), false},
-		{"other branch", TasksPrefix("main"), Task("dev", hex40), false},
-		{"ref equal to prefix", TasksPrefix("a"), TasksPrefix("a"), false},
+		{"task under tasks root", TasksRoot, Task(hex40), true},
+		{"task not under notes prefix", NotesPrefix, Task(hex40), false},
+		{"ref equal to prefix", TasksRoot, TasksRoot, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -139,12 +120,7 @@ func TestTrackingRoundTrip(t *testing.T) {
 		want   string
 	}{
 		{"note", "origin", Note(hex40), "refs/cc-notes-sync/origin/notes/" + hex40},
-		{
-			"task slashed branch",
-			"upstream",
-			Task("feature/x", hex40),
-			"refs/cc-notes-sync/upstream/tasks/feature/x/" + hex40,
-		},
+		{"task", "upstream", Task(hex40), "refs/cc-notes-sync/upstream/tasks/" + hex40},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

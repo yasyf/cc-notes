@@ -720,7 +720,7 @@ func TestRenderTaskMatchesCLIJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	snapshot, err := s.Load(t.Context(), refs.Task("main", model.EntityID(id)))
+	snapshot, err := s.Load(t.Context(), refs.Task(model.EntityID(id)))
 	if err != nil {
 		t.Fatalf("load task: %v", err)
 	}

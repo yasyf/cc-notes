@@ -420,21 +420,37 @@ func TestFoldDepInterleavings(t *testing.T) {
 	}
 }
 
-func TestFoldPromoteLWW(t *testing.T) {
-	diamond := []model.PackCommit{
-		mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Type: model.TypeTask, Branch: "main"}),
-		mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Promote{From: "main", To: "feat"}),
-		mk("ccc", []string{"aaa"}, "carol", 250, 2, model.Promote{From: "main", To: "hotfix"}),
-		mk("ddd", []string{"bbb", "ccc"}, "dave", 300, 3),
+func TestFoldSetBranchLWW(t *testing.T) {
+	cases := []struct {
+		name       string
+		bBranch    model.Branch
+		cBranch    model.Branch
+		bTime      int64
+		cTime      int64
+		wantBranch model.Branch
+	}{
+		{name: "later set wins", bBranch: "feat", cBranch: "hotfix", bTime: 200, cTime: 250, wantBranch: "hotfix"},
+		{name: "earlier set loses", bBranch: "hotfix", cBranch: "feat", bTime: 250, cTime: 200, wantBranch: "hotfix"},
+		{name: "later set to backlog wins", bBranch: "feat", cBranch: "", bTime: 200, cTime: 250, wantBranch: ""},
 	}
-	for i, input := range permutations(diamond) {
-		got, err := fold.Task(input)
-		if err != nil {
-			t.Fatalf("permutation %d: Task() error = %v", i, err)
-		}
-		if got.Branch != "hotfix" {
-			t.Fatalf("permutation %d: Branch = %q, want %q", i, got.Branch, "hotfix")
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diamond := []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Type: model.TypeTask, Branch: "main"}),
+				mk("bbb", []string{"aaa"}, "bob", tc.bTime, 2, model.SetBranch{Branch: tc.bBranch}),
+				mk("ccc", []string{"aaa"}, "carol", tc.cTime, 2, model.SetBranch{Branch: tc.cBranch}),
+				mk("ddd", []string{"bbb", "ccc"}, "dave", 300, 3),
+			}
+			for i, input := range permutations(diamond) {
+				got, err := fold.Task(input)
+				if err != nil {
+					t.Fatalf("permutation %d: Task() error = %v", i, err)
+				}
+				if got.Branch != tc.wantBranch {
+					t.Fatalf("permutation %d: Branch = %q, want %q", i, got.Branch, tc.wantBranch)
+				}
+			}
+		})
 	}
 }
 

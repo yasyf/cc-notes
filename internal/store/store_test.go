@@ -161,7 +161,7 @@ func TestCreateTaskRoundTrip(t *testing.T) {
 		t.Errorf("task = %+v, want title/branch/status/type = ship it/%s/open/task", task, branch)
 	}
 
-	ref := refs.Task(branch, task.ID)
+	ref := refs.Task(task.ID)
 	loaded, err := s.Load(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -173,20 +173,15 @@ func TestCreateTaskRoundTrip(t *testing.T) {
 		t.Errorf("commit message = %q, want %q", msg, "cc-notes: task create")
 	}
 
-	list, err := s.ListTasks(t.Context(), branch)
+	list, err := s.ListTasks(t.Context())
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
 	if want := []model.Task{task}; !reflect.DeepEqual(list, want) {
-		t.Errorf("ListTasks(%s) = %+v, want %+v", branch, list, want)
+		t.Errorf("ListTasks = %+v, want %+v", list, want)
 	}
-
-	parent, err := s.ListTasks(t.Context(), "feat")
-	if err != nil {
-		t.Fatalf("ListTasks(feat): %v", err)
-	}
-	if len(parent) != 0 {
-		t.Errorf("ListTasks(feat) leaked sub-branch tasks: %+v", parent)
+	if list[0].Branch != branch {
+		t.Errorf("task folds branch %q, want %q", list[0].Branch, branch)
 	}
 }
 
@@ -198,7 +193,6 @@ func TestCreateRejects(t *testing.T) {
 	}{
 		{name: "no ops", ops: nil},
 		{name: "first op not a create", ops: []model.Op{model.SetTitle{Title: "x"}}},
-		{name: "task with empty branch", ops: []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "x", Type: model.TypeTask}}},
 		{name: "invalid enum rejected by codec", ops: []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "x", Type: "bogus", Branch: "main"}}, want: model.ErrInvalidValue},
 		{name: "kind mismatch rejected by fold", ops: []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "x"}, model.SetStatus{Status: model.StatusDone}}, want: fold.ErrKindMismatch},
 	} {
@@ -415,30 +409,27 @@ func TestListNotesDeleted(t *testing.T) {
 	}
 }
 
-func TestListTasksLiveness(t *testing.T) {
+func TestListTasksReturnsAll(t *testing.T) {
 	s := initStore(t)
-	promoted := create(t, s, taskOps("promote me", "main")).(model.Task)
-	live := create(t, s, taskOps("stays", "main")).(model.Task)
-	ref := refs.Task("main", promoted.ID)
+	create(t, s, taskOps("on main", "main"))
+	create(t, s, taskOps("on release", "release"))
+	create(t, s, taskOps("backlog", ""))
 
-	if _, err := s.Append(t.Context(), ref, []model.Op{model.Promote{From: "main", To: "release"}}); err != nil {
-		t.Fatalf("Append promote: %v", err)
-	}
-
-	list, err := s.ListTasks(t.Context(), "main")
+	list, err := s.ListTasks(t.Context())
 	if err != nil {
-		t.Fatalf("ListTasks(main): %v", err)
+		t.Fatalf("ListTasks: %v", err)
 	}
-	if want := []model.Task{live}; !reflect.DeepEqual(list, want) {
-		t.Errorf("ListTasks(main) = %+v, want only the live task %+v", list, want)
+	if len(list) != 3 {
+		t.Fatalf("ListTasks returned %d tasks, want 3", len(list))
 	}
-
-	loaded, err := s.Load(t.Context(), ref)
-	if err != nil {
-		t.Fatalf("Load dead ref: %v", err)
+	branches := map[model.Branch]bool{}
+	for _, task := range list {
+		branches[task.Branch] = true
 	}
-	if got := loaded.(model.Task).Branch; got != "release" {
-		t.Errorf("dead ref folds to branch %q, want release", got)
+	for _, want := range []model.Branch{"main", "release", ""} {
+		if !branches[want] {
+			t.Errorf("ListTasks missing a task on branch %q: %+v", want, list)
+		}
 	}
 }
 
@@ -455,7 +446,7 @@ func TestResolve(t *testing.T) {
 	}
 	unique := string(a.ID)[:shared+1]
 
-	got, err := s.Resolve(ctx, refs.KindNote, "", unique)
+	got, err := s.Resolve(ctx, refs.KindNote, unique)
 	if err != nil {
 		t.Fatalf("Resolve unique: %v", err)
 	}
@@ -463,7 +454,7 @@ func TestResolve(t *testing.T) {
 		t.Errorf("Resolve(%q) = %q, want %q", unique, got, want)
 	}
 
-	got, err = s.Resolve(ctx, refs.KindNote, "", strings.ToUpper(unique))
+	got, err = s.Resolve(ctx, refs.KindNote, strings.ToUpper(unique))
 	if err != nil {
 		t.Fatalf("Resolve uppercase: %v", err)
 	}
@@ -471,26 +462,20 @@ func TestResolve(t *testing.T) {
 		t.Errorf("Resolve(upper %q) = %q, want %q", unique, got, want)
 	}
 
-	if _, err := s.Resolve(ctx, refs.KindNote, "", "zzz"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Resolve(ctx, refs.KindNote, "zzz"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve(zzz) = %v, want ErrNotFound", err)
 	}
 
-	got, err = s.Resolve(ctx, refs.KindTask, "main", string(task.ID))
+	got, err = s.Resolve(ctx, refs.KindTask, string(task.ID))
 	if err != nil {
 		t.Fatalf("Resolve task: %v", err)
 	}
-	if want := refs.Task("main", task.ID); got != want {
+	if want := refs.Task(task.ID); got != want {
 		t.Errorf("Resolve task = %q, want %q", got, want)
 	}
 
-	if _, err := s.Resolve(ctx, refs.KindTask, "release", string(task.ID)); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Resolve task on wrong branch = %v, want ErrNotFound", err)
-	}
-	if _, err := s.Resolve(ctx, refs.KindTask, "main", string(a.ID)); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Resolve(ctx, refs.KindTask, string(a.ID)); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve note id as task = %v, want ErrNotFound", err)
-	}
-	if _, err := s.Resolve(ctx, refs.KindTask, "", string(task.ID)); err == nil || errors.Is(err, ErrNotFound) {
-		t.Errorf("Resolve task with empty branch = %v, want plain error", err)
 	}
 }
 
@@ -516,7 +501,7 @@ func TestResolveAmbiguous(t *testing.T) {
 	}
 
 	prefix := string(shared[0])[:1]
-	_, err := s.Resolve(t.Context(), refs.KindNote, "", prefix)
+	_, err := s.Resolve(t.Context(), refs.KindNote, prefix)
 	if !errors.Is(err, ErrAmbiguous) {
 		t.Fatalf("Resolve(%q) = %v, want ErrAmbiguous", prefix, err)
 	}

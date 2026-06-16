@@ -40,7 +40,7 @@ func mergeInto(t *testing.T, dir, target, source string) {
 
 func setStatus(t *testing.T, s *store.Store, branch model.Branch, id model.EntityID, status model.Status) {
 	t.Helper()
-	appendOps(t, s, refs.Task(branch, id), model.SetStatus{Status: status})
+	appendOps(t, s, refs.Task(id), model.SetStatus{Status: status})
 }
 
 func taskIDs(tasks []model.Task) []model.EntityID {
@@ -149,7 +149,7 @@ func TestReconcileIdempotent(t *testing.T) {
 		t.Errorf("second Promoted = %d, want %d", got, want)
 	}
 	if got, want := second.Scanned(), 0; got != want {
-		t.Errorf("second Scanned = %d, want %d (the promoted-away ref carries no live work)", got, want)
+		t.Errorf("second Scanned = %d, want %d (the moved task no longer folds on the source branch)", got, want)
 	}
 	if got := ccRefs(t, dir); !mapsEqual(got, before) {
 		t.Errorf("refs moved on idempotent rerun: %v -> %v", before, got)
@@ -326,8 +326,8 @@ func TestReconcileDryRun(t *testing.T) {
 	if got := ccRefs(t, dir); !mapsEqual(got, before) {
 		t.Errorf("dry-run moved refs: %v -> %v", before, got)
 	}
-	if _, exists := ccRefs(t, dir)[refs.Task("main", task.ID)]; exists {
-		t.Errorf("dry-run created destination ref %s", refs.Task("main", task.ID))
+	if got := loadTask(t, s, refs.Task(task.ID)).Branch; got != "feature/x" {
+		t.Errorf("dry-run moved task to branch %q, want feature/x untouched", got)
 	}
 	if got := taskIDs(listTasks(t, s, "feature/x")); !slices.Equal(got, []model.EntityID{task.ID}) {
 		t.Errorf("ListTasks(feature/x) = %v, want still live under dry-run", got)

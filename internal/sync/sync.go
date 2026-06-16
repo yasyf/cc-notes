@@ -2,25 +2,20 @@
 // repositories. Install wires a remote's refspecs so plain git fetch and
 // push carry entity refs alongside branches; Sync is the explicit engine:
 // fetch into a per-remote tracking namespace, converge every ref by create,
-// fast-forward, or union merge, consolidate task siblings left behind by a
-// promote, then push — looping on contention, never forcing. Promote moves
-// a task between branch namespaces by appending the promote op (the
-// tombstone) to the old chain and folding the new tip into the destination
-// ref. Refs are never deleted: deletions do not propagate through refspecs,
-// so a deleted ref would resurrect on the next fetch.
+// fast-forward, or union merge, then push — looping on contention, never
+// forcing. Refs are never deleted: deletions do not propagate through
+// refspecs, so a deleted ref would resurrect on the next fetch.
 package sync
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"sync/atomic"
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/model"
@@ -40,14 +35,9 @@ const (
 	// maxRefAttempts bounds per-ref compare-and-swap retries against
 	// concurrent local writers.
 	maxRefAttempts = 16
-	// refConcurrency bounds the per-ref fan-out of reconcile and consolidate.
+	// refConcurrency bounds the per-ref fan-out of reconcile.
 	refConcurrency = 8
 )
-
-// syntheticHead stands in for an unwritten merge commit when consolidation
-// folds the union of diverged sibling tips: fold is pure, so the head needs
-// no git object — only a sha no real commit can carry.
-const syntheticHead = model.SHA("cc-notes:synthetic-union-head")
 
 var (
 	// ErrSyncContended reports a Sync that exhausted its rounds, or a ref
@@ -61,8 +51,7 @@ var (
 type Report struct {
 	// Created counts local refs created from remote-only refs.
 	Created int
-	// FastForwarded counts local refs fast-forwarded to a remote or
-	// consolidated tip.
+	// FastForwarded counts local refs fast-forwarded to a remote tip.
 	FastForwarded int
 	// Merged counts union merge commits written for diverged tips.
 	Merged int
@@ -84,7 +73,7 @@ const (
 )
 
 // engine carries one Sync run's handles and counters; the atomic counters
-// absorb the reconcile and consolidate fan-outs.
+// absorb the reconcile fan-out.
 type engine struct {
 	store  *store.Store
 	remote string
@@ -97,8 +86,7 @@ type engine struct {
 // Sync converges the local refs/cc-notes/ namespace with remote and pushes
 // the result. Each round fetches the remote's entity refs into the tracking
 // namespace, reconciles every remote-known ref — create, fast-forward, or
-// union merge, never a clobber — consolidates task siblings split across
-// branch namespaces by a promote, and pushes whatever differs, unforced. A
+// union merge, never a clobber — and pushes whatever differs, unforced. A
 // non-fast-forward push means the remote moved mid-round: the next round
 // merges the new tips. Exhausting maxRounds fails wrapping ErrSyncContended;
 // an unconfigured remote fails wrapping ErrRemoteNotFound.
@@ -122,9 +110,6 @@ func Sync(ctx context.Context, dir, remote string) (Report, error) {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
 		if err := e.reconcile(ctx, remoteView); err != nil {
-			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
-		}
-		if err := e.consolidate(ctx); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
 		pending, err := e.pending(ctx, remoteView)
@@ -186,144 +171,6 @@ func (e *engine) reconcile(ctx context.Context, remoteView map[string]model.SHA)
 		g.Go(func() error { return e.ensure(gctx, ref, tip) })
 	}
 	return g.Wait()
-}
-
-// consolidate repairs the wake of a promote: it groups every local task ref
-// by entity id, folds the union of each group's tips to find the live
-// branch, folds every sibling tip into refs.Task(liveBranch, id) — creating
-// it when absent — and then converges every other sibling to the resulting
-// union tip, so no op stranded on a dead sibling ref is ever lost and every
-// sibling folds to the same branch: exactly one ref satisfies liveness, even
-// after racing promotes to different destinations. Dead siblings keep their
-// refs: liveness is folded branch == ref branch, never ref deletion.
-func (e *engine) consolidate(ctx context.Context) error {
-	local, err := e.store.Repo.ListPrefix(ctx, namespace)
-	if err != nil {
-		return err
-	}
-	groups := make(map[model.EntityID][]string)
-	for name := range local {
-		parsed, err := refs.Parse(name)
-		if err != nil {
-			return fmt.Errorf("local ref: %w", err)
-		}
-		if parsed.Kind == refs.KindTask {
-			groups[parsed.ID] = append(groups[parsed.ID], name)
-		}
-	}
-	// One poisoned entity must not stop the others from consolidating:
-	// every entity is attempted, and the failures come back joined.
-	ids := slices.Sorted(maps.Keys(groups))
-	errs := make([]error, len(ids))
-	var g errgroup.Group
-	g.SetLimit(refConcurrency)
-	for i, id := range ids {
-		g.Go(func() error {
-			errs[i] = e.consolidateEntity(ctx, id, groups[id])
-			return nil
-		})
-	}
-	_ = g.Wait() // always nil: the goroutines record into errs instead
-	return errors.Join(errs...)
-}
-
-func (e *engine) consolidateEntity(ctx context.Context, id model.EntityID, group []string) error {
-	slices.Sort(group)
-	tips := make([]model.SHA, 0, len(group))
-	for _, ref := range group {
-		tip, err := e.store.Repo.Tip(ctx, ref)
-		if err != nil {
-			return fmt.Errorf("consolidate task %s: %w", id.Short(), err)
-		}
-		tips = append(tips, tip)
-	}
-	frontier, err := e.frontier(ctx, tips)
-	if err != nil {
-		return fmt.Errorf("consolidate task %s: %w", id.Short(), err)
-	}
-	task, err := e.foldUnion(ctx, frontier)
-	if err != nil {
-		return fmt.Errorf("consolidate task %s: %w", id.Short(), err)
-	}
-	liveRef := refs.Task(task.Branch, id)
-	for _, tip := range frontier {
-		if err := e.ensure(ctx, liveRef, tip); err != nil {
-			return fmt.Errorf("consolidate task %s: %w", id.Short(), err)
-		}
-	}
-	// Converge the siblings to the live ref's union tip — not each to the
-	// raw frontier, which would mint mirrored merge commits per sibling and
-	// never settle. Every sibling tip is dominated by the union tip, so this
-	// is a fast-forward unless a concurrent writer moved the sibling.
-	union, err := e.store.Repo.Tip(ctx, liveRef)
-	if err != nil {
-		return fmt.Errorf("consolidate task %s: %w", id.Short(), err)
-	}
-	for _, ref := range group {
-		if ref == liveRef {
-			continue
-		}
-		if err := e.ensure(ctx, ref, union); err != nil {
-			return fmt.Errorf("consolidate task %s: %w", id.Short(), err)
-		}
-	}
-	return nil
-}
-
-// frontier drops every tip contained in another, leaving the minimal head
-// set whose union covers all siblings, sorted for deterministic folds.
-func (e *engine) frontier(ctx context.Context, tips []model.SHA) ([]model.SHA, error) {
-	slices.Sort(tips)
-	tips = slices.Compact(tips)
-	frontier := make([]model.SHA, 0, len(tips))
-	for i, tip := range tips {
-		dominated := false
-		for j, other := range tips {
-			if i == j {
-				continue
-			}
-			contained, err := e.store.Repo.IsAncestor(ctx, tip, other)
-			if err != nil {
-				return nil, err
-			}
-			if contained {
-				dominated = true
-				break
-			}
-		}
-		if !dominated {
-			frontier = append(frontier, tip)
-		}
-	}
-	return frontier, nil
-}
-
-// foldUnion folds the union of the frontier chains as a task. Multiple
-// heads fold under a synthetic empty-ops merge head — fold is pure, so the
-// union's branch is known before any merge commit is written.
-func (e *engine) foldUnion(ctx context.Context, frontier []model.SHA) (model.Task, error) {
-	seen := make(map[model.SHA]bool)
-	var commits []model.PackCommit
-	for _, tip := range frontier {
-		chain, err := e.store.Repo.ReadChain(ctx, tip)
-		if err != nil {
-			return model.Task{}, err
-		}
-		for _, c := range chain {
-			if !seen[c.SHA] {
-				seen[c.SHA] = true
-				commits = append(commits, c)
-			}
-		}
-	}
-	if len(frontier) > 1 {
-		commits = append(commits, model.PackCommit{
-			SHA:     syntheticHead,
-			Parents: frontier,
-			Pack:    model.Pack{Lamport: nextLamport(commits)},
-		})
-	}
-	return fold.Task(commits)
 }
 
 // pending counts local refs that differ from the remote view: the refs the
@@ -434,12 +281,4 @@ func ensureRemote(ctx context.Context, g gitcmd.Git, remote string) error {
 		return fmt.Errorf("%w: %q", ErrRemoteNotFound, remote)
 	}
 	return nil
-}
-
-func nextLamport(commits []model.PackCommit) model.Lamport {
-	var top model.Lamport
-	for _, c := range commits {
-		top = max(top, c.Pack.Lamport)
-	}
-	return top + 1
 }

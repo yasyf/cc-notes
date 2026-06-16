@@ -113,6 +113,9 @@ func (o CreateTask) validate() error {
 	if err := o.Priority.validate(); err != nil {
 		return err
 	}
+	if o.Branch == "" {
+		return nil
+	}
 	return o.Branch.validate()
 }
 
@@ -220,19 +223,19 @@ type AddComment struct {
 // OpKind returns "add_comment".
 func (AddComment) OpKind() string { return "add_comment" }
 
-// Promote moves a task between branch namespaces. The op is the tombstone on
-// the old chain: ref deletions don't propagate through refspecs, ops do.
-type Promote struct {
-	From Branch `json:"from"`
-	To   Branch `json:"to"`
+// SetBranch reassigns a task to a branch. Branch is an LWW scalar: the last
+// SetBranch (or the CreateTask default) in linearization order wins. An
+// empty branch means the backlog.
+type SetBranch struct {
+	Branch Branch `json:"branch"`
 }
 
-// OpKind returns "promote".
-func (Promote) OpKind() string { return "promote" }
+// OpKind returns "set_branch".
+func (SetBranch) OpKind() string { return "set_branch" }
 
-func (o Promote) validate() error {
-	if err := o.From.validate(); err != nil {
-		return err
+func (o SetBranch) validate() error {
+	if o.Branch == "" {
+		return nil
 	}
-	return o.To.validate()
+	return o.Branch.validate()
 }

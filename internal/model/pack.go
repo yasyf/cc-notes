@@ -193,10 +193,10 @@ func marshalOp(op Op) ([]byte, error) {
 			Kind string `json:"kind"`
 			AddComment
 		}{o.OpKind(), o})
-	case Promote:
+	case SetBranch:
 		return json.Marshal(struct {
 			Kind string `json:"kind"`
-			Promote
+			SetBranch
 		}{o.OpKind(), o})
 	}
 	return nil, fmt.Errorf("%w: %T", ErrUnknownKind, op)
@@ -240,7 +240,7 @@ var opDecoders = map[string]func(json.RawMessage) (Op, error){
 	RemoveDep{}.OpKind():      decodeAs[RemoveDep],
 	SetParent{}.OpKind():      decodeAs[SetParent],
 	AddComment{}.OpKind():     decodeAs[AddComment],
-	Promote{}.OpKind():        decodeAs[Promote],
+	SetBranch{}.OpKind():      decodeAs[SetBranch],
 }
 
 func decodeAs[T Op](raw json.RawMessage) (Op, error) {
