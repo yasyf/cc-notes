@@ -1,8 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "cc-notes",
-  "version": "0.1.0",
-  "description": "Git-native notes and tasks layer for AI agents, distributed as a Claude Code plugin.",
+  "description": "Git-native notes and tasks layer for AI agents — durable, synced work items and design decisions stored as objects in the git ODB on refs/cc-notes/*.",
   "owner": {
     "name": "yasyf"
   },
@@ -10,7 +9,6 @@
     {
       "name": "cc-notes",
       "source": "./plugin",
-      "version": "0.1.0",
       "description": "Git-native notes and tasks layer for AI agents — durable, synced work items and design decisions stored as objects in the git ODB on refs/cc-notes/*.",
       "category": "development",
       "tags": [
