@@ -30,6 +30,17 @@ const goldenNote = "---\n" +
 	"author: Agent A <a@example.com>\n" +
 	"created: \"2025-12-12T02:54:56Z\"\n" +
 	"updated: \"2025-12-13T02:54:56Z\"\n" +
+	"verified_at: \"2025-12-14T02:54:56Z\"\n" +
+	"verified_by: Agent V <v@example.com>\n" +
+	"verified_commit: aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111\n" +
+	"witness:\n" +
+	"  - kind: path\n" +
+	"    value: internal/cli/output.go\n" +
+	"    oid: 1234567890abcdef1234567890abcdef12345678\n" +
+	"  - kind: commit\n" +
+	"    value: abc1234\n" +
+	"    oid: abcd1234abcd1234abcd1234abcd1234abcd1234\n" +
+	"superseded_by: [cccc1111cccc1111cccc1111cccc1111cccc1111, dddd2222dddd2222dddd2222dddd2222dddd2222]\n" +
 	"---\n" +
 	"Long-form analysis.\n\nWith a second paragraph.\n"
 
@@ -94,10 +105,21 @@ func richNote() model.Note {
 			{Kind: model.AnchorPath, Value: "internal/cli/output.go"},
 			{Kind: model.AnchorBranch, Value: "feature/login"},
 		},
-		Author:    "Agent A <a@example.com>",
-		CreatedAt: 1765508096,
-		UpdatedAt: 1765594496,
-		Head:      "ffff0000ffff0000ffff0000ffff0000ffff0000",
+		Author:         "Agent A <a@example.com>",
+		CreatedAt:      1765508096,
+		UpdatedAt:      1765594496,
+		VerifiedAt:     1765680896,
+		VerifiedBy:     "Agent V <v@example.com>",
+		VerifiedCommit: "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+		Witness: []model.AnchorWitness{
+			{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "internal/cli/output.go"}, OID: "1234567890abcdef1234567890abcdef12345678"},
+			{Anchor: model.Anchor{Kind: model.AnchorCommit, Value: "abc1234"}, OID: "abcd1234abcd1234abcd1234abcd1234abcd1234"},
+		},
+		SupersededBy: []model.EntityID{
+			"cccc1111cccc1111cccc1111cccc1111cccc1111",
+			"dddd2222dddd2222dddd2222dddd2222dddd2222",
+		},
+		Head: "ffff0000ffff0000ffff0000ffff0000ffff0000",
 	}
 }
 
@@ -329,6 +351,15 @@ func TestDiffNoteImmutable(t *testing.T) {
 		{"id", func(p *fusefs.ParsedNote) { p.ID = set("0000000000000000000000000000000000000000") }},
 		{"author", func(p *fusefs.ParsedNote) { p.Author = set("Mallory <m@example.com>") }},
 		{"created", func(p *fusefs.ParsedNote) { p.Created = set("2020-01-01T00:00:00Z") }},
+		{"verified_at", func(p *fusefs.ParsedNote) { p.VerifiedAt = set("2020-01-01T00:00:00Z") }},
+		{"verified_by", func(p *fusefs.ParsedNote) { p.VerifiedBy = set("Mallory <m@example.com>") }},
+		{"verified_commit", func(p *fusefs.ParsedNote) { p.VerifiedCommit = set("0000000000000000000000000000000000000000") }},
+		{"superseded_by", func(p *fusefs.ParsedNote) {
+			p.SupersededBy.Value = append(p.SupersededBy.Value, "eeee3333eeee3333eeee3333eeee3333eeee3333")
+		}},
+		{"superseded_by", func(p *fusefs.ParsedNote) { p.SupersededBy = set([]string{}) }},
+		{"witness", func(p *fusefs.ParsedNote) { p.Witness.Value[0].OID = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" }},
+		{"witness", func(p *fusefs.ParsedNote) { p.Witness = set([]fusefs.ParsedWitness{}) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.field, func(t *testing.T) {
@@ -342,6 +373,41 @@ func TestDiffNoteImmutable(t *testing.T) {
 				t.Errorf("err %q does not name field %q", err, tc.field)
 			}
 		})
+	}
+}
+
+func TestDiffNoteVerifiedSurvivesRoundTrip(t *testing.T) {
+	base := richNote()
+	p := mustParseNote(t, fusefs.RenderNote(base))
+	if got, want := p.VerifiedAt.Value, "2025-12-14T02:54:56Z"; !p.VerifiedAt.Set || got != want {
+		t.Errorf("verified_at = %q (set %v), want %q set", got, p.VerifiedAt.Set, want)
+	}
+	if got, want := p.VerifiedBy.Value, "Agent V <v@example.com>"; !p.VerifiedBy.Set || got != want {
+		t.Errorf("verified_by = %q (set %v), want %q set", got, p.VerifiedBy.Set, want)
+	}
+	if got, want := p.VerifiedCommit.Value, "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111"; !p.VerifiedCommit.Set || got != want {
+		t.Errorf("verified_commit = %q (set %v), want %q set", got, p.VerifiedCommit.Set, want)
+	}
+	wantWitness := []fusefs.ParsedWitness{
+		{Kind: "path", Value: "internal/cli/output.go", OID: "1234567890abcdef1234567890abcdef12345678"},
+		{Kind: "commit", Value: "abc1234", OID: "abcd1234abcd1234abcd1234abcd1234abcd1234"},
+	}
+	if !p.Witness.Set || !reflect.DeepEqual(p.Witness.Value, wantWitness) {
+		t.Errorf("witness = %#v (set %v), want %#v in stored order", p.Witness.Value, p.Witness.Set, wantWitness)
+	}
+	wantSuperseded := []string{
+		"cccc1111cccc1111cccc1111cccc1111cccc1111",
+		"dddd2222dddd2222dddd2222dddd2222dddd2222",
+	}
+	if !p.SupersededBy.Set || !reflect.DeepEqual(p.SupersededBy.Value, wantSuperseded) {
+		t.Errorf("superseded_by = %#v (set %v), want %#v", p.SupersededBy.Value, p.SupersededBy.Set, wantSuperseded)
+	}
+	ops, err := fusefs.DiffNote(base, p)
+	if err != nil {
+		t.Fatalf("DiffNote: %v", err)
+	}
+	if len(ops) != 0 {
+		t.Errorf("verified-note round trip produced ops %#v, want none", ops)
 	}
 }
 

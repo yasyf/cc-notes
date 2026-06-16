@@ -83,16 +83,29 @@ func (f *Field[T]) UnmarshalYAML(value *yaml.Node) error {
 // the body below the closing delimiter. Every frontmatter field is optional
 // so a minimal new file parses; DiffNote treats unset fields as untouched.
 type ParsedNote struct {
-	ID       Field[string]   `yaml:"id"`
-	Title    Field[string]   `yaml:"title"`
-	Tags     Field[[]string] `yaml:"tags"`
-	Commits  Field[[]string] `yaml:"commits"`
-	Paths    Field[[]string] `yaml:"paths"`
-	Branches Field[[]string] `yaml:"branches"`
-	Author   Field[string]   `yaml:"author"`
-	Created  Field[string]   `yaml:"created"`
-	Updated  Field[string]   `yaml:"updated"`
-	Body     string          `yaml:"-"`
+	ID             Field[string]          `yaml:"id"`
+	Title          Field[string]          `yaml:"title"`
+	Tags           Field[[]string]        `yaml:"tags"`
+	Commits        Field[[]string]        `yaml:"commits"`
+	Paths          Field[[]string]        `yaml:"paths"`
+	Branches       Field[[]string]        `yaml:"branches"`
+	Author         Field[string]          `yaml:"author"`
+	Created        Field[string]          `yaml:"created"`
+	Updated        Field[string]          `yaml:"updated"`
+	VerifiedAt     Field[string]          `yaml:"verified_at"`
+	VerifiedBy     Field[string]          `yaml:"verified_by"`
+	VerifiedCommit Field[string]          `yaml:"verified_commit"`
+	Witness        Field[[]ParsedWitness] `yaml:"witness"`
+	SupersededBy   Field[[]string]        `yaml:"superseded_by"`
+	Body           string                 `yaml:"-"`
+}
+
+// ParsedWitness is one entry in a note document's witness sequence: the anchor
+// kind and value plus the git oid recorded for it at verify time.
+type ParsedWitness struct {
+	Kind  string `yaml:"kind"`
+	Value string `yaml:"value"`
+	OID   string `yaml:"oid"`
 }
 
 func (p ParsedNote) anchors(kind model.AnchorKind) Field[[]string] {
@@ -180,10 +193,13 @@ type leaseDoc struct {
 }
 
 // RenderNote renders n as markdown with YAML frontmatter: fixed key order
-// (id, title, tags, commits, paths, branches, author, created, updated),
-// anchor values split by kind with empty kinds omitted, tags as a flow
-// sequence, RFC3339 UTC timestamps, and the body verbatim below the closing
-// delimiter. The output is deterministic byte for byte.
+// (id, title, tags, commits, paths, branches, author, created, updated,
+// verified_at, verified_by, verified_commit, witness, superseded_by), anchor
+// values split by kind with empty kinds omitted, tags as a flow sequence,
+// RFC3339 UTC timestamps, and the body verbatim below the closing delimiter.
+// The verification keys are omitted when empty so a never-verified note stays
+// clean; witness renders as a block sequence in stored anchor order, never
+// re-sorted. The output is deterministic byte for byte.
 func RenderNote(n model.Note) []byte {
 	fm := &yaml.Node{Kind: yaml.MappingNode}
 	put := func(key string, value *yaml.Node) {
@@ -200,6 +216,21 @@ func RenderNote(n model.Note) []byte {
 	put("author", scalarNode(string(n.Author)))
 	put("created", scalarNode(stamp(n.CreatedAt)))
 	put("updated", scalarNode(stamp(n.UpdatedAt)))
+	if n.VerifiedAt != 0 {
+		put("verified_at", scalarNode(stamp(n.VerifiedAt)))
+	}
+	if n.VerifiedBy != "" {
+		put("verified_by", scalarNode(string(n.VerifiedBy)))
+	}
+	if n.VerifiedCommit != "" {
+		put("verified_commit", scalarNode(string(n.VerifiedCommit)))
+	}
+	if len(n.Witness) > 0 {
+		put("witness", witnessNode(n.Witness))
+	}
+	if len(n.SupersededBy) > 0 {
+		put("superseded_by", flowNode(idStrings(n.SupersededBy)))
+	}
 
 	var buf bytes.Buffer
 	buf.WriteString(delimiter)
@@ -258,17 +289,24 @@ func splitFrontmatter(doc string) (fm, body string, err error) {
 
 // DiffNote compares an edited note document against the snapshot it was
 // rendered from and returns the ops that reproduce the edit. Title, body,
-// tags, and anchors are editable; id, author, and created are immutable —
-// echoing them unchanged is fine, changing them fails with
-// ErrImmutableField. The updated stamp is informational: editors save the
-// stale one, so any value is accepted and never diffed. Ops come out in a
-// fixed order — set_title, set_body, tag adds then removes, anchor adds
-// then removes per kind — each group sorted by value.
+// tags, and anchors are editable; id, author, created, and the verification
+// fields (verified_at, verified_by, verified_commit, witness, superseded_by)
+// are immutable — echoing them unchanged is fine, changing them fails with
+// ErrImmutableField (verification state changes via the CLI, not the
+// filesystem). The updated stamp is informational: editors save the stale
+// one, so any value is accepted and never diffed. Ops come out in a fixed
+// order — set_title, set_body, tag adds then removes, anchor adds then
+// removes per kind — each group sorted by value.
 func DiffNote(base model.Note, p ParsedNote) ([]model.Op, error) {
 	if err := errors.Join(
 		immutable("id", p.ID, string(base.ID)),
 		immutable("author", p.Author, string(base.Author)),
 		immutable("created", p.Created, stamp(base.CreatedAt)),
+		immutable("verified_at", p.VerifiedAt, stampOrEmpty(base.VerifiedAt)),
+		immutable("verified_by", p.VerifiedBy, string(base.VerifiedBy)),
+		immutable("verified_commit", p.VerifiedCommit, string(base.VerifiedCommit)),
+		immutableStrings("superseded_by", p.SupersededBy, idStrings(base.SupersededBy)),
+		immutableWitness(p.Witness, base.Witness),
 	); err != nil {
 		return nil, err
 	}
@@ -591,6 +629,28 @@ func renderComments(comments []model.Comment) []ParsedComment {
 	return out
 }
 
+func immutableWitness(f Field[[]ParsedWitness], base []model.AnchorWitness) error {
+	if !f.Set {
+		return nil
+	}
+	claimed := f.Value
+	if f.Null {
+		claimed = nil
+	}
+	if !slices.Equal(claimed, renderWitness(base)) {
+		return fmt.Errorf("%w: witness", ErrImmutableField)
+	}
+	return nil
+}
+
+func renderWitness(base []model.AnchorWitness) []ParsedWitness {
+	out := make([]ParsedWitness, len(base))
+	for i, a := range base {
+		out[i] = ParsedWitness{Kind: string(a.Anchor.Kind), Value: a.Anchor.Value, OID: string(a.OID)}
+	}
+	return out
+}
+
 func stringValue(f Field[string]) string {
 	if f.Null {
 		return ""
@@ -655,6 +715,20 @@ func flowNode(values []string) *yaml.Node {
 	n := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
 	for _, v := range values {
 		n.Content = append(n.Content, scalarNode(v))
+	}
+	return n
+}
+
+func witnessNode(witness []model.AnchorWitness) *yaml.Node {
+	n := &yaml.Node{Kind: yaml.SequenceNode}
+	for _, w := range witness {
+		m := &yaml.Node{Kind: yaml.MappingNode}
+		m.Content = append(m.Content,
+			scalarNode("kind"), scalarNode(string(w.Anchor.Kind)),
+			scalarNode("value"), scalarNode(w.Anchor.Value),
+			scalarNode("oid"), scalarNode(string(w.OID)),
+		)
+		n.Content = append(n.Content, m)
 	}
 	return n
 }
