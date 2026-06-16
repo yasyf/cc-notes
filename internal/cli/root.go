@@ -1,5 +1,6 @@
-// Package cli wires the cobra command tree for cc-notes: the note and task
-// noun groups plus init, sync, and version. Output is agents-first — lean
+// Package cli wires the cobra command tree for cc-notes: the note, task,
+// skills, and hooks noun groups plus init, sync, and version. Output is
+// agents-first — lean
 // deterministic lines or compact JSON on stdout, one labeled error line on
 // stderr, exit codes mapped from typed errors via ExitCode.
 package cli
@@ -26,6 +27,6 @@ func NewRootCmd() *cobra.Command {
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &UsageError{Err: err}
 	})
-	root.AddCommand(newInitCmd(), newSyncCmd(), newReconcileCmd(), newMountCmd(), newVersionCmd(), newNoteCmd(), newTaskCmd())
+	root.AddCommand(newInitCmd(), newSyncCmd(), newReconcileCmd(), newMountCmd(), newVersionCmd(), newNoteCmd(), newTaskCmd(), newSkillsCmd(), newHooksCmd())
 	return root
 }
