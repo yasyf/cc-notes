@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/store"
+	ccsync "github.com/yasyf/cc-notes/internal/sync"
 )
 
 var allStatuses = []model.Status{model.StatusOpen, model.StatusInProgress, model.StatusDone, model.StatusCancelled}
@@ -29,8 +32,10 @@ func newTaskCmd() *cobra.Command {
 		newTaskReadyCmd(),
 		newTaskBacklogCmd(),
 		newTaskShowCmd(),
+		newTaskStartCmd(),
 		newTaskClaimCmd(),
-		newTaskStatusCmd("done", model.StatusDone),
+		newTaskRenewCmd(),
+		newTaskDoneCmd(),
 		newTaskStatusCmd("cancel", model.StatusCancelled),
 		newTaskEditCmd(),
 		newTaskCommentCmd(),
@@ -274,11 +279,162 @@ func newTaskShowCmd() *cobra.Command {
 	return cmd
 }
 
-func newTaskClaimCmd() *cobra.Command {
+func newTaskStartCmd() *cobra.Command {
 	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "start ID",
+		Short: "Claim a task and move it onto your current branch",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			headBranch, err := s.Git.HeadBranch(ctx)
+			if errors.Is(err, gitcmd.ErrDetachedHead) {
+				return errors.New("detached HEAD; cannot start a task here")
+			}
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			ref, task, err := loadTask(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			if err := claimable(task); err != nil {
+				return err
+			}
+			me, err := s.Actor(ctx)
+			if err != nil {
+				return err
+			}
+			snapshot, err := s.Append(ctx, ref, []model.Op{model.Claim{Assignee: me}})
+			if err != nil {
+				return err
+			}
+			task = snapshot.(model.Task)
+			if task.Assignee != me {
+				return &ConflictError{Msg: fmt.Sprintf("%s already claimed by %s (%s)", task.ID.Short(), task.Assignee, task.Status)}
+			}
+			snapshot, err = s.Append(ctx, ref, []model.Op{model.SetBranch{Branch: headBranch}})
+			if err != nil {
+				return err
+			}
+			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newTaskClaimCmd() *cobra.Command {
+	var jsonOut, steal, syncRemote bool
 	cmd := &cobra.Command{
 		Use:   "claim ID",
 		Short: "Claim an open, unassigned task",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if steal && syncRemote {
+				return &UsageError{Err: errors.New("--steal and --sync are mutually exclusive")}
+			}
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			ref, task, err := loadTask(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			me, err := s.Actor(ctx)
+			if err != nil {
+				return err
+			}
+			if steal && task.Status == model.StatusInProgress {
+				return claimSteal(cmd, s, ref, task, me, jsonOut)
+			}
+			if err := claimable(task); err != nil {
+				return err
+			}
+			snapshot, err := s.Append(ctx, ref, []model.Op{model.Claim{Assignee: me}})
+			if err != nil {
+				return err
+			}
+			task = snapshot.(model.Task)
+			if task.Assignee != me {
+				return &ConflictError{Msg: fmt.Sprintf("%s already claimed by %s (%s)", task.ID.Short(), task.Assignee, task.Status)}
+			}
+			if syncRemote {
+				return claimSyncYield(cmd, s, task, me, jsonOut)
+			}
+			return printTask(cmd, s, task, jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags.BoolVar(&steal, "steal", false, "reclaim an in-progress task whose lease has expired")
+	flags.BoolVar(&syncRemote, "sync", false, "claim, then sync and re-check, yielding if another agent won")
+	return cmd
+}
+
+// claimSteal reclaims an in-progress task whose lease is stale. A fresh lease
+// is refused with the remaining time; a holder who renewed past the observed
+// heartbeat (or a stealer who lost the race) makes the Reclaim a fold no-op,
+// surfaced as a conflict after the reload.
+func claimSteal(cmd *cobra.Command, s *store.Store, ref string, task model.Task, me model.Actor, jsonOut bool) error {
+	ctx := cmd.Context()
+	now := time.Now()
+	ttl, err := leaseTTL(ctx, s.Git)
+	if err != nil {
+		return err
+	}
+	if !isStale(task, now, ttl) {
+		remaining := ttl - now.Sub(time.Unix(taskHeartbeat(task), 0))
+		return &ConflictError{Msg: fmt.Sprintf("%s lease held by %s, %s remaining", task.ID.Short(), task.Assignee, remaining.Round(time.Second))}
+	}
+	snapshot, err := s.Append(ctx, ref, []model.Op{model.Reclaim{Assignee: me, From: task.Assignee, AfterLamport: task.HeartbeatLamport}})
+	if err != nil {
+		return err
+	}
+	task = snapshot.(model.Task)
+	if task.Assignee != me {
+		return &ConflictError{Msg: fmt.Sprintf("%s held by %s (renewed in time or lost steal race)", task.ID.Short(), task.Assignee)}
+	}
+	return printTask(cmd, s, task, jsonOut)
+}
+
+// claimSyncYield syncs the default remote after a local claim, then reloads and
+// yields to the remote winner if another agent's claim linearized first.
+func claimSyncYield(cmd *cobra.Command, s *store.Store, task model.Task, me model.Actor, jsonOut bool) error {
+	ctx := cmd.Context()
+	dir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("working directory: %w", err)
+	}
+	if _, err := ccsync.Sync(ctx, dir, defaultRemote, false); err != nil {
+		return err
+	}
+	if _, task, err = loadTask(ctx, s, string(task.ID)); err != nil {
+		return err
+	}
+	if task.Assignee != me {
+		return &ConflictError{Msg: fmt.Sprintf("%s claimed by %s", task.ID.Short(), task.Assignee)}
+	}
+	return printTask(cmd, s, task, jsonOut)
+}
+
+func newTaskRenewCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "renew ID",
+		Short: "Refresh the lease heartbeat on a task you hold",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -293,22 +449,61 @@ func newTaskClaimCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := claimable(task); err != nil {
-				return err
-			}
-			actor, err := s.Actor(ctx)
+			me, err := s.Actor(ctx)
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.Claim{Assignee: actor}})
+			if task.Assignee != me {
+				return &ConflictError{Msg: fmt.Sprintf("%s held by %s, not you", task.ID.Short(), orDash(string(task.Assignee)))}
+			}
+			snapshot, err := s.Append(ctx, ref, []model.Op{model.Renew{}})
 			if err != nil {
 				return err
 			}
-			task = snapshot.(model.Task)
-			if task.Assignee != actor {
-				return &ConflictError{Msg: fmt.Sprintf("%s already claimed by %s (%s)", task.ID.Short(), task.Assignee, task.Status)}
+			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newTaskDoneCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "done ID",
+		Short: "Mark a task done and anchor your HEAD commit onto it",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, err := openStore()
+			if err != nil {
+				return err
 			}
-			return printTask(cmd, s, task, jsonOut)
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			ref, task, err := loadTask(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			switch task.Status {
+			case model.StatusOpen, model.StatusInProgress:
+			default:
+				return &ConflictError{Msg: fmt.Sprintf("%s already %s", task.ID.Short(), task.Status)}
+			}
+			head, err := resolveHead(ctx, s)
+			if err != nil {
+				return err
+			}
+			ops := []model.Op{model.SetStatus{Status: model.StatusDone}}
+			if head != "" {
+				ops = append(ops, model.LinkCommit{SHA: head})
+			}
+			snapshot, err := s.Append(ctx, ref, ops)
+			if err != nil {
+				return err
+			}
+			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")

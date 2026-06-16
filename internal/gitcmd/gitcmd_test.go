@@ -372,6 +372,67 @@ func TestAuthorIdentMissing(t *testing.T) {
 	}
 }
 
+func TestCommitSHA(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	full := commitEmpty(t, g, "c1")
+
+	got, err := g.CommitSHA(ctx, "HEAD")
+	if err != nil {
+		t.Fatalf("HEAD: %v", err)
+	}
+	if got != full {
+		t.Fatalf("HEAD: got %q, want %q", got, full)
+	}
+
+	short := string(full)[:8]
+	got, err = g.CommitSHA(ctx, short)
+	if err != nil {
+		t.Fatalf("short %s: %v", short, err)
+	}
+	if got != full {
+		t.Fatalf("short %s: got %q, want full %q", short, got, full)
+	}
+
+	if _, err := g.CommitSHA(ctx, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"); !errors.Is(err, gitcmd.ErrRevNotFound) {
+		t.Fatalf("unknown rev: got %v, want ErrRevNotFound", err)
+	}
+}
+
+func TestTaskTrailers(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	none := commitEmpty(t, g, "no trailer")
+	got, err := g.TaskTrailers(ctx, string(none))
+	if err != nil {
+		t.Fatalf("none: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("none: got %q, want empty", got)
+	}
+
+	mustGit(t, g.Dir, "commit", "-q", "--allow-empty", "-m", "one\n\ncc-task: d82c087")
+	single := model.SHA(mustGit(t, g.Dir, "rev-parse", "HEAD"))
+	got, err = g.TaskTrailers(ctx, string(single))
+	if err != nil {
+		t.Fatalf("single: %v", err)
+	}
+	if want := []string{"d82c087"}; !slices.Equal(got, want) {
+		t.Fatalf("single: got %q, want %q", got, want)
+	}
+
+	mustGit(t, g.Dir, "commit", "-q", "--allow-empty", "-m", "two\n\ncc-task: aaa1111\ncc-task: bbb2222")
+	multi := model.SHA(mustGit(t, g.Dir, "rev-parse", "HEAD"))
+	got, err = g.TaskTrailers(ctx, string(multi))
+	if err != nil {
+		t.Fatalf("multi: %v", err)
+	}
+	if want := []string{"aaa1111", "bbb2222"}; !slices.Equal(got, want) {
+		t.Fatalf("multi: got %q, want %q", got, want)
+	}
+}
+
 func TestRemotes(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()

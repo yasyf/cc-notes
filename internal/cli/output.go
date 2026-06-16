@@ -46,12 +46,18 @@ type commentDTO struct {
 	Body   string `json:"body"`
 }
 
+// leaseDTO is the task lease: the current holder (the assignee, or null when
+// unassigned) and the heartbeat timestamp (the AuthorTime of the assignee's
+// latest op as RFC3339 UTC, or null before any claim).
+type leaseDTO struct {
+	Holder    *string `json:"holder"`
+	Heartbeat *string `json:"heartbeat"`
+}
+
 // taskDTO fixes the JSON field order and formats for task output: full hex
 // ids, RFC3339 UTC timestamps, null for unset optionals, sorted set slices,
-// and the derived blocks reverse index.
-//
-// TODO(P2/P3): the committed task JSON shape also lists "lease" and "commits";
-// they land with note hygiene and coordination, not in P1.
+// the derived blocks reverse index, the commits that implement the task, and
+// the lease.
 type taskDTO struct {
 	ID          string       `json:"id"`
 	Branch      string       `json:"branch"`
@@ -66,6 +72,8 @@ type taskDTO struct {
 	Blocks      []string     `json:"blocks"`
 	Parent      *string      `json:"parent"`
 	Comments    []commentDTO `json:"comments"`
+	Commits     []string     `json:"commits"`
+	Lease       leaseDTO     `json:"lease"`
 	CreatedAt   string       `json:"created_at"`
 	UpdatedAt   string       `json:"updated_at"`
 	StartedAt   *string      `json:"started_at"`
@@ -214,6 +222,8 @@ func newTaskDTO(t model.Task, blocks []model.EntityID) taskDTO {
 		Blocks:      idStrings(blocks),
 		Parent:      optString(string(t.Parent)),
 		Comments:    comments,
+		Commits:     shaStrings(t.Commits),
+		Lease:       leaseDTO{Holder: optString(string(t.Assignee)), Heartbeat: optTime(t.HeartbeatAt)},
 		CreatedAt:   rfc3339(t.CreatedAt),
 		UpdatedAt:   rfc3339(t.UpdatedAt),
 		StartedAt:   optTime(t.StartedAt),
@@ -284,6 +294,7 @@ func renderTaskShow(t model.Task, blocks []model.EntityID) string {
 	header(&b, "updated", rfc3339(t.UpdatedAt))
 	header(&b, "started", orDash(optTimeString(t.StartedAt)))
 	header(&b, "closed", orDash(optTimeString(t.ClosedAt)))
+	header(&b, "commits", csvOrDash(shortSHAs(t.Commits)))
 	if t.Description != "" {
 		b.WriteByte('\n')
 		b.WriteString(t.Description)
@@ -371,6 +382,22 @@ func idStrings(ids []model.EntityID) []string {
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, string(id))
+	}
+	return out
+}
+
+func shaStrings(shas []model.SHA) []string {
+	out := make([]string, 0, len(shas))
+	for _, s := range shas {
+		out = append(out, string(s))
+	}
+	return out
+}
+
+func shortSHAs(shas []model.SHA) []string {
+	out := make([]string, len(shas))
+	for i, s := range shas {
+		out[i] = string(s)[:7]
 	}
 	return out
 }

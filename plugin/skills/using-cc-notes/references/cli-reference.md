@@ -283,8 +283,9 @@ list of commits that implemented it.
 
 ### `cc-notes task start ID`
 
-Claim the task and set its `Branch` to your current branch, atomically, opening a lease. The
-one-step "I'm taking this and pulling it onto my branch."
+Claim the task (deterministic first-wins) and, once the claim is won, set its `Branch` to your
+current branch, opening a lease. The one-step "I'm taking this and pulling it onto my branch" — a
+lost claim leaves the task on its original branch.
 
 | Flag | Default | Meaning |
 |------|---------|---------|

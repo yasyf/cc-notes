@@ -183,26 +183,34 @@ type Note struct {
 
 // Task is the folded snapshot of a task entity. Timestamps are unix seconds;
 // zero means unset for StartedAt and ClosedAt, and an empty Parent or
-// Assignee means none. Labels and BlockedBy are sorted; Head is the chain tip
-// the snapshot was folded from.
+// Assignee means none. Labels, BlockedBy, and Commits are sorted; Head is the
+// chain tip the snapshot was folded from.
+//
+// HeartbeatAt and HeartbeatLamport are the lease heartbeat: the AuthorTime and
+// lamport of the assignee's latest op (any edit, comment, claim, or renew the
+// assignee authored). Both are zero before any claim. Commits is the sorted set
+// of commit shas that implement the task (the task->commit direction).
 type Task struct {
-	ID          EntityID   `json:"id"`
-	Branch      Branch     `json:"branch"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	Type        TaskType   `json:"type"`
-	Status      Status     `json:"status"`
-	Priority    Priority   `json:"priority"`
-	Assignee    Actor      `json:"assignee"`
-	Labels      []string   `json:"labels"`
-	BlockedBy   []EntityID `json:"blocked_by"`
-	Parent      EntityID   `json:"parent"`
-	Comments    []Comment  `json:"comments"`
-	CreatedAt   int64      `json:"created_at"`
-	UpdatedAt   int64      `json:"updated_at"`
-	StartedAt   int64      `json:"started_at"`
-	ClosedAt    int64      `json:"closed_at"`
-	Head        SHA        `json:"head"`
+	ID               EntityID   `json:"id"`
+	Branch           Branch     `json:"branch"`
+	Title            string     `json:"title"`
+	Description      string     `json:"description"`
+	Type             TaskType   `json:"type"`
+	Status           Status     `json:"status"`
+	Priority         Priority   `json:"priority"`
+	Assignee         Actor      `json:"assignee"`
+	HeartbeatAt      int64      `json:"heartbeat_at"`
+	HeartbeatLamport Lamport    `json:"heartbeat_lamport"`
+	Labels           []string   `json:"labels"`
+	BlockedBy        []EntityID `json:"blocked_by"`
+	Parent           EntityID   `json:"parent"`
+	Comments         []Comment  `json:"comments"`
+	CreatedAt        int64      `json:"created_at"`
+	UpdatedAt        int64      `json:"updated_at"`
+	StartedAt        int64      `json:"started_at"`
+	ClosedAt         int64      `json:"closed_at"`
+	Commits          []SHA      `json:"commits"`
+	Head             SHA        `json:"head"`
 }
 
 // NewNonce returns 16 crypto/rand bytes hex-encoded (32 characters). Create

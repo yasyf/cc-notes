@@ -57,10 +57,9 @@ func parseWhen(s string, now time.Time) (time.Time, error) {
 	return t, nil
 }
 
-// taskHeartbeat is the P1 idle proxy: the later of StartedAt and UpdatedAt as
-// unix seconds.
-// TODO(P3): replace with the AuthorTime of the assignee's latest op.
-func taskHeartbeat(t model.Task) int64 { return max(t.StartedAt, t.UpdatedAt) }
+// taskHeartbeat is the lease heartbeat: the AuthorTime of the assignee's latest
+// op, as unix seconds. Zero before any claim.
+func taskHeartbeat(t model.Task) int64 { return t.HeartbeatAt }
 
 // isStale reports an in-progress task whose idle time exceeds ttl.
 func isStale(t model.Task, now time.Time, ttl time.Duration) bool {

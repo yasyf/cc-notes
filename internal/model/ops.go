@@ -213,6 +213,32 @@ type Claim struct {
 // OpKind returns "claim".
 func (Claim) OpKind() string { return "claim" }
 
+// Renew refreshes the lease heartbeat. It carries no data: the fold reads the
+// carrying commit's author and stamps the heartbeat when that author is the
+// assignee.
+type Renew struct{}
+
+// OpKind returns "renew".
+func (Renew) OpKind() string { return "renew" }
+
+// Reclaim steals a task from a stale holder, deterministically. At fold time it
+// applies only if the task is still held by From and the holder's heartbeat has
+// not advanced past AfterLamport — so a holder who renewed past AfterLamport
+// makes it a guaranteed no-op on every replica, and two stealers race
+// first-wins (the second sees a From mismatch). Staleness itself is judged in
+// the CLI; the fold never reads a clock. "Guaranteed no-op on every replica"
+// means determinism — all replicas agree on the outcome under linearization,
+// not that the holder always wins regardless of order: a concurrent Renew only
+// saves the lease if it linearizes before the Reclaim.
+type Reclaim struct {
+	Assignee     Actor   `json:"assignee"`
+	From         Actor   `json:"from"`
+	AfterLamport Lamport `json:"after_lamport"`
+}
+
+// OpKind returns "reclaim".
+func (Reclaim) OpKind() string { return "reclaim" }
+
 // AddLabel adds one label to a task's label set.
 type AddLabel struct {
 	Label string `json:"label"`
@@ -244,6 +270,22 @@ type RemoveDep struct {
 
 // OpKind returns "remove_dep".
 func (RemoveDep) OpKind() string { return "remove_dep" }
+
+// LinkCommit records that the commit with the given sha implements this task.
+type LinkCommit struct {
+	SHA SHA `json:"sha"`
+}
+
+// OpKind returns "link_commit".
+func (LinkCommit) OpKind() string { return "link_commit" }
+
+// UnlinkCommit removes a commit link.
+type UnlinkCommit struct {
+	SHA SHA `json:"sha"`
+}
+
+// OpKind returns "unlink_commit".
+func (UnlinkCommit) OpKind() string { return "unlink_commit" }
 
 // SetParent replaces the parent of a task; an empty parent clears it.
 type SetParent struct {

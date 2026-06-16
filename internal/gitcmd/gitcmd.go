@@ -31,6 +31,8 @@ var (
 	ErrDetachedHead = errors.New("detached HEAD")
 	// ErrPathNotFound reports a path absent at the requested rev.
 	ErrPathNotFound = errors.New("path not found at rev")
+	// ErrRevNotFound reports a rev that names no commit.
+	ErrRevNotFound = errors.New("rev not found")
 )
 
 // casPatterns match git's ref-transaction failures across the files and
@@ -145,6 +147,38 @@ func (g Git) PathOID(ctx context.Context, rev, path string) (string, error) {
 		return "", fmt.Errorf("path oid %s:%s: %w", rev, path, err)
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// CommitSHA resolves rev to the full hex sha of the commit it names, for
+// blame. A rev that names no commit wraps ErrRevNotFound.
+func (g Git) CommitSHA(ctx context.Context, rev string) (model.SHA, error) {
+	out, err := g.run(ctx, "", "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	if err != nil {
+		var cmdErr *commandError
+		if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 {
+			// --quiet exits 1 with empty stdout when the rev names no commit.
+			return "", fmt.Errorf("commit sha %s: %w", rev, ErrRevNotFound)
+		}
+		return "", fmt.Errorf("commit sha %s: %w", rev, err)
+	}
+	return model.SHA(strings.TrimSpace(out)), nil
+}
+
+// TaskTrailers returns the values of every cc-task: trailer on the commit at
+// rev, in order, for blame. A commit with no such trailer returns an empty
+// slice.
+func (g Git) TaskTrailers(ctx context.Context, rev string) ([]string, error) {
+	out, err := g.run(ctx, "", "show", "-s", "--format=%(trailers:key=cc-task,valueonly)", rev)
+	if err != nil {
+		return nil, fmt.Errorf("task trailers %s: %w", rev, err)
+	}
+	var values []string
+	for line := range strings.SplitSeq(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			values = append(values, line)
+		}
+	}
+	return values, nil
 }
 
 // CheckRefFormat validates branch as a branch name via

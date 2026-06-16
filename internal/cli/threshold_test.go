@@ -76,19 +76,22 @@ func TestLeaseTTL(t *testing.T) {
 
 func TestTaskHeartbeat(t *testing.T) {
 	cases := []struct {
-		name    string
-		started int64
-		updated int64
-		want    int64
+		name      string
+		heartbeat int64
+		started   int64
+		updated   int64
+		want      int64
 	}{
-		{"updated newer", 100, 200, 200},
-		{"started newer", 300, 200, 300},
-		{"equal", 150, 150, 150},
-		{"started unset", 0, 200, 200},
+		{"heartbeat set", 500, 100, 200, 500},
+		{"never claimed", 0, 300, 400, 0},
+		// HeartbeatAt is the lease heartbeat, independent of StartedAt/UpdatedAt:
+		// an assignee-less in-progress task (HeartbeatAt 0) reads as never-renewed
+		// even when UpdatedAt is recent.
+		{"ignores updated", 100, 999, 999, 100},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := taskHeartbeat(model.Task{StartedAt: tc.started, UpdatedAt: tc.updated})
+			got := taskHeartbeat(model.Task{HeartbeatAt: tc.heartbeat, StartedAt: tc.started, UpdatedAt: tc.updated})
 			if got != tc.want {
 				t.Fatalf("taskHeartbeat = %d, want %d", got, tc.want)
 			}
@@ -114,7 +117,8 @@ func TestIsStale(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			task := model.Task{Status: tc.status, UpdatedAt: tc.hb}
+			// UpdatedAt is set fresh to prove isStale keys off HeartbeatAt, not it.
+			task := model.Task{Status: tc.status, HeartbeatAt: tc.hb, UpdatedAt: now.Unix()}
 			if got := isStale(task, now, ttl); got != tc.want {
 				t.Fatalf("isStale = %v, want %v", got, tc.want)
 			}

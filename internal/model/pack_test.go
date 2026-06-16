@@ -63,10 +63,14 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 		{"set_status", SetStatus{Status: StatusDone}},
 		{"set_assignee", SetAssignee{Assignee: "agent-1"}},
 		{"claim", Claim{Assignee: "agent-2"}},
+		{"renew", Renew{}},
+		{"reclaim", Reclaim{Assignee: "agent-2", From: "agent-1", AfterLamport: 5}},
 		{"add_label", AddLabel{Label: "backend"}},
 		{"remove_label", RemoveLabel{Label: "frontend"}},
 		{"add_dep", AddDep{ID: testID}},
 		{"remove_dep", RemoveDep{ID: testID}},
+		{"link_commit", LinkCommit{SHA: testID}},
+		{"unlink_commit", UnlinkCommit{SHA: testParent}},
 		{"set_parent", SetParent{Parent: testParent}},
 		{"add_comment", AddComment{Body: "Taking this one."}},
 		{"set_branch", SetBranch{Branch: "feature/x"}},
@@ -142,6 +146,19 @@ func TestPackGoldenBytes(t *testing.T) {
 				},
 			},
 			want: `{"v":1,"lamport":7,"ops":[{"kind":"create_task","nonce":"0123456789abcdef0123456789abcdef","title":"Fix flaky sync","description":"Two-clone round-trip flakes","type":"bug","priority":1,"branch":"main","parent":"","labels":["ci","sync"]},{"kind":"claim","assignee":"agent-7"},{"kind":"set_status","status":"in_progress"}]}`,
+		},
+		{
+			name: "coordination pack",
+			pack: Pack{
+				Lamport: 5,
+				Ops: []Op{
+					Claim{Assignee: "agent-2"},
+					Renew{},
+					Reclaim{Assignee: "agent-2", From: "agent-1", AfterLamport: 5},
+					LinkCommit{SHA: testID},
+				},
+			},
+			want: `{"v":1,"lamport":5,"ops":[{"kind":"claim","assignee":"agent-2"},{"kind":"renew"},{"kind":"reclaim","assignee":"agent-2","from":"agent-1","after_lamport":5},{"kind":"link_commit","sha":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"}]}`,
 		},
 		{
 			name: "note pack with anchors",
@@ -249,6 +266,11 @@ func TestDecodePackEmptyBranch(t *testing.T) {
 			"create_task on backlog",
 			`{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":0,"branch":"","parent":"","labels":[]}]}`,
 			CreateTask{Nonce: "00", Title: "t", Type: TypeTask, Priority: 0, Labels: []string{}},
+		},
+		{
+			"reclaim with zero after_lamport",
+			`{"v":1,"lamport":1,"ops":[{"kind":"reclaim","assignee":"agent-2","from":"agent-1","after_lamport":0}]}`,
+			Reclaim{Assignee: "agent-2", From: "agent-1", AfterLamport: 0},
 		},
 	}
 	for _, tc := range cases {

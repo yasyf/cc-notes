@@ -151,6 +151,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 	}
 	labels := map[string]bool{}
 	deps := map[model.EntityID]bool{}
+	commits := map[model.SHA]bool{}
 	created := false
 	for _, c := range ordered {
 		for _, op := range c.Pack.Ops {
@@ -207,12 +208,29 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 				task.Comments = append(task.Comments, model.Comment{Author: c.Author, TS: c.AuthorTime, Body: o.Body})
 			case model.SetBranch:
 				task.Branch = o.Branch
+			case model.Renew:
+				// heartbeat refresh handled uniformly below
+			case model.Reclaim:
+				if task.Assignee == o.From && task.HeartbeatLamport <= o.AfterLamport {
+					task.Assignee = o.Assignee
+					task.Status = model.StatusInProgress
+					task.HeartbeatAt = c.AuthorTime
+					task.HeartbeatLamport = c.Pack.Lamport
+				}
+			case model.LinkCommit:
+				commits[o.SHA] = true
+			case model.UnlinkCommit:
+				delete(commits, o.SHA)
 			default:
 				return model.Task{}, fmt.Errorf("%w: %s on a task", ErrKindMismatch, op.OpKind())
 			}
 		}
 		if len(c.Pack.Ops) > 0 {
 			task.UpdatedAt = c.AuthorTime
+			if task.Assignee != "" && c.Author == task.Assignee {
+				task.HeartbeatAt = c.AuthorTime
+				task.HeartbeatLamport = c.Pack.Lamport
+			}
 		}
 	}
 	if !created {
@@ -220,6 +238,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 	}
 	task.Labels = sortedKeys(labels)
 	task.BlockedBy = sortedKeys(deps)
+	task.Commits = sortedKeys(commits)
 	return task, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/fold"
@@ -85,22 +86,25 @@ func TestFoldTaskLifecycle(t *testing.T) {
 		mk("ddd", []string{"ccc"}, "bob", 400, 4, model.SetStatus{Status: model.StatusDone}),
 	}
 	want := model.Task{
-		ID:          "aaa",
-		Branch:      "main",
-		Title:       "Fix flaky sync",
-		Description: "round-trip flakes",
-		Type:        model.TypeBug,
-		Status:      model.StatusDone,
-		Priority:    1,
-		Assignee:    "bob",
-		Labels:      []string{"ci", "sync"},
-		BlockedBy:   []model.EntityID{"feedface"},
-		Comments:    []model.Comment{{Author: "bob", TS: 300, Body: "on it"}},
-		CreatedAt:   100,
-		UpdatedAt:   400,
-		StartedAt:   200,
-		ClosedAt:    400,
-		Head:        "ddd",
+		ID:               "aaa",
+		Branch:           "main",
+		Title:            "Fix flaky sync",
+		Description:      "round-trip flakes",
+		Type:             model.TypeBug,
+		Status:           model.StatusDone,
+		Priority:         1,
+		Assignee:         "bob",
+		HeartbeatAt:      400,
+		HeartbeatLamport: 4,
+		Labels:           []string{"ci", "sync"},
+		BlockedBy:        []model.EntityID{"feedface"},
+		Comments:         []model.Comment{{Author: "bob", TS: 300, Body: "on it"}},
+		CreatedAt:        100,
+		UpdatedAt:        400,
+		StartedAt:        200,
+		ClosedAt:         400,
+		Commits:          []model.SHA{},
+		Head:             "ddd",
 	}
 	got, err := fold.Task(chain)
 	if err != nil {
@@ -493,20 +497,23 @@ func TestFoldMultiMergeDeterminism(t *testing.T) {
 		mk("hhh", []string{"ggg"}, "hank", 600, 6, model.SetStatus{Status: model.StatusDone}),
 	}
 	want := model.Task{
-		ID:        "aaa",
-		Branch:    "main",
-		Title:     "from-b",
-		Type:      model.TypeTask,
-		Status:    model.StatusDone,
-		Assignee:  "eve",
-		Labels:    []string{"c"},
-		BlockedBy: []model.EntityID{},
-		Comments:  []model.Comment{{Author: "frank", TS: 350, Body: "hi"}},
-		CreatedAt: 100,
-		UpdatedAt: 600,
-		StartedAt: 400,
-		ClosedAt:  600,
-		Head:      "hhh",
+		ID:               "aaa",
+		Branch:           "main",
+		Title:            "from-b",
+		Type:             model.TypeTask,
+		Status:           model.StatusDone,
+		Assignee:         "eve",
+		HeartbeatAt:      400,
+		HeartbeatLamport: 4,
+		Labels:           []string{"c"},
+		BlockedBy:        []model.EntityID{},
+		Comments:         []model.Comment{{Author: "frank", TS: 350, Body: "hi"}},
+		CreatedAt:        100,
+		UpdatedAt:        600,
+		StartedAt:        400,
+		ClosedAt:         600,
+		Commits:          []model.SHA{},
+		Head:             "hhh",
 	}
 	for i, input := range shuffles(dag, 50) {
 		got, err := fold.Task(input)
@@ -786,6 +793,258 @@ func TestFoldErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := tc.via(tc.commits); !errors.Is(err, tc.want) {
 				t.Fatalf("error = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestFoldHeartbeat(t *testing.T) {
+	cases := []struct {
+		name         string
+		chain        []model.PackCommit
+		wantAt       int64
+		wantLamport  model.Lamport
+		wantAssignee model.Actor
+	}{
+		{
+			name: "claim stamps heartbeat from claim commit",
+			chain: []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Claim{Assignee: "bob"}),
+			},
+			wantAt: 200, wantLamport: 2, wantAssignee: "bob",
+		},
+		{
+			name: "renew by assignee advances heartbeat",
+			chain: []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Claim{Assignee: "bob"}),
+				mk("ccc", []string{"bbb"}, "bob", 300, 3, model.Renew{}),
+			},
+			wantAt: 300, wantLamport: 3, wantAssignee: "bob",
+		},
+		{
+			name: "renew by non-assignee does not refresh",
+			chain: []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Claim{Assignee: "bob"}),
+				mk("ccc", []string{"bbb"}, "carol", 300, 3, model.Renew{}),
+			},
+			wantAt: 200, wantLamport: 2, wantAssignee: "bob",
+		},
+		{
+			name: "assignee comment refreshes heartbeat",
+			chain: []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Claim{Assignee: "bob"}),
+				mk("ccc", []string{"bbb"}, "bob", 300, 3, model.AddComment{Body: "wip"}),
+			},
+			wantAt: 300, wantLamport: 3, wantAssignee: "bob",
+		},
+		{
+			name: "non-assignee edit does not refresh",
+			chain: []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Claim{Assignee: "bob"}),
+				mk("ccc", []string{"bbb"}, "carol", 300, 3, model.SetTitle{Title: "renamed"}),
+			},
+			wantAt: 200, wantLamport: 2, wantAssignee: "bob",
+		},
+		{
+			name: "empty commit by assignee does not refresh",
+			chain: []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Claim{Assignee: "bob"}),
+				mk("ccc", []string{"bbb"}, "bob", 300, 3),
+			},
+			wantAt: 200, wantLamport: 2, wantAssignee: "bob",
+		},
+		{
+			name: "no heartbeat before any claim",
+			chain: []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetTitle{Title: "x"}),
+			},
+			wantAt: 0, wantLamport: 0, wantAssignee: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := fold.Task(tc.chain)
+			if err != nil {
+				t.Fatalf("Task() error = %v", err)
+			}
+			if got.HeartbeatAt != tc.wantAt {
+				t.Fatalf("HeartbeatAt = %d, want %d", got.HeartbeatAt, tc.wantAt)
+			}
+			if got.HeartbeatLamport != tc.wantLamport {
+				t.Fatalf("HeartbeatLamport = %d, want %d", got.HeartbeatLamport, tc.wantLamport)
+			}
+			if got.Assignee != tc.wantAssignee {
+				t.Fatalf("Assignee = %q, want %q", got.Assignee, tc.wantAssignee)
+			}
+		})
+	}
+}
+
+func TestFoldReclaim(t *testing.T) {
+	base := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Claim{Assignee: "bob"}),
+	}
+	cases := []struct {
+		name         string
+		tail         model.PackCommit
+		wantAssignee model.Actor
+		wantStatus   model.Status
+		wantAt       int64
+		wantLamport  model.Lamport
+	}{
+		{
+			name:         "applies for matching holder at or below after_lamport",
+			tail:         mk("ccc", []string{"bbb"}, "carol", 300, 3, model.Reclaim{Assignee: "carol", From: "bob", AfterLamport: 2}),
+			wantAssignee: "carol", wantStatus: model.StatusInProgress, wantAt: 300, wantLamport: 3,
+		},
+		{
+			name:         "noop on from mismatch",
+			tail:         mk("ccc", []string{"bbb"}, "carol", 300, 3, model.Reclaim{Assignee: "carol", From: "dave", AfterLamport: 2}),
+			wantAssignee: "bob", wantStatus: model.StatusInProgress, wantAt: 200, wantLamport: 2,
+		},
+		{
+			name:         "noop when heartbeat advanced past after_lamport",
+			tail:         mk("ccc", []string{"bbb"}, "carol", 300, 3, model.Reclaim{Assignee: "carol", From: "bob", AfterLamport: 1}),
+			wantAssignee: "bob", wantStatus: model.StatusInProgress, wantAt: 200, wantLamport: 2,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := fold.Task(append(slices.Clone(base), tc.tail))
+			if err != nil {
+				t.Fatalf("Task() error = %v", err)
+			}
+			if got.Assignee != tc.wantAssignee {
+				t.Fatalf("Assignee = %q, want %q", got.Assignee, tc.wantAssignee)
+			}
+			if got.Status != tc.wantStatus {
+				t.Fatalf("Status = %q, want %q", got.Status, tc.wantStatus)
+			}
+			if got.HeartbeatAt != tc.wantAt {
+				t.Fatalf("HeartbeatAt = %d, want %d", got.HeartbeatAt, tc.wantAt)
+			}
+			if got.HeartbeatLamport != tc.wantLamport {
+				t.Fatalf("HeartbeatLamport = %d, want %d", got.HeartbeatLamport, tc.wantLamport)
+			}
+			// Reclaim never resets the original claim's StartedAt.
+			if got.StartedAt != 200 {
+				t.Fatalf("StartedAt = %d, want 200 (reclaim must not reset)", got.StartedAt)
+			}
+		})
+	}
+}
+
+func TestFoldReclaimConvergence(t *testing.T) {
+	// Holder renewed past the reclaim's observation: the renew linearizes before
+	// the reclaim, so the reclaim is a no-op on every replica and bob keeps it.
+	renewedPast := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Claim{Assignee: "bob"}),
+		mk("ccc", []string{"bbb"}, "bob", 300, 3, model.Renew{}),
+		mk("ddd", []string{"bbb"}, "carol", 300, 3, model.Reclaim{Assignee: "carol", From: "bob", AfterLamport: 2}),
+		mk("eee", []string{"ccc", "ddd"}, "dave", 400, 4),
+	}
+	for i, input := range permutations(renewedPast) {
+		got, err := fold.Task(input)
+		if err != nil {
+			t.Fatalf("renewedPast permutation %d: error = %v", i, err)
+		}
+		if got.Assignee != "bob" {
+			t.Fatalf("renewedPast permutation %d: Assignee = %q, want bob (holder renewed past)", i, got.Assignee)
+		}
+	}
+
+	// Stale holder: reclaim observed the live heartbeat lamport, so it steals on
+	// every replica.
+	stolen := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Claim{Assignee: "bob"}),
+		mk("ccc", []string{"bbb"}, "carol", 300, 3, model.Reclaim{Assignee: "carol", From: "bob", AfterLamport: 2}),
+	}
+	for i, input := range permutations(stolen) {
+		got, err := fold.Task(input)
+		if err != nil {
+			t.Fatalf("stolen permutation %d: error = %v", i, err)
+		}
+		if got.Assignee != "carol" || got.Status != model.StatusInProgress {
+			t.Fatalf("stolen permutation %d: Assignee=%q Status=%q, want carol/in_progress", i, got.Assignee, got.Status)
+		}
+		if got.StartedAt != 200 {
+			t.Fatalf("stolen permutation %d: StartedAt = %d, want 200", i, got.StartedAt)
+		}
+	}
+
+	// Two concurrent stealers: first in linearization order wins (ccc < ddd on
+	// the sha tiebreak), the second sees a From mismatch — deterministic across
+	// every permutation.
+	twoStealers := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Claim{Assignee: "bob"}),
+		mk("ccc", []string{"bbb"}, "carol", 300, 3, model.Reclaim{Assignee: "carol", From: "bob", AfterLamport: 2}),
+		mk("ddd", []string{"bbb"}, "dave", 300, 3, model.Reclaim{Assignee: "dave", From: "bob", AfterLamport: 2}),
+		mk("eee", []string{"ccc", "ddd"}, "erin", 400, 4),
+	}
+	for i, input := range permutations(twoStealers) {
+		got, err := fold.Task(input)
+		if err != nil {
+			t.Fatalf("twoStealers permutation %d: error = %v", i, err)
+		}
+		if got.Assignee != "carol" {
+			t.Fatalf("twoStealers permutation %d: Assignee = %q, want carol (first-wins)", i, got.Assignee)
+		}
+	}
+}
+
+func TestFoldCommitLinkInterleavings(t *testing.T) {
+	cases := []struct {
+		name         string
+		bTime, cTime int64
+		bOp, cOp     model.Op
+		want         []model.SHA
+	}{
+		{
+			name:  "link after unlink keeps commit",
+			bTime: 200, cTime: 250,
+			bOp: model.UnlinkCommit{SHA: "sha1"}, cOp: model.LinkCommit{SHA: "sha1"},
+			want: []model.SHA{"sha1"},
+		},
+		{
+			name:  "unlink after link drops commit",
+			bTime: 250, cTime: 200,
+			bOp: model.UnlinkCommit{SHA: "sha1"}, cOp: model.LinkCommit{SHA: "sha1"},
+			want: []model.SHA{},
+		},
+		{
+			name:  "concurrent links dedupe and sort",
+			bTime: 200, cTime: 250,
+			bOp: model.LinkCommit{SHA: "zzz"}, cOp: model.LinkCommit{SHA: "aaa2"},
+			want: []model.SHA{"aaa2", "zzz"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diamond := []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Type: model.TypeTask, Branch: "main"}),
+				mk("bbb", []string{"aaa"}, "bob", tc.bTime, 2, tc.bOp),
+				mk("ccc", []string{"aaa"}, "carol", tc.cTime, 2, tc.cOp),
+				mk("ddd", []string{"bbb", "ccc"}, "dave", 300, 3),
+			}
+			for i, input := range permutations(diamond) {
+				got, err := fold.Task(input)
+				if err != nil {
+					t.Fatalf("permutation %d: Task() error = %v", i, err)
+				}
+				if !reflect.DeepEqual(got.Commits, tc.want) {
+					t.Fatalf("permutation %d: Commits = %v, want %v", i, got.Commits, tc.want)
+				}
 			}
 		})
 	}

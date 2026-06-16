@@ -178,6 +178,16 @@ func marshalOp(op Op) ([]byte, error) {
 			Kind string `json:"kind"`
 			Claim
 		}{o.OpKind(), o})
+	case Renew:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			Renew
+		}{o.OpKind(), o})
+	case Reclaim:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			Reclaim
+		}{o.OpKind(), o})
 	case AddLabel:
 		return json.Marshal(struct {
 			Kind string `json:"kind"`
@@ -197,6 +207,16 @@ func marshalOp(op Op) ([]byte, error) {
 		return json.Marshal(struct {
 			Kind string `json:"kind"`
 			RemoveDep
+		}{o.OpKind(), o})
+	case LinkCommit:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			LinkCommit
+		}{o.OpKind(), o})
+	case UnlinkCommit:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			UnlinkCommit
 		}{o.OpKind(), o})
 	case SetParent:
 		return json.Marshal(struct {
@@ -252,10 +272,14 @@ var opDecoders = map[string]func(json.RawMessage) (Op, error){
 	SetStatus{}.OpKind():          decodeAs[SetStatus],
 	SetAssignee{}.OpKind():        decodeAs[SetAssignee],
 	Claim{}.OpKind():              decodeAs[Claim],
+	Renew{}.OpKind():              decodeAs[Renew],
+	Reclaim{}.OpKind():            decodeAs[Reclaim],
 	AddLabel{}.OpKind():           decodeAs[AddLabel],
 	RemoveLabel{}.OpKind():        decodeAs[RemoveLabel],
 	AddDep{}.OpKind():             decodeAs[AddDep],
 	RemoveDep{}.OpKind():          decodeAs[RemoveDep],
+	LinkCommit{}.OpKind():         decodeAs[LinkCommit],
+	UnlinkCommit{}.OpKind():       decodeAs[UnlinkCommit],
 	SetParent{}.OpKind():          decodeAs[SetParent],
 	AddComment{}.OpKind():         decodeAs[AddComment],
 	SetBranch{}.OpKind():          decodeAs[SetBranch],

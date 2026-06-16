@@ -603,13 +603,22 @@ func TestTaskJSONContract(t *testing.T) {
 	if shown.ClosedAt != nil || !strings.Contains(raw, `"closed_at":null`) {
 		t.Errorf("closed_at = %v, want null", shown.ClosedAt)
 	}
+	if len(shown.Commits) != 0 || !strings.Contains(raw, `"commits":[]`) {
+		t.Errorf("commits = %v (raw %q), want empty non-null array", shown.Commits, raw)
+	}
+	if shown.Lease.Holder == nil || *shown.Lease.Holder != winner {
+		t.Errorf("lease.holder = %v, want %q", shown.Lease.Holder, winner)
+	}
+	if shown.Lease.Heartbeat == nil || !strings.HasSuffix(*shown.Lease.Heartbeat, "Z") {
+		t.Errorf("lease.heartbeat = %v, want RFC3339Z after claim", shown.Lease.Heartbeat)
+	}
 
 	rawBlocker := mustBin(t, dir, actorA, "task", "show", blocker.ID, "--json")
 	blockerShown := mustJSON[taskJSON](t, rawBlocker)
 	if len(blockerShown.Blocks) != 1 || blockerShown.Blocks[0] != rich.ID {
 		t.Errorf("blocker blocks = %v, want derived [%s]", blockerShown.Blocks, rich.ID)
 	}
-	for _, fragment := range []string{`"description":""`, `"assignee":null`, `"parent":null`, `"started_at":null`, `"closed_at":null`} {
+	for _, fragment := range []string{`"description":""`, `"assignee":null`, `"parent":null`, `"started_at":null`, `"closed_at":null`, `"commits":[]`, `"lease":{"holder":null,"heartbeat":null}`} {
 		if !strings.Contains(rawBlocker, fragment) {
 			t.Errorf("blocker JSON %q missing %q", rawBlocker, fragment)
 		}

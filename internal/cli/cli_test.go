@@ -64,6 +64,11 @@ type taskJSON struct {
 		TS     string `json:"ts"`
 		Body   string `json:"body"`
 	} `json:"comments"`
+	Commits []string `json:"commits"`
+	Lease   struct {
+		Holder    *string `json:"holder"`
+		Heartbeat *string `json:"heartbeat"`
+	} `json:"lease"`
 	CreatedAt string  `json:"created_at"`
 	UpdatedAt string  `json:"updated_at"`
 	StartedAt *string `json:"started_at"`

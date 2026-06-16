@@ -67,6 +67,14 @@ const goldenTask = `{
       "body": "On it.\nETA tonight."
     }
   ],
+  "commits": [
+    "cafe0000cafe0000cafe0000cafe0000cafe0000",
+    "feed1111feed1111feed1111feed1111feed1111"
+  ],
+  "lease": {
+    "holder": "Agent A \u003ca@example.com\u003e",
+    "heartbeat": "2025-12-13T02:54:56Z"
+  },
   "created_at": "2025-12-12T02:54:56Z",
   "updated_at": "2025-12-13T02:54:56Z",
   "started_at": "2025-12-12T03:10:00Z",
@@ -95,20 +103,23 @@ func richNote() model.Note {
 
 func richTask() model.Task {
 	return model.Task{
-		ID:          "0123abcd4567ef890123abcd4567ef890123abcd",
-		Branch:      "feature/login",
-		Title:       "Wire the FUSE layer <urgently>",
-		Description: "Render, parse, diff.\nNo kernel needed.",
-		Type:        model.TypeBug,
-		Status:      model.StatusInProgress,
-		Priority:    1,
-		Assignee:    "Agent A <a@example.com>",
-		Labels:      []string{"fs", "render"},
-		BlockedBy:   []model.EntityID{"9999aaaa9999aaaa9999aaaa9999aaaa9999aaaa"},
-		Parent:      "8888bbbb8888bbbb8888bbbb8888bbbb8888bbbb",
+		ID:               "0123abcd4567ef890123abcd4567ef890123abcd",
+		Branch:           "feature/login",
+		Title:            "Wire the FUSE layer <urgently>",
+		Description:      "Render, parse, diff.\nNo kernel needed.",
+		Type:             model.TypeBug,
+		Status:           model.StatusInProgress,
+		Priority:         1,
+		Assignee:         "Agent A <a@example.com>",
+		HeartbeatAt:      1765594496,
+		HeartbeatLamport: 7,
+		Labels:           []string{"fs", "render"},
+		BlockedBy:        []model.EntityID{"9999aaaa9999aaaa9999aaaa9999aaaa9999aaaa"},
+		Parent:           "8888bbbb8888bbbb8888bbbb8888bbbb8888bbbb",
 		Comments: []model.Comment{
 			{Author: "Agent B <b@example.com>", TS: 1765510000, Body: "On it.\nETA tonight."},
 		},
+		Commits:   []model.SHA{"cafe0000cafe0000cafe0000cafe0000cafe0000", "feed1111feed1111feed1111feed1111feed1111"},
 		CreatedAt: 1765508096,
 		UpdatedAt: 1765594496,
 		StartedAt: 1765509000,

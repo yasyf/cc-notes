@@ -132,10 +132,19 @@ type ParsedTask struct {
 	Blocks      Field[[]string]        `json:"blocks"`
 	Parent      Field[string]          `json:"parent"`
 	Comments    Field[[]ParsedComment] `json:"comments"`
+	Commits     Field[[]string]        `json:"commits"`
+	Lease       ParsedLease            `json:"lease"`
 	CreatedAt   Field[string]          `json:"created_at"`
 	UpdatedAt   Field[string]          `json:"updated_at"`
 	StartedAt   Field[string]          `json:"started_at"`
 	ClosedAt    Field[string]          `json:"closed_at"`
+}
+
+// ParsedLease is the nested lease object of a parsed task document. Both fields
+// are CLI-owned; DiffTask pins them immutable.
+type ParsedLease struct {
+	Holder    Field[string] `json:"holder"`
+	Heartbeat Field[string] `json:"heartbeat"`
 }
 
 // taskDoc mirrors internal/cli's taskDTO field for field: the rendered task
@@ -156,10 +165,18 @@ type taskDoc struct {
 	Blocks      []string        `json:"blocks"`
 	Parent      *string         `json:"parent"`
 	Comments    []ParsedComment `json:"comments"`
+	Commits     []string        `json:"commits"`
+	Lease       leaseDoc        `json:"lease"`
 	CreatedAt   string          `json:"created_at"`
 	UpdatedAt   string          `json:"updated_at"`
 	StartedAt   *string         `json:"started_at"`
 	ClosedAt    *string         `json:"closed_at"`
+}
+
+// leaseDoc mirrors internal/cli's leaseDTO field for field.
+type leaseDoc struct {
+	Holder    *string `json:"holder"`
+	Heartbeat *string `json:"heartbeat"`
 }
 
 // RenderNote renders n as markdown with YAML frontmatter: fixed key order
@@ -348,6 +365,8 @@ func RenderTask(t model.Task) []byte {
 		Blocks:      []string{},
 		Parent:      optString(string(t.Parent)),
 		Comments:    renderComments(t.Comments),
+		Commits:     shaStrings(t.Commits),
+		Lease:       leaseDoc{Holder: optString(string(t.Assignee)), Heartbeat: optStamp(t.HeartbeatAt)},
 		CreatedAt:   stamp(t.CreatedAt),
 		UpdatedAt:   stamp(t.UpdatedAt),
 		StartedAt:   optStamp(t.StartedAt),
@@ -398,6 +417,9 @@ func DiffTask(base model.Task, p ParsedTask) ([]model.Op, error) {
 		immutableStrings("blocks", p.Blocks, nil),
 		immutable("parent", p.Parent, string(base.Parent)),
 		immutableComments(p.Comments, base.Comments),
+		immutableStrings("commits", p.Commits, shaStrings(base.Commits)),
+		immutable("lease.holder", p.Lease.Holder, string(base.Assignee)),
+		immutable("lease.heartbeat", p.Lease.Heartbeat, stampOrEmpty(base.HeartbeatAt)),
 		immutable("created_at", p.CreatedAt, stamp(base.CreatedAt)),
 		immutable("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
 		immutable("started_at", p.StartedAt, stampOrEmpty(base.StartedAt)),
@@ -485,6 +507,8 @@ func NewTask(p ParsedTask, branch model.Branch) ([]model.Op, error) {
 		cliOnly("blocks", len(stringsValue(p.Blocks)) > 0),
 		cliOnly("parent", stringValue(p.Parent) != ""),
 		cliOnly("comments", p.Comments.Set && !p.Comments.Null && len(p.Comments.Value) > 0),
+		cliOnly("commits", len(stringsValue(p.Commits)) > 0),
+		cliOnly("lease", stringValue(p.Lease.Holder) != "" || stringValue(p.Lease.Heartbeat) != ""),
 	); err != nil {
 		return nil, err
 	}
@@ -663,6 +687,14 @@ func idStrings(ids []model.EntityID) []string {
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, string(id))
+	}
+	return out
+}
+
+func shaStrings(shas []model.SHA) []string {
+	out := make([]string, 0, len(shas))
+	for _, s := range shas {
+		out = append(out, string(s))
 	}
 	return out
 }
