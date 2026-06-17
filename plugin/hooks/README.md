@@ -2,7 +2,7 @@
 
 `cc_notes.py` is a [capt-hook](https://pypi.org/project/capt-hook/) hook module
 that nudges agents to keep cc-notes in step with the git work they do. It ships
-with cc-notes and is what `cc-notes hooks install` wires into a target repo.
+as the cc-notes capt-hook pack, enabled in a repo by `cc-notes hooks install`.
 
 These are **nudges, never gates**. cc-notes complements Claude's native task
 tracking, so every hook only ever warns, and none can block a tool call.
@@ -56,32 +56,15 @@ explicit step they run by hand after a merge.
 $ cc-notes hooks install
 ```
 
-This drops `cc_notes.py` into the repo's `.claude/hooks/` and merges the capt-hook
-event wiring into `.claude/settings.json`. capt-hook runs via `uvx`, so there is
-nothing else to install.
+This runs `uvx capt-hook pack add github:yasyf/cc-notes@<binary version>`, which
+resolves the ref to a commit, caches the pinned pack tarball, records
+`[packs.cc-notes]` in `.claude/hooks/packs.toml`, and regenerates the event wiring
+in `.claude/settings.local.json`. capt-hook derives the event set from the pack,
+and the dispatcher runs via `uvx`, so there is nothing else to install.
 
-The merged settings block:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "uvx capt-hook run UserPromptSubmit" }] }
-    ],
-    "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "uvx capt-hook run PreToolUse" }] }
-    ],
-    "PostToolUse": [
-      { "hooks": [{ "type": "command", "command": "uvx capt-hook run PostToolUse" }] }
-    ]
-  }
-}
-```
-
-One dispatcher per event reads the payload on stdin, evaluates every registered
-hook in `.claude/hooks/`, and emits at most one nudge. The session-start nudge
-fires on `UserPromptSubmit`; the other five fire on `PostToolUse`. `PreToolUse` is
-wired so other hook modules in the same directory keep working.
+The pack cache (`~/.cache/captain-hook`) and `.claude/settings.local.json` aren't
+committed, so a teammate who clones the repo runs `uvx capt-hook pack update` — or
+re-runs `cc-notes hooks install` — to fetch and wire the pack locally.
 
 ## Test
 

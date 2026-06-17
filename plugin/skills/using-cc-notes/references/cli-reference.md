@@ -220,16 +220,16 @@ v0.2.0 (dd02f2d)
 
 ## Setup commands
 
-Wire the Claude Code integration into a repository. Both commands write into the repo and
-take `--dir` to redirect the destination, relative to the repo root.
+Wire the Claude Code integration into a repository. `skills` and `workflows` write into
+the repo and take `--dir` to redirect the destination, relative to the repo root; `hooks`
+delegates to `capt-hook pack add`.
 
 ### `cc-notes hooks install`
 
-Install the capt-hook hook modules and wire them into `.claude/settings.json`.
-
-| Flag | Default | Meaning |
-|------|---------|---------|
-| `--dir <path>` | `.claude/hooks` | Destination directory, relative to the repo root |
+Enable the cc-notes capt-hook pack. Runs `uvx capt-hook pack add
+github:yasyf/cc-notes@<binary version>`, which caches the pinned pack tarball,
+records `[packs.cc-notes]` in `.claude/hooks/packs.toml`, and wires the events
+into `.claude/settings.local.json`. Takes no flags.
 
 ### `cc-notes skills install`
 

@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The cc-notes nudge hooks now ship as a capt-hook pack. `cc-notes hooks install`
+  enables it via `capt-hook pack add github:yasyf/cc-notes`, which caches the
+  pinned pack and wires the events into `.claude/settings.local.json`, instead of
+  vendoring `cc_notes.py` and hand-wiring `.claude/settings.json`.
+
 ## [0.3.0] - 2026-06-16
 
 Tasks are now global. A task's branch is a folded attribute, not part of its
