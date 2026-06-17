@@ -7,6 +7,7 @@ package cli_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,12 @@ import (
 )
 
 const matrixActor = "Matrix Worker <worker@example.com>"
+
+// binTimeout bounds a single binary invocation. Real commands finish in
+// milliseconds, so the ceiling is generous enough never to fire on a healthy
+// run; it exists only so a subprocess that genuinely stalls fails the test
+// fast instead of hanging the whole package to its global timeout.
+const binTimeout = 2 * time.Minute
 
 var testBinary string
 
@@ -70,16 +77,23 @@ func binEnv(actor string) []string {
 	)
 }
 
-// execBin runs the built binary in dir as actor. It is goroutine-safe: the
-// returned error reports only a failure to launch, never a non-zero exit.
+// execBin runs the built binary in dir as actor, bounded by binTimeout so a
+// stalled subprocess fails the test fast instead of hanging the package to its
+// global timeout. It is goroutine-safe: the returned error reports a launch
+// failure or a timeout, never a non-zero exit.
 func execBin(dir, actor string, args ...string) (binResult, error) {
-	cmd := exec.Command(testBinary, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), binTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, testBinary, args...)
 	cmd.Dir = dir
 	cmd.Env = binEnv(actor)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
 	res := binResult{Stdout: stdout.String(), Stderr: stderr.String()}
+	if ctx.Err() == context.DeadlineExceeded {
+		return res, fmt.Errorf("cc-notes %s: timed out after %s", strings.Join(args, " "), binTimeout)
+	}
 	var exit *exec.ExitError
 	switch {
 	case err == nil:
