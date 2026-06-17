@@ -52,6 +52,7 @@ and carries the refs regardless of front-end) or real `git push`/`git pull`.
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--remote <name>` | `origin` | Remote to wire |
+| `--ci` | off | Also install a GitHub Actions workflow reconciling merged tasks onto the default branch (recommended; works under git and jj) |
 | `--hook` | off | Also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj, rebase, and server-side squash) |
 
 ```console
@@ -218,6 +219,16 @@ Install the `using-cc-notes` skill into the repository.
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--dir <path>` | `.claude/skills` | Destination directory, relative to the repo root |
+
+### `cc-notes workflows install`
+
+Install the cc-notes CI workflow into the repository — a GitHub Actions job that runs `cc-notes
+reconcile` against the default branch on every push to it, using the release binary. This is what
+`cc-notes init --ci` writes; install it standalone here. Requires cc-notes >= 0.3.0.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--dir <path>` | `.github/workflows` | Destination directory, relative to the repo root |
 
 ## Task commands
 

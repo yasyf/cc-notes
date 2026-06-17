@@ -21,14 +21,19 @@ const postMergeHook = "#!/bin/sh\nexec cc-notes reconcile\n"
 func newInitCmd() *cobra.Command {
 	var remote string
 	var hook bool
+	var ci bool
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Install refs/cc-notes/* refspecs on a remote",
 		Long: "Install the refs/cc-notes/* fetch and push refspecs on a remote.\n\n" +
+			"--ci installs a GitHub Actions workflow that reconciles merged tasks onto\n" +
+			"the default branch on every push to it. It is the recommended automation\n" +
+			"path: it runs the release binary and fires under jj as well as git, unlike\n" +
+			"the post-merge hook.\n\n" +
 			"--hook also installs a git post-merge hook that runs `cc-notes reconcile`\n" +
 			"after every merge. The hook is git-only: it does NOT fire under jj, a\n" +
-			"rebase, or a server-side squash merge. Treat it as a convenience — the\n" +
-			"explicit `cc-notes reconcile` command and a CI job are the real story.",
+			"rebase, or a server-side squash merge. Treat it as a git-only convenience —\n" +
+			"prefer --ci.",
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := openStore()
@@ -41,6 +46,15 @@ func newInitCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			if _, err := fmt.Fprintf(out, "initialized: refs/cc-notes/* refspecs installed for %s\n", remote); err != nil {
 				return err
+			}
+			if ci {
+				root, err := s.Git.Root(cmd.Context())
+				if err != nil {
+					return err
+				}
+				if err := installWorkflows(cmd, filepath.Join(root, ".github", "workflows")); err != nil {
+					return err
+				}
 			}
 			if !hook {
 				return nil
@@ -55,6 +69,7 @@ func newInitCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&remote, "remote", defaultRemote, "remote to wire")
+	flags.BoolVar(&ci, "ci", false, "also install a GitHub Actions workflow reconciling merged tasks onto the default branch (recommended; works under git and jj)")
 	flags.BoolVar(&hook, "hook", false, "also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj/rebase/server-side squash)")
 	return cmd
 }

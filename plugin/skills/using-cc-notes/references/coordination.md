@@ -168,6 +168,16 @@ error. So reconcile (and sync) are explicit commands that behave identically und
 jj. Coordination is explicit commands plus CI, never a hook that one of your VCS front-ends
 silently ignores.
 
+### Automate it in CI (recommended)
+
+`cc-notes init --ci` installs a GitHub Actions workflow that runs `cc-notes reconcile` against
+the default branch on every push to it, using the release binary. This is the recommended
+automation path — and the only reliable one for jj users, since git post-merge hooks never fire
+under jj. The job installs cc-notes, then runs sync, reconcile, and sync again, so a merged
+branch's open tasks land on the default branch without any local hook. `cc-notes init --hook` remains as a
+git-only fallback for repos that never touch jj. Install the workflow standalone with `cc-notes
+workflows install`.
+
 ## Sync: union-merge, never clobber
 
 `cc-notes sync` converges `refs/cc-notes/*` with the remote. It fetches, merges divergent

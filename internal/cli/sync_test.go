@@ -11,6 +11,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/internal/version"
+	"github.com/yasyf/cc-notes/plugin"
 )
 
 type syncJSON struct {
@@ -79,6 +80,35 @@ func TestInitHookInstallsPostMerge(t *testing.T) {
 	}
 	if again, _ := os.ReadFile(hook); string(again) != string(body) {
 		t.Fatalf("refused install still clobbered hook: %q", again)
+	}
+}
+
+func TestInitCIInstallsWorkflow(t *testing.T) {
+	dir, _ := initRepoWithRemote(t)
+	out := mustRun(t, dir, "init", "--ci")
+	workflow := filepath.Join(dir, ".github", "workflows", "cc-notes.yml")
+	suffix := filepath.Join(".github", "workflows", "cc-notes.yml")
+	if !strings.Contains(out, "wrote ") || !strings.Contains(out, suffix) {
+		t.Fatalf("init --ci output = %q, want a wrote line for %q", out, suffix)
+	}
+	got, err := os.ReadFile(workflow)
+	if err != nil {
+		t.Fatalf("read installed workflow: %v", err)
+	}
+	want, err := plugin.Files.ReadFile("workflows/cc-notes.yml")
+	if err != nil {
+		t.Fatalf("read embedded workflow: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("installed workflow does not match embedded source")
+	}
+}
+
+func TestInitWithoutCIWritesNoWorkflow(t *testing.T) {
+	dir, _ := initRepoWithRemote(t)
+	mustRun(t, dir, "init")
+	if _, err := os.Stat(filepath.Join(dir, ".github")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("plain init touched .github (stat err = %v); --ci must be opt-in", err)
 	}
 }
 

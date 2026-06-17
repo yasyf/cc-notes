@@ -53,6 +53,35 @@ func newSkillsInstallCmd() *cobra.Command {
 	return cmd
 }
 
+func newWorkflowsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "workflows",
+		Short: "Manage the cc-notes CI workflow",
+		Args:  noUnknownSubcommand,
+		RunE:  runHelp,
+	}
+	cmd.AddCommand(newWorkflowsInstallCmd())
+	return cmd
+}
+
+func newWorkflowsInstallCmd() *cobra.Command {
+	var dir string
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Install the cc-notes CI workflow into the repository",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := repoRoot(cmd)
+			if err != nil {
+				return err
+			}
+			return installWorkflows(cmd, filepath.Join(root, dir))
+		},
+	}
+	cmd.Flags().StringVar(&dir, "dir", filepath.Join(".github", "workflows"), "destination directory, relative to the repo root")
+	return cmd
+}
+
 func newHooksCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hooks",
@@ -113,6 +142,13 @@ func installTree(cmd *cobra.Command, fsys fs.FS, src, dst string) error {
 		rel := strings.TrimPrefix(path, src+"/")
 		return writeEmbedded(cmd, fsys, path, filepath.Join(dst, rel))
 	})
+}
+
+// installWorkflows writes the embedded CI workflow template into dst. Both
+// `workflows install` and `init --ci` route through here so they install the
+// same tree.
+func installWorkflows(cmd *cobra.Command, dst string) error {
+	return installTree(cmd, plugin.Files, "workflows", dst)
 }
 
 // installHookModules copies the embedded *.py hook modules into dst.
