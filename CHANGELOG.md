@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-17
+
+### Added
+- Projects and Sprints, an optional planning layer over tasks and notes: new
+  entity kinds at flat repo-wide refs `refs/cc-notes/{projects,sprints}/<id>`,
+  carried by the existing `refs/cc-notes/*` refspec with no sync changes. A task
+  holds independent sprint and project pointers and a sprint holds a project
+  pointer — membership is an upward last-write-wins pointer, with tasks-in-sprint,
+  sprints-in-project, and tasks-in-project derived as reverse indexes. Both kinds
+  carry a lifecycle status; sprints add optional start/end dates. Managed via the
+  new `cc-notes project` and `cc-notes sprint` command groups.
+- Task validation criteria: structured `{id, text, script, status}` checks on a
+  task, required by default at `cc-notes task add` (escape hatch
+  `--no-validation-criteria`) and managed via the `cc-notes task criterion`
+  subgroup. `cc-notes task done` is gated on every criterion being met, with
+  `--force` to override.
+- `cc-notes task validate`: runs a criterion's check script, explicit-only — it
+  prints each script first, requires `--yes` or an interactive TTY, refuses a
+  non-terminal stdin, and runs under `sh -c` with a bounded timeout in the repo.
+  Validation scripts ride sync from untrusted peers, so they never execute
+  implicitly.
+- FUSE mount support for the planning layer: flat editable `/sprints/<id>.json`
+  and `/projects/<id>.json` files (criteria editable, membership display-only),
+  plus a read-only nested browse tree at
+  `/projects/<p>/sprints/<s>/tasks/<t>.json` whose leaves symlink to the real
+  flat task files.
+
 ### Changed
 - The cc-notes nudge hooks now ship as a capt-hook pack. `cc-notes hooks install`
   enables it via `capt-hook pack add github:yasyf/cc-notes`, which caches the
@@ -104,6 +131,7 @@ Releases.
 - The Python-era documentation site (GitHub Pages) and the repo homepage link
   that pointed at it.
 
-[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/yasyf/cc-notes/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/yasyf/cc-notes/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/yasyf/cc-notes/releases/tag/v0.2.0
