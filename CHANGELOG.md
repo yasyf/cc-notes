@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-16
+
 Tasks are now global. A task's branch is a folded attribute, not part of its
 ref, so one task crosses branches, merges, and machines while every agent shares
 a single backlog.
@@ -96,5 +98,6 @@ Releases.
 - The Python-era documentation site (GitHub Pages) and the repo homepage link
   that pointed at it.
 
-[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/yasyf/cc-notes/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/yasyf/cc-notes/releases/tag/v0.2.0
