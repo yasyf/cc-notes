@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -128,29 +129,42 @@ type ParsedComment struct {
 	Body   string `json:"body"`
 }
 
+// ParsedCriterion is one acceptance criterion in a task document, mirroring the
+// CLI's criterionDTO key for key.
+type ParsedCriterion struct {
+	ID     string `json:"id"`
+	Text   string `json:"text"`
+	Script string `json:"script"`
+	Status string `json:"status"`
+}
+
 // ParsedTask is the decoded form of a task file, mirroring the CLI's --json
 // DTO key for key. Every field is optional so a minimal new file parses;
 // DiffTask treats unset fields as untouched.
 type ParsedTask struct {
-	ID          Field[string]          `json:"id"`
-	Branch      Field[string]          `json:"branch"`
-	Title       Field[string]          `json:"title"`
-	Description Field[string]          `json:"description"`
-	Type        Field[string]          `json:"type"`
-	Status      Field[string]          `json:"status"`
-	Priority    Field[int]             `json:"priority"`
-	Assignee    Field[string]          `json:"assignee"`
-	Labels      Field[[]string]        `json:"labels"`
-	BlockedBy   Field[[]string]        `json:"blocked_by"`
-	Blocks      Field[[]string]        `json:"blocks"`
-	Parent      Field[string]          `json:"parent"`
-	Comments    Field[[]ParsedComment] `json:"comments"`
-	Commits     Field[[]string]        `json:"commits"`
-	Lease       ParsedLease            `json:"lease"`
-	CreatedAt   Field[string]          `json:"created_at"`
-	UpdatedAt   Field[string]          `json:"updated_at"`
-	StartedAt   Field[string]          `json:"started_at"`
-	ClosedAt    Field[string]          `json:"closed_at"`
+	ID           Field[string]            `json:"id"`
+	Branch       Field[string]            `json:"branch"`
+	Title        Field[string]            `json:"title"`
+	Description  Field[string]            `json:"description"`
+	Type         Field[string]            `json:"type"`
+	Status       Field[string]            `json:"status"`
+	Priority     Field[int]               `json:"priority"`
+	Assignee     Field[string]            `json:"assignee"`
+	Labels       Field[[]string]          `json:"labels"`
+	BlockedBy    Field[[]string]          `json:"blocked_by"`
+	Blocks       Field[[]string]          `json:"blocks"`
+	Parent       Field[string]            `json:"parent"`
+	Comments     Field[[]ParsedComment]   `json:"comments"`
+	Commits      Field[[]string]          `json:"commits"`
+	Lease        ParsedLease              `json:"lease"`
+	CreatedAt    Field[string]            `json:"created_at"`
+	UpdatedAt    Field[string]            `json:"updated_at"`
+	StartedAt    Field[string]            `json:"started_at"`
+	ClosedAt     Field[string]            `json:"closed_at"`
+	Sprint       Field[string]            `json:"sprint"`
+	Project      Field[string]            `json:"project"`
+	Criteria     Field[[]ParsedCriterion] `json:"criteria"`
+	ClosedForced Field[bool]              `json:"closed_forced"`
 }
 
 // ParsedLease is the nested lease object of a parsed task document. Both fields
@@ -165,25 +179,29 @@ type ParsedLease struct {
 // (TestRenderTaskMatchesCLIJSON pins it), so any change there lands here
 // too.
 type taskDoc struct {
-	ID          string          `json:"id"`
-	Branch      string          `json:"branch"`
-	Title       string          `json:"title"`
-	Description string          `json:"description"`
-	Type        string          `json:"type"`
-	Status      string          `json:"status"`
-	Priority    int             `json:"priority"`
-	Assignee    *string         `json:"assignee"`
-	Labels      []string        `json:"labels"`
-	BlockedBy   []string        `json:"blocked_by"`
-	Blocks      []string        `json:"blocks"`
-	Parent      *string         `json:"parent"`
-	Comments    []ParsedComment `json:"comments"`
-	Commits     []string        `json:"commits"`
-	Lease       leaseDoc        `json:"lease"`
-	CreatedAt   string          `json:"created_at"`
-	UpdatedAt   string          `json:"updated_at"`
-	StartedAt   *string         `json:"started_at"`
-	ClosedAt    *string         `json:"closed_at"`
+	ID           string            `json:"id"`
+	Branch       string            `json:"branch"`
+	Title        string            `json:"title"`
+	Description  string            `json:"description"`
+	Type         string            `json:"type"`
+	Status       string            `json:"status"`
+	Priority     int               `json:"priority"`
+	Assignee     *string           `json:"assignee"`
+	Labels       []string          `json:"labels"`
+	BlockedBy    []string          `json:"blocked_by"`
+	Blocks       []string          `json:"blocks"`
+	Parent       *string           `json:"parent"`
+	Comments     []ParsedComment   `json:"comments"`
+	Commits      []string          `json:"commits"`
+	Lease        leaseDoc          `json:"lease"`
+	CreatedAt    string            `json:"created_at"`
+	UpdatedAt    string            `json:"updated_at"`
+	StartedAt    *string           `json:"started_at"`
+	ClosedAt     *string           `json:"closed_at"`
+	Sprint       *string           `json:"sprint"`
+	Project      *string           `json:"project"`
+	Criteria     []ParsedCriterion `json:"criteria"`
+	ClosedForced bool              `json:"closed_forced"`
 }
 
 // leaseDoc mirrors internal/cli's leaseDTO field for field.
@@ -390,31 +408,59 @@ func firstHeading(body string) string {
 // empty in turn.
 func RenderTask(t model.Task) []byte {
 	doc := taskDoc{
-		ID:          string(t.ID),
-		Branch:      string(t.Branch),
-		Title:       t.Title,
-		Description: t.Description,
-		Type:        string(t.Type),
-		Status:      string(t.Status),
-		Priority:    int(t.Priority),
-		Assignee:    optString(string(t.Assignee)),
-		Labels:      emptyNotNil(t.Labels),
-		BlockedBy:   idStrings(t.BlockedBy),
-		Blocks:      []string{},
-		Parent:      optString(string(t.Parent)),
-		Comments:    renderComments(t.Comments),
-		Commits:     shaStrings(t.Commits),
-		Lease:       leaseDoc{Holder: optString(string(t.Assignee)), Heartbeat: optStamp(t.HeartbeatAt)},
-		CreatedAt:   stamp(t.CreatedAt),
-		UpdatedAt:   stamp(t.UpdatedAt),
-		StartedAt:   optStamp(t.StartedAt),
-		ClosedAt:    optStamp(t.ClosedAt),
+		ID:           string(t.ID),
+		Branch:       string(t.Branch),
+		Title:        t.Title,
+		Description:  t.Description,
+		Type:         string(t.Type),
+		Status:       string(t.Status),
+		Priority:     int(t.Priority),
+		Assignee:     optString(string(t.Assignee)),
+		Labels:       emptyNotNil(t.Labels),
+		BlockedBy:    idStrings(t.BlockedBy),
+		Blocks:       []string{},
+		Parent:       optString(string(t.Parent)),
+		Comments:     renderComments(t.Comments),
+		Commits:      shaStrings(t.Commits),
+		Lease:        leaseDoc{Holder: optString(string(t.Assignee)), Heartbeat: optStamp(t.HeartbeatAt)},
+		CreatedAt:    stamp(t.CreatedAt),
+		UpdatedAt:    stamp(t.UpdatedAt),
+		StartedAt:    optStamp(t.StartedAt),
+		ClosedAt:     optStamp(t.ClosedAt),
+		Sprint:       optString(string(t.Sprint)),
+		Project:      optString(string(t.Project)),
+		Criteria:     renderCriteria(t.Criteria),
+		ClosedForced: taskClosedForced(t),
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		panic(fmt.Sprintf("fusefs: encode task document: %v", err))
 	}
 	return append(data, '\n')
+}
+
+// renderCriteria mirrors internal/cli's criterionDTOs: always non-nil so the
+// JSON serializes an empty list rather than null.
+func renderCriteria(criteria []model.Criterion) []ParsedCriterion {
+	out := make([]ParsedCriterion, len(criteria))
+	for i, c := range criteria {
+		out[i] = ParsedCriterion{ID: c.ID, Text: c.Text, Script: c.Script, Status: string(c.Status)}
+	}
+	return out
+}
+
+// taskClosedForced mirrors internal/cli's closedForced: a done task left with at
+// least one unmet criterion was force-closed.
+func taskClosedForced(t model.Task) bool {
+	if t.Status != model.StatusDone {
+		return false
+	}
+	for _, c := range t.Criteria {
+		if c.Status != model.CriterionMet {
+			return true
+		}
+	}
+	return false
 }
 
 // ParseTask decodes a task file. Decoding is strict — the document must be
@@ -439,12 +485,14 @@ func ParseTask(data []byte) (ParsedTask, error) {
 
 // DiffTask compares an edited task document against the snapshot it was
 // rendered from and returns the ops that reproduce the edit. Title,
-// description, status, priority, and labels are editable; id, branch, type,
-// assignee, blocked_by, blocks, parent, comments, and every timestamp are
-// immutable — echoing them unchanged is fine, changing them fails with
-// ErrImmutableField (coordination fields change via the CLI, not the
-// filesystem). Ops come out in a fixed order — set_title, set_description,
-// set_status, set_priority, label adds then removes sorted by value.
+// description, status, priority, labels, and criteria are editable; id, branch,
+// type, assignee, blocked_by, blocks, parent, comments, sprint, project, and
+// every timestamp are immutable — echoing them unchanged is fine, changing them
+// fails with ErrImmutableField (coordination and membership fields change via
+// the CLI, not the filesystem). closed_forced is informational, like the
+// updated stamp: parsed, never diffed. Ops come out in a fixed order —
+// set_title, set_description, set_status, set_priority, label adds then removes
+// sorted by value, then the criteria ops (see diffCriteria).
 func DiffTask(base model.Task, p ParsedTask) ([]model.Op, error) {
 	if err := errors.Join(
 		immutable("id", p.ID, string(base.ID)),
@@ -462,6 +510,8 @@ func DiffTask(base model.Task, p ParsedTask) ([]model.Op, error) {
 		immutable("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
 		immutable("started_at", p.StartedAt, stampOrEmpty(base.StartedAt)),
 		immutable("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
+		immutable("sprint", p.Sprint, string(base.Sprint)),
+		immutable("project", p.Project, string(base.Project)),
 	); err != nil {
 		return nil, err
 	}
@@ -503,6 +553,87 @@ func DiffTask(base model.Task, p ParsedTask) ([]model.Op, error) {
 			ops = append(ops, model.RemoveLabel{Label: label})
 		}
 	}
+	criteriaOps, err := diffCriteria(base.Criteria, p.Criteria)
+	if err != nil {
+		return nil, err
+	}
+	ops = append(ops, criteriaOps...)
+	return ops, nil
+}
+
+// diffCriteria diffs an edited criteria array against the base, matching by id.
+// A parsed entry whose id matches a base criterion emits set_criterion_text /
+// set_criterion_status / set_criterion_script for each changed field; an entry
+// with an empty id is a new criterion (add_criterion under a fresh nonce, plus
+// set_criterion_status when it starts non-pending); an entry with a non-empty
+// id absent from the base is rejected with ErrParse — ids are server-assigned,
+// the editor may not invent them. A base criterion the parsed array drops is
+// removed. Ops come out deterministically: removes sorted by id, then field
+// updates sorted by id (text, status, script per id), then adds in parsed
+// order. An unset field leaves the criteria untouched; a null one clears them
+// all. Invalid statuses fail with ErrParse.
+func diffCriteria(base []model.Criterion, f Field[[]ParsedCriterion]) ([]model.Op, error) {
+	if !f.Set {
+		return nil, nil
+	}
+	parsed := f.Value
+	if f.Null {
+		parsed = nil
+	}
+	baseByID := make(map[string]model.Criterion, len(base))
+	for _, c := range base {
+		baseByID[c.ID] = c
+	}
+	matched := make(map[string]ParsedCriterion, len(parsed))
+	var adds []ParsedCriterion
+	for _, pc := range parsed {
+		if pc.ID == "" {
+			adds = append(adds, pc)
+			continue
+		}
+		if _, ok := baseByID[pc.ID]; !ok {
+			return nil, fmt.Errorf("%w: unknown criterion id %q", ErrParse, pc.ID)
+		}
+		matched[pc.ID] = pc
+	}
+	var ops []model.Op
+	var removeIDs []string
+	for _, c := range base {
+		if _, ok := matched[c.ID]; !ok {
+			removeIDs = append(removeIDs, c.ID)
+		}
+	}
+	slices.Sort(removeIDs)
+	for _, id := range removeIDs {
+		ops = append(ops, model.RemoveCriterion{ID: id})
+	}
+	for _, id := range slices.Sorted(maps.Keys(matched)) {
+		pc, bc := matched[id], baseByID[id]
+		if pc.Text != bc.Text {
+			ops = append(ops, model.SetCriterionText{ID: id, Text: pc.Text})
+		}
+		if pc.Status != string(bc.Status) {
+			status, err := parseCriterionStatus(pc.Status)
+			if err != nil {
+				return nil, err
+			}
+			ops = append(ops, model.SetCriterionStatus{ID: id, Status: status})
+		}
+		if pc.Script != bc.Script {
+			ops = append(ops, model.SetCriterionScript{ID: id, Script: pc.Script})
+		}
+	}
+	for _, pc := range adds {
+		id := model.NewNonce()
+		ops = append(ops, model.AddCriterion{ID: id, Text: pc.Text, Script: pc.Script})
+		if pc.Status != "" && pc.Status != string(model.CriterionPending) {
+			status, err := parseCriterionStatus(pc.Status)
+			if err != nil {
+				return nil, err
+			}
+			ops = append(ops, model.SetCriterionStatus{ID: id, Status: status})
+		}
+	}
 	return ops, nil
 }
 
@@ -540,13 +671,17 @@ func NewTask(p ParsedTask, branch model.Branch) ([]model.Op, error) {
 		}
 	}
 	if err := errors.Join(
-		cliOnly("assignee", stringValue(p.Assignee) != ""),
-		cliOnly("blocked_by", len(stringsValue(p.BlockedBy)) > 0),
-		cliOnly("blocks", len(stringsValue(p.Blocks)) > 0),
-		cliOnly("parent", stringValue(p.Parent) != ""),
-		cliOnly("comments", p.Comments.Set && !p.Comments.Null && len(p.Comments.Value) > 0),
-		cliOnly("commits", len(stringsValue(p.Commits)) > 0),
-		cliOnly("lease", stringValue(p.Lease.Holder) != "" || stringValue(p.Lease.Heartbeat) != ""),
+		cliOnly("task", "assignee", stringValue(p.Assignee) != ""),
+		cliOnly("task", "blocked_by", len(stringsValue(p.BlockedBy)) > 0),
+		cliOnly("task", "blocks", len(stringsValue(p.Blocks)) > 0),
+		cliOnly("task", "parent", stringValue(p.Parent) != ""),
+		cliOnly("task", "comments", p.Comments.Set && !p.Comments.Null && len(p.Comments.Value) > 0),
+		cliOnly("task", "commits", len(stringsValue(p.Commits)) > 0),
+		cliOnly("task", "lease", stringValue(p.Lease.Holder) != "" || stringValue(p.Lease.Heartbeat) != ""),
+		cliOnly("task", "sprint", stringValue(p.Sprint) != ""),
+		cliOnly("task", "project", stringValue(p.Project) != ""),
+		cliOnly("task", "criteria", p.Criteria.Set && !p.Criteria.Null && len(p.Criteria.Value) > 0),
+		cliOnly("task", "closed_forced", p.ClosedForced.Set && !p.ClosedForced.Null && p.ClosedForced.Value),
 	); err != nil {
 		return nil, err
 	}
@@ -561,11 +696,415 @@ func NewTask(p ParsedTask, branch model.Branch) ([]model.Op, error) {
 	}}, nil
 }
 
-func cliOnly(field string, set bool) error {
+// sprintDoc mirrors internal/cli's sprintDTO field for field: the rendered
+// sprint file matches `sprint show --json` pretty-printed, so any change there
+// lands here too. The tasks reverse index is cross-entity and cannot be
+// computed from one sprint, so it renders empty (like RenderTask's blocks).
+type sprintDoc struct {
+	ID          string          `json:"id"`
+	Project     *string         `json:"project"`
+	Title       string          `json:"title"`
+	Description string          `json:"description"`
+	Status      string          `json:"status"`
+	StartDate   *string         `json:"start_date"`
+	EndDate     *string         `json:"end_date"`
+	Labels      []string        `json:"labels"`
+	Commits     []string        `json:"commits"`
+	Comments    []ParsedComment `json:"comments"`
+	Author      string          `json:"author"`
+	CreatedAt   string          `json:"created_at"`
+	UpdatedAt   string          `json:"updated_at"`
+	StartedAt   *string         `json:"started_at"`
+	ClosedAt    *string         `json:"closed_at"`
+	Tasks       []string        `json:"tasks"`
+}
+
+// ParsedSprint is the decoded form of a sprint file, mirroring sprintDoc key
+// for key. Every field is optional so a minimal new file parses; DiffSprint
+// treats unset fields as untouched.
+type ParsedSprint struct {
+	ID          Field[string]          `json:"id"`
+	Project     Field[string]          `json:"project"`
+	Title       Field[string]          `json:"title"`
+	Description Field[string]          `json:"description"`
+	Status      Field[string]          `json:"status"`
+	StartDate   Field[string]          `json:"start_date"`
+	EndDate     Field[string]          `json:"end_date"`
+	Labels      Field[[]string]        `json:"labels"`
+	Commits     Field[[]string]        `json:"commits"`
+	Comments    Field[[]ParsedComment] `json:"comments"`
+	Author      Field[string]          `json:"author"`
+	CreatedAt   Field[string]          `json:"created_at"`
+	UpdatedAt   Field[string]          `json:"updated_at"`
+	StartedAt   Field[string]          `json:"started_at"`
+	ClosedAt    Field[string]          `json:"closed_at"`
+	Tasks       Field[[]string]        `json:"tasks"`
+}
+
+// RenderSprint renders s as the CLI's --json sprint document pretty-printed with
+// 2-space indent and a trailing newline. The tasks reverse index renders empty.
+func RenderSprint(s model.Sprint) []byte {
+	doc := sprintDoc{
+		ID:          string(s.ID),
+		Project:     optString(string(s.Project)),
+		Title:       s.Title,
+		Description: s.Description,
+		Status:      string(s.Status),
+		StartDate:   optStamp(s.StartDate),
+		EndDate:     optStamp(s.EndDate),
+		Labels:      emptyNotNil(s.Labels),
+		Commits:     shaStrings(s.Commits),
+		Comments:    renderComments(s.Comments),
+		Author:      string(s.Author),
+		CreatedAt:   stamp(s.CreatedAt),
+		UpdatedAt:   stamp(s.UpdatedAt),
+		StartedAt:   optStamp(s.StartedAt),
+		ClosedAt:    optStamp(s.ClosedAt),
+		Tasks:       []string{},
+	}
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		panic(fmt.Sprintf("fusefs: encode sprint document: %v", err))
+	}
+	return append(data, '\n')
+}
+
+// ParseSprint decodes a sprint file. Decoding is strict — the document must be
+// a single JSON object, unknown keys at any depth and trailing data fail with
+// ErrParse.
+func ParseSprint(data []byte) (ParsedSprint, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return ParsedSprint{}, fmt.Errorf("%w: sprint document must be a JSON object", ErrParse)
+	}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.DisallowUnknownFields()
+	var p ParsedSprint
+	if err := dec.Decode(&p); err != nil {
+		return ParsedSprint{}, fmt.Errorf("%w: %v", ErrParse, err)
+	}
+	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
+		return ParsedSprint{}, fmt.Errorf("%w: trailing data after sprint document", ErrParse)
+	}
+	return p, nil
+}
+
+// DiffSprint compares an edited sprint document against the snapshot it was
+// rendered from and returns the ops that reproduce the edit. Title,
+// description, status, start_date, end_date, and labels are editable; id,
+// project, commits, comments, author, the tasks reverse index, and every
+// timestamp are immutable — echoing them unchanged is fine, changing them fails
+// with ErrImmutableField (membership changes via the CLI, not the filesystem).
+// Ops come out in a fixed order — set_title, set_description, set_sprint_status,
+// set_start_date, set_end_date, label adds then removes sorted by value.
+func DiffSprint(base model.Sprint, p ParsedSprint) ([]model.Op, error) {
+	if err := errors.Join(
+		immutable("id", p.ID, string(base.ID)),
+		immutable("project", p.Project, string(base.Project)),
+		immutableStrings("commits", p.Commits, shaStrings(base.Commits)),
+		immutableComments(p.Comments, base.Comments),
+		immutable("author", p.Author, string(base.Author)),
+		immutable("created_at", p.CreatedAt, stamp(base.CreatedAt)),
+		immutable("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
+		immutable("started_at", p.StartedAt, stampOrEmpty(base.StartedAt)),
+		immutable("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
+		immutableStrings("tasks", p.Tasks, nil),
+	); err != nil {
+		return nil, err
+	}
+	var ops []model.Op
+	if p.Title.Set {
+		if title := stringValue(p.Title); title != base.Title {
+			ops = append(ops, model.SetTitle{Title: title})
+		}
+	}
+	if p.Description.Set {
+		if description := stringValue(p.Description); description != base.Description {
+			ops = append(ops, model.SetDescription{Description: description})
+		}
+	}
+	if p.Status.Set {
+		status, err := parseSprintStatus(p.Status)
+		if err != nil {
+			return nil, err
+		}
+		if status != base.Status {
+			ops = append(ops, model.SetSprintStatus{Status: status})
+		}
+	}
+	if p.StartDate.Set {
+		date, err := parseDate(p.StartDate)
+		if err != nil {
+			return nil, err
+		}
+		if date != base.StartDate {
+			ops = append(ops, model.SetStartDate{Date: date})
+		}
+	}
+	if p.EndDate.Set {
+		date, err := parseDate(p.EndDate)
+		if err != nil {
+			return nil, err
+		}
+		if date != base.EndDate {
+			ops = append(ops, model.SetEndDate{Date: date})
+		}
+	}
+	if p.Labels.Set {
+		adds, removes := diffSets(base.Labels, stringsValue(p.Labels))
+		for _, label := range adds {
+			ops = append(ops, model.AddLabel{Label: label})
+		}
+		for _, label := range removes {
+			ops = append(ops, model.RemoveLabel{Label: label})
+		}
+	}
+	return ops, nil
+}
+
+// NewSprint builds the create op for a brand-new sprint file. The title is
+// required; project, commits, comments, and the tasks reverse index are set via
+// the CLI, never via a new file; timestamps are informational and ignored.
+func NewSprint(p ParsedSprint) ([]model.Op, error) {
+	if p.ID.Set {
+		return nil, fmt.Errorf("%w: id on a new sprint", ErrParse)
+	}
+	title := stringValue(p.Title)
+	if title == "" {
+		return nil, fmt.Errorf("%w: new sprint needs a title", ErrParse)
+	}
+	if p.Status.Set && model.SprintStatus(stringValue(p.Status)) != model.SprintPlanned {
+		return nil, fmt.Errorf("%w: new sprint status %q, want planned", ErrParse, stringValue(p.Status))
+	}
+	if err := errors.Join(
+		cliOnly("sprint", "project", stringValue(p.Project) != ""),
+		cliOnly("sprint", "commits", len(stringsValue(p.Commits)) > 0),
+		cliOnly("sprint", "comments", p.Comments.Set && !p.Comments.Null && len(p.Comments.Value) > 0),
+		cliOnly("sprint", "tasks", len(stringsValue(p.Tasks)) > 0),
+	); err != nil {
+		return nil, err
+	}
+	return []model.Op{model.CreateSprint{
+		Nonce:       model.NewNonce(),
+		Title:       title,
+		Description: stringValue(p.Description),
+		Labels:      sortedSet(stringsValue(p.Labels)),
+	}}, nil
+}
+
+// projectDoc mirrors internal/cli's projectDTO field for field: the rendered
+// project file matches `project show --json` pretty-printed. The sprints and
+// tasks reverse indexes are cross-entity and cannot be computed from one
+// project, so they render empty (like RenderTask's blocks).
+type projectDoc struct {
+	ID          string          `json:"id"`
+	Title       string          `json:"title"`
+	Description string          `json:"description"`
+	Status      string          `json:"status"`
+	Labels      []string        `json:"labels"`
+	Commits     []string        `json:"commits"`
+	Comments    []ParsedComment `json:"comments"`
+	Author      string          `json:"author"`
+	CreatedAt   string          `json:"created_at"`
+	UpdatedAt   string          `json:"updated_at"`
+	ClosedAt    *string         `json:"closed_at"`
+	Sprints     []string        `json:"sprints"`
+	Tasks       []string        `json:"tasks"`
+}
+
+// ParsedProject is the decoded form of a project file, mirroring projectDoc key
+// for key. Every field is optional so a minimal new file parses; DiffProject
+// treats unset fields as untouched.
+type ParsedProject struct {
+	ID          Field[string]          `json:"id"`
+	Title       Field[string]          `json:"title"`
+	Description Field[string]          `json:"description"`
+	Status      Field[string]          `json:"status"`
+	Labels      Field[[]string]        `json:"labels"`
+	Commits     Field[[]string]        `json:"commits"`
+	Comments    Field[[]ParsedComment] `json:"comments"`
+	Author      Field[string]          `json:"author"`
+	CreatedAt   Field[string]          `json:"created_at"`
+	UpdatedAt   Field[string]          `json:"updated_at"`
+	ClosedAt    Field[string]          `json:"closed_at"`
+	Sprints     Field[[]string]        `json:"sprints"`
+	Tasks       Field[[]string]        `json:"tasks"`
+}
+
+// RenderProject renders pr as the CLI's --json project document pretty-printed
+// with 2-space indent and a trailing newline. The sprints and tasks reverse
+// indexes render empty.
+func RenderProject(pr model.Project) []byte {
+	doc := projectDoc{
+		ID:          string(pr.ID),
+		Title:       pr.Title,
+		Description: pr.Description,
+		Status:      string(pr.Status),
+		Labels:      emptyNotNil(pr.Labels),
+		Commits:     shaStrings(pr.Commits),
+		Comments:    renderComments(pr.Comments),
+		Author:      string(pr.Author),
+		CreatedAt:   stamp(pr.CreatedAt),
+		UpdatedAt:   stamp(pr.UpdatedAt),
+		ClosedAt:    optStamp(pr.ClosedAt),
+		Sprints:     []string{},
+		Tasks:       []string{},
+	}
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		panic(fmt.Sprintf("fusefs: encode project document: %v", err))
+	}
+	return append(data, '\n')
+}
+
+// ParseProject decodes a project file. Decoding is strict — the document must
+// be a single JSON object, unknown keys at any depth and trailing data fail
+// with ErrParse.
+func ParseProject(data []byte) (ParsedProject, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return ParsedProject{}, fmt.Errorf("%w: project document must be a JSON object", ErrParse)
+	}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.DisallowUnknownFields()
+	var p ParsedProject
+	if err := dec.Decode(&p); err != nil {
+		return ParsedProject{}, fmt.Errorf("%w: %v", ErrParse, err)
+	}
+	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
+		return ParsedProject{}, fmt.Errorf("%w: trailing data after project document", ErrParse)
+	}
+	return p, nil
+}
+
+// DiffProject compares an edited project document against the snapshot it was
+// rendered from and returns the ops that reproduce the edit. Title,
+// description, status, and labels are editable; id, commits, comments, author,
+// the sprints and tasks reverse indexes, and every timestamp are immutable —
+// echoing them unchanged is fine, changing them fails with ErrImmutableField.
+// Ops come out in a fixed order — set_title, set_description,
+// set_project_status, label adds then removes sorted by value.
+func DiffProject(base model.Project, p ParsedProject) ([]model.Op, error) {
+	if err := errors.Join(
+		immutable("id", p.ID, string(base.ID)),
+		immutableStrings("commits", p.Commits, shaStrings(base.Commits)),
+		immutableComments(p.Comments, base.Comments),
+		immutable("author", p.Author, string(base.Author)),
+		immutable("created_at", p.CreatedAt, stamp(base.CreatedAt)),
+		immutable("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
+		immutable("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
+		immutableStrings("sprints", p.Sprints, nil),
+		immutableStrings("tasks", p.Tasks, nil),
+	); err != nil {
+		return nil, err
+	}
+	var ops []model.Op
+	if p.Title.Set {
+		if title := stringValue(p.Title); title != base.Title {
+			ops = append(ops, model.SetTitle{Title: title})
+		}
+	}
+	if p.Description.Set {
+		if description := stringValue(p.Description); description != base.Description {
+			ops = append(ops, model.SetDescription{Description: description})
+		}
+	}
+	if p.Status.Set {
+		status, err := parseProjectStatus(p.Status)
+		if err != nil {
+			return nil, err
+		}
+		if status != base.Status {
+			ops = append(ops, model.SetProjectStatus{Status: status})
+		}
+	}
+	if p.Labels.Set {
+		adds, removes := diffSets(base.Labels, stringsValue(p.Labels))
+		for _, label := range adds {
+			ops = append(ops, model.AddLabel{Label: label})
+		}
+		for _, label := range removes {
+			ops = append(ops, model.RemoveLabel{Label: label})
+		}
+	}
+	return ops, nil
+}
+
+// NewProject builds the create op for a brand-new project file. The title is
+// required; commits, comments, and the sprints/tasks reverse indexes are set
+// via the CLI, never via a new file; timestamps are informational and ignored.
+func NewProject(p ParsedProject) ([]model.Op, error) {
+	if p.ID.Set {
+		return nil, fmt.Errorf("%w: id on a new project", ErrParse)
+	}
+	title := stringValue(p.Title)
+	if title == "" {
+		return nil, fmt.Errorf("%w: new project needs a title", ErrParse)
+	}
+	if p.Status.Set && model.ProjectStatus(stringValue(p.Status)) != model.ProjectActive {
+		return nil, fmt.Errorf("%w: new project status %q, want active", ErrParse, stringValue(p.Status))
+	}
+	if err := errors.Join(
+		cliOnly("project", "commits", len(stringsValue(p.Commits)) > 0),
+		cliOnly("project", "comments", p.Comments.Set && !p.Comments.Null && len(p.Comments.Value) > 0),
+		cliOnly("project", "sprints", len(stringsValue(p.Sprints)) > 0),
+		cliOnly("project", "tasks", len(stringsValue(p.Tasks)) > 0),
+	); err != nil {
+		return nil, err
+	}
+	return []model.Op{model.CreateProject{
+		Nonce:       model.NewNonce(),
+		Title:       title,
+		Description: stringValue(p.Description),
+		Labels:      sortedSet(stringsValue(p.Labels)),
+	}}, nil
+}
+
+func cliOnly(kind, field string, set bool) error {
 	if set {
-		return fmt.Errorf("%w: %s on a new task changes via the CLI", ErrParse, field)
+		return fmt.Errorf("%w: %s on a new %s changes via the CLI", ErrParse, field, kind)
 	}
 	return nil
+}
+
+func parseCriterionStatus(status string) (model.CriterionStatus, error) {
+	switch s := model.CriterionStatus(status); s {
+	case model.CriterionPending, model.CriterionMet, model.CriterionFailed:
+		return s, nil
+	default:
+		return "", fmt.Errorf("%w: criterion status %q", ErrParse, status)
+	}
+}
+
+func parseSprintStatus(f Field[string]) (model.SprintStatus, error) {
+	switch status := model.SprintStatus(stringValue(f)); status {
+	case model.SprintPlanned, model.SprintActive, model.SprintCompleted, model.SprintCancelled:
+		return status, nil
+	default:
+		return "", fmt.Errorf("%w: sprint status %q", ErrParse, stringValue(f))
+	}
+}
+
+func parseProjectStatus(f Field[string]) (model.ProjectStatus, error) {
+	switch status := model.ProjectStatus(stringValue(f)); status {
+	case model.ProjectActive, model.ProjectCompleted, model.ProjectArchived, model.ProjectCancelled:
+		return status, nil
+	default:
+		return "", fmt.Errorf("%w: project status %q", ErrParse, stringValue(f))
+	}
+}
+
+// parseDate parses a rendered RFC3339 date field back to unix seconds. An unset
+// field is the caller's concern; a null or empty value clears the date to 0.
+func parseDate(f Field[string]) (int64, error) {
+	if f.Null || f.Value == "" {
+		return 0, nil
+	}
+	ts, err := time.Parse(time.RFC3339, f.Value)
+	if err != nil {
+		return 0, fmt.Errorf("%w: date %q", ErrParse, f.Value)
+	}
+	return ts.Unix(), nil
 }
 
 func parseStatus(f Field[string]) (model.Status, error) {

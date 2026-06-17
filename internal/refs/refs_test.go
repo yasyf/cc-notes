@@ -21,13 +21,38 @@ func TestBuildGolden(t *testing.T) {
 	}{
 		{"note", Note(hex40), "refs/cc-notes/notes/" + hex40},
 		{"task", Task(hex40), "refs/cc-notes/tasks/" + hex40},
+		{"sprint", Sprint(hex40), "refs/cc-notes/sprints/" + hex40},
+		{"project", Project(hex40), "refs/cc-notes/projects/" + hex40},
 		{"notes prefix", NotesPrefix, "refs/cc-notes/notes/"},
 		{"tasks root", TasksRoot, "refs/cc-notes/tasks/"},
+		{"sprints root", SprintsRoot, "refs/cc-notes/sprints/"},
+		{"projects root", ProjectsRoot, "refs/cc-notes/projects/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.got != tc.want {
 				t.Errorf("built %q, want %q", tc.got, tc.want)
+			}
+		})
+	}
+}
+
+func TestKindValues(t *testing.T) {
+	// Kind strings tag the entity namespace; pin them so a rename can't drift.
+	cases := []struct {
+		name string
+		got  Kind
+		want Kind
+	}{
+		{"note", KindNote, "note"},
+		{"task", KindTask, "task"},
+		{"sprint", KindSprint, "sprint"},
+		{"project", KindProject, "project"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("Kind = %q, want %q", tc.got, tc.want)
 			}
 		})
 	}
@@ -43,6 +68,10 @@ func TestParseRoundTrip(t *testing.T) {
 		{"note sha256 id", Note(hex64), Ref{Kind: KindNote, ID: hex64}},
 		{"task", Task(hex40), Ref{Kind: KindTask, ID: hex40}},
 		{"task sha256 id", Task(hex64), Ref{Kind: KindTask, ID: hex64}},
+		{"sprint", Sprint(hex40), Ref{Kind: KindSprint, ID: hex40}},
+		{"sprint sha256 id", Sprint(hex64), Ref{Kind: KindSprint, ID: hex64}},
+		{"project", Project(hex40), Ref{Kind: KindProject, ID: hex40}},
+		{"project sha256 id", Project(hex64), Ref{Kind: KindProject, ID: hex64}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,6 +106,14 @@ func TestParseRejects(t *testing.T) {
 		{"task missing id", "refs/cc-notes/tasks/", ErrMalformed},
 		{"nested task", "refs/cc-notes/tasks/sub/" + hex40, ErrMalformed},
 		{"task uppercase hex id", "refs/cc-notes/tasks/" + strings.ToUpper(hex40), ErrMalformed},
+		{"sprint missing id", "refs/cc-notes/sprints/", ErrMalformed},
+		{"nested sprint", "refs/cc-notes/sprints/sub/" + hex40, ErrMalformed},
+		{"sprint uppercase hex id", "refs/cc-notes/sprints/" + strings.ToUpper(hex40), ErrMalformed},
+		{"sprint non-hex id", "refs/cc-notes/sprints/" + strings.Repeat("z", 40), ErrMalformed},
+		{"project missing id", "refs/cc-notes/projects/", ErrMalformed},
+		{"nested project", "refs/cc-notes/projects/sub/" + hex40, ErrMalformed},
+		{"project uppercase hex id", "refs/cc-notes/projects/" + strings.ToUpper(hex40), ErrMalformed},
+		{"project 41 hex chars", "refs/cc-notes/projects/" + hex40 + "0", ErrMalformed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

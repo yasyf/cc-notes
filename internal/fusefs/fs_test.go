@@ -10,6 +10,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path"
 	"slices"
 	"strings"
 	"testing"
@@ -132,7 +133,7 @@ func TestReaddirTreeSynthesis(t *testing.T) {
 		dir  string
 		want []string
 	}{
-		{"/", []string{"notes", "tasks"}},
+		{"/", []string{"notes", "projects", "sprints", "tasks"}},
 		{"/notes", []string{NoteFilename(note)}},
 		{"/tasks", wantTasks},
 	} {
@@ -588,5 +589,220 @@ func TestDeletedNoteHidden(t *testing.T) {
 	var st fuse.Stat_t
 	if errc := f.Getattr("/notes/"+NoteFilename(note), &st, invalidFh); errc != -fuse.ENOENT {
 		t.Errorf("Getattr(deleted) = %d, want -ENOENT", errc)
+	}
+}
+
+func createSprint(t *testing.T, s *store.Store, title string) model.Sprint {
+	t.Helper()
+	snap, err := s.Create(t.Context(), []model.Op{model.CreateSprint{Nonce: model.NewNonce(), Title: title}})
+	if err != nil {
+		t.Fatalf("create sprint: %v", err)
+	}
+	return snap.(model.Sprint)
+}
+
+func createProject(t *testing.T, s *store.Store, title string) model.Project {
+	t.Helper()
+	snap, err := s.Create(t.Context(), []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: title}})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	return snap.(model.Project)
+}
+
+func appendOps(t *testing.T, s *store.Store, ref string, ops ...model.Op) {
+	t.Helper()
+	if _, err := s.Append(t.Context(), ref, ops); err != nil {
+		t.Fatalf("append %s: %v", ref, err)
+	}
+}
+
+// browseFixture builds a project P holding a sprint S, a task T pointed at S,
+// and a task D pointed directly at P — the membership shape the nested browse
+// tree renders.
+func browseFixture(t *testing.T) (f *FS, s *store.Store, p model.Project, sp model.Sprint, taskT, direct model.Task) {
+	t.Helper()
+	f, s = newTestFS(t)
+	p = createProject(t, s, "Proj")
+	sp = createSprint(t, s, "Sprint One")
+	appendOps(t, s, refs.Sprint(sp.ID), model.SetProject{Project: p.ID})
+	taskT = createTask(t, s, "main", "In sprint")
+	appendOps(t, s, refs.Task(taskT.ID), model.SetSprint{Sprint: sp.ID})
+	direct = createTask(t, s, "main", "Direct in project")
+	appendOps(t, s, refs.Task(direct.ID), model.SetProject{Project: p.ID})
+	return f, s, p, sp, taskT, direct
+}
+
+func TestBrowseTreeReaddir(t *testing.T) {
+	f, _, p, sp, taskT, direct := browseFixture(t)
+	pShort, sShort := p.ID.Short(), sp.ID.Short()
+	tFile, dFile := TaskFilename(taskT), TaskFilename(direct)
+
+	// /projects and /sprints carry both the flat <short>.json file and the
+	// <short> browse dir.
+	if got := readNames(t, f, "/projects"); !slices.Contains(got, pShort+".json") || !slices.Contains(got, pShort) {
+		t.Errorf("readdir /projects = %v, want both %q and %q", got, pShort+".json", pShort)
+	}
+	if got := readNames(t, f, "/sprints"); !slices.Contains(got, sShort+".json") || !slices.Contains(got, sShort) {
+		t.Errorf("readdir /sprints = %v, want both %q and %q", got, sShort+".json", sShort)
+	}
+
+	if got := readNames(t, f, "/projects/"+pShort); !slices.Equal(got, []string{"sprints", "tasks"}) {
+		t.Errorf("readdir /projects/<p> = %v, want [sprints tasks]", got)
+	}
+	if got := readNames(t, f, "/projects/"+pShort+"/sprints"); !slices.Contains(got, sShort) {
+		t.Errorf("readdir /projects/<p>/sprints = %v, want %q", got, sShort)
+	}
+	if got := readNames(t, f, "/projects/"+pShort+"/sprints/"+sShort+"/tasks"); !slices.Contains(got, tFile) {
+		t.Errorf("readdir project/sprint/tasks = %v, want %q", got, tFile)
+	}
+	if got := readNames(t, f, "/projects/"+pShort+"/tasks"); !slices.Contains(got, tFile) || !slices.Contains(got, dFile) {
+		t.Errorf("readdir /projects/<p>/tasks = %v, want %q and %q", got, tFile, dFile)
+	}
+	if got := readNames(t, f, "/sprints/"+sShort+"/tasks"); !slices.Contains(got, tFile) {
+		t.Errorf("readdir /sprints/<s>/tasks = %v, want %q", got, tFile)
+	}
+}
+
+func TestBrowseTreeSymlinkStatAndReadlink(t *testing.T) {
+	f, _, p, sp, taskT, _ := browseFixture(t)
+	tFile := TaskFilename(taskT)
+	link := "/projects/" + p.ID.Short() + "/sprints/" + sp.ID.Short() + "/tasks/" + tFile
+
+	var st fuse.Stat_t
+	if errc := f.Getattr(link, &st, invalidFh); errc != 0 || st.Mode&fuse.S_IFLNK == 0 {
+		t.Fatalf("Getattr(%s) = %d mode %o, want symlink", link, errc, st.Mode)
+	}
+	errc, target := f.Readlink(link)
+	if errc != 0 {
+		t.Fatalf("Readlink(%s) = %d", link, errc)
+	}
+	if want := "../../../../../tasks/" + tFile; target != want {
+		t.Errorf("Readlink target = %q, want %q", target, want)
+	}
+	if got := path.Join(path.Dir(link), target); got != "/tasks/"+tFile {
+		t.Errorf("resolved target = %q, want /tasks/%s", got, tFile)
+	}
+	// The advertised size equals the target length, so the kernel reads it whole.
+	if st.Size != int64(len(target)) {
+		t.Errorf("symlink size %d != target length %d", st.Size, len(target))
+	}
+}
+
+// TestBrowseTreeReadThrough is the load-bearing test: following a nested
+// symlink to the flat task file and editing there must change the real entity.
+func TestBrowseTreeReadThrough(t *testing.T) {
+	f, s, p, sp, taskT, _ := browseFixture(t)
+	tFile := TaskFilename(taskT)
+	link := "/projects/" + p.ID.Short() + "/sprints/" + sp.ID.Short() + "/tasks/" + tFile
+
+	// Follow the symlink to the flat file, exactly as the kernel would.
+	errc, target := f.Readlink(link)
+	if errc != 0 {
+		t.Fatalf("Readlink = %d", errc)
+	}
+	flat := path.Join(path.Dir(link), target)
+	if flat != "/tasks/"+tFile {
+		t.Fatalf("resolved flat path = %q, want /tasks/%s", flat, tFile)
+	}
+
+	// Edit the title through the flat file the symlink points at.
+	cur, err := s.Load(t.Context(), refs.Task(taskT.ID))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	edited := cur.(model.Task)
+	edited.Title = "Edited Through Symlink"
+
+	errc, fh := f.Open(flat, fuse.O_RDWR)
+	if errc != 0 {
+		t.Fatalf("Open(%s) = %d", flat, errc)
+	}
+	mustWriteAll(t, f, flat, fh, RenderTask(edited))
+	if errc := f.Flush(flat, fh); errc != 0 {
+		t.Fatalf("Flush = %d", errc)
+	}
+	f.Release(flat, fh)
+
+	folded, err := s.Load(t.Context(), refs.Task(taskT.ID))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := folded.(model.Task).Title; got != "Edited Through Symlink" {
+		t.Errorf("title = %q, want the edit through the symlink to land on the real file", got)
+	}
+}
+
+func TestBrowseTreeBrokenChain(t *testing.T) {
+	f, s, p, sp, taskT, direct := browseFixture(t)
+	orphan := createSprint(t, s, "Orphan") // no project membership
+	pShort, sShort := p.ID.Short(), sp.ID.Short()
+	tFile, dFile := TaskFilename(taskT), TaskFilename(direct)
+
+	var st fuse.Stat_t
+	// D is direct in the project, never in sprint S.
+	badTask := "/sprints/" + sShort + "/tasks/" + dFile
+	if errc := f.Getattr(badTask, &st, invalidFh); errc != -fuse.ENOENT {
+		t.Errorf("Getattr(%s) = %d, want -ENOENT (task not in sprint)", badTask, errc)
+	}
+	if errc, _ := f.Readlink(badTask); errc != -fuse.ENOENT {
+		t.Errorf("Readlink(%s) = %d, want -ENOENT", badTask, errc)
+	}
+	// The orphan sprint is not in project P.
+	badSprint := "/projects/" + pShort + "/sprints/" + orphan.ID.Short()
+	if errc := f.Getattr(badSprint, &st, invalidFh); errc != -fuse.ENOENT {
+		t.Errorf("Getattr(%s) = %d, want -ENOENT (sprint not in project)", badSprint, errc)
+	}
+	badLink := "/projects/" + pShort + "/sprints/" + orphan.ID.Short() + "/tasks/" + tFile
+	if errc, _ := f.Readlink(badLink); errc != -fuse.ENOENT {
+		t.Errorf("Readlink(%s) = %d, want -ENOENT (sprint not in project)", badLink, errc)
+	}
+}
+
+func TestFlatSprintFileEdit(t *testing.T) {
+	f, s, p, sp, _, _ := browseFixture(t)
+	ref := refs.Sprint(sp.ID)
+	flat := "/sprints/" + SprintFilename(sp)
+
+	// Editable: change the title through the flat file.
+	cur, err := s.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	edited := cur.(model.Sprint)
+	edited.Title = "Renamed Sprint"
+	errc, fh := f.Open(flat, fuse.O_RDWR)
+	if errc != 0 {
+		t.Fatalf("Open = %d", errc)
+	}
+	mustWriteAll(t, f, flat, fh, RenderSprint(edited))
+	if errc := f.Flush(flat, fh); errc != 0 {
+		t.Fatalf("Flush = %d", errc)
+	}
+	f.Release(flat, fh)
+
+	folded, err := s.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := folded.(model.Sprint).Title; got != "Renamed Sprint" {
+		t.Errorf("title = %q, want the flat-file edit to land", got)
+	}
+
+	// Immutable: the project membership pointer changes only via the CLI.
+	reloaded := folded.(model.Sprint)
+	before := mustTip(t, s, ref)
+	doc := bytes.Replace(RenderSprint(reloaded), []byte(string(p.ID)), []byte(strings.Repeat("0", len(p.ID))), 1)
+	errc, fh = f.Open(flat, fuse.O_RDWR)
+	if errc != 0 {
+		t.Fatalf("Open = %d", errc)
+	}
+	mustWriteAll(t, f, flat, fh, doc)
+	if errc := f.Flush(flat, fh); errc != -fuse.EPERM {
+		t.Errorf("Flush of project edit = %d, want -EPERM", errc)
+	}
+	f.Release(flat, fh)
+	if after := mustTip(t, s, ref); after != before {
+		t.Errorf("immutable project edit advanced the tip")
 	}
 }

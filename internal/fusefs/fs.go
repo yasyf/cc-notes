@@ -318,7 +318,7 @@ func (f *FS) Rename(oldpath string, newpath string) int {
 		}
 		return -fuse.EPERM // entities and directories never move
 	}
-	if _, isEntity := entityTarget(newpath); isEntity {
+	if _, ok := entityTarget(newpath); ok {
 		// The atomic save: an editor wrote the full document to a scratch
 		// file and renames it onto the entity (or new-entity) name.
 		ref, _, errc := f.commitDocument(newpath, sc.data)
@@ -543,6 +543,18 @@ func diffDocument(base model.Snapshot, data []byte) ([]model.Op, error) {
 			return nil, err
 		}
 		return DiffTask(b, parsed)
+	case model.Sprint:
+		parsed, err := ParseSprint(data)
+		if err != nil {
+			return nil, err
+		}
+		return DiffSprint(b, parsed)
+	case model.Project:
+		parsed, err := ParseProject(data)
+		if err != nil {
+			return nil, err
+		}
+		return DiffProject(b, parsed)
 	default:
 		panic(fmt.Sprintf("fusefs: unknown snapshot type %T", base))
 	}
@@ -553,11 +565,11 @@ func diffDocument(base model.Snapshot, data []byte) ([]model.Op, error) {
 // entity-shaped creates a new entity. Caller holds f.mu; the store writes
 // run with it released. It returns the entity's ref and folded snapshot.
 func (f *FS) commitDocument(p string, data []byte) (string, model.Snapshot, int) {
-	isNote, ok := entityTarget(p)
+	kind, ok := entityTarget(p)
 	if !ok {
 		panic("fusefs: commitDocument on non-entity path " + p)
 	}
-	ref, r, errc := f.resolveTarget(p, isNote)
+	ref, r, errc := f.resolveTarget(p, kind)
 	switch {
 	case errc == 0:
 		f.mu.Unlock()
@@ -575,7 +587,7 @@ func (f *FS) commitDocument(p string, data []byte) (string, model.Snapshot, int)
 	case errc != -fuse.ENOENT:
 		return "", nil, errc
 	}
-	ops, err := newEntityOps(isNote, data)
+	ops, err := newEntityOps(kind, data)
 	if err != nil {
 		return "", nil, errno(err)
 	}
@@ -592,7 +604,7 @@ func (f *FS) commitDocument(p string, data []byte) (string, model.Snapshot, int)
 // resolveTarget resolves a commit target: an alias first, then the short
 // id embedded in the filename. -ENOENT means "no such entity yet" — the
 // caller falls through to create.
-func (f *FS) resolveTarget(p string, isNote bool) (string, rendered, int) {
+func (f *FS) resolveTarget(p string, kind refs.Kind) (string, rendered, int) {
 	if ref, ok := f.aliases[p]; ok {
 		tip, err := f.store.Repo.Tip(f.ctx, ref)
 		if err != nil {
@@ -609,47 +621,78 @@ func (f *FS) resolveTarget(p string, isNote bool) (string, rendered, int) {
 	if !ok {
 		return "", rendered{}, -fuse.ENOENT
 	}
-	var ref string
-	var r rendered
-	var err error
-	if isNote {
-		ref, r, err = f.resolveNote(shortID)
-	} else {
-		ref, r, err = f.resolveTask(shortID)
-	}
+	ref, r, err := f.resolveEntity(kind, shortID)
 	if err != nil {
 		return "", rendered{}, errno(err)
 	}
 	return ref, r, 0
 }
 
-func newEntityOps(isNote bool, data []byte) ([]model.Op, error) {
-	if isNote {
+// resolveEntity routes a short id to the resolver for its kind.
+func (f *FS) resolveEntity(kind refs.Kind, shortID string) (string, rendered, error) {
+	switch kind {
+	case refs.KindNote:
+		return f.resolveNote(shortID)
+	case refs.KindTask:
+		return f.resolveTask(shortID)
+	case refs.KindSprint:
+		return f.resolveSprint(shortID)
+	case refs.KindProject:
+		return f.resolveProject(shortID)
+	default:
+		panic("fusefs: resolveEntity on unknown kind " + string(kind))
+	}
+}
+
+func newEntityOps(kind refs.Kind, data []byte) ([]model.Op, error) {
+	switch kind {
+	case refs.KindNote:
 		parsed, err := ParseNote(data)
 		if err != nil {
 			return nil, err
 		}
 		return NewNote(parsed)
+	case refs.KindTask:
+		parsed, err := ParseTask(data)
+		if err != nil {
+			return nil, err
+		}
+		return NewTask(parsed, model.Branch(stringValue(parsed.Branch)))
+	case refs.KindSprint:
+		parsed, err := ParseSprint(data)
+		if err != nil {
+			return nil, err
+		}
+		return NewSprint(parsed)
+	case refs.KindProject:
+		parsed, err := ParseProject(data)
+		if err != nil {
+			return nil, err
+		}
+		return NewProject(parsed)
+	default:
+		panic("fusefs: newEntityOps on unknown kind " + string(kind))
 	}
-	parsed, err := ParseTask(data)
-	if err != nil {
-		return nil, err
-	}
-	return NewTask(parsed, model.Branch(stringValue(parsed.Branch)))
 }
 
 // entityTarget classifies p as a committable entity path — a ".md" name
-// directly under /notes or a ".json" name directly under /tasks. ok is
-// false for everything else; those paths stay in-memory scratch files.
-func entityTarget(p string) (isNote, ok bool) {
+// directly under /notes, or a ".json" name directly under /tasks, /sprints,
+// or /projects. The nested browse-tree leaves live at deeper paths and never
+// match. ok is false for everything else; those paths stay in-memory scratch
+// files.
+func entityTarget(p string) (kind refs.Kind, ok bool) {
 	dir, name := path.Dir(p), path.Base(p)
 	switch {
 	case dir == "/notes" && strings.HasSuffix(name, ".md") && name != ".md":
-		return true, true
+		return refs.KindNote, true
 	case dir == "/tasks" && strings.HasSuffix(name, ".json") && name != ".json":
-		return false, true
+		return refs.KindTask, true
+	case dir == "/sprints" && strings.HasSuffix(name, ".json") && name != ".json":
+		return refs.KindSprint, true
+	case dir == "/projects" && strings.HasSuffix(name, ".json") && name != ".json":
+		return refs.KindProject, true
 	}
-	return false, false
+	return "", false
 }
 
 func refFor(snap model.Snapshot) string {
@@ -658,6 +701,10 @@ func refFor(snap model.Snapshot) string {
 		return refs.Note(s.ID)
 	case model.Task:
 		return refs.Task(s.ID)
+	case model.Sprint:
+		return refs.Sprint(s.ID)
+	case model.Project:
+		return refs.Project(s.ID)
 	default:
 		panic(fmt.Sprintf("fusefs: unknown snapshot type %T", snap))
 	}
@@ -693,6 +740,18 @@ func (f *FS) openEntity(p string) (string, rendered, int) {
 		return ref, r, 0
 	case TaskFile:
 		ref, r, err := f.resolveTask(n.ShortID)
+		if err != nil {
+			return "", rendered{}, errno(err)
+		}
+		return ref, r, 0
+	case SprintFile:
+		ref, r, err := f.resolveSprint(n.ShortID)
+		if err != nil {
+			return "", rendered{}, errno(err)
+		}
+		return ref, r, 0
+	case ProjectFile:
+		ref, r, err := f.resolveProject(n.ShortID)
 		if err != nil {
 			return "", rendered{}, errno(err)
 		}
@@ -737,6 +796,38 @@ func (f *FS) resolveTask(shortID string) (string, rendered, error) {
 	}
 	if _, ok := r.snapshot.(model.Task); !ok {
 		return "", rendered{}, fmt.Errorf("ref %s folds as %T, want task", ref, r.snapshot)
+	}
+	return ref, r, nil
+}
+
+// resolveSprint maps a short id to the sprint it names.
+func (f *FS) resolveSprint(shortID string) (string, rendered, error) {
+	ref, tip, err := f.resolveRef(refs.SprintsRoot, shortID)
+	if err != nil {
+		return "", rendered{}, err
+	}
+	r, err := f.renderTip(tip)
+	if err != nil {
+		return "", rendered{}, err
+	}
+	if _, ok := r.snapshot.(model.Sprint); !ok {
+		return "", rendered{}, fmt.Errorf("ref %s folds as %T, want sprint", ref, r.snapshot)
+	}
+	return ref, r, nil
+}
+
+// resolveProject maps a short id to the project it names.
+func (f *FS) resolveProject(shortID string) (string, rendered, error) {
+	ref, tip, err := f.resolveRef(refs.ProjectsRoot, shortID)
+	if err != nil {
+		return "", rendered{}, err
+	}
+	r, err := f.renderTip(tip)
+	if err != nil {
+		return "", rendered{}, err
+	}
+	if _, ok := r.snapshot.(model.Project); !ok {
+		return "", rendered{}, fmt.Errorf("ref %s folds as %T, want project", ref, r.snapshot)
 	}
 	return ref, r, nil
 }
@@ -803,6 +894,10 @@ func renderDocument(snap model.Snapshot) []byte {
 		return RenderNote(s)
 	case model.Task:
 		return RenderTask(s)
+	case model.Sprint:
+		return RenderSprint(s)
+	case model.Project:
+		return RenderProject(s)
 	default:
 		panic(fmt.Sprintf("fusefs: unknown snapshot type %T", snap))
 	}
@@ -814,6 +909,10 @@ func headOf(snap model.Snapshot) model.SHA {
 		return s.Head
 	case model.Task:
 		return s.Head
+	case model.Sprint:
+		return s.Head
+	case model.Project:
+		return s.Head
 	default:
 		panic(fmt.Sprintf("fusefs: unknown snapshot type %T", snap))
 	}
@@ -824,6 +923,10 @@ func snapshotTimes(snap model.Snapshot) (created, updated int64) {
 	case model.Note:
 		return s.CreatedAt, s.UpdatedAt
 	case model.Task:
+		return s.CreatedAt, s.UpdatedAt
+	case model.Sprint:
+		return s.CreatedAt, s.UpdatedAt
+	case model.Project:
 		return s.CreatedAt, s.UpdatedAt
 	default:
 		panic(fmt.Sprintf("fusefs: unknown snapshot type %T", snap))
@@ -856,7 +959,7 @@ func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 		return -fuse.ENOENT
 	}
 	switch n := node.(type) {
-	case Root, NotesDir, TasksRoot:
+	case Root, NotesDir, TasksRoot, SprintsDir, ProjectsDir:
 		f.fillDirStat(stat, p)
 		return 0
 	case NoteFile:
@@ -873,6 +976,33 @@ func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 		}
 		f.fillEntityStat(stat, r)
 		return 0
+	case SprintFile:
+		_, r, rerr := f.resolveSprint(n.ShortID)
+		if rerr != nil {
+			return errno(rerr)
+		}
+		f.fillEntityStat(stat, r)
+		return 0
+	case ProjectFile:
+		_, r, rerr := f.resolveProject(n.ShortID)
+		if rerr != nil {
+			return errno(rerr)
+		}
+		f.fillEntityStat(stat, r)
+		return 0
+	case ProjectBrowseDir, ProjectSprintsDir, ProjectSprintDir, ProjectSprintTasksDir, ProjectTasksDir, SprintBrowseDir, SprintTasksDir:
+		if errc := f.validateBrowseDir(node); errc != 0 {
+			return errc
+		}
+		f.fillDirStat(stat, p)
+		return 0
+	case ProjectSprintTaskLink, ProjectTaskLink, SprintTaskLink:
+		task, target, errc := f.resolveLink(p, node)
+		if errc != 0 {
+			return errc
+		}
+		f.fillSymlinkStat(stat, task, len(target))
+		return 0
 	default:
 		panic(fmt.Sprintf("fusefs: unknown node %T", node))
 	}
@@ -886,9 +1016,9 @@ func (f *FS) listDir(p string) ([]string, int) {
 		return nil, -fuse.ENOENT
 	}
 	names := map[string]bool{}
-	switch node.(type) {
+	switch n := node.(type) {
 	case Root:
-		names["notes"], names["tasks"] = true, true
+		names["notes"], names["tasks"], names["sprints"], names["projects"] = true, true, true, true
 	case NotesDir:
 		notes, err := f.store.ListNotes(f.ctx, false, false)
 		if err != nil {
@@ -905,6 +1035,100 @@ func (f *FS) listDir(p string) ([]string, int) {
 		for _, t := range tasks {
 			names[TaskFilename(t)] = true
 		}
+	case SprintsDir:
+		sprints, err := f.store.ListSprints(f.ctx)
+		if err != nil {
+			return nil, errno(err)
+		}
+		for _, s := range sprints {
+			names[SprintFilename(s)] = true
+			names[s.ID.Short()] = true
+		}
+	case ProjectsDir:
+		projects, err := f.store.ListProjects(f.ctx)
+		if err != nil {
+			return nil, errno(err)
+		}
+		for _, p := range projects {
+			names[ProjectFilename(p)] = true
+			names[p.ID.Short()] = true
+		}
+	case ProjectBrowseDir:
+		if _, errc := f.lookupProject(n.ProjShort); errc != 0 {
+			return nil, errc
+		}
+		names["sprints"], names["tasks"] = true, true
+	case ProjectSprintsDir:
+		project, errc := f.lookupProject(n.ProjShort)
+		if errc != 0 {
+			return nil, errc
+		}
+		sprints, err := f.store.ListSprints(f.ctx)
+		if err != nil {
+			return nil, errno(err)
+		}
+		for _, s := range sprints {
+			if s.Project == project.ID {
+				names[s.ID.Short()] = true
+			}
+		}
+	case ProjectSprintDir:
+		if _, errc := f.lookupSprintInProject(n.ProjShort, n.SprintShort); errc != 0 {
+			return nil, errc
+		}
+		names["tasks"] = true
+	case ProjectSprintTasksDir:
+		sprint, errc := f.lookupSprintInProject(n.ProjShort, n.SprintShort)
+		if errc != 0 {
+			return nil, errc
+		}
+		tasks, err := f.store.ListTasks(f.ctx)
+		if err != nil {
+			return nil, errno(err)
+		}
+		for _, t := range tasks {
+			if t.Sprint == sprint.ID {
+				names[TaskFilename(t)] = true
+			}
+		}
+	case ProjectTasksDir:
+		project, errc := f.lookupProject(n.ProjShort)
+		if errc != 0 {
+			return nil, errc
+		}
+		tasks, err := f.store.ListTasks(f.ctx)
+		if err != nil {
+			return nil, errno(err)
+		}
+		sprints, err := f.store.ListSprints(f.ctx)
+		if err != nil {
+			return nil, errno(err)
+		}
+		inProject := projectTaskSet(tasks, sprints, project.ID)
+		for _, t := range tasks {
+			if inProject[t.ID] {
+				names[TaskFilename(t)] = true
+			}
+		}
+	case SprintBrowseDir:
+		if _, errc := f.lookupSprint(n.SprintShort); errc != 0 {
+			return nil, errc
+		}
+		names["tasks"] = true
+	case SprintTasksDir:
+		sprint, errc := f.lookupSprint(n.SprintShort)
+		if errc != 0 {
+			return nil, errc
+		}
+		tasks, err := f.store.ListTasks(f.ctx)
+		if err != nil {
+			return nil, errno(err)
+		}
+		for _, t := range tasks {
+			if t.Sprint == sprint.ID {
+				names[TaskFilename(t)] = true
+			}
+		}
 	default:
 		return nil, -fuse.ENOTDIR
 	}
@@ -916,12 +1140,225 @@ func (f *FS) listDir(p string) ([]string, int) {
 	return slices.Sorted(maps.Keys(names)), 0
 }
 
+// --- nested browse tree ---
+
+// Readlink resolves a browse-tree task leaf to its relative target under the
+// flat /tasks namespace, validating the full membership chain first. A broken
+// chain or unknown id reads ENOENT; a non-link path reads EINVAL.
+func (f *FS) Readlink(p string) (int, string) {
+	if JunkName(path.Base(p)) {
+		return -fuse.ENOENT, ""
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	node, err := ParsePath(p)
+	if err != nil {
+		return -fuse.ENOENT, ""
+	}
+	switch node.(type) {
+	case ProjectSprintTaskLink, ProjectTaskLink, SprintTaskLink:
+		_, target, errc := f.resolveLink(p, node)
+		if errc != 0 {
+			return errc, ""
+		}
+		return 0, target
+	default:
+		return -fuse.EINVAL, ""
+	}
+}
+
+// lookupProject resolves a project browse-dir short id to its snapshot,
+// mapping any failure to an errno.
+func (f *FS) lookupProject(shortID string) (model.Project, int) {
+	_, r, err := f.resolveProject(shortID)
+	if err != nil {
+		return model.Project{}, errno(err)
+	}
+	return r.snapshot.(model.Project), 0
+}
+
+// lookupSprint resolves a sprint browse-dir short id to its snapshot.
+func (f *FS) lookupSprint(shortID string) (model.Sprint, int) {
+	_, r, err := f.resolveSprint(shortID)
+	if err != nil {
+		return model.Sprint{}, errno(err)
+	}
+	return r.snapshot.(model.Sprint), 0
+}
+
+// lookupTask resolves a task leaf short id to its snapshot.
+func (f *FS) lookupTask(shortID string) (model.Task, int) {
+	_, r, err := f.resolveTask(shortID)
+	if err != nil {
+		return model.Task{}, errno(err)
+	}
+	return r.snapshot.(model.Task), 0
+}
+
+// lookupSprintInProject resolves the sprint and confirms it belongs to the
+// project the browse path names.
+func (f *FS) lookupSprintInProject(projShort, sprintShort string) (model.Sprint, int) {
+	project, errc := f.lookupProject(projShort)
+	if errc != 0 {
+		return model.Sprint{}, errc
+	}
+	sprint, errc := f.lookupSprint(sprintShort)
+	if errc != 0 {
+		return model.Sprint{}, errc
+	}
+	if sprint.Project != project.ID {
+		return model.Sprint{}, -fuse.ENOENT
+	}
+	return sprint, 0
+}
+
+// validateBrowseDir confirms the project/sprint chain a browse directory names
+// exists and is linked as the path claims.
+func (f *FS) validateBrowseDir(node Node) int {
+	switch n := node.(type) {
+	case ProjectBrowseDir:
+		_, errc := f.lookupProject(n.ProjShort)
+		return errc
+	case ProjectSprintsDir:
+		_, errc := f.lookupProject(n.ProjShort)
+		return errc
+	case ProjectTasksDir:
+		_, errc := f.lookupProject(n.ProjShort)
+		return errc
+	case ProjectSprintDir:
+		_, errc := f.lookupSprintInProject(n.ProjShort, n.SprintShort)
+		return errc
+	case ProjectSprintTasksDir:
+		_, errc := f.lookupSprintInProject(n.ProjShort, n.SprintShort)
+		return errc
+	case SprintBrowseDir:
+		_, errc := f.lookupSprint(n.SprintShort)
+		return errc
+	case SprintTasksDir:
+		_, errc := f.lookupSprint(n.SprintShort)
+		return errc
+	default:
+		panic(fmt.Sprintf("fusefs: validateBrowseDir on non-dir node %T", node))
+	}
+}
+
+// resolveLink validates a browse-tree link's full membership chain, resolves the
+// leaf task, and returns that task plus the relative symlink target. A broken
+// chain or unknown id maps to ENOENT.
+func (f *FS) resolveLink(p string, node Node) (model.Task, string, int) {
+	task, errc := f.linkTask(node)
+	if errc != 0 {
+		return model.Task{}, "", errc
+	}
+	return task, SymlinkTarget(p, "tasks/"+TaskFilename(task)), 0
+}
+
+// linkTask validates the membership chain a browse-tree link encodes and
+// returns the leaf task it points at.
+func (f *FS) linkTask(node Node) (model.Task, int) {
+	switch n := node.(type) {
+	case SprintTaskLink:
+		sprint, errc := f.lookupSprint(n.SprintShort)
+		if errc != 0 {
+			return model.Task{}, errc
+		}
+		task, errc := f.lookupTask(n.TaskShort)
+		if errc != 0 {
+			return model.Task{}, errc
+		}
+		if task.Sprint != sprint.ID {
+			return model.Task{}, -fuse.ENOENT
+		}
+		return task, 0
+	case ProjectSprintTaskLink:
+		sprint, errc := f.lookupSprintInProject(n.ProjShort, n.SprintShort)
+		if errc != 0 {
+			return model.Task{}, errc
+		}
+		task, errc := f.lookupTask(n.TaskShort)
+		if errc != 0 {
+			return model.Task{}, errc
+		}
+		if task.Sprint != sprint.ID {
+			return model.Task{}, -fuse.ENOENT
+		}
+		return task, 0
+	case ProjectTaskLink:
+		project, errc := f.lookupProject(n.ProjShort)
+		if errc != 0 {
+			return model.Task{}, errc
+		}
+		task, errc := f.lookupTask(n.TaskShort)
+		if errc != 0 {
+			return model.Task{}, errc
+		}
+		member, err := f.taskInProject(task, project.ID)
+		if err != nil {
+			return model.Task{}, errno(err)
+		}
+		if !member {
+			return model.Task{}, -fuse.ENOENT
+		}
+		return task, 0
+	default:
+		panic(fmt.Sprintf("fusefs: linkTask on non-link node %T", node))
+	}
+}
+
+// taskInProject reports whether task belongs to projectID, mirroring the CLI's
+// reverse index: a direct project pointer, or membership through a sprint whose
+// project is projectID.
+func (f *FS) taskInProject(task model.Task, projectID model.EntityID) (bool, error) {
+	if task.Project == projectID {
+		return true, nil
+	}
+	if task.Sprint == "" {
+		return false, nil
+	}
+	sprints, err := f.store.ListSprints(f.ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, s := range sprints {
+		if s.ID == task.Sprint {
+			return s.Project == projectID, nil
+		}
+	}
+	return false, nil
+}
+
+// projectTaskSet returns the set of task ids in projectID: tasks pointed
+// directly at the project, unioned with tasks whose sprint belongs to it.
+func projectTaskSet(tasks []model.Task, sprints []model.Sprint, projectID model.EntityID) map[model.EntityID]bool {
+	projectSprints := make(map[model.EntityID]bool)
+	for _, s := range sprints {
+		if s.Project == projectID {
+			projectSprints[s.ID] = true
+		}
+	}
+	set := make(map[model.EntityID]bool)
+	for _, t := range tasks {
+		if t.Project == projectID || (t.Sprint != "" && projectSprints[t.Sprint]) {
+			set[t.ID] = true
+		}
+	}
+	return set
+}
+
 // --- stat plumbing ---
 
 func (f *FS) fillEntityStat(stat *fuse.Stat_t, r rendered) {
 	created, updated := snapshotTimes(r.snapshot)
 	mtime := fuse.Timespec{Sec: updated, Nsec: versionNsec(headOf(r.snapshot))}
 	f.fillStat(stat, fuse.S_IFREG|0o644, idIno(r.snapshot.EntityID()), int64(len(r.data)), mtime, created)
+}
+
+// fillSymlinkStat fills a browse-tree leaf as a symlink: S_IFLNK with the
+// target length as size — the kernel reads exactly that many bytes from
+// Readlink — and the linked task's times, so the leaf ages with its target.
+func (f *FS) fillSymlinkStat(stat *fuse.Stat_t, task model.Task, size int) {
+	mtime := fuse.Timespec{Sec: task.UpdatedAt, Nsec: versionNsec(task.Head)}
+	f.fillStat(stat, fuse.S_IFLNK|0o777, idIno(task.ID), int64(size), mtime, task.CreatedAt)
 }
 
 func (f *FS) fillDirStat(stat *fuse.Stat_t, p string) {

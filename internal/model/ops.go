@@ -157,6 +157,32 @@ func (o CreateTask) validate() error {
 	return o.Branch.validate()
 }
 
+// CreateSprint is the root operation of a sprint chain. The nonce makes
+// otherwise-identical creates hash to distinct entity ids; an empty Project
+// means the sprint belongs to no project.
+type CreateSprint struct {
+	Nonce       string   `json:"nonce"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Project     EntityID `json:"project"`
+	Labels      []string `json:"labels"`
+}
+
+// OpKind returns "create_sprint".
+func (CreateSprint) OpKind() string { return "create_sprint" }
+
+// CreateProject is the root operation of a project chain. The nonce makes
+// otherwise-identical creates hash to distinct entity ids.
+type CreateProject struct {
+	Nonce       string   `json:"nonce"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Labels      []string `json:"labels"`
+}
+
+// OpKind returns "create_project".
+func (CreateProject) OpKind() string { return "create_project" }
+
 // SetDescription replaces the description of a task.
 type SetDescription struct {
 	Description string `json:"description"`
@@ -320,14 +346,122 @@ func (o SetBranch) validate() error {
 	return o.Branch.validate()
 }
 
+// SetSprint assigns a task to a sprint; an empty sprint clears the membership.
+// Sprint is an LWW scalar resolved at fold time.
+type SetSprint struct {
+	Sprint EntityID `json:"sprint"`
+}
+
+// OpKind returns "set_sprint".
+func (SetSprint) OpKind() string { return "set_sprint" }
+
+// SetProject assigns a task or sprint to a project; an empty project clears the
+// membership. Project is an LWW scalar interpreted per entity kind at fold time.
+type SetProject struct {
+	Project EntityID `json:"project"`
+}
+
+// OpKind returns "set_project".
+func (SetProject) OpKind() string { return "set_project" }
+
+// SetSprintStatus replaces the lifecycle status of a sprint.
+type SetSprintStatus struct {
+	Status SprintStatus `json:"status"`
+}
+
+// OpKind returns "set_sprint_status".
+func (SetSprintStatus) OpKind() string { return "set_sprint_status" }
+
+func (o SetSprintStatus) validate() error { return o.Status.validate() }
+
+// SetProjectStatus replaces the lifecycle status of a project.
+type SetProjectStatus struct {
+	Status ProjectStatus `json:"status"`
+}
+
+// OpKind returns "set_project_status".
+func (SetProjectStatus) OpKind() string { return "set_project_status" }
+
+func (o SetProjectStatus) validate() error { return o.Status.validate() }
+
+// SetStartDate sets a sprint's user-set start date in unix seconds; zero clears
+// it. Date is an LWW scalar, distinct from the CreatedAt lifecycle stamp.
+type SetStartDate struct {
+	Date int64 `json:"date"`
+}
+
+// OpKind returns "set_start_date".
+func (SetStartDate) OpKind() string { return "set_start_date" }
+
+// SetEndDate sets a sprint's user-set end date in unix seconds; zero clears it.
+// Date is an LWW scalar, distinct from the ClosedAt lifecycle stamp.
+type SetEndDate struct {
+	Date int64 `json:"date"`
+}
+
+// OpKind returns "set_end_date".
+func (SetEndDate) OpKind() string { return "set_end_date" }
+
+// AddCriterion appends a structured acceptance criterion to a task. ID is a
+// nonce stable within the task; Script is an optional check command ("" means
+// none). New criteria start pending.
+type AddCriterion struct {
+	ID     string `json:"id"`
+	Text   string `json:"text"`
+	Script string `json:"script"`
+}
+
+// OpKind returns "add_criterion".
+func (AddCriterion) OpKind() string { return "add_criterion" }
+
+// RemoveCriterion removes the criterion with the given id from a task.
+type RemoveCriterion struct {
+	ID string `json:"id"`
+}
+
+// OpKind returns "remove_criterion".
+func (RemoveCriterion) OpKind() string { return "remove_criterion" }
+
+// SetCriterionText replaces the text of the criterion with the given id.
+type SetCriterionText struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// OpKind returns "set_criterion_text".
+func (SetCriterionText) OpKind() string { return "set_criterion_text" }
+
+// SetCriterionStatus replaces the validation status of the criterion with the
+// given id.
+type SetCriterionStatus struct {
+	ID     string          `json:"id"`
+	Status CriterionStatus `json:"status"`
+}
+
+// OpKind returns "set_criterion_status".
+func (SetCriterionStatus) OpKind() string { return "set_criterion_status" }
+
+func (o SetCriterionStatus) validate() error { return o.Status.validate() }
+
+// SetCriterionScript replaces the check command of the criterion with the given
+// id; an empty script clears it.
+type SetCriterionScript struct {
+	ID     string `json:"id"`
+	Script string `json:"script"`
+}
+
+// OpKind returns "set_criterion_script".
+func (SetCriterionScript) OpKind() string { return "set_criterion_script" }
+
 // Checkpoint compacts an entity's history into a single seed. State is the
 // full folded snapshot of every commit in CoversShas, CoversLamport is the
 // lamport of the covered tip, and EntityID is the immutable root sha the
 // snapshot belongs to. Checkpoint is always appended, never a root, so it
 // never changes an entity id: a fold uses the newest seed-safe checkpoint as
 // its starting snapshot and treats every other checkpoint as a no-op. The pack
-// codec carries State kind-tagged (note or task) so it decodes back to the
-// concrete model.Note or model.Task; the snapshot's kind drives fold dispatch.
+// codec carries State kind-tagged (note, task, sprint, or project) so it decodes
+// back to the concrete model.Note/Task/Sprint/Project; the snapshot's kind drives
+// fold dispatch.
 type Checkpoint struct {
 	EntityID      EntityID
 	State         Snapshot

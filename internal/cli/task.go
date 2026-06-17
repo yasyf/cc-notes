@@ -44,15 +44,17 @@ func newTaskCmd() *cobra.Command {
 		newTaskMoveCmd(),
 		newTaskStaleCmd(),
 		newTaskArchivedCmd(),
+		newTaskCriterionCmd(),
+		newTaskValidateCmd(),
 	)
 	return cmd
 }
 
 func newTaskAddCmd() *cobra.Command {
-	var desc, taskType, parent, branch string
+	var desc, taskType, parent, branch, sprint, project string
 	var priority int
-	var labels, blockedBy []string
-	var backlog, jsonOut bool
+	var labels, blockedBy, criteria []string
+	var backlog, noValidation, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "add TITLE",
 		Short: "Create a task",
@@ -61,6 +63,12 @@ func newTaskAddCmd() *cobra.Command {
 			ctx := cmd.Context()
 			if backlog && cmd.Flags().Changed("branch") {
 				return &UsageError{Err: errors.New("--backlog and --branch are mutually exclusive")}
+			}
+			if len(criteria) > 0 && noValidation {
+				return &UsageError{Err: errors.New("--criterion and --no-validation-criteria are mutually exclusive")}
+			}
+			if !noValidation && len(criteria) == 0 {
+				return &UsageError{Err: errors.New("at least one --criterion is required (or pass --no-validation-criteria)")}
 			}
 			s, err := openStore()
 			if err != nil {
@@ -95,6 +103,22 @@ func newTaskAddCmd() *cobra.Command {
 				}
 				parentID = parentTask.ID
 			}
+			var sprintID model.EntityID
+			if sprint != "" {
+				_, sp, err := loadSprint(ctx, s, sprint)
+				if err != nil {
+					return err
+				}
+				sprintID = sp.ID
+			}
+			var projectID model.EntityID
+			if project != "" {
+				_, proj, err := loadProject(ctx, s, project)
+				if err != nil {
+					return err
+				}
+				projectID = proj.ID
+			}
 			ops := []model.Op{model.CreateTask{
 				Nonce:       model.NewNonce(),
 				Title:       args[0],
@@ -105,6 +129,15 @@ func newTaskAddCmd() *cobra.Command {
 				Parent:      parentID,
 				Labels:      labels,
 			}}
+			if sprintID != "" {
+				ops = append(ops, model.SetSprint{Sprint: sprintID})
+			}
+			if projectID != "" {
+				ops = append(ops, model.SetProject{Project: projectID})
+			}
+			for _, c := range criteria {
+				ops = append(ops, model.AddCriterion{ID: model.NewNonce(), Text: c})
+			}
 			for _, prefix := range blockedBy {
 				blocker, _, err := resolveBlocker(ctx, s, prefix)
 				if err != nil {
@@ -124,7 +157,11 @@ func newTaskAddCmd() *cobra.Command {
 	flags.StringVar(&taskType, "type", "task", "task type (task|bug|epic|question)")
 	flags.IntVar(&priority, "priority", 2, "priority 0-3 (0 most urgent)")
 	flags.StringArrayVar(&labels, "label", nil, "label (repeatable)")
+	flags.StringArrayVar(&criteria, "criterion", nil, "acceptance criterion text (repeatable, required unless --no-validation-criteria)")
+	flags.BoolVar(&noValidation, "no-validation-criteria", false, "create with no acceptance criteria")
 	flags.StringVar(&parent, "parent", "", "parent task id prefix")
+	flags.StringVar(&sprint, "sprint", "", "sprint id prefix")
+	flags.StringVar(&project, "project", "", "project id prefix")
 	flags.StringArrayVar(&blockedBy, "blocked-by", nil, "blocker task id prefix (repeatable, resolved globally)")
 	flags.StringVar(&branch, "branch", "", "task branch (default: current branch)")
 	flags.BoolVar(&backlog, "backlog", false, "create on the backlog (no branch)")
@@ -471,7 +508,7 @@ func newTaskRenewCmd() *cobra.Command {
 }
 
 func newTaskDoneCmd() *cobra.Command {
-	var jsonOut bool
+	var force, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "done ID",
 		Short: "Mark a task done and anchor your HEAD commit onto it",
@@ -494,6 +531,11 @@ func newTaskDoneCmd() *cobra.Command {
 			default:
 				return &ConflictError{Msg: fmt.Sprintf("%s already %s", task.ID.Short(), task.Status)}
 			}
+			if !force {
+				if err := unmetCriteriaErr(task); err != nil {
+					return err
+				}
+			}
 			head, err := resolveHead(ctx, s)
 			if err != nil {
 				return err
@@ -509,8 +551,31 @@ func newTaskDoneCmd() *cobra.Command {
 			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags := cmd.Flags()
+	flags.BoolVar(&force, "force", false, "close even with unmet criteria")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
+}
+
+// unmetCriteriaErr returns a UsageError listing every criterion not yet met,
+// instructing --force, or nil when every criterion is met. The done gate uses
+// it to refuse closing a task whose acceptance criteria have not all passed.
+func unmetCriteriaErr(task model.Task) error {
+	var unmet []model.Criterion
+	for _, c := range task.Criteria {
+		if c.Status != model.CriterionMet {
+			unmet = append(unmet, c)
+		}
+	}
+	if len(unmet) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s has %d unmet criterion/criteria (pass --force to close anyway):", task.ID.Short(), len(unmet))
+	for _, c := range unmet {
+		fmt.Fprintf(&b, "\n  %s [%s] %s", c.ID[:7], c.Status, sanitizeDisplay(c.Text, false))
+	}
+	return &UsageError{Err: errors.New(b.String())}
 }
 
 func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
@@ -549,9 +614,9 @@ func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
 }
 
 func newTaskEditCmd() *cobra.Command {
-	var title, desc, taskType, status, assignee, parent string
+	var title, desc, taskType, status, assignee, parent, sprint, project string
 	var priority int
-	var unassign, noParent bool
+	var unassign, noParent, noSprint, noProject bool
 	var addLabels, rmLabels []string
 	var jsonOut bool
 	cmd := &cobra.Command{
@@ -566,6 +631,12 @@ func newTaskEditCmd() *cobra.Command {
 			}
 			if flags.Changed("parent") && noParent {
 				return &UsageError{Err: errors.New("--parent and --no-parent are mutually exclusive")}
+			}
+			if flags.Changed("sprint") && noSprint {
+				return &UsageError{Err: errors.New("--sprint and --no-sprint are mutually exclusive")}
+			}
+			if flags.Changed("project") && noProject {
+				return &UsageError{Err: errors.New("--project and --no-project are mutually exclusive")}
 			}
 			s, err := openStore()
 			if err != nil {
@@ -625,6 +696,26 @@ func newTaskEditCmd() *cobra.Command {
 			if noParent {
 				ops = append(ops, model.SetParent{})
 			}
+			if flags.Changed("sprint") {
+				_, sp, err := loadSprint(ctx, s, sprint)
+				if err != nil {
+					return err
+				}
+				ops = append(ops, model.SetSprint{Sprint: sp.ID})
+			}
+			if noSprint {
+				ops = append(ops, model.SetSprint{})
+			}
+			if flags.Changed("project") {
+				_, proj, err := loadProject(ctx, s, project)
+				if err != nil {
+					return err
+				}
+				ops = append(ops, model.SetProject{Project: proj.ID})
+			}
+			if noProject {
+				ops = append(ops, model.SetProject{})
+			}
 			if len(ops) == 0 {
 				return &UsageError{Err: errors.New("task edit requires at least one flag")}
 			}
@@ -654,6 +745,10 @@ func newTaskEditCmd() *cobra.Command {
 	flags.StringArrayVar(&rmLabels, "rm-label", nil, "remove label (repeatable)")
 	flags.StringVar(&parent, "parent", "", "new parent task id prefix")
 	flags.BoolVar(&noParent, "no-parent", false, "clear the parent")
+	flags.StringVar(&sprint, "sprint", "", "new sprint id prefix")
+	flags.BoolVar(&noSprint, "no-sprint", false, "clear the sprint")
+	flags.StringVar(&project, "project", "", "new project id prefix")
+	flags.BoolVar(&noProject, "no-project", false, "clear the project")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
@@ -910,6 +1005,212 @@ func newTaskArchivedCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&closedBefore, "closed-before", "", "archive cutoff (Go duration relative, or RFC3339 absolute; default 720h)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newTaskCriterionCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "criterion",
+		Short: "Structured acceptance criteria on a task",
+		Args:  noUnknownSubcommand,
+		RunE:  runHelp,
+	}
+	cmd.AddCommand(
+		newCriterionAddCmd(),
+		newCriterionRemoveCmd(),
+		newCriterionStatusCmd("met", model.CriterionMet),
+		newCriterionStatusCmd("failed", model.CriterionFailed),
+		newCriterionStatusCmd("reset", model.CriterionPending),
+		newCriterionScriptCmd(),
+		newCriterionListCmd(),
+	)
+	return cmd
+}
+
+func newCriterionAddCmd() *cobra.Command {
+	var script string
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "add TASK TEXT",
+		Short: "Add an acceptance criterion to a task",
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			var scriptText string
+			if cmd.Flags().Changed("script") {
+				if scriptText, err = readScript(script); err != nil {
+					return err
+				}
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			ref, _, err := loadTask(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			snapshot, err := s.Append(ctx, ref, []model.Op{model.AddCriterion{ID: model.NewNonce(), Text: args[1], Script: scriptText}})
+			if err != nil {
+				return err
+			}
+			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	flags.StringVar(&script, "script", "", "validation script file; its contents become the criterion's check command")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newCriterionRemoveCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "rm TASK CRIT",
+		Short: "Remove an acceptance criterion from a task",
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			ref, task, err := loadTask(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			crit, err := resolveCriterion(task, args[1])
+			if err != nil {
+				return err
+			}
+			snapshot, err := s.Append(ctx, ref, []model.Op{model.RemoveCriterion{ID: crit.ID}})
+			if err != nil {
+				return err
+			}
+			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newCriterionStatusCmd(use string, status model.CriterionStatus) *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   use + " TASK CRIT",
+		Short: "Mark a criterion " + string(status),
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			ref, task, err := loadTask(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			crit, err := resolveCriterion(task, args[1])
+			if err != nil {
+				return err
+			}
+			snapshot, err := s.Append(ctx, ref, []model.Op{model.SetCriterionStatus{ID: crit.ID, Status: status}})
+			if err != nil {
+				return err
+			}
+			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newCriterionScriptCmd() *cobra.Command {
+	var clear, jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "script TASK CRIT FILE",
+		Short: "Set or clear a criterion's validation script",
+		Args:  maxArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			switch {
+			case clear && len(args) != 2:
+				return &UsageError{Err: errors.New("--clear takes TASK CRIT with no FILE")}
+			case !clear && len(args) != 3:
+				return &UsageError{Err: errors.New("script requires TASK CRIT FILE (or --clear)")}
+			}
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			var scriptText string
+			if !clear {
+				if scriptText, err = readScript(args[2]); err != nil {
+					return err
+				}
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			ref, task, err := loadTask(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			crit, err := resolveCriterion(task, args[1])
+			if err != nil {
+				return err
+			}
+			snapshot, err := s.Append(ctx, ref, []model.Op{model.SetCriterionScript{ID: crit.ID, Script: scriptText}})
+			if err != nil {
+				return err
+			}
+			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	flags.BoolVar(&clear, "clear", false, "clear the criterion's validation script")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
+func newCriterionListCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "list TASK",
+		Short: "List a task's acceptance criteria",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			_, task, err := loadTask(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if jsonOut {
+				return printJSON(out, criterionDTOs(task.Criteria))
+			}
+			for _, c := range task.Criteria {
+				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\n", c.ID[:7], c.Status, c.Text); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 

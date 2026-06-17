@@ -98,6 +98,28 @@ func chronoNotes(a, b model.Note) int {
 	return strings.Compare(string(a.ID), string(b.ID))
 }
 
+func sprintOps(title string) []model.Op {
+	return []model.Op{model.CreateSprint{Nonce: model.NewNonce(), Title: title}}
+}
+
+func projectOps(title string) []model.Op {
+	return []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: title}}
+}
+
+func chronoSprints(a, b model.Sprint) int {
+	if c := a.CreatedAt - b.CreatedAt; c != 0 {
+		return int(c)
+	}
+	return strings.Compare(string(a.ID), string(b.ID))
+}
+
+func chronoProjects(a, b model.Project) int {
+	if c := a.CreatedAt - b.CreatedAt; c != 0 {
+		return int(c)
+	}
+	return strings.Compare(string(a.ID), string(b.ID))
+}
+
 func TestCreateNoteRoundTrip(t *testing.T) {
 	s := initStore(t)
 	ops := []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "hello", Body: "world", Tags: []string{"b", "a"}}}
@@ -680,5 +702,275 @@ func TestMerge(t *testing.T) {
 
 	if _, err := s.Merge(ctx, ref, ours, theirs); !errors.Is(err, gitcmd.ErrCASMismatch) {
 		t.Errorf("stale Merge = %v, want ErrCASMismatch", err)
+	}
+}
+
+func TestCreateSprintRoundTrip(t *testing.T) {
+	s := initStore(t)
+	ops := []model.Op{model.CreateSprint{Nonce: model.NewNonce(), Title: "Q3", Description: "third quarter", Labels: []string{"b", "a"}}}
+	snapshot := create(t, s, ops)
+	sprint, ok := snapshot.(model.Sprint)
+	if !ok {
+		t.Fatalf("Create returned %T, want model.Sprint", snapshot)
+	}
+
+	if sprint.Title != "Q3" || sprint.Description != "third quarter" {
+		t.Errorf("sprint = %q/%q, want Q3/third quarter", sprint.Title, sprint.Description)
+	}
+	if sprint.Status != model.SprintPlanned {
+		t.Errorf("Status = %q, want %q", sprint.Status, model.SprintPlanned)
+	}
+	if want := []string{"a", "b"}; !slices.Equal(sprint.Labels, want) {
+		t.Errorf("Labels = %v, want %v", sprint.Labels, want)
+	}
+	if sprint.Author != testActor {
+		t.Errorf("Author = %q, want %q", sprint.Author, testActor)
+	}
+	if sprint.Head != model.SHA(sprint.ID) {
+		t.Errorf("Head = %s, want root %s", sprint.Head, sprint.ID)
+	}
+	if sprint.CreatedAt == 0 || sprint.UpdatedAt != sprint.CreatedAt {
+		t.Errorf("timestamps = %d/%d, want equal non-zero", sprint.CreatedAt, sprint.UpdatedAt)
+	}
+
+	ref := refs.Sprint(sprint.ID)
+	if got := mustGit(t, s.Git.Dir, "rev-parse", ref); got != string(sprint.ID) {
+		t.Errorf("ref %s -> %s, want %s", ref, got, sprint.ID)
+	}
+	loaded, err := s.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded, snapshot) {
+		t.Errorf("Load = %+v, want Create snapshot %+v", loaded, snapshot)
+	}
+	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: sprint create" {
+		t.Errorf("commit message = %q, want %q", msg, "cc-notes: sprint create")
+	}
+
+	list, err := s.ListSprints(t.Context())
+	if err != nil {
+		t.Fatalf("ListSprints: %v", err)
+	}
+	if want := []model.Sprint{sprint}; !reflect.DeepEqual(list, want) {
+		t.Errorf("ListSprints = %+v, want %+v", list, want)
+	}
+}
+
+func TestCreateProjectRoundTrip(t *testing.T) {
+	s := initStore(t)
+	ops := []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: "Platform", Description: "infra work", Labels: []string{"y", "x"}}}
+	snapshot := create(t, s, ops)
+	project, ok := snapshot.(model.Project)
+	if !ok {
+		t.Fatalf("Create returned %T, want model.Project", snapshot)
+	}
+
+	if project.Title != "Platform" || project.Description != "infra work" {
+		t.Errorf("project = %q/%q, want Platform/infra work", project.Title, project.Description)
+	}
+	if project.Status != model.ProjectActive {
+		t.Errorf("Status = %q, want %q", project.Status, model.ProjectActive)
+	}
+	if want := []string{"x", "y"}; !slices.Equal(project.Labels, want) {
+		t.Errorf("Labels = %v, want %v", project.Labels, want)
+	}
+	if project.Author != testActor {
+		t.Errorf("Author = %q, want %q", project.Author, testActor)
+	}
+	if project.Head != model.SHA(project.ID) {
+		t.Errorf("Head = %s, want root %s", project.Head, project.ID)
+	}
+	if project.CreatedAt == 0 || project.UpdatedAt != project.CreatedAt {
+		t.Errorf("timestamps = %d/%d, want equal non-zero", project.CreatedAt, project.UpdatedAt)
+	}
+
+	ref := refs.Project(project.ID)
+	if got := mustGit(t, s.Git.Dir, "rev-parse", ref); got != string(project.ID) {
+		t.Errorf("ref %s -> %s, want %s", ref, got, project.ID)
+	}
+	loaded, err := s.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded, snapshot) {
+		t.Errorf("Load = %+v, want Create snapshot %+v", loaded, snapshot)
+	}
+	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: project create" {
+		t.Errorf("commit message = %q, want %q", msg, "cc-notes: project create")
+	}
+
+	list, err := s.ListProjects(t.Context())
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if want := []model.Project{project}; !reflect.DeepEqual(list, want) {
+		t.Errorf("ListProjects = %+v, want %+v", list, want)
+	}
+}
+
+// ticker returns a clock that yields ts[i] on the i-th call, pinning the
+// per-create CreatedAt so list ordering is deterministic. The first two ticks
+// collide to exercise the id tiebreaker.
+func ticker(ts ...int64) func() time.Time {
+	i := 0
+	return func() time.Time {
+		t := time.Unix(ts[i], 0).UTC()
+		i++
+		return t
+	}
+}
+
+func TestListSprintsSorted(t *testing.T) {
+	s := initStore(t)
+	s.now = ticker(200, 200, 100)
+	a := create(t, s, sprintOps("a")).(model.Sprint)
+	b := create(t, s, sprintOps("b")).(model.Sprint)
+	c := create(t, s, sprintOps("c")).(model.Sprint)
+
+	if c.CreatedAt != 100 || a.CreatedAt != 200 || b.CreatedAt != 200 {
+		t.Fatalf("CreatedAt = %d/%d/%d, want 200/200/100", a.CreatedAt, b.CreatedAt, c.CreatedAt)
+	}
+
+	list, err := s.ListSprints(t.Context())
+	if err != nil {
+		t.Fatalf("ListSprints: %v", err)
+	}
+	want := []model.Sprint{a, b, c}
+	slices.SortFunc(want, chronoSprints)
+	if !reflect.DeepEqual(list, want) {
+		t.Errorf("ListSprints = %+v, want %+v (CreatedAt then id)", list, want)
+	}
+	if list[0].ID != c.ID {
+		t.Errorf("first = %s, want earliest %s", list[0].ID, c.ID)
+	}
+}
+
+func TestListProjectsSorted(t *testing.T) {
+	s := initStore(t)
+	s.now = ticker(200, 200, 100)
+	a := create(t, s, projectOps("a")).(model.Project)
+	b := create(t, s, projectOps("b")).(model.Project)
+	c := create(t, s, projectOps("c")).(model.Project)
+
+	if c.CreatedAt != 100 || a.CreatedAt != 200 || b.CreatedAt != 200 {
+		t.Fatalf("CreatedAt = %d/%d/%d, want 200/200/100", a.CreatedAt, b.CreatedAt, c.CreatedAt)
+	}
+
+	list, err := s.ListProjects(t.Context())
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	want := []model.Project{a, b, c}
+	slices.SortFunc(want, chronoProjects)
+	if !reflect.DeepEqual(list, want) {
+		t.Errorf("ListProjects = %+v, want %+v (CreatedAt then id)", list, want)
+	}
+	if list[0].ID != c.ID {
+		t.Errorf("first = %s, want earliest %s", list[0].ID, c.ID)
+	}
+}
+
+func TestResolveSprint(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	titles := map[model.EntityID]string{}
+	buckets := map[byte][]model.EntityID{}
+	var shared []model.EntityID
+	for i := 0; len(shared) == 0; i++ {
+		if i > 17 {
+			t.Fatal("no shared 1-char prefix after 17 creates")
+		}
+		title := fmt.Sprintf("sprint-%d", i)
+		sprint := create(t, s, sprintOps(title)).(model.Sprint)
+		titles[sprint.ID] = title
+		first := sprint.ID[0]
+		buckets[first] = append(buckets[first], sprint.ID)
+		if len(buckets[first]) == 2 {
+			shared = buckets[first]
+		}
+	}
+
+	full := shared[0]
+	got, err := s.Resolve(ctx, refs.KindSprint, string(full))
+	if err != nil {
+		t.Fatalf("Resolve(%q): %v", full, err)
+	}
+	if want := refs.Sprint(full); got != want {
+		t.Errorf("Resolve(%q) = %q, want %q", full, got, want)
+	}
+
+	if _, err := s.Resolve(ctx, refs.KindSprint, "zzz"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Resolve(zzz) = %v, want ErrNotFound", err)
+	}
+
+	prefix := string(shared[0])[:1]
+	_, err = s.Resolve(ctx, refs.KindSprint, prefix)
+	var ambiguous *AmbiguousError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("Resolve(%q) = %v, want *AmbiguousError", prefix, err)
+	}
+	if ambiguous.Kind != refs.KindSprint || ambiguous.Prefix != prefix {
+		t.Errorf("AmbiguousError = %+v, want kind sprint prefix %q", ambiguous, prefix)
+	}
+	slices.Sort(shared)
+	want := []Candidate{
+		{ID: shared[0], Title: titles[shared[0]]},
+		{ID: shared[1], Title: titles[shared[1]]},
+	}
+	if !reflect.DeepEqual(ambiguous.Candidates, want) {
+		t.Errorf("Candidates = %+v, want %+v", ambiguous.Candidates, want)
+	}
+}
+
+func TestResolveProject(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	titles := map[model.EntityID]string{}
+	buckets := map[byte][]model.EntityID{}
+	var shared []model.EntityID
+	for i := 0; len(shared) == 0; i++ {
+		if i > 17 {
+			t.Fatal("no shared 1-char prefix after 17 creates")
+		}
+		title := fmt.Sprintf("project-%d", i)
+		project := create(t, s, projectOps(title)).(model.Project)
+		titles[project.ID] = title
+		first := project.ID[0]
+		buckets[first] = append(buckets[first], project.ID)
+		if len(buckets[first]) == 2 {
+			shared = buckets[first]
+		}
+	}
+
+	full := shared[0]
+	got, err := s.Resolve(ctx, refs.KindProject, string(full))
+	if err != nil {
+		t.Fatalf("Resolve(%q): %v", full, err)
+	}
+	if want := refs.Project(full); got != want {
+		t.Errorf("Resolve(%q) = %q, want %q", full, got, want)
+	}
+
+	if _, err := s.Resolve(ctx, refs.KindProject, "zzz"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Resolve(zzz) = %v, want ErrNotFound", err)
+	}
+
+	prefix := string(shared[0])[:1]
+	_, err = s.Resolve(ctx, refs.KindProject, prefix)
+	var ambiguous *AmbiguousError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("Resolve(%q) = %v, want *AmbiguousError", prefix, err)
+	}
+	if ambiguous.Kind != refs.KindProject || ambiguous.Prefix != prefix {
+		t.Errorf("AmbiguousError = %+v, want kind project prefix %q", ambiguous, prefix)
+	}
+	slices.Sort(shared)
+	want := []Candidate{
+		{ID: shared[0], Title: titles[shared[0]]},
+		{ID: shared[1], Title: titles[shared[1]]},
+	}
+	if !reflect.DeepEqual(ambiguous.Candidates, want) {
+		t.Errorf("Candidates = %+v, want %+v", ambiguous.Candidates, want)
 	}
 }

@@ -54,7 +54,7 @@ week) should be able to find it in the shared queue and pick it up — so it bel
 backlog, not pinned to whatever branch you happen to be on.
 
 ```console
-$ cc-notes task add "Login retries ignore the backoff ceiling" --type bug --priority 1 --label auth --backlog
+$ cc-notes task add "Login retries ignore the backoff ceiling" --type bug --priority 1 --label auth --backlog --criterion "login retries honor the backoff ceiling"
 3f9a1c2	open	P1	-	Login retries ignore the backoff ceiling
 ```
 
@@ -88,9 +88,9 @@ so several agents draw ready work from the same backlog; the dependency keeps th
 migration ahead of the code that reads it.
 
 ```console
-$ cc-notes task add "Migrate sessions table" --label db --backlog
+$ cc-notes task add "Migrate sessions table" --label db --backlog --no-validation-criteria
 9c4e2a1	open	P2	-	Migrate sessions table
-$ cc-notes task add "Read sessions from the new schema" --label api --backlog
+$ cc-notes task add "Read sessions from the new schema" --label api --backlog --no-validation-criteria
 e0b8f73	open	P2	-	Read sessions from the new schema
 $ cc-notes task dep e0b8f73 9c4e2a1
 e0b8f73	open	P2	-	Read sessions from the new schema

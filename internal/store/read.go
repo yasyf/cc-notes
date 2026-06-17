@@ -95,6 +95,50 @@ func (s *Store) ListTasks(ctx context.Context) ([]model.Task, error) {
 	return tasks, nil
 }
 
+// ListSprints folds every sprint in the repository, ordered by creation time
+// then id.
+func (s *Store) ListSprints(ctx context.Context) ([]model.Sprint, error) {
+	entries, err := s.children(ctx, refs.SprintsRoot)
+	if err != nil {
+		return nil, err
+	}
+	all, err := foldAll(ctx, s, entries, fold.Sprint)
+	if err != nil {
+		return nil, err
+	}
+	sprints := make([]model.Sprint, 0, len(all))
+	sprints = append(sprints, all...)
+	slices.SortFunc(sprints, func(a, b model.Sprint) int {
+		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return sprints, nil
+}
+
+// ListProjects folds every project in the repository, ordered by creation time
+// then id.
+func (s *Store) ListProjects(ctx context.Context) ([]model.Project, error) {
+	entries, err := s.children(ctx, refs.ProjectsRoot)
+	if err != nil {
+		return nil, err
+	}
+	all, err := foldAll(ctx, s, entries, fold.Project)
+	if err != nil {
+		return nil, err
+	}
+	projects := make([]model.Project, 0, len(all))
+	projects = append(projects, all...)
+	slices.SortFunc(projects, func(a, b model.Project) int {
+		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return projects, nil
+}
+
 // children lists the refs that are immediate children of prefix, excluding
 // nested namespaces.
 func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error) {

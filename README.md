@@ -52,7 +52,7 @@ initialized: refs/cc-notes/* refspecs installed for origin
 Capture shared work on the backlog. Every mutation echoes the entity's new state as a lean tab-separated line:
 
 ```console
-$ cc-notes task add "Add retry backoff to the API client" --backlog --priority 1 --label api
+$ cc-notes task add "Add retry backoff to the API client" --backlog --priority 1 --label api --criterion "backoff caps at 30s"
 d82c087	open	P1	-	Add retry backoff to the API client
 ```
 
@@ -148,7 +148,7 @@ None of these verdicts are stored — each is computed by the reader against a t
 
 ## Going further
 
-Run `cc-notes task --help` and `cc-notes note --help` for the full command set: tasks add `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, and `stale`; notes add `list`, `edit`, `search`, `verify`, `supersede`, and `review`. The bundled Claude Code plugin under `plugin/` ships the `using-cc-notes` skill with the complete CLI reference. With a `_fuse` binary, `cc-notes mount [DIR]` exposes everything as an editable filesystem — notes as Markdown, tasks as JSON. `DIR` is created if it does not exist; omit it to use a managed per-repo default under `~/.cc-notes/mnt`.
+Run `cc-notes task --help` and `cc-notes note --help` for the full command set: tasks add `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, and `stale`; notes add `list`, `edit`, `search`, `verify`, `supersede`, and `review`. An optional planning layer rolls tasks up into sprints and projects with `cc-notes sprint` and `cc-notes project` (repo-wide, not branch-scoped), and tasks can carry validation criteria that gate `cc-notes task done` until they pass — `cc-notes task validate` runs each criterion's check script behind an explicit confirmation. The bundled Claude Code plugin under `plugin/` ships the `using-cc-notes` skill with the complete CLI reference. With a `_fuse` binary, `cc-notes mount [DIR]` exposes everything as an editable filesystem — notes as Markdown, tasks, sprints, and projects as JSON. `DIR` is created if it does not exist; omit it to use a managed per-repo default under `~/.cc-notes/mnt`.
 
 ## License
 

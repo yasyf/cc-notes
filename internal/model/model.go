@@ -81,6 +81,62 @@ func (s Status) validate() error {
 	return fmt.Errorf("%w: status %q", ErrInvalidValue, s)
 }
 
+// SprintStatus is the lifecycle state of a sprint.
+type SprintStatus string
+
+// Sprint lifecycle states.
+const (
+	SprintPlanned   SprintStatus = "planned"
+	SprintActive    SprintStatus = "active"
+	SprintCompleted SprintStatus = "completed"
+	SprintCancelled SprintStatus = "cancelled"
+)
+
+func (s SprintStatus) validate() error {
+	switch s {
+	case SprintPlanned, SprintActive, SprintCompleted, SprintCancelled:
+		return nil
+	}
+	return fmt.Errorf("%w: sprint status %q", ErrInvalidValue, s)
+}
+
+// ProjectStatus is the lifecycle state of a project.
+type ProjectStatus string
+
+// Project lifecycle states.
+const (
+	ProjectActive    ProjectStatus = "active"
+	ProjectCompleted ProjectStatus = "completed"
+	ProjectArchived  ProjectStatus = "archived"
+	ProjectCancelled ProjectStatus = "cancelled"
+)
+
+func (s ProjectStatus) validate() error {
+	switch s {
+	case ProjectActive, ProjectCompleted, ProjectArchived, ProjectCancelled:
+		return nil
+	}
+	return fmt.Errorf("%w: project status %q", ErrInvalidValue, s)
+}
+
+// CriterionStatus is the validation state of a task acceptance criterion.
+type CriterionStatus string
+
+// Criterion validation states.
+const (
+	CriterionPending CriterionStatus = "pending"
+	CriterionMet     CriterionStatus = "met"
+	CriterionFailed  CriterionStatus = "failed"
+)
+
+func (s CriterionStatus) validate() error {
+	switch s {
+	case CriterionPending, CriterionMet, CriterionFailed:
+		return nil
+	}
+	return fmt.Errorf("%w: criterion status %q", ErrInvalidValue, s)
+}
+
 // TaskType categorizes a task.
 type TaskType string
 
@@ -151,6 +207,16 @@ type Comment struct {
 	Body   string `json:"body"`
 }
 
+// Criterion is one structured acceptance criterion on a task. ID is a nonce
+// stable within the task; Script is an optional check command ("" means none);
+// Status is the latest validation verdict.
+type Criterion struct {
+	ID     string          `json:"id"`
+	Text   string          `json:"text"`
+	Script string          `json:"script"`
+	Status CriterionStatus `json:"status"`
+}
+
 // Note is the folded snapshot of a note entity. Timestamps are unix seconds;
 // rendering to RFC3339 happens at output time. Tags is sorted; Head is the
 // chain tip the snapshot was folded from.
@@ -191,26 +257,74 @@ type Note struct {
 // assignee authored). Both are zero before any claim. Commits is the sorted set
 // of commit shas that implement the task (the task->commit direction).
 type Task struct {
-	ID               EntityID   `json:"id"`
-	Branch           Branch     `json:"branch"`
-	Title            string     `json:"title"`
-	Description      string     `json:"description"`
-	Type             TaskType   `json:"type"`
-	Status           Status     `json:"status"`
-	Priority         Priority   `json:"priority"`
-	Assignee         Actor      `json:"assignee"`
-	HeartbeatAt      int64      `json:"heartbeat_at"`
-	HeartbeatLamport Lamport    `json:"heartbeat_lamport"`
-	Labels           []string   `json:"labels"`
-	BlockedBy        []EntityID `json:"blocked_by"`
-	Parent           EntityID   `json:"parent"`
-	Comments         []Comment  `json:"comments"`
-	CreatedAt        int64      `json:"created_at"`
-	UpdatedAt        int64      `json:"updated_at"`
-	StartedAt        int64      `json:"started_at"`
-	ClosedAt         int64      `json:"closed_at"`
-	Commits          []SHA      `json:"commits"`
-	Head             SHA        `json:"head"`
+	ID               EntityID    `json:"id"`
+	Branch           Branch      `json:"branch"`
+	Title            string      `json:"title"`
+	Description      string      `json:"description"`
+	Type             TaskType    `json:"type"`
+	Status           Status      `json:"status"`
+	Priority         Priority    `json:"priority"`
+	Assignee         Actor       `json:"assignee"`
+	HeartbeatAt      int64       `json:"heartbeat_at"`
+	HeartbeatLamport Lamport     `json:"heartbeat_lamport"`
+	Labels           []string    `json:"labels"`
+	BlockedBy        []EntityID  `json:"blocked_by"`
+	Parent           EntityID    `json:"parent"`
+	Comments         []Comment   `json:"comments"`
+	CreatedAt        int64       `json:"created_at"`
+	UpdatedAt        int64       `json:"updated_at"`
+	StartedAt        int64       `json:"started_at"`
+	ClosedAt         int64       `json:"closed_at"`
+	Commits          []SHA       `json:"commits"`
+	Head             SHA         `json:"head"`
+	Sprint           EntityID    `json:"sprint"`   // LWW membership, empty means none
+	Project          EntityID    `json:"project"`  // LWW membership, empty means none (independent of Sprint)
+	Criteria         []Criterion `json:"criteria"` // append-ordered by creation (linearization order)
+}
+
+// Sprint is the folded snapshot of a sprint entity: a time-boxed grouping of
+// tasks, optionally within a project. Timestamps are unix seconds; zero means
+// unset for StartDate, EndDate, StartedAt, and ClosedAt, and an empty Project
+// means none. StartDate and EndDate are user-set LWW scalars, distinct from the
+// CreatedAt and ClosedAt lifecycle stamps. Labels, Commits, and Comments are
+// folded collections; Head is the chain tip the snapshot was folded from.
+type Sprint struct {
+	ID          EntityID     `json:"id"`
+	Project     EntityID     `json:"project"`
+	Title       string       `json:"title"`
+	Description string       `json:"description"`
+	Status      SprintStatus `json:"status"`
+	StartDate   int64        `json:"start_date"`
+	EndDate     int64        `json:"end_date"`
+	Labels      []string     `json:"labels"`
+	Commits     []SHA        `json:"commits"`
+	Comments    []Comment    `json:"comments"`
+	Author      Actor        `json:"author"`
+	CreatedAt   int64        `json:"created_at"`
+	UpdatedAt   int64        `json:"updated_at"`
+	StartedAt   int64        `json:"started_at"`
+	ClosedAt    int64        `json:"closed_at"`
+	Head        SHA          `json:"head"`
+}
+
+// Project is the folded snapshot of a project entity: a long-lived grouping of
+// sprints and tasks. Timestamps are unix seconds; zero means unset for ClosedAt.
+// Projects carry no start or end dates and no StartedAt — only the CreatedAt and
+// ClosedAt lifecycle stamps. Labels, Commits, and Comments are folded
+// collections; Head is the chain tip the snapshot was folded from.
+type Project struct {
+	ID          EntityID      `json:"id"`
+	Title       string        `json:"title"`
+	Description string        `json:"description"`
+	Status      ProjectStatus `json:"status"`
+	Labels      []string      `json:"labels"`
+	Commits     []SHA         `json:"commits"`
+	Comments    []Comment     `json:"comments"`
+	Author      Actor         `json:"author"`
+	CreatedAt   int64         `json:"created_at"`
+	UpdatedAt   int64         `json:"updated_at"`
+	ClosedAt    int64         `json:"closed_at"`
+	Head        SHA           `json:"head"`
 }
 
 // NewNonce returns 16 crypto/rand bytes hex-encoded (32 characters). Create

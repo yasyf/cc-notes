@@ -59,25 +59,82 @@ type leaseDTO struct {
 // the derived blocks reverse index, the commits that implement the task, and
 // the lease.
 type taskDTO struct {
+	ID           string         `json:"id"`
+	Branch       string         `json:"branch"`
+	Title        string         `json:"title"`
+	Description  string         `json:"description"`
+	Type         string         `json:"type"`
+	Status       string         `json:"status"`
+	Priority     int            `json:"priority"`
+	Assignee     *string        `json:"assignee"`
+	Labels       []string       `json:"labels"`
+	BlockedBy    []string       `json:"blocked_by"`
+	Blocks       []string       `json:"blocks"`
+	Parent       *string        `json:"parent"`
+	Comments     []commentDTO   `json:"comments"`
+	Commits      []string       `json:"commits"`
+	Lease        leaseDTO       `json:"lease"`
+	CreatedAt    string         `json:"created_at"`
+	UpdatedAt    string         `json:"updated_at"`
+	StartedAt    *string        `json:"started_at"`
+	ClosedAt     *string        `json:"closed_at"`
+	Sprint       *string        `json:"sprint"`
+	Project      *string        `json:"project"`
+	Criteria     []criterionDTO `json:"criteria"`
+	ClosedForced bool           `json:"closed_forced"`
+}
+
+// criterionDTO is one structured acceptance criterion: the full nonce id, its
+// text, the optional check script (empty when none), and the latest validation
+// status.
+type criterionDTO struct {
+	ID     string `json:"id"`
+	Text   string `json:"text"`
+	Script string `json:"script"`
+	Status string `json:"status"`
+}
+
+// sprintDTO fixes the JSON field order and formats for sprint output: full hex
+// ids, RFC3339 UTC timestamps, null for unset optionals, the user-set
+// start/end dates (null when 0), sorted set slices, and the full-hex ids of the
+// sprint's tasks (the reverse index, passed in).
+type sprintDTO struct {
 	ID          string       `json:"id"`
-	Branch      string       `json:"branch"`
+	Project     *string      `json:"project"`
 	Title       string       `json:"title"`
 	Description string       `json:"description"`
-	Type        string       `json:"type"`
 	Status      string       `json:"status"`
-	Priority    int          `json:"priority"`
-	Assignee    *string      `json:"assignee"`
+	StartDate   *string      `json:"start_date"`
+	EndDate     *string      `json:"end_date"`
 	Labels      []string     `json:"labels"`
-	BlockedBy   []string     `json:"blocked_by"`
-	Blocks      []string     `json:"blocks"`
-	Parent      *string      `json:"parent"`
-	Comments    []commentDTO `json:"comments"`
 	Commits     []string     `json:"commits"`
-	Lease       leaseDTO     `json:"lease"`
+	Comments    []commentDTO `json:"comments"`
+	Author      string       `json:"author"`
 	CreatedAt   string       `json:"created_at"`
 	UpdatedAt   string       `json:"updated_at"`
 	StartedAt   *string      `json:"started_at"`
 	ClosedAt    *string      `json:"closed_at"`
+	Tasks       []string     `json:"tasks"`
+}
+
+// projectDTO fixes the JSON field order and formats for project output: full
+// hex ids, RFC3339 UTC timestamps, null for unset optionals, sorted set slices,
+// and the full-hex ids of the project's sprints and tasks (the reverse indexes,
+// passed in).
+type projectDTO struct {
+	ID          string       `json:"id"`
+	Title       string       `json:"title"`
+	Description string       `json:"description"`
+	Status      string       `json:"status"`
+	Labels      []string     `json:"labels"`
+	Commits     []string     `json:"commits"`
+	Comments    []commentDTO `json:"comments"`
+	Author      string       `json:"author"`
+	CreatedAt   string       `json:"created_at"`
+	UpdatedAt   string       `json:"updated_at"`
+	ClosedAt    *string      `json:"closed_at"`
+	Sprints     []string     `json:"sprints"`
+	Tasks       []string     `json:"tasks"`
 }
 
 // statusDTO fixes the JSON field order for a status report: the current
@@ -213,30 +270,107 @@ func newNoteDTO(n model.Note, drift string) noteDTO {
 }
 
 func newTaskDTO(t model.Task, blocks []model.EntityID) taskDTO {
-	comments := make([]commentDTO, len(t.Comments))
-	for i, c := range t.Comments {
-		comments[i] = commentDTO{Author: string(c.Author), TS: rfc3339(c.TS), Body: c.Body}
-	}
 	return taskDTO{
-		ID:          string(t.ID),
-		Branch:      string(t.Branch),
-		Title:       t.Title,
-		Description: t.Description,
-		Type:        string(t.Type),
-		Status:      string(t.Status),
-		Priority:    int(t.Priority),
-		Assignee:    optString(string(t.Assignee)),
-		Labels:      emptyNotNil(t.Labels),
-		BlockedBy:   idStrings(t.BlockedBy),
-		Blocks:      idStrings(blocks),
-		Parent:      optString(string(t.Parent)),
-		Comments:    comments,
-		Commits:     shaStrings(t.Commits),
-		Lease:       leaseDTO{Holder: optString(string(t.Assignee)), Heartbeat: optTime(t.HeartbeatAt)},
-		CreatedAt:   rfc3339(t.CreatedAt),
-		UpdatedAt:   rfc3339(t.UpdatedAt),
-		StartedAt:   optTime(t.StartedAt),
-		ClosedAt:    optTime(t.ClosedAt),
+		ID:           string(t.ID),
+		Branch:       string(t.Branch),
+		Title:        t.Title,
+		Description:  t.Description,
+		Type:         string(t.Type),
+		Status:       string(t.Status),
+		Priority:     int(t.Priority),
+		Assignee:     optString(string(t.Assignee)),
+		Labels:       emptyNotNil(t.Labels),
+		BlockedBy:    idStrings(t.BlockedBy),
+		Blocks:       idStrings(blocks),
+		Parent:       optString(string(t.Parent)),
+		Comments:     commentDTOs(t.Comments),
+		Commits:      shaStrings(t.Commits),
+		Lease:        leaseDTO{Holder: optString(string(t.Assignee)), Heartbeat: optTime(t.HeartbeatAt)},
+		CreatedAt:    rfc3339(t.CreatedAt),
+		UpdatedAt:    rfc3339(t.UpdatedAt),
+		StartedAt:    optTime(t.StartedAt),
+		ClosedAt:     optTime(t.ClosedAt),
+		Sprint:       optString(string(t.Sprint)),
+		Project:      optString(string(t.Project)),
+		Criteria:     criterionDTOs(t.Criteria),
+		ClosedForced: closedForced(t),
+	}
+}
+
+// criterionDTOs renders a task's criteria as DTOs, always non-nil so JSON
+// serializes an empty list rather than null.
+func criterionDTOs(criteria []model.Criterion) []criterionDTO {
+	out := make([]criterionDTO, len(criteria))
+	for i, c := range criteria {
+		out[i] = criterionDTO{ID: c.ID, Text: c.Text, Script: c.Script, Status: string(c.Status)}
+	}
+	return out
+}
+
+// closedForced reports whether a done task was closed with at least one
+// criterion still unmet — the force-close escape hatch leaves a visible mark.
+func closedForced(t model.Task) bool {
+	if t.Status != model.StatusDone {
+		return false
+	}
+	for _, c := range t.Criteria {
+		if c.Status != model.CriterionMet {
+			return true
+		}
+	}
+	return false
+}
+
+// commentDTOs renders a folded comment slice into its DTO form with RFC3339 UTC
+// timestamps.
+func commentDTOs(comments []model.Comment) []commentDTO {
+	out := make([]commentDTO, len(comments))
+	for i, c := range comments {
+		out[i] = commentDTO{Author: string(c.Author), TS: rfc3339(c.TS), Body: c.Body}
+	}
+	return out
+}
+
+// newSprintDTO renders a sprint snapshot plus its reverse-index task ids into
+// its fixed-order DTO.
+func newSprintDTO(s model.Sprint, tasks []model.EntityID) sprintDTO {
+	return sprintDTO{
+		ID:          string(s.ID),
+		Project:     optString(string(s.Project)),
+		Title:       s.Title,
+		Description: s.Description,
+		Status:      string(s.Status),
+		StartDate:   optTime(s.StartDate),
+		EndDate:     optTime(s.EndDate),
+		Labels:      emptyNotNil(s.Labels),
+		Commits:     shaStrings(s.Commits),
+		Comments:    commentDTOs(s.Comments),
+		Author:      string(s.Author),
+		CreatedAt:   rfc3339(s.CreatedAt),
+		UpdatedAt:   rfc3339(s.UpdatedAt),
+		StartedAt:   optTime(s.StartedAt),
+		ClosedAt:    optTime(s.ClosedAt),
+		Tasks:       idStrings(tasks),
+	}
+}
+
+// newProjectDTO renders a project snapshot plus its reverse-index sprint and
+// task ids into its fixed-order DTO.
+func newProjectDTO(p model.Project, sprints, tasks []model.EntityID) projectDTO {
+	return projectDTO{
+		ID:          string(p.ID),
+		Title:       p.Title,
+		Description: p.Description,
+		Status:      string(p.Status),
+		Labels:      emptyNotNil(p.Labels),
+		Commits:     shaStrings(p.Commits),
+		Comments:    commentDTOs(p.Comments),
+		Author:      string(p.Author),
+		CreatedAt:   rfc3339(p.CreatedAt),
+		UpdatedAt:   rfc3339(p.UpdatedAt),
+		ClosedAt:    optTime(p.ClosedAt),
+		Sprints:     idStrings(sprints),
+		Tasks:       idStrings(tasks),
 	}
 }
 
@@ -313,6 +447,75 @@ func renderTaskShow(t model.Task, blocks []model.EntityID) string {
 		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, rfc3339(c.TS), c.Body)
 	}
 	return b.String()
+}
+
+// renderSprintShow renders the lean show view of a sprint: the fixed-order
+// header block (project as a short id), the description separated by a blank
+// line, each comment as a "-- <author> <RFC3339>" block, then a tasks header
+// listing the short ids of the sprint's tasks.
+func renderSprintShow(s model.Sprint, tasks []model.EntityID) string {
+	var b strings.Builder
+	header(&b, "id", string(s.ID))
+	header(&b, "project", orDash(shortID(s.Project)))
+	header(&b, "title", s.Title)
+	header(&b, "status", string(s.Status))
+	header(&b, "start_date", orDash(optTimeString(s.StartDate)))
+	header(&b, "end_date", orDash(optTimeString(s.EndDate)))
+	header(&b, "labels", csvOrDash(s.Labels))
+	header(&b, "created", rfc3339(s.CreatedAt))
+	header(&b, "updated", rfc3339(s.UpdatedAt))
+	header(&b, "started", orDash(optTimeString(s.StartedAt)))
+	header(&b, "closed", orDash(optTimeString(s.ClosedAt)))
+	header(&b, "commits", csvOrDash(shortSHAs(s.Commits)))
+	if s.Description != "" {
+		b.WriteByte('\n')
+		b.WriteString(s.Description)
+		b.WriteByte('\n')
+	}
+	for _, c := range s.Comments {
+		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, rfc3339(c.TS), c.Body)
+	}
+	header(&b, "tasks", csvOrDash(shortIDs(tasks)))
+	return b.String()
+}
+
+// renderProjectShow renders the lean show view of a project: the fixed-order
+// header block, the description separated by a blank line, each comment as a
+// "-- <author> <RFC3339>" block, then sprints and tasks headers listing the
+// short ids of the project's sprints and tasks.
+func renderProjectShow(p model.Project, sprints, tasks []model.EntityID) string {
+	var b strings.Builder
+	header(&b, "id", string(p.ID))
+	header(&b, "title", p.Title)
+	header(&b, "status", string(p.Status))
+	header(&b, "labels", csvOrDash(p.Labels))
+	header(&b, "created", rfc3339(p.CreatedAt))
+	header(&b, "updated", rfc3339(p.UpdatedAt))
+	header(&b, "closed", orDash(optTimeString(p.ClosedAt)))
+	header(&b, "commits", csvOrDash(shortSHAs(p.Commits)))
+	if p.Description != "" {
+		b.WriteByte('\n')
+		b.WriteString(p.Description)
+		b.WriteByte('\n')
+	}
+	for _, c := range p.Comments {
+		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, rfc3339(c.TS), c.Body)
+	}
+	header(&b, "sprints", csvOrDash(shortIDs(sprints)))
+	header(&b, "tasks", csvOrDash(shortIDs(tasks)))
+	return b.String()
+}
+
+// leanSprintLine renders the tab-separated sprint line:
+// <short7>\t<status>\t<title>.
+func leanSprintLine(s model.Sprint) string {
+	return fmt.Sprintf("%s\t%s\t%s", s.ID.Short(), s.Status, s.Title)
+}
+
+// leanProjectLine renders the tab-separated project line:
+// <short7>\t<status>\t<title>.
+func leanProjectLine(p model.Project) string {
+	return fmt.Sprintf("%s\t%s\t%s", p.ID.Short(), p.Status, p.Title)
 }
 
 // printJSON writes v as one compact JSON document with a trailing newline.

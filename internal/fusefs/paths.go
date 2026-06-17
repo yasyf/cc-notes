@@ -3,6 +3,7 @@ package fusefs
 import (
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/yasyf/cc-notes/internal/model"
@@ -27,8 +28,10 @@ var junkNames = map[string]bool{
 	".localized":            true,
 }
 
-// Node is one parsed mount path: Root, NotesDir, TasksRoot, NoteFile, or
-// TaskFile.
+// Node is one parsed mount path: the roots (Root, NotesDir, TasksRoot,
+// SprintsDir, ProjectsDir), the flat editable entity files (NoteFile, TaskFile,
+// SprintFile, ProjectFile), and the read-only nested browse tree of sprints and
+// projects whose task leaves are symlinks to the flat files.
 type Node interface {
 	node()
 }
@@ -54,11 +57,108 @@ type TaskFile struct {
 	ShortID string
 }
 
-func (Root) node()      {}
-func (NotesDir) node()  {}
-func (TasksRoot) node() {}
-func (NoteFile) node()  {}
-func (TaskFile) node()  {}
+// SprintsDir is the /sprints directory.
+type SprintsDir struct{}
+
+// ProjectsDir is the /projects directory.
+type ProjectsDir struct{}
+
+// SprintFile is a flat editable sprint file directly under /sprints, keyed by
+// its short id prefix.
+type SprintFile struct {
+	ShortID string
+}
+
+// ProjectFile is a flat editable project file directly under /projects, keyed
+// by its short id prefix.
+type ProjectFile struct {
+	ShortID string
+}
+
+// ProjectBrowseDir is the read-only /projects/<p> browse directory for one
+// project, holding its sprints/ and tasks/ subtrees.
+type ProjectBrowseDir struct {
+	ProjShort string
+}
+
+// ProjectSprintsDir is /projects/<p>/sprints, listing the project's sprints as
+// browse subdirectories.
+type ProjectSprintsDir struct {
+	ProjShort string
+}
+
+// ProjectSprintDir is /projects/<p>/sprints/<s>, one of a project's sprints.
+type ProjectSprintDir struct {
+	ProjShort   string
+	SprintShort string
+}
+
+// ProjectSprintTasksDir is /projects/<p>/sprints/<s>/tasks, listing that
+// sprint's tasks as symlinks to the flat /tasks files.
+type ProjectSprintTasksDir struct {
+	ProjShort   string
+	SprintShort string
+}
+
+// ProjectSprintTaskLink is /projects/<p>/sprints/<s>/tasks/<t>.json, a symlink
+// to the flat /tasks/<t>.json file.
+type ProjectSprintTaskLink struct {
+	ProjShort   string
+	SprintShort string
+	TaskShort   string
+}
+
+// ProjectTasksDir is /projects/<p>/tasks, listing the project's tasks as
+// symlinks to the flat /tasks files.
+type ProjectTasksDir struct {
+	ProjShort string
+}
+
+// ProjectTaskLink is /projects/<p>/tasks/<t>.json, a symlink to the flat
+// /tasks/<t>.json file.
+type ProjectTaskLink struct {
+	ProjShort string
+	TaskShort string
+}
+
+// SprintBrowseDir is the read-only /sprints/<s> browse directory for one
+// sprint, holding its tasks/ subtree.
+type SprintBrowseDir struct {
+	SprintShort string
+}
+
+// SprintTasksDir is /sprints/<s>/tasks, listing the sprint's tasks as symlinks
+// to the flat /tasks files.
+type SprintTasksDir struct {
+	SprintShort string
+}
+
+// SprintTaskLink is /sprints/<s>/tasks/<t>.json, a symlink to the flat
+// /tasks/<t>.json file.
+type SprintTaskLink struct {
+	SprintShort string
+	TaskShort   string
+}
+
+func (Root) node()                  {}
+func (NotesDir) node()              {}
+func (TasksRoot) node()             {}
+func (NoteFile) node()              {}
+func (TaskFile) node()              {}
+func (SprintsDir) node()            {}
+func (ProjectsDir) node()           {}
+func (SprintFile) node()            {}
+func (ProjectFile) node()           {}
+func (ProjectBrowseDir) node()      {}
+func (ProjectSprintsDir) node()     {}
+func (ProjectSprintDir) node()      {}
+func (ProjectSprintTasksDir) node() {}
+func (ProjectSprintTaskLink) node() {}
+func (ProjectTasksDir) node()       {}
+func (ProjectTaskLink) node()       {}
+func (SprintBrowseDir) node()       {}
+func (SprintTasksDir) node()        {}
+func (SprintTaskLink) node()        {}
 
 // NoteFilename names a note file "<short7>-<slug>.md", dropping the slug
 // part when the title yields none.
@@ -71,6 +171,12 @@ func NoteFilename(n model.Note) string {
 
 // TaskFilename names a task file "<short7>.json".
 func TaskFilename(t model.Task) string { return t.ID.Short() + ".json" }
+
+// SprintFilename names a sprint file "<short7>.json".
+func SprintFilename(s model.Sprint) string { return s.ID.Short() + ".json" }
+
+// ProjectFilename names a project file "<short7>.json".
+func ProjectFilename(p model.Project) string { return p.ID.Short() + ".json" }
 
 // slug lowercases the title and joins its [a-z0-9]+ runs with dashes,
 // capped at maxSlugLen.
@@ -163,7 +269,152 @@ func ParsePath(path string) (Node, error) {
 		default:
 			return nil, fmt.Errorf("%w: tasks do not nest: %q", ErrPath, path)
 		}
+	case "sprints":
+		return parseSprints(path, tail)
+	case "projects":
+		return parseProjects(path, tail)
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrPath, path)
 	}
+}
+
+// parseSprints decodes the /sprints subtree: the flat "<short7>.json" sprint
+// file, the "<short7>" browse directory, and the nested tasks/ symlink leaves.
+// It is purely syntactic — membership of <t> in <s> is enforced by fs.go.
+func parseSprints(full string, tail []string) (Node, error) {
+	switch len(tail) {
+	case 0:
+		return SprintsDir{}, nil
+	case 1:
+		if strings.HasSuffix(tail[0], ".json") {
+			shortID, ok := ShortIDOf(tail[0])
+			if !ok {
+				return nil, errPath(full)
+			}
+			return SprintFile{ShortID: shortID}, nil
+		}
+		sprint, ok := shortIDDir(tail[0])
+		if !ok {
+			return nil, errPath(full)
+		}
+		return SprintBrowseDir{SprintShort: sprint}, nil
+	}
+	sprint, ok := shortIDDir(tail[0])
+	if !ok || tail[1] != "tasks" {
+		return nil, errPath(full)
+	}
+	switch len(tail) {
+	case 2:
+		return SprintTasksDir{SprintShort: sprint}, nil
+	case 3:
+		task, ok := taskLinkID(tail[2])
+		if !ok {
+			return nil, errPath(full)
+		}
+		return SprintTaskLink{SprintShort: sprint, TaskShort: task}, nil
+	}
+	return nil, errPath(full)
+}
+
+// parseProjects decodes the /projects subtree: the flat "<short7>.json" project
+// file, the "<short7>" browse directory, and the nested sprints/ and tasks/
+// branches whose symlink leaves point at the flat task files. It is purely
+// syntactic — membership of <s> in <p> and <t> in <s>/<p> is enforced by fs.go.
+func parseProjects(full string, tail []string) (Node, error) {
+	switch len(tail) {
+	case 0:
+		return ProjectsDir{}, nil
+	case 1:
+		if strings.HasSuffix(tail[0], ".json") {
+			shortID, ok := ShortIDOf(tail[0])
+			if !ok {
+				return nil, errPath(full)
+			}
+			return ProjectFile{ShortID: shortID}, nil
+		}
+		proj, ok := shortIDDir(tail[0])
+		if !ok {
+			return nil, errPath(full)
+		}
+		return ProjectBrowseDir{ProjShort: proj}, nil
+	}
+	proj, ok := shortIDDir(tail[0])
+	if !ok {
+		return nil, errPath(full)
+	}
+	switch tail[1] {
+	case "tasks":
+		switch len(tail) {
+		case 2:
+			return ProjectTasksDir{ProjShort: proj}, nil
+		case 3:
+			task, ok := taskLinkID(tail[2])
+			if !ok {
+				return nil, errPath(full)
+			}
+			return ProjectTaskLink{ProjShort: proj, TaskShort: task}, nil
+		}
+	case "sprints":
+		switch len(tail) {
+		case 2:
+			return ProjectSprintsDir{ProjShort: proj}, nil
+		case 3, 4, 5:
+			sprint, ok := shortIDDir(tail[2])
+			if !ok {
+				return nil, errPath(full)
+			}
+			if len(tail) == 3 {
+				return ProjectSprintDir{ProjShort: proj, SprintShort: sprint}, nil
+			}
+			if tail[3] != "tasks" {
+				return nil, errPath(full)
+			}
+			if len(tail) == 4 {
+				return ProjectSprintTasksDir{ProjShort: proj, SprintShort: sprint}, nil
+			}
+			task, ok := taskLinkID(tail[4])
+			if !ok {
+				return nil, errPath(full)
+			}
+			return ProjectSprintTaskLink{ProjShort: proj, SprintShort: sprint, TaskShort: task}, nil
+		}
+	}
+	return nil, errPath(full)
+}
+
+// SymlinkTarget returns the relative symlink target from an absolute link path
+// to a flat file flatRel under the mount root. It emits one "../" per path
+// component in path.Dir(linkPath) — enough to climb back to the root — then
+// flatRel. For /projects/<p>/sprints/<s>/tasks/<t>.json with flatRel
+// "tasks/<t>.json" it returns "../../../../../tasks/<t>.json".
+func SymlinkTarget(linkPath, flatRel string) string {
+	return strings.Repeat("../", strings.Count(path.Dir(linkPath), "/")) + flatRel
+}
+
+// shortIDDir validates a bare browse-directory component: a non-empty run of
+// hex with no suffix, naming a project or sprint subtree. The ".json" flat-file
+// names are matched before this, so a browse dir never collides with a file.
+func shortIDDir(name string) (string, bool) {
+	if name == "" {
+		return "", false
+	}
+	for i := range len(name) {
+		if !isHex(name[i]) {
+			return "", false
+		}
+	}
+	return name, true
+}
+
+// taskLinkID extracts the task short id from a "<short7>.json" symlink leaf.
+func taskLinkID(name string) (string, bool) {
+	shortID, ok := ShortIDOf(name)
+	if !ok || !strings.HasSuffix(name, ".json") {
+		return "", false
+	}
+	return shortID, true
+}
+
+func errPath(full string) error {
+	return fmt.Errorf("%w: %q", ErrPath, full)
 }

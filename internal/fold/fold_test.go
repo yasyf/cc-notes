@@ -104,6 +104,7 @@ func TestFoldTaskLifecycle(t *testing.T) {
 		StartedAt:        200,
 		ClosedAt:         400,
 		Commits:          []model.SHA{},
+		Criteria:         []model.Criterion{},
 		Head:             "ddd",
 	}
 	got, err := fold.Task(chain)
@@ -232,6 +233,30 @@ func TestFoldConcurrentClaim(t *testing.T) {
 func taskChain(ops ...model.Op) []model.PackCommit {
 	chain := []model.PackCommit{
 		mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+	}
+	for i, op := range ops {
+		sha := fmt.Sprintf("c%02d", i)
+		chain = append(chain, mk(sha, []string{string(chain[len(chain)-1].SHA)}, "actor", 200+100*int64(i), uint64(i)+2, op))
+	}
+	return chain
+}
+
+// sprintChain builds a linear sprint chain in the shape of taskChain.
+func sprintChain(ops ...model.Op) []model.PackCommit {
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateSprint{Nonce: "n", Title: "s"}),
+	}
+	for i, op := range ops {
+		sha := fmt.Sprintf("c%02d", i)
+		chain = append(chain, mk(sha, []string{string(chain[len(chain)-1].SHA)}, "actor", 200+100*int64(i), uint64(i)+2, op))
+	}
+	return chain
+}
+
+// projectChain builds a linear project chain in the shape of taskChain.
+func projectChain(ops ...model.Op) []model.PackCommit {
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateProject{Nonce: "n", Title: "p"}),
 	}
 	for i, op := range ops {
 		sha := fmt.Sprintf("c%02d", i)
@@ -513,6 +538,7 @@ func TestFoldMultiMergeDeterminism(t *testing.T) {
 		StartedAt:        400,
 		ClosedAt:         600,
 		Commits:          []model.SHA{},
+		Criteria:         []model.Criterion{},
 		Head:             "hhh",
 	}
 	for i, input := range shuffles(dag, 50) {
@@ -688,6 +714,8 @@ func TestFoldSupersededConverges(t *testing.T) {
 func TestFoldErrors(t *testing.T) {
 	noteRoot := mk("aaa", nil, "alice", 100, 1, model.CreateNote{Nonce: "n"})
 	taskRoot := mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Type: model.TypeTask, Branch: "main"})
+	sprintRoot := mk("aaa", nil, "alice", 100, 1, model.CreateSprint{Nonce: "n"})
+	projectRoot := mk("aaa", nil, "alice", 100, 1, model.CreateProject{Nonce: "n"})
 	cases := []struct {
 		name    string
 		commits []model.PackCommit
@@ -777,6 +805,114 @@ func TestFoldErrors(t *testing.T) {
 			commits: []model.PackCommit{noteRoot},
 			via:     taskErr,
 			want:    fold.ErrKindMismatch,
+		},
+		{
+			name: "sprint status op on a task chain",
+			commits: []model.PackCommit{
+				taskRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetSprintStatus{Status: model.SprintActive}),
+			},
+			via:  taskErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "project status op on a task chain",
+			commits: []model.PackCommit{
+				taskRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetProjectStatus{Status: model.ProjectArchived}),
+			},
+			via:  taskErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "start date op on a task chain",
+			commits: []model.PackCommit{
+				taskRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetStartDate{Date: 1000}),
+			},
+			via:  taskErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "end date op on a task chain",
+			commits: []model.PackCommit{
+				taskRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetEndDate{Date: 2000}),
+			},
+			via:  taskErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "task status op on a sprint chain",
+			commits: []model.PackCommit{
+				sprintRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetStatus{Status: model.StatusDone}),
+			},
+			via:  sprintErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "set_sprint op on a sprint chain",
+			commits: []model.PackCommit{
+				sprintRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetSprint{Sprint: "feedface"}),
+			},
+			via:  sprintErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name:    "task chain folded as sprint",
+			commits: []model.PackCommit{taskRoot},
+			via:     sprintErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "note chain folded as sprint",
+			commits: []model.PackCommit{noteRoot},
+			via:     sprintErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name: "task status op on a project chain",
+			commits: []model.PackCommit{
+				projectRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetStatus{Status: model.StatusDone}),
+			},
+			via:  projectErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "sprint status op on a project chain",
+			commits: []model.PackCommit{
+				projectRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetSprintStatus{Status: model.SprintActive}),
+			},
+			via:  projectErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name:    "sprint chain folded as project",
+			commits: []model.PackCommit{sprintRoot},
+			via:     projectErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name: "second create_sprint",
+			commits: []model.PackCommit{
+				sprintRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.CreateSprint{Nonce: "m"}),
+			},
+			via:  sprintErr,
+			want: fold.ErrDuplicateCreate,
+		},
+		{
+			name: "second create_project",
+			commits: []model.PackCommit{
+				projectRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.CreateProject{Nonce: "m"}),
+			},
+			via:  projectErr,
+			want: fold.ErrDuplicateCreate,
 		},
 		{
 			name: "linearize error propagates through Fold",
@@ -1003,6 +1139,36 @@ func TestFoldReclaimConvergence(t *testing.T) {
 	}
 }
 
+func TestFoldReclaimClearsClosedAt(t *testing.T) {
+	// create → bob claims → bob marks done (stamps ClosedAt) → carol reclaims.
+	// The reclaim re-opens the task to in_progress, which must clear the close
+	// stamp while leaving the original claim's StartedAt intact. bob's heartbeat
+	// lamport rides up to 3 on the done commit, so after_lamport=3 makes the
+	// reclaim fire.
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2, model.Claim{Assignee: "bob"}),
+		mk("ccc", []string{"bbb"}, "bob", 300, 3, model.SetStatus{Status: model.StatusDone}),
+		mk("ddd", []string{"ccc"}, "carol", 400, 4, model.Reclaim{Assignee: "carol", From: "bob", AfterLamport: 3}),
+	}
+	got, err := fold.Task(chain)
+	if err != nil {
+		t.Fatalf("Task() error = %v", err)
+	}
+	if got.Status != model.StatusInProgress {
+		t.Fatalf("Status = %q, want %q", got.Status, model.StatusInProgress)
+	}
+	if got.Assignee != "carol" {
+		t.Fatalf("Assignee = %q, want carol", got.Assignee)
+	}
+	if got.ClosedAt != 0 {
+		t.Fatalf("ClosedAt = %d, want 0 (reclaim re-opens and clears the close stamp)", got.ClosedAt)
+	}
+	if got.StartedAt != 200 {
+		t.Fatalf("StartedAt = %d, want 200 (reclaim must not reset the original claim's start)", got.StartedAt)
+	}
+}
+
 func TestFoldCommitLinkInterleavings(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -1050,6 +1216,446 @@ func TestFoldCommitLinkInterleavings(t *testing.T) {
 	}
 }
 
+func TestFoldSprintLifecycle(t *testing.T) {
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateSprint{
+			Nonce:       "n",
+			Title:       "Sprint 1",
+			Description: "first sprint",
+			Project:     "proj0",
+			Labels:      []string{"q3"},
+		}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2,
+			model.SetTitle{Title: "Sprint One"},
+			model.SetDescription{Description: "the first sprint"},
+			model.AddLabel{Label: "planning"},
+		),
+		mk("ccc", []string{"bbb"}, "bob", 300, 3,
+			model.SetProject{Project: "proj1"},
+			model.SetStartDate{Date: 1000},
+			model.SetEndDate{Date: 2000},
+		),
+		mk("ddd", []string{"ccc"}, "carol", 400, 4,
+			model.SetSprintStatus{Status: model.SprintActive},
+			model.LinkCommit{SHA: "sha1"},
+			model.AddComment{Body: "kickoff"},
+		),
+		mk("eee", []string{"ddd"}, "dave", 500, 5,
+			model.AddLabel{Label: "alpha"},
+			model.RemoveLabel{Label: "q3"},
+			model.UnlinkCommit{SHA: "sha1"},
+			model.LinkCommit{SHA: "sha2"},
+			model.AddComment{Body: "midpoint"},
+		),
+	}
+	want := model.Sprint{
+		ID:          "aaa",
+		Project:     "proj1",
+		Title:       "Sprint One",
+		Description: "the first sprint",
+		Status:      model.SprintActive,
+		StartDate:   1000,
+		EndDate:     2000,
+		Labels:      []string{"alpha", "planning"},
+		Commits:     []model.SHA{"sha2"},
+		Comments: []model.Comment{
+			{Author: "carol", TS: 400, Body: "kickoff"},
+			{Author: "dave", TS: 500, Body: "midpoint"},
+		},
+		Author:    "alice",
+		CreatedAt: 100,
+		UpdatedAt: 500,
+		StartedAt: 400,
+		Head:      "eee",
+	}
+	got, err := fold.Sprint(chain)
+	if err != nil {
+		t.Fatalf("Sprint() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Sprint() = %+v, want %+v", got, want)
+	}
+	snap, err := fold.Fold(chain)
+	if err != nil {
+		t.Fatalf("Fold() error = %v", err)
+	}
+	dispatched, ok := snap.(model.Sprint)
+	if !ok {
+		t.Fatalf("Fold() = %T, want model.Sprint", snap)
+	}
+	if !reflect.DeepEqual(dispatched, want) {
+		t.Fatalf("Fold() = %+v, want %+v", dispatched, want)
+	}
+	if snap.EntityID() != "aaa" {
+		t.Fatalf("EntityID() = %q, want %q", snap.EntityID(), "aaa")
+	}
+}
+
+func TestFoldSprintStatusTimestamps(t *testing.T) {
+	chain := sprintChain(
+		model.SetSprintStatus{Status: model.SprintActive},    // t=200
+		model.SetSprintStatus{Status: model.SprintCompleted}, // t=300
+		model.SetSprintStatus{Status: model.SprintActive},    // t=400
+		model.SetSprintStatus{Status: model.SprintCancelled}, // t=500
+	)
+	cases := []struct {
+		name        string
+		prefix      int
+		wantStatus  model.SprintStatus
+		wantStarted int64
+		wantClosed  int64
+	}{
+		{name: "active stamps started", prefix: 2, wantStatus: model.SprintActive, wantStarted: 200},
+		{name: "completed stamps closed", prefix: 3, wantStatus: model.SprintCompleted, wantStarted: 200, wantClosed: 300},
+		{name: "reactivate resets started and clears closed", prefix: 4, wantStatus: model.SprintActive, wantStarted: 400},
+		{name: "cancelled stamps closed keeps started", prefix: 5, wantStatus: model.SprintCancelled, wantStarted: 400, wantClosed: 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := fold.Sprint(chain[:tc.prefix])
+			if err != nil {
+				t.Fatalf("Sprint() error = %v", err)
+			}
+			if got.Status != tc.wantStatus {
+				t.Fatalf("Status = %q, want %q", got.Status, tc.wantStatus)
+			}
+			if got.StartedAt != tc.wantStarted {
+				t.Fatalf("StartedAt = %d, want %d", got.StartedAt, tc.wantStarted)
+			}
+			if got.ClosedAt != tc.wantClosed {
+				t.Fatalf("ClosedAt = %d, want %d", got.ClosedAt, tc.wantClosed)
+			}
+		})
+	}
+}
+
+func TestFoldSprintDates(t *testing.T) {
+	chain := sprintChain(
+		model.SetStartDate{Date: 1000}, // t=200
+		model.SetEndDate{Date: 2000},   // t=300
+		model.SetStartDate{Date: 0},    // t=400 clears start
+		model.SetEndDate{Date: 0},      // t=500 clears end
+	)
+	cases := []struct {
+		name          string
+		prefix        int
+		wantStartDate int64
+		wantEndDate   int64
+	}{
+		{name: "start set", prefix: 2, wantStartDate: 1000},
+		{name: "end set", prefix: 3, wantStartDate: 1000, wantEndDate: 2000},
+		{name: "start cleared", prefix: 4, wantStartDate: 0, wantEndDate: 2000},
+		{name: "end cleared", prefix: 5, wantStartDate: 0, wantEndDate: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := fold.Sprint(chain[:tc.prefix])
+			if err != nil {
+				t.Fatalf("Sprint() error = %v", err)
+			}
+			if got.StartDate != tc.wantStartDate {
+				t.Fatalf("StartDate = %d, want %d", got.StartDate, tc.wantStartDate)
+			}
+			if got.EndDate != tc.wantEndDate {
+				t.Fatalf("EndDate = %d, want %d", got.EndDate, tc.wantEndDate)
+			}
+		})
+	}
+}
+
+func TestFoldProjectLifecycle(t *testing.T) {
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateProject{
+			Nonce:       "n",
+			Title:       "Proj",
+			Description: "the project",
+			Labels:      []string{"core"},
+		}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2,
+			model.SetTitle{Title: "Project X"},
+			model.SetDescription{Description: "project x"},
+			model.AddLabel{Label: "active-work"},
+			model.AddComment{Body: "started"},
+		),
+		mk("ccc", []string{"bbb"}, "carol", 300, 3,
+			model.SetProjectStatus{Status: model.ProjectCompleted},
+			model.RemoveLabel{Label: "core"},
+			model.LinkCommit{SHA: "c1"},
+			model.AddComment{Body: "shipped"},
+		),
+	}
+	want := model.Project{
+		ID:          "aaa",
+		Title:       "Project X",
+		Description: "project x",
+		Status:      model.ProjectCompleted,
+		Labels:      []string{"active-work"},
+		Commits:     []model.SHA{"c1"},
+		Comments: []model.Comment{
+			{Author: "bob", TS: 200, Body: "started"},
+			{Author: "carol", TS: 300, Body: "shipped"},
+		},
+		Author:    "alice",
+		CreatedAt: 100,
+		UpdatedAt: 300,
+		ClosedAt:  300,
+		Head:      "ccc",
+	}
+	got, err := fold.Project(chain)
+	if err != nil {
+		t.Fatalf("Project() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Project() = %+v, want %+v", got, want)
+	}
+	snap, err := fold.Fold(chain)
+	if err != nil {
+		t.Fatalf("Fold() error = %v", err)
+	}
+	dispatched, ok := snap.(model.Project)
+	if !ok {
+		t.Fatalf("Fold() = %T, want model.Project", snap)
+	}
+	if !reflect.DeepEqual(dispatched, want) {
+		t.Fatalf("Fold() = %+v, want %+v", dispatched, want)
+	}
+	if snap.EntityID() != "aaa" {
+		t.Fatalf("EntityID() = %q, want %q", snap.EntityID(), "aaa")
+	}
+}
+
+func TestFoldProjectStatusTimestamps(t *testing.T) {
+	chain := projectChain(
+		model.SetProjectStatus{Status: model.ProjectCompleted}, // t=200
+		model.SetProjectStatus{Status: model.ProjectActive},    // t=300
+		model.SetProjectStatus{Status: model.ProjectArchived},  // t=400
+		model.SetProjectStatus{Status: model.ProjectCancelled}, // t=500
+	)
+	cases := []struct {
+		name       string
+		prefix     int
+		wantStatus model.ProjectStatus
+		wantClosed int64
+	}{
+		{name: "completed stamps closed", prefix: 2, wantStatus: model.ProjectCompleted, wantClosed: 200},
+		{name: "reactivate clears closed", prefix: 3, wantStatus: model.ProjectActive},
+		{name: "archived stamps closed", prefix: 4, wantStatus: model.ProjectArchived, wantClosed: 400},
+		{name: "cancelled stamps closed", prefix: 5, wantStatus: model.ProjectCancelled, wantClosed: 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := fold.Project(chain[:tc.prefix])
+			if err != nil {
+				t.Fatalf("Project() error = %v", err)
+			}
+			if got.Status != tc.wantStatus {
+				t.Fatalf("Status = %q, want %q", got.Status, tc.wantStatus)
+			}
+			if got.ClosedAt != tc.wantClosed {
+				t.Fatalf("ClosedAt = %d, want %d", got.ClosedAt, tc.wantClosed)
+			}
+		})
+	}
+}
+
+func TestFoldTaskCriteria(t *testing.T) {
+	cases := []struct {
+		name string
+		ops  []model.Op
+		want []model.Criterion
+	}{
+		{
+			name: "insertion order preserved",
+			ops: []model.Op{
+				model.AddCriterion{ID: "c1", Text: "one"},
+				model.AddCriterion{ID: "c2", Text: "two"},
+				model.AddCriterion{ID: "c3", Text: "three"},
+			},
+			want: []model.Criterion{
+				{ID: "c1", Text: "one", Status: model.CriterionPending},
+				{ID: "c2", Text: "two", Status: model.CriterionPending},
+				{ID: "c3", Text: "three", Status: model.CriterionPending},
+			},
+		},
+		{
+			name: "duplicate add id is a no-op",
+			ops: []model.Op{
+				model.AddCriterion{ID: "c1", Text: "one", Script: "keep"},
+				model.AddCriterion{ID: "c1", Text: "shadow", Script: "drop"},
+			},
+			want: []model.Criterion{
+				{ID: "c1", Text: "one", Script: "keep", Status: model.CriterionPending},
+			},
+		},
+		{
+			name: "set text status script by id",
+			ops: []model.Op{
+				model.AddCriterion{ID: "c1", Text: "one", Script: "old"},
+				model.SetCriterionText{ID: "c1", Text: "uno"},
+				model.SetCriterionStatus{ID: "c1", Status: model.CriterionMet},
+				model.SetCriterionScript{ID: "c1", Script: "new"},
+			},
+			want: []model.Criterion{
+				{ID: "c1", Text: "uno", Script: "new", Status: model.CriterionMet},
+			},
+		},
+		{
+			name: "remove middle preserves order",
+			ops: []model.Op{
+				model.AddCriterion{ID: "c1", Text: "one"},
+				model.AddCriterion{ID: "c2", Text: "two"},
+				model.AddCriterion{ID: "c3", Text: "three"},
+				model.RemoveCriterion{ID: "c2"},
+			},
+			want: []model.Criterion{
+				{ID: "c1", Text: "one", Status: model.CriterionPending},
+				{ID: "c3", Text: "three", Status: model.CriterionPending},
+			},
+		},
+		{
+			name: "set on absent id is a no-op",
+			ops: []model.Op{
+				model.AddCriterion{ID: "c1", Text: "one"},
+				model.SetCriterionText{ID: "ghost", Text: "x"},
+				model.SetCriterionStatus{ID: "ghost", Status: model.CriterionFailed},
+				model.SetCriterionScript{ID: "ghost", Script: "x"},
+			},
+			want: []model.Criterion{
+				{ID: "c1", Text: "one", Status: model.CriterionPending},
+			},
+		},
+		{
+			name: "remove on absent id is a no-op",
+			ops: []model.Op{
+				model.AddCriterion{ID: "c1", Text: "one"},
+				model.RemoveCriterion{ID: "ghost"},
+			},
+			want: []model.Criterion{
+				{ID: "c1", Text: "one", Status: model.CriterionPending},
+			},
+		},
+		{
+			name: "re-add after remove appends at end",
+			ops: []model.Op{
+				model.AddCriterion{ID: "c1", Text: "one"},
+				model.AddCriterion{ID: "c2", Text: "two"},
+				model.RemoveCriterion{ID: "c1"},
+				model.AddCriterion{ID: "c1", Text: "again"},
+			},
+			want: []model.Criterion{
+				{ID: "c2", Text: "two", Status: model.CriterionPending},
+				{ID: "c1", Text: "again", Status: model.CriterionPending},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := fold.Task(taskChain(tc.ops...))
+			if err != nil {
+				t.Fatalf("Task() error = %v", err)
+			}
+			if !reflect.DeepEqual(got.Criteria, tc.want) {
+				t.Fatalf("Criteria = %+v, want %+v", got.Criteria, tc.want)
+			}
+		})
+	}
+}
+
+func TestFoldTaskCriteriaEmpty(t *testing.T) {
+	got, err := fold.Task(taskChain())
+	if err != nil {
+		t.Fatalf("Task() error = %v", err)
+	}
+	if got.Criteria == nil {
+		t.Fatalf("Criteria = nil, want non-nil empty slice")
+	}
+	if len(got.Criteria) != 0 {
+		t.Fatalf("Criteria = %+v, want empty", got.Criteria)
+	}
+}
+
+func TestFoldTaskCriteriaConcurrent(t *testing.T) {
+	// Two concurrent AddCriterion: bbb and ccc share lamport and time, so the
+	// sha tiebreak (bbb < ccc) fixes the append order on every replica.
+	diamond := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Type: model.TypeTask, Branch: "main"}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddCriterion{ID: "cb", Text: "from-b"}),
+		mk("ccc", []string{"aaa"}, "carol", 200, 2, model.AddCriterion{ID: "cc", Text: "from-c"}),
+		mk("ddd", []string{"bbb", "ccc"}, "dave", 300, 3),
+	}
+	want := []model.Criterion{
+		{ID: "cb", Text: "from-b", Status: model.CriterionPending},
+		{ID: "cc", Text: "from-c", Status: model.CriterionPending},
+	}
+	for i, input := range permutations(diamond) {
+		got, err := fold.Task(input)
+		if err != nil {
+			t.Fatalf("permutation %d: Task() error = %v", i, err)
+		}
+		if !reflect.DeepEqual(got.Criteria, want) {
+			t.Fatalf("permutation %d: Criteria = %+v, want %+v", i, got.Criteria, want)
+		}
+	}
+}
+
+func TestFoldTaskMembershipLWW(t *testing.T) {
+	cases := []struct {
+		name         string
+		bOp, cOp     model.Op
+		bTime, cTime int64
+		wantSprint   model.EntityID
+		wantProject  model.EntityID
+	}{
+		{
+			name: "later sprint set wins",
+			bOp:  model.SetSprint{Sprint: "spr-b"}, cOp: model.SetSprint{Sprint: "spr-c"},
+			bTime: 200, cTime: 250, wantSprint: "spr-c",
+		},
+		{
+			name: "earlier sprint set loses",
+			bOp:  model.SetSprint{Sprint: "spr-b"}, cOp: model.SetSprint{Sprint: "spr-c"},
+			bTime: 250, cTime: 200, wantSprint: "spr-b",
+		},
+		{
+			name: "later sprint clear wins",
+			bOp:  model.SetSprint{Sprint: "spr-b"}, cOp: model.SetSprint{Sprint: ""},
+			bTime: 200, cTime: 250, wantSprint: "",
+		},
+		{
+			name: "later project set wins",
+			bOp:  model.SetProject{Project: "prj-b"}, cOp: model.SetProject{Project: "prj-c"},
+			bTime: 200, cTime: 250, wantProject: "prj-c",
+		},
+		{
+			name: "earlier project set loses",
+			bOp:  model.SetProject{Project: "prj-b"}, cOp: model.SetProject{Project: "prj-c"},
+			bTime: 250, cTime: 200, wantProject: "prj-b",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diamond := []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Type: model.TypeTask, Branch: "main"}),
+				mk("bbb", []string{"aaa"}, "bob", tc.bTime, 2, tc.bOp),
+				mk("ccc", []string{"aaa"}, "carol", tc.cTime, 2, tc.cOp),
+				mk("ddd", []string{"bbb", "ccc"}, "dave", 300, 3),
+			}
+			for i, input := range permutations(diamond) {
+				got, err := fold.Task(input)
+				if err != nil {
+					t.Fatalf("permutation %d: Task() error = %v", i, err)
+				}
+				if got.Sprint != tc.wantSprint {
+					t.Fatalf("permutation %d: Sprint = %q, want %q", i, got.Sprint, tc.wantSprint)
+				}
+				if got.Project != tc.wantProject {
+					t.Fatalf("permutation %d: Project = %q, want %q", i, got.Project, tc.wantProject)
+				}
+			}
+		})
+	}
+}
+
 func foldErr(commits []model.PackCommit) error {
 	_, err := fold.Fold(commits)
 	return err
@@ -1062,5 +1668,15 @@ func noteErr(commits []model.PackCommit) error {
 
 func taskErr(commits []model.PackCommit) error {
 	_, err := fold.Task(commits)
+	return err
+}
+
+func sprintErr(commits []model.PackCommit) error {
+	_, err := fold.Sprint(commits)
+	return err
+}
+
+func projectErr(commits []model.PackCommit) error {
+	_, err := fold.Project(commits)
 	return err
 }

@@ -149,6 +149,16 @@ func marshalOp(op Op) ([]byte, error) {
 			Kind string `json:"kind"`
 			CreateTask
 		}{o.OpKind(), o})
+	case CreateSprint:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			CreateSprint
+		}{o.OpKind(), o})
+	case CreateProject:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			CreateProject
+		}{o.OpKind(), o})
 	case SetDescription:
 		return json.Marshal(struct {
 			Kind string `json:"kind"`
@@ -234,6 +244,61 @@ func marshalOp(op Op) ([]byte, error) {
 			Kind string `json:"kind"`
 			SetBranch
 		}{o.OpKind(), o})
+	case SetSprint:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetSprint
+		}{o.OpKind(), o})
+	case SetProject:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetProject
+		}{o.OpKind(), o})
+	case SetSprintStatus:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetSprintStatus
+		}{o.OpKind(), o})
+	case SetProjectStatus:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetProjectStatus
+		}{o.OpKind(), o})
+	case SetStartDate:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetStartDate
+		}{o.OpKind(), o})
+	case SetEndDate:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetEndDate
+		}{o.OpKind(), o})
+	case AddCriterion:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			AddCriterion
+		}{o.OpKind(), o})
+	case RemoveCriterion:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			RemoveCriterion
+		}{o.OpKind(), o})
+	case SetCriterionText:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetCriterionText
+		}{o.OpKind(), o})
+	case SetCriterionStatus:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetCriterionStatus
+		}{o.OpKind(), o})
+	case SetCriterionScript:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetCriterionScript
+		}{o.OpKind(), o})
 	case Checkpoint:
 		return marshalCheckpoint(o)
 	}
@@ -263,6 +328,10 @@ func marshalCheckpoint(o Checkpoint) ([]byte, error) {
 		stateKind = "note"
 	case Task:
 		stateKind = "task"
+	case Sprint:
+		stateKind = "sprint"
+	case Project:
+		stateKind = "project"
 	default:
 		return nil, fmt.Errorf("%w: checkpoint state %T", ErrUnknownKind, o.State)
 	}
@@ -308,6 +377,18 @@ func decodeCheckpoint(raw json.RawMessage) (Op, error) {
 			return nil, fmt.Errorf("unmarshal checkpoint task state: %w", err)
 		}
 		state = t
+	case "sprint":
+		var s Sprint
+		if err := json.Unmarshal(wire.State, &s); err != nil {
+			return nil, fmt.Errorf("unmarshal checkpoint sprint state: %w", err)
+		}
+		state = s
+	case "project":
+		var p Project
+		if err := json.Unmarshal(wire.State, &p); err != nil {
+			return nil, fmt.Errorf("unmarshal checkpoint project state: %w", err)
+		}
+		state = p
 	default:
 		return nil, fmt.Errorf("%w: checkpoint state_kind %q", ErrInvalidValue, wire.StateKind)
 	}
@@ -348,6 +429,8 @@ var opDecoders = map[string]func(json.RawMessage) (Op, error){
 	AddSupersededBy{}.OpKind():    decodeAs[AddSupersededBy],
 	RemoveSupersededBy{}.OpKind(): decodeAs[RemoveSupersededBy],
 	CreateTask{}.OpKind():         decodeAs[CreateTask],
+	CreateSprint{}.OpKind():       decodeAs[CreateSprint],
+	CreateProject{}.OpKind():      decodeAs[CreateProject],
 	SetDescription{}.OpKind():     decodeAs[SetDescription],
 	SetType{}.OpKind():            decodeAs[SetType],
 	SetPriority{}.OpKind():        decodeAs[SetPriority],
@@ -365,6 +448,17 @@ var opDecoders = map[string]func(json.RawMessage) (Op, error){
 	SetParent{}.OpKind():          decodeAs[SetParent],
 	AddComment{}.OpKind():         decodeAs[AddComment],
 	SetBranch{}.OpKind():          decodeAs[SetBranch],
+	SetSprint{}.OpKind():          decodeAs[SetSprint],
+	SetProject{}.OpKind():         decodeAs[SetProject],
+	SetSprintStatus{}.OpKind():    decodeAs[SetSprintStatus],
+	SetProjectStatus{}.OpKind():   decodeAs[SetProjectStatus],
+	SetStartDate{}.OpKind():       decodeAs[SetStartDate],
+	SetEndDate{}.OpKind():         decodeAs[SetEndDate],
+	AddCriterion{}.OpKind():       decodeAs[AddCriterion],
+	RemoveCriterion{}.OpKind():    decodeAs[RemoveCriterion],
+	SetCriterionText{}.OpKind():   decodeAs[SetCriterionText],
+	SetCriterionStatus{}.OpKind(): decodeAs[SetCriterionStatus],
+	SetCriterionScript{}.OpKind(): decodeAs[SetCriterionScript],
 	Checkpoint{}.OpKind():         decodeCheckpoint,
 }
 

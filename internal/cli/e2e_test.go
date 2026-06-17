@@ -123,7 +123,7 @@ func mustBin(t *testing.T, dir, actor string, args ...string) string {
 // parsed JSON document.
 func addTaskBin(t *testing.T, dir, title string, extra ...string) taskJSON {
 	t.Helper()
-	args := append([]string{"task", "add", title, "--json"}, extra...)
+	args := append([]string{"task", "add", title, "--no-validation-criteria", "--json"}, extra...)
 	return mustJSON[taskJSON](t, mustBin(t, dir, actorA, args...))
 }
 
@@ -652,7 +652,7 @@ func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
 	mustGit(t, root, "clone", "-q", bare, "work")
 	mustGit(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 
-	res, err := execBin(dir, actorA, "task", "add", "First write")
+	res, err := execBin(dir, actorA, "task", "add", "First write", "--no-validation-criteria")
 	if err != nil {
 		t.Fatalf("cc-notes task add: %v", err)
 	}
@@ -668,7 +668,7 @@ func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
 	if res.Stderr != want {
 		t.Fatalf("first mutating command stderr = %q, want %q", res.Stderr, want)
 	}
-	mustBin(t, dir, actorA, "task", "add", "Second write")
+	mustBin(t, dir, actorA, "task", "add", "Second write", "--no-validation-criteria")
 }
 
 // TestTwoCloneSyncRoundTrip round-trips a task through a bare remote: clone A
@@ -688,7 +688,7 @@ func TestTwoCloneSyncRoundTrip(t *testing.T) {
 
 	cloneA := clone("a")
 	mustBin(t, cloneA, actorA, "init")
-	task := mustJSON[taskJSON](t, mustBin(t, cloneA, actorA, "task", "add", "Shared task", "--json"))
+	task := mustJSON[taskJSON](t, mustBin(t, cloneA, actorA, "task", "add", "Shared task", "--no-validation-criteria", "--json"))
 	if out := mustBin(t, cloneA, actorA, "sync"); out != "pushed: 1\nrounds: 1\n" {
 		t.Fatalf("clone A sync = %q, want pushed: 1 / rounds: 1", out)
 	}

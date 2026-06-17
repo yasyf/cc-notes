@@ -74,12 +74,36 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 		{"set_parent", SetParent{Parent: testParent}},
 		{"add_comment", AddComment{Body: "Taking this one."}},
 		{"set_branch", SetBranch{Branch: "feature/x"}},
+		{"create_sprint", CreateSprint{
+			Nonce:       testNonce,
+			Title:       "Q3 sync hardening",
+			Description: "Stabilize two-clone sync",
+			Project:     testParent,
+			Labels:      []string{"ops", "sync"},
+		}},
+		{"create_project", CreateProject{
+			Nonce:       testNonce,
+			Title:       "Platform",
+			Description: "Core infrastructure",
+			Labels:      []string{"infra"},
+		}},
+		{"set_sprint", SetSprint{Sprint: testID}},
+		{"set_project", SetProject{Project: testParent}},
+		{"set_sprint_status", SetSprintStatus{Status: SprintActive}},
+		{"set_project_status", SetProjectStatus{Status: ProjectArchived}},
+		{"set_start_date", SetStartDate{Date: 1700000000}},
+		{"set_end_date", SetEndDate{Date: 1701000000}},
+		{"add_criterion", AddCriterion{ID: "crit-1", Text: "all tests pass", Script: "go test ./..."}},
+		{"remove_criterion", RemoveCriterion{ID: "crit-1"}},
+		{"set_criterion_text", SetCriterionText{ID: "crit-1", Text: "all tests pass under -race"}},
+		{"set_criterion_status", SetCriterionStatus{ID: "crit-1", Status: CriterionMet}},
+		{"set_criterion_script", SetCriterionScript{ID: "crit-1", Script: "make check"}},
 		{"checkpoint", Checkpoint{
 			EntityID: testID,
 			State: Note{
 				ID: testID, Title: "Deploy runbook", Body: "Ship from green main only.",
 				Tags: []string{"ops"}, Anchors: []Anchor{{Kind: AnchorCommit, Value: testID}},
-				Author: "ada <ada@example.com>", CreatedAt: 100, UpdatedAt: 200,
+				Author: "ada", CreatedAt: 100, UpdatedAt: 200,
 				SupersededBy: []EntityID{}, Head: testParent,
 			},
 			CoversLamport: 5,
@@ -162,6 +186,71 @@ func TestPackRoundTripCheckpointTaskState(t *testing.T) {
 	}
 	if _, ok := cp.State.(Task); !ok {
 		t.Fatalf("decoded State = %T, want Task", cp.State)
+	}
+}
+
+func TestPackRoundTripCheckpointSprintState(t *testing.T) {
+	op := Checkpoint{
+		EntityID: testID,
+		State: Sprint{
+			ID: testID, Project: testParent, Title: "Q3 sync hardening", Description: "Stabilize sync",
+			Status: SprintActive, StartDate: 1700000000, EndDate: 1701000000,
+			Labels: []string{"ops"}, Commits: []SHA{}, Comments: []Comment{{Author: "agent-7", TS: 300, Body: "kickoff"}},
+			Author: "ada", CreatedAt: 100, UpdatedAt: 300, StartedAt: 200, ClosedAt: 0, Head: testParent,
+		},
+		CoversLamport: 7,
+		CoversShas:    []SHA{testParent, testID},
+	}
+	pack := Pack{Lamport: 8, Ops: []Op{op}}
+	data, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got, err := DecodePack(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !reflect.DeepEqual(got, pack) {
+		t.Fatalf("round-trip = %#v, want %#v", got, pack)
+	}
+	cp, ok := got.Ops[0].(Checkpoint)
+	if !ok {
+		t.Fatalf("Ops[0] = %T, want Checkpoint", got.Ops[0])
+	}
+	if _, ok := cp.State.(Sprint); !ok {
+		t.Fatalf("decoded State = %T, want Sprint", cp.State)
+	}
+}
+
+func TestPackRoundTripCheckpointProjectState(t *testing.T) {
+	op := Checkpoint{
+		EntityID: testID,
+		State: Project{
+			ID: testID, Title: "Platform", Description: "Core infrastructure", Status: ProjectActive,
+			Labels: []string{"infra"}, Commits: []SHA{}, Comments: []Comment{{Author: "ada", TS: 100, Body: "init"}},
+			Author: "ada", CreatedAt: 100, UpdatedAt: 200, ClosedAt: 0, Head: testParent,
+		},
+		CoversLamport: 4,
+		CoversShas:    []SHA{testParent, testID},
+	}
+	pack := Pack{Lamport: 5, Ops: []Op{op}}
+	data, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got, err := DecodePack(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !reflect.DeepEqual(got, pack) {
+		t.Fatalf("round-trip = %#v, want %#v", got, pack)
+	}
+	cp, ok := got.Ops[0].(Checkpoint)
+	if !ok {
+		t.Fatalf("Ops[0] = %T, want Checkpoint", got.Ops[0])
+	}
+	if _, ok := cp.State.(Project); !ok {
+		t.Fatalf("decoded State = %T, want Project", cp.State)
 	}
 }
 
@@ -281,7 +370,42 @@ func TestPackGoldenBytes(t *testing.T) {
 					CoversShas:    []SHA{testParent, testID},
 				}},
 			},
-			want: `{"v":1,"lamport":8,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"task","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","branch":"main","title":"Fix flaky sync","description":"round-trip flakes","type":"bug","status":"in_progress","priority":1,"assignee":"agent-7","heartbeat_at":300,"heartbeat_lamport":4,"labels":["ci"],"blocked_by":[],"parent":"","comments":[{"author":"agent-7","ts":300,"body":"on it"}],"created_at":100,"updated_at":300,"started_at":200,"closed_at":0,"commits":[],"head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":7,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+			want: `{"v":1,"lamport":8,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"task","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","branch":"main","title":"Fix flaky sync","description":"round-trip flakes","type":"bug","status":"in_progress","priority":1,"assignee":"agent-7","heartbeat_at":300,"heartbeat_lamport":4,"labels":["ci"],"blocked_by":[],"parent":"","comments":[{"author":"agent-7","ts":300,"body":"on it"}],"created_at":100,"updated_at":300,"started_at":200,"closed_at":0,"commits":[],"head":"00112233445566778899aabbccddeeff00112233","sprint":"","project":"","criteria":null},"covers_lamport":7,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+		{
+			name: "checkpoint over a sprint",
+			pack: Pack{
+				Lamport: 6,
+				Ops: []Op{Checkpoint{
+					EntityID: testID,
+					State: Sprint{
+						ID: testID, Project: testParent, Title: "Sprint 1", Description: "first sprint",
+						Status: SprintActive, StartDate: 1000, EndDate: 2000, Labels: []string{"q3"},
+						Commits: []SHA{}, Comments: []Comment{{Author: "ada", TS: 150, Body: "kickoff"}},
+						Author: "ada", CreatedAt: 100, UpdatedAt: 200, StartedAt: 120, Head: testParent,
+					},
+					CoversLamport: 5,
+					CoversShas:    []SHA{testParent, testID},
+				}},
+			},
+			want: `{"v":1,"lamport":6,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"sprint","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","project":"00112233445566778899aabbccddeeff00112233","title":"Sprint 1","description":"first sprint","status":"active","start_date":1000,"end_date":2000,"labels":["q3"],"commits":[],"comments":[{"author":"ada","ts":150,"body":"kickoff"}],"author":"ada","created_at":100,"updated_at":200,"started_at":120,"closed_at":0,"head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":5,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+		{
+			name: "checkpoint over a project",
+			pack: Pack{
+				Lamport: 10,
+				Ops: []Op{Checkpoint{
+					EntityID: testID,
+					State: Project{
+						ID: testID, Title: "Q3 Platform", Description: "platform work",
+						Status: ProjectActive, Labels: []string{"infra"}, Commits: []SHA{}, Comments: []Comment{},
+						Author: "ada", CreatedAt: 100, UpdatedAt: 200, Head: testParent,
+					},
+					CoversLamport: 9,
+					CoversShas:    []SHA{testParent, testID},
+				}},
+			},
+			want: `{"v":1,"lamport":10,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"project","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Q3 Platform","description":"platform work","status":"active","labels":["infra"],"commits":[],"comments":[],"author":"ada","created_at":100,"updated_at":200,"closed_at":0,"head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":9,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
 		},
 	}
 	for _, tc := range cases {
@@ -308,6 +432,9 @@ func TestDecodePackFailures(t *testing.T) {
 		{"version 2", `{"v":2,"lamport":1,"ops":[]}`, ErrUnsupportedVersion},
 		{"missing version", `{"lamport":1,"ops":[]}`, ErrUnsupportedVersion},
 		{"bad status", `{"v":1,"lamport":1,"ops":[{"kind":"set_status","status":"paused"}]}`, ErrInvalidValue},
+		{"bad sprint status", `{"v":1,"lamport":1,"ops":[{"kind":"set_sprint_status","status":"paused"}]}`, ErrInvalidValue},
+		{"bad project status", `{"v":1,"lamport":1,"ops":[{"kind":"set_project_status","status":"frozen"}]}`, ErrInvalidValue},
+		{"bad criterion status", `{"v":1,"lamport":1,"ops":[{"kind":"set_criterion_status","id":"crit-1","status":"unknown"}]}`, ErrInvalidValue},
 		{"priority 4", `{"v":1,"lamport":1,"ops":[{"kind":"set_priority","priority":4}]}`, ErrInvalidValue},
 		{"negative priority", `{"v":1,"lamport":1,"ops":[{"kind":"set_priority","priority":-1}]}`, ErrInvalidValue},
 		{"bad task type", `{"v":1,"lamport":1,"ops":[{"kind":"set_type","type":"chore"}]}`, ErrInvalidValue},

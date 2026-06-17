@@ -8,15 +8,15 @@ Git-native notes and tasks layer for agents, written in Go (module `github.com/y
 cc-notes/
 ├── cmd/cc-notes/     # Binary entrypoint — signal-aware main, exit-code mapping
 ├── internal/         # Go core (not importable outside the module)
-│   ├── model/        #   entity ids, Note/Task snapshots, kind-tagged ops, pack codec
-│   ├── refs/         #   pure ref-name build/parse (notes global, tasks global with an LWW branch attribute)
-│   ├── fold/         #   pure CRDT core — linearize + deterministic fold, LWW, claim rule, checkpoint replay
+│   ├── model/        #   entity ids, Note/Task/Sprint/Project snapshots, task validation criteria, kind-tagged ops, pack codec
+│   ├── refs/         #   pure ref-name build/parse (notes global, tasks global with an LWW branch attribute, sprints and projects global)
+│   ├── fold/         #   pure CRDT core — linearize + deterministic fold, LWW, claim rule, sprint/project fold and task criterion status, checkpoint replay
 │   ├── gitobj/       #   go-git object/ref layer, CheckAndSetReference CAS appends
 │   ├── gitcmd/       #   exec git — fetch/push with user credentials, config, update-ref
 │   ├── store/        #   entity store: create, append (CAS), load, list, resolve
 │   ├── sync/         #   refspec install, sync loop, union merge, reconcile (relocate tasks on merge)
-│   ├── cli/          #   cobra command tree: note/task noun groups, init, sync, mount
-│   ├── fusefs/       #   FUSE mount (build tag fuse) — render/parse/diff + cgofuse ops
+│   ├── cli/          #   cobra command tree: note/task/sprint/project noun groups, task validation criteria + validate, init, sync, mount
+│   ├── fusefs/       #   FUSE mount (build tag fuse) — render/parse/diff + cgofuse ops, flat sprint/project files + nested symlink browse tree
 │   └── version/      #   ldflags-injected build metadata
 ├── scripts/          # install.sh — curl-able release-binary installer
 ├── Formula/          # Homebrew formula — machine-bumped by release.yml on stable tags

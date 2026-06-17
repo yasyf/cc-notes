@@ -16,11 +16,12 @@ import (
 // Create roots a new entity chain: ops must begin with the create op, which
 // the caller stamps with a fresh nonce. The pack is written at lamport 1 as
 // a parentless commit whose sha becomes the entity id, then the entity ref —
-// refs.Note for a note, refs.Task for a task — is
-// created atomically: a ref that already exists fails with
-// gitcmd.ErrCASMismatch. Notes and tasks share a flat namespace keyed by
-// entity id. The pack is validated and folded before the ref is created, so
-// a bad op never publishes. It returns the folded snapshot.
+// refs.Note for a note, refs.Task for a task, refs.Sprint for a sprint,
+// refs.Project for a project — is created atomically: a ref that already
+// exists fails with gitcmd.ErrCASMismatch. Notes, tasks, sprints, and projects
+// share a flat namespace keyed by entity id. The pack is validated and folded
+// before the ref is created, so a bad op never publishes. It returns the
+// folded snapshot.
 func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, error) {
 	if len(ops) == 0 {
 		return nil, errors.New("create: no ops")
@@ -32,8 +33,12 @@ func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, err
 		kind, refFor = "note", refs.Note
 	case model.CreateTask:
 		kind, refFor = "task", refs.Task
+	case model.CreateSprint:
+		kind, refFor = "sprint", refs.Sprint
+	case model.CreateProject:
+		kind, refFor = "project", refs.Project
 	default:
-		return nil, fmt.Errorf("create: first op is %s, want create_note or create_task", ops[0].OpKind())
+		return nil, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, or create_project", ops[0].OpKind())
 	}
 	pack, err := roundTrip(model.Pack{Lamport: 1, Ops: ops})
 	if err != nil {

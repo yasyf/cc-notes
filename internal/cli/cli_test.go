@@ -73,6 +73,15 @@ type taskJSON struct {
 	UpdatedAt string  `json:"updated_at"`
 	StartedAt *string `json:"started_at"`
 	ClosedAt  *string `json:"closed_at"`
+	Sprint    *string `json:"sprint"`
+	Project   *string `json:"project"`
+	Criteria  []struct {
+		ID     string `json:"id"`
+		Text   string `json:"text"`
+		Script string `json:"script"`
+		Status string `json:"status"`
+	} `json:"criteria"`
+	ClosedForced bool `json:"closed_forced"`
 }
 
 // gitEnvKeys are the environment knobs that could leak host git state into a
@@ -177,7 +186,7 @@ func mustJSON[T any](t *testing.T, raw string) T {
 
 func addTask(t *testing.T, dir, title string, extra ...string) taskJSON {
 	t.Helper()
-	args := append([]string{"task", "add", title, "--json"}, extra...)
+	args := append([]string{"task", "add", title, "--no-validation-criteria", "--json"}, extra...)
 	return mustJSON[taskJSON](t, mustRun(t, dir, args...))
 }
 
@@ -322,7 +331,7 @@ func TestTaskJSONRoundTrip(t *testing.T) {
 	dir := initRepo(t)
 	blocker := addTask(t, dir, "Blocker")
 	out := mustRun(t, dir, "task", "add", "Main", "--desc", "Body text", "--type", "bug",
-		"--priority", "1", "--label", "x", "--label", "a",
+		"--priority", "1", "--label", "x", "--label", "a", "--no-validation-criteria",
 		"--parent", blocker.ID, "--blocked-by", blocker.ID, "--json")
 	if !strings.HasPrefix(out, `{"id":"`) || !strings.Contains(out, `","branch":"main",`) {
 		t.Fatalf("task JSON field order broken: %q", out)
@@ -574,7 +583,7 @@ func TestUsageErrors(t *testing.T) {
 		{"note", "show"},
 		{"task", "comment", "abc"},
 		{"task", "list", "--branch", "feat ure"},
-		{"task", "add", "T", "--branch", "../evil"},
+		{"task", "add", "T", "--no-validation-criteria", "--branch", "../evil"},
 	} {
 		_, _, err := runCLI(t, dir, args...)
 		var usage *cli.UsageError

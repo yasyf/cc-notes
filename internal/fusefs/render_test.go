@@ -89,7 +89,83 @@ const goldenTask = `{
   "created_at": "2025-12-12T02:54:56Z",
   "updated_at": "2025-12-13T02:54:56Z",
   "started_at": "2025-12-12T03:10:00Z",
-  "closed_at": null
+  "closed_at": null,
+  "sprint": "7777cccc7777cccc7777cccc7777cccc7777cccc",
+  "project": "6666dddd6666dddd6666dddd6666dddd6666dddd",
+  "criteria": [
+    {
+      "id": "aaaa1111aaaa1111aaaa1111aaaa1111",
+      "text": "Compiles clean",
+      "script": "go build ./...",
+      "status": "met"
+    },
+    {
+      "id": "bbbb2222bbbb2222bbbb2222bbbb2222",
+      "text": "Tests pass",
+      "script": "",
+      "status": "pending"
+    }
+  ],
+  "closed_forced": false
+}
+`
+
+const goldenSprint = `{
+  "id": "5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa",
+  "project": "6666dddd6666dddd6666dddd6666dddd6666dddd",
+  "title": "Sprint 7 core",
+  "description": "Ship the FUSE layer.\nTwo lines.",
+  "status": "active",
+  "start_date": "2025-12-12T02:54:56Z",
+  "end_date": "2025-12-19T02:54:56Z",
+  "labels": [
+    "core",
+    "fs"
+  ],
+  "commits": [
+    "cafe0000cafe0000cafe0000cafe0000cafe0000"
+  ],
+  "comments": [
+    {
+      "author": "Agent B b@example.com",
+      "ts": "2025-12-12T03:26:40Z",
+      "body": "Kickoff."
+    }
+  ],
+  "author": "Agent A a@example.com",
+  "created_at": "2025-12-12T02:54:56Z",
+  "updated_at": "2025-12-13T02:54:56Z",
+  "started_at": "2025-12-12T03:10:00Z",
+  "closed_at": null,
+  "tasks": []
+}
+`
+
+const goldenProject = `{
+  "id": "6666dddd6666dddd6666dddd6666dddd6666dddd",
+  "title": "Platform v2",
+  "description": "Long-lived effort.\nMany sprints.",
+  "status": "active",
+  "labels": [
+    "core",
+    "platform"
+  ],
+  "commits": [
+    "feed1111feed1111feed1111feed1111feed1111"
+  ],
+  "comments": [
+    {
+      "author": "Agent C c@example.com",
+      "ts": "2025-12-12T03:26:40Z",
+      "body": "Charter approved."
+    }
+  ],
+  "author": "Agent A a@example.com",
+  "created_at": "2025-12-12T02:54:56Z",
+  "updated_at": "2025-12-13T02:54:56Z",
+  "closed_at": null,
+  "sprints": [],
+  "tasks": []
 }
 `
 
@@ -145,7 +221,53 @@ func richTask() model.Task {
 		CreatedAt: 1765508096,
 		UpdatedAt: 1765594496,
 		StartedAt: 1765509000,
-		Head:      "eeee0000eeee0000eeee0000eeee0000eeee0000",
+		Sprint:    "7777cccc7777cccc7777cccc7777cccc7777cccc",
+		Project:   "6666dddd6666dddd6666dddd6666dddd6666dddd",
+		Criteria: []model.Criterion{
+			{ID: "aaaa1111aaaa1111aaaa1111aaaa1111", Text: "Compiles clean", Script: "go build ./...", Status: model.CriterionMet},
+			{ID: "bbbb2222bbbb2222bbbb2222bbbb2222", Text: "Tests pass", Status: model.CriterionPending},
+		},
+		Head: "eeee0000eeee0000eeee0000eeee0000eeee0000",
+	}
+}
+
+func richSprint() model.Sprint {
+	return model.Sprint{
+		ID:          "5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa",
+		Project:     "6666dddd6666dddd6666dddd6666dddd6666dddd",
+		Title:       "Sprint 7 core",
+		Description: "Ship the FUSE layer.\nTwo lines.",
+		Status:      model.SprintActive,
+		StartDate:   1765508096,
+		EndDate:     1766112896,
+		Labels:      []string{"core", "fs"},
+		Commits:     []model.SHA{"cafe0000cafe0000cafe0000cafe0000cafe0000"},
+		Comments: []model.Comment{
+			{Author: "Agent B b@example.com", TS: 1765510000, Body: "Kickoff."},
+		},
+		Author:    "Agent A a@example.com",
+		CreatedAt: 1765508096,
+		UpdatedAt: 1765594496,
+		StartedAt: 1765509000,
+		Head:      "dddd0000dddd0000dddd0000dddd0000dddd0000",
+	}
+}
+
+func richProject() model.Project {
+	return model.Project{
+		ID:          "6666dddd6666dddd6666dddd6666dddd6666dddd",
+		Title:       "Platform v2",
+		Description: "Long-lived effort.\nMany sprints.",
+		Status:      model.ProjectActive,
+		Labels:      []string{"core", "platform"},
+		Commits:     []model.SHA{"feed1111feed1111feed1111feed1111feed1111"},
+		Comments: []model.Comment{
+			{Author: "Agent C c@example.com", TS: 1765510000, Body: "Charter approved."},
+		},
+		Author:    "Agent A a@example.com",
+		CreatedAt: 1765508096,
+		UpdatedAt: 1765594496,
+		Head:      "cccc0000cccc0000cccc0000cccc0000cccc0000",
 	}
 }
 
@@ -167,6 +289,24 @@ func mustParseTask(t *testing.T, data []byte) fusefs.ParsedTask {
 	p, err := fusefs.ParseTask(data)
 	if err != nil {
 		t.Fatalf("ParseTask(%q): %v", data, err)
+	}
+	return p
+}
+
+func mustParseSprint(t *testing.T, data []byte) fusefs.ParsedSprint {
+	t.Helper()
+	p, err := fusefs.ParseSprint(data)
+	if err != nil {
+		t.Fatalf("ParseSprint(%q): %v", data, err)
+	}
+	return p
+}
+
+func mustParseProject(t *testing.T, data []byte) fusefs.ParsedProject {
+	t.Helper()
+	p, err := fusefs.ParseProject(data)
+	if err != nil {
+		t.Fatalf("ParseProject(%q): %v", data, err)
 	}
 	return p
 }
@@ -535,6 +675,8 @@ func TestDiffTaskImmutable(t *testing.T) {
 		{"updated_at", func(p *fusefs.ParsedTask) { p.UpdatedAt = set("2020-01-01T00:00:00Z") }},
 		{"started_at", func(p *fusefs.ParsedTask) { p.StartedAt = null[string]() }},
 		{"closed_at", func(p *fusefs.ParsedTask) { p.ClosedAt = set("2026-01-01T00:00:00Z") }},
+		{"sprint", func(p *fusefs.ParsedTask) { p.Sprint = set("0000000000000000000000000000000000000000") }},
+		{"project", func(p *fusefs.ParsedTask) { p.Project = set("0000000000000000000000000000000000000000") }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.field, func(t *testing.T) {
@@ -548,6 +690,158 @@ func TestDiffTaskImmutable(t *testing.T) {
 				t.Errorf("err %q does not name field %q", err, tc.field)
 			}
 		})
+	}
+}
+
+const (
+	critA = "aaaa1111aaaa1111aaaa1111aaaa1111"
+	critB = "bbbb2222bbbb2222bbbb2222bbbb2222"
+)
+
+func TestDiffTaskCriteriaEditable(t *testing.T) {
+	base := richTask()
+	cases := []struct {
+		name   string
+		mutate func(*fusefs.ParsedTask)
+		want   []model.Op
+	}{
+		{
+			"edit text", func(p *fusefs.ParsedTask) { p.Criteria.Value[0].Text = "Builds clean" },
+			[]model.Op{model.SetCriterionText{ID: critA, Text: "Builds clean"}},
+		},
+		{
+			"edit status", func(p *fusefs.ParsedTask) { p.Criteria.Value[1].Status = "met" },
+			[]model.Op{model.SetCriterionStatus{ID: critB, Status: model.CriterionMet}},
+		},
+		{
+			"edit script", func(p *fusefs.ParsedTask) { p.Criteria.Value[1].Script = "go test ./..." },
+			[]model.Op{model.SetCriterionScript{ID: critB, Script: "go test ./..."}},
+		},
+		{
+			"text status script in order for one id",
+			func(p *fusefs.ParsedTask) {
+				p.Criteria.Value[0].Text = "Builds"
+				p.Criteria.Value[0].Status = "failed"
+				p.Criteria.Value[0].Script = "make"
+			},
+			[]model.Op{
+				model.SetCriterionText{ID: critA, Text: "Builds"},
+				model.SetCriterionStatus{ID: critA, Status: model.CriterionFailed},
+				model.SetCriterionScript{ID: critA, Script: "make"},
+			},
+		},
+		{
+			"remove omitted criterion",
+			func(p *fusefs.ParsedTask) { p.Criteria.Value = p.Criteria.Value[:1] },
+			[]model.Op{model.RemoveCriterion{ID: critB}},
+		},
+		{
+			"null clears all, removes sorted by id",
+			func(p *fusefs.ParsedTask) { p.Criteria = null[[]fusefs.ParsedCriterion]() },
+			[]model.Op{model.RemoveCriterion{ID: critA}, model.RemoveCriterion{ID: critB}},
+		},
+		{
+			"removes precede field updates",
+			func(p *fusefs.ParsedTask) {
+				p.Criteria.Value[1].Text = "Tests still pass"
+				p.Criteria.Value = p.Criteria.Value[1:]
+			},
+			[]model.Op{
+				model.RemoveCriterion{ID: critA},
+				model.SetCriterionText{ID: critB, Text: "Tests still pass"},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseTask(t, fusefs.RenderTask(base))
+			tc.mutate(&p)
+			ops, err := fusefs.DiffTask(base, p)
+			if err != nil {
+				t.Fatalf("DiffTask: %v", err)
+			}
+			if !reflect.DeepEqual(ops, tc.want) {
+				t.Errorf("ops %#v, want %#v", ops, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiffTaskCriteriaAdd(t *testing.T) {
+	base := richTask()
+	t.Run("empty id appends with a nonce, pending start emits no status", func(t *testing.T) {
+		p := mustParseTask(t, fusefs.RenderTask(base))
+		p.Criteria.Value = append(p.Criteria.Value, fusefs.ParsedCriterion{Text: "New crit", Script: "scripty"})
+		ops, err := fusefs.DiffTask(base, p)
+		if err != nil {
+			t.Fatalf("DiffTask: %v", err)
+		}
+		if len(ops) != 1 {
+			t.Fatalf("ops %#v, want one AddCriterion", ops)
+		}
+		add, ok := ops[0].(model.AddCriterion)
+		if !ok || len(add.ID) != 32 {
+			t.Fatalf("op %#v, want AddCriterion with a 32-char nonce", ops[0])
+		}
+		add.ID = ""
+		if want := (model.AddCriterion{Text: "New crit", Script: "scripty"}); add != want {
+			t.Errorf("add %#v, want %#v", add, want)
+		}
+	})
+	t.Run("non-pending new criterion emits a status op on the same nonce", func(t *testing.T) {
+		p := mustParseTask(t, fusefs.RenderTask(base))
+		p.Criteria.Value = append(p.Criteria.Value, fusefs.ParsedCriterion{Text: "Pre-met", Status: "met"})
+		ops, err := fusefs.DiffTask(base, p)
+		if err != nil {
+			t.Fatalf("DiffTask: %v", err)
+		}
+		if len(ops) != 2 {
+			t.Fatalf("ops %#v, want AddCriterion then SetCriterionStatus", ops)
+		}
+		add, ok := ops[0].(model.AddCriterion)
+		if !ok || len(add.ID) != 32 {
+			t.Fatalf("op[0] %#v, want AddCriterion with a 32-char nonce", ops[0])
+		}
+		st, ok := ops[1].(model.SetCriterionStatus)
+		if !ok || st.ID != add.ID || st.Status != model.CriterionMet {
+			t.Fatalf("op[1] %#v, want SetCriterionStatus{%q, met}", ops[1], add.ID)
+		}
+	})
+}
+
+func TestDiffTaskCriteriaErrors(t *testing.T) {
+	base := richTask()
+	cases := []struct {
+		name   string
+		mutate func(*fusefs.ParsedTask)
+	}{
+		{"invented id", func(p *fusefs.ParsedTask) { p.Criteria.Value[0].ID = "deadbeefdeadbeefdeadbeefdeadbeef" }},
+		{"bad status on existing", func(p *fusefs.ParsedTask) { p.Criteria.Value[0].Status = "explode" }},
+		{"bad status on new", func(p *fusefs.ParsedTask) {
+			p.Criteria.Value = append(p.Criteria.Value, fusefs.ParsedCriterion{Text: "x", Status: "explode"})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseTask(t, fusefs.RenderTask(base))
+			tc.mutate(&p)
+			if _, err := fusefs.DiffTask(base, p); !errors.Is(err, fusefs.ErrParse) {
+				t.Fatalf("err %v, want ErrParse", err)
+			}
+		})
+	}
+}
+
+func TestDiffTaskClosedForcedIgnored(t *testing.T) {
+	base := richTask()
+	p := mustParseTask(t, fusefs.RenderTask(base))
+	p.ClosedForced = set(true)
+	ops, err := fusefs.DiffTask(base, p)
+	if err != nil {
+		t.Fatalf("DiffTask: %v", err)
+	}
+	if len(ops) != 0 {
+		t.Errorf("closed_forced flip produced ops %#v, want none", ops)
 	}
 }
 
@@ -691,6 +985,10 @@ func TestNewTask(t *testing.T) {
 		"blocks set":       `{"title": "x", "blocks": ["1111"]}`,
 		"parent set":       `{"title": "x", "parent": "1111"}`,
 		"comments set":     `{"title": "x", "comments": [{"author": "a", "ts": "t", "body": "b"}]}`,
+		"sprint set":       `{"title": "x", "sprint": "1111"}`,
+		"project set":      `{"title": "x", "project": "1111"}`,
+		"criteria set":     `{"title": "x", "criteria": [{"id": "1", "text": "t", "script": "", "status": "pending"}]}`,
+		"closed_forced":    `{"title": "x", "closed_forced": true}`,
 	}
 	for name, doc := range errorCases {
 		t.Run(name, func(t *testing.T) {
@@ -725,6 +1023,352 @@ func TestNoteTextEditEndToEnd(t *testing.T) {
 	if !reflect.DeepEqual(ops, want) {
 		t.Errorf("ops %#v, want %#v", ops, want)
 	}
+}
+
+func TestRenderSprintGolden(t *testing.T) {
+	if got := string(fusefs.RenderSprint(richSprint())); got != goldenSprint {
+		t.Errorf("rich sprint render:\n got %q\nwant %q", got, goldenSprint)
+	}
+}
+
+func TestRenderProjectGolden(t *testing.T) {
+	if got := string(fusefs.RenderProject(richProject())); got != goldenProject {
+		t.Errorf("rich project render:\n got %q\nwant %q", got, goldenProject)
+	}
+}
+
+func TestSprintRoundTrip(t *testing.T) {
+	base := richSprint()
+	cases := map[string]model.Sprint{
+		"rich": base,
+		"planned no project": {
+			ID: base.ID, Title: "Planning", Status: model.SprintPlanned,
+			CreatedAt: 100, UpdatedAt: 100,
+		},
+		"completed with dates": {
+			ID: base.ID, Project: base.Project, Title: "Done", Status: model.SprintCompleted,
+			StartDate: 100, EndDate: 200, CreatedAt: 100, UpdatedAt: 300, StartedAt: 100, ClosedAt: 300,
+		},
+	}
+	for name, s := range cases {
+		t.Run(name, func(t *testing.T) {
+			ops, err := fusefs.DiffSprint(s, mustParseSprint(t, fusefs.RenderSprint(s)))
+			if err != nil {
+				t.Fatalf("DiffSprint: %v", err)
+			}
+			if len(ops) != 0 {
+				t.Errorf("round trip produced ops %#v, want none", ops)
+			}
+		})
+	}
+}
+
+func TestDiffSprintEditable(t *testing.T) {
+	base := richSprint()
+	cases := []struct {
+		name   string
+		mutate func(*fusefs.ParsedSprint)
+		want   []model.Op
+	}{
+		{"title", func(p *fusefs.ParsedSprint) { p.Title = set("Renamed") }, []model.Op{model.SetTitle{Title: "Renamed"}}},
+		{"description", func(p *fusefs.ParsedSprint) { p.Description = set("New body") }, []model.Op{model.SetDescription{Description: "New body"}}},
+		{"status", func(p *fusefs.ParsedSprint) { p.Status = set("completed") }, []model.Op{model.SetSprintStatus{Status: model.SprintCompleted}}},
+		{"start_date change", func(p *fusefs.ParsedSprint) { p.StartDate = set("2025-12-13T02:54:56Z") }, []model.Op{model.SetStartDate{Date: 1765594496}}},
+		{"start_date clear via null", func(p *fusefs.ParsedSprint) { p.StartDate = null[string]() }, []model.Op{model.SetStartDate{Date: 0}}},
+		{"end_date clear via empty", func(p *fusefs.ParsedSprint) { p.EndDate = set("") }, []model.Op{model.SetEndDate{Date: 0}}},
+		{"add label", func(p *fusefs.ParsedSprint) { p.Labels.Value = append(p.Labels.Value, "urgent") }, []model.Op{model.AddLabel{Label: "urgent"}}},
+		{"remove label", func(p *fusefs.ParsedSprint) { p.Labels = set([]string{"fs"}) }, []model.Op{model.RemoveLabel{Label: "core"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseSprint(t, fusefs.RenderSprint(base))
+			tc.mutate(&p)
+			ops, err := fusefs.DiffSprint(base, p)
+			if err != nil {
+				t.Fatalf("DiffSprint: %v", err)
+			}
+			if !reflect.DeepEqual(ops, tc.want) {
+				t.Errorf("ops %#v, want %#v", ops, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiffSprintInvalidValues(t *testing.T) {
+	base := richSprint()
+	cases := []struct {
+		name   string
+		mutate func(*fusefs.ParsedSprint)
+	}{
+		{"bogus status", func(p *fusefs.ParsedSprint) { p.Status = set("paused") }},
+		{"null status", func(p *fusefs.ParsedSprint) { p.Status = null[string]() }},
+		{"bad start_date", func(p *fusefs.ParsedSprint) { p.StartDate = set("not-a-date") }},
+		{"bad end_date", func(p *fusefs.ParsedSprint) { p.EndDate = set("12/19/2025") }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseSprint(t, fusefs.RenderSprint(base))
+			tc.mutate(&p)
+			if _, err := fusefs.DiffSprint(base, p); !errors.Is(err, fusefs.ErrParse) {
+				t.Fatalf("err %v, want ErrParse", err)
+			}
+		})
+	}
+}
+
+func TestDiffSprintImmutable(t *testing.T) {
+	base := richSprint()
+	cases := []struct {
+		field  string
+		mutate func(*fusefs.ParsedSprint)
+	}{
+		{"id", func(p *fusefs.ParsedSprint) { p.ID = set("0000000000000000000000000000000000000000") }},
+		{"project", func(p *fusefs.ParsedSprint) { p.Project = set("0000000000000000000000000000000000000000") }},
+		{"project", func(p *fusefs.ParsedSprint) { p.Project = null[string]() }},
+		{"commits", func(p *fusefs.ParsedSprint) { p.Commits = set([]string{}) }},
+		{"comments", func(p *fusefs.ParsedSprint) { p.Comments.Value[0].Body = "edited" }},
+		{"author", func(p *fusefs.ParsedSprint) { p.Author = set("Mallory m@example.com") }},
+		{"created_at", func(p *fusefs.ParsedSprint) { p.CreatedAt = set("2020-01-01T00:00:00Z") }},
+		{"updated_at", func(p *fusefs.ParsedSprint) { p.UpdatedAt = set("2020-01-01T00:00:00Z") }},
+		{"started_at", func(p *fusefs.ParsedSprint) { p.StartedAt = null[string]() }},
+		{"closed_at", func(p *fusefs.ParsedSprint) { p.ClosedAt = set("2026-01-01T00:00:00Z") }},
+		{"tasks", func(p *fusefs.ParsedSprint) { p.Tasks = set([]string{"1111"}) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.field, func(t *testing.T) {
+			p := mustParseSprint(t, fusefs.RenderSprint(base))
+			tc.mutate(&p)
+			_, err := fusefs.DiffSprint(base, p)
+			if !errors.Is(err, fusefs.ErrImmutableField) {
+				t.Fatalf("err %v, want ErrImmutableField", err)
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Errorf("err %q does not name field %q", err, tc.field)
+			}
+		})
+	}
+}
+
+func TestNewSprint(t *testing.T) {
+	t.Run("minimal", func(t *testing.T) {
+		ops, err := fusefs.NewSprint(mustParseSprint(t, []byte(`{"title": "New sprint"}`)))
+		if err != nil {
+			t.Fatalf("NewSprint: %v", err)
+		}
+		create := ops[0].(model.CreateSprint)
+		if len(ops) != 1 || len(create.Nonce) != 32 {
+			t.Fatalf("ops %#v, want one CreateSprint with a 32-char nonce", ops)
+		}
+		create.Nonce = ""
+		if want := (model.CreateSprint{Title: "New sprint"}); !reflect.DeepEqual(create, want) {
+			t.Errorf("create %#v, want %#v", create, want)
+		}
+	})
+	t.Run("description and labels", func(t *testing.T) {
+		doc := `{"title": "Planned", "description": "scope", "labels": ["z", "a", "z"]}`
+		ops, err := fusefs.NewSprint(mustParseSprint(t, []byte(doc)))
+		if err != nil {
+			t.Fatalf("NewSprint: %v", err)
+		}
+		create := ops[0].(model.CreateSprint)
+		create.Nonce = ""
+		want := model.CreateSprint{Title: "Planned", Description: "scope", Labels: []string{"a", "z"}}
+		if !reflect.DeepEqual(create, want) {
+			t.Errorf("create %#v, want %#v", create, want)
+		}
+	})
+	errorCases := map[string]string{
+		"missing title":      `{"description": "no title"}`,
+		"non-planned status": `{"title": "x", "status": "active"}`,
+		"id set":             `{"title": "x", "id": "5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa"}`,
+		"project set":        `{"title": "x", "project": "6666dddd6666dddd6666dddd6666dddd6666dddd"}`,
+		"commits set":        `{"title": "x", "commits": ["cafe0000cafe0000cafe0000cafe0000cafe0000"]}`,
+		"comments set":       `{"title": "x", "comments": [{"author": "a", "ts": "t", "body": "b"}]}`,
+		"tasks set":          `{"title": "x", "tasks": ["1111"]}`,
+	}
+	for name, doc := range errorCases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := fusefs.NewSprint(mustParseSprint(t, []byte(doc))); !errors.Is(err, fusefs.ErrParse) {
+				t.Fatalf("err %v, want ErrParse", err)
+			}
+		})
+	}
+	t.Run("default status accepted", func(t *testing.T) {
+		p := fusefs.ParsedSprint{Title: set("x"), Status: set("planned")}
+		if _, err := fusefs.NewSprint(p); err != nil {
+			t.Fatalf("NewSprint with planned status: %v", err)
+		}
+	})
+	t.Run("timestamps ignored", func(t *testing.T) {
+		doc := `{"title": "x", "created_at": "2020-01-01T00:00:00Z", "updated_at": "2020-01-01T00:00:00Z",
+			"started_at": null, "closed_at": null, "start_date": null, "end_date": null}`
+		if _, err := fusefs.NewSprint(mustParseSprint(t, []byte(doc))); err != nil {
+			t.Fatalf("NewSprint: %v", err)
+		}
+	})
+}
+
+func TestProjectRoundTrip(t *testing.T) {
+	base := richProject()
+	cases := map[string]model.Project{
+		"rich": base,
+		"active minimal": {
+			ID: base.ID, Title: "Active", Status: model.ProjectActive,
+			CreatedAt: 100, UpdatedAt: 100,
+		},
+		"archived with closure": {
+			ID: base.ID, Title: "Closed", Status: model.ProjectArchived,
+			CreatedAt: 100, UpdatedAt: 400, ClosedAt: 400, Labels: []string{"x"},
+		},
+	}
+	for name, pr := range cases {
+		t.Run(name, func(t *testing.T) {
+			ops, err := fusefs.DiffProject(pr, mustParseProject(t, fusefs.RenderProject(pr)))
+			if err != nil {
+				t.Fatalf("DiffProject: %v", err)
+			}
+			if len(ops) != 0 {
+				t.Errorf("round trip produced ops %#v, want none", ops)
+			}
+		})
+	}
+}
+
+func TestDiffProjectEditable(t *testing.T) {
+	base := richProject()
+	cases := []struct {
+		name   string
+		mutate func(*fusefs.ParsedProject)
+		want   []model.Op
+	}{
+		{"title", func(p *fusefs.ParsedProject) { p.Title = set("Renamed") }, []model.Op{model.SetTitle{Title: "Renamed"}}},
+		{"description", func(p *fusefs.ParsedProject) { p.Description = set("New body") }, []model.Op{model.SetDescription{Description: "New body"}}},
+		{"status", func(p *fusefs.ParsedProject) { p.Status = set("archived") }, []model.Op{model.SetProjectStatus{Status: model.ProjectArchived}}},
+		{"add label", func(p *fusefs.ParsedProject) { p.Labels.Value = append(p.Labels.Value, "urgent") }, []model.Op{model.AddLabel{Label: "urgent"}}},
+		{"remove label", func(p *fusefs.ParsedProject) { p.Labels = set([]string{"core"}) }, []model.Op{model.RemoveLabel{Label: "platform"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseProject(t, fusefs.RenderProject(base))
+			tc.mutate(&p)
+			ops, err := fusefs.DiffProject(base, p)
+			if err != nil {
+				t.Fatalf("DiffProject: %v", err)
+			}
+			if !reflect.DeepEqual(ops, tc.want) {
+				t.Errorf("ops %#v, want %#v", ops, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiffProjectInvalidValues(t *testing.T) {
+	base := richProject()
+	cases := []struct {
+		name   string
+		mutate func(*fusefs.ParsedProject)
+	}{
+		{"bogus status", func(p *fusefs.ParsedProject) { p.Status = set("paused") }},
+		{"null status", func(p *fusefs.ParsedProject) { p.Status = null[string]() }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseProject(t, fusefs.RenderProject(base))
+			tc.mutate(&p)
+			if _, err := fusefs.DiffProject(base, p); !errors.Is(err, fusefs.ErrParse) {
+				t.Fatalf("err %v, want ErrParse", err)
+			}
+		})
+	}
+}
+
+func TestDiffProjectImmutable(t *testing.T) {
+	base := richProject()
+	cases := []struct {
+		field  string
+		mutate func(*fusefs.ParsedProject)
+	}{
+		{"id", func(p *fusefs.ParsedProject) { p.ID = set("0000000000000000000000000000000000000000") }},
+		{"commits", func(p *fusefs.ParsedProject) { p.Commits = set([]string{}) }},
+		{"comments", func(p *fusefs.ParsedProject) { p.Comments.Value[0].Body = "edited" }},
+		{"author", func(p *fusefs.ParsedProject) { p.Author = set("Mallory m@example.com") }},
+		{"created_at", func(p *fusefs.ParsedProject) { p.CreatedAt = set("2020-01-01T00:00:00Z") }},
+		{"updated_at", func(p *fusefs.ParsedProject) { p.UpdatedAt = set("2020-01-01T00:00:00Z") }},
+		{"closed_at", func(p *fusefs.ParsedProject) { p.ClosedAt = set("2026-01-01T00:00:00Z") }},
+		{"sprints", func(p *fusefs.ParsedProject) { p.Sprints = set([]string{"1111"}) }},
+		{"tasks", func(p *fusefs.ParsedProject) { p.Tasks = set([]string{"1111"}) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.field, func(t *testing.T) {
+			p := mustParseProject(t, fusefs.RenderProject(base))
+			tc.mutate(&p)
+			_, err := fusefs.DiffProject(base, p)
+			if !errors.Is(err, fusefs.ErrImmutableField) {
+				t.Fatalf("err %v, want ErrImmutableField", err)
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Errorf("err %q does not name field %q", err, tc.field)
+			}
+		})
+	}
+}
+
+func TestNewProject(t *testing.T) {
+	t.Run("minimal", func(t *testing.T) {
+		ops, err := fusefs.NewProject(mustParseProject(t, []byte(`{"title": "New project"}`)))
+		if err != nil {
+			t.Fatalf("NewProject: %v", err)
+		}
+		create := ops[0].(model.CreateProject)
+		if len(ops) != 1 || len(create.Nonce) != 32 {
+			t.Fatalf("ops %#v, want one CreateProject with a 32-char nonce", ops)
+		}
+		create.Nonce = ""
+		if want := (model.CreateProject{Title: "New project"}); !reflect.DeepEqual(create, want) {
+			t.Errorf("create %#v, want %#v", create, want)
+		}
+	})
+	t.Run("description and labels", func(t *testing.T) {
+		doc := `{"title": "Platform", "description": "scope", "labels": ["z", "a", "z"]}`
+		ops, err := fusefs.NewProject(mustParseProject(t, []byte(doc)))
+		if err != nil {
+			t.Fatalf("NewProject: %v", err)
+		}
+		create := ops[0].(model.CreateProject)
+		create.Nonce = ""
+		want := model.CreateProject{Title: "Platform", Description: "scope", Labels: []string{"a", "z"}}
+		if !reflect.DeepEqual(create, want) {
+			t.Errorf("create %#v, want %#v", create, want)
+		}
+	})
+	errorCases := map[string]string{
+		"missing title":     `{"description": "no title"}`,
+		"non-active status": `{"title": "x", "status": "completed"}`,
+		"id set":            `{"title": "x", "id": "6666dddd6666dddd6666dddd6666dddd6666dddd"}`,
+		"commits set":       `{"title": "x", "commits": ["feed1111feed1111feed1111feed1111feed1111"]}`,
+		"comments set":      `{"title": "x", "comments": [{"author": "a", "ts": "t", "body": "b"}]}`,
+		"sprints set":       `{"title": "x", "sprints": ["1111"]}`,
+		"tasks set":         `{"title": "x", "tasks": ["1111"]}`,
+	}
+	for name, doc := range errorCases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := fusefs.NewProject(mustParseProject(t, []byte(doc))); !errors.Is(err, fusefs.ErrParse) {
+				t.Fatalf("err %v, want ErrParse", err)
+			}
+		})
+	}
+	t.Run("default status accepted", func(t *testing.T) {
+		p := fusefs.ParsedProject{Title: set("x"), Status: set("active")}
+		if _, err := fusefs.NewProject(p); err != nil {
+			t.Fatalf("NewProject with active status: %v", err)
+		}
+	})
+	t.Run("timestamps ignored", func(t *testing.T) {
+		doc := `{"title": "x", "created_at": "2020-01-01T00:00:00Z", "updated_at": "2020-01-01T00:00:00Z", "closed_at": null}`
+		if _, err := fusefs.NewProject(mustParseProject(t, []byte(doc))); err != nil {
+			t.Fatalf("NewProject: %v", err)
+		}
+	})
 }
 
 // gitEnv pins git to a hermetic config so host state cannot leak in.
@@ -778,11 +1422,11 @@ func addTaskID(t *testing.T, dir string, args ...string) string {
 // pretty-printed, for a task exercising every DTO field.
 func TestRenderTaskMatchesCLIJSON(t *testing.T) {
 	dir := initRepo(t)
-	parentID := addTaskID(t, dir, "task", "add", "Parent epic", "--type", "epic")
-	blockerID := addTaskID(t, dir, "task", "add", "Blocker")
+	parentID := addTaskID(t, dir, "task", "add", "Parent epic", "--type", "epic", "--no-validation-criteria")
+	blockerID := addTaskID(t, dir, "task", "add", "Blocker", "--no-validation-criteria")
 	id := addTaskID(t, dir, "task", "add", "Cross-check & <rich> task",
 		"--desc", "Multi-line\ndescription.", "--label", "render", "--label", "fs",
-		"--priority", "1", "--parent", parentID, "--blocked-by", blockerID)
+		"--priority", "1", "--parent", parentID, "--blocked-by", blockerID, "--no-validation-criteria")
 	runCLI(t, dir, "task", "claim", id)
 	runCLI(t, dir, "task", "comment", id, "First comment\nwith a newline")
 
@@ -803,5 +1447,70 @@ func TestRenderTaskMatchesCLIJSON(t *testing.T) {
 	}
 	if got := fusefs.RenderTask(snapshot.(model.Task)); !bytes.Equal(got, want.Bytes()) {
 		t.Errorf("RenderTask diverges from CLI --json:\n got %s\nwant %s", got, want.Bytes())
+	}
+}
+
+// TestRenderSprintMatchesCLIJSON pins the byte-compatibility contract between
+// RenderSprint and the CLI: the rendered file must equal `sprint show --json`
+// pretty-printed, for a sprint exercising every DTO field. The sprint has no
+// member tasks, so the tasks reverse index is empty on both sides (like the
+// task test keeps blocks empty).
+func TestRenderSprintMatchesCLIJSON(t *testing.T) {
+	dir := initRepo(t)
+	projectID := addTaskID(t, dir, "project", "add", "Umbrella project", "--desc", "Holds the sprint.")
+	id := addTaskID(t, dir, "sprint", "add", "Sprint 7 <core>",
+		"--desc", "Ship the FUSE layer.\nTwo lines.", "--project", projectID,
+		"--label", "fs", "--label", "core", "--start", "2025-12-12", "--end", "2025-12-19")
+	runCLI(t, dir, "sprint", "start", id)
+	runCLI(t, dir, "sprint", "comment", id, "Kickoff comment\nwith a newline")
+
+	raw := runCLI(t, dir, "sprint", "show", id, "--json")
+	var want bytes.Buffer
+	if err := json.Indent(&want, []byte(strings.TrimSuffix(raw, "\n")), "", "  "); err != nil {
+		t.Fatalf("indent CLI output %q: %v", raw, err)
+	}
+	want.WriteByte('\n')
+
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	snapshot, err := s.Load(t.Context(), refs.Sprint(model.EntityID(id)))
+	if err != nil {
+		t.Fatalf("load sprint: %v", err)
+	}
+	if got := fusefs.RenderSprint(snapshot.(model.Sprint)); !bytes.Equal(got, want.Bytes()) {
+		t.Errorf("RenderSprint diverges from CLI --json:\n got %s\nwant %s", got, want.Bytes())
+	}
+}
+
+// TestRenderProjectMatchesCLIJSON pins the byte-compatibility contract between
+// RenderProject and the CLI: the rendered file must equal `project show --json`
+// pretty-printed, for a project exercising every DTO field. The project has no
+// member sprints or tasks, so both reverse indexes are empty on both sides.
+func TestRenderProjectMatchesCLIJSON(t *testing.T) {
+	dir := initRepo(t)
+	id := addTaskID(t, dir, "project", "add", "Platform <v2>",
+		"--desc", "Long-lived effort.\nMany sprints.", "--label", "platform", "--label", "core")
+	runCLI(t, dir, "project", "complete", id)
+	runCLI(t, dir, "project", "comment", id, "Charter approved\nfinal.")
+
+	raw := runCLI(t, dir, "project", "show", id, "--json")
+	var want bytes.Buffer
+	if err := json.Indent(&want, []byte(strings.TrimSuffix(raw, "\n")), "", "  "); err != nil {
+		t.Fatalf("indent CLI output %q: %v", raw, err)
+	}
+	want.WriteByte('\n')
+
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	snapshot, err := s.Load(t.Context(), refs.Project(model.EntityID(id)))
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	if got := fusefs.RenderProject(snapshot.(model.Project)); !bytes.Equal(got, want.Bytes()) {
+		t.Errorf("RenderProject diverges from CLI --json:\n got %s\nwant %s", got, want.Bytes())
 	}
 }

@@ -83,7 +83,7 @@ func TestFoldNoteCompactedEqualsFull(t *testing.T) {
 func TestFoldTaskCompactedEqualsFull(t *testing.T) {
 	c0 := mk("c0", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "Fix", Type: model.TypeBug, Priority: 1, Branch: "main", Labels: []string{"ci"}})
 	c1 := mk("c1", []string{"c0"}, "bob", 200, 2, model.Claim{Assignee: "bob"})
-	c2 := mk("c2", []string{"c1"}, "bob", 300, 3, model.AddComment{Body: "on it"}, model.AddLabel{Label: "sync"})
+	c2 := mk("c2", []string{"c1"}, "bob", 300, 3, model.AddComment{Body: "on it"}, model.AddLabel{Label: "sync"}, model.AddCriterion{ID: "cr1", Text: "first"})
 	state, err := fold.Task([]model.PackCommit{c0, c1, c2})
 	if err != nil {
 		t.Fatalf("fold prefix: %v", err)
@@ -91,7 +91,7 @@ func TestFoldTaskCompactedEqualsFull(t *testing.T) {
 	cK := cp("cK", "c2", "compactor", 350, 4, state, 3, "c0", "c1", "c2")
 	cKempty := mk("cK", []string{"c2"}, "compactor", 350, 4)
 	c3 := mk("c3", []string{"cK"}, "bob", 400, 5, model.Renew{})
-	c4 := mk("c4", []string{"c3"}, "bob", 500, 6, model.SetStatus{Status: model.StatusDone})
+	c4 := mk("c4", []string{"c3"}, "bob", 500, 6, model.AddCriterion{ID: "cr2", Text: "second"}, model.SetCriterionStatus{ID: "cr1", Status: model.CriterionMet}, model.SetStatus{Status: model.StatusDone})
 	compacted := []model.PackCommit{c0, c1, c2, cK, c3, c4}
 	full := []model.PackCommit{c0, c1, c2, cKempty, c3, c4}
 
@@ -111,6 +111,116 @@ func TestFoldTaskCompactedEqualsFull(t *testing.T) {
 	}
 	if gotFull.StartedAt != 200 || gotFull.ClosedAt != 500 {
 		t.Fatalf("started/closed = (%d,%d), want (200,500)", gotFull.StartedAt, gotFull.ClosedAt)
+	}
+	// cr1 is added in the seeded prefix and flipped to met by a replayed
+	// suffix op; cr2 is added after the seed. Append order and the seeded
+	// criterion's later mutation must survive seeding from the checkpoint.
+	if len(gotFull.Criteria) != 2 ||
+		gotFull.Criteria[0].ID != "cr1" || gotFull.Criteria[0].Status != model.CriterionMet ||
+		gotFull.Criteria[1].ID != "cr2" || gotFull.Criteria[1].Status != model.CriterionPending {
+		t.Fatalf("criteria = %+v, want [cr1=met, cr2=pending] in order", gotFull.Criteria)
+	}
+}
+
+// TestFoldSprintCompactedEqualsFull is the sprint analog: a status transition,
+// dates, labels, comments, and a commit link straddle a seed-safe checkpoint.
+// The lifecycle stamps (StartedAt, ClosedAt) must match the full fold.
+func TestFoldSprintCompactedEqualsFull(t *testing.T) {
+	c0 := mk("c0", nil, "alice", 100, 1, model.CreateSprint{Nonce: "n", Title: "S", Description: "d", Project: "p0", Labels: []string{"q3"}})
+	c1 := mk("c1", []string{"c0"}, "bob", 200, 2, model.SetSprintStatus{Status: model.SprintActive}, model.AddLabel{Label: "go"})
+	c2 := mk("c2", []string{"c1"}, "bob", 300, 3, model.AddComment{Body: "kickoff"}, model.SetStartDate{Date: 1000})
+	state, err := fold.Sprint([]model.PackCommit{c0, c1, c2})
+	if err != nil {
+		t.Fatalf("fold prefix: %v", err)
+	}
+	cK := cp("cK", "c2", "compactor", 350, 4, state, 3, "c0", "c1", "c2")
+	cKempty := mk("cK", []string{"c2"}, "compactor", 350, 4)
+	c3 := mk("c3", []string{"cK"}, "carol", 400, 5, model.SetSprintStatus{Status: model.SprintCompleted}, model.SetEndDate{Date: 2000})
+	c4 := mk("c4", []string{"c3"}, "carol", 500, 6, model.LinkCommit{SHA: "sha1"}, model.AddComment{Body: "done"})
+	compacted := []model.PackCommit{c0, c1, c2, cK, c3, c4}
+	full := []model.PackCommit{c0, c1, c2, cKempty, c3, c4}
+
+	gotFull, err := fold.Sprint(full)
+	if err != nil {
+		t.Fatalf("fold full: %v", err)
+	}
+	gotCompact, err := fold.Sprint(compacted)
+	if err != nil {
+		t.Fatalf("fold compacted: %v", err)
+	}
+	if !reflect.DeepEqual(gotCompact, gotFull) {
+		t.Fatalf("compacted = %+v\nfull = %+v", gotCompact, gotFull)
+	}
+	if gotFull.StartedAt != 200 || gotFull.ClosedAt != 400 {
+		t.Fatalf("started/closed = (%d,%d), want (200,400)", gotFull.StartedAt, gotFull.ClosedAt)
+	}
+	if gotFull.Status != model.SprintCompleted {
+		t.Fatalf("Status = %q, want completed", gotFull.Status)
+	}
+	if gotFull.StartDate != 1000 || gotFull.EndDate != 2000 {
+		t.Fatalf("start/end date = (%d,%d), want (1000,2000)", gotFull.StartDate, gotFull.EndDate)
+	}
+	if gotFull.Head != "c4" {
+		t.Fatalf("Head = %q, want c4", gotFull.Head)
+	}
+	r := rand.New(rand.NewPCG(3, 5))
+	for i := range 30 {
+		got, err := fold.Sprint(shuffled(compacted, r))
+		if err != nil {
+			t.Fatalf("shuffle %d: %v", i, err)
+		}
+		if !reflect.DeepEqual(got, gotFull) {
+			t.Fatalf("shuffle %d = %+v, want %+v", i, got, gotFull)
+		}
+	}
+}
+
+// TestFoldProjectCompactedEqualsFull is the project analog: a status transition,
+// labels, and comments straddle a seed-safe checkpoint. ClosedAt must match.
+func TestFoldProjectCompactedEqualsFull(t *testing.T) {
+	c0 := mk("c0", nil, "alice", 100, 1, model.CreateProject{Nonce: "n", Title: "P", Description: "d", Labels: []string{"core"}})
+	c1 := mk("c1", []string{"c0"}, "bob", 200, 2, model.AddLabel{Label: "active-work"}, model.AddComment{Body: "started"})
+	c2 := mk("c2", []string{"c1"}, "bob", 300, 3, model.SetTitle{Title: "Proj X"}, model.LinkCommit{SHA: "sha1"})
+	state, err := fold.Project([]model.PackCommit{c0, c1, c2})
+	if err != nil {
+		t.Fatalf("fold prefix: %v", err)
+	}
+	cK := cp("cK", "c2", "compactor", 350, 4, state, 3, "c0", "c1", "c2")
+	cKempty := mk("cK", []string{"c2"}, "compactor", 350, 4)
+	c3 := mk("c3", []string{"cK"}, "carol", 400, 5, model.SetProjectStatus{Status: model.ProjectCompleted}, model.RemoveLabel{Label: "core"})
+	c4 := mk("c4", []string{"c3"}, "carol", 500, 6, model.AddComment{Body: "done"})
+	compacted := []model.PackCommit{c0, c1, c2, cK, c3, c4}
+	full := []model.PackCommit{c0, c1, c2, cKempty, c3, c4}
+
+	gotFull, err := fold.Project(full)
+	if err != nil {
+		t.Fatalf("fold full: %v", err)
+	}
+	gotCompact, err := fold.Project(compacted)
+	if err != nil {
+		t.Fatalf("fold compacted: %v", err)
+	}
+	if !reflect.DeepEqual(gotCompact, gotFull) {
+		t.Fatalf("compacted = %+v\nfull = %+v", gotCompact, gotFull)
+	}
+	if gotFull.Status != model.ProjectCompleted || gotFull.ClosedAt != 400 {
+		t.Fatalf("status/closed = (%q,%d), want (completed,400)", gotFull.Status, gotFull.ClosedAt)
+	}
+	if !slices.Equal(gotFull.Labels, []string{"active-work"}) {
+		t.Fatalf("Labels = %v, want [active-work]", gotFull.Labels)
+	}
+	if gotFull.Head != "c4" {
+		t.Fatalf("Head = %q, want c4", gotFull.Head)
+	}
+	r := rand.New(rand.NewPCG(11, 13))
+	for i := range 30 {
+		got, err := fold.Project(shuffled(compacted, r))
+		if err != nil {
+			t.Fatalf("shuffle %d: %v", i, err)
+		}
+		if !reflect.DeepEqual(got, gotFull) {
+			t.Fatalf("shuffle %d = %+v, want %+v", i, got, gotFull)
+		}
 	}
 }
 

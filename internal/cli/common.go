@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -94,6 +95,17 @@ func bodyArg(cmd *cobra.Command, value string) (string, error) {
 	return strings.TrimRight(string(data), "\n"), nil
 }
 
+// readScript reads the validation script file at path and returns its
+// contents verbatim. The contents become a criterion's check command, run only
+// by task validate.
+func readScript(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read script %s: %w", path, err)
+	}
+	return string(data), nil
+}
+
 // exactArgs is cobra.ExactArgs returning a UsageError, so arity mistakes
 // exit 2.
 func exactArgs(n int) cobra.PositionalArgs {
@@ -148,11 +160,69 @@ func parseTaskType(value string) (model.TaskType, error) {
 	}
 }
 
+func parseSprintStatus(value string) (model.SprintStatus, error) {
+	switch s := model.SprintStatus(value); s {
+	case model.SprintPlanned, model.SprintActive, model.SprintCompleted, model.SprintCancelled:
+		return s, nil
+	default:
+		return "", fmt.Errorf("invalid sprint status %q (planned|active|completed|cancelled)", value)
+	}
+}
+
+func parseProjectStatus(value string) (model.ProjectStatus, error) {
+	switch s := model.ProjectStatus(value); s {
+	case model.ProjectActive, model.ProjectCompleted, model.ProjectArchived, model.ProjectCancelled:
+		return s, nil
+	default:
+		return "", fmt.Errorf("invalid project status %q (active|completed|archived|cancelled)", value)
+	}
+}
+
 func validatePriority(p int) (model.Priority, error) {
 	if p < 0 || p > 3 {
 		return 0, fmt.Errorf("invalid priority %d (0-3)", p)
 	}
 	return model.Priority(p), nil
+}
+
+// parseDate parses a YYYY-MM-DD calendar date as UTC midnight into unix
+// seconds. An empty value is the caller's signal to clear the date and is
+// handled before calling this.
+func parseDate(value string) (int64, error) {
+	t, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid date %q (want YYYY-MM-DD): %w", value, err)
+	}
+	return t.UTC().Unix(), nil
+}
+
+// resolveCriterion expands a criterion id prefix — matched case-insensitively —
+// against a task's criteria. No match fails with ErrNotFound; several matches
+// fail with an error listing each candidate's short id and text; one match
+// returns the criterion.
+func resolveCriterion(task model.Task, prefix string) (model.Criterion, error) {
+	lowered := strings.ToLower(prefix)
+	var matches []model.Criterion
+	for _, c := range task.Criteria {
+		if strings.HasPrefix(strings.ToLower(c.ID), lowered) {
+			matches = append(matches, c)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return model.Criterion{}, fmt.Errorf("%w: no criterion matches %q", store.ErrNotFound, prefix)
+	case 1:
+		return matches[0], nil
+	default:
+		var b strings.Builder
+		for i, c := range matches {
+			if i > 0 {
+				b.WriteString("; ")
+			}
+			fmt.Fprintf(&b, "%s %s", c.ID[:7], c.Text)
+		}
+		return model.Criterion{}, fmt.Errorf("%w: criterion prefix %q matches %d: %s", store.ErrAmbiguous, prefix, len(matches), b.String())
+	}
 }
 
 // loadNote resolves a note id prefix and folds its chain.
@@ -179,6 +249,32 @@ func loadTask(ctx context.Context, s *store.Store, prefix string) (string, model
 		return "", model.Task{}, err
 	}
 	return ref, snapshot.(model.Task), nil
+}
+
+// loadSprint resolves a sprint id prefix and folds its chain.
+func loadSprint(ctx context.Context, s *store.Store, prefix string) (string, model.Sprint, error) {
+	ref, err := s.Resolve(ctx, refs.KindSprint, prefix)
+	if err != nil {
+		return "", model.Sprint{}, err
+	}
+	snapshot, err := s.Load(ctx, ref)
+	if err != nil {
+		return "", model.Sprint{}, err
+	}
+	return ref, snapshot.(model.Sprint), nil
+}
+
+// loadProject resolves a project id prefix and folds its chain.
+func loadProject(ctx context.Context, s *store.Store, prefix string) (string, model.Project, error) {
+	ref, err := s.Resolve(ctx, refs.KindProject, prefix)
+	if err != nil {
+		return "", model.Project{}, err
+	}
+	snapshot, err := s.Load(ctx, ref)
+	if err != nil {
+		return "", model.Project{}, err
+	}
+	return ref, snapshot.(model.Project), nil
 }
 
 // allTasks folds every task in the repository keyed by entity id. It backs
@@ -314,4 +410,37 @@ func printTask(cmd *cobra.Command, s *store.Store, t model.Task, jsonOut bool) e
 		return err
 	}
 	return printJSON(cmd.OutOrStdout(), newTaskDTO(t, blocksFor(live, t.ID)))
+}
+
+// printSprint writes sprint as its JSON DTO — carrying the reverse-index ids of
+// its tasks — or its lean line.
+func printSprint(cmd *cobra.Command, s *store.Store, sprint model.Sprint, jsonOut bool) error {
+	if !jsonOut {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanSprintLine(sprint))
+		return err
+	}
+	tasks, err := s.ListTasks(cmd.Context())
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), newSprintDTO(sprint, tasksInSprint(tasks, sprint.ID)))
+}
+
+// printProject writes project as its JSON DTO — carrying the reverse-index ids
+// of its sprints and tasks — or its lean line.
+func printProject(cmd *cobra.Command, s *store.Store, project model.Project, jsonOut bool) error {
+	if !jsonOut {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanProjectLine(project))
+		return err
+	}
+	ctx := cmd.Context()
+	sprints, err := s.ListSprints(ctx)
+	if err != nil {
+		return err
+	}
+	tasks, err := s.ListTasks(ctx)
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), newProjectDTO(project, sprintsInProject(sprints, project.ID), tasksInProject(tasks, sprints, project.ID)))
 }

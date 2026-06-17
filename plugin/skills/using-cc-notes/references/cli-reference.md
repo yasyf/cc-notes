@@ -1,9 +1,13 @@
 # cc-notes CLI reference
 
-The complete command surface, grouped by noun: repo, task, note. Every command takes
-`-h`/`--help`, and every note, task, sync, and reconcile command takes `--json` for a
-machine-readable record. Without `--json`, mutations echo a lean tab-separated line and
-listings print one lean line per entity.
+The complete command surface, grouped by noun: repo, task, sprint, project, note. Every
+command takes `-h`/`--help`, and every note, task, sprint, project, sync, and reconcile
+command takes `--json` for a machine-readable record. Without `--json`, mutations echo a
+lean tab-separated line and listings print one lean line per entity.
+
+Sprints and projects are an **optional planning layer** on top of tasks — group work into a
+time-boxed sprint or a long-lived project without touching the canonical task and note flow.
+A task that joins neither behaves exactly as it did before.
 
 ## The model in one screen
 
@@ -26,13 +30,25 @@ listings print one lean line per entity.
   points at its replacement and drops out of default listings.
 - **Identity.** Writes are signed by `CC_NOTES_ACTOR` (`"Name <email>"`) when set, else by
   git `user.name`/`user.email`. The claim and lease primitives key on this actor.
+- **Sprints and projects are an optional, repo-wide planning layer.** A task carries an
+  independent sprint pointer **and** project pointer — both optional, both last-write-wins,
+  and applied across the whole repository, not per branch. A sprint carries an optional project
+  pointer. Membership is always an upward pointer; "tasks in a sprint", "sprints in a
+  project", and "tasks in a project" (direct ∪ via-sprint, deduplicated) are **derived**
+  reverse indexes, never stored. Sprint ids, project ids, and criterion ids all resolve by id
+  prefix exactly like tasks — an ambiguous prefix exits 5, no match exits 3.
 
 ## Lean-line formats
 
 | Entity | Fields (tab-separated) |
 |--------|------------------------|
 | Task | `<short7-id>` `<status>` `P<priority>` `<assignee\|->` `<title>` |
+| Sprint | `<short7-id>` `<status>` `<title>` |
+| Project | `<short7-id>` `<status>` `<title>` |
 | Note | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<tags csv\|->` `<title>` |
+
+A criterion's short id is the first 7 hex chars of its 32-hex nonce; `task criterion list`
+and the validation logs print `<short7-crit-id>` `<status>` `<text>`.
 
 Short ids are the first 7 hex chars; `-` stands in for an empty field. `task stale` appends
 a trailing idle marker to the task line; `note review` appends a verdict to the note line.
@@ -180,8 +196,11 @@ part of normal sync.
 
 ### `cc-notes mount [MOUNTPOINT]`
 
-Mount notes and tasks as an editable filesystem in the foreground; Ctrl-C unmounts. Notes
-render as Markdown, tasks as JSON; edits and diffs flow back into the object database.
+Mount the cc-notes entities as an editable filesystem in the foreground; Ctrl-C unmounts.
+Notes render as Markdown under `/notes`; tasks, sprints, and projects render as JSON under
+`/tasks`, `/sprints`, and `/projects`, with edits and diffs flowing back into the object
+database. A read-only nested tree of symlinks under `/projects` and `/sprints` walks the
+hierarchy; the [sprints and projects reference](sprints-and-projects.md) covers it.
 `MOUNTPOINT` is optional and defaults to a managed per-repo directory under
 `~/.cc-notes/mnt`. Requires a `_fuse` binary plus a FUSE implementation (`fuse-t` on macOS,
 `fuse3` on Linux).
@@ -247,16 +266,33 @@ Create a task. `Branch` defaults to your current branch; `--backlog` sets it to 
 | `--type <type>` | `task` | One of `task`, `bug`, `epic`, `question` |
 | `--label <label>` | none | Label; repeatable |
 | `--desc <text>` | empty | Description; `-` reads stdin |
+| `--criterion <text>` | none | Acceptance criterion; repeatable, **required by default** (see below) |
+| `--no-validation-criteria` | off | Create with no criteria; mutually exclusive with `--criterion` |
 | `--parent <id>` | none | Parent task id |
+| `--sprint <id>` | none | Join a sprint (id prefix) |
+| `--project <id>` | none | Join a project directly (id prefix) |
 | `--blocked-by <id>` | none | Blocker task id; repeatable, resolved globally |
 | `--branch <branch>` | current branch | Set the task's branch explicitly |
 | `--backlog` | off | Set `Branch=""` (shared, branch-less) |
 | `--json` | off | Emit JSON |
 
+**Acceptance criteria are required by default.** A `task add` with no `--criterion` and no
+`--no-validation-criteria` is a usage error (exit 2) — the default nudges every task to
+record what "done" means up front. Pass `--no-validation-criteria` to opt out explicitly;
+it cannot be combined with `--criterion`. Each criterion starts `pending`; gate `task done`
+on them and drive them with the `task criterion` subgroup below.
+
+`--sprint` and `--project` are independent: a task may join a sprint, a project, both, or
+neither. Joining a sprint leaves the project pointer untouched; `project show` still counts
+the task through its sprint.
+
 ```console
-$ cc-notes task add "Add retry backoff to the API client" --priority 1 --label api
-d82c087	open	P1	-	Add retry backoff to the API client
-$ cc-notes task add "Rotate signing keys quarterly" --backlog
+$ cc-notes task add "Add retry backoff to the API client" --priority 1 --label api \
+    --sprint afd8362 --criterion "go test ./... passes" --criterion "p99 latency under 200ms"
+286d87c	open	P1	-	Add retry backoff to the API client
+$ cc-notes task add "Spike: evaluate gRPC" --no-validation-criteria --project 07daf88
+94c0917	open	P2	-	Spike: evaluate gRPC
+$ cc-notes task add "Rotate signing keys quarterly" --backlog --no-validation-criteria
 5d3e9c1	open	P2	-	Rotate signing keys quarterly
 ```
 
@@ -365,11 +401,23 @@ commits that implemented it.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--force` | off | Close even with unmet criteria |
 | `--json` | off | Emit JSON |
 
+**`done` is gated on acceptance criteria.** While any criterion is `pending` or `failed`,
+`done` lists the unmet ones and refuses to close (exit 2). Mark them `met` (by
+hand or via `task validate`), or pass `--force` to close anyway — a force-close sets the
+derived `closed_forced` flag in the task's `--json` so the override stays visible.
+
 ```console
-$ cc-notes task done d82c087
-d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
+$ cc-notes task done 286d87c
+usage: 286d87c has 2 unmet criterion/criteria (pass --force to close anyway):
+  c5144db [pending] go test ./... passes
+  f06100e [pending] p99 latency under 200ms
+$ cc-notes task criterion met 286d87c c5144db
+286d87c	open	P1	-	Add retry backoff to the API client
+$ cc-notes task done 286d87c --force
+286d87c	done	P1	-	Add retry backoff to the API client
 ```
 
 ### `cc-notes task cancel ID`
@@ -438,7 +486,73 @@ not fit.
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--parent <id>` | Set parent |
 | `--no-parent` | Clear the parent |
+| `--sprint <id>` | Join a sprint (id prefix); mutually exclusive with `--no-sprint` |
+| `--no-sprint` | Clear the sprint |
+| `--project <id>` | Join a project (id prefix); mutually exclusive with `--no-project` |
+| `--no-project` | Clear the project |
 | `--json` | Emit JSON |
+
+### `cc-notes task criterion`
+
+The criterion subgroup manages a task's structured acceptance criteria — the `pending` /
+`met` / `failed` checks that gate `task done`. Every verb addresses a criterion by an id
+prefix (`CRIT`, case-insensitive): no match exits 3, an ambiguous prefix exits 5. Criteria
+are also editable by id through the task's FUSE JSON file.
+
+| Verb | Args | Meaning |
+|------|------|---------|
+| `add` | `TASK "TEXT" [--script FILE]` | Add a criterion (`pending`); `--script` stores a file's contents as its check command |
+| `rm` | `TASK CRIT` | Remove a criterion |
+| `met` | `TASK CRIT` | Mark a criterion `met` |
+| `failed` | `TASK CRIT` | Mark a criterion `failed` |
+| `reset` | `TASK CRIT` | Reset a criterion to `pending` |
+| `script` | `TASK CRIT FILE` \| `TASK CRIT --clear` | Set or clear a criterion's validation script |
+| `list` | `TASK [--json]` | List a task's criteria |
+
+Every verb also takes `--json`. The lean `list` line is `<short7-crit-id>` `<status>`
+`<text>`.
+
+```console
+$ cc-notes task criterion add 286d87c "build succeeds" --script ./scripts/check-build.sh
+286d87c	open	P1	-	Add retry backoff to the API client
+$ cc-notes task criterion list 286d87c
+c5144db	met	go test ./... passes
+f06100e	pending	p99 latency under 200ms
+40ddcd3	pending	build succeeds
+```
+
+### `cc-notes task validate ID`
+
+Run a task's criterion validation scripts locally and record each verdict. This is the only
+command that executes stored criterion scripts, and it is **explicit and confirmation-gated**
+on purpose: scripts arrive over git sync from other agents and remotes, so running one runs
+untrusted code in your working tree. It **never** runs during `sync`, `list`, fold, `done`,
+or any render.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--yes` | off | Run without the interactive confirmation prompt |
+| `--timeout <dur>` | `5m` | Per-script timeout |
+| `--json` | off | Emit JSON |
+
+Validate collects the criteria that carry a script, prints each script to stderr first, then
+requires consent before running anything: `--yes`, or a `y`/`yes` answer to the interactive
+`[y/N]` prompt. A non-terminal stdin without `--yes` is a hard error — a piped or automated
+invocation can never run a script silently. Each script runs under `sh -c` in the repo root;
+exit 0 marks the criterion `met`, a non-zero exit or a timeout marks it `failed`. A task with
+no scripted criteria prints `no criteria have validation scripts` and exits 0.
+
+```console
+$ cc-notes task validate 286d87c --yes
+criterion 40ddcd3 build succeeds:
+go build ./...
+
+40ddcd3 met build succeeds
+286d87c	open	P1	-	Add retry backoff to the API client
+```
+
+(The `criterion …` preview and the per-script verdict lines go to stderr; the final task line
+or `--json` document is stdout.)
 
 ### `cc-notes task stale`
 
@@ -477,8 +591,236 @@ stale.
 
 ### JSON task shape
 
-`{"id":string,"branch":string,"title":string,"description":string,"type":string,"status":string,"priority":int,"assignee":string|null,"labels":[…],"blocked_by":[id,…],"blocks":[id,…],"parent":string|null,"comments":[{"author":string,"ts":rfc3339,"body":string}],"commits":[sha,…],"lease":{"holder":string|null,"heartbeat":rfc3339|null},"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339|null,"closed_at":rfc3339|null}`.
+`{"id":string,"branch":string,"title":string,"description":string,"type":string,"status":string,"priority":int,"assignee":string|null,"labels":[…],"blocked_by":[id,…],"blocks":[id,…],"parent":string|null,"comments":[{"author":string,"ts":rfc3339,"body":string}],"commits":[sha,…],"lease":{"holder":string|null,"heartbeat":rfc3339|null},"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339|null,"closed_at":rfc3339|null,"sprint":id|null,"project":id|null,"criteria":[{"id":string,"text":string,"script":string,"status":string}],"closed_forced":bool}`.
 `blocks` is the derived reverse index of `blocked_by`; `branch` is `""` for a backlog task.
+`sprint` and `project` are the task's independent membership pointers (`null` when unset);
+each criterion's `status` is `pending`, `met`, or `failed`, and `script` is `""` when it
+carries none; `closed_forced` is `true` only for a `done` task closed with at least one
+criterion still unmet.
+
+## Project commands
+
+Projects are long-lived, repo-wide, branch-less groupings of sprints and tasks. A task joins
+a project directly with `--project`, or inherits one through its sprint; a project never
+points down — `project show` derives both reverse indexes. Status advances from `active` to
+one of `completed`, `archived`, or `cancelled`, and the lifecycle verbs only fire from `active`.
+Projects resolve by id prefix like tasks. Every command takes `--json`.
+
+### `cc-notes project add TITLE`
+
+Create a project. It is born `active`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--desc <text>` | empty | Description; `-` reads stdin |
+| `--label <label>` | none | Label; repeatable |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes project add "Billing platform" --desc "Revenue and invoicing" --label infra
+07daf88	active	Billing platform
+```
+
+### `cc-notes project list`
+
+List projects, each as its current folded state. Default lists every status.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--status <csv>` | all | Status filter, comma-separated |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes project list
+07daf88	active	Billing platform
+```
+
+### `cc-notes project show ID`
+
+Show one project: a fixed-order header block (id, title, status, labels, created, updated,
+closed, commits), the description after a blank line, each comment as a `-- <author>
+<rfc3339>` block, then a `sprints:` line and a `tasks:` line of short ids. `sprints` is the
+sprints pointed at this project; `tasks` is the union of tasks pointed directly at the
+project and tasks reached through one of its sprints, deduplicated.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes project show 07daf88
+id: 07daf88299b3418c4067425e9e6ce336602eb729
+title: Billing platform
+status: active
+labels: infra
+created: 2026-06-16T19:14:07Z
+updated: 2026-06-16T19:14:07Z
+closed: -
+commits: -
+
+Revenue and invoicing
+sprints: afd8362
+tasks: 286d87c,94c0917
+```
+
+### `cc-notes project complete ID` · `archive ID` · `cancel ID`
+
+Move a project to a terminal status. Each fires only from `active`; a project already
+`completed`, `archived`, or `cancelled` is a conflict (exit 4).
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes project complete 07daf88
+07daf88	completed	Billing platform
+```
+
+### `cc-notes project edit ID`
+
+Edit a project without transition checks — at least one flag is required.
+
+| Flag | Meaning |
+|------|---------|
+| `--title <text>` | New title |
+| `--desc <text>` | New description; `-` reads stdin |
+| `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
+| `--json` | Emit JSON |
+
+### `cc-notes project comment ID BODY`
+
+Append a comment; `BODY` of `-` reads stdin.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+### JSON project shape
+
+`{"id":string,"title":string,"description":string,"status":string,"labels":[…],"commits":[sha,…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"closed_at":rfc3339|null,"sprints":[id,…],"tasks":[id,…]}`.
+`status` is `active`, `completed`, `archived`, or `cancelled`; `sprints` and `tasks` are the
+derived reverse indexes as full-hex ids.
+
+## Sprint commands
+
+Sprints are time-boxed, repo-wide groupings of tasks, optionally within a project. A task
+joins a sprint with `--sprint`; a sprint points at an optional project with `--project`.
+`sprint show` derives the task reverse index. Status advances from `planned` to `active` to
+`completed`, or to `cancelled` from either open state; `start`, `complete`, and `cancel` only
+fire from `planned` or `active`. Sprints resolve by id prefix like tasks. Every command takes
+`--json`.
+
+### `cc-notes sprint add TITLE`
+
+Create a sprint. It is born `planned`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--desc <text>` | empty | Description; `-` reads stdin |
+| `--project <id>` | none | Owning project (id prefix) |
+| `--label <label>` | none | Label; repeatable |
+| `--start <YYYY-MM-DD>` | none | Start date |
+| `--end <YYYY-MM-DD>` | none | End date |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes sprint add "Sprint 7" --project 07daf88 --start 2026-06-15 --end 2026-06-29
+afd8362	planned	Sprint 7
+```
+
+### `cc-notes sprint list`
+
+List sprints, each as its current folded state. Default lists every status.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--project <id>` | none | Filter to a project (id prefix) |
+| `--status <csv>` | all | Status filter, comma-separated |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes sprint list --project 07daf88
+afd8362	planned	Sprint 7
+```
+
+### `cc-notes sprint show ID`
+
+Show one sprint: a fixed-order header block (id, project short id, title, status, start_date,
+end_date, labels, created, updated, started, closed, commits), the description after a blank
+line, each comment as a `-- <author> <rfc3339>` block, then a `tasks:` line of the short ids
+of the tasks pointed at this sprint.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes sprint show afd8362
+id: afd8362cc6e5a816b3987e9cc7ccd2bca775d397
+project: 07daf88
+title: Sprint 7
+status: planned
+start_date: 2026-06-15T00:00:00Z
+end_date: 2026-06-29T00:00:00Z
+labels: -
+created: 2026-06-16T19:14:58Z
+updated: 2026-06-16T19:14:58Z
+started: -
+closed: -
+commits: -
+
+Invoicing polish
+tasks: 286d87c
+```
+
+### `cc-notes sprint start ID` · `complete ID` · `cancel ID`
+
+Advance a sprint's status: `start` sets it `active`, `complete` sets it `completed`, `cancel`
+sets it `cancelled`. Each fires only from `planned` or `active`; a sprint already `completed`
+or `cancelled` is a conflict (exit 4).
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes sprint start afd8362
+afd8362	active	Sprint 7
+```
+
+### `cc-notes sprint edit ID`
+
+Edit a sprint without transition checks — at least one flag is required. The `--project`,
+`--start`, and `--end` setters each pair with a `--no-*` clearer, and the two are mutually
+exclusive.
+
+| Flag | Meaning |
+|------|---------|
+| `--title <text>` | New title |
+| `--desc <text>` | New description; `-` reads stdin |
+| `--project <id>` | Set the owning project (id prefix) |
+| `--no-project` | Clear the project |
+| `--start <YYYY-MM-DD>` | Set the start date |
+| `--no-start` | Clear the start date |
+| `--end <YYYY-MM-DD>` | Set the end date |
+| `--no-end` | Clear the end date |
+| `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
+| `--json` | Emit JSON |
+
+### `cc-notes sprint comment ID BODY`
+
+Append a comment; `BODY` of `-` reads stdin.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+### JSON sprint shape
+
+`{"id":string,"project":id|null,"title":string,"description":string,"status":string,"start_date":rfc3339|null,"end_date":rfc3339|null,"labels":[…],"commits":[sha,…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339|null,"closed_at":rfc3339|null,"tasks":[id,…]}`.
+`status` is `planned`, `active`, `completed`, or `cancelled`; `start_date`/`end_date` are the
+user-set dates (`null` when unset); `tasks` is the derived reverse index as full-hex ids.
 
 ## Note commands
 

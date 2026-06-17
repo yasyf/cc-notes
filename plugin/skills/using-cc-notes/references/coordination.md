@@ -33,7 +33,7 @@ are visible to **every agent on every branch**, and they are the cross-agent que
 shared work there; capture work specific to your current branch with a plain `task add`.
 
 ```console
-$ cc-notes task add "Add retry backoff to the API client" --backlog --priority 1 --label api
+$ cc-notes task add "Add retry backoff to the API client" --backlog --priority 1 --label api --criterion "backoff caps at 30s"
 d82c087	open	P1	-	Add retry backoff to the API client
 ```
 

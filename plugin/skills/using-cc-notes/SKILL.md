@@ -89,9 +89,9 @@ notes: 14 total, 3 need review
 **3. Plan.** Capture shared work onto the backlog; capture branch-specific work plainly.
 
 ```console
-$ cc-notes task add "build the widget" --backlog --priority 1
+$ cc-notes task add "build the widget" --backlog --priority 1 --no-validation-criteria
 08118da	open	P1	-	build the widget
-$ cc-notes task add "Add retry backoff to the API client" --priority 1 --label api
+$ cc-notes task add "Add retry backoff to the API client" --priority 1 --label api --criterion "backoff caps at 30s"
 d82c087	open	P1	-	Add retry backoff to the API client
 ```
 
@@ -183,6 +183,19 @@ The verbs reached for most. The full surface — every flag, default, and output
 Append `--json` to any note, task, sync, reconcile, or status command for a machine-readable
 record instead of the lean line.
 
+## Projects and sprints (optional)
+
+An optional planning layer sits on top of tasks — skip it for the canonical flow above. A
+task can carry an independent **sprint** pointer (a time-boxed grouping) and **project**
+pointer (a long-lived one), and a sprint can point at a project; all three are optional and
+**repo-wide**, not branch-scoped like a task's `branch`. Membership is an upward pointer the
+reader inverts, so `cc-notes sprint show` and `cc-notes project show` derive the tasks (and a
+project's sprints) that roll up into them. Independently, a task can carry **validation
+criteria** (`cc-notes task add --criterion`, or the `cc-notes task criterion` subgroup):
+`cc-notes task done` refuses to close while any criterion is unmet unless you pass `--force`,
+and `cc-notes task validate` runs each criterion's check script behind an explicit
+confirmation. See `references/sprints-and-projects.md` and `references/validation-criteria.md`.
+
 ## References
 
 - `references/cli-reference.md` — the complete command surface: every flag, default, and the
@@ -194,3 +207,7 @@ record instead of the lean line.
   native todo vs cc-notes task vs cc-notes note.
 - `references/lifecycle-and-hygiene.md` — keeping the record honest: task leases and
   staleness, note verification, drift, and supersession, and the maintenance verbs.
+- `references/sprints-and-projects.md` — the optional planning layer: tasks rolling up into
+  sprints and projects, the repo-wide upward pointers, and the derived reverse indexes.
+- `references/validation-criteria.md` — structured acceptance criteria on a task, the gated
+  `task done`, and the explicit, confirmation-gated `task validate` trust boundary.

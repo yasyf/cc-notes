@@ -1,10 +1,11 @@
 // Package refs defines the cc-notes ref naming scheme: pure build and parse
-// functions with no git access. Notes live at refs/cc-notes/notes/<id> and
-// tasks at refs/cc-notes/tasks/<id>, both flat — the entity id is the only
-// component after the namespace, and a task's branch is a folded attribute,
-// not part of its ref name. Sync-tracking refs shadow the namespace under
-// refs/cc-notes-sync/<remote>/, outside refs/cc-notes/ so the wildcard push
-// refspec never republishes them.
+// functions with no git access. Notes live at refs/cc-notes/notes/<id>, tasks
+// at refs/cc-notes/tasks/<id>, sprints at refs/cc-notes/sprints/<id>, and
+// projects at refs/cc-notes/projects/<id>, all flat — the entity id is the
+// only component after the namespace, and a task's branch is a folded
+// attribute, not part of its ref name. Sync-tracking refs shadow the namespace
+// under refs/cc-notes-sync/<remote>/, outside refs/cc-notes/ so the wildcard
+// push refspec never republishes them.
 package refs
 
 import (
@@ -28,6 +29,14 @@ const NotesPrefix = namespace + "notes/"
 // slash.
 const TasksRoot = namespace + "tasks/"
 
+// SprintsRoot is the ref namespace holding every sprint, including the trailing
+// slash.
+const SprintsRoot = namespace + "sprints/"
+
+// ProjectsRoot is the ref namespace holding every project, including the
+// trailing slash.
+const ProjectsRoot = namespace + "projects/"
+
 var (
 	// ErrNotCCNotes reports a ref outside the cc-notes namespaces.
 	ErrNotCCNotes = errors.New("not a cc-notes ref")
@@ -41,8 +50,10 @@ type Kind string
 
 // Entity namespaces.
 const (
-	KindNote Kind = "note"
-	KindTask Kind = "task"
+	KindNote    Kind = "note"
+	KindTask    Kind = "task"
+	KindSprint  Kind = "sprint"
+	KindProject Kind = "project"
 )
 
 // Ref is one parsed cc-notes ref name.
@@ -57,10 +68,17 @@ func Note(id model.EntityID) string { return NotesPrefix + string(id) }
 // Task returns the ref name for the task with the given id.
 func Task(id model.EntityID) string { return TasksRoot + string(id) }
 
+// Sprint returns the ref name for the sprint with the given id.
+func Sprint(id model.EntityID) string { return SprintsRoot + string(id) }
+
+// Project returns the ref name for the project with the given id.
+func Project(id model.EntityID) string { return ProjectsRoot + string(id) }
+
 // Parse decodes a cc-notes ref name. The id is the only component after the
-// notes/ or tasks/ namespace. It returns ErrNotCCNotes for refs outside
-// refs/cc-notes/ and ErrMalformed for anything that does not match the
-// scheme, including ids that are not 40 or 64 lowercase hex characters.
+// notes/, tasks/, sprints/, or projects/ namespace. It returns ErrNotCCNotes
+// for refs outside refs/cc-notes/ and ErrMalformed for anything that does not
+// match the scheme, including ids that are not 40 or 64 lowercase hex
+// characters.
 func Parse(ref string) (Ref, error) {
 	rest, ok := strings.CutPrefix(ref, namespace)
 	if !ok {
@@ -87,6 +105,22 @@ func Parse(ref string) (Ref, error) {
 			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
 		}
 		return Ref{Kind: KindTask, ID: model.EntityID(tail)}, nil
+	case "sprints":
+		if strings.ContainsRune(tail, '/') {
+			return Ref{}, fmt.Errorf("%w: nested components in sprint ref %q", ErrMalformed, ref)
+		}
+		if !validID(tail) {
+			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
+		}
+		return Ref{Kind: KindSprint, ID: model.EntityID(tail)}, nil
+	case "projects":
+		if strings.ContainsRune(tail, '/') {
+			return Ref{}, fmt.Errorf("%w: nested components in project ref %q", ErrMalformed, ref)
+		}
+		if !validID(tail) {
+			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
+		}
+		return Ref{Kind: KindProject, ID: model.EntityID(tail)}, nil
 	default:
 		return Ref{}, fmt.Errorf("%w: unknown namespace %q in %q", ErrMalformed, kind, ref)
 	}

@@ -47,6 +47,10 @@ func Fold(commits []model.PackCommit) (model.Snapshot, error) {
 		return foldNote(ordered)
 	case model.CreateTask:
 		return foldTask(ordered)
+	case model.CreateSprint:
+		return foldSprint(ordered)
+	case model.CreateProject:
+		return foldProject(ordered)
 	case nil:
 		return nil, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
 	default:
@@ -72,6 +76,26 @@ func Task(commits []model.PackCommit) (model.Task, error) {
 		return model.Task{}, err
 	}
 	return foldTask(ordered)
+}
+
+// Sprint linearizes the chain and folds it as a sprint. It fails with
+// ErrKindMismatch when the chain was created as a different kind.
+func Sprint(commits []model.PackCommit) (model.Sprint, error) {
+	ordered, err := Linearize(commits)
+	if err != nil {
+		return model.Sprint{}, err
+	}
+	return foldSprint(ordered)
+}
+
+// Project linearizes the chain and folds it as a project. It fails with
+// ErrKindMismatch when the chain was created as a different kind.
+func Project(commits []model.PackCommit) (model.Project, error) {
+	ordered, err := Linearize(commits)
+	if err != nil {
+		return model.Project{}, err
+	}
+	return foldProject(ordered)
 }
 
 func foldNote(ordered []model.PackCommit) (model.Note, error) {
@@ -179,6 +203,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 	labels := map[string]bool{}
 	deps := map[model.EntityID]bool{}
 	commits := map[model.SHA]bool{}
+	var criteria []model.Criterion
 	created := false
 	if seeded {
 		seed, ok := base.State.(model.Task)
@@ -187,6 +212,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 		}
 		task = seed
 		task.Comments = slices.Clone(seed.Comments)
+		criteria = slices.Clone(seed.Criteria)
 		for _, l := range seed.Labels {
 			labels[l] = true
 		}
@@ -199,6 +225,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 		created = true
 	} else {
 		task = model.Task{ID: model.EntityID(ordered[0].SHA), CreatedAt: ordered[0].AuthorTime, Comments: []model.Comment{}}
+		criteria = []model.Criterion{}
 	}
 	for _, c := range ordered {
 		if seeded && (c.SHA == seedSHA || covered[c.SHA]) {
@@ -267,6 +294,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 				if task.Assignee == o.From && task.HeartbeatLamport <= o.AfterLamport {
 					task.Assignee = o.Assignee
 					task.Status = model.StatusInProgress
+					task.ClosedAt = 0
 					task.HeartbeatAt = c.AuthorTime
 					task.HeartbeatLamport = c.Pack.Lamport
 				}
@@ -274,6 +302,30 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 				commits[o.SHA] = true
 			case model.UnlinkCommit:
 				delete(commits, o.SHA)
+			case model.SetSprint:
+				task.Sprint = o.Sprint
+			case model.SetProject:
+				task.Project = o.Project
+			case model.AddCriterion:
+				if criterionIndex(criteria, o.ID) < 0 {
+					criteria = append(criteria, model.Criterion{ID: o.ID, Text: o.Text, Script: o.Script, Status: model.CriterionPending})
+				}
+			case model.RemoveCriterion:
+				if i := criterionIndex(criteria, o.ID); i >= 0 {
+					criteria = slices.Delete(criteria, i, i+1)
+				}
+			case model.SetCriterionText:
+				if i := criterionIndex(criteria, o.ID); i >= 0 {
+					criteria[i].Text = o.Text
+				}
+			case model.SetCriterionStatus:
+				if i := criterionIndex(criteria, o.ID); i >= 0 {
+					criteria[i].Status = o.Status
+				}
+			case model.SetCriterionScript:
+				if i := criterionIndex(criteria, o.ID); i >= 0 {
+					criteria[i].Script = o.Script
+				}
 			default:
 				return model.Task{}, fmt.Errorf("%w: %s on a task", ErrKindMismatch, op.OpKind())
 			}
@@ -292,8 +344,24 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 	task.Labels = sortedKeys(labels)
 	task.BlockedBy = sortedKeys(deps)
 	task.Commits = sortedKeys(commits)
+	if criteria == nil {
+		criteria = []model.Criterion{}
+	}
+	task.Criteria = criteria
 	task.Head = ordered[len(ordered)-1].SHA
 	return task, nil
+}
+
+// criterionIndex returns the index of the criterion with the given id in the
+// slice, or -1 when absent. Criteria lists are tiny, so a linear scan is the
+// right tool; there is no stored lamport.
+func criterionIndex(criteria []model.Criterion, id string) int {
+	for i := range criteria {
+		if criteria[i].ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 func applyStatus(task *model.Task, status model.Status, at int64) {
@@ -306,6 +374,203 @@ func applyStatus(task *model.Task, status model.Status, at int64) {
 		task.ClosedAt = at
 	case model.StatusOpen, model.StatusInProgress:
 		task.ClosedAt = 0
+	}
+}
+
+func foldSprint(ordered []model.PackCommit) (model.Sprint, error) {
+	base, seedSHA, covered, seeded := selectSeed(ordered)
+	var sprint model.Sprint
+	labels := map[string]bool{}
+	commits := map[model.SHA]bool{}
+	created := false
+	if seeded {
+		seed, ok := base.State.(model.Sprint)
+		if !ok {
+			return model.Sprint{}, fmt.Errorf("%w: checkpoint over a non-sprint folded as a sprint", ErrKindMismatch)
+		}
+		sprint = seed
+		sprint.Comments = slices.Clone(seed.Comments)
+		for _, l := range seed.Labels {
+			labels[l] = true
+		}
+		for _, sha := range seed.Commits {
+			commits[sha] = true
+		}
+		created = true
+	} else {
+		sprint = model.Sprint{ID: model.EntityID(ordered[0].SHA), CreatedAt: ordered[0].AuthorTime, Comments: []model.Comment{}}
+	}
+	for _, c := range ordered {
+		if seeded && (c.SHA == seedSHA || covered[c.SHA]) {
+			continue
+		}
+		for _, op := range c.Pack.Ops {
+			if !created {
+				switch o := op.(type) {
+				case model.CreateSprint:
+					created = true
+					sprint.Title, sprint.Description = o.Title, o.Description
+					sprint.Project, sprint.Author = o.Project, c.Author
+					sprint.Status = model.SprintPlanned
+					for _, l := range o.Labels {
+						labels[l] = true
+					}
+				case model.CreateNote, model.CreateTask, model.CreateProject:
+					return model.Sprint{}, fmt.Errorf("%w: %s chain folded as a sprint", ErrKindMismatch, op.OpKind())
+				default:
+					return model.Sprint{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
+				}
+				continue
+			}
+			switch o := op.(type) {
+			case model.Checkpoint:
+				// A non-seed checkpoint is a fold no-op: its covered ops replay
+				// through their original commits, which remain in the chain.
+			case model.CreateNote, model.CreateTask, model.CreateSprint, model.CreateProject:
+				return model.Sprint{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
+			case model.SetTitle:
+				sprint.Title = o.Title
+			case model.SetDescription:
+				sprint.Description = o.Description
+			case model.SetProject:
+				sprint.Project = o.Project
+			case model.SetSprintStatus:
+				applySprintStatus(&sprint, o.Status, c.AuthorTime)
+			case model.SetStartDate:
+				sprint.StartDate = o.Date
+			case model.SetEndDate:
+				sprint.EndDate = o.Date
+			case model.AddLabel:
+				labels[o.Label] = true
+			case model.RemoveLabel:
+				delete(labels, o.Label)
+			case model.AddComment:
+				sprint.Comments = append(sprint.Comments, model.Comment{Author: c.Author, TS: c.AuthorTime, Body: o.Body})
+			case model.LinkCommit:
+				commits[o.SHA] = true
+			case model.UnlinkCommit:
+				delete(commits, o.SHA)
+			default:
+				return model.Sprint{}, fmt.Errorf("%w: %s on a sprint", ErrKindMismatch, op.OpKind())
+			}
+		}
+		if hasNonCheckpointOp(c) {
+			sprint.UpdatedAt = c.AuthorTime
+		}
+	}
+	if !created {
+		return model.Sprint{}, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
+	}
+	sprint.Labels = sortedKeys(labels)
+	sprint.Commits = sortedKeys(commits)
+	sprint.Head = ordered[len(ordered)-1].SHA
+	return sprint, nil
+}
+
+func applySprintStatus(s *model.Sprint, status model.SprintStatus, at int64) {
+	if status == model.SprintActive && s.Status != model.SprintActive {
+		s.StartedAt = at
+	}
+	s.Status = status
+	switch status {
+	case model.SprintCompleted, model.SprintCancelled:
+		s.ClosedAt = at
+	case model.SprintPlanned, model.SprintActive:
+		s.ClosedAt = 0
+	}
+}
+
+func foldProject(ordered []model.PackCommit) (model.Project, error) {
+	base, seedSHA, covered, seeded := selectSeed(ordered)
+	var project model.Project
+	labels := map[string]bool{}
+	commits := map[model.SHA]bool{}
+	created := false
+	if seeded {
+		seed, ok := base.State.(model.Project)
+		if !ok {
+			return model.Project{}, fmt.Errorf("%w: checkpoint over a non-project folded as a project", ErrKindMismatch)
+		}
+		project = seed
+		project.Comments = slices.Clone(seed.Comments)
+		for _, l := range seed.Labels {
+			labels[l] = true
+		}
+		for _, sha := range seed.Commits {
+			commits[sha] = true
+		}
+		created = true
+	} else {
+		project = model.Project{ID: model.EntityID(ordered[0].SHA), CreatedAt: ordered[0].AuthorTime, Comments: []model.Comment{}}
+	}
+	for _, c := range ordered {
+		if seeded && (c.SHA == seedSHA || covered[c.SHA]) {
+			continue
+		}
+		for _, op := range c.Pack.Ops {
+			if !created {
+				switch o := op.(type) {
+				case model.CreateProject:
+					created = true
+					project.Title, project.Description = o.Title, o.Description
+					project.Author = c.Author
+					project.Status = model.ProjectActive
+					for _, l := range o.Labels {
+						labels[l] = true
+					}
+				case model.CreateNote, model.CreateTask, model.CreateSprint:
+					return model.Project{}, fmt.Errorf("%w: %s chain folded as a project", ErrKindMismatch, op.OpKind())
+				default:
+					return model.Project{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
+				}
+				continue
+			}
+			switch o := op.(type) {
+			case model.Checkpoint:
+				// A non-seed checkpoint is a fold no-op: its covered ops replay
+				// through their original commits, which remain in the chain.
+			case model.CreateNote, model.CreateTask, model.CreateSprint, model.CreateProject:
+				return model.Project{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
+			case model.SetTitle:
+				project.Title = o.Title
+			case model.SetDescription:
+				project.Description = o.Description
+			case model.SetProjectStatus:
+				applyProjectStatus(&project, o.Status, c.AuthorTime)
+			case model.AddLabel:
+				labels[o.Label] = true
+			case model.RemoveLabel:
+				delete(labels, o.Label)
+			case model.AddComment:
+				project.Comments = append(project.Comments, model.Comment{Author: c.Author, TS: c.AuthorTime, Body: o.Body})
+			case model.LinkCommit:
+				commits[o.SHA] = true
+			case model.UnlinkCommit:
+				delete(commits, o.SHA)
+			default:
+				return model.Project{}, fmt.Errorf("%w: %s on a project", ErrKindMismatch, op.OpKind())
+			}
+		}
+		if hasNonCheckpointOp(c) {
+			project.UpdatedAt = c.AuthorTime
+		}
+	}
+	if !created {
+		return model.Project{}, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
+	}
+	project.Labels = sortedKeys(labels)
+	project.Commits = sortedKeys(commits)
+	project.Head = ordered[len(ordered)-1].SHA
+	return project, nil
+}
+
+func applyProjectStatus(p *model.Project, status model.ProjectStatus, at int64) {
+	p.Status = status
+	switch status {
+	case model.ProjectCompleted, model.ProjectArchived, model.ProjectCancelled:
+		p.ClosedAt = at
+	case model.ProjectActive:
+		p.ClosedAt = 0
 	}
 }
 
