@@ -20,7 +20,43 @@ import (
 	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
+	"github.com/yasyf/fusekit"
 )
+
+// The production mount always wraps the FS in fusekit's cache-defeat decorator,
+// which drives the commit (notesCommit) after BOTH Flush and Fsync and overrides
+// the Getattr mtime nanosecond from notesSeed. The bare FS these white-box tests
+// drive is unwrapped, so flush/fsync/getattrDefeated reproduce exactly what the
+// decorator does — exercising the real production behavior without weakening any
+// assertion.
+
+// flush mirrors the decorator's Flush: the FS Flush handler, then the commit.
+func flush(f *FS, p string, fh uint64) int {
+	if rc := f.Flush(p, fh); rc != 0 {
+		return rc
+	}
+	return f.notesCommit(p, fh)
+}
+
+// fsync mirrors the decorator's Fsync: the FS Fsync handler, then the commit.
+func fsync(f *FS, p string, fh uint64) int {
+	if rc := f.Fsync(p, false, fh); rc != 0 {
+		return rc
+	}
+	return f.notesCommit(p, fh)
+}
+
+// getattrDefeated mirrors the decorator's Getattr: the FS Getattr, then the
+// per-version mtime-nanosecond override fusekit applies from notesSeed.
+func getattrDefeated(f *FS, p string, stat *fuse.Stat_t, fh uint64) int {
+	rc := f.Getattr(p, stat, fh)
+	if rc == 0 {
+		if seed := f.notesSeed(p, stat); seed != "" {
+			stat.Mtim.Nsec = fusekit.VersionNsec(seed)
+		}
+	}
+	return rc
+}
 
 // scrubGitEnv clears every git environment knob that could leak host state
 // into a test and pins global/system config to /dev/null.
@@ -192,7 +228,7 @@ func TestFlushCommitsDiffedOps(t *testing.T) {
 	if n := f.Write(p, extra, int64(len(RenderNote(note))), fh); n != len(extra) {
 		t.Fatalf("Write = %d", n)
 	}
-	if errc := f.Flush(p, fh); errc != 0 {
+	if errc := flush(f, p, fh); errc != 0 {
 		t.Fatalf("Flush = %d", errc)
 	}
 	f.Release(p, fh)
@@ -242,7 +278,7 @@ func TestIdenticalRewriteNoCommit(t *testing.T) {
 		t.Fatalf("Open = %d", errc)
 	}
 	mustWriteAll(t, f, p, fh, RenderNote(note))
-	if errc := f.Flush(p, fh); errc != 0 {
+	if errc := flush(f, p, fh); errc != 0 {
 		t.Fatalf("Flush = %d", errc)
 	}
 	f.Release(p, fh)
@@ -264,7 +300,7 @@ func TestParseErrorEINVAL(t *testing.T) {
 		t.Fatalf("Open = %d", errc)
 	}
 	mustWriteAll(t, f, p, fh, []byte("not: [valid frontmatter\n"))
-	if errc := f.Flush(p, fh); errc != -fuse.EINVAL {
+	if errc := flush(f, p, fh); errc != -fuse.EINVAL {
 		t.Errorf("Flush = %d, want -EINVAL", errc)
 	}
 
@@ -304,10 +340,10 @@ func TestStrippedOTruncRewrite(t *testing.T) {
 	if n := f.Write(p, doc, 0, fh); n != len(doc) {
 		t.Fatalf("Write = %d", n)
 	}
-	if errc := f.Fsync(p, false, fh); errc != 0 {
+	if errc := fsync(f, p, fh); errc != 0 {
 		t.Fatalf("Fsync = %d", errc)
 	}
-	if errc := f.Flush(p, fh); errc != 0 {
+	if errc := flush(f, p, fh); errc != 0 {
 		t.Fatalf("Flush = %d", errc)
 	}
 	f.Release(p, fh)
@@ -331,14 +367,14 @@ func TestMtimeChangesPerVersion(t *testing.T) {
 	p := "/notes/" + NoteFilename(note)
 
 	var before fuse.Stat_t
-	if errc := f.Getattr(p, &before, invalidFh); errc != 0 {
+	if errc := getattrDefeated(f, p, &before, invalidFh); errc != 0 {
 		t.Fatalf("Getattr = %d", errc)
 	}
 	if _, err := s.Append(t.Context(), refs.Note(note.ID), []model.Op{model.SetBody{Body: "v2\n"}}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	var after fuse.Stat_t
-	if errc := f.Getattr(p, &after, invalidFh); errc != 0 {
+	if errc := getattrDefeated(f, p, &after, invalidFh); errc != 0 {
 		t.Fatalf("Getattr = %d", errc)
 	}
 	if before.Mtim == after.Mtim {
@@ -363,7 +399,7 @@ func TestFsyncSurfacesParseError(t *testing.T) {
 	if n := f.Write(p, []byte("garbage: [\n"), 0, fh); n != 11 {
 		t.Fatalf("Write = %d", n)
 	}
-	if errc := f.Fsync(p, false, fh); errc != -fuse.EINVAL {
+	if errc := fsync(f, p, fh); errc != -fuse.EINVAL {
 		t.Errorf("Fsync = %d, want -EINVAL", errc)
 	}
 	f.Release(p, fh)
@@ -382,7 +418,7 @@ func TestImmutableEditEPERM(t *testing.T) {
 		t.Fatalf("Open = %d", errc)
 	}
 	mustWriteAll(t, f, p, fh, doc)
-	if errc := f.Flush(p, fh); errc != -fuse.EPERM {
+	if errc := flush(f, p, fh); errc != -fuse.EPERM {
 		t.Errorf("Flush = %d, want -EPERM", errc)
 	}
 	f.Release(p, fh)
@@ -405,7 +441,7 @@ func TestAtomicSaveCreatesNote(t *testing.T) {
 	if n := f.Write(tmp, doc, 0, fh); n != len(doc) {
 		t.Fatalf("Write = %d", n)
 	}
-	if errc := f.Flush(tmp, fh); errc != 0 {
+	if errc := flush(f, tmp, fh); errc != 0 {
 		t.Fatalf("Flush = %d", errc)
 	}
 	f.Release(tmp, fh)
@@ -458,7 +494,7 @@ func TestPendingFlushCreatesTask(t *testing.T) {
 	if n := f.Write(p, doc, 0, fh); n != len(doc) {
 		t.Fatalf("Write = %d", n)
 	}
-	if errc := f.Flush(p, fh); errc != 0 {
+	if errc := flush(f, p, fh); errc != 0 {
 		t.Fatalf("Flush = %d", errc)
 	}
 	f.Release(p, fh)
@@ -493,7 +529,7 @@ func TestScratchUnlink(t *testing.T) {
 	if n := f.Write(p, []byte("temp"), 0, fh); n != 4 {
 		t.Fatalf("Write = %d", n)
 	}
-	if errc := f.Flush(p, fh); errc != 0 {
+	if errc := flush(f, p, fh); errc != 0 {
 		t.Fatalf("Flush = %d", errc)
 	}
 	f.Release(p, fh)
@@ -558,7 +594,7 @@ func TestExternalAppendMergesWithFlush(t *testing.T) {
 	edited := note
 	edited.Body = "edited body\n"
 	mustWriteAll(t, f, p, fh, RenderNote(edited))
-	if errc := f.Flush(p, fh); errc != 0 {
+	if errc := flush(f, p, fh); errc != 0 {
 		t.Fatalf("Flush = %d", errc)
 	}
 	f.Release(p, fh)
@@ -719,7 +755,7 @@ func TestBrowseTreeReadThrough(t *testing.T) {
 		t.Fatalf("Open(%s) = %d", flat, errc)
 	}
 	mustWriteAll(t, f, flat, fh, RenderTask(edited))
-	if errc := f.Flush(flat, fh); errc != 0 {
+	if errc := flush(f, flat, fh); errc != 0 {
 		t.Fatalf("Flush = %d", errc)
 	}
 	f.Release(flat, fh)
@@ -776,7 +812,7 @@ func TestFlatSprintFileEdit(t *testing.T) {
 		t.Fatalf("Open = %d", errc)
 	}
 	mustWriteAll(t, f, flat, fh, RenderSprint(edited))
-	if errc := f.Flush(flat, fh); errc != 0 {
+	if errc := flush(f, flat, fh); errc != 0 {
 		t.Fatalf("Flush = %d", errc)
 	}
 	f.Release(flat, fh)
@@ -798,7 +834,7 @@ func TestFlatSprintFileEdit(t *testing.T) {
 		t.Fatalf("Open = %d", errc)
 	}
 	mustWriteAll(t, f, flat, fh, doc)
-	if errc := f.Flush(flat, fh); errc != -fuse.EPERM {
+	if errc := flush(f, flat, fh); errc != -fuse.EPERM {
 		t.Errorf("Flush of project edit = %d, want -EPERM", errc)
 	}
 	f.Release(flat, fh)

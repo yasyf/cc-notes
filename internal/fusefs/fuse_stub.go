@@ -5,11 +5,16 @@ package fusefs
 import (
 	"context"
 	"fmt"
+
+	"github.com/yasyf/fusekit/mountd"
 )
 
-// Mount always fails in this build variant: the binary was compiled
-// without the fuse tag. See mount.go for the contract the fuse build
-// implements.
+// Mount always fails in this build variant: the binary was compiled without
+// the fuse tag, so it has no in-process fuse host. It wraps mountd.ErrCannotHost
+// — the pure-build refusal, distinct from a fuse-built binary whose library
+// failed to load (ErrFuseUnavailable) — exactly the sentinel the detached path's
+// Spawn raises when a pure binary is asked to host. See mount.go for the
+// contract the fuse build implements.
 func Mount(_ context.Context, _, _ string) error {
-	return fmt.Errorf("%w: this binary was built without FUSE support; rebuild with -tags fuse, or download the _fuse release binary (macOS: brew install fuse-t; Linux: apt install fuse3)", ErrFuseUnavailable)
+	return fmt.Errorf("%w: this binary was built without FUSE support; rebuild with -tags fuse, or download the _fuse release binary (macOS: brew install fuse-t; Linux: apt install fuse3)", mountd.ErrCannotHost)
 }

@@ -11,6 +11,8 @@ import (
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
+	"github.com/yasyf/fusekit"
+	"github.com/yasyf/fusekit/mountd"
 )
 
 func TestExitCodeAndLabel(t *testing.T) {
@@ -39,6 +41,22 @@ func TestExitCodeAndLabel(t *testing.T) {
 		{"sync contended", fmt.Errorf("sync: %w", ccsync.ErrSyncContended), 4, "conflict"},
 		{"ambiguous", fmt.Errorf("resolve: %w", ambiguous), 5, "ambiguous"},
 		{"remote missing", fmt.Errorf("sync: %w", ccsync.ErrRemoteNotFound), 1, "error"},
+		// Mount-holder conflicts: exit 4.
+		{"holder busy", fmt.Errorf("mount: %w", mountd.ErrBusy), 4, "conflict"},
+		{"foreign mount", fmt.Errorf("mount: %w", mountd.ErrForeignMount), 4, "conflict"},
+		{"base mismatch", fmt.Errorf("mount: %w", mountd.ErrBaseMismatch), 4, "conflict"},
+		// Every other holder-class error and the fuse sentinels: exit 1.
+		{"holder unavailable", fmt.Errorf("mount: %w", mountd.ErrHolderUnavailable), 1, "error"},
+		{"tcc denied", fmt.Errorf("mount: %w", mountd.ErrTCCDenied), 1, "error"},
+		{"holder unmount wedged", fmt.Errorf("unmount: %w", mountd.ErrUnmountWedged), 1, "error"},
+		{"mount timeout", fmt.Errorf("mount: %w", mountd.ErrMountTimeout), 1, "error"},
+		{"mount failed", fmt.Errorf("mount: %w", mountd.ErrMountFailed), 1, "error"},
+		{"unknown class", fmt.Errorf("mount: %w", mountd.ErrUnknownClass), 1, "error"},
+		{"cannot host", fmt.Errorf("spawn: %w", mountd.ErrCannotHost), 1, "error"},
+		{"fuse unavailable", fmt.Errorf("mount: %w", fusekit.ErrFuseUnavailable), 1, "error"},
+		// RemoteHost dual-wraps a TCC denial with fusekit.ErrMountNotLive; it must
+		// still classify as a plain error, never a conflict.
+		{"overlay tcc", fmt.Errorf("mount: %w: %w", fusekit.ErrMountNotLive, mountd.ErrTCCDenied), 1, "error"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

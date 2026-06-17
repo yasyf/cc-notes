@@ -41,8 +41,7 @@ type rendered struct {
 
 // handle is one open file: an entity edit buffer or a scratch buffer.
 // base is the open-time snapshot diffs run against; it is nil (and ref
-// empty) for scratch and pending files. mnsec carries the per-version
-// mtime nanoseconds (see versionNsec).
+// empty) for scratch and pending files.
 type handle struct {
 	path    string
 	ref     string
@@ -50,7 +49,6 @@ type handle struct {
 	buf     []byte
 	ino     uint64
 	mtime   int64
-	mnsec   int64
 	birth   int64
 	dirty   bool
 	flushed bool
@@ -145,7 +143,7 @@ func (f *FS) Getattr(p string, stat *fuse.Stat_t, fh uint64) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if h := f.handleFor(p, fh, true); h != nil {
-		f.fillStat(stat, fuse.S_IFREG|0o644, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime, Nsec: h.mnsec}, h.birth)
+		f.fillStat(stat, fuse.S_IFREG|0o644, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime}, h.birth)
 		return 0
 	}
 	return f.statPath(p, stat)
@@ -169,7 +167,7 @@ func (f *FS) Open(p string, flags int) (int, uint64) {
 	created, updated := snapshotTimes(r.snapshot)
 	h := &handle{
 		path: p, ref: ref, base: r.snapshot, buf: slices.Clone(r.data),
-		ino: idIno(r.snapshot.EntityID()), mtime: updated, mnsec: versionNsec(headOf(r.snapshot)), birth: created,
+		ino: idIno(r.snapshot.EntityID()), mtime: updated, birth: created,
 	}
 	truncateOnOpen(h, flags)
 	return 0, f.newHandle(h)
@@ -260,18 +258,19 @@ func (f *FS) Truncate(p string, size int64, fh uint64) int {
 	return f.statPath(p, &st)
 }
 
-// Flush commits the handle's buffer — this, not Release, is the write
-// boundary: release errors are discarded by the kernel, flush errors reach
-// the editor's close(2).
+// Flush marks the handle flushed so the Release backstop won't double-commit;
+// the actual commit is the cache-defeat decorator's Commit hook (notesCommit),
+// which fusekit runs after BOTH Flush and Fsync. Flush is the editor's close(2)
+// boundary, but FUSE-T's NFS client swallows the flush errno — so routing
+// notesCommit through Fsync too (the COMMIT the client DOES report) is what
+// makes a bad save fail loudly at close.
 func (f *FS) Flush(p string, fh uint64) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	h := f.handles[fh]
-	if h == nil {
-		return 0
+	if h := f.handles[fh]; h != nil {
+		h.flushed = true
 	}
-	h.flushed = true
-	return f.commitHandle(h)
+	return 0
 }
 
 // Release drops the handle, committing as a backstop only when no flush
@@ -287,11 +286,24 @@ func (f *FS) Release(p string, fh uint64) int {
 	return 0
 }
 
-// Fsync commits like Flush: FUSE-T's NFS client issues a COMMIT (fsync)
-// before the flush at close(2) and reports ITS failure to the writer,
-// while flush errors are swallowed — committing here is what makes a bad
-// save fail loudly at close (and at an editor's explicit fsync).
-func (f *FS) Fsync(p string, datasync bool, fh uint64) int {
+// Fsync is a no-op handler: the commit it used to drive is now the cache-defeat
+// decorator's Commit hook (notesCommit), which fusekit runs after both Fsync
+// and Flush. FUSE-T's NFS client issues a COMMIT (fsync) before the close(2)
+// flush and reports ITS errno to the writer while swallowing the flush errno,
+// so notesCommit firing on Fsync is what makes a bad save fail loudly at close
+// (and at an editor's explicit fsync). It does not set flushed, so a transient
+// (EIO) commit failure here still leaves the Release backstop armed.
+func (f *FS) Fsync(p string, datasync bool, fh uint64) int { return 0 }
+
+// notesCommit commits the handle's buffer — the cache-defeat decorator's Commit
+// hook, which fusekit runs after BOTH the Flush and the Fsync handlers. Routing
+// the commit through one callback fired on both write boundaries keeps the rich
+// semantics (the transient-vs-deterministic error split, the last-good-render
+// revert, the failed-create draft-preserve, the path-fallback handle lookup) in
+// ONE place — commitHandle — instead of duplicated across Flush and Fsync. It
+// returns commitHandle's errno (zero on success, or a clean no-op for an
+// already-committed handle).
+func (f *FS) notesCommit(p string, fh uint64) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	h := f.handles[fh]
@@ -475,7 +487,7 @@ func (f *FS) commitHandle(h *handle) int {
 			f.cacheRender(snap)
 			h.base = snap
 			created, updated := snapshotTimes(snap)
-			h.birth, h.mtime, h.mnsec = created, updated, versionNsec(headOf(snap))
+			h.birth, h.mtime = created, updated
 		}
 		h.dirty = false
 		return 0
@@ -1349,7 +1361,10 @@ func projectTaskSet(tasks []model.Task, sprints []model.Sprint, projectID model.
 
 func (f *FS) fillEntityStat(stat *fuse.Stat_t, r rendered) {
 	created, updated := snapshotTimes(r.snapshot)
-	mtime := fuse.Timespec{Sec: updated, Nsec: versionNsec(headOf(r.snapshot))}
+	// Nsec is left zero here; the cache-defeat decorator overrides it on
+	// Getattr with VersionNsec(notesSeed(path)) so a same-second commit is
+	// still a visible mtime change.
+	mtime := fuse.Timespec{Sec: updated}
 	f.fillStat(stat, fuse.S_IFREG|0o644, idIno(r.snapshot.EntityID()), int64(len(r.data)), mtime, created)
 }
 
@@ -1357,7 +1372,8 @@ func (f *FS) fillEntityStat(stat *fuse.Stat_t, r rendered) {
 // target length as size — the kernel reads exactly that many bytes from
 // Readlink — and the linked task's times, so the leaf ages with its target.
 func (f *FS) fillSymlinkStat(stat *fuse.Stat_t, task model.Task, size int) {
-	mtime := fuse.Timespec{Sec: task.UpdatedAt, Nsec: versionNsec(task.Head)}
+	// Nsec left zero; the decorator overrides it via notesSeed on Getattr.
+	mtime := fuse.Timespec{Sec: task.UpdatedAt}
 	f.fillStat(stat, fuse.S_IFLNK|0o777, idIno(task.ID), int64(size), mtime, task.CreatedAt)
 }
 
@@ -1395,16 +1411,76 @@ func (f *FS) fillStat(stat *fuse.Stat_t, mode uint32, ino uint64, size int64, mt
 	}
 }
 
-// versionNsec derives the mtime's nanosecond component from the chain tip.
-// Entity timestamps have second granularity, so a save whose commit lands
-// in the same second would otherwise leave the mtime unchanged — and the
-// NFS client would keep serving its own written pages over the differing
-// canonical render (a save normalizes sets, stamps started_at, and so on).
-// A per-version sub-second component makes every commit a visible mtime
-// change, forcing the client to revalidate its data cache (live-smoke
-// finding: a same-second status edit read back as the written bytes padded
-// to the new render's size).
-func versionNsec(tip model.SHA) int64 { return int64(fnvHash("v:"+string(tip)) % 1_000_000_000) }
+// notesSeed resolves p to the entity (or browse-tree task) it names and returns
+// that entity's CURRENT chain-tip SHA — the per-version seed the cache-defeat
+// decorator folds into the Getattr mtime nanoseconds via fusekit.VersionNsec.
+// Entity timestamps have second granularity, so a save whose commit lands in
+// the same second would otherwise leave the mtime unchanged, and FUSE-T's NFS
+// client would keep serving its own written pages over the differing canonical
+// render (live-smoke finding). Re-reading the live tip means an external CLI
+// commit shows on the next Getattr. Directories, scratch files, pending
+// (uncommitted) entities, and unresolved paths have no version and return ""
+// (the decorator then leaves the Nsec untouched). It is the path-based
+// replacement for the per-handle mtime nanosecond the FS used to cache.
+func (f *FS) notesSeed(p string, _ *fuse.Stat_t) string {
+	if JunkName(path.Base(p)) {
+		return ""
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.scratch[p]; ok {
+		return ""
+	}
+	if ref, ok := f.aliases[p]; ok {
+		tip, err := f.store.Repo.Tip(f.ctx, ref)
+		if err != nil {
+			return ""
+		}
+		r, err := f.renderTip(tip)
+		if err != nil {
+			return ""
+		}
+		return string(headOf(r.snapshot))
+	}
+	node, err := ParsePath(p)
+	if err != nil {
+		return ""
+	}
+	switch n := node.(type) {
+	case NoteFile:
+		_, r, err := f.resolveNote(n.ShortID)
+		if err != nil {
+			return ""
+		}
+		return string(headOf(r.snapshot))
+	case TaskFile:
+		_, r, err := f.resolveTask(n.ShortID)
+		if err != nil {
+			return ""
+		}
+		return string(headOf(r.snapshot))
+	case SprintFile:
+		_, r, err := f.resolveSprint(n.ShortID)
+		if err != nil {
+			return ""
+		}
+		return string(headOf(r.snapshot))
+	case ProjectFile:
+		_, r, err := f.resolveProject(n.ShortID)
+		if err != nil {
+			return ""
+		}
+		return string(headOf(r.snapshot))
+	case ProjectSprintTaskLink, ProjectTaskLink, SprintTaskLink:
+		task, errc := f.linkTask(node)
+		if errc != 0 {
+			return ""
+		}
+		return string(task.Head)
+	default:
+		return ""
+	}
+}
 
 // idIno derives a stable inode from the entity id, invariant across slug
 // renames; pathIno covers directories and scratch files.

@@ -76,9 +76,14 @@ jobs:
           codesign --force -s - dist/cc-notes_darwin_amd64_fuse
       - name: Smoke (fuse binary without fuse-t)
         # The fuse binary dlopens libfuse-t lazily, so it must run cleanly on a
-        # Mac that has no fuse-t. The runner is arm64 and has none — prove the
-        # native slice reports its version and that `mount` fails gracefully
-        # with the install hint (exit 1, not a crash signal) rather than serving.
+        # Mac that has no fuse-t. The runner is arm64 and has none. `mount` now
+        # detaches by default: it SPAWNS a mount holder that cannot load
+        # libfuse-t, so the holder reports the failure, the command exits 1 with
+        # a "fuse" hint, and — the key property of the holder model — it RETURNS
+        # rather than blocking. `mount --foreground` fails the same way
+        # in-process. Both must exit 1 (not a crash signal). HOME is scoped to a
+        # scratch dir so the spawned holder's socket/log are isolated, and the
+        # holder is shut down afterward so it does not linger.
         run: |
           # The cask uninstall can exit nonzero on CI runners and may leave the
           # pkg-installed dylibs behind; remove them explicitly so the
@@ -87,15 +92,28 @@ jobs:
           sudo rm -f /usr/local/lib/libfuse-t*
           test ! -e /usr/local/lib/libfuse-t.dylib
           BIN=dist/cc-notes_darwin_arm64_fuse
+          export HOME="$RUNNER_TEMP/ccn-home"
+          mkdir -p "$HOME" "$RUNNER_TEMP/ccn-mp"
           "$BIN" version | grep -q "${GITHUB_REF_NAME}"
-          mkdir -p "$RUNNER_TEMP/ccn-mp"
+          # Detached default: spawns a holder that cannot host; exits 1, returns.
           set +e
           out="$("$BIN" mount "$RUNNER_TEMP/ccn-mp" 2>&1)"
           code=$?
           set -e
-          echo "$out"
+          echo "detached: $out"
           test "$code" -eq 1
           echo "$out" | grep -qi fuse
+          # Foreground: fails in-process the same way (no holder).
+          set +e
+          out="$("$BIN" mount --foreground "$RUNNER_TEMP/ccn-mp" 2>&1)"
+          code=$?
+          set -e
+          echo "foreground: $out"
+          test "$code" -eq 1
+          echo "$out" | grep -qi fuse
+          # Tear down the spawned holder and remove its socket/log.
+          "$BIN" mount --shutdown 2>&1 || true
+          rm -rf "$HOME/.cc-notes"
       - uses: actions/upload-artifact@v7
         with:
           name: cc-notes_darwin_fuse
@@ -141,27 +159,47 @@ jobs:
           name: cc-notes_linux_amd64_fuse
           path: bin
       - name: Smoke both linux binaries
+        # This runner installs no libfuse3 runtime, so the fuse binary cannot
+        # dlopen it either. `mount` detaches by default. HOME is scoped to a
+        # scratch dir so the spawned holder is isolated and torn down at the end.
         run: |
           chmod +x bin/cc-notes_linux_amd64 bin/cc-notes_linux_amd64_fuse
+          export HOME="$RUNNER_TEMP/ccn-home"
+          mkdir -p "$HOME"
           for BIN in bin/cc-notes_linux_amd64 bin/cc-notes_linux_amd64_fuse; do
             "$BIN" version | grep -q "${GITHUB_REF_NAME}"
           done
-          # Pure binary: mount prints the install hint and exits 1.
+          # Pure binary: detached mount cannot spawn a holder (no fuse build) and
+          # --foreground cannot host — both print the install hint, exit 1, return.
+          for MODE in "" "--foreground"; do
+            set +e
+            out="$(bin/cc-notes_linux_amd64 mount $MODE /tmp/ccn-pure 2>&1)"
+            code=$?
+            set -e
+            echo "pure $MODE: $out"
+            test "$code" -eq 1
+            echo "$out" | grep -qi fuse
+          done
+          # Fuse binary: detached mount spawns a holder that cannot load libfuse3;
+          # the holder reports the failure, the command exits 1 AND returns.
           set +e
-          out="$(bin/cc-notes_linux_amd64 mount /tmp/ccn-x 2>&1)"
+          out="$(bin/cc-notes_linux_amd64_fuse mount /tmp/ccn-fuse 2>&1)"
           code=$?
           set -e
-          echo "$out"
+          echo "fuse detached: $out"
           test "$code" -eq 1
           echo "$out" | grep -qi fuse
-          # Fuse binary: mount on a missing mountpoint fails gracefully (exit 1,
-          # no crash dump) without ever blocking on a live mount.
+          # Foreground fuse: fails in-process the same way (no holder).
           set +e
-          out="$(bin/cc-notes_linux_amd64_fuse mount /tmp/ccn-x 2>&1)"
+          out="$(bin/cc-notes_linux_amd64_fuse mount --foreground /tmp/ccn-fuse 2>&1)"
           code=$?
           set -e
-          echo "$out"
+          echo "fuse foreground: $out"
           test "$code" -eq 1
+          echo "$out" | grep -qi fuse
+          # Tear down the spawned holder and remove its socket/log.
+          bin/cc-notes_linux_amd64_fuse mount --shutdown 2>&1 || true
+          rm -rf "$HOME/.cc-notes"
 
   release:
     name: publish release

@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (UX): `cc-notes mount` now detaches by default.** A background mount
+  holder serves the mount; the command prints the mountpoint and returns, and the
+  mount outlives the invocation. `mount` no longer blocks, and **Ctrl-C no longer
+  unmounts** — tear a mount down with `cc-notes mount --stop DIR` or a plain
+  `umount DIR` (the holder reconciles either). To keep the old in-process
+  lifecycle — block in the foreground, Ctrl-C unmounts — pass
+  `cc-notes mount --foreground`. Three new flags drive the holder directly:
+  `--stop DIR` unmounts one mount, `--list` prints what the holder serves, and
+  `--shutdown` unmounts everything and stops the holder. One holder serves every
+  repo mounted on the machine over a single socket (`~/.cc-notes/mounts.sock`)
+  and outlives the CLI invocations that drive it. Failures keep the existing
+  exit-code contract: a holder conflict (a busy dir, a foreign mount in the way,
+  a base mismatch) exits 4; an unreachable holder, a denied "Network Volumes"
+  grant, or a wedged unmount exits 1; a bad flag combination exits 2.
+- The FUSE mount machinery now rides the shared
+  [`github.com/yasyf/fusekit`](https://github.com/yasyf/fusekit) library: the
+  detached mount-holder protocol, cgofuse-load panic recovery, pre-mount carcass
+  cleanup, bounded teardown, and the NFS cache-defeat hooks. What the mount
+  renders is unchanged.
+
 ## [0.4.0] - 2026-06-17
 
 ### Added
