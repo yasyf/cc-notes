@@ -17,9 +17,9 @@ import (
 
 	"github.com/winfsp/cgofuse/fuse"
 
-	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
+	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/fusekit"
 )
 

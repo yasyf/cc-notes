@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 const (

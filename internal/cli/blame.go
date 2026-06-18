@@ -8,8 +8,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
-	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/store"
+	"github.com/yasyf/cc-notes/model"
 )
 
 func newBlameCmd() *cobra.Command {

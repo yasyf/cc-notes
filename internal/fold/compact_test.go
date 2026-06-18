@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/fold"
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // cp builds a checkpoint commit: a single-parent commit carrying one Checkpoint

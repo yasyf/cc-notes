@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/store"
+	"github.com/yasyf/cc-notes/model"
 )
 
 func TestResolveCriterion(t *testing.T) {

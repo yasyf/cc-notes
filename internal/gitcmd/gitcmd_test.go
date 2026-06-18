@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // scrubGitEnv clears every git environment knob that could leak host state
@@ -606,9 +606,9 @@ func TestRevRangeFileAuthors(t *testing.T) {
 	mustGit(t, g.Dir,
 		"-c", "user.name=Alice", "-c", "user.email=alice@x.com",
 		"commit", "-q", "--allow-empty", "-m", "empty by alice")
-	commitFile("Alice", "alice@x.com", "shared.txt", "a\nb\n")     // alice touches shared + onlysecond
+	commitFile("Alice", "alice@x.com", "shared.txt", "a\nb\n") // alice touches shared + onlysecond
 	commitFile("Alice", "alice@x.com", "onlysecond.txt", "x\n")
-	commitFile("Bob", "bob@x.com", "shared.txt", "a\nb\nc\n")      // bob touches shared + onlyfirst
+	commitFile("Bob", "bob@x.com", "shared.txt", "a\nb\nc\n") // bob touches shared + onlyfirst
 	commitFile("Bob", "bob@x.com", "onlyfirst.txt", "y\n")
 	head := resolve(t, g.Dir, "HEAD")
 

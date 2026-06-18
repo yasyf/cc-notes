@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // newTaskValidateCmd runs a task's acceptance-criteria validation scripts and

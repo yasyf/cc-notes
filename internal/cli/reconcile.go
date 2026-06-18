@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/model"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
+	"github.com/yasyf/cc-notes/model"
 )
 
 func newReconcileCmd() *cobra.Command {

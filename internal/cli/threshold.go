@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 const (

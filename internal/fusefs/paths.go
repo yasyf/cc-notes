@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // maxSlugLen caps the slug portion of a note filename.

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/fold"
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 func TestFoldNote(t *testing.T) {

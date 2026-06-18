@@ -3,7 +3,7 @@ package cli
 import (
 	"slices"
 
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // tasksInSprint returns the sorted ids of the tasks whose folded sprint is

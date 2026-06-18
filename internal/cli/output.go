@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yasyf/cc-notes/internal/model"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // anchorDTO is one note anchor with its content witness rendered as the git

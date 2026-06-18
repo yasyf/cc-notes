@@ -3,8 +3,8 @@ package cli_test
 import (
 	"testing"
 
-	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // gcReport mirrors the gc command's JSON shape for assertions.

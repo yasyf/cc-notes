@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // sameExceptHead asserts two snapshots are equal in every field but Head, which

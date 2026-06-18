@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 func TestHierarchyTasksInSprint(t *testing.T) {

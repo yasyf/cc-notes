@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/store"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // driftRepoGit runs git in dir, failing the test on error.

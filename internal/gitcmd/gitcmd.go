@@ -18,7 +18,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 var (

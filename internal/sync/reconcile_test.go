@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
-	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // reconcileClone returns a clone whose main branch carries one initial

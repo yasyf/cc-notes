@@ -3,8 +3,8 @@ package store
 import (
 	"context"
 
-	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // GCLocal tidies local-only state: it removes fold-cache entries whose tip is

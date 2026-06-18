@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/yasyf/cc-notes/internal/fold"
-	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // Resolve expands an entity id prefix — matched case-insensitively against

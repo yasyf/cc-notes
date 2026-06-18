@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/fold"
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 func mk(sha string, parents []string, author string, at int64, lamport uint64, ops ...model.Op) model.PackCommit {

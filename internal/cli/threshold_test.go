@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
-	"github.com/yasyf/cc-notes/internal/model"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // initGitRepo creates a git repository in a temp dir with global/system config

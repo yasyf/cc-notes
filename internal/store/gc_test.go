@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
-	"github.com/yasyf/cc-notes/internal/model"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // initBareRemote creates a bare repository and wires it as origin on s.
