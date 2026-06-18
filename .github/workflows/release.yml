@@ -262,7 +262,7 @@ jobs:
           sed -i -E "s|sha256 \"[0-9a-f]{64}\" # linux-amd64|sha256 \"${LINUX_AMD64}\" # linux-amd64|" "$F"
           sed -i -E "s|sha256 \"[0-9a-f]{64}\" # linux-arm64|sha256 \"${LINUX_ARM64}\" # linux-arm64|" "$F"
           # The capt-hook pack manifest carries a bare semver, no leading v.
-          M=capt-hook.toml
+          M=.claude/capt-hook.toml
           sed -i -E "s|^version = \"[^\"]+\"|version = \"${VERSION}\"|" "$M"
           # Fail loud if a sed anchor stopped matching; allow idempotent re-runs.
           grep -q "version \"${VERSION}\"" "$F"
