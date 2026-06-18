@@ -124,6 +124,9 @@ func mustGit(t *testing.T, dir string, args ...string) string {
 func initRepo(t *testing.T) string {
 	t.Helper()
 	scrubGitEnv(t)
+	// Isolate HOME so a test that spawns or drives a mount holder writes its
+	// state under ~/.cc-notes in a temp dir, never the real home.
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	mustGit(t, dir, "init", "-q", "-b", "main")
 	mustGit(t, dir, "config", "user.name", "Test User")

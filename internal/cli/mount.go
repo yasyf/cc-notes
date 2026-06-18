@@ -108,7 +108,14 @@ func runMount(cmd *cobra.Command, args []string, opts mountOpts) error {
 	}
 
 	// Detached default: hand the mount to the holder (spawning it if needed),
-	// print the mountpoint, and return — the mount persists.
+	// print the mountpoint, and return — the mount persists. Ensure the state dir
+	// exists first: it homes the spawn log and the default socket, and fusekit
+	// treats both paths' parent dirs as the caller's to create. Without this the
+	// first `mount DIR` on a fresh machine — an explicit mountpoint never creates
+	// ~/.cc-notes — dies opening the holder log.
+	if err := os.MkdirAll(stateDir(), 0o700); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
 	if err := newRemoteHost(opts.socket).Setup(repoRoot, mp); err != nil {
 		return err
 	}

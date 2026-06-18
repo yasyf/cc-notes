@@ -154,6 +154,34 @@ func TestMountHolderDownExits1(t *testing.T) {
 	}
 }
 
+// TestMountDetachedCreatesStateDir guards the first-run holder spawn: the
+// detached path must create cc-notes' state dir (~/.cc-notes) before handing
+// off to the holder, because that dir homes the spawn log and the default
+// socket, and fusekit treats their parent dirs as the caller's to create. An
+// explicit mountpoint never creates ~/.cc-notes on its own, so without this the
+// first `cc-notes mount DIR` on a fresh machine dies with "open mount holder
+// log: no such file or directory". A pure test binary can't spawn a holder, so
+// the mount itself fails (ErrCannotHost) — but the state dir must already exist
+// by the time it does.
+func TestMountDetachedCreatesStateDir(t *testing.T) {
+	repo := initRepo(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	stateDir := filepath.Join(home, ".cc-notes")
+	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
+		t.Fatalf("precondition: state dir %s should be absent, stat err = %v", stateDir, err)
+	}
+
+	sock := filepath.Join(t.TempDir(), "never-bound.sock")
+	mp := filepath.Join(t.TempDir(), "mnt")
+	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, mp); err == nil {
+		t.Fatal("mount with no holder succeeded on a pure build, want a failure")
+	}
+	if _, err := os.Stat(stateDir); err != nil {
+		t.Fatalf("detached mount did not create state dir %s: %v", stateDir, err)
+	}
+}
+
 func TestMountList(t *testing.T) {
 	repo := initRepo(t)
 	sock, _ := fakeHolder(t, func(req mountd.Request) mountd.Response {
