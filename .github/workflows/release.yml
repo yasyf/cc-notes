@@ -241,14 +241,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: main
-      # The formula now lives in the shared external tap, not in this repo.
-      # HOMEBREW_TAP_TOKEN is a repo secret with push access to that tap.
-      - uses: actions/checkout@v6
-        with:
-          repository: yasyf/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: tap
-      - name: Publish Formula to yasyf/homebrew-tap
+      - name: Render Formula into staging dir
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -263,9 +256,11 @@ jobs:
           # The canonical formula template lives inline here. Asset urls
           # interpolate v#{version}, so only the version line and the four
           # marker-anchored shas vary per release; the trailing `# darwin-arm64`
-          # etc. markers anchor the seds below — keep them.
-          mkdir -p tap/Formula
-          F=tap/Formula/cc-notes.rb
+          # etc. markers anchor the seds below — keep them. The rendered formula
+          # is staged under tap-staging/ and published by the shared composite
+          # action below, which checks out the tap, merges this dir in, and pushes.
+          mkdir -p tap-staging/Formula
+          F=tap-staging/Formula/cc-notes.rb
           cat > "$F" <<'FORMULA'
           # Homebrew formula for cc-notes. Installs the prebuilt binary for the
           # current platform from cc-notes' GitHub Releases — no Go toolchain
@@ -360,18 +355,21 @@ jobs:
           grep -q "${DARWIN_AMD64}\" # darwin-amd64" "$F"
           grep -q "${LINUX_AMD64}\" # linux-amd64" "$F"
           grep -q "${LINUX_ARM64}\" # linux-arm64" "$F"
-          # Commit + push the formula to the tap repo.
-          git -C tap config user.name "github-actions[bot]"
-          git -C tap config user.email "github-actions[bot]@users.noreply.github.com"
-          git -C tap add Formula/cc-notes.rb
-          if git -C tap diff --cached --quiet; then
-            echo "tap formula already at ${GITHUB_REF_NAME}; nothing to push"
-          else
-            git -C tap commit -m "cc-notes ${VERSION}"
-            git -C tap push
-          fi
+      # The shared action checks out yasyf/homebrew-tap, merges tap-staging/'s
+      # contents into the tap root, then git add -A / commit / push. This job no
+      # longer checks out or runs any git against the tap itself.
+      - name: Publish Formula to yasyf/homebrew-tap
+        uses: yasyf/homebrew-tap/.github/actions/publish@main
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          dir: tap-staging
+          message: "cc-notes ${{ github.ref_name }}"
+      - name: Bump capt-hook manifest in cc-notes main
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           # The capt-hook pack manifest is cc-notes' own file; keep bumping it in
-          # this repo's main on every stable release.
+          # this repo's main on every stable release. This commits to cc-notes'
+          # own main via the default checkout token — unrelated to the tap.
           M=.claude/capt-hook.toml
           sed -i -E "s|^version = \"[^\"]+\"|version = \"${VERSION}\"|" "$M"
           grep -q "version = \"${VERSION}\"" "$M"
