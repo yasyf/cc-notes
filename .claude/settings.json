@@ -46,6 +46,12 @@
         "source": "github",
         "repo": "yasyf/captain-hook"
       }
+    },
+    "cc-notes": {
+      "source": {
+        "source": "github",
+        "repo": "yasyf/cc-notes"
+      }
     }
   },
   "enabledPlugins": {
@@ -53,7 +59,8 @@
     "slop-cop@skills": true,
     "llm-prompts@skills": true,
     "writing-docs@skills": true,
-    "captain-hook@captain-hook": true
+    "captain-hook@captain-hook": true,
+    "cc-notes@cc-notes": true
   },
   "hooks": {
     "UserPromptSubmit": [
