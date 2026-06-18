@@ -17,17 +17,17 @@ cc-notes is a git-native notes and tasks layer for agents. Every entity — a no
 task — is an event-log CRDT: an append-only log of operation packs, one per git commit,
 on hidden `refs/cc-notes/*` refs inside the repo's object database. The data is versioned,
 synced by plain `git push`/`git pull` (or `cc-notes sync` under jj, whose git bridge skips
-the cc-notes refs), and invisible in checkouts and diffs. A pure
-deterministic fold replays each log into a snapshot, so every replica reads the same state.
+the cc-notes refs), and invisible in checkouts and diffs. A deterministic fold replays each
+log into a snapshot, so every replica reads the same state.
 
 Reach for cc-notes when work or knowledge must survive the current session or reach another
-agent. Keep the moment-to-moment step tracking for what you are doing right now in the
-harness's own todo tool.
+agent. Track moment-to-moment steps for what you are doing right now in the harness's own
+todo tool.
 
 ## Three tools, three jobs
 
-This is the one distinction to get right. Native todos, cc-notes tasks, and cc-notes notes
-differ along two axes — how long the record lives and who can see it.
+Get this distinction right first. Native todos, cc-notes tasks, and cc-notes notes differ
+along two axes: how long the record lives and who can see it.
 
 | Tool | Lifetime | Scope | Use for |
 |------|----------|-------|---------|
@@ -37,16 +37,14 @@ differ along two axes — how long the record lives and who can see it.
 
 Tasks are **global**. Each task is a single flat ref at `refs/cc-notes/tasks/<id>`, exactly
 like a note. Its branch is a *mutable attribute*, not part of its identity: `task list` and
-`task ready` default to the tasks on your current branch, the shared **backlog** is every
-task with no branch (`task add --backlog`, visible to every agent on every branch), and
-`task move <id> --to <branch>` (or `task start`, automatically) re-homes a task by setting
-that attribute. Because the id is global, every id-addressed command resolves by id alone —
-there is no `--branch` on `show`/`claim`/`start`/`done`/`move`/`renew`. `--branch`,
-`--backlog`, and `--all-branches` are reader filters on `list`/`ready` and setters on
-`add`/`move`/`edit`.
+`task ready` default to your current branch, the shared **backlog** is every task with no
+branch (`task add --backlog`, visible to every agent on every branch), and `task move <id>
+--to <branch>` (or `task start`, automatically) re-homes a task by setting that attribute.
+Because the id is global, every id-addressed command resolves by id alone — there is no
+`--branch` on `show`/`claim`/`start`/`done`/`move`/`renew`.
 
-Notes are repo-global. Each note records when it was last **verified** true; superseding a
-note points it at its replacement and drops it from default listings.
+A note records when it was last **verified** true; superseding a note points it at its
+replacement and drops it from default listings.
 
 The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, else your git
 `user.name`/`user.email`. Claims and leases key on that actor.
@@ -57,15 +55,21 @@ See `references/tasks-vs-notes.md` for worked examples of choosing among the thr
 
 The spine of day-to-day use. Run `init` once per repo; everything else recurs as you work.
 
-**1. Initialize (once per repo).** Installs the refspecs so plain `git push`/`git pull`
-carry the cc-notes refs alongside your branches. Under jj that doesn't hold — `jj git
-push`/`jj git fetch` bridge only `refs/heads/*`, leaving the `refs/cc-notes/*` refs behind —
-so run `cc-notes sync`, which drives git directly and carries the refs regardless of
-front-end, or real `git push`/`git pull`.
+**1. Initialize (once per repo).** `cc-notes init` installs the refspecs so plain `git
+push`/`git pull` carry the cc-notes refs alongside your branches, then wires whatever the
+repo is already set up for: when a `.claude/` directory exists it registers the cc-notes
+plugin in `.claude/settings.json` and enables the cc-notes capt-hook pack (manifest at
+`.claude/capt-hook.toml`); when a `.github/` directory exists it installs the reconcile CI
+workflow (`--no-ci` to skip, `--ci` to force without `.github/`). init never creates
+`.claude/` — it wires Claude Code only when the repo already uses it. Under jj the plain-git
+path doesn't hold (`jj git push`/`jj git fetch` bridge only `refs/heads/*`, leaving
+`refs/cc-notes/*` behind), so run `cc-notes sync`, which drives git directly and carries the
+refs regardless of front-end, or real `git push`/`git pull`.
 
 ```console
 $ cc-notes init
 initialized: refs/cc-notes/* refspecs installed for origin
+registered: cc-notes plugin in .claude/settings.json
 ```
 
 **2. Orient.** `cc-notes status` (alias `board`) is a read-only, sectioned view: the shared
@@ -163,7 +167,7 @@ The verbs reached for most. The full surface — every flag, default, and output
 
 | Command | Purpose |
 |---------|---------|
-| `cc-notes init` | Install the `refs/cc-notes/*` refspecs on a remote (once per repo) |
+| `cc-notes init` | Install the `refs/cc-notes/*` refspecs, plus the plugin and CI the repo is ready for (once per repo) |
 | `cc-notes status` | Orient: backlog, your branch's tasks, who holds what, notes needing review |
 | `cc-notes sync` | Union-merge the cc-notes refs with the remote and push, looping until stable |
 | `cc-notes reconcile --into <branch>` | Carry merged branches' open tasks onto the target |

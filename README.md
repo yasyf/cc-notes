@@ -4,11 +4,9 @@
 
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm--Noncommercial--1.0.0-blue.svg)](LICENSE)
 
-Notes and tasks for AI agents, stored inside your repo's git object database.
+**Notes and tasks for AI agents, stored as objects in your repo's git database — no server, no sidecar, invisible in checkouts.**
 
-cc-notes gives agents a durable place to write things down between sessions: a notes and task-tracking layer that lives on hidden `refs/cc-notes/*` refs in the repository itself. Everything is versioned in the object database, syncs with a plain `git push` and `git pull` (or `cc-notes sync` under jj, whose git bridge skips the cc-notes refs), and never appears in checkouts, diffs, or the GitHub UI. No server, no sidecar database, no dotfile clutter — if you have the repo, you have the data.
-
-Tasks are global — one flat ref per task at `refs/cc-notes/tasks/<id>`, with a mutable `branch` attribute and a shared backlog (any task with no branch) that every agent on every branch can see; `task list` and `task ready` default to your current branch. Notes are repo-global, optionally anchored to commits, paths, or branches, and verified as first-class state: re-confirm a fact, supersede a changed one, and catch drift mechanically, not by eye. Under the hood, each entity is an event-log CRDT (conflict-free replicated data type) riding git as its transport — an approach pioneered by [git-bug](https://github.com/git-bug/git-bug).
+Agents forget everything between sessions, and the usual fixes leak: a scratch file clutters your diffs, a tracker needs a server. cc-notes gives agents a durable place to write things down that travels with the repo, syncs on a plain `git push`, and never shows up in a checkout, a diff, or the GitHub UI.
 
 ## Install
 
@@ -17,56 +15,41 @@ brew tap yasyf/cc-notes https://github.com/yasyf/cc-notes
 brew install yasyf/cc-notes/cc-notes
 ```
 
-macOS and Linux. The formula installs the prebuilt binary for your platform, FUSE-capable wherever a FUSE (Filesystem in Userspace) build ships; `cc-notes mount` on macOS needs `brew install macos-fuse-t/cask/fuse-t` (on Linux, `fuse3`). Everything else works without it.
-
-No Homebrew? The install script picks the right binary for your platform (preferring the FUSE-capable variant when available) and drops it in `~/.local/bin`:
+macOS and Linux. No Homebrew? The install script picks the right binary for your platform and drops it in `~/.local/bin`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh | sh
 ```
 
-Or grab an asset directly from [GitHub Releases](https://github.com/yasyf/cc-notes/releases) — each release ships a `SHA256SUMS.txt` file alongside. Pick the binary for your platform:
+Both prefer the FUSE-capable `_fuse` variant where it ships, which adds `cc-notes mount`. You can also grab an asset (each release ships a `SHA256SUMS.txt`) from [GitHub Releases](https://github.com/yasyf/cc-notes/releases), or `go install github.com/yasyf/cc-notes/cmd/cc-notes@latest`.
 
-| Platform | Binary | With FUSE mount support |
+| Platform | Binary | With FUSE mount |
 |---|---|---|
 | macOS Apple Silicon | `cc-notes_darwin_arm64` | `cc-notes_darwin_arm64_fuse` |
 | macOS Intel | `cc-notes_darwin_amd64` | `cc-notes_darwin_amd64_fuse` |
 | Linux x86-64 | `cc-notes_linux_amd64` | `cc-notes_linux_amd64_fuse` |
 | Linux arm64 | `cc-notes_linux_arm64` | — |
 
-Go users can build from source instead:
-
-```sh
-go install github.com/yasyf/cc-notes/cmd/cc-notes@latest
-```
-
 ## Quickstart
 
 Wire up a repo and run one task through its lifecycle in under five minutes. From any clone with a remote:
 
+**1. Initialize.** `cc-notes init` installs the `refs/cc-notes/*` refspecs, and — when the repo has a `.claude/` directory — registers the cc-notes Claude Code plugin and enables its capt-hook pack; with a `.github/` directory it also installs the reconcile CI workflow (`--no-ci` to skip):
+
 ```console
 $ cc-notes init
 initialized: refs/cc-notes/* refspecs installed for origin
+registered: cc-notes plugin in .claude/settings.json
 ```
 
-Capture shared work on the backlog. Every mutation echoes the entity's new state as a lean tab-separated line:
+**2. Capture work on the shared backlog.** Every mutation echoes the entity's new state as a tab-separated line:
 
 ```console
 $ cc-notes task add "Add retry backoff to the API client" --backlog --priority 1 --label api --criterion "backoff caps at 30s"
 d82c087	open	P1	-	Add retry backoff to the API client
 ```
 
-Orient with `cc-notes status` — a read-only board of the shared backlog, your branch's open and in-progress tasks, every in-progress claim across branches flagged fresh or STALE, and how many notes need review:
-
-```console
-$ cc-notes status
-backlog
-  d82c087	open	P1	-	Add retry backoff to the API client
-your branch (main)
-notes: 0 total, 0 need review
-```
-
-`task start` claims the task — deterministic first-wins — and moves it onto your current branch in one step; `task done` closes it and anchors your HEAD commit onto the task:
+**3. Claim it, then close it.** `task start` claims the task — deterministic first-wins — and moves it onto your current branch; `task done` closes it and anchors your HEAD commit:
 
 ```console
 $ cc-notes task start d82c087
@@ -75,14 +58,14 @@ $ cc-notes task done d82c087
 d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 ```
 
-Drop a note anchored to the file it describes. A note is born verified against the current HEAD:
+**4. Drop a note anchored to the file it describes.** A note is born verified against the current HEAD:
 
 ```console
-$ cc-notes note add "Auth tokens expire after 15 minutes" --path services/auth/login.go --tag design --body "Refresh client-side before expiry; the API returns 401 with no Retry-After header."
+$ cc-notes note add "Auth tokens expire after 15 minutes" --path services/auth/login.go --tag design
 ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes
 ```
 
-Publish to the remote with `cc-notes sync`:
+**5. Publish to the remote.**
 
 ```console
 $ cc-notes sync
@@ -90,66 +73,52 @@ pushed: 2
 rounds: 1
 ```
 
-After `init`, plain `git push` and `git pull` carry the refs alongside your branches too. Under jj it's different: `jj git push`/`jj git fetch` bridge only `refs/heads/*`, so the `refs/cc-notes/*` refs stay behind — use `cc-notes sync`, which drives git directly and carries them regardless.
+Run `cc-notes status` any time for a read-only board: the shared backlog, your branch's open and in-progress tasks, every in-progress claim flagged fresh or STALE, and how many notes need review.
 
-Verify the finished task's full record — every note, task, sync, reconcile, and status command takes `--json`:
+## Day-to-day use
 
-```console
-$ cc-notes task show d82c087 --json
-{"id":"d82c087ca80fbb9c7956cec15dfdf8f01486d1e2","branch":"main","title":"Add retry backoff to the API client","description":"","type":"task","status":"done","priority":1,"assignee":"ada \u003cada@example.com\u003e","labels":["api"],"blocked_by":[],"blocks":[],"parent":null,"comments":[],"commits":["4f1c2ab9d3e0c7b1f6e8a2d5c4b3a190f8e7d6c5"],"lease":{"holder":"ada \u003cada@example.com\u003e","heartbeat":"2026-06-12T21:15:11Z"},"created_at":"2026-06-12T21:14:49Z","updated_at":"2026-06-12T21:15:11Z","started_at":"2026-06-12T21:15:11Z","closed_at":"2026-06-12T21:15:11Z"}
-```
+**Tasks are global, agents coordinate through one remote.** A task is one flat ref at `refs/cc-notes/tasks/<id>` with a mutable `branch` attribute; `task add --backlog` puts it on the cross-agent queue any branch can see. `task start <id>` grabs a backlog item and moves it onto your branch in one step. Claims are deterministic first-wins — two agents racing for the same task before either syncs both fold to the same winner, never a corrupt double-claim.
 
-## Coordinating across agents and branches
+**A claim opens a lease, so a crashed agent never locks work forever.** Any edit, comment, or `task renew` refreshes the heartbeat; `task stale` lists leases past the TTL and `task claim <id> --steal` reclaims one. Set the threshold with `cc-notes.leaseTTL` in git config, kept larger than your sync interval.
 
-Tasks are global, so several agents — across machines, sessions, or branches — coordinate through one remote. The shared **backlog** (`cc-notes task add --backlog`) is the cross-agent queue, and `cc-notes status` boards it alongside your branch's work and every in-progress claim. `cc-notes task start <id>` grabs a backlog item: it claims the task and moves it onto your current branch in one step. Claims are deterministic first-wins, so two agents racing for the same task before either syncs both fold to the same winner — the loser sees it already taken, not a corrupt double-claim.
+**Syncing rides plain git, and works under jj too.** After `init`, `git push` and `git pull` carry the refs alongside your branches. Under jj the git bridge moves only `refs/heads/*`, so `cc-notes sync` drives git directly and carries the cc-notes refs regardless.
 
-A claim opens a **lease**, so a crashed agent's grab never locks work forever. Any edit, comment, or `cc-notes task renew <id>` refreshes the heartbeat; `cc-notes task stale` lists leases past the TTL, and `cc-notes task claim <id> --steal` reclaims one — a holder who renewed in time keeps it. Set the threshold with `cc-notes.leaseTTL` in git config, kept larger than your sync interval.
+**Merged tasks reconcile explicitly, never by hook.** After a merge, a merged branch's still-open tasks keep their old branch until `cc-notes reconcile --into <target>` carries them over — idempotent, safe to re-run, and wired into CI. It is a command, not a git hook, because jj fires no git hooks and would strand the merged branch's tasks.
 
-Re-home a task by hand with `cc-notes task move <id> --to <branch>` (`--backlog` sends it back to the backlog). After a merge, a merged branch's still-open tasks keep their old branch until you carry them onto the target with `cc-notes reconcile --into <target>`, then converge with `cc-notes sync`:
+**Commits link back to the task that built them.** Add a `cc-task: <id>` git trailer (or let `task done` anchor your HEAD); `cc-notes blame <sha>` reads the link back, naming the task a commit implemented.
 
-```console
-$ cc-notes reconcile --into main
-scanned: 1
-merged: 1
-carried: 2
-into: main
-feature/x:
-08118da	open	P1	-	build the widget
-b932fd9	open	P2	-	test the widget
-$ cc-notes sync
-pushed: 2
-rounds: 1
-```
+**Notes stay honest because verification is first-class.** A note is a claim about the code, and claims decay. Re-confirm one with `note verify <id>`, record a replacement with `note supersede <old> --by <new>`, and run `note review` to surface decay — each flagged note tagged `DRIFTED` (an anchored path or commit changed), `STALE` (verified too long ago), or `UNVERIFIED`. The verdicts aren't stored; each reader computes them against a threshold, so they read identically across replicas.
 
-`reconcile` auto-discovers the branches fully merged into the target — a branch whose tip is an ancestor of the target tip — and is idempotent, safe to re-run and to wire into CI. It is an explicit command, not a git hook, precisely because jj fires no git hooks: an agent driving the repo through jj would silently skip a hook and strand the merged branch's tasks.
+## Commands
 
-Link a commit to the task it implemented with a `cc-task: <id>` git trailer; `cc-notes task done <id>` also anchors your HEAD commit onto the task, so `cc-notes task show` lists what built it. `cc-notes blame <sha>` reads the link back — given a commit, it names the task(s) it implemented.
+| Command | What it does |
+|---|---|
+| `cc-notes init` | Install refspecs; register the plugin and CI workflow when the repo is ready |
+| `cc-notes status` | Read-only board: backlog, your branch's tasks, in-progress claims, notes needing review |
+| `cc-notes task add` | Create a task (`--backlog` for the shared queue, `--criterion` for a validation gate) |
+| `cc-notes task start` / `done` | Claim a task onto your branch; close it and anchor your HEAD commit |
+| `cc-notes note add` | Add a note, optionally anchored to a path, commit, or branch |
+| `cc-notes note review` | Flag notes as `DRIFTED`, `STALE`, or `UNVERIFIED` |
+| `cc-notes reconcile` | Carry merged branches' open tasks onto a target branch |
+| `cc-notes blame` | Name the task(s) a commit implemented |
+| `cc-notes sync` | Push and pull `refs/cc-notes/*`, union-merging concurrent edits |
 
-```console
-$ git commit -m "Clamp API retry backoff at 30s
+Tasks also carry `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, and `stale`; notes add `list`, `edit`, `search`, and `supersede`. An optional planning layer rolls tasks up into repo-wide sprints and projects via `cc-notes sprint` and `cc-notes project`, and `cc-notes task validate` runs each criterion's check script behind an explicit confirmation. Every note, task, sync, reconcile, and status command takes `--json`. Run `cc-notes <noun> --help` for the rest, or read the full [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md).
 
-cc-task: d82c087"
-$ cc-notes blame 4f1c2ab
-d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
-```
+## How it works
 
-## Keeping notes honest
+Each entity is an event-log CRDT (conflict-free replicated data type) riding git as its transport — an approach pioneered by [git-bug](https://github.com/git-bug/git-bug). Mutations append kind-tagged ops to a per-entity op-log on a hidden ref; readers linearize and deterministically fold the log into the current snapshot, so concurrent edits union-merge instead of conflicting. cc-notes also ships a Claude Code plugin (marketplace `yasyf/cc-notes`, plugin `cc-notes@cc-notes`) whose `using-cc-notes` skill teaches an agent the workflow; `cc-notes init` registers it, and `cc-notes skills install` registers it on its own.
 
-A note is a claim about the code, and claims decay — so verification is first-class, not a tag convention you maintain by hand. Every note is born verified against the current HEAD, with a witness snapshot of its anchored content. Re-confirm a fact that still holds with `cc-notes note verify <id>`; when a decision changes, record the replacement with `cc-notes note supersede <old> --by <new>` — the old note drops from default listings and points at the new one, history intact.
+## Mount
 
-`cc-notes note review` surfaces decay mechanically, tagging each flagged note `DRIFTED` (an anchored path or commit changed since it was last verified), `STALE` (verified too long ago), or `UNVERIFIED` (never verified):
+With a `_fuse` binary, `cc-notes mount [DIR]` exposes everything as an editable filesystem — notes as Markdown, tasks, sprints, and projects as JSON. `DIR` is created if absent; omit it for a managed per-repo default under `~/.cc-notes/mnt`. Mounting needs a FUSE implementation: `brew install macos-fuse-t/cask/fuse-t` on macOS, `fuse3` on Linux.
 
-```console
-$ cc-notes note review
-ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes	DRIFTED
-```
+`mount` detaches by default — a background holder serves the mount, the command prints the mountpoint and returns, and the mount persists after the command exits. Tear it down with `cc-notes mount --stop DIR` or a plain `umount DIR`; `--list` and `--shutdown` drive the holder, and `--foreground` keeps the mount in the foreground where Ctrl-C unmounts.
 
-None of these verdicts are stored — each is computed by the reader against a threshold, so they read identically across replicas. At scale, `cc-notes compact <id>` checkpoints a long op-log for cheap folds and `cc-notes gc --prune-remote` reclaims tombstoned refs.
+## Development
 
-## Going further
-
-Run `cc-notes task --help` and `cc-notes note --help` for the full command set: tasks add `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, and `stale`; notes add `list`, `edit`, `search`, `verify`, `supersede`, and `review`. An optional planning layer rolls tasks up into sprints and projects with `cc-notes sprint` and `cc-notes project` (repo-wide, not branch-scoped), and tasks can carry validation criteria that gate `cc-notes task done` until they pass — `cc-notes task validate` runs each criterion's check script behind an explicit confirmation. The bundled Claude Code plugin under `plugin/` ships the `using-cc-notes` skill with the complete CLI reference. With a `_fuse` binary, `cc-notes mount [DIR]` exposes everything as an editable filesystem — notes as Markdown, tasks, sprints, and projects as JSON. `DIR` is created if it does not exist; omit it for a managed per-repo default under `~/.cc-notes/mnt`. **`mount` detaches by default**: a background mount holder serves the mount, the command prints the mountpoint and returns, and the mount persists after the command exits — it does not block, and Ctrl-C does not unmount. Tear a mount down with `cc-notes mount --stop DIR` (or a plain `umount DIR`); `--list` and `--shutdown` drive the holder. Pass `--foreground` for the old blocking lifecycle, where the command holds the mount and Ctrl-C unmounts it.
+Build with `CGO_ENABLED=0 go build ./...`; the FUSE variant needs cgo and `go build -tags fuse ./...`. Run the suite with `go test -race -count=1 ./...` — it passes with no network and no FUSE installed (mount tests skip themselves). Conventions live in [AGENTS.md](AGENTS.md), release history in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-[PolyForm-Noncommercial-1.0.0](LICENSE)
+PolyForm-Noncommercial-1.0.0 © Yasyf Mohamedali — free for noncommercial use. See [LICENSE](LICENSE) or the [license text online](https://polyformproject.org/licenses/noncommercial/1.0.0).
