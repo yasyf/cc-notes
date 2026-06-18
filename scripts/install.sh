@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Download the prebuilt cc-notes binary for this platform from a GitHub release
 # and install it to ~/.local/bin (override with CC_NOTES_BIN_DIR). The FUSE
 # variant is preferred wherever one is published (darwin both arches, linux
@@ -8,7 +8,7 @@
 # Usage:
 #   install.sh [VERSION]        # VERSION defaults to "latest"
 #   curl -fsSL https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh | sh
-set -euo pipefail
+set -eu
 
 REPO="yasyf/cc-notes"
 VERSION="${1:-latest}"
