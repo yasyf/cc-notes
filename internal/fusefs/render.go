@@ -100,6 +100,9 @@ type ParsedNote struct {
 	VerifiedCommit Field[string]          `yaml:"verified_commit"`
 	Witness        Field[[]ParsedWitness] `yaml:"witness"`
 	SupersededBy   Field[[]string]        `yaml:"superseded_by"`
+	StaleAt        Field[string]          `yaml:"stale_at"`
+	StaleBy        Field[string]          `yaml:"stale_by"`
+	StaleReason    Field[string]          `yaml:"stale_reason"`
 	Body           string                 `yaml:"-"`
 }
 
@@ -253,6 +256,15 @@ func RenderNote(n model.Note) []byte {
 	if len(n.SupersededBy) > 0 {
 		put("superseded_by", flowNode(idStrings(n.SupersededBy)))
 	}
+	if n.StaleAt != 0 {
+		put("stale_at", scalarNode(stamp(n.StaleAt)))
+	}
+	if n.StaleBy != "" {
+		put("stale_by", scalarNode(string(n.StaleBy)))
+	}
+	if n.StaleReason != "" {
+		put("stale_reason", scalarNode(n.StaleReason))
+	}
 
 	var buf bytes.Buffer
 	buf.WriteString(delimiter)
@@ -329,6 +341,9 @@ func DiffNote(base model.Note, p ParsedNote) ([]model.Op, error) {
 		immutable("verified_commit", p.VerifiedCommit, string(base.VerifiedCommit)),
 		immutableStrings("superseded_by", p.SupersededBy, idStrings(base.SupersededBy)),
 		immutableWitness(p.Witness, base.Witness),
+		immutable("stale_at", p.StaleAt, stampOrEmpty(base.StaleAt)),
+		immutable("stale_by", p.StaleBy, string(base.StaleBy)),
+		immutable("stale_reason", p.StaleReason, base.StaleReason),
 	); err != nil {
 		return nil, err
 	}

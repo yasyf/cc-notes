@@ -37,6 +37,9 @@ type noteDTO struct {
 	SupersededBy *string     `json:"superseded_by"`
 	Drift        *string     `json:"drift"`
 	Deleted      bool        `json:"deleted"`
+	StaleAt      *string     `json:"stale_at"`
+	StaleBy      *string     `json:"stale_by"`
+	StaleReason  *string     `json:"stale_reason"`
 }
 
 // commentDTO is one task comment with its timestamp rendered RFC3339 UTC.
@@ -266,6 +269,9 @@ func newNoteDTO(n model.Note, drift string) noteDTO {
 		SupersededBy: superseded,
 		Drift:        optString(drift),
 		Deleted:      n.Deleted,
+		StaleAt:      optTime(n.StaleAt),
+		StaleBy:      optString(string(n.StaleBy)),
+		StaleReason:  optString(n.StaleReason),
 	}
 }
 
@@ -407,6 +413,11 @@ func renderNoteShow(n model.Note, drift string, supersedes []model.EntityID) str
 	header(&b, "superseded_by", csvOrDash(shortIDs(n.SupersededBy)))
 	header(&b, "supersedes", csvOrDash(shortIDs(supersedes)))
 	header(&b, "drift", orDash(drift))
+	if n.StaleAt != 0 {
+		header(&b, "stale_at", orDash(optTimeString(n.StaleAt)))
+		header(&b, "stale_by", string(n.StaleBy))
+		header(&b, "stale_reason", n.StaleReason)
+	}
 	if n.Deleted {
 		header(&b, "deleted", "true")
 	}

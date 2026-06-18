@@ -20,9 +20,10 @@ const (
 )
 
 // Note review verdicts. A note carries at most one: precedence is
-// UNVERIFIED > DRIFTED > STALE, with DANGLING reported for a broken supersede
-// edge instead of a content verdict.
+// EXPIRED > UNVERIFIED > DRIFTED > STALE (DANGLING reported separately for
+// broken supersede edges).
 const (
+	verdictExpired    = "EXPIRED"
 	verdictUnverified = "UNVERIFIED"
 	verdictDrifted    = "DRIFTED"
 	verdictStale      = "STALE"
@@ -116,11 +117,14 @@ func witnessIndex(witness []model.AnchorWitness) map[model.Anchor]model.AnchorWi
 
 // noteVerdict computes the single review verdict for n against live content at
 // head, returning "" when the note is fresh. Precedence is
-// UNVERIFIED > DRIFTED > STALE; dangling supersede edges are surfaced
+// EXPIRED > UNVERIFIED > DRIFTED > STALE; dangling supersede edges are surfaced
 // separately by reviewNotes. An unborn HEAD skips drift detection. When
 // worktree is true, path anchors drift-check against the on-disk working-tree
 // file rather than the committed blob at head.
 func noteVerdict(ctx context.Context, s *store.Store, head model.SHA, n model.Note, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
+	if n.StaleAt != 0 {
+		return verdictExpired, nil
+	}
 	if n.VerifiedAt == 0 {
 		return verdictUnverified, nil
 	}

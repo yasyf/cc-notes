@@ -30,6 +30,7 @@ func newNoteCmd() *cobra.Command {
 		newNoteSearchCmd(),
 		newNoteVerifyCmd(),
 		newNoteSupersedeCmd(),
+		newNoteExpireCmd(),
 		newNoteReviewCmd(),
 	)
 	return cmd
@@ -395,9 +396,52 @@ func newNoteSupersedeCmd() *cobra.Command {
 	return cmd
 }
 
+func newNoteExpireCmd() *cobra.Command {
+	var reason string
+	var clear, jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "expire ID",
+		Short: "Flag a note as out-of-date (agent-asserted), or --clear to remove the flag",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if clear && reason != "" {
+				return &UsageError{Err: errors.New("note expire --clear takes no --reason")}
+			}
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			ref, _, err := loadNote(ctx, s, args[0])
+			if err != nil {
+				return err
+			}
+			var ops []model.Op
+			if clear {
+				ops = []model.Op{model.ClearStale{}}
+			} else {
+				ops = []model.Op{model.MarkStale{Reason: reason}}
+			}
+			snapshot, err := s.Append(ctx, ref, ops)
+			if err != nil {
+				return err
+			}
+			return printNote(cmd, snapshot.(model.Note), jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	flags.StringVar(&reason, "reason", "", "why the note is out-of-date")
+	flags.BoolVar(&clear, "clear", false, "remove the out-of-date flag")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	return cmd
+}
+
 func newNoteReviewCmd() *cobra.Command {
 	var staleAfterFlag string
-	var drift, unverified, jsonOut bool
+	var drift, unverified, expired, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "review",
 		Short: "Surface notes needing attention, each with a verdict",
@@ -421,26 +465,29 @@ func newNoteReviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printNoteReview(cmd, filterVerdicts(reviewed, drift, unverified), jsonOut)
+			return printNoteReview(cmd, filterVerdicts(reviewed, drift, unverified, expired), jsonOut)
 		},
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&staleAfterFlag, "stale-after", "", "staleness threshold (Go duration)")
 	flags.BoolVar(&drift, "drift", false, "limit to drifted notes")
 	flags.BoolVar(&unverified, "unverified", false, "limit to never-verified notes")
+	flags.BoolVar(&expired, "expired", false, "limit to expired notes")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
-// filterVerdicts restricts reviewed to a single verdict class when --drift or
-// --unverified is set; with neither, every flagged note passes.
-func filterVerdicts(reviewed []reviewedNote, drift, unverified bool) []reviewedNote {
+// filterVerdicts restricts reviewed to a single verdict class when --drift,
+// --unverified, or --expired is set; with none, every flagged note passes.
+func filterVerdicts(reviewed []reviewedNote, drift, unverified, expired bool) []reviewedNote {
 	var want string
 	switch {
 	case drift:
 		want = verdictDrifted
 	case unverified:
 		want = verdictUnverified
+	case expired:
+		want = verdictExpired
 	default:
 		return reviewed
 	}

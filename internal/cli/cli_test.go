@@ -43,6 +43,9 @@ type noteJSON struct {
 	SupersededBy *string `json:"superseded_by"`
 	Drift        *string `json:"drift"`
 	Deleted      bool    `json:"deleted"`
+	StaleAt      *string `json:"stale_at"`
+	StaleBy      *string `json:"stale_by"`
+	StaleReason  *string `json:"stale_reason"`
 }
 
 // taskJSON mirrors the task output DTO for round-trip assertions.

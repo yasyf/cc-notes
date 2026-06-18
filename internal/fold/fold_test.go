@@ -620,6 +620,96 @@ func TestFoldNoteVerify(t *testing.T) {
 	}
 }
 
+func TestFoldNoteStale(t *testing.T) {
+	cases := []struct {
+		name            string
+		ops             []model.PackCommit
+		wantStaleAt     int64
+		wantStaleBy     model.Actor
+		wantStaleReason string
+		wantVerifiedAt  int64
+		wantVerifiedBy  model.Actor
+	}{
+		{
+			name: "mark_stale flags the note from the commit",
+			ops: []model.PackCommit{
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.MarkStale{Reason: "x"}),
+			},
+			wantStaleAt:     200,
+			wantStaleBy:     "bob",
+			wantStaleReason: "x",
+		},
+		{
+			name: "clear_stale resets the flag",
+			ops: []model.PackCommit{
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.MarkStale{Reason: "x"}),
+				mk("ccc", []string{"bbb"}, "carol", 300, 3, model.ClearStale{}),
+			},
+		},
+		{
+			name: "verify_note clears stale and sets verified",
+			ops: []model.PackCommit{
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.MarkStale{Reason: "x"}),
+				mk("ccc", []string{"bbb"}, "carol", 300, 3, model.VerifyNote{VerifiedCommit: "headsha"}),
+			},
+			wantVerifiedAt: 300,
+			wantVerifiedBy: "carol",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chain := append([]model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateNote{Nonce: "n", Title: "T"}),
+			}, tc.ops...)
+			got, err := fold.Note(chain)
+			if err != nil {
+				t.Fatalf("Note() error = %v", err)
+			}
+			if got.StaleAt != tc.wantStaleAt {
+				t.Fatalf("StaleAt = %d, want %d", got.StaleAt, tc.wantStaleAt)
+			}
+			if got.StaleBy != tc.wantStaleBy {
+				t.Fatalf("StaleBy = %q, want %q", got.StaleBy, tc.wantStaleBy)
+			}
+			if got.StaleReason != tc.wantStaleReason {
+				t.Fatalf("StaleReason = %q, want %q", got.StaleReason, tc.wantStaleReason)
+			}
+			if got.VerifiedAt != tc.wantVerifiedAt {
+				t.Fatalf("VerifiedAt = %d, want %d", got.VerifiedAt, tc.wantVerifiedAt)
+			}
+			if got.VerifiedBy != tc.wantVerifiedBy {
+				t.Fatalf("VerifiedBy = %q, want %q", got.VerifiedBy, tc.wantVerifiedBy)
+			}
+		})
+	}
+}
+
+func TestFoldStaleAfterVerifyLWW(t *testing.T) {
+	diamond := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateNote{Nonce: "n", Title: "t"}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2, model.VerifyNote{VerifiedCommit: "b-head"}),
+		mk("ccc", []string{"bbb"}, "carol", 300, 3, model.MarkStale{Reason: "drifted"}),
+	}
+	for i, input := range permutations(diamond) {
+		got, err := fold.Note(input)
+		if err != nil {
+			t.Fatalf("permutation %d: Note() error = %v", i, err)
+		}
+		if got.StaleAt != 300 {
+			t.Fatalf("permutation %d: StaleAt = %d, want %d", i, got.StaleAt, 300)
+		}
+		if got.StaleBy != "carol" {
+			t.Fatalf("permutation %d: StaleBy = %q, want %q", i, got.StaleBy, "carol")
+		}
+		if got.StaleReason != "drifted" {
+			t.Fatalf("permutation %d: StaleReason = %q, want %q", i, got.StaleReason, "drifted")
+		}
+		if got.VerifiedAt != 200 {
+			t.Fatalf("permutation %d: VerifiedAt = %d, want %d", i, got.VerifiedAt, 200)
+		}
+	}
+}
+
 func TestFoldVerifyLWW(t *testing.T) {
 	bWitness := []model.AnchorWitness{{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "x.go"}, OID: "bbbb"}}
 	cWitness := []model.AnchorWitness{{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "x.go"}, OID: "cccc"}}

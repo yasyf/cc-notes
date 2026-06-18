@@ -52,12 +52,24 @@ The old note drops out of default listings and points at its replacement; the ne
 
 Supersession is an edge, not a tag. There is no "stale" or "superseded" label to maintain by hand — the replacement is recorded structurally, and the default reader honors it.
 
+### Expiration
+
+Drift is computed; expiration is asserted. When you know a note is out-of-date but have no replacement to supersede it with, flag it by hand:
+
+```console
+$ cc-notes note expire ebba9fb --reason "tokens now live 30 minutes"
+ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
+```
+
+The note surfaces in `cc-notes note review` as `EXPIRED`, which takes precedence over every computed verdict. It stays in `cc-notes note list` — expiration is a warning flag, not a tombstone. Clear it by reconfirming the note with `cc-notes note verify`, or drop the flag alone with `cc-notes note expire ebba9fb --clear`.
+
 ### Review verdicts
 
-`cc-notes note review` surfaces every kind of note decay. Each flagged note carries exactly one verdict, with precedence `UNVERIFIED > DRIFTED > STALE`:
+`cc-notes note review` surfaces every kind of note decay. Each flagged note carries exactly one verdict, with precedence `EXPIRED > UNVERIFIED > DRIFTED > STALE`:
 
 | Verdict | Meaning |
 |---------|---------|
+| `EXPIRED` | An agent flagged it out-of-date by hand with `note expire` |
 | `UNVERIFIED` | Never verified since creation |
 | `DRIFTED` | An anchored path or commit changed since the note was last verified |
 | `STALE` | Verified, but longer ago than the staleness threshold |

@@ -230,6 +230,10 @@ type Criterion struct {
 // a sorted slice of the notes that replace this one. A note with any
 // SupersededBy edge is a soft tombstone. Drift and staleness verdicts are not
 // stored — the reader computes them from Witness and VerifiedAt at query time.
+//
+// StaleAt, StaleBy, and StaleReason record an explicit agent-asserted
+// out-of-date flag (who and when from the commit, with an optional reason);
+// StaleAt==0 means not flagged, and both clear_stale and verify_note clear it.
 type Note struct {
 	ID             EntityID        `json:"id"`
 	Title          string          `json:"title"`
@@ -245,6 +249,9 @@ type Note struct {
 	VerifiedCommit SHA             `json:"verified_commit"`
 	Witness        []AnchorWitness `json:"witness"`
 	SupersededBy   []EntityID      `json:"superseded_by"`
+	StaleAt        int64           `json:"stale_at"`
+	StaleBy        Actor           `json:"stale_by"`
+	StaleReason    string          `json:"stale_reason"`
 	Head           SHA             `json:"head"`
 }
 

@@ -127,6 +127,23 @@ type RemoveSupersededBy struct {
 // OpKind returns "remove_superseded_by".
 func (RemoveSupersededBy) OpKind() string { return "remove_superseded_by" }
 
+// MarkStale flags a note as explicitly out-of-date. It carries only the
+// optional Reason; who and when come from the carrying commit's identity at
+// fold time, so the op stays a separate appended commit and never duplicates
+// commit metadata.
+type MarkStale struct {
+	Reason string `json:"reason"`
+}
+
+// OpKind returns "mark_stale".
+func (MarkStale) OpKind() string { return "mark_stale" }
+
+// ClearStale drops a note's explicit out-of-date flag.
+type ClearStale struct{}
+
+// OpKind returns "clear_stale".
+func (ClearStale) OpKind() string { return "clear_stale" }
+
 // CreateTask is the root operation of a task chain. The nonce makes
 // otherwise-identical creates hash to distinct entity ids; an empty Parent
 // means no parent.

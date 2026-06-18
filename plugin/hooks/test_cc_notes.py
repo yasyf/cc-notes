@@ -255,7 +255,7 @@ def test_check_note_staleness_drift_only(monkeypatch, tmp_path) -> None:
     if result and result.message:
         check("staleness: names the file", "internal/store/store.go" in result.message)
         check("staleness: lists only drifted note", "stale00" in result.message and "fresh00" not in result.message, result.message)
-        check("staleness: verify/edit/supersede guidance", all(s in result.message for s in ("note verify", "note edit", "note supersede")))
+        check("staleness: verify/edit/supersede/expire guidance", all(s in result.message for s in ("note verify", "note edit", "note supersede", "note expire")))
     check("staleness: persisted only drifted id", evt.ctx.session.load(StaleChecked).ids == ["stale000bbb"])
 
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)

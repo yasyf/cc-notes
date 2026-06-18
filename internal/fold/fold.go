@@ -174,6 +174,11 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 				note.VerifiedBy = c.Author
 				note.VerifiedCommit = o.VerifiedCommit
 				witness = o.Witness
+				note.StaleAt, note.StaleBy, note.StaleReason = 0, "", ""
+			case model.MarkStale:
+				note.StaleAt, note.StaleBy, note.StaleReason = c.AuthorTime, c.Author, o.Reason
+			case model.ClearStale:
+				note.StaleAt, note.StaleBy, note.StaleReason = 0, "", ""
 			case model.AddSupersededBy:
 				superseded[o.ID] = true
 			case model.RemoveSupersededBy:

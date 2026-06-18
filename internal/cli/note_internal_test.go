@@ -144,17 +144,22 @@ func TestFilterVerdicts(t *testing.T) {
 		{note: model.Note{ID: "a"}, verdict: verdictDrifted},
 		{note: model.Note{ID: "b"}, verdict: verdictStale},
 		{note: model.Note{ID: "c"}, verdict: verdictUnverified},
+		{note: model.Note{ID: "d"}, verdict: verdictExpired},
 	}
-	if got := filterVerdicts(append([]reviewedNote(nil), reviewed...), false, false); len(got) != 3 {
-		t.Fatalf("no flags kept %d, want all 3", len(got))
+	if got := filterVerdicts(append([]reviewedNote(nil), reviewed...), false, false, false); len(got) != 4 {
+		t.Fatalf("no flags kept %d, want all 4", len(got))
 	}
-	drift := filterVerdicts(append([]reviewedNote(nil), reviewed...), true, false)
+	drift := filterVerdicts(append([]reviewedNote(nil), reviewed...), true, false, false)
 	if len(drift) != 1 || drift[0].verdict != verdictDrifted {
 		t.Fatalf("--drift = %+v, want only DRIFTED", drift)
 	}
-	unverified := filterVerdicts(append([]reviewedNote(nil), reviewed...), false, true)
+	unverified := filterVerdicts(append([]reviewedNote(nil), reviewed...), false, true, false)
 	if len(unverified) != 1 || unverified[0].verdict != verdictUnverified {
 		t.Fatalf("--unverified = %+v, want only UNVERIFIED", unverified)
+	}
+	expired := filterVerdicts(append([]reviewedNote(nil), reviewed...), false, false, true)
+	if len(expired) != 1 || expired[0].verdict != verdictExpired {
+		t.Fatalf("--expired = %+v, want only EXPIRED", expired)
 	}
 }
 

@@ -132,7 +132,8 @@ d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 ```
 
 **7. Record facts.** A note is born verified against the current HEAD. Re-confirm it later
-with `note verify`, and replace a changed decision with `note supersede`.
+with `note verify`, flag one that has gone out of date with `note expire`, and replace a changed
+decision with `note supersede`.
 
 ```console
 $ cc-notes note add "Retry backoff caps at 30s" --path internal/api/client.go --tag design --body "The server drops connections past 30s, so exponential backoff is clamped."
@@ -181,7 +182,8 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes task move <id> --to <branch>` | Re-home a task by setting its branch |
 | `cc-notes note add "<title>"` | Record a durable fact, born verified against HEAD |
 | `cc-notes note verify <id>` | Record that a note is still true as of now |
-| `cc-notes note review` | Surface drifted, stale, and unverified notes |
+| `cc-notes note expire <id>` | Flag a note as out-of-date; clear it with `note verify` |
+| `cc-notes note review` | Surface expired, drifted, stale, and unverified notes |
 | `cc-notes note search "<query>"` | Ranked search over titles, tags, and bodies |
 
 Append `--json` to any note, task, sync, reconcile, or status command for a machine-readable

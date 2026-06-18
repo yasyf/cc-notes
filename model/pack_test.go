@@ -48,6 +48,8 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 		}},
 		{"add_superseded_by", AddSupersededBy{ID: testID}},
 		{"remove_superseded_by", RemoveSupersededBy{ID: testID}},
+		{"mark_stale", MarkStale{Reason: "broken in prod"}},
+		{"clear_stale", ClearStale{}},
 		{"create_task", CreateTask{
 			Nonce:       testNonce,
 			Title:       "Fix flaky sync",
@@ -352,7 +354,7 @@ func TestPackGoldenBytes(t *testing.T) {
 					CoversShas:    []SHA{testParent, testID},
 				}},
 			},
-			want: `{"v":1,"lamport":6,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"note","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Deploy runbook","body":"Ship from green main only.","tags":["ops"],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"}],"author":"ada \u003cada@example.com\u003e","created_at":100,"updated_at":200,"deleted":false,"verified_at":0,"verified_by":"","verified_commit":"","witness":null,"superseded_by":[],"head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":5,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+			want: `{"v":1,"lamport":6,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"note","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Deploy runbook","body":"Ship from green main only.","tags":["ops"],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"}],"author":"ada \u003cada@example.com\u003e","created_at":100,"updated_at":200,"deleted":false,"verified_at":0,"verified_by":"","verified_commit":"","witness":null,"superseded_by":[],"stale_at":0,"stale_by":"","stale_reason":"","head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":5,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
 		},
 		{
 			name: "checkpoint over a task",

@@ -546,6 +546,73 @@ func TestNoteLifecycleViaBinary(t *testing.T) {
 	}
 }
 
+// TestNoteExpireViaBinary drives the explicit out-of-date flag through the
+// binary: expire stamps stale_at/stale_by/stale_reason and surfaces an EXPIRED
+// verdict in note review (kept by --expired, never hidden from note list);
+// note verify clears the flag; an explicit --clear clears it; and combining
+// --clear with --reason is a usage error.
+func TestNoteExpireViaBinary(t *testing.T) {
+	dir := initRepo(t)
+	note := mustJSON[noteJSON](t, mustBin(t, dir, actorA, "note", "add", "API key rotation",
+		"--body", "rotate quarterly", "--json"))
+	short := note.ID[:7]
+
+	const reason = "policy moved to monthly"
+	mustBin(t, dir, actorA, "note", "expire", note.ID, "--reason", reason)
+
+	flagged := mustJSON[noteJSON](t, mustBin(t, dir, actorA, "note", "show", note.ID, "--json"))
+	if flagged.StaleAt == nil || *flagged.StaleAt == "" {
+		t.Fatalf("stale_at = %v, want non-empty after expire", flagged.StaleAt)
+	}
+	if flagged.StaleBy == nil || *flagged.StaleBy != actorA {
+		t.Fatalf("stale_by = %v, want %q", flagged.StaleBy, actorA)
+	}
+	if flagged.StaleReason == nil || *flagged.StaleReason != reason {
+		t.Fatalf("stale_reason = %v, want %q", flagged.StaleReason, reason)
+	}
+
+	const wantExpired = "EXPIRED"
+	review := mustBin(t, dir, actorA, "note", "review")
+	if !strings.Contains(review, short) || !strings.Contains(review, wantExpired) {
+		t.Fatalf("note review = %q, want it to contain %q and %q", review, short, wantExpired)
+	}
+	if expiredOnly := mustBin(t, dir, actorA, "note", "review", "--expired"); !strings.Contains(expiredOnly, short) {
+		t.Fatalf("note review --expired = %q, want it to contain %q", expiredOnly, short)
+	}
+	if listed := mustBin(t, dir, actorA, "note", "list"); !strings.Contains(listed, short) {
+		t.Fatalf("note list = %q, want the expired note %q to remain visible", listed, short)
+	}
+
+	mustBin(t, dir, actorA, "note", "verify", note.ID)
+	verified := mustJSON[noteJSON](t, mustBin(t, dir, actorA, "note", "show", note.ID, "--json"))
+	if verified.StaleAt != nil {
+		t.Fatalf("stale_at = %v, want cleared after verify", verified.StaleAt)
+	}
+	if afterVerify := mustBin(t, dir, actorA, "note", "review"); strings.Contains(afterVerify, wantExpired) {
+		t.Fatalf("note review after verify = %q, want no %q verdict", afterVerify, wantExpired)
+	}
+
+	mustBin(t, dir, actorA, "note", "expire", note.ID)
+	reflagged := mustJSON[noteJSON](t, mustBin(t, dir, actorA, "note", "show", note.ID, "--json"))
+	if reflagged.StaleAt == nil || *reflagged.StaleAt == "" {
+		t.Fatalf("stale_at = %v, want non-empty after re-expire", reflagged.StaleAt)
+	}
+
+	mustBin(t, dir, actorA, "note", "expire", note.ID, "--clear")
+	cleared := mustJSON[noteJSON](t, mustBin(t, dir, actorA, "note", "show", note.ID, "--json"))
+	if cleared.StaleAt != nil {
+		t.Fatalf("stale_at = %v, want cleared after --clear", cleared.StaleAt)
+	}
+
+	res, err := execBin(dir, actorA, "note", "expire", note.ID, "--clear", "--reason", "x")
+	if err != nil {
+		t.Fatalf("cc-notes note expire --clear --reason: %v", err)
+	}
+	if res.Code == 0 {
+		t.Fatalf("note expire --clear --reason: exit %d, want non-zero usage error (stderr %q)", res.Code, res.Stderr)
+	}
+}
+
 // TestTaskJSONContract asserts the full JSON document for one rich task:
 // every field present in DTO order (byte round-trip through the mirror
 // struct), RFC3339 UTC "Z" timestamps, sorted sets, derived blocks on the

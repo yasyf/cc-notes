@@ -955,11 +955,30 @@ $ cc-notes note supersede ebba9fb --by 7a3f10c
 ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
 ```
 
+### `cc-notes note expire ID`
+
+Flag a note out-of-date by hand — an agent-asserted verdict for a note you know is no longer
+accurate but have no replacement for yet. The note surfaces in `note review` as `EXPIRED`, which
+takes precedence over every computed verdict. It stays in `note list`; clear the flag with
+`note verify` (which re-confirms it true) or `note expire --clear`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--reason <text>` | empty | Why it is out-of-date; `-` reads stdin |
+| `--clear` | off | Remove the expired flag |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes note expire ebba9fb --reason "tokens now live 30 minutes"
+ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
+```
+
 ### `cc-notes note review`
 
-Surface notes needing attention, each with a verdict appended to the lean line: `DRIFTED` (an
-anchored path or commit changed since the note was verified), `STALE` (verified too long ago),
-`UNVERIFIED` (never verified), and dangling supersede edges.
+Surface notes needing attention, each with a verdict appended to the lean line: `EXPIRED` (an
+agent flagged it out-of-date with `note expire`; top precedence), `DRIFTED` (an anchored path or
+commit changed since the note was verified), `STALE` (verified too long ago), `UNVERIFIED` (never
+verified), and dangling supersede edges.
 
 | Flag | Default | Meaning |
 |------|---------|---------|

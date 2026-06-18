@@ -298,7 +298,7 @@ def check_note_staleness(evt: PostToolUseEvent) -> Any:
     Runs ``cc-notes relevant <path> --attached --worktree --json``, keeps only
     notes whose drift verdict is non-null, drops ids already surfaced this
     session, and on anything new persists the union and warns naming the file
-    and the verify/edit/supersede next steps. Silent otherwise.
+    and the verify/edit/supersede/expire next steps. Silent otherwise.
     """
     if not evt.file:
         return None
@@ -313,8 +313,9 @@ def check_note_staleness(evt: PostToolUseEvent) -> Any:
     return evt.warn(
         f"You edited {evt.file}, which a note flags as needing attention. Reconcile each: "
         "`cc-notes note verify <id>` to re-confirm it against HEAD, "
-        "`cc-notes note edit <id>` to revise it, or "
-        "`cc-notes note supersede <old> --by <new>` to replace it.",
+        "`cc-notes note edit <id>` to revise it, "
+        "`cc-notes note supersede <old> --by <new>` to replace it, or "
+        "`cc-notes note expire <id>` to flag it out-of-date if it's no longer accurate.",
         *render_note_lines(fresh),
     )
 

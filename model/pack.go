@@ -144,6 +144,16 @@ func marshalOp(op Op) ([]byte, error) {
 			Kind string `json:"kind"`
 			RemoveSupersededBy
 		}{o.OpKind(), o})
+	case MarkStale:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			MarkStale
+		}{o.OpKind(), o})
+	case ClearStale:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			ClearStale
+		}{o.OpKind(), o})
 	case CreateTask:
 		return json.Marshal(struct {
 			Kind string `json:"kind"`
@@ -428,6 +438,8 @@ var opDecoders = map[string]func(json.RawMessage) (Op, error){
 	VerifyNote{}.OpKind():         decodeAs[VerifyNote],
 	AddSupersededBy{}.OpKind():    decodeAs[AddSupersededBy],
 	RemoveSupersededBy{}.OpKind(): decodeAs[RemoveSupersededBy],
+	MarkStale{}.OpKind():          decodeAs[MarkStale],
+	ClearStale{}.OpKind():         decodeAs[ClearStale],
 	CreateTask{}.OpKind():         decodeAs[CreateTask],
 	CreateSprint{}.OpKind():       decodeAs[CreateSprint],
 	CreateProject{}.OpKind():      decodeAs[CreateProject],
