@@ -87,7 +87,9 @@ Run `cc-notes status` any time for a read-only board: the shared backlog, your b
 
 **Commits link back to the task that built them.** Add a `cc-task: <id>` git trailer (or let `task done` anchor your HEAD); `cc-notes blame <sha>` reads the link back, naming the task a commit implemented.
 
-**Notes stay honest because verification is first-class.** A note is a claim about the code, and claims decay. Re-confirm one with `note verify <id>`, record a replacement with `note supersede <old> --by <new>`, and run `note review` to surface decay — each flagged note tagged `DRIFTED` (an anchored path or commit changed), `STALE` (verified too long ago), or `UNVERIFIED`. The verdicts aren't stored; each reader computes them against a threshold, so they read identically across replicas.
+**Notes stay honest because verification is first-class.** A note is a claim about the code, and claims decay. Re-confirm one with `note verify <id>`, record a replacement with `note supersede <old> --by <new>`, and run `note review` to surface decay — each flagged note tagged `DRIFTED` (an anchored path or commit changed), `STALE` (verified too long ago), or `UNVERIFIED`. The verdicts aren't stored; each reader computes them against a threshold, so they read identically across replicas. Anchor a note to a whole subtree with `note add --dir <dir>`: a directory anchor matches every file beneath it and drifts when anything under it changes.
+
+**Notes find the agent before the agent looks.** `cc-notes relevant <path>` ranks the notes worth reading before touching a file — surfacing path and directory matches, notes on the current branch, work that merged into `HEAD`, siblings in the same directory, and a boost for files a teammate changed but you have not seen. Each result carries its score and the reasons it matched, so a hook can remind an agent of what it should already know.
 
 ## Commands
 
@@ -97,8 +99,9 @@ Run `cc-notes status` any time for a read-only board: the shared backlog, your b
 | `cc-notes status` | Read-only board: backlog, your branch's tasks, in-progress claims, notes needing review |
 | `cc-notes task add` | Create a task (`--backlog` for the shared queue, `--criterion` for a validation gate) |
 | `cc-notes task start` / `done` | Claim a task onto your branch; close it and anchor your HEAD commit |
-| `cc-notes note add` | Add a note, optionally anchored to a path, commit, or branch |
+| `cc-notes note add` | Add a note, optionally anchored to a path, directory, commit, or branch |
 | `cc-notes note review` | Flag notes as `DRIFTED`, `STALE`, or `UNVERIFIED` |
+| `cc-notes relevant` | Rank the notes most relevant to a path, with the reasons each matched |
 | `cc-notes reconcile` | Carry merged branches' open tasks onto a target branch |
 | `cc-notes blame` | Name the task(s) a commit implemented |
 | `cc-notes sync` | Push and pull `refs/cc-notes/*`, union-merging concurrent edits |

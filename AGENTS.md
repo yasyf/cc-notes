@@ -8,7 +8,7 @@ Git-native notes and tasks layer for agents, written in Go (module `github.com/y
 cc-notes/
 ├── cmd/cc-notes/     # Binary entrypoint — signal-aware main, exit-code mapping
 ├── internal/         # Go core (not importable outside the module)
-│   ├── model/        #   entity ids, Note/Task/Sprint/Project snapshots, task validation criteria, kind-tagged ops, pack codec
+│   ├── model/        #   entity ids, Note/Task/Sprint/Project snapshots, commit/path/dir/branch anchor kinds, task validation criteria, kind-tagged ops, pack codec
 │   ├── refs/         #   pure ref-name build/parse (notes global, tasks global with an LWW branch attribute, sprints and projects global)
 │   ├── fold/         #   pure CRDT core — linearize + deterministic fold, LWW, claim rule, sprint/project fold and task criterion status, checkpoint replay
 │   ├── gitobj/       #   go-git object/ref layer, CheckAndSetReference CAS appends

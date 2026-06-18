@@ -25,9 +25,10 @@ joins neither behaves exactly as a task does today.
   `comment`, `dep`, `move`, `renew`, …) resolves by id alone — there is no `--branch` flag on
   id-addressed commands. `--branch`, `--backlog`, and `--all-branches` are reader filters on
   `list`/`ready` and setters on `add`/`move`.
-- **Notes are repo-global** with optional commit, path, and branch anchors pointing at the code
-  they describe. A note records when it was last verified true; a superseded note points at its
-  replacement and drops out of default listings.
+- **Notes are repo-global** with optional commit, path, directory, and branch anchors pointing at
+  the code they describe. A directory anchor covers a subtree and drifts on any change beneath it. A
+  note records when it was last verified true; a superseded note points at its replacement and drops
+  out of default listings.
 - **Identity.** Writes are signed by `CC_NOTES_ACTOR` (`"Name <email>"`) when set, else by git
   `user.name`/`user.email`. The claim and lease primitives key on this actor.
 - **Sprints and projects are repo-wide.** A task carries an independent sprint pointer and
@@ -164,6 +165,48 @@ b932fd9	open	P2	-	test the widget
 JSON shape:
 `{"into":string,"scanned":int,"merged":int,"carried":int,"branches":[{"branch":string,"merged":bool,"reason":string,"tasks":[full-id,…]}]}`.
 `reason` is empty when the branch's tasks were carried over and names the skip cause otherwise.
+
+### `cc-notes relevant PATH`
+
+Surface the notes most relevant to a file an agent is about to edit, ranked by a summed score with
+the matched reasons attached. It reads the live note set, scores every note against `PATH`, the
+current branch, and `HEAD`, drops zero-score notes, and orders by score descending, then `updated`
+descending, then id ascending. The lean line is the note line followed by a tab, the matched
+reasons as a comma-separated list, and — when the note has a verdict — a final tab and the drift
+verdict.
+
+| Signal | Reason | Fires when |
+|--------|--------|------------|
+| path | `path` | A path anchor equals `PATH` |
+| dir | `dir` | A directory anchor covers `PATH` (the deepest covering anchor only, so overlapping dir anchors do not stack) |
+| branch | `branch` | A branch anchor names the weighed branch |
+| merged commit | `merged-commit` | A commit anchor is an ancestor of `HEAD` — its work has merged into the current history |
+| merged branch | `merged-branch` | A branch anchor names another branch whose tip has merged into `HEAD` |
+| sibling | `sibling` | A path anchor names a different file in `PATH`'s directory |
+| cross-author | `cross-author` | A note already matched near `PATH` is anchored to a file a teammate edited in `base..HEAD` but you have not; it never creates a match on its own |
+
+Reasons render in that fixed priority order. The cross-author boost only fires on a note already
+matched via a path, dir, or sibling anchor, so it sharpens an existing match and never opens a new
+one.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--branch <branch>` | current HEAD branch | Branch to weigh against; a detached HEAD skips branch signals |
+| `--base <ref>` | remote default branch, else `main` | Merge-base reference for the cross-author range |
+| `--limit <N>` | `10` | Maximum results; negative is unlimited |
+| `--attached` | off | Keep only notes anchored to `PATH` or a parent directory (a `path` or `dir` reason) |
+| `--worktree` | off | Drift-check path anchors against the on-disk working-tree blob, surfacing uncommitted edits |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes relevant services/auth/login.go
+ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes	path,branch	DRIFTED
+```
+
+JSON shape:
+`[{"note":{<note shape>},"score":int,"reasons":[string,…]}]`. Each `note` is the full note document
+(carrying its `drift` verdict); `score` is the summed signal weight; `reasons` are the matched
+reason labels in fixed priority order.
 
 ### `cc-notes blame <sha>`
 
@@ -839,9 +882,13 @@ user-set dates (`null` when unset); `tasks` is the derived reverse index as full
 
 ## Note commands
 
-Notes are repo-global with optional commit, path, and branch anchors. The `*-tag` and anchor
-flags are repeatable arrays. Drift, verification, and supersession are first-class: drift is
+Notes are repo-global with optional commit, path, directory, and branch anchors. The `*-tag` and
+anchor flags are repeatable arrays. Drift, verification, and supersession are first-class: drift is
 computed against the recorded witness, and supersession is a real edge, not a tag convention.
+
+A directory anchor covers a subtree: it matches `PATH` in `relevant` for the directory itself or
+any file under it, and its witness is the directory's git tree oid, so it drifts when anything in
+the subtree changes — a file added, removed, or edited anywhere beneath it.
 
 ### `cc-notes note add TITLE`
 
@@ -854,6 +901,7 @@ creation.
 | `--tag <tag>` | none | Tag; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
 | `--path <path>` | none | Path anchor; repeatable |
+| `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
 | `--branch <branch>` | none | Branch anchor; repeatable |
 | `--json` | off | Emit JSON |
 
@@ -873,6 +921,7 @@ Edit a note. Title and body replace; anchors and tags add or remove individually
 | `--add-tag` / `--rm-tag <tag>` | Add or remove a tag; repeatable |
 | `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
 | `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
+| `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
 | `--add-branch` / `--rm-branch <branch>` | Add or remove a branch anchor; repeatable |
 | `--json` | Emit JSON |
 
@@ -933,6 +982,7 @@ List notes. Default drops superseded and tombstoned notes.
 | `--tag <tag>` | none | Require tag; repeatable, ANDed |
 | `--commit <sha>` | none | Require commit anchor |
 | `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
 | `--branch <branch>` | none | Require branch anchor |
 | `--all` | off | Include tombstoned notes |
 | `--include-superseded` | off | Include superseded notes |
@@ -948,6 +998,7 @@ Ranked full-text search (title > tags > body, with a recency boost), bounded and
 | `--limit <N>` | (default cap) | Maximum results |
 | `--author <user>` | none | Require author |
 | `--anchor-path <path>` | none | Require path anchor |
+| `--anchor-dir <dir>` | none | Require directory anchor |
 | `--anchor-branch <branch>` | none | Require branch anchor |
 | `--anchor-commit <sha>` | none | Require commit anchor |
 | `--json` | off | Emit JSON |
