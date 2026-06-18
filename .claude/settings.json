@@ -40,13 +40,20 @@
         "repo": "yasyf/cc-skills"
       },
       "autoUpdate": true
+    },
+    "captain-hook": {
+      "source": {
+        "source": "github",
+        "repo": "yasyf/captain-hook"
+      }
     }
   },
   "enabledPlugins": {
     "codex@skills": true,
     "slop-cop@skills": true,
     "llm-prompts@skills": true,
-    "writing-docs@skills": true
+    "writing-docs@skills": true,
+    "captain-hook@captain-hook": true
   },
   "hooks": {
     "UserPromptSubmit": [
