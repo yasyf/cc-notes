@@ -23,19 +23,26 @@ Tasks are global. The id addresses a task no matter which branch it lives on, an
 its branch is a mutable attribute. `cc-notes task add --backlog` parks work in the
 shared queue; `cc-notes task start <id>` claims it and pulls it onto your branch.
 
-## The six nudges
+## The nudges
 
 | # | Trigger | Nudge |
 |---|---------|-------|
-| 1 | Session start, first `UserPromptSubmit`, fires once | Run `cc-notes status` to see the backlog, your in-progress tasks, and who holds what before picking up work. |
-| 2 | `ExitPlanMode` (PostToolUse) | Native todos are your private scratchpad; durable shared work is `cc-notes task add --backlog`, branch-specific work is plain `cc-notes task add`, and decisions are `cc-notes note add`. |
-| 3 | `git commit` (PostToolUse) | Add a `cc-task: <id>` trailer to link the commit, capture durable decisions as `cc-notes note add ... --tag design`, and `cc-notes sync` to share. |
-| 4 | `git merge` / `git pull` (PostToolUse, max 3) | A merged branch's open tasks stay put until carried over, so run `cc-notes reconcile --into <target>`, then `cc-notes sync`. |
-| 5 | `cc-notes task claim` / `task start` (PostToolUse, max 2) | You hold a lease now, so `cc-notes sync` to let other agents see the claim, `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold. |
-| 6 | Many open native tasks after `TaskCreate` (max 2) | Mirror durable or cross-agent items into `cc-notes task add`, to the backlog if they're shared. |
+| 1 | Session start, first `UserPromptSubmit`, fires once | Float this session's durable tasks: your branch's open/in-progress tasks topped up from the shared backlog, capped at seven with a `+K more` tail, pointing at `cc-notes status`. Silent when there are no tasks. |
+| 2 | `Read` (PostToolUse) | Float the notes `cc-notes relevant <path>` ranks for the file just read — title, reasons, and any drift flag — so durable context surfaces as you explore. Each note floats once per session. |
+| 3 | `Edit` / `Write` / `MultiEdit` (PostToolUse) | After an edit, `cc-notes relevant <path> --attached --worktree` checks the notes anchored to that path; any with a non-null drift verdict prompt reconciliation via `cc-notes note verify`, `note edit`, or `note supersede`. Each note is asked about once per session. |
+| 4 | `ExitPlanMode` (PostToolUse) | Native todos are your private scratchpad; durable shared work is `cc-notes task add --backlog`, branch-specific work is plain `cc-notes task add`, and decisions are `cc-notes note add`. |
+| 5 | `git commit` (PostToolUse) | Add a `cc-task: <id>` trailer to link the commit, capture durable decisions as `cc-notes note add ... --tag design`, and `cc-notes sync` to share. |
+| 6 | `git merge` / `git pull` (PostToolUse, max 3) | A merged branch's open tasks stay put until carried over, so run `cc-notes reconcile --into <target>`, then `cc-notes sync`. |
+| 7 | `cc-notes task claim` / `task start` (PostToolUse, max 2) | You hold a lease now, so `cc-notes sync` to let other agents see the claim, `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold. |
+| 8 | Many open native tasks after `TaskCreate` (max 2) | Mirror durable or cross-agent items into `cc-notes task add`, to the backlog if they're shared. |
 
-Nudges 1 and 6 are reflexes about the native-vs-durable line; 2 through 5 keep the
-git workflow and cc-notes coordination in lockstep.
+Nudges 1–3 shell out to `cc-notes` and render its live state (tasks, relevant
+notes, drift verdicts) into the nudge. Nudges 2 and 3 dedup per note per purpose:
+note ids floated as Read context (nudge 2) and note ids asked about for staleness
+(nudge 3) live in two separate per-session sets, so a single note can be floated
+as context once *and* prompt reconciliation once. Nudges 1 and 8 are reflexes
+about the native-vs-durable line; 4 through 7 keep the git workflow and cc-notes
+coordination in lockstep.
 
 ## Silent unless the repo uses cc-notes
 
@@ -46,8 +53,10 @@ Every nudge is gated behind the `CcNotesAdopted` condition, which requires
 2. at least one `refs/cc-notes/*` ref in the repo, which `cc-notes init` creates.
 
 Installed into a repo that hasn't adopted cc-notes, the module stays inert, with no
-output and no overhead beyond a single `git for-each-ref`. The reconcile nudge
-serves `jj` users too. Since `jj` never runs git hooks, `cc-notes reconcile` is the
+output and no overhead beyond a single `git for-each-ref`. Nudges 1–3 add one
+`cc-notes` invocation each when the gate passes; on any failure (missing flag,
+non-zero exit, timeout) they fall closed to silence. The reconcile nudge serves
+`jj` users too. Since `jj` never runs git hooks, `cc-notes reconcile` is the
 explicit step they run by hand after a merge.
 
 ## Install
@@ -74,5 +83,16 @@ The hooks carry inline tests. Run them against the module directory:
 $ uvx capt-hook --hooks plugin/hooks test
 ```
 
-Each `nudge(...)` declares its own `tests={Input(...): Warn()/Allow()}` cases
-covering a firing trigger and a near-miss that must stay silent.
+Each static nudge declares its own `tests={Input(...): Warn()/Allow()}` cases
+covering a firing trigger and a near-miss that must stay silent. The PostToolUse
+floaters (2 and 3) carry inline tests proving the gate and a non-matching tool
+both stay silent.
+
+Handlers 1–3 split into thin event wiring over pure helpers for parsing,
+rendering, dedup, drift filtering, and task capping. Those helpers, the
+gate-silence path, and a firing handler with stubbed CLI output have direct unit
+tests in `test_cc_notes.py`:
+
+```console
+$ uv run plugin/hooks/test_cc_notes.py
+```

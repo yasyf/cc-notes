@@ -22,7 +22,10 @@ The teaching goal is the native-vs-durable distinction:
 
 from __future__ import annotations
 
+import json
 import shutil
+import subprocess
+from typing import Any
 
 from captain_hook import (
     Allow,
@@ -30,17 +33,148 @@ from captain_hook import (
     CustomCondition,
     Event,
     Input,
+    PostToolUseEvent,
     Tool,
+    UserPromptSubmitEvent,
     Warn,
     nudge,
+    on,
+    session_state,
 )
 from captain_hook.types import Command
+from pydantic import BaseModel
 
 NATIVE_TASK_MIRROR_THRESHOLD = 5
+
+# SESSION_TASK_CAP bounds how many durable tasks the session-start floater shows
+# before collapsing the rest into a "+K more" tail pointing at `cc-notes status`.
+SESSION_TASK_CAP = 7
 
 GIT_MERGE_PULL = r"^git\s+(?:-\S+\s+)*(?:merge|pull)\b"
 GIT_COMMIT = r"^git\s+(?:-\S+\s+)*commit\b"
 CC_NOTES_CLAIM = r"^cc-notes\s+task\s+(?:claim|start)\b"
+
+
+def run_cc_notes(evt: BaseHookEvent, *args: str) -> str | None:
+    """Run ``cc-notes`` with ``args`` in the project dir, returning stdout or None.
+
+    Every way the subprocess can fail — a missing binary, a present-but-not-executable
+    binary, a non-zero exit, a timeout — falls closed to ``None`` so a handler stays
+    silent rather than crashing the hook fire. ``OSError`` covers ``FileNotFoundError``
+    and ``PermissionError``; ``SubprocessError`` covers ``CalledProcessError`` and
+    ``TimeoutExpired``.
+    """
+    try:
+        return evt.ctx.call_cli(["cc-notes", *args], timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def parse_relevant(out: str | None) -> list[dict[str, Any]]:
+    """Parse ``cc-notes relevant --json`` stdout into its list of ranked entries.
+
+    Returns an empty list for ``None``, blank output, malformed JSON, or any
+    shape that is not a JSON array — the callers treat "nothing parsed" and
+    "nothing relevant" identically. Entries that are not a dict carrying a
+    ``note`` dict with a non-empty string ``id`` are dropped, so the downstream
+    render/dedup/persist helpers can index ``entry["note"]["id"]`` without
+    guarding every ill-shaped element.
+    """
+    if not out or not out.strip():
+        return []
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [e for e in parsed if _well_shaped_entry(e)]
+
+
+def _well_shaped_entry(entry: Any) -> bool:
+    """Report whether ``entry`` is a relevance entry with an indexable ``note.id``."""
+    return (
+        isinstance(entry, dict)
+        and isinstance(note := entry.get("note"), dict)
+        and isinstance(note.get("id"), str)
+        and bool(note["id"])
+    )
+
+
+def parse_tasks(out: str | None) -> list[dict[str, Any]]:
+    """Parse ``cc-notes task list --json`` stdout into its flat list of task DTOs.
+
+    Returns an empty list for ``None``, blank output, malformed JSON, or any
+    non-array shape. Non-dict array elements are dropped so ``render_task_line``
+    can call ``.get`` on every survivor.
+    """
+    if not out or not out.strip():
+        return []
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [t for t in parsed if isinstance(t, dict)]
+
+
+def short_id(full: str) -> str:
+    """Return the 7-char short id cc-notes renders, the first 7 hex chars of an id."""
+    return full[:7]
+
+
+def render_note_lines(entries: list[dict[str, Any]]) -> list[str]:
+    """Render relevance entries as ``<short> <title> (reasons) [DRIFT]`` lines.
+
+    The drift suffix is appended only when the note's ``drift`` verdict is
+    non-null; a fresh note (null/absent drift) carries no suffix.
+    """
+    lines: list[str] = []
+    for entry in entries:
+        note = entry.get("note", {})
+        reasons = ", ".join(entry.get("reasons", []))
+        line = f"{short_id(note.get('id', ''))} {note.get('title', '')}"
+        if reasons:
+            line += f" ({reasons})"
+        if drift := note.get("drift"):
+            line += f" [{drift}]"
+        lines.append(line)
+    return lines
+
+
+def dedup_against_ids(entries: list[dict[str, Any]], seen: list[str]) -> list[dict[str, Any]]:
+    """Drop relevance entries whose note id is already in ``seen``, preserving order."""
+    seen_set = set(seen)
+    return [e for e in entries if e.get("note", {}).get("id") not in seen_set]
+
+
+def filter_drifted(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only relevance entries whose note has a non-null ``drift`` verdict."""
+    return [e for e in entries if e.get("note", {}).get("drift")]
+
+
+def render_task_line(task: dict[str, Any]) -> str:
+    """Render one task DTO as ``<short> <status> <title>`` plus ``@assignee`` when set."""
+    line = f"{short_id(task.get('id', ''))} {task.get('status', '')} {task.get('title', '')}"
+    if assignee := task.get("assignee"):
+        line += f" @{assignee}"
+    return line
+
+
+def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int) -> list[str]:
+    """Render up to ``cap`` task lines, with a ``+K more`` tail when truncated.
+
+    Returns an empty list for no tasks. When ``len(tasks) > cap`` the first
+    ``cap`` are rendered and a final ``+K more — run `cc-notes status``` line
+    accounts for the remainder.
+    """
+    if not tasks:
+        return []
+    lines = [render_task_line(t) for t in tasks[:cap]]
+    if (extra := len(tasks) - cap) > 0:
+        lines.append(f"+{extra} more — run `cc-notes status`")
+    return lines
 
 
 class CcNotesAdopted(CustomCondition):
@@ -74,18 +208,115 @@ class ManyNativeTasks(CustomCondition):
         return len(evt.tasks.open) >= NATIVE_TASK_MIRROR_THRESHOLD
 
 
-nudge(
-    "Before picking up work, run `cc-notes status` to orient: the shared backlog "
-    "(unassigned work any agent can grab), your current branch's open and "
-    "in-progress tasks, who holds what across branches (each flagged fresh or "
-    "STALE), and notes needing review.",
+@session_state
+class FloatedNotes(BaseModel):
+    """Per-session record of note ids already floated as Read-time context."""
+
+    ids: list[str] = []
+
+
+@session_state
+class StaleChecked(BaseModel):
+    """Per-session record of note ids already surfaced as edit-time staleness prompts."""
+
+    ids: list[str] = []
+
+
+@on(
+    Event.UserPromptSubmit,
     only_if=[CcNotesAdopted()],
-    events=Event.UserPromptSubmit,
     max_fires=1,
+)
+def float_session_tasks(evt: UserPromptSubmitEvent) -> Any:
+    """Float this session's durable tasks once, at the first prompt.
+
+    Lists the current branch's open/in-progress tasks, topping up from the
+    shared backlog while room remains under :data:`SESSION_TASK_CAP`, and
+    renders the combined top ``SESSION_TASK_CAP`` as orientation pointing at
+    ``cc-notes status``. Silent when cc-notes is absent or there are no tasks.
+    """
+    branch_tasks = parse_tasks(run_cc_notes(evt, "task", "list", "--json"))
+    tasks = list(branch_tasks)
+    if len(tasks) < SESSION_TASK_CAP:
+        tasks.extend(parse_tasks(run_cc_notes(evt, "task", "list", "--backlog", "--json")))
+    lines = cap_and_render_tasks(tasks, SESSION_TASK_CAP)
+    if not lines:
+        return None
+    return evt.warn(
+        "Durable cc-notes tasks in play — run `cc-notes status` to orient "
+        "(shared backlog, your branch's tasks, who holds what, notes needing review):",
+        *lines,
+    )
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[Tool("Read"), CcNotesAdopted()],
     tests={
-        Input(prompt="let's start on the retry logic"): Warn(pattern="cc-notes status"),
+        # Gate keeps the floater silent without cc-notes; non-Read tools never match.
+        Input(tool="Read", file="internal/store/store.go"): Allow(),
+        Input(tool="Edit", file="m.py"): Allow(),
     },
 )
+def float_note_context(evt: PostToolUseEvent) -> Any:
+    """Float notes relevant to a freshly read file, once per note per session.
+
+    Runs ``cc-notes relevant <path> --json``, drops ids already floated this
+    session, and on anything fresh persists the union and warns with each note's
+    title, reasons, and drift flag. Silent when nothing remains or the command
+    empties.
+    """
+    if not evt.file:
+        return None
+    entries = parse_relevant(run_cc_notes(evt, "relevant", str(evt.file), "--json"))
+    floated = evt.ctx.session.load(FloatedNotes)
+    fresh = dedup_against_ids(entries, floated.ids)
+    if not fresh:
+        return None
+    floated.ids = floated.ids + [e["note"]["id"] for e in fresh]
+    evt.ctx.session[FloatedNotes].set(floated)
+    return evt.warn(
+        f"Notes relevant to {evt.file} (durable, git-synced cc-notes context):",
+        *render_note_lines(fresh),
+    )
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[Tool("Edit|Write|MultiEdit"), CcNotesAdopted()],
+    tests={
+        # Gate keeps the check silent without cc-notes; reads never match.
+        Input(tool="Edit", file="internal/store/store.go"): Allow(),
+        Input(tool="Write", file="internal/store/store.go"): Allow(),
+        Input(tool="MultiEdit", file="internal/store/store.go"): Allow(),
+        Input(tool="Read", file="m.py"): Allow(),
+    },
+)
+def check_note_staleness(evt: PostToolUseEvent) -> Any:
+    """Prompt reconciliation when an edit touches a path anchored by a drifted note.
+
+    Runs ``cc-notes relevant <path> --attached --worktree --json``, keeps only
+    notes whose drift verdict is non-null, drops ids already surfaced this
+    session, and on anything new persists the union and warns naming the file
+    and the verify/edit/supersede next steps. Silent otherwise.
+    """
+    if not evt.file:
+        return None
+    entries = parse_relevant(run_cc_notes(evt, "relevant", str(evt.file), "--attached", "--worktree", "--json"))
+    drifted = filter_drifted(entries)
+    checked = evt.ctx.session.load(StaleChecked)
+    fresh = dedup_against_ids(drifted, checked.ids)
+    if not fresh:
+        return None
+    checked.ids = checked.ids + [e["note"]["id"] for e in fresh]
+    evt.ctx.session[StaleChecked].set(checked)
+    return evt.warn(
+        f"You edited {evt.file}, which a note flags as needing attention. Reconcile each: "
+        "`cc-notes note verify <id>` to re-confirm it against HEAD, "
+        "`cc-notes note edit <id>` to revise it, or "
+        "`cc-notes note supersede <old> --by <new>` to replace it.",
+        *render_note_lines(fresh),
+    )
 
 
 nudge(
