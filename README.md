@@ -11,8 +11,7 @@ Agents forget everything between sessions, and the usual fixes leak: a scratch f
 ## Install
 
 ```sh
-brew tap yasyf/cc-notes https://github.com/yasyf/cc-notes
-brew install yasyf/cc-notes/cc-notes
+brew install yasyf/tap/cc-notes
 ```
 
 macOS and Linux. No Homebrew? The install script picks the right binary for your platform and drops it in `~/.local/bin`:
