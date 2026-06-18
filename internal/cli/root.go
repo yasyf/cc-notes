@@ -27,6 +27,6 @@ func NewRootCmd() *cobra.Command {
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &UsageError{Err: err}
 	})
-	root.AddCommand(newInitCmd(), newSyncCmd(), newStatusCmd(), newReconcileCmd(), newBlameCmd(), newCompactCmd(), newGCCmd(), newMountCmd(), newMountHolderCmd(), newVersionCmd(), newNoteCmd(), newTaskCmd(), newSprintCmd(), newProjectCmd(), newSkillsCmd(), newHooksCmd(), newWorkflowsCmd())
+	root.AddCommand(newInitCmd(), newSyncCmd(), newStatusCmd(), newReconcileCmd(), newBlameCmd(), newRelevantCmd(), newCompactCmd(), newGCCmd(), newMountCmd(), newMountHolderCmd(), newVersionCmd(), newNoteCmd(), newTaskCmd(), newSprintCmd(), newProjectCmd(), newSkillsCmd(), newHooksCmd(), newWorkflowsCmd())
 	return root
 }

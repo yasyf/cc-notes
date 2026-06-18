@@ -76,14 +76,15 @@ func resolveHead(ctx context.Context, s *store.Store) (model.SHA, error) {
 }
 
 // buildWitness computes the per-anchor content witness for anchors against
-// head: a path anchor's content oid (skipped when HEAD is unborn or the path
-// is absent), and a commit anchor's own oid. Branch anchors carry no witness.
-// The result tracks anchor order, so the folded witness order is deterministic.
+// head: a path anchor's content oid and a directory anchor's tree oid (both
+// skipped when HEAD is unborn or the path is absent), and a commit anchor's
+// own oid. Branch anchors carry no witness. The result tracks anchor order, so
+// the folded witness order is deterministic.
 func buildWitness(ctx context.Context, s *store.Store, head model.SHA, anchors []model.Anchor) ([]model.AnchorWitness, error) {
 	var witness []model.AnchorWitness
 	for _, a := range anchors {
 		switch a.Kind {
-		case model.AnchorPath:
+		case model.AnchorPath, model.AnchorDir:
 			if head == "" {
 				continue
 			}
@@ -116,13 +117,15 @@ func witnessIndex(witness []model.AnchorWitness) map[model.Anchor]model.AnchorWi
 // noteVerdict computes the single review verdict for n against live content at
 // head, returning "" when the note is fresh. Precedence is
 // UNVERIFIED > DRIFTED > STALE; dangling supersede edges are surfaced
-// separately by reviewNotes. An unborn HEAD skips drift detection.
-func noteVerdict(ctx context.Context, s *store.Store, head model.SHA, n model.Note, now time.Time, staleAfter time.Duration) (string, error) {
+// separately by reviewNotes. An unborn HEAD skips drift detection. When
+// worktree is true, path anchors drift-check against the on-disk working-tree
+// file rather than the committed blob at head.
+func noteVerdict(ctx context.Context, s *store.Store, head model.SHA, n model.Note, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
 	if n.VerifiedAt == 0 {
 		return verdictUnverified, nil
 	}
-	if head != "" {
-		drifted, err := noteDrifted(ctx, s, head, n)
+	if head != "" || worktree {
+		drifted, err := noteDrifted(ctx, s, head, n, worktree)
 		if err != nil {
 			return "", err
 		}
@@ -137,10 +140,14 @@ func noteVerdict(ctx context.Context, s *store.Store, head model.SHA, n model.No
 }
 
 // noteDrifted reports whether any witnessed anchor no longer matches live
-// content at head: a path whose content oid changed or vanished, or a commit
-// no longer reachable from head. Anchors without a recorded witness are not
-// drift-checked.
-func noteDrifted(ctx context.Context, s *store.Store, head model.SHA, n model.Note) (bool, error) {
+// content at head: a path or directory whose content oid changed or vanished
+// (a directory's witness is its tree oid, so any change under the subtree
+// drifts), or a commit no longer reachable from head. Anchors without a
+// recorded witness are not drift-checked. When worktree is true, a path
+// anchor's live oid is the on-disk working-tree blob (WorktreeBlobOID), so an
+// uncommitted edit drifts the note; directory and commit anchors keep their
+// HEAD-based check.
+func noteDrifted(ctx context.Context, s *store.Store, head model.SHA, n model.Note, worktree bool) (bool, error) {
 	byAnchor := witnessIndex(n.Witness)
 	for _, a := range n.Anchors {
 		w, ok := byAnchor[a]
@@ -148,8 +155,8 @@ func noteDrifted(ctx context.Context, s *store.Store, head model.SHA, n model.No
 			continue
 		}
 		switch a.Kind {
-		case model.AnchorPath:
-			oid, err := s.Git.PathOID(ctx, string(head), a.Value)
+		case model.AnchorPath, model.AnchorDir:
+			oid, err := liveAnchorOID(ctx, s, head, a, worktree)
 			if errors.Is(err, gitcmd.ErrPathNotFound) {
 				return true, nil
 			}
@@ -175,6 +182,18 @@ func noteDrifted(ctx context.Context, s *store.Store, head model.SHA, n model.No
 	return false, nil
 }
 
+// liveAnchorOID resolves the current content oid of a path or directory anchor.
+// A path anchor under worktree mode reads the on-disk working-tree blob
+// (WorktreeBlobOID), surfacing an uncommitted edit as drift; otherwise, and
+// always for a directory anchor, it reads the committed object at head
+// (PathOID). A missing path wraps gitcmd.ErrPathNotFound either way.
+func liveAnchorOID(ctx context.Context, s *store.Store, head model.SHA, a model.Anchor, worktree bool) (string, error) {
+	if worktree && a.Kind == model.AnchorPath {
+		return s.Git.WorktreeBlobOID(ctx, a.Value)
+	}
+	return s.Git.PathOID(ctx, string(head), a.Value)
+}
+
 // reviewNotes folds the review set (non-deleted, including superseded for
 // dangling detection) and returns each flagged note with its verdict. A
 // non-superseded note carries its content verdict (UNVERIFIED/DRIFTED/STALE);
@@ -198,7 +217,7 @@ func reviewNotes(ctx context.Context, s *store.Store, head model.SHA, now time.T
 			}
 			continue
 		}
-		verdict, err := noteVerdict(ctx, s, head, n, now, staleAfter)
+		verdict, err := noteVerdict(ctx, s, head, n, now, staleAfter, false)
 		if err != nil {
 			return nil, err
 		}

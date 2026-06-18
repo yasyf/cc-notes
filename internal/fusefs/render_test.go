@@ -364,6 +364,8 @@ func TestNoteRoundTrip(t *testing.T) {
 				{Kind: model.AnchorCommit, Value: "3333333"},
 				{Kind: model.AnchorPath, Value: "a/b.go"},
 				{Kind: model.AnchorPath, Value: "c d/e.go"},
+				{Kind: model.AnchorDir, Value: "internal/auth"},
+				{Kind: model.AnchorDir, Value: "c d/sub"},
 				{Kind: model.AnchorBranch, Value: "main"},
 				{Kind: model.AnchorBranch, Value: "feature/x"},
 			},

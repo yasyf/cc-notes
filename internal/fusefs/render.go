@@ -43,6 +43,7 @@ var anchorKinds = []struct {
 }{
 	{"commits", model.AnchorCommit},
 	{"paths", model.AnchorPath},
+	{"dirs", model.AnchorDir},
 	{"branches", model.AnchorBranch},
 }
 
@@ -89,6 +90,7 @@ type ParsedNote struct {
 	Tags           Field[[]string]        `yaml:"tags"`
 	Commits        Field[[]string]        `yaml:"commits"`
 	Paths          Field[[]string]        `yaml:"paths"`
+	Dirs           Field[[]string]        `yaml:"dirs"`
 	Branches       Field[[]string]        `yaml:"branches"`
 	Author         Field[string]          `yaml:"author"`
 	Created        Field[string]          `yaml:"created"`
@@ -115,6 +117,8 @@ func (p ParsedNote) anchors(kind model.AnchorKind) Field[[]string] {
 		return p.Commits
 	case model.AnchorPath:
 		return p.Paths
+	case model.AnchorDir:
+		return p.Dirs
 	case model.AnchorBranch:
 		return p.Branches
 	}
@@ -211,7 +215,7 @@ type leaseDoc struct {
 }
 
 // RenderNote renders n as markdown with YAML frontmatter: fixed key order
-// (id, title, tags, commits, paths, branches, author, created, updated,
+// (id, title, tags, commits, paths, dirs, branches, author, created, updated,
 // verified_at, verified_by, verified_commit, witness, superseded_by), anchor
 // values split by kind with empty kinds omitted, tags as a flow sequence,
 // RFC3339 UTC timestamps, and the body verbatim below the closing delimiter.

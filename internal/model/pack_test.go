@@ -28,6 +28,7 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 			Anchors: []Anchor{
 				{Kind: AnchorCommit, Value: testID},
 				{Kind: AnchorPath, Value: "docs/deploy.md"},
+				{Kind: AnchorDir, Value: "internal/auth"},
 				{Kind: AnchorBranch, Value: "main"},
 			},
 		}},

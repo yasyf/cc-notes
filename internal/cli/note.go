@@ -37,7 +37,7 @@ func newNoteCmd() *cobra.Command {
 
 func newNoteAddCmd() *cobra.Command {
 	var body string
-	var tags, commits, paths, branches []string
+	var tags, commits, paths, dirs, branches []string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "add TITLE",
@@ -61,7 +61,7 @@ func newNoteAddCmd() *cobra.Command {
 				Title:   args[0],
 				Body:    text,
 				Tags:    tags,
-				Anchors: buildAnchors(commits, paths, branches),
+				Anchors: buildAnchors(commits, paths, dirs, branches),
 			}
 			snapshot, err := s.Create(ctx, []model.Op{create})
 			if err != nil {
@@ -88,6 +88,7 @@ func newNoteAddCmd() *cobra.Command {
 	flags.StringArrayVar(&tags, "tag", nil, "tag (repeatable)")
 	flags.StringArrayVar(&commits, "commit", nil, "commit anchor (repeatable)")
 	flags.StringArrayVar(&paths, "path", nil, "path anchor (repeatable)")
+	flags.StringArrayVar(&dirs, "dir", nil, "directory anchor (repeatable)")
 	flags.StringArrayVar(&branches, "branch", nil, "branch anchor (repeatable)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
@@ -95,7 +96,7 @@ func newNoteAddCmd() *cobra.Command {
 
 func newNoteListCmd() *cobra.Command {
 	var tags []string
-	var path, commit, branch string
+	var path, commit, dir, branch string
 	var all, includeSuperseded, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -114,6 +115,7 @@ func newNoteListCmd() *cobra.Command {
 				return !hasAll(n.Tags, tags) ||
 					(commit != "" && !hasAnchor(n, model.AnchorCommit, commit)) ||
 					(path != "" && !hasAnchor(n, model.AnchorPath, path)) ||
+					(dir != "" && !hasAnchor(n, model.AnchorDir, dir)) ||
 					(branch != "" && !hasAnchor(n, model.AnchorBranch, branch))
 			})
 			sortNotes(notes)
@@ -124,6 +126,7 @@ func newNoteListCmd() *cobra.Command {
 	flags.StringArrayVar(&tags, "tag", nil, "require tag (repeatable, ANDed)")
 	flags.StringVar(&path, "path", "", "require path anchor")
 	flags.StringVar(&commit, "commit", "", "require commit anchor")
+	flags.StringVar(&dir, "dir", "", "require directory anchor")
 	flags.StringVar(&branch, "branch", "", "require branch anchor")
 	flags.BoolVar(&all, "all", false, "include tombstoned notes")
 	flags.BoolVar(&includeSuperseded, "include-superseded", false, "include superseded notes")
@@ -155,7 +158,7 @@ func newNoteShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			verdict, err := noteVerdict(ctx, s, head, note, time.Now(), staleAfter)
+			verdict, err := noteVerdict(ctx, s, head, note, time.Now(), staleAfter, false)
 			if err != nil {
 				return err
 			}
@@ -176,7 +179,7 @@ func newNoteShowCmd() *cobra.Command {
 
 func newNoteEditCmd() *cobra.Command {
 	var title, body string
-	var addTags, rmTags, addPaths, rmPaths, addCommits, rmCommits, addBranches, rmBranches []string
+	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches []string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
@@ -201,10 +204,10 @@ func newNoteEditCmd() *cobra.Command {
 			for _, tag := range rmTags {
 				ops = append(ops, model.RemoveTag{Tag: tag})
 			}
-			for _, a := range buildAnchors(addCommits, addPaths, addBranches) {
+			for _, a := range buildAnchors(addCommits, addPaths, addDirs, addBranches) {
 				ops = append(ops, model.AddAnchor{Anchor: a})
 			}
-			for _, a := range buildAnchors(rmCommits, rmPaths, rmBranches) {
+			for _, a := range buildAnchors(rmCommits, rmPaths, rmDirs, rmBranches) {
 				ops = append(ops, model.RemoveAnchor{Anchor: a})
 			}
 			if len(ops) == 0 {
@@ -235,6 +238,8 @@ func newNoteEditCmd() *cobra.Command {
 	flags.StringArrayVar(&rmTags, "rm-tag", nil, "remove tag (repeatable)")
 	flags.StringArrayVar(&addPaths, "add-path", nil, "add path anchor (repeatable)")
 	flags.StringArrayVar(&rmPaths, "rm-path", nil, "remove path anchor (repeatable)")
+	flags.StringArrayVar(&addDirs, "add-dir", nil, "add directory anchor (repeatable)")
+	flags.StringArrayVar(&rmDirs, "rm-dir", nil, "remove directory anchor (repeatable)")
 	flags.StringArrayVar(&addCommits, "add-commit", nil, "add commit anchor (repeatable)")
 	flags.StringArrayVar(&rmCommits, "rm-commit", nil, "remove commit anchor (repeatable)")
 	flags.StringArrayVar(&addBranches, "add-branch", nil, "add branch anchor (repeatable)")
@@ -275,7 +280,7 @@ func newNoteRmCmd() *cobra.Command {
 
 func newNoteSearchCmd() *cobra.Command {
 	var tags []string
-	var author, anchorPath, anchorBranch, anchorCommit string
+	var author, anchorPath, anchorDir, anchorBranch, anchorCommit string
 	var limit int
 	var jsonOut bool
 	cmd := &cobra.Command{
@@ -291,7 +296,7 @@ func newNoteSearchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			notes = rankNotes(notes, args[0], tags, author, anchorPath, anchorBranch, anchorCommit, limit)
+			notes = rankNotes(notes, args[0], tags, author, anchorPath, anchorDir, anchorBranch, anchorCommit, limit)
 			return printNoteList(cmd, notes, jsonOut)
 		},
 	}
@@ -300,6 +305,7 @@ func newNoteSearchCmd() *cobra.Command {
 	flags.IntVar(&limit, "limit", 20, "maximum results")
 	flags.StringVar(&author, "author", "", "require author")
 	flags.StringVar(&anchorPath, "anchor-path", "", "require path anchor")
+	flags.StringVar(&anchorDir, "anchor-dir", "", "require directory anchor")
 	flags.StringVar(&anchorBranch, "anchor-branch", "", "require branch anchor")
 	flags.StringVar(&anchorCommit, "anchor-commit", "", "require commit anchor")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -463,7 +469,7 @@ func printNoteReview(cmd *cobra.Command, reviewed []reviewedNote, jsonOut bool) 
 // rankNotes filters notes by tag, author, and anchors, keeps those matching
 // query in their title, a tag, or body, then orders by match tier
 // (title > tag > body), UpdatedAt descending, id ascending, truncated to limit.
-func rankNotes(notes []model.Note, query string, tags []string, author, anchorPath, anchorBranch, anchorCommit string, limit int) []model.Note {
+func rankNotes(notes []model.Note, query string, tags []string, author, anchorPath, anchorDir, anchorBranch, anchorCommit string, limit int) []model.Note {
 	q := strings.ToLower(query)
 	type scored struct {
 		note model.Note
@@ -474,6 +480,7 @@ func rankNotes(notes []model.Note, query string, tags []string, author, anchorPa
 		if !hasAll(n.Tags, tags) ||
 			(author != "" && string(n.Author) != author) ||
 			(anchorPath != "" && !hasAnchor(n, model.AnchorPath, anchorPath)) ||
+			(anchorDir != "" && !hasAnchor(n, model.AnchorDir, anchorDir)) ||
 			(anchorBranch != "" && !hasAnchor(n, model.AnchorBranch, anchorBranch)) ||
 			(anchorCommit != "" && !hasAnchor(n, model.AnchorCommit, anchorCommit)) {
 			continue
@@ -542,13 +549,16 @@ func hasAnchor(n model.Note, kind model.AnchorKind, value string) bool {
 	return slices.Contains(n.Anchors, model.Anchor{Kind: kind, Value: value})
 }
 
-func buildAnchors(commits, paths, branches []string) []model.Anchor {
-	anchors := make([]model.Anchor, 0, len(commits)+len(paths)+len(branches))
+func buildAnchors(commits, paths, dirs, branches []string) []model.Anchor {
+	anchors := make([]model.Anchor, 0, len(commits)+len(paths)+len(dirs)+len(branches))
 	for _, v := range commits {
 		anchors = append(anchors, model.Anchor{Kind: model.AnchorCommit, Value: v})
 	}
 	for _, v := range paths {
 		anchors = append(anchors, model.Anchor{Kind: model.AnchorPath, Value: v})
+	}
+	for _, v := range dirs {
+		anchors = append(anchors, model.Anchor{Kind: model.AnchorDir, Value: v})
 	}
 	for _, v := range branches {
 		anchors = append(anchors, model.Anchor{Kind: model.AnchorBranch, Value: v})

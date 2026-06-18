@@ -397,6 +397,7 @@ func renderNoteShow(n model.Note, drift string, supersedes []model.EntityID) str
 	header(&b, "tags", csvOrDash(n.Tags))
 	header(&b, "commits", csvOrDash(anchorValues(n.Anchors, model.AnchorCommit)))
 	header(&b, "paths", csvOrDash(anchorValues(n.Anchors, model.AnchorPath)))
+	header(&b, "dirs", csvOrDash(anchorValues(n.Anchors, model.AnchorDir)))
 	header(&b, "branches", csvOrDash(anchorValues(n.Anchors, model.AnchorBranch)))
 	header(&b, "author", string(n.Author))
 	header(&b, "created", rfc3339(n.CreatedAt))

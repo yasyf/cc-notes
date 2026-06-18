@@ -176,18 +176,19 @@ const (
 	AnchorCommit AnchorKind = "commit"
 	AnchorPath   AnchorKind = "path"
 	AnchorBranch AnchorKind = "branch"
+	AnchorDir    AnchorKind = "dir"
 )
 
 func (k AnchorKind) validate() error {
 	switch k {
-	case AnchorCommit, AnchorPath, AnchorBranch:
+	case AnchorCommit, AnchorPath, AnchorBranch, AnchorDir:
 		return nil
 	}
 	return fmt.Errorf("%w: anchor kind %q", ErrInvalidValue, k)
 }
 
 // Anchor pins a note to a location in the repository: a commit, a file path,
-// or a branch.
+// a directory, or a branch.
 type Anchor struct {
 	Kind  AnchorKind `json:"kind"`
 	Value string     `json:"value"`

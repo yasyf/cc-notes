@@ -219,7 +219,7 @@ func TestNoteAddLeanLine(t *testing.T) {
 func TestNoteJSONRoundTrip(t *testing.T) {
 	dir := initRepo(t)
 	out := mustRun(t, dir, "note", "add", "Design", "--body", "decisions", "--tag", "arch",
-		"--commit", "abc123", "--path", "internal/cli", "--branch", "main", "--json")
+		"--commit", "abc123", "--path", "internal/cli", "--dir", "internal/auth", "--branch", "main", "--json")
 	if !strings.HasPrefix(out, `{"id":"`) {
 		t.Fatalf("note JSON does not lead with id: %q", out)
 	}
@@ -237,7 +237,7 @@ func TestNoteJSONRoundTrip(t *testing.T) {
 	if got := strings.Join(shown.Tags, ","); got != "arch" {
 		t.Errorf("tags = %q, want arch", got)
 	}
-	wantAnchors := []string{"branch=main", "commit=abc123", "path=internal/cli"}
+	wantAnchors := []string{"branch=main", "commit=abc123", "dir=internal/auth", "path=internal/cli"}
 	gotAnchors := make([]string, len(shown.Anchors))
 	for i, a := range shown.Anchors {
 		gotAnchors[i] = a.Kind + "=" + a.Value
