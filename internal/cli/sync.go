@@ -22,54 +22,81 @@ func newInitCmd() *cobra.Command {
 	var remote string
 	var hook bool
 	var ci bool
+	var noCI bool
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Install refs/cc-notes/* refspecs on a remote",
-		Long: "Install the refs/cc-notes/* fetch and push refspecs on a remote.\n\n" +
-			"--ci installs a GitHub Actions workflow that reconciles merged tasks onto\n" +
-			"the default branch on every push to it. It is the recommended automation\n" +
-			"path: it runs the release binary and fires under jj as well as git, unlike\n" +
-			"the post-merge hook.\n\n" +
+		Short: "Set up cc-notes in this repository",
+		Long: "Set up cc-notes in this repository. Installs the refs/cc-notes/* fetch and\n" +
+			"push refspecs, then does everything the repo is ready for:\n\n" +
+			"  - When a .claude/ directory exists (the repo uses Claude Code), registers\n" +
+			"    the cc-notes plugin in .claude/settings.json and enables the cc-notes\n" +
+			"    capt-hook pack via `capt-hook pack add`.\n" +
+			"  - When a .github/ directory exists, installs a GitHub Actions workflow that\n" +
+			"    reconciles merged tasks onto the default branch on every push. Pass\n" +
+			"    --no-ci to skip it, or --ci to force it without a .github/ directory.\n\n" +
 			"--hook also installs a git post-merge hook that runs `cc-notes reconcile`\n" +
 			"after every merge. The hook is git-only: it does NOT fire under jj, a\n" +
 			"rebase, or a server-side squash merge. Treat it as a git-only convenience —\n" +
-			"prefer --ci.",
+			"prefer the CI workflow.",
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if ci && noCI {
+				return &UsageError{Err: errors.New("--ci and --no-ci are mutually exclusive")}
+			}
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
-			if _, err := ccsync.Install(cmd.Context(), s.Git, remote); err != nil {
+			ctx := cmd.Context()
+			if _, err := ccsync.Install(ctx, s.Git, remote); err != nil {
+				return err
+			}
+			root, err := s.Git.Root(ctx)
+			if err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
 			if _, err := fmt.Fprintf(out, "initialized: refs/cc-notes/* refspecs installed for %s\n", remote); err != nil {
 				return err
 			}
-			if ci {
-				root, err := s.Git.Root(cmd.Context())
-				if err != nil {
+			claudeExists := dirExists(filepath.Join(root, ".claude"))
+			if claudeExists {
+				if err := registerPlugin(root); err != nil {
 					return err
 				}
+				if _, err := fmt.Fprintln(out, "registered: cc-notes plugin in .claude/settings.json"); err != nil {
+					return err
+				}
+			}
+			if ci || (!noCI && dirExists(filepath.Join(root, ".github"))) {
 				if err := installWorkflows(cmd, filepath.Join(root, ".github", "workflows")); err != nil {
 					return err
 				}
 			}
-			if !hook {
-				return nil
+			if hook {
+				path, err := installPostMergeHook(cmd, s.Git)
+				if err != nil {
+					return err
+				}
+				if _, err := fmt.Fprintf(out, "installed: post-merge hook at %s\n", path); err != nil {
+					return err
+				}
 			}
-			path, err := installPostMergeHook(cmd, s.Git)
-			if err != nil {
-				return err
+			// The capt-hook pack add shells out to uvx over the network, so it runs
+			// last: a failure here never blocks the local-only refspecs, plugin
+			// registration, CI workflow, or post-merge hook installed above.
+			if claudeExists {
+				if err := runCaptHookPackAdd(cmd, root, version.Version); err != nil {
+					return err
+				}
 			}
-			_, err = fmt.Fprintf(out, "installed: post-merge hook at %s\n", path)
-			return err
+			return nil
 		},
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&remote, "remote", defaultRemote, "remote to wire")
-	flags.BoolVar(&ci, "ci", false, "also install a GitHub Actions workflow reconciling merged tasks onto the default branch (recommended; works under git and jj)")
+	flags.BoolVar(&ci, "ci", false, "force-install the reconcile GitHub Actions workflow even without a .github/ directory")
+	flags.BoolVar(&noCI, "no-ci", false, "skip the reconcile GitHub Actions workflow even when a .github/ directory exists")
 	flags.BoolVar(&hook, "hook", false, "also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj/rebase/server-side squash)")
 	return cmd
 }

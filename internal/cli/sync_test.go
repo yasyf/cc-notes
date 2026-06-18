@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -179,5 +180,94 @@ func TestVersionCommand(t *testing.T) {
 	}
 	if out := mustRun(t, dir, "--version"); out != want {
 		t.Fatalf("--version = %q, want %q", out, want)
+	}
+}
+
+func TestInitInstallsCIWhenGithubExists(t *testing.T) {
+	dir, _ := initRepoWithRemote(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o755); err != nil {
+		t.Fatalf("mkdir .github: %v", err)
+	}
+	mustRun(t, dir, "init")
+	if _, err := os.Stat(filepath.Join(dir, ".github", "workflows", "cc-notes.yml")); err != nil {
+		t.Fatalf("init did not install the reconcile workflow with .github present: %v", err)
+	}
+}
+
+func TestInitNoCISuppressesWorkflow(t *testing.T) {
+	dir, _ := initRepoWithRemote(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o755); err != nil {
+		t.Fatalf("mkdir .github: %v", err)
+	}
+	mustRun(t, dir, "init", "--no-ci")
+	if _, err := os.Stat(filepath.Join(dir, ".github", "workflows", "cc-notes.yml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("init --no-ci installed the workflow anyway (stat err = %v)", err)
+	}
+}
+
+func TestInitCIAndNoCIConflict(t *testing.T) {
+	dir, _ := initRepoWithRemote(t)
+	_, _, err := runCLI(t, dir, "init", "--ci", "--no-ci")
+	if cli.ExitCode(err) != 2 {
+		t.Fatalf("init --ci --no-ci err = %v (exit %d), want a UsageError exit 2", err, cli.ExitCode(err))
+	}
+}
+
+func TestInitRegistersPluginWhenClaudeExists(t *testing.T) {
+	dir, _ := initRepoWithRemote(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatalf("mkdir .claude: %v", err)
+	}
+	stubUvx(t)
+	out := mustRun(t, dir, "init")
+	assertCCNotesRegistered(t, filepath.Join(dir, ".claude", "settings.json"))
+	if !strings.Contains(out, "registered: cc-notes plugin in .claude/settings.json") {
+		t.Fatalf("init output %q missing the registration line", out)
+	}
+}
+
+func TestInitSkipsClaudeWiringWithoutClaude(t *testing.T) {
+	dir, _ := initRepoWithRemote(t)
+	out := mustRun(t, dir, "init")
+	if _, err := os.Stat(filepath.Join(dir, ".claude")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("init created .claude without one present (stat err = %v); it must never scaffold .claude", err)
+	}
+	if strings.Contains(out, "registered:") {
+		t.Fatalf("init registered the plugin without a .claude/ directory: %q", out)
+	}
+}
+
+// stubUvx puts a no-op uvx on PATH so init's `capt-hook pack add` step runs
+// without the real uvx subprocess or network.
+func stubUvx(t *testing.T) {
+	t.Helper()
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "uvx"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write uvx stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// assertCCNotesRegistered checks that settings.json at path enables the cc-notes
+// plugin and registers its marketplace.
+func assertCCNotesRegistered(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	ep, _ := m["enabledPlugins"].(map[string]any)
+	if ep["cc-notes@cc-notes"] != true {
+		t.Fatalf("enabledPlugins missing cc-notes@cc-notes: %v", m["enabledPlugins"])
+	}
+	mk, _ := m["extraKnownMarketplaces"].(map[string]any)
+	cc, _ := mk["cc-notes"].(map[string]any)
+	src, _ := cc["source"].(map[string]any)
+	if src["source"] != "github" || src["repo"] != "yasyf/cc-notes" {
+		t.Fatalf("extraKnownMarketplaces[cc-notes] = %v, want source github yasyf/cc-notes", mk["cc-notes"])
 	}
 }

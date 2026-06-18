@@ -26,20 +26,22 @@ func newSkillsCmd() *cobra.Command {
 }
 
 func newSkillsInstallCmd() *cobra.Command {
-	var dir string
 	cmd := &cobra.Command{
 		Use:   "install",
-		Short: "Install the using-cc-notes skill into the repository",
+		Short: "Register the cc-notes plugin in .claude/settings.json",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, err := repoRoot(cmd)
 			if err != nil {
 				return err
 			}
-			return installTree(cmd, plugin.Files, "skills", filepath.Join(root, dir))
+			if err := registerPlugin(root); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "registered: cc-notes plugin in .claude/settings.json")
+			return err
 		},
 	}
-	cmd.Flags().StringVar(&dir, "dir", filepath.Join(".claude", "skills"), "destination directory, relative to the repo root")
 	return cmd
 }
 

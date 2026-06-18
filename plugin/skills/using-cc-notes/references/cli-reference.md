@@ -59,21 +59,29 @@ sorted set slices.
 
 ### `cc-notes init`
 
-Install the `refs/cc-notes/*` refspecs on a remote. Run once per repo. After init, plain
-`git push` and `git pull` carry the cc-notes refs alongside your branches. Under jj that
-doesn't hold: `jj git push`/`jj git fetch` bridge only `refs/heads/*`, leaving the
-`refs/cc-notes/*` refs behind — run `cc-notes sync` (it drives the real git binary directly
-and carries the refs regardless of front-end) or real `git push`/`git pull`.
+Set up cc-notes in this repository — run once per repo. Installs the `refs/cc-notes/*`
+refspecs and then does everything the repo is ready for. After init, plain `git push` and
+`git pull` carry the cc-notes refs alongside your branches. Under jj that doesn't hold:
+`jj git push`/`jj git fetch` bridge only `refs/heads/*`, leaving the `refs/cc-notes/*` refs
+behind — run `cc-notes sync` (it drives the real git binary directly and carries the refs
+regardless of front-end) or real `git push`/`git pull`.
+
+When a `.claude/` directory exists, init also registers the cc-notes plugin in
+`.claude/settings.json` and enables the cc-notes capt-hook pack (via `capt-hook pack add`).
+When a `.github/` directory exists, it installs the reconcile CI workflow by default. init
+never creates `.claude/` — it only wires Claude Code when the repo already uses it.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--remote <name>` | `origin` | Remote to wire |
-| `--ci` | off | Also install a GitHub Actions workflow reconciling merged tasks onto the default branch (recommended; works under git and jj) |
+| `--ci` | auto | Force-install the reconcile GitHub Actions workflow even without a `.github/` directory (it is installed by default when `.github/` exists) |
+| `--no-ci` | off | Skip the reconcile workflow even when a `.github/` directory exists |
 | `--hook` | off | Also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj, rebase, and server-side squash) |
 
 ```console
 $ cc-notes init
 initialized: refs/cc-notes/* refspecs installed for origin
+registered: cc-notes plugin in .claude/settings.json
 ```
 
 ### `cc-notes sync`
@@ -220,9 +228,11 @@ v0.2.0 (dd02f2d)
 
 ## Setup commands
 
-Wire the Claude Code integration into a repository. `skills` and `workflows` write into
-the repo and take `--dir` to redirect the destination, relative to the repo root; `hooks`
-delegates to `capt-hook pack add`.
+Wire the Claude Code integration into a repository. Most repos get all of this from
+`cc-notes init`; these are the granular pieces. `skills install` registers the cc-notes
+plugin in `.claude/settings.json`; `hooks install` delegates to `capt-hook pack add`;
+`workflows install` writes the CI workflow and takes `--dir` to redirect its destination,
+relative to the repo root.
 
 ### `cc-notes hooks install`
 
@@ -233,11 +243,10 @@ into `.claude/settings.local.json`. Takes no flags.
 
 ### `cc-notes skills install`
 
-Install the `using-cc-notes` skill into the repository.
-
-| Flag | Default | Meaning |
-|------|---------|---------|
-| `--dir <path>` | `.claude/skills` | Destination directory, relative to the repo root |
+Register the cc-notes plugin in `.claude/settings.json` — shallow-merges the cc-notes
+marketplace and the `cc-notes@cc-notes` plugin into the committed settings, so the
+`using-cc-notes` skill loads from the plugin (tracking the repository) on folder-trust
+rather than being copied into `.claude/skills/`. Takes no flags.
 
 ### `cc-notes workflows install`
 

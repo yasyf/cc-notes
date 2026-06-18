@@ -142,6 +142,12 @@ func noUnknownSubcommand(cmd *cobra.Command, args []string) error {
 // short-circuiting to help; a bare group invocation still prints help.
 func runHelp(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 
+// dirExists reports whether path is an existing directory.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 func parseStatus(value string) (model.Status, error) {
 	switch s := model.Status(value); s {
 	case model.StatusOpen, model.StatusInProgress, model.StatusDone, model.StatusCancelled:

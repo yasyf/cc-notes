@@ -6,7 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-18
+
 ### Changed
+- **`cc-notes init` now does everything.** It still installs the
+  `refs/cc-notes/*` refspecs, and now also wires up whatever the repository is
+  ready for: when a `.claude/` directory exists it registers the cc-notes plugin
+  in `.claude/settings.json` and enables the cc-notes capt-hook pack, and when a
+  `.github/` directory exists it installs the reconcile GitHub Actions workflow.
+  Pass `--no-ci` to skip the workflow or `--ci` to force it without a `.github/`
+  directory. `init` never creates `.claude/` — it only wires Claude Code when the
+  repo already uses it.
+- `cc-notes skills install` now registers the cc-notes plugin in
+  `.claude/settings.json` (the skill loads from the plugin, tracking the
+  repository) instead of copying the skill tree into `.claude/skills/`. The
+  capt-hook pack manifest moved from the repo root to `.claude/capt-hook.toml`.
 - **BREAKING (UX): `cc-notes mount` now detaches by default.** A background mount
   holder serves the mount; the command prints the mountpoint and returns, and the
   mount outlives the invocation. `mount` no longer blocks, and **Ctrl-C no longer
@@ -152,7 +166,8 @@ Releases.
 - The Python-era documentation site (GitHub Pages) and the repo homepage link
   that pointed at it.
 
-[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/yasyf/cc-notes/compare/v0.4.1...v0.5.0
 [0.4.0]: https://github.com/yasyf/cc-notes/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/yasyf/cc-notes/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/yasyf/cc-notes/releases/tag/v0.2.0

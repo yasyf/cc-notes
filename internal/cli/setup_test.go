@@ -11,31 +11,16 @@ import (
 	"github.com/yasyf/cc-notes/plugin"
 )
 
-func TestSkillsInstallWritesTree(t *testing.T) {
+func TestSkillsInstallRegistersPlugin(t *testing.T) {
 	dir := initRepo(t)
 	out := mustRun(t, dir, "skills", "install")
 
-	skill := filepath.Join(dir, ".claude", "skills", "using-cc-notes", "SKILL.md")
-	got, err := os.ReadFile(skill)
-	if err != nil {
-		t.Fatalf("read installed SKILL.md: %v", err)
+	assertCCNotesRegistered(t, filepath.Join(dir, ".claude", "settings.json"))
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills")); !os.IsNotExist(err) {
+		t.Fatalf("skills install created .claude/skills; it should register the plugin, not vendor the skill")
 	}
-	want, err := plugin.Files.ReadFile("skills/using-cc-notes/SKILL.md")
-	if err != nil {
-		t.Fatalf("read embedded SKILL.md: %v", err)
-	}
-	if string(got) != string(want) {
-		t.Fatalf("installed SKILL.md does not match embedded source")
-	}
-	if a, _ := plugin.Files.ReadFile("skills/using-cc-notes/references/coordination.md"); len(a) > 0 {
-		ref := filepath.Join(dir, ".claude", "skills", "using-cc-notes", "references", "coordination.md")
-		if _, err := os.Stat(ref); err != nil {
-			t.Fatalf("references tree not installed: %v", err)
-		}
-	}
-	suffix := filepath.Join("using-cc-notes", "SKILL.md")
-	if !strings.Contains(out, "wrote ") || !strings.Contains(out, suffix) {
-		t.Fatalf("install output %q missing a wrote line for %q", out, suffix)
+	if !strings.Contains(out, "registered: cc-notes plugin in .claude/settings.json") {
+		t.Fatalf("install output %q missing the registration line", out)
 	}
 }
 
