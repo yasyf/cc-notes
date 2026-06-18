@@ -526,6 +526,147 @@ func TestRoot(t *testing.T) {
 	}
 }
 
+func TestMergeBase(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	base := commitEmpty(t, g, "base")
+	mustGit(t, g.Dir, "checkout", "-q", "-b", "feature")
+	commitEmpty(t, g, "feature tip")
+	feature := resolve(t, g.Dir, "HEAD")
+	mustGit(t, g.Dir, "checkout", "-q", "main")
+	commitEmpty(t, g, "main tip")
+	main := resolve(t, g.Dir, "HEAD")
+
+	got, err := g.MergeBase(ctx, string(main), string(feature))
+	if err != nil {
+		t.Fatalf("MergeBase across fork: %v", err)
+	}
+	if got != base {
+		t.Fatalf("MergeBase = %q, want fork point %q", got, base)
+	}
+
+	mustGit(t, g.Dir, "checkout", "-q", "--orphan", "unrelated")
+	orphan := commitEmpty(t, g, "orphan root")
+	if _, err := g.MergeBase(ctx, string(main), string(orphan)); !errors.Is(err, gitcmd.ErrRevNotFound) {
+		t.Fatalf("MergeBase on unrelated histories = %v, want ErrRevNotFound", err)
+	}
+}
+
+func TestDefaultBranch(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	commitEmpty(t, g, "c1")
+
+	if _, err := g.DefaultBranch(ctx); !errors.Is(err, gitcmd.ErrNoDefaultBranch) {
+		t.Fatalf("unset origin/HEAD = %v, want ErrNoDefaultBranch", err)
+	}
+
+	mustGit(t, g.Dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	got, err := g.DefaultBranch(ctx)
+	if err != nil {
+		t.Fatalf("set origin/HEAD: %v", err)
+	}
+	if got != "main" {
+		t.Fatalf("DefaultBranch = %q, want main", got)
+	}
+}
+
+func TestRevRangeFileAuthors(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	commitFile := func(name, email, path, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(g.Dir, path), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		mustGit(t, g.Dir, "add", path)
+		mustGit(t, g.Dir,
+			"-c", "user.name="+name, "-c", "user.email="+email,
+			"commit", "-q", "-m", "edit "+path)
+	}
+
+	commitFile("Base", "base@x.com", "shared.txt", "a\n")
+	base := resolve(t, g.Dir, "HEAD")
+
+	// An empty range yields an empty, non-nil map.
+	empty, err := g.RevRangeFileAuthors(ctx, string(base), string(base))
+	if err != nil {
+		t.Fatalf("empty range: %v", err)
+	}
+	if empty == nil {
+		t.Fatal("empty range: got nil map, want empty non-nil")
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty range: got %v, want empty", empty)
+	}
+
+	// A merge-only-or-empty commit contributes no paths.
+	mustGit(t, g.Dir,
+		"-c", "user.name=Alice", "-c", "user.email=alice@x.com",
+		"commit", "-q", "--allow-empty", "-m", "empty by alice")
+	commitFile("Alice", "alice@x.com", "shared.txt", "a\nb\n")     // alice touches shared + onlysecond
+	commitFile("Alice", "alice@x.com", "onlysecond.txt", "x\n")
+	commitFile("Bob", "bob@x.com", "shared.txt", "a\nb\nc\n")      // bob touches shared + onlyfirst
+	commitFile("Bob", "bob@x.com", "onlyfirst.txt", "y\n")
+	head := resolve(t, g.Dir, "HEAD")
+
+	got, err := g.RevRangeFileAuthors(ctx, string(base), string(head))
+	if err != nil {
+		t.Fatalf("RevRangeFileAuthors: %v", err)
+	}
+	want := map[string][]string{
+		"shared.txt":     {"alice@x.com", "bob@x.com"},
+		"onlyfirst.txt":  {"bob@x.com"},
+		"onlysecond.txt": {"alice@x.com"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("RevRangeFileAuthors: got %v, want %v", got, want)
+	}
+	for path, wantEmails := range want {
+		if !slices.Equal(got[path], wantEmails) {
+			t.Fatalf("RevRangeFileAuthors[%q] = %v, want %v", path, got[path], wantEmails)
+		}
+	}
+}
+
+func TestWorktreeBlobOID(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	path := "dir/file.txt"
+	if err := os.MkdirAll(filepath.Join(g.Dir, "dir"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("first\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	oid, err := g.WorktreeBlobOID(ctx, path)
+	if err != nil {
+		t.Fatalf("WorktreeBlobOID: %v", err)
+	}
+	if want := mustGit(t, g.Dir, "hash-object", "--", path); oid != want {
+		t.Fatalf("WorktreeBlobOID = %q, want %q", oid, want)
+	}
+
+	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("second\n"), 0o644); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	edited, err := g.WorktreeBlobOID(ctx, path)
+	if err != nil {
+		t.Fatalf("WorktreeBlobOID after edit: %v", err)
+	}
+	if edited == oid {
+		t.Fatalf("WorktreeBlobOID after edit = %q, want a different oid than %q", edited, oid)
+	}
+
+	if _, err := g.WorktreeBlobOID(ctx, "missing.txt"); !errors.Is(err, gitcmd.ErrPathNotFound) {
+		t.Fatalf("WorktreeBlobOID on absent path = %v, want ErrPathNotFound", err)
+	}
+}
+
 func TestPathOID(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()

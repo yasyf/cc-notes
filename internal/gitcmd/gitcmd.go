@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/yasyf/cc-notes/internal/model"
@@ -33,6 +34,9 @@ var (
 	ErrPathNotFound = errors.New("path not found at rev")
 	// ErrRevNotFound reports a rev that names no commit.
 	ErrRevNotFound = errors.New("rev not found")
+	// ErrNoDefaultBranch reports that origin/HEAD is unset, so the remote
+	// default branch cannot be resolved.
+	ErrNoDefaultBranch = errors.New("no default branch")
 )
 
 // casPatterns match git's ref-transaction failures across the files and
@@ -176,6 +180,18 @@ func (g Git) PathOID(ctx context.Context, rev, path string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// WorktreeBlobOID returns the git blob object id that hashing the on-disk
+// working-tree file at path would yield (git hash-object), for checking drift
+// against uncommitted edits. A missing or unreadable file wraps
+// ErrPathNotFound.
+func (g Git) WorktreeBlobOID(ctx context.Context, path string) (string, error) {
+	out, err := g.run(ctx, "", "hash-object", "--", path)
+	if err = classify(err, ErrPathNotFound, []string{"could not open"}); err != nil {
+		return "", fmt.Errorf("worktree blob oid %s: %w", path, err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // CommitSHA resolves rev to the full hex sha of the commit it names, for
 // blame. A rev that names no commit wraps ErrRevNotFound.
 func (g Git) CommitSHA(ctx context.Context, rev string) (model.SHA, error) {
@@ -189,6 +205,66 @@ func (g Git) CommitSHA(ctx context.Context, rev string) (model.SHA, error) {
 		return "", fmt.Errorf("commit sha %s: %w", rev, err)
 	}
 	return model.SHA(strings.TrimSpace(out)), nil
+}
+
+// MergeBase returns the best common ancestor of a and b (git merge-base) as a
+// full hex sha. When the two revs share no common ancestor — git exits 1 with
+// empty stdout — it wraps ErrRevNotFound.
+func (g Git) MergeBase(ctx context.Context, a, b string) (model.SHA, error) {
+	out, err := g.run(ctx, "", "merge-base", a, b)
+	if err != nil {
+		var cmdErr *commandError
+		if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 && strings.TrimSpace(out) == "" {
+			return "", fmt.Errorf("merge base %s %s: %w", a, b, ErrRevNotFound)
+		}
+		return "", fmt.Errorf("merge base %s %s: %w", a, b, err)
+	}
+	return model.SHA(strings.TrimSpace(out)), nil
+}
+
+// RevRangeFileAuthors maps each file path touched in the commit range
+// base..head to the distinct author emails who touched it, sorted for
+// determinism. Merges and renames are excluded so paths and authorship stay
+// unambiguous. An empty range returns an empty, non-nil map.
+//
+// The single `git log` invocation emits one record per commit, each beginning
+// with a NUL byte followed by the author email on the same line; the blank
+// line after the format separates that header from the commit's --name-only
+// file list. Splitting on the NUL record separator and reading the first line
+// of each record as the email and the remaining non-empty lines as paths
+// avoids the brittle interleaving of -z with --name-only.
+func (g Git) RevRangeFileAuthors(ctx context.Context, base, head string) (map[string][]string, error) {
+	out, err := g.run(ctx, "", "log", base+".."+head, "--no-merges", "--no-renames", "--name-only", "--pretty=format:%x00%ae")
+	if err != nil {
+		return nil, fmt.Errorf("rev range file authors %s..%s: %w", base, head, err)
+	}
+	sets := make(map[string]map[string]struct{})
+	for _, record := range strings.Split(out, "\x00") {
+		lines := strings.Split(record, "\n")
+		if len(lines) == 0 || lines[0] == "" {
+			continue
+		}
+		email := lines[0]
+		for _, path := range lines[1:] {
+			if path == "" {
+				continue
+			}
+			if sets[path] == nil {
+				sets[path] = make(map[string]struct{})
+			}
+			sets[path][email] = struct{}{}
+		}
+	}
+	authors := make(map[string][]string, len(sets))
+	for path, set := range sets {
+		emails := make([]string, 0, len(set))
+		for email := range set {
+			emails = append(emails, email)
+		}
+		slices.Sort(emails)
+		authors[path] = emails
+	}
+	return authors, nil
 }
 
 // TaskTrailers returns the values of every cc-task: trailer on the commit at
@@ -290,6 +366,22 @@ func (g Git) HeadBranch(ctx context.Context) (model.Branch, error) {
 		return "", fmt.Errorf("head branch: %w", err)
 	}
 	return model.Branch(strings.TrimSpace(out)), nil
+}
+
+// DefaultBranch returns the remote default branch — the branch origin/HEAD
+// points at — with the leading "origin/" stripped, e.g. "main". It assumes the
+// remote is named origin. When origin/HEAD is unset (git exits non-zero) it
+// wraps ErrNoDefaultBranch so the caller can fall back.
+func (g Git) DefaultBranch(ctx context.Context) (model.Branch, error) {
+	out, err := g.run(ctx, "", "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	if err != nil {
+		var cmdErr *commandError
+		if errors.As(err, &cmdErr) {
+			return "", fmt.Errorf("default branch: %w", ErrNoDefaultBranch)
+		}
+		return "", fmt.Errorf("default branch: %w", err)
+	}
+	return model.Branch(strings.TrimPrefix(strings.TrimSpace(out), "origin/")), nil
 }
 
 // AuthorIdent returns the author name and email git would use for a new
