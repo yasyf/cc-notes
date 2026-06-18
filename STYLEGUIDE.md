@@ -80,7 +80,10 @@ tip, _ := store.Tip(ctx, id)
 - Naming: short receivers (`s *Store`, not `store` or `self`/`this`); no `Get`
   prefix (`Tip()`, not `GetTip()`); acronyms keep case (`ID`, `URL`, `SHA`).
 - Lowercase unexported by default; export only what another package must call.
-  The public surface is the `cmd/cc-notes` binary, not an importable Go API.
+  The public surface is the `cmd/cc-notes` binary plus the importable `model`
+  and `notes` packages: `model` is the domain vocabulary, `notes` the in-process
+  client a consumer drives instead of shelling out. Everything else stays
+  `internal/`.
 - Flat control flow: early returns, happy path at the lowest indentation. Nesting
   >3 deep is a smell — extract a function.
 - One concept per file; file names describe contents (`refs.go`, `fold.go`), no

@@ -21,6 +21,11 @@ const (
 	syncNamespace = "refs/cc-notes-sync/"
 )
 
+// Namespace is the ref prefix holding every cc-notes entity — notes, tasks,
+// sprints, and projects — including the trailing slash. Listing it enumerates
+// the whole entity set; it never matches the refs/cc-notes-sync/ tracking refs.
+const Namespace = namespace
+
 // NotesPrefix is the ref namespace holding all notes, including the trailing
 // slash.
 const NotesPrefix = namespace + "notes/"

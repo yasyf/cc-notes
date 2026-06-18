@@ -41,6 +41,17 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 	return snapshot, nil
 }
 
+// HasNotes reports whether the repository holds any cc-notes entity: any ref
+// under refs/cc-notes/. It is the in-process equivalent of
+// `git for-each-ref --count=1 refs/cc-notes/`, with no binary lookup.
+func (s *Store) HasNotes(ctx context.Context) (bool, error) {
+	tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
+	if err != nil {
+		return false, err
+	}
+	return len(tips) > 0, nil
+}
+
 // ListNotes folds every note in the repository, ordered by creation time
 // then id. Tombstoned notes are skipped unless includeDeleted is set, and
 // superseded notes (those with any SupersededBy edge) are skipped unless
