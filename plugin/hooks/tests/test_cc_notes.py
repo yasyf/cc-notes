@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.13"
-# dependencies = ["capt-hook==3.7.0", "pydantic>=2"]
+# dependencies = ["capt-hook>=3.10.0", "pydantic>=2"]
 # ///
 """Direct unit tests for the cc-notes capt-hook pack's pure helpers and handlers.
 
@@ -15,7 +15,7 @@ inputs.
 
 Run with the same toolchain the inline tests use::
 
-    uv run plugin/hooks/test_cc_notes.py
+    uv run plugin/hooks/tests/test_cc_notes.py
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cc_notes
 from cc_notes import (
@@ -340,7 +340,7 @@ def test_handlers_silent_on_malformed_array(monkeypatch, tmp_path) -> None:
         check("malformed array: float_session_tasks does not crash", False, f"{type(raised).__name__}: {raised}")
 
 
-class _MonkeyPatch:
+class MonkeyPatch:
     """Minimal monkeypatch supporting setattr with automatic teardown."""
 
     def __init__(self) -> None:
@@ -363,7 +363,7 @@ def main() -> int:
     for fn in tests:
         print(f"{fn.__name__}:")
         params = inspect.signature(fn).parameters
-        mp = _MonkeyPatch()
+        mp = MonkeyPatch()
         kwargs = {}
         tmp = None
         if "monkeypatch" in params:

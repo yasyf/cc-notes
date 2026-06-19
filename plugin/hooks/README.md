@@ -91,8 +91,8 @@ both stay silent.
 Handlers 1–3 split into thin event wiring over pure helpers for parsing,
 rendering, dedup, drift filtering, and task capping. Those helpers, the
 gate-silence path, and a firing handler with stubbed CLI output have direct unit
-tests in `test_cc_notes.py`:
+tests in `tests/test_cc_notes.py`:
 
 ```console
-$ uv run plugin/hooks/test_cc_notes.py
+$ uv run plugin/hooks/tests/test_cc_notes.py
 ```
