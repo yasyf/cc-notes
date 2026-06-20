@@ -44,20 +44,23 @@ as context once *and* prompt reconciliation once. Nudges 1 and 8 are reflexes
 about the native-vs-durable line; 4 through 7 keep the git workflow and cc-notes
 coordination in lockstep.
 
-## Silent unless the repo uses cc-notes
+## Silent unless cc-notes is installed
 
-Every nudge is gated behind the `CcNotesAdopted` condition, which requires
-**both**:
+Every nudge is gated behind the `CcNotesAvailable` condition, which requires
+exactly one thing: the `cc-notes` binary on `PATH`. There is no `refs/cc-notes/*`
+ref check — gating on that would be a chicken-and-egg wall, since the adoption
+nudges that prompt the *first* cc-notes write would never fire in a fresh repo
+that has no refs yet.
 
-1. the `cc-notes` binary on `PATH`, and
-2. at least one `refs/cc-notes/*` ref in the repo, which `cc-notes init` creates.
-
-Installed into a repo that hasn't adopted cc-notes, the module stays inert, with no
-output and no overhead beyond a single `git for-each-ref`. Nudges 1–3 add one
-`cc-notes` invocation each when the gate passes; on any failure (missing flag,
-non-zero exit, timeout) they fall closed to silence. The reconcile nudge serves
-`jj` users too. Since `jj` never runs git hooks, `cc-notes reconcile` is the
-explicit step they run by hand after a merge.
+The per-repo opt-in is the pack's **presence** in `.claude/hooks/packs.toml`,
+which `cc-notes hooks install` records. A repo that doesn't want these nudges
+leaves the pack out. Where the pack is enabled but the repo has no cc-notes data
+yet, the read-time floaters (1–3) shell out to `cc-notes` and get nothing back,
+so they fall closed to silence on their own. `run_cc_notes` returns `None` on any
+failure (missing flag, non-zero exit, timeout) and the parse helpers turn empty
+output into nothing to render. The reconcile nudge
+serves `jj` users too. Since `jj` never runs git hooks, `cc-notes reconcile` is
+the explicit step they run by hand after a merge.
 
 ## Install
 
@@ -65,11 +68,14 @@ explicit step they run by hand after a merge.
 $ cc-notes hooks install
 ```
 
-This runs `uvx capt-hook pack add github:yasyf/cc-notes@<binary version>`, which
-resolves the ref to a commit, caches the pinned pack tarball, records
+This runs `uvx capt-hook pack add github:yasyf/cc-notes@latest`, which resolves
+`@latest` to the newest release, caches the pack tarball, records
 `[packs.cc-notes]` in `.claude/hooks/packs.toml`, and regenerates the event wiring
-in `.claude/settings.local.json`. capt-hook derives the event set from the pack,
-and the dispatcher runs via `uvx`, so there is nothing else to install.
+in `.claude/settings.local.json`. The source is unpinned on purpose: the pack
+tracks `@latest` and `uvx capt-hook pack update` picks up new releases, so the
+nudges stay current without re-running install against a bumped binary. capt-hook
+derives the event set from the pack, and the dispatcher runs via `uvx`, so there
+is nothing else to install.
 
 The pack cache (`~/.cache/captain-hook`) and `.claude/settings.local.json` aren't
 committed, so a teammate who clones the repo runs `uvx capt-hook pack update` — or
@@ -85,13 +91,15 @@ $ uvx capt-hook --hooks plugin/hooks test
 
 Each static nudge declares its own `tests={Input(...): Warn()/Allow()}` cases
 covering a firing trigger and a near-miss that must stay silent. The PostToolUse
-floaters (2 and 3) carry inline tests proving the gate and a non-matching tool
-both stay silent.
+floaters (2 and 3) carry one inline test each, proving a non-matching tool stays
+silent; their firing path shells out to `cc-notes`, so the inline harness (which
+stubs only `call_llm`, never the CLI subprocess) cannot assert it deterministically.
 
 Handlers 1–3 split into thin event wiring over pure helpers for parsing,
-rendering, dedup, drift filtering, and task capping. Those helpers, the
-gate-silence path, and a firing handler with stubbed CLI output have direct unit
-tests in `tests/test_cc_notes.py`:
+rendering, dedup, drift filtering, and task capping. Those helpers, both gate
+branches (binary present opens it, binary absent fails it closed) with
+`shutil.which` mocked, and a firing handler with stubbed CLI output have direct
+unit tests in `tests/test_cc_notes.py`:
 
 ```console
 $ uv run plugin/hooks/tests/test_cc_notes.py

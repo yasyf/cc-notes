@@ -4,14 +4,13 @@
 # ///
 """Direct unit tests for the cc-notes capt-hook pack's pure helpers and handlers.
 
-The inline ``tests={...}`` on each hook prove environment-stable behavior (the
-gate keeps the PostToolUse floaters silent, non-matching tools Allow). These
-tests cover what the inline harness cannot make deterministic: the pure render
-and filter helpers, the gate-silence path when ``cc-notes`` is absent, and a
-firing handler end to end with stubbed CLI output. They mock the gate's true
-externals (``shutil.which`` and the ``git for-each-ref`` subprocess) rather than
-the condition object, so the real ``CcNotesAdopted`` logic runs under controlled
-inputs.
+The inline ``tests={...}`` on each hook prove environment-stable behavior
+(non-matching tools Allow). These tests cover what the inline harness cannot make
+deterministic: the pure render and filter helpers, both gate branches (binary
+present opens it, binary absent fails it closed), and a firing handler end to end
+with stubbed CLI output. They mock the gate's one true external, ``shutil.which``,
+rather than the condition object, so the real ``CcNotesAvailable`` logic runs
+under controlled inputs.
 
 Run with the same toolchain the inline tests use::
 
@@ -153,11 +152,15 @@ def test_cap_and_render_tasks() -> None:
 
 
 def stub_cli(mapping: dict[tuple[str, ...], str]):
-    """Build a call_cli stub: git probe returns a ref; cc-notes args map to payloads."""
+    """Build a call_cli stub mapping ``cc-notes`` arg tuples to canned payloads.
+
+    A key not in ``mapping`` raises ``FileNotFoundError`` so a handler that runs
+    an unexpected command surfaces the gap instead of silently passing. The gate
+    no longer shells out — it reads ``shutil.which`` only — so no ``git`` probe is
+    stubbed here.
+    """
 
     def _call(args, *, input=None, timeout=30, env=None):
-        if args[0] == "git":
-            return "abc123 commit\trefs/cc-notes/notes/abc123\n"
         key = tuple(args[1:])
         if key in mapping:
             return mapping[key]
@@ -166,25 +169,68 @@ def stub_cli(mapping: dict[tuple[str, ...], str]):
     return _call
 
 
+# gated_handlers maps each gated read-time handler to a tool its own Tool
+# condition matches (UserPromptSubmit carries no tool). Picking the right tool
+# isolates the gate: when which() opens the gate, matches_conditions can only
+# fail on the gate itself, not on a tool mismatch.
+gated_handlers = [
+    (float_session_tasks, Event.UserPromptSubmit, None),
+    (float_note_context, Event.PostToolUse, "Read"),
+    (check_note_staleness, Event.PostToolUse, "Edit"),
+]
+
+
+def _gate_event(ev_type: Event, tool: str | None):
+    return mock_event(
+        ev_type.name,
+        tool=tool,
+        file="internal/store/store.go",
+        prompt="start work",
+    )
+
+
 def test_gate_silent_when_cc_notes_absent(monkeypatch) -> None:
-    """With cc-notes off PATH, CcNotesAdopted fails closed and every handler is silent."""
+    """With cc-notes off PATH, CcNotesAvailable fails closed and every handler is silent."""
     monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: None)
 
     from captain_hook.conditions import matches_conditions
+
+    for handler, ev_type, tool in gated_handlers:
+        evt = _gate_event(ev_type, tool)
+        gated = matches_conditions(_spec_for(handler), evt)
+        check(f"gate-absent: {handler.__name__} condition fails closed", not gated)
+
+
+def test_gate_open_when_cc_notes_present(monkeypatch) -> None:
+    """With cc-notes on PATH the gate opens even in a repo with NO refs/cc-notes/*.
+
+    The refs requirement is gone, so check() reads shutil.which only. To keep this
+    a real regression test, we force evt.ctx.git to return None — a refs-free probe.
+    The binary-only gate ignores git entirely, so it still opens; but if the dropped
+    refs probe were restored, it would read that None, fail closed, and fail this
+    test. (Without this stub the probe would run real git in the ambient cwd — the
+    cc-notes repo itself carries refs/cc-notes/*, so a restored gate would pass too
+    and the test would prove nothing.)
+    """
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+
+    from captain_hook.conditions import matches_conditions
+
+    for handler, ev_type, tool in gated_handlers:
+        evt = _gate_event(ev_type, tool)
+        monkeypatch.setattr(evt.ctx, "git", lambda *_a, **_k: None)
+        gated = matches_conditions(_spec_for(handler), evt)
+        check(f"gate-present: {handler.__name__} condition opens with no refs", gated)
+
+
+def _spec_for(handler):
+    """Return the registered hook spec whose handler is ``handler``."""
     from captain_hook.app import _state
 
     for entry in _state.hooks:
-        if entry.handler not in (float_session_tasks, float_note_context, check_note_staleness):
-            continue
-        ev_type = next(iter(entry.spec.events))
-        evt = mock_event(
-            ev_type.name,
-            tool="Read" if ev_type is Event.PostToolUse else None,
-            file="internal/store/store.go",
-            prompt="start work",
-        )
-        gated = matches_conditions(entry.spec, evt)
-        check(f"gate-absent: {entry.name} condition fails closed", not gated)
+        if entry.handler is handler:
+            return entry.spec
+    raise AssertionError(f"no registered hook for {handler.__name__}")
 
 
 def test_float_session_tasks_fires(monkeypatch, tmp_path) -> None:

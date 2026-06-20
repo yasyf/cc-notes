@@ -3,10 +3,12 @@
 These are advisory NUDGES, never gates: cc-notes *complements* Claude's native
 task tracking, so the hooks only ever warn — they never block a tool call.
 
-Every nudge is gated behind :class:`CcNotesAdopted`, which keeps them completely
-silent unless the repo actually uses cc-notes (binary on PATH *and*
-``refs/cc-notes/*`` present). Installed into a repo that doesn't use cc-notes,
-this file is inert.
+Every nudge is gated behind :class:`CcNotesAvailable`, which keeps them completely
+silent unless the ``cc-notes`` binary is on PATH. Per-repo opt-in is the pack's
+*presence* in ``.claude/hooks/packs.toml`` — a repo that doesn't want these
+nudges simply doesn't enable the pack. The read-time floaters fall closed to
+silence on a repo with no cc-notes refs anyway, since :func:`run_cc_notes`
+returns nothing to render there.
 
 The teaching goal is the native-vs-durable distinction:
 
@@ -177,24 +179,20 @@ def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int) -> list[str]:
     return lines
 
 
-class CcNotesAdopted(CustomCondition):
-    """Matches only in repos that actually use cc-notes.
+class CcNotesAvailable(CustomCondition):
+    """Matches whenever the ``cc-notes`` binary resolves on PATH.
 
-    Both signals are required so the nudges stay silent in repos that merely have
-    the hook installed but never ran ``cc-notes init``:
-
-      1. the ``cc-notes`` binary resolves on PATH, and
-      2. the repository carries at least one ``refs/cc-notes/*`` ref.
-
-    The ref probe shells out via ``evt.ctx.git`` (cwd = the project dir), which
-    returns ``None`` outside a git work tree, so the condition fails closed.
+    Gating on the binary alone is deliberate: enabling the pack in a repo (its
+    presence in ``.claude/hooks/packs.toml``) *is* the per-repo opt-in, so a
+    fresh repo with no ``refs/cc-notes/*`` yet still gets the adoption nudges
+    that prompt the first ``cc-notes`` write. There is no chicken-and-egg ref
+    probe to satisfy first. The read-time floaters (nudges 1-3) shell out to
+    ``cc-notes`` through :func:`run_cc_notes`, which returns nothing to render on
+    an empty repo, so they fall closed to silence on their own.
     """
 
     def check(self, evt: BaseHookEvent) -> bool:
-        if shutil.which("cc-notes") is None:
-            return False
-        refs = evt.ctx.git("for-each-ref", "--count=1", "refs/cc-notes/")
-        return bool(refs and refs.strip())
+        return shutil.which("cc-notes") is not None
 
 
 class ManyNativeTasks(CustomCondition):
@@ -224,7 +222,7 @@ class StaleChecked(BaseModel):
 
 @on(
     Event.UserPromptSubmit,
-    only_if=[CcNotesAdopted()],
+    only_if=[CcNotesAvailable()],
     max_fires=1,
 )
 def float_session_tasks(evt: UserPromptSubmitEvent) -> Any:
@@ -251,10 +249,12 @@ def float_session_tasks(evt: UserPromptSubmitEvent) -> Any:
 
 @on(
     Event.PostToolUse,
-    only_if=[Tool("Read"), CcNotesAdopted()],
+    only_if=[Tool("Read"), CcNotesAvailable()],
     tests={
-        # Gate keeps the floater silent without cc-notes; non-Read tools never match.
-        Input(tool="Read", file="internal/store/store.go"): Allow(),
+        # A non-Read tool never matches the Tool gate — deterministic silence
+        # regardless of cc-notes state. The firing path (Read floats relevant
+        # notes) shells out to `cc-notes relevant`, so its assertion lives in
+        # tests/test_cc_notes.py with a stubbed CLI, not here.
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
@@ -283,12 +283,12 @@ def float_note_context(evt: PostToolUseEvent) -> Any:
 
 @on(
     Event.PostToolUse,
-    only_if=[Tool("Edit|Write|MultiEdit"), CcNotesAdopted()],
+    only_if=[Tool("Edit|Write|MultiEdit"), CcNotesAvailable()],
     tests={
-        # Gate keeps the check silent without cc-notes; reads never match.
-        Input(tool="Edit", file="internal/store/store.go"): Allow(),
-        Input(tool="Write", file="internal/store/store.go"): Allow(),
-        Input(tool="MultiEdit", file="internal/store/store.go"): Allow(),
+        # A Read never matches the Edit|Write|MultiEdit gate — deterministic
+        # silence regardless of cc-notes state. The firing path (a drifted note
+        # on the edited path) shells out to `cc-notes relevant`, so its assertion
+        # lives in tests/test_cc_notes.py with a stubbed CLI, not here.
         Input(tool="Read", file="m.py"): Allow(),
     },
 )
@@ -326,7 +326,7 @@ nudge(
     "global queue every agent can see and claim) — or plain `cc-notes task add` "
     "for work specific to your current branch. Capture decisions and durable "
     "facts as `cc-notes note add`.",
-    only_if=[Tool("ExitPlanMode"), CcNotesAdopted()],
+    only_if=[Tool("ExitPlanMode"), CcNotesAvailable()],
     events=Event.PostToolUse,
     tests={
         Input(tool="ExitPlanMode"): Warn(pattern="cc-notes task add"),
@@ -340,7 +340,7 @@ nudge(
     "(queryable with `git log --grep` and `cc-notes blame <sha>`). Capture any "
     "durable decision behind it as `cc-notes note add \"...\" --tag design` (born "
     "verified against HEAD), then `cc-notes sync` to share your refs.",
-    only_if=[Command(GIT_COMMIT), CcNotesAdopted()],
+    only_if=[Command(GIT_COMMIT), CcNotesAvailable()],
     events=Event.PostToolUse,
     tests={
         Input(command="git commit -m 'add retry ceiling'"): Warn(pattern="cc-task:"),
@@ -355,7 +355,7 @@ nudge(
     "over. Run `cc-notes reconcile --into <target>` to set them onto the target, "
     "then `cc-notes sync` to converge with the remote. Both are idempotent. "
     "(jj merges never fire git hooks — reconcile is the explicit step.)",
-    only_if=[Command(GIT_MERGE_PULL), CcNotesAdopted()],
+    only_if=[Command(GIT_MERGE_PULL), CcNotesAvailable()],
     events=Event.PostToolUse,
     max_fires=3,
     tests={
@@ -373,7 +373,7 @@ nudge(
     "`cc-notes task renew <id>` on long silent stretches, and `cc-notes task done "
     "<id>` when finished. A crashed hold whose lease expired is reclaimable with "
     "`cc-notes task claim <id> --steal`.",
-    only_if=[Command(CC_NOTES_CLAIM), CcNotesAdopted()],
+    only_if=[Command(CC_NOTES_CLAIM), CcNotesAvailable()],
     events=Event.PostToolUse,
     max_fires=2,
     tests={
@@ -389,7 +389,7 @@ nudge(
     "and are private to this agent — mirror any that are durable or cross-agent "
     "into `cc-notes task add` (`--backlog` if it's shared work anyone can claim). "
     "Keep the purely in-session steps as native todos.",
-    only_if=[Tool("TaskCreate"), ManyNativeTasks(), CcNotesAdopted()],
+    only_if=[Tool("TaskCreate"), ManyNativeTasks(), CcNotesAvailable()],
     events=Event.PostToolUse,
     max_fires=2,
     tests={
