@@ -6,7 +6,7 @@ require (
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/spf13/cobra v1.10.2
 	github.com/winfsp/cgofuse v1.6.1-0.20260531120352-2fa812d1bdc7
-	github.com/yasyf/fusekit v0.1.1
+	github.com/yasyf/fusekit v0.2.0
 	golang.org/x/sync v0.21.0
 	gopkg.in/yaml.v3 v3.0.1
 )

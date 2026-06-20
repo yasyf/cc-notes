@@ -161,7 +161,13 @@ func runMountShutdown(cmd *cobra.Command, socket string) error {
 		}
 		return fmt.Errorf("%w: %s", fusefs.ErrUnmountWedged, strings.Join(dirs, ", "))
 	}
-	client.WaitGone(5 * time.Second)
+	if !client.WaitGone(5 * time.Second) {
+		// The holder swept its mounts and acked Shutdown but kept its socket —
+		// reap it by peer credentials (bounded, identity-gated; never a name
+		// kill) so a wedged process cannot linger holding the socket.
+		_, _ = client.Kill()
+		client.WaitGone(2 * time.Second)
+	}
 	if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "cc-notes: mount holder stopped"); err != nil {
 		return err
 	}
