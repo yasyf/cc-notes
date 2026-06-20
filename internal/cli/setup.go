@@ -116,6 +116,7 @@ func packAddArgs(ver string) []string {
 // streaming the subcommand's stdio so its progress reaches the operator.
 func runCaptHookPackAdd(cmd *cobra.Command, root, ver string) error {
 	args := append([]string{"uvx"}, packAddArgs(ver)...)
+	//nolint:gosec // G204: args[0] is the literal "uvx"; the rest is this command's own fixed capt-hook invocation, by design.
 	c := exec.CommandContext(cmd.Context(), args[0], args[1:]...)
 	c.Dir = root
 	c.Stdout = cmd.OutOrStdout()
@@ -165,9 +166,10 @@ func writeEmbedded(cmd *cobra.Command, fsys fs.FS, src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("read embedded %s: %w", src, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Dir(dst), err)
 	}
+	//nolint:gosec // G306: dst is a workflow/config file installed into the user's repo and meant to be world-readable (0o644).
 	if err := os.WriteFile(dst, data, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", dst, err)
 	}

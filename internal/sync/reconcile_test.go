@@ -38,7 +38,7 @@ func mergeInto(t *testing.T, dir, target, source string) {
 	mustGit(t, dir, "merge", "-q", "--no-ff", "-m", "merge "+source, source)
 }
 
-func setStatus(t *testing.T, s *store.Store, branch model.Branch, id model.EntityID, status model.Status) {
+func setStatus(t *testing.T, s *store.Store, _ model.Branch, id model.EntityID, status model.Status) {
 	t.Helper()
 	appendOps(t, s, refs.Task(id), model.SetStatus{Status: status})
 }

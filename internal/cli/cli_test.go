@@ -105,7 +105,7 @@ func scrubGitEnv(t *testing.T) {
 	for _, key := range gitEnvKeys {
 		if value, ok := os.LookupEnv(key); ok {
 			t.Setenv(key, value)
-			os.Unsetenv(key)
+			_ = os.Unsetenv(key)
 		}
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
@@ -115,6 +115,7 @@ func scrubGitEnv(t *testing.T) {
 
 func mustGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
@@ -143,10 +144,10 @@ func initRepo(t *testing.T) string {
 func commitFile(t *testing.T, dir, path, content string) string {
 	t.Helper()
 	full := filepath.Join(dir, path)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
 	mustGit(t, dir, "add", path)
@@ -308,6 +309,7 @@ func TestNoteRmAndSearch(t *testing.T) {
 	dir := initRepo(t)
 	parser := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Parser bug", "--body", "the Tokenizer breaks", "--tag", "bug", "--json"))
 	mustRun(t, dir, "note", "add", "Other", "--tag", "misc")
+	//nolint:gosec // G101: test fixture, not a credential — "PARSER" is a search query string.
 	for query, wantTitle := range map[string]string{"PARSER": "Parser bug", "tokenizer": "Parser bug", "misc": "Other"} {
 		out := mustRun(t, dir, "note", "search", query)
 		if !strings.Contains(out, wantTitle) || strings.Count(out, "\n") != 1 {

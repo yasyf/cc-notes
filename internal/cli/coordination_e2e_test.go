@@ -211,7 +211,7 @@ func TestBlame(t *testing.T) {
 // returns the new HEAD sha.
 func commitWithTrailer(t *testing.T, dir, path, content, id string) string {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, path), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, path), []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
 	mustGit(t, dir, "add", path)

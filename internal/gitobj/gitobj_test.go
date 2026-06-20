@@ -67,6 +67,7 @@ func git(t *testing.T, dir string, args ...string) string {
 
 func gitStdin(t *testing.T, dir, stdin string, args ...string) string {
 	t.Helper()
+	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = gitEnv()
@@ -80,6 +81,7 @@ func gitStdin(t *testing.T, dir, stdin string, args ...string) string {
 
 func gitRaw(t *testing.T, dir string, args ...string) []byte {
 	t.Helper()
+	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = gitEnv()
@@ -402,7 +404,7 @@ func TestOpenFromSubdirectory(t *testing.T) {
 	git(t, dir, "update-ref", ref, string(sha))
 
 	sub := filepath.Join(dir, "deep", "nested")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
+	if err := os.MkdirAll(sub, 0o750); err != nil {
 		t.Fatalf("mkdir %s: %v", sub, err)
 	}
 	got, err := open(t, sub).Tip(t.Context(), ref)
@@ -454,7 +456,7 @@ func TestOpenLinkedWorktree(t *testing.T) {
 	}
 
 	sub := filepath.Join(wt, "inner")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
+	if err := os.MkdirAll(sub, 0o750); err != nil {
 		t.Fatalf("mkdir %s: %v", sub, err)
 	}
 	if got, err := open(t, sub).Tip(t.Context(), ref); err != nil || got != sha {

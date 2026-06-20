@@ -99,6 +99,7 @@ func bodyArg(cmd *cobra.Command, value string) (string, error) {
 // contents verbatim. The contents become a criterion's check command, run only
 // by task validate.
 func readScript(path string) (string, error) {
+	//nolint:gosec // G304: path is the operator-supplied validation-script file for this CLI; reading it is the intended behavior.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read script %s: %w", path, err)

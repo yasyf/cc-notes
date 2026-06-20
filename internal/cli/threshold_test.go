@@ -24,6 +24,7 @@ func initGitRepo(t *testing.T) gitcmd.Git {
 		{"config", "user.name", "Test User"},
 		{"config", "user.email", "test@example.com"},
 	} {
+		//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
@@ -34,7 +35,7 @@ func initGitRepo(t *testing.T) gitcmd.Git {
 
 func TestLeaseTTL(t *testing.T) {
 	t.Run("default 1h", func(t *testing.T) {
-		os.Unsetenv(leaseTTLEnv)
+		_ = os.Unsetenv(leaseTTLEnv)
 		g := initGitRepo(t)
 		got, err := leaseTTL(t.Context(), g)
 		if err != nil {
@@ -45,7 +46,7 @@ func TestLeaseTTL(t *testing.T) {
 		}
 	})
 	t.Run("config fallback", func(t *testing.T) {
-		os.Unsetenv(leaseTTLEnv)
+		_ = os.Unsetenv(leaseTTLEnv)
 		g := initGitRepo(t)
 		if err := g.ConfigSet(t.Context(), leaseTTLConfig, "3h"); err != nil {
 			t.Fatalf("config set: %v", err)

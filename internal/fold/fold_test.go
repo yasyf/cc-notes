@@ -231,9 +231,8 @@ func TestFoldConcurrentClaim(t *testing.T) {
 // taskChain builds a linear task chain: a create at t=100, then one commit
 // per op at t=200+100*i with lamport i+2.
 func taskChain(ops ...model.Op) []model.PackCommit {
-	chain := []model.PackCommit{
-		mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}),
-	}
+	chain := make([]model.PackCommit, 0, 1+len(ops))
+	chain = append(chain, mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Title: "t", Type: model.TypeTask, Branch: "main"}))
 	for i, op := range ops {
 		sha := fmt.Sprintf("c%02d", i)
 		chain = append(chain, mk(sha, []string{string(chain[len(chain)-1].SHA)}, "actor", 200+100*int64(i), uint64(i)+2, op))
@@ -243,9 +242,8 @@ func taskChain(ops ...model.Op) []model.PackCommit {
 
 // sprintChain builds a linear sprint chain in the shape of taskChain.
 func sprintChain(ops ...model.Op) []model.PackCommit {
-	chain := []model.PackCommit{
-		mk("aaa", nil, "alice", 100, 1, model.CreateSprint{Nonce: "n", Title: "s"}),
-	}
+	chain := make([]model.PackCommit, 0, 1+len(ops))
+	chain = append(chain, mk("aaa", nil, "alice", 100, 1, model.CreateSprint{Nonce: "n", Title: "s"}))
 	for i, op := range ops {
 		sha := fmt.Sprintf("c%02d", i)
 		chain = append(chain, mk(sha, []string{string(chain[len(chain)-1].SHA)}, "actor", 200+100*int64(i), uint64(i)+2, op))
@@ -255,9 +253,8 @@ func sprintChain(ops ...model.Op) []model.PackCommit {
 
 // projectChain builds a linear project chain in the shape of taskChain.
 func projectChain(ops ...model.Op) []model.PackCommit {
-	chain := []model.PackCommit{
-		mk("aaa", nil, "alice", 100, 1, model.CreateProject{Nonce: "n", Title: "p"}),
-	}
+	chain := make([]model.PackCommit, 0, 1+len(ops))
+	chain = append(chain, mk("aaa", nil, "alice", 100, 1, model.CreateProject{Nonce: "n", Title: "p"}))
 	for i, op := range ops {
 		sha := fmt.Sprintf("c%02d", i)
 		chain = append(chain, mk(sha, []string{string(chain[len(chain)-1].SHA)}, "actor", 200+100*int64(i), uint64(i)+2, op))

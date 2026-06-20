@@ -81,6 +81,7 @@ func (e *commandError) exitCode() int {
 }
 
 func (g Git) run(ctx context.Context, stdin string, args ...string) (string, error) {
+	//nolint:gosec // G204: git is a fixed argv[0]; args are internal git subcommands, not user-shell input, in this CLI's own repo.
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", g.Dir}, args...)...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
@@ -120,16 +121,16 @@ func isZero(sha model.SHA) bool {
 // UpdateRef atomically points ref at new under a real ref lock, succeeding
 // only if the ref currently equals old. An empty or all-zero old means the
 // ref must not exist yet (create); the zero id's length is derived from
-// new. The unverified update form is never emitted. A CAS failure wraps
+// newRef. The unverified update form is never emitted. A CAS failure wraps
 // ErrCASMismatch.
-func (g Git) UpdateRef(ctx context.Context, ref string, new, old model.SHA) error {
-	if new == "" {
+func (g Git) UpdateRef(ctx context.Context, ref string, newRef, old model.SHA) error {
+	if newRef == "" {
 		return fmt.Errorf("update ref %s: empty new sha", ref)
 	}
 	if isZero(old) {
-		old = model.SHA(strings.Repeat("0", len(new)))
+		old = model.SHA(strings.Repeat("0", len(newRef)))
 	}
-	directive := fmt.Sprintf("update %s\x00%s\x00%s\x00", ref, new, old)
+	directive := fmt.Sprintf("update %s\x00%s\x00%s\x00", ref, newRef, old)
 	_, err := g.run(ctx, directive, "update-ref", "--stdin", "-z")
 	if err = classify(err, ErrCASMismatch, casPatterns); err != nil {
 		return fmt.Errorf("update ref %s: %w", ref, err)

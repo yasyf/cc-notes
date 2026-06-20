@@ -14,6 +14,7 @@ import (
 // driftRepoGit runs git in dir, failing the test on error.
 func driftRepoGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
@@ -30,10 +31,10 @@ func driftRepoGit(t *testing.T, dir string, args ...string) {
 func commitDirFile(t *testing.T, dir, path, content string) {
 	t.Helper()
 	full := filepath.Join(dir, filepath.FromSlash(path))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
 	driftRepoGit(t, dir, "add", "-A")

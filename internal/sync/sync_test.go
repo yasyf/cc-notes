@@ -42,7 +42,7 @@ func scrubGitEnv(t *testing.T) {
 	} {
 		if value, ok := os.LookupEnv(key); ok {
 			t.Setenv(key, value)
-			os.Unsetenv(key)
+			_ = os.Unsetenv(key)
 		}
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
@@ -52,6 +52,7 @@ func scrubGitEnv(t *testing.T) {
 
 func mustGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
@@ -300,6 +301,7 @@ fi
 exec %q "$@"
 `, marker, marker, realGit, bare, ref, tip, realGit)
 	stub := filepath.Join(dir, "git")
+	//nolint:gosec // G306: the git stub must be executable (0o755) for the test's PATH override to run it.
 	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatalf("write git stub: %v", err)
 	}
@@ -529,6 +531,7 @@ func TestPlainPushDivergedEntityRef(t *testing.T) {
 	mustGit(t, b.Git.Dir, "commit", "-q", "--allow-empty", "-m", "b work")
 	bHead := mustGit(t, b.Git.Dir, "rev-parse", "HEAD")
 
+	//nolint:gosec // G204: test shells out to git with fixed argv[0] and literal push args.
 	out, err := exec.Command("git", "-C", b.Git.Dir, "push", "origin").CombinedOutput()
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 1 {

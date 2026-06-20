@@ -21,6 +21,7 @@ var ccNotesMarketplaceJSON = json.RawMessage(`{"source":{"source":"github","repo
 func registerPlugin(root string) error {
 	path := filepath.Join(root, ".claude", "settings.json")
 	top := orderedObject{vals: map[string]json.RawMessage{}}
+	//nolint:gosec // G304: path is .claude/settings.json under the repo root this command manages.
 	switch data, err := os.ReadFile(path); {
 	case err == nil:
 		if err := json.Unmarshal(data, &top); err != nil {
@@ -65,11 +66,11 @@ func writeSettings(path string, top orderedObject) error {
 		return fmt.Errorf("marshal settings: %w", err)
 	}
 	data := buf.Bytes()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {

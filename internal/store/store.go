@@ -96,12 +96,20 @@ type Store struct {
 // a malformed value is an error, never a fallback — otherwise git's author
 // identity for the repository.
 func Open(dir string) (*Store, error) {
+	return OpenContext(context.Background(), dir)
+}
+
+// OpenContext is Open with an explicit context threaded into the lazy git
+// common-dir resolution the fold cache performs. Callers that already hold a
+// request context should prefer it so cancellation propagates into the cache
+// directory lookup.
+func OpenContext(ctx context.Context, dir string) (*Store, error) {
 	repo, err := gitobj.Open(dir)
 	if err != nil {
 		return nil, err
 	}
 	s := &Store{Repo: repo, Git: gitcmd.Git{Dir: dir}, now: time.Now, cache: newFoldCache("", foldCacheCap)}
-	s.cache.commonDir = func() (string, error) { return s.Git.CommonDir(context.Background()) }
+	s.cache.commonDir = func() (string, error) { return s.Git.CommonDir(ctx) }
 	return s, nil
 }
 
@@ -152,6 +160,7 @@ func Backoff(ctx context.Context, attempt int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
+	//nolint:gosec // G404: retry-backoff jitter is timing, not security; a weak PRNG is appropriate.
 	case <-time.After(backoffBase + rand.N(limit)):
 		return nil
 	}

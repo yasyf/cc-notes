@@ -48,7 +48,7 @@ func TestPackAddArgs(t *testing.T) {
 
 func TestRegisterPluginPreservesOrderAndMerges(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o750); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
 	existing := `{
@@ -85,13 +85,14 @@ func TestRegisterPluginPreservesOrderAndMerges(t *testing.T) {
 }
 `
 	path := filepath.Join(dir, ".claude", "settings.json")
-	if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
 		t.Fatalf("seed settings: %v", err)
 	}
 	if err := registerPlugin(dir); err != nil {
 		t.Fatalf("registerPlugin: %v", err)
 	}
 
+	//nolint:gosec // G304: reads the settings.json path under the test's own temp dir.
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read settings: %v", err)
@@ -145,13 +146,14 @@ func TestRegisterPluginPreservesOrderAndMerges(t *testing.T) {
 
 func TestRegisterPluginCreatesAndIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o750); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
 	path := filepath.Join(dir, ".claude", "settings.json")
 	if err := registerPlugin(dir); err != nil {
 		t.Fatalf("registerPlugin (create): %v", err)
 	}
+	//nolint:gosec // G304: reads the settings.json path under the test's own temp dir.
 	first, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read after create: %v", err)
@@ -159,6 +161,7 @@ func TestRegisterPluginCreatesAndIsIdempotent(t *testing.T) {
 	if err := registerPlugin(dir); err != nil {
 		t.Fatalf("registerPlugin (idempotent): %v", err)
 	}
+	//nolint:gosec // G304: reads the settings.json path under the test's own temp dir.
 	second, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read after second run: %v", err)

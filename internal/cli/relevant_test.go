@@ -35,6 +35,7 @@ func relevantRepo(t *testing.T) string {
 // relevantGit runs git in dir authored by email, failing the test on error.
 func relevantGit(t *testing.T, dir, email string, args ...string) {
 	t.Helper()
+	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
@@ -51,10 +52,10 @@ func relevantGit(t *testing.T, dir, email string, args ...string) {
 func commitFileAs(t *testing.T, dir, email, path, content string) model.SHA {
 	t.Helper()
 	full := filepath.Join(dir, filepath.FromSlash(path))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
 	relevantGit(t, dir, email, "add", "-A")
@@ -349,7 +350,7 @@ func TestRelevantWorktreeDrift(t *testing.T) {
 	verifyNote(t, dir, id)
 
 	// Edit the working tree without committing.
-	if err := os.WriteFile(filepath.Join(dir, "svc", "handler.go"), []byte("dirty\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "svc", "handler.go"), []byte("dirty\n"), 0o600); err != nil {
 		t.Fatalf("write dirty: %v", err)
 	}
 
@@ -396,7 +397,7 @@ func TestRelevantJSON(t *testing.T) {
 
 	id := makeNote(t, dir, "path note", model.Anchor{Kind: model.AnchorPath, Value: "svc/handler.go"})
 	verifyNote(t, dir, id)
-	if err := os.WriteFile(filepath.Join(dir, "svc", "handler.go"), []byte("dirty\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "svc", "handler.go"), []byte("dirty\n"), 0o600); err != nil {
 		t.Fatalf("write dirty: %v", err)
 	}
 

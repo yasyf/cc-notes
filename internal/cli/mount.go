@@ -210,7 +210,7 @@ func newRemoteHost(socket string) *mountd.RemoteHost {
 // created — a missing directory is the common first-run snag, not an error to
 // refuse; with no argument it defaults to ~/.cc-notes/mnt/<base>-<hash>.
 func resolveRepoAndMountpoint(ctx context.Context, cwd string, args []string) (repoRoot, mountpoint string, err error) {
-	s, err := store.Open(cwd)
+	s, err := store.OpenContext(ctx, cwd)
 	if err != nil {
 		return "", "", err
 	}

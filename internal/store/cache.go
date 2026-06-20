@@ -99,6 +99,7 @@ func (c *foldCache) get(tip model.SHA) (model.Snapshot, bool) {
 	if err != nil || dir == "" {
 		return nil, false
 	}
+	//nolint:gosec // G304: dir is this store's own fold-cache directory and tip is a validated SHA key, not external input.
 	data, err := os.ReadFile(filepath.Join(dir, string(tip)))
 	if err != nil {
 		return nil, false
@@ -123,7 +124,7 @@ func (c *foldCache) put(tip model.SHA, snap model.Snapshot) {
 	if !ok {
 		return
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return
 	}
 	if !writeFileAtomic(dir, string(tip), data) {
@@ -157,7 +158,7 @@ func (c *foldCache) record(dir string, tip model.SHA) {
 		seed = seedOrder(dir)
 	}
 	for _, oldest := range c.promote(seed, tip) {
-		os.Remove(filepath.Join(dir, string(oldest)))
+		_ = os.Remove(filepath.Join(dir, string(oldest)))
 	}
 }
 
@@ -251,7 +252,7 @@ func (c *foldCache) delete(tip model.SHA) {
 	if err != nil || dir == "" {
 		return
 	}
-	os.Remove(filepath.Join(dir, string(tip)))
+	_ = os.Remove(filepath.Join(dir, string(tip)))
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if i := slices.Index(c.order, tip); i >= 0 {
@@ -323,16 +324,16 @@ func writeFileAtomic(dir, name string, data []byte) bool {
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return false
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return false
 	}
 	if err := os.Rename(tmpName, filepath.Join(dir, name)); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return false
 	}
 	return true

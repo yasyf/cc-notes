@@ -295,7 +295,7 @@ func ParseNote(data []byte) (ParsedNote, error) {
 	switch err := dec.Decode(&p); {
 	case errors.Is(err, io.EOF):
 	case err != nil:
-		return ParsedNote{}, fmt.Errorf("%w: %v", ErrParse, err)
+		return ParsedNote{}, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 	p.Body = body
 	return p, nil
@@ -494,7 +494,7 @@ func ParseTask(data []byte) (ParsedTask, error) {
 	dec.DisallowUnknownFields()
 	var p ParsedTask
 	if err := dec.Decode(&p); err != nil {
-		return ParsedTask{}, fmt.Errorf("%w: %v", ErrParse, err)
+		return ParsedTask{}, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
 		return ParsedTask{}, fmt.Errorf("%w: trailing data after task document", ErrParse)
@@ -800,7 +800,7 @@ func ParseSprint(data []byte) (ParsedSprint, error) {
 	dec.DisallowUnknownFields()
 	var p ParsedSprint
 	if err := dec.Decode(&p); err != nil {
-		return ParsedSprint{}, fmt.Errorf("%w: %v", ErrParse, err)
+		return ParsedSprint{}, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
 		return ParsedSprint{}, fmt.Errorf("%w: trailing data after sprint document", ErrParse)
@@ -988,7 +988,7 @@ func ParseProject(data []byte) (ParsedProject, error) {
 	dec.DisallowUnknownFields()
 	var p ParsedProject
 	if err := dec.Decode(&p); err != nil {
-		return ParsedProject{}, fmt.Errorf("%w: %v", ErrParse, err)
+		return ParsedProject{}, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
 		return ParsedProject{}, fmt.Errorf("%w: trailing data after project document", ErrParse)

@@ -29,6 +29,7 @@ func TestWorkflowsInstallWritesTree(t *testing.T) {
 	out := mustRun(t, dir, "workflows", "install")
 
 	workflow := filepath.Join(dir, ".github", "workflows", "cc-notes.yml")
+	//nolint:gosec // G304: reads a path under the test's own temp repo.
 	got, err := os.ReadFile(workflow)
 	if err != nil {
 		t.Fatalf("read installed cc-notes.yml: %v", err)
@@ -57,6 +58,7 @@ func TestWorkflowsInstallEmitsExpectedBehaviors(t *testing.T) {
 	dir := initRepo(t)
 	mustRun(t, dir, "workflows", "install")
 
+	//nolint:gosec // G304: reads a path under the test's own temp repo.
 	raw, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", "cc-notes.yml"))
 	if err != nil {
 		t.Fatalf("read installed workflow: %v", err)

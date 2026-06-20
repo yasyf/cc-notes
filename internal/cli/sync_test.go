@@ -67,6 +67,7 @@ func TestInitHookInstallsPostMerge(t *testing.T) {
 	if info.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("post-merge hook mode = %v, want executable", info.Mode().Perm())
 	}
+	//nolint:gosec // G304: reads the post-merge hook path under the test's own temp repo.
 	body, err := os.ReadFile(hook)
 	if err != nil {
 		t.Fatalf("read post-merge hook: %v", err)
@@ -79,6 +80,7 @@ func TestInitHookInstallsPostMerge(t *testing.T) {
 	if cli.ExitCode(err) != 2 {
 		t.Fatalf("init --hook over existing hook err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
 	}
+	//nolint:gosec // G304: reads the post-merge hook path under the test's own temp repo.
 	if again, _ := os.ReadFile(hook); string(again) != string(body) {
 		t.Fatalf("refused install still clobbered hook: %q", again)
 	}
@@ -92,6 +94,7 @@ func TestInitCIInstallsWorkflow(t *testing.T) {
 	if !strings.Contains(out, "wrote ") || !strings.Contains(out, suffix) {
 		t.Fatalf("init --ci output = %q, want a wrote line for %q", out, suffix)
 	}
+	//nolint:gosec // G304: reads the installed workflow path under the test's own temp repo.
 	got, err := os.ReadFile(workflow)
 	if err != nil {
 		t.Fatalf("read installed workflow: %v", err)
@@ -185,7 +188,7 @@ func TestVersionCommand(t *testing.T) {
 
 func TestInitInstallsCIWhenGithubExists(t *testing.T) {
 	dir, _ := initRepoWithRemote(t)
-	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o750); err != nil {
 		t.Fatalf("mkdir .github: %v", err)
 	}
 	mustRun(t, dir, "init")
@@ -196,7 +199,7 @@ func TestInitInstallsCIWhenGithubExists(t *testing.T) {
 
 func TestInitNoCISuppressesWorkflow(t *testing.T) {
 	dir, _ := initRepoWithRemote(t)
-	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o750); err != nil {
 		t.Fatalf("mkdir .github: %v", err)
 	}
 	mustRun(t, dir, "init", "--no-ci")
@@ -215,7 +218,7 @@ func TestInitCIAndNoCIConflict(t *testing.T) {
 
 func TestInitRegistersPluginWhenClaudeExists(t *testing.T) {
 	dir, _ := initRepoWithRemote(t)
-	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o750); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
 	stubUvx(t)
@@ -242,6 +245,7 @@ func TestInitSkipsClaudeWiringWithoutClaude(t *testing.T) {
 func stubUvx(t *testing.T) {
 	t.Helper()
 	binDir := t.TempDir()
+	//nolint:gosec // G306: uvx stub must be executable (0o755) for the test's PATH lookup to run it.
 	if err := os.WriteFile(filepath.Join(binDir, "uvx"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write uvx stub: %v", err)
 	}
@@ -252,6 +256,7 @@ func stubUvx(t *testing.T) {
 // plugin and registers its marketplace.
 func assertCCNotesRegistered(t *testing.T, path string) {
 	t.Helper()
+	//nolint:gosec // G304: reads a settings.json path under the test's own temp repo.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

@@ -29,7 +29,7 @@ func scrubGitEnv(t *testing.T) {
 	} {
 		if value, ok := os.LookupEnv(key); ok {
 			t.Setenv(key, value)
-			os.Unsetenv(key)
+			_ = os.Unsetenv(key)
 		}
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
@@ -39,6 +39,7 @@ func scrubGitEnv(t *testing.T) {
 
 func mustGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)

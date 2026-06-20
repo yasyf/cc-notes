@@ -121,6 +121,7 @@ func confirmScripts(cmd *cobra.Command, n int) error {
 func runScript(ctx context.Context, dir, script string, timeout time.Duration) model.CriterionStatus {
 	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	//nolint:gosec // G204: running the operator-defined criterion check command under sh is this feature's whole purpose.
 	cmd := exec.CommandContext(tctx, "sh", "-c", script)
 	cmd.Dir = dir
 	// WaitDelay force-closes the script's inherited pipes shortly after the

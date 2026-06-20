@@ -25,13 +25,13 @@ func fakeHolder(t *testing.T, respond func(req mountd.Request) mountd.Response) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	socket = filepath.Join(dir, "m.sock")
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 
 	var mu sync.Mutex
 	var reqs []mountd.Request
@@ -42,7 +42,7 @@ func fakeHolder(t *testing.T, respond func(req mountd.Request) mountd.Response) 
 				return
 			}
 			go func(conn net.Conn) {
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				var req mountd.Request
 				// A bare Available() dial closes without sending; the EOF here
 				// keeps those probes out of the recorded requests.
@@ -56,7 +56,7 @@ func fakeHolder(t *testing.T, respond func(req mountd.Request) mountd.Response) 
 				resp.Proto = mountd.MountProtoVersion
 				_ = json.NewEncoder(conn).Encode(resp)
 				if req.Op == mountd.OpShutdown && resp.OK {
-					ln.Close()
+					_ = ln.Close()
 				}
 			}(conn)
 		}

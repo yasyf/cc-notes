@@ -37,14 +37,15 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	testBinary = filepath.Join(dir, "cc-notes")
+	//nolint:gosec // G204: fixed go-build of this repo's own binary in the e2e test setup.
 	build := exec.Command("go", "build", "-o", testBinary, "github.com/yasyf/cc-notes/cmd/cc-notes")
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build cc-notes: %v\n%s", err, out)
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		os.Exit(1)
 	}
 	code := m.Run()
-	os.RemoveAll(dir)
+	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }
 
@@ -84,6 +85,7 @@ func binEnv(actor string) []string {
 func execBin(dir, actor string, args ...string) (binResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), binTimeout)
 	defer cancel()
+	//nolint:gosec // G204: testBinary is the e2e-built cc-notes binary; args are test-controlled.
 	cmd := exec.CommandContext(ctx, testBinary, args...)
 	cmd.Dir = dir
 	cmd.Env = binEnv(actor)

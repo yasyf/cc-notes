@@ -28,7 +28,7 @@ func scrubGitEnv(t *testing.T) {
 	} {
 		if value, ok := os.LookupEnv(key); ok {
 			t.Setenv(key, value)
-			os.Unsetenv(key)
+			_ = os.Unsetenv(key)
 		}
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
@@ -38,6 +38,7 @@ func scrubGitEnv(t *testing.T) {
 
 func mustGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
@@ -510,7 +511,7 @@ func TestRoot(t *testing.T) {
 	}
 
 	sub := filepath.Join(g.Dir, "nested", "dir")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
+	if err := os.MkdirAll(sub, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	got, err = gitcmd.Git{Dir: sub}.Root(ctx)
@@ -578,7 +579,7 @@ func TestRevRangeFileAuthors(t *testing.T) {
 
 	commitFile := func(name, email, path, content string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(g.Dir, path), []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(g.Dir, path), []byte(content), 0o600); err != nil {
 			t.Fatalf("write %s: %v", path, err)
 		}
 		mustGit(t, g.Dir, "add", path)
@@ -636,10 +637,10 @@ func TestWorktreeBlobOID(t *testing.T) {
 	ctx := t.Context()
 
 	path := "dir/file.txt"
-	if err := os.MkdirAll(filepath.Join(g.Dir, "dir"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(g.Dir, "dir"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("first\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("first\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -651,7 +652,7 @@ func TestWorktreeBlobOID(t *testing.T) {
 		t.Fatalf("WorktreeBlobOID = %q, want %q", oid, want)
 	}
 
-	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("second\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("second\n"), 0o600); err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
 	edited, err := g.WorktreeBlobOID(ctx, path)
@@ -672,10 +673,10 @@ func TestPathOID(t *testing.T) {
 	ctx := t.Context()
 
 	path := "dir/file.txt"
-	if err := os.MkdirAll(filepath.Join(g.Dir, "dir"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(g.Dir, "dir"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("first\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("first\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	mustGit(t, g.Dir, "add", path)
@@ -693,7 +694,7 @@ func TestPathOID(t *testing.T) {
 		t.Fatalf("PathOID on absent path = %v, want ErrPathNotFound", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("second\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("second\n"), 0o600); err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
 	mustGit(t, g.Dir, "commit", "-q", "-am", "edit file")

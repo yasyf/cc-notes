@@ -115,9 +115,10 @@ func installPostMergeHook(cmd *cobra.Command, g gitcmd.Git) (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stat post-merge hook: %w", err)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("create hooks dir: %w", err)
 	}
+	//nolint:gosec // G306: a git post-merge hook must be executable (0o755) to run.
 	if err := os.WriteFile(path, []byte(postMergeHook), 0o755); err != nil {
 		return "", fmt.Errorf("write post-merge hook: %w", err)
 	}

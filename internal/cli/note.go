@@ -398,14 +398,14 @@ func newNoteSupersedeCmd() *cobra.Command {
 
 func newNoteExpireCmd() *cobra.Command {
 	var reason string
-	var clear, jsonOut bool
+	var clearFlag, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "expire ID",
 		Short: "Flag a note as out-of-date (agent-asserted), or --clear to remove the flag",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if clear && reason != "" {
+			if clearFlag && reason != "" {
 				return &UsageError{Err: errors.New("note expire --clear takes no --reason")}
 			}
 			s, err := openStore()
@@ -420,7 +420,7 @@ func newNoteExpireCmd() *cobra.Command {
 				return err
 			}
 			var ops []model.Op
-			if clear {
+			if clearFlag {
 				ops = []model.Op{model.ClearStale{}}
 			} else {
 				ops = []model.Op{model.MarkStale{Reason: reason}}
@@ -434,7 +434,7 @@ func newNoteExpireCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&reason, "reason", "", "why the note is out-of-date")
-	flags.BoolVar(&clear, "clear", false, "remove the out-of-date flag")
+	flags.BoolVar(&clearFlag, "clear", false, "remove the out-of-date flag")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }

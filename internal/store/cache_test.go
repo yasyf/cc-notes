@@ -84,7 +84,7 @@ func TestFoldCacheVersionBump(t *testing.T) {
 	tip := model.SHA("aaaa000000000000000000000000000000000000")
 
 	stale := append([]byte{byte('0' + foldCacheVersion - 1), ' '}, "note\n{\"id\":\"x\"}"...)
-	if err := os.WriteFile(filepath.Join(dir, string(tip)), stale, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, string(tip)), stale, 0o600); err != nil {
 		t.Fatalf("write stale entry: %v", err)
 	}
 
@@ -222,7 +222,7 @@ func TestFoldCachePreP3EntryInvalidated(t *testing.T) {
 	// parses cleanly, so the version byte is the only thing that makes get miss;
 	// reverting foldCacheVersion to 2 turns this into a hit and fails the test.
 	preP3 := append([]byte{byte('0' + 2), ' '}, "task\n{\"id\":\"taskid\",\"branch\":\"main\",\"title\":\"old\",\"head\":\""+string(tip)+"\"}"...)
-	if err := os.WriteFile(filepath.Join(dir, string(tip)), preP3, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, string(tip)), preP3, 0o600); err != nil {
 		t.Fatalf("write pre-P3 entry: %v", err)
 	}
 
@@ -248,7 +248,7 @@ func TestFoldCacheCorruptEntryIsMiss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tip: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, string(tip)), []byte("not a cache entry"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, string(tip)), []byte("not a cache entry"), 0o600); err != nil {
 		t.Fatalf("corrupt entry: %v", err)
 	}
 

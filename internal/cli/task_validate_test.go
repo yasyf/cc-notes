@@ -17,9 +17,10 @@ import (
 func withFileStdin(t *testing.T) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "stdin")
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatalf("write stdin file: %v", err)
 	}
+	//nolint:gosec // G304: opens the stdin file under the test's own temp dir.
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("open stdin file: %v", err)
@@ -28,7 +29,7 @@ func withFileStdin(t *testing.T) {
 	os.Stdin = f
 	t.Cleanup(func() {
 		os.Stdin = saved
-		f.Close()
+		_ = f.Close()
 	})
 }
 
@@ -136,7 +137,7 @@ func TestTaskCriterionRoundTrip(t *testing.T) {
 	}
 
 	scriptFile := filepath.Join(dir, "check.sh")
-	if err := os.WriteFile(scriptFile, []byte("exit 0"), 0o644); err != nil {
+	if err := os.WriteFile(scriptFile, []byte("exit 0"), 0o600); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
 	scripted := spJSON[taskDTO](t, spMust(t, dir, "task", "criterion", "script", task.ID, cid[:7], scriptFile, "--json"))
@@ -175,10 +176,10 @@ func TestTaskValidate(t *testing.T) {
 
 	passFile := filepath.Join(dir, "pass.sh")
 	failFile := filepath.Join(dir, "fail.sh")
-	if err := os.WriteFile(passFile, []byte("exit 0"), 0o644); err != nil {
+	if err := os.WriteFile(passFile, []byte("exit 0"), 0o600); err != nil {
 		t.Fatalf("write pass script: %v", err)
 	}
-	if err := os.WriteFile(failFile, []byte("exit 1"), 0o644); err != nil {
+	if err := os.WriteFile(failFile, []byte("exit 1"), 0o600); err != nil {
 		t.Fatalf("write fail script: %v", err)
 	}
 	spMust(t, dir, "task", "criterion", "script", task.ID, pass[:7], passFile)

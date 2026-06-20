@@ -65,6 +65,7 @@ func TestFoldNoteCompactedEqualsFull(t *testing.T) {
 	if gotCompact.Head != "c4" {
 		t.Fatalf("Head = %q, want c4", gotCompact.Head)
 	}
+	//nolint:gosec // G404: deterministic PRNG seeds a reproducible fold fuzz; not security-relevant.
 	r := rand.New(rand.NewPCG(1, 2))
 	for i := range 30 {
 		got, err := fold.Note(shuffled(compacted, r))
@@ -163,6 +164,7 @@ func TestFoldSprintCompactedEqualsFull(t *testing.T) {
 	if gotFull.Head != "c4" {
 		t.Fatalf("Head = %q, want c4", gotFull.Head)
 	}
+	//nolint:gosec // G404: deterministic PRNG seeds a reproducible fold fuzz; not security-relevant.
 	r := rand.New(rand.NewPCG(3, 5))
 	for i := range 30 {
 		got, err := fold.Sprint(shuffled(compacted, r))
@@ -212,6 +214,7 @@ func TestFoldProjectCompactedEqualsFull(t *testing.T) {
 	if gotFull.Head != "c4" {
 		t.Fatalf("Head = %q, want c4", gotFull.Head)
 	}
+	//nolint:gosec // G404: deterministic PRNG seeds a reproducible fold fuzz; not security-relevant.
 	r := rand.New(rand.NewPCG(11, 13))
 	for i := range 30 {
 		got, err := fold.Project(shuffled(compacted, r))
@@ -275,6 +278,7 @@ func TestFoldTwoConcurrentCheckpoints(t *testing.T) {
 	if !slices.Equal(got.Tags, []string{"a", "b", "base", "common"}) {
 		t.Fatalf("Tags = %v, want [a b base common]", got.Tags)
 	}
+	//nolint:gosec // G404: deterministic PRNG seeds a reproducible fold fuzz; not security-relevant.
 	r := rand.New(rand.NewPCG(7, 9))
 	for i := range 50 {
 		s, err := fold.Note(shuffled(combined, r))

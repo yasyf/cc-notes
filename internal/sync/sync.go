@@ -97,7 +97,7 @@ type engine struct {
 // scan is suspect. Exhausting maxRounds fails wrapping ErrSyncContended; an
 // unconfigured remote fails wrapping ErrRemoteNotFound.
 func Sync(ctx context.Context, dir, remote string, full bool) (Report, error) {
-	s, err := store.Open(dir)
+	s, err := store.OpenContext(ctx, dir)
 	if err != nil {
 		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
 	}

@@ -43,7 +43,7 @@ func scrubGitEnv(t *testing.T) {
 	} {
 		if value, ok := os.LookupEnv(key); ok {
 			t.Setenv(key, value)
-			os.Unsetenv(key)
+			_ = os.Unsetenv(key)
 		}
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
@@ -53,6 +53,7 @@ func scrubGitEnv(t *testing.T) {
 
 func mustGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
@@ -375,7 +376,7 @@ func TestAppendContended(t *testing.T) {
 	mustGit(t, blocked, "config", "user.name", testName)
 	mustGit(t, blocked, "config", "user.email", testEmail)
 	alternates := filepath.Join(blocked, ".git", "objects", "info", "alternates")
-	if err := os.WriteFile(alternates, []byte(filepath.Join(s.Git.Dir, ".git", "objects")+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(alternates, []byte(filepath.Join(s.Git.Dir, ".git", "objects")+"\n"), 0o600); err != nil {
 		t.Fatalf("write alternates: %v", err)
 	}
 	mustGit(t, blocked, "update-ref", ref, string(decoy.ID))

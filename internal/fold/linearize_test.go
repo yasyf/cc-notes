@@ -56,6 +56,7 @@ func permutations(commits []model.PackCommit) [][]model.PackCommit {
 }
 
 func shuffles(commits []model.PackCommit, n int) [][]model.PackCommit {
+	//nolint:gosec // G404: deterministic PRNG seeds a reproducible linearize fuzz; not security-relevant.
 	r := rand.New(rand.NewPCG(1, 2))
 	out := make([][]model.PackCommit, n)
 	for i := range out {

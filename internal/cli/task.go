@@ -1135,7 +1135,7 @@ func newCriterionStatusCmd(use string, status model.CriterionStatus) *cobra.Comm
 }
 
 func newCriterionScriptCmd() *cobra.Command {
-	var clear, jsonOut bool
+	var clearFlag, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "script TASK CRIT FILE",
 		Short: "Set or clear a criterion's validation script",
@@ -1143,9 +1143,9 @@ func newCriterionScriptCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			switch {
-			case clear && len(args) != 2:
+			case clearFlag && len(args) != 2:
 				return &UsageError{Err: errors.New("--clear takes TASK CRIT with no FILE")}
-			case !clear && len(args) != 3:
+			case !clearFlag && len(args) != 3:
 				return &UsageError{Err: errors.New("script requires TASK CRIT FILE (or --clear)")}
 			}
 			s, err := openStore()
@@ -1153,7 +1153,7 @@ func newCriterionScriptCmd() *cobra.Command {
 				return err
 			}
 			var scriptText string
-			if !clear {
+			if !clearFlag {
 				if scriptText, err = readScript(args[2]); err != nil {
 					return err
 				}
@@ -1177,7 +1177,7 @@ func newCriterionScriptCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.BoolVar(&clear, "clear", false, "clear the criterion's validation script")
+	flags.BoolVar(&clearFlag, "clear", false, "clear the criterion's validation script")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }

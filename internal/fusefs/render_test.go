@@ -445,8 +445,10 @@ func TestDiffNoteEditable(t *testing.T) {
 		{
 			"swap tags adds before removes", func(p *fusefs.ParsedNote) { p.Tags = set([]string{"bb", "aa"}) },
 			[]model.Op{
-				model.AddTag{Tag: "aa"}, model.AddTag{Tag: "bb"},
-				model.RemoveTag{Tag: "bug"}, model.RemoveTag{Tag: "parser"},
+				model.AddTag{Tag: "aa"},
+				model.AddTag{Tag: "bb"},
+				model.RemoveTag{Tag: "bug"},
+				model.RemoveTag{Tag: "parser"},
 			},
 		},
 		{
@@ -1386,6 +1388,7 @@ func initRepo(t *testing.T) string {
 	t.Helper()
 	gitEnv(t)
 	dir := t.TempDir()
+	//nolint:gosec // G204: test shells out to git with fixed argv[0] and literal init args.
 	out, err := exec.Command("git", "-C", dir, "init", "-q", "-b", "main").CombinedOutput()
 	if err != nil {
 		t.Fatalf("git init: %v: %s", err, out)

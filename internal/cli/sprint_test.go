@@ -31,7 +31,7 @@ func spInitRepo(t *testing.T) string {
 	} {
 		if value, ok := os.LookupEnv(key); ok {
 			t.Setenv(key, value)
-			os.Unsetenv(key)
+			_ = os.Unsetenv(key)
 		}
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
@@ -43,6 +43,7 @@ func spInitRepo(t *testing.T) string {
 		{"config", "user.name", "Test User"},
 		{"config", "user.email", "test@example.com"},
 	} {
+		//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
