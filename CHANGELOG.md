@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A `ccn` shorthand for `cc-notes`. Homebrew and the install script now drop a
+  `ccn` symlink next to the binary, and the CLI shows `ccn` in its help/usage
+  when invoked through it.
+
 ## [0.5.0] - 2026-06-18
 
 ### Changed

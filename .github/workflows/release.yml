@@ -356,6 +356,7 @@ jobs:
                 # The release asset is a bare binary staged under its asset name.
                 bin.install Dir["cc-notes_*"].first => "cc-notes"
               end
+              bin.install_symlink "cc-notes" => "ccn"
             end
 
             def caveats

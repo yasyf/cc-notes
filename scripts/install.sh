@@ -1,9 +1,10 @@
 #!/bin/sh
 # Download the prebuilt cc-notes binary for this platform from a GitHub release
-# and install it to ~/.local/bin (override with CC_NOTES_BIN_DIR). The FUSE
-# variant is preferred wherever one is published (darwin both arches, linux
-# amd64), falling back to the pure static binary. Re-running for a version that
-# is already installed is a silent no-op.
+# and install it to ~/.local/bin (override with CC_NOTES_BIN_DIR), alongside a
+# `ccn` shorthand symlink. The FUSE variant is preferred wherever one is
+# published (darwin both arches, linux amd64), falling back to the pure static
+# binary. Re-running for a version that is already installed skips the download
+# but still refreshes the ccn symlink.
 #
 # Usage:
 #   install.sh [VERSION]        # VERSION defaults to "latest"
@@ -21,6 +22,12 @@ sha256_of() {
   else
     shasum -a 256 "$1" | awk '{print $1}'
   fi
+}
+
+# (Re)create the ccn shorthand next to the binary. A relative target keeps the
+# link valid if the bin dir is moved; ln -sf overwrites any prior link.
+link_alias() {
+  ln -sf cc-notes "$BIN_DIR/ccn"
 }
 
 # Prefer Homebrew for the default "latest" install: it owns updates, lands on
@@ -76,12 +83,13 @@ case "${os}_${arch}" in
   darwin_arm64 | darwin_amd64 | linux_amd64) asset="${asset}_fuse" ;;
 esac
 
-# Already on the target version? Nothing to do. Release binaries print
-# "<tag> (<commit>)", so a leading-tag match counts.
+# Already on the target version? Skip the download, but still refresh the ccn
+# shorthand. Release binaries print "<tag> (<commit>)", so a leading-tag match
+# counts.
 if [ -x "$DEST" ]; then
   installed="$("$DEST" version 2>/dev/null || true)"
   case "$installed" in
-    "$VERSION" | "$VERSION "*) exit 0 ;;
+    "$VERSION" | "$VERSION "*) link_alias; exit 0 ;;
   esac
 fi
 
@@ -111,4 +119,5 @@ if [ "$actual" != "$expected" ]; then
 fi
 chmod +x "$tmp"
 mv -f "$tmp" "$DEST"
+link_alias
 echo "cc-notes: installed $DEST ($("$DEST" version))" >&2

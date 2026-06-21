@@ -20,7 +20,7 @@ macOS and Linux. No Homebrew? The install script picks the right binary for your
 curl -fsSL https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh | sh
 ```
 
-Both prefer the FUSE-capable `_fuse` variant where it ships, which adds `cc-notes mount`. You can also grab an asset (each release ships a `SHA256SUMS.txt`) from [GitHub Releases](https://github.com/yasyf/cc-notes/releases), or `go install github.com/yasyf/cc-notes/cmd/cc-notes@latest`.
+Both prefer the FUSE-capable `_fuse` variant where it ships, which adds `cc-notes mount`, and install a `ccn` shorthand for `cc-notes` (the same binary, fewer keystrokes). You can also grab an asset (each release ships a `SHA256SUMS.txt`) from [GitHub Releases](https://github.com/yasyf/cc-notes/releases), or `go install github.com/yasyf/cc-notes/cmd/cc-notes@latest`.
 
 Or just add the marketplace plugin: enabling `cc-notes@cc-notes` auto-installs the binary on its first session (Homebrew-preferred, the release download as fallback) via a bundled `SessionStart` hook, so adopting cc-notes is one step.
 
