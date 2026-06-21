@@ -15,12 +15,40 @@ func TestSkillsInstallRegistersPlugin(t *testing.T) {
 	dir := initRepo(t)
 	out := mustRun(t, dir, "skills", "install")
 
-	assertCCNotesRegistered(t, filepath.Join(dir, ".claude", "settings.json"))
+	settings := filepath.Join(dir, ".claude", "settings.json")
+	assertCCNotesRegistered(t, settings)
 	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills")); !os.IsNotExist(err) {
 		t.Fatalf("skills install created .claude/skills; it should register the plugin, not vendor the skill")
 	}
-	if !strings.Contains(out, "registered: cc-notes plugin in .claude/settings.json") {
-		t.Fatalf("install output %q missing the registration line", out)
+	// The repo root prints symlink-resolved (macOS /var -> /private/var), so
+	// assert the message frame and the repo settings suffix rather than an exact
+	// path equal to the unresolved t.TempDir().
+	const prefix = "registered: cc-notes plugin in "
+	suffix := filepath.Join(".claude", "settings.json") + "\n"
+	if !strings.HasPrefix(out, prefix) || !strings.HasSuffix(out, suffix) {
+		t.Fatalf("install output = %q, want %q…%q for the repo settings.json", out, prefix, suffix)
+	}
+}
+
+// TestSkillsInstallGlobalRegistersUserSettings drives `skills install --global`
+// through the cobra tree and proves it enables the plugin in the user-global
+// ~/.claude/settings.json under the test-isolated HOME — never the repo's
+// .claude, and without a `cc-notes init`. initRepo redirects HOME to a temp dir,
+// so the real ~/.claude/settings.json is untouched.
+func TestSkillsInstallGlobalRegistersUserSettings(t *testing.T) {
+	dir := initRepo(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	out := mustRun(t, dir, "skills", "install", "--global")
+
+	global := filepath.Join(home, ".claude", "settings.json")
+	assertCCNotesRegistered(t, global)
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("--global wrote the repo settings.json; it must target only the user-global file")
+	}
+	if want := "registered: cc-notes plugin in " + global + "\n"; out != want {
+		t.Fatalf("--global install output = %q, want %q", out, want)
 	}
 }
 

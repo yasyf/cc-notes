@@ -292,15 +292,16 @@ Wire the Claude Code integration into a repository. Most repos get all of this f
 Register the cc-notes plugin in `.claude/settings.json` — shallow-merge the cc-notes marketplace
 (`yasyf/cc-notes`) and the `cc-notes@cc-notes` plugin into the committed settings, preserving
 every other key. The `using-cc-notes` skill then loads from the plugin (tracking the repository)
-on folder-trust instead of being copied into `.claude/skills/`. Takes no flags.
+on folder-trust instead of being copied into `.claude/skills/`. Pass `--global` to enable the
+plugin in the user-global `~/.claude/settings.json` instead of the repo.
 
 ### `cc-notes hooks install`
 
 Enable the cc-notes capt-hook pack. Runs `uvx capt-hook pack add
-github:yasyf/cc-notes@<binary version>`, which caches the pinned pack tarball, records
-`[packs.cc-notes]` in `.claude/hooks/packs.toml`, and wires the events into
-`.claude/settings.local.json`. The pack manifest lives at `.claude/capt-hook.toml`. Takes no
-flags.
+github:yasyf/cc-notes@latest`, which caches the pack tarball, records `[packs.cc-notes]` in
+`.claude/hooks/packs.toml`, and wires the events into `.claude/settings.local.json`. The source
+tracks `@latest` (unpinned) so `uvx capt-hook pack update` carries pack fixes without re-running
+install. The pack manifest lives at `.claude/capt-hook.toml`. Takes no flags.
 
 ### `cc-notes workflows install`
 

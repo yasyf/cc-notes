@@ -45,6 +45,56 @@ func TestInitInstallsRefspecs(t *testing.T) {
 	}
 }
 
+// TestSelfInitOnFirstWriteNoRemote proves a fresh `git init` repo needs no
+// `cc-notes init` before its first write: `note add` and `task add` each create
+// their refs/cc-notes/* ref directly. initRepo never runs `cc-notes init`, so a
+// passing assertion documents that self-init on first mutation already works.
+func TestSelfInitOnFirstWriteNoRemote(t *testing.T) {
+	dir := initRepo(t)
+	if refs := mustGit(t, dir, "for-each-ref", "refs/cc-notes/"); refs != "" {
+		t.Fatalf("fresh repo already has cc-notes refs %q; want none before any write", refs)
+	}
+
+	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "First", "--json"))
+	noteRef := "refs/cc-notes/notes/" + note.ID
+	if got := mustGit(t, dir, "rev-parse", "--verify", noteRef); got == "" {
+		t.Fatalf("note add did not create %s", noteRef)
+	}
+
+	task := addTask(t, dir, "Ship it")
+	taskRef := "refs/cc-notes/tasks/" + task.ID
+	if got := mustGit(t, dir, "rev-parse", "--verify", taskRef); got == "" {
+		t.Fatalf("task add did not create %s", taskRef)
+	}
+}
+
+// TestSelfInitWiresRefspecsOnFirstWrite proves the first mutating command in a
+// repo that has a remote but was never `cc-notes init`-ed installs the
+// refs/cc-notes/* refspecs itself via autoInstall — fetch and push both — so the
+// note it just created can sync. No `cc-notes init` runs first.
+func TestSelfInitWiresRefspecsOnFirstWrite(t *testing.T) {
+	dir, bare := initRepoWithRemote(t)
+	if fetch := mustGit(t, dir, "config", "--get-all", "remote.origin.fetch"); strings.Contains(fetch, "refs/cc-notes/*") {
+		t.Fatalf("fresh repo already has cc-notes fetch refspec %q; want none before any write", fetch)
+	}
+
+	mustRun(t, dir, "note", "add", "First")
+
+	fetch := mustGit(t, dir, "config", "--get-all", "remote.origin.fetch")
+	if !strings.Contains(fetch, "+refs/cc-notes/*:refs/cc-notes/*") {
+		t.Fatalf("first write did not auto-install the fetch refspec: %q", fetch)
+	}
+	push := mustGit(t, dir, "config", "--get-all", "remote.origin.push")
+	if !strings.Contains(push, "refs/cc-notes/*:refs/cc-notes/*") {
+		t.Fatalf("first write did not auto-install the push refspec: %q", push)
+	}
+
+	mustRun(t, dir, "sync")
+	if remote := mustGit(t, bare, "for-each-ref", "refs/cc-notes/"); !strings.Contains(remote, "refs/cc-notes/notes/") {
+		t.Fatalf("synced remote refs = %q, want the note ref pushed without a prior `cc-notes init`", remote)
+	}
+}
+
 func TestInitNoRemote(t *testing.T) {
 	dir := initRepo(t)
 	_, _, err := runCLI(t, dir, "init")

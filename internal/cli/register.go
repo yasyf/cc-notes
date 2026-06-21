@@ -13,13 +13,24 @@ import (
 // Code at the cc-notes plugin marketplace on GitHub.
 var ccNotesMarketplaceJSON = json.RawMessage(`{"source":{"source":"github","repo":"yasyf/cc-notes"}}`)
 
-// registerPlugin enables the cc-notes Claude Code plugin in
-// <root>/.claude/settings.json by shallow-merging an extraKnownMarketplaces
-// entry and an enabledPlugins flag into the committed settings, preserving every
-// other key and the existing key order. The skill then loads from the plugin
-// (tracking the repository) instead of being copied into .claude/skills.
-func registerPlugin(root string) error {
-	path := filepath.Join(root, ".claude", "settings.json")
+// repoSettingsPath is the project-scoped Claude Code settings file under root.
+func repoSettingsPath(root string) string {
+	return filepath.Join(root, ".claude", "settings.json")
+}
+
+// userSettingsPath is the user-global Claude Code settings file
+// (~/.claude/settings.json), the target of `--global` plugin enablement.
+func userSettingsPath() string {
+	return filepath.Join(mustHome(), ".claude", "settings.json")
+}
+
+// registerPlugin enables the cc-notes Claude Code plugin in the settings.json at
+// path by shallow-merging an extraKnownMarketplaces entry and an enabledPlugins
+// flag into the existing settings, preserving every other key and the existing
+// key order. The skill then loads from the plugin (tracking the repository)
+// instead of being copied into .claude/skills. path is either the repo's
+// .claude/settings.json or the user-global ~/.claude/settings.json.
+func registerPlugin(path string) error {
 	top := orderedObject{vals: map[string]json.RawMessage{}}
 	//nolint:gosec // G304: path is .claude/settings.json under the repo root this command manages.
 	switch data, err := os.ReadFile(path); {

@@ -61,7 +61,7 @@ func newInitCmd() *cobra.Command {
 			}
 			claudeExists := dirExists(filepath.Join(root, ".claude"))
 			if claudeExists {
-				if err := registerPlugin(root); err != nil {
+				if err := registerPlugin(repoSettingsPath(root)); err != nil {
 					return err
 				}
 				if _, err := fmt.Fprintln(out, "registered: cc-notes plugin in .claude/settings.json"); err != nil {
@@ -86,7 +86,7 @@ func newInitCmd() *cobra.Command {
 			// last: a failure here never blocks the local-only refspecs, plugin
 			// registration, CI workflow, or post-merge hook installed above.
 			if claudeExists {
-				if err := runCaptHookPackAdd(cmd, root, version.Version); err != nil {
+				if err := runCaptHookPackAdd(cmd, root); err != nil {
 					return err
 				}
 			}

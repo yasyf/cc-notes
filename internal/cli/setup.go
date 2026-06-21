@@ -10,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/cc-notes/plugin"
 )
 
@@ -26,23 +25,41 @@ func newSkillsCmd() *cobra.Command {
 }
 
 func newSkillsInstallCmd() *cobra.Command {
+	var global bool
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Register the cc-notes plugin in .claude/settings.json",
-		Args:  exactArgs(0),
+		Long: "Register the cc-notes plugin in the repo's .claude/settings.json, or in\n" +
+			"the user-global ~/.claude/settings.json with --global.",
+		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			root, err := repoRoot(cmd)
+			path, err := pluginSettingsTarget(cmd, global)
 			if err != nil {
 				return err
 			}
-			if err := registerPlugin(root); err != nil {
+			if err := registerPlugin(path); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), "registered: cc-notes plugin in .claude/settings.json")
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "registered: cc-notes plugin in %s\n", path)
 			return err
 		},
 	}
+	cmd.Flags().BoolVar(&global, "global", false, "enable the plugin in the user-global ~/.claude/settings.json instead of the repo")
 	return cmd
+}
+
+// pluginSettingsTarget resolves where `skills install` writes the plugin
+// enablement: the user-global ~/.claude/settings.json when global is set, else
+// the repo's .claude/settings.json. Only the repo target needs the repo root.
+func pluginSettingsTarget(cmd *cobra.Command, global bool) (string, error) {
+	if global {
+		return userSettingsPath(), nil
+	}
+	root, err := repoRoot(cmd)
+	if err != nil {
+		return "", err
+	}
+	return repoSettingsPath(root), nil
 }
 
 func newWorkflowsCmd() *cobra.Command {
@@ -95,27 +112,25 @@ func newHooksInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runCaptHookPackAdd(cmd, root, version.Version)
+			return runCaptHookPackAdd(cmd, root)
 		},
 	}
 	return cmd
 }
 
 // packAddArgs builds the argv after `uvx` that enables the cc-notes pack,
-// pinned to the running binary's release tag. A dev build has no matching
-// tag, so it tracks the default branch.
-func packAddArgs(ver string) []string {
-	source := "github:yasyf/cc-notes"
-	if ver != "" && ver != "dev" {
-		source += "@" + ver
-	}
-	return []string{"capt-hook", "pack", "add", source}
+// always tracking the latest release rather than pinning to the running binary's
+// version. The nudge pack and the binary version independently, so an unpinned
+// source lets `uvx capt-hook pack update` carry pack fixes to every install
+// without re-running `cc-notes hooks install` against a bumped binary.
+func packAddArgs() []string {
+	return []string{"capt-hook", "pack", "add", "github:yasyf/cc-notes@latest"}
 }
 
 // runCaptHookPackAdd shells out to `uvx capt-hook pack add` from the repo root,
 // streaming the subcommand's stdio so its progress reaches the operator.
-func runCaptHookPackAdd(cmd *cobra.Command, root, ver string) error {
-	args := append([]string{"uvx"}, packAddArgs(ver)...)
+func runCaptHookPackAdd(cmd *cobra.Command, root string) error {
+	args := append([]string{"uvx"}, packAddArgs()...)
 	//nolint:gosec // G204: args[0] is the literal "uvx"; the rest is this command's own fixed capt-hook invocation, by design.
 	c := exec.CommandContext(cmd.Context(), args[0], args[1:]...)
 	c.Dir = root

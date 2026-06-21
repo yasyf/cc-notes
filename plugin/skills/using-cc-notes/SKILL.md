@@ -3,7 +3,8 @@ name: using-cc-notes
 description: >-
   Use cc-notes to record durable tasks and notes that outlive a session, stored as
   git objects on refs/cc-notes/*. Triggers when an agent records a task or note for
-  later; runs status to orient on the backlog and who holds what; claims or starts a
+  later; adopts cc-notes in a repo that has not run init yet; runs status to orient on
+  the backlog and who holds what; claims or starts a
   task; coordinates work across branches and multiple agents; manages leases and
   reclaims stale claims; verifies or supersedes a durable fact; syncs tasks and notes
   with a remote; reconciles tasks after merging a branch; or links commits to the task

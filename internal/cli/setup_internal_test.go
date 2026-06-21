@@ -7,42 +7,18 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestPackAddArgs(t *testing.T) {
-	tests := []struct {
-		name string
-		ver  string
-		want []string
-	}{
-		{
-			name: "dev tracks the default branch",
-			ver:  "dev",
-			want: []string{"capt-hook", "pack", "add", "github:yasyf/cc-notes"},
-		},
-		{
-			name: "empty tracks the default branch",
-			ver:  "",
-			want: []string{"capt-hook", "pack", "add", "github:yasyf/cc-notes"},
-		},
-		{
-			name: "stable tag pins the ref",
-			ver:  "v1.2.3",
-			want: []string{"capt-hook", "pack", "add", "github:yasyf/cc-notes@v1.2.3"},
-		},
-		{
-			name: "prerelease tag pins the ref",
-			ver:  "v1.2.3-rc1",
-			want: []string{"capt-hook", "pack", "add", "github:yasyf/cc-notes@v1.2.3-rc1"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := packAddArgs(tt.ver)
-			if !slices.Equal(got, tt.want) {
-				t.Fatalf("packAddArgs(%q) = %v, want %v", tt.ver, got, tt.want)
-			}
-		})
+	// The source is unpinned on purpose: the pack tracks @latest so
+	// `uvx capt-hook pack update` carries pack fixes without re-running install
+	// against a bumped binary. This intentionally diverges from pinning to the
+	// binary version.
+	want := []string{"capt-hook", "pack", "add", "github:yasyf/cc-notes@latest"}
+	if got := packAddArgs(); !slices.Equal(got, want) {
+		t.Fatalf("packAddArgs() = %v, want %v", got, want)
 	}
 }
 
@@ -88,7 +64,7 @@ func TestRegisterPluginPreservesOrderAndMerges(t *testing.T) {
 	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
 		t.Fatalf("seed settings: %v", err)
 	}
-	if err := registerPlugin(dir); err != nil {
+	if err := registerPlugin(path); err != nil {
 		t.Fatalf("registerPlugin: %v", err)
 	}
 
@@ -150,7 +126,7 @@ func TestRegisterPluginCreatesAndIsIdempotent(t *testing.T) {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
 	path := filepath.Join(dir, ".claude", "settings.json")
-	if err := registerPlugin(dir); err != nil {
+	if err := registerPlugin(path); err != nil {
 		t.Fatalf("registerPlugin (create): %v", err)
 	}
 	//nolint:gosec // G304: reads the settings.json path under the test's own temp dir.
@@ -158,7 +134,7 @@ func TestRegisterPluginCreatesAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read after create: %v", err)
 	}
-	if err := registerPlugin(dir); err != nil {
+	if err := registerPlugin(path); err != nil {
 		t.Fatalf("registerPlugin (idempotent): %v", err)
 	}
 	//nolint:gosec // G304: reads the settings.json path under the test's own temp dir.
@@ -168,5 +144,64 @@ func TestRegisterPluginCreatesAndIsIdempotent(t *testing.T) {
 	}
 	if string(first) != string(second) {
 		t.Fatalf("registerPlugin is not idempotent:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
+// TestPluginSettingsTargetGlobal proves `--global` targets the user-global
+// ~/.claude/settings.json under the (test-isolated) HOME, never the repo, and
+// without needing a repo root. HOME is redirected to a temp dir so the real
+// ~/.claude/settings.json is untouched.
+func TestPluginSettingsTargetGlobal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	target, err := pluginSettingsTarget(&cobra.Command{}, true)
+	if err != nil {
+		t.Fatalf("pluginSettingsTarget(global): %v", err)
+	}
+	want := filepath.Join(home, ".claude", "settings.json")
+	if target != want {
+		t.Fatalf("global target = %q, want %q", target, want)
+	}
+	if target != userSettingsPath() {
+		t.Fatalf("global target = %q, want userSettingsPath() %q", target, userSettingsPath())
+	}
+}
+
+// TestRegisterPluginWritesGlobalSettings proves registerPlugin enables the
+// plugin in the user-global settings.json when handed userSettingsPath(),
+// creating ~/.claude/ under the test's temp HOME. This is the mechanism the
+// orchestrator drives for the real global enable; the test never touches the
+// real home.
+func TestRegisterPluginWritesGlobalSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path := userSettingsPath()
+	if err := registerPlugin(path); err != nil {
+		t.Fatalf("registerPlugin(global): %v", err)
+	}
+	if !strings.HasPrefix(path, home) {
+		t.Fatalf("global settings path %q escaped the temp HOME %q", path, home)
+	}
+
+	//nolint:gosec // G304: reads the global settings path under the test's own temp HOME.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read global settings: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("global settings is not valid JSON: %v", err)
+	}
+	ep, _ := m["enabledPlugins"].(map[string]any)
+	if ep["cc-notes@cc-notes"] != true {
+		t.Fatalf("enabledPlugins = %v, want cc-notes@cc-notes enabled in the global settings", m["enabledPlugins"])
+	}
+	mk, _ := m["extraKnownMarketplaces"].(map[string]any)
+	cc, _ := mk["cc-notes"].(map[string]any)
+	src, _ := cc["source"].(map[string]any)
+	if src["source"] != "github" || src["repo"] != "yasyf/cc-notes" {
+		t.Fatalf("global extraKnownMarketplaces[cc-notes] = %v, want source github yasyf/cc-notes", mk["cc-notes"])
 	}
 }
