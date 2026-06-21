@@ -72,14 +72,15 @@ This runs `uvx capt-hook pack add github:yasyf/cc-notes@latest`, which resolves
 `@latest` to the newest release, caches the pack tarball, records
 `[packs.cc-notes]` in `.claude/hooks/packs.toml`, and regenerates the event wiring
 in `.claude/settings.local.json`. The source is unpinned on purpose: the pack
-tracks `@latest` and `uvx capt-hook pack update` picks up new releases, so the
-nudges stay current without re-running install against a bumped binary. capt-hook
-derives the event set from the pack, and the dispatcher runs via `uvx`, so there
-is nothing else to install.
+tracks `@latest`, and capt-hook re-resolves it at most once a day and auto-fetches
+new releases, so the nudges stay current on their own. capt-hook derives the event
+set from the pack, and the dispatcher runs via `uvx`, so there is nothing else to
+install.
 
 The pack cache (`~/.cache/captain-hook`) and `.claude/settings.local.json` aren't
-committed, so a teammate who clones the repo runs `uvx capt-hook pack update` — or
-re-runs `cc-notes hooks install` — to fetch and wire the pack locally.
+committed, but capt-hook auto-fetches the declared pack on the next hook event, so a
+teammate who clones the repo only re-runs `cc-notes hooks install` to regenerate the
+local event wiring.
 
 ## Test
 
