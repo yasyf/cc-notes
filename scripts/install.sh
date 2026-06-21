@@ -15,6 +15,27 @@ VERSION="${1:-latest}"
 BIN_DIR="${CC_NOTES_BIN_DIR:-$HOME/.local/bin}"
 DEST="$BIN_DIR/cc-notes"
 
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+# Prefer Homebrew for the default "latest" install: it owns updates, lands on
+# PATH, and the formula carries its own checksums. Best-effort — any failure
+# (no brew, the Homebrew 6 tap-trust sandbox bug #22603, network) falls through
+# to the direct release download below. A pinned-version request skips brew,
+# since the formula only tracks the latest stable release.
+if [ "$VERSION" = "latest" ] && command -v brew >/dev/null 2>&1; then
+  if brew install yasyf/tap/cc-notes >/dev/null 2>&1 && command -v cc-notes >/dev/null 2>&1; then
+    echo "cc-notes: installed via Homebrew ($(cc-notes version))" >&2
+    exit 0
+  fi
+  echo "cc-notes: Homebrew unavailable or failed (e.g. tap-trust #22603); using direct download" >&2
+fi
+
 # Resolve "latest" to a concrete tag by following the releases/latest redirect
 # and parsing the tag off the resulting .../releases/tag/<tag> URL.
 if [ "$VERSION" = "latest" ]; then
@@ -72,6 +93,22 @@ mkdir -p "$BIN_DIR"
 tmp="$(mktemp "$BIN_DIR/.cc-notes.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 curl -fsSL --retry 2 -o "$tmp" "$url"
+# Verify the download against the release's SHA256SUMS.txt before trusting it.
+# (Homebrew already verifies via the formula; this guards the direct path.)
+if ! sums="$(curl -fsSL --retry 2 "https://github.com/$REPO/releases/download/$VERSION/SHA256SUMS.txt")"; then
+  echo "cc-notes: could not fetch SHA256SUMS.txt for $VERSION" >&2
+  exit 1
+fi
+expected="$(printf '%s\n' "$sums" | awk -v a="$asset" '$2 == a {print $1}')"
+if [ -z "$expected" ]; then
+  echo "cc-notes: no checksum for $asset in SHA256SUMS.txt" >&2
+  exit 1
+fi
+actual="$(sha256_of "$tmp")"
+if [ "$actual" != "$expected" ]; then
+  echo "cc-notes: checksum mismatch for $asset (expected $expected, got $actual)" >&2
+  exit 1
+fi
 chmod +x "$tmp"
 mv -f "$tmp" "$DEST"
 echo "cc-notes: installed $DEST ($("$DEST" version))" >&2

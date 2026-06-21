@@ -35,6 +35,7 @@ shared queue; `cc-notes task start <id>` claims it and pulls it onto your branch
 | 6 | `git merge` / `git pull` (PostToolUse, max 3) | A merged branch's open tasks stay put until carried over, so run `cc-notes reconcile --into <target>`, then `cc-notes sync`. |
 | 7 | `cc-notes task claim` / `task start` (PostToolUse, max 2) | You hold a lease now, so `cc-notes sync` to let other agents see the claim, `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold. |
 | 8 | Many open native tasks after `TaskCreate` (max 2) | Mirror durable or cross-agent items into `cc-notes task add`, to the backlog if they're shared. |
+| 9 | `cc-notes` binary missing from `PATH`, first `UserPromptSubmit`, fires once | The pack is enabled but the binary is missing, so name the two install paths — `brew install yasyf/tap/cc-notes` or `curl -fsSL …/install.sh \| sh` — to break the silent dead-end. |
 
 Nudges 1–3 shell out to `cc-notes` and render its live state (tasks, relevant
 notes, drift verdicts) into the nudge. Nudges 2 and 3 dedup per note per purpose:
@@ -44,13 +45,24 @@ as context once *and* prompt reconciliation once. Nudges 1 and 8 are reflexes
 about the native-vs-durable line; 4 through 7 keep the git workflow and cc-notes
 coordination in lockstep.
 
+Nudge 9 is the visible fallback for the plugin's auto-installer. Enabling the
+cc-notes plugin runs a `SessionStart` hook (`scripts/ensure-cc-notes.sh`) that is
+the primary auto-install path — Homebrew-preferred, the release download as
+fallback — so the binary is usually present before the first prompt. Nudge 9
+speaks only when that bootstrap couldn't produce a binary.
+
 ## Silent unless cc-notes is installed
 
-Every nudge is gated behind the `CcNotesAvailable` condition, which requires
-exactly one thing: the `cc-notes` binary on `PATH`. There is no `refs/cc-notes/*`
-ref check — gating on that would be a chicken-and-egg wall, since the adoption
-nudges that prompt the *first* cc-notes write would never fire in a fresh repo
-that has no refs yet.
+Every *workflow* nudge is gated behind the `CcNotesAvailable` condition, which
+requires exactly one thing: the `cc-notes` binary on `PATH`. There is no
+`refs/cc-notes/*` ref check — gating on that would be a chicken-and-egg wall,
+since the adoption nudges that prompt the *first* cc-notes write would never fire
+in a fresh repo that has no refs yet.
+
+The one exception is nudge 9, gated on the inverse `CcNotesMissing` (binary *not*
+on `PATH`). It's the only thing that speaks when the binary is absent, so an
+opt-in repo whose auto-install didn't land a binary still gets a hint instead of
+silence across the board.
 
 The per-repo opt-in is the pack's **presence** in `.claude/hooks/packs.toml`,
 which `cc-notes hooks install` records. A repo that doesn't want these nudges

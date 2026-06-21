@@ -36,6 +36,7 @@ from cc_notes import (
     float_session_tasks,
     parse_relevant,
     parse_tasks,
+    prompt_install_cc_notes,
     render_note_lines,
     render_task_line,
     run_cc_notes,
@@ -264,6 +265,30 @@ def test_float_session_tasks_silent_no_tasks(monkeypatch, tmp_path) -> None:
     evt = mock_event("UserPromptSubmit", prompt="hi", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
     check("float silent: no tasks -> None", float_session_tasks(evt) is None)
+
+
+def test_install_nudge_gate(monkeypatch, tmp_path) -> None:
+    """CcNotesMissing inverts the gate: OPEN when the binary is absent, CLOSED when present."""
+    from captain_hook.conditions import matches_conditions
+
+    evt = mock_event("UserPromptSubmit", prompt="start work", session_dir=tmp_path)
+
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: None)
+    check("install nudge: gate opens when binary absent", matches_conditions(_spec_for(prompt_install_cc_notes), evt))
+
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    check("install nudge: gate closes when binary present", not matches_conditions(_spec_for(prompt_install_cc_notes), evt))
+
+
+def test_install_nudge_message(monkeypatch, tmp_path) -> None:
+    """The body is unconditional (the gate lives in the decorator) and names both install paths."""
+    evt = mock_event("UserPromptSubmit", prompt="start work", session_dir=tmp_path)
+    result = prompt_install_cc_notes(evt)
+    check("install nudge: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("install nudge: brew path present", "brew install yasyf/tap/cc-notes" in result.message, result.message)
+        check("install nudge: install.sh path present", "scripts/install.sh" in result.message, result.message)
+        check("install nudge: mentions PATH", "PATH" in result.message, result.message)
 
 
 def test_float_note_context_dedup(monkeypatch, tmp_path) -> None:

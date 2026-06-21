@@ -3,12 +3,15 @@
 These are advisory NUDGES, never gates: cc-notes *complements* Claude's native
 task tracking, so the hooks only ever warn — they never block a tool call.
 
-Every nudge is gated behind :class:`CcNotesAvailable`, which keeps them completely
-silent unless the ``cc-notes`` binary is on PATH. Per-repo opt-in is the pack's
-*presence* in ``.claude/hooks/packs.toml`` — a repo that doesn't want these
-nudges simply doesn't enable the pack. The read-time floaters fall closed to
-silence on a repo with no cc-notes refs anyway, since :func:`run_cc_notes`
-returns nothing to render there.
+Every *workflow* nudge is gated behind :class:`CcNotesAvailable`, which keeps them
+completely silent unless the ``cc-notes`` binary is on PATH — with one exception:
+:func:`prompt_install_cc_notes`, gated on the inverse :class:`CcNotesMissing`,
+fires precisely when the binary is absent so an opt-in repo isn't left with silent
+nudges and no hint. Per-repo opt-in is the pack's *presence* in
+``.claude/hooks/packs.toml`` — a repo that doesn't want these nudges simply
+doesn't enable the pack. The read-time floaters fall closed to silence on a repo
+with no cc-notes refs anyway, since :func:`run_cc_notes` returns nothing to render
+there.
 
 The teaching goal is the native-vs-durable distinction:
 
@@ -195,6 +198,21 @@ class CcNotesAvailable(CustomCondition):
         return shutil.which("cc-notes") is not None
 
 
+class CcNotesMissing(CustomCondition):
+    """Matches whenever the ``cc-notes`` binary does NOT resolve on PATH.
+
+    The exact inverse of :class:`CcNotesAvailable`. A wired pack with no binary
+    on PATH is the silent dead-end this nudge breaks: every workflow nudge gates
+    closed and nothing signals that cc-notes is in play here. It is the visible
+    fallback when the plugin's SessionStart auto-installer could not produce a
+    binary (offline, locked-down env). Gate on binary absence alone — no ref
+    probe — matching CcNotesAvailable's binary-only philosophy.
+    """
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        return shutil.which("cc-notes") is None
+
+
 class ManyNativeTasks(CustomCondition):
     """Matches when the session is carrying enough open native tasks to look durable.
 
@@ -244,6 +262,28 @@ def float_session_tasks(evt: UserPromptSubmitEvent) -> Any:
         "Durable cc-notes tasks in play — run `cc-notes status` to orient "
         "(shared backlog, your branch's tasks, who holds what, notes needing review):",
         *lines,
+    )
+
+
+@on(
+    Event.UserPromptSubmit,
+    only_if=[CcNotesMissing()],
+    max_fires=1,
+)
+def prompt_install_cc_notes(evt: UserPromptSubmitEvent) -> Any:
+    """Once per session, surface that the cc-notes binary is missing and how to install it.
+
+    The pack is wired here (its presence in packs.toml is the opt-in) but the
+    binary is off PATH, so every other nudge gates closed and the plugin's
+    SessionStart auto-installer evidently did not land one. Name the two install
+    paths once at the first prompt rather than failing silent.
+    """
+    return evt.warn(
+        "cc-notes hooks are enabled in this repo but the `cc-notes` binary isn't on "
+        "PATH, so every cc-notes nudge stays silent (the plugin's auto-install didn't "
+        "land one). Install it to enable them:",
+        "brew install yasyf/tap/cc-notes",
+        "# or: curl -fsSL https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh | sh",
     )
 
 

@@ -4,5 +4,19 @@
   "description": "Git-native notes and tasks layer for AI agents — durable, synced work items and design decisions stored as objects in the git ODB on refs/cc-notes/*.",
   "author": {
     "name": "yasyf"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/ensure-cc-notes.sh",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
   }
 }
