@@ -84,16 +84,23 @@ func linkNotes(repoRoot, mountpoint string) error {
 
 // unlinkNotes removes repoRoot/.notes only when it is a symlink pointing at
 // mountpoint, so a teardown never deletes a real file or a symlink the user
-// repurposed. A missing link is a no-op.
+// repurposed. A missing link or a real file/directory at the path is a no-op;
+// an unexpected stat or readlink error is surfaced rather than swallowed.
 func unlinkNotes(repoRoot, mountpoint string) error {
 	link := notesLinkPath(repoRoot)
-	target, err := os.Readlink(link)
+	info, err := os.Lstat(link)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		// Not a symlink (EINVAL) means a real file took the path — leave it.
+		return fmt.Errorf("inspect %s: %w", link, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
 		return nil
+	}
+	target, err := os.Readlink(link)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", link, err)
 	}
 	if target != mountpoint {
 		return nil
