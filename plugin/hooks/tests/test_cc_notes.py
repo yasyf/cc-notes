@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cc_notes
 from cc_notes import (
+    DurableInternalWrite,
     FloatedNotes,
     HandoffVerdict,
     StaleChecked,
@@ -205,6 +206,52 @@ def test_cap_and_render_tasks() -> None:
     )
     under = cap_and_render_tasks(tasks[:3], 7)
     check("cap_and_render_tasks: under cap -> no tail", len(under) == 3 and not under[-1].startswith("+"))
+
+
+def test_durable_internal_write_condition() -> None:
+    """DurableInternalWrite.check fires on durable-internal writes, stays silent on the rest.
+
+    The condition is pure over the event (no PATH/CLI), so it is unit-tested
+    directly via mock_event. The false-positive matrix is non-negotiable:
+    published docs, source, secrets, and images MUST stay silent; the
+    GOOGLE_OAUTH_VERIFICATION.md / memory/ / signal-bearing writes MUST fire.
+    """
+    cond = DurableInternalWrite()
+
+    def fires(label: str, *, tool: str = "Write", file=None, content=None, command=None, expected: bool) -> None:
+        evt = mock_event("PostToolUse", tool=tool, file=file, content=content, command=command)
+        check(f"durable-internal: {label}", cond.check(evt) == expected, f"file={file!r} content={content!r}")
+
+    # Positives ----------------------------------------------------------------
+    fires("STRONG *_VERIFICATION.md fires", file="GOOGLE_OAUTH_VERIFICATION.md", content="# x\n## Status\n", expected=True)
+    fires("STRONG nested HANDOFF.md fires (basename match)", file="work/sub/HANDOFF.md", content="brief", expected=True)
+    fires("memory/ .md fires", file="memory/google-oauth-verification.md", content="status notes", expected=True)
+    fires("memory/ any-extension fires", file="memory/scratch.py", content="x = 1\n", expected=True)
+    fires("nested src/memory/ fires (under prefix)", file="src/memory/x.md", content="anything", expected=True)
+    fires("WEAK *-notes.md + checklist body fires", file="auth-notes.md", content="next steps:\n- [ ] rotate\n", expected=True)
+    fires("WEAK *-notes.md + keyword body fires", file="deploy-notes.md", content="This is a handoff for the next agent.\n", expected=True)
+    fires("WEAK runbook* fires with signal", file="runbook-deploy.md", content="## Status\nremaining work\n", expected=True)
+    fires("WEAK TODO.md + checklist fires", file="TODO.md", content="- [ ] ship it\n", expected=True)
+
+    # Negatives ----------------------------------------------------------------
+    fires("WEAK name, no body signal stays silent", file="auth-notes.md", content="just a heading\n", expected=False)
+    fires("WEAK name, empty body stays silent", file="auth-notes.md", content="", expected=False)
+    fires("published README.md silent", file="README.md", content="# Readme\n", expected=False)
+    fires("published CHANGELOG.md silent", file="CHANGELOG.md", content="# Changelog\n## Status\n- [ ] x\n", expected=False)
+    fires("published LICENSE.md silent", file="LICENSE.md", content="MIT\n", expected=False)
+    fires("published CONTRIBUTING.md silent", file="CONTRIBUTING.md", content="## Status\nHandoff\n", expected=False)
+    fires("published docs/ tree silent", file="docs/guide.md", content="# Guide\n## Status\n- [ ] x\n", expected=False)
+    fires("source .ts silent", file="src/foo.ts", content="export const x = 1\n", expected=False)
+    fires("source .go silent", file="main.go", content="package main\n", expected=False)
+    fires("source .toml silent", file="pyproject.toml", content="[project]\nname='x'\n", expected=False)
+    fires("source .yaml silent", file="config.yaml", content="status: handoff\n", expected=False)
+    fires("secret .env silent", file=".env", content="API_KEY=secret\n", expected=False)
+    fires("secret .env.local silent", file=".env.local", content="API_KEY=secret\n", expected=False)
+    fires("secret *secret*.md silent", file="app-secret.md", content="## Status\nHandoff\n- [ ] x\n", expected=False)
+    fires("secret *.key silent", file="private.key", content="-----BEGIN-----\n", expected=False)
+    fires("secret *credential*.md silent", file="db-credential.md", content="## Status\nHandoff\n", expected=False)
+    fires("image .png silent", file="screenshot.png", content="binary", expected=False)
+    fires("no-file Bash event silent", tool="Bash", command="ls", expected=False)
 
 
 def stub_cli(mapping: dict[tuple[str, ...], str]):

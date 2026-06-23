@@ -76,6 +76,29 @@ HANDOFF_EXEMPT_NAME = re.compile(
 
 HANDOFF_EXEMPT_DIRS = ("docs/", "site/", "blog/", "content/", ".github/")
 
+# DurableInternalWrite glob vocabulary: the static, paid-call-free classifier the
+# :class:`DurableInternalWrite` condition reads. STRONG names are durable-internal
+# on their name alone; WEAK names only fire when the body carries an internal signal
+# (a `- [ ]` checklist or a handoff/status/runbook keyword via INTERNAL_BODY_RE).
+# PUBLISHED/SOURCE/SECRET are the hard exclusions — a write that matches one of
+# those is never durable-internal knowledge that belongs out of the public tree.
+STRONG_INTERNAL_GLOBS = ("*_VERIFICATION.md", "*HANDOFF*.md", "*STATUS*.md", "*-handoff.md", "HANDOFF.md", "STATUS.md", "NOTES.md")
+WEAK_INTERNAL_GLOBS = ("TODO.md", "*-notes.md", "runbook*.md", "runbook*", "scratch*.md")
+PUBLISHED_GLOBS = ("README*", "CHANGELOG*", "LICENSE*", "CONTRIBUTING*", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg")
+PUBLISHED_DIRS = ("docs/",)
+SECRET_GLOBS = (".env", ".env.*", "*.env", "*secret*", "*credential*", "*.key", "*.pem")
+SOURCE_GLOBS = (
+    "*.py", "*.pyi", "*.ts", "*.tsx", "*.js", "*.mjs", "*.cjs", "*.jsx",
+    "*.go", "*.rs", "*.java", "*.c", "*.h", "*.cpp", "*.rb", "*.sh",
+    "*.json", "*.toml", "*.yaml", "*.yml",
+)
+
+# A WEAK-named write only nudges when its body carries an internal signal: a
+# top-level (optionally indented) `- [ ]` checklist line, or a handoff/status/
+# runbook-flavored keyword. The leading `(?im)` makes the whole pattern
+# case-insensitive and multiline.
+INTERNAL_BODY_RE = r"(?im)^\s*- \[ \]|\b(handoff|hand-off|remaining|next steps|runbook|verification|status|decisions?)\b"
+
 
 def run_cc_notes(evt: BaseHookEvent, *args: str) -> str | None:
     """Run ``cc-notes`` with ``args`` in the project dir, returning stdout or None.
@@ -299,6 +322,44 @@ class ManyNativeTasks(CustomCondition):
 
     def check(self, evt: BaseHookEvent) -> bool:
         return len(evt.tasks.open) >= NATIVE_TASK_MIRROR_THRESHOLD
+
+
+class DurableInternalWrite(CustomCondition):
+    """Matches a write of durable INTERNAL knowledge that belongs out of the public tree.
+
+    The static, paid-call-free counterpart to the LLM-backed
+    :func:`nudge_store_handoff_as_doc`: it fires on the loose status/handoff/
+    notes/runbook/TODO file an agent would otherwise commit to a public branch —
+    the kind cc-notes keeps as git objects on ``refs/cc-notes/*`` instead. A
+    ``memory/`` write of any extension counts (that tree is the durable-fact
+    home), a STRONG-named ``.md`` counts on its name, a WEAK-named ``.md`` counts
+    only when its body carries an internal signal (:data:`INTERNAL_BODY_RE`).
+    Published docs (README/CHANGELOG/…, ``docs/``, images), source files, and
+    anything secret-shaped are hard-excluded — those are never durable-internal
+    knowledge, and secrets must never be pushed into refs that sync to the remote.
+    """
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        file = evt.file
+        # A `memory/` write of ANY extension is durable-internal — caught before
+        # the non-.md bail below — unless it is secret-shaped (refs sync remotely).
+        if file is not None and file.under("memory/") and not file.matches(*SECRET_GLOBS):
+            return True
+        if file is None:
+            return False
+        if file.suffix.lower() != ".md":
+            return False
+        if file.matches(*SECRET_GLOBS):
+            return False
+        if file.matches(*PUBLISHED_GLOBS) or file.under(*PUBLISHED_DIRS):
+            return False
+        if file.matches(*SOURCE_GLOBS):
+            return False
+        if file.matches(*STRONG_INTERNAL_GLOBS):
+            return True
+        if file.matches(*WEAK_INTERNAL_GLOBS):
+            return bool(evt.content) and bool(re.search(INTERNAL_BODY_RE, evt.content))
+        return False
 
 
 @session_state
@@ -563,6 +624,45 @@ def nudge_store_handoff_as_doc(evt: PostToolUseEvent) -> Any:
         '(Pipe the markdown into `--body -`; `--when` is the "read this when…" '
         "trigger that decides when a future agent is shown it.)",
     )
+
+
+nudge(
+    "This file reads like durable INTERNAL knowledge — a status/handoff brief, "
+    "ad-hoc notes, a runbook, or a TODO list — the kind you'd otherwise commit to "
+    "a public branch where it shouldn't be committed. cc-notes keeps exactly this "
+    "out of the public tree: as git objects on `refs/cc-notes/*`, synced with the "
+    "remote but never in the working tree. Move it there, then delete the loose "
+    "file:\n"
+    "- long-form runbook/handoff/context for the next agent -> "
+    'cc-notes doc add "<title>" --body - --when "<when to read this>"\n'
+    "- a single durable fact or decision -> cc-notes note add\n"
+    "- actionable work / TODOs -> cc-notes task add (`--backlog` if it's shared)\n"
+    "Do NOT push secrets into cc-notes — the refs sync to the remote. Keep "
+    ".env/keys/credentials in gitignored scratch, never in a note, doc, or task.",
+    only_if=[Tool("Edit|Write|MultiEdit"), DurableInternalWrite(), CcNotesAvailable()],
+    events=Event.PostToolUse,
+    max_fires=2,
+    tests={
+        Input(
+            tool="Write",
+            file="GOOGLE_OAUTH_VERIFICATION.md",
+            content="# ...\n## Status\nHandoff\n## Remaining\n- [ ] x\n",
+        ): Warn(pattern="cc-notes doc add"),
+        Input(tool="Edit", file="memory/google-oauth-verification.md", content="status notes"): Warn(pattern="cc-notes note add"),
+        Input(tool="Write", file="auth-notes.md", content="next steps:\n- [ ] rotate\n"): Warn(pattern="cc-notes task add"),
+        # WEAK name with no internal body signal stays silent.
+        Input(tool="Write", file="auth-notes.md", content="just a heading\n"): Allow(),
+        # Published docs, source, secrets, images, and non-edit tools never fire.
+        Input(tool="Write", file="README.md", content="# Readme\nsome prose\n"): Allow(),
+        Input(tool="Write", file="docs/guide.md", content="# Guide\n## Status\n- [ ] x\n"): Allow(),
+        Input(tool="Write", file="CHANGELOG.md", content="# Changelog\n## Status\n"): Allow(),
+        Input(tool="Write", file="src/foo.ts", content="export const x = 1\n"): Allow(),
+        Input(tool="Write", file=".env", content="API_KEY=secret\n"): Allow(),
+        Input(tool="Write", file="oauth-secret.md", content="## Status\nHandoff\n- [ ] x\n"): Allow(),
+        Input(tool="Write", file="screenshot.png", content="binary"): Allow(),
+        Input(tool="Read", file="m.py"): Allow(),
+    },
+)
 
 
 nudge(
