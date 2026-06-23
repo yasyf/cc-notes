@@ -59,6 +59,14 @@ the primary auto-install path — Homebrew-preferred, the release download as
 fallback — so the binary is usually present before the first prompt. Nudge 9
 speaks only when that bootstrap couldn't produce a binary.
 
+That same `SessionStart` hook also runs `cc-notes mount --auto` — the
+session-start ensure-mount — alongside the auto-install. `mount --auto`
+self-gates on the repo's opt-in (`cc-notes.autoMount=true`, set by `cc-notes
+init` unless you pass `--no-mount`) and on a fuse-capable binary, adopts an
+already-live mount with zero overhead, and is quiet and best-effort, so it never
+fails the session. This is a shell `SessionStart` hook, not a capt-hook nudge, so
+it carries no entry in the nudge table above.
+
 ## Silent unless cc-notes is installed
 
 Every *workflow* nudge is gated behind the `CcNotesAvailable` condition, which

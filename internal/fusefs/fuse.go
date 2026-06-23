@@ -22,6 +22,11 @@ import (
 	"github.com/yasyf/fusekit"
 )
 
+// Hostable reports whether this binary can host fuse mounts in-process. It is
+// true in the fuse build, so automatic mounts (init's auto-mount, the
+// session-start ensure-mount) proceed.
+const Hostable = true
+
 // libfuseT is where the FUSE-T cask installs its dylib.
 const libfuseT = "/usr/local/lib/libfuse-t.dylib"
 

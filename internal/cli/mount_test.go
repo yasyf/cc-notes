@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
+	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/fusekit/mountd"
 )
 
@@ -70,10 +71,15 @@ func fakeHolder(t *testing.T, respond func(req mountd.Request) mountd.Response) 
 	return socket, requests
 }
 
-// okHolder responds success to every op (an empty List).
+// okHolder responds success to every op (an empty List). Its OpHealth reports
+// THIS binary's version, so the detached mount path's Converge sees no version
+// skew and is the cheap no-op (the production-common case) — a holder reporting
+// a different version would route into the retire-and-replace path, which a pure
+// test binary cannot respawn through (TestMountDetachedConvergesStaleHolder
+// exercises that skew leg deliberately).
 func okHolder(req mountd.Request) mountd.Response {
 	if req.Op == mountd.OpHealth {
-		return mountd.Response{OK: true, Version: "test"}
+		return mountd.Response{OK: true, Version: version.String()}
 	}
 	return mountd.Response{OK: true}
 }
@@ -107,6 +113,47 @@ func TestMountDetachedSucceeds(t *testing.T) {
 	}
 }
 
+// TestMountDetachedConvergesStaleHolder proves the detached mount path converges
+// a holder left running at an older cc-notes version before serving: Converge
+// sees the version skew and retires the stale holder (OpShutdown). Because a pure
+// test binary cannot respawn the successor, the mount then fails with
+// ErrCannotHost (exit 1) after a "converge warning" on stderr — a real fuse
+// binary would respawn the current version and remount. The full
+// replace+remount is covered in fusekit's RemoteHost.Converge tests; this pins
+// the cc-notes integration (Converge runs before Setup and fires on skew).
+func TestMountDetachedConvergesStaleHolder(t *testing.T) {
+	repo := initRepo(t)
+	sock, requests := fakeHolder(t, func(req mountd.Request) mountd.Response {
+		if req.Op == mountd.OpHealth {
+			// A version the current binary will never report, so Converge treats
+			// the holder as skewed and retires it.
+			return mountd.Response{OK: true, Version: "v0.0.0-stale"}
+		}
+		return mountd.Response{OK: true}
+	})
+	mp := filepath.Join(t.TempDir(), "mnt")
+
+	_, stderr, err := runCLI(t, repo, "mount", "--socket", sock, mp)
+	if err == nil {
+		t.Fatal("mount succeeded against a stale holder a pure binary cannot replace, want a failure")
+	}
+	if code := cli.ExitCode(err); code != 1 {
+		t.Errorf("exit = %d, want 1 (cannot respawn the successor on a pure build); err = %v", code, err)
+	}
+	var sawShutdown bool
+	for _, r := range requests() {
+		if r.Op == mountd.OpShutdown {
+			sawShutdown = true
+		}
+	}
+	if !sawShutdown {
+		t.Error("Converge did not retire the stale-version holder (no OpShutdown sent)")
+	}
+	if !strings.Contains(stderr, "converge warning") {
+		t.Errorf("stderr = %q, want a converge warning for the failed respawn", stderr)
+	}
+}
+
 func TestMountDetachedIdempotentRemount(t *testing.T) {
 	repo := initRepo(t)
 	sock, _ := fakeHolder(t, okHolder)
@@ -135,6 +182,34 @@ func TestMountBusyExits4(t *testing.T) {
 	}
 	if code := cli.ExitCode(err); code != 4 {
 		t.Errorf("exit = %d, want 4 (conflict); err = %v", code, err)
+	}
+}
+
+// TestMountAutoQuietNoOpWithoutFuse proves the session-start ensure-mount
+// (`mount --auto`) is a silent, successful no-op on a binary that cannot host
+// fuse — even with the repo opted in (cc-notes.autoMount=true). It must never
+// contact a holder or print anything, so the SessionStart hook can call it in
+// any repo without risk of disturbing a running holder.
+func TestMountAutoQuietNoOpWithoutFuse(t *testing.T) {
+	dir := initRepo(t)
+	mustGit(t, dir, "config", "cc-notes.autoMount", "true")
+
+	stdout, stderr, err := runCLI(t, dir, "mount", "--auto")
+	if err != nil {
+		t.Fatalf("mount --auto: %v", err)
+	}
+	if stdout != "" || stderr != "" {
+		t.Errorf("mount --auto output = (stdout %q, stderr %q), want silent", stdout, stderr)
+	}
+}
+
+// TestMountAutoRejectsMountpoint proves --auto is a self-contained mode: it takes
+// no MOUNTPOINT and cannot be combined with another mode.
+func TestMountAutoRejectsMountpoint(t *testing.T) {
+	dir := initRepo(t)
+	_, _, err := runCLI(t, dir, "mount", "--auto", filepath.Join(t.TempDir(), "mnt"))
+	if cli.ExitCode(err) != 2 {
+		t.Fatalf("mount --auto MOUNTPOINT err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
 	}
 }
 

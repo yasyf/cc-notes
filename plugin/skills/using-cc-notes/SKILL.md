@@ -61,6 +61,18 @@ The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, el
 
 See `references/tasks-vs-notes.md` for worked examples of choosing among the four.
 
+## Mount the notes tree (optional)
+
+The `.notes` mount surfaces every note, doc, and task as editable files at the repo root — read-write Markdown and JSON you browse and edit instead of shelling out. On a `_fuse` binary, `cc-notes init` mounts it by default and records the preference, so each new session re-mounts it automatically and the mount survives reboots with no steady-state cost. A pure (non-fuse) binary records the preference but mounts nothing until a fuse-capable session takes over. Opt out at init time, or manage a live mount:
+
+```console
+$ cc-notes init --no-mount   # skip the mount and disable auto-mount
+$ cc-notes mount               # mount on demand (needs a _fuse binary)
+$ cc-notes mount --stop .notes # unmount this repo's .notes
+```
+
+The mount mechanics — holder model, teardown, the macOS Network Volumes grant — live in `references/cli-reference.md`.
+
 ## Canonical agent flow
 
 The spine of day-to-day use. Run `init` once per repo; everything else recurs as you work.

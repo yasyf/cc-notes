@@ -76,13 +76,13 @@ rounds: 1
 | `cc-notes reconcile` | Carry merged branches' open tasks onto a target branch |
 | `cc-notes blame` | Name the task(s) a commit implemented |
 | `cc-notes sync` | Push and pull `refs/cc-notes/*`, union-merging concurrent edits |
-| `cc-notes mount` | Expose notes and tasks as an editable filesystem (needs a `_fuse` binary) |
+| `cc-notes mount` | Expose notes and tasks as an editable `.notes` filesystem (needs a `_fuse` binary; auto-mounted by `init`) |
 
 Tasks also carry `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, `stale`, `claim`, and `validate`; notes add `verify`, `list`, `edit`, `search`, and `supersede`; docs add `list`, `show`, `edit`, `search`, `verify`, `supersede`, `expire`, and `review`. An optional planning layer rolls tasks up into sprints and projects via `cc-notes sprint` and `cc-notes project`. Every note, task, doc, sync, reconcile, and status command takes `--json`. Run `cc-notes <noun> --help`, or read the full [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md).
 
 ## How it works
 
-Each entity is an event-log CRDT (conflict-free replicated data type) riding git as its transport — an approach pioneered by [git-bug](https://github.com/git-bug/git-bug). Mutations append kind-tagged ops to a per-entity op-log on a hidden ref; readers linearize and deterministically fold the log into the current snapshot, so concurrent edits union-merge instead of conflicting. Syncing rides plain git (and works under jj, where `cc-notes sync` drives git directly). With a `_fuse` binary, `cc-notes mount` exposes everything as an editable filesystem — Markdown notes, JSON tasks — needing `brew install macos-fuse-t/cask/fuse-t` on macOS or `fuse3` on Linux; see the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) for mount mechanics.
+Each entity is an event-log CRDT (conflict-free replicated data type) riding git as its transport — an approach pioneered by [git-bug](https://github.com/git-bug/git-bug). Mutations append kind-tagged ops to a per-entity op-log on a hidden ref; readers linearize and deterministically fold the log into the current snapshot, so concurrent edits union-merge instead of conflicting. Syncing rides plain git (and works under jj, where `cc-notes sync` drives git directly). With a `_fuse` binary, `cc-notes mount` exposes everything as an editable filesystem — Markdown notes, JSON tasks — needing `brew install macos-fuse-t/cask/fuse-t` on macOS or `fuse3` on Linux; see the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) for mount mechanics. On a `_fuse` binary `init` mounts this `.notes` tree by default (`--no-mount` to skip) and records the preference, so each session re-mounts it; a pure binary records the preference but mounts nothing.
 
 ## Development
 

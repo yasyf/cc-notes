@@ -23,6 +23,7 @@ func newInitCmd() *cobra.Command {
 	var hook bool
 	var ci bool
 	var noCI bool
+	var noMount bool
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Set up cc-notes in this repository",
@@ -33,7 +34,10 @@ func newInitCmd() *cobra.Command {
 			"    capt-hook pack via `capt-hook pack add`.\n" +
 			"  - When a .github/ directory exists, installs a GitHub Actions workflow that\n" +
 			"    reconciles merged tasks onto the default branch on every push. Pass\n" +
-			"    --no-ci to skip it, or --ci to force it without a .github/ directory.\n\n" +
+			"    --no-ci to skip it, or --ci to force it without a .github/ directory.\n" +
+			"  - Mounts the repository's notes, docs, and tasks as a `.notes` filesystem\n" +
+			"    (a background holder serves it) and records the preference so new\n" +
+			"    sessions re-mount it. Pass --no-mount to skip and disable that.\n\n" +
 			"--hook also installs a git post-merge hook that runs `cc-notes reconcile`\n" +
 			"after every merge. The hook is git-only: it does NOT fire under jj, a\n" +
 			"rebase, or a server-side squash merge. Treat it as a git-only convenience —\n" +
@@ -82,9 +86,21 @@ func newInitCmd() *cobra.Command {
 					return err
 				}
 			}
+			// Auto-mount the repo's .notes by default so the notes/tasks tree is
+			// there without a manual `cc-notes mount`; --no-mount opts out. The
+			// preference is persisted in git config (read by the session-start
+			// ensure-mount nudge) regardless, and the mount itself is best-effort —
+			// a build that cannot host fuse just warns. Recorded before the network
+			// capt-hook call below so a uvx blip never loses the preference.
+			if err := setAutoMount(ctx, s.Git, !noMount); err != nil {
+				return fmt.Errorf("record auto-mount preference: %w", err)
+			}
+			if !noMount {
+				autoMount(cmd, root)
+			}
 			// The capt-hook pack add shells out to uvx over the network, so it runs
 			// last: a failure here never blocks the local-only refspecs, plugin
-			// registration, CI workflow, or post-merge hook installed above.
+			// registration, CI workflow, post-merge hook, or auto-mount above.
 			if claudeExists {
 				if err := runCaptHookPackAdd(cmd, root); err != nil {
 					return err
@@ -98,6 +114,7 @@ func newInitCmd() *cobra.Command {
 	flags.BoolVar(&ci, "ci", false, "force-install the reconcile GitHub Actions workflow even without a .github/ directory")
 	flags.BoolVar(&noCI, "no-ci", false, "skip the reconcile GitHub Actions workflow even when a .github/ directory exists")
 	flags.BoolVar(&hook, "hook", false, "also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj/rebase/server-side squash)")
+	flags.BoolVar(&noMount, "no-mount", false, "skip auto-mounting the `.notes` filesystem and disable the session-start ensure-mount")
 	return cmd
 }
 

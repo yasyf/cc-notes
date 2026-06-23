@@ -9,6 +9,13 @@ import (
 	"github.com/yasyf/fusekit/mountd"
 )
 
+// Hostable reports whether this binary can host fuse mounts in-process. It is
+// false in the pure build, so automatic mounts (init's auto-mount, the
+// session-start ensure-mount) silently skip rather than spawning a holder that
+// can only fail — and, critically, never contact a running holder. An explicit
+// `cc-notes mount` still attempts and surfaces ErrCannotHost.
+const Hostable = false
+
 // Mount always fails in this build variant: the binary was compiled without
 // the fuse tag, so it has no in-process fuse host. It wraps mountd.ErrCannotHost
 // — the pure-build refusal, distinct from a fuse-built binary whose library

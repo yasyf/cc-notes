@@ -39,3 +39,11 @@ func mountsSocketPath() string {
 func mountHolderLogPath() string {
 	return filepath.Join(stateDir(), "mount-holder.log")
 }
+
+// stableExecDir is where the mount holder's binary is materialized as a stable
+// copy before spawning (~/.cc-notes/bin), so the holder's resolved executable
+// path stays put across version upgrades and the macOS "Network Volumes" TCC
+// grant survives them; see fusekit/mountd.RemoteHost.StableExecDir.
+func stableExecDir() string {
+	return filepath.Join(stateDir(), "bin")
+}

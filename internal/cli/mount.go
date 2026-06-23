@@ -16,6 +16,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/fusefs"
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/store"
+	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/fusekit/mountd"
 )
 
@@ -31,6 +32,7 @@ type mountOpts struct {
 	shutdown   bool
 	stop       string
 	socket     string
+	auto       bool
 }
 
 func newMountCmd() *cobra.Command {
@@ -62,6 +64,8 @@ func newMountCmd() *cobra.Command {
 	f.StringVar(&opts.stop, "stop", "", "unmount the mount at DIR, then exit")
 	f.StringVar(&opts.socket, "socket", mountsSocketPath(), "mount-holder unix socket path")
 	_ = f.MarkHidden("socket")
+	f.BoolVar(&opts.auto, "auto", false, "session-start ensure-mount: mount only if this repo opted in (cc-notes.autoMount) and the binary can host fuse; self-gating, best-effort, quiet")
+	_ = f.MarkHidden("auto")
 	return cmd
 }
 
@@ -87,7 +91,13 @@ func runMount(cmd *cobra.Command, args []string, opts mountOpts) error {
 		return &UsageError{Err: errors.New("--list, --shutdown, and --stop take no MOUNTPOINT and cannot be combined with --foreground")}
 	}
 
+	if opts.auto && (modes > 0 || opts.foreground || len(args) > 0) {
+		return &UsageError{Err: errors.New("--auto takes no MOUNTPOINT and cannot be combined with --foreground, --list, --shutdown, or --stop")}
+	}
+
 	switch {
+	case opts.auto:
+		return runMountAuto(cmd)
 	case opts.list:
 		return runMountList(cmd, opts.socket)
 	case opts.shutdown:
@@ -130,16 +140,34 @@ func runMount(cmd *cobra.Command, args []string, opts mountOpts) error {
 		return fusefs.Mount(cmd.Context(), repoRoot, mp)
 	}
 
-	// Detached default: hand the mount to the holder (spawning it if needed),
-	// print the mountpoint, and return — the mount persists. Ensure the state dir
-	// exists first: it homes the spawn log and the default socket, and fusekit
-	// treats both paths' parent dirs as the caller's to create. Without this the
-	// first `mount DIR` on a fresh machine — an explicit mountpoint never creates
-	// ~/.cc-notes — dies opening the holder log.
+	// Detached default: hand the mount to the holder, converging a stale-version
+	// holder first and presenting the managed .notes symlink. serveDetached owns
+	// that whole path so `init`'s auto-mount reuses it verbatim.
+	return serveDetached(cmd, opts.socket, repoRoot, mp, usedDefault)
+}
+
+// serveDetached hands repoRoot's mount to the holder on socket and returns —
+// the mount persists. It converges a stale-version holder first (a holder left
+// running at an older cc-notes version never self-replaces, the wire protocol
+// being frozen), then ensures the mount via Setup, then — for the managed
+// default (usedDefault) — presents it in the repo as a .notes symlink and prints
+// that path; an explicit mountpoint prints itself. The state dir is created
+// first: it homes the spawn log and the default socket, and fusekit treats both
+// paths' parent dirs as the caller's to create. Shared by `mount` and `init`.
+func serveDetached(cmd *cobra.Command, socket, repoRoot, mp string, usedDefault bool) error {
 	if err := os.MkdirAll(stateDir(), 0o700); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
 	}
-	if err := newRemoteHost(opts.socket).Setup(repoRoot, mp); err != nil {
+	host := newRemoteHost(socket)
+	// Converge is best-effort: a failure must not block this mount (Setup below
+	// brings a holder up and serves the requested dir regardless), so it is
+	// surfaced as a warning, not returned.
+	if err := host.Converge(cmd.Context()); err != nil {
+		if _, werr := fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: converge warning: %v\n", err); werr != nil {
+			return werr
+		}
+	}
+	if err := host.Setup(repoRoot, mp); err != nil {
 		return err
 	}
 	// Present the managed default at .notes only after the mount is live, so a
@@ -259,13 +287,17 @@ func runMountStop(cmd *cobra.Command, socket, dir string) error {
 
 // newRemoteHost builds the holder-backed mount driver for socket, carrying
 // cc-notes' holder argv and pure-build install hint. SpawnTimeout is left zero
-// (mountd.DefaultSpawnTimeout).
+// (mountd.DefaultSpawnTimeout). StableExecDir spawns the holder from a stable
+// binary copy so the macOS TCC grant survives upgrades; Version lets Converge
+// replace a holder left running at an older cc-notes version.
 func newRemoteHost(socket string) *mountd.RemoteHost {
 	return &mountd.RemoteHost{
 		Socket:         socket,
 		LogPath:        mountHolderLogPath(),
 		Args:           []string{"mount-holder", "--socket", socket},
 		CannotHostHint: cannotHostHint,
+		StableExecDir:  stableExecDir(),
+		Version:        version.String(),
 	}
 }
 
@@ -297,14 +329,26 @@ func resolveRepoAndMountpoint(ctx context.Context, cwd string, args []string) (r
 		}
 		return repoRoot, mp, false, nil
 	}
+	mp, err := defaultMountpoint(repoRoot)
+	if err != nil {
+		return "", "", false, err
+	}
+	return repoRoot, mp, true, nil
+}
+
+// defaultMountpoint is the managed per-repo mountpoint for repoRoot
+// (~/.cc-notes/mnt/<base>-<hash>), created if missing. The hash keys the holder
+// registry per repo; the basename keeps the path legible. Shared by the
+// no-argument `mount` default and `init`'s auto-mount.
+func defaultMountpoint(repoRoot string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", "", false, fmt.Errorf("home directory: %w", err)
+		return "", fmt.Errorf("home directory: %w", err)
 	}
 	sum := sha256.Sum256([]byte(repoRoot))
 	mp := filepath.Join(home, ".cc-notes", "mnt", filepath.Base(repoRoot)+"-"+hex.EncodeToString(sum[:])[:8])
 	if err := os.MkdirAll(mp, 0o700); err != nil {
-		return "", "", false, fmt.Errorf("create mountpoint %s: %w", mp, err)
+		return "", fmt.Errorf("create mountpoint %s: %w", mp, err)
 	}
-	return repoRoot, mp, true, nil
+	return mp, nil
 }
