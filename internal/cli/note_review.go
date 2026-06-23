@@ -36,6 +36,47 @@ type reviewedNote struct {
 	verdict string
 }
 
+// reviewedDoc pairs a doc with its computed review verdict.
+type reviewedDoc struct {
+	doc     model.Doc
+	verdict string
+}
+
+// freshEntity carries the freshness-relevant fields a Note and a Doc share —
+// anchors, content witness, last-verify time, the out-of-date flag, and
+// supersede edges — so one verdict/drift implementation serves both kinds.
+// model.Note and model.Doc both expose these as fields; the cli-local adapter
+// (freshFromNote/freshFromDoc) projects them without colliding with any method.
+type freshEntity struct {
+	Anchors      []model.Anchor
+	Witness      []model.AnchorWitness
+	VerifiedAt   int64
+	StaleAt      int64
+	SupersededBy []model.EntityID
+}
+
+// freshFromNote projects a note onto its freshness fields.
+func freshFromNote(n model.Note) freshEntity {
+	return freshEntity{
+		Anchors:      n.Anchors,
+		Witness:      n.Witness,
+		VerifiedAt:   n.VerifiedAt,
+		StaleAt:      n.StaleAt,
+		SupersededBy: n.SupersededBy,
+	}
+}
+
+// freshFromDoc projects a doc onto its freshness fields.
+func freshFromDoc(d model.Doc) freshEntity {
+	return freshEntity{
+		Anchors:      d.Anchors,
+		Witness:      d.Witness,
+		VerifiedAt:   d.VerifiedAt,
+		StaleAt:      d.StaleAt,
+		SupersededBy: d.SupersededBy,
+	}
+}
+
 // noteStaleAfter resolves the note staleness threshold with precedence
 // env > git config > 90d: CC_NOTES_NOTE_STALE_AFTER overrides the last
 // cc-notes.noteStaleAfter git config value (mirrors leaseTTL).
@@ -115,21 +156,22 @@ func witnessIndex(witness []model.AnchorWitness) map[model.Anchor]model.AnchorWi
 	return m
 }
 
-// noteVerdict computes the single review verdict for n against live content at
-// head, returning "" when the note is fresh. Precedence is
+// verdictOf computes the single review verdict for fe against live content at
+// head, returning "" when fresh. Precedence is
 // EXPIRED > UNVERIFIED > DRIFTED > STALE; dangling supersede edges are surfaced
-// separately by reviewNotes. An unborn HEAD skips drift detection. When
-// worktree is true, path anchors drift-check against the on-disk working-tree
-// file rather than the committed blob at head.
-func noteVerdict(ctx context.Context, s *store.Store, head model.SHA, n model.Note, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
-	if n.StaleAt != 0 {
+// separately by reviewNotes/reviewDocs. An unborn HEAD skips drift detection.
+// When worktree is true, path anchors drift-check against the on-disk
+// working-tree file rather than the committed blob at head. noteVerdict and
+// docVerdict are thin projections onto this shared core.
+func verdictOf(ctx context.Context, s *store.Store, head model.SHA, fe freshEntity, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
+	if fe.StaleAt != 0 {
 		return verdictExpired, nil
 	}
-	if n.VerifiedAt == 0 {
+	if fe.VerifiedAt == 0 {
 		return verdictUnverified, nil
 	}
 	if head != "" || worktree {
-		drifted, err := noteDrifted(ctx, s, head, n, worktree)
+		drifted, err := driftedOf(ctx, s, head, fe, worktree)
 		if err != nil {
 			return "", err
 		}
@@ -137,23 +179,22 @@ func noteVerdict(ctx context.Context, s *store.Store, head model.SHA, n model.No
 			return verdictDrifted, nil
 		}
 	}
-	if now.Sub(time.Unix(n.VerifiedAt, 0)) > staleAfter {
+	if now.Sub(time.Unix(fe.VerifiedAt, 0)) > staleAfter {
 		return verdictStale, nil
 	}
 	return "", nil
 }
 
-// noteDrifted reports whether any witnessed anchor no longer matches live
-// content at head: a path or directory whose content oid changed or vanished
-// (a directory's witness is its tree oid, so any change under the subtree
-// drifts), or a commit no longer reachable from head. Anchors without a
-// recorded witness are not drift-checked. When worktree is true, a path
-// anchor's live oid is the on-disk working-tree blob (WorktreeBlobOID), so an
-// uncommitted edit drifts the note; directory and commit anchors keep their
-// HEAD-based check.
-func noteDrifted(ctx context.Context, s *store.Store, head model.SHA, n model.Note, worktree bool) (bool, error) {
-	byAnchor := witnessIndex(n.Witness)
-	for _, a := range n.Anchors {
+// driftedOf reports whether any witnessed anchor no longer matches live content
+// at head: a path or directory whose content oid changed or vanished (a
+// directory's witness is its tree oid, so any change under the subtree drifts),
+// or a commit no longer reachable from head. Anchors without a recorded witness
+// are not drift-checked. When worktree is true, a path anchor's live oid is the
+// on-disk working-tree blob (WorktreeBlobOID), so an uncommitted edit drifts the
+// entity; directory and commit anchors keep their HEAD-based check.
+func driftedOf(ctx context.Context, s *store.Store, head model.SHA, fe freshEntity, worktree bool) (bool, error) {
+	byAnchor := witnessIndex(fe.Witness)
+	for _, a := range fe.Anchors {
 		w, ok := byAnchor[a]
 		if !ok {
 			continue
@@ -186,6 +227,20 @@ func noteDrifted(ctx context.Context, s *store.Store, head model.SHA, n model.No
 	return false, nil
 }
 
+// noteVerdict computes the single review verdict for n against live content at
+// head, returning "" when the note is fresh. See verdictOf for precedence and
+// the worktree semantics.
+func noteVerdict(ctx context.Context, s *store.Store, head model.SHA, n model.Note, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
+	return verdictOf(ctx, s, head, freshFromNote(n), now, staleAfter, worktree)
+}
+
+// docVerdict computes the single review verdict for d against live content at
+// head, returning "" when the doc is fresh. A doc carries the same verdict set
+// and precedence as a note. See verdictOf.
+func docVerdict(ctx context.Context, s *store.Store, head model.SHA, d model.Doc, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
+	return verdictOf(ctx, s, head, freshFromDoc(d), now, staleAfter, worktree)
+}
+
 // liveAnchorOID resolves the current content oid of a path or directory anchor.
 // A path anchor under worktree mode reads the on-disk working-tree blob
 // (WorktreeBlobOID), surfacing an uncommitted edit as drift; otherwise, and
@@ -216,7 +271,7 @@ func reviewNotes(ctx context.Context, s *store.Store, head model.SHA, now time.T
 	var reviewed []reviewedNote
 	for _, n := range all {
 		if len(n.SupersededBy) > 0 {
-			if supersedeDangling(n, exists) {
+			if supersedeDangling(freshFromNote(n), exists) {
 				reviewed = append(reviewed, reviewedNote{note: n, verdict: verdictDangling})
 			}
 			continue
@@ -232,11 +287,45 @@ func reviewNotes(ctx context.Context, s *store.Store, head model.SHA, now time.T
 	return reviewed, nil
 }
 
-// supersedeDangling reports whether any of n's supersede targets has been
+// reviewDocs folds the doc review set (non-deleted, including superseded for
+// dangling detection) and returns each flagged doc with its verdict, mirroring
+// reviewNotes: a non-superseded doc carries its content verdict
+// (UNVERIFIED/DRIFTED/STALE/EXPIRED); a superseded doc is surfaced only when its
+// edge dangles. Fresh docs are dropped. Order follows ListDocs: creation time
+// then id.
+func reviewDocs(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) ([]reviewedDoc, error) {
+	all, err := s.ListDocs(ctx, false, true)
+	if err != nil {
+		return nil, err
+	}
+	exists := make(map[model.EntityID]bool, len(all))
+	for _, d := range all {
+		exists[d.ID] = true
+	}
+	var reviewed []reviewedDoc
+	for _, d := range all {
+		if len(d.SupersededBy) > 0 {
+			if supersedeDangling(freshFromDoc(d), exists) {
+				reviewed = append(reviewed, reviewedDoc{doc: d, verdict: verdictDangling})
+			}
+			continue
+		}
+		verdict, err := docVerdict(ctx, s, head, d, now, staleAfter, false)
+		if err != nil {
+			return nil, err
+		}
+		if verdict != "" {
+			reviewed = append(reviewed, reviewedDoc{doc: d, verdict: verdict})
+		}
+	}
+	return reviewed, nil
+}
+
+// supersedeDangling reports whether any of fe's supersede targets has been
 // tombstoned — absent from the live (non-deleted) set. A chain whose target is
 // itself superseded but still live is valid, not dangling.
-func supersedeDangling(n model.Note, exists map[model.EntityID]bool) bool {
-	for _, target := range n.SupersededBy {
+func supersedeDangling(fe freshEntity, exists map[model.EntityID]bool) bool {
+	for _, target := range fe.SupersededBy {
 		if !exists[target] {
 			return true
 		}
@@ -264,6 +353,15 @@ func reverseSupersedes(ctx context.Context, s *store.Store, id model.EntityID) (
 // noteReviewCount counts the notes needing review against live content.
 func noteReviewCount(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) (int, error) {
 	reviewed, err := reviewNotes(ctx, s, head, now, staleAfter)
+	if err != nil {
+		return 0, err
+	}
+	return len(reviewed), nil
+}
+
+// docReviewCount counts the docs needing review against live content.
+func docReviewCount(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) (int, error) {
+	reviewed, err := reviewDocs(ctx, s, head, now, staleAfter)
 	if err != nil {
 		return 0, err
 	}

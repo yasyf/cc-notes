@@ -28,14 +28,14 @@ func (s *Store) GCLocal(ctx context.Context) (int, error) {
 	return tidied, nil
 }
 
-// PruneTombstones physically deletes tombstoned note refs — notes folded to
-// Deleted — locally and on remote via git push --delete, then drops their
-// now-orphaned cache entries. Superseded notes and tasks are never pruned: a
-// superseded note keeps its supersede pointer and history, and there is no task
-// tombstone. Pruning is best-effort and non-convergent — a stale clone that
-// never saw the delete re-advertises the ref on its next push — so it continues
-// past per-note failures, tallying pruned (both deletes succeeded) and failed,
-// and never returns a per-note error.
+// PruneTombstones physically deletes tombstoned note and doc refs — those
+// folded to Deleted — locally and on remote via git push --delete, then drops
+// their now-orphaned cache entries. Superseded notes and docs and all tasks are
+// never pruned: a superseded entity keeps its supersede pointer and history, and
+// there is no task tombstone. Pruning is best-effort and non-convergent — a
+// stale clone that never saw the delete re-advertises the ref on its next push —
+// so it continues past per-ref failures, tallying pruned (both deletes
+// succeeded) and failed, and never returns a per-ref error.
 func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, failed int, err error) {
 	notes, err := s.ListNotes(ctx, true, true)
 	if err != nil {
@@ -57,11 +57,31 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 		}
 		pruned++
 	}
+	docs, err := s.ListDocs(ctx, true, true)
+	if err != nil {
+		return pruned, failed, err
+	}
+	for _, d := range docs {
+		if !d.Deleted {
+			continue
+		}
+		ref := refs.Doc(d.ID)
+		if err := s.Git.DeleteRef(ctx, ref, d.Head); err != nil {
+			failed++
+			continue
+		}
+		s.cache.delete(d.Head)
+		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+			failed++
+			continue
+		}
+		pruned++
+	}
 	return pruned, failed, nil
 }
 
 // liveTips returns the set of commit shas that are the current tip of some
-// entity ref — every note and every task.
+// entity ref — every note, every task, and every doc.
 func (s *Store) liveTips(ctx context.Context) (map[model.SHA]bool, error) {
 	notes, err := s.children(ctx, refs.NotesPrefix)
 	if err != nil {
@@ -71,11 +91,18 @@ func (s *Store) liveTips(ctx context.Context) (map[model.SHA]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	live := make(map[model.SHA]bool, len(notes)+len(tasks))
+	docs, err := s.children(ctx, refs.DocsRoot)
+	if err != nil {
+		return nil, err
+	}
+	live := make(map[model.SHA]bool, len(notes)+len(tasks)+len(docs))
 	for _, e := range notes {
 		live[e.tip] = true
 	}
 	for _, e := range tasks {
+		live[e.tip] = true
+	}
+	for _, e := range docs {
 		live[e.tip] = true
 	}
 	return live, nil

@@ -25,16 +25,18 @@ Reach for cc-notes when work or knowledge must survive the current session or re
 agent. Track moment-to-moment steps for what you are doing right now in the harness's own
 todo tool.
 
-## Three tools, three jobs
+## Four tools, four jobs
 
-Get this distinction right first. Native todos, cc-notes tasks, and cc-notes notes differ
-along two axes: how long the record lives and who can see it.
+Get this distinction right first. Native todos, cc-notes tasks, cc-notes notes, and cc-notes
+docs differ along two axes — how long the record lives and who can see it — and the two durable
+knowledge records, a note and a doc, split once more by form.
 
 | Tool | Lifetime | Scope | Use for |
 |------|----------|-------|---------|
 | Native todos (`TaskCreate`/`TaskUpdate`) | Ephemeral — this session, gone at session end | This agent's private scratchpad | Decomposing the *current* task into in-session steps |
 | `cc-notes task` | Durable — git ODB, synced across machines and agents | Global: one flat ref per task, with a mutable `branch` attribute and a shared backlog every agent sees | Work that outlives the session or coordinates agents: claim, lease, deps, comments, priority, lifecycle |
 | `cc-notes note` | Durable — git ODB, synced | Repo-global, optionally anchored to a commit, path, or branch | Design decisions and durable facts, verified and searchable |
+| `cc-notes doc` | Durable — git ODB, synced | Repo-global, anchored like a note, plus a `--when` read-trigger | Multi-paragraph guidance written *for the next agent*, verified and floated on read |
 
 Tasks are **global**. Each task is a single flat ref at `refs/cc-notes/tasks/<id>`, exactly
 like a note. Its branch is a *mutable attribute*, not part of its identity: `task list` and
@@ -47,10 +49,17 @@ Because the id is global, every id-addressed command resolves by id alone — th
 A note records when it was last **verified** true; superseding a note points it at its
 replacement and drops it from default listings.
 
+A **doc** is the long-form sibling of a note — the same durable, repo-global, born-verified
+lifecycle (`doc verify`/`doc expire`/`doc supersede`), but it holds multi-paragraph guidance
+written *for the next agent* where a note holds a one-line fact, and it carries a free-text
+`--when` read-trigger that names when that agent should open it. Like a note it anchors to the
+code it describes, drifts when that code changes, and floats into a relevant agent's context —
+but only its title, `--when` text, and a `doc show` pointer surface, never the body.
+
 The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, else your git
 `user.name`/`user.email`. Claims and leases key on that actor.
 
-See `references/tasks-vs-notes.md` for worked examples of choosing among the three.
+See `references/tasks-vs-notes.md` for worked examples of choosing among the four.
 
 ## Canonical agent flow
 
@@ -186,8 +195,10 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes note expire <id>` | Flag a note as out-of-date; clear it with `note verify` |
 | `cc-notes note review` | Surface expired, drifted, stale, and unverified notes |
 | `cc-notes note search "<query>"` | Ranked search over titles, tags, and bodies |
+| `cc-notes doc add "<title>" --when "<trigger>"` | Store long-form agent guidance, born verified, with a when-to-read trigger |
+| `cc-notes doc search "<query>"` | Ranked search over doc titles, tags, and bodies |
 
-Append `--json` to any note, task, sync, reconcile, or status command for a machine-readable
+Append `--json` to any note, doc, task, sync, reconcile, or status command for a machine-readable
 record instead of the lean line.
 
 ## Projects and sprints (optional)
@@ -210,8 +221,8 @@ confirmation. See `references/sprints-and-projects.md` and `references/validatio
 - `references/coordination.md` — how agents coordinate over time: the backlog and the branch
   attribute, claims and leases, stale-claim recovery, deps and blocking, reconcile-on-merge,
   and union-merge sync across a shared remote.
-- `references/tasks-vs-notes.md` — the three-way distinction with worked examples of choosing
-  native todo vs cc-notes task vs cc-notes note.
+- `references/tasks-vs-notes.md` — the four-way distinction with worked examples of choosing
+  native todo vs cc-notes task vs cc-notes note vs cc-notes doc.
 - `references/lifecycle-and-hygiene.md` — keeping the record honest: task leases and
   staleness, note verification, drift, and supersession, and the maintenance verbs.
 - `references/sprints-and-projects.md` — the optional planning layer: tasks rolling up into

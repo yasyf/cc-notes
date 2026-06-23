@@ -27,13 +27,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import cc_notes
 from cc_notes import (
     FloatedNotes,
+    HandoffVerdict,
     StaleChecked,
     cap_and_render_tasks,
     check_note_staleness,
     dedup_against_ids,
+    entry_payload,
     filter_drifted,
     float_note_context,
     float_session_tasks,
+    nudge_store_handoff_as_doc,
     parse_relevant,
     parse_tasks,
     prompt_install_cc_notes,
@@ -56,6 +59,28 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 def note_entry(note_id: str, *, drift: str | None = None, title: str = "t", reasons: list[str] | None = None) -> dict:
     return {"note": {"id": note_id, "title": title, "drift": drift}, "score": 1, "reasons": ["path"] if reasons is None else reasons}
+
+
+def doc_entry(
+    doc_id: str,
+    *,
+    when: str = "",
+    drift: str | None = None,
+    title: str = "d",
+    reasons: list[str] | None = None,
+    body: str = "LONG_DOC_BODY",
+) -> dict:
+    """A `kind == "doc"` relevance entry: the doc DTO under "doc", no "note" key.
+
+    Carries a ``body`` the render path must never surface — the float only ever
+    emits the pointer (title/when/verdict/`doc show`), never the long body.
+    """
+    return {
+        "kind": "doc",
+        "doc": {"id": doc_id, "title": title, "when": when, "drift": drift, "body": body},
+        "score": 1,
+        "reasons": ["dir"] if reasons is None else reasons,
+    }
 
 
 def test_parse_relevant() -> None:
@@ -100,6 +125,32 @@ def test_render_note_lines() -> None:
     check("render_note_lines: no reasons -> no parens", no_reasons == ["0000000 X"], repr(no_reasons))
 
 
+def test_render_doc_lines() -> None:
+    """A kind=="doc" entry renders title + when + verdict + `doc show`, never the body."""
+    fresh = render_note_lines([doc_entry("abc1234def0", when="resuming the auth cutover", drift=None, title="Auth handoff", reasons=["dir"])])
+    check(
+        "render: fresh doc renders when + doc show, no verdict",
+        fresh == ["abc1234 Auth handoff — when: resuming the auth cutover (dir) — cc-notes doc show abc1234"],
+        repr(fresh),
+    )
+    stale = render_note_lines([doc_entry("def5678aaa0", when="before editing the parser", drift="STALE", title="Parser notes", reasons=["path"])])
+    check(
+        "render: out-of-date doc carries lowercased [stale] verdict",
+        stale == ["def5678 Parser notes — when: before editing the parser [stale] (path) — cc-notes doc show def5678"],
+        repr(stale),
+    )
+    check("render: doc line never leaks the body", all("LONG_DOC_BODY" not in line for line in fresh + stale), repr(fresh + stale))
+    # A mixed list dispatches per entry kind: the note renders the note line, the doc the doc line.
+    mixed = render_note_lines(
+        [note_entry("0123456abcdef", drift=None, title="Retry ceiling", reasons=["path"]), doc_entry("99aa00bb11c", when="when X", title="Doc", reasons=["dir"])]
+    )
+    check(
+        "render: mixed note+doc dispatch by kind",
+        mixed == ["0123456 Retry ceiling (path)", "99aa00b Doc — when: when X (dir) — cc-notes doc show 99aa00b"],
+        repr(mixed),
+    )
+
+
 def test_dedup_against_ids() -> None:
     entries = [note_entry("aaa1111"), note_entry("bbb2222"), note_entry("ccc3333")]
     kept = dedup_against_ids(entries, ["bbb2222"])
@@ -119,6 +170,10 @@ def test_filter_drifted() -> None:
     check("filter_drifted: keeps only non-null drift", [e["note"]["id"] for e in kept] == ["bbb2222", "ccc3333"], repr(kept))
     check("filter_drifted: empty -> []", filter_drifted([]) == [])
     check("filter_drifted: all fresh -> []", filter_drifted([note_entry("x", drift=None)]) == [])
+    # Docs carry drift under doc.drift with no "note" key — the kind-dispatched filter must
+    # keep a drifted/expired doc, not drop it for lacking a note payload.
+    mixed = filter_drifted([note_entry("nnn0000", drift=None), doc_entry("ddd0001", drift="EXPIRED"), doc_entry("ddd0002", drift=None)])
+    check("filter_drifted: keeps drifted doc, drops fresh doc", [entry_payload(e)["id"] for e in mixed] == ["ddd0001"], repr(mixed))
 
 
 def test_render_task_line() -> None:
@@ -168,6 +223,38 @@ def stub_cli(mapping: dict[tuple[str, ...], str]):
         raise FileNotFoundError(args[0])
 
     return _call
+
+
+def stub_llm(verdict: HandoffVerdict):
+    """Build a call_llm stub returning a fixed HandoffVerdict for any prompt.
+
+    Mirrors stub_cli: the test monkeypatches it onto ``evt.ctx.call_llm``. The
+    handler passes ``response_model=HandoffVerdict`` and the real backend parses
+    the reply into that model, so the stub returns an already-built instance.
+    """
+
+    def _call(template, *args, **kwargs):
+        return verdict
+
+    return _call
+
+
+def _llm_must_not_run(template, *args, **kwargs):
+    """A call_llm stub that fails loudly — proves the pre-gate skipped the paid call."""
+    raise AssertionError("call_llm was reached for a pre-gated write")
+
+
+# A long-form internal handoff: written for the next agent, not human-facing docs.
+HANDOFF_BODY = (
+    "# Auth cutover handoff\n\n"
+    "Status: half-done. The old session middleware still runs in parallel with the "
+    "new token flow. Before you touch internal/api/auth.go, read this.\n\n"
+    "## What's done\n- New JWT verifier wired into the gateway.\n"
+    "## What's left\n- Delete the legacy cookie path once the dual-write window "
+    "closes.\n- Reconcile the two refresh-token tables.\n\n"
+    "## Gotchas\nThe migration script is NOT idempotent yet; re-running double-writes "
+    "the refresh tokens. Run it exactly once.\n" + "More resume context for the next agent. " * 20
+)
 
 
 # gated_handlers maps each gated read-time handler to a tool its own Tool
@@ -326,7 +413,8 @@ def test_check_note_staleness_drift_only(monkeypatch, tmp_path) -> None:
     if result and result.message:
         check("staleness: names the file", "internal/store/store.go" in result.message)
         check("staleness: lists only drifted note", "stale00" in result.message and "fresh00" not in result.message, result.message)
-        check("staleness: verify/edit/supersede/expire guidance", all(s in result.message for s in ("note verify", "note edit", "note supersede", "note expire")))
+        check("staleness: names note reconciliation commands", "cc-notes note verify/edit/supersede/expire" in result.message, result.message)
+        check("staleness: names doc reconciliation commands", "cc-notes doc verify/edit/supersede/expire" in result.message, result.message)
     check("staleness: persisted only drifted id", evt.ctx.session.load(StaleChecked).ids == ["stale000bbb"])
 
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
@@ -342,6 +430,36 @@ def test_check_note_staleness_all_fresh_silent(monkeypatch, tmp_path) -> None:
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
     check("staleness: all fresh -> None", check_note_staleness(evt) is None)
+
+
+def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
+    """A drifted kind=="doc" entry on the edited path warns, names doc commands, never leaks the body.
+
+    Mirrors test_check_note_staleness_drift_only for a doc: drift lives under
+    ``doc.drift`` (no ``note`` key), so the kind-dispatched filter/persist must
+    keep it, render it through the doc-line path (pointer only), and surface the
+    doc reconciliation commands.
+    """
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    payload = cc_notes.json.dumps(
+        [doc_entry("drifteddoc01", when="before touching the parser", drift="DRIFTED", title="Parser handoff", reasons=["path"])]
+    )
+    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--json"): payload}
+
+    evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
+    result = check_note_staleness(evt)
+    check("staleness doc: warns on drifted doc", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("staleness doc: renders doc pointer", "Parser handoff" in result.message and "cc-notes doc show drifted" in result.message, result.message)
+        check("staleness doc: lowercased verdict", "[drifted]" in result.message, result.message)
+        check("staleness doc: never leaks the body", "LONG_DOC_BODY" not in result.message, result.message)
+        check("staleness doc: names doc reconciliation commands", "cc-notes doc verify/edit/supersede/expire" in result.message, result.message)
+    check("staleness doc: persisted by doc id", evt.ctx.session.load(StaleChecked).ids == ["drifteddoc01"], repr(evt.ctx.session.load(StaleChecked).ids))
+
+    evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
+    check("staleness doc: re-edit deduped -> None", check_note_staleness(evt2) is None)
 
 
 def test_run_cc_notes_fails_closed(monkeypatch, tmp_path) -> None:
@@ -409,6 +527,72 @@ def test_handlers_silent_on_malformed_array(monkeypatch, tmp_path) -> None:
         check("malformed array: float_session_tasks does not crash", True)
     except BaseException as raised:  # noqa: BLE001
         check("malformed array: float_session_tasks does not crash", False, f"{type(raised).__name__}: {raised}")
+
+
+def test_handoff_nudge_fires_on_internal(monkeypatch, tmp_path) -> None:
+    """A long internal-handoff .md classified is_handoff=True warns toward `cc-notes doc add`.
+
+    The cheap pre-gate passes (long, non-exempt .md) and the stubbed classifier
+    returns a handoff verdict, so the handler seeds the suggested command from the
+    verdict's title/when/area.
+    """
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Write", file="HANDOFF.md", content=HANDOFF_BODY, session_dir=tmp_path)
+    verdict = HandoffVerdict(is_handoff=True, title="Auth cutover handoff", when="resuming the auth cutover", area="internal/api")
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
+
+    result = nudge_store_handoff_as_doc(evt)
+    check("handoff nudge: warns on internal handoff", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("handoff nudge: names `cc-notes doc add`", "cc-notes doc add" in result.message, result.message)
+        check("handoff nudge: carries --when", "--when" in result.message, result.message)
+        check("handoff nudge: uses classifier title", '"Auth cutover handoff"' in result.message, result.message)
+        check("handoff nudge: uses classifier when text", '--when "resuming the auth cutover"' in result.message, result.message)
+        check("handoff nudge: uses classifier dir", "--dir internal/api" in result.message, result.message)
+        check("handoff nudge: explains auto-surfacing", "cc-notes relevant" in result.message, result.message)
+
+
+def test_handoff_nudge_silent_on_public(monkeypatch, tmp_path) -> None:
+    """A long .md classified is_handoff=False (genuinely public docs) stays silent."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Write", file="GUIDE.md", content=HANDOFF_BODY, session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(HandoffVerdict(is_handoff=False)))
+    check("handoff nudge: silent on public doc -> None", nudge_store_handoff_as_doc(evt) is None)
+
+
+def test_handoff_nudge_exempt_path_skips_llm(monkeypatch, tmp_path) -> None:
+    """An exempt name (README.md) is pre-gated out — call_llm is NEVER reached.
+
+    The stub raises if called, so a passing test proves the paid classifier never
+    runs for an obviously-public file even when its body is long.
+    """
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Write", file="README.md", content=HANDOFF_BODY, session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_llm", _llm_must_not_run)
+    try:
+        check("handoff nudge: exempt README.md -> None (LLM never called)", nudge_store_handoff_as_doc(evt) is None)
+    except AssertionError as raised:
+        check("handoff nudge: exempt README.md -> None (LLM never called)", False, f"call_llm ran: {raised}")
+
+
+def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
+    """A kind=="doc" entry from `relevant` floats its when/verdict pointer and persists by doc id."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    payload = cc_notes.json.dumps(
+        [doc_entry("d0cd0c00111", when="before touching the auth flow", drift="DRIFTED", title="Auth handoff", reasons=["dir"])]
+    )
+    mapping = {("relevant", "internal/api/auth.go", "--json"): payload}
+    evt = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
+
+    result = float_note_context(evt)
+    check("doc float: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("doc float: renders when trigger", "before touching the auth flow" in result.message, result.message)
+        check("doc float: renders lowercased verdict", "[drifted]" in result.message, result.message)
+        check("doc float: renders doc show hint", "cc-notes doc show d0cd0c0" in result.message, result.message)
+        check("doc float: never leaks the body", "LONG_DOC_BODY" not in result.message, result.message)
+    check("doc float: persists by doc id", evt.ctx.session.load(FloatedNotes).ids == ["d0cd0c00111"], repr(evt.ctx.session.load(FloatedNotes).ids))
 
 
 class MonkeyPatch:

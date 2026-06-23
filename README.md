@@ -59,6 +59,8 @@ rounds: 1
 
 `init` installs the `refs/cc-notes/*` refspecs and — given a `.claude/` directory — registers the Claude Code plugin and capt-hook pack; with `.github/` it also installs the reconcile CI workflow (`--no-ci` to skip). Every mutation echoes the entity's new state as a tab-separated line. `task start` claims a backlog item onto your branch (deterministic first-wins, so racing agents fold to one winner) and opens a lease that any edit refreshes — set the TTL with `cc-notes.leaseTTL` in git config. Run `cc-notes status` any time for a read-only board.
 
+**Long-form handoffs live as docs, not loose files.** A `cc-notes doc` is the long-form sibling of a note — the brief you would otherwise leave in a `HANDOFF.md` nobody opens. It carries a free-text `--when` trigger naming the moment the next agent should read it, so `cc-notes relevant` ranks docs alongside notes and the read-time hooks float its pointer — title, `--when` text, and a `doc show` hint — when that moment arrives; the long body stays in the doc. Docs share the note freshness lifecycle: `doc verify`, `doc supersede`, and `doc expire` keep a handoff current, and `doc review` flags the ones that have drifted.
+
 ## Commands
 
 | Command | What it does |
@@ -69,13 +71,14 @@ rounds: 1
 | `cc-notes task start` / `done` | Claim a task onto your branch; close it and anchor your HEAD commit |
 | `cc-notes note add` | Add a note, optionally anchored to a path, directory, commit, or branch |
 | `cc-notes note review` | Flag notes as `DRIFTED`, `STALE`, or `UNVERIFIED` |
-| `cc-notes relevant` | Rank the notes most relevant to a path, with the reasons each matched |
+| `cc-notes doc add` | Store a long-form handoff with a `--when` trigger, surfaced to the next agent by `cc-notes relevant` |
+| `cc-notes relevant` | Rank the notes and docs most relevant to a path, with the reasons each matched |
 | `cc-notes reconcile` | Carry merged branches' open tasks onto a target branch |
 | `cc-notes blame` | Name the task(s) a commit implemented |
 | `cc-notes sync` | Push and pull `refs/cc-notes/*`, union-merging concurrent edits |
 | `cc-notes mount` | Expose notes and tasks as an editable filesystem (needs a `_fuse` binary) |
 
-Tasks also carry `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, `stale`, `claim`, and `validate`; notes add `verify`, `list`, `edit`, `search`, and `supersede`. An optional planning layer rolls tasks up into sprints and projects via `cc-notes sprint` and `cc-notes project`. Every note, task, sync, reconcile, and status command takes `--json`. Run `cc-notes <noun> --help`, or read the full [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md).
+Tasks also carry `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, `stale`, `claim`, and `validate`; notes add `verify`, `list`, `edit`, `search`, and `supersede`; docs add `list`, `show`, `edit`, `search`, `verify`, `supersede`, `expire`, and `review`. An optional planning layer rolls tasks up into sprints and projects via `cc-notes sprint` and `cc-notes project`. Every note, task, doc, sync, reconcile, and status command takes `--json`. Run `cc-notes <noun> --help`, or read the full [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md).
 
 ## How it works
 

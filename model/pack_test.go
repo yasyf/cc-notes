@@ -34,6 +34,7 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 		}},
 		{"set_title", SetTitle{Title: "New title"}},
 		{"set_body", SetBody{Body: "New body"}},
+		{"set_when", SetWhen{When: "before touching the auth flow"}},
 		{"add_tag", AddTag{Tag: "urgent"}},
 		{"remove_tag", RemoveTag{Tag: "stale"}},
 		{"add_anchor", AddAnchor{Anchor: Anchor{Kind: AnchorPath, Value: "internal/model/pack.go"}}},
@@ -89,6 +90,19 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 			Title:       "Platform",
 			Description: "Core infrastructure",
 			Labels:      []string{"infra"},
+		}},
+		{"create_doc", CreateDoc{
+			Nonce: testNonce,
+			Title: "Auth architecture",
+			Body:  "How the token refresh loop works.",
+			When:  "before touching the auth flow",
+			Tags:  []string{"auth", "arch"},
+			Anchors: []Anchor{
+				{Kind: AnchorCommit, Value: testID},
+				{Kind: AnchorPath, Value: "internal/auth/token.go"},
+				{Kind: AnchorDir, Value: "internal/auth"},
+				{Kind: AnchorBranch, Value: "main"},
+			},
 		}},
 		{"set_sprint", SetSprint{Sprint: testID}},
 		{"set_project", SetProject{Project: testParent}},
@@ -155,6 +169,40 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 				t.Fatalf("round-trip = %#v, want %#v", got, pack)
 			}
 		})
+	}
+}
+
+func TestPackRoundTripCheckpointDocState(t *testing.T) {
+	op := Checkpoint{
+		EntityID: testID,
+		State: Doc{
+			ID: testID, Title: "Auth architecture", Body: "How the token refresh loop works.",
+			When: "before touching the auth flow", Tags: []string{"auth"},
+			Anchors: []Anchor{{Kind: AnchorPath, Value: "internal/auth/token.go"}},
+			Author:  "ada", CreatedAt: 100, UpdatedAt: 200,
+			SupersededBy: []EntityID{}, Head: testParent,
+		},
+		CoversLamport: 5,
+		CoversShas:    []SHA{testParent, testID},
+	}
+	pack := Pack{Lamport: 6, Ops: []Op{op}}
+	data, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got, err := DecodePack(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !reflect.DeepEqual(got, pack) {
+		t.Fatalf("round-trip = %#v, want %#v", got, pack)
+	}
+	cp, ok := got.Ops[0].(Checkpoint)
+	if !ok {
+		t.Fatalf("Ops[0] = %T, want Checkpoint", got.Ops[0])
+	}
+	if _, ok := cp.State.(Doc); !ok {
+		t.Fatalf("decoded State = %T, want Doc", cp.State)
 	}
 }
 

@@ -46,6 +46,16 @@ type SetBody struct {
 // OpKind returns "set_body".
 func (SetBody) OpKind() string { return "set_body" }
 
+// SetWhen replaces the free-text "read this when…" trigger of a doc. When is an
+// LWW scalar: the last SetWhen (or the CreateDoc default) in linearization
+// order wins.
+type SetWhen struct {
+	When string `json:"when"`
+}
+
+// OpKind returns "set_when".
+func (SetWhen) OpKind() string { return "set_when" }
+
 // AddTag adds one tag to a note's tag set.
 type AddTag struct {
 	Tag string `json:"tag"`
@@ -199,6 +209,29 @@ type CreateProject struct {
 
 // OpKind returns "create_project".
 func (CreateProject) OpKind() string { return "create_project" }
+
+// CreateDoc is the root operation of a doc chain. The nonce makes
+// otherwise-identical creates hash to distinct entity ids.
+type CreateDoc struct {
+	Nonce   string   `json:"nonce"`
+	Title   string   `json:"title"`
+	Body    string   `json:"body"`
+	When    string   `json:"when"`
+	Tags    []string `json:"tags"`
+	Anchors []Anchor `json:"anchors"`
+}
+
+// OpKind returns "create_doc".
+func (CreateDoc) OpKind() string { return "create_doc" }
+
+func (o CreateDoc) validate() error {
+	for _, a := range o.Anchors {
+		if err := a.Kind.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // SetDescription replaces the description of a task.
 type SetDescription struct {
@@ -476,9 +509,9 @@ func (SetCriterionScript) OpKind() string { return "set_criterion_script" }
 // snapshot belongs to. Checkpoint is always appended, never a root, so it
 // never changes an entity id: a fold uses the newest seed-safe checkpoint as
 // its starting snapshot and treats every other checkpoint as a no-op. The pack
-// codec carries State kind-tagged (note, task, sprint, or project) so it decodes
-// back to the concrete model.Note/Task/Sprint/Project; the snapshot's kind drives
-// fold dispatch.
+// codec carries State kind-tagged (note, doc, task, sprint, or project) so it
+// decodes back to the concrete model.Note/Doc/Task/Sprint/Project; the
+// snapshot's kind drives fold dispatch.
 type Checkpoint struct {
 	EntityID      EntityID
 	State         Snapshot

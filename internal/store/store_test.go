@@ -83,6 +83,10 @@ func taskOps(title string, branch model.Branch) []model.Op {
 	return []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: title, Type: model.TypeTask, Branch: branch}}
 }
 
+func docOps(title string) []model.Op {
+	return []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: title}}
+}
+
 func create(t *testing.T, s *Store, ops []model.Op) model.Snapshot {
 	t.Helper()
 	snapshot, err := s.Create(t.Context(), ops)
@@ -93,6 +97,13 @@ func create(t *testing.T, s *Store, ops []model.Op) model.Snapshot {
 }
 
 func chronoNotes(a, b model.Note) int {
+	if c := a.CreatedAt - b.CreatedAt; c != 0 {
+		return int(c)
+	}
+	return strings.Compare(string(a.ID), string(b.ID))
+}
+
+func chronoDocs(a, b model.Doc) int {
 	if c := a.CreatedAt - b.CreatedAt; c != 0 {
 		return int(c)
 	}
@@ -609,6 +620,214 @@ func TestResolveAmbiguous(t *testing.T) {
 		if !strings.Contains(ambiguous.Error(), c.ID.Short()) || !strings.Contains(ambiguous.Error(), c.Title) {
 			t.Errorf("Error() = %q, missing candidate %s %q", ambiguous.Error(), c.ID.Short(), c.Title)
 		}
+	}
+}
+
+func TestCreateDocRoundTrip(t *testing.T) {
+	s := initStore(t)
+	ops := []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: "hello", Body: "world", When: "before refactoring auth", Tags: []string{"b", "a"}}}
+	snapshot := create(t, s, ops)
+	doc, ok := snapshot.(model.Doc)
+	if !ok {
+		t.Fatalf("Create returned %T, want model.Doc", snapshot)
+	}
+
+	if doc.Title != "hello" || doc.Body != "world" {
+		t.Errorf("doc = %q/%q, want hello/world", doc.Title, doc.Body)
+	}
+	if doc.When != "before refactoring auth" {
+		t.Errorf("When = %q, want %q", doc.When, "before refactoring auth")
+	}
+	if want := []string{"a", "b"}; !slices.Equal(doc.Tags, want) {
+		t.Errorf("Tags = %v, want %v", doc.Tags, want)
+	}
+	if doc.Author != testActor {
+		t.Errorf("Author = %q, want %q", doc.Author, testActor)
+	}
+	if doc.Deleted {
+		t.Error("fresh doc is Deleted")
+	}
+	if doc.Head != model.SHA(doc.ID) {
+		t.Errorf("Head = %s, want root %s", doc.Head, doc.ID)
+	}
+	if doc.CreatedAt == 0 || doc.UpdatedAt != doc.CreatedAt {
+		t.Errorf("timestamps = %d/%d, want equal non-zero", doc.CreatedAt, doc.UpdatedAt)
+	}
+
+	ref := refs.Doc(doc.ID)
+	loaded, err := s.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded, snapshot) {
+		t.Errorf("Load = %+v, want Create snapshot %+v", loaded, snapshot)
+	}
+
+	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: doc create" {
+		t.Errorf("commit message = %q, want %q", msg, "cc-notes: doc create")
+	}
+
+	list, err := s.ListDocs(t.Context(), false, false)
+	if err != nil {
+		t.Fatalf("ListDocs: %v", err)
+	}
+	if want := []model.Doc{doc}; !reflect.DeepEqual(list, want) {
+		t.Errorf("ListDocs = %+v, want %+v", list, want)
+	}
+}
+
+func TestSetWhenUpdatesDoc(t *testing.T) {
+	s := initStore(t)
+	doc := create(t, s, docOps("trigger")).(model.Doc)
+	ref := refs.Doc(doc.ID)
+
+	snapshot, err := s.Append(t.Context(), ref, []model.Op{model.SetWhen{When: "after deploy fails"}})
+	if err != nil {
+		t.Fatalf("Append SetWhen: %v", err)
+	}
+	updated := snapshot.(model.Doc)
+	if updated.When != "after deploy fails" {
+		t.Errorf("When = %q, want %q", updated.When, "after deploy fails")
+	}
+	if updated.ID != doc.ID {
+		t.Errorf("ID changed across SetWhen: %s -> %s", doc.ID, updated.ID)
+	}
+}
+
+func TestListDocsDeleted(t *testing.T) {
+	s := initStore(t)
+	keep := create(t, s, docOps("keep")).(model.Doc)
+	gone := create(t, s, docOps("gone")).(model.Doc)
+
+	snapshot, err := s.Append(t.Context(), refs.Doc(gone.ID), []model.Op{model.DeleteNote{}})
+	if err != nil {
+		t.Fatalf("Append delete: %v", err)
+	}
+	deleted := snapshot.(model.Doc)
+	if !deleted.Deleted {
+		t.Fatal("snapshot after delete_note is not Deleted")
+	}
+
+	live, err := s.ListDocs(t.Context(), false, false)
+	if err != nil {
+		t.Fatalf("ListDocs(false): %v", err)
+	}
+	if want := []model.Doc{keep}; !reflect.DeepEqual(live, want) {
+		t.Errorf("ListDocs(false) = %+v, want %+v", live, want)
+	}
+
+	all, err := s.ListDocs(t.Context(), true, false)
+	if err != nil {
+		t.Fatalf("ListDocs(true): %v", err)
+	}
+	want := []model.Doc{keep, deleted}
+	slices.SortFunc(want, chronoDocs)
+	if !reflect.DeepEqual(all, want) {
+		t.Errorf("ListDocs(true) = %+v, want %+v", all, want)
+	}
+}
+
+func TestListDocsSuperseded(t *testing.T) {
+	s := initStore(t)
+	keep := create(t, s, docOps("keep")).(model.Doc)
+	old := create(t, s, docOps("old")).(model.Doc)
+
+	snapshot, err := s.Append(t.Context(), refs.Doc(old.ID), []model.Op{model.AddSupersededBy{ID: keep.ID}})
+	if err != nil {
+		t.Fatalf("Append supersede: %v", err)
+	}
+	superseded := snapshot.(model.Doc)
+	if want := []model.EntityID{keep.ID}; !slices.Equal(superseded.SupersededBy, want) {
+		t.Fatalf("SupersededBy = %v, want %v", superseded.SupersededBy, want)
+	}
+
+	live, err := s.ListDocs(t.Context(), false, false)
+	if err != nil {
+		t.Fatalf("ListDocs(false, false): %v", err)
+	}
+	if want := []model.Doc{keep}; !reflect.DeepEqual(live, want) {
+		t.Errorf("ListDocs(false, false) = %+v, want only keep", live)
+	}
+
+	all, err := s.ListDocs(t.Context(), false, true)
+	if err != nil {
+		t.Fatalf("ListDocs(false, true): %v", err)
+	}
+	want := []model.Doc{keep, superseded}
+	slices.SortFunc(want, chronoDocs)
+	if !reflect.DeepEqual(all, want) {
+		t.Errorf("ListDocs(false, true) = %+v, want both", all)
+	}
+}
+
+func TestListDocsSorted(t *testing.T) {
+	s := initStore(t)
+	s.now = ticker(200, 200, 100)
+	a := create(t, s, docOps("a")).(model.Doc)
+	b := create(t, s, docOps("b")).(model.Doc)
+	c := create(t, s, docOps("c")).(model.Doc)
+
+	if c.CreatedAt != 100 || a.CreatedAt != 200 || b.CreatedAt != 200 {
+		t.Fatalf("CreatedAt = %d/%d/%d, want 200/200/100", a.CreatedAt, b.CreatedAt, c.CreatedAt)
+	}
+
+	list, err := s.ListDocs(t.Context(), false, false)
+	if err != nil {
+		t.Fatalf("ListDocs: %v", err)
+	}
+	want := []model.Doc{a, b, c}
+	slices.SortFunc(want, chronoDocs)
+	if !reflect.DeepEqual(list, want) {
+		t.Errorf("ListDocs = %+v, want %+v (CreatedAt then id)", list, want)
+	}
+	if list[0].ID != c.ID {
+		t.Errorf("first = %s, want earliest %s", list[0].ID, c.ID)
+	}
+}
+
+func TestResolveDoc(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	a := create(t, s, docOps("alpha")).(model.Doc)
+	b := create(t, s, docOps("beta")).(model.Doc)
+	note := create(t, s, noteOps("gamma")).(model.Note)
+
+	shared := 0
+	for shared < len(a.ID) && a.ID[shared] == b.ID[shared] {
+		shared++
+	}
+	unique := string(a.ID)[:shared+1]
+
+	got, err := s.Resolve(ctx, refs.KindDoc, unique)
+	if err != nil {
+		t.Fatalf("Resolve unique: %v", err)
+	}
+	if want := refs.Doc(a.ID); got != want {
+		t.Errorf("Resolve(%q) = %q, want %q", unique, got, want)
+	}
+
+	got, err = s.Resolve(ctx, refs.KindDoc, strings.ToUpper(unique))
+	if err != nil {
+		t.Fatalf("Resolve uppercase: %v", err)
+	}
+	if want := refs.Doc(a.ID); got != want {
+		t.Errorf("Resolve(upper %q) = %q, want %q", unique, got, want)
+	}
+
+	got, err = s.Resolve(ctx, refs.KindDoc, string(b.ID))
+	if err != nil {
+		t.Fatalf("Resolve full id: %v", err)
+	}
+	if want := refs.Doc(b.ID); got != want {
+		t.Errorf("Resolve(%q) = %q, want %q", b.ID, got, want)
+	}
+
+	if _, err := s.Resolve(ctx, refs.KindDoc, "zzz"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Resolve(zzz) = %v, want ErrNotFound", err)
+	}
+
+	if _, err := s.Resolve(ctx, refs.KindDoc, string(note.ID)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Resolve note id as doc = %v, want ErrNotFound", err)
 	}
 }
 

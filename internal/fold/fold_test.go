@@ -66,6 +66,104 @@ func TestFoldNote(t *testing.T) {
 	}
 }
 
+func TestFoldDoc(t *testing.T) {
+	witness := []model.AnchorWitness{
+		{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "auth.go"}, OID: "0011"},
+	}
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateDoc{
+			Nonce:   "n",
+			Title:   "T",
+			Body:    "B",
+			When:    "before touching auth",
+			Tags:    []string{"beta", "alpha"},
+			Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "x.go"}},
+		}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2,
+			model.SetTitle{Title: "T2"},
+			model.SetWhen{When: "before touching the auth flow"},
+			model.AddTag{Tag: "gamma"},
+			model.RemoveTag{Tag: "alpha"},
+			model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "auth.go"}},
+			model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "x.go"}},
+		),
+		mk("ccc", []string{"bbb"}, "carol", 300, 3,
+			model.SetBody{Body: "B2"},
+			model.VerifyNote{Witness: witness, VerifiedCommit: "headsha"},
+		),
+	}
+	want := model.Doc{
+		ID:             "aaa",
+		Title:          "T2",
+		Body:           "B2",
+		When:           "before touching the auth flow",
+		Tags:           []string{"beta", "gamma"},
+		Anchors:        []model.Anchor{{Kind: model.AnchorPath, Value: "auth.go"}},
+		Author:         "alice",
+		CreatedAt:      100,
+		UpdatedAt:      300,
+		VerifiedAt:     300,
+		VerifiedBy:     "carol",
+		VerifiedCommit: "headsha",
+		Witness:        witness,
+		SupersededBy:   []model.EntityID{},
+		Head:           "ccc",
+	}
+	got, err := fold.Doc(chain)
+	if err != nil {
+		t.Fatalf("Doc() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Doc() = %+v, want %+v", got, want)
+	}
+	snap, err := fold.Fold(chain)
+	if err != nil {
+		t.Fatalf("Fold() error = %v", err)
+	}
+	dispatched, ok := snap.(model.Doc)
+	if !ok {
+		t.Fatalf("Fold() = %T, want model.Doc", snap)
+	}
+	if !reflect.DeepEqual(dispatched, want) {
+		t.Fatalf("Fold() = %+v, want %+v", dispatched, want)
+	}
+	if snap.EntityID() != "aaa" {
+		t.Fatalf("EntityID() = %q, want %q", snap.EntityID(), "aaa")
+	}
+}
+
+func TestFoldDocWhenLWW(t *testing.T) {
+	cases := []struct {
+		name         string
+		bWhen, cWhen string
+		bTime, cTime int64
+		want         string
+	}{
+		{name: "later set wins", bWhen: "from-b", cWhen: "from-c", bTime: 200, cTime: 250, want: "from-c"},
+		{name: "earlier set loses", bWhen: "from-b", cWhen: "from-c", bTime: 250, cTime: 200, want: "from-b"},
+		{name: "later clear wins", bWhen: "from-b", cWhen: "", bTime: 200, cTime: 250, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diamond := []model.PackCommit{
+				mk("aaa", nil, "alice", 100, 1, model.CreateDoc{Nonce: "n", When: "orig"}),
+				mk("bbb", []string{"aaa"}, "bob", tc.bTime, 2, model.SetWhen{When: tc.bWhen}),
+				mk("ccc", []string{"aaa"}, "carol", tc.cTime, 2, model.SetWhen{When: tc.cWhen}),
+				mk("ddd", []string{"bbb", "ccc"}, "dave", 300, 3),
+			}
+			for i, input := range permutations(diamond) {
+				got, err := fold.Doc(input)
+				if err != nil {
+					t.Fatalf("permutation %d: Doc() error = %v", i, err)
+				}
+				if got.When != tc.want {
+					t.Fatalf("permutation %d: When = %q, want %q", i, got.When, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestFoldTaskLifecycle(t *testing.T) {
 	chain := []model.PackCommit{
 		mk("aaa", nil, "alice", 100, 1, model.CreateTask{
@@ -800,6 +898,7 @@ func TestFoldSupersededConverges(t *testing.T) {
 
 func TestFoldErrors(t *testing.T) {
 	noteRoot := mk("aaa", nil, "alice", 100, 1, model.CreateNote{Nonce: "n"})
+	docRoot := mk("aaa", nil, "alice", 100, 1, model.CreateDoc{Nonce: "n"})
 	taskRoot := mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Type: model.TypeTask, Branch: "main"})
 	sprintRoot := mk("aaa", nil, "alice", 100, 1, model.CreateSprint{Nonce: "n"})
 	projectRoot := mk("aaa", nil, "alice", 100, 1, model.CreateProject{Nonce: "n"})
@@ -892,6 +991,54 @@ func TestFoldErrors(t *testing.T) {
 			commits: []model.PackCommit{noteRoot},
 			via:     taskErr,
 			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "doc chain folded as note",
+			commits: []model.PackCommit{docRoot},
+			via:     noteErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "note chain folded as doc",
+			commits: []model.PackCommit{noteRoot},
+			via:     docErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name: "set_when op on a note chain",
+			commits: []model.PackCommit{
+				noteRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetWhen{When: "x"}),
+			},
+			via:  noteErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "task op on a doc chain",
+			commits: []model.PackCommit{
+				docRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetStatus{Status: model.StatusDone}),
+			},
+			via:  docErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "second create_doc",
+			commits: []model.PackCommit{
+				docRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.CreateDoc{Nonce: "m"}),
+			},
+			via:  docErr,
+			want: fold.ErrDuplicateCreate,
+		},
+		{
+			name: "create_doc after create_note",
+			commits: []model.PackCommit{
+				noteRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.CreateDoc{Nonce: "m"}),
+			},
+			via:  noteErr,
+			want: fold.ErrDuplicateCreate,
 		},
 		{
 			name: "sprint status op on a task chain",
@@ -1750,6 +1897,11 @@ func foldErr(commits []model.PackCommit) error {
 
 func noteErr(commits []model.PackCommit) error {
 	_, err := fold.Note(commits)
+	return err
+}
+
+func docErr(commits []model.PackCommit) error {
+	_, err := fold.Doc(commits)
 	return err
 }
 

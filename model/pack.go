@@ -104,6 +104,11 @@ func marshalOp(op Op) ([]byte, error) {
 			Kind string `json:"kind"`
 			SetBody
 		}{o.OpKind(), o})
+	case SetWhen:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetWhen
+		}{o.OpKind(), o})
 	case AddTag:
 		return json.Marshal(struct {
 			Kind string `json:"kind"`
@@ -168,6 +173,11 @@ func marshalOp(op Op) ([]byte, error) {
 		return json.Marshal(struct {
 			Kind string `json:"kind"`
 			CreateProject
+		}{o.OpKind(), o})
+	case CreateDoc:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			CreateDoc
 		}{o.OpKind(), o})
 	case SetDescription:
 		return json.Marshal(struct {
@@ -336,6 +346,8 @@ func marshalCheckpoint(o Checkpoint) ([]byte, error) {
 	switch o.State.(type) {
 	case Note:
 		stateKind = "note"
+	case Doc:
+		stateKind = "doc"
 	case Task:
 		stateKind = "task"
 	case Sprint:
@@ -381,6 +393,12 @@ func decodeCheckpoint(raw json.RawMessage) (Op, error) {
 			return nil, fmt.Errorf("unmarshal checkpoint note state: %w", err)
 		}
 		state = n
+	case "doc":
+		var d Doc
+		if err := json.Unmarshal(wire.State, &d); err != nil {
+			return nil, fmt.Errorf("unmarshal checkpoint doc state: %w", err)
+		}
+		state = d
 	case "task":
 		var t Task
 		if err := json.Unmarshal(wire.State, &t); err != nil {
@@ -430,6 +448,7 @@ var opDecoders = map[string]func(json.RawMessage) (Op, error){
 	CreateNote{}.OpKind():         decodeAs[CreateNote],
 	SetTitle{}.OpKind():           decodeAs[SetTitle],
 	SetBody{}.OpKind():            decodeAs[SetBody],
+	SetWhen{}.OpKind():            decodeAs[SetWhen],
 	AddTag{}.OpKind():             decodeAs[AddTag],
 	RemoveTag{}.OpKind():          decodeAs[RemoveTag],
 	AddAnchor{}.OpKind():          decodeAs[AddAnchor],
@@ -443,6 +462,7 @@ var opDecoders = map[string]func(json.RawMessage) (Op, error){
 	CreateTask{}.OpKind():         decodeAs[CreateTask],
 	CreateSprint{}.OpKind():       decodeAs[CreateSprint],
 	CreateProject{}.OpKind():      decodeAs[CreateProject],
+	CreateDoc{}.OpKind():          decodeAs[CreateDoc],
 	SetDescription{}.OpKind():     decodeAs[SetDescription],
 	SetType{}.OpKind():            decodeAs[SetType],
 	SetPriority{}.OpKind():        decodeAs[SetPriority],

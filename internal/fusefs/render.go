@@ -420,6 +420,228 @@ func firstHeading(body string) string {
 	return ""
 }
 
+// ParsedDoc is the decoded form of a doc file: the frontmatter keys plus the
+// body below the closing delimiter. It mirrors ParsedNote with one added key,
+// when, the free-text "read this when…" trigger. Every frontmatter field is
+// optional so a minimal new file parses; DiffDoc treats unset fields as
+// untouched.
+type ParsedDoc struct {
+	ID             Field[string]          `yaml:"id"`
+	Title          Field[string]          `yaml:"title"`
+	When           Field[string]          `yaml:"when"`
+	Tags           Field[[]string]        `yaml:"tags"`
+	Commits        Field[[]string]        `yaml:"commits"`
+	Paths          Field[[]string]        `yaml:"paths"`
+	Dirs           Field[[]string]        `yaml:"dirs"`
+	Branches       Field[[]string]        `yaml:"branches"`
+	Author         Field[string]          `yaml:"author"`
+	Created        Field[string]          `yaml:"created"`
+	Updated        Field[string]          `yaml:"updated"`
+	VerifiedAt     Field[string]          `yaml:"verified_at"`
+	VerifiedBy     Field[string]          `yaml:"verified_by"`
+	VerifiedCommit Field[string]          `yaml:"verified_commit"`
+	Witness        Field[[]ParsedWitness] `yaml:"witness"`
+	SupersededBy   Field[[]string]        `yaml:"superseded_by"`
+	StaleAt        Field[string]          `yaml:"stale_at"`
+	StaleBy        Field[string]          `yaml:"stale_by"`
+	StaleReason    Field[string]          `yaml:"stale_reason"`
+	Body           string                 `yaml:"-"`
+}
+
+func (p ParsedDoc) anchors(kind model.AnchorKind) Field[[]string] {
+	switch kind {
+	case model.AnchorCommit:
+		return p.Commits
+	case model.AnchorPath:
+		return p.Paths
+	case model.AnchorDir:
+		return p.Dirs
+	case model.AnchorBranch:
+		return p.Branches
+	}
+	panic("fusefs: unknown anchor kind " + string(kind))
+}
+
+// RenderDoc renders d as markdown with YAML frontmatter, mirroring RenderNote
+// with one added key: when renders right after title, always (even when empty)
+// so the document round-trips byte for byte. The remaining key order, anchor
+// splitting by kind, verification and stale handling, and the verbatim body
+// below the closing delimiter all match RenderNote. The output is deterministic
+// byte for byte.
+func RenderDoc(d model.Doc) []byte {
+	fm := &yaml.Node{Kind: yaml.MappingNode}
+	put := func(key string, value *yaml.Node) {
+		fm.Content = append(fm.Content, scalarNode(key), value)
+	}
+	put("id", scalarNode(string(d.ID)))
+	put("title", scalarNode(d.Title))
+	put("when", scalarNode(d.When))
+	put("tags", flowNode(d.Tags))
+	for _, ak := range anchorKinds {
+		if values := anchorValues(d.Anchors, ak.kind); len(values) > 0 {
+			put(ak.key, flowNode(values))
+		}
+	}
+	put("author", scalarNode(string(d.Author)))
+	put("created", scalarNode(stamp(d.CreatedAt)))
+	put("updated", scalarNode(stamp(d.UpdatedAt)))
+	if d.VerifiedAt != 0 {
+		put("verified_at", scalarNode(stamp(d.VerifiedAt)))
+	}
+	if d.VerifiedBy != "" {
+		put("verified_by", scalarNode(string(d.VerifiedBy)))
+	}
+	if d.VerifiedCommit != "" {
+		put("verified_commit", scalarNode(string(d.VerifiedCommit)))
+	}
+	if len(d.Witness) > 0 {
+		put("witness", witnessNode(d.Witness))
+	}
+	if len(d.SupersededBy) > 0 {
+		put("superseded_by", flowNode(idStrings(d.SupersededBy)))
+	}
+	if d.StaleAt != 0 {
+		put("stale_at", scalarNode(stamp(d.StaleAt)))
+	}
+	if d.StaleBy != "" {
+		put("stale_by", scalarNode(string(d.StaleBy)))
+	}
+	if d.StaleReason != "" {
+		put("stale_reason", scalarNode(d.StaleReason))
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(delimiter)
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(fm); err != nil {
+		panic(fmt.Sprintf("fusefs: encode doc frontmatter: %v", err))
+	}
+	if err := enc.Close(); err != nil {
+		panic(fmt.Sprintf("fusefs: close frontmatter encoder: %v", err))
+	}
+	buf.WriteString(delimiter)
+	buf.WriteString(d.Body)
+	return buf.Bytes()
+}
+
+// ParseDoc decodes a doc file: YAML frontmatter between --- delimiters, body
+// verbatim below. Decoding is strict — a missing delimiter or an unknown
+// frontmatter key fails with ErrParse.
+func ParseDoc(data []byte) (ParsedDoc, error) {
+	fm, body, err := splitFrontmatter(string(data))
+	if err != nil {
+		return ParsedDoc{}, err
+	}
+	var p ParsedDoc
+	dec := yaml.NewDecoder(strings.NewReader(fm))
+	dec.KnownFields(true)
+	switch err := dec.Decode(&p); {
+	case errors.Is(err, io.EOF):
+	case err != nil:
+		return ParsedDoc{}, fmt.Errorf("%w: %w", ErrParse, err)
+	}
+	p.Body = body
+	return p, nil
+}
+
+// DiffDoc compares an edited doc document against the snapshot it was rendered
+// from and returns the ops that reproduce the edit. Title, when, body, tags,
+// and anchors are editable; id, author, created, and the verification fields
+// (verified_at, verified_by, verified_commit, witness, superseded_by) are
+// immutable — echoing them unchanged is fine, changing them fails with
+// ErrImmutableField (verification state changes via the CLI, not the
+// filesystem). The updated stamp is informational: editors save the stale one,
+// so any value is accepted and never diffed. Ops come out in a fixed order —
+// set_title, set_when, set_body, tag adds then removes, anchor adds then removes
+// per kind — each group sorted by value.
+func DiffDoc(base model.Doc, p ParsedDoc) ([]model.Op, error) {
+	if err := errors.Join(
+		immutable("id", p.ID, string(base.ID)),
+		immutable("author", p.Author, string(base.Author)),
+		immutable("created", p.Created, stamp(base.CreatedAt)),
+		immutable("verified_at", p.VerifiedAt, stampOrEmpty(base.VerifiedAt)),
+		immutable("verified_by", p.VerifiedBy, string(base.VerifiedBy)),
+		immutable("verified_commit", p.VerifiedCommit, string(base.VerifiedCommit)),
+		immutableStrings("superseded_by", p.SupersededBy, idStrings(base.SupersededBy)),
+		immutableWitness(p.Witness, base.Witness),
+		immutable("stale_at", p.StaleAt, stampOrEmpty(base.StaleAt)),
+		immutable("stale_by", p.StaleBy, string(base.StaleBy)),
+		immutable("stale_reason", p.StaleReason, base.StaleReason),
+	); err != nil {
+		return nil, err
+	}
+	var ops []model.Op
+	if p.Title.Set {
+		if title := stringValue(p.Title); title != base.Title {
+			ops = append(ops, model.SetTitle{Title: title})
+		}
+	}
+	if p.When.Set {
+		if when := stringValue(p.When); when != base.When {
+			ops = append(ops, model.SetWhen{When: when})
+		}
+	}
+	if p.Body != base.Body {
+		ops = append(ops, model.SetBody{Body: p.Body})
+	}
+	if p.Tags.Set {
+		adds, removes := diffSets(base.Tags, stringsValue(p.Tags))
+		for _, tag := range adds {
+			ops = append(ops, model.AddTag{Tag: tag})
+		}
+		for _, tag := range removes {
+			ops = append(ops, model.RemoveTag{Tag: tag})
+		}
+	}
+	for _, ak := range anchorKinds {
+		field := p.anchors(ak.kind)
+		if !field.Set {
+			continue
+		}
+		adds, removes := diffSets(anchorValues(base.Anchors, ak.kind), stringsValue(field))
+		for _, value := range adds {
+			ops = append(ops, model.AddAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
+		}
+		for _, value := range removes {
+			ops = append(ops, model.RemoveAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
+		}
+	}
+	return ops, nil
+}
+
+// NewDoc builds the create op for a brand-new doc file. The title comes from
+// the frontmatter, falling back to the first "# " heading in the body; neither
+// is an error. The when trigger is optional. A new file claiming an id is a
+// contradiction and fails; author, created, and updated are informational and
+// ignored.
+func NewDoc(p ParsedDoc) ([]model.Op, error) {
+	if p.ID.Set {
+		return nil, fmt.Errorf("%w: id on a new doc", ErrParse)
+	}
+	title := stringValue(p.Title)
+	if title == "" {
+		title = firstHeading(p.Body)
+	}
+	if title == "" {
+		return nil, fmt.Errorf("%w: new doc needs a title or a # heading", ErrParse)
+	}
+	var anchors []model.Anchor
+	for _, ak := range anchorKinds {
+		for _, value := range sortedSet(stringsValue(p.anchors(ak.kind))) {
+			anchors = append(anchors, model.Anchor{Kind: ak.kind, Value: value})
+		}
+	}
+	return []model.Op{model.CreateDoc{
+		Nonce:   model.NewNonce(),
+		Title:   title,
+		Body:    p.Body,
+		When:    stringValue(p.When),
+		Tags:    sortedSet(stringsValue(p.Tags)),
+		Anchors: anchors,
+	}}, nil
+}
+
 // RenderTask renders t as the CLI's --json document pretty-printed with
 // 2-space indent and a trailing newline, byte-compatible with
 // `task show --json`. Blocks is a derived cross-entity index this layer

@@ -70,9 +70,9 @@ func TestNoteDirAnchorDrift(t *testing.T) {
 	}
 	note := model.Note{Anchors: anchors, Witness: witness}
 
-	drifted, err := noteDrifted(ctx, s, head, note, false)
+	drifted, err := driftedOf(ctx, s, head, freshFromNote(note), false)
 	if err != nil {
-		t.Fatalf("noteDrifted (unchanged): %v", err)
+		t.Fatalf("driftedOf (unchanged): %v", err)
 	}
 	if drifted {
 		t.Fatal("dir anchor drifted with no change to the subtree")
@@ -83,9 +83,9 @@ func TestNoteDirAnchorDrift(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveHead after edit: %v", err)
 	}
-	drifted, err = noteDrifted(ctx, s, head, note, false)
+	drifted, err = driftedOf(ctx, s, head, freshFromNote(note), false)
 	if err != nil {
-		t.Fatalf("noteDrifted (changed): %v", err)
+		t.Fatalf("driftedOf (changed): %v", err)
 	}
 	if !drifted {
 		t.Fatal("dir anchor did not drift after a file under it changed")
@@ -97,9 +97,9 @@ func TestNoteDirAnchorDrift(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveHead after delete: %v", err)
 	}
-	drifted, err = noteDrifted(ctx, s, head, note, false)
+	drifted, err = driftedOf(ctx, s, head, freshFromNote(note), false)
 	if err != nil {
-		t.Fatalf("noteDrifted (deleted): %v", err)
+		t.Fatalf("driftedOf (deleted): %v", err)
 	}
 	if !drifted {
 		t.Fatal("dir anchor did not drift after the directory was deleted")

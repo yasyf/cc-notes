@@ -549,6 +549,12 @@ func diffDocument(base model.Snapshot, data []byte) ([]model.Op, error) {
 			return nil, err
 		}
 		return DiffNote(b, parsed)
+	case model.Doc:
+		parsed, err := ParseDoc(data)
+		if err != nil {
+			return nil, err
+		}
+		return DiffDoc(b, parsed)
 	case model.Task:
 		parsed, err := ParseTask(data)
 		if err != nil {
@@ -645,6 +651,8 @@ func (f *FS) resolveEntity(kind refs.Kind, shortID string) (string, rendered, er
 	switch kind {
 	case refs.KindNote:
 		return f.resolveNote(shortID)
+	case refs.KindDoc:
+		return f.resolveDoc(shortID)
 	case refs.KindTask:
 		return f.resolveTask(shortID)
 	case refs.KindSprint:
@@ -664,6 +672,12 @@ func newEntityOps(kind refs.Kind, data []byte) ([]model.Op, error) {
 			return nil, err
 		}
 		return NewNote(parsed)
+	case refs.KindDoc:
+		parsed, err := ParseDoc(data)
+		if err != nil {
+			return nil, err
+		}
+		return NewDoc(parsed)
 	case refs.KindTask:
 		parsed, err := ParseTask(data)
 		if err != nil {
@@ -688,15 +702,17 @@ func newEntityOps(kind refs.Kind, data []byte) ([]model.Op, error) {
 }
 
 // entityTarget classifies p as a committable entity path — a ".md" name
-// directly under /notes, or a ".json" name directly under /tasks, /sprints,
-// or /projects. The nested browse-tree leaves live at deeper paths and never
-// match. ok is false for everything else; those paths stay in-memory scratch
-// files.
+// directly under /notes or /docs, or a ".json" name directly under /tasks,
+// /sprints, or /projects. The nested browse-tree leaves live at deeper paths
+// and never match. ok is false for everything else; those paths stay in-memory
+// scratch files.
 func entityTarget(p string) (kind refs.Kind, ok bool) {
 	dir, name := path.Dir(p), path.Base(p)
 	switch {
 	case dir == "/notes" && strings.HasSuffix(name, ".md") && name != ".md":
 		return refs.KindNote, true
+	case dir == "/docs" && strings.HasSuffix(name, ".md") && name != ".md":
+		return refs.KindDoc, true
 	case dir == "/tasks" && strings.HasSuffix(name, ".json") && name != ".json":
 		return refs.KindTask, true
 	case dir == "/sprints" && strings.HasSuffix(name, ".json") && name != ".json":
@@ -711,6 +727,8 @@ func refFor(snap model.Snapshot) string {
 	switch s := snap.(type) {
 	case model.Note:
 		return refs.Note(s.ID)
+	case model.Doc:
+		return refs.Doc(s.ID)
 	case model.Task:
 		return refs.Task(s.ID)
 	case model.Sprint:
@@ -746,6 +764,12 @@ func (f *FS) openEntity(p string) (string, rendered, int) {
 	switch n := node.(type) {
 	case NoteFile:
 		ref, r, err := f.resolveNote(n.ShortID)
+		if err != nil {
+			return "", rendered{}, errno(err)
+		}
+		return ref, r, 0
+	case DocFile:
+		ref, r, err := f.resolveDoc(n.ShortID)
 		if err != nil {
 			return "", rendered{}, errno(err)
 		}
@@ -791,6 +815,28 @@ func (f *FS) resolveNote(shortID string) (string, rendered, error) {
 	}
 	if note.Deleted {
 		return "", rendered{}, fmt.Errorf("%w: note %s is deleted", ErrPath, shortID)
+	}
+	return ref, r, nil
+}
+
+// resolveDoc maps a short id to the live doc it names. Unknown, deleted, and
+// ambiguous short ids all read as ErrPath — the filesystem namespace has no way
+// to disambiguate a colliding prefix.
+func (f *FS) resolveDoc(shortID string) (string, rendered, error) {
+	ref, tip, err := f.resolveRef(refs.DocsRoot, shortID)
+	if err != nil {
+		return "", rendered{}, err
+	}
+	r, err := f.renderTip(tip)
+	if err != nil {
+		return "", rendered{}, err
+	}
+	doc, ok := r.snapshot.(model.Doc)
+	if !ok {
+		return "", rendered{}, fmt.Errorf("ref %s folds as %T, want doc", ref, r.snapshot)
+	}
+	if doc.Deleted {
+		return "", rendered{}, fmt.Errorf("%w: doc %s is deleted", ErrPath, shortID)
 	}
 	return ref, r, nil
 }
@@ -904,6 +950,8 @@ func renderDocument(snap model.Snapshot) []byte {
 	switch s := snap.(type) {
 	case model.Note:
 		return RenderNote(s)
+	case model.Doc:
+		return RenderDoc(s)
 	case model.Task:
 		return RenderTask(s)
 	case model.Sprint:
@@ -919,6 +967,8 @@ func headOf(snap model.Snapshot) model.SHA {
 	switch s := snap.(type) {
 	case model.Note:
 		return s.Head
+	case model.Doc:
+		return s.Head
 	case model.Task:
 		return s.Head
 	case model.Sprint:
@@ -933,6 +983,8 @@ func headOf(snap model.Snapshot) model.SHA {
 func snapshotTimes(snap model.Snapshot) (created, updated int64) {
 	switch s := snap.(type) {
 	case model.Note:
+		return s.CreatedAt, s.UpdatedAt
+	case model.Doc:
 		return s.CreatedAt, s.UpdatedAt
 	case model.Task:
 		return s.CreatedAt, s.UpdatedAt
@@ -971,11 +1023,18 @@ func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 		return -fuse.ENOENT
 	}
 	switch n := node.(type) {
-	case Root, NotesDir, TasksRoot, SprintsDir, ProjectsDir:
+	case Root, NotesDir, DocsDir, TasksRoot, SprintsDir, ProjectsDir:
 		f.fillDirStat(stat, p)
 		return 0
 	case NoteFile:
 		_, r, rerr := f.resolveNote(n.ShortID)
+		if rerr != nil {
+			return errno(rerr)
+		}
+		f.fillEntityStat(stat, r)
+		return 0
+	case DocFile:
+		_, r, rerr := f.resolveDoc(n.ShortID)
 		if rerr != nil {
 			return errno(rerr)
 		}
@@ -1030,7 +1089,7 @@ func (f *FS) listDir(p string) ([]string, int) {
 	names := map[string]bool{}
 	switch n := node.(type) {
 	case Root:
-		names["notes"], names["tasks"], names["sprints"], names["projects"] = true, true, true, true
+		names["notes"], names["docs"], names["tasks"], names["sprints"], names["projects"] = true, true, true, true, true
 	case NotesDir:
 		notes, err := f.store.ListNotes(f.ctx, false, false)
 		if err != nil {
@@ -1038,6 +1097,14 @@ func (f *FS) listDir(p string) ([]string, int) {
 		}
 		for _, note := range notes {
 			names[NoteFilename(note)] = true
+		}
+	case DocsDir:
+		docs, err := f.store.ListDocs(f.ctx, false, false)
+		if err != nil {
+			return nil, errno(err)
+		}
+		for _, doc := range docs {
+			names[DocFilename(doc)] = true
 		}
 	case TasksRoot:
 		tasks, err := f.store.ListTasks(f.ctx)
@@ -1449,6 +1516,12 @@ func (f *FS) notesSeed(p string, _ *fuse.Stat_t) string {
 	switch n := node.(type) {
 	case NoteFile:
 		_, r, err := f.resolveNote(n.ShortID)
+		if err != nil {
+			return ""
+		}
+		return string(headOf(r.snapshot))
+	case DocFile:
+		_, r, err := f.resolveDoc(n.ShortID)
 		if err != nil {
 			return ""
 		}

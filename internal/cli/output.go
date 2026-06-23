@@ -42,6 +42,29 @@ type noteDTO struct {
 	StaleReason  *string     `json:"stale_reason"`
 }
 
+// docDTO fixes the JSON field order and formats for doc output: the noteDTO
+// shape plus the free-text When trigger (always present, surfaced verbatim)
+// placed right after the body.
+type docDTO struct {
+	ID           string      `json:"id"`
+	Title        string      `json:"title"`
+	Body         string      `json:"body"`
+	When         string      `json:"when"`
+	Tags         []string    `json:"tags"`
+	Anchors      []anchorDTO `json:"anchors"`
+	Author       string      `json:"author"`
+	CreatedAt    string      `json:"created_at"`
+	UpdatedAt    string      `json:"updated_at"`
+	VerifiedAt   *string     `json:"verified_at"`
+	VerifiedBy   *string     `json:"verified_by"`
+	SupersededBy *string     `json:"superseded_by"`
+	Drift        *string     `json:"drift"`
+	Deleted      bool        `json:"deleted"`
+	StaleAt      *string     `json:"stale_at"`
+	StaleBy      *string     `json:"stale_by"`
+	StaleReason  *string     `json:"stale_reason"`
+}
+
 // commentDTO is one task comment with its timestamp rendered RFC3339 UTC.
 type commentDTO struct {
 	Author string `json:"author"`
@@ -142,13 +165,14 @@ type projectDTO struct {
 
 // statusDTO fixes the JSON field order for a status report: the current
 // branch, the backlog and your-branch task slices, the in-progress tasks
-// grouped by assignee, and the note summary.
+// grouped by assignee, and the note and doc summaries.
 type statusDTO struct {
 	Branch     string              `json:"branch"`
 	Backlog    []taskDTO           `json:"backlog"`
 	YourBranch []taskDTO           `json:"your_branch"`
 	InProgress []statusAssigneeDTO `json:"in_progress"`
 	Notes      statusNotesDTO      `json:"notes"`
+	Docs       statusNotesDTO      `json:"docs"`
 }
 
 // statusAssigneeDTO groups one assignee's in-progress tasks.
@@ -275,6 +299,43 @@ func newNoteDTO(n model.Note, drift string) noteDTO {
 	}
 }
 
+func newDocDTO(d model.Doc, drift string) docDTO {
+	byAnchor := witnessIndex(d.Witness)
+	anchors := make([]anchorDTO, len(d.Anchors))
+	for i, a := range d.Anchors {
+		var witness *string
+		if w, ok := byAnchor[a]; ok {
+			oid := string(w.OID)
+			witness = &oid
+		}
+		anchors[i] = anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: witness}
+	}
+	var superseded *string
+	if len(d.SupersededBy) > 0 {
+		id := string(d.SupersededBy[0])
+		superseded = &id
+	}
+	return docDTO{
+		ID:           string(d.ID),
+		Title:        d.Title,
+		Body:         d.Body,
+		When:         d.When,
+		Tags:         emptyNotNil(d.Tags),
+		Anchors:      anchors,
+		Author:       string(d.Author),
+		CreatedAt:    rfc3339(d.CreatedAt),
+		UpdatedAt:    rfc3339(d.UpdatedAt),
+		VerifiedAt:   optTime(d.VerifiedAt),
+		VerifiedBy:   optString(string(d.VerifiedBy)),
+		SupersededBy: superseded,
+		Drift:        optString(drift),
+		Deleted:      d.Deleted,
+		StaleAt:      optTime(d.StaleAt),
+		StaleBy:      optString(string(d.StaleBy)),
+		StaleReason:  optString(d.StaleReason),
+	}
+}
+
 func newTaskDTO(t model.Task, blocks []model.EntityID) taskDTO {
 	return taskDTO{
 		ID:           string(t.ID),
@@ -386,6 +447,13 @@ func leanNoteLine(n model.Note) string {
 	return fmt.Sprintf("%s\t%s\t%s\t%s", n.ID.Short(), dateUTC(n.UpdatedAt), csvOrDash(n.Tags), n.Title)
 }
 
+// leanDocLine renders the tab-separated doc line:
+// <short7>\t<YYYY-MM-DD of updated_at UTC>\t<tags csv|->\t<title>\t<when|->.
+// The trailing field carries the free-text When trigger verbatim.
+func leanDocLine(d model.Doc) string {
+	return fmt.Sprintf("%s\t%s\t%s\t%s\t%s", d.ID.Short(), dateUTC(d.UpdatedAt), csvOrDash(d.Tags), d.Title, orDash(d.When))
+}
+
 // leanTaskLine renders the tab-separated task line:
 // <short7>\t<status>\t<P{n}>\t<assignee|->\t<title>.
 func leanTaskLine(t model.Task) string {
@@ -424,6 +492,45 @@ func renderNoteShow(n model.Note, drift string, supersedes []model.EntityID) str
 	if n.Body != "" {
 		b.WriteByte('\n')
 		b.WriteString(n.Body)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// renderDocShow renders the lean show view of a doc: the fixed-order header
+// block, with the free-text When trigger on a "when" line right after the
+// title, then the body separated by a blank line. The header carries the
+// verify metadata, the supersede edges in both directions, and the computed
+// drift verdict. The deleted header appears only on a tombstoned doc.
+func renderDocShow(d model.Doc, drift string, supersedes []model.EntityID) string {
+	var b strings.Builder
+	header(&b, "id", string(d.ID))
+	header(&b, "title", d.Title)
+	header(&b, "when", orDash(d.When))
+	header(&b, "tags", csvOrDash(d.Tags))
+	header(&b, "commits", csvOrDash(anchorValues(d.Anchors, model.AnchorCommit)))
+	header(&b, "paths", csvOrDash(anchorValues(d.Anchors, model.AnchorPath)))
+	header(&b, "dirs", csvOrDash(anchorValues(d.Anchors, model.AnchorDir)))
+	header(&b, "branches", csvOrDash(anchorValues(d.Anchors, model.AnchorBranch)))
+	header(&b, "author", string(d.Author))
+	header(&b, "created", rfc3339(d.CreatedAt))
+	header(&b, "updated", rfc3339(d.UpdatedAt))
+	header(&b, "verified_at", orDash(optTimeString(d.VerifiedAt)))
+	header(&b, "verified_by", orDash(string(d.VerifiedBy)))
+	header(&b, "superseded_by", csvOrDash(shortIDs(d.SupersededBy)))
+	header(&b, "supersedes", csvOrDash(shortIDs(supersedes)))
+	header(&b, "drift", orDash(drift))
+	if d.StaleAt != 0 {
+		header(&b, "stale_at", orDash(optTimeString(d.StaleAt)))
+		header(&b, "stale_by", string(d.StaleBy))
+		header(&b, "stale_reason", d.StaleReason)
+	}
+	if d.Deleted {
+		header(&b, "deleted", "true")
+	}
+	if d.Body != "" {
+		b.WriteByte('\n')
+		b.WriteString(d.Body)
 		b.WriteByte('\n')
 	}
 	return b.String()

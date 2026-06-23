@@ -40,6 +40,8 @@ func newCompactCmd() *cobra.Command {
 			switch v := snap.(type) {
 			case model.Note:
 				return printNote(cmd, v, jsonOut)
+			case model.Doc:
+				return printDoc(cmd, v, "", jsonOut)
 			case model.Task:
 				return printTask(cmd, s, v, jsonOut)
 			default:
@@ -52,9 +54,9 @@ func newCompactCmd() *cobra.Command {
 }
 
 // resolveEntity expands a kind-agnostic id prefix into a ref. An entity is a
-// note or a task and ids are globally unique, so it resolves against both
-// namespaces; a prefix that matches one entity in each is ambiguous and fails
-// with an *AmbiguousError listing both.
+// note, a task, or a doc and ids are globally unique, so it resolves against all
+// three namespaces; a prefix that matches an entity in more than one is
+// ambiguous and fails with an *AmbiguousError listing each match.
 func resolveEntity(ctx context.Context, s *store.Store, prefix string) (string, error) {
 	noteRef, noteErr := s.Resolve(ctx, refs.KindNote, prefix)
 	if noteErr != nil && !errors.Is(noteErr, store.ErrNotFound) {
@@ -64,21 +66,33 @@ func resolveEntity(ctx context.Context, s *store.Store, prefix string) (string, 
 	if taskErr != nil && !errors.Is(taskErr, store.ErrNotFound) {
 		return "", taskErr
 	}
-	switch {
-	case noteErr == nil && taskErr == nil:
-		return "", ambiguousAcrossKinds(ctx, s, prefix, noteRef, taskRef)
-	case noteErr == nil:
-		return noteRef, nil
-	case taskErr == nil:
-		return taskRef, nil
+	docRef, docErr := s.Resolve(ctx, refs.KindDoc, prefix)
+	if docErr != nil && !errors.Is(docErr, store.ErrNotFound) {
+		return "", docErr
+	}
+	matched := make([]string, 0, 3)
+	if noteErr == nil {
+		matched = append(matched, noteRef)
+	}
+	if taskErr == nil {
+		matched = append(matched, taskRef)
+	}
+	if docErr == nil {
+		matched = append(matched, docRef)
+	}
+	switch len(matched) {
+	case 0:
+		return "", fmt.Errorf("%w: no note, task, or doc matches %q", store.ErrNotFound, prefix)
+	case 1:
+		return matched[0], nil
 	default:
-		return "", fmt.Errorf("%w: no note or task matches %q", store.ErrNotFound, prefix)
+		return "", ambiguousAcrossKinds(ctx, s, prefix, matched)
 	}
 }
 
-func ambiguousAcrossKinds(ctx context.Context, s *store.Store, prefix, noteRef, taskRef string) error {
-	candidates := make([]store.Candidate, 0, 2)
-	for _, ref := range []string{noteRef, taskRef} {
+func ambiguousAcrossKinds(ctx context.Context, s *store.Store, prefix string, matched []string) error {
+	candidates := make([]store.Candidate, 0, len(matched))
+	for _, ref := range matched {
 		snap, err := s.Load(ctx, ref)
 		if err != nil {
 			return err
@@ -86,6 +100,8 @@ func ambiguousAcrossKinds(ctx context.Context, s *store.Store, prefix, noteRef, 
 		title := ""
 		switch v := snap.(type) {
 		case model.Note:
+			title = v.Title
+		case model.Doc:
 			title = v.Title
 		case model.Task:
 			title = v.Title

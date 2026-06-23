@@ -172,6 +172,43 @@ func TestFoldCacheRoundTripBothKinds(t *testing.T) {
 	}
 }
 
+func TestFoldCacheRoundTripDoc(t *testing.T) {
+	dir := t.TempDir()
+	c := newFoldCache(dir, foldCacheCap)
+
+	tip := model.SHA("dddd111111111111111111111111111111111111")
+	doc := model.Doc{
+		ID:        "docid",
+		Title:     "design",
+		Body:      "long body",
+		When:      "before touching the fold",
+		Tags:      []string{"a", "b"},
+		Anchors:   []model.Anchor{{Kind: model.AnchorPath, Value: "fold.go"}},
+		Author:    testActor,
+		CreatedAt: 100,
+		UpdatedAt: 200,
+		Witness: []model.AnchorWitness{
+			{Anchor: model.Anchor{Kind: model.AnchorCommit, Value: "abc1234"}, OID: "abc1234"},
+		},
+		VerifiedAt:     150,
+		VerifiedBy:     testActor,
+		VerifiedCommit: "deadbeef",
+		Head:           tip,
+	}
+	c.put(tip, doc)
+
+	got, ok := c.get(tip)
+	if !ok {
+		t.Fatal("doc round-trip: get miss")
+	}
+	if !reflect.DeepEqual(got, doc) {
+		t.Fatalf("doc round-trip: got %#v, want %#v", got, doc)
+	}
+	if got.(model.Doc).When != doc.When {
+		t.Fatalf("When = %q, want %q", got.(model.Doc).When, doc.When)
+	}
+}
+
 func TestFoldCacheTaskP3FieldsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	c := newFoldCache(dir, foldCacheCap)

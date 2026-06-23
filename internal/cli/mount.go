@@ -37,8 +37,8 @@ func newMountCmd() *cobra.Command {
 	var opts mountOpts
 	cmd := &cobra.Command{
 		Use:   "mount [MOUNTPOINT]",
-		Short: "Mount notes and tasks as a filesystem (detaches; a mount holder serves it)",
-		Long: "Mount the repository's notes and tasks as an editable filesystem.\n\n" +
+		Short: "Mount notes, docs, and tasks as a filesystem (detaches; a mount holder serves it)",
+		Long: "Mount the repository's notes, docs, and tasks as an editable filesystem.\n\n" +
 			"By default `mount` DETACHES: a background mount holder serves the mount, the\n" +
 			"command prints the mountpoint and returns, and the mount persists after the\n" +
 			"command exits. With no MOUNTPOINT the mount is served at a managed per-repo\n" +

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -90,6 +91,27 @@ func makeNote(t *testing.T, dir, title string, anchors ...model.Anchor) model.En
 	return snap.(model.Note).ID
 }
 
+// makeDoc creates a doc with id-stable nonce, the given when trigger and
+// anchors, and no verify (unverified) through the store, returning its entity
+// id.
+func makeDoc(t *testing.T, dir, title, when string, anchors ...model.Anchor) model.EntityID {
+	t.Helper()
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	snap, err := s.Create(t.Context(), []model.Op{model.CreateDoc{
+		Nonce:   model.NewNonce(),
+		Title:   title,
+		When:    when,
+		Anchors: anchors,
+	}})
+	if err != nil {
+		t.Fatalf("create doc %q: %v", title, err)
+	}
+	return snap.(model.Doc).ID
+}
+
 // verifyNote stamps a real witness on a note against current HEAD, so the note
 // reads as fresh until its anchored content drifts.
 func verifyNote(t *testing.T, dir string, id model.EntityID) {
@@ -116,8 +138,9 @@ func verifyNote(t *testing.T, dir string, id model.EntityID) {
 	}
 }
 
-// runRelevant scores notes for target through the engine, failing on error.
-func runRelevant(t *testing.T, dir, target string) []scoredNote {
+// runRelevant scores notes and docs for target through the engine, failing on
+// error.
+func runRelevant(t *testing.T, dir, target string) []scoredEntity {
 	t.Helper()
 	scored, _, err := relevantForTest(t, dir, target, "", "", false, false)
 	if err != nil {
@@ -127,7 +150,7 @@ func runRelevant(t *testing.T, dir, target string) []scoredNote {
 }
 
 // relevantForTest opens the store in dir and runs the relevance engine.
-func relevantForTest(t *testing.T, dir, target, branchFlag, baseFlag string, attached, worktree bool) ([]scoredNote, map[model.EntityID]string, error) {
+func relevantForTest(t *testing.T, dir, target, branchFlag, baseFlag string, attached, worktree bool) ([]scoredEntity, map[model.EntityID]string, error) {
 	t.Helper()
 	s, err := store.Open(dir)
 	if err != nil {
@@ -137,24 +160,24 @@ func relevantForTest(t *testing.T, dir, target, branchFlag, baseFlag string, att
 }
 
 // scoredIDs returns the ordered entity ids of a scored slice.
-func scoredIDs(scored []scoredNote) []model.EntityID {
+func scoredIDs(scored []scoredEntity) []model.EntityID {
 	out := make([]model.EntityID, len(scored))
 	for i, m := range scored {
-		out[i] = m.note.ID
+		out[i] = m.id()
 	}
 	return out
 }
 
 // findScored returns the scored entry for id, failing if absent.
-func findScored(t *testing.T, scored []scoredNote, id model.EntityID) scoredNote {
+func findScored(t *testing.T, scored []scoredEntity, id model.EntityID) scoredEntity {
 	t.Helper()
 	for _, m := range scored {
-		if m.note.ID == id {
+		if m.id() == id {
 			return m
 		}
 	}
-	t.Fatalf("note %s not in results %v", id, scoredIDs(scored))
-	return scoredNote{}
+	t.Fatalf("entity %s not in results %v", id, scoredIDs(scored))
+	return scoredEntity{}
 }
 
 func TestRelevantOrdering(t *testing.T) {
@@ -450,11 +473,12 @@ func nonEmptyLines(s string) []string {
 	return out
 }
 
-// scoredFixture builds a scoredNote with a synthetic id and UpdatedAt for sort
-// tests, where committing notes a second apart cannot reliably distinguish
-// UpdatedAt at the engine's second granularity.
-func scoredFixture(id string, score int, updatedAt int64) scoredNote {
-	return scoredNote{
+// scoredFixture builds a note-kind scoredEntity with a synthetic id and
+// UpdatedAt for sort tests, where committing entities a second apart cannot
+// reliably distinguish UpdatedAt at the engine's second granularity.
+func scoredFixture(id string, score int, updatedAt int64) scoredEntity {
+	return scoredEntity{
+		kind:  refs.KindNote,
 		note:  model.Note{ID: model.EntityID(id), UpdatedAt: updatedAt},
 		score: score,
 	}
@@ -463,12 +487,12 @@ func scoredFixture(id string, score int, updatedAt int64) scoredNote {
 func TestCompareScoredTotalOrder(t *testing.T) {
 	tests := []struct {
 		name string
-		in   []scoredNote
+		in   []scoredEntity
 		want []model.EntityID
 	}{
 		{
 			name: "score descending dominates",
-			in: []scoredNote{
+			in: []scoredEntity{
 				scoredFixture("a", 15, 100),
 				scoredFixture("b", 100, 50),
 				scoredFixture("c", 60, 100),
@@ -477,7 +501,7 @@ func TestCompareScoredTotalOrder(t *testing.T) {
 		},
 		{
 			name: "equal score breaks on UpdatedAt descending",
-			in: []scoredNote{
+			in: []scoredEntity{
 				scoredFixture("a", 60, 100),
 				scoredFixture("b", 60, 300),
 				scoredFixture("c", 60, 200),
@@ -486,7 +510,7 @@ func TestCompareScoredTotalOrder(t *testing.T) {
 		},
 		{
 			name: "equal score and UpdatedAt breaks on id ascending",
-			in: []scoredNote{
+			in: []scoredEntity{
 				scoredFixture("c", 60, 100),
 				scoredFixture("a", 60, 100),
 				scoredFixture("b", 60, 100),
@@ -637,5 +661,107 @@ func TestRelevantLimitNegativeUnlimited(t *testing.T) {
 	stdout := runRelevantCmd(t, dir, "--limit", "-1", "pkg/a.go")
 	if lines := nonEmptyLines(stdout); len(lines) != 3 {
 		t.Fatalf("--limit -1 emitted %d lines, want 3:\n%s", len(lines), stdout)
+	}
+}
+
+func TestRelevantRanksDocs(t *testing.T) {
+	dir := relevantRepo(t)
+	commitFileAs(t, dir, relevantMe, "internal/auth/login.go", "v1\n")
+
+	// A note anchored to the exact path (score 100) and a doc anchored to the
+	// parent dir (score 60) — both score off the same anchor signals, ranked
+	// together by score descending.
+	pathNote := makeNote(t, dir, "exact path", model.Anchor{Kind: model.AnchorPath, Value: "internal/auth/login.go"})
+	dirDoc := makeDoc(t, dir, "auth handoff", "resuming the auth cutover", model.Anchor{Kind: model.AnchorDir, Value: "internal/auth"})
+
+	scored := runRelevant(t, dir, "internal/auth/login.go")
+	wantIDs := []model.EntityID{pathNote, dirDoc}
+	if !slices.Equal(scoredIDs(scored), wantIDs) {
+		t.Fatalf("ranked ids = %v, want %v (path note outranks dir doc)", scoredIDs(scored), wantIDs)
+	}
+
+	note := findScored(t, scored, pathNote)
+	if note.kind != refs.KindNote {
+		t.Fatalf("note entry kind = %q, want %q", note.kind, refs.KindNote)
+	}
+
+	doc := findScored(t, scored, dirDoc)
+	if doc.kind != refs.KindDoc {
+		t.Fatalf("doc entry kind = %q, want %q", doc.kind, refs.KindDoc)
+	}
+	if doc.doc.When != "resuming the auth cutover" {
+		t.Fatalf("doc when = %q, want the verbatim trigger", doc.doc.When)
+	}
+	if doc.score != scoreDir || len(doc.reasons) != 1 || doc.reasons[0] != reasonDir {
+		t.Fatalf("doc = score %d reasons %v, want %d [dir]", doc.score, doc.reasons, scoreDir)
+	}
+}
+
+func TestRelevantDocJSON(t *testing.T) {
+	dir := relevantRepo(t)
+	commitFileAs(t, dir, relevantMe, "internal/api/client.go", "v1\n")
+
+	noteID := makeNote(t, dir, "path note", model.Anchor{Kind: model.AnchorPath, Value: "internal/api/client.go"})
+	docID := makeDoc(t, dir, "api handoff", "resuming the api cutover", model.Anchor{Kind: model.AnchorDir, Value: "internal/api"})
+
+	stdout := runRelevantCmd(t, dir, "--json", "internal/api/client.go")
+	var dtos []relevantDTO
+	if err := json.Unmarshal([]byte(stdout), &dtos); err != nil {
+		t.Fatalf("unmarshal json %q: %v", stdout, err)
+	}
+	if len(dtos) != 2 {
+		t.Fatalf("json results = %d, want 2", len(dtos))
+	}
+
+	// The path note (score 100) ranks above the dir doc (score 60). A note entry
+	// keeps its "note" key and omits "doc"; a doc entry carries "doc" (with the
+	// verbatim trigger and verdict) and omits "note".
+	noteEntry := dtos[0]
+	if noteEntry.Kind != string(refs.KindNote) || noteEntry.Note == nil || noteEntry.Doc != nil {
+		t.Fatalf("entry[0] kind=%q note=%v doc=%v, want a note entry", noteEntry.Kind, noteEntry.Note, noteEntry.Doc)
+	}
+	if noteEntry.Note.ID != string(noteID) {
+		t.Errorf("note id = %q, want %q", noteEntry.Note.ID, noteID)
+	}
+
+	docEntry := dtos[1]
+	if docEntry.Kind != string(refs.KindDoc) || docEntry.Doc == nil || docEntry.Note != nil {
+		t.Fatalf("entry[1] kind=%q note=%v doc=%v, want a doc entry", docEntry.Kind, docEntry.Note, docEntry.Doc)
+	}
+	if docEntry.Doc.ID != string(docID) {
+		t.Errorf("doc id = %q, want %q", docEntry.Doc.ID, docID)
+	}
+	if docEntry.Doc.When != "resuming the api cutover" {
+		t.Errorf("doc when = %q, want the verbatim trigger", docEntry.Doc.When)
+	}
+	if docEntry.Score != scoreDir {
+		t.Errorf("doc score = %d, want %d", docEntry.Score, scoreDir)
+	}
+	if len(docEntry.Reasons) != 1 || docEntry.Reasons[0] != reasonDir {
+		t.Errorf("doc reasons = %v, want [%s]", docEntry.Reasons, reasonDir)
+	}
+	// A freshly created (unverified) doc carries its verdict in the doc DTO.
+	if docEntry.Doc.Drift == nil || *docEntry.Doc.Drift != verdictUnverified {
+		t.Errorf("doc drift = %v, want %q", docEntry.Doc.Drift, verdictUnverified)
+	}
+}
+
+func TestRelevantDocLeanLine(t *testing.T) {
+	dir := relevantRepo(t)
+	commitFileAs(t, dir, relevantMe, "internal/api/client.go", "v1\n")
+	docID := makeDoc(t, dir, "api handoff", "resuming the api cutover", model.Anchor{Kind: model.AnchorDir, Value: "internal/api"})
+
+	stdout := runRelevantCmd(t, dir, "internal/api/client.go")
+	lines := nonEmptyLines(stdout)
+	if len(lines) != 1 {
+		t.Fatalf("lean output = %d lines, want 1:\n%s", len(lines), stdout)
+	}
+	line := lines[0]
+	// The doc line carries the verbatim trigger, the dir reason, the verdict flag
+	// (unverified here), and a doc-show hint — never the long body.
+	for _, want := range []string{"resuming the api cutover", reasonDir, "[unverified]", "doc show " + docID.Short()} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("doc lean line %q missing %q", line, want)
+		}
 	}
 }

@@ -28,10 +28,10 @@ var junkNames = map[string]bool{
 	".localized":            true,
 }
 
-// Node is one parsed mount path: the roots (Root, NotesDir, TasksRoot,
-// SprintsDir, ProjectsDir), the flat editable entity files (NoteFile, TaskFile,
-// SprintFile, ProjectFile), and the read-only nested browse tree of sprints and
-// projects whose task leaves are symlinks to the flat files.
+// Node is one parsed mount path: the roots (Root, NotesDir, DocsDir, TasksRoot,
+// SprintsDir, ProjectsDir), the flat editable entity files (NoteFile, DocFile,
+// TaskFile, SprintFile, ProjectFile), and the read-only nested browse tree of
+// sprints and projects whose task leaves are symlinks to the flat files.
 type Node interface {
 	node()
 }
@@ -42,12 +42,21 @@ type Root struct{}
 // NotesDir is the /notes directory.
 type NotesDir struct{}
 
+// DocsDir is the /docs directory.
+type DocsDir struct{}
+
 // TasksRoot is the /tasks directory.
 type TasksRoot struct{}
 
 // NoteFile is a note file under /notes, keyed by its short id prefix so a
 // stale slug still resolves.
 type NoteFile struct {
+	ShortID string
+}
+
+// DocFile is a doc file under /docs, keyed by its short id prefix so a stale
+// slug still resolves.
+type DocFile struct {
 	ShortID string
 }
 
@@ -142,8 +151,10 @@ type SprintTaskLink struct {
 
 func (Root) node()                  {}
 func (NotesDir) node()              {}
+func (DocsDir) node()               {}
 func (TasksRoot) node()             {}
 func (NoteFile) node()              {}
+func (DocFile) node()               {}
 func (TaskFile) node()              {}
 func (SprintsDir) node()            {}
 func (ProjectsDir) node()           {}
@@ -167,6 +178,15 @@ func NoteFilename(n model.Note) string {
 		return n.ID.Short() + "-" + s + ".md"
 	}
 	return n.ID.Short() + ".md"
+}
+
+// DocFilename names a doc file "<short7>-<slug>.md", dropping the slug part
+// when the title yields none.
+func DocFilename(d model.Doc) string {
+	if s := slug(d.Title); s != "" {
+		return d.ID.Short() + "-" + s + ".md"
+	}
+	return d.ID.Short() + ".md"
 }
 
 // TaskFilename names a task file "<short7>.json".
@@ -223,10 +243,10 @@ func JunkName(name string) bool {
 	return junkNames[name] || strings.HasPrefix(name, "._")
 }
 
-// ParsePath decodes an absolute mount path into its syntactic Node. Notes
-// and tasks are flat: a ".md" name under /notes is a NoteFile and a ".json"
-// name under /tasks is a TaskFile, both keyed by short id. Paths outside the
-// tree shape fail with ErrPath.
+// ParsePath decodes an absolute mount path into its syntactic Node. Notes,
+// docs, and tasks are flat: a ".md" name under /notes is a NoteFile, a ".md"
+// name under /docs is a DocFile, and a ".json" name under /tasks is a TaskFile,
+// all keyed by short id. Paths outside the tree shape fail with ErrPath.
 func ParsePath(path string) (Node, error) {
 	if path == "/" {
 		return Root{}, nil
@@ -255,6 +275,19 @@ func ParsePath(path string) (Node, error) {
 			return NoteFile{ShortID: shortID}, nil
 		default:
 			return nil, fmt.Errorf("%w: notes do not nest: %q", ErrPath, path)
+		}
+	case "docs":
+		switch len(tail) {
+		case 0:
+			return DocsDir{}, nil
+		case 1:
+			shortID, ok := ShortIDOf(tail[0])
+			if !ok || !strings.HasSuffix(tail[0], ".md") {
+				return nil, fmt.Errorf("%w: %q", ErrPath, path)
+			}
+			return DocFile{ShortID: shortID}, nil
+		default:
+			return nil, fmt.Errorf("%w: docs do not nest: %q", ErrPath, path)
 		}
 	case "tasks":
 		switch len(tail) {

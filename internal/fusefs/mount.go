@@ -7,8 +7,8 @@ import "github.com/yasyf/fusekit"
 //
 //	Mount(ctx context.Context, repoRoot string, mountpoint string) error
 //
-// It serves repoRoot's notes and tasks as a filesystem at mountpoint in the
-// FOREGROUND: the call blocks until ctx is canceled (the CLI wires
+// It serves repoRoot's notes, docs, and tasks as a filesystem at mountpoint in
+// the FOREGROUND: the call blocks until ctx is canceled (the CLI wires
 // SIGINT/SIGTERM via signal.NotifyContext) or the mount is removed externally
 // with umount(8), then tears the mount down. It is the `mount --foreground`
 // path and bypasses the mount holder; the default `mount` detaches and drives a

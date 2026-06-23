@@ -94,6 +94,57 @@ func TestPruneTombstonesSkipsSupersededAndTasks(t *testing.T) {
 	}
 }
 
+func TestPruneTombstonesDeletesDocRefLocalAndRemote(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	bare := initBareRemote(t, s)
+
+	doc := create(t, s, docOps("doomed")).(model.Doc)
+	ref := refs.Doc(doc.ID)
+	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+	mustGit(t, s.Git.Dir, "push", "origin", ref+":"+ref)
+
+	pruned, failed, err := s.PruneTombstones(ctx, "origin")
+	if err != nil {
+		t.Fatalf("PruneTombstones: %v", err)
+	}
+	if pruned != 1 || failed != 0 {
+		t.Fatalf("pruned/failed = %d/%d, want 1/0", pruned, failed)
+	}
+	if _, err := s.Repo.Tip(ctx, ref); !errors.Is(err, gitobj.ErrRefNotFound) {
+		t.Fatalf("local doc ref still present: %v", err)
+	}
+	if got := mustGit(t, bare, "for-each-ref", "--format=%(refname)", ref); got != "" {
+		t.Fatalf("remote doc ref still present after prune: %q", got)
+	}
+}
+
+func TestPruneTombstonesSkipsSupersededDoc(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	initBareRemote(t, s)
+
+	old := create(t, s, docOps("old")).(model.Doc)
+	replacement := create(t, s, docOps("new")).(model.Doc)
+	oldRef := refs.Doc(old.ID)
+	if _, err := s.Append(ctx, oldRef, []model.Op{model.AddSupersededBy{ID: replacement.ID}}); err != nil {
+		t.Fatalf("supersede: %v", err)
+	}
+
+	pruned, failed, err := s.PruneTombstones(ctx, "origin")
+	if err != nil {
+		t.Fatalf("PruneTombstones: %v", err)
+	}
+	if pruned != 0 || failed != 0 {
+		t.Fatalf("pruned/failed = %d/%d, want 0/0", pruned, failed)
+	}
+	if _, err := s.Repo.Tip(ctx, oldRef); err != nil {
+		t.Fatalf("superseded doc ref pruned: %v", err)
+	}
+}
+
 func TestGCLocalPrunesOrphanedCacheEntry(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()

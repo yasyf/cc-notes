@@ -15,7 +15,7 @@ const (
 	// foldCacheVersion prefixes every entry; bumping it invalidates every
 	// on-disk entry without touching the files, since a leading version
 	// mismatch reads as a miss.
-	foldCacheVersion = 3
+	foldCacheVersion = 4
 	// foldCacheCap bounds the number of on-disk entries; the least-recently
 	// used are evicted past it.
 	foldCacheCap = 1024
@@ -27,6 +27,7 @@ const (
 const (
 	foldCacheKindNote = "note"
 	foldCacheKindTask = "task"
+	foldCacheKindDoc  = "doc"
 )
 
 // foldCache is a persistent, local, tip-keyed snapshot cache: a pure
@@ -271,6 +272,8 @@ func encodeFoldEntry(snap model.Snapshot) ([]byte, bool) {
 		kind = foldCacheKindNote
 	case model.Task:
 		kind = foldCacheKindTask
+	case model.Doc:
+		kind = foldCacheKindDoc
 	default:
 		return nil, false
 	}
@@ -309,6 +312,12 @@ func decodeFoldEntry(data []byte) (model.Snapshot, bool) {
 			return nil, false
 		}
 		return t, true
+	case foldCacheKindDoc:
+		var d model.Doc
+		if err := json.Unmarshal(body, &d); err != nil {
+			return nil, false
+		}
+		return d, true
 	default:
 		return nil, false
 	}

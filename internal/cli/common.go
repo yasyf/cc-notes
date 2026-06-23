@@ -245,6 +245,19 @@ func loadNote(ctx context.Context, s *store.Store, prefix string) (string, model
 	return ref, snapshot.(model.Note), nil
 }
 
+// loadDoc resolves a doc id prefix and folds its chain.
+func loadDoc(ctx context.Context, s *store.Store, prefix string) (string, model.Doc, error) {
+	ref, err := s.Resolve(ctx, refs.KindDoc, prefix)
+	if err != nil {
+		return "", model.Doc{}, err
+	}
+	snapshot, err := s.Load(ctx, ref)
+	if err != nil {
+		return "", model.Doc{}, err
+	}
+	return ref, snapshot.(model.Doc), nil
+}
+
 // loadTask resolves a task id prefix globally and folds its chain.
 func loadTask(ctx context.Context, s *store.Store, prefix string) (string, model.Task, error) {
 	ref, err := s.Resolve(ctx, refs.KindTask, prefix)
@@ -371,6 +384,16 @@ func sortNotes(notes []model.Note) {
 	})
 }
 
+// sortDocs orders docs by updated_at descending, then id ascending.
+func sortDocs(docs []model.Doc) {
+	slices.SortFunc(docs, func(a, b model.Doc) int {
+		if c := cmp.Compare(b.UpdatedAt, a.UpdatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+}
+
 // sortTasks orders tasks by priority ascending, then created_at ascending,
 // then id ascending.
 func sortTasks(tasks []model.Task) {
@@ -402,6 +425,16 @@ func printNote(cmd *cobra.Command, n model.Note, jsonOut bool) error {
 		return printJSON(cmd.OutOrStdout(), newNoteDTO(n, ""))
 	}
 	_, err := fmt.Fprintln(cmd.OutOrStdout(), leanNoteLine(n))
+	return err
+}
+
+// printDoc writes d as its JSON DTO carrying the drift verdict, or its lean
+// line. A mutation echo passes an empty drift.
+func printDoc(cmd *cobra.Command, d model.Doc, drift string, jsonOut bool) error {
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), newDocDTO(d, drift))
+	}
+	_, err := fmt.Fprintln(cmd.OutOrStdout(), leanDocLine(d))
 	return err
 }
 

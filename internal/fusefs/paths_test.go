@@ -45,6 +45,39 @@ func TestNoteFilename(t *testing.T) {
 	}
 }
 
+func TestDocFilename(t *testing.T) {
+	id := model.EntityID("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0")
+	cases := []struct {
+		name  string
+		title string
+		want  string
+	}{
+		{"simple", "Fix the parser", "a1b2c3d-fix-the-parser.md"},
+		{"punctuation collapses", "Hello, World! (v2)", "a1b2c3d-hello-world-v2.md"},
+		{"digits kept", "v2 2024 roadmap", "a1b2c3d-v2-2024-roadmap.md"},
+		{"uppercase lowered", "READ Me", "a1b2c3d-read-me.md"},
+		{"unicode-only title", "日本語のメモ", "a1b2c3d.md"},
+		{"empty title", "", "a1b2c3d.md"},
+		{"symbols only", "---???!!!", "a1b2c3d.md"},
+		{
+			"capped at forty without trailing dash",
+			strings.Repeat("abc ", 20),
+			"a1b2c3d-" + strings.TrimSuffix(strings.Repeat("abc-", 10), "-") + ".md",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fusefs.DocFilename(model.Doc{ID: id, Title: tc.title})
+			if got != tc.want {
+				t.Errorf("DocFilename(%q) = %q, want %q", tc.title, got, tc.want)
+			}
+			if slug := strings.TrimSuffix(strings.TrimPrefix(got, "a1b2c3d-"), ".md"); len(slug) > 40 {
+				t.Errorf("slug %q longer than 40", slug)
+			}
+		})
+	}
+}
+
 func TestTaskFilename(t *testing.T) {
 	task := model.Task{ID: "0123abcd4567ef890123abcd4567ef890123abcd"}
 	if got, want := fusefs.TaskFilename(task), "0123abc.json"; got != want {
@@ -119,9 +152,12 @@ func TestParsePath(t *testing.T) {
 	}{
 		{"/", fusefs.Root{}},
 		{"/notes", fusefs.NotesDir{}},
+		{"/docs", fusefs.DocsDir{}},
 		{"/tasks", fusefs.TasksRoot{}},
 		{"/notes/a1b2c3d-fix-the-parser.md", fusefs.NoteFile{ShortID: "a1b2c3d"}},
 		{"/notes/a1b2c3d.md", fusefs.NoteFile{ShortID: "a1b2c3d"}},
+		{"/docs/a1b2c3d-fix-the-parser.md", fusefs.DocFile{ShortID: "a1b2c3d"}},
+		{"/docs/a1b2c3d.md", fusefs.DocFile{ShortID: "a1b2c3d"}},
 		{"/tasks/0123abc.json", fusefs.TaskFile{ShortID: "0123abc"}},
 		{"/tasks/0123abc-slug.json", fusefs.TaskFile{ShortID: "0123abc"}},
 		// Flat sprint and project dirs and files.
@@ -160,6 +196,10 @@ func TestParsePathErrors(t *testing.T) {
 		"", "notes", "relative/path", "/unknown", "/notes/", "/tasks/",
 		"/notes/readme.md", "/notes/a1b2c3d.json", "/notes/deep/a1b2c3d.md",
 		"/tasks//main", "/tasks/./x", "/tasks/../x", "/notes/..",
+		// Docs are flat like notes: a bare dir, a non-id name, the ".md"
+		// suffix alone, a wrong extension, and any nesting all fail.
+		"/docs/", "/docs/readme.md", "/docs/.md", "/docs/a1b2c3d.json",
+		"/docs/deep/a1b2c3d.md",
 		// Tasks are flat: a non-id name, a non-.json name, and any nesting
 		// under /tasks all fail.
 		"/tasks/main", "/tasks/0123abc.md", "/tasks/main/0123abc.json",

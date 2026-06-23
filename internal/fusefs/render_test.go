@@ -53,6 +53,41 @@ const goldenMinimalNote = "---\n" +
 	"updated: \"1970-01-01T00:00:00Z\"\n" +
 	"---\n"
 
+const goldenDoc = "---\n" +
+	"id: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0\n" +
+	"title: \"Fix the parser: edge-cases & \\U0001F984\"\n" +
+	"when: before touching the auth flow\n" +
+	"tags: [bug, parser]\n" +
+	"commits: [abc1234, def5678]\n" +
+	"paths: [internal/cli/output.go]\n" +
+	"branches: [feature/login]\n" +
+	"author: Agent A <a@example.com>\n" +
+	"created: \"2025-12-12T02:54:56Z\"\n" +
+	"updated: \"2025-12-13T02:54:56Z\"\n" +
+	"verified_at: \"2025-12-14T02:54:56Z\"\n" +
+	"verified_by: Agent V <v@example.com>\n" +
+	"verified_commit: aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111\n" +
+	"witness:\n" +
+	"  - kind: path\n" +
+	"    value: internal/cli/output.go\n" +
+	"    oid: 1234567890abcdef1234567890abcdef12345678\n" +
+	"  - kind: commit\n" +
+	"    value: abc1234\n" +
+	"    oid: abcd1234abcd1234abcd1234abcd1234abcd1234\n" +
+	"superseded_by: [cccc1111cccc1111cccc1111cccc1111cccc1111, dddd2222dddd2222dddd2222dddd2222dddd2222]\n" +
+	"---\n" +
+	"Long-form analysis.\n\nWith a second paragraph.\n"
+
+const goldenMinimalDoc = "---\n" +
+	"id: b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1\n" +
+	"title: \"07\"\n" +
+	"when: \"\"\n" +
+	"tags: []\n" +
+	"author: A <a@x>\n" +
+	"created: \"1970-01-01T00:00:00Z\"\n" +
+	"updated: \"1970-01-01T00:00:00Z\"\n" +
+	"---\n"
+
 const goldenTask = `{
   "id": "0123abcd4567ef890123abcd4567ef890123abcd",
   "branch": "feature/login",
@@ -199,6 +234,37 @@ func richNote() model.Note {
 	}
 }
 
+func richDoc() model.Doc {
+	return model.Doc{
+		ID:    "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+		Title: "Fix the parser: edge-cases & 🦄",
+		Body:  "Long-form analysis.\n\nWith a second paragraph.\n",
+		When:  "before touching the auth flow",
+		Tags:  []string{"bug", "parser"},
+		Anchors: []model.Anchor{
+			{Kind: model.AnchorCommit, Value: "abc1234"},
+			{Kind: model.AnchorCommit, Value: "def5678"},
+			{Kind: model.AnchorPath, Value: "internal/cli/output.go"},
+			{Kind: model.AnchorBranch, Value: "feature/login"},
+		},
+		Author:         "Agent A <a@example.com>",
+		CreatedAt:      1765508096,
+		UpdatedAt:      1765594496,
+		VerifiedAt:     1765680896,
+		VerifiedBy:     "Agent V <v@example.com>",
+		VerifiedCommit: "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+		Witness: []model.AnchorWitness{
+			{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "internal/cli/output.go"}, OID: "1234567890abcdef1234567890abcdef12345678"},
+			{Anchor: model.Anchor{Kind: model.AnchorCommit, Value: "abc1234"}, OID: "abcd1234abcd1234abcd1234abcd1234abcd1234"},
+		},
+		SupersededBy: []model.EntityID{
+			"cccc1111cccc1111cccc1111cccc1111cccc1111",
+			"dddd2222dddd2222dddd2222dddd2222dddd2222",
+		},
+		Head: "ffff0000ffff0000ffff0000ffff0000ffff0000",
+	}
+}
+
 func richTask() model.Task {
 	return model.Task{
 		ID:               "0123abcd4567ef890123abcd4567ef890123abcd",
@@ -284,6 +350,15 @@ func mustParseNote(t *testing.T, data []byte) fusefs.ParsedNote {
 	return p
 }
 
+func mustParseDoc(t *testing.T, data []byte) fusefs.ParsedDoc {
+	t.Helper()
+	p, err := fusefs.ParseDoc(data)
+	if err != nil {
+		t.Fatalf("ParseDoc(%q): %v", data, err)
+	}
+	return p
+}
+
 func mustParseTask(t *testing.T, data []byte) fusefs.ParsedTask {
 	t.Helper()
 	p, err := fusefs.ParseTask(data)
@@ -322,6 +397,42 @@ func TestRenderNoteGolden(t *testing.T) {
 	}
 	if got := string(fusefs.RenderNote(minimal)); got != goldenMinimalNote {
 		t.Errorf("minimal note render:\n got %q\nwant %q", got, goldenMinimalNote)
+	}
+}
+
+func TestRenderDocGolden(t *testing.T) {
+	if got := string(fusefs.RenderDoc(richDoc())); got != goldenDoc {
+		t.Errorf("rich doc render:\n got %q\nwant %q", got, goldenDoc)
+	}
+	minimal := model.Doc{
+		ID:     "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1",
+		Title:  "07",
+		Author: "A <a@x>",
+	}
+	if got := string(fusefs.RenderDoc(minimal)); got != goldenMinimalDoc {
+		t.Errorf("minimal doc render:\n got %q\nwant %q", got, goldenMinimalDoc)
+	}
+}
+
+func TestDiffDocWhenEdit(t *testing.T) {
+	base := richDoc()
+	noop, err := fusefs.DiffDoc(base, mustParseDoc(t, fusefs.RenderDoc(base)))
+	if err != nil {
+		t.Fatalf("DiffDoc round trip: %v", err)
+	}
+	if len(noop) != 0 {
+		t.Errorf("unchanged doc round trip produced ops %#v, want none", noop)
+	}
+
+	p := mustParseDoc(t, fusefs.RenderDoc(base))
+	p.When = set("after the migration lands")
+	ops, err := fusefs.DiffDoc(base, p)
+	if err != nil {
+		t.Fatalf("DiffDoc: %v", err)
+	}
+	want := []model.Op{model.SetWhen{When: "after the migration lands"}}
+	if !reflect.DeepEqual(ops, want) {
+		t.Errorf("edited when produced ops %#v, want %#v", ops, want)
 	}
 }
 

@@ -23,10 +23,12 @@ func TestBuildGolden(t *testing.T) {
 		{"task", Task(hex40), "refs/cc-notes/tasks/" + hex40},
 		{"sprint", Sprint(hex40), "refs/cc-notes/sprints/" + hex40},
 		{"project", Project(hex40), "refs/cc-notes/projects/" + hex40},
+		{"doc", Doc(hex40), "refs/cc-notes/docs/" + hex40},
 		{"notes prefix", NotesPrefix, "refs/cc-notes/notes/"},
 		{"tasks root", TasksRoot, "refs/cc-notes/tasks/"},
 		{"sprints root", SprintsRoot, "refs/cc-notes/sprints/"},
 		{"projects root", ProjectsRoot, "refs/cc-notes/projects/"},
+		{"docs root", DocsRoot, "refs/cc-notes/docs/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,6 +50,7 @@ func TestKindValues(t *testing.T) {
 		{"task", KindTask, "task"},
 		{"sprint", KindSprint, "sprint"},
 		{"project", KindProject, "project"},
+		{"doc", KindDoc, "doc"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,6 +75,8 @@ func TestParseRoundTrip(t *testing.T) {
 		{"sprint sha256 id", Sprint(hex64), Ref{Kind: KindSprint, ID: hex64}},
 		{"project", Project(hex40), Ref{Kind: KindProject, ID: hex40}},
 		{"project sha256 id", Project(hex64), Ref{Kind: KindProject, ID: hex64}},
+		{"doc", Doc(hex40), Ref{Kind: KindDoc, ID: hex40}},
+		{"doc sha256 id", Doc(hex64), Ref{Kind: KindDoc, ID: hex64}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,6 +119,11 @@ func TestParseRejects(t *testing.T) {
 		{"nested project", "refs/cc-notes/projects/sub/" + hex40, ErrMalformed},
 		{"project uppercase hex id", "refs/cc-notes/projects/" + strings.ToUpper(hex40), ErrMalformed},
 		{"project 41 hex chars", "refs/cc-notes/projects/" + hex40 + "0", ErrMalformed},
+		{"doc missing id", "refs/cc-notes/docs/", ErrMalformed},
+		{"nested doc", "refs/cc-notes/docs/sub/" + hex40, ErrMalformed},
+		{"doc uppercase hex id", "refs/cc-notes/docs/" + strings.ToUpper(hex40), ErrMalformed},
+		{"doc non-hex id", "refs/cc-notes/docs/" + strings.Repeat("z", 40), ErrMalformed},
+		{"doc 41 hex chars", "refs/cc-notes/docs/" + hex40 + "0", ErrMalformed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,7 +147,9 @@ func TestDirectChild(t *testing.T) {
 	}{
 		{"note under notes prefix", NotesPrefix, Note(hex40), true},
 		{"task under tasks root", TasksRoot, Task(hex40), true},
+		{"doc under docs root", DocsRoot, Doc(hex40), true},
 		{"task not under notes prefix", NotesPrefix, Task(hex40), false},
+		{"doc not under notes prefix", NotesPrefix, Doc(hex40), false},
 		{"ref equal to prefix", TasksRoot, TasksRoot, false},
 	}
 	for _, tc := range cases {

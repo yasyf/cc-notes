@@ -36,6 +36,7 @@ shared queue; `cc-notes task start <id>` claims it and pulls it onto your branch
 | 7 | `cc-notes task claim` / `task start` (PostToolUse, max 2) | You hold a lease now, so `cc-notes sync` to let other agents see the claim, `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold. |
 | 8 | Many open native tasks after `TaskCreate` (max 2) | Mirror durable or cross-agent items into `cc-notes task add`, to the backlog if they're shared. |
 | 9 | `cc-notes` binary missing from `PATH`, first `UserPromptSubmit`, fires once | The pack is enabled but the binary is missing, so name the two install paths — `brew install yasyf/tap/cc-notes` or `curl -fsSL …/install.sh \| sh` — to break the silent dead-end. |
+| 10 | `Write` / `Edit` of a `.md` file (PostToolUse, LLM-gated, max 2) | A cheap name/dir/size pre-gate filters out public files (`README`, `CHANGELOG`, `docs/`, anything under ~600 chars) before any model call; an LLM then classifies the surviving body, and when it reads as an internal agent-handoff the nudge points at `cc-notes doc add "<title>" --when "<when>" --dir <area> --body -` — store the brief as a doc that surfaces to the next agent automatically, not a loose `.md` nobody opens. |
 
 Nudges 1–3 shell out to `cc-notes` and render its live state (tasks, relevant
 notes, drift verdicts) into the nudge. Nudges 2 and 3 dedup per note per purpose:
@@ -44,6 +45,13 @@ note ids floated as Read context (nudge 2) and note ids asked about for stalenes
 as context once *and* prompt reconciliation once. Nudges 1 and 8 are reflexes
 about the native-vs-durable line; 4 through 7 keep the git workflow and cc-notes
 coordination in lockstep.
+
+Nudge 10 is the lone LLM-gated detector. It watches `.md` writes, filters out
+public files with a cheap name/dir/size pre-gate, and only then asks the model
+whether the body reads as an internal agent-handoff — nudging the long-form brief
+into `cc-notes doc add … --when …` instead of a loose file the next agent never
+opens. The pre-gate runs first so the model is never called for an obvious
+`README` or a one-line note, and `max_fires=2` caps it per session.
 
 Nudge 9 is the visible fallback for the plugin's auto-installer. Enabling the
 cc-notes plugin runs a `SessionStart` hook (`scripts/ensure-cc-notes.sh`) that is
@@ -107,6 +115,13 @@ covering a firing trigger and a near-miss that must stay silent. The PostToolUse
 floaters (2 and 3) carry one inline test each, proving a non-matching tool stays
 silent; their firing path shells out to `cc-notes`, so the inline harness (which
 stubs only `call_llm`, never the CLI subprocess) cannot assert it deterministically.
+
+The handoff detector (nudge 10) is LLM-gated, so its inline `tests={...}` cover
+only the cheap pre-gate (every case an `Allow()`): the inline harness stubs
+`call_llm` to the default `is_handoff=False` verdict, so a positive can never fire
+there. The firing/public split — an internal handoff warns, a public `.md` stays
+silent, and an exempt path skips the model entirely — is proven in
+`tests/test_cc_notes.py`, which stubs `evt.ctx.call_llm` directly.
 
 Handlers 1–3 split into thin event wiring over pure helpers for parsing,
 rendering, dedup, drift filtering, and task capping. Those helpers, both gate

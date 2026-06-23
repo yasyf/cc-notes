@@ -1,7 +1,7 @@
 # cc-notes CLI reference
 
-The command surface, grouped by noun: repo, task, sprint, project, note. Every command takes
-`-h`/`--help`. Every note, task, sprint, project, sync, and reconcile command takes `--json`
+The command surface, grouped by noun: repo, task, sprint, project, note, doc. Every command takes
+`-h`/`--help`. Every note, doc, task, sprint, project, sync, and reconcile command takes `--json`
 for a machine-readable record; without it, mutations echo a lean tab-separated line and
 listings print one lean line per entity.
 
@@ -47,11 +47,12 @@ joins neither behaves exactly as a task does today.
 | Sprint | `<short7-id>` `<status>` `<title>` |
 | Project | `<short7-id>` `<status>` `<title>` |
 | Note | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<tags csv\|->` `<title>` |
+| Doc | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<tags csv\|->` `<title>` `<when trigger\|->` |
 
 Short ids are the first 7 hex chars; `-` stands in for an empty field. A criterion's short id is
 the first 7 hex chars of its 32-hex nonce; `task criterion list` and the validation logs print
 `<short7-crit-id>` `<status>` `<text>`. `task stale` appends a trailing idle marker to the task
-line; `note review` appends a verdict to the note line. JSON output uses full 40-hex ids,
+line; `note review` and `doc review` append a verdict to the note or doc line. JSON output uses full 40-hex ids,
 RFC3339 UTC timestamps, `null` for unset optionals, and sorted set slices.
 
 ## Repo commands
@@ -175,6 +176,13 @@ descending, then id ascending. The lean line is the note line followed by a tab,
 reasons as a comma-separated list, and — when the note has a verdict — a final tab and the drift
 verdict.
 
+Docs rank in the same pass: `relevant` scores every doc against `PATH` by the same path, directory,
+and branch anchor signals as a note and floats the matches inline. A doc line carries its free-text
+`when` trigger as the final lean field, then a bracketed drift verdict (e.g. `[drifted]`) when the
+doc is not fresh, and a trailing `doc show <short-id>` hint in place of the long body; the `--json`
+form tags each entry with a `kind` discriminator (`note` or `doc`) and nests the matching document
+under that key.
+
 | Signal | Reason | Fires when |
 |--------|--------|------------|
 | path | `path` | A path anchor equals `PATH` |
@@ -204,9 +212,10 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes	path,branch	DRIFTE
 ```
 
 JSON shape:
-`[{"note":{<note shape>},"score":int,"reasons":[string,…]}]`. Each `note` is the full note document
-(carrying its `drift` verdict); `score` is the summed signal weight; `reasons` are the matched
-reason labels in fixed priority order.
+`[{"kind":string,"note":{<note shape>},"doc":{<doc shape>},"score":int,"reasons":[string,…]}]`.
+`kind` is `note` or `doc` and selects which of `note`/`doc` is present (the other is omitted); the
+present value is the full document, carrying its `drift` verdict and, for a doc, its `when` trigger.
+`score` is the summed signal weight; `reasons` are the matched reason labels in fixed priority order.
 
 ### `cc-notes blame <sha>`
 
@@ -1056,3 +1065,212 @@ Tombstone a note. It drops out of listings; history survives.
 `{"id":string,"title":string,"body":string,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string|null}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"verified_at":rfc3339|null,"verified_by":string|null,"superseded_by":string|null,"drift":string|null,"deleted":bool}`.
 `drift` is the computed verdict (`null` when fresh); `superseded_by` is the replacement note id
 or `null`.
+
+## Doc commands
+
+Docs are the long-form sibling of notes: a multi-paragraph internal write-up or agent handoff —
+the prose that would otherwise sit in a loose `.md` — addressed and kept fresh the same way a note
+is. A doc carries the same optional commit, path, directory, and branch anchors and the same
+first-class drift, verification, supersession, and expiry lifecycle, plus one extra field: a
+free-text `when` trigger that records the situation in which the doc is worth reading. The `--tag`
+and anchor flags are repeatable arrays.
+
+A directory anchor covers a subtree exactly as it does for a note: it matches `PATH` in `relevant`
+for the directory or any file under it, and its witness is the directory's git tree oid, so it
+drifts when anything beneath it changes. The `when` trigger is surfaced verbatim — on the lean
+line, in `relevant`, and in `--json` — so an agent can scan it without opening the body.
+
+### `cc-notes doc add TITLE`
+
+Create a doc. Like a note, a doc is born verified against `HEAD`: its anchors get a content
+witness at creation.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--body <text>` | empty | Doc body; `-` reads stdin |
+| `--when <text>` | empty | Free-text "read this when…" trigger, surfaced verbatim |
+| `--tag <tag>` | none | Tag; repeatable |
+| `--commit <sha>` | none | Commit anchor; repeatable |
+| `--path <path>` | none | Path anchor; repeatable |
+| `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
+| `--branch <branch>` | none | Branch anchor; repeatable |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes doc add "How auth token refresh works" --dir internal/auth --tag design \
+    --when "before touching token refresh or the 401 retry path" \
+    --body "Refresh client-side before expiry; the API returns 401 with no Retry-After header."
+62208d7	2026-06-23	design	How auth token refresh works	before touching token refresh or the 401 retry path
+```
+
+### `cc-notes doc edit ID`
+
+Edit a doc — at least one flag is required. Title, body, and the `when` trigger replace; anchors
+and tags add or remove individually.
+
+| Flag | Meaning |
+|------|---------|
+| `--title <text>` | New title |
+| `--body <text>` | New body; `-` reads stdin |
+| `--when <text>` | New "read this when…" trigger |
+| `--add-tag` / `--rm-tag <tag>` | Add or remove a tag; repeatable |
+| `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
+| `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
+| `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
+| `--add-branch` / `--rm-branch <branch>` | Add or remove a branch anchor; repeatable |
+| `--json` | Emit JSON |
+
+### `cc-notes doc verify ID`
+
+Record that the doc is still true as of now, refreshing the witness against the current content of
+its anchors at `HEAD`. This is how a doc re-earns "fresh" after `doc review` flags it.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes doc verify 62208d7
+62208d7	2026-06-23	design	How auth token refresh works	before touching token refresh or the 401 retry path
+```
+
+### `cc-notes doc supersede OLD --by NEW`
+
+Record that `NEW` replaces `OLD`. `OLD` drops from default listings and points at `NEW`; history
+is preserved. `--remove` undoes the edge.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--by <id>` | (required) | The replacement doc |
+| `--remove` | off | Remove the supersede edge |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes doc supersede 62208d7 --by 7a3f10c
+62208d7	2026-06-23	design	How auth token refresh works	before touching token refresh or the 401 retry path
+```
+
+### `cc-notes doc expire ID`
+
+Flag a doc out-of-date by hand — an agent-asserted verdict for a doc you know is no longer accurate
+but have no replacement for yet. The doc surfaces in `doc review` as `EXPIRED`, which takes
+precedence over every computed verdict. It stays in `doc list`; clear the flag with `doc verify`
+(which re-confirms it true) or `doc expire --clear`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--reason <text>` | empty | Why it is out-of-date |
+| `--clear` | off | Remove the expired flag |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes doc expire 62208d7 --reason "tokens now live 30 minutes"
+62208d7	2026-06-23	design	How auth token refresh works	before touching token refresh or the 401 retry path
+```
+
+### `cc-notes doc review`
+
+Surface docs needing attention, each with a verdict appended to the lean line: `EXPIRED` (an agent
+flagged it out-of-date with `doc expire`; top precedence), `DRIFTED` (an anchored path, directory,
+or commit changed since the doc was verified), `STALE` (verified too long ago), `UNVERIFIED` (never
+verified), and dangling supersede edges.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--stale-after <dur>` | (config default) | Staleness threshold |
+| `--drift` | off | Limit to drifted docs |
+| `--unverified` | off | Limit to never-verified docs |
+| `--expired` | off | Limit to expired docs |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes doc review
+62208d7	2026-06-23	design	How auth token refresh works	before touching token refresh or the 401 retry path	DRIFTED
+```
+
+### `cc-notes doc list`
+
+List docs. Default drops superseded and tombstoned docs.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--tag <tag>` | none | Require tag; repeatable, ANDed |
+| `--commit <sha>` | none | Require commit anchor |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--all` | off | Include tombstoned docs |
+| `--include-superseded` | off | Include superseded docs |
+| `--json` | off | Emit JSON |
+
+### `cc-notes doc search QUERY`
+
+Ranked search across doc titles, tags, and bodies (title > tags > body, ties broken by recency),
+bounded and scopable.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--tag <tag>` | none | Require tag; repeatable, ANDed |
+| `--limit <N>` | `20` | Maximum results; negative is unlimited |
+| `--author <user>` | none | Require author |
+| `--anchor-path <path>` | none | Require path anchor |
+| `--anchor-dir <dir>` | none | Require directory anchor |
+| `--anchor-branch <branch>` | none | Require branch anchor |
+| `--anchor-commit <sha>` | none | Require commit anchor |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes doc search "token refresh" --tag design
+62208d7	2026-06-23	design	How auth token refresh works	before touching token refresh or the 401 retry path
+```
+
+### `cc-notes doc show ID`
+
+Show one doc: a fixed-order header block (id, title, when, tags, anchors, author, created, updated,
+verified_at/by, superseded_by, supersedes, drift verdict) then the body after a blank line. The
+`when` trigger sits on its own line right after the title. `supersedes` is a text-only field — the
+computed reverse index of `superseded_by` — with no JSON counterpart, so don't parse it from
+`--json`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes doc show 62208d7
+id: 62208d76cdfff653f6879fb31183f53087457120
+title: How auth token refresh works
+when: before touching token refresh or the 401 retry path
+tags: design
+commits: -
+paths: -
+dirs: internal/auth
+branches: -
+author: ada <ada@example.com>
+created: 2026-06-23T09:48:55Z
+updated: 2026-06-23T09:48:55Z
+verified_at: 2026-06-23T09:48:55Z
+verified_by: ada <ada@example.com>
+superseded_by: -
+supersedes: -
+drift: -
+
+Refresh client-side before expiry; the API returns 401 with no Retry-After header.
+```
+
+### `cc-notes doc rm ID`
+
+Tombstone a doc. It drops out of listings; history survives.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+### JSON doc shape
+
+`{"id":string,"title":string,"body":string,"when":string,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string|null}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"verified_at":rfc3339|null,"verified_by":string|null,"superseded_by":string|null,"drift":string|null,"deleted":bool,"stale_at":rfc3339|null,"stale_by":string|null,"stale_reason":string|null}`.
+The doc shape is the note shape plus `when` (the free-text trigger, `""` when unset, always
+present) right after `body`, and the agent-asserted expiry fields `stale_at`/`stale_by`/
+`stale_reason` (each `null` until `doc expire` sets them, cleared by `doc verify` or `doc expire
+--clear`). `drift` is the computed verdict (`null` when fresh); `superseded_by` is the replacement
+doc id or `null`.

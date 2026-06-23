@@ -110,6 +110,15 @@ func createNote(t *testing.T, s *store.Store, title, body string) model.Note {
 	return snap.(model.Note)
 }
 
+func createDoc(t *testing.T, s *store.Store, title, body, when string) model.Doc {
+	t.Helper()
+	snap, err := s.Create(t.Context(), []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: title, Body: body, When: when}})
+	if err != nil {
+		t.Fatalf("create doc: %v", err)
+	}
+	return snap.(model.Doc)
+}
+
 func createTask(t *testing.T, s *store.Store, branch model.Branch, title string) model.Task {
 	t.Helper()
 	snap, err := s.Create(t.Context(), []model.Op{model.CreateTask{
@@ -160,6 +169,7 @@ func mustWriteAll(t *testing.T, f *FS, p string, fh uint64, data []byte) {
 func TestReaddirTreeSynthesis(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Alpha Note", "body\n")
+	doc := createDoc(t, s, "Alpha Doc", "doc body\n", "editing the parser")
 	taskMain := createTask(t, s, "main", "On main")
 	taskNested := createTask(t, s, "feature/login", "On nested branch")
 	wantTasks := []string{TaskFilename(taskMain), TaskFilename(taskNested)}
@@ -169,8 +179,9 @@ func TestReaddirTreeSynthesis(t *testing.T) {
 		dir  string
 		want []string
 	}{
-		{"/", []string{"notes", "projects", "sprints", "tasks"}},
+		{"/", []string{"docs", "notes", "projects", "sprints", "tasks"}},
 		{"/notes", []string{NoteFilename(note)}},
+		{"/docs", []string{DocFilename(doc)}},
 		{"/tasks", wantTasks},
 	} {
 		if got := readNames(t, f, tc.dir); !slices.Equal(got, tc.want) {
@@ -624,6 +635,125 @@ func TestDeletedNoteHidden(t *testing.T) {
 	}
 	var st fuse.Stat_t
 	if errc := f.Getattr("/notes/"+NoteFilename(note), &st, invalidFh); errc != -fuse.ENOENT {
+		t.Errorf("Getattr(deleted) = %d, want -ENOENT", errc)
+	}
+}
+
+func TestDocFlushSetsWhen(t *testing.T) {
+	f, s := newTestFS(t)
+	doc := createDoc(t, s, "Triggers", "doc body\n", "before editing the parser")
+	ref := refs.Doc(doc.ID)
+	p := "/docs/" + DocFilename(doc)
+	before := mustTip(t, s, ref)
+
+	edited := bytes.Replace(RenderDoc(doc), []byte("before editing the parser"), []byte("after touching the parser"), 1)
+	if bytes.Equal(edited, RenderDoc(doc)) {
+		t.Fatal("when line not found in render")
+	}
+
+	errc, fh := f.Open(p, fuse.O_RDWR)
+	if errc != 0 {
+		t.Fatalf("Open = %d", errc)
+	}
+	mustWriteAll(t, f, p, fh, edited)
+	if errc := flush(f, p, fh); errc != 0 {
+		t.Fatalf("Flush = %d", errc)
+	}
+	f.Release(p, fh)
+
+	after := mustTip(t, s, ref)
+	if after == before {
+		t.Fatal("tip did not advance")
+	}
+	chain, err := s.Repo.ReadChain(t.Context(), after)
+	if err != nil {
+		t.Fatalf("ReadChain: %v", err)
+	}
+	var tipOps []model.Op
+	for _, c := range chain {
+		if c.SHA == after {
+			tipOps = c.Pack.Ops
+		}
+	}
+	if len(tipOps) != 1 {
+		t.Fatalf("tip commit ops = %v, want exactly one", tipOps)
+	}
+	setWhen, ok := tipOps[0].(model.SetWhen)
+	if !ok {
+		t.Fatalf("tip op = %T, want SetWhen", tipOps[0])
+	}
+	if setWhen.When != "after touching the parser" {
+		t.Errorf("SetWhen.When = %q, want %q", setWhen.When, "after touching the parser")
+	}
+	folded, err := s.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := folded.(model.Doc).When; got != "after touching the parser" {
+		t.Errorf("folded when = %q", got)
+	}
+}
+
+func TestAtomicSaveCreatesDoc(t *testing.T) {
+	f, s := newTestFS(t)
+	createDoc(t, s, "Existing", "so /docs lists\n", "")
+
+	tmp := "/docs/.fresh-doc.md.tmp.1234"
+	errc, fh := f.Create(tmp, fuse.O_WRONLY, 0o644)
+	if errc != 0 {
+		t.Fatalf("Create = %d", errc)
+	}
+	body := []byte("---\ntitle: Fresh Doc\nwhen: touching the fold\ntags: [draft]\n---\nWritten through the mount.\n")
+	if n := f.Write(tmp, body, 0, fh); n != len(body) {
+		t.Fatalf("Write = %d", n)
+	}
+	if errc := flush(f, tmp, fh); errc != 0 {
+		t.Fatalf("Flush = %d", errc)
+	}
+	f.Release(tmp, fh)
+
+	target := "/docs/fresh-doc.md"
+	if errc := f.Rename(tmp, target); errc != 0 {
+		t.Fatalf("Rename = %d", errc)
+	}
+
+	docs, err := s.ListDocs(t.Context(), false, false)
+	if err != nil {
+		t.Fatalf("ListDocs: %v", err)
+	}
+	var created model.Doc
+	for _, d := range docs {
+		if d.Title == "Fresh Doc" {
+			created = d
+		}
+	}
+	if created.ID == "" {
+		t.Fatal("atomic save did not create the doc")
+	}
+	if created.Body != "Written through the mount.\n" || created.When != "touching the fold" || !slices.Equal(created.Tags, []string{"draft"}) {
+		t.Errorf("created doc = %+v", created)
+	}
+	var st fuse.Stat_t
+	if errc := f.Getattr(target, &st, invalidFh); errc != 0 || st.Size != int64(len(RenderDoc(created))) {
+		t.Errorf("Getattr(target) = %d size %d, want render size %d", errc, st.Size, len(RenderDoc(created)))
+	}
+	if got := readNames(t, f, "/docs"); !slices.Contains(got, DocFilename(created)) {
+		t.Errorf("readdir /docs = %v, missing %s", got, DocFilename(created))
+	}
+}
+
+func TestDeletedDocHidden(t *testing.T) {
+	f, s := newTestFS(t)
+	doc := createDoc(t, s, "Doomed Doc", "body\n", "")
+	if _, err := s.Append(t.Context(), refs.Doc(doc.ID), []model.Op{model.DeleteNote{}}); err != nil {
+		t.Fatalf("tombstone: %v", err)
+	}
+
+	if got := readNames(t, f, "/docs"); slices.Contains(got, DocFilename(doc)) {
+		t.Errorf("tombstoned doc still listed: %v", got)
+	}
+	var st fuse.Stat_t
+	if errc := f.Getattr("/docs/"+DocFilename(doc), &st, invalidFh); errc != -fuse.ENOENT {
 		t.Errorf("Getattr(deleted) = %d, want -ENOENT", errc)
 	}
 }

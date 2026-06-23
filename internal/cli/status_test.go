@@ -21,6 +21,10 @@ type statusJSONShape struct {
 		Total       int `json:"total"`
 		NeedsReview int `json:"needs_review"`
 	} `json:"notes"`
+	Docs struct {
+		Total       int `json:"total"`
+		NeedsReview int `json:"needs_review"`
+	} `json:"docs"`
 }
 
 func hasTaskID(tasks []taskJSON, id string) bool {
@@ -64,6 +68,9 @@ func TestStatusJSON(t *testing.T) {
 	if st.Notes.Total != 1 || st.Notes.NeedsReview != 0 {
 		t.Fatalf("notes = %+v, want total 1 needs_review 0", st.Notes)
 	}
+	if st.Docs.Total != 0 || st.Docs.NeedsReview != 0 {
+		t.Fatalf("docs = %+v, want total 0 needs_review 0", st.Docs)
+	}
 
 	t.Setenv("CC_NOTES_LEASE_TTL", "1ns")
 	st2 := mustJSON[statusJSONShape](t, mustRun(t, dir, "status", "--json"))
@@ -89,10 +96,29 @@ func TestStatusText(t *testing.T) {
 		"in progress across branches\n",
 		"  " + actorA + "\t" + claimed.ID[:7] + "\tfresh\n",
 		"notes: 1 total, 0 need review\n",
+		"docs: 0 total, 0 need review\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status text %q missing %q", out, want)
 		}
+	}
+}
+
+// TestStatusDocs proves the docs summary tracks real docs: a freshly added doc
+// is born-verified, so it counts toward the total without needing review.
+func TestStatusDocs(t *testing.T) {
+	dir := initRepo(t)
+	mustRun(t, dir, "doc", "add", "A doc", "--when", "editing the parser")
+
+	t.Setenv("CC_NOTES_LEASE_TTL", "8760h")
+	out := mustRun(t, dir, "status")
+	if !strings.Contains(out, "docs: 1 total, 0 need review\n") {
+		t.Fatalf("status text %q missing docs summary line", out)
+	}
+
+	st := mustJSON[statusJSONShape](t, mustRun(t, dir, "status", "--json"))
+	if st.Docs.Total != 1 || st.Docs.NeedsReview != 0 {
+		t.Fatalf("docs = %+v, want total 1 needs_review 0", st.Docs)
 	}
 }
 
