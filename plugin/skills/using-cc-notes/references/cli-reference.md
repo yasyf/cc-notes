@@ -253,24 +253,28 @@ reference](sprints-and-projects.md) covers it. Requires a `_fuse` binary plus a 
 implementation (`fuse-t` on macOS, `fuse3` on Linux).
 
 `mount` detaches by default: a background mount holder serves the mount, the command prints the
-mountpoint and returns, and the mount persists after the command exits. `MOUNTPOINT` is created
-if missing; omit it to use a managed per-repo default under `~/.cc-notes/mnt`. Tear down with
-`mount --stop DIR` or plain `umount DIR` (the holder reconciles either). The holder-management
-modes (`--list`, `--shutdown`, `--stop`) are mutually exclusive with each other, with a
-`MOUNTPOINT`, and with `--foreground`.
+path and returns, and the mount persists after the command exits. With no `MOUNTPOINT` the mount
+is served at a managed per-repo default under `~/.cc-notes/mnt` and presented in the repo as a
+`.notes` symlink into it (`cd .notes` to browse); the symlink is kept out of git via
+`.git/info/exclude`, never the tracked `.gitignore`, so the live mount stays out of the working
+tree. Pass an explicit `MOUNTPOINT` to serve there instead — it is created if missing and no
+symlink is made. Tear down with `mount --stop .notes` (or `--stop DIR`) or plain `umount`; `--stop`
+and `--shutdown` remove the `.notes` symlink they created. The holder-management modes (`--list`,
+`--shutdown`, `--stop`) are mutually exclusive with each other, with a `MOUNTPOINT`, and with
+`--foreground`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--foreground` / `-f` | off | Serve in the foreground and unmount on Ctrl-C (bypasses the holder) |
-| `--stop <DIR>` | none | Unmount the mount at `DIR`, then exit |
+| `--stop <DIR>` | none | Unmount the mount at `DIR` (or the `.notes` symlink), then exit |
 | `--shutdown` | off | Unmount everything and stop the mount holder, then exit |
 | `--list` | off | List the mounts the holder serves, then exit |
 
 ```console
-$ cc-notes mount ./cc-notes-fs
-/abs/path/to/cc-notes-fs
-$ cc-notes mount --stop ./cc-notes-fs
-cc-notes: unmounted /abs/path/to/cc-notes-fs
+$ cc-notes mount
+/abs/path/to/repo/.notes
+$ cc-notes mount --stop .notes
+cc-notes: unmounted /Users/me/.cc-notes/mnt/repo-1a2b3c4d
 ```
 
 ### `cc-notes version`

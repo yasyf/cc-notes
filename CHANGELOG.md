@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ccn` symlink next to the binary, and the CLI shows `ccn` in its help/usage
   when invoked through it.
 
+### Changed
+- **`cc-notes mount` now defaults to an in-repo `.notes` symlink.** Run with no
+  `MOUNTPOINT` and the mount is served at the managed per-repo default under
+  `~/.cc-notes/mnt` and presented in the repo as a `.notes` symlink into it
+  (`cd .notes` to browse), kept out of git via `.git/info/exclude` — never the
+  tracked `.gitignore`. The live mount stays out of the working tree: on macOS it
+  is an NFS-backed fuse-t mount that doesn't belong inside a checkout that
+  `git status`, editors, and watchers walk. Pass an explicit `MOUNTPOINT` to
+  serve there instead, with no symlink. `mount --stop .notes` resolves the
+  symlink to its managed mountpoint, and `--stop`/`--shutdown` remove the
+  `.notes` symlink they created. A pre-existing real `.notes` file or directory
+  is never clobbered — the mount fails fast before serving.
+
 ## [0.5.0] - 2026-06-18
 
 ### Changed

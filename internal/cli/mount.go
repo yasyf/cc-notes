@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/fusefs"
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/fusekit/mountd"
 )
@@ -40,9 +41,13 @@ func newMountCmd() *cobra.Command {
 		Long: "Mount the repository's notes and tasks as an editable filesystem.\n\n" +
 			"By default `mount` DETACHES: a background mount holder serves the mount, the\n" +
 			"command prints the mountpoint and returns, and the mount persists after the\n" +
-			"command exits. MOUNTPOINT is created if it does not exist; omit it to use a\n" +
-			"managed per-repo default under ~/.cc-notes/mnt. Unmount with `mount --stop DIR`\n" +
-			"or plain `umount DIR` (the holder reconciles either).\n\n" +
+			"command exits. With no MOUNTPOINT the mount is served at a managed per-repo\n" +
+			"default under ~/.cc-notes/mnt and presented in the repo as a `.notes` symlink\n" +
+			"into it (kept out of git via .git/info/exclude); `cd .notes` to browse. Pass an\n" +
+			"explicit MOUNTPOINT to serve there instead — it is created if missing and no\n" +
+			"symlink is made. Unmount with `mount --stop DIR` (DIR may be `.notes`) or plain\n" +
+			"`umount DIR` (the holder reconciles either); --stop and --shutdown remove the\n" +
+			".notes symlink they created.\n\n" +
 			"--foreground keeps the old in-process lifecycle: the command blocks serving the\n" +
 			"mount and Ctrl-C unmounts it (bypassing the holder).",
 		Args: maxArgs(1),
@@ -95,13 +100,31 @@ func runMount(cmd *cobra.Command, args []string, opts mountOpts) error {
 	if err != nil {
 		return fmt.Errorf("working directory: %w", err)
 	}
-	repoRoot, mp, err := resolveRepoAndMountpoint(cmd.Context(), cwd, args)
+	repoRoot, mp, usedDefault, err := resolveRepoAndMountpoint(cmd.Context(), cwd, args)
 	if err != nil {
 		return err
 	}
+	// Reject a conflicting .notes before serving, so a real file or directory at
+	// the path fails fast instead of after Setup has already brought a mount up.
+	if usedDefault {
+		if err := notesLinkBlocked(repoRoot); err != nil {
+			return err
+		}
+	}
 
 	if opts.foreground {
-		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: mounting at %s (foreground; Ctrl-C to unmount)\n", mp); err != nil {
+		// The managed default is presented at .notes before the blocking serve
+		// and removed when it returns (Ctrl-C cancels ctx → Mount returns).
+		shown := mp
+		if usedDefault {
+			link, err := presentNotes(cmd.Context(), gitcmd.Git{Dir: repoRoot}, repoRoot, mp)
+			if err != nil {
+				return err
+			}
+			shown = link
+			defer func() { _ = unlinkNotes(repoRoot, mp) }()
+		}
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: mounting at %s (foreground; Ctrl-C to unmount)\n", shown); err != nil {
 			return err
 		}
 		return fusefs.Mount(cmd.Context(), repoRoot, mp)
@@ -119,7 +142,21 @@ func runMount(cmd *cobra.Command, args []string, opts mountOpts) error {
 	if err := newRemoteHost(opts.socket).Setup(repoRoot, mp); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(cmd.OutOrStdout(), mp); err != nil {
+	// Present the managed default at .notes only after the mount is live, so a
+	// failed Setup leaves no dangling symlink; print .notes (the path to browse)
+	// and note the managed target on stderr. An explicit MOUNTPOINT prints itself.
+	out := mp
+	if usedDefault {
+		link, err := presentNotes(cmd.Context(), gitcmd.Git{Dir: repoRoot}, repoRoot, mp)
+		if err != nil {
+			return err
+		}
+		out = link
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: serving at %s\n", mp); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), out); err != nil {
 		return err
 	}
 	return nil
@@ -150,6 +187,10 @@ func runMountList(cmd *cobra.Command, socket string) error {
 // fail to come down surface ErrUnmountWedged (exit 1).
 func runMountShutdown(cmd *cobra.Command, socket string) error {
 	client := mountd.NewClient(socket)
+	// Snapshot the mounts before teardown so the .notes symlinks presenting them
+	// can be removed afterward — Shutdown drops them from the holder's registry.
+	// Best-effort: a List failure just leaves the symlinks for the next mount.
+	mounts, _ := client.List()
 	failed, err := client.Shutdown()
 	if err != nil {
 		return err
@@ -168,6 +209,11 @@ func runMountShutdown(cmd *cobra.Command, socket string) error {
 		_, _ = client.Kill()
 		client.WaitGone(2 * time.Second)
 	}
+	// Every mount came down (failed is empty above), so remove each presenting
+	// .notes symlink that still points at its now-unmounted dir.
+	for _, m := range mounts {
+		_ = unlinkNotes(m.Base, m.Dir)
+	}
 	if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "cc-notes: mount holder stopped"); err != nil {
 		return err
 	}
@@ -182,13 +228,28 @@ func runMountStop(cmd *cobra.Command, socket, dir string) error {
 	if err != nil {
 		return fmt.Errorf("mountpoint: %w", err)
 	}
+	// --stop may name the in-repo .notes symlink rather than the managed
+	// mountpoint the holder registered; resolve it so teardown matches, and
+	// remember the symlink to remove once the mount is down. A --stop on the
+	// managed path directly stays a pure teardown — its .notes symlink is cleaned
+	// by `--stop .notes` or `--shutdown` — so nothing-mounted keeps contacting no
+	// holder (Teardown short-circuits locally).
+	namedLink := ""
+	if target, rerr := os.Readlink(mp); rerr == nil {
+		namedLink = mp
+		mp = absSymlinkTarget(mp, target)
+	}
 	// Teardown needs a base only for its base != dir refusal: a registered mount
 	// is torn down by the base the holder recorded, and an unregistered carcass
 	// ignores base entirely (a forced kernel unmount). The mountpoint's parent
 	// is a stable non-dir value that satisfies the refusal.
-	base := filepath.Dir(mp)
-	if err := newRemoteHost(socket).Teardown(base, mp); err != nil {
+	if err := newRemoteHost(socket).Teardown(filepath.Dir(mp), mp); err != nil {
 		return err
+	}
+	if namedLink != "" {
+		if err := os.Remove(namedLink); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", namedLink, err)
+		}
 	}
 	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: unmounted %s\n", mp); err != nil {
 		return err
@@ -215,33 +276,35 @@ func newRemoteHost(socket string) *mountd.RemoteHost {
 // default both resolve against it. An explicit MOUNTPOINT is made absolute and
 // created — a missing directory is the common first-run snag, not an error to
 // refuse; with no argument it defaults to ~/.cc-notes/mnt/<base>-<hash>.
-func resolveRepoAndMountpoint(ctx context.Context, cwd string, args []string) (repoRoot, mountpoint string, err error) {
+// usedDefault is true only for that no-argument managed default — the case the
+// caller presents in the repo as a .notes symlink.
+func resolveRepoAndMountpoint(ctx context.Context, cwd string, args []string) (repoRoot, mountpoint string, usedDefault bool, err error) {
 	s, err := store.OpenContext(ctx, cwd)
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
 	repoRoot, err = s.Git.Root(ctx)
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
 	if len(args) == 1 {
 		mp, err := filepath.Abs(args[0])
 		if err != nil {
-			return "", "", fmt.Errorf("mountpoint: %w", err)
+			return "", "", false, fmt.Errorf("mountpoint: %w", err)
 		}
 		if err := os.MkdirAll(mp, 0o700); err != nil {
-			return "", "", fmt.Errorf("create mountpoint %s: %w", mp, err)
+			return "", "", false, fmt.Errorf("create mountpoint %s: %w", mp, err)
 		}
-		return repoRoot, mp, nil
+		return repoRoot, mp, false, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", "", fmt.Errorf("home directory: %w", err)
+		return "", "", false, fmt.Errorf("home directory: %w", err)
 	}
 	sum := sha256.Sum256([]byte(repoRoot))
 	mp := filepath.Join(home, ".cc-notes", "mnt", filepath.Base(repoRoot)+"-"+hex.EncodeToString(sum[:])[:8])
 	if err := os.MkdirAll(mp, 0o700); err != nil {
-		return "", "", fmt.Errorf("create mountpoint %s: %w", mp, err)
+		return "", "", false, fmt.Errorf("create mountpoint %s: %w", mp, err)
 	}
-	return repoRoot, mp, nil
+	return repoRoot, mp, true, nil
 }

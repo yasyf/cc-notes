@@ -254,6 +254,82 @@ func TestMountShutdown(t *testing.T) {
 	}
 }
 
+// TestMountDetachedDefaultLinksNotes proves the no-argument detached mount is
+// served at the managed default and presented in the repo as a .notes symlink
+// into it, kept out of git via .git/info/exclude (never a tracked .gitignore),
+// with the .notes path — not the opaque managed path — printed to stdout.
+func TestMountDetachedDefaultLinksNotes(t *testing.T) {
+	repo := initRepo(t)
+	repoRoot := mustGit(t, repo, "rev-parse", "--show-toplevel")
+	sock, requests := fakeHolder(t, okHolder)
+
+	stdout, _, err := runCLI(t, repo, "mount", "--socket", sock)
+	if err != nil {
+		t.Fatalf("mount: %v", err)
+	}
+
+	link := filepath.Join(repoRoot, ".notes")
+	if got := strings.TrimSpace(stdout); got != link {
+		t.Errorf("stdout = %q, want the .notes symlink %q", got, link)
+	}
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("readlink %s: %v", link, err)
+	}
+
+	var mountDir string
+	for _, r := range requests() {
+		if r.Op == mountd.OpMount {
+			mountDir = r.Dir
+		}
+	}
+	if mountDir == "" {
+		t.Fatal("no OpMount sent to the holder")
+	}
+	if target != mountDir {
+		t.Errorf(".notes -> %q, want the managed mountpoint %q", target, mountDir)
+	}
+
+	exclude := filepath.Join(repoRoot, ".git", "info", "exclude")
+	if data, err := os.ReadFile(exclude); err != nil {
+		t.Fatalf("read %s: %v", exclude, err)
+	} else if !strings.Contains(string(data), "/.notes") {
+		t.Errorf("exclude %q missing /.notes", data)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".gitignore")); !os.IsNotExist(err) {
+		t.Errorf(".gitignore should not be created; stat err = %v", err)
+	}
+}
+
+// TestMountStopRemovesNotesSymlink proves `mount --stop .notes` resolves the
+// in-repo symlink to the managed mountpoint it points at (so teardown matches
+// the holder's registry) and removes the symlink. Nothing is actually mounted,
+// so teardown short-circuits locally without contacting the holder.
+func TestMountStopRemovesNotesSymlink(t *testing.T) {
+	repo := initRepo(t)
+	repoRoot := mustGit(t, repo, "rev-parse", "--show-toplevel")
+	sock, requests := fakeHolder(t, okHolder)
+
+	mp := filepath.Join(t.TempDir(), "mnt")
+	if err := os.MkdirAll(mp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(repoRoot, ".notes")
+	if err := os.Symlink(mp, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, "--stop", ".notes"); err != nil {
+		t.Fatalf("mount --stop .notes: %v", err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Errorf(".notes symlink not removed: err=%v", err)
+	}
+	if got := requests(); len(got) != 0 {
+		t.Errorf("--stop contacted the holder for an unmounted target: %v", got)
+	}
+}
+
 func TestMountFlagConflictsExit2(t *testing.T) {
 	repo := initRepo(t)
 	for _, args := range [][]string{

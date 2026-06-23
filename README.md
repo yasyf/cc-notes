@@ -115,9 +115,11 @@ Each entity is an event-log CRDT (conflict-free replicated data type) riding git
 
 ## Mount
 
-With a `_fuse` binary, `cc-notes mount [DIR]` exposes everything as an editable filesystem — notes as Markdown, tasks, sprints, and projects as JSON. `DIR` is created if absent; omit it for a managed per-repo default under `~/.cc-notes/mnt`. Mounting needs a FUSE implementation: `brew install macos-fuse-t/cask/fuse-t` on macOS, `fuse3` on Linux.
+With a `_fuse` binary, `cc-notes mount [DIR]` exposes everything as an editable filesystem — notes as Markdown, tasks, sprints, and projects as JSON. Mounting needs a FUSE implementation: `brew install macos-fuse-t/cask/fuse-t` on macOS, `fuse3` on Linux.
 
-`mount` detaches by default — a background holder serves the mount, the command prints the mountpoint and returns, and the mount persists after the command exits. Tear it down with `cc-notes mount --stop DIR` or a plain `umount DIR`; `--list` and `--shutdown` drive the holder, and `--foreground` keeps the mount in the foreground where Ctrl-C unmounts.
+Run with no `DIR` and the mount is served at a managed per-repo default under `~/.cc-notes/mnt` and presented in the repo as a `.notes` symlink into it — `cd .notes` to browse. The symlink is kept out of git via `.git/info/exclude` (the tracked `.gitignore` is never touched), so the live mount stays out of the working tree: on macOS it is an NFS-backed fuse-t mount, which doesn't belong inside a checkout that `git status`, editors, and watchers walk. Pass an explicit `DIR` to serve there instead — it is created if absent and no symlink is made.
+
+`mount` detaches by default — a background holder serves the mount, the command prints the path (`.notes` for the default, else `DIR`) and returns, and the mount persists after the command exits. Tear it down with `cc-notes mount --stop .notes` (or `--stop DIR`) or a plain `umount`; `--stop` and `--shutdown` remove the `.notes` symlink they created. `--list` and `--shutdown` drive the holder, and `--foreground` keeps the mount in the foreground where Ctrl-C unmounts.
 
 ## Development
 
