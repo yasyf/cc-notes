@@ -38,7 +38,7 @@ func TestDocVerdict(t *testing.T) {
 
 	t.Run("witness mismatch against live content is DRIFTED", func(t *testing.T) {
 		dir := t.TempDir()
-		driftRepoGit(t, dir, "init", "-q", "-b", "main")
+		driftRepoInit(t, dir)
 		commitDirFile(t, dir, "internal/auth/login.go", "v1\n")
 		t.Chdir(dir)
 
@@ -77,7 +77,7 @@ func TestDocVerdict(t *testing.T) {
 
 func TestDocReviewCount(t *testing.T) {
 	dir := t.TempDir()
-	driftRepoGit(t, dir, "init", "-q", "-b", "main")
+	driftRepoInit(t, dir)
 	commitDirFile(t, dir, "internal/api/client.go", "v1\n")
 	t.Chdir(dir)
 

@@ -11,6 +11,21 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
+// driftRepoInit creates a git repository on branch main in dir with a local
+// identity, so the store's own commits — which inherit the test process env,
+// not driftRepoGit's per-invocation GIT_AUTHOR_* — have an author on a runner
+// with no global git config. Global/system config is pinned to /dev/null so
+// only this repo's local identity is consulted.
+func driftRepoInit(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	driftRepoGit(t, dir, "init", "-q", "-b", "main")
+	driftRepoGit(t, dir, "config", "user.name", "Test User")
+	driftRepoGit(t, dir, "config", "user.email", "test@example.com")
+}
+
 // driftRepoGit runs git in dir, failing the test on error.
 func driftRepoGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
@@ -43,7 +58,7 @@ func commitDirFile(t *testing.T, dir, path, content string) {
 
 func TestNoteDirAnchorDrift(t *testing.T) {
 	dir := t.TempDir()
-	driftRepoGit(t, dir, "init", "-q", "-b", "main")
+	driftRepoInit(t, dir)
 	commitDirFile(t, dir, "internal/auth/login.go", "v1\n")
 
 	t.Chdir(dir)

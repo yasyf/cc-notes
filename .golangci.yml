@@ -20,6 +20,14 @@ linters:
     - revive
     - staticcheck
     - unused
+  exclusions:
+    rules:
+      # gosec's filesystem checks (G301/G304/G306) over t.TempDir/os.MkdirTemp
+      # paths are false positives in tests: the paths are test-controlled, not
+      # attacker-supplied, and the perms are irrelevant to throwaway fixtures.
+      - path: _test\.go
+        linters:
+          - gosec
 
 formatters:
   enable:

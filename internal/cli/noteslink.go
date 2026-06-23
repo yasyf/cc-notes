@@ -123,12 +123,13 @@ func addNotesExclude(ctx context.Context, g gitcmd.Git) error {
 		return err
 	}
 	infoDir := filepath.Join(commonDir, "info")
-	if err := os.MkdirAll(infoDir, 0o755); err != nil {
+	if err := os.MkdirAll(infoDir, 0o750); err != nil {
 		return fmt.Errorf("create %s: %w", infoDir, err)
 	}
 	exclude := filepath.Join(infoDir, "exclude")
 	pattern := "/" + notesLinkName
 
+	//nolint:gosec // G304: exclude is .git/info/exclude under the git common dir this command manages.
 	data, err := os.ReadFile(exclude)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", exclude, err)
@@ -145,7 +146,7 @@ func addNotesExclude(ctx context.Context, g gitcmd.Git) error {
 		b.WriteByte('\n')
 	}
 	b.WriteString(pattern + "\n")
-	if err := os.WriteFile(exclude, []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(exclude, []byte(b.String()), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", exclude, err)
 	}
 	return nil
