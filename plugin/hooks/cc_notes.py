@@ -30,7 +30,6 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import subprocess
 from typing import Any
 
 from captain_hook import (
@@ -82,15 +81,10 @@ def run_cc_notes(evt: BaseHookEvent, *args: str) -> str | None:
     """Run ``cc-notes`` with ``args`` in the project dir, returning stdout or None.
 
     Every way the subprocess can fail — a missing binary, a present-but-not-executable
-    binary, a non-zero exit, a timeout — falls closed to ``None`` so a handler stays
-    silent rather than crashing the hook fire. ``OSError`` covers ``FileNotFoundError``
-    and ``PermissionError``; ``SubprocessError`` covers ``CalledProcessError`` and
-    ``TimeoutExpired``.
+    binary, a non-zero exit, a timeout — falls closed to ``None`` (``throw=False``) so a
+    handler stays silent rather than crashing the hook fire.
     """
-    try:
-        return evt.ctx.call_cli(["cc-notes", *args], timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return None
+    return evt.ctx.call_cli(["cc-notes", *args], timeout=10, throw=False)
 
 
 def parse_relevant(out: str | None) -> list[dict[str, Any]]:

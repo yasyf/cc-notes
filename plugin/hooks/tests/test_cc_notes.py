@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.13"
-# dependencies = ["capt-hook>=3.10.0", "pydantic>=2"]
+# dependencies = ["capt-hook>=3.18.0", "pydantic>=2"]
 # ///
 """Direct unit tests for the cc-notes capt-hook pack's pure helpers and handlers.
 
@@ -210,16 +210,20 @@ def test_cap_and_render_tasks() -> None:
 def stub_cli(mapping: dict[tuple[str, ...], str]):
     """Build a call_cli stub mapping ``cc-notes`` arg tuples to canned payloads.
 
-    A key not in ``mapping`` raises ``FileNotFoundError`` so a handler that runs
-    an unexpected command surfaces the gap instead of silently passing. The gate
-    no longer shells out — it reads ``shutil.which`` only — so no ``git`` probe is
-    stubbed here.
+    A key not in ``mapping`` surfaces the gap: with ``throw`` (the real
+    ``call_cli`` default) it raises ``FileNotFoundError`` so a handler that runs
+    an unexpected command isn't silently passed; with ``throw=False`` (how
+    ``run_cc_notes`` invokes it) it returns ``None``, mirroring the real
+    fail-closed contract. The gate no longer shells out — it reads
+    ``shutil.which`` only — so no ``git`` probe is stubbed here.
     """
 
-    def _call(args, *, input=None, timeout=30, env=None):
+    def _call(args, *, input=None, timeout=30, env=None, throw=True):
         key = tuple(args[1:])
         if key in mapping:
             return mapping[key]
+        if not throw:
+            return None
         raise FileNotFoundError(args[0])
 
     return _call
@@ -462,32 +466,26 @@ def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
     check("staleness doc: re-edit deduped -> None", check_note_staleness(evt2) is None)
 
 
-def test_run_cc_notes_fails_closed(monkeypatch, tmp_path) -> None:
-    """Every subprocess failure mode falls closed to None, never raising into the hook fire."""
-    import subprocess
+def test_run_cc_notes_passes_throw_false(monkeypatch, tmp_path) -> None:
+    """run_cc_notes invokes call_cli with throw=False, delegating fail-closed to capt-hook.
 
+    The swallowing of every subprocess failure mode (missing binary, non-zero
+    exit, timeout) now lives in ``call_cli(throw=False)``; the pack's job is only
+    to pass that flag and return whatever comes back. The stub returns None on the
+    throw=False contract, mirroring the real backend.
+    """
     evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
 
-    def raiser(exc):
-        def _call(args, *, input=None, timeout=30, env=None):
-            raise exc
+    seen: dict[str, object] = {}
 
-        return _call
+    def _call(args, *, input=None, timeout=30, env=None, throw=True):
+        seen["throw"] = throw
+        return None
 
-    cases = [
-        ("missing binary (FileNotFoundError)", FileNotFoundError(2, "No such file", "cc-notes")),
-        ("not executable (PermissionError)", PermissionError(13, "Permission denied", "cc-notes")),
-        ("generic OSError", OSError(8, "Exec format error")),
-        ("non-zero exit (CalledProcessError)", subprocess.CalledProcessError(1, ["cc-notes"])),
-        ("timeout (TimeoutExpired)", subprocess.TimeoutExpired(["cc-notes"], 10)),
-    ]
-    for label, exc in cases:
-        monkeypatch.setattr(evt.ctx, "call_cli", raiser(exc))
-        try:
-            result = run_cc_notes(evt, "relevant", "x.go", "--json")
-            check(f"run_cc_notes: {label} -> None", result is None, repr(result))
-        except BaseException as raised:  # noqa: BLE001 — the whole point is nothing escapes
-            check(f"run_cc_notes: {label} -> None", False, f"escaped: {type(raised).__name__}: {raised}")
+    monkeypatch.setattr(evt.ctx, "call_cli", _call)
+    result = run_cc_notes(evt, "relevant", "x.go", "--json")
+    check("run_cc_notes: passes throw=False", seen.get("throw") is False, repr(seen.get("throw")))
+    check("run_cc_notes: returns call_cli result (None)", result is None, repr(result))
 
 
 def test_handlers_silent_on_malformed_array(monkeypatch, tmp_path) -> None:
