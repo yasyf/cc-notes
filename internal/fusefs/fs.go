@@ -98,6 +98,13 @@ type FS struct {
 	aliases map[string]string
 }
 
+// FusePassthroughOnly reports false: this FS synthesizes a tree (/notes, /tasks)
+// over a git store, serving handler-generated content keyed on fuse file handles,
+// not real backing files. fuse-t's FSKit backend does not honor fi->fh, so
+// fusekit must keep fuse-t's NFS backend. See fusekit.PassthroughOnly. (Inert
+// until cc-notes bumps fusekit to a version that reads this marker.)
+func (f *FS) FusePassthroughOnly() bool { return false }
+
 func newFS(ctx context.Context, s *store.Store) *FS {
 	return &FS{
 		store:   s,
