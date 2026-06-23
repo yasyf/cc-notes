@@ -37,6 +37,7 @@ shared queue; `cc-notes task start <id>` claims it and pulls it onto your branch
 | 8 | Many open native tasks after `TaskCreate` (max 2) | Mirror durable or cross-agent items into `cc-notes task add`, to the backlog if they're shared. |
 | 9 | `cc-notes` binary missing from `PATH`, first `UserPromptSubmit`, fires once | The pack is enabled but the binary is missing, so name the two install paths — `brew install yasyf/tap/cc-notes` or `curl -fsSL …/install.sh \| sh` — to break the silent dead-end. |
 | 10 | `Write` / `Edit` of a `.md` file (PostToolUse, LLM-gated, max 2) | A cheap name/dir/size pre-gate filters out public files (`README`, `CHANGELOG`, `docs/`, anything under ~600 chars) before any model call; an LLM then classifies the surviving body, and when it reads as an internal agent-handoff the nudge points at `cc-notes doc add "<title>" --when "<when>" --dir <area> --body -` — store the brief as a doc that surfaces to the next agent automatically, not a loose `.md` nobody opens. |
+| 11 | `Write` / `Edit` / `MultiEdit` of a cc-pool memory file (PostToolUse) | Mirror a repo-relevant agent memory (`feedback` / `project` / `reference`) into a durable note keyed by a `memory:<slug>` tag — the first write creates it, a later edit updates the same note. The `MEMORY.md` index and `user` memories are skipped. It is the one handler that *writes* (an idempotent note upsert), yet it still never blocks and falls closed to silence on any failure. |
 
 Nudges 1–3 shell out to `cc-notes` and render its live state (tasks, relevant
 notes, drift verdicts) into the nudge. Nudges 2 and 3 dedup per note per purpose:
@@ -52,6 +53,19 @@ whether the body reads as an internal agent-handoff — nudging the long-form br
 into `cc-notes doc add … --when …` instead of a loose file the next agent never
 opens. The pre-gate runs first so the model is never called for an obvious
 `README` or a one-line note, and `max_fires=2` caps it per session.
+
+Nudge 11 is the lone *side-effecting* handler. The harness records durable agent
+memories as `<slug>.md` files under a `memory/` dir inside a `.cc-pool` tree, and
+this handler mirrors the repo-relevant ones into notes so they ride the repo
+instead of living only in the harness. A cheap path gate (`MemoryWrite`) rejects
+everything but a memory slug file before any disk read; the body is read back from
+disk so a `Write` and an `Edit` both yield the final content; and the note is keyed
+by a `memory:<slug>` tag, so the handler upserts — `note list` to find an existing
+mirror, then `note edit` in place (skipping the edit when title and body are
+unchanged) or `note add`. It mirrors only `feedback`, `project`, and `reference`
+memories, never a `user` who-you-are memory or the `MEMORY.md` index. Because it
+runs at `PostToolUse` the memory write has already landed, and every cc-notes call
+falls closed to silence, so a failed mirror never disturbs it.
 
 Nudge 9 is the visible fallback for the plugin's auto-installer. Enabling the
 cc-notes plugin runs a `SessionStart` hook (`scripts/ensure-cc-notes.sh`) that is

@@ -213,6 +213,20 @@ The verbs reached for most. The full surface — every flag, default, and output
 Append `--json` to any note, doc, task, sync, reconcile, or status command for a machine-readable
 record instead of the lean line.
 
+## Memory mirror (automatic)
+
+Where the cc-notes capt-hook pack is enabled, an agent's durable *memory* writes mirror into
+notes on their own — you never have to choose between the two stores. A `PostToolUse` hook
+watches the harness's memory files and, for the repo-relevant kinds (`feedback`, `project`, and
+`reference` — a `user` "who you are" memory is skipped), upserts a note keyed by a `memory:<slug>`
+tag. The first write to a memory creates the note; a later edit rewrites that same note, so a
+memory and its note stay one-to-one. The note takes the memory's one-line description as its title
+and the memory body verbatim, tagged `memory`, `memory:<slug>`, and `memory-type:<type>`.
+
+List what has been mirrored with `cc-notes note list --tag memory`, then `cc-notes sync` to share
+it. The memory write itself always lands first and untouched; a mirror that cannot write stays
+silent, so it never disturbs the write it shadows.
+
 ## Projects and sprints (optional)
 
 An optional planning layer sits on top of tasks — skip it for the canonical flow above. A

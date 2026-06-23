@@ -30,7 +30,8 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from typing import Any
+from pathlib import Path
+from typing import Any, NamedTuple
 
 from captain_hook import (
     Allow,
@@ -282,6 +283,89 @@ def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int) -> list[str]:
     return lines
 
 
+MIRRORED_MEMORY_TYPES = ("feedback", "project", "reference")
+
+# A cc-pool memory file is YAML frontmatter (name/description/metadata) fenced by
+# `---` lines, then a markdown body. The mirror reads the body verbatim plus two
+# frontmatter scalars: metadata.type (decides which memories mirror) and the
+# description (the note title).
+MEMORY_FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?(.*)\Z", re.DOTALL)
+
+
+class ParsedMemory(NamedTuple):
+    """A cc-pool memory file split into the fields the mirror needs."""
+
+    type: str
+    title: str
+    body: str
+
+
+def parse_memory_file(path: Path) -> ParsedMemory | None:
+    """Parse a memory file's ``metadata.type``, ``description`` title, and body, or None.
+
+    Reads from disk so a Write and an Edit both yield the final merged content.
+    Returns None when the file is unreadable or carries no ``---`` frontmatter — the
+    caller treats that as "nothing to mirror".
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = MEMORY_FRONTMATTER.match(text)
+    if not m:
+        return None
+    front, body = m.group(1), m.group(2)
+    return ParsedMemory(
+        type=_front_field(front, "type", indented=True),
+        title=_front_field(front, "description"),
+        body=body.strip(),
+    )
+
+
+def _front_field(front: str, key: str, *, indented: bool = False) -> str:
+    """Extract a frontmatter scalar by key, unwrapping a single layer of quotes.
+
+    ``indented`` allows leading whitespace so a nested key (``metadata.type``) is
+    found; the anchored ``^[ \\t]*type:`` still cannot match mid-line inside a
+    same-suffixed sibling like ``node_type:``.
+    """
+    indent = r"[ \t]*" if indented else ""
+    m = re.search(rf"(?m)^{indent}{re.escape(key)}:[ \t]*(.*)$", front)
+    if not m:
+        return ""
+    val = m.group(1).strip()
+    if len(val) >= 2 and val[0] in "\"'" and val[-1] == val[0]:
+        val = val[1:-1]
+    return val
+
+
+def memory_notes(evt: BaseHookEvent, slug: str) -> list[dict[str, Any]]:
+    """Return existing notes carrying the ``memory:<slug>`` mirror key.
+
+    Empty for no match, unreadable output, or any non-array shape — the caller
+    reads "none found" as "create a new note".
+    """
+    out = run_cc_notes(evt, "note", "list", "--tag", f"memory:{slug}", "--json")
+    if not out or not out.strip():
+        return []
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    return [n for n in parsed if isinstance(n, dict)] if isinstance(parsed, list) else []
+
+
+def note_id_of(out: str | None) -> str:
+    """Pull the ``id`` from a ``cc-notes note add --json`` reply, or "" when absent."""
+    if not out or not out.strip():
+        return ""
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError:
+        return ""
+    return parsed.get("id", "") if isinstance(parsed, dict) else ""
+
+
 class CcNotesAvailable(CustomCondition):
     """Matches whenever the ``cc-notes`` binary resolves on PATH.
 
@@ -360,6 +444,22 @@ class DurableInternalWrite(CustomCondition):
         if file.matches(*WEAK_INTERNAL_GLOBS):
             return bool(evt.content) and bool(re.search(INTERNAL_BODY_RE, evt.content))
         return False
+
+
+class MemoryWrite(CustomCondition):
+    """Matches a write to a cc-pool agent-memory file.
+
+    True for a ``<slug>.md`` directly under a ``memory/`` dir somewhere inside a
+    ``.cc-pool`` tree, excluding the ``MEMORY.md`` index. This is the cheap path
+    gate in front of :func:`mirror_memory_to_note` — it short-circuits before any
+    disk read for the overwhelming majority of writes that aren't memories.
+    """
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        if evt.file is None:
+            return False
+        p = Path(str(evt.file))
+        return p.suffix == ".md" and p.name != "MEMORY.md" and p.parent.name == "memory" and ".cc-pool" in p.parts
 
 
 @session_state
@@ -499,6 +599,71 @@ def check_note_staleness(evt: PostToolUseEvent) -> Any:
         "for a note use `cc-notes note verify/edit/supersede/expire`, "
         "for a doc use `cc-notes doc verify/edit/supersede/expire`.",
         *render_note_lines(fresh),
+    )
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[Tool("Write|Edit|MultiEdit"), MemoryWrite(), CcNotesAvailable()],
+    tests={
+        # Deterministic silence without a real file or CLI: the Tool gate rejects a
+        # Read; MemoryWrite rejects a normal source path and the MEMORY.md index;
+        # and a real memory path with no file on disk no-ops (parse returns None)
+        # before any shell-out. The create/update/skip litmus needs a real on-disk
+        # memory file and a stubbed CLI, so it lives in tests/test_cc_notes.py.
+        Input(tool="Read", file="/n/.cc-pool/p/memory/x.md"): Allow(),
+        Input(tool="Write", file="internal/store/store.go", content="x = 1\n"): Allow(),
+        Input(tool="Write", file="/n/.cc-pool/p/memory/MEMORY.md", content="# Memory Index\n"): Allow(),
+        Input(tool="Write", file="/n/.cc-pool/p/memory/x.md", content="---\ntype: feedback\n---\nbody\n"): Allow(),
+    },
+)
+def mirror_memory_to_note(evt: PostToolUseEvent) -> Any:
+    """Mirror a freshly written cc-pool memory file into a durable cc-notes note.
+
+    The memory write goes through untouched — this is a PostToolUse side-effect that
+    additionally captures repo-relevant memories (``feedback``/``project``/
+    ``reference``; ``user`` who-you-are memories are skipped) as git-synced,
+    drift-checked notes. The note is keyed by a stable ``memory:<slug>`` tag: the
+    first write creates it, later writes edit the same note in place (skipping the
+    edit when title and body are unchanged), so a memory and its note stay
+    one-to-one. Every cc-notes failure falls closed to silence — a mirror that can't
+    write must never disturb the memory write that already landed.
+    """
+    parsed = parse_memory_file(Path(str(evt.file)))
+    if parsed is None or parsed.type not in MIRRORED_MEMORY_TYPES:
+        return None
+    slug = evt.file.stem
+    title = parsed.title or slug.replace("-", " ")
+    existing = memory_notes(evt, slug)
+    if existing:
+        note = existing[0]
+        if note.get("title", "") == title and note.get("body", "") == parsed.body:
+            return None
+        if run_cc_notes(evt, "note", "edit", note.get("id", ""), f"--title={title}", f"--body={parsed.body}") is None:
+            return None
+        note_id, action = note.get("id", ""), "updated"
+    else:
+        out = run_cc_notes(
+            evt,
+            "note",
+            "add",
+            "--json",
+            f"--body={parsed.body}",
+            "--tag",
+            "memory",
+            "--tag",
+            f"memory:{slug}",
+            "--tag",
+            f"memory-type:{parsed.type}",
+            "--",
+            title,
+        )
+        if out is None:
+            return None
+        note_id, action = note_id_of(out), "created"
+    return evt.warn(
+        f"Mirrored memory '{slug}' → durable cc-notes note {short_id(note_id)} ({action}), "
+        f"tagged `memory` / `memory:{slug}`. Run `cc-notes sync` to share it.",
     )
 
 

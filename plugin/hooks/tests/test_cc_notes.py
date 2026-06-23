@@ -29,6 +29,7 @@ from cc_notes import (
     DurableInternalWrite,
     FloatedNotes,
     HandoffVerdict,
+    MemoryWrite,
     StaleChecked,
     cap_and_render_tasks,
     check_note_staleness,
@@ -37,7 +38,9 @@ from cc_notes import (
     filter_drifted,
     float_note_context,
     float_session_tasks,
+    mirror_memory_to_note,
     nudge_store_handoff_as_doc,
+    parse_memory_file,
     parse_relevant,
     parse_tasks,
     prompt_install_cc_notes,
@@ -638,6 +641,148 @@ def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
         check("doc float: renders doc show hint", "cc-notes doc show d0cd0c0" in result.message, result.message)
         check("doc float: never leaks the body", "LONG_DOC_BODY" not in result.message, result.message)
     check("doc float: persists by doc id", evt.ctx.session.load(FloatedNotes).ids == ["d0cd0c00111"], repr(evt.ctx.session.load(FloatedNotes).ids))
+
+
+def write_memory(tmp_path: Path, slug: str, mtype: str, description: str, body: str) -> Path:
+    """Write a realistic cc-pool memory file on disk and return its path.
+
+    The path has the shape the MemoryWrite gate keys on — a ``<slug>.md`` under a
+    ``memory/`` dir inside a ``.cc-pool`` tree — and the frontmatter carries the
+    ``node_type`` sibling that the type parse must not confuse with ``type``.
+    """
+    mempath = tmp_path / ".cc-pool" / "accounts" / "a" / "projects" / "-p" / "memory" / f"{slug}.md"
+    mempath.parent.mkdir(parents=True, exist_ok=True)
+    mempath.write_text(
+        f"---\nname: {slug}\ndescription: {description}\nmetadata:\n"
+        f"  node_type: memory\n  type: {mtype}\n  originSessionId: sess-1\n---\n\n{body}\n",
+        encoding="utf-8",
+    )
+    return mempath
+
+
+def mirror_cli(list_payload: str = "[]", add_payload: str = '{"id": "abc1234def0"}'):
+    """A recording call_cli stub for the memory mirror, returning canned note output.
+
+    Dispatches on the ``note <verb>`` pair: ``list`` yields ``list_payload``, ``add``
+    yields ``add_payload``, ``edit`` yields ``""``. Records every argv so a test can
+    assert exactly which commands the handler issued (and which it skipped).
+    """
+    calls: list[list[str]] = []
+
+    def _call(args, *, input=None, timeout=30, env=None, throw=True):
+        calls.append(list(args))
+        verb = tuple(args[1:3])
+        if verb == ("note", "list"):
+            return list_payload
+        if verb == ("note", "add"):
+            return add_payload
+        if verb == ("note", "edit"):
+            return ""
+        if not throw:
+            return None
+        raise FileNotFoundError(args[0])
+
+    return _call, calls
+
+
+def test_parse_memory_file(tmp_path) -> None:
+    """Frontmatter parse pulls metadata.type (not node_type), an unquoted description, a stripped body."""
+    p = tmp_path / "m.md"
+    p.write_text(
+        '---\nname: foo\ndescription: "Quoted: with colon"\nmetadata:\n'
+        "  node_type: memory\n  type: project\n  originSessionId: s\n---\n\nBody line one.\n\nBody line two.\n",
+        encoding="utf-8",
+    )
+    parsed = parse_memory_file(p)
+    check("parse_memory: not None", parsed is not None, repr(parsed))
+    if parsed:
+        check("parse_memory: type from metadata, not node_type", parsed.type == "project", parsed.type)
+        check("parse_memory: description unquoted", parsed.title == "Quoted: with colon", parsed.title)
+        check("parse_memory: body stripped, internals kept", parsed.body == "Body line one.\n\nBody line two.", repr(parsed.body))
+    check("parse_memory: missing file -> None", parse_memory_file(tmp_path / "nope.md") is None)
+    nofront = tmp_path / "plain.md"
+    nofront.write_text("# Just markdown\nno frontmatter\n", encoding="utf-8")
+    check("parse_memory: no frontmatter -> None", parse_memory_file(nofront) is None)
+
+
+def test_memory_write_condition() -> None:
+    """The path gate matches a memory slug file and nothing else — index, source, or non-.cc-pool .md."""
+    cond = MemoryWrite()
+
+    def fires(path: str) -> bool:
+        return cond.check(mock_event("PostToolUse", tool="Write", file=path))
+
+    check("MemoryWrite: matches a memory slug file", fires("/u/.cc-pool/accounts/a/projects/-p/memory/my-fact.md"))
+    check("MemoryWrite: skips the MEMORY.md index", not fires("/u/.cc-pool/accounts/a/projects/-p/memory/MEMORY.md"))
+    check("MemoryWrite: skips a normal source file", not fires("internal/store/store.go"))
+    check("MemoryWrite: skips a .md outside a memory dir", not fires("/u/.cc-pool/accounts/a/projects/-p/notes/x.md"))
+    check("MemoryWrite: skips a memory dir outside .cc-pool", not fires("/u/code/memory/x.md"))
+
+
+def test_mirror_creates_note(monkeypatch, tmp_path) -> None:
+    """First write of a feedback memory issues one note add, keyed and typed, no edit."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    mem = write_memory(tmp_path, "retry-ceiling", "feedback", "Retry backoff caps at 30s", "The server drops past 30s.")
+    evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
+    call, calls = mirror_cli(list_payload="[]")
+    monkeypatch.setattr(evt.ctx, "call_cli", call)
+
+    result = mirror_memory_to_note(evt)
+    check("mirror create: warns 'created'", result is not None and result.action is Action.warn and "created" in (result.message or ""), repr(result))
+    adds = [c for c in calls if tuple(c[1:3]) == ("note", "add")]
+    check("mirror create: issues exactly one note add", len(adds) == 1, repr(calls))
+    if adds:
+        a = adds[0]
+        check("mirror create: keys by slug tag", "memory:retry-ceiling" in a, repr(a))
+        check("mirror create: tags type", "memory-type:feedback" in a, repr(a))
+        check("mirror create: carries generic memory tag", "memory" in a, repr(a))
+        check("mirror create: carries the stripped body", "--body=The server drops past 30s." in a, repr(a))
+        check("mirror create: title is the positional after --", a[-2] == "--" and a[-1] == "Retry backoff caps at 30s", repr(a))
+    check("mirror create: issues no edit", not any(tuple(c[1:3]) == ("note", "edit") for c in calls), repr(calls))
+
+
+def test_mirror_updates_note(monkeypatch, tmp_path) -> None:
+    """A later write with a changed body edits the SAME note id in place, never adds."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    mem = write_memory(tmp_path, "retry-ceiling", "feedback", "Retry ceiling", "v2 body")
+    evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
+    existing = cc_notes.json.dumps([{"id": "abc1234def0", "title": "Retry ceiling", "body": "v1 body", "tags": ["memory", "memory:retry-ceiling"]}])
+    call, calls = mirror_cli(list_payload=existing)
+    monkeypatch.setattr(evt.ctx, "call_cli", call)
+
+    result = mirror_memory_to_note(evt)
+    check("mirror update: warns 'updated'", result is not None and "updated" in (result.message or ""), repr(result))
+    edits = [c for c in calls if tuple(c[1:3]) == ("note", "edit")]
+    check("mirror update: one edit on the same id", len(edits) == 1 and edits[0][3] == "abc1234def0", repr(calls))
+    if edits:
+        check("mirror update: carries the new body", "--body=v2 body" in edits[0], repr(edits[0]))
+        check("mirror update: carries the title", "--title=Retry ceiling" in edits[0], repr(edits[0]))
+    check("mirror update: issues no add", not any(tuple(c[1:3]) == ("note", "add") for c in calls), repr(calls))
+
+
+def test_mirror_skips_unchanged(monkeypatch, tmp_path) -> None:
+    """When the existing note's title and body already match, only the lookup runs — no edit churn."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    mem = write_memory(tmp_path, "retry-ceiling", "feedback", "Retry ceiling", "same body")
+    evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
+    existing = cc_notes.json.dumps([{"id": "abc1234def0", "title": "Retry ceiling", "body": "same body"}])
+    call, calls = mirror_cli(list_payload=existing)
+    monkeypatch.setattr(evt.ctx, "call_cli", call)
+
+    check("mirror skip: silent when unchanged", mirror_memory_to_note(evt) is None)
+    check("mirror skip: only a list lookup issued", [tuple(c[1:3]) for c in calls] == [("note", "list")], repr(calls))
+
+
+def test_mirror_skips_user_type(monkeypatch, tmp_path) -> None:
+    """A user (who-you-are) memory is repo-irrelevant — no note, and not even a lookup."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    mem = write_memory(tmp_path, "who-i-am", "user", "Yasyf prefers Go", "Some user fact.")
+    evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
+    call, calls = mirror_cli()
+    monkeypatch.setattr(evt.ctx, "call_cli", call)
+
+    check("mirror user-skip: silent", mirror_memory_to_note(evt) is None)
+    check("mirror user-skip: issues no cc-notes calls at all", calls == [], repr(calls))
 
 
 class MonkeyPatch:
