@@ -25,11 +25,11 @@ Reach for cc-notes when work or knowledge must survive the current session or re
 agent. Track moment-to-moment steps for what you are doing right now in the harness's own
 todo tool.
 
-## Four tools, four jobs
+## Five tools, five jobs
 
-Get this distinction right first. Native todos, cc-notes tasks, cc-notes notes, and cc-notes
-docs differ along two axes — how long the record lives and who can see it — and the two durable
-knowledge records, a note and a doc, split once more by form.
+Get this distinction right first. Native todos, cc-notes tasks, cc-notes notes, cc-notes docs,
+and cc-notes logs differ along two axes — how long the record lives and who can see it — and the
+three durable knowledge records, a note, a doc, and a log, split once more by form.
 
 | Tool | Lifetime | Scope | Use for |
 |------|----------|-------|---------|
@@ -37,6 +37,7 @@ knowledge records, a note and a doc, split once more by form.
 | `cc-notes task` | Durable — git ODB, synced across machines and agents | Global: one flat ref per task, with a mutable `branch` attribute and a shared backlog every agent sees | Work that outlives the session or coordinates agents: claim, lease, deps, comments, priority, lifecycle |
 | `cc-notes note` | Durable — git ODB, synced | Repo-global, optionally anchored to a commit, path, or branch | Design decisions and durable facts, verified and searchable |
 | `cc-notes doc` | Durable — git ODB, synced | Repo-global, anchored like a note, plus a `--when` read-trigger | Multi-paragraph guidance written *for the next agent*, verified and floated on read |
+| `cc-notes log` | Durable — git ODB, synced | Repo-global, anchored like a doc | An append-only chronological journal — an incident timeline, a rollout log, a debugging session — whose entries are never edited or reordered, with no verify/drift/supersede lifecycle |
 
 Tasks are **global**. Each task is a single flat ref at `refs/cc-notes/tasks/<id>`, exactly
 like a note. Its branch is a *mutable attribute*, not part of its identity: `task list` and
@@ -56,10 +57,19 @@ written *for the next agent* where a note holds a one-line fact, and it carries 
 code it describes, drifts when that code changes, and floats into a relevant agent's context —
 but only its title, `--when` text, and a `doc show` pointer surface, never the body.
 
+A **log** looks like a doc — durable, repo-global, anchored, floated on read — but it is the
+opposite kind of record. A doc is *living guidance* kept fresh: you replace its body and re-verify
+it, and it drifts when the code moves out from under it. A log is an *immutable running record*:
+`log append` adds a timestamped, authored entry and that entry never moves or changes, so a log
+has no freshness lifecycle at all — no verify, no expire, no supersede, and it never drifts,
+because an append-only journal never claims to be current truth. Reach for a log when the value is
+the chronology itself — an incident timeline, a rollout log, a debugging session — rather than a
+single fact (a note) or a guide you keep current (a doc).
+
 The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, else your git
 `user.name`/`user.email`. Claims and leases key on that actor.
 
-See `references/tasks-vs-notes.md` for worked examples of choosing among the four.
+See `references/tasks-vs-notes.md` for worked examples of choosing among the five.
 
 ## Mount the notes tree (optional)
 
@@ -209,9 +219,12 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes note search "<query>"` | Ranked search over titles, tags, and bodies |
 | `cc-notes doc add "<title>" --when "<trigger>"` | Store long-form agent guidance, born verified, with a when-to-read trigger |
 | `cc-notes doc search "<query>"` | Ranked search over doc titles, tags, and bodies |
+| `cc-notes log add "<title>"` | Start an append-only chronological journal |
+| `cc-notes log append <id> "<text>"` | Append one timestamped, authored entry to a log |
+| `cc-notes log show <id>` | Read a log's entries in chronological order |
 
-Append `--json` to any note, doc, task, sync, reconcile, or status command for a machine-readable
-record instead of the lean line.
+Append `--json` to any note, doc, log, task, sync, reconcile, or status command for a
+machine-readable record instead of the lean line.
 
 ## Memory mirror (automatic)
 
@@ -247,8 +260,8 @@ confirmation. See `references/sprints-and-projects.md` and `references/validatio
 - `references/coordination.md` — how agents coordinate over time: the backlog and the branch
   attribute, claims and leases, stale-claim recovery, deps and blocking, reconcile-on-merge,
   and union-merge sync across a shared remote.
-- `references/tasks-vs-notes.md` — the four-way distinction with worked examples of choosing
-  native todo vs cc-notes task vs cc-notes note vs cc-notes doc.
+- `references/tasks-vs-notes.md` — the five-way distinction with worked examples of choosing
+  native todo vs cc-notes task vs cc-notes note vs cc-notes doc vs cc-notes log.
 - `references/lifecycle-and-hygiene.md` — keeping the record honest: task leases and
   staleness, note verification, drift, and supersession, and the maintenance verbs.
 - `references/sprints-and-projects.md` — the optional planning layer: tasks rolling up into

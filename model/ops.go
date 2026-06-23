@@ -233,6 +233,37 @@ func (o CreateDoc) validate() error {
 	return nil
 }
 
+// CreateLog is the root operation of a log chain. The nonce makes
+// otherwise-identical creates hash to distinct entity ids.
+type CreateLog struct {
+	Nonce   string   `json:"nonce"`
+	Title   string   `json:"title"`
+	Tags    []string `json:"tags"`
+	Anchors []Anchor `json:"anchors"`
+}
+
+// OpKind returns "create_log".
+func (CreateLog) OpKind() string { return "create_log" }
+
+func (o CreateLog) validate() error {
+	for _, a := range o.Anchors {
+		if err := a.Kind.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AppendEntry appends one entry to a log; entries are append-only. It carries
+// only the entry text — author and timestamp come from the carrying commit's
+// identity at fold time, exactly like add_comment.
+type AppendEntry struct {
+	Text string `json:"text"`
+}
+
+// OpKind returns "append_entry".
+func (AppendEntry) OpKind() string { return "append_entry" }
+
 // SetDescription replaces the description of a task.
 type SetDescription struct {
 	Description string `json:"description"`
@@ -509,8 +540,8 @@ func (SetCriterionScript) OpKind() string { return "set_criterion_script" }
 // snapshot belongs to. Checkpoint is always appended, never a root, so it
 // never changes an entity id: a fold uses the newest seed-safe checkpoint as
 // its starting snapshot and treats every other checkpoint as a no-op. The pack
-// codec carries State kind-tagged (note, doc, task, sprint, or project) so it
-// decodes back to the concrete model.Note/Doc/Task/Sprint/Project; the
+// codec carries State kind-tagged (note, doc, log, task, sprint, or project) so
+// it decodes back to the concrete model.Note/Doc/Log/Task/Sprint/Project; the
 // snapshot's kind drives fold dispatch.
 type Checkpoint struct {
 	EntityID      EntityID

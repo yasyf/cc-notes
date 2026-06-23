@@ -208,6 +208,15 @@ type Comment struct {
 	Body   string `json:"body"`
 }
 
+// LogEntry is one append-only entry in a log: a timestamped, authored fact that
+// never moves or changes once written. Author and TS come from the carrying
+// commit's identity; TS is unix seconds.
+type LogEntry struct {
+	Author Actor  `json:"author"`
+	TS     int64  `json:"ts"`
+	Text   string `json:"text"`
+}
+
 // Criterion is one structured acceptance criterion on a task. ID is a nonce
 // stable within the task; Script is an optional check command ("" means none);
 // Status is the latest validation verdict.
@@ -297,6 +306,31 @@ type Doc struct {
 	StaleBy        Actor           `json:"stale_by"`
 	StaleReason    string          `json:"stale_reason"`
 	Head           SHA             `json:"head"`
+}
+
+// Log is the folded snapshot of a log entity: an append-only journal — an
+// incident timeline, a rollout log, a debugging-session record — written for
+// future agents. Each entry, once written, never moves or changes; the only
+// mutation is to append. Like a Doc it carries Tags and Anchors and is surfaced
+// by relevance, but it inherits none of the freshness lifecycle (no
+// verify/witness/expire/supersede). Timestamps are unix seconds; rendering to
+// RFC3339 happens at output time. Tags is sorted; Head is the chain tip the
+// snapshot was folded from.
+//
+// Entries is the ordered list of log entries in linearization order
+// (lamport → author-time → sha), the same order Task comments fold in. The
+// fold is pure concatenation, so cross-branch sync converges with no reconcile.
+type Log struct {
+	ID        EntityID   `json:"id"`
+	Title     string     `json:"title"`
+	Entries   []LogEntry `json:"entries"`
+	Tags      []string   `json:"tags"`
+	Anchors   []Anchor   `json:"anchors"`
+	Author    Actor      `json:"author"`
+	CreatedAt int64      `json:"created_at"`
+	UpdatedAt int64      `json:"updated_at"`
+	Deleted   bool       `json:"deleted"`
+	Head      SHA        `json:"head"`
 }
 
 // Task is the folded snapshot of a task entity. Timestamps are unix seconds;

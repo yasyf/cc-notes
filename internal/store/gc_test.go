@@ -121,6 +121,33 @@ func TestPruneTombstonesDeletesDocRefLocalAndRemote(t *testing.T) {
 	}
 }
 
+func TestPruneTombstonesDeletesLogRefLocalAndRemote(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	bare := initBareRemote(t, s)
+
+	log := create(t, s, logOps("doomed")).(model.Log)
+	ref := refs.Log(log.ID)
+	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+	mustGit(t, s.Git.Dir, "push", "origin", ref+":"+ref)
+
+	pruned, failed, err := s.PruneTombstones(ctx, "origin")
+	if err != nil {
+		t.Fatalf("PruneTombstones: %v", err)
+	}
+	if pruned != 1 || failed != 0 {
+		t.Fatalf("pruned/failed = %d/%d, want 1/0", pruned, failed)
+	}
+	if _, err := s.Repo.Tip(ctx, ref); !errors.Is(err, gitobj.ErrRefNotFound) {
+		t.Fatalf("local log ref still present: %v", err)
+	}
+	if got := mustGit(t, bare, "for-each-ref", "--format=%(refname)", ref); got != "" {
+		t.Fatalf("remote log ref still present after prune: %q", got)
+	}
+}
+
 func TestPruneTombstonesSkipsSupersededDoc(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()

@@ -145,6 +145,76 @@ func TestFoldDocCheckpointOverNonDocMismatch(t *testing.T) {
 	}
 }
 
+// TestFoldLogCompactedEqualsFull is the log analog: appended entries, a title
+// edit, and a tag/anchor mutation straddle a seed-safe checkpoint. The two folds
+// must be byte-for-byte identical, including the seeded entry slice, its order,
+// and Head.
+func TestFoldLogCompactedEqualsFull(t *testing.T) {
+	c0 := mk("c0", nil, "alice", 100, 1, model.CreateLog{Nonce: "n", Title: "T0", Tags: []string{"a"}})
+	c1 := mk("c1", []string{"c0"}, "bob", 200, 2, model.AppendEntry{Text: "first"}, model.SetTitle{Title: "T1"}, model.AddTag{Tag: "b"})
+	c2 := mk("c2", []string{"c1"}, "carol", 300, 3, model.AppendEntry{Text: "second"}, model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "x.go"}})
+	state, err := fold.Log([]model.PackCommit{c0, c1, c2})
+	if err != nil {
+		t.Fatalf("fold prefix: %v", err)
+	}
+	cK := cp("cK", "c2", "compactor", 350, 4, state, 3, "c0", "c1", "c2")
+	cKempty := mk("cK", []string{"c2"}, "compactor", 350, 4)
+	c3 := mk("c3", []string{"cK"}, "dave", 400, 5, model.AppendEntry{Text: "third"}, model.RemoveTag{Tag: "a"})
+	c4 := mk("c4", []string{"c3"}, "erin", 500, 6, model.AppendEntry{Text: "fourth"}, model.AddTag{Tag: "c"})
+	compacted := []model.PackCommit{c0, c1, c2, cK, c3, c4}
+	full := []model.PackCommit{c0, c1, c2, cKempty, c3, c4}
+
+	gotFull, err := fold.Log(full)
+	if err != nil {
+		t.Fatalf("fold full: %v", err)
+	}
+	gotCompact, err := fold.Log(compacted)
+	if err != nil {
+		t.Fatalf("fold compacted: %v", err)
+	}
+	if !reflect.DeepEqual(gotCompact, gotFull) {
+		t.Fatalf("compacted = %+v\nfull = %+v", gotCompact, gotFull)
+	}
+	wantEntries := []model.LogEntry{
+		{Author: "bob", TS: 200, Text: "first"},
+		{Author: "carol", TS: 300, Text: "second"},
+		{Author: "dave", TS: 400, Text: "third"},
+		{Author: "erin", TS: 500, Text: "fourth"},
+	}
+	if !reflect.DeepEqual(gotCompact.Entries, wantEntries) {
+		t.Fatalf("Entries = %+v, want %+v", gotCompact.Entries, wantEntries)
+	}
+	if gotCompact.Head != "c4" {
+		t.Fatalf("Head = %q, want c4", gotCompact.Head)
+	}
+	//nolint:gosec // G404: deterministic PRNG seeds a reproducible fold fuzz; not security-relevant.
+	r := rand.New(rand.NewPCG(23, 29))
+	for i := range 30 {
+		got, err := fold.Log(shuffled(compacted, r))
+		if err != nil {
+			t.Fatalf("shuffle %d: %v", i, err)
+		}
+		if !reflect.DeepEqual(got, gotFull) {
+			t.Fatalf("shuffle %d = %+v, want %+v", i, got, gotFull)
+		}
+	}
+}
+
+// TestFoldLogCheckpointOverNonLogMismatch confirms that seeding a log fold from a
+// checkpoint whose State is a non-log snapshot fails with ErrKindMismatch.
+func TestFoldLogCheckpointOverNonLogMismatch(t *testing.T) {
+	c0 := mk("c0", nil, "alice", 100, 1, model.CreateNote{Nonce: "n", Title: "T"})
+	c1 := mk("c1", []string{"c0"}, "bob", 200, 2, model.SetTitle{Title: "T2"})
+	note, err := fold.Note([]model.PackCommit{c0, c1})
+	if err != nil {
+		t.Fatalf("fold prefix: %v", err)
+	}
+	cK := cp("cK", "c1", "compactor", 250, 3, note, 2, "c0", "c1")
+	if _, err := fold.Log([]model.PackCommit{c0, c1, cK}); !errors.Is(err, fold.ErrKindMismatch) {
+		t.Fatalf("fold err = %v, want ErrKindMismatch", err)
+	}
+}
+
 // TestFoldTaskCompactedEqualsFull is the task analog: a claim, comment, renew,
 // and status transition straddle a seed-safe checkpoint. The lease fields
 // (HeartbeatAt, HeartbeatLamport, StartedAt, ClosedAt) must match the full fold.

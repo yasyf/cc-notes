@@ -258,6 +258,19 @@ func loadDoc(ctx context.Context, s *store.Store, prefix string) (string, model.
 	return ref, snapshot.(model.Doc), nil
 }
 
+// loadLog resolves a log id prefix and folds its chain.
+func loadLog(ctx context.Context, s *store.Store, prefix string) (string, model.Log, error) {
+	ref, err := s.Resolve(ctx, refs.KindLog, prefix)
+	if err != nil {
+		return "", model.Log{}, err
+	}
+	snapshot, err := s.Load(ctx, ref)
+	if err != nil {
+		return "", model.Log{}, err
+	}
+	return ref, snapshot.(model.Log), nil
+}
+
 // loadTask resolves a task id prefix globally and folds its chain.
 func loadTask(ctx context.Context, s *store.Store, prefix string) (string, model.Task, error) {
 	ref, err := s.Resolve(ctx, refs.KindTask, prefix)
@@ -394,6 +407,16 @@ func sortDocs(docs []model.Doc) {
 	})
 }
 
+// sortLogs orders logs by updated_at descending, then id ascending.
+func sortLogs(logs []model.Log) {
+	slices.SortFunc(logs, func(a, b model.Log) int {
+		if c := cmp.Compare(b.UpdatedAt, a.UpdatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+}
+
 // sortTasks orders tasks by priority ascending, then created_at ascending,
 // then id ascending.
 func sortTasks(tasks []model.Task) {
@@ -435,6 +458,15 @@ func printDoc(cmd *cobra.Command, d model.Doc, drift string, jsonOut bool) error
 		return printJSON(cmd.OutOrStdout(), newDocDTO(d, drift))
 	}
 	_, err := fmt.Fprintln(cmd.OutOrStdout(), leanDocLine(d))
+	return err
+}
+
+// printLog writes l as its JSON DTO or its lean line.
+func printLog(cmd *cobra.Command, l model.Log, jsonOut bool) error {
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), newLogDTO(l))
+	}
+	_, err := fmt.Fprintln(cmd.OutOrStdout(), leanLogLine(l))
 	return err
 }
 

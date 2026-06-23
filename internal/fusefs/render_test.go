@@ -1630,3 +1630,355 @@ func TestRenderProjectMatchesCLIJSON(t *testing.T) {
 		t.Errorf("RenderProject diverges from CLI --json:\n got %s\nwant %s", got, want.Bytes())
 	}
 }
+
+// goldenLog pins the rich-log render byte for byte. The second entry carries a
+// markdown heading, a list, and a code fence to prove the full-line HTML-comment
+// fence is an unambiguous split key — none of that text can be mistaken for a
+// delimiter.
+const goldenLog = "---\n" +
+	"id: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0\n" +
+	"title: Auth rollout timeline\n" +
+	"tags: [ops, rollout]\n" +
+	"paths: [internal/auth]\n" +
+	"branches: [main]\n" +
+	"author: Agent A <a@example.com>\n" +
+	"created: \"2025-12-12T02:54:56Z\"\n" +
+	"updated: \"2025-12-13T02:54:56Z\"\n" +
+	"---\n" +
+	"<!-- cc-notes:entry author=\"Agent A <a@example.com>\" ts=\"2025-12-12T02:54:56Z\" -->\n" +
+	"flipped to 5%\n" +
+	"<!-- cc-notes:entry author=\"Agent B <b@example.com>\" ts=\"2025-12-13T02:54:56Z\" -->\n" +
+	"# Heading inside an entry\n- a list item\n- another\n\n```go\nfunc main() {}\n```\nDone.\n"
+
+const goldenMinimalLog = "---\n" +
+	"id: b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1\n" +
+	"title: \"07\"\n" +
+	"tags: []\n" +
+	"author: A <a@x>\n" +
+	"created: \"1970-01-01T00:00:00Z\"\n" +
+	"updated: \"1970-01-01T00:00:00Z\"\n" +
+	"---\n"
+
+func richLog() model.Log {
+	return model.Log{
+		ID:    "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+		Title: "Auth rollout timeline",
+		Entries: []model.LogEntry{
+			{Author: "Agent A <a@example.com>", TS: 1765508096, Text: "flipped to 5%\n"},
+			{
+				Author: "Agent B <b@example.com>", TS: 1765594496,
+				Text: "# Heading inside an entry\n- a list item\n- another\n\n```go\nfunc main() {}\n```\nDone.\n",
+			},
+		},
+		Tags: []string{"ops", "rollout"},
+		Anchors: []model.Anchor{
+			{Kind: model.AnchorPath, Value: "internal/auth"},
+			{Kind: model.AnchorBranch, Value: "main"},
+		},
+		Author:    "Agent A <a@example.com>",
+		CreatedAt: 1765508096,
+		UpdatedAt: 1765594496,
+		Head:      "ffff0000ffff0000ffff0000ffff0000ffff0000",
+	}
+}
+
+func mustParseLog(t *testing.T, data []byte) fusefs.ParsedLog {
+	t.Helper()
+	p, err := fusefs.ParseLog(data)
+	if err != nil {
+		t.Fatalf("ParseLog(%q): %v", data, err)
+	}
+	return p
+}
+
+func TestRenderLogGolden(t *testing.T) {
+	if got := string(fusefs.RenderLog(richLog())); got != goldenLog {
+		t.Errorf("rich log render:\n got %q\nwant %q", got, goldenLog)
+	}
+	minimal := model.Log{
+		ID:     "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1",
+		Title:  "07",
+		Author: "A <a@x>",
+	}
+	if got := string(fusefs.RenderLog(minimal)); got != goldenMinimalLog {
+		t.Errorf("minimal log render:\n got %q\nwant %q", got, goldenMinimalLog)
+	}
+}
+
+// TestRenderLogCLIEntriesParseable proves RenderLog terminates CLI-created
+// entry text — stored verbatim with no trailing newline — so a multi-entry log
+// renders with every fence anchored at a line start and ParseLog recovers the
+// entries instead of failing on a glued-together fence.
+func TestRenderLogCLIEntriesParseable(t *testing.T) {
+	l := model.Log{
+		ID:     "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+		Title:  "Rollout",
+		Author: "A <a@x>",
+		Entries: []model.LogEntry{
+			{Author: "A <a@x>", TS: 100, Text: "flipped to 5%"},
+			{Author: "B <b@x>", TS: 200, Text: "rolled back to 0%"},
+		},
+	}
+	rendered := string(fusefs.RenderLog(l))
+	// The second entry's text must end at a newline so the following fence
+	// opens a fresh line — never "...5%<!-- cc-notes:entry".
+	if !strings.Contains(rendered, "flipped to 5%\n<!-- cc-notes:entry") {
+		t.Errorf("second fence not anchored at line start:\n%s", rendered)
+	}
+	p := mustParseLog(t, []byte(rendered))
+	if len(p.Entries) != 2 {
+		t.Fatalf("parsed %d entries, want 2", len(p.Entries))
+	}
+	if got, want := p.Entries[0].Text, "flipped to 5%\n"; got != want {
+		t.Errorf("entry 0 text %q, want %q", got, want)
+	}
+	if got, want := p.Entries[1].Text, "rolled back to 0%\n"; got != want {
+		t.Errorf("entry 1 text %q, want %q", got, want)
+	}
+}
+
+func TestLogRoundTrip(t *testing.T) {
+	base := richLog()
+	cases := map[string]model.Log{
+		"rich":      base,
+		"empty log": {ID: base.ID, Title: "Empty", Author: base.Author, CreatedAt: 100, UpdatedAt: 100},
+		"no trailing newline in last entry": {
+			ID: base.ID, Title: "Dangling", Author: base.Author,
+			Entries: []model.LogEntry{{Author: "A <a@x>", TS: 100, Text: "dangling line"}},
+		},
+		"entry text with delimiter lines": {
+			ID: base.ID, Title: "Tricky", Author: base.Author,
+			Entries: []model.LogEntry{{Author: "A <a@x>", TS: 100, Text: "---\nfirst\n---\nlast\n"}},
+		},
+		"entry text with blank lines": {
+			ID: base.ID, Title: "Spaced", Author: base.Author,
+			Entries: []model.LogEntry{
+				{Author: "A <a@x>", TS: 100, Text: "line one\n\nline three\n"},
+				{Author: "B <b@x>", TS: 200, Text: "next entry\n"},
+			},
+		},
+		// The CLI stores entry text verbatim with no trailing newline (log
+		// append/-m/--entry); a 2+ entry log in that shape must still render to
+		// a parseable doc and diff back to no ops.
+		"cli-shaped entries without trailing newlines": {
+			ID: base.ID, Title: "Rollout", Author: base.Author,
+			Entries: []model.LogEntry{
+				{Author: "A <a@x>", TS: 100, Text: "flipped to 5%"},
+				{Author: "B <b@x>", TS: 200, Text: "rolled back to 0%"},
+			},
+		},
+		"many anchors": {
+			ID: base.ID, Title: "Anchored", Author: base.Author,
+			Anchors: []model.Anchor{
+				{Kind: model.AnchorCommit, Value: "1111111"},
+				{Kind: model.AnchorPath, Value: "a/b.go"},
+				{Kind: model.AnchorDir, Value: "internal/auth"},
+				{Kind: model.AnchorBranch, Value: "main"},
+			},
+		},
+	}
+	for name, l := range cases {
+		t.Run(name, func(t *testing.T) {
+			ops, err := fusefs.DiffLog(l, mustParseLog(t, fusefs.RenderLog(l)))
+			if err != nil {
+				t.Fatalf("DiffLog: %v", err)
+			}
+			if len(ops) != 0 {
+				t.Errorf("round trip produced ops %#v, want none", ops)
+			}
+		})
+	}
+}
+
+func TestDiffLogAppendEntry(t *testing.T) {
+	base := richLog()
+	text := string(fusefs.RenderLog(base))
+	text += "<!-- cc-notes:entry author=\"ignored\" ts=\"1999-01-01T00:00:00Z\" -->\n"
+	text += "rolled back to 0%\nincident closed.\n"
+	ops, err := fusefs.DiffLog(base, mustParseLog(t, []byte(text)))
+	if err != nil {
+		t.Fatalf("DiffLog: %v", err)
+	}
+	want := []model.Op{model.AppendEntry{Text: "rolled back to 0%\nincident closed.\n"}}
+	if !reflect.DeepEqual(ops, want) {
+		t.Errorf("ops %#v, want %#v", ops, want)
+	}
+}
+
+func TestDiffLogFrontmatterEdits(t *testing.T) {
+	base := richLog()
+	cases := []struct {
+		name   string
+		mutate func(*fusefs.ParsedLog)
+		want   []model.Op
+	}{
+		{
+			"title", func(p *fusefs.ParsedLog) { p.Title = set("Renamed timeline") },
+			[]model.Op{model.SetTitle{Title: "Renamed timeline"}},
+		},
+		{
+			"add tag", func(p *fusefs.ParsedLog) { p.Tags = set([]string{"ops", "rollout", "urgent"}) },
+			[]model.Op{model.AddTag{Tag: "urgent"}},
+		},
+		{
+			"remove tag", func(p *fusefs.ParsedLog) { p.Tags = set([]string{"ops"}) },
+			[]model.Op{model.RemoveTag{Tag: "rollout"}},
+		},
+		{
+			"add anchor", func(p *fusefs.ParsedLog) { p.Paths = set([]string{"internal/auth", "internal/auth/oauth.go"}) },
+			[]model.Op{model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "internal/auth/oauth.go"}}},
+		},
+		{
+			"remove anchor", func(p *fusefs.ParsedLog) { p.Branches = set([]string{}) },
+			[]model.Op{model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorBranch, Value: "main"}}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseLog(t, fusefs.RenderLog(base))
+			tc.mutate(&p)
+			ops, err := fusefs.DiffLog(base, p)
+			if err != nil {
+				t.Fatalf("DiffLog: %v", err)
+			}
+			if !reflect.DeepEqual(ops, tc.want) {
+				t.Errorf("ops %#v, want %#v", ops, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiffLogAppendOnly(t *testing.T) {
+	base := richLog()
+	cases := []struct {
+		name   string
+		mutate func(p *fusefs.ParsedLog)
+	}{
+		{"modified entry text", func(p *fusefs.ParsedLog) { p.Entries[0].Text = "rewritten\n" }},
+		{"modified entry author", func(p *fusefs.ParsedLog) { p.Entries[0].Author = "Mallory <m@x>" }},
+		{"modified entry ts", func(p *fusefs.ParsedLog) { p.Entries[0].TS = "2000-01-01T00:00:00Z" }},
+		{"reordered entries", func(p *fusefs.ParsedLog) { p.Entries[0], p.Entries[1] = p.Entries[1], p.Entries[0] }},
+		{"removed entry", func(p *fusefs.ParsedLog) { p.Entries = p.Entries[:1] }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseLog(t, fusefs.RenderLog(base))
+			tc.mutate(&p)
+			_, err := fusefs.DiffLog(base, p)
+			if !errors.Is(err, fusefs.ErrImmutableField) {
+				t.Fatalf("err %v, want ErrImmutableField", err)
+			}
+		})
+	}
+}
+
+func TestDiffLogImmutableFrontmatter(t *testing.T) {
+	base := richLog()
+	cases := []struct {
+		field  string
+		mutate func(*fusefs.ParsedLog)
+	}{
+		{"id", func(p *fusefs.ParsedLog) { p.ID = set("0000000000000000000000000000000000000000") }},
+		{"author", func(p *fusefs.ParsedLog) { p.Author = set("Mallory <m@example.com>") }},
+		{"created", func(p *fusefs.ParsedLog) { p.Created = set("2020-01-01T00:00:00Z") }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.field, func(t *testing.T) {
+			p := mustParseLog(t, fusefs.RenderLog(base))
+			tc.mutate(&p)
+			_, err := fusefs.DiffLog(base, p)
+			if !errors.Is(err, fusefs.ErrImmutableField) {
+				t.Fatalf("err %v, want ErrImmutableField", err)
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Errorf("err %q does not name field %q", err, tc.field)
+			}
+		})
+	}
+}
+
+func TestDiffLogUpdatedIsInformational(t *testing.T) {
+	base := richLog()
+	p := mustParseLog(t, fusefs.RenderLog(base))
+	p.Updated = set("1999-12-31T23:59:59Z")
+	ops, err := fusefs.DiffLog(base, p)
+	if err != nil {
+		t.Fatalf("DiffLog: %v", err)
+	}
+	if len(ops) != 0 {
+		t.Errorf("stale updated produced ops %#v, want none", ops)
+	}
+}
+
+func TestParseLogSentinelCollision(t *testing.T) {
+	// An entry whose own text carries the fence sentinel is ambiguous and must
+	// be rejected, not silently re-split.
+	body := "---\ntitle: Bad\nauthor: A <a@x>\n---\n" +
+		"<!-- cc-notes:entry author=\"A <a@x>\" ts=\"2025-12-12T02:54:56Z\" -->\n" +
+		"text mentioning <!-- cc-notes:entry author=\"forged\" ts=\"x\" --> inline\n"
+	if _, err := fusefs.ParseLog([]byte(body)); !errors.Is(err, fusefs.ErrParse) {
+		t.Fatalf("err %v, want ErrParse", err)
+	}
+}
+
+func TestParseLogTextBeforeFirstEntry(t *testing.T) {
+	body := "---\ntitle: Bad\nauthor: A <a@x>\n---\n" +
+		"loose text with no fence\n" +
+		"<!-- cc-notes:entry author=\"A <a@x>\" ts=\"2025-12-12T02:54:56Z\" -->\n" +
+		"entry text\n"
+	if _, err := fusefs.ParseLog([]byte(body)); !errors.Is(err, fusefs.ErrParse) {
+		t.Fatalf("err %v, want ErrParse", err)
+	}
+}
+
+func TestNewLog(t *testing.T) {
+	t.Run("frontmatter title with entries", func(t *testing.T) {
+		doc := "---\ntitle: Brand new\ntags: [b, a, b]\npaths: [internal/auth]\n---\n" +
+			"<!-- cc-notes:entry author=\"ignored\" ts=\"2025-12-12T02:54:56Z\" -->\nfirst entry\n"
+		ops, err := fusefs.NewLog(mustParseLog(t, []byte(doc)))
+		if err != nil {
+			t.Fatalf("NewLog: %v", err)
+		}
+		create, ok := ops[0].(model.CreateLog)
+		if !ok || len(create.Nonce) != 32 {
+			t.Fatalf("ops[0] %#v, want CreateLog with a 32-char nonce", ops[0])
+		}
+		create.Nonce = ""
+		wantCreate := model.CreateLog{
+			Title:   "Brand new",
+			Tags:    []string{"a", "b"},
+			Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "internal/auth"}},
+		}
+		if !reflect.DeepEqual(create, wantCreate) {
+			t.Errorf("create %#v, want %#v", create, wantCreate)
+		}
+		wantRest := []model.Op{model.AppendEntry{Text: "first entry\n"}}
+		if !reflect.DeepEqual(ops[1:], wantRest) {
+			t.Errorf("entry ops %#v, want %#v", ops[1:], wantRest)
+		}
+	})
+	t.Run("heading fallback from first entry", func(t *testing.T) {
+		doc := "---\n---\n" +
+			"<!-- cc-notes:entry author=\"A <a@x>\" ts=\"2025-12-12T02:54:56Z\" -->\n# Heading title\nrest\n"
+		ops, err := fusefs.NewLog(mustParseLog(t, []byte(doc)))
+		if err != nil {
+			t.Fatalf("NewLog: %v", err)
+		}
+		if got := ops[0].(model.CreateLog).Title; got != "Heading title" {
+			t.Errorf("title %q, want %q", got, "Heading title")
+		}
+	})
+	t.Run("no title anywhere", func(t *testing.T) {
+		doc := "---\n---\n" +
+			"<!-- cc-notes:entry author=\"A <a@x>\" ts=\"2025-12-12T02:54:56Z\" -->\nplain text\n"
+		if _, err := fusefs.NewLog(mustParseLog(t, []byte(doc))); !errors.Is(err, fusefs.ErrParse) {
+			t.Fatalf("err %v, want ErrParse", err)
+		}
+	})
+	t.Run("id on a new log", func(t *testing.T) {
+		doc := "---\nid: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0\ntitle: Copied\n---\n"
+		if _, err := fusefs.NewLog(mustParseLog(t, []byte(doc))); !errors.Is(err, fusefs.ErrParse) {
+			t.Fatalf("err %v, want ErrParse", err)
+		}
+	})
+}

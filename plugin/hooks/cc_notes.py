@@ -22,7 +22,12 @@ The teaching goal is the native-vs-durable distinction:
     queue, ``Branch == ""``, visible to every agent), and ``task start`` claims
     it under a lease while moving it onto your current branch;
   * ``cc-notes note`` — durable, git-synced, repo-global decisions & facts, born
-    verified against HEAD with first-class drift/verify/supersede.
+    verified against HEAD with first-class drift/verify/supersede;
+  * ``cc-notes log`` — durable, git-synced, repo-global append-only chronological
+    journal (an incident timeline, a rollout log, a debugging session). Anchorable
+    and surfaced by ``cc-notes relevant`` and the read/edit hooks exactly like a
+    doc, but with no freshness lifecycle: entries are immutable and never edited,
+    so a log never drifts and carries no verify/supersede machinery.
 """
 
 from __future__ import annotations
@@ -118,9 +123,10 @@ def parse_relevant(out: str | None) -> list[dict[str, Any]]:
     shape that is not a JSON array — the callers treat "nothing parsed" and
     "nothing relevant" identically. The JSON is a tagged union: a note (or legacy
     untagged) entry carries a ``note`` dict, a ``kind == "doc"`` entry carries a
-    ``doc`` dict. Entries whose kind-appropriate payload is not a dict with a
-    non-empty string ``id`` are dropped, so the downstream render/dedup/persist
-    helpers can index the payload id without guarding every ill-shaped element.
+    ``doc`` dict, and a ``kind == "log"`` entry carries a ``log`` dict. Entries
+    whose kind-appropriate payload is not a dict with a non-empty string ``id`` are
+    dropped, so the downstream render/dedup/persist helpers can index the payload
+    id without guarding every ill-shaped element.
     """
     if not out or not out.strip():
         return []
@@ -137,18 +143,23 @@ def entry_kind(entry: dict[str, Any]) -> str:
     """Return a relevance entry's kind tag, defaulting legacy (untagged) entries to "note".
 
     ``cc-notes relevant --json`` tags every entry with a top-level ``kind`` of
-    ``"note"`` or ``"doc"``. Entries written before the tag existed carry no
-    ``kind`` and are notes, so anything that isn't ``"doc"`` reads as a note.
+    ``"note"``, ``"doc"``, or ``"log"``. ``"doc"`` and ``"log"`` are passed
+    through verbatim; entries written before the tag existed carry no ``kind`` and
+    are notes, so anything else reads as a note. The payload helpers
+    (:func:`entry_payload`/:func:`_well_shaped_entry`) index by this tag, so once a
+    kind is recognized here its DTO is picked up under the matching key.
     """
-    return "doc" if entry.get("kind") == "doc" else "note"
+    kind = entry.get("kind")
+    return kind if kind in ("doc", "log") else "note"
 
 
 def entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
-    """Return the inner DTO an entry carries: its ``doc`` object for docs, else ``note``.
+    """Return the inner DTO an entry carries, keyed by kind: ``doc``, ``log``, else ``note``.
 
-    A doc entry omits the ``note`` key and a note entry omits ``doc``, so callers
-    index the right object by kind. Falls to ``{}`` for an absent or non-dict
-    payload, mirroring the ``.get(..., {})`` the render helpers relied on.
+    Each entry nests its DTO under the key matching its kind and omits the others,
+    so callers index the right object by :func:`entry_kind`. Falls to ``{}`` for an
+    absent or non-dict payload, mirroring the ``.get(..., {})`` the render helpers
+    relied on.
     """
     payload = entry.get(entry_kind(entry))
     return payload if isinstance(payload, dict) else {}
@@ -159,8 +170,9 @@ def _well_shaped_entry(entry: Any) -> bool:
 
     A note entry (and any legacy untagged entry) must carry a ``note`` dict with a
     non-empty string ``id``; a ``kind == "doc"`` entry must carry such a ``doc``
-    dict. Either way the render/dedup/persist helpers can index the payload's
-    ``id`` without guarding every ill-shaped element.
+    dict, and a ``kind == "log"`` entry such a ``log`` dict. Either way the
+    render/dedup/persist helpers can index the payload's ``id`` without guarding
+    every ill-shaped element.
     """
     if not isinstance(entry, dict):
         return False
@@ -196,10 +208,13 @@ def render_note_lines(entries: list[dict[str, Any]]) -> list[str]:
 
     Notes render ``<short> <title> (reasons) [DRIFT]``; docs render their title,
     the ``when`` "read this when…" trigger, the freshness verdict, and a
-    ``doc show`` hint — never the doc body. See :func:`render_note_line` and
-    :func:`render_doc_line`.
+    ``doc show`` hint — never the doc body; logs render their title, reasons, and a
+    ``log show`` hint with no drift suffix (an append-only record never drifts).
+    See :func:`render_note_line`, :func:`render_doc_line`, and
+    :func:`render_log_line`.
     """
-    return [render_doc_line(e) if entry_kind(e) == "doc" else render_note_line(e) for e in entries]
+    dispatch = {"doc": render_doc_line, "log": render_log_line}
+    return [dispatch.get(entry_kind(e), render_note_line)(e) for e in entries]
 
 
 def render_note_line(entry: dict[str, Any]) -> str:
@@ -240,6 +255,23 @@ def render_doc_line(entry: dict[str, Any]) -> str:
     return line
 
 
+def render_log_line(entry: dict[str, Any]) -> str:
+    """Render one log entry as a pointer — short id, title, match reasons, ``log show``.
+
+    A log is anchored and floated like a doc, but it is an append-only journal with
+    no freshness lifecycle: it never drifts, so the line carries no drift suffix and
+    no ``when`` trigger. The entries stay in cc-notes — only the pointer floats, with
+    a ``cc-notes log show <short>`` hint to read the full chronology.
+    """
+    log = entry.get("log", {})
+    short = short_id(log.get("id", ""))
+    line = f"{short} {log.get('title', '')}"
+    if reasons := ", ".join(entry.get("reasons", [])):
+        line += f" ({reasons})"
+    line += f" — cc-notes log show {short}"
+    return line
+
+
 def dedup_against_ids(entries: list[dict[str, Any]], seen: list[str]) -> list[dict[str, Any]]:
     """Drop relevance entries whose payload id is already in ``seen``, preserving order.
 
@@ -255,7 +287,9 @@ def filter_drifted(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     Indexes each entry by kind (:func:`entry_payload`) so a drifted/expired doc
     (drift under ``doc.drift``) is kept alongside a drifted note, not silently
-    dropped for lacking a ``note`` key.
+    dropped for lacking a ``note`` key. A log carries no ``drift`` field at all —
+    an append-only record never claims current truth, so it can never drift — so a
+    log is correctly excluded from the staleness nudge here.
     """
     return [e for e in entries if entry_payload(e).get("drift")]
 
@@ -537,13 +571,14 @@ def prompt_install_cc_notes(evt: UserPromptSubmitEvent) -> Any:
     },
 )
 def float_note_context(evt: PostToolUseEvent) -> Any:
-    """Float notes and docs relevant to a freshly read file, once per id per session.
+    """Float notes, docs, and logs relevant to a freshly read file, once per id per session.
 
     Runs ``cc-notes relevant <path> --json``, drops ids already floated this
     session, and on anything new persists the union and warns with each entry's
-    pointer — a note's title/reasons/drift, or a doc's title, ``when`` trigger,
-    and freshness verdict (never its body). Silent when nothing remains or the
-    command empties.
+    pointer — a note's title/reasons/drift, a doc's title, ``when`` trigger, and
+    freshness verdict (never its body), or a log's title and ``log show`` hint
+    (never its entries, and no drift — a log never drifts). Silent when nothing
+    remains or the command empties.
     """
     if not evt.file:
         return None
@@ -837,7 +872,10 @@ nudge(
     "for work specific to your current branch. Capture decisions and durable "
     "facts as `cc-notes note add`. Long-form handoffs or internal context for the "
     "next agent go in `cc-notes doc add` (not a loose .md) — docs surface "
-    "automatically through `cc-notes relevant`.",
+    "automatically through `cc-notes relevant`. For a running, chronological record "
+    "— an incident timeline, a rollout log, a debugging session — create it with "
+    "`cc-notes log add` then grow it one entry at a time with `cc-notes log append "
+    "<id>` (append-only; entries are never edited).",
     only_if=[Tool("ExitPlanMode"), CcNotesAvailable()],
     events=Event.PostToolUse,
     tests={

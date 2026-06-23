@@ -44,6 +44,7 @@ from cc_notes import (
     parse_relevant,
     parse_tasks,
     prompt_install_cc_notes,
+    render_log_line,
     render_note_lines,
     render_task_line,
     run_cc_notes,
@@ -82,6 +83,27 @@ def doc_entry(
     return {
         "kind": "doc",
         "doc": {"id": doc_id, "title": title, "when": when, "drift": drift, "body": body},
+        "score": 1,
+        "reasons": ["dir"] if reasons is None else reasons,
+    }
+
+
+def log_entry(
+    log_id: str,
+    *,
+    title: str = "l",
+    reasons: list[str] | None = None,
+    entries: list[dict] | None = None,
+) -> dict:
+    """A `kind == "log"` relevance entry: the log DTO under "log", no "note"/"doc" key.
+
+    A log is append-only and never drifts, so it carries no ``drift`` field. The
+    ``entries`` chronology must never reach the float — the pointer renders only
+    the title and a ``log show`` hint, never the entry text.
+    """
+    return {
+        "kind": "log",
+        "log": {"id": log_id, "title": title, "entries": [{"text": "LOG_ENTRY_TEXT"}] if entries is None else entries},
         "score": 1,
         "reasons": ["dir"] if reasons is None else reasons,
     }
@@ -151,6 +173,47 @@ def test_render_doc_lines() -> None:
     check(
         "render: mixed note+doc dispatch by kind",
         mixed == ["0123456 Retry ceiling (path)", "99aa00b Doc — when: when X (dir) — cc-notes doc show 99aa00b"],
+        repr(mixed),
+    )
+
+
+def test_render_log_lines() -> None:
+    """A kind=="log" entry renders short id + title + reasons + `log show`, no drift, no when."""
+    line = render_log_line(log_entry("abc1234def0", title="Auth rollout", reasons=["dir"]))
+    check(
+        "render_log_line: id + title + reasons + log show",
+        line == "abc1234 Auth rollout (dir) — cc-notes log show abc1234",
+        repr(line),
+    )
+    no_reasons = render_log_line(log_entry("0000000aaaa", title="Incident", reasons=[]))
+    check("render_log_line: no reasons -> no parens", no_reasons == "0000000 Incident — cc-notes log show 0000000", repr(no_reasons))
+    # Dispatch: render_note_lines routes a kind=="log" entry through render_log_line, never the note path.
+    routed = render_note_lines([log_entry("def5678aaa0", title="Rollout log", reasons=["path"])])
+    check(
+        "render_log_line: render_note_lines dispatches log by kind",
+        routed == ["def5678 Rollout log (path) — cc-notes log show def5678"],
+        repr(routed),
+    )
+    # A log never carries a drift verdict, so the line never gains a `[...]` suffix.
+    check("render_log_line: no drift suffix", "[" not in line, repr(line))
+    # The chronology stays in cc-notes — only the pointer floats, never the entry text.
+    check("render_log_line: never leaks entry text", "LOG_ENTRY_TEXT" not in routed[0], repr(routed))
+    # A mixed list dispatches per kind: note, doc, and log each take their own render path.
+    mixed = render_note_lines(
+        [
+            note_entry("0123456abcdef", drift=None, title="Retry ceiling", reasons=["path"]),
+            doc_entry("99aa00bb11c", when="when X", title="Doc", reasons=["dir"]),
+            log_entry("11bb22cc33d", title="Log", reasons=["branch"]),
+        ]
+    )
+    check(
+        "render_log_line: mixed note+doc+log dispatch by kind",
+        mixed
+        == [
+            "0123456 Retry ceiling (path)",
+            "99aa00b Doc — when: when X (dir) — cc-notes doc show 99aa00b",
+            "11bb22c Log (branch) — cc-notes log show 11bb22c",
+        ],
         repr(mixed),
     )
 
@@ -641,6 +704,29 @@ def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
         check("doc float: renders doc show hint", "cc-notes doc show d0cd0c0" in result.message, result.message)
         check("doc float: never leaks the body", "LONG_DOC_BODY" not in result.message, result.message)
     check("doc float: persists by doc id", evt.ctx.session.load(FloatedNotes).ids == ["d0cd0c00111"], repr(evt.ctx.session.load(FloatedNotes).ids))
+
+
+def test_float_note_context_floats_log(monkeypatch, tmp_path) -> None:
+    """A kind=="log" entry from `relevant` floats its `log show` pointer and persists by log id.
+
+    A log is surfaced on read exactly like a doc, but it is an append-only journal:
+    it renders only its title and a ``log show`` hint, never the entry chronology,
+    and never a drift verdict (a log can't drift).
+    """
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    payload = cc_notes.json.dumps([log_entry("105f00ba9c1", title="Auth rollout", reasons=["dir"])])
+    mapping = {("relevant", "internal/api/auth.go", "--json"): payload}
+    evt = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
+
+    result = float_note_context(evt)
+    check("log float: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("log float: renders title", "Auth rollout" in result.message, result.message)
+        check("log float: renders log show hint", "cc-notes log show 105f00b" in result.message, result.message)
+        check("log float: no drift verdict", "[" not in result.message.split("Auth rollout", 1)[1], result.message)
+        check("log float: never leaks entry text", "LOG_ENTRY_TEXT" not in result.message, result.message)
+    check("log float: persists by log id", evt.ctx.session.load(FloatedNotes).ids == ["105f00ba9c1"], repr(evt.ctx.session.load(FloatedNotes).ids))
 
 
 def write_memory(tmp_path: Path, slug: str, mtype: str, description: str, body: str) -> Path:

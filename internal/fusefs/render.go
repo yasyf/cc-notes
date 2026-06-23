@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -640,6 +641,290 @@ func NewDoc(p ParsedDoc) ([]model.Op, error) {
 		Tags:    sortedSet(stringsValue(p.Tags)),
 		Anchors: anchors,
 	}}, nil
+}
+
+// logEntryFencePrefix opens the viewer-invisible HTML comment that fences one
+// log entry, carrying the entry's author and timestamp. Entry text that itself
+// contains this prefix is rejected at parse time — the fence is the split key,
+// so a collision would be ambiguous.
+const logEntryFencePrefix = "<!-- cc-notes:entry "
+
+// logEntryFenceRe matches a full fence line, capturing the author and the
+// RFC3339 timestamp. It is anchored and matched per whole line so entry text
+// containing markdown headings, lists, or code fences can never be mistaken for
+// a delimiter.
+var logEntryFenceRe = regexp.MustCompile(`^<!-- cc-notes:entry author="(.*)" ts="([^"]*)" -->$`)
+
+// logEntryFence renders the fence line for one entry: author rendered with %q
+// (escaped, double-quoted) and the timestamp as the canonical RFC3339 stamp.
+func logEntryFence(author, ts string) string {
+	return fmt.Sprintf(`<!-- cc-notes:entry author=%q ts=%q -->`, author, ts)
+}
+
+// ParsedLogEntry is one entry recovered from a log file body: the author and
+// timestamp captured from its fence line plus the verbatim text below it (which
+// keeps its own trailing newline). On a new trailing entry the fence fields are
+// ignored — author and ts come from the carrying commit.
+type ParsedLogEntry struct {
+	Author string
+	TS     string
+	Text   string
+}
+
+// ParsedLog is the decoded form of a log file: the frontmatter keys plus the
+// ordered entries below the closing delimiter. It mirrors ParsedDoc minus the
+// freshness lifecycle and the single body, with the body replaced by an
+// append-only Entries list. Every frontmatter field is optional so a minimal
+// new file parses; DiffLog treats unset fields as untouched.
+type ParsedLog struct {
+	ID       Field[string]    `yaml:"id"`
+	Title    Field[string]    `yaml:"title"`
+	Tags     Field[[]string]  `yaml:"tags"`
+	Commits  Field[[]string]  `yaml:"commits"`
+	Paths    Field[[]string]  `yaml:"paths"`
+	Dirs     Field[[]string]  `yaml:"dirs"`
+	Branches Field[[]string]  `yaml:"branches"`
+	Author   Field[string]    `yaml:"author"`
+	Created  Field[string]    `yaml:"created"`
+	Updated  Field[string]    `yaml:"updated"`
+	Entries  []ParsedLogEntry `yaml:"-"`
+}
+
+func (p ParsedLog) anchors(kind model.AnchorKind) Field[[]string] {
+	switch kind {
+	case model.AnchorCommit:
+		return p.Commits
+	case model.AnchorPath:
+		return p.Paths
+	case model.AnchorDir:
+		return p.Dirs
+	case model.AnchorBranch:
+		return p.Branches
+	}
+	panic("fusefs: unknown anchor kind " + string(kind))
+}
+
+// RenderLog renders l as markdown with YAML frontmatter (id, title, tags,
+// <non-empty anchor kinds>, author, created, updated — the Doc keys minus when
+// and the whole freshness block) followed by one block per entry: a
+// viewer-invisible fence line carrying the entry's author and timestamp, then
+// the entry text. Each non-empty entry is terminated with a newline if it lacks
+// one (CLI-created entries store text verbatim with no trailing newline), so the
+// following fence — or EOF — always lands at a line start; DiffLog compares
+// stored entries against this same canonicalized form. The output is
+// deterministic byte for byte.
+func RenderLog(l model.Log) []byte {
+	fm := &yaml.Node{Kind: yaml.MappingNode}
+	put := func(key string, value *yaml.Node) {
+		fm.Content = append(fm.Content, scalarNode(key), value)
+	}
+	put("id", scalarNode(string(l.ID)))
+	put("title", scalarNode(l.Title))
+	put("tags", flowNode(l.Tags))
+	for _, ak := range anchorKinds {
+		if values := anchorValues(l.Anchors, ak.kind); len(values) > 0 {
+			put(ak.key, flowNode(values))
+		}
+	}
+	put("author", scalarNode(string(l.Author)))
+	put("created", scalarNode(stamp(l.CreatedAt)))
+	put("updated", scalarNode(stamp(l.UpdatedAt)))
+
+	var buf bytes.Buffer
+	buf.WriteString(delimiter)
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(fm); err != nil {
+		panic(fmt.Sprintf("fusefs: encode log frontmatter: %v", err))
+	}
+	if err := enc.Close(); err != nil {
+		panic(fmt.Sprintf("fusefs: close frontmatter encoder: %v", err))
+	}
+	buf.WriteString(delimiter)
+	for _, e := range l.Entries {
+		buf.WriteString(logEntryFence(string(e.Author), stamp(e.TS)))
+		buf.WriteString("\n")
+		buf.WriteString(ensureTrailingNewline(e.Text))
+	}
+	return buf.Bytes()
+}
+
+// ensureTrailingNewline returns text with a single trailing newline appended
+// when it lacks one, leaving empty text empty. Entry text reaches the renderer
+// in two shapes: the FUSE editor saves text that already ends in a newline,
+// while CLI-created entries (log append, -m, --entry) store the text verbatim
+// with no trailing newline. Terminating every non-empty entry keeps the next
+// fence — or EOF — anchored at a line start so ParseLog can split it, and is
+// the canonical form DiffLog compares stored entries against.
+func ensureTrailingNewline(text string) string {
+	if text == "" || strings.HasSuffix(text, "\n") {
+		return text
+	}
+	return text + "\n"
+}
+
+// ParseLog decodes a log file: YAML frontmatter between --- delimiters, then the
+// fenced entries below. Decoding is strict — a missing delimiter, an unknown
+// frontmatter key, body text before the first fence, or entry text colliding
+// with the fence sentinel all fail with ErrParse.
+func ParseLog(data []byte) (ParsedLog, error) {
+	fm, body, err := splitFrontmatter(string(data))
+	if err != nil {
+		return ParsedLog{}, err
+	}
+	var p ParsedLog
+	dec := yaml.NewDecoder(strings.NewReader(fm))
+	dec.KnownFields(true)
+	switch err := dec.Decode(&p); {
+	case errors.Is(err, io.EOF):
+	case err != nil:
+		return ParsedLog{}, fmt.Errorf("%w: %w", ErrParse, err)
+	}
+	entries, err := splitLogEntries(body)
+	if err != nil {
+		return ParsedLog{}, err
+	}
+	p.Entries = entries
+	return p, nil
+}
+
+// splitLogEntries walks the log body line by line: a full line matching the
+// fence regex opens a new entry, capturing its author and timestamp; the
+// verbatim text between fences (newlines kept) is the entry text. Non-empty text
+// before the first fence fails with ErrParse, as does any entry text line
+// carrying the fence sentinel.
+func splitLogEntries(body string) ([]ParsedLogEntry, error) {
+	var entries []ParsedLogEntry
+	var text strings.Builder
+	open := false
+	for line := range strings.Lines(body) {
+		stripped := strings.TrimSuffix(line, "\n")
+		if m := logEntryFenceRe.FindStringSubmatch(stripped); m != nil {
+			if open {
+				entries[len(entries)-1].Text = text.String()
+			}
+			entries = append(entries, ParsedLogEntry{Author: m[1], TS: m[2]})
+			text.Reset()
+			open = true
+			continue
+		}
+		if !open {
+			if strings.TrimSpace(line) != "" {
+				return nil, fmt.Errorf("%w: log body text before first entry", ErrParse)
+			}
+			continue
+		}
+		if strings.Contains(line, logEntryFencePrefix) {
+			return nil, fmt.Errorf("%w: log entry text collides with the entry fence sentinel", ErrParse)
+		}
+		text.WriteString(line)
+	}
+	if open {
+		entries[len(entries)-1].Text = text.String()
+	}
+	return entries, nil
+}
+
+// DiffLog compares an edited log document against the snapshot it was rendered
+// from and returns the ops that reproduce the edit. Entries are append-only: the
+// first len(base.Entries) parsed entries must reproduce the stored entries
+// byte-for-byte (author, ts, text), and any modification, reorder, removal, or a
+// count below the stored count fails with ErrImmutableField; only genuinely-new
+// trailing entries become AppendEntry ops, with their fence author/ts ignored
+// (those come from the carrying commit). Title, tags, and anchors diff exactly
+// like DiffDoc; id, author, and created are immutable; the updated stamp is
+// informational. Ops come out in a fixed order — set_title, tag adds then
+// removes, anchor adds then removes per kind, then the new entries in order.
+func DiffLog(base model.Log, p ParsedLog) ([]model.Op, error) {
+	if err := errors.Join(
+		immutable("id", p.ID, string(base.ID)),
+		immutable("author", p.Author, string(base.Author)),
+		immutable("created", p.Created, stamp(base.CreatedAt)),
+	); err != nil {
+		return nil, err
+	}
+	if len(p.Entries) < len(base.Entries) {
+		return nil, fmt.Errorf("%w: removed existing entries", ErrImmutableField)
+	}
+	for i, be := range base.Entries {
+		pe := p.Entries[i]
+		if pe.Author != string(be.Author) || pe.TS != stamp(be.TS) || pe.Text != ensureTrailingNewline(be.Text) {
+			return nil, fmt.Errorf("%w: log entry %d is append-only", ErrImmutableField, i)
+		}
+	}
+	var ops []model.Op
+	if p.Title.Set {
+		if title := stringValue(p.Title); title != base.Title {
+			ops = append(ops, model.SetTitle{Title: title})
+		}
+	}
+	if p.Tags.Set {
+		adds, removes := diffSets(base.Tags, stringsValue(p.Tags))
+		for _, tag := range adds {
+			ops = append(ops, model.AddTag{Tag: tag})
+		}
+		for _, tag := range removes {
+			ops = append(ops, model.RemoveTag{Tag: tag})
+		}
+	}
+	for _, ak := range anchorKinds {
+		field := p.anchors(ak.kind)
+		if !field.Set {
+			continue
+		}
+		adds, removes := diffSets(anchorValues(base.Anchors, ak.kind), stringsValue(field))
+		for _, value := range adds {
+			ops = append(ops, model.AddAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
+		}
+		for _, value := range removes {
+			ops = append(ops, model.RemoveAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
+		}
+	}
+	for _, pe := range p.Entries[len(base.Entries):] {
+		if pe.Text == "" {
+			return nil, fmt.Errorf("%w: new log entry is empty", ErrParse)
+		}
+		ops = append(ops, model.AppendEntry{Text: pe.Text})
+	}
+	return ops, nil
+}
+
+// NewLog builds the create op plus any initial entries for a brand-new log file.
+// The title comes from the frontmatter, falling back to the first "# " heading
+// in the first entry; neither is an error if the other is present. A new file
+// claiming an id is a contradiction and fails; author, created, and updated are
+// informational and ignored. Each parsed entry becomes an AppendEntry; an empty
+// entry fails with ErrParse.
+func NewLog(p ParsedLog) ([]model.Op, error) {
+	if p.ID.Set {
+		return nil, fmt.Errorf("%w: id on a new log", ErrParse)
+	}
+	title := stringValue(p.Title)
+	if title == "" && len(p.Entries) > 0 {
+		title = firstHeading(p.Entries[0].Text)
+	}
+	if title == "" {
+		return nil, fmt.Errorf("%w: new log needs a title or a # heading", ErrParse)
+	}
+	var anchors []model.Anchor
+	for _, ak := range anchorKinds {
+		for _, value := range sortedSet(stringsValue(p.anchors(ak.kind))) {
+			anchors = append(anchors, model.Anchor{Kind: ak.kind, Value: value})
+		}
+	}
+	ops := []model.Op{model.CreateLog{
+		Nonce:   model.NewNonce(),
+		Title:   title,
+		Tags:    sortedSet(stringsValue(p.Tags)),
+		Anchors: anchors,
+	}}
+	for _, pe := range p.Entries {
+		if pe.Text == "" {
+			return nil, fmt.Errorf("%w: new log entry is empty", ErrParse)
+		}
+		ops = append(ops, model.AppendEntry{Text: pe.Text})
+	}
+	return ops, nil
 }
 
 // RenderTask renders t as the CLI's --json document pretty-printed with

@@ -47,16 +47,18 @@ var reasonOrder = []string{
 }
 
 // relevantDTO is one ranked entity in the JSON output of relevant: a kind
-// discriminator ("note"|"doc"), the matching entity DTO (the note DTO on a note
-// entry, the doc DTO — carrying the free-text trigger — on a doc entry, both
-// carrying the drift verdict), the summed relevance score, and the matched
-// reasons in fixed priority order. Note and Doc are mutually exclusive; the
-// unused one is omitted so the float hook can index entry["note"]/entry["doc"]
-// by kind.
+// discriminator ("note"|"doc"|"log"), the matching entity DTO (the note DTO on
+// a note entry, the doc DTO — carrying the free-text trigger — on a doc entry,
+// the log DTO on a log entry; notes and docs carry the drift verdict, logs
+// never drift), the summed relevance score, and the matched reasons in fixed
+// priority order. Note, Doc, and Log are mutually exclusive; the unused ones
+// are omitted so the float hook can index entry["note"]/entry["doc"]/
+// entry["log"] by kind.
 type relevantDTO struct {
 	Kind    string   `json:"kind"`
 	Note    *noteDTO `json:"note,omitempty"`
 	Doc     *docDTO  `json:"doc,omitempty"`
+	Log     *logDTO  `json:"log,omitempty"`
 	Score   int      `json:"score"`
 	Reasons []string `json:"reasons"`
 }
@@ -69,30 +71,40 @@ type scoredNote struct {
 }
 
 // scoredEntity is one kept entity in the merged ranking: a kind discriminator
-// and exactly one of the note or doc it carries, plus the summed score and
-// matched reasons. Notes and docs are ranked together by compareScored.
+// and exactly one of the note, doc, or log it carries, plus the summed score
+// and matched reasons. Notes, docs, and logs are ranked together by
+// compareScored.
 type scoredEntity struct {
 	kind    refs.Kind
 	note    model.Note
 	doc     model.Doc
+	log     model.Log
 	score   int
 	reasons []string
 }
 
 // id returns the kept entity's id, regardless of kind.
 func (e scoredEntity) id() model.EntityID {
-	if e.kind == refs.KindDoc {
+	switch e.kind {
+	case refs.KindDoc:
 		return e.doc.ID
+	case refs.KindLog:
+		return e.log.ID
+	default:
+		return e.note.ID
 	}
-	return e.note.ID
 }
 
 // updatedAt returns the kept entity's last-update time, regardless of kind.
 func (e scoredEntity) updatedAt() int64 {
-	if e.kind == refs.KindDoc {
+	switch e.kind {
+	case refs.KindDoc:
 		return e.doc.UpdatedAt
+	case refs.KindLog:
+		return e.log.UpdatedAt
+	default:
+		return e.note.UpdatedAt
 	}
-	return e.note.UpdatedAt
 }
 
 func newRelevantCmd() *cobra.Command {
@@ -101,7 +113,7 @@ func newRelevantCmd() *cobra.Command {
 	var jsonOut, attached, worktree bool
 	cmd := &cobra.Command{
 		Use:   "relevant PATH",
-		Short: "Surface the notes and docs most relevant to a path, ranked with reasons",
+		Short: "Surface the notes, docs, and logs most relevant to a path, ranked with reasons",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -129,8 +141,8 @@ func newRelevantCmd() *cobra.Command {
 	return cmd
 }
 
-// relevantNotes scores every live note and doc against target and returns those
-// with a positive score, sorted by score descending, then UpdatedAt descending,
+// relevantNotes scores every live note, doc, and log against target and returns
+// those with a positive score, sorted by score descending, then UpdatedAt descending,
 // then id ascending, along with each kept entity's drift verdict keyed by id.
 // branchFlag and baseFlag override the resolved branch and merge-base base;
 // attached drops entities not anchored to the path or a parent directory;
@@ -197,6 +209,24 @@ func relevantNotes(ctx context.Context, s *store.Store, target, branchFlag, base
 		scored = append(scored, scoredEntity{kind: refs.KindDoc, doc: d, score: score, reasons: reasons})
 	}
 
+	logs, err := s.ListLogs(ctx, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, l := range logs {
+		score, reasons, err := scoreAnchors(ctx, s, l.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, nil, err
+		}
+		if score == 0 {
+			continue
+		}
+		if attached && !anchoredNear(reasons) {
+			continue
+		}
+		scored = append(scored, scoredEntity{kind: refs.KindLog, log: l, score: score, reasons: reasons})
+	}
+
 	verdicts := make(map[model.EntityID]string, len(scored))
 	for _, e := range scored {
 		verdict, err := entityVerdict(ctx, s, head, e, now, staleAfter, worktree)
@@ -218,12 +248,18 @@ func anchoredNear(reasons []string) bool {
 }
 
 // entityVerdict computes the drift verdict for a kept entity against live
-// content at head, dispatching to the shared note/doc verdict core by kind.
+// content at head, dispatching to the shared note/doc verdict core by kind. A
+// log never drifts — it has no freshness lifecycle — so it short-circuits to an
+// empty verdict.
 func entityVerdict(ctx context.Context, s *store.Store, head model.SHA, e scoredEntity, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
-	if e.kind == refs.KindDoc {
+	switch e.kind {
+	case refs.KindDoc:
 		return docVerdict(ctx, s, head, e.doc, now, staleAfter, worktree)
+	case refs.KindLog:
+		return "", nil
+	default:
+		return noteVerdict(ctx, s, head, e.note, now, staleAfter, worktree)
 	}
-	return noteVerdict(ctx, s, head, e.note, now, staleAfter, worktree)
 }
 
 // compareScored is the total ranking order for scored entities: higher score
@@ -520,6 +556,9 @@ func printRelevant(cmd *cobra.Command, scored []scoredEntity, verdicts map[model
 			case refs.KindDoc:
 				d := newDocDTO(e.doc, verdicts[e.doc.ID])
 				dto.Doc = &d
+			case refs.KindLog:
+				l := newLogDTO(e.log)
+				dto.Log = &l
 			default:
 				n := newNoteDTO(e.note, verdicts[e.note.ID])
 				dto.Note = &n
@@ -537,6 +576,8 @@ func printRelevant(cmd *cobra.Command, scored []scoredEntity, verdicts map[model
 				line += "\t" + verdictFlag(v)
 			}
 			line += "\tdoc show " + e.doc.ID.Short()
+		case refs.KindLog:
+			line = leanLogLine(e.log) + "\t" + csvOrDash(e.reasons) + "\tlog show " + e.log.ID.Short()
 		default:
 			line = leanNoteLine(e.note) + "\t" + csvOrDash(e.reasons)
 			if v := verdicts[e.note.ID]; v != "" {

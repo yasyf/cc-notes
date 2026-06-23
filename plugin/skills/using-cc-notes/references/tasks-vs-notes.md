@@ -1,12 +1,12 @@
-# Choosing native todos, cc-notes tasks, notes, and docs
+# Choosing native todos, cc-notes tasks, notes, docs, and logs
 
-Four tools record "things to remember," and picking the wrong one is the most common mistake. The native todo tool, `cc-notes task`, `cc-notes note`, and `cc-notes doc` differ along two axes — how long the record lives, and who can see it — plus, for the two durable knowledge records, the *form* the knowledge takes. Get those right and the choice is mechanical.
+Five tools record "things to remember," and picking the wrong one is the most common mistake. The native todo tool, `cc-notes task`, `cc-notes note`, `cc-notes doc`, and `cc-notes log` differ along two axes — how long the record lives, and who can see it — plus, for the three durable knowledge records, the *form* the knowledge takes. Get those right and the choice is mechanical.
 
 ## The two axes
 
-**Lifetime.** Native todos are ephemeral — they live for one session and vanish when it ends. cc-notes tasks, notes, and docs are durable git objects on `refs/cc-notes/*`, so they persist across sessions, machines, and agents, and ride the repo's normal push and pull.
+**Lifetime.** Native todos are ephemeral — they live for one session and vanish when it ends. cc-notes tasks, notes, docs, and logs are durable git objects on `refs/cc-notes/*`, so they persist across sessions, machines, and agents, and ride the repo's normal push and pull.
 
-**Scope.** Native todos are private to the current agent. A `cc-notes task` is global: it lives at a single flat ref, and any agent who syncs the repo sees it. Its branch is a mutable attribute, not its identity — `task list` and `task ready` default to tasks on your current branch, but the shared backlog (tasks with no branch) is visible to every agent on every branch. cc-notes notes and docs are repo-global, shared the same way.
+**Scope.** Native todos are private to the current agent. A `cc-notes task` is global: it lives at a single flat ref, and any agent who syncs the repo sees it. Its branch is a mutable attribute, not its identity — `task list` and `task ready` default to tasks on your current branch, but the shared backlog (tasks with no branch) is visible to every agent on every branch. cc-notes notes, docs, and logs are repo-global, shared the same way.
 
 | Tool | Lifetime | Scope | Records |
 |------|----------|-------|---------|
@@ -14,14 +14,15 @@ Four tools record "things to remember," and picking the wrong one is the most co
 | `cc-notes task` | Durable, synced | Global; a branch attribute plus a shared backlog | A unit of work that outlives the session or coordinates agents |
 | `cc-notes note` | Durable, synced | Repo-global, shared | A one-line decision or fact worth remembering |
 | `cc-notes doc` | Durable, synced | Repo-global, shared | Long-form guidance written for the next agent, with a when-to-read trigger |
+| `cc-notes log` | Durable, synced | Repo-global, shared | An append-only chronology — each entry an immutable timestamped fact, never edited |
 
 ## The decision
 
 Ask, in order:
 
 1. **Will this matter after the session ends?** No: native todo. Yes: cc-notes.
-2. **Is it work to do, or knowledge to remember?** Work is a `cc-notes task`; knowledge — a fact or a guide — is a note or a doc (next question).
-3. **One line, or long-form?** A single verified fact or decision is a `cc-notes note`. Multi-paragraph guidance written *for the next agent* — a handoff, a current-state brief, a *read this before you touch X* — is a `cc-notes doc`, carrying a free-text `--when` trigger that says when the next agent should read it.
+2. **Is it work to do, or knowledge to remember?** Work is a `cc-notes task`; knowledge — a fact, a guide, or a running record — is a note, a doc, or a log (next question).
+3. **A standing fact, living guidance, or a growing chronology?** A single verified fact or decision is a `cc-notes note`. Multi-paragraph guidance written *for the next agent* — a handoff, a current-state brief, a *read this before you touch X* — is a `cc-notes doc`, carrying a free-text `--when` trigger that says when the next agent should read it. A chronology you keep adding to over time — an incident timeline, a rollout log, a debugging session — is a `cc-notes log`: each `log append` is an immutable timestamped entry, and the log never drifts because it never claims to be current truth.
 4. **If it is work, who picks it up?** Anyone — drop it in the shared backlog with `cc-notes task add --backlog`. Only this line of work — file it on your current branch with a plain `cc-notes task add`.
 
 Native todos and cc-notes tasks are not exclusive. Decompose a durable task into in-session native todos while you execute it: the cc-notes task is the durable unit of work, the native todos are your private scratchpad for finishing it.
@@ -50,6 +51,19 @@ b71e0d4	2026-06-16	design	Retry backoff caps at 30s
 $ printf 'The new token endpoint is live behind a feature flag; the legacy handler still serves. Resume by flipping the flag in config and deleting the legacy handler. Do not touch the refresh path until the gateway timeout is confirmed.\n' | cc-notes doc add "Auth migration handoff" --when "resuming the auth cutover" --dir internal/api --tag handoff --body -
 5c7d279	2026-06-23	handoff	Auth migration handoff	resuming the auth cutover
 ```
+
+**Recording a production incident as it unfolds.** `cc-notes log`. The value is the chronology, not a single fact: a timeline of timestamped, authored entries that you keep appending as the incident develops, and that nobody ever rewrites afterward. A note would flatten the sequence into one line; a doc would invite editing the body as the situation changed, but an incident record must stay exactly as it was written. Create the log, anchor it to the affected code, then append each entry as you learn more.
+
+```console
+$ cc-notes log add "Checkout 500s incident 2026-06-23" --dir internal/checkout --tag incident
+9f2c0e1	2026-06-23	incident	Checkout 500s incident 2026-06-23
+$ cc-notes log append 9f2c0e1 "16:02 — error rate spiked to 12% after the pricing deploy"
+9f2c0e1	2026-06-23	incident	Checkout 500s incident 2026-06-23
+$ cc-notes log append 9f2c0e1 "16:31 — rolled back the deploy; error rate back to baseline"
+9f2c0e1	2026-06-23	incident	Checkout 500s incident 2026-06-23
+```
+
+Each entry carries the author and timestamp of the commit that wrote it, and `log show 9f2c0e1` replays them in order. There is no `verify`, `supersede`, or `expire` — the record is the history, and history does not drift.
 
 **Decomposing that bug fix once you pick it up.** Both. The bug is a durable task in the backlog. `task start` atomically claims it (deterministic first-wins), moves it onto your current branch, and opens a lease:
 

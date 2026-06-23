@@ -209,6 +209,36 @@ func TestFoldCacheRoundTripDoc(t *testing.T) {
 	}
 }
 
+func TestFoldCacheRoundTripLog(t *testing.T) {
+	dir := t.TempDir()
+	c := newFoldCache(dir, foldCacheCap)
+
+	tip := model.SHA("eeee111111111111111111111111111111111111")
+	log := model.Log{
+		ID:    "logid",
+		Title: "rollout",
+		Entries: []model.LogEntry{
+			{Author: testActor, TS: 150, Text: "flipped to 5%"},
+			{Author: testActor, TS: 250, Text: "flipped to 50%"},
+		},
+		Tags:      []string{"a", "b"},
+		Anchors:   []model.Anchor{{Kind: model.AnchorDir, Value: "internal/auth"}},
+		Author:    testActor,
+		CreatedAt: 100,
+		UpdatedAt: 250,
+		Head:      tip,
+	}
+	c.put(tip, log)
+
+	got, ok := c.get(tip)
+	if !ok {
+		t.Fatal("log round-trip: get miss")
+	}
+	if !reflect.DeepEqual(got, log) {
+		t.Fatalf("log round-trip: got %#v, want %#v", got, log)
+	}
+}
+
 func TestFoldCacheTaskP3FieldsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	c := newFoldCache(dir, foldCacheCap)

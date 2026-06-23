@@ -104,6 +104,18 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 				{Kind: AnchorBranch, Value: "main"},
 			},
 		}},
+		{"create_log", CreateLog{
+			Nonce: testNonce,
+			Title: "Auth rollout",
+			Tags:  []string{"ops", "auth"},
+			Anchors: []Anchor{
+				{Kind: AnchorCommit, Value: testID},
+				{Kind: AnchorPath, Value: "internal/auth/token.go"},
+				{Kind: AnchorDir, Value: "internal/auth"},
+				{Kind: AnchorBranch, Value: "main"},
+			},
+		}},
+		{"append_entry", AppendEntry{Text: "flipped to 5%"}},
 		{"set_sprint", SetSprint{Sprint: testID}},
 		{"set_project", SetProject{Project: testParent}},
 		{"set_sprint_status", SetSprintStatus{Status: SprintActive}},
@@ -203,6 +215,43 @@ func TestPackRoundTripCheckpointDocState(t *testing.T) {
 	}
 	if _, ok := cp.State.(Doc); !ok {
 		t.Fatalf("decoded State = %T, want Doc", cp.State)
+	}
+}
+
+func TestPackRoundTripCheckpointLogState(t *testing.T) {
+	op := Checkpoint{
+		EntityID: testID,
+		State: Log{
+			ID: testID, Title: "Auth rollout",
+			Entries: []LogEntry{
+				{Author: "ada", TS: 150, Text: "flipped to 5%"},
+				{Author: "bob", TS: 250, Text: "flipped to 50%"},
+			},
+			Tags:    []string{"ops"},
+			Anchors: []Anchor{{Kind: AnchorDir, Value: "internal/auth"}},
+			Author:  "ada", CreatedAt: 100, UpdatedAt: 250, Head: testParent,
+		},
+		CoversLamport: 5,
+		CoversShas:    []SHA{testParent, testID},
+	}
+	pack := Pack{Lamport: 6, Ops: []Op{op}}
+	data, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got, err := DecodePack(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !reflect.DeepEqual(got, pack) {
+		t.Fatalf("round-trip = %#v, want %#v", got, pack)
+	}
+	cp, ok := got.Ops[0].(Checkpoint)
+	if !ok {
+		t.Fatalf("Ops[0] = %T, want Checkpoint", got.Ops[0])
+	}
+	if _, ok := cp.State.(Log); !ok {
+		t.Fatalf("decoded State = %T, want Log", cp.State)
 	}
 }
 
@@ -366,6 +415,25 @@ func TestPackGoldenBytes(t *testing.T) {
 			want: `{"v":1,"lamport":1,"ops":[{"kind":"create_note","nonce":"ffffffffffffffffffffffffffffffff","title":"Deploy runbook","body":"Ship from green main only.","tags":["ops"],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},{"kind":"path","value":"docs/deploy.md"}]},{"kind":"add_tag","tag":"runbook"}]}`,
 		},
 		{
+			name: "log pack with anchors and entry",
+			pack: Pack{
+				Lamport: 2,
+				Ops: []Op{
+					CreateLog{
+						Nonce: "ffffffffffffffffffffffffffffffff",
+						Title: "Auth rollout",
+						Tags:  []string{"ops"},
+						Anchors: []Anchor{
+							{Kind: AnchorCommit, Value: testID},
+							{Kind: AnchorDir, Value: "internal/auth"},
+						},
+					},
+					AppendEntry{Text: "flipped to 5%"},
+				},
+			},
+			want: `{"v":1,"lamport":2,"ops":[{"kind":"create_log","nonce":"ffffffffffffffffffffffffffffffff","title":"Auth rollout","tags":["ops"],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},{"kind":"dir","value":"internal/auth"}]},{"kind":"append_entry","text":"flipped to 5%"}]}`,
+		},
+		{
 			name: "note hygiene pack",
 			pack: Pack{
 				Lamport: 4,
@@ -457,6 +525,24 @@ func TestPackGoldenBytes(t *testing.T) {
 				}},
 			},
 			want: `{"v":1,"lamport":10,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"project","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Q3 Platform","description":"platform work","status":"active","labels":["infra"],"commits":[],"comments":[],"author":"ada","created_at":100,"updated_at":200,"closed_at":0,"head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":9,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+		{
+			name: "checkpoint over a log",
+			pack: Pack{
+				Lamport: 6,
+				Ops: []Op{Checkpoint{
+					EntityID: testID,
+					State: Log{
+						ID: testID, Title: "Auth rollout",
+						Entries: []LogEntry{{Author: "ada", TS: 150, Text: "flipped to 5%"}},
+						Tags:    []string{"ops"}, Anchors: []Anchor{{Kind: AnchorDir, Value: "internal/auth"}},
+						Author: "ada", CreatedAt: 100, UpdatedAt: 150, Head: testParent,
+					},
+					CoversLamport: 5,
+					CoversShas:    []SHA{testParent, testID},
+				}},
+			},
+			want: `{"v":1,"lamport":6,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"log","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Auth rollout","entries":[{"author":"ada","ts":150,"text":"flipped to 5%"}],"tags":["ops"],"anchors":[{"kind":"dir","value":"internal/auth"}],"author":"ada","created_at":100,"updated_at":150,"deleted":false,"head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":5,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
 		},
 	}
 	for _, tc := range cases {

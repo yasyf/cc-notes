@@ -119,6 +119,23 @@ func createDoc(t *testing.T, s *store.Store, title, body, when string) model.Doc
 	return snap.(model.Doc)
 }
 
+func createLog(t *testing.T, s *store.Store, title string, entries ...string) model.Log {
+	t.Helper()
+	snap, err := s.Create(t.Context(), []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: title}})
+	if err != nil {
+		t.Fatalf("create log: %v", err)
+	}
+	log := snap.(model.Log)
+	for _, text := range entries {
+		next, err := s.Append(t.Context(), refs.Log(log.ID), []model.Op{model.AppendEntry{Text: text}})
+		if err != nil {
+			t.Fatalf("append entry: %v", err)
+		}
+		log = next.(model.Log)
+	}
+	return log
+}
+
 func createTask(t *testing.T, s *store.Store, branch model.Branch, title string) model.Task {
 	t.Helper()
 	snap, err := s.Create(t.Context(), []model.Op{model.CreateTask{
@@ -179,7 +196,7 @@ func TestReaddirTreeSynthesis(t *testing.T) {
 		dir  string
 		want []string
 	}{
-		{"/", []string{"docs", "notes", "projects", "sprints", "tasks"}},
+		{"/", []string{"docs", "logs", "notes", "projects", "sprints", "tasks"}},
 		{"/notes", []string{NoteFilename(note)}},
 		{"/docs", []string{DocFilename(doc)}},
 		{"/tasks", wantTasks},
@@ -755,6 +772,168 @@ func TestDeletedDocHidden(t *testing.T) {
 	var st fuse.Stat_t
 	if errc := f.Getattr("/docs/"+DocFilename(doc), &st, invalidFh); errc != -fuse.ENOENT {
 		t.Errorf("Getattr(deleted) = %d, want -ENOENT", errc)
+	}
+}
+
+func TestLogAppendEntryFlush(t *testing.T) {
+	f, s := newTestFS(t)
+	log := createLog(t, s, "Rollout", "flipped to 5%\n")
+	ref := refs.Log(log.ID)
+	p := "/logs/" + LogFilename(log)
+	before := mustTip(t, s, ref)
+
+	// Append a new fenced entry at EOF, exactly as an editor would: the fence
+	// fields on a brand-new entry are ignored — author/ts come from the commit.
+	appended := append(slices.Clone(RenderLog(log)),
+		[]byte("<!-- cc-notes:entry author=\"ignored\" ts=\"1999-01-01T00:00:00Z\" -->\nrolled back to 0%\n")...)
+
+	errc, fh := f.Open(p, fuse.O_RDWR)
+	if errc != 0 {
+		t.Fatalf("Open = %d", errc)
+	}
+	mustWriteAll(t, f, p, fh, appended)
+	if errc := flush(f, p, fh); errc != 0 {
+		t.Fatalf("Flush = %d", errc)
+	}
+	f.Release(p, fh)
+
+	after := mustTip(t, s, ref)
+	if after == before {
+		t.Fatal("tip did not advance")
+	}
+	chain, err := s.Repo.ReadChain(t.Context(), after)
+	if err != nil {
+		t.Fatalf("ReadChain: %v", err)
+	}
+	var tipOps []model.Op
+	for _, c := range chain {
+		if c.SHA == after {
+			tipOps = c.Pack.Ops
+		}
+	}
+	if len(tipOps) != 1 {
+		t.Fatalf("tip commit ops = %v, want exactly one", tipOps)
+	}
+	appendEntry, ok := tipOps[0].(model.AppendEntry)
+	if !ok {
+		t.Fatalf("tip op = %T, want AppendEntry", tipOps[0])
+	}
+	if want := "rolled back to 0%\n"; appendEntry.Text != want {
+		t.Errorf("AppendEntry.Text = %q, want %q", appendEntry.Text, want)
+	}
+	folded, err := s.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	entries := folded.(model.Log).Entries
+	if len(entries) != 2 || entries[0].Text != "flipped to 5%\n" || entries[1].Text != "rolled back to 0%\n" {
+		t.Errorf("folded entries = %#v", entries)
+	}
+}
+
+func TestLogMidFileEditEPERM(t *testing.T) {
+	f, s := newTestFS(t)
+	log := createLog(t, s, "Locked", "first entry\n", "second entry\n")
+	ref := refs.Log(log.ID)
+	p := "/logs/" + LogFilename(log)
+	before := mustTip(t, s, ref)
+
+	canonical := RenderLog(log)
+	edited := bytes.Replace(canonical, []byte("first entry\n"), []byte("rewritten entry\n"), 1)
+	if bytes.Equal(edited, canonical) {
+		t.Fatal("edit did not change the rendered bytes")
+	}
+
+	errc, fh := f.Open(p, fuse.O_RDWR)
+	if errc != 0 {
+		t.Fatalf("Open = %d", errc)
+	}
+	mustWriteAll(t, f, p, fh, edited)
+	if errc := flush(f, p, fh); errc != -fuse.EPERM {
+		t.Errorf("Flush = %d, want -EPERM", errc)
+	}
+
+	// The deterministic-rejection path reverts the handle buffer to the last
+	// good render so path-based readers never see the rejected bytes.
+	h := f.handles[fh]
+	if h == nil {
+		t.Fatal("handle gone after rejected flush")
+	}
+	if !bytes.Equal(h.buf, canonical) {
+		t.Errorf("handle buffer not reverted to canonical bytes:\n got %q\nwant %q", h.buf, canonical)
+	}
+	f.Release(p, fh)
+
+	if after := mustTip(t, s, ref); after != before {
+		t.Errorf("immutable edit advanced the tip")
+	}
+}
+
+// TestLogCLIEntriesMountRoundTrip drives the mount path for a 2+ entry log built
+// from CLI-stored entry text (no trailing newlines, exactly as `log append`
+// stores it). Open/Read must return canonical bytes whose fences are anchored at
+// line starts, a flush of the unmodified render must succeed (not -EINVAL from a
+// ParseLog failure on a glued-together fence), and appending a new entry on top
+// must commit one AppendEntry.
+func TestLogCLIEntriesMountRoundTrip(t *testing.T) {
+	f, s := newTestFS(t)
+	log := createLog(t, s, "Rollout", "flipped to 5%", "rolled back to 0%")
+	ref := refs.Log(log.ID)
+	p := "/logs/" + LogFilename(log)
+	before := mustTip(t, s, ref)
+
+	canonical := RenderLog(log)
+	if !bytes.Contains(canonical, []byte("flipped to 5%\n<!-- cc-notes:entry")) {
+		t.Fatalf("rendered fence not anchored at line start:\n%s", canonical)
+	}
+	if _, err := ParseLog(canonical); err != nil {
+		t.Fatalf("ParseLog(canonical): %v", err)
+	}
+
+	var st fuse.Stat_t
+	if errc := f.Getattr(p, &st, invalidFh); errc != 0 {
+		t.Fatalf("Getattr(%s) = %d", p, errc)
+	}
+	errc, fh := f.Open(p, fuse.O_RDWR)
+	if errc != 0 {
+		t.Fatalf("Open = %d", errc)
+	}
+	buf := make([]byte, st.Size)
+	if n := f.Read(p, buf, 0, fh); int64(n) != st.Size {
+		t.Fatalf("Read = %d, want %d", n, st.Size)
+	}
+	if !bytes.Equal(buf, canonical) {
+		t.Fatalf("read bytes diverge from canonical render:\n got %q\nwant %q", buf, canonical)
+	}
+
+	// Flushing the unmodified render must round-trip cleanly: no diff, no parse
+	// failure, no -EINVAL.
+	if errc := flush(f, p, fh); errc != 0 {
+		t.Fatalf("flush of unmodified render = %d, want 0", errc)
+	}
+	if after := mustTip(t, s, ref); after != before {
+		t.Errorf("no-op flush advanced the tip")
+	}
+
+	// Append a third entry at EOF and flush; one AppendEntry lands.
+	appended := append(slices.Clone(canonical),
+		[]byte("<!-- cc-notes:entry author=\"ignored\" ts=\"1999-01-01T00:00:00Z\" -->\nincident closed\n")...)
+	mustWriteAll(t, f, p, fh, appended)
+	if errc := flush(f, p, fh); errc != 0 {
+		t.Fatalf("flush of appended entry = %d, want 0", errc)
+	}
+	f.Release(p, fh)
+
+	folded, err := s.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	entries := folded.(model.Log).Entries
+	if len(entries) != 3 ||
+		entries[0].Text != "flipped to 5%" ||
+		entries[1].Text != "rolled back to 0%" ||
+		entries[2].Text != "incident closed\n" {
+		t.Errorf("folded entries = %#v", entries)
 	}
 }
 

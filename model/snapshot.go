@@ -1,7 +1,7 @@
 package model
 
-// Snapshot is the folded state of one entity chain: a Note, Doc, Task, Sprint,
-// or Project. The concrete type discriminates the entity kind.
+// Snapshot is the folded state of one entity chain: a Note, Doc, Log, Task,
+// Sprint, or Project. The concrete type discriminates the entity kind.
 type Snapshot interface {
 	// EntityID returns the entity id: the full oid of the chain's root commit.
 	EntityID() EntityID
@@ -12,6 +12,9 @@ func (n Note) EntityID() EntityID { return n.ID }
 
 // EntityID returns the doc's entity id.
 func (d Doc) EntityID() EntityID { return d.ID }
+
+// EntityID returns the log's entity id.
+func (l Log) EntityID() EntityID { return l.ID }
 
 // EntityID returns the task's entity id.
 func (t Task) EntityID() EntityID { return t.ID }

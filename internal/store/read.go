@@ -116,6 +116,34 @@ func (s *Store) ListDocs(ctx context.Context, includeDeleted, includeSuperseded 
 	return docs, nil
 }
 
+// ListLogs folds every log in the repository, ordered by creation time then
+// id. Tombstoned logs are skipped unless includeDeleted is set. Logs carry no
+// supersede lifecycle, so there is no superseded filter.
+func (s *Store) ListLogs(ctx context.Context, includeDeleted bool) ([]model.Log, error) {
+	entries, err := s.children(ctx, refs.LogsRoot)
+	if err != nil {
+		return nil, err
+	}
+	all, err := foldAll(ctx, s, entries, fold.Log)
+	if err != nil {
+		return nil, err
+	}
+	logs := make([]model.Log, 0, len(all))
+	for _, l := range all {
+		if !includeDeleted && l.Deleted {
+			continue
+		}
+		logs = append(logs, l)
+	}
+	slices.SortFunc(logs, func(a, b model.Log) int {
+		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return logs, nil
+}
+
 // ListTasks folds every task in the repository, ordered by creation time
 // then id. Branch is a folded attribute; callers filter by it.
 func (s *Store) ListTasks(ctx context.Context) ([]model.Task, error) {

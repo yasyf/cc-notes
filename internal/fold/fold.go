@@ -28,8 +28,8 @@ var (
 
 // Fold linearizes the chain and replays its operation packs into a snapshot,
 // dispatching on the create op: a create_note chain folds to model.Note, a
-// create_doc chain to model.Doc, a create_task chain to model.Task. Set-valued
-// snapshot fields come back as
+// create_doc chain to model.Doc, a create_log chain to model.Log, a create_task
+// chain to model.Task. Set-valued snapshot fields come back as
 // non-nil sorted slices; anchors sort by (kind, value).
 //
 // A chain may contain Checkpoint commits. Fold receives the full chain (the
@@ -48,6 +48,8 @@ func Fold(commits []model.PackCommit) (model.Snapshot, error) {
 		return foldNote(ordered)
 	case model.CreateDoc:
 		return foldDoc(ordered)
+	case model.CreateLog:
+		return foldLog(ordered)
 	case model.CreateTask:
 		return foldTask(ordered)
 	case model.CreateSprint:
@@ -79,6 +81,16 @@ func Doc(commits []model.PackCommit) (model.Doc, error) {
 		return model.Doc{}, err
 	}
 	return foldDoc(ordered)
+}
+
+// Log linearizes the chain and folds it as a log. It fails with
+// ErrKindMismatch when the chain was created as a different kind.
+func Log(commits []model.PackCommit) (model.Log, error) {
+	ordered, err := Linearize(commits)
+	if err != nil {
+		return model.Log{}, err
+	}
+	return foldLog(ordered)
 }
 
 // Task linearizes the chain and folds it as a task. It fails with
@@ -155,7 +167,7 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 					for _, a := range o.Anchors {
 						anchors[a] = true
 					}
-				case model.CreateDoc, model.CreateTask, model.CreateSprint, model.CreateProject:
+				case model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
 					return model.Note{}, fmt.Errorf("%w: %s chain folded as a note", ErrKindMismatch, op.OpKind())
 				default:
 					return model.Note{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
@@ -166,7 +178,7 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 			case model.Checkpoint:
 				// A non-seed checkpoint is a fold no-op: its covered ops replay
 				// through their original commits, which remain in the chain.
-			case model.CreateNote, model.CreateDoc, model.CreateTask, model.CreateSprint, model.CreateProject:
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
 				return model.Note{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
 				note.Title = o.Title
@@ -259,7 +271,7 @@ func foldDoc(ordered []model.PackCommit) (model.Doc, error) {
 					for _, a := range o.Anchors {
 						anchors[a] = true
 					}
-				case model.CreateNote, model.CreateTask, model.CreateSprint, model.CreateProject:
+				case model.CreateNote, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
 					return model.Doc{}, fmt.Errorf("%w: %s chain folded as a doc", ErrKindMismatch, op.OpKind())
 				default:
 					return model.Doc{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
@@ -270,7 +282,7 @@ func foldDoc(ordered []model.PackCommit) (model.Doc, error) {
 			case model.Checkpoint:
 				// A non-seed checkpoint is a fold no-op: its covered ops replay
 				// through their original commits, which remain in the chain.
-			case model.CreateNote, model.CreateDoc, model.CreateTask, model.CreateSprint, model.CreateProject:
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
 				return model.Doc{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
 				doc.Title = o.Title
@@ -321,6 +333,95 @@ func foldDoc(ordered []model.PackCommit) (model.Doc, error) {
 	return doc, nil
 }
 
+func foldLog(ordered []model.PackCommit) (model.Log, error) {
+	base, seedSHA, covered, seeded := selectSeed(ordered)
+	var log model.Log
+	tags := map[string]bool{}
+	anchors := map[model.Anchor]bool{}
+	var entries []model.LogEntry
+	created := false
+	if seeded {
+		seed, ok := base.State.(model.Log)
+		if !ok {
+			return model.Log{}, fmt.Errorf("%w: checkpoint over a non-log folded as a log", ErrKindMismatch)
+		}
+		log = seed
+		entries = slices.Clone(seed.Entries)
+		for _, t := range seed.Tags {
+			tags[t] = true
+		}
+		for _, a := range seed.Anchors {
+			anchors[a] = true
+		}
+		created = true
+	} else {
+		log = model.Log{ID: model.EntityID(ordered[0].SHA), CreatedAt: ordered[0].AuthorTime, Entries: []model.LogEntry{}}
+		entries = []model.LogEntry{}
+	}
+	for _, c := range ordered {
+		if seeded && (c.SHA == seedSHA || covered[c.SHA]) {
+			continue
+		}
+		for _, op := range c.Pack.Ops {
+			if !created {
+				switch o := op.(type) {
+				case model.CreateLog:
+					created = true
+					log.Title, log.Author = o.Title, c.Author
+					for _, t := range o.Tags {
+						tags[t] = true
+					}
+					for _, a := range o.Anchors {
+						anchors[a] = true
+					}
+				case model.CreateNote, model.CreateDoc, model.CreateTask, model.CreateSprint, model.CreateProject:
+					return model.Log{}, fmt.Errorf("%w: %s chain folded as a log", ErrKindMismatch, op.OpKind())
+				default:
+					return model.Log{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
+				}
+				continue
+			}
+			switch o := op.(type) {
+			case model.Checkpoint:
+				// A non-seed checkpoint is a fold no-op: its covered ops replay
+				// through their original commits, which remain in the chain.
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
+				return model.Log{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
+			case model.SetTitle:
+				log.Title = o.Title
+			case model.AppendEntry:
+				entries = append(entries, model.LogEntry{Author: c.Author, TS: c.AuthorTime, Text: o.Text})
+			case model.AddTag:
+				tags[o.Tag] = true
+			case model.RemoveTag:
+				delete(tags, o.Tag)
+			case model.AddAnchor:
+				anchors[o.Anchor] = true
+			case model.RemoveAnchor:
+				delete(anchors, o.Anchor)
+			case model.DeleteNote:
+				log.Deleted = true
+			default:
+				return model.Log{}, fmt.Errorf("%w: %s on a log", ErrKindMismatch, op.OpKind())
+			}
+		}
+		if hasNonCheckpointOp(c) {
+			log.UpdatedAt = c.AuthorTime
+		}
+	}
+	if !created {
+		return model.Log{}, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
+	}
+	log.Tags = sortedKeys(tags)
+	log.Anchors = sortedAnchors(anchors)
+	if entries == nil {
+		entries = []model.LogEntry{}
+	}
+	log.Entries = entries
+	log.Head = ordered[len(ordered)-1].SHA
+	return log, nil
+}
+
 func foldTask(ordered []model.PackCommit) (model.Task, error) {
 	base, seedSHA, covered, seeded := selectSeed(ordered)
 	var task model.Task
@@ -367,7 +468,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 					for _, l := range o.Labels {
 						labels[l] = true
 					}
-				case model.CreateNote, model.CreateDoc, model.CreateSprint, model.CreateProject:
+				case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateSprint, model.CreateProject:
 					return model.Task{}, fmt.Errorf("%w: %s chain folded as a task", ErrKindMismatch, op.OpKind())
 				default:
 					return model.Task{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
@@ -378,7 +479,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 			case model.Checkpoint:
 				// A non-seed checkpoint is a fold no-op: its covered ops replay
 				// through their original commits, which remain in the chain.
-			case model.CreateNote, model.CreateDoc, model.CreateTask, model.CreateSprint, model.CreateProject:
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
 				return model.Task{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
 				task.Title = o.Title
@@ -539,7 +640,7 @@ func foldSprint(ordered []model.PackCommit) (model.Sprint, error) {
 					for _, l := range o.Labels {
 						labels[l] = true
 					}
-				case model.CreateNote, model.CreateDoc, model.CreateTask, model.CreateProject:
+				case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateProject:
 					return model.Sprint{}, fmt.Errorf("%w: %s chain folded as a sprint", ErrKindMismatch, op.OpKind())
 				default:
 					return model.Sprint{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
@@ -550,7 +651,7 @@ func foldSprint(ordered []model.PackCommit) (model.Sprint, error) {
 			case model.Checkpoint:
 				// A non-seed checkpoint is a fold no-op: its covered ops replay
 				// through their original commits, which remain in the chain.
-			case model.CreateNote, model.CreateDoc, model.CreateTask, model.CreateSprint, model.CreateProject:
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
 				return model.Sprint{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
 				sprint.Title = o.Title
@@ -642,7 +743,7 @@ func foldProject(ordered []model.PackCommit) (model.Project, error) {
 					for _, l := range o.Labels {
 						labels[l] = true
 					}
-				case model.CreateNote, model.CreateDoc, model.CreateTask, model.CreateSprint:
+				case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint:
 					return model.Project{}, fmt.Errorf("%w: %s chain folded as a project", ErrKindMismatch, op.OpKind())
 				default:
 					return model.Project{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
@@ -653,7 +754,7 @@ func foldProject(ordered []model.PackCommit) (model.Project, error) {
 			case model.Checkpoint:
 				// A non-seed checkpoint is a fold no-op: its covered ops replay
 				// through their original commits, which remain in the chain.
-			case model.CreateNote, model.CreateDoc, model.CreateTask, model.CreateSprint, model.CreateProject:
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
 				return model.Project{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
 				project.Title = o.Title

@@ -153,11 +153,14 @@ func TestParsePath(t *testing.T) {
 		{"/", fusefs.Root{}},
 		{"/notes", fusefs.NotesDir{}},
 		{"/docs", fusefs.DocsDir{}},
+		{"/logs", fusefs.LogsDir{}},
 		{"/tasks", fusefs.TasksRoot{}},
 		{"/notes/a1b2c3d-fix-the-parser.md", fusefs.NoteFile{ShortID: "a1b2c3d"}},
 		{"/notes/a1b2c3d.md", fusefs.NoteFile{ShortID: "a1b2c3d"}},
 		{"/docs/a1b2c3d-fix-the-parser.md", fusefs.DocFile{ShortID: "a1b2c3d"}},
 		{"/docs/a1b2c3d.md", fusefs.DocFile{ShortID: "a1b2c3d"}},
+		{"/logs/a1b2c3d-auth-rollout.md", fusefs.LogFile{ShortID: "a1b2c3d"}},
+		{"/logs/a1b2c3d.md", fusefs.LogFile{ShortID: "a1b2c3d"}},
 		{"/tasks/0123abc.json", fusefs.TaskFile{ShortID: "0123abc"}},
 		{"/tasks/0123abc-slug.json", fusefs.TaskFile{ShortID: "0123abc"}},
 		// Flat sprint and project dirs and files.
@@ -200,6 +203,9 @@ func TestParsePathErrors(t *testing.T) {
 		// suffix alone, a wrong extension, and any nesting all fail.
 		"/docs/", "/docs/readme.md", "/docs/.md", "/docs/a1b2c3d.json",
 		"/docs/deep/a1b2c3d.md",
+		// Logs are flat like docs: same rejection shapes.
+		"/logs/", "/logs/readme.md", "/logs/.md", "/logs/a1b2c3d.json",
+		"/logs/deep/a1b2c3d.md",
 		// Tasks are flat: a non-id name, a non-.json name, and any nesting
 		// under /tasks all fail.
 		"/tasks/main", "/tasks/0123abc.md", "/tasks/main/0123abc.json",

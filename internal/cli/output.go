@@ -65,6 +65,30 @@ type docDTO struct {
 	StaleReason  *string     `json:"stale_reason"`
 }
 
+// logEntryDTO is one append-only log entry with its timestamp rendered RFC3339
+// UTC.
+type logEntryDTO struct {
+	Author string `json:"author"`
+	TS     string `json:"ts"`
+	Text   string `json:"text"`
+}
+
+// logDTO fixes the JSON field order and formats for log output: full hex id,
+// RFC3339 UTC timestamps, sorted set slices, and the ordered append-only
+// entries. A log carries no freshness lifecycle, so there is no
+// witness/verify/stale/superseded/drift.
+type logDTO struct {
+	ID        string        `json:"id"`
+	Title     string        `json:"title"`
+	Entries   []logEntryDTO `json:"entries"`
+	Tags      []string      `json:"tags"`
+	Anchors   []anchorDTO   `json:"anchors"`
+	Author    string        `json:"author"`
+	CreatedAt string        `json:"created_at"`
+	UpdatedAt string        `json:"updated_at"`
+	Deleted   bool          `json:"deleted"`
+}
+
 // commentDTO is one task comment with its timestamp rendered RFC3339 UTC.
 type commentDTO struct {
 	Author string `json:"author"`
@@ -165,7 +189,7 @@ type projectDTO struct {
 
 // statusDTO fixes the JSON field order for a status report: the current
 // branch, the backlog and your-branch task slices, the in-progress tasks
-// grouped by assignee, and the note and doc summaries.
+// grouped by assignee, and the note, doc, and log summaries.
 type statusDTO struct {
 	Branch     string              `json:"branch"`
 	Backlog    []taskDTO           `json:"backlog"`
@@ -173,6 +197,7 @@ type statusDTO struct {
 	InProgress []statusAssigneeDTO `json:"in_progress"`
 	Notes      statusNotesDTO      `json:"notes"`
 	Docs       statusNotesDTO      `json:"docs"`
+	Logs       statusLogsDTO       `json:"logs"`
 }
 
 // statusAssigneeDTO groups one assignee's in-progress tasks.
@@ -192,6 +217,12 @@ type statusStaleDTO struct {
 type statusNotesDTO struct {
 	Total       int `json:"total"`
 	NeedsReview int `json:"needs_review"`
+}
+
+// statusLogsDTO is the log summary: total logs. Logs have no freshness
+// lifecycle, so there is no needs_review count.
+type statusLogsDTO struct {
+	Total int `json:"total"`
 }
 
 // staleTaskDTO embeds a taskDTO, inlining its fields, plus the idle duration in
@@ -336,6 +367,36 @@ func newDocDTO(d model.Doc, drift string) docDTO {
 	}
 }
 
+// newLogDTO renders a log snapshot into its fixed-order DTO. A log carries no
+// per-anchor witness, so every anchor's witness is null.
+func newLogDTO(l model.Log) logDTO {
+	anchors := make([]anchorDTO, len(l.Anchors))
+	for i, a := range l.Anchors {
+		anchors[i] = anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: nil}
+	}
+	return logDTO{
+		ID:        string(l.ID),
+		Title:     l.Title,
+		Entries:   logEntryDTOs(l.Entries),
+		Tags:      emptyNotNil(l.Tags),
+		Anchors:   anchors,
+		Author:    string(l.Author),
+		CreatedAt: rfc3339(l.CreatedAt),
+		UpdatedAt: rfc3339(l.UpdatedAt),
+		Deleted:   l.Deleted,
+	}
+}
+
+// logEntryDTOs renders a folded entry slice into its DTO form with RFC3339 UTC
+// timestamps, always non-nil so JSON serializes an empty list rather than null.
+func logEntryDTOs(entries []model.LogEntry) []logEntryDTO {
+	out := make([]logEntryDTO, len(entries))
+	for i, e := range entries {
+		out[i] = logEntryDTO{Author: string(e.Author), TS: rfc3339(e.TS), Text: e.Text}
+	}
+	return out
+}
+
 func newTaskDTO(t model.Task, blocks []model.EntityID) taskDTO {
 	return taskDTO{
 		ID:           string(t.ID),
@@ -454,6 +515,13 @@ func leanDocLine(d model.Doc) string {
 	return fmt.Sprintf("%s\t%s\t%s\t%s\t%s", d.ID.Short(), dateUTC(d.UpdatedAt), csvOrDash(d.Tags), d.Title, orDash(d.When))
 }
 
+// leanLogLine renders the tab-separated log line:
+// <short7>\t<YYYY-MM-DD of updated_at UTC>\t<tags csv|->\t<title>.
+// It has the same shape as leanNoteLine — a log carries no when trigger.
+func leanLogLine(l model.Log) string {
+	return fmt.Sprintf("%s\t%s\t%s\t%s", l.ID.Short(), dateUTC(l.UpdatedAt), csvOrDash(l.Tags), l.Title)
+}
+
 // leanTaskLine renders the tab-separated task line:
 // <short7>\t<status>\t<P{n}>\t<assignee|->\t<title>.
 func leanTaskLine(t model.Task) string {
@@ -532,6 +600,31 @@ func renderDocShow(d model.Doc, drift string, supersedes []model.EntityID) strin
 		b.WriteByte('\n')
 		b.WriteString(d.Body)
 		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// renderLogShow renders the lean show view of a log: the fixed-order header
+// block — dropping all verify/stale/supersede/drift, which a log never carries
+// — then each entry as a "-- <author> <RFC3339>" block, the same block style
+// task comments render in. The deleted header appears only on a tombstoned log.
+func renderLogShow(l model.Log) string {
+	var b strings.Builder
+	header(&b, "id", string(l.ID))
+	header(&b, "title", l.Title)
+	header(&b, "tags", csvOrDash(l.Tags))
+	header(&b, "commits", csvOrDash(anchorValues(l.Anchors, model.AnchorCommit)))
+	header(&b, "paths", csvOrDash(anchorValues(l.Anchors, model.AnchorPath)))
+	header(&b, "dirs", csvOrDash(anchorValues(l.Anchors, model.AnchorDir)))
+	header(&b, "branches", csvOrDash(anchorValues(l.Anchors, model.AnchorBranch)))
+	header(&b, "author", string(l.Author))
+	header(&b, "created", rfc3339(l.CreatedAt))
+	header(&b, "updated", rfc3339(l.UpdatedAt))
+	if l.Deleted {
+		header(&b, "deleted", "true")
+	}
+	for _, e := range l.Entries {
+		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", e.Author, rfc3339(e.TS), e.Text)
 	}
 	return b.String()
 }

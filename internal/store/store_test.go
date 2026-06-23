@@ -87,6 +87,10 @@ func docOps(title string) []model.Op {
 	return []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: title}}
 }
 
+func logOps(title string) []model.Op {
+	return []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: title}}
+}
+
 func create(t *testing.T, s *Store, ops []model.Op) model.Snapshot {
 	t.Helper()
 	snapshot, err := s.Create(t.Context(), ops)
@@ -828,6 +832,166 @@ func TestResolveDoc(t *testing.T) {
 
 	if _, err := s.Resolve(ctx, refs.KindDoc, string(note.ID)); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve note id as doc = %v, want ErrNotFound", err)
+	}
+}
+
+func chronoLogs(a, b model.Log) int {
+	if c := a.CreatedAt - b.CreatedAt; c != 0 {
+		return int(c)
+	}
+	return strings.Compare(string(a.ID), string(b.ID))
+}
+
+func TestCreateLogRoundTrip(t *testing.T) {
+	s := initStore(t)
+	ops := []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "rollout", Tags: []string{"b", "a"}}}
+	snapshot := create(t, s, ops)
+	log, ok := snapshot.(model.Log)
+	if !ok {
+		t.Fatalf("Create returned %T, want model.Log", snapshot)
+	}
+
+	if log.Title != "rollout" {
+		t.Errorf("Title = %q, want rollout", log.Title)
+	}
+	if want := []string{"a", "b"}; !slices.Equal(log.Tags, want) {
+		t.Errorf("Tags = %v, want %v", log.Tags, want)
+	}
+	if log.Author != testActor {
+		t.Errorf("Author = %q, want %q", log.Author, testActor)
+	}
+	if log.Deleted {
+		t.Error("fresh log is Deleted")
+	}
+	if log.Entries == nil || len(log.Entries) != 0 {
+		t.Errorf("Entries = %+v, want non-nil empty", log.Entries)
+	}
+	if log.Head != model.SHA(log.ID) {
+		t.Errorf("Head = %s, want root %s", log.Head, log.ID)
+	}
+	if log.CreatedAt == 0 || log.UpdatedAt != log.CreatedAt {
+		t.Errorf("timestamps = %d/%d, want equal non-zero", log.CreatedAt, log.UpdatedAt)
+	}
+
+	ref := refs.Log(log.ID)
+	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: log create" {
+		t.Errorf("commit message = %q, want %q", msg, "cc-notes: log create")
+	}
+
+	// Two appended entries take their author and timestamp from the carrying
+	// commit, in linearization order.
+	snapshot, err := s.Append(t.Context(), ref, []model.Op{model.AppendEntry{Text: "flipped to 5%"}})
+	if err != nil {
+		t.Fatalf("Append first entry: %v", err)
+	}
+	snapshot, err = s.Append(t.Context(), ref, []model.Op{model.AppendEntry{Text: "flipped to 50%"}})
+	if err != nil {
+		t.Fatalf("Append second entry: %v", err)
+	}
+	appended := snapshot.(model.Log)
+	if appended.ID != log.ID {
+		t.Errorf("ID changed across appends: %s -> %s", log.ID, appended.ID)
+	}
+	if len(appended.Entries) != 2 {
+		t.Fatalf("Entries len = %d, want 2", len(appended.Entries))
+	}
+	if appended.Entries[0].Text != "flipped to 5%" || appended.Entries[1].Text != "flipped to 50%" {
+		t.Errorf("entry order = %q/%q, want flipped to 5%%/flipped to 50%%", appended.Entries[0].Text, appended.Entries[1].Text)
+	}
+	for i, e := range appended.Entries {
+		if e.Author != testActor {
+			t.Errorf("Entries[%d].Author = %q, want %q", i, e.Author, testActor)
+		}
+		if e.TS == 0 {
+			t.Errorf("Entries[%d].TS = 0, want non-zero commit time", i)
+		}
+	}
+
+	loaded, err := s.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded, snapshot) {
+		t.Errorf("Load = %+v, want Append snapshot %+v", loaded, snapshot)
+	}
+
+	list, err := s.ListLogs(t.Context(), false)
+	if err != nil {
+		t.Fatalf("ListLogs: %v", err)
+	}
+	if want := []model.Log{appended}; !reflect.DeepEqual(list, want) {
+		t.Errorf("ListLogs = %+v, want %+v", list, want)
+	}
+}
+
+func TestListLogsDeleted(t *testing.T) {
+	s := initStore(t)
+	keep := create(t, s, logOps("keep")).(model.Log)
+	gone := create(t, s, logOps("gone")).(model.Log)
+
+	snapshot, err := s.Append(t.Context(), refs.Log(gone.ID), []model.Op{model.DeleteNote{}})
+	if err != nil {
+		t.Fatalf("Append delete: %v", err)
+	}
+	deleted := snapshot.(model.Log)
+	if !deleted.Deleted {
+		t.Fatal("snapshot after delete_note is not Deleted")
+	}
+
+	live, err := s.ListLogs(t.Context(), false)
+	if err != nil {
+		t.Fatalf("ListLogs(false): %v", err)
+	}
+	if want := []model.Log{keep}; !reflect.DeepEqual(live, want) {
+		t.Errorf("ListLogs(false) = %+v, want %+v", live, want)
+	}
+
+	all, err := s.ListLogs(t.Context(), true)
+	if err != nil {
+		t.Fatalf("ListLogs(true): %v", err)
+	}
+	want := []model.Log{keep, deleted}
+	slices.SortFunc(want, chronoLogs)
+	if !reflect.DeepEqual(all, want) {
+		t.Errorf("ListLogs(true) = %+v, want %+v", all, want)
+	}
+}
+
+func TestResolveLog(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	a := create(t, s, logOps("alpha")).(model.Log)
+	b := create(t, s, logOps("beta")).(model.Log)
+	note := create(t, s, noteOps("gamma")).(model.Note)
+
+	shared := 0
+	for shared < len(a.ID) && a.ID[shared] == b.ID[shared] {
+		shared++
+	}
+	unique := string(a.ID)[:shared+1]
+
+	got, err := s.Resolve(ctx, refs.KindLog, unique)
+	if err != nil {
+		t.Fatalf("Resolve unique: %v", err)
+	}
+	if want := refs.Log(a.ID); got != want {
+		t.Errorf("Resolve(%q) = %q, want %q", unique, got, want)
+	}
+
+	got, err = s.Resolve(ctx, refs.KindLog, string(b.ID))
+	if err != nil {
+		t.Fatalf("Resolve full id: %v", err)
+	}
+	if want := refs.Log(b.ID); got != want {
+		t.Errorf("Resolve(%q) = %q, want %q", b.ID, got, want)
+	}
+
+	if _, err := s.Resolve(ctx, refs.KindLog, "zzz"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Resolve(zzz) = %v, want ErrNotFound", err)
+	}
+
+	if _, err := s.Resolve(ctx, refs.KindLog, string(note.ID)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Resolve note id as log = %v, want ErrNotFound", err)
 	}
 }
 

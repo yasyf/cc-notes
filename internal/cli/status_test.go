@@ -25,6 +25,9 @@ type statusJSONShape struct {
 		Total       int `json:"total"`
 		NeedsReview int `json:"needs_review"`
 	} `json:"docs"`
+	Logs struct {
+		Total int `json:"total"`
+	} `json:"logs"`
 }
 
 func hasTaskID(tasks []taskJSON, id string) bool {
@@ -71,6 +74,9 @@ func TestStatusJSON(t *testing.T) {
 	if st.Docs.Total != 0 || st.Docs.NeedsReview != 0 {
 		t.Fatalf("docs = %+v, want total 0 needs_review 0", st.Docs)
 	}
+	if st.Logs.Total != 0 {
+		t.Fatalf("logs = %+v, want total 0", st.Logs)
+	}
 
 	t.Setenv("CC_NOTES_LEASE_TTL", "1ns")
 	st2 := mustJSON[statusJSONShape](t, mustRun(t, dir, "status", "--json"))
@@ -97,10 +103,30 @@ func TestStatusText(t *testing.T) {
 		"  " + actorA + "\t" + claimed.ID[:7] + "\tfresh\n",
 		"notes: 1 total, 0 need review\n",
 		"docs: 0 total, 0 need review\n",
+		"logs: 0 total\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status text %q missing %q", out, want)
 		}
+	}
+}
+
+// TestStatusLogs proves the logs summary tracks real logs: logs have no
+// freshness lifecycle, so the line and DTO carry only a total, no needs_review.
+func TestStatusLogs(t *testing.T) {
+	dir := initRepo(t)
+	mustRun(t, dir, "log", "add", "Rollout timeline")
+	mustRun(t, dir, "log", "add", "Incident A")
+
+	t.Setenv("CC_NOTES_LEASE_TTL", "8760h")
+	out := mustRun(t, dir, "status")
+	if !strings.Contains(out, "logs: 2 total\n") {
+		t.Fatalf("status text %q missing logs summary line", out)
+	}
+
+	st := mustJSON[statusJSONShape](t, mustRun(t, dir, "status", "--json"))
+	if st.Logs.Total != 2 {
+		t.Fatalf("logs = %+v, want total 2", st.Logs)
 	}
 }
 

@@ -112,6 +112,32 @@ func makeDoc(t *testing.T, dir, title, when string, anchors ...model.Anchor) mod
 	return snap.(model.Doc).ID
 }
 
+// makeLog creates a log with an id-stable nonce, the given anchors, and one
+// appended entry through the store, returning its entity id.
+func makeLog(t *testing.T, dir, title, entry string, anchors ...model.Anchor) model.EntityID {
+	t.Helper()
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	ctx := t.Context()
+	snap, err := s.Create(ctx, []model.Op{model.CreateLog{
+		Nonce:   model.NewNonce(),
+		Title:   title,
+		Anchors: anchors,
+	}})
+	if err != nil {
+		t.Fatalf("create log %q: %v", title, err)
+	}
+	id := snap.(model.Log).ID
+	if entry != "" {
+		if _, err := s.Append(ctx, refs.Log(id), []model.Op{model.AppendEntry{Text: entry}}); err != nil {
+			t.Fatalf("append entry to log %s: %v", id, err)
+		}
+	}
+	return id
+}
+
 // verifyNote stamps a real witness on a note against current HEAD, so the note
 // reads as fresh until its anchored content drifts.
 func verifyNote(t *testing.T, dir string, id model.EntityID) {
@@ -743,6 +769,91 @@ func TestRelevantDocJSON(t *testing.T) {
 	// A freshly created (unverified) doc carries its verdict in the doc DTO.
 	if docEntry.Doc.Drift == nil || *docEntry.Doc.Drift != verdictUnverified {
 		t.Errorf("doc drift = %v, want %q", docEntry.Doc.Drift, verdictUnverified)
+	}
+}
+
+func TestRelevantRanksLogs(t *testing.T) {
+	dir := relevantRepo(t)
+	commitFileAs(t, dir, relevantMe, "internal/auth/login.go", "v1\n")
+
+	// A note (exact path, 100), a doc (dir, 60), and a log (dir, 60) all score
+	// off the same anchor signals and are ranked together by score descending.
+	pathNote := makeNote(t, dir, "exact path", model.Anchor{Kind: model.AnchorPath, Value: "internal/auth/login.go"})
+	dirDoc := makeDoc(t, dir, "auth handoff", "resuming the auth cutover", model.Anchor{Kind: model.AnchorDir, Value: "internal/auth"})
+	dirLog := makeLog(t, dir, "auth rollout", "flipped to 5%", model.Anchor{Kind: model.AnchorDir, Value: "internal/auth"})
+
+	scored, verdicts, err := relevantForTest(t, dir, "internal/auth/login.go", "", "", false, false)
+	if err != nil {
+		t.Fatalf("relevantNotes: %v", err)
+	}
+
+	// All three surface; the path note (100) ranks first, the doc and log (both
+	// 60) follow ordered by id.
+	if got := scoredIDs(scored); len(got) != 3 || got[0] != pathNote {
+		t.Fatalf("ranked ids = %v, want path note first then doc+log", got)
+	}
+
+	log := findScored(t, scored, dirLog)
+	if log.kind != refs.KindLog {
+		t.Fatalf("log entry kind = %q, want %q", log.kind, refs.KindLog)
+	}
+	if log.score != scoreDir || len(log.reasons) != 1 || log.reasons[0] != reasonDir {
+		t.Fatalf("log = score %d reasons %v, want %d [dir]", log.score, log.reasons, scoreDir)
+	}
+	// A log never drifts: its verdict is always empty, no matter the anchored
+	// content's state.
+	if v := verdicts[dirLog]; v != "" {
+		t.Fatalf("log verdict = %q, want empty (logs never drift)", v)
+	}
+	// The doc still carries its own verdict, proving the empty log verdict is not
+	// a blanket suppression.
+	if v := verdicts[dirDoc]; v != verdictUnverified {
+		t.Fatalf("doc verdict = %q, want %q", v, verdictUnverified)
+	}
+}
+
+func TestRelevantLogJSONAndLeanLine(t *testing.T) {
+	dir := relevantRepo(t)
+	commitFileAs(t, dir, relevantMe, "internal/api/client.go", "v1\n")
+	logID := makeLog(t, dir, "api rollout", "first entry", model.Anchor{Kind: model.AnchorDir, Value: "internal/api"})
+
+	jsonOut := runRelevantCmd(t, dir, "--json", "internal/api/client.go")
+	var dtos []relevantDTO
+	if err := json.Unmarshal([]byte(jsonOut), &dtos); err != nil {
+		t.Fatalf("unmarshal json %q: %v", jsonOut, err)
+	}
+	if len(dtos) != 1 {
+		t.Fatalf("json results = %d, want 1", len(dtos))
+	}
+	entry := dtos[0]
+	if entry.Kind != string(refs.KindLog) || entry.Log == nil || entry.Note != nil || entry.Doc != nil {
+		t.Fatalf("entry kind=%q note=%v doc=%v log=%v, want a log entry", entry.Kind, entry.Note, entry.Doc, entry.Log)
+	}
+	if entry.Log.ID != string(logID) {
+		t.Errorf("log id = %q, want %q", entry.Log.ID, logID)
+	}
+	if len(entry.Log.Entries) != 1 || entry.Log.Entries[0].Text != "first entry" {
+		t.Errorf("log entries = %+v, want the one appended entry", entry.Log.Entries)
+	}
+	if entry.Score != scoreDir {
+		t.Errorf("log score = %d, want %d", entry.Score, scoreDir)
+	}
+
+	lean := runRelevantCmd(t, dir, "internal/api/client.go")
+	lines := nonEmptyLines(lean)
+	if len(lines) != 1 {
+		t.Fatalf("lean output = %d lines, want 1:\n%s", len(lines), lean)
+	}
+	line := lines[0]
+	// The log line carries the dir reason and a log-show hint, and never a
+	// verdict flag — logs never drift.
+	for _, want := range []string{reasonDir, "log show " + logID.Short()} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("log lean line %q missing %q", line, want)
+		}
+	}
+	if strings.Contains(line, "[") {
+		t.Fatalf("log lean line %q carries a verdict flag, want none (logs never drift)", line)
 	}
 }
 

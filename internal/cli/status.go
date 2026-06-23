@@ -51,6 +51,10 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			logs, err := s.ListLogs(ctx, false)
+			if err != nil {
+				return err
+			}
 			head, err := resolveHead(ctx, s)
 			if err != nil {
 				return err
@@ -97,9 +101,9 @@ func newStatusCmd() *cobra.Command {
 			}
 
 			if jsonOut {
-				return printStatusJSON(cmd, s, branch, backlog, yourBranch, assignees, groups, notes, reviewCount, docs, docReviewCount, now, ttl)
+				return printStatusJSON(cmd, s, branch, backlog, yourBranch, assignees, groups, notes, reviewCount, docs, docReviewCount, logs, now, ttl)
 			}
-			return printStatusText(cmd, branch, backlog, yourBranch, assignees, groups, notes, reviewCount, docs, docReviewCount, now, ttl)
+			return printStatusText(cmd, branch, backlog, yourBranch, assignees, groups, notes, reviewCount, docs, docReviewCount, logs, now, ttl)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -110,7 +114,7 @@ func openOrInProgress(s model.Status) bool {
 	return s == model.StatusOpen || s == model.StatusInProgress
 }
 
-func printStatusText(cmd *cobra.Command, branch model.Branch, backlog, yourBranch []model.Task, assignees []model.Actor, groups map[model.Actor][]model.Task, notes []model.Note, reviewCount int, docs []model.Doc, docReviewCount int, now time.Time, ttl time.Duration) error {
+func printStatusText(cmd *cobra.Command, branch model.Branch, backlog, yourBranch []model.Task, assignees []model.Actor, groups map[model.Actor][]model.Task, notes []model.Note, reviewCount int, docs []model.Doc, docReviewCount int, logs []model.Log, now time.Time, ttl time.Duration) error {
 	var b strings.Builder
 	b.WriteString("backlog\n")
 	for _, t := range backlog {
@@ -134,11 +138,12 @@ func printStatusText(cmd *cobra.Command, branch model.Branch, backlog, yourBranc
 	}
 	fmt.Fprintf(&b, "notes: %d total, %d need review\n", len(notes), reviewCount)
 	fmt.Fprintf(&b, "docs: %d total, %d need review\n", len(docs), docReviewCount)
+	fmt.Fprintf(&b, "logs: %d total\n", len(logs))
 	_, err := fmt.Fprint(cmd.OutOrStdout(), b.String())
 	return err
 }
 
-func printStatusJSON(cmd *cobra.Command, s *store.Store, branch model.Branch, backlog, yourBranch []model.Task, assignees []model.Actor, groups map[model.Actor][]model.Task, notes []model.Note, reviewCount int, docs []model.Doc, docReviewCount int, now time.Time, ttl time.Duration) error {
+func printStatusJSON(cmd *cobra.Command, s *store.Store, branch model.Branch, backlog, yourBranch []model.Task, assignees []model.Actor, groups map[model.Actor][]model.Task, notes []model.Note, reviewCount int, docs []model.Doc, docReviewCount int, logs []model.Log, now time.Time, ttl time.Duration) error {
 	live, err := allTasks(cmd.Context(), s)
 	if err != nil {
 		return err
@@ -150,6 +155,7 @@ func printStatusJSON(cmd *cobra.Command, s *store.Store, branch model.Branch, ba
 		InProgress: make([]statusAssigneeDTO, 0, len(assignees)),
 		Notes:      statusNotesDTO{Total: len(notes), NeedsReview: reviewCount},
 		Docs:       statusNotesDTO{Total: len(docs), NeedsReview: docReviewCount},
+		Logs:       statusLogsDTO{Total: len(logs)},
 	}
 	for _, a := range assignees {
 		grp := groups[a]

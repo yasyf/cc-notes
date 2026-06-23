@@ -1,8 +1,8 @@
 # cc-notes CLI reference
 
-The command surface, grouped by noun: repo, task, sprint, project, note, doc. Every command takes
-`-h`/`--help`. Every note, doc, task, sprint, project, sync, and reconcile command takes `--json`
-for a machine-readable record; without it, mutations echo a lean tab-separated line and
+The command surface, grouped by noun: repo, task, sprint, project, note, doc, log. Every command
+takes `-h`/`--help`. Every note, doc, log, task, sprint, project, sync, and reconcile command takes
+`--json` for a machine-readable record; without it, mutations echo a lean tab-separated line and
 listings print one lean line per entity.
 
 Sprints and projects are an optional planning layer over tasks — group work into a time-boxed
@@ -48,6 +48,7 @@ joins neither behaves exactly as a task does today.
 | Project | `<short7-id>` `<status>` `<title>` |
 | Note | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<tags csv\|->` `<title>` |
 | Doc | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<tags csv\|->` `<title>` `<when trigger\|->` |
+| Log | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<tags csv\|->` `<title>` |
 
 Short ids are the first 7 hex chars; `-` stands in for an empty field. A criterion's short id is
 the first 7 hex chars of its 32-hex nonce; `task criterion list` and the validation logs print
@@ -176,12 +177,13 @@ descending, then id ascending. The lean line is the note line followed by a tab,
 reasons as a comma-separated list, and — when the note has a verdict — a final tab and the drift
 verdict.
 
-Docs rank in the same pass: `relevant` scores every doc against `PATH` by the same path, directory,
-and branch anchor signals as a note and floats the matches inline. A doc line carries its free-text
-`when` trigger as the final lean field, then a bracketed drift verdict (e.g. `[drifted]`) when the
-doc is not fresh, and a trailing `doc show <short-id>` hint in place of the long body; the `--json`
-form tags each entry with a `kind` discriminator (`note` or `doc`) and nests the matching document
-under that key.
+Docs and logs rank in the same pass: `relevant` scores every doc and log against `PATH` by the
+same path, directory, and branch anchor signals as a note and floats the matches inline. A doc line
+carries its free-text `when` trigger as the final lean field, then a bracketed drift verdict (e.g.
+`[drifted]`) when the doc is not fresh, and a trailing `doc show <short-id>` hint in place of the
+long body. A log line carries no `when` and no drift verdict — a log never drifts — and ends with a
+`log show <short-id>` hint in place of its entries. The `--json` form tags each entry with a `kind`
+discriminator (`note`, `doc`, or `log`) and nests the matching entity under that key.
 
 | Signal | Reason | Fires when |
 |--------|--------|------------|
@@ -212,10 +214,11 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes	path,branch	DRIFTE
 ```
 
 JSON shape:
-`[{"kind":string,"note":{<note shape>},"doc":{<doc shape>},"score":int,"reasons":[string,…]}]`.
-`kind` is `note` or `doc` and selects which of `note`/`doc` is present (the other is omitted); the
-present value is the full document, carrying its `drift` verdict and, for a doc, its `when` trigger.
-`score` is the summed signal weight; `reasons` are the matched reason labels in fixed priority order.
+`[{"kind":string,"note":{<note shape>},"doc":{<doc shape>},"log":{<log shape>},"score":int,"reasons":[string,…]}]`.
+`kind` is `note`, `doc`, or `log` and selects which of `note`/`doc`/`log` is present (the others are
+omitted); the present value is the full entity, carrying its `drift` verdict for a note or doc, and,
+for a doc, its `when` trigger (a log carries neither — it never drifts). `score` is the summed signal
+weight; `reasons` are the matched reason labels in fixed priority order.
 
 ### `cc-notes blame <sha>`
 
@@ -1274,3 +1277,149 @@ present) right after `body`, and the agent-asserted expiry fields `stale_at`/`st
 `stale_reason` (each `null` until `doc expire` sets them, cleared by `doc verify` or `doc expire
 --clear`). `drift` is the computed verdict (`null` when fresh); `superseded_by` is the replacement
 doc id or `null`.
+
+## Log commands
+
+Logs are append-only chronological journals — an incident timeline, a rollout log, a debugging
+session — addressed and anchored the same way a doc is, but with no freshness lifecycle. A log
+carries the same optional commit, path, directory, and branch anchors and floats into `relevant`
+exactly like a doc, but it has no verify, supersede, expire, or review machinery: an append-only
+record never claims current truth, so it never drifts. Each entry is appended once and is then
+immutable — its author and timestamp come from the carrying commit, and nothing ever edits or
+reorders it. The `--tag` and anchor flags are repeatable arrays.
+
+A directory anchor covers a subtree exactly as it does for a note or doc: it matches `PATH` in
+`relevant` for the directory or any file under it.
+
+### `cc-notes log add TITLE`
+
+Create a log. A log has no witness and no drift to track, so it is not born verified the way a note
+or doc is. Seed an optional first entry with `--entry` (`-` reads it from stdin); the entry is
+recorded as a separate append so its author and timestamp are honest.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--entry <text>` | none | Record a first entry; `-` reads stdin |
+| `--tag <tag>` | none | Tag; repeatable |
+| `--commit <sha>` | none | Commit anchor; repeatable |
+| `--path <path>` | none | Path anchor; repeatable |
+| `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
+| `--branch <branch>` | none | Branch anchor; repeatable |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes log add "Auth rollout" --dir internal/auth --tag ops --entry "flipped to 5%"
+3d91f0a	2026-06-23	ops	Auth rollout
+```
+
+### `cc-notes log append ID [TEXT]`
+
+Append one entry to a log. The text comes from the positional `TEXT`, `-m`/`--message`, or `-`
+(stdin) — exactly one source. The author and timestamp are taken from the commit, and existing
+entries stay immutable; this is the only way an entry is ever added.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `-m`, `--message <text>` | none | Entry text; mutually exclusive with the positional and `-` |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes log append 3d91f0a "ramped to 50%"
+3d91f0a	2026-06-23	ops	Auth rollout
+$ echo "ramped to 100%" | cc-notes log append 3d91f0a -
+3d91f0a	2026-06-23	ops	Auth rollout
+```
+
+### `cc-notes log edit ID`
+
+Edit a log's title, tags, and anchors — at least one flag is required. Entries are never editable
+here; append a new entry with `log append` instead.
+
+| Flag | Meaning |
+|------|---------|
+| `--title <text>` | New title |
+| `--add-tag` / `--rm-tag <tag>` | Add or remove a tag; repeatable |
+| `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
+| `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
+| `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
+| `--add-branch` / `--rm-branch <branch>` | Add or remove a branch anchor; repeatable |
+| `--json` | Emit JSON |
+
+### `cc-notes log list`
+
+List logs. Default drops tombstoned logs.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--tag <tag>` | none | Require tag; repeatable, ANDed |
+| `--commit <sha>` | none | Require commit anchor |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--all` | off | Include tombstoned logs |
+| `--json` | off | Emit JSON |
+
+### `cc-notes log search QUERY`
+
+Ranked search across log titles, tags, and entry text (title > tags > entries, ties broken by
+recency), bounded and scopable.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--tag <tag>` | none | Require tag; repeatable, ANDed |
+| `--limit <N>` | `20` | Maximum results; negative is unlimited |
+| `--author <user>` | none | Require author |
+| `--anchor-path <path>` | none | Require path anchor |
+| `--anchor-dir <dir>` | none | Require directory anchor |
+| `--anchor-branch <branch>` | none | Require branch anchor |
+| `--anchor-commit <sha>` | none | Require commit anchor |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes log search "rollout" --tag ops
+3d91f0a	2026-06-23	ops	Auth rollout
+```
+
+### `cc-notes log show ID`
+
+Show one log: a fixed-order header block (id, title, tags, anchors, author, created, updated) then
+each entry as a `-- <author> <rfc3339>` block in chronological order, after a blank line.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes log show 3d91f0a
+id: 3d91f0ab2c4d5e6f70819a2b3c4d5e6f70819a2b
+title: Auth rollout
+tags: ops
+commits: -
+paths: -
+dirs: internal/auth
+branches: -
+author: ada <ada@example.com>
+created: 2026-06-23T16:00:00Z
+updated: 2026-06-23T16:42:00Z
+
+-- ada <ada@example.com> 2026-06-23T16:00:00Z
+flipped to 5%
+
+-- ada <ada@example.com> 2026-06-23T16:42:00Z
+ramped to 50%
+```
+
+### `cc-notes log rm ID`
+
+Tombstone a log. It drops out of listings; history survives.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+### JSON log shape
+
+`{"id":string,"title":string,"entries":[{"author":string,"ts":rfc3339,"text":string}],"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string|null}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"deleted":bool}`.
+`entries` is the append-only list in chronological order, each carrying the author and timestamp of
+the commit that appended it. A log has none of the doc's freshness fields — no `when`, `verified_at`,
+`superseded_by`, `drift`, or expiry — because it never drifts.

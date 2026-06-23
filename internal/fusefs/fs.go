@@ -562,6 +562,12 @@ func diffDocument(base model.Snapshot, data []byte) ([]model.Op, error) {
 			return nil, err
 		}
 		return DiffDoc(b, parsed)
+	case model.Log:
+		parsed, err := ParseLog(data)
+		if err != nil {
+			return nil, err
+		}
+		return DiffLog(b, parsed)
 	case model.Task:
 		parsed, err := ParseTask(data)
 		if err != nil {
@@ -660,6 +666,8 @@ func (f *FS) resolveEntity(kind refs.Kind, shortID string) (string, rendered, er
 		return f.resolveNote(shortID)
 	case refs.KindDoc:
 		return f.resolveDoc(shortID)
+	case refs.KindLog:
+		return f.resolveLog(shortID)
 	case refs.KindTask:
 		return f.resolveTask(shortID)
 	case refs.KindSprint:
@@ -685,6 +693,12 @@ func newEntityOps(kind refs.Kind, data []byte) ([]model.Op, error) {
 			return nil, err
 		}
 		return NewDoc(parsed)
+	case refs.KindLog:
+		parsed, err := ParseLog(data)
+		if err != nil {
+			return nil, err
+		}
+		return NewLog(parsed)
 	case refs.KindTask:
 		parsed, err := ParseTask(data)
 		if err != nil {
@@ -720,6 +734,8 @@ func entityTarget(p string) (kind refs.Kind, ok bool) {
 		return refs.KindNote, true
 	case dir == "/docs" && strings.HasSuffix(name, ".md") && name != ".md":
 		return refs.KindDoc, true
+	case dir == "/logs" && strings.HasSuffix(name, ".md") && name != ".md":
+		return refs.KindLog, true
 	case dir == "/tasks" && strings.HasSuffix(name, ".json") && name != ".json":
 		return refs.KindTask, true
 	case dir == "/sprints" && strings.HasSuffix(name, ".json") && name != ".json":
@@ -736,6 +752,8 @@ func refFor(snap model.Snapshot) string {
 		return refs.Note(s.ID)
 	case model.Doc:
 		return refs.Doc(s.ID)
+	case model.Log:
+		return refs.Log(s.ID)
 	case model.Task:
 		return refs.Task(s.ID)
 	case model.Sprint:
@@ -777,6 +795,12 @@ func (f *FS) openEntity(p string) (string, rendered, int) {
 		return ref, r, 0
 	case DocFile:
 		ref, r, err := f.resolveDoc(n.ShortID)
+		if err != nil {
+			return "", rendered{}, errno(err)
+		}
+		return ref, r, 0
+	case LogFile:
+		ref, r, err := f.resolveLog(n.ShortID)
 		if err != nil {
 			return "", rendered{}, errno(err)
 		}
@@ -844,6 +868,28 @@ func (f *FS) resolveDoc(shortID string) (string, rendered, error) {
 	}
 	if doc.Deleted {
 		return "", rendered{}, fmt.Errorf("%w: doc %s is deleted", ErrPath, shortID)
+	}
+	return ref, r, nil
+}
+
+// resolveLog maps a short id to the live log it names. Unknown, deleted, and
+// ambiguous short ids all read as ErrPath — the filesystem namespace has no way
+// to disambiguate a colliding prefix.
+func (f *FS) resolveLog(shortID string) (string, rendered, error) {
+	ref, tip, err := f.resolveRef(refs.LogsRoot, shortID)
+	if err != nil {
+		return "", rendered{}, err
+	}
+	r, err := f.renderTip(tip)
+	if err != nil {
+		return "", rendered{}, err
+	}
+	log, ok := r.snapshot.(model.Log)
+	if !ok {
+		return "", rendered{}, fmt.Errorf("ref %s folds as %T, want log", ref, r.snapshot)
+	}
+	if log.Deleted {
+		return "", rendered{}, fmt.Errorf("%w: log %s is deleted", ErrPath, shortID)
 	}
 	return ref, r, nil
 }
@@ -959,6 +1005,8 @@ func renderDocument(snap model.Snapshot) []byte {
 		return RenderNote(s)
 	case model.Doc:
 		return RenderDoc(s)
+	case model.Log:
+		return RenderLog(s)
 	case model.Task:
 		return RenderTask(s)
 	case model.Sprint:
@@ -976,6 +1024,8 @@ func headOf(snap model.Snapshot) model.SHA {
 		return s.Head
 	case model.Doc:
 		return s.Head
+	case model.Log:
+		return s.Head
 	case model.Task:
 		return s.Head
 	case model.Sprint:
@@ -992,6 +1042,8 @@ func snapshotTimes(snap model.Snapshot) (created, updated int64) {
 	case model.Note:
 		return s.CreatedAt, s.UpdatedAt
 	case model.Doc:
+		return s.CreatedAt, s.UpdatedAt
+	case model.Log:
 		return s.CreatedAt, s.UpdatedAt
 	case model.Task:
 		return s.CreatedAt, s.UpdatedAt
@@ -1030,7 +1082,7 @@ func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 		return -fuse.ENOENT
 	}
 	switch n := node.(type) {
-	case Root, NotesDir, DocsDir, TasksRoot, SprintsDir, ProjectsDir:
+	case Root, NotesDir, DocsDir, LogsDir, TasksRoot, SprintsDir, ProjectsDir:
 		f.fillDirStat(stat, p)
 		return 0
 	case NoteFile:
@@ -1042,6 +1094,13 @@ func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 		return 0
 	case DocFile:
 		_, r, rerr := f.resolveDoc(n.ShortID)
+		if rerr != nil {
+			return errno(rerr)
+		}
+		f.fillEntityStat(stat, r)
+		return 0
+	case LogFile:
+		_, r, rerr := f.resolveLog(n.ShortID)
 		if rerr != nil {
 			return errno(rerr)
 		}
@@ -1096,7 +1155,7 @@ func (f *FS) listDir(p string) ([]string, int) {
 	names := map[string]bool{}
 	switch n := node.(type) {
 	case Root:
-		names["notes"], names["docs"], names["tasks"], names["sprints"], names["projects"] = true, true, true, true, true
+		names["notes"], names["docs"], names["logs"], names["tasks"], names["sprints"], names["projects"] = true, true, true, true, true, true
 	case NotesDir:
 		notes, err := f.store.ListNotes(f.ctx, false, false)
 		if err != nil {
@@ -1112,6 +1171,14 @@ func (f *FS) listDir(p string) ([]string, int) {
 		}
 		for _, doc := range docs {
 			names[DocFilename(doc)] = true
+		}
+	case LogsDir:
+		logs, err := f.store.ListLogs(f.ctx, false)
+		if err != nil {
+			return nil, errno(err)
+		}
+		for _, l := range logs {
+			names[LogFilename(l)] = true
 		}
 	case TasksRoot:
 		tasks, err := f.store.ListTasks(f.ctx)
@@ -1529,6 +1596,12 @@ func (f *FS) notesSeed(p string, _ *fuse.Stat_t) string {
 		return string(headOf(r.snapshot))
 	case DocFile:
 		_, r, err := f.resolveDoc(n.ShortID)
+		if err != nil {
+			return ""
+		}
+		return string(headOf(r.snapshot))
+	case LogFile:
+		_, r, err := f.resolveLog(n.ShortID)
 		if err != nil {
 			return ""
 		}

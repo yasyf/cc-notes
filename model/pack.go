@@ -179,6 +179,16 @@ func marshalOp(op Op) ([]byte, error) {
 			Kind string `json:"kind"`
 			CreateDoc
 		}{o.OpKind(), o})
+	case CreateLog:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			CreateLog
+		}{o.OpKind(), o})
+	case AppendEntry:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			AppendEntry
+		}{o.OpKind(), o})
 	case SetDescription:
 		return json.Marshal(struct {
 			Kind string `json:"kind"`
@@ -348,6 +358,8 @@ func marshalCheckpoint(o Checkpoint) ([]byte, error) {
 		stateKind = "note"
 	case Doc:
 		stateKind = "doc"
+	case Log:
+		stateKind = "log"
 	case Task:
 		stateKind = "task"
 	case Sprint:
@@ -399,6 +411,12 @@ func decodeCheckpoint(raw json.RawMessage) (Op, error) {
 			return nil, fmt.Errorf("unmarshal checkpoint doc state: %w", err)
 		}
 		state = d
+	case "log":
+		var l Log
+		if err := json.Unmarshal(wire.State, &l); err != nil {
+			return nil, fmt.Errorf("unmarshal checkpoint log state: %w", err)
+		}
+		state = l
 	case "task":
 		var t Task
 		if err := json.Unmarshal(wire.State, &t); err != nil {
@@ -463,6 +481,8 @@ var opDecoders = map[string]func(json.RawMessage) (Op, error){
 	CreateSprint{}.OpKind():       decodeAs[CreateSprint],
 	CreateProject{}.OpKind():      decodeAs[CreateProject],
 	CreateDoc{}.OpKind():          decodeAs[CreateDoc],
+	CreateLog{}.OpKind():          decodeAs[CreateLog],
+	AppendEntry{}.OpKind():        decodeAs[AppendEntry],
 	SetDescription{}.OpKind():     decodeAs[SetDescription],
 	SetType{}.OpKind():            decodeAs[SetType],
 	SetPriority{}.OpKind():        decodeAs[SetPriority],

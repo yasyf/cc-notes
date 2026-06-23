@@ -28,6 +28,7 @@ const (
 	foldCacheKindNote = "note"
 	foldCacheKindTask = "task"
 	foldCacheKindDoc  = "doc"
+	foldCacheKindLog  = "log"
 )
 
 // foldCache is a persistent, local, tip-keyed snapshot cache: a pure
@@ -274,6 +275,8 @@ func encodeFoldEntry(snap model.Snapshot) ([]byte, bool) {
 		kind = foldCacheKindTask
 	case model.Doc:
 		kind = foldCacheKindDoc
+	case model.Log:
+		kind = foldCacheKindLog
 	default:
 		return nil, false
 	}
@@ -318,6 +321,12 @@ func decodeFoldEntry(data []byte) (model.Snapshot, bool) {
 			return nil, false
 		}
 		return d, true
+	case foldCacheKindLog:
+		var l model.Log
+		if err := json.Unmarshal(body, &l); err != nil {
+			return nil, false
+		}
+		return l, true
 	default:
 		return nil, false
 	}

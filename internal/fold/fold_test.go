@@ -164,6 +164,110 @@ func TestFoldDocWhenLWW(t *testing.T) {
 	}
 }
 
+func TestFoldLog(t *testing.T) {
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateLog{
+			Nonce:   "n",
+			Title:   "Auth rollout",
+			Tags:    []string{"beta", "alpha"},
+			Anchors: []model.Anchor{{Kind: model.AnchorDir, Value: "internal/auth"}},
+		}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2,
+			model.AppendEntry{Text: "flipped to 5%"},
+			model.AddTag{Tag: "gamma"},
+			model.RemoveTag{Tag: "alpha"},
+			model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "auth.go"}},
+		),
+		mk("ccc", []string{"bbb"}, "carol", 300, 3,
+			model.SetTitle{Title: "Auth rollout (prod)"},
+			model.AppendEntry{Text: "flipped to 50%"},
+		),
+	}
+	want := model.Log{
+		ID:    "aaa",
+		Title: "Auth rollout (prod)",
+		Entries: []model.LogEntry{
+			{Author: "bob", TS: 200, Text: "flipped to 5%"},
+			{Author: "carol", TS: 300, Text: "flipped to 50%"},
+		},
+		Tags:      []string{"beta", "gamma"},
+		Anchors:   []model.Anchor{{Kind: model.AnchorDir, Value: "internal/auth"}, {Kind: model.AnchorPath, Value: "auth.go"}},
+		Author:    "alice",
+		CreatedAt: 100,
+		UpdatedAt: 300,
+		Head:      "ccc",
+	}
+	got, err := fold.Log(chain)
+	if err != nil {
+		t.Fatalf("Log() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Log() = %+v, want %+v", got, want)
+	}
+	snap, err := fold.Fold(chain)
+	if err != nil {
+		t.Fatalf("Fold() error = %v", err)
+	}
+	dispatched, ok := snap.(model.Log)
+	if !ok {
+		t.Fatalf("Fold() = %T, want model.Log", snap)
+	}
+	if !reflect.DeepEqual(dispatched, want) {
+		t.Fatalf("Fold() = %+v, want %+v", dispatched, want)
+	}
+	if snap.EntityID() != "aaa" {
+		t.Fatalf("EntityID() = %q, want %q", snap.EntityID(), "aaa")
+	}
+}
+
+// TestFoldLogEmptyEntries confirms a log with no AppendEntry folds to a non-nil
+// empty entry slice, never nil.
+func TestFoldLogEmptyEntries(t *testing.T) {
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateLog{Nonce: "n", Title: "T"}),
+	}
+	got, err := fold.Log(chain)
+	if err != nil {
+		t.Fatalf("Log() error = %v", err)
+	}
+	if got.Entries == nil {
+		t.Fatalf("Entries = nil, want non-nil empty slice")
+	}
+	if len(got.Entries) != 0 {
+		t.Fatalf("Entries = %+v, want empty", got.Entries)
+	}
+}
+
+// TestFoldLogConvergence is the cross-branch merge convergence trap: two
+// branches each append an entry to the same log, then a union merge joins them.
+// Both replicas must fold to the identical entry slice in deterministic
+// linearization order (lamport → author-time → sha), with no reconcile.
+func TestFoldLogConvergence(t *testing.T) {
+	c0 := mk("c0", nil, "root", 100, 1, model.CreateLog{Nonce: "n", Title: "Incident", Tags: []string{"base"}})
+	c1 := mk("c1", []string{"c0"}, "root", 150, 2, model.AppendEntry{Text: "paged on-call"})
+	// Two concurrent branches, each appending one entry at the same lamport.
+	a1 := mk("a1", []string{"c1"}, "alice", 200, 3, model.AppendEntry{Text: "from-alice"})
+	b1 := mk("b1", []string{"c1"}, "bob", 210, 3, model.AppendEntry{Text: "from-bob"})
+	merge := mk("mmm", []string{"a1", "b1"}, "alice", 300, 4)
+	combined := []model.PackCommit{c0, c1, a1, b1, merge}
+
+	// a1 and b1 share a lamport; b1 has the later author-time, so a1 sorts first.
+	want := []model.LogEntry{
+		{Author: "root", TS: 150, Text: "paged on-call"},
+		{Author: "alice", TS: 200, Text: "from-alice"},
+		{Author: "bob", TS: 210, Text: "from-bob"},
+	}
+	for i, input := range permutations(combined) {
+		got, err := fold.Log(input)
+		if err != nil {
+			t.Fatalf("permutation %d: Log() error = %v", i, err)
+		}
+		if !reflect.DeepEqual(got.Entries, want) {
+			t.Fatalf("permutation %d: Entries = %+v, want %+v", i, got.Entries, want)
+		}
+	}
+}
+
 func TestFoldTaskLifecycle(t *testing.T) {
 	chain := []model.PackCommit{
 		mk("aaa", nil, "alice", 100, 1, model.CreateTask{
@@ -899,6 +1003,7 @@ func TestFoldSupersededConverges(t *testing.T) {
 func TestFoldErrors(t *testing.T) {
 	noteRoot := mk("aaa", nil, "alice", 100, 1, model.CreateNote{Nonce: "n"})
 	docRoot := mk("aaa", nil, "alice", 100, 1, model.CreateDoc{Nonce: "n"})
+	logRoot := mk("aaa", nil, "alice", 100, 1, model.CreateLog{Nonce: "n"})
 	taskRoot := mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Type: model.TypeTask, Branch: "main"})
 	sprintRoot := mk("aaa", nil, "alice", 100, 1, model.CreateSprint{Nonce: "n"})
 	projectRoot := mk("aaa", nil, "alice", 100, 1, model.CreateProject{Nonce: "n"})
@@ -1038,6 +1143,93 @@ func TestFoldErrors(t *testing.T) {
 				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.CreateDoc{Nonce: "m"}),
 			},
 			via:  noteErr,
+			want: fold.ErrDuplicateCreate,
+		},
+		{
+			name:    "append_entry before create",
+			commits: []model.PackCommit{mk("aaa", nil, "alice", 100, 1, model.AppendEntry{Text: "orphan"})},
+			via:     logErr,
+			want:    fold.ErrNoCreate,
+		},
+		{
+			name: "set_when op on a log chain",
+			commits: []model.PackCommit{
+				logRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetWhen{When: "x"}),
+			},
+			via:  logErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "verify_note op on a log chain",
+			commits: []model.PackCommit{
+				logRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.VerifyNote{VerifiedCommit: "deadbeef"}),
+			},
+			via:  logErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "mark_stale op on a log chain",
+			commits: []model.PackCommit{
+				logRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.MarkStale{Reason: "x"}),
+			},
+			via:  logErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "set_body op on a log chain",
+			commits: []model.PackCommit{
+				logRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetBody{Body: "x"}),
+			},
+			via:  logErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "append_entry op on a doc chain",
+			commits: []model.PackCommit{
+				docRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AppendEntry{Text: "x"}),
+			},
+			via:  docErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name:    "log chain folded as doc",
+			commits: []model.PackCommit{logRoot},
+			via:     docErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "doc chain folded as log",
+			commits: []model.PackCommit{docRoot},
+			via:     logErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "task chain folded as log",
+			commits: []model.PackCommit{taskRoot},
+			via:     logErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name: "create_log after create_doc",
+			commits: []model.PackCommit{
+				docRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.CreateLog{Nonce: "m"}),
+			},
+			via:  docErr,
+			want: fold.ErrDuplicateCreate,
+		},
+		{
+			name: "second create_log",
+			commits: []model.PackCommit{
+				logRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.CreateLog{Nonce: "m"}),
+			},
+			via:  logErr,
 			want: fold.ErrDuplicateCreate,
 		},
 		{
@@ -1902,6 +2094,11 @@ func noteErr(commits []model.PackCommit) error {
 
 func docErr(commits []model.PackCommit) error {
 	_, err := fold.Doc(commits)
+	return err
+}
+
+func logErr(commits []model.PackCommit) error {
+	_, err := fold.Log(commits)
 	return err
 }
 

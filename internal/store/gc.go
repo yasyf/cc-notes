@@ -28,7 +28,7 @@ func (s *Store) GCLocal(ctx context.Context) (int, error) {
 	return tidied, nil
 }
 
-// PruneTombstones physically deletes tombstoned note and doc refs — those
+// PruneTombstones physically deletes tombstoned note, doc, and log refs — those
 // folded to Deleted — locally and on remote via git push --delete, then drops
 // their now-orphaned cache entries. Superseded notes and docs and all tasks are
 // never pruned: a superseded entity keeps its supersede pointer and history, and
@@ -77,11 +77,31 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 		}
 		pruned++
 	}
+	logs, err := s.ListLogs(ctx, true)
+	if err != nil {
+		return pruned, failed, err
+	}
+	for _, l := range logs {
+		if !l.Deleted {
+			continue
+		}
+		ref := refs.Log(l.ID)
+		if err := s.Git.DeleteRef(ctx, ref, l.Head); err != nil {
+			failed++
+			continue
+		}
+		s.cache.delete(l.Head)
+		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+			failed++
+			continue
+		}
+		pruned++
+	}
 	return pruned, failed, nil
 }
 
 // liveTips returns the set of commit shas that are the current tip of some
-// entity ref — every note, every task, and every doc.
+// entity ref — every note, every task, every doc, and every log.
 func (s *Store) liveTips(ctx context.Context) (map[model.SHA]bool, error) {
 	notes, err := s.children(ctx, refs.NotesPrefix)
 	if err != nil {
@@ -95,7 +115,11 @@ func (s *Store) liveTips(ctx context.Context) (map[model.SHA]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	live := make(map[model.SHA]bool, len(notes)+len(tasks)+len(docs))
+	logs, err := s.children(ctx, refs.LogsRoot)
+	if err != nil {
+		return nil, err
+	}
+	live := make(map[model.SHA]bool, len(notes)+len(tasks)+len(docs)+len(logs))
 	for _, e := range notes {
 		live[e.tip] = true
 	}
@@ -103,6 +127,9 @@ func (s *Store) liveTips(ctx context.Context) (map[model.SHA]bool, error) {
 		live[e.tip] = true
 	}
 	for _, e := range docs {
+		live[e.tip] = true
+	}
+	for _, e := range logs {
 		live[e.tip] = true
 	}
 	return live, nil

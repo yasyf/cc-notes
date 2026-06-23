@@ -30,6 +30,8 @@ func (s *Store) Resolve(ctx context.Context, kind refs.Kind, prefix string) (str
 		namespace = refs.ProjectsRoot
 	case refs.KindDoc:
 		namespace = refs.DocsRoot
+	case refs.KindLog:
+		namespace = refs.LogsRoot
 	default:
 		return "", fmt.Errorf("resolve: unknown kind %q", kind)
 	}
@@ -77,6 +79,8 @@ func titleOf(snapshot model.Snapshot) string {
 	case model.Project:
 		return v.Title
 	case model.Doc:
+		return v.Title
+	case model.Log:
 		return v.Title
 	default:
 		panic(fmt.Sprintf("unknown snapshot type %T", snapshot))
