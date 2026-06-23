@@ -59,6 +59,10 @@ func newDocAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			commits, err := resolveCommits(ctx, s.Git, commits)
+			if err != nil {
+				return err
+			}
 			create := model.CreateDoc{
 				Nonce:   model.NewNonce(),
 				Title:   args[0],
@@ -212,6 +216,14 @@ func newDocEditCmd() *cobra.Command {
 			for _, tag := range rmTags {
 				ops = append(ops, model.RemoveTag{Tag: tag})
 			}
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			addCommits, err := resolveCommits(ctx, s.Git, addCommits)
+			if err != nil {
+				return err
+			}
 			for _, a := range buildAnchors(addCommits, addPaths, addDirs, addBranches) {
 				ops = append(ops, model.AddAnchor{Anchor: a})
 			}
@@ -220,10 +232,6 @@ func newDocEditCmd() *cobra.Command {
 			}
 			if len(ops) == 0 {
 				return &UsageError{Err: errors.New("doc edit requires at least one flag")}
-			}
-			s, err := openStore()
-			if err != nil {
-				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
+	"github.com/yasyf/cc-notes/internal/store"
 )
 
 // docJSON mirrors the doc output DTO for round-trip assertions: the noteJSON
@@ -129,6 +130,73 @@ func TestDocEditWhen(t *testing.T) {
 	shown := mustJSON[docJSON](t, mustRun(t, dir, "doc", "show", added.ID, "--json"))
 	if shown.When != "second trigger" {
 		t.Fatalf("shown when = %q, want %q", shown.When, "second trigger")
+	}
+}
+
+// TestDocCommitAnchorShortSha is the regression for the short-sha anchor bug:
+// an abbreviated --commit value must be expanded to the full 40-char sha at
+// add time, so the read paths that resolve the anchor commit (doc show, status,
+// drift) — which reject anything shorter than a full sha — never see it raw. A
+// commit that does not exist is a hard error at add time, with nothing stored.
+func TestDocCommitAnchorShortSha(t *testing.T) {
+	dir := initRepo(t)
+	full := commitFile(t, dir, "seed.go", "package main")
+	short := full[:8]
+
+	// add: the short sha is expanded to the full sha on the stored anchor.
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Anchored", "--commit", short, "--json"))
+	var addedCommit string
+	for _, a := range added.Anchors {
+		if a.Kind == "commit" {
+			addedCommit = a.Value
+		}
+	}
+	if addedCommit != full {
+		t.Fatalf("stored commit anchor = %q, want the full sha %q (from short %q)", addedCommit, full, short)
+	}
+
+	// show: the originally-poisoned read path now resolves cleanly, because the
+	// stored value is a full sha rather than the raw 8-char prefix.
+	shown := mustJSON[docJSON](t, mustRun(t, dir, "doc", "show", added.ID, "--json"))
+	var shownCommit string
+	for _, a := range shown.Anchors {
+		if a.Kind == "commit" {
+			shownCommit = a.Value
+		}
+	}
+	if shownCommit != full {
+		t.Fatalf("shown commit anchor = %q, want %q", shownCommit, full)
+	}
+	if shown.Drift != nil {
+		t.Fatalf("drift = %v, want null: the anchor commit is reachable from HEAD", *shown.Drift)
+	}
+
+	// edit --add-commit: the same expansion applies on the edit path.
+	c2 := commitFile(t, dir, "seed.go", "package main // v2")
+	edited := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", added.ID, "--add-commit", c2[:10], "--json"))
+	var hasC2 bool
+	for _, a := range edited.Anchors {
+		if a.Kind == "commit" && a.Value == c2 {
+			hasC2 = true
+		}
+		if a.Kind == "commit" && len(a.Value) != 40 {
+			t.Fatalf("edited commit anchor = %q, want a full 40-char sha", a.Value)
+		}
+	}
+	if !hasC2 {
+		t.Fatalf("edited anchors = %v, want the expanded %q present", edited.Anchors, c2)
+	}
+
+	// add of a non-existent commit is a hard error at add time, and nothing is
+	// stored: no new doc is created.
+	before := mustJSON[[]docJSON](t, mustRun(t, dir, "doc", "list", "--json"))
+	_, _, err := runCLI(t, dir, "doc", "add", "Bad", "--commit", "deadbeef")
+	if !errors.Is(err, store.ErrNotFound) || cli.ExitCode(err) != 3 {
+		t.Fatalf("add with nonexistent commit err = %v (exit %d), want ErrNotFound exit 3", err, cli.ExitCode(err))
+	}
+	after := mustJSON[[]docJSON](t, mustRun(t, dir, "doc", "list", "--json"))
+	if len(after) != len(before) {
+		t.Fatalf("doc count after failed add = %d, want unchanged %d", len(after), len(before))
 	}
 }
 

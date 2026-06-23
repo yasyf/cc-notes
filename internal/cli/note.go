@@ -2,6 +2,7 @@ package cli
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -10,7 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -54,6 +57,10 @@ func newNoteAddCmd() *cobra.Command {
 				return err
 			}
 			text, err := bodyArg(cmd, body)
+			if err != nil {
+				return err
+			}
+			commits, err := resolveCommits(ctx, s.Git, commits)
 			if err != nil {
 				return err
 			}
@@ -205,6 +212,14 @@ func newNoteEditCmd() *cobra.Command {
 			for _, tag := range rmTags {
 				ops = append(ops, model.RemoveTag{Tag: tag})
 			}
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			addCommits, err := resolveCommits(ctx, s.Git, addCommits)
+			if err != nil {
+				return err
+			}
 			for _, a := range buildAnchors(addCommits, addPaths, addDirs, addBranches) {
 				ops = append(ops, model.AddAnchor{Anchor: a})
 			}
@@ -213,10 +228,6 @@ func newNoteEditCmd() *cobra.Command {
 			}
 			if len(ops) == 0 {
 				return &UsageError{Err: errors.New("note edit requires at least one flag")}
-			}
-			s, err := openStore()
-			if err != nil {
-				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
@@ -594,6 +605,31 @@ func printNoteList(cmd *cobra.Command, notes []model.Note, jsonOut bool) error {
 
 func hasAnchor(n model.Note, kind model.AnchorKind, value string) bool {
 	return slices.Contains(n.Anchors, model.Anchor{Kind: kind, Value: value})
+}
+
+// resolveCommits expands every user-supplied commit anchor — an abbreviated
+// sha or a revision like HEAD — to its full 40-char commit sha, so the value
+// stored on the anchor is what every read path (status, show, drift) can
+// resolve. An anchor naming no commit, or an ambiguous prefix, is a hard
+// error surfaced at add time: nothing is stored on a bad value. The result
+// preserves order and is freshly allocated, so the caller's slice is left
+// untouched.
+func resolveCommits(ctx context.Context, g gitcmd.Git, commits []string) ([]string, error) {
+	if len(commits) == 0 {
+		return commits, nil
+	}
+	full := make([]string, len(commits))
+	for i, c := range commits {
+		sha, err := g.CommitSHA(ctx, c)
+		if errors.Is(err, gitcmd.ErrRevNotFound) {
+			return nil, fmt.Errorf("%w: no commit %s", store.ErrNotFound, c)
+		}
+		if err != nil {
+			return nil, err
+		}
+		full[i] = string(sha)
+	}
+	return full, nil
 }
 
 func buildAnchors(commits, paths, dirs, branches []string) []model.Anchor {

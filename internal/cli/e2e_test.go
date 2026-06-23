@@ -505,9 +505,10 @@ func TestClaimDetachedHead(t *testing.T) {
 // visibility.
 func TestNoteLifecycleViaBinary(t *testing.T) {
 	dir := initRepo(t)
+	short := commitFile(t, dir, "seed.go", "package main")[:8]
 	note := mustJSON[noteJSON](t, mustBin(t, dir, actorA, "note", "add", "Anchored note",
 		"--body", "First body", "--tag", "design", "--tag", "api",
-		"--commit", "abc1234", "--path", "internal/cli", "--json"))
+		"--commit", short, "--path", "internal/cli", "--json"))
 	mustBin(t, dir, actorA, "note", "add", "Plain", "--tag", "misc")
 
 	noteLine := note.ID[:7] + "\t" + dateOf(t, note.UpdatedAt) + "\tapi,design\tAnchored note\n"

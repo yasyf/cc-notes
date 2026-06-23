@@ -222,8 +222,10 @@ func TestNoteAddLeanLine(t *testing.T) {
 
 func TestNoteJSONRoundTrip(t *testing.T) {
 	dir := initRepo(t)
+	full := commitFile(t, dir, "seed.go", "package main")
+	short := full[:8]
 	out := mustRun(t, dir, "note", "add", "Design", "--body", "decisions", "--tag", "arch",
-		"--commit", "abc123", "--path", "internal/cli", "--dir", "internal/auth", "--branch", "main", "--json")
+		"--commit", short, "--path", "internal/cli", "--dir", "internal/auth", "--branch", "main", "--json")
 	if !strings.HasPrefix(out, `{"id":"`) {
 		t.Fatalf("note JSON does not lead with id: %q", out)
 	}
@@ -241,7 +243,7 @@ func TestNoteJSONRoundTrip(t *testing.T) {
 	if got := strings.Join(shown.Tags, ","); got != "arch" {
 		t.Errorf("tags = %q, want arch", got)
 	}
-	wantAnchors := []string{"branch=main", "commit=abc123", "dir=internal/auth", "path=internal/cli"}
+	wantAnchors := []string{"branch=main", "commit=" + full, "dir=internal/auth", "path=internal/cli"}
 	gotAnchors := make([]string, len(shown.Anchors))
 	for i, a := range shown.Anchors {
 		gotAnchors[i] = a.Kind + "=" + a.Value
@@ -252,12 +254,15 @@ func TestNoteJSONRoundTrip(t *testing.T) {
 	for _, a := range shown.Anchors {
 		switch a.Kind {
 		case "commit":
+			if len(a.Value) != 40 {
+				t.Errorf("commit anchor value = %q, want the full 40-char sha (short %q expanded)", a.Value, short)
+			}
 			if a.Witness == nil || *a.Witness != a.Value {
 				t.Errorf("commit anchor witness = %v, want its own oid %q", a.Witness, a.Value)
 			}
 		default:
 			if a.Witness != nil {
-				t.Errorf("%s anchor witness = %v, want null in an unborn repo", a.Kind, *a.Witness)
+				t.Errorf("%s anchor witness = %v, want null for an absent path/dir/branch", a.Kind, *a.Witness)
 			}
 		}
 	}
