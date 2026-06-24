@@ -880,11 +880,10 @@ func TestCreateLogRoundTrip(t *testing.T) {
 
 	// Two appended entries take their author and timestamp from the carrying
 	// commit, in linearization order.
-	snapshot, err := s.Append(t.Context(), ref, []model.Op{model.AppendEntry{Text: "flipped to 5%"}})
-	if err != nil {
+	if _, err := s.Append(t.Context(), ref, []model.Op{model.AppendEntry{Text: "flipped to 5%"}}); err != nil {
 		t.Fatalf("Append first entry: %v", err)
 	}
-	snapshot, err = s.Append(t.Context(), ref, []model.Op{model.AppendEntry{Text: "flipped to 50%"}})
+	snapshot, err := s.Append(t.Context(), ref, []model.Op{model.AppendEntry{Text: "flipped to 50%"}})
 	if err != nil {
 		t.Fatalf("Append second entry: %v", err)
 	}

@@ -46,6 +46,7 @@ func newTaskCmd() *cobra.Command {
 		newTaskArchivedCmd(),
 		newTaskCriterionCmd(),
 		newTaskValidateCmd(),
+		newTaskHistoryCmd(),
 	)
 	return cmd
 }

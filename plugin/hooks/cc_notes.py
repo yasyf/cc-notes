@@ -887,7 +887,8 @@ nudge(
 
 nudge(
     "Commit landed. Add a `cc-task: <id>` trailer to link it to its task "
-    "(queryable with `git log --grep` and `cc-notes blame <sha>`). Capture any "
+    "(queryable with `git log --grep` and `cc-notes blame <sha>`; `cc-notes "
+    "history <id>` shows an entity's full edit trail). Capture any "
     "durable decision behind it as `cc-notes note add \"...\" --tag design` (born "
     "verified against HEAD), and a long-form handoff or internal brief for a future "
     "agent as `cc-notes doc add` (not a loose .md), then `cc-notes sync` to share "

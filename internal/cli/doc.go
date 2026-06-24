@@ -34,6 +34,7 @@ func newDocCmd() *cobra.Command {
 		newDocSupersedeCmd(),
 		newDocExpireCmd(),
 		newDocReviewCmd(),
+		newDocHistoryCmd(),
 	)
 	return cmd
 }

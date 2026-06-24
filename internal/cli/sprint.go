@@ -28,6 +28,7 @@ func newSprintCmd() *cobra.Command {
 		newSprintStatusCmd("cancel", model.SprintCancelled),
 		newSprintEditCmd(),
 		newSprintCommentCmd(),
+		newSprintHistoryCmd(),
 	)
 	return cmd
 }

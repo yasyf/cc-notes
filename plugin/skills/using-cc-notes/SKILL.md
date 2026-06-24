@@ -205,6 +205,7 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes sync` | Union-merge the cc-notes refs with the remote and push, looping until stable |
 | `cc-notes reconcile --into <branch>` | Carry merged branches' open tasks onto the target |
 | `cc-notes blame <sha>` | List the task(s) a commit implemented |
+| `cc-notes history <id>` | Show an entity's edit history — who changed which fields, when (`--reverse`, `--limit`, `--json`) |
 | `cc-notes task add "<title>"` | Capture branch work; add `--backlog` for shared work |
 | `cc-notes task ready` | List open, unassigned, unblocked tasks — the pickup queue |
 | `cc-notes task start <id>` | Claim a task and move it onto your current branch |

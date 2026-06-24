@@ -28,6 +28,7 @@ func newLogCmd() *cobra.Command {
 		newLogEditCmd(),
 		newLogRmCmd(),
 		newLogSearchCmd(),
+		newLogHistoryCmd(),
 	)
 	return cmd
 }

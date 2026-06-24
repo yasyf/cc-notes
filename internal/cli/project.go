@@ -28,6 +28,7 @@ func newProjectCmd() *cobra.Command {
 		newProjectStatusCmd("cancel", model.ProjectCancelled),
 		newProjectEditCmd(),
 		newProjectCommentCmd(),
+		newProjectHistoryCmd(),
 	)
 	return cmd
 }

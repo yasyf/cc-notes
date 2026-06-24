@@ -234,6 +234,33 @@ $ cc-notes blame 4f1c2ab
 d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 ```
 
+### `cc-notes history <id>`
+
+Show an entity's edit trail: one entry per commit in the chain, with the fields that commit
+changed. The id resolves across every kind. Each entry computes its delta by folding the chain
+up to that point, so you see `status: open → in_progress`, not a raw op dump. Commits whose only
+effect was on bookkeeping (a lease heartbeat) or that were idempotent are skipped; a checkpoint
+shows as a `compacted` marker. Entries run newest-first by default.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--reverse` | off | Oldest first (chronological) |
+| `--limit N` | 0 (all) | Show at most the N most recent entries |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes history 0914cfb
+478fb4e  ada <ada@example.com>  2026-06-24T01:47:53Z
+    closed_at: 2026-06-24T01:47:53Z
+    status: in_progress → done
+1c33968  ada <ada@example.com>  2026-06-24T01:47:53Z
+    assignee: ada <ada@example.com>
+    status: open → in_progress
+0914cfb  ada <ada@example.com>  2026-06-24T01:47:53Z  created task
+    status: open
+    title: ship the thing
+```
+
 ### `cc-notes compact <id>`
 
 Collapse an entity's op-log into a checkpoint so future folds are cheap. The id and the full

@@ -35,6 +35,7 @@ func newNoteCmd() *cobra.Command {
 		newNoteSupersedeCmd(),
 		newNoteExpireCmd(),
 		newNoteReviewCmd(),
+		newNoteHistoryCmd(),
 	)
 	return cmd
 }
