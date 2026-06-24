@@ -21,13 +21,13 @@ ensure_mount() {
 
 if command -v cc-notes >/dev/null 2>&1; then
   ensure_mount
-  emit "cc-notes $(cc-notes version 2>/dev/null) is installed; its durable task/note tooling is available."
+  emit "cc-notes $(cc-notes version 2>/dev/null) is installed; its durable task, note, doc, and log tooling is available."
   exit 0
 fi
 
 if curl -fsSL https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh | sh >/dev/null 2>&1 && command -v cc-notes >/dev/null 2>&1; then
   ensure_mount
-  emit "Installed cc-notes $(cc-notes version 2>/dev/null) on first use; its durable task/note tooling is now available."
+  emit "Installed cc-notes $(cc-notes version 2>/dev/null) on first use; its durable task, note, doc, and log tooling is now available."
   exit 0
 fi
 

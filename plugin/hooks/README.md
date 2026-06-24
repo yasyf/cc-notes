@@ -18,6 +18,8 @@ native task tracking versus durable, git-synced cc-notes entities.
 | `cc-notes task add --backlog` | Durable, git-synced | The shared backlog (`Branch == ""`), visible to every agent on every branch | Unassigned work any agent can claim and start |
 | `cc-notes task add` | Durable, git-synced | Your current branch | Branch-specific work that outlives the session, with claim, deps, and lifecycle |
 | `cc-notes note add` | Durable, git-synced | Repo-global | Design decisions and durable facts |
+| `cc-notes doc add` | Durable, git-synced | Repo-global, anchored like a note, plus a `--when` read-trigger | Long-form guidance written for the next agent, verified and floated on read |
+| `cc-notes log add` | Durable, git-synced | Repo-global, anchored like a doc | An append-only chronological journal — entries are immutable, never edited or reordered |
 
 Tasks are global. The id addresses a task no matter which branch it lives on, and
 its branch is a mutable attribute. `cc-notes task add --backlog` parks work in the
@@ -28,8 +30,8 @@ shared queue; `cc-notes task start <id>` claims it and pulls it onto your branch
 | # | Trigger | Nudge |
 |---|---------|-------|
 | 1 | Session start, first `UserPromptSubmit`, fires once | Float this session's durable tasks: your branch's open/in-progress tasks topped up from the shared backlog, capped at seven with a `+K more` tail, pointing at `cc-notes status`. Silent when there are no tasks. |
-| 2 | `Read` (PostToolUse) | Float the notes `cc-notes relevant <path>` ranks for the file just read — title, reasons, and any drift flag — so durable context surfaces as you explore. Each note floats once per session. |
-| 3 | `Edit` / `Write` / `MultiEdit` (PostToolUse) | After an edit, `cc-notes relevant <path> --attached --worktree` checks the notes anchored to that path; any with a non-null drift verdict prompt reconciliation via `cc-notes note verify`, `note edit`, or `note supersede`. Each note is asked about once per session. |
+| 2 | `Read` (PostToolUse) | Float the notes, docs, and logs `cc-notes relevant <path>` ranks for the file just read — title, reasons, and any drift flag — so durable context surfaces as you explore. Each entry floats once per session. |
+| 3 | `Edit` / `Write` / `MultiEdit` (PostToolUse) | After an edit, `cc-notes relevant <path> --attached --worktree` checks the notes and docs anchored to that path; any with a non-null drift verdict prompt reconciliation via `verify`, `edit`, or `supersede` on the matching kind (`cc-notes note …` or `cc-notes doc …`). Each entry is asked about once per session. |
 | 4 | `ExitPlanMode` (PostToolUse) | Native todos are your private scratchpad; durable shared work is `cc-notes task add --backlog`, branch-specific work is plain `cc-notes task add`, and decisions are `cc-notes note add`. |
 | 5 | `git commit` (PostToolUse) | Add a `cc-task: <id>` trailer to link the commit, capture durable decisions as `cc-notes note add ... --tag design`, and `cc-notes sync` to share. |
 | 6 | `git merge` / `git pull` (PostToolUse, max 3) | A merged branch's open tasks stay put until carried over, so run `cc-notes reconcile --into <target>`, then `cc-notes sync`. |
@@ -40,10 +42,10 @@ shared queue; `cc-notes task start <id>` claims it and pulls it onto your branch
 | 11 | `Write` / `Edit` / `MultiEdit` of a cc-pool memory file (PostToolUse) | Mirror a repo-relevant agent memory (`feedback` / `project` / `reference`) into a durable note keyed by a `memory:<slug>` tag — the first write creates it, a later edit updates the same note. The `MEMORY.md` index and `user` memories are skipped. It is the one handler that *writes* (an idempotent note upsert), yet it still never blocks and falls closed to silence on any failure. |
 
 Nudges 1–3 shell out to `cc-notes` and render its live state (tasks, relevant
-notes, drift verdicts) into the nudge. Nudges 2 and 3 dedup per note per purpose:
-note ids floated as Read context (nudge 2) and note ids asked about for staleness
-(nudge 3) live in two separate per-session sets, so a single note can be floated
-as context once *and* prompt reconciliation once. Nudges 1 and 8 are reflexes
+notes, docs, and logs, drift verdicts) into the nudge. Nudges 2 and 3 dedup per
+entry per purpose: entry ids floated as Read context (nudge 2) and entry ids
+asked about for staleness (nudge 3) live in two separate per-session sets, so a
+single entry can be floated as context once *and* prompt reconciliation once. Nudges 1 and 8 are reflexes
 about the native-vs-durable line; 4 through 7 keep the git workflow and cc-notes
 coordination in lockstep.
 

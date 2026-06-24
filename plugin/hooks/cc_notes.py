@@ -590,7 +590,7 @@ def float_note_context(evt: PostToolUseEvent) -> Any:
     floated.ids = floated.ids + [entry_payload(e)["id"] for e in fresh]
     evt.ctx.session[FloatedNotes].set(floated)
     return evt.warn(
-        f"Notes and docs relevant to {evt.file} (durable, git-synced cc-notes context):",
+        f"Notes, docs, and logs relevant to {evt.file} (durable, git-synced cc-notes context):",
         *render_note_lines(fresh),
     )
 
