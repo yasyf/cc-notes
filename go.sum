@@ -81,6 +81,8 @@ github.com/xanzy/ssh-agent v0.3.3 h1:+/15pJfg/RsTxqYcX6fHqOXZwwMP+2VyYWJeWM2qQFM
 github.com/xanzy/ssh-agent v0.3.3/go.mod h1:6dzNDKs0J9rVPHPhaGCukekBHKqfl+L3KghI1Bc68Uw=
 github.com/yasyf/fusekit v0.12.0 h1:fS/kEZRl7Te4dC7s6hZE2WmTGw4yUCJFkhQ5PX9FJNo=
 github.com/yasyf/fusekit v0.12.0/go.mod h1:5lWoMvSsIRZUdnNNIrsSlaYLbdM10PyoAyo3FXE9fg0=
+github.com/yasyf/fusekit v0.14.1 h1:JEt52ZN/6Bj26Lcc2/s4NqjlVmfXdlIAKeeyRVtBgN0=
+github.com/yasyf/fusekit v0.14.1/go.mod h1:5lWoMvSsIRZUdnNNIrsSlaYLbdM10PyoAyo3FXE9fg0=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
 golang.org/x/crypto v0.0.0-20220622213112-05595931fe9d/go.mod h1:IxCIyHEi3zRg3s0A5j5BB6A9Jmi73HwBIUl50j+osU4=
 golang.org/x/crypto v0.53.0 h1:QZ4Muo8THX6CizN2vPPd5fBGHyogrdK9fG4wLPFUsto=
