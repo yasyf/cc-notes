@@ -26,28 +26,41 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cc_notes
 from cc_notes import (
+    CommitsJudged,
     DurableInternalWrite,
     FloatedNotes,
-    HandoffVerdict,
     MemoryWrite,
+    PlansSeen,
+    PlanTask,
+    PlanTasks,
+    RecordVerdict,
     StaleChecked,
+    SurfacePick,
     cap_and_render_tasks,
     check_note_staleness,
+    commit_decision,
     dedup_against_ids,
     entry_payload,
     filter_drifted,
     float_note_context,
     float_session_tasks,
+    in_cc_pool_memory,
     mirror_memory_to_note,
-    nudge_store_handoff_as_doc,
+    nudge_commit_record,
+    nudge_plan_tasks,
+    nudge_record_durable,
     parse_memory_file,
     parse_relevant,
     parse_tasks,
+    plan_task_commands,
+    plan_text,
     prompt_install_cc_notes,
+    record_command,
     render_log_line,
     render_note_lines,
     render_task_line,
     run_cc_notes,
+    surface_filter,
 )
 from captain_hook.testing.helpers import mock_event
 from captain_hook.types import Action, Event
@@ -318,6 +331,30 @@ def test_durable_internal_write_condition() -> None:
     fires("secret *credential*.md silent", file="db-credential.md", content="## Status\nHandoff\n", expected=False)
     fires("image .png silent", file="screenshot.png", content="binary", expected=False)
     fires("no-file Bash event silent", tool="Bash", command="ls", expected=False)
+    # cc-pool memory tree is the mirror's domain — the router gate excludes it, even a
+    # STRONG-named slug, so a memory write hits only mirror_memory_to_note.
+    fires(".cc-pool STRONG-named slug excluded (guard beats STRONG)", file="/u/.cc-pool/a/projects/-p/memory/HANDOFF.md", content="## Status\n- [ ] x\n", expected=False)
+    fires(".cc-pool MEMORY.md index excluded", file="/u/.cc-pool/a/projects/-p/memory/MEMORY.md", content="# Index\n", expected=False)
+    fires(".cc-pool user-memory excluded", file="/u/.cc-pool/a/projects/-p/memory/who-i-am.md", content="next steps:\n- [ ] x\n", expected=False)
+
+
+def test_in_cc_pool_memory() -> None:
+    """The shared predicate that makes the mirror (A) and the record-router (B) disjoint."""
+    check("cc-pool memory slug matches", in_cc_pool_memory(Path("/u/.cc-pool/a/projects/-p/memory/x.md")))
+    check("cc-pool MEMORY.md is in the tree", in_cc_pool_memory(Path("/u/.cc-pool/a/projects/-p/memory/MEMORY.md")))
+    check("generic repo memory/ is NOT cc-pool", not in_cc_pool_memory(Path("repo/memory/x.md")))
+    check("non-memory dir under .cc-pool excluded", not in_cc_pool_memory(Path("/u/.cc-pool/a/projects/-p/notes/x.md")))
+
+
+def test_record_command_per_kind() -> None:
+    """Each kind renders the right cc-notes command; log is two lines (add + append), no --when."""
+    check("note: add --body -", record_command("note", "Retry cap", "", "internal/api") == ['cc-notes note add "Retry cap" --dir internal/api --body -'], repr(record_command("note", "Retry cap", "", "internal/api")))
+    check("note: '.' area drops --dir", "--dir" not in record_command("note", "T", "", ".")[0])
+    check("doc: carries --when", '--when "read me when X"' in record_command("doc", "T", "read me when X", ".")[0])
+    log_lines = record_command("log", "Outage timeline", "", "ops")
+    check("log: two lines, add then append", len(log_lines) == 2 and log_lines[0].startswith('cc-notes log add "Outage timeline"') and "log append" in log_lines[1], repr(log_lines))
+    check("log: no --when", all("--when" not in ln for ln in log_lines))
+    check("task: task add", record_command("task", "Do it", "", ".")[0].startswith('cc-notes task add "Do it"'))
 
 
 def stub_cli(mapping: dict[tuple[str, ...], str]):
@@ -342,12 +379,13 @@ def stub_cli(mapping: dict[tuple[str, ...], str]):
     return _call
 
 
-def stub_llm(verdict: HandoffVerdict):
-    """Build a call_llm stub returning a fixed HandoffVerdict for any prompt.
+def stub_llm(verdict: object):
+    """Build a call_llm stub returning a fixed response-model instance for any prompt.
 
-    Mirrors stub_cli: the test monkeypatches it onto ``evt.ctx.call_llm``. The
-    handler passes ``response_model=HandoffVerdict`` and the real backend parses
-    the reply into that model, so the stub returns an already-built instance.
+    Mirrors stub_cli: the test monkeypatches it onto ``evt.ctx.call_llm``. Each handler
+    passes ``response_model=<Model>`` and the real backend parses the reply into that
+    model, so the stub just returns an already-built instance — a RecordVerdict for the
+    record routers, a PlanTasks for the plan handler, a SurfacePick for the filter.
     """
 
     def _call(template, *args, **kwargs):
@@ -356,9 +394,22 @@ def stub_llm(verdict: HandoffVerdict):
     return _call
 
 
-def _llm_must_not_run(template, *args, **kwargs):
-    """A call_llm stub that fails loudly — proves the pre-gate skipped the paid call."""
-    raise AssertionError("call_llm was reached for a pre-gated write")
+def stub_git(mapping: dict[tuple[str, ...], str | None]):
+    """Build an ``evt.ctx.git`` stub mapping git argv tuples to canned stdout.
+
+    A tuple not in ``mapping`` returns None, mirroring the real ``git`` helper's
+    fail-closed contract (it returns None when the command errors).
+    """
+
+    def _git(*args: str):
+        return mapping.get(tuple(args))
+
+    return _git
+
+
+def _llm_boom(*args, **kwargs):
+    """A call_llm stub that raises — proves the router falls closed to silence."""
+    raise RuntimeError("classifier unavailable")
 
 
 # A long-form internal handoff: written for the next agent, not human-facing docs.
@@ -579,6 +630,42 @@ def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
     check("staleness doc: re-edit deduped -> None", check_note_staleness(evt2) is None)
 
 
+def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path) -> None:
+    """With 2+ drifted records the filter surfaces only the LLM's pick, yet marks ALL drifted judged once/session.
+
+    Mirrors test_float_note_context_multi_filters_but_judges_all for the edit-time path:
+    check_note_staleness re-implements the same mark-all-before-filter ordering, so it
+    needs its own multi-candidate litmus. A regression that filtered before persisting, or
+    persisted only the picked subset, would re-warn an unpicked drifted record forever.
+    """
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    payload = cc_notes.json.dumps(
+        [
+            note_entry("drf0001aaa", drift="STALE", title="Keep"),
+            note_entry("drf0002bbb", drift="DRIFTED", title="Drop"),
+            note_entry("drf0003ccc", drift="EXPIRED", title="Keep2"),
+        ]
+    )
+    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--json"): payload}
+    evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["drf0001aaa", "drf0003ccc"])))
+    result = check_note_staleness(evt)
+    check("staleness multi: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("staleness multi: surfaces picked", "drf0001" in result.message and "drf0003" in result.message, result.message)
+        check("staleness multi: drops unpicked", "drf0002" not in result.message, result.message)
+    check(
+        "staleness multi: marks ALL drifted judged once/session",
+        sorted(evt.ctx.session.load(StaleChecked).ids) == ["drf0001aaa", "drf0002bbb", "drf0003ccc"],
+        repr(evt.ctx.session.load(StaleChecked).ids),
+    )
+    evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(evt2.ctx, "call_llm", _llm_boom)
+    check("staleness multi: re-edit fully deduped to silence", check_note_staleness(evt2) is None)
+
+
 def test_run_cc_notes_passes_throw_false(monkeypatch, tmp_path) -> None:
     """run_cc_notes invokes call_cli with throw=False, delegating fail-closed to capt-hook.
 
@@ -640,50 +727,52 @@ def test_handlers_silent_on_malformed_array(monkeypatch, tmp_path) -> None:
         check("malformed array: float_session_tasks does not crash", False, f"{type(raised).__name__}: {raised}")
 
 
-def test_handoff_nudge_fires_on_internal(monkeypatch, tmp_path) -> None:
-    """A long internal-handoff .md classified is_handoff=True warns toward `cc-notes doc add`.
-
-    The cheap pre-gate passes (long, non-exempt .md) and the stubbed classifier
-    returns a handoff verdict, so the handler seeds the suggested command from the
-    verdict's title/when/area.
-    """
+def test_record_router_routes_doc(monkeypatch, tmp_path) -> None:
+    """A gated write the LLM marks record=True, kind=doc warns with `cc-notes doc add … --when …`."""
     monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     evt = mock_event("PostToolUse", tool="Write", file="HANDOFF.md", content=HANDOFF_BODY, session_dir=tmp_path)
-    verdict = HandoffVerdict(is_handoff=True, title="Auth cutover handoff", when="resuming the auth cutover", area="internal/api")
+    verdict = RecordVerdict(record=True, kind="doc", title="Auth cutover", when="resuming the auth cutover", area="internal/api", reasoning="in-flight handoff")
     monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
 
-    result = nudge_store_handoff_as_doc(evt)
-    check("handoff nudge: warns on internal handoff", result is not None and result.action is Action.warn, repr(result))
+    result = nudge_record_durable(evt)
+    check("router doc: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("handoff nudge: names `cc-notes doc add`", "cc-notes doc add" in result.message, result.message)
-        check("handoff nudge: carries --when", "--when" in result.message, result.message)
-        check("handoff nudge: uses classifier title", '"Auth cutover handoff"' in result.message, result.message)
-        check("handoff nudge: uses classifier when text", '--when "resuming the auth cutover"' in result.message, result.message)
-        check("handoff nudge: uses classifier dir", "--dir internal/api" in result.message, result.message)
-        check("handoff nudge: explains auto-surfacing", "cc-notes relevant" in result.message, result.message)
+        check("router doc: names cc-notes doc add", "cc-notes doc add" in result.message, result.message)
+        check("router doc: carries --when", '--when "resuming the auth cutover"' in result.message, result.message)
+        check("router doc: uses title", '"Auth cutover"' in result.message, result.message)
+        check("router doc: uses dir", "--dir internal/api" in result.message, result.message)
+        check("router doc: cites reasoning", "in-flight handoff" in result.message, result.message)
 
 
-def test_handoff_nudge_silent_on_public(monkeypatch, tmp_path) -> None:
-    """A long .md classified is_handoff=False (genuinely public docs) stays silent."""
+def test_record_router_routes_log(monkeypatch, tmp_path) -> None:
+    """kind=log renders the two-step `log add` + `log append`, and never a --when (a log never drifts)."""
     monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="GUIDE.md", content=HANDOFF_BODY, session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(HandoffVerdict(is_handoff=False)))
-    check("handoff nudge: silent on public doc -> None", nudge_store_handoff_as_doc(evt) is None)
+    evt = mock_event("PostToolUse", tool="Write", file="incident-notes.md", content="14:02 paged\n14:10 rolled back\n", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="log", title="Outage timeline", reasoning="a chronology")))
+    result = nudge_record_durable(evt)
+    check("router log: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("router log: add + append", "cc-notes log add" in result.message and "cc-notes log append" in result.message, result.message)
+        check("router log: no --when on a log", "--when" not in result.message, result.message)
 
 
-def test_handoff_nudge_exempt_path_skips_llm(monkeypatch, tmp_path) -> None:
-    """An exempt name (README.md) is pre-gated out — call_llm is NEVER reached.
-
-    The stub raises if called, so a passing test proves the paid classifier never
-    runs for an obviously-public file even when its body is long.
-    """
+def test_record_router_silent_when_not_recorded(monkeypatch, tmp_path) -> None:
+    """record=False (a static-gate false positive) stays silent — the LLM is the precision step."""
     monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="README.md", content=HANDOFF_BODY, session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_llm", _llm_must_not_run)
-    try:
-        check("handoff nudge: exempt README.md -> None (LLM never called)", nudge_store_handoff_as_doc(evt) is None)
-    except AssertionError as raised:
-        check("handoff nudge: exempt README.md -> None (LLM never called)", False, f"call_llm ran: {raised}")
+    evt = mock_event("PostToolUse", tool="Write", file="STATUS.md", content=HANDOFF_BODY, session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=False)))
+    check("router: silent on record=False", nudge_record_durable(evt) is None)
+    evt2 = mock_event("PostToolUse", tool="Write", file="STATUS.md", content=HANDOFF_BODY, session_dir=tmp_path)
+    monkeypatch.setattr(evt2.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="")))
+    check("router: silent on empty/unknown kind", nudge_record_durable(evt2) is None)
+
+
+def test_record_router_fails_closed_on_llm_error(monkeypatch, tmp_path) -> None:
+    """A classifier error never crashes the nudge — it falls closed to silence."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Write", file="HANDOFF.md", content=HANDOFF_BODY, session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
+    check("router: fails closed on LLM error", nudge_record_durable(evt) is None)
 
 
 def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
@@ -727,6 +816,226 @@ def test_float_note_context_floats_log(monkeypatch, tmp_path) -> None:
         check("log float: no drift verdict", "[" not in result.message.split("Auth rollout", 1)[1], result.message)
         check("log float: never leaks entry text", "LOG_ENTRY_TEXT" not in result.message, result.message)
     check("log float: persists by log id", evt.ctx.session.load(FloatedNotes).ids == ["105f00ba9c1"], repr(evt.ctx.session.load(FloatedNotes).ids))
+
+
+def test_surface_filter_single_skips_llm(monkeypatch, tmp_path) -> None:
+    """A lone candidate surfaces directly — no model call is paid (a boom stub proves it)."""
+    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
+    kept = surface_filter(evt, [note_entry("only0001aaa", title="Sole")], touched="read")
+    check("surface filter: single candidate bypasses LLM", [entry_payload(e)["id"] for e in kept] == ["only0001aaa"], repr(kept))
+
+
+def test_surface_filter_trims_to_subset(monkeypatch, tmp_path) -> None:
+    """With 2+ candidates the small LLM keeps only the ids it picks, preserving order."""
+    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
+    fresh = [note_entry("aaa0001xxx"), note_entry("bbb0002xxx"), note_entry("ccc0003xxx")]
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["aaa0001xxx", "ccc0003xxx"])))
+    kept = surface_filter(evt, fresh, touched="read")
+    check("surface filter: keeps only picked subset", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx", "ccc0003xxx"], repr(kept))
+
+
+def test_surface_filter_ignores_unknown_ids(monkeypatch, tmp_path) -> None:
+    """An id the model returns that was never a candidate is ignored (intersection only)."""
+    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
+    fresh = [note_entry("aaa0001xxx"), note_entry("bbb0002xxx")]
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["aaa0001xxx", "zzz9999zzz"])))
+    kept = surface_filter(evt, fresh, touched="read")
+    check("surface filter: drops ids not in the candidate set", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx"], repr(kept))
+
+
+def test_surface_filter_fails_open(monkeypatch, tmp_path) -> None:
+    """A classifier error surfaces EVERY candidate — the recall filter must never hide context."""
+    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
+    fresh = [note_entry("aaa0001xxx"), note_entry("bbb0002xxx")]
+    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
+    kept = surface_filter(evt, fresh, touched="read")
+    check("surface filter: fails open to all candidates", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx", "bbb0002xxx"], repr(kept))
+
+
+def test_float_note_context_multi_filters_but_judges_all(monkeypatch, tmp_path) -> None:
+    """float_note_context surfaces only the LLM's pick, yet marks ALL fresh ids judged once/session."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    payload = cc_notes.json.dumps(
+        [note_entry("aaa0001xxx", title="Keep"), note_entry("bbb0002xxx", title="Drop"), note_entry("ccc0003xxx", title="Keep2")]
+    )
+    mapping = {("relevant", "x.go", "--json"): payload}
+    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["aaa0001xxx", "ccc0003xxx"])))
+    result = float_note_context(evt)
+    check("multi float: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("multi float: surfaces picked", "aaa0001" in result.message and "ccc0003" in result.message, result.message)
+        check("multi float: drops unpicked", "bbb0002" not in result.message, result.message)
+    check(
+        "multi float: marks ALL fresh judged once/session",
+        sorted(evt.ctx.session.load(FloatedNotes).ids) == ["aaa0001xxx", "bbb0002xxx", "ccc0003xxx"],
+        repr(evt.ctx.session.load(FloatedNotes).ids),
+    )
+    evt2 = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(evt2.ctx, "call_llm", _llm_boom)
+    check("multi float: re-read fully deduped to silence", float_note_context(evt2) is None)
+
+
+COMMIT_DIFF = (
+    "commit deadsha000\n\n internal/api/client.go | 4 ++--\n 1 file changed\n\n"
+    "@@ retry backoff @@\n-    cap := 10 * time.Second\n+    cap := 30 * time.Second\n"
+)
+
+
+def commit_event(tmp_path, monkeypatch, *, sha="deadsha000", verdict=None, diff=COMMIT_DIFF):
+    """An ExitPlanMode-free commit event with git + call_llm stubbed for the record-router."""
+    evt = mock_event("PostToolUse", tool="Bash", command="git commit -m x", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "git", stub_git({("rev-parse", "HEAD"): sha, ("show", "--stat", "-p", "HEAD"): diff}))
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict if verdict is not None else RecordVerdict(record=False)))
+    return evt
+
+
+def test_commit_reminder_always_fires(monkeypatch, tmp_path) -> None:
+    """No durable decision (record=False) still fires the deterministic link + sync reminder."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    result = nudge_commit_record(commit_event(tmp_path, monkeypatch))
+    check("commit: warns the reminder", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("commit: names cc-task trailer", "cc-task:" in result.message, result.message)
+        check("commit: names cc-notes sync", "cc-notes sync" in result.message, result.message)
+        check("commit: no decision line when record=False", "capture it" not in result.message, result.message)
+
+
+def test_commit_routes_decision(monkeypatch, tmp_path) -> None:
+    """A durable-decision verdict folds a `cc-notes note add` into the reminder, keeping it."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    verdict = RecordVerdict(record=True, kind="note", title="Backoff caps at 30s", area="internal/api", reasoning="server drops past 30s")
+    result = nudge_commit_record(commit_event(tmp_path, monkeypatch, verdict=verdict))
+    check("commit decision: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("commit decision: keeps the reminder", "cc-notes sync" in result.message, result.message)
+        check("commit decision: routes a note", "cc-notes note add" in result.message and '"Backoff caps at 30s"' in result.message, result.message)
+        check("commit decision: cites reasoning", "server drops past 30s" in result.message, result.message)
+
+
+def test_commit_only_routes_note_or_doc(monkeypatch, tmp_path) -> None:
+    """A commit captures a decision, never a log or task — a log/task verdict drops to reminder only."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    result = nudge_commit_record(commit_event(tmp_path, monkeypatch, verdict=RecordVerdict(record=True, kind="log", title="x")))
+    check("commit: log verdict yields no record line", result is not None and "capture it" not in (result.message or ""), repr(result))
+
+
+def test_commit_dedup_per_sha(monkeypatch, tmp_path) -> None:
+    """The same HEAD sha is judged once; a re-fire on that sha is silent, a new sha (amend) fires."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    first = commit_event(tmp_path, monkeypatch, sha="sha111")
+    check("commit dedup: first fire warns", nudge_commit_record(first) is not None)
+    check("commit dedup: sha recorded", "sha111" in first.ctx.session.load(CommitsJudged).shas)
+    check("commit dedup: same sha silent", nudge_commit_record(commit_event(tmp_path, monkeypatch, sha="sha111")) is None)
+    check("commit dedup: a new sha fires", nudge_commit_record(commit_event(tmp_path, monkeypatch, sha="sha222")) is not None)
+
+
+def test_commit_fails_safe_without_git(monkeypatch, tmp_path) -> None:
+    """git unavailable (no sha, no diff) still fires the base reminder — only the suggestion drops."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Bash", command="git commit -m x", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "git", stub_git({}))  # every git call -> None
+    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # unreachable: no diff means no classifier call
+    result = nudge_commit_record(evt)
+    check("commit fail-safe: still warns the reminder", result is not None and "cc-notes sync" in (result.message or ""), repr(result))
+
+
+def test_commit_decision_llm_error_keeps_reminder(monkeypatch, tmp_path) -> None:
+    """git works (a diff is fetched) but the classifier raises: the suggestion drops, the reminder stays."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = commit_event(tmp_path, monkeypatch)  # git stub returns COMMIT_DIFF + a real sha
+    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # classifier raises AFTER the diff is fetched
+    result = nudge_commit_record(evt)
+    check("commit llm-error: still warns the reminder", result is not None and "cc-notes sync" in (result.message or ""), repr(result))
+    check("commit llm-error: drops the decision line", result is not None and "capture it" not in (result.message or ""), repr(result))
+
+
+SAMPLE_PLAN = "# Plan\n\n## Approach\n1. Add the widget\n2. Wire it up\n\n## Tasks\n- build the gateway client\n"
+
+
+def plan_event(tmp_path, monkeypatch, *, plan_path=None, inline=None, tasks=None):
+    """An ExitPlanMode event with planFilePath/plan injected into tool_input and the LLM stubbed."""
+    evt = mock_event("PostToolUse", tool="ExitPlanMode", session_dir=tmp_path)
+    ti: dict = {}
+    if plan_path is not None:
+        ti["planFilePath"] = str(plan_path)
+    if inline is not None:
+        ti["plan"] = inline
+    evt._raw["tool_input"] = ti
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(PlanTasks(tasks=tasks if tasks is not None else [])))
+    return evt
+
+
+def test_plan_teach_always_fires(monkeypatch, tmp_path) -> None:
+    """ExitPlanMode with no readable plan still fires the native-vs-durable teach, no LLM call."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = plan_event(tmp_path, monkeypatch)
+    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # no plan text -> the extractor is never reached
+    result = nudge_plan_tasks(evt)
+    check("plan teach: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("plan teach: native-vs-durable line", "Native TaskCreate" in result.message, result.message)
+        check("plan teach: names cc-notes task add", "cc-notes task add" in result.message, result.message)
+        check("plan teach: no extracted header when none", "look like durable work" not in result.message, result.message)
+
+
+def test_plan_extracts_tasks_from_file(monkeypatch, tmp_path) -> None:
+    """A plan file is read and the LLM's durable items render as `cc-notes task add` lines."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
+    tasks = [PlanTask(title="Build the gateway client", shared=True), PlanTask(title="Wire the widget", shared=False)]
+    result = nudge_plan_tasks(plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=tasks))
+    check("plan extract: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("plan extract: shared item gets --backlog", 'cc-notes task add "Build the gateway client" --backlog' in result.message, result.message)
+        check(
+            "plan extract: branch item has no --backlog",
+            'cc-notes task add "Wire the widget"' in result.message and 'cc-notes task add "Wire the widget" --backlog' not in result.message,
+            result.message,
+        )
+        check("plan extract: the teach is still present", "Native TaskCreate" in result.message, result.message)
+
+
+def test_plan_dedup_per_path(monkeypatch, tmp_path) -> None:
+    """Re-approving the same plan file stays silent; the path is recorded once."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
+    first = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")])
+    check("plan dedup: first fires", nudge_plan_tasks(first) is not None)
+    check("plan dedup: path recorded", str(plan_path) in first.ctx.session.load(PlansSeen).paths)
+    second = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")])
+    check("plan dedup: same plan silent", nudge_plan_tasks(second) is None)
+
+
+def test_plan_text_prefers_file_over_inline(tmp_path) -> None:
+    """plan_text reads the authoritative file when planFilePath is present, else the inline plan."""
+    plan_path = tmp_path / "p.md"
+    plan_path.write_text("FROM FILE\n", encoding="utf-8")
+    from_file = mock_event("PostToolUse", tool="ExitPlanMode")
+    from_file._raw["tool_input"] = {"planFilePath": str(plan_path), "plan": "FROM INLINE"}
+    check("plan_text: prefers the file", plan_text(from_file) == "FROM FILE")
+    inline_only = mock_event("PostToolUse", tool="ExitPlanMode")
+    inline_only._raw["tool_input"] = {"plan": "FROM INLINE"}
+    check("plan_text: falls back to inline", plan_text(inline_only) == "FROM INLINE")
+    none_evt = mock_event("PostToolUse", tool="ExitPlanMode")
+    none_evt._raw["tool_input"] = {}
+    check("plan_text: None when neither present", plan_text(none_evt) is None)
+
+
+def test_plan_task_commands_caps_and_skips_blank(monkeypatch, tmp_path) -> None:
+    """Extraction caps at five items, drops blank titles; no plan text -> []."""
+    evt = mock_event("PostToolUse", tool="ExitPlanMode", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(PlanTasks(tasks=[PlanTask(title=f"t{i}") for i in range(8)])))
+    check("plan cmds: caps at five", len(plan_task_commands(evt, "plan")) == 5)
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(PlanTasks(tasks=[PlanTask(title="real"), PlanTask(title="   "), PlanTask(title="real2")])))
+    cmds = plan_task_commands(evt, "plan")
+    check("plan cmds: drops blank titles", cmds == ['cc-notes task add "real"', 'cc-notes task add "real2"'], repr(cmds))
+    check("plan cmds: empty text -> []", plan_task_commands(evt, None) == [])
 
 
 def write_memory(tmp_path: Path, slug: str, mtype: str, description: str, body: str) -> Path:

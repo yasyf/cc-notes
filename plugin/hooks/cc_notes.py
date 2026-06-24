@@ -3,6 +3,19 @@
 These are advisory NUDGES, never gates: cc-notes *complements* Claude's native
 task tracking, so the hooks only ever warn — they never block a tool call.
 
+Every hook is one shape — **static recall → LLM precision → act** — running in one
+of two directions. **Surface** (pull) takes a file the agent touched, recalls the
+durable records anchored to it (``cc-notes relevant``), and a small LLM keeps the
+subset worth putting in context (:func:`surface_filter`); it fails OPEN, since a
+broken filter must never hide context. **Record** (push) takes a write, commit, or
+plan, recalls a candidate over a cheap glob/diff, and a small LLM confirms it is
+durable and routes it to the right primitive — note, doc, log, or task — or to
+nothing; it fails CLOSED to silence. The cheap layer deliberately over-selects; the
+LLM is the precision gate in both directions. The only deterministic outcomes are
+where there is no "which" to choose: a cc-pool memory file already declares its type
+(→ :func:`mirror_memory_to_note`, no LLM), and the pure workflow reminders (merge →
+reconcile, claim → sync) have a single fixed action.
+
 Every *workflow* nudge is gated behind :class:`CcNotesAvailable`, which keeps them
 completely silent unless the ``cc-notes`` binary is on PATH — with one exception:
 :func:`prompt_install_cc_notes`, gated on the inverse :class:`CcNotesMissing`,
@@ -23,6 +36,10 @@ The teaching goal is the native-vs-durable distinction:
     it under a lease while moving it onto your current branch;
   * ``cc-notes note`` — durable, git-synced, repo-global decisions & facts, born
     verified against HEAD with first-class drift/verify/supersede;
+  * ``cc-notes doc`` — durable, git-synced, repo-global living guidance for the
+    next agent (a handoff brief, a runbook, design rationale), anchored like a
+    note, carrying a ``--when`` read-trigger, re-verified and drift-checked against
+    HEAD;
   * ``cc-notes log`` — durable, git-synced, repo-global append-only chronological
     journal (an incident timeline, a rollout log, a debugging session). Anchorable
     and surfaced by ``cc-notes relevant`` and the read/edit hooks exactly like a
@@ -63,31 +80,30 @@ NATIVE_TASK_MIRROR_THRESHOLD = 5
 # before collapsing the rest into a "+K more" tail pointing at `cc-notes status`.
 SESSION_TASK_CAP = 7
 
+# NUDGE_MAX_FIRES is the uniform session cap on every advisory that isn't a
+# once-per-session orientation (those use max_fires=1) and doesn't self-limit by
+# per-id dedup (the surface floaters and the mirror carry no cap). One number for
+# the whole Record-routing + Workflow-reminder surface keeps the policy legible:
+# any one of these speaks at most three times a session, then stays quiet.
+NUDGE_MAX_FIRES = 3
+
+# LLM_INPUT_CAP bounds the body/diff/plan text handed to a precision classifier so
+# one large write, commit, or plan can never blow the small-model prompt. The tail
+# past the cap is rarely decision-relevant — the opening of a file, diff, or plan
+# carries the signal a router needs.
+LLM_INPUT_CAP = 6000
+
 GIT_MERGE_PULL = r"^git\s+(?:-\S+\s+)*(?:merge|pull)\b"
 GIT_COMMIT = r"^git\s+(?:-\S+\s+)*commit\b"
 CC_NOTES_CLAIM = r"^cc-notes\s+task\s+(?:claim|start)\b"
 
-# nudge_store_handoff_as_doc pre-gate knobs: only a substantial, non-exempt
-# long-form markdown write reaches the (paid) classifier. HANDOFF_MIN_CHARS is the
-# floor below which a write is too small to be a handoff brief; the name and dir
-# exemptions skip the obviously human-facing files an LLM call would only waste
-# budget on (a README, a published changelog, a docs/ tree, …).
-HANDOFF_MIN_CHARS = 600
-
-HANDOFF_EXEMPT_NAME = re.compile(
-    r"^(README|CHANGELOG|CONTRIBUTING|LICENSE|AGENTS|CLAUDE|GEMINI|"
-    r"STYLEGUIDE|CODE_OF_CONDUCT|SECURITY)\.(md|markdown)$",
-    re.IGNORECASE,
-)
-
-HANDOFF_EXEMPT_DIRS = ("docs/", "site/", "blog/", "content/", ".github/")
-
-# DurableInternalWrite glob vocabulary: the static, paid-call-free classifier the
-# :class:`DurableInternalWrite` condition reads. STRONG names are durable-internal
-# on their name alone; WEAK names only fire when the body carries an internal signal
-# (a `- [ ]` checklist or a handoff/status/runbook keyword via INTERNAL_BODY_RE).
-# PUBLISHED/SOURCE/SECRET are the hard exclusions — a write that matches one of
-# those is never durable-internal knowledge that belongs out of the public tree.
+# DurableInternalWrite glob vocabulary: the cheap, over-selective recall gate the
+# :class:`DurableInternalWrite` condition reads before handing off to the LLM
+# record-router. STRONG names look durable-internal on their name alone; WEAK names
+# only qualify when the body carries an internal signal (a `- [ ]` checklist or a
+# handoff/status/runbook keyword via INTERNAL_BODY_RE). PUBLISHED/SOURCE/SECRET are
+# the hard exclusions — a write that matches one of those is never durable-internal
+# knowledge that belongs out of the public tree.
 STRONG_INTERNAL_GLOBS = ("*_VERIFICATION.md", "*HANDOFF*.md", "*STATUS*.md", "*-handoff.md", "HANDOFF.md", "STATUS.md", "NOTES.md")
 WEAK_INTERNAL_GLOBS = ("TODO.md", "*-notes.md", "runbook*.md", "runbook*", "scratch*.md")
 PUBLISHED_GLOBS = ("README*", "CHANGELOG*", "LICENSE*", "CONTRIBUTING*", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg")
@@ -317,6 +333,18 @@ def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int) -> list[str]:
     return lines
 
 
+def in_cc_pool_memory(path: Path) -> bool:
+    """True for any file under a cc-pool agent-memory dir (``.cc-pool/…/memory/``).
+
+    The mirror (:func:`mirror_memory_to_note`) is the sole owner of this tree, so the
+    advisory record-router excludes it — a memory write is captured by the mirror, never
+    nudged. Deliberately broader than :class:`MemoryWrite`: it covers ``MEMORY.md``,
+    ``user``-type memories, and any extension, because the *whole* tree is the mirror's
+    domain, even the files the mirror chooses not to mirror.
+    """
+    return ".cc-pool" in path.parts and path.parent.name == "memory"
+
+
 MIRRORED_MEMORY_TYPES = ("feedback", "project", "reference")
 
 # A cc-pool memory file is YAML frontmatter (name/description/metadata) fenced by
@@ -407,7 +435,7 @@ class CcNotesAvailable(CustomCondition):
     presence in ``.claude/hooks/packs.toml``) *is* the per-repo opt-in, so a
     fresh repo with no ``refs/cc-notes/*`` yet still gets the adoption nudges
     that prompt the first ``cc-notes`` write. There is no chicken-and-egg ref
-    probe to satisfy first. The read-time floaters (nudges 1-3) shell out to
+    probe to satisfy first. The Surface floaters shell out to
     ``cc-notes`` through :func:`run_cc_notes`, which returns nothing to render on
     an empty repo, so they fall closed to silence on their own.
     """
@@ -445,26 +473,32 @@ class ManyNativeTasks(CustomCondition):
 class DurableInternalWrite(CustomCondition):
     """Matches a write of durable INTERNAL knowledge that belongs out of the public tree.
 
-    The static, paid-call-free counterpart to the LLM-backed
-    :func:`nudge_store_handoff_as_doc`: it fires on the loose status/handoff/
-    notes/runbook/TODO file an agent would otherwise commit to a public branch —
-    the kind cc-notes keeps as git objects on ``refs/cc-notes/*`` instead. A
-    ``memory/`` write of any extension counts (that tree is the durable-fact
-    home), a STRONG-named ``.md`` counts on its name, a WEAK-named ``.md`` counts
-    only when its body carries an internal signal (:data:`INTERNAL_BODY_RE`).
-    Published docs (README/CHANGELOG/…, ``docs/``, images), source files, and
-    anything secret-shaped are hard-excluded — those are never durable-internal
-    knowledge, and secrets must never be pushed into refs that sync to the remote.
+    The cheap, over-selective recall gate in front of the LLM :func:`nudge_record_durable`:
+    it flags the loose status/handoff/notes/runbook/TODO file an agent would otherwise
+    commit to a public branch — the kind cc-notes keeps as git objects on
+    ``refs/cc-notes/*`` instead — and the router's LLM then confirms and routes it. A
+    generic ``memory/`` write of any extension counts (that tree is the durable-fact
+    home), a STRONG-named ``.md`` counts on its name, a WEAK-named ``.md`` counts only
+    when its body carries an internal signal (:data:`INTERNAL_BODY_RE`). The cc-pool
+    memory tree (:func:`in_cc_pool_memory`) is excluded — the mirror owns it. Published
+    docs (README/CHANGELOG/…, ``docs/``, images), source files, and anything secret-shaped
+    are hard-excluded — those are never durable-internal knowledge, and secrets must never
+    be pushed into refs that sync to the remote.
     """
 
     def check(self, evt: BaseHookEvent) -> bool:
         file = evt.file
-        # A `memory/` write of ANY extension is durable-internal — caught before
-        # the non-.md bail below — unless it is secret-shaped (refs sync remotely).
-        if file is not None and file.under("memory/") and not file.matches(*SECRET_GLOBS):
-            return True
         if file is None:
             return False
+        # The mirror owns the cc-pool memory tree (handled deterministically by
+        # metadata.type), so the LLM record-router never fires there — guard first so
+        # a memory slug literally named "handoff" can't leak into the STRONG branch.
+        if in_cc_pool_memory(Path(str(file))):
+            return False
+        # A `memory/` write of ANY extension is durable-internal — caught before
+        # the non-.md bail below — unless it is secret-shaped (refs sync remotely).
+        if file.under("memory/") and not file.matches(*SECRET_GLOBS):
+            return True
         if file.suffix.lower() != ".md":
             return False
         if file.matches(*SECRET_GLOBS):
@@ -493,7 +527,7 @@ class MemoryWrite(CustomCondition):
         if evt.file is None:
             return False
         p = Path(str(evt.file))
-        return p.suffix == ".md" and p.name != "MEMORY.md" and p.parent.name == "memory" and ".cc-pool" in p.parts
+        return in_cc_pool_memory(p) and p.suffix == ".md" and p.name != "MEMORY.md"
 
 
 @session_state
@@ -508,6 +542,30 @@ class StaleChecked(BaseModel):
     """Per-session record of note ids already surfaced as edit-time staleness prompts."""
 
     ids: list[str] = []
+
+
+@session_state
+class CommitsJudged(BaseModel):
+    """Per-session record of HEAD shas the commit record-router has already judged.
+
+    Dedup is per commit, not per turn: a sha judged once is never re-judged, so an
+    amend (new sha) or a multi-commit turn each get exactly one look, and a no-op
+    re-fire on the same HEAD stays silent.
+    """
+
+    shas: list[str] = []
+
+
+@session_state
+class PlansSeen(BaseModel):
+    """Per-session record of plan file paths the plan record-router has already handled.
+
+    Keyed on ``planFilePath`` — one nudge per plan file, so re-approving the same plan
+    stays silent while a genuinely new plan fires again. A plan approved without a path
+    (rare) isn't deduped; ``max_fires`` caps the repeats.
+    """
+
+    paths: list[str] = []
 
 
 @on(
@@ -559,6 +617,62 @@ def prompt_install_cc_notes(evt: UserPromptSubmitEvent) -> Any:
     )
 
 
+SURFACE_FILTER_SYSTEM = (
+    "You are a precision filter on the recall side. A cheap ranker has surfaced durable cc-notes "
+    "records (notes, docs, logs) anchored to a file the agent just touched. The ranker over-selects "
+    "on purpose; your job is to keep the ones worth putting in front of the agent right now and drop "
+    "only the clearly irrelevant.\n"
+    "\n"
+    "Bias hard toward surfacing: a missing piece of durable context costs far more than one extra "
+    "line the agent skims past. Drop a record only when its title and match reasons make it plainly "
+    "unrelated to this file. When in doubt, keep it.\n"
+    "\n"
+    "Return the ids to surface, as a subset of the candidate ids given."
+)
+
+
+class SurfacePick(BaseModel):
+    """The surface filter's verdict: which candidate record ids are worth surfacing now.
+
+    ``ids`` defaults empty; the caller intersects it with the candidate set, so a
+    degenerate parse surfaces nothing rather than inventing ids. The handlers fail
+    OPEN around the call — an error surfaces every candidate — so an empty list only
+    ever means the model deliberately dropped them all.
+    """
+
+    ids: list[str] = []
+
+
+def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touched: str) -> list[dict[str, Any]]:
+    """Pick which freshly-recalled records to surface, biased toward surfacing.
+
+    A lone candidate (or none) surfaces directly — there is nothing to choose, so no
+    model call is paid. For two or more, a small non-agentic LLM keeps the worthwhile
+    subset; the caller has already marked every ``fresh`` id judged, so each record is
+    filtered at most once per session. Fails OPEN: any classifier error returns the
+    full ``fresh`` set, because a broken filter must never swallow durable context.
+    """
+    if len(fresh) <= 1:
+        return fresh
+    lines = {entry_payload(e)["id"]: render_note_lines([e])[0] for e in fresh}
+    prompt = (
+        Prompt()
+        .system(SURFACE_FILTER_SYSTEM)
+        .context("touched-file", str(evt.file))
+        .context("how-touched", touched)
+        .context("candidates", "\n".join(f"{eid}\t{line}" for eid, line in lines.items()))
+        .ask("Which candidate ids are worth surfacing now? Keep all but the clearly irrelevant.")
+    )
+    try:
+        pick = evt.ctx.call_llm(prompt, response_model=SurfacePick, model="small", agent=False, transcript=False)
+    except Exception:
+        # Fail OPEN: a recall-side filter that errors must show everything, never hide
+        # context by breaking — the inverse of the record side's fail-closed silence.
+        return fresh
+    chosen = set(pick.ids) & set(lines)
+    return [e for e in fresh if entry_payload(e)["id"] in chosen]
+
+
 @on(
     Event.PostToolUse,
     only_if=[Tool("Read"), CcNotesAvailable()],
@@ -571,14 +685,16 @@ def prompt_install_cc_notes(evt: UserPromptSubmitEvent) -> Any:
     },
 )
 def float_note_context(evt: PostToolUseEvent) -> Any:
-    """Float notes, docs, and logs relevant to a freshly read file, once per id per session.
+    """Surface the notes, docs, and logs relevant to a freshly read file, once per id per session.
 
-    Runs ``cc-notes relevant <path> --json``, drops ids already floated this
-    session, and on anything new persists the union and warns with each entry's
-    pointer — a note's title/reasons/drift, a doc's title, ``when`` trigger, and
-    freshness verdict (never its body), or a log's title and ``log show`` hint
-    (never its entries, and no drift — a log never drifts). Silent when nothing
-    remains or the command empties.
+    The recall step runs ``cc-notes relevant <path> --json`` and drops ids already
+    floated this session; the precision step (:func:`surface_filter`, a small LLM
+    biased toward surfacing) keeps the worthwhile subset. Every fresh id is marked
+    judged before filtering, so a record is weighed at most once a session. On a
+    non-empty pick it warns with each entry's pointer — a note's title/reasons/drift,
+    a doc's title, ``when`` trigger, and freshness verdict (never its body), or a
+    log's title and ``log show`` hint (never its entries, and no drift — a log never
+    drifts). Silent when recall empties or the filter keeps nothing.
     """
     if not evt.file:
         return None
@@ -589,9 +705,13 @@ def float_note_context(evt: PostToolUseEvent) -> Any:
         return None
     floated.ids = floated.ids + [entry_payload(e)["id"] for e in fresh]
     evt.ctx.session[FloatedNotes].set(floated)
+    picked = surface_filter(evt, fresh, touched="read")
+    if not picked:
+        return None
     return evt.warn(
-        f"Notes, docs, and logs relevant to {evt.file} (durable, git-synced cc-notes context):",
-        *render_note_lines(fresh),
+        f"You read {evt.file} — durable cc-notes records you should know "
+        "(git-synced context, never in the working tree):",
+        *render_note_lines(picked),
     )
 
 
@@ -607,15 +727,16 @@ def float_note_context(evt: PostToolUseEvent) -> Any:
     },
 )
 def check_note_staleness(evt: PostToolUseEvent) -> Any:
-    """Prompt reconciliation when an edit touches a path anchored by a drifted note or doc.
+    """Surface drifted records anchored to a path an edit just touched, for reconciliation.
 
-    Runs ``cc-notes relevant <path> --attached --worktree --json``, keeps only
-    entries whose kind-dispatched drift verdict is non-null (notes and
-    drifted/expired docs alike), drops ids already surfaced this session, and on
-    anything new persists the union and warns naming the file and the
-    verify/edit/supersede/expire next steps for the matching kind. Docs render
-    through :func:`render_doc_line` (pointer only, never the body). Silent
-    otherwise.
+    The recall step runs ``cc-notes relevant <path> --attached --worktree --json`` and
+    keeps only entries whose kind-dispatched drift verdict is non-null (notes and
+    drifted/expired docs alike; a log never drifts); the precision step
+    (:func:`surface_filter`) keeps the subset whose drift actually warrants a look.
+    Every fresh id is marked judged before filtering, so a record is weighed at most
+    once a session. On a non-empty pick it warns naming the file and the
+    verify/edit/supersede/expire next steps for the matching kind. Docs render through
+    :func:`render_doc_line` (pointer only, never the body). Silent otherwise.
     """
     if not evt.file:
         return None
@@ -627,13 +748,16 @@ def check_note_staleness(evt: PostToolUseEvent) -> Any:
         return None
     checked.ids = checked.ids + [entry_payload(e)["id"] for e in fresh]
     evt.ctx.session[StaleChecked].set(checked)
+    picked = surface_filter(evt, fresh, touched="edited")
+    if not picked:
+        return None
     return evt.warn(
-        f"You edited {evt.file}, which a note or doc flags as needing attention. Reconcile each "
-        "against its kind — `verify <id>` to re-confirm it against HEAD, `edit <id>` to revise it, "
-        "`supersede <old> --by <new>` to replace it, or `expire <id>` to flag it out-of-date: "
-        "for a note use `cc-notes note verify/edit/supersede/expire`, "
+        f"You edited {evt.file} — durable cc-notes records anchored here look out of date. "
+        "Reconcile each against its kind — `verify <id>` to re-confirm it against HEAD, `edit <id>` "
+        "to revise it, `supersede <old> --by <new>` to replace it, or `expire <id>` to flag it "
+        "out-of-date: for a note use `cc-notes note verify/edit/supersede/expire`, "
         "for a doc use `cc-notes doc verify/edit/supersede/expire`.",
-        *render_note_lines(fresh),
+        *render_note_lines(picked),
     )
 
 
@@ -702,205 +826,343 @@ def mirror_memory_to_note(evt: PostToolUseEvent) -> Any:
     )
 
 
-HANDOFF_CLASSIFIER_SYSTEM = (
-    "You classify a markdown file an agent just wrote in a code repository. Decide "
-    "whether it is an INTERNAL AGENT-HANDOFF doc: long-form context written for the "
-    "NEXT agent (or your future self) to read before touching this code. Handoffs "
-    "look like a state-of-play brief, a \"read this before you change X\" guide, "
-    "migration notes, design rationale for an in-flight change, a resume-here "
-    "handoff, or an investigation write-up. These belong in cc-notes as a durable, "
-    "drift-checked doc that future agents are surfaced automatically.\n"
+RECORD_ROUTER_SYSTEM = (
+    "You are a precision filter. A cheap static rule has already flagged a file an agent just "
+    "wrote as POSSIBLY durable internal knowledge — content that belongs in cc-notes (git objects "
+    "on refs/cc-notes/*, synced with the repo but never in the working tree) rather than as a loose "
+    "file in the public tree. The static rule over-selects on purpose; your job is to confirm the "
+    "write is genuinely durable internal knowledge and, when it is, route it to the right cc-notes "
+    "record.\n"
     "\n"
-    "It is NOT a handoff when the file is genuinely human-facing or published "
-    "project documentation that belongs in the repo tree: a README, a user guide, a "
-    "tutorial, API reference, a released changelog, a blog post, release notes, or a "
-    "spec written for people. When the file could plausibly be either, answer "
-    "is_handoff=false — only flag a clear internal handoff.\n"
+    "Set record=false when the file is genuinely human-facing or published project documentation "
+    "that belongs in the repo tree — a README, a user guide, a tutorial, API reference, a released "
+    "changelog, a blog post, release notes, or a spec written for people — or when it is throwaway "
+    "scratch with no durable value. When it could plausibly be either, answer record=false. Only a "
+    "clear case records.\n"
     "\n"
-    "When is_handoff is true, also return: title — a short title for the doc; when — "
-    "a free-text \"read this when…\" trigger naming the future situation in which an "
-    "agent should reach for it; area — the repo directory the doc is about (e.g. "
-    "internal/api), or \".\" if unclear; reasoning — one line explaining the call."
+    "When record=true, choose exactly one kind:\n"
+    "- note: a single durable fact or decision — one verifiable claim about the code (e.g. 'retry "
+    "backoff caps at 30s because the server drops connections past it').\n"
+    "- doc: living, long-form guidance for the next agent that you keep fresh — a handoff brief, a "
+    "runbook, design rationale for an in-flight change, an investigation write-up. A doc is "
+    "re-verified, drifts when the code moves, and carries a 'read this when…' trigger.\n"
+    "- log: an immutable, append-only chronology — an incident timeline, a rollout log, a debugging "
+    "session. Its value is the running record itself; entries are never edited and it has no "
+    "freshness lifecycle.\n"
+    "- task: actionable work still to be done — a TODO or checklist of follow-ups.\n"
+    "\n"
+    "doc vs log is the subtle call: choose doc when the content is guidance you would keep current, "
+    "log when it is a dated record of what happened that you would only ever append to.\n"
+    "\n"
+    "When record=true also return: title — a short title; when — for a doc, the free-text 'read "
+    "this when…' trigger (leave empty for other kinds); area — the repo directory the record is "
+    "about (e.g. internal/api), or '.' if unclear; reasoning — one line explaining the call."
 )
 
 
-class HandoffVerdict(BaseModel):
-    """The classifier's verdict on whether a freshly written ``.md`` is an agent handoff.
+class RecordVerdict(BaseModel):
+    """The router's verdict: whether a freshly written file is durable cc-notes content, as which kind.
 
-    ``is_handoff`` defaults False so a degenerate or empty model parse fails closed
-    to silence. The remaining fields seed the suggested ``cc-notes doc add`` command
-    and are only meaningful when ``is_handoff`` is true.
+    ``record`` defaults False so a degenerate or empty model parse fails closed to
+    silence. ``kind`` is one of :data:`RECORD_KINDS`; the remaining fields seed the
+    suggested ``cc-notes <kind> add`` command and are only meaningful when ``record``
+    is true.
     """
 
-    is_handoff: bool = False
+    record: bool = False
+    kind: str = ""
     title: str = ""
     when: str = ""
     area: str = ""
     reasoning: str = ""
 
 
-def _doc_pre_gated(evt: PostToolUseEvent) -> str | None:
-    """Return the markdown body worth classifying, or None to skip the LLM entirely.
+RECORD_KINDS = ("note", "doc", "log", "task")
 
-    The cheap, paid-call-free filter in front of :func:`nudge_store_handoff_as_doc`:
-    only a substantial, non-exempt long-form ``.md``/``.markdown`` write that has not
-    already nudged this turn survives. Everything else returns None so the classifier
-    is never called — that pre-gate is what keeps the LLM cost off the vast majority
-    of markdown writes.
+
+def record_command(kind: str, title: str, when: str, area: str) -> list[str]:
+    """The cc-notes command line(s) that record content under the router's chosen kind.
+
+    A log takes no body at creation — ``log add`` opens the journal and ``log append``
+    grows it — so it renders as two lines; the others are a single ``add`` piping the
+    file in through ``--body -``.
     """
-    if not (evt.file and evt.file_matches("*.md", "*.markdown")):
-        return None
-    if HANDOFF_EXEMPT_NAME.match(evt.file.name):
-        return None
-    if evt.file.under(*HANDOFF_EXEMPT_DIRS):
-        return None
-    body = evt.content or ""
-    if len(body) < HANDOFF_MIN_CHARS:
-        return None
-    if fired_this_turn(evt):
-        return None
-    return body
+    dir_flag = f" --dir {area}" if area and area != "." else ""
+    if kind == "doc":
+        return [f'cc-notes doc add "{title}" --when "{when}"{dir_flag} --body -']
+    if kind == "log":
+        return [
+            f'cc-notes log add "{title}"{dir_flag}',
+            "cc-notes log append <id>   # then add the chronology one entry at a time",
+        ]
+    if kind == "task":
+        return [f'cc-notes task add "{title}"   # add --backlog if it is shared work']
+    return [f'cc-notes note add "{title}"{dir_flag} --body -']
 
 
 @on(
     Event.PostToolUse,
-    only_if=[Tool("Write|Edit"), CcNotesAvailable()],
-    max_fires=2,
+    only_if=[Tool("Write|Edit|MultiEdit"), DurableInternalWrite(), CcNotesAvailable()],
+    max_fires=NUDGE_MAX_FIRES,
     tests={
-        # Every case is deterministic silence WITHOUT a stubbed classifier: the
-        # cheap pre-gate returns None first (exempt name, exempt dir, wrong suffix,
-        # or too short) or the Tool gate rejects a non-Write/Edit tool, so the LLM
-        # is never reached. The firing / public / exempt-skips-LLM split needs a
-        # stubbed call_llm and lives in tests/test_cc_notes.py.
-        Input(tool="Write", file="README.md", content="# Readme\n" + "lorem ipsum " * 120): Allow(),
-        Input(tool="Write", file="CHANGELOG.md", content="# Changelog\n" + "entry text " * 120): Allow(),
-        Input(tool="Write", file="AGENTS.md", content="# Agents\n" + "guidance line " * 120): Allow(),
-        Input(tool="Write", file="docs/guide.md", content="# Guide\n" + "prose body " * 120): Allow(),
-        Input(tool="Write", file="internal/store/store.py", content="x = 1\n" * 400): Allow(),
-        Input(tool="Write", file="HANDOFF.md", content="too short to be a handoff"): Allow(),
+        # The DurableInternalWrite gate + the inline harness's default call_llm stub
+        # (record=False) make every case deterministic silence: a rejected path never
+        # reaches the LLM, and a matched path's stubbed verdict does not record. The
+        # firing / kind-routing split needs a call_llm stub returning record=True and
+        # lives in tests/test_cc_notes.py.
+        Input(tool="Write", file="HANDOFF.md", content="## Status\nHandoff\n## Remaining\n- [ ] x\n"): Allow(),
+        Input(tool="Write", file="README.md", content="# Readme\nsome prose\n"): Allow(),
+        Input(tool="Write", file="src/foo.ts", content="export const x = 1\n"): Allow(),
+        Input(tool="Write", file=".env", content="API_KEY=secret\n"): Allow(),
+        Input(tool="Write", file="/n/.cc-pool/p/memory/x.md", content="---\ntype: feedback\n---\nbody\n"): Allow(),
         Input(tool="Read", file="HANDOFF.md"): Allow(),
     },
 )
-def nudge_store_handoff_as_doc(evt: PostToolUseEvent) -> Any:
-    """Nudge storing a long-form internal-handoff ``.md`` as a cc-notes doc.
+def nudge_record_durable(evt: PostToolUseEvent) -> Any:
+    """Record-route a write the static gate flagged as possibly durable internal knowledge.
 
-    A cheap static pre-gate (:func:`_doc_pre_gated`) drops everything that is
-    obviously not an agent handoff before any paid call. The survivor's body is
-    classified by a small stateless LLM call (``agent=False, transcript=False``)
-    biased toward "not a handoff"; only a clear handoff warns, naming the
-    ``cc-notes doc add … --when …`` that would store it where future agents are
-    surfaced it automatically. Fails closed to silence on any classifier error —
-    this is a nudge, never a gate.
+    The cheap, over-selective :class:`DurableInternalWrite` condition is the recall gate;
+    this handler is the precision step — it asks the LLM whether the write is genuinely
+    durable cc-notes content and, if so, which record: note (a fact), doc (living
+    guidance), log (an append-only chronology), or task (actionable work). On a positive
+    verdict it warns with the exact ``cc-notes <kind> add`` to run. One nudge per turn
+    (``fired_this_turn``); fails closed to silence on any classifier error — a nudge,
+    never a gate. The cc-pool memory tree is excluded upstream by the gate, so the mirror
+    owns those writes alone.
     """
-    body = _doc_pre_gated(evt)
-    if body is None:
+    if fired_this_turn(evt):
         return None
     prompt = (
         Prompt()
-        .system(HANDOFF_CLASSIFIER_SYSTEM)
+        .system(RECORD_ROUTER_SYSTEM)
         .context("path", str(evt.file))
-        .context("markdown", body[:4000])
-        .ask("Is this markdown an internal agent-handoff doc that belongs in cc-notes?")
+        .context("content", (evt.content or "")[:LLM_INPUT_CAP])
+        .ask("Does this belong in cc-notes, and if so as which record (note/doc/log/task)?")
     )
     try:
-        verdict = evt.ctx.call_llm(prompt, response_model=HandoffVerdict, agent=False, transcript=False)
+        verdict = evt.ctx.call_llm(prompt, response_model=RecordVerdict, model="small", agent=False, transcript=False)
     except Exception:
-        # Fail closed: a classifier error (network, timeout, bad parse) must never
-        # crash a nudge fire — the pack only ever warns, it never blocks.
+        # Fail closed: a classifier error (network, timeout, bad parse) must never crash a
+        # nudge fire — the pack only ever warns, it never blocks.
         return None
-    if not verdict.is_handoff:
+    if not verdict.record or verdict.kind not in RECORD_KINDS:
         return None
     record_fire(evt)
-    add_cmd = (
-        f'cc-notes doc add "{verdict.title or evt.file.stem}" '
-        f'--when "{verdict.when}" --dir {verdict.area or "."} --body -'
-    )
+    title = verdict.title or (evt.file.stem if evt.file else "untitled")
     return evt.warn(
-        f"{evt.file} reads like an internal handoff written for the next agent, not "
-        "human-facing documentation. Store it as a durable cc-notes doc instead of a "
-        "loose file that nothing reopens — docs are ranked by `cc-notes relevant`, "
-        "floated to future agents on read, and drift-checked against HEAD:",
-        add_cmd,
-        '(Pipe the markdown into `--body -`; `--when` is the "read this when…" '
-        "trigger that decides when a future agent is shown it.)",
+        f"{evt.file} reads like durable {verdict.kind} content for cc-notes, not a loose file in "
+        f"the working tree ({verdict.reasoning}). Record it, then delete the loose file:",
+        *record_command(verdict.kind, title, verdict.when, verdict.area),
+        "(Don't put secrets in cc-notes — the refs sync to the remote.)",
     )
 
 
-nudge(
-    "This file reads like durable INTERNAL knowledge — a status/handoff brief, "
-    "ad-hoc notes, a runbook, or a TODO list — the kind you'd otherwise commit to "
-    "a public branch where it shouldn't be committed. cc-notes keeps exactly this "
-    "out of the public tree: as git objects on `refs/cc-notes/*`, synced with the "
-    "remote but never in the working tree. Move it there, then delete the loose "
-    "file:\n"
-    "- long-form runbook/handoff/context for the next agent -> "
-    'cc-notes doc add "<title>" --body - --when "<when to read this>"\n'
-    "- a single durable fact or decision -> cc-notes note add\n"
-    "- actionable work / TODOs -> cc-notes task add (`--backlog` if it's shared)\n"
-    "Do NOT push secrets into cc-notes — the refs sync to the remote. Keep "
-    ".env/keys/credentials in gitignored scratch, never in a note, doc, or task.",
-    only_if=[Tool("Edit|Write|MultiEdit"), DurableInternalWrite(), CcNotesAvailable()],
-    events=Event.PostToolUse,
-    max_fires=2,
-    tests={
-        Input(
-            tool="Write",
-            file="GOOGLE_OAUTH_VERIFICATION.md",
-            content="# ...\n## Status\nHandoff\n## Remaining\n- [ ] x\n",
-        ): Warn(pattern="cc-notes doc add"),
-        Input(tool="Edit", file="memory/google-oauth-verification.md", content="status notes"): Warn(pattern="cc-notes note add"),
-        Input(tool="Write", file="auth-notes.md", content="next steps:\n- [ ] rotate\n"): Warn(pattern="cc-notes task add"),
-        # WEAK name with no internal body signal stays silent.
-        Input(tool="Write", file="auth-notes.md", content="just a heading\n"): Allow(),
-        # Published docs, source, secrets, images, and non-edit tools never fire.
-        Input(tool="Write", file="README.md", content="# Readme\nsome prose\n"): Allow(),
-        Input(tool="Write", file="docs/guide.md", content="# Guide\n## Status\n- [ ] x\n"): Allow(),
-        Input(tool="Write", file="CHANGELOG.md", content="# Changelog\n## Status\n"): Allow(),
-        Input(tool="Write", file="src/foo.ts", content="export const x = 1\n"): Allow(),
-        Input(tool="Write", file=".env", content="API_KEY=secret\n"): Allow(),
-        Input(tool="Write", file="oauth-secret.md", content="## Status\nHandoff\n- [ ] x\n"): Allow(),
-        Input(tool="Write", file="screenshot.png", content="binary"): Allow(),
-        Input(tool="Read", file="m.py"): Allow(),
-    },
+PLAN_TASKS_SYSTEM = (
+    "An agent just had a plan approved. Extract only the work items that are DURABLE — work that "
+    "outlives this session, or that another agent might pick up or coordinate on — and worth tracking "
+    "as a cc-notes task. Skip the moment-to-moment implementation steps the agent does right now and "
+    "checks off as it goes; those belong in the private native todo list, not cc-notes.\n"
+    "\n"
+    "Prefer a few high-value items over a long list, and return an empty list when the plan is "
+    "throwaway or entirely in-session mechanics. For each item set title (a short imperative) and "
+    "shared=true when any agent could pick it up — it belongs on the shared backlog — rather than "
+    "being tied to this agent's current branch."
+)
+
+# The canonical native-vs-durable teaching. The four cc-notes primitives are
+# described here in the same terms the README table and SKILL.md use, so the line
+# an agent learns at plan time matches the reference it reads later.
+PLAN_TEACH = (
+    "Plan approved. Native TaskCreate/TaskUpdate is your private scratchpad — it vanishes at session "
+    "end. Durable work that outlives the session or coordinates agents goes in `cc-notes task`: "
+    "`--backlog` for shared work any agent can claim, plain `cc-notes task add` for your branch. "
+    "(A decision or durable fact is a `cc-notes note add`; living guidance for the next agent, with a "
+    "`--when` read-trigger, is a `cc-notes doc add`; an append-only chronology whose entries are never "
+    "edited is a `cc-notes log add`.)"
 )
 
 
-nudge(
-    "Plan approved. Native TaskCreate/TaskUpdate is your private, this-session "
-    "scratchpad. Durable shared work goes in `cc-notes task add --backlog` (the "
-    "global queue every agent can see and claim) — or plain `cc-notes task add` "
-    "for work specific to your current branch. Capture decisions and durable "
-    "facts as `cc-notes note add`. Long-form handoffs or internal context for the "
-    "next agent go in `cc-notes doc add` (not a loose .md) — docs surface "
-    "automatically through `cc-notes relevant`. For a running, chronological record "
-    "— an incident timeline, a rollout log, a debugging session — create it with "
-    "`cc-notes log add` then grow it one entry at a time with `cc-notes log append "
-    "<id>` (append-only; entries are never edited).",
+class PlanTask(BaseModel):
+    """One durable work item the plan router lifts out of an approved plan."""
+
+    title: str = ""
+    shared: bool = False
+
+
+class PlanTasks(BaseModel):
+    """The plan router's verdict: the few durable work items worth a cc-notes task.
+
+    Defaults to an empty list so a degenerate parse or a throwaway plan suggests
+    nothing — the deterministic teach still stands on its own.
+    """
+
+    tasks: list[PlanTask] = []
+
+
+def plan_text(evt: PostToolUseEvent) -> str | None:
+    """The approved plan's text — the plan file when readable, else the inline plan, else None.
+
+    The ExitPlanMode tool input carries both ``planFilePath`` and an inline ``plan``;
+    the file is authoritative, so it is preferred and the inline copy is the fallback.
+    Returns None when neither yields text, and the caller then fires the teach without
+    any extracted tasks.
+    """
+    ti = evt._tool_input
+    path = ti.get("planFilePath")
+    if isinstance(path, str) and path:
+        try:
+            text = Path(path).read_text(encoding="utf-8").strip()
+        except OSError:
+            text = ""
+        if text:
+            return text
+    inline = ti.get("plan")
+    return inline.strip() if isinstance(inline, str) and inline.strip() else None
+
+
+def plan_task_commands(evt: PostToolUseEvent, text: str | None) -> list[str]:
+    """The ``cc-notes task add`` lines for the durable items a small LLM lifts from the plan.
+
+    Returns [] when there is no plan text, the model finds nothing durable, or it
+    errors — the teach carries the nudge on its own in every case. Caps at five so a
+    sprawling plan can't produce a wall of commands.
+    """
+    if not text:
+        return []
+    prompt = (
+        Prompt()
+        .system(PLAN_TASKS_SYSTEM)
+        .context("plan", text[:LLM_INPUT_CAP])
+        .ask("Which few items from this plan are durable work worth a cc-notes task? None if it is all in-session steps.")
+    )
+    try:
+        extracted = evt.ctx.call_llm(prompt, response_model=PlanTasks, model="small", agent=False, transcript=False)
+    except Exception:
+        return []
+    commands = []
+    for task in extracted.tasks[:5]:
+        title = task.title.strip()
+        if title:
+            commands.append(f'cc-notes task add "{title}"' + (" --backlog" if task.shared else ""))
+    return commands
+
+
+@on(
+    Event.PostToolUse,
     only_if=[Tool("ExitPlanMode"), CcNotesAvailable()],
-    events=Event.PostToolUse,
+    max_fires=NUDGE_MAX_FIRES,
     tests={
         Input(tool="ExitPlanMode"): Warn(pattern="cc-notes task add"),
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
+def nudge_plan_tasks(evt: PostToolUseEvent) -> Any:
+    """On plan approval, teach the native-vs-durable line and route the plan's durable items to tasks.
+
+    The teach is deterministic and always fires; the extracted ``cc-notes task add``
+    lines are the LLM precision step (:func:`plan_task_commands`). Deduped per
+    ``planFilePath`` in :class:`PlansSeen` so re-approving the same plan stays silent
+    while a genuinely new plan fires again; a plan with no path isn't deduped and
+    ``max_fires`` caps the repeats. Fails safe: a classifier error drops only the
+    extracted tasks, never the teach.
+    """
+    text = plan_text(evt)
+    path = evt._tool_input.get("planFilePath")
+    if isinstance(path, str) and path:
+        seen = evt.ctx.session.load(PlansSeen)
+        if path in seen.paths:
+            return None
+        seen.paths = seen.paths + [path]
+        evt.ctx.session[PlansSeen].set(seen)
+    lines = [PLAN_TEACH]
+    if commands := plan_task_commands(evt, text):
+        lines.append("These items from your plan look like durable work — capture them:")
+        lines.extend(commands)
+    return evt.warn(*lines)
 
 
-nudge(
-    "Commit landed. Add a `cc-task: <id>` trailer to link it to its task "
-    "(queryable with `git log --grep` and `cc-notes blame <sha>`; `cc-notes "
-    "history <id>` shows an entity's full edit trail). Capture any "
-    "durable decision behind it as `cc-notes note add \"...\" --tag design` (born "
-    "verified against HEAD), and a long-form handoff or internal brief for a future "
-    "agent as `cc-notes doc add` (not a loose .md), then `cc-notes sync` to share "
-    "your refs.",
+COMMIT_DECISION_SYSTEM = (
+    "An agent just landed a git commit. Decide whether the change embodies a durable DECISION worth "
+    "capturing as a cc-notes record — a design choice, a tradeoff, a non-obvious rationale a future "
+    "agent would want explained — as opposed to routine, self-explanatory work (a rename, a "
+    "dependency bump, a formatting pass, a mechanical fix) that the diff and message already cover.\n"
+    "\n"
+    "Set record=false for routine or self-explanatory commits — that is most commits. Only a commit "
+    "that encodes a decision worth preserving records. When record=true choose the kind: note for a "
+    "single durable fact or decision (one verifiable claim), doc for longer living rationale a future "
+    "agent should read before touching this area. Return title (short), when (for a doc, the 'read "
+    "this when…' trigger; empty for a note), area (the repo directory, or '.'), reasoning (one line)."
+)
+
+
+def commit_decision(evt: PostToolUseEvent) -> list[str]:
+    """The 'capture this decision' lines for the HEAD commit, or [] when none is warranted.
+
+    Fetches the commit (message + diffstat + a bounded patch) and asks a small
+    non-agentic LLM whether it encodes a durable decision; on a note/doc verdict it
+    returns the framing line plus the exact ``cc-notes <kind> add``. Any git error
+    (including a ``git show`` timeout, which ``evt.ctx.git`` does not swallow) or any
+    classifier error returns [] — the deterministic link/sync reminder stands on its
+    own, so a missing suggestion never matters. Only note/doc are routed here: a
+    commit captures a decision, not a chronology or a task.
+    """
+    try:
+        diff = evt.ctx.git("show", "--stat", "-p", "HEAD")
+        if not diff:
+            return []
+        prompt = (
+            Prompt()
+            .system(COMMIT_DECISION_SYSTEM)
+            .context("commit", diff[:LLM_INPUT_CAP])
+            .ask("Does this commit encode a durable decision worth a cc-notes note or doc?")
+        )
+        verdict = evt.ctx.call_llm(prompt, response_model=RecordVerdict, model="small", agent=False, transcript=False)
+    except Exception:
+        return []
+    if not verdict.record or verdict.kind not in ("note", "doc"):
+        return []
+    title = verdict.title or "the decision behind this commit"
+    return [
+        f"This commit encodes a durable {verdict.kind} ({verdict.reasoning}) — capture it:",
+        *record_command(verdict.kind, title, verdict.when, verdict.area),
+    ]
+
+
+@on(
+    Event.PostToolUse,
     only_if=[Command(GIT_COMMIT), CcNotesAvailable()],
-    events=Event.PostToolUse,
+    max_fires=NUDGE_MAX_FIRES,
     tests={
         Input(command="git commit -m 'add retry ceiling'"): Warn(pattern="cc-task:"),
         Input(command="git commit --amend"): Warn(pattern="cc-notes sync"),
         Input(command="git status"): Allow(),
     },
 )
+def nudge_commit_record(evt: PostToolUseEvent) -> Any:
+    """After a commit, remind to link + sync, and route any durable decision to a note/doc.
+
+    The link/sync reminder is deterministic workflow coordination and always fires; the
+    decision suggestion is the LLM precision step (:func:`commit_decision`). Deduped per
+    HEAD sha in :class:`CommitsJudged` so each commit is judged once — an amend (new sha)
+    gets a fresh look, a no-op re-fire on the same HEAD stays silent. Fails safe: a git or
+    classifier error drops only the suggestion, never the reminder.
+    """
+    try:
+        sha = (evt.ctx.git("rev-parse", "HEAD") or "").strip()
+    except Exception:
+        sha = ""
+    judged = evt.ctx.session.load(CommitsJudged)
+    if sha and sha in judged.shas:
+        return None
+    if sha:
+        judged.shas = judged.shas + [sha]
+        evt.ctx.session[CommitsJudged].set(judged)
+    return evt.warn(
+        "Commit landed. Link it to its task with a `cc-task: <id>` trailer (queryable via "
+        "`git log --grep`, `cc-notes blame <sha>`, and `cc-notes history <id>`), then "
+        "`cc-notes sync` to share your refs.",
+        *commit_decision(evt),
+    )
 
 
 nudge(
@@ -910,7 +1172,7 @@ nudge(
     "(jj merges never fire git hooks — reconcile is the explicit step.)",
     only_if=[Command(GIT_MERGE_PULL), CcNotesAvailable()],
     events=Event.PostToolUse,
-    max_fires=3,
+    max_fires=NUDGE_MAX_FIRES,
     tests={
         Input(command="git merge feature"): Warn(pattern="reconcile"),
         Input(command="git pull origin main"): Warn(pattern="reconcile"),
@@ -928,7 +1190,7 @@ nudge(
     "`cc-notes task claim <id> --steal`.",
     only_if=[Command(CC_NOTES_CLAIM), CcNotesAvailable()],
     events=Event.PostToolUse,
-    max_fires=2,
+    max_fires=NUDGE_MAX_FIRES,
     tests={
         Input(command="cc-notes task start d82c087"): Warn(pattern="renew"),
         Input(command="cc-notes task claim 08118da --steal"): Warn(pattern="renew"),
@@ -944,7 +1206,7 @@ nudge(
     "Keep the purely in-session steps as native todos.",
     only_if=[Tool("TaskCreate"), ManyNativeTasks(), CcNotesAvailable()],
     events=Event.PostToolUse,
-    max_fires=2,
+    max_fires=NUDGE_MAX_FIRES,
     tests={
         Input(
             tool="TaskCreate",

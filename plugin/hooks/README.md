@@ -25,63 +25,96 @@ Tasks are global. The id addresses a task no matter which branch it lives on, an
 its branch is a mutable attribute. `cc-notes task add --backlog` parks work in the
 shared queue; `cc-notes task start <id>` claims it and pulls it onto your branch.
 
-## The nudges
+## The framework
 
-| # | Trigger | Nudge |
-|---|---------|-------|
-| 1 | Session start, first `UserPromptSubmit`, fires once | Float this session's durable tasks: your branch's open/in-progress tasks topped up from the shared backlog, capped at seven with a `+K more` tail, pointing at `cc-notes status`. Silent when there are no tasks. |
-| 2 | `Read` (PostToolUse) | Float the notes, docs, and logs `cc-notes relevant <path>` ranks for the file just read — title, reasons, and any drift flag — so durable context surfaces as you explore. Each entry floats once per session. |
-| 3 | `Edit` / `Write` / `MultiEdit` (PostToolUse) | After an edit, `cc-notes relevant <path> --attached --worktree` checks the notes and docs anchored to that path; any with a non-null drift verdict prompt reconciliation via `verify`, `edit`, or `supersede` on the matching kind (`cc-notes note …` or `cc-notes doc …`). Each entry is asked about once per session. |
-| 4 | `ExitPlanMode` (PostToolUse) | Native todos are your private scratchpad; durable shared work is `cc-notes task add --backlog`, branch-specific work is plain `cc-notes task add`, and decisions are `cc-notes note add`. |
-| 5 | `git commit` (PostToolUse) | Add a `cc-task: <id>` trailer to link the commit, capture durable decisions as `cc-notes note add ... --tag design`, and `cc-notes sync` to share. |
-| 6 | `git merge` / `git pull` (PostToolUse, max 3) | A merged branch's open tasks stay put until carried over, so run `cc-notes reconcile --into <target>`, then `cc-notes sync`. |
-| 7 | `cc-notes task claim` / `task start` (PostToolUse, max 2) | You hold a lease now, so `cc-notes sync` to let other agents see the claim, `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold. |
-| 8 | Many open native tasks after `TaskCreate` (max 2) | Mirror durable or cross-agent items into `cc-notes task add`, to the backlog if they're shared. |
-| 9 | `cc-notes` binary missing from `PATH`, first `UserPromptSubmit`, fires once | The pack is enabled but the binary is missing, so name the two install paths — `brew install yasyf/tap/cc-notes` or `curl -fsSL …/install.sh \| sh` — to break the silent dead-end. |
-| 10 | `Write` / `Edit` of a `.md` file (PostToolUse, LLM-gated, max 2) | A cheap name/dir/size pre-gate filters out public files (`README`, `CHANGELOG`, `docs/`, anything under ~600 chars) before any model call; an LLM then classifies the surviving body, and when it reads as an internal agent-handoff the nudge points at `cc-notes doc add "<title>" --when "<when>" --dir <area> --body -` — store the brief as a doc that surfaces to the next agent automatically, not a loose `.md` nobody opens. |
-| 11 | `Write` / `Edit` / `MultiEdit` of a cc-pool memory file (PostToolUse) | Mirror a repo-relevant agent memory (`feedback` / `project` / `reference`) into a durable note keyed by a `memory:<slug>` tag — the first write creates it, a later edit updates the same note. The `MEMORY.md` index and `user` memories are skipped. It is the one handler that *writes* (an idempotent note upsert), yet it still never blocks and falls closed to silence on any failure. |
+Every nudge is one shape — **static recall → LLM precision → act** — running in one of
+two directions.
 
-Nudges 1–3 shell out to `cc-notes` and render its live state (tasks, relevant
-notes, docs, and logs, drift verdicts) into the nudge. Nudges 2 and 3 dedup per
-entry per purpose: entry ids floated as Read context (nudge 2) and entry ids
-asked about for staleness (nudge 3) live in two separate per-session sets, so a
-single entry can be floated as context once *and* prompt reconciliation once. Nudges 1 and 8 are reflexes
-about the native-vs-durable line; 4 through 7 keep the git workflow and cc-notes
-coordination in lockstep.
+**Surface (pull)** takes a file you just touched, recalls the durable records anchored
+to it, and a small LLM keeps the subset worth your attention. It fails *open*: if the
+model call errors, every recalled record is shown rather than hide context by breaking.
 
-Nudge 10 is the lone LLM-gated detector. It watches `.md` writes, filters out
-public files with a cheap name/dir/size pre-gate, and only then asks the model
-whether the body reads as an internal agent-handoff — nudging the long-form brief
-into `cc-notes doc add … --when …` instead of a loose file the next agent never
-opens. The pre-gate runs first so the model is never called for an obvious
-`README` or a one-line note, and `max_fires=2` caps it per session.
+**Record (push)** takes a write, a commit, or an approved plan, recalls a candidate over
+a cheap glob or diff, and a small LLM confirms the content is durable and routes it to
+exactly one primitive — note, doc, log, or task — or to nothing. It fails *closed* to
+silence.
 
-Nudge 11 is the lone *side-effecting* handler. The harness records durable agent
-memories as `<slug>.md` files under a `memory/` dir inside a `.cc-pool` tree, and
-this handler mirrors the repo-relevant ones into notes so they ride the repo
-instead of living only in the harness. A cheap path gate (`MemoryWrite`) rejects
-everything but a memory slug file before any disk read; the body is read back from
-disk so a `Write` and an `Edit` both yield the final content; and the note is keyed
-by a `memory:<slug>` tag, so the handler upserts — `note list` to find an existing
-mirror, then `note edit` in place (skipping the edit when title and body are
-unchanged) or `note add`. It mirrors only `feedback`, `project`, and `reference`
-memories, never a `user` who-you-are memory or the `MEMORY.md` index. Because it
-runs at `PostToolUse` the memory write has already landed, and every cc-notes call
-falls closed to silence, so a failed mirror never disturbs it.
+The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
+on purpose; the LLM is the precision gate in both directions. The only deterministic hooks
+are the ones with no "which" to pick: the memory mirror, where the file already declares
+its type, and the pure workflow reminders, where the action is fixed.
 
-Nudge 9 is the visible fallback for the plugin's auto-installer. Enabling the
-cc-notes plugin runs a `SessionStart` hook (`scripts/ensure-cc-notes.sh`) that is
-the primary auto-install path — Homebrew-preferred, the release download as
-fallback — so the binary is usually present before the first prompt. Nudge 9
-speaks only when that bootstrap couldn't produce a binary.
+### Surface — pull durable records into context
 
-That same `SessionStart` hook also runs `cc-notes mount --auto` — the
-session-start ensure-mount — alongside the auto-install. `mount --auto`
-self-gates on the repo's opt-in (`cc-notes.autoMount=true`, set by `cc-notes
-init` unless you pass `--no-mount`) and on a fuse-capable binary, adopts an
-already-live mount with zero overhead, and is quiet and best-effort, so it never
-fails the session. This is a shell `SessionStart` hook, not a capt-hook nudge, so
-it carries no entry in the nudge table above.
+| Trigger | Recall | The LLM picks |
+|---------|--------|---------------|
+| `Read` a file (PostToolUse) | notes, docs, and logs `cc-notes relevant <path>` ranks | which are worth surfacing now — a lone candidate surfaces directly, two or more are filtered |
+| `Edit` / `Write` / `MultiEdit` a file (PostToolUse) | anchored records with a non-null drift verdict (`relevant --attached --worktree`) | which drift actually warrants a `verify` / `edit` / `supersede` / `expire`, named per kind |
+| Session start, first `UserPromptSubmit` (once) | your branch's open/in-progress tasks topped up from the backlog | nothing — rendered straight as orientation, capped at seven with a `+K more` → `cc-notes status` |
+
+Each record is LLM-judged at most once per session: a Read floats it as context once, an
+edit asks about its staleness once, tracked in two separate per-session sets. The filter
+marks every recalled record judged before it picks, so an unpicked one is not re-weighed
+later. The session-start float is deterministic orientation, not a filtered surface.
+
+### Record — route new durable content to a primitive
+
+| Trigger | Candidate | The LLM picks |
+|---------|-----------|---------------|
+| `Write` / `Edit` / `MultiEdit` of an internal-looking file (PostToolUse) | a status/handoff/notes/runbook/`memory/` file the static `DurableInternalWrite` gate flags | note / doc / log / task — or none; the subtle call is doc (living guidance) vs log (append-only chronology) |
+| `git commit` (PostToolUse) | the HEAD commit — message, diffstat, bounded patch | whether the change encodes a durable decision worth a note or doc; the `cc-task:` link + `cc-notes sync` reminder always fires regardless |
+| `ExitPlanMode` (PostToolUse) | the approved plan's text (`planFilePath`, else inline) | which few plan items are durable work → `cc-notes task add` (`--backlog` if shared); the native-vs-durable teach always fires regardless |
+| Many open native tasks after `TaskCreate` | the growing native list | (static, no model) mirror the durable or cross-agent items into `cc-notes task add` |
+
+The internal-write router asks once per turn; the commit router judges each HEAD sha once,
+so an amend re-judges while a re-fire on the same commit stays silent; the plan router fires
+once per plan file. Every record nudge falls *closed* to silence on any classifier or git
+error, never invents a record on a degenerate parse (`record` and the kind both default
+empty), and only ever suggests — it never blocks.
+
+### Workflow reminders — fixed action, no model
+
+| Trigger | Reminder |
+|---------|----------|
+| `git merge` / `git pull` (PostToolUse) | a merged branch's open tasks stay put — `cc-notes reconcile --into <target>`, then `cc-notes sync` (jj merges fire no git hooks, so this is the explicit step) |
+| `cc-notes task claim` / `task start` (PostToolUse) | you hold a lease — `cc-notes sync` so others see it, `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold |
+| `cc-notes` binary missing, first `UserPromptSubmit` (once) | the pack is enabled but the binary is off `PATH` — name the two install paths (`brew install yasyf/tap/cc-notes` or `curl -fsSL …/install.sh \| sh`) so an opt-in repo isn't left silent |
+
+### Firing policy
+
+One cap by class. Every Record router and Workflow reminder is capped at `NUDGE_MAX_FIRES`
+(three) per session as a backstop, and additionally deduped by its own key — the turn, the
+HEAD sha, or the plan path — so it speaks once per real event rather than on every fire. The
+Surface floaters carry no cap: their per-record session dedup already bounds them. The two
+once-per-session orientations (the session-start task float and the install hint) fire
+exactly once.
+
+### The memory mirror — the one action hook
+
+The lone *side-effecting* handler. The harness records durable agent memories as
+`<slug>.md` files under a `memory/` dir inside a `.cc-pool` tree, and this handler mirrors
+the repo-relevant ones into notes so they ride the repo instead of living only in the
+harness. A cheap path gate (`MemoryWrite`) rejects everything but a memory slug file before
+any disk read; the body is read back from disk so a `Write` and an `Edit` both yield the
+final content; and the note is keyed by a `memory:<slug>` tag, so the handler upserts —
+`note list` to find an existing mirror, then `note edit` in place (skipping the edit when
+title and body are unchanged) or `note add`. It mirrors only `feedback`, `project`, and
+`reference` memories, never a `user` who-you-are memory or the `MEMORY.md` index. Because it
+runs at `PostToolUse` the memory write has already landed, and every cc-notes call falls
+closed to silence, so a failed mirror never disturbs it. The cc-pool memory tree is the
+mirror's alone: the internal-write record router hard-excludes it, so a memory write is
+captured once, by the mirror, never also nudged.
+
+### The session-start mount
+
+Enabling the cc-notes plugin runs a `SessionStart` hook (`scripts/ensure-cc-notes.sh`) that
+auto-installs the binary — Homebrew-preferred, the release download as fallback — so it is
+usually present before the first prompt; the install reminder above speaks only when that
+bootstrap couldn't produce one. That same hook also runs `cc-notes mount --auto`, which
+self-gates on the repo's opt-in (`cc-notes.autoMount=true`, set by `cc-notes init` unless
+you pass `--no-mount`) and on a fuse-capable binary, adopts an already-live mount with zero
+overhead, and is quiet and best-effort. Both are shell `SessionStart` hooks, not capt-hook
+nudges.
 
 ## Silent unless cc-notes is installed
 
@@ -91,15 +124,15 @@ requires exactly one thing: the `cc-notes` binary on `PATH`. There is no
 since the adoption nudges that prompt the *first* cc-notes write would never fire
 in a fresh repo that has no refs yet.
 
-The one exception is nudge 9, gated on the inverse `CcNotesMissing` (binary *not*
-on `PATH`). It's the only thing that speaks when the binary is absent, so an
-opt-in repo whose auto-install didn't land a binary still gets a hint instead of
-silence across the board.
+The one exception is the install reminder, gated on the inverse `CcNotesMissing`
+(binary *not* on `PATH`). It's the only thing that speaks when the binary is absent,
+so an opt-in repo whose auto-install didn't land a binary still gets a hint instead
+of silence across the board.
 
 The per-repo opt-in is the pack's **presence** in `.claude/hooks/packs.toml`,
 which `cc-notes hooks install` records. A repo that doesn't want these nudges
 leaves the pack out. Where the pack is enabled but the repo has no cc-notes data
-yet, the read-time floaters (1–3) shell out to `cc-notes` and get nothing back,
+yet, the Surface floaters shell out to `cc-notes` and get nothing back,
 so they fall closed to silence on their own. `run_cc_notes` returns `None` on any
 failure (missing flag, non-zero exit, timeout) and the parse helpers turn empty
 output into nothing to render. The reconcile nudge
@@ -134,24 +167,24 @@ The hooks carry inline tests. Run them against the module directory:
 $ uvx capt-hook --hooks plugin/hooks test
 ```
 
-Each static nudge declares its own `tests={Input(...): Warn()/Allow()}` cases
-covering a firing trigger and a near-miss that must stay silent. The PostToolUse
-floaters (2 and 3) carry one inline test each, proving a non-matching tool stays
-silent; their firing path shells out to `cc-notes`, so the inline harness (which
-stubs only `call_llm`, never the CLI subprocess) cannot assert it deterministically.
+Each nudge declares its own `tests={Input(...): Warn()/Allow()}` cases covering a
+firing trigger and a near-miss that must stay silent. The Surface floaters carry one
+inline test each, proving a non-matching tool stays silent; their firing path shells
+out to `cc-notes`, so the inline harness (which stubs only `call_llm`, never the CLI
+subprocess) cannot assert it deterministically.
 
-The handoff detector (nudge 10) is LLM-gated, so its inline `tests={...}` cover
-only the cheap pre-gate (every case an `Allow()`): the inline harness stubs
-`call_llm` to the default `is_handoff=False` verdict, so a positive can never fire
-there. The firing/public split — an internal handoff warns, a public `.md` stays
-silent, and an exempt path skips the model entirely — is proven in
-`tests/test_cc_notes.py`, which stubs `evt.ctx.call_llm` directly.
+The Record routers are LLM-gated, so their inline `tests={...}` cover only the cheap
+static gate: the inline harness stubs `call_llm` to its default verdict, which records
+nothing, so a positive can never fire there. What the gate lets through, what the model
+routes to (note vs doc vs log vs task), the always-on commit and plan teaches, and the
+per-key dedup are proven in `tests/test_cc_notes.py`, which stubs `evt.ctx.call_llm`
+(and `evt.ctx.git`) directly.
 
-Handlers 1–3 split into thin event wiring over pure helpers for parsing,
-rendering, dedup, drift filtering, and task capping. Those helpers, both gate
-branches (binary present opens it, binary absent fails it closed) with
-`shutil.which` mocked, and a firing handler with stubbed CLI output have direct
-unit tests in `tests/test_cc_notes.py`:
+The Surface floaters split into thin event wiring over pure helpers for parsing,
+rendering, dedup, drift filtering, the precision filter, and task capping. Those
+helpers, both gate branches (binary present opens it, binary absent fails it closed)
+with `shutil.which` mocked, and the firing handlers with stubbed CLI and LLM output
+have direct unit tests in `tests/test_cc_notes.py`:
 
 ```console
 $ uv run plugin/hooks/tests/test_cc_notes.py
