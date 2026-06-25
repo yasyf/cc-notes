@@ -1,10 +1,11 @@
 name: Release
 
-# Tag-driven release. Pushing a vX.Y.Z tag cross-compiles the pure static
-# binaries (CGO off) plus the FUSE variants (cgo, -tags fuse), smoke-tests that
-# they run on a host WITHOUT a fuse library installed, then publishes them with
-# a SHA256SUMS manifest to the GitHub release for the tag. scripts/install.sh
-# downloads these assets, preferring the _fuse build where one exists.
+# Tag-driven release. Pushing a vX.Y.Z tag cross-compiles the pure static binaries
+# (CGO off) plus the FUSE variants (cgo, -tags fuse), smoke-tests that they run on a
+# host WITHOUT a fuse library installed, publishes them with a SHA256SUMS manifest to
+# the GitHub release, then renders Formula/cc-notes.rb and publishes it to the tap via
+# the shared homebrew-tap actions. scripts/install.sh downloads these assets,
+# preferring the _fuse build where one exists.
 
 on:
   push:
@@ -18,8 +19,17 @@ permissions:
   contents: write
 
 jobs:
+  verify-tag-on-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: yasyf/homebrew-tap/.github/actions/verify-tag-on-main@v1
+
   pure:
     name: pure ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: verify-tag-on-main
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -48,6 +58,7 @@ jobs:
 
   fuse-macos:
     name: fuse darwin (arm64 + amd64)
+    needs: verify-tag-on-main
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
@@ -56,34 +67,25 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Install fuse-t (build-time headers only)
-        # cgofuse compiles against fuse.h; fuse-t ships the headers. The
-        # library itself is dlopened lazily at runtime, so it is uninstalled
-        # again before the smoke step below.
+        # cgofuse compiles against fuse.h; fuse-t ships the headers. The library
+        # itself is dlopened lazily at runtime, so it is uninstalled before the smoke
+        # step below.
         run: brew install macos-fuse-t/cask/fuse-t
+
       - name: Import Developer ID certificate
+        uses: yasyf/homebrew-tap/.github/actions/import-developer-id@v1
+        with:
+          p12: ${{ secrets.MACOS_SIGN_P12 }}
+          p12-password: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
+          notary-key-id: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          notary-issuer-id: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+
+      - name: Build, sign, notarize the darwin fuse variants
+        # disable-library-validation: the fuse build dlopens libfuse-t (another team's
+        # dylib) under hardened runtime. macOS 15/26 SIGKILL ad-hoc/Team-less sigs.
         env:
-          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
-          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
-          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
-          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
-        run: |
-          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
-          KP="$(openssl rand -base64 24)"
-          security create-keychain -p "$KP" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KP" "$KEYCHAIN"
-          echo -n "$MACOS_SIGN_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_SIGN_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KP" "$KEYCHAIN" >/dev/null
-          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/[\" ]//g')
-          rm -f "$RUNNER_TEMP/cert.p12"
-          echo "MACOS_SIGN_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/{print $2; exit}')" >> "$GITHUB_ENV"
-          echo -n "$MACOS_NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
-          echo "MACOS_NOTARY_KEY_FILE=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
-          echo "MACOS_NOTARY_KEY_ID=$MACOS_NOTARY_KEY_ID" >> "$GITHUB_ENV"
-          echo "MACOS_NOTARY_ISSUER=$MACOS_NOTARY_ISSUER_ID" >> "$GITHUB_ENV"
-      - name: Build darwin fuse variants
+          MACOS_CODESIGN_DISABLE_LIBRARY_VALIDATION: "1"
         run: |
           COMMIT="$(git rev-parse --short HEAD)"
           LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${GITHUB_REF_NAME} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT}"
@@ -94,31 +96,16 @@ jobs:
           # amd64 slice cross-compiles against the fat macOS SDK.
           CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -tags fuse -ldflags "$LDFLAGS" \
             -o dist/cc-notes_darwin_amd64_fuse ./cmd/cc-notes
-          # Developer ID sign (hardened runtime) + notarize both slices — macOS 15/26
-          # reject ad-hoc/Team-less signatures (the binary gets SIGKILLed). The fuse build
-          # dlopens libfuse-t (another team's dylib), so it needs disable-library-validation
-          # under hardened runtime.
-          printf '%s' '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>com.apple.security.cs.disable-library-validation</key><true/></dict></plist>' > "$RUNNER_TEMP/fuse-ents.plist"
-          for b in dist/cc-notes_darwin_arm64_fuse dist/cc-notes_darwin_amd64_fuse; do
-            codesign --force --options runtime --timestamp --entitlements "$RUNNER_TEMP/fuse-ents.plist" -s "$MACOS_SIGN_IDENTITY" "$b"
-            codesign --verify --strict "$b"
-            z="$(mktemp -d)/$(basename "$b").zip"; ditto -c -k "$b" "$z"
-            xcrun notarytool submit "$z" --key "$MACOS_NOTARY_KEY_FILE" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER" --wait --timeout 20m
-          done
+          # Developer ID sign + notarize each darwin binary via the shared script.
+          bash "$MACOS_CODESIGN_SCRIPT" dist/cc-notes_darwin_arm64_fuse darwin_arm64
+          bash "$MACOS_CODESIGN_SCRIPT" dist/cc-notes_darwin_amd64_fuse darwin_amd64
       - name: Smoke (fuse binary without fuse-t)
-        # The fuse binary dlopens libfuse-t lazily, so it must run cleanly on a
-        # Mac that has no fuse-t. The runner is arm64 and has none. `mount` now
-        # detaches by default: it SPAWNS a mount holder that cannot load
-        # libfuse-t, so the holder reports the failure, the command exits 1 with
-        # a "fuse" hint, and — the key property of the holder model — it RETURNS
-        # rather than blocking. `mount --foreground` fails the same way
-        # in-process. Both must exit 1 (not a crash signal). HOME is scoped to a
-        # scratch dir so the spawned holder's socket/log are isolated, and the
-        # holder is shut down afterward so it does not linger.
+        # The fuse binary dlopens libfuse-t lazily, so it must run cleanly on a Mac
+        # that has no fuse-t. The runner is arm64 and has none. `mount` detaches by
+        # default: it SPAWNS a mount holder that cannot load libfuse-t, so the holder
+        # reports the failure, the command exits 1 with a "fuse" hint, and RETURNS
+        # rather than blocking. `mount --foreground` fails the same way in-process.
         run: |
-          # The cask uninstall can exit nonzero on CI runners and may leave the
-          # pkg-installed dylibs behind; remove them explicitly so the
-          # no-fuse-t assertion below stays strict.
           brew uninstall fuse-t || true
           sudo rm -f /usr/local/lib/libfuse-t*
           test ! -e /usr/local/lib/libfuse-t.dylib
@@ -126,7 +113,6 @@ jobs:
           export HOME="$RUNNER_TEMP/ccn-home"
           mkdir -p "$HOME" "$RUNNER_TEMP/ccn-mp"
           "$BIN" version | grep -q "${GITHUB_REF_NAME}"
-          # Detached default: spawns a holder that cannot host; exits 1, returns.
           set +e
           out="$("$BIN" mount "$RUNNER_TEMP/ccn-mp" 2>&1)"
           code=$?
@@ -134,7 +120,6 @@ jobs:
           echo "detached: $out"
           test "$code" -eq 1
           echo "$out" | grep -qi fuse
-          # Foreground: fails in-process the same way (no holder).
           set +e
           out="$("$BIN" mount --foreground "$RUNNER_TEMP/ccn-mp" 2>&1)"
           code=$?
@@ -142,7 +127,6 @@ jobs:
           echo "foreground: $out"
           test "$code" -eq 1
           echo "$out" | grep -qi fuse
-          # Tear down the spawned holder and remove its socket/log.
           "$BIN" mount --shutdown 2>&1 || true
           rm -rf "$HOME/.cc-notes"
       - uses: actions/upload-artifact@v7
@@ -153,6 +137,7 @@ jobs:
 
   fuse-linux:
     name: fuse linux/amd64
+    needs: verify-tag-on-main
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -190,9 +175,6 @@ jobs:
           name: cc-notes_linux_amd64_fuse
           path: bin
       - name: Smoke both linux binaries
-        # This runner installs no libfuse3 runtime, so the fuse binary cannot
-        # dlopen it either. `mount` detaches by default. HOME is scoped to a
-        # scratch dir so the spawned holder is isolated and torn down at the end.
         run: |
           chmod +x bin/cc-notes_linux_amd64 bin/cc-notes_linux_amd64_fuse
           export HOME="$RUNNER_TEMP/ccn-home"
@@ -200,8 +182,6 @@ jobs:
           for BIN in bin/cc-notes_linux_amd64 bin/cc-notes_linux_amd64_fuse; do
             "$BIN" version | grep -q "${GITHUB_REF_NAME}"
           done
-          # Pure binary: detached mount cannot spawn a holder (no fuse build) and
-          # --foreground cannot host — both print the install hint, exit 1, return.
           for MODE in "" "--foreground"; do
             set +e
             out="$(bin/cc-notes_linux_amd64 mount $MODE /tmp/ccn-pure 2>&1)"
@@ -211,8 +191,6 @@ jobs:
             test "$code" -eq 1
             echo "$out" | grep -qi fuse
           done
-          # Fuse binary: detached mount spawns a holder that cannot load libfuse3;
-          # the holder reports the failure, the command exits 1 AND returns.
           set +e
           out="$(bin/cc-notes_linux_amd64_fuse mount /tmp/ccn-fuse 2>&1)"
           code=$?
@@ -220,7 +198,6 @@ jobs:
           echo "fuse detached: $out"
           test "$code" -eq 1
           echo "$out" | grep -qi fuse
-          # Foreground fuse: fails in-process the same way (no holder).
           set +e
           out="$(bin/cc-notes_linux_amd64_fuse mount --foreground /tmp/ccn-fuse 2>&1)"
           code=$?
@@ -228,7 +205,6 @@ jobs:
           echo "fuse foreground: $out"
           test "$code" -eq 1
           echo "$out" | grep -qi fuse
-          # Tear down the spawned holder and remove its socket/log.
           bin/cc-notes_linux_amd64_fuse mount --shutdown 2>&1 || true
           rm -rf "$HOME/.cc-notes"
 
@@ -267,141 +243,46 @@ jobs:
     # Prerelease tags (v1.2.3-rc.1) publish assets but never touch the formula.
     if: ${{ !contains(github.ref_name, '-') }}
     steps:
-      # cc-notes' own checkout: the formula is generated from this canonical
-      # template, and the capt-hook manifest bump is committed back here.
+      # cc-notes' own checkout: the formula template lives here, and the capt-hook
+      # manifest bump is committed back here.
       - uses: actions/checkout@v6
         with:
           ref: main
-      - name: Render Formula into staging dir
+      - name: Extract the fuse asset checksums
+        id: shas
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           gh release download "$GITHUB_REF_NAME" --pattern SHA256SUMS.txt --output sums.txt
           sha() { awk -v a="$1" '$2 == a {print $1}' sums.txt; }
-          DARWIN_ARM64="$(sha cc-notes_darwin_arm64_fuse)"
-          DARWIN_AMD64="$(sha cc-notes_darwin_amd64_fuse)"
-          LINUX_AMD64="$(sha cc-notes_linux_amd64_fuse)"
-          LINUX_ARM64="$(sha cc-notes_linux_arm64)"
-          test -n "$DARWIN_ARM64" && test -n "$DARWIN_AMD64" && test -n "$LINUX_AMD64" && test -n "$LINUX_ARM64"
-          # The canonical formula template lives inline here. Asset urls
-          # interpolate v#{version}, so only the version line and the four
-          # marker-anchored shas vary per release; the trailing `# darwin-arm64`
-          # etc. markers anchor the seds below — keep them. The rendered formula
-          # is staged under tap-staging/ and published by the shared composite
-          # action below, which checks out the tap, merges this dir in, and pushes.
-          mkdir -p tap-staging/Formula
-          F=tap-staging/Formula/cc-notes.rb
-          cat > "$F" <<'FORMULA'
-          # Homebrew formula for cc-notes. Installs the prebuilt binary for the
-          # current platform from cc-notes' GitHub Releases — no Go toolchain
-          # needed. `brew install --HEAD` builds (pure Go) from source instead.
-          #
-          #   brew install yasyf/tap/cc-notes
-          #
-          # The FUSE-capable build ships everywhere one is published (macOS both
-          # arches, linux/amd64) and runs fine without FUSE present — only
-          # `cc-notes mount` needs fuse-t (macOS) or fuse3 (Linux) at runtime. If
-          # asset names or the fuse matrix change, scripts/install.sh and the
-          # bump-formula seds in .github/workflows/release.yml (in cc-notes) must
-          # change in lockstep.
-          #
-          # This file is generated and pushed by cc-notes' release.yml bump-formula
-          # job on every stable tag; edit the template there, not here.
-          class CcNotes < Formula
-            desc "Git-native notes and tasks layer for agents"
-            homepage "https://github.com/yasyf/cc-notes"
-            version "PLACEHOLDER_VERSION"
-            license "PolyForm-Noncommercial-1.0.0"
-
-            livecheck do
-              url :stable
-              strategy :github_latest
-            end
-
-            head do
-              url "https://github.com/yasyf/cc-notes.git", branch: "main"
-              depends_on "go" => :build
-            end
-
-            on_macos do
-              on_arm do
-                url "https://github.com/yasyf/cc-notes/releases/download/v#{version}/cc-notes_darwin_arm64_fuse"
-                sha256 "0000000000000000000000000000000000000000000000000000000000000000" # darwin-arm64
-              end
-              on_intel do
-                url "https://github.com/yasyf/cc-notes/releases/download/v#{version}/cc-notes_darwin_amd64_fuse"
-                sha256 "0000000000000000000000000000000000000000000000000000000000000000" # darwin-amd64
-              end
-            end
-
-            on_linux do
-              on_intel do
-                url "https://github.com/yasyf/cc-notes/releases/download/v#{version}/cc-notes_linux_amd64_fuse"
-                sha256 "0000000000000000000000000000000000000000000000000000000000000000" # linux-amd64
-              end
-              on_arm do
-                # No FUSE variant ships for linux/arm64; this is the pure binary.
-                url "https://github.com/yasyf/cc-notes/releases/download/v#{version}/cc-notes_linux_arm64"
-                sha256 "0000000000000000000000000000000000000000000000000000000000000000" # linux-arm64
-              end
-            end
-
-            def install
-              if build.head?
-                ENV["CGO_ENABLED"] = "0"
-                ldflags = "-s -w -X github.com/yasyf/cc-notes/internal/version.Version=#{version}"
-                system "go", "build", *std_go_args(ldflags: ldflags, output: bin/"cc-notes"), "./cmd/cc-notes"
-              else
-                # The release asset is a bare binary staged under its asset name.
-                bin.install Dir["cc-notes_*"].first => "cc-notes"
-              end
-              bin.install_symlink "cc-notes" => "ccn"
-            end
-
-            def caveats
-              on_macos do
-                <<~EOS
-                  `cc-notes mount` needs fuse-t at runtime:
-                    brew install macos-fuse-t/cask/fuse-t
-                  Everything else works without it.
-                EOS
-              end
-            end
-
-            test do
-              # Release binaries print "<tag> (<commit>)", e.g. "v0.2.0 (ab12cd3)".
-              assert_match version.to_s, shell_output("#{bin}/cc-notes version")
-            end
-          end
-          FORMULA
-          # Rewrite the version line and the four marker-anchored shas.
-          sed -i -E "s|^  version \"[^\"]+\"|  version \"${VERSION}\"|" "$F"
-          sed -i -E "s|sha256 \"[0-9a-f]{64}\" # darwin-arm64|sha256 \"${DARWIN_ARM64}\" # darwin-arm64|" "$F"
-          sed -i -E "s|sha256 \"[0-9a-f]{64}\" # darwin-amd64|sha256 \"${DARWIN_AMD64}\" # darwin-amd64|" "$F"
-          sed -i -E "s|sha256 \"[0-9a-f]{64}\" # linux-amd64|sha256 \"${LINUX_AMD64}\" # linux-amd64|" "$F"
-          sed -i -E "s|sha256 \"[0-9a-f]{64}\" # linux-arm64|sha256 \"${LINUX_ARM64}\" # linux-arm64|" "$F"
-          # Fail loud if a sed anchor stopped matching.
-          grep -q "version \"${VERSION}\"" "$F"
-          grep -q "${DARWIN_ARM64}\" # darwin-arm64" "$F"
-          grep -q "${DARWIN_AMD64}\" # darwin-amd64" "$F"
-          grep -q "${LINUX_AMD64}\" # linux-amd64" "$F"
-          grep -q "${LINUX_ARM64}\" # linux-arm64" "$F"
-      # The shared action checks out yasyf/homebrew-tap, merges tap-staging/'s
-      # contents into the tap root, then git add -A / commit / push. This job no
-      # longer checks out or runs any git against the tap itself.
-      - name: Publish Formula to yasyf/homebrew-tap
-        uses: yasyf/homebrew-tap/.github/actions/publish@main
+          da="$(sha cc-notes_darwin_arm64_fuse)"; dx="$(sha cc-notes_darwin_amd64_fuse)"
+          la="$(sha cc-notes_linux_arm64)"; lx="$(sha cc-notes_linux_amd64_fuse)"
+          test -n "$da" && test -n "$dx" && test -n "$la" && test -n "$lx"
+          {
+            echo "darwin_arm64=$da"
+            echo "darwin_amd64=$dx"
+            echo "linux_amd64=$lx"
+            echo "linux_arm64=$la"
+          } >> "$GITHUB_OUTPUT"
+      - name: Render Formula/cc-notes.rb
+        uses: yasyf/homebrew-tap/.github/actions/render-formula@v1
+        with:
+          template: .github/formula/cc-notes.rb.tmpl
+          output: Formula/cc-notes.rb
+          substitutions: |
+            __SHA_DARWIN_ARM64__=${{ steps.shas.outputs.darwin_arm64 }}
+            __SHA_DARWIN_AMD64__=${{ steps.shas.outputs.darwin_amd64 }}
+            __SHA_LINUX_AMD64__=${{ steps.shas.outputs.linux_amd64 }}
+            __SHA_LINUX_ARM64__=${{ steps.shas.outputs.linux_arm64 }}
+      - name: Publish Formula to the tap
+        uses: yasyf/homebrew-tap/.github/actions/publish@v1
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           dir: tap-staging
           message: "cc-notes ${{ github.ref_name }}"
-      - name: Bump capt-hook manifest in cc-notes main
+      - name: Bump the capt-hook manifest in cc-notes main
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # The capt-hook pack manifest is cc-notes' own file; keep bumping it in
-          # this repo's main on every stable release. This commits to cc-notes'
-          # own main via the default checkout token — unrelated to the tap.
           M=.claude/capt-hook.toml
           sed -i -E "s|^version = \"[^\"]+\"|version = \"${VERSION}\"|" "$M"
           grep -q "version = \"${VERSION}\"" "$M"
