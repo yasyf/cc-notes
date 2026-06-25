@@ -1,50 +1,21 @@
-"""capt-hook enforcement hooks for repos that have adopted cc-notes.
+"""capt-hook nudges for repos that have adopted cc-notes.
 
-These are advisory NUDGES, never gates: cc-notes *complements* Claude's native
-task tracking, so the hooks only ever warn — they never block a tool call.
+These are advisory NUDGES, never gates: cc-notes complements Claude's native task
+tracking, so the hooks only ever warn — they never block a tool call. Per-repo
+opt-in is the pack's presence in ``.claude/hooks/packs.toml``; a repo that doesn't
+want the nudges simply doesn't enable it.
 
-Every hook is one shape — **static recall → LLM precision → act** — running in one
-of two directions. **Surface** (pull) takes a file the agent touched, recalls the
-durable records anchored to it (``cc-notes relevant``), and a small LLM keeps the
-subset worth putting in context (:func:`surface_filter`); it fails OPEN, since a
-broken filter must never hide context. **Record** (push) takes a write, commit, or
-plan, recalls a candidate over a cheap glob/diff, and a small LLM confirms it is
-durable and routes it to the right primitive — note, doc, log, or task — or to
-nothing; it fails CLOSED to silence. The cheap layer deliberately over-selects; the
-LLM is the precision gate in both directions. The only deterministic outcomes are
-where there is no "which" to choose: a cc-pool memory file already declares its type
-(→ :func:`mirror_memory_to_note`, no LLM), and the pure workflow reminders (merge →
-reconcile, claim → sync) have a single fixed action.
+Every hook is one shape — static recall → LLM precision → act — running in one of two
+directions. **Surface** (pull) takes a file the agent touched, recalls the durable
+records anchored to it, and a small LLM keeps the subset worth surfacing
+(:func:`surface_filter`); it fails OPEN, since a broken filter must never hide
+context. **Record** (push) takes a write, commit, or plan, recalls a candidate over a
+cheap glob/diff, and a small LLM confirms it is durable and routes it — or routes it to
+nothing; it fails CLOSED to silence. The cheap layer deliberately over-selects; the LLM
+is the precision gate in both directions.
 
-Every *workflow* nudge is gated behind :class:`CcNotesAvailable`, which keeps them
-completely silent unless the ``cc-notes`` binary is on PATH — with one exception:
-:func:`prompt_install_cc_notes`, gated on the inverse :class:`CcNotesMissing`,
-fires precisely when the binary is absent so an opt-in repo isn't left with silent
-nudges and no hint. Per-repo opt-in is the pack's *presence* in
-``.claude/hooks/packs.toml`` — a repo that doesn't want these nudges simply
-doesn't enable the pack. The read-time floaters fall closed to silence on a repo
-with no cc-notes refs anyway, since :func:`run_cc_notes` returns nothing to render
-there.
-
-The teaching goal is the native-vs-durable distinction:
-
-  * native ``TaskCreate``/``TaskUpdate`` — ephemeral, this-session-only, private
-    scratchpad for decomposing the current task into in-session steps;
-  * ``cc-notes task`` — durable, git-synced, GLOBAL work. The id is global; a
-    task's branch is a mutable attribute (the shared backlog is the unassigned
-    queue, ``Branch == ""``, visible to every agent), and ``task start`` claims
-    it under a lease while moving it onto your current branch;
-  * ``cc-notes note`` — durable, git-synced, repo-global decisions & facts, born
-    verified against HEAD with first-class drift/verify/supersede;
-  * ``cc-notes doc`` — durable, git-synced, repo-global living guidance for the
-    next agent (a handoff brief, a runbook, design rationale), anchored like a
-    note, carrying a ``--when`` read-trigger, re-verified and drift-checked against
-    HEAD;
-  * ``cc-notes log`` — durable, git-synced, repo-global append-only chronological
-    journal (an incident timeline, a rollout log, a debugging session). Anchorable
-    and surfaced by ``cc-notes relevant`` and the read/edit hooks exactly like a
-    doc, but with no freshness lifecycle: entries are immutable and never edited,
-    so a log never drifts and carries no verify/supersede machinery.
+For what each cc-notes record (note/doc/log/task) is, see the README's "What the hooks
+teach" table — the prompts here speak in those same terms.
 """
 
 from __future__ import annotations
@@ -68,7 +39,6 @@ from captain_hook import (
     Warn,
     nudge,
     on,
-    session_state,
 )
 from captain_hook.state import fired_this_turn, record_fire
 from captain_hook.types import Command
@@ -76,21 +46,11 @@ from pydantic import BaseModel
 
 NATIVE_TASK_MIRROR_THRESHOLD = 5
 
-# SESSION_TASK_CAP bounds how many durable tasks the session-start floater shows
-# before collapsing the rest into a "+K more" tail pointing at `cc-notes status`.
+# Max durable tasks the session-start floater shows before a "+K more" tail.
 SESSION_TASK_CAP = 7
-
-# NUDGE_MAX_FIRES is the uniform session cap on every advisory that isn't a
-# once-per-session orientation (those use max_fires=1) and doesn't self-limit by
-# per-id dedup (the surface floaters and the mirror carry no cap). One number for
-# the whole Record-routing + Workflow-reminder surface keeps the policy legible:
-# any one of these speaks at most three times a session, then stays quiet.
+# Per-session fire cap for advisories that aren't once-per-session and don't self-dedup.
 NUDGE_MAX_FIRES = 3
-
-# LLM_INPUT_CAP bounds the body/diff/plan text handed to a precision classifier so
-# one large write, commit, or plan can never blow the small-model prompt. The tail
-# past the cap is rarely decision-relevant — the opening of a file, diff, or plan
-# carries the signal a router needs.
+# Cap on body/diff/plan text handed to a small-model classifier.
 LLM_INPUT_CAP = 6000
 
 GIT_MERGE_PULL = r"^git\s+(?:-\S+\s+)*(?:merge|pull)\b"
@@ -286,16 +246,6 @@ def render_log_line(entry: dict[str, Any]) -> str:
         line += f" ({reasons})"
     line += f" — cc-notes log show {short}"
     return line
-
-
-def dedup_against_ids(entries: list[dict[str, Any]], seen: list[str]) -> list[dict[str, Any]]:
-    """Drop relevance entries whose payload id is already in ``seen``, preserving order.
-
-    Indexes each entry by kind (``doc`` or ``note``) so a floated doc dedups
-    against its own id, not a missing ``note`` key.
-    """
-    seen_set = set(seen)
-    return [e for e in entries if entry_payload(e).get("id") not in seen_set]
 
 
 def filter_drifted(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -530,44 +480,6 @@ class MemoryWrite(CustomCondition):
         return in_cc_pool_memory(p) and p.suffix == ".md" and p.name != "MEMORY.md"
 
 
-@session_state
-class FloatedNotes(BaseModel):
-    """Per-session record of note ids already floated as Read-time context."""
-
-    ids: list[str] = []
-
-
-@session_state
-class StaleChecked(BaseModel):
-    """Per-session record of note ids already surfaced as edit-time staleness prompts."""
-
-    ids: list[str] = []
-
-
-@session_state
-class CommitsJudged(BaseModel):
-    """Per-session record of HEAD shas the commit record-router has already judged.
-
-    Dedup is per commit, not per turn: a sha judged once is never re-judged, so an
-    amend (new sha) or a multi-commit turn each get exactly one look, and a no-op
-    re-fire on the same HEAD stays silent.
-    """
-
-    shas: list[str] = []
-
-
-@session_state
-class PlansSeen(BaseModel):
-    """Per-session record of plan file paths the plan record-router has already handled.
-
-    Keyed on ``planFilePath`` — one nudge per plan file, so re-approving the same plan
-    stays silent while a genuinely new plan fires again. A plan approved without a path
-    (rare) isn't deduped; ``max_fires`` caps the repeats.
-    """
-
-    paths: list[str] = []
-
-
 @on(
     Event.UserPromptSubmit,
     only_if=[CcNotesAvailable()],
@@ -643,6 +555,12 @@ class SurfacePick(BaseModel):
     ids: list[str] = []
 
 
+def unseen_entries(evt: BaseHookEvent, entries: list[dict[str, Any]], *, scope: str) -> list[dict[str, Any]]:
+    """Fresh entries (not yet surfaced under scope), marking every candidate before the LLM filters."""
+    fresh = set(evt.ctx.s.unseen([entry_payload(e)["id"] for e in entries], scope=scope))
+    return [e for e in entries if entry_payload(e)["id"] in fresh]
+
+
 def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touched: str) -> list[dict[str, Any]]:
     """Pick which freshly-recalled records to surface, biased toward surfacing.
 
@@ -677,34 +595,25 @@ def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touche
     Event.PostToolUse,
     only_if=[Tool("Read"), CcNotesAvailable()],
     tests={
-        # A non-Read tool never matches the Tool gate — deterministic silence
-        # regardless of cc-notes state. The firing path (Read floats relevant
-        # notes) shells out to `cc-notes relevant`, so its assertion lives in
-        # tests/test_cc_notes.py with a stubbed CLI, not here.
+        # A non-Read tool never matches the Tool gate. The firing path needs a stubbed
+        # CLI, so it lives in tests/test_cc_notes.py.
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
 def float_note_context(evt: PostToolUseEvent) -> Any:
     """Surface the notes, docs, and logs relevant to a freshly read file, once per id per session.
 
-    The recall step runs ``cc-notes relevant <path> --json`` and drops ids already
-    floated this session; the precision step (:func:`surface_filter`, a small LLM
-    biased toward surfacing) keeps the worthwhile subset. Every fresh id is marked
-    judged before filtering, so a record is weighed at most once a session. On a
-    non-empty pick it warns with each entry's pointer — a note's title/reasons/drift,
-    a doc's title, ``when`` trigger, and freshness verdict (never its body), or a
-    log's title and ``log show`` hint (never its entries, and no drift — a log never
-    drifts). Silent when recall empties or the filter keeps nothing.
+    Recall runs ``cc-notes relevant <path> --json``; the precision step
+    (:func:`surface_filter`) keeps the worthwhile subset. :func:`unseen_entries` marks
+    every fresh id judged before filtering, so a record is weighed at most once a session.
+    Silent when recall empties or the filter keeps nothing.
     """
     if not evt.file:
         return None
     entries = parse_relevant(run_cc_notes(evt, "relevant", str(evt.file), "--json"))
-    floated = evt.ctx.session.load(FloatedNotes)
-    fresh = dedup_against_ids(entries, floated.ids)
+    fresh = unseen_entries(evt, entries, scope="floated")
     if not fresh:
         return None
-    floated.ids = floated.ids + [entry_payload(e)["id"] for e in fresh]
-    evt.ctx.session[FloatedNotes].set(floated)
     picked = surface_filter(evt, fresh, touched="read")
     if not picked:
         return None
@@ -719,35 +628,28 @@ def float_note_context(evt: PostToolUseEvent) -> Any:
     Event.PostToolUse,
     only_if=[Tool("Edit|Write|MultiEdit"), CcNotesAvailable()],
     tests={
-        # A Read never matches the Edit|Write|MultiEdit gate — deterministic
-        # silence regardless of cc-notes state. The firing path (a drifted note
-        # on the edited path) shells out to `cc-notes relevant`, so its assertion
-        # lives in tests/test_cc_notes.py with a stubbed CLI, not here.
+        # A Read never matches the Edit|Write|MultiEdit gate. The firing path needs a
+        # stubbed CLI, so it lives in tests/test_cc_notes.py.
         Input(tool="Read", file="m.py"): Allow(),
     },
 )
 def check_note_staleness(evt: PostToolUseEvent) -> Any:
     """Surface drifted records anchored to a path an edit just touched, for reconciliation.
 
-    The recall step runs ``cc-notes relevant <path> --attached --worktree --json`` and
-    keeps only entries whose kind-dispatched drift verdict is non-null (notes and
-    drifted/expired docs alike; a log never drifts); the precision step
-    (:func:`surface_filter`) keeps the subset whose drift actually warrants a look.
-    Every fresh id is marked judged before filtering, so a record is weighed at most
-    once a session. On a non-empty pick it warns naming the file and the
-    verify/edit/supersede/expire next steps for the matching kind. Docs render through
-    :func:`render_doc_line` (pointer only, never the body). Silent otherwise.
+    Recall runs ``cc-notes relevant <path> --attached --worktree --json``;
+    :func:`filter_drifted` keeps only entries with a non-null drift verdict (a log never
+    drifts), then :func:`surface_filter` keeps the subset worth a look. :func:`unseen_entries`
+    marks every fresh id judged before filtering, so a record is weighed at most once a
+    session — under a distinct ``stale`` scope, so a read-time float never suppresses the
+    edit-time warning for the same id. Docs render pointer-only, never the body.
     """
     if not evt.file:
         return None
     entries = parse_relevant(run_cc_notes(evt, "relevant", str(evt.file), "--attached", "--worktree", "--json"))
     drifted = filter_drifted(entries)
-    checked = evt.ctx.session.load(StaleChecked)
-    fresh = dedup_against_ids(drifted, checked.ids)
+    fresh = unseen_entries(evt, drifted, scope="stale")
     if not fresh:
         return None
-    checked.ids = checked.ids + [entry_payload(e)["id"] for e in fresh]
-    evt.ctx.session[StaleChecked].set(checked)
     picked = surface_filter(evt, fresh, touched="edited")
     if not picked:
         return None
@@ -765,11 +667,9 @@ def check_note_staleness(evt: PostToolUseEvent) -> Any:
     Event.PostToolUse,
     only_if=[Tool("Write|Edit|MultiEdit"), MemoryWrite(), CcNotesAvailable()],
     tests={
-        # Deterministic silence without a real file or CLI: the Tool gate rejects a
-        # Read; MemoryWrite rejects a normal source path and the MEMORY.md index;
-        # and a real memory path with no file on disk no-ops (parse returns None)
-        # before any shell-out. The create/update/skip litmus needs a real on-disk
-        # memory file and a stubbed CLI, so it lives in tests/test_cc_notes.py.
+        # Each case is silent without a real file or CLI (wrong tool, non-memory path,
+        # the MEMORY.md index, or a memory path with no file on disk). The create/update/
+        # skip litmus needs an on-disk file + stubbed CLI, so it lives in tests/test_cc_notes.py.
         Input(tool="Read", file="/n/.cc-pool/p/memory/x.md"): Allow(),
         Input(tool="Write", file="internal/store/store.go", content="x = 1\n"): Allow(),
         Input(tool="Write", file="/n/.cc-pool/p/memory/MEMORY.md", content="# Memory Index\n"): Allow(),
@@ -905,11 +805,9 @@ def record_command(kind: str, title: str, when: str, area: str) -> list[str]:
     only_if=[Tool("Write|Edit|MultiEdit"), DurableInternalWrite(), CcNotesAvailable()],
     max_fires=NUDGE_MAX_FIRES,
     tests={
-        # The DurableInternalWrite gate + the inline harness's default call_llm stub
-        # (record=False) make every case deterministic silence: a rejected path never
-        # reaches the LLM, and a matched path's stubbed verdict does not record. The
-        # firing / kind-routing split needs a call_llm stub returning record=True and
-        # lives in tests/test_cc_notes.py.
+        # Each case is silent under the default call_llm stub (record=False): a rejected
+        # path never reaches the LLM, a matched path's stubbed verdict doesn't record. The
+        # firing / kind-routing split needs a record=True stub, in tests/test_cc_notes.py.
         Input(tool="Write", file="HANDOFF.md", content="## Status\nHandoff\n## Remaining\n- [ ] x\n"): Allow(),
         Input(tool="Write", file="README.md", content="# Readme\nsome prose\n"): Allow(),
         Input(tool="Write", file="src/foo.ts", content="export const x = 1\n"): Allow(),
@@ -969,9 +867,7 @@ PLAN_TASKS_SYSTEM = (
     "being tied to this agent's current branch."
 )
 
-# The canonical native-vs-durable teaching. The four cc-notes primitives are
-# described here in the same terms the README table and SKILL.md use, so the line
-# an agent learns at plan time matches the reference it reads later.
+# The canonical native-vs-durable teaching, in the same terms as the README table and SKILL.md.
 PLAN_TEACH = (
     "Plan approved. Native TaskCreate/TaskUpdate is your private scratchpad — it vanishes at session "
     "end. Durable work that outlives the session or coordinates agents goes in `cc-notes task`: "
@@ -1061,19 +957,14 @@ def nudge_plan_tasks(evt: PostToolUseEvent) -> Any:
 
     The teach is deterministic and always fires; the extracted ``cc-notes task add``
     lines are the LLM precision step (:func:`plan_task_commands`). Deduped per
-    ``planFilePath`` in :class:`PlansSeen` so re-approving the same plan stays silent
-    while a genuinely new plan fires again; a plan with no path isn't deduped and
-    ``max_fires`` caps the repeats. Fails safe: a classifier error drops only the
-    extracted tasks, never the teach.
+    ``planFilePath`` so re-approving the same plan stays silent while a genuinely new plan
+    fires again; a plan with no path isn't deduped and ``max_fires`` caps the repeats.
+    Fails safe: a classifier error drops only the extracted tasks, never the teach.
     """
     text = plan_text(evt)
     path = evt._tool_input.get("planFilePath")
-    if isinstance(path, str) and path:
-        seen = evt.ctx.session.load(PlansSeen)
-        if path in seen.paths:
-            return None
-        seen.paths = seen.paths + [path]
-        evt.ctx.session[PlansSeen].set(seen)
+    if isinstance(path, str) and path and not evt.ctx.s.once(path, scope="plan"):
+        return None
     lines = [PLAN_TEACH]
     if commands := plan_task_commands(evt, text):
         lines.append("These items from your plan look like durable work — capture them:")
@@ -1098,22 +989,22 @@ COMMIT_DECISION_SYSTEM = (
 def commit_decision(evt: PostToolUseEvent) -> list[str]:
     """The 'capture this decision' lines for the HEAD commit, or [] when none is warranted.
 
-    Fetches the commit (message + diffstat + a bounded patch) and asks a small
-    non-agentic LLM whether it encodes a durable decision; on a note/doc verdict it
-    returns the framing line plus the exact ``cc-notes <kind> add``. Any git error
-    (including a ``git show`` timeout, which ``evt.ctx.git`` does not swallow) or any
-    classifier error returns [] — the deterministic link/sync reminder stands on its
-    own, so a missing suggestion never matters. Only note/doc are routed here: a
-    commit captures a decision, not a chronology or a task.
+    Pulls the HEAD commit's bounded diff via ``evt.ctx.diff(commit="HEAD")`` and asks a
+    small non-agentic LLM whether it encodes a durable decision; on a note/doc verdict it
+    returns the framing line plus the exact ``cc-notes <kind> add``. An empty diff, a git
+    error (including a diff timeout, which the primitive's git fallback does not swallow),
+    or any classifier error returns [] — the deterministic link/sync reminder stands on its
+    own, so a missing suggestion never matters. Only note/doc are routed here: a commit
+    captures a decision, not a chronology or a task.
     """
     try:
-        diff = evt.ctx.git("show", "--stat", "-p", "HEAD")
+        diff = evt.ctx.diff(commit="HEAD")
         if not diff:
             return []
         prompt = (
             Prompt()
             .system(COMMIT_DECISION_SYSTEM)
-            .context("commit", diff[:LLM_INPUT_CAP])
+            .context("commit", diff)
             .ask("Does this commit encode a durable decision worth a cc-notes note or doc?")
         )
         verdict = evt.ctx.call_llm(prompt, response_model=RecordVerdict, model="small", agent=False, transcript=False)
@@ -1143,20 +1034,16 @@ def nudge_commit_record(evt: PostToolUseEvent) -> Any:
 
     The link/sync reminder is deterministic workflow coordination and always fires; the
     decision suggestion is the LLM precision step (:func:`commit_decision`). Deduped per
-    HEAD sha in :class:`CommitsJudged` so each commit is judged once — an amend (new sha)
-    gets a fresh look, a no-op re-fire on the same HEAD stays silent. Fails safe: a git or
-    classifier error drops only the suggestion, never the reminder.
+    HEAD sha so each commit is judged once — an amend (new sha) gets a fresh look, a no-op
+    re-fire on the same HEAD stays silent; a sha-less git failure still fires the reminder.
+    Fails safe: a git or classifier error drops only the suggestion, never the reminder.
     """
     try:
         sha = (evt.ctx.git("rev-parse", "HEAD") or "").strip()
     except Exception:
         sha = ""
-    judged = evt.ctx.session.load(CommitsJudged)
-    if sha and sha in judged.shas:
+    if sha and not evt.ctx.s.once(sha, scope="commit"):
         return None
-    if sha:
-        judged.shas = judged.shas + [sha]
-        evt.ctx.session[CommitsJudged].set(judged)
     return evt.warn(
         "Commit landed. Link it to its task with a `cc-task: <id>` trailer (queryable via "
         "`git log --grep`, `cc-notes blame <sha>`, and `cc-notes history <id>`), then "

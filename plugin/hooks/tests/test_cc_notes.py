@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.13"
-# dependencies = ["capt-hook>=3.18.0", "pydantic>=2"]
+# dependencies = ["capt-hook>=4.2.0", "pydantic>=2"]
 # ///
 """Direct unit tests for the cc-notes capt-hook pack's pure helpers and handlers.
 
@@ -19,6 +19,7 @@ Run with the same toolchain the inline tests use::
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,20 +27,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cc_notes
 from cc_notes import (
-    CommitsJudged,
     DurableInternalWrite,
-    FloatedNotes,
     MemoryWrite,
-    PlansSeen,
     PlanTask,
     PlanTasks,
     RecordVerdict,
-    StaleChecked,
     SurfacePick,
     cap_and_render_tasks,
     check_note_staleness,
     commit_decision,
-    dedup_against_ids,
     entry_payload,
     filter_drifted,
     float_note_context,
@@ -229,14 +225,6 @@ def test_render_log_lines() -> None:
         ],
         repr(mixed),
     )
-
-
-def test_dedup_against_ids() -> None:
-    entries = [note_entry("aaa1111"), note_entry("bbb2222"), note_entry("ccc3333")]
-    kept = dedup_against_ids(entries, ["bbb2222"])
-    check("dedup_against_ids: drops seen, keeps order", [e["note"]["id"] for e in kept] == ["aaa1111", "ccc3333"], repr(kept))
-    check("dedup_against_ids: empty seen keeps all", dedup_against_ids(entries, []) == entries)
-    check("dedup_against_ids: all seen -> []", dedup_against_ids(entries, ["aaa1111", "bbb2222", "ccc3333"]) == [])
 
 
 def test_filter_drifted() -> None:
@@ -556,7 +544,8 @@ def test_float_note_context_dedup(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
     first = float_note_context(evt)
     check("note floater: first read warns", first is not None and first.action is Action.warn, repr(first))
-    check("note floater: persisted id", evt.ctx.session.load(FloatedNotes).ids == ["deadbeef000"])
+    if first and first.message:
+        check("note floater: surfaces the note", "deadbee Schema" in first.message, first.message)
 
     evt2 = mock_event("PostToolUse", tool="Read", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
@@ -583,7 +572,6 @@ def test_check_note_staleness_drift_only(monkeypatch, tmp_path) -> None:
         check("staleness: lists only drifted note", "stale00" in result.message and "fresh00" not in result.message, result.message)
         check("staleness: names note reconciliation commands", "cc-notes note verify/edit/supersede/expire" in result.message, result.message)
         check("staleness: names doc reconciliation commands", "cc-notes doc verify/edit/supersede/expire" in result.message, result.message)
-    check("staleness: persisted only drifted id", evt.ctx.session.load(StaleChecked).ids == ["stale000bbb"])
 
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
@@ -623,7 +611,6 @@ def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
         check("staleness doc: lowercased verdict", "[drifted]" in result.message, result.message)
         check("staleness doc: never leaks the body", "LONG_DOC_BODY" not in result.message, result.message)
         check("staleness doc: names doc reconciliation commands", "cc-notes doc verify/edit/supersede/expire" in result.message, result.message)
-    check("staleness doc: persisted by doc id", evt.ctx.session.load(StaleChecked).ids == ["drifteddoc01"], repr(evt.ctx.session.load(StaleChecked).ids))
 
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
@@ -634,9 +621,10 @@ def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path
     """With 2+ drifted records the filter surfaces only the LLM's pick, yet marks ALL drifted judged once/session.
 
     Mirrors test_float_note_context_multi_filters_but_judges_all for the edit-time path:
-    check_note_staleness re-implements the same mark-all-before-filter ordering, so it
-    needs its own multi-candidate litmus. A regression that filtered before persisting, or
-    persisted only the picked subset, would re-warn an unpicked drifted record forever.
+    check_note_staleness drives the same mark-all-before-filter ordering, so it needs its
+    own multi-candidate litmus. The re-edit fires a fail-OPEN LLM stub: if the unpicked
+    drf0002bbb were not marked judged on the first pass, it would resurface here, so the
+    silent second call is the behavioral proof that ALL drifted ids were marked.
     """
     monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     payload = cc_notes.json.dumps(
@@ -655,15 +643,40 @@ def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path
     if result and result.message:
         check("staleness multi: surfaces picked", "drf0001" in result.message and "drf0003" in result.message, result.message)
         check("staleness multi: drops unpicked", "drf0002" not in result.message, result.message)
-    check(
-        "staleness multi: marks ALL drifted judged once/session",
-        sorted(evt.ctx.session.load(StaleChecked).ids) == ["drf0001aaa", "drf0002bbb", "drf0003ccc"],
-        repr(evt.ctx.session.load(StaleChecked).ids),
-    )
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
     monkeypatch.setattr(evt2.ctx, "call_llm", _llm_boom)
-    check("staleness multi: re-edit fully deduped to silence", check_note_staleness(evt2) is None)
+    check("staleness multi: re-edit fully deduped to silence (unpicked drf0002 was marked)", check_note_staleness(evt2) is None)
+
+
+def test_float_and_staleness_scopes_are_isolated(monkeypatch, tmp_path) -> None:
+    """A read-time float of id X must NOT suppress the edit-time staleness warning for that same X.
+
+    The two handlers dedup under distinct scopes ("floated" vs "stale") on the SAME session
+    store. If they shared a scope, floating X on read would mark it judged everywhere and the
+    later edit-time drift warning for X would be wrongly swallowed. Both events share one
+    session_dir so the scopes coexist; only the scope split keeps them independent.
+    """
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    note_id = "sharedid0001"
+    read_payload = cc_notes.json.dumps([note_entry(note_id, drift=None, title="Shared fact", reasons=["dir"])])
+    edit_payload = cc_notes.json.dumps([note_entry(note_id, drift="STALE", title="Shared fact", reasons=["path"])])
+
+    read_evt = mock_event("PostToolUse", tool="Read", file="internal/store/store.go", session_dir=tmp_path)
+    monkeypatch.setattr(read_evt.ctx, "call_cli", stub_cli({("relevant", "internal/store/store.go", "--json"): read_payload}))
+    read_result = float_note_context(read_evt)
+    check("scope isolation: read floats the shared note", read_result is not None and note_id[:7] in (read_result.message or ""), repr(read_result))
+
+    edit_evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
+    monkeypatch.setattr(
+        edit_evt.ctx, "call_cli", stub_cli({("relevant", "internal/store/store.go", "--attached", "--worktree", "--json"): edit_payload})
+    )
+    edit_result = check_note_staleness(edit_evt)
+    check(
+        "scope isolation: a read-time float does NOT suppress the edit-time staleness warning for the same id",
+        edit_result is not None and note_id[:7] in (edit_result.message or ""),
+        repr(edit_result),
+    )
 
 
 def test_run_cc_notes_passes_throw_false(monkeypatch, tmp_path) -> None:
@@ -792,7 +805,10 @@ def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
         check("doc float: renders lowercased verdict", "[drifted]" in result.message, result.message)
         check("doc float: renders doc show hint", "cc-notes doc show d0cd0c0" in result.message, result.message)
         check("doc float: never leaks the body", "LONG_DOC_BODY" not in result.message, result.message)
-    check("doc float: persists by doc id", evt.ctx.session.load(FloatedNotes).ids == ["d0cd0c00111"], repr(evt.ctx.session.load(FloatedNotes).ids))
+
+    evt2 = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
+    check("doc float: re-read deduped by doc id -> None", float_note_context(evt2) is None)
 
 
 def test_float_note_context_floats_log(monkeypatch, tmp_path) -> None:
@@ -815,7 +831,10 @@ def test_float_note_context_floats_log(monkeypatch, tmp_path) -> None:
         check("log float: renders log show hint", "cc-notes log show 105f00b" in result.message, result.message)
         check("log float: no drift verdict", "[" not in result.message.split("Auth rollout", 1)[1], result.message)
         check("log float: never leaks entry text", "LOG_ENTRY_TEXT" not in result.message, result.message)
-    check("log float: persists by log id", evt.ctx.session.load(FloatedNotes).ids == ["105f00ba9c1"], repr(evt.ctx.session.load(FloatedNotes).ids))
+
+    evt2 = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
+    check("log float: re-read deduped by log id -> None", float_note_context(evt2) is None)
 
 
 def test_surface_filter_single_skips_llm(monkeypatch, tmp_path) -> None:
@@ -854,7 +873,12 @@ def test_surface_filter_fails_open(monkeypatch, tmp_path) -> None:
 
 
 def test_float_note_context_multi_filters_but_judges_all(monkeypatch, tmp_path) -> None:
-    """float_note_context surfaces only the LLM's pick, yet marks ALL fresh ids judged once/session."""
+    """float_note_context surfaces only the LLM's pick, yet marks ALL fresh ids judged once/session.
+
+    The re-read fires a fail-OPEN LLM stub: were the unpicked bbb0002xxx not marked judged on
+    the first pass, it would resurface here, so the silent second call proves all fresh ids
+    were marked before the filter ran.
+    """
     monkeypatch.setattr(cc_notes.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     payload = cc_notes.json.dumps(
         [note_entry("aaa0001xxx", title="Keep"), note_entry("bbb0002xxx", title="Drop"), note_entry("ccc0003xxx", title="Keep2")]
@@ -868,15 +892,10 @@ def test_float_note_context_multi_filters_but_judges_all(monkeypatch, tmp_path) 
     if result and result.message:
         check("multi float: surfaces picked", "aaa0001" in result.message and "ccc0003" in result.message, result.message)
         check("multi float: drops unpicked", "bbb0002" not in result.message, result.message)
-    check(
-        "multi float: marks ALL fresh judged once/session",
-        sorted(evt.ctx.session.load(FloatedNotes).ids) == ["aaa0001xxx", "bbb0002xxx", "ccc0003xxx"],
-        repr(evt.ctx.session.load(FloatedNotes).ids),
-    )
     evt2 = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
     monkeypatch.setattr(evt2.ctx, "call_llm", _llm_boom)
-    check("multi float: re-read fully deduped to silence", float_note_context(evt2) is None)
+    check("multi float: re-read fully deduped to silence (unpicked bbb0002 was marked)", float_note_context(evt2) is None)
 
 
 COMMIT_DIFF = (
@@ -886,9 +905,14 @@ COMMIT_DIFF = (
 
 
 def commit_event(tmp_path, monkeypatch, *, sha="deadsha000", verdict=None, diff=COMMIT_DIFF):
-    """An ExitPlanMode-free commit event with git + call_llm stubbed for the record-router."""
+    """A commit event with rev-parse (git), the commit diff primitive, and call_llm stubbed.
+
+    The handler reads the sha via ``evt.ctx.git("rev-parse", "HEAD")`` for per-sha dedup and
+    the patch via ``evt.ctx.diff(commit="HEAD")`` for the record-router — so both are stubbed.
+    """
     evt = mock_event("PostToolUse", tool="Bash", command="git commit -m x", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "git", stub_git({("rev-parse", "HEAD"): sha, ("show", "--stat", "-p", "HEAD"): diff}))
+    monkeypatch.setattr(evt.ctx, "git", stub_git({("rev-parse", "HEAD"): sha}))
+    monkeypatch.setattr(evt.ctx, "diff", lambda *a, **k: diff)
     monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict if verdict is not None else RecordVerdict(record=False)))
     return evt
 
@@ -928,7 +952,6 @@ def test_commit_dedup_per_sha(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     first = commit_event(tmp_path, monkeypatch, sha="sha111")
     check("commit dedup: first fire warns", nudge_commit_record(first) is not None)
-    check("commit dedup: sha recorded", "sha111" in first.ctx.session.load(CommitsJudged).shas)
     check("commit dedup: same sha silent", nudge_commit_record(commit_event(tmp_path, monkeypatch, sha="sha111")) is None)
     check("commit dedup: a new sha fires", nudge_commit_record(commit_event(tmp_path, monkeypatch, sha="sha222")) is not None)
 
@@ -937,20 +960,40 @@ def test_commit_fails_safe_without_git(monkeypatch, tmp_path) -> None:
     """git unavailable (no sha, no diff) still fires the base reminder — only the suggestion drops."""
     monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = mock_event("PostToolUse", tool="Bash", command="git commit -m x", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "git", stub_git({}))  # every git call -> None
+    monkeypatch.setattr(evt.ctx, "git", stub_git({}))  # rev-parse -> None (sha-less, dedup skipped, reminder fires)
+    monkeypatch.setattr(evt.ctx, "diff", lambda *a, **k: None)  # no diff -> the classifier is never reached
     monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # unreachable: no diff means no classifier call
     result = nudge_commit_record(evt)
     check("commit fail-safe: still warns the reminder", result is not None and "cc-notes sync" in (result.message or ""), repr(result))
 
 
 def test_commit_decision_llm_error_keeps_reminder(monkeypatch, tmp_path) -> None:
-    """git works (a diff is fetched) but the classifier raises: the suggestion drops, the reminder stays."""
+    """A diff is fetched but the classifier raises: the suggestion drops, the reminder stays."""
     monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    evt = commit_event(tmp_path, monkeypatch)  # git stub returns COMMIT_DIFF + a real sha
+    evt = commit_event(tmp_path, monkeypatch)  # diff stub returns COMMIT_DIFF + a real sha
     monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # classifier raises AFTER the diff is fetched
     result = nudge_commit_record(evt)
     check("commit llm-error: still warns the reminder", result is not None and "cc-notes sync" in (result.message or ""), repr(result))
     check("commit llm-error: drops the decision line", result is not None and "capture it" not in (result.message or ""), repr(result))
+
+
+def test_commit_fails_safe_on_git_timeout(monkeypatch, tmp_path) -> None:
+    """A git timeout (which evt.ctx.git/diff don't swallow) still fires the reminder — only the suggestion drops."""
+    monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+
+    def boom(*_a, **_k):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=5)
+
+    evt = commit_event(tmp_path, monkeypatch)  # the commit diff fetch times out (the jj-colocated git-fallback case)
+    monkeypatch.setattr(evt.ctx, "diff", boom)
+    result = nudge_commit_record(evt)
+    check("commit diff-timeout: still warns the reminder", result is not None and "cc-notes sync" in (result.message or ""), repr(result))
+    check("commit diff-timeout: drops the decision line", result is not None and "capture it" not in (result.message or ""), repr(result))
+
+    evt2 = commit_event(tmp_path, monkeypatch)  # the rev-parse for per-sha dedup times out -> sha-less, reminder still fires
+    monkeypatch.setattr(evt2.ctx, "git", boom)
+    result2 = nudge_commit_record(evt2)
+    check("commit rev-parse-timeout: still warns the reminder", result2 is not None and "cc-notes sync" in (result2.message or ""), repr(result2))
 
 
 SAMPLE_PLAN = "# Plan\n\n## Approach\n1. Add the widget\n2. Wire it up\n\n## Tasks\n- build the gateway client\n"
@@ -1001,15 +1044,18 @@ def test_plan_extracts_tasks_from_file(monkeypatch, tmp_path) -> None:
 
 
 def test_plan_dedup_per_path(monkeypatch, tmp_path) -> None:
-    """Re-approving the same plan file stays silent; the path is recorded once."""
+    """Re-approving the same plan file stays silent; a genuinely new plan path re-fires."""
     monkeypatch.setattr(cc_notes.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     plan_path = tmp_path / "plan.md"
     plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
     first = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")])
     check("plan dedup: first fires", nudge_plan_tasks(first) is not None)
-    check("plan dedup: path recorded", str(plan_path) in first.ctx.session.load(PlansSeen).paths)
     second = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")])
     check("plan dedup: same plan silent", nudge_plan_tasks(second) is None)
+    other_path = tmp_path / "plan2.md"
+    other_path.write_text(SAMPLE_PLAN, encoding="utf-8")
+    third = plan_event(tmp_path, monkeypatch, plan_path=other_path, tasks=[PlanTask(title="X")])
+    check("plan dedup: a new plan path re-fires", nudge_plan_tasks(third) is not None)
 
 
 def test_plan_text_prefers_file_over_inline(tmp_path) -> None:
