@@ -219,6 +219,7 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes note review` | Surface expired, drifted, stale, and unverified notes |
 | `cc-notes note search "<query>"` | Ranked search over titles, tags, and bodies |
 | `cc-notes doc add "<title>" --when "<trigger>"` | Store long-form agent guidance, born verified, with a when-to-read trigger |
+| `cc-notes doc edit <id> --checkout` | Render a doc (or note) to an editable file; edit it, then `--apply` (or `--abort`) |
 | `cc-notes doc search "<query>"` | Ranked search over doc titles, tags, and bodies |
 | `cc-notes log add "<title>"` | Start an append-only chronological journal |
 | `cc-notes log append <id> "<text>"` | Append one timestamped, authored entry to a log |

@@ -127,6 +127,8 @@ def check_note_staleness(evt: PostToolUseEvent) -> HookResult | None:
         "Reconcile each against its kind — `verify <id>` to re-confirm it against HEAD, `edit <id>` "
         "to revise it, `supersede <old> --by <new>` to replace it, or `expire <id>` to flag it "
         "out-of-date: for a note use `cc-notes note verify/edit/supersede/expire`, "
-        "for a doc use `cc-notes doc verify/edit/supersede/expire`.",
+        "for a doc use `cc-notes doc verify/edit/supersede/expire`. To revise a long "
+        "record with your file tools, `edit <id> --checkout` writes it to a file and "
+        "`--apply` commits the change.",
         *render_note_lines(picked),
     )

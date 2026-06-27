@@ -947,12 +947,19 @@ creation.
 | `--path <path>` | none | Path anchor; repeatable |
 | `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
 | `--branch <branch>` | none | Branch anchor; repeatable |
+| `--checkout` | off | Write a note template to an editable file and print its path |
+| `--apply <path>` | off | Create the note from the checked-out file |
+| `--abort <path>` | off | Discard the checked-out file |
 | `--json` | off | Emit JSON |
 
 ```console
 $ cc-notes note add "Auth tokens expire after 15 minutes" --path services/auth/login.go --tag design --body "Refresh client-side before expiry; the API returns 401 with no Retry-After header."
 ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes
 ```
+
+To draft a longer note as a file, run `cc-notes note add --checkout`, fill in the template it
+prints, then `cc-notes note add --apply <path>`. The created note is born verified, the same as a
+flag-driven `note add`.
 
 ### `cc-notes note edit ID`
 
@@ -967,7 +974,22 @@ Edit a note. Title and body replace; anchors and tags add or remove individually
 | `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
 | `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
 | `--add-branch` / `--rm-branch <branch>` | Add or remove a branch anchor; repeatable |
+| `--checkout` | Write the note to an editable Markdown file and print its path |
+| `--apply` | Apply the edits from the checked-out file |
+| `--abort` | Discard the checked-out file |
 | `--json` | Emit JSON |
+
+Editing as a file is the natural path when you want to revise the body with your normal file
+tools instead of passing `--body`: `--checkout` renders the note to a Markdown+frontmatter file
+and prints its path, you edit that file, then `--apply` diffs it against the checked-out version
+and commits only what changed. `--checkout` / `--apply` / `--abort` are mutually exclusive and
+cannot be combined with the content flags above.
+
+```console
+$ path=$(cc-notes note edit ebba9fb --checkout)
+$ $EDITOR "$path"          # or any Read/Write tooling
+$ cc-notes note edit ebba9fb --apply
+```
 
 ### `cc-notes note verify ID`
 
@@ -1124,7 +1146,14 @@ witness at creation.
 | `--path <path>` | none | Path anchor; repeatable |
 | `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
 | `--branch <branch>` | none | Branch anchor; repeatable |
+| `--checkout` | off | Write a doc template to an editable file and print its path |
+| `--apply <path>` | off | Create the doc from the checked-out file |
+| `--abort <path>` | off | Discard the checked-out file |
 | `--json` | off | Emit JSON |
+
+To draft a long doc as a file, run `cc-notes doc add --checkout`, fill in the template it prints
+(set `title`, the `when` trigger, and the body), then `cc-notes doc add --apply <path>`. The
+created doc is born verified, the same as a flag-driven `doc add`.
 
 ```console
 $ cc-notes doc add "How auth token refresh works" --dir internal/auth --tag design \
@@ -1148,7 +1177,22 @@ and tags add or remove individually.
 | `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
 | `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
 | `--add-branch` / `--rm-branch <branch>` | Add or remove a branch anchor; repeatable |
+| `--checkout` | Write the doc to an editable Markdown file and print its path |
+| `--apply` | Apply the edits from the checked-out file |
+| `--abort` | Discard the checked-out file |
 | `--json` | Emit JSON |
+
+A doc's body is usually long, so editing it as a file is often easier than `--body`: `--checkout`
+renders the doc to a Markdown+frontmatter file and prints its path, you edit that file with your
+normal tools, then `--apply` diffs it against the checked-out version and commits only what
+changed — including concurrent edits to fields you left alone. `--checkout` / `--apply` /
+`--abort` are mutually exclusive and cannot be combined with the content flags above.
+
+```console
+$ path=$(cc-notes doc edit 62208d7 --checkout)
+$ $EDITOR "$path"          # or any Read/Write tooling
+$ cc-notes doc edit 62208d7 --apply
+```
 
 ### `cc-notes doc verify ID`
 

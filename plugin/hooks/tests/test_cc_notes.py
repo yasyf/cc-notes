@@ -645,6 +645,7 @@ def test_check_note_staleness_drift_only(monkeypatch, tmp_path) -> None:
         check("staleness: lists only drifted note", "stale00" in result.message and "fresh00" not in result.message, result.message)
         check("staleness: names note reconciliation commands", "cc-notes note verify/edit/supersede/expire" in result.message, result.message)
         check("staleness: names doc reconciliation commands", "cc-notes doc verify/edit/supersede/expire" in result.message, result.message)
+        check("staleness: points at the file-edit workflow", "--checkout" in result.message and "--apply" in result.message, result.message)
 
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))

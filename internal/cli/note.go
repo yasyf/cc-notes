@@ -43,12 +43,23 @@ func newNoteCmd() *cobra.Command {
 func newNoteAddCmd() *cobra.Command {
 	var body string
 	var tags, commits, paths, dirs, branches []string
-	var jsonOut bool
+	var jsonOut, checkout, apply, abort bool
 	cmd := &cobra.Command{
 		Use:   "add TITLE",
 		Short: "Create a note",
-		Args:  exactArgs(1),
+		Long: "Create a note from flags, or as a file: --checkout writes a template to an\n" +
+			"editable file and prints its path; fill it in, then --apply <path> to create\n" +
+			"the note (or --abort <path> to discard).",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if checkout {
+				return exactArgs(0)(cmd, args)
+			}
+			return exactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if checkout || apply || abort {
+				return runFileMode(cmd, noteAdapter(), true, args, checkout, apply, abort, jsonOut)
+			}
 			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
@@ -100,6 +111,9 @@ func newNoteAddCmd() *cobra.Command {
 	flags.StringArrayVar(&dirs, "dir", nil, "directory anchor (repeatable)")
 	flags.StringArrayVar(&branches, "branch", nil, "branch anchor (repeatable)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags.BoolVar(&checkout, "checkout", false, "write a note template to an editable file and print its path")
+	flags.BoolVar(&apply, "apply", false, "create the note from the checked-out file (add --apply PATH)")
+	flags.BoolVar(&abort, "abort", false, "discard the checked-out file (add --abort PATH)")
 	return cmd
 }
 
@@ -189,12 +203,18 @@ func newNoteShowCmd() *cobra.Command {
 func newNoteEditCmd() *cobra.Command {
 	var title, body string
 	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches []string
-	var jsonOut bool
+	var jsonOut, checkout, apply, abort bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
 		Short: "Edit a note",
-		Args:  exactArgs(1),
+		Long: "Edit a note by flags, or as a file: --checkout writes the note to an editable\n" +
+			"Markdown file and prints its path; edit that file with your normal tools, then\n" +
+			"--apply to commit the change (or --abort to discard).",
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if checkout || apply || abort {
+				return runFileMode(cmd, noteAdapter(), false, args, checkout, apply, abort, jsonOut)
+			}
 			ctx := cmd.Context()
 			var ops []model.Op
 			if cmd.Flags().Changed("title") {
@@ -258,6 +278,9 @@ func newNoteEditCmd() *cobra.Command {
 	flags.StringArrayVar(&addBranches, "add-branch", nil, "add branch anchor (repeatable)")
 	flags.StringArrayVar(&rmBranches, "rm-branch", nil, "remove branch anchor (repeatable)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags.BoolVar(&checkout, "checkout", false, "write the note to an editable file and print its path")
+	flags.BoolVar(&apply, "apply", false, "apply edits from the checked-out file")
+	flags.BoolVar(&abort, "abort", false, "discard the checked-out file")
 	return cmd
 }
 

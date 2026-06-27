@@ -41,6 +41,27 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 	return snapshot, nil
 }
 
+// LoadAt folds the chain ending at head into a snapshot, using the same
+// tip-keyed fold cache as Load. Where Load resolves a ref to its current tip,
+// LoadAt takes the chain tip directly, so a caller holding a past head sha —
+// the base a file-edit buffer was rendered from — can reconstruct that exact
+// snapshot to diff an edit against. A head whose chain is unreadable fails.
+func (s *Store) LoadAt(ctx context.Context, head model.SHA) (model.Snapshot, error) {
+	if snap, ok := s.cache.get(head); ok {
+		return snap, nil
+	}
+	chain, err := s.Repo.ReadChain(ctx, head)
+	if err != nil {
+		return nil, fmt.Errorf("load at %s: %w", head, err)
+	}
+	snapshot, err := fold.Fold(chain)
+	if err != nil {
+		return nil, fmt.Errorf("load at %s: %w", head, err)
+	}
+	s.cache.put(head, snapshot)
+	return snapshot, nil
+}
+
 // HasNotes reports whether the repository holds any cc-notes entity: any ref
 // under refs/cc-notes/. It is the in-process equivalent of
 // `git for-each-ref --count=1 refs/cc-notes/`, with no binary lookup.
