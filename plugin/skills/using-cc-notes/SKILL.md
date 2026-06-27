@@ -241,6 +241,22 @@ List what has been mirrored with `cc-notes note list --tag memory`, then `cc-not
 it. The memory write itself always lands first and untouched; a mirror that cannot write stays
 silent, so it never disturbs the write it shadows.
 
+## Auto-sync / auto-reconcile (automatic)
+
+Where the cc-notes capt-hook pack is enabled, your git workflow keeps cc-notes refs shared on its
+own — you no longer run `cc-notes sync` by hand after routine actions. After a `git commit`, a
+`cc-notes task claim`/`task start`, or a `git merge`/`git pull`, a `PostToolUse` hook runs `cc-notes
+sync` itself, at most once per turn — a commit and a claim in the same turn sync once. After a `git
+merge`/`git pull` it first runs `cc-notes reconcile --into <current branch>`, carrying the merged
+branch's still-open tasks onto your branch, then syncs.
+
+Both are idempotent and fail-closed: a repo with no remote or an offline box stays silent, while a
+genuine sync failure — say a rejected non-fast-forward push — surfaces a short retry hint. A
+detached HEAD or a reconcile error is skipped silently. jj merges fire no git hooks, so after a jj
+merge you still run `cc-notes reconcile` and `cc-notes sync` yourself. Note the contrast with the
+memory mirror above: a memory write is not an auto-sync trigger, so the mirror still asks you to run
+`cc-notes sync` to share it.
+
 ## Projects and sprints (optional)
 
 An optional planning layer sits on top of tasks — skip it for the canonical flow above. A

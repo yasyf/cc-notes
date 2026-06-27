@@ -62,7 +62,7 @@ later. The session-start float is deterministic orientation, not a filtered surf
 | Trigger | Candidate | The LLM picks |
 |---------|-----------|---------------|
 | `Write` / `Edit` / `MultiEdit` of an internal-looking file (PostToolUse) | a status/handoff/notes/runbook/`memory/` file the static `DurableInternalWrite` gate flags | note / doc / log / task — or none; the subtle call is doc (living guidance) vs log (append-only chronology) |
-| `git commit` (PostToolUse) | the HEAD commit — message, diffstat, bounded patch | whether the change encodes a durable decision worth a note or doc; the `cc-task:` link + `cc-notes sync` reminder always fires regardless |
+| `git commit` (PostToolUse) | the HEAD commit — message, diffstat, bounded patch | whether the change encodes a durable decision worth a note or doc; the `cc-task:` link reminder always fires regardless, and the sync is an automatic side-effect (see below) |
 | `ExitPlanMode` (PostToolUse) | the approved plan's text (`planFilePath`, else inline) | which few plan items are durable work → `cc-notes task add` (`--backlog` if shared); the native-vs-durable teach always fires regardless |
 | Many open native tasks after `TaskCreate` | the growing native list | (static, no model) mirror the durable or cross-agent items into `cc-notes task add` |
 
@@ -76,8 +76,8 @@ empty), and only ever suggests — it never blocks.
 
 | Trigger | Reminder |
 |---------|----------|
-| `git merge` / `git pull` (PostToolUse) | a merged branch's open tasks stay put — `cc-notes reconcile --into <target>`, then `cc-notes sync` (jj merges fire no git hooks, so this is the explicit step) |
-| `cc-notes task claim` / `task start` (PostToolUse) | you hold a lease — `cc-notes sync` so others see it, `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold |
+| `git merge` / `git pull` (PostToolUse) | the pack auto-runs `cc-notes reconcile --into <current branch>` (carrying the merged branch's still-open tasks onto your branch) then syncs, confirming "Reconciled merged tasks onto <branch>. Synced cc-notes refs." (a failed push surfaces the retry hint instead; jj merges fire no git hooks, so after a jj merge you still run `cc-notes reconcile` / `sync` yourself) |
+| `cc-notes task claim` / `task start` (PostToolUse) | you hold a lease — `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold (sync is automatic now) |
 | `cc-notes` binary missing, first `UserPromptSubmit` (once) | the pack is enabled but the binary is off `PATH` — name the two install paths (`brew install yasyf/tap/cc-notes` or `curl -fsSL …/install.sh \| sh`) so an opt-in repo isn't left silent |
 
 ### Firing policy
@@ -85,13 +85,35 @@ empty), and only ever suggests — it never blocks.
 One cap by class. Every Record router and Workflow reminder is capped at `NUDGE_MAX_FIRES`
 (three) per session as a backstop, and additionally deduped by its own key — the turn, the
 HEAD sha, or the plan path — so it speaks once per real event rather than on every fire. The
-Surface floaters carry no cap: their per-record session dedup already bounds them. The two
+auto-sync action deduplicates per turn across all of its triggers (commit, claim/start,
+merge/pull), so the several events of one turn drive a single sync. The Surface floaters
+carry no cap: their per-record session dedup already bounds them. The two
 once-per-session orientations (the session-start task float and the install hint) fire
 exactly once.
 
-### The memory mirror — the one action hook
+### The action hooks — side-effecting handlers
 
-The lone *side-effecting* handler. The harness records durable agent memories as
+Three handlers *do* something rather than nudge, all deterministic, idempotent, and
+fail-closed. The auto-sync triggers (a commit, a claim/start, a merge/pull) dedup to **at
+most one sync per turn** — a commit and a claim in the same turn sync once. The failure
+policy is uniform: a repo with no remote or an offline box is a legitimate state, so the
+handler is silent (no nag); a genuine sync failure — a non-fast-forward push rejection, say
+— surfaces a short "cc-notes sync failed — run `cc-notes sync` to retry."; and a detached
+HEAD or a reconcile error stays silent, since it is local-only and carries no hazard.
+
+**Auto-sync.** After a `git commit`, a `cc-notes task claim` / `task start`, or a
+`git merge` / `git pull`, the pack runs `cc-notes sync` itself and confirms with "Synced
+cc-notes refs." — once per turn across every trigger. This replaces the old "run cc-notes
+sync" nudge.
+
+**Auto-reconcile.** After a `git merge` / `git pull`, the pack runs
+`cc-notes reconcile --into <current branch>` — carrying the merged branch's still-open tasks
+onto your branch — then syncs, confirming "Reconciled merged tasks onto <branch>. Synced
+cc-notes refs.". The push outcome rides along, so a failed push surfaces the same retry hint
+rather than reading as synced. This replaces the old reconcile-then-sync nudge. jj merges fire
+no git hooks, so after a jj merge you still run `cc-notes reconcile` / `sync` yourself.
+
+**The memory mirror.** The harness records durable agent memories as
 `<slug>.md` files under a `memory/` dir inside a `.cc-pool` tree, and this handler mirrors
 the repo-relevant ones into notes so they ride the repo instead of living only in the
 harness. A cheap path gate (`MemoryWrite`) rejects everything but a memory slug file before
@@ -101,9 +123,10 @@ final content; and the note is keyed by a `memory:<slug>` tag, so the handler up
 title and body are unchanged) or `note add`. It mirrors only `feedback`, `project`, and
 `reference` memories, never a `user` who-you-are memory or the `MEMORY.md` index. Because it
 runs at `PostToolUse` the memory write has already landed, and every cc-notes call falls
-closed to silence, so a failed mirror never disturbs it. The cc-pool memory tree is the
-mirror's alone: the internal-write record router hard-excludes it, so a memory write is
-captured once, by the mirror, never also nudged.
+closed to silence, so a failed mirror never disturbs it. A memory write is *not* an auto-sync
+trigger: the mirror still nudges "Run `cc-notes sync` to share it" rather than syncing for
+you. The cc-pool memory tree is the mirror's alone: the internal-write record router
+hard-excludes it, so a memory write is captured once, by the mirror, never also nudged.
 
 ### The session-start mount
 
@@ -135,7 +158,7 @@ leaves the pack out. Where the pack is enabled but the repo has no cc-notes data
 yet, the Surface floaters shell out to `cc-notes` and get nothing back,
 so they fall closed to silence on their own. `run_cc_notes` returns `None` on any
 failure (missing flag, non-zero exit, timeout) and the parse helpers turn empty
-output into nothing to render. The reconcile nudge
+output into nothing to render. The auto-reconcile action
 serves `jj` users too. Since `jj` never runs git hooks, `cc-notes reconcile` is
 the explicit step they run by hand after a merge.
 

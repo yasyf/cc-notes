@@ -1,0 +1,193 @@
+"""Shared helpers, conditions, and record vocabulary for the cc-notes hook pack."""
+
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+from typing import Any
+
+from captain_hook import BaseHookEvent, CustomCondition
+from pydantic import BaseModel
+
+NATIVE_TASK_MIRROR_THRESHOLD = 5
+
+# Max durable tasks the session-start floater shows before a "+K more" tail.
+SESSION_TASK_CAP = 7
+# Per-session fire cap for advisories that aren't once-per-session and don't self-dedup.
+NUDGE_MAX_FIRES = 3
+# Cap on body/diff/plan text handed to a small-model classifier.
+LLM_INPUT_CAP = 6000
+
+RECORD_KINDS = ("note", "doc", "log", "task")
+
+
+class RecordVerdict(BaseModel):
+    """The router's verdict: whether a freshly written file is durable cc-notes content, as which kind.
+
+    ``record`` defaults False so a degenerate or empty model parse fails closed to
+    silence. ``kind`` is one of :data:`RECORD_KINDS`; the remaining fields seed the
+    suggested ``cc-notes <kind> add`` command and are only meaningful when ``record``
+    is true.
+    """
+
+    record: bool = False
+    kind: str = ""
+    title: str = ""
+    when: str = ""
+    area: str = ""
+    reasoning: str = ""
+
+
+def run_cc_notes(evt: BaseHookEvent, *args: str) -> str | None:
+    # Fails closed to None (throw=False) on any subprocess failure so a handler stays
+    # silent rather than crashing the hook fire.
+    return evt.ctx.call_cli(["cc-notes", *args], timeout=10, throw=False)
+
+
+def parse_relevant(out: str | None) -> list[dict[str, Any]]:
+    if not out or not out.strip():
+        return []
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [e for e in parsed if well_shaped_entry(e)]
+
+
+def entry_kind(entry: dict[str, Any]) -> str:
+    kind = entry.get("kind")
+    return kind if kind in ("doc", "log") else "note"
+
+
+def entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
+    payload = entry.get(entry_kind(entry))
+    return payload if isinstance(payload, dict) else {}
+
+
+def well_shaped_entry(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    payload = entry.get(entry_kind(entry))
+    return isinstance(payload, dict) and isinstance(payload.get("id"), str) and bool(payload["id"])
+
+
+def parse_tasks(out: str | None) -> list[dict[str, Any]]:
+    if not out or not out.strip():
+        return []
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [t for t in parsed if isinstance(t, dict)]
+
+
+def short_id(full: str) -> str:
+    return full[:7]
+
+
+def render_note_lines(entries: list[dict[str, Any]]) -> list[str]:
+    dispatch = {"doc": render_doc_line, "log": render_log_line}
+    return [dispatch.get(entry_kind(e), render_note_line)(e) for e in entries]
+
+
+def render_note_line(entry: dict[str, Any]) -> str:
+    note = entry.get("note", {})
+    reasons = ", ".join(entry.get("reasons", []))
+    line = f"{short_id(note.get('id', ''))} {note.get('title', '')}"
+    if reasons:
+        line += f" ({reasons})"
+    if drift := note.get("drift"):
+        line += f" [{drift}]"
+    return line
+
+
+def render_doc_line(entry: dict[str, Any]) -> str:
+    doc = entry.get("doc", {})
+    short = short_id(doc.get("id", ""))
+    line = f"{short} {doc.get('title', '')}"
+    if when := doc.get("when"):
+        line += f" — when: {when}"
+    if drift := doc.get("drift"):
+        line += f" [{str(drift).lower()}]"
+    if reasons := ", ".join(entry.get("reasons", [])):
+        line += f" ({reasons})"
+    line += f" — cc-notes doc show {short}"
+    return line
+
+
+def render_log_line(entry: dict[str, Any]) -> str:
+    log = entry.get("log", {})
+    short = short_id(log.get("id", ""))
+    line = f"{short} {log.get('title', '')}"
+    if reasons := ", ".join(entry.get("reasons", [])):
+        line += f" ({reasons})"
+    line += f" — cc-notes log show {short}"
+    return line
+
+
+def filter_drifted(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [e for e in entries if entry_payload(e).get("drift")]
+
+
+def render_task_line(task: dict[str, Any]) -> str:
+    line = f"{short_id(task.get('id', ''))} {task.get('status', '')} {task.get('title', '')}"
+    if assignee := task.get("assignee"):
+        line += f" @{assignee}"
+    return line
+
+
+def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int) -> list[str]:
+    if not tasks:
+        return []
+    lines = [render_task_line(t) for t in tasks[:cap]]
+    if (extra := len(tasks) - cap) > 0:
+        lines.append(f"+{extra} more — run `cc-notes status`")
+    return lines
+
+
+def in_cc_pool_memory(path: Path) -> bool:
+    # The mirror owns the cc-pool memory tree, so the advisory record-router excludes it.
+    # Deliberately broader than MemoryWrite: the whole tree is the mirror's domain.
+    return ".cc-pool" in path.parts and path.parent.name == "memory"
+
+
+def record_command(kind: str, title: str, when: str, area: str) -> list[str]:
+    # A log takes no body at creation — `log add` opens the journal and `log append`
+    # grows it — so it renders as two lines; the others are a single `add`.
+    dir_flag = f" --dir {area}" if area and area != "." else ""
+    if kind == "doc":
+        return [f'cc-notes doc add "{title}" --when "{when}"{dir_flag} --body -']
+    if kind == "log":
+        return [
+            f'cc-notes log add "{title}"{dir_flag}',
+            "cc-notes log append <id>   # then add the chronology one entry at a time",
+        ]
+    if kind == "task":
+        return [f'cc-notes task add "{title}"   # add --backlog if it is shared work']
+    return [f'cc-notes note add "{title}"{dir_flag} --body -']
+
+
+class CcNotesAvailable(CustomCondition):
+    """Matches whenever the ``cc-notes`` binary resolves on PATH."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        return shutil.which("cc-notes") is not None
+
+
+class CcNotesMissing(CustomCondition):
+    """Matches whenever the ``cc-notes`` binary does NOT resolve on PATH."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        return shutil.which("cc-notes") is None
+
+
+class ManyNativeTasks(CustomCondition):
+    """Matches when the session is carrying enough open native tasks to look durable."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        return len(evt.tasks.open) >= NATIVE_TASK_MIRROR_THRESHOLD
