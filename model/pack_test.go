@@ -13,6 +13,7 @@ const (
 	testNonce  = "0123456789abcdef0123456789abcdef"
 	testID     = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
 	testParent = "00112233445566778899aabbccddeeff00112233"
+	testOID    = "e3b1c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 )
 
 func TestPackRoundTripEveryOpKind(t *testing.T) {
@@ -127,6 +128,8 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 		{"set_criterion_text", SetCriterionText{ID: "crit-1", Text: "all tests pass under -race"}},
 		{"set_criterion_status", SetCriterionStatus{ID: "crit-1", Status: CriterionMet}},
 		{"set_criterion_script", SetCriterionScript{ID: "crit-1", Script: "make check"}},
+		{"add_attachment", AddAttachment{Name: "trace.png", OID: testOID, Size: 2048}},
+		{"remove_attachment", RemoveAttachment{Name: "trace.png"}},
 		{"checkpoint", Checkpoint{
 			EntityID: testID,
 			State: Note{
@@ -181,6 +184,46 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 				t.Fatalf("round-trip = %#v, want %#v", got, pack)
 			}
 		})
+	}
+}
+
+func TestPackRoundTripCheckpointStateWithAttachments(t *testing.T) {
+	op := Checkpoint{
+		EntityID: testID,
+		State: Note{
+			ID: testID, Title: "Deploy runbook", Tags: []string{}, Anchors: []Anchor{},
+			Author: "ada", CreatedAt: 100, UpdatedAt: 200,
+			SupersededBy: []EntityID{}, Head: testParent,
+			Attachments: []Attachment{
+				{Name: "diagram.svg", OID: testOID, Size: 512},
+				{Name: "trace.png", OID: testOID, Size: 2048},
+			},
+		},
+		CoversLamport: 5,
+		CoversShas:    []SHA{testParent, testID},
+	}
+	pack := Pack{Lamport: 6, Ops: []Op{op}}
+	data, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got, err := DecodePack(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !reflect.DeepEqual(got, pack) {
+		t.Fatalf("round-trip = %#v, want %#v", got, pack)
+	}
+	cp, ok := got.Ops[0].(Checkpoint)
+	if !ok {
+		t.Fatalf("Ops[0] = %T, want Checkpoint", got.Ops[0])
+	}
+	state, ok := cp.State.(Note)
+	if !ok {
+		t.Fatalf("decoded State = %T, want Note", cp.State)
+	}
+	if !reflect.DeepEqual(state.Attachments, op.State.(Note).Attachments) {
+		t.Fatalf("Attachments = %+v, want %+v", state.Attachments, op.State.(Note).Attachments)
 	}
 }
 
@@ -588,6 +631,19 @@ func TestDecodePackFailures(t *testing.T) {
 		{"trailing slash in set_branch", `{"v":1,"lamport":1,"ops":[{"kind":"set_branch","branch":"feature/"}]}`, ErrInvalidValue},
 		{"unknown checkpoint state_kind", `{"v":1,"lamport":1,"ops":[{"kind":"checkpoint","entity_id":"a1","state_kind":"epic","state":{"id":"a1"},"covers_lamport":1,"covers_shas":["a1"]}]}`, ErrInvalidValue},
 		{"missing checkpoint state", `{"v":1,"lamport":1,"ops":[{"kind":"checkpoint","entity_id":"a1","state_kind":"note","covers_lamport":1,"covers_shas":["a1"]}]}`, ErrInvalidValue},
+		{"empty attachment name", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"","oid":"` + testOID + `","size":1}]}`, ErrInvalidValue},
+		{"slash in attachment name", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"a/b.png","oid":"` + testOID + `","size":1}]}`, ErrInvalidValue},
+		{"dot attachment name", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":".","oid":"` + testOID + `","size":1}]}`, ErrInvalidValue},
+		{"dot-dot attachment name", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"..","oid":"` + testOID + `","size":1}]}`, ErrInvalidValue},
+		{"control char in attachment name", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"a\u0001b","oid":"` + testOID + `","size":1}]}`, ErrInvalidValue},
+		{"overlong attachment name", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"` + strings.Repeat("x", 256) + `","oid":"` + testOID + `","size":1}]}`, ErrInvalidValue},
+		{"short attachment oid", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"a.png","oid":"abc123","size":1}]}`, ErrInvalidValue},
+		{"uppercase attachment oid", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"a.png","oid":"` + strings.ToUpper(testOID) + `","size":1}]}`, ErrInvalidValue},
+		{"sha1-length attachment oid", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"a.png","oid":"` + testID + `","size":1}]}`, ErrInvalidValue},
+		{"zero attachment size", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"a.png","oid":"` + testOID + `","size":0}]}`, ErrInvalidValue},
+		{"negative attachment size", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"a.png","oid":"` + testOID + `","size":-1}]}`, ErrInvalidValue},
+		{"empty remove_attachment name", `{"v":1,"lamport":1,"ops":[{"kind":"remove_attachment","name":""}]}`, ErrInvalidValue},
+		{"traversal remove_attachment name", `{"v":1,"lamport":1,"ops":[{"kind":"remove_attachment","name":".."}]}`, ErrInvalidValue},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -629,6 +685,30 @@ func TestDecodePackEmptyBranch(t *testing.T) {
 			}
 			if len(pack.Ops) != 1 {
 				t.Fatalf("len(Ops) = %d, want 1", len(pack.Ops))
+			}
+			if !reflect.DeepEqual(pack.Ops[0], tc.want) {
+				t.Fatalf("Ops[0] = %#v, want %#v", pack.Ops[0], tc.want)
+			}
+		})
+	}
+}
+
+func TestDecodePackAttachmentEdgeNames(t *testing.T) {
+	cases := []struct {
+		name string
+		want Op
+	}{
+		{"with space.png", AddAttachment{Name: "with space.png", OID: testOID, Size: 1}},
+		{"снимок.png", AddAttachment{Name: "снимок.png", OID: testOID, Size: 1}},
+		{"...", AddAttachment{Name: "...", OID: testOID, Size: 1}},
+		{strings.Repeat("x", 255), AddAttachment{Name: strings.Repeat("x", 255), OID: testOID, Size: 1}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wire := `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"` + tc.name + `","oid":"` + testOID + `","size":1}]}`
+			pack, err := DecodePack([]byte(wire))
+			if err != nil {
+				t.Fatalf("DecodePack error = %v, want nil", err)
 			}
 			if !reflect.DeepEqual(pack.Ops[0], tc.want) {
 				t.Fatalf("Ops[0] = %#v, want %#v", pack.Ops[0], tc.want)

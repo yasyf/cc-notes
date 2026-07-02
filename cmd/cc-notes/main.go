@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/yasyf/cc-notes/internal/cli"
+	"github.com/yasyf/cc-notes/model"
 )
 
 func main() {
@@ -26,7 +28,22 @@ func main() {
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %s\n", cli.Label(err), err)
+		if hint := upgradeHint(err); hint != "" {
+			fmt.Fprintln(os.Stderr, hint)
+		}
 		stop()
 		os.Exit(cli.ExitCode(err))
 	}
+}
+
+// upgradeHint returns the remediation line for an op kind this binary does
+// not speak (e.g. add_attachment or remove_attachment read by a pre-LFS
+// binary): an unknown kind means the entity was written by a newer cc-notes,
+// so the fix is always to upgrade. It returns "" for every other error.
+func upgradeHint(err error) string {
+	var unknown *model.UnknownKindError
+	if !errors.As(err, &unknown) {
+		return ""
+	}
+	return fmt.Sprintf("op kind %q was written by a newer cc-notes; run `brew upgrade yasyf/tap/cc-notes` and retry", unknown.Kind)
 }

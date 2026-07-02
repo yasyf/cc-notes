@@ -21,6 +21,16 @@ var (
 	ErrInvalidValue = errors.New("invalid field value")
 )
 
+// UnknownKindError is the concrete error DecodePack returns for an
+// unregistered op kind. It carries the kind so the binary can tell the user
+// which op a newer cc-notes wrote; errors.Is(err, ErrUnknownKind) matches it.
+type UnknownKindError struct{ Kind string }
+
+func (e *UnknownKindError) Error() string { return fmt.Sprintf("%s: %q", ErrUnknownKind, e.Kind) }
+
+// Is reports whether target is the ErrUnknownKind sentinel.
+func (e *UnknownKindError) Is(target error) bool { return target == ErrUnknownKind }
+
 // Pack is one operation pack: the ops carried by a single entity commit,
 // stamped with the entity's lamport clock.
 type Pack struct {
@@ -329,6 +339,16 @@ func marshalOp(op Op) ([]byte, error) {
 			Kind string `json:"kind"`
 			SetCriterionScript
 		}{o.OpKind(), o})
+	case AddAttachment:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			AddAttachment
+		}{o.OpKind(), o})
+	case RemoveAttachment:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			RemoveAttachment
+		}{o.OpKind(), o})
 	case Checkpoint:
 		return marshalCheckpoint(o)
 	}
@@ -455,7 +475,7 @@ func decodeOp(raw json.RawMessage) (Op, error) {
 	}
 	decode, ok := opDecoders[disc.Kind]
 	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrUnknownKind, disc.Kind)
+		return nil, &UnknownKindError{Kind: disc.Kind}
 	}
 	return decode(raw)
 }
@@ -511,6 +531,8 @@ var opDecoders = map[string]func(json.RawMessage) (Op, error){
 	SetCriterionText{}.OpKind():   decodeAs[SetCriterionText],
 	SetCriterionStatus{}.OpKind(): decodeAs[SetCriterionStatus],
 	SetCriterionScript{}.OpKind(): decodeAs[SetCriterionScript],
+	AddAttachment{}.OpKind():      decodeAs[AddAttachment],
+	RemoveAttachment{}.OpKind():   decodeAs[RemoveAttachment],
 	Checkpoint{}.OpKind():         decodeCheckpoint,
 }
 

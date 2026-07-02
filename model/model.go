@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -227,6 +228,55 @@ type Criterion struct {
 	Status CriterionStatus `json:"status"`
 }
 
+// maxAttachmentNameBytes bounds an attachment name to a single filesystem
+// name component.
+const maxAttachmentNameBytes = 255
+
+// attachmentOIDRE matches a git-lfs object id: the sha256 of the content,
+// 64 lower-hex characters.
+var attachmentOIDRE = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
+
+// Attachment is one named large-content reference on a note, doc, or log.
+// Name is the file name, unique per entity (attachments resolve LWW by Name
+// at fold time); OID is the git-lfs object id (sha256 of the content, 64
+// lower hex); Size is the content length in bytes, always positive — git-lfs
+// never stores the empty object. The bytes themselves live in the local LFS
+// object store and move over the LFS batch API at sync time, never in the
+// entity chain.
+type Attachment struct {
+	Name string `json:"name"`
+	OID  string `json:"oid"`
+	Size int64  `json:"size"`
+}
+
+func (a Attachment) validate() error {
+	if err := validateAttachmentName(a.Name); err != nil {
+		return err
+	}
+	if !attachmentOIDRE.MatchString(a.OID) {
+		return fmt.Errorf("%w: attachment oid %q", ErrInvalidValue, a.OID)
+	}
+	if a.Size <= 0 {
+		return fmt.Errorf("%w: attachment size %d", ErrInvalidValue, a.Size)
+	}
+	return nil
+}
+
+// validateAttachmentName enforces that name is one safe filesystem component:
+// non-empty, at most 255 bytes, not "." or "..", and free of '/' and control
+// characters.
+func validateAttachmentName(name string) error {
+	if name == "" || name == "." || name == ".." || len(name) > maxAttachmentNameBytes {
+		return fmt.Errorf("%w: attachment name %q", ErrInvalidValue, name)
+	}
+	for i := range len(name) {
+		if name[i] < 0x20 || name[i] == 0x7f || name[i] == '/' {
+			return fmt.Errorf("%w: attachment name %q", ErrInvalidValue, name)
+		}
+	}
+	return nil
+}
+
 // Note is the folded snapshot of a note entity. Timestamps are unix seconds;
 // rendering to RFC3339 happens at output time. Tags is sorted; Head is the
 // chain tip the snapshot was folded from.
@@ -243,6 +293,10 @@ type Criterion struct {
 // StaleAt, StaleBy, and StaleReason record an explicit agent-asserted
 // out-of-date flag (who and when from the commit, with an optional reason);
 // StaleAt==0 means not flagged, and both clear_stale and verify_note clear it.
+//
+// Attachments is the folded attachment set, LWW by Name, sorted by Name, and
+// nil when empty — the field marshals omitempty so attachment-less snapshots
+// keep their pre-attachment bytes.
 type Note struct {
 	ID             EntityID        `json:"id"`
 	Title          string          `json:"title"`
@@ -262,6 +316,7 @@ type Note struct {
 	StaleBy        Actor           `json:"stale_by"`
 	StaleReason    string          `json:"stale_reason"`
 	Head           SHA             `json:"head"`
+	Attachments    []Attachment    `json:"attachments,omitempty"`
 }
 
 // Doc is the folded snapshot of a doc entity: a long-form markdown document
@@ -286,6 +341,10 @@ type Note struct {
 // StaleAt, StaleBy, and StaleReason record an explicit agent-asserted
 // out-of-date flag (who and when from the commit, with an optional reason);
 // StaleAt==0 means not flagged, and both clear_stale and verify_note clear it.
+//
+// Attachments is the folded attachment set, LWW by Name, sorted by Name, and
+// nil when empty — the field marshals omitempty so attachment-less snapshots
+// keep their pre-attachment bytes.
 type Doc struct {
 	ID             EntityID        `json:"id"`
 	Title          string          `json:"title"`
@@ -306,6 +365,7 @@ type Doc struct {
 	StaleBy        Actor           `json:"stale_by"`
 	StaleReason    string          `json:"stale_reason"`
 	Head           SHA             `json:"head"`
+	Attachments    []Attachment    `json:"attachments,omitempty"`
 }
 
 // Log is the folded snapshot of a log entity: an append-only journal — an
@@ -320,17 +380,22 @@ type Doc struct {
 // Entries is the ordered list of log entries in linearization order
 // (lamport → author-time → sha), the same order Task comments fold in. The
 // fold is pure concatenation, so cross-branch sync converges with no reconcile.
+//
+// Attachments is the folded attachment set, LWW by Name, sorted by Name, and
+// nil when empty — the field marshals omitempty so attachment-less snapshots
+// keep their pre-attachment bytes.
 type Log struct {
-	ID        EntityID   `json:"id"`
-	Title     string     `json:"title"`
-	Entries   []LogEntry `json:"entries"`
-	Tags      []string   `json:"tags"`
-	Anchors   []Anchor   `json:"anchors"`
-	Author    Actor      `json:"author"`
-	CreatedAt int64      `json:"created_at"`
-	UpdatedAt int64      `json:"updated_at"`
-	Deleted   bool       `json:"deleted"`
-	Head      SHA        `json:"head"`
+	ID          EntityID     `json:"id"`
+	Title       string       `json:"title"`
+	Entries     []LogEntry   `json:"entries"`
+	Tags        []string     `json:"tags"`
+	Anchors     []Anchor     `json:"anchors"`
+	Author      Actor        `json:"author"`
+	CreatedAt   int64        `json:"created_at"`
+	UpdatedAt   int64        `json:"updated_at"`
+	Deleted     bool         `json:"deleted"`
+	Head        SHA          `json:"head"`
+	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
 // Task is the folded snapshot of a task entity. Timestamps are unix seconds;

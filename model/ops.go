@@ -534,6 +534,33 @@ type SetCriterionScript struct {
 // OpKind returns "set_criterion_script".
 func (SetCriterionScript) OpKind() string { return "set_criterion_script" }
 
+// AddAttachment sets the named attachment on a note, doc, or log to the
+// content with the given LFS oid and size. Attachments resolve LWW by Name in
+// linearization order at fold time, so re-attaching an existing name replaces
+// it on every replica.
+type AddAttachment struct {
+	Name string `json:"name"`
+	OID  string `json:"oid"`
+	Size int64  `json:"size"`
+}
+
+// OpKind returns "add_attachment".
+func (AddAttachment) OpKind() string { return "add_attachment" }
+
+func (o AddAttachment) validate() error {
+	return Attachment{Name: o.Name, OID: o.OID, Size: o.Size}.validate()
+}
+
+// RemoveAttachment removes the named attachment from a note, doc, or log.
+type RemoveAttachment struct {
+	Name string `json:"name"`
+}
+
+// OpKind returns "remove_attachment".
+func (RemoveAttachment) OpKind() string { return "remove_attachment" }
+
+func (o RemoveAttachment) validate() error { return validateAttachmentName(o.Name) }
+
 // Checkpoint compacts an entity's history into a single seed. State is the
 // full folded snapshot of every commit in CoversShas, CoversLamport is the
 // lamport of the covered tip, and EntityID is the immutable root sha the

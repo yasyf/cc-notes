@@ -298,6 +298,25 @@ func TestFoldCachePreP3EntryInvalidated(t *testing.T) {
 	}
 }
 
+func TestFoldCachePreAttachmentEntryInvalidated(t *testing.T) {
+	dir := t.TempDir()
+	c := newFoldCache(dir, foldCacheCap)
+	tip := model.SHA("eeee555555555555555555555555555555555555")
+
+	// A valid note entry written by a pre-attachment binary under cache
+	// version 4: the JSON predates the attachments field. The body parses
+	// cleanly, so the version byte is the only thing that makes get miss;
+	// reverting foldCacheVersion to 4 turns this into a hit and fails the test.
+	preLFS := append([]byte{byte('0' + 4), ' '}, "note\n{\"id\":\"noteid\",\"title\":\"old\",\"head\":\""+string(tip)+"\"}"...)
+	if err := os.WriteFile(filepath.Join(dir, string(tip)), preLFS, 0o600); err != nil {
+		t.Fatalf("write pre-attachment entry: %v", err)
+	}
+
+	if _, ok := c.get(tip); ok {
+		t.Fatal("get of pre-attachment (version 4) note entry: want miss after bump to 5")
+	}
+}
+
 func TestFoldCacheCorruptEntryIsMiss(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()

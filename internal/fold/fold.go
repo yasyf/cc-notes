@@ -30,7 +30,10 @@ var (
 // dispatching on the create op: a create_note chain folds to model.Note, a
 // create_doc chain to model.Doc, a create_log chain to model.Log, a create_task
 // chain to model.Task. Set-valued snapshot fields come back as
-// non-nil sorted slices; anchors sort by (kind, value).
+// non-nil sorted slices; anchors sort by (kind, value). The one exception is
+// Attachments (LWW by name), which sorts by name and comes back nil when
+// empty — the field marshals omitempty, so attachment-less snapshots keep
+// their pre-attachment bytes.
 //
 // A chain may contain Checkpoint commits. Fold receives the full chain (the
 // create commit is always the root); when the newest checkpoint is seed-safe it
@@ -129,6 +132,7 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 	tags := map[string]bool{}
 	anchors := map[model.Anchor]bool{}
 	superseded := map[model.EntityID]bool{}
+	attachments := map[string]model.Attachment{}
 	var witness []model.AnchorWitness
 	created := false
 	if seeded {
@@ -145,6 +149,9 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 		}
 		for _, id := range seed.SupersededBy {
 			superseded[id] = true
+		}
+		for _, a := range seed.Attachments {
+			attachments[a.Name] = a
 		}
 		witness = seed.Witness
 		created = true
@@ -208,6 +215,10 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 				superseded[o.ID] = true
 			case model.RemoveSupersededBy:
 				delete(superseded, o.ID)
+			case model.AddAttachment:
+				attachments[o.Name] = model.Attachment{Name: o.Name, OID: o.OID, Size: o.Size}
+			case model.RemoveAttachment:
+				delete(attachments, o.Name)
 			default:
 				return model.Note{}, fmt.Errorf("%w: %s on a note", ErrKindMismatch, op.OpKind())
 			}
@@ -222,6 +233,7 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 	note.Tags = sortedKeys(tags)
 	note.Anchors = sortedAnchors(anchors)
 	note.SupersededBy = sortedKeys(superseded)
+	note.Attachments = sortedAttachments(attachments)
 	note.Witness = witness
 	note.Head = ordered[len(ordered)-1].SHA
 	return note, nil
@@ -233,6 +245,7 @@ func foldDoc(ordered []model.PackCommit) (model.Doc, error) {
 	tags := map[string]bool{}
 	anchors := map[model.Anchor]bool{}
 	superseded := map[model.EntityID]bool{}
+	attachments := map[string]model.Attachment{}
 	var witness []model.AnchorWitness
 	created := false
 	if seeded {
@@ -249,6 +262,9 @@ func foldDoc(ordered []model.PackCommit) (model.Doc, error) {
 		}
 		for _, id := range seed.SupersededBy {
 			superseded[id] = true
+		}
+		for _, a := range seed.Attachments {
+			attachments[a.Name] = a
 		}
 		witness = seed.Witness
 		created = true
@@ -314,6 +330,10 @@ func foldDoc(ordered []model.PackCommit) (model.Doc, error) {
 				superseded[o.ID] = true
 			case model.RemoveSupersededBy:
 				delete(superseded, o.ID)
+			case model.AddAttachment:
+				attachments[o.Name] = model.Attachment{Name: o.Name, OID: o.OID, Size: o.Size}
+			case model.RemoveAttachment:
+				delete(attachments, o.Name)
 			default:
 				return model.Doc{}, fmt.Errorf("%w: %s on a doc", ErrKindMismatch, op.OpKind())
 			}
@@ -328,6 +348,7 @@ func foldDoc(ordered []model.PackCommit) (model.Doc, error) {
 	doc.Tags = sortedKeys(tags)
 	doc.Anchors = sortedAnchors(anchors)
 	doc.SupersededBy = sortedKeys(superseded)
+	doc.Attachments = sortedAttachments(attachments)
 	doc.Witness = witness
 	doc.Head = ordered[len(ordered)-1].SHA
 	return doc, nil
@@ -338,6 +359,7 @@ func foldLog(ordered []model.PackCommit) (model.Log, error) {
 	var log model.Log
 	tags := map[string]bool{}
 	anchors := map[model.Anchor]bool{}
+	attachments := map[string]model.Attachment{}
 	var entries []model.LogEntry
 	created := false
 	if seeded {
@@ -352,6 +374,9 @@ func foldLog(ordered []model.PackCommit) (model.Log, error) {
 		}
 		for _, a := range seed.Anchors {
 			anchors[a] = true
+		}
+		for _, a := range seed.Attachments {
+			attachments[a.Name] = a
 		}
 		created = true
 	} else {
@@ -401,6 +426,10 @@ func foldLog(ordered []model.PackCommit) (model.Log, error) {
 				delete(anchors, o.Anchor)
 			case model.DeleteNote:
 				log.Deleted = true
+			case model.AddAttachment:
+				attachments[o.Name] = model.Attachment{Name: o.Name, OID: o.OID, Size: o.Size}
+			case model.RemoveAttachment:
+				delete(attachments, o.Name)
 			default:
 				return model.Log{}, fmt.Errorf("%w: %s on a log", ErrKindMismatch, op.OpKind())
 			}
@@ -414,6 +443,7 @@ func foldLog(ordered []model.PackCommit) (model.Log, error) {
 	}
 	log.Tags = sortedKeys(tags)
 	log.Anchors = sortedAnchors(anchors)
+	log.Attachments = sortedAttachments(attachments)
 	if entries == nil {
 		entries = []model.LogEntry{}
 	}
@@ -883,6 +913,24 @@ func sortedKeys[K cmp.Ordered](set map[K]bool) []K {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+// sortedAttachments returns the folded attachment set ordered by Name, or nil
+// when empty: Attachments marshals omitempty, so a nil result keeps
+// attachment-less snapshot bytes identical to their pre-attachment form and
+// keeps a fresh fold DeepEqual to its own cache and checkpoint round-trips.
+func sortedAttachments(set map[string]model.Attachment) []model.Attachment {
+	if len(set) == 0 {
+		return nil
+	}
+	attachments := make([]model.Attachment, 0, len(set))
+	for _, a := range set {
+		attachments = append(attachments, a)
+	}
+	slices.SortFunc(attachments, func(a, b model.Attachment) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
+	return attachments
 }
 
 func sortedAnchors(set map[model.Anchor]bool) []model.Anchor {

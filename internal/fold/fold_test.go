@@ -1341,6 +1341,42 @@ func TestFoldErrors(t *testing.T) {
 			want: fold.ErrDuplicateCreate,
 		},
 		{
+			name: "add_attachment on a task chain",
+			commits: []model.PackCommit{
+				taskRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddAttachment{Name: "trace.png", OID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Size: 1}),
+			},
+			via:  taskErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "remove_attachment on a task chain",
+			commits: []model.PackCommit{
+				taskRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.RemoveAttachment{Name: "trace.png"}),
+			},
+			via:  taskErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "add_attachment on a sprint chain",
+			commits: []model.PackCommit{
+				sprintRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddAttachment{Name: "trace.png", OID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Size: 1}),
+			},
+			via:  sprintErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "add_attachment on a project chain",
+			commits: []model.PackCommit{
+				projectRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddAttachment{Name: "trace.png", OID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Size: 1}),
+			},
+			via:  projectErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
 			name: "linearize error propagates through Fold",
 			commits: []model.PackCommit{
 				noteRoot,
