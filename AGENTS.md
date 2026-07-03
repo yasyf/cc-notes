@@ -101,6 +101,8 @@ Target Go 1.26+. Full rules live in STYLEGUIDE.md; the build/test loop:
 - **Vet**: `go vet ./...` before every commit
 - **Fuse variant**: `go build -tags fuse ./...` needs cgo + a FUSE implementation (fuse-t on macOS, fuse3 on Linux); the default build must stay pure Go.
 
+**Comments are terse and used sparingly — the code documents itself** through names, types, and organization. The one exception is documentation-generation comments: godoc on exported types, funcs, and the package, each starting with the identifier's name (`// NewRootCmd builds …`); unexported helpers get none. Beyond godoc, comment only for TODOs, non-obvious workarounds, or disabled code — never to restate the signature.
+
 @STYLEGUIDE.md
 
 ## General Rules
