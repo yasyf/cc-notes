@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -93,6 +94,58 @@ func bodyArg(cmd *cobra.Command, value string) (string, error) {
 		return "", fmt.Errorf("read stdin: %w", err)
 	}
 	return strings.TrimRight(string(data), "\n"), nil
+}
+
+// attachOps ingests every --attach file into the local LFS store — fully
+// offline; content reaches the remote only at sync — and returns one
+// AddAttachment op per file. A duplicate base name within one invocation, a
+// missing file, an empty file, or an invalid name is a UsageError. The one
+// time ingestion installs the prune guard it announces the config line on
+// stderr, mirroring autoInstall.
+func attachOps(ctx context.Context, cmd *cobra.Command, s *store.Store, paths []string) ([]model.Op, error) {
+	seen := make(map[string]bool, len(paths))
+	ops := make([]model.Op, 0, len(paths))
+	for _, path := range paths {
+		name := filepath.Base(path)
+		if seen[name] {
+			return nil, &UsageError{Err: fmt.Errorf("--attach %s: duplicate attachment name %q in one invocation", path, name)}
+		}
+		seen[name] = true
+		att, guarded, err := s.AttachFile(ctx, path)
+		if errors.Is(err, model.ErrInvalidValue) || errors.Is(err, os.ErrNotExist) {
+			return nil, &UsageError{Err: err}
+		}
+		if err != nil {
+			return nil, err
+		}
+		if guarded {
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: installed %s in .git/config (makes `git lfs prune` verify remote presence before deleting)\n",
+				store.PruneGuardConfig); err != nil {
+				return nil, err
+			}
+		}
+		ops = append(ops, model.AddAttachment{Name: att.Name, OID: att.OID, Size: att.Size})
+	}
+	return ops, nil
+}
+
+// entityAttachments renders an entity's attachments with their local
+// presence, always non-nil so JSON serializes an empty list rather than
+// null. The LFS store is opened only when there is something to probe, so
+// attachment-less output paths cost nothing.
+func entityAttachments(ctx context.Context, s *store.Store, atts []model.Attachment) ([]attachmentDTO, error) {
+	out := make([]attachmentDTO, 0, len(atts))
+	if len(atts) == 0 {
+		return out, nil
+	}
+	content, err := s.LFS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range atts {
+		out = append(out, attachmentDTO{Name: a.Name, OID: a.OID, Size: a.Size, Present: content.Has(a.OID)})
+	}
+	return out, nil
 }
 
 // readScript reads the validation script file at path and returns its
@@ -443,31 +496,43 @@ func hasAll(have, want []string) bool {
 
 // printNote writes n as its JSON DTO or its lean line. A mutation echo carries
 // no drift verdict.
-func printNote(cmd *cobra.Command, n model.Note, jsonOut bool) error {
-	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newNoteDTO(n, ""))
+func printNote(cmd *cobra.Command, s *store.Store, n model.Note, jsonOut bool) error {
+	if !jsonOut {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanNoteLine(n))
+		return err
 	}
-	_, err := fmt.Fprintln(cmd.OutOrStdout(), leanNoteLine(n))
-	return err
+	atts, err := entityAttachments(cmd.Context(), s, n.Attachments)
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), newNoteDTO(n, "", atts))
 }
 
 // printDoc writes d as its JSON DTO carrying the drift verdict, or its lean
 // line. A mutation echo passes an empty drift.
-func printDoc(cmd *cobra.Command, d model.Doc, drift string, jsonOut bool) error {
-	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newDocDTO(d, drift))
+func printDoc(cmd *cobra.Command, s *store.Store, d model.Doc, drift string, jsonOut bool) error {
+	if !jsonOut {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanDocLine(d))
+		return err
 	}
-	_, err := fmt.Fprintln(cmd.OutOrStdout(), leanDocLine(d))
-	return err
+	atts, err := entityAttachments(cmd.Context(), s, d.Attachments)
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), newDocDTO(d, drift, atts))
 }
 
 // printLog writes l as its JSON DTO or its lean line.
-func printLog(cmd *cobra.Command, l model.Log, jsonOut bool) error {
-	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newLogDTO(l))
+func printLog(cmd *cobra.Command, s *store.Store, l model.Log, jsonOut bool) error {
+	if !jsonOut {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanLogLine(l))
+		return err
 	}
-	_, err := fmt.Fprintln(cmd.OutOrStdout(), leanLogLine(l))
-	return err
+	atts, err := entityAttachments(cmd.Context(), s, l.Attachments)
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), newLogDTO(l, atts))
 }
 
 // printTask writes t as its JSON DTO — with the derived blocks index — or

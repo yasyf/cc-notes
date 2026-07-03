@@ -180,6 +180,11 @@ func TestParsePath(t *testing.T) {
 		{"/sprints/5555aaa", fusefs.SprintBrowseDir{SprintShort: "5555aaa"}},
 		{"/sprints/5555aaa/tasks", fusefs.SprintTasksDir{SprintShort: "5555aaa"}},
 		{"/sprints/5555aaa/tasks/0123abc.json", fusefs.SprintTaskLink{SprintShort: "5555aaa", TaskShort: "0123abc"}},
+		// Attachments tree: entity dirs by short id, files by verbatim name.
+		{"/attachments", fusefs.AttachmentsDir{}},
+		{"/attachments/a1b2c3d", fusefs.AttachmentEntityDir{EntityShort: "a1b2c3d"}},
+		{"/attachments/a1b2c3d/report.pdf", fusefs.AttachmentFile{EntityShort: "a1b2c3d", Name: "report.pdf"}},
+		{"/attachments/a1b2c3d/trace.log", fusefs.AttachmentFile{EntityShort: "a1b2c3d", Name: "trace.log"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
@@ -220,6 +225,10 @@ func TestParsePathErrors(t *testing.T) {
 		"/projects/6666ddd/tasks/0123abc.json/extra",
 		"/sprints/5555aaa/tasks/0123abc.json/extra",
 		"/projects/6666ddd/sprints/5555aaa/tasks/0123abc.json/extra",
+		// Attachments: non-hex entity dirs, traversal components, and any
+		// nesting under a name all fail.
+		"/attachments/", "/attachments/nothex", "/attachments/a1b2c3d/",
+		"/attachments/a1b2c3d/..", "/attachments/a1b2c3d/name/extra",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {

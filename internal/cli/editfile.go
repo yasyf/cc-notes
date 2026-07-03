@@ -41,7 +41,7 @@ type editAdapter struct {
 	diffOps    func(base model.Snapshot, data []byte) ([]model.Op, error)
 	createOps  func(data []byte) ([]model.Op, error)
 	bornVerify func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error)
-	print      func(cmd *cobra.Command, snap model.Snapshot, jsonOut bool) error
+	print      func(cmd *cobra.Command, s *store.Store, snap model.Snapshot, jsonOut bool) error
 }
 
 // noun is the entity word used in messages; for the cc-notes kinds it equals
@@ -77,8 +77,8 @@ func docAdapter() editAdapter {
 		bornVerify: func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error) {
 			return bornVerify(ctx, s, refs.Doc(snap.EntityID()), snap.(model.Doc).Anchors)
 		},
-		print: func(cmd *cobra.Command, snap model.Snapshot, jsonOut bool) error {
-			return printDoc(cmd, snap.(model.Doc), "", jsonOut)
+		print: func(cmd *cobra.Command, s *store.Store, snap model.Snapshot, jsonOut bool) error {
+			return printDoc(cmd, s, snap.(model.Doc), "", jsonOut)
 		},
 	}
 }
@@ -112,8 +112,8 @@ func noteAdapter() editAdapter {
 		bornVerify: func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error) {
 			return bornVerify(ctx, s, refs.Note(snap.EntityID()), snap.(model.Note).Anchors)
 		},
-		print: func(cmd *cobra.Command, snap model.Snapshot, jsonOut bool) error {
-			return printNote(cmd, snap.(model.Note), jsonOut)
+		print: func(cmd *cobra.Command, s *store.Store, snap model.Snapshot, jsonOut bool) error {
+			return printNote(cmd, s, snap.(model.Note), jsonOut)
 		},
 	}
 }
@@ -362,7 +362,7 @@ func editApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAd
 		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "no changes to apply"); err != nil {
 			return err
 		}
-		return a.print(cmd, snap, jsonOut)
+		return a.print(cmd, s, snap, jsonOut)
 	}
 	if err := autoInstall(ctx, cmd, s.Git); err != nil {
 		return err
@@ -372,7 +372,7 @@ func editApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAd
 		return err
 	}
 	removeBuffer(files)
-	return a.print(cmd, snap, jsonOut)
+	return a.print(cmd, s, snap, jsonOut)
 }
 
 func editAbort(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAdapter, prefix string) error {
@@ -427,7 +427,7 @@ func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAda
 		return err
 	}
 	removeBuffer(files)
-	return a.print(cmd, verified, jsonOut)
+	return a.print(cmd, s, verified, jsonOut)
 }
 
 func abortFiles(cmd *cobra.Command, files editFiles) error {

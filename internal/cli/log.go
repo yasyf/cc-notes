@@ -4,12 +4,14 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -35,7 +37,7 @@ func newLogCmd() *cobra.Command {
 
 func newLogAddCmd() *cobra.Command {
 	var entry string
-	var tags, commits, paths, dirs, branches []string
+	var tags, commits, paths, dirs, branches, attach []string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "add TITLE",
@@ -60,7 +62,12 @@ func newLogAddCmd() *cobra.Command {
 				Tags:    tags,
 				Anchors: buildAnchors(commits, paths, dirs, branches),
 			}
-			snapshot, err := s.Create(ctx, []model.Op{create})
+			ops := []model.Op{create}
+			attOps, err := attachOps(ctx, cmd, s, attach)
+			if err != nil {
+				return err
+			}
+			snapshot, err := s.Create(ctx, append(ops, attOps...))
 			if err != nil {
 				return err
 			}
@@ -76,11 +83,12 @@ func newLogAddCmd() *cobra.Command {
 				}
 				log = appended.(model.Log)
 			}
-			return printLog(cmd, log, jsonOut)
+			return printLog(cmd, s, log, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&entry, "entry", "", "optional first entry; - reads stdin")
+	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
 	flags.StringArrayVar(&tags, "tag", nil, "tag (repeatable)")
 	flags.StringArrayVar(&commits, "commit", nil, "commit anchor (repeatable)")
 	flags.StringArrayVar(&paths, "path", nil, "path anchor (repeatable)")
@@ -92,7 +100,8 @@ func newLogAddCmd() *cobra.Command {
 
 func newLogAppendCmd() *cobra.Command {
 	var message string
-	var jsonOut bool
+	var attach []string
+	var replace, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "append ID [TEXT]",
 		Short: "Append one entry to a log; entries are append-only",
@@ -101,9 +110,16 @@ func newLogAppendCmd() *cobra.Command {
 			if len(args) == 0 {
 				return &UsageError{Err: errors.New("log append requires a log ID")}
 			}
-			text, err := entryText(cmd, args, message)
-			if err != nil {
-				return err
+			var ops []model.Op
+			if len(args) > 1 || cmd.Flags().Changed("message") {
+				text, err := entryText(cmd, args, message)
+				if err != nil {
+					return err
+				}
+				ops = append(ops, model.AppendEntry{Text: text})
+			}
+			if len(ops) == 0 && len(attach) == 0 {
+				return &UsageError{Err: errors.New("log append requires entry text (a positional TEXT, -m, or - for stdin) or --attach")}
 			}
 			ctx := cmd.Context()
 			s, err := openStore()
@@ -113,21 +129,48 @@ func newLogAppendCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadLog(ctx, s, args[0])
+			ref, log, err := loadLog(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.AppendEntry{Text: text}})
+			if !replace {
+				if err := checkAttachCollisions(log.Attachments, attach); err != nil {
+					return err
+				}
+			}
+			attOps, err := attachOps(ctx, cmd, s, attach)
 			if err != nil {
 				return err
 			}
-			return printLog(cmd, snapshot.(model.Log), jsonOut)
+			snapshot, err := s.Append(ctx, ref, append(ops, attOps...))
+			if err != nil {
+				return err
+			}
+			return printLog(cmd, s, snapshot.(model.Log), jsonOut)
 		},
 	}
 	flags := cmd.Flags()
 	flags.StringVarP(&message, "message", "m", "", "entry text")
+	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
+	flags.BoolVar(&replace, "replace", false, "allow --attach to overwrite a live attachment with the same name")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
+}
+
+// checkAttachCollisions rejects an --attach whose base name collides with a
+// live attachment: replacing content silently would orphan the old bytes
+// behind the same name, so the caller must opt in with --replace.
+func checkAttachCollisions(live []model.Attachment, paths []string) error {
+	names := make(map[string]bool, len(live))
+	for _, a := range live {
+		names[a.Name] = true
+	}
+	for _, p := range paths {
+		if name := filepath.Base(p); names[name] {
+			return &UsageError{Err: fmt.Errorf("attachment %q already exists on this log; pass --replace to overwrite it", name)}
+		}
+	}
+	return nil
 }
 
 // entryText resolves the entry text for log append from exactly one of: the
@@ -189,7 +232,7 @@ func newLogListCmd() *cobra.Command {
 					(branch != "" && !hasAnchorIn(l.Anchors, model.AnchorBranch, branch))
 			})
 			sortLogs(logs)
-			return printLogList(cmd, logs, jsonOut)
+			return printLogList(cmd, s, logs, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -219,10 +262,14 @@ func newLogShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), newLogDTO(log))
+			atts, err := entityAttachments(ctx, s, log.Attachments)
+			if err != nil {
+				return err
 			}
-			_, err = fmt.Fprint(cmd.OutOrStdout(), renderLogShow(log))
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), newLogDTO(log, atts))
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), renderLogShow(log, atts))
 			return err
 		},
 	}
@@ -232,7 +279,7 @@ func newLogShowCmd() *cobra.Command {
 
 func newLogEditCmd() *cobra.Command {
 	var title string
-	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches []string
+	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches, rmAttachments []string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
@@ -264,6 +311,9 @@ func newLogEditCmd() *cobra.Command {
 			for _, a := range buildAnchors(rmCommits, rmPaths, rmDirs, rmBranches) {
 				ops = append(ops, model.RemoveAnchor{Anchor: a})
 			}
+			for _, name := range rmAttachments {
+				ops = append(ops, model.RemoveAttachment{Name: name})
+			}
 			if len(ops) == 0 {
 				return &UsageError{Err: errors.New("log edit requires at least one flag")}
 			}
@@ -278,7 +328,7 @@ func newLogEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printLog(cmd, snapshot.(model.Log), jsonOut)
+			return printLog(cmd, s, snapshot.(model.Log), jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -293,6 +343,7 @@ func newLogEditCmd() *cobra.Command {
 	flags.StringArrayVar(&rmCommits, "rm-commit", nil, "remove commit anchor (repeatable)")
 	flags.StringArrayVar(&addBranches, "add-branch", nil, "add branch anchor (repeatable)")
 	flags.StringArrayVar(&rmBranches, "rm-branch", nil, "remove branch anchor (repeatable)")
+	flags.StringArrayVar(&rmAttachments, "rm-attachment", nil, "remove attachment by name (repeatable)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
@@ -320,7 +371,7 @@ func newLogRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printLog(cmd, snapshot.(model.Log), jsonOut)
+			return printLog(cmd, s, snapshot.(model.Log), jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -346,7 +397,7 @@ func newLogSearchCmd() *cobra.Command {
 				return err
 			}
 			logs = rankLogs(logs, args[0], tags, author, anchorPath, anchorDir, anchorBranch, anchorCommit, limit)
-			return printLogList(cmd, logs, jsonOut)
+			return printLogList(cmd, s, logs, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -426,12 +477,16 @@ func logTier(l model.Log, q string) int {
 	return 0
 }
 
-func printLogList(cmd *cobra.Command, logs []model.Log, jsonOut bool) error {
+func printLogList(cmd *cobra.Command, s *store.Store, logs []model.Log, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		dtos := make([]logDTO, len(logs))
 		for i, l := range logs {
-			dtos[i] = newLogDTO(l)
+			atts, err := entityAttachments(cmd.Context(), s, l.Attachments)
+			if err != nil {
+				return err
+			}
+			dtos[i] = newLogDTO(l, atts)
 		}
 		return printJSON(out, dtos)
 	}

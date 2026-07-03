@@ -1,6 +1,6 @@
 // Package cli wires the cobra command tree for cc-notes: the note, doc, log,
-// task, sprint, project, skills, hooks, and workflows noun groups plus init,
-// sync, and version. Output is agents-first — lean
+// task, sprint, project, attachment, skills, hooks, and workflows noun groups
+// plus init, sync, and version. Output is agents-first — lean
 // deterministic lines or compact JSON on stdout, one labeled error line on
 // stderr, exit codes mapped from typed errors via ExitCode.
 package cli
@@ -27,6 +27,6 @@ func NewRootCmd() *cobra.Command {
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &UsageError{Err: err}
 	})
-	root.AddCommand(newInitCmd(), newSyncCmd(), newStatusCmd(), newReconcileCmd(), newBlameCmd(), newHistoryCmd(), newRelevantCmd(), newCompactCmd(), newGCCmd(), newMountCmd(), newMountHolderCmd(), newVersionCmd(), newNoteCmd(), newDocCmd(), newLogCmd(), newTaskCmd(), newSprintCmd(), newProjectCmd(), newSkillsCmd(), newHooksCmd(), newWorkflowsCmd())
+	root.AddCommand(newInitCmd(), newSyncCmd(), newStatusCmd(), newReconcileCmd(), newBlameCmd(), newHistoryCmd(), newRelevantCmd(), newCompactCmd(), newGCCmd(), newMountCmd(), newMountHolderCmd(), newVersionCmd(), newNoteCmd(), newDocCmd(), newLogCmd(), newTaskCmd(), newSprintCmd(), newProjectCmd(), newAttachmentCmd(), newSkillsCmd(), newHooksCmd(), newWorkflowsCmd())
 	return root
 }

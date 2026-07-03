@@ -35,17 +35,26 @@ type noteJSON struct {
 		Value   string  `json:"value"`
 		Witness *string `json:"witness"`
 	} `json:"anchors"`
-	Author       string  `json:"author"`
-	CreatedAt    string  `json:"created_at"`
-	UpdatedAt    string  `json:"updated_at"`
-	VerifiedAt   *string `json:"verified_at"`
-	VerifiedBy   *string `json:"verified_by"`
-	SupersededBy *string `json:"superseded_by"`
-	Drift        *string `json:"drift"`
-	Deleted      bool    `json:"deleted"`
-	StaleAt      *string `json:"stale_at"`
-	StaleBy      *string `json:"stale_by"`
-	StaleReason  *string `json:"stale_reason"`
+	Author       string           `json:"author"`
+	CreatedAt    string           `json:"created_at"`
+	UpdatedAt    string           `json:"updated_at"`
+	VerifiedAt   *string          `json:"verified_at"`
+	VerifiedBy   *string          `json:"verified_by"`
+	SupersededBy *string          `json:"superseded_by"`
+	Drift        *string          `json:"drift"`
+	Deleted      bool             `json:"deleted"`
+	StaleAt      *string          `json:"stale_at"`
+	StaleBy      *string          `json:"stale_by"`
+	StaleReason  *string          `json:"stale_reason"`
+	Attachments  []attachmentJSON `json:"attachments"`
+}
+
+// attachmentJSON mirrors the attachment output DTO for round-trip assertions.
+type attachmentJSON struct {
+	Name    string `json:"name"`
+	OID     string `json:"oid"`
+	Size    int64  `json:"size"`
+	Present bool   `json:"present"`
 }
 
 // taskJSON mirrors the task output DTO for round-trip assertions.

@@ -49,7 +49,7 @@ func TestNewDocDTO(t *testing.T) {
 		Witness:      []model.AnchorWitness{{Anchor: anchor, OID: "f00ba12"}},
 		SupersededBy: []model.EntityID{"newer000", "newer111"},
 	}
-	dto := newDocDTO(d, "STALE")
+	dto := newDocDTO(d, "STALE", nil)
 
 	if dto.When != "resuming the auth cutover" {
 		t.Fatalf("When = %q, want the verbatim trigger", dto.When)
@@ -67,7 +67,7 @@ func TestNewDocDTO(t *testing.T) {
 		t.Fatalf("Body = %q, want the long body", dto.Body)
 	}
 
-	empty := newDocDTO(model.Doc{ID: "abc1234ff"}, "")
+	empty := newDocDTO(model.Doc{ID: "abc1234ff"}, "", nil)
 	if empty.Drift != nil {
 		t.Fatalf("Drift = %v on no-drift doc, want nil", empty.Drift)
 	}
@@ -85,7 +85,7 @@ func TestRenderDocShow(t *testing.T) {
 		UpdatedAt: 1735689600,
 		Body:      "body text",
 	}
-	got := renderDocShow(d, "DRIFTED", []model.EntityID{"older00"})
+	got := renderDocShow(d, "DRIFTED", []model.EntityID{"older00"}, nil)
 
 	if !strings.Contains(got, "title: Auth handoff\nwhen: resuming the cutover\ntags: -\n") {
 		t.Fatalf("when header not directly after title:\n%s", got)
@@ -97,7 +97,7 @@ func TestRenderDocShow(t *testing.T) {
 		t.Fatalf("body not appended after a blank line:\n%s", got)
 	}
 
-	bare := renderDocShow(model.Doc{ID: "deadbeefcafe", Title: "X", CreatedAt: 1735689600, UpdatedAt: 1735689600}, "", nil)
+	bare := renderDocShow(model.Doc{ID: "deadbeefcafe", Title: "X", CreatedAt: 1735689600, UpdatedAt: 1735689600}, "", nil, nil)
 	if !strings.Contains(bare, "when: -\n") {
 		t.Fatalf("empty when not dashed:\n%s", bare)
 	}

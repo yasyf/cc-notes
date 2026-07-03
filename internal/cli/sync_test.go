@@ -20,6 +20,8 @@ type syncJSON struct {
 	FastForwarded int `json:"fast_forwarded"`
 	Merged        int `json:"merged"`
 	Pushed        int `json:"pushed"`
+	Uploaded      int `json:"uploaded"`
+	Downloaded    int `json:"downloaded"`
 	Rounds        int `json:"rounds"`
 }
 

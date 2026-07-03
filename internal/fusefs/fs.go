@@ -20,6 +20,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/lfs"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -39,14 +40,18 @@ type rendered struct {
 	data     []byte
 }
 
-// handle is one open file: an entity edit buffer or a scratch buffer.
-// base is the open-time snapshot diffs run against; it is nil (and ref
-// empty) for scratch and pending files.
+// handle is one open file: an entity edit buffer, a scratch buffer, or a
+// read-only attachment. base is the open-time snapshot diffs run against; it
+// is nil (and ref empty) for scratch and pending files. An attachment handle
+// sets file and size instead of buf: reads go straight through ReadAt on the
+// LFS object, never a memory buffer.
 type handle struct {
 	path    string
 	ref     string
 	base    model.Snapshot
 	buf     []byte
+	file    *os.File
+	size    int64
 	ino     uint64
 	mtime   int64
 	birth   int64
@@ -96,6 +101,12 @@ type FS struct {
 	// editor created, before the canonical <short7>-<slug> name), so the
 	// editor's stat-after-save still resolves.
 	aliases map[string]string
+	// content is the local LFS store /attachments reads serve from,
+	// resolved lazily once; contentSet distinguishes it from the zero value.
+	content    lfs.Store
+	contentSet bool
+	// missingLogged rate-limits the missing-attachment holder log per oid.
+	missingLogged map[string]time.Time
 }
 
 // FusePassthroughOnly reports false: this FS synthesizes a tree (/notes, /tasks)
@@ -107,15 +118,16 @@ func (f *FS) FusePassthroughOnly() bool { return false }
 
 func newFS(ctx context.Context, s *store.Store) *FS {
 	return &FS{
-		store:   s,
-		ctx:     context.WithoutCancel(ctx),
-		uid:     uint32(os.Getuid()),
-		gid:     uint32(os.Getgid()),
-		start:   time.Now(),
-		handles: map[uint64]*handle{},
-		renders: map[model.SHA]rendered{},
-		scratch: map[string]*scratchFile{},
-		aliases: map[string]string{},
+		store:         s,
+		ctx:           context.WithoutCancel(ctx),
+		uid:           uint32(os.Getuid()),
+		gid:           uint32(os.Getgid()),
+		start:         time.Now(),
+		handles:       map[uint64]*handle{},
+		renders:       map[model.SHA]rendered{},
+		scratch:       map[string]*scratchFile{},
+		aliases:       map[string]string{},
+		missingLogged: map[string]time.Time{},
 	}
 }
 
@@ -150,6 +162,10 @@ func (f *FS) Getattr(p string, stat *fuse.Stat_t, fh uint64) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if h := f.handleFor(p, fh, true); h != nil {
+		if h.file != nil {
+			f.fillStat(stat, fuse.S_IFREG|0o444, h.ino, h.size, fuse.Timespec{Sec: h.mtime}, h.birth)
+			return 0
+		}
 		f.fillStat(stat, fuse.S_IFREG|0o644, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime}, h.birth)
 		return 0
 	}
@@ -162,6 +178,9 @@ func (f *FS) Open(p string, flags int) (int, uint64) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if af, ok := attachmentNode(p); ok {
+		return f.openAttachment(p, af, flags)
+	}
 	if sc, ok := f.scratch[p]; ok {
 		h := &handle{path: p, buf: slices.Clone(sc.data), ino: pathIno(p), mtime: sc.mtime.Unix(), birth: sc.mtime.Unix()}
 		truncateOnOpen(h, flags)
@@ -191,6 +210,9 @@ func (f *FS) Create(p string, flags int, mode uint32) (int, uint64) {
 	if JunkName(path.Base(p)) {
 		return -fuse.EPERM, invalidFh
 	}
+	if underAttachments(p) {
+		return -fuse.EPERM, invalidFh
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	now := time.Now()
@@ -203,9 +225,17 @@ func (f *FS) Read(p string, buff []byte, ofst int64, fh uint64) int {
 	defer f.mu.Unlock()
 	var data []byte
 	if h := f.handleFor(p, fh, true); h != nil {
+		if h.file != nil {
+			return readWindow(h.file, buff, ofst)
+		}
 		data = h.buf
 	} else if sc, ok := f.scratch[p]; ok {
 		data = sc.data
+	} else if af, ok := attachmentNode(p); ok {
+		// Stateless windowed read: FUSE-T's NFS layer reads by path after
+		// reconnects, and an attachment must never round-trip through a
+		// render buffer.
+		return f.readAttachmentAt(af, buff, ofst)
 	} else {
 		_, r, errc := f.openEntity(p)
 		if errc != 0 {
@@ -226,6 +256,9 @@ func (f *FS) Write(p string, buff []byte, ofst int64, fh uint64) int {
 	if h == nil {
 		return -fuse.EBADF
 	}
+	if h.file != nil {
+		return -fuse.EACCES
+	}
 	if end := ofst + int64(len(buff)); end > int64(len(h.buf)) {
 		h.buf = resize(h.buf, end)
 	}
@@ -239,6 +272,9 @@ func (f *FS) Write(p string, buff []byte, ofst int64, fh uint64) int {
 func (f *FS) Truncate(p string, size int64, fh uint64) int {
 	if JunkName(path.Base(p)) {
 		return -fuse.ENOENT
+	}
+	if underAttachments(p) {
+		return -fuse.EACCES
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -280,14 +316,22 @@ func (f *FS) Flush(p string, fh uint64) int {
 	return 0
 }
 
-// Release drops the handle, committing as a backstop only when no flush
-// ever ran for this fh; its status is kernel-discarded either way.
+// Release drops the handle, closing an attachment's content file and
+// committing as a backstop only when no flush ever ran for this fh; its
+// status is kernel-discarded either way.
 func (f *FS) Release(p string, fh uint64) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	h := f.handles[fh]
 	delete(f.handles, fh)
-	if h != nil && h.dirty && !h.flushed {
+	if h == nil {
+		return 0
+	}
+	if h.file != nil {
+		_ = h.file.Close()
+		return 0
+	}
+	if h.dirty && !h.flushed {
 		_ = f.commitHandle(h)
 	}
 	return 0
@@ -324,7 +368,7 @@ func (f *FS) Rename(oldpath string, newpath string) int {
 	if JunkName(path.Base(oldpath)) {
 		return -fuse.ENOENT
 	}
-	if JunkName(path.Base(newpath)) {
+	if JunkName(path.Base(newpath)) || underAttachments(newpath) {
 		return -fuse.EPERM
 	}
 	f.mu.Lock()
@@ -1140,6 +1184,22 @@ func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 		}
 		f.fillSymlinkStat(stat, task, len(target))
 		return 0
+	case AttachmentsDir:
+		f.fillDirStat(stat, p)
+		return 0
+	case AttachmentEntityDir:
+		if _, errc := f.lookupAttachable(n.EntityShort); errc != 0 {
+			return errc
+		}
+		f.fillDirStat(stat, p)
+		return 0
+	case AttachmentFile:
+		ent, att, errc := f.findAttachment(n)
+		if errc != 0 {
+			return errc
+		}
+		f.fillAttachmentStat(stat, ent, att)
+		return 0
 	default:
 		panic(fmt.Sprintf("fusefs: unknown node %T", node))
 	}
@@ -1155,7 +1215,7 @@ func (f *FS) listDir(p string) ([]string, int) {
 	names := map[string]bool{}
 	switch n := node.(type) {
 	case Root:
-		names["notes"], names["docs"], names["logs"], names["tasks"], names["sprints"], names["projects"] = true, true, true, true, true, true
+		names["notes"], names["docs"], names["logs"], names["tasks"], names["sprints"], names["projects"], names["attachments"] = true, true, true, true, true, true, true
 	case NotesDir:
 		notes, err := f.store.ListNotes(f.ctx, false, false)
 		if err != nil {
@@ -1281,6 +1341,20 @@ func (f *FS) listDir(p string) ([]string, int) {
 			if t.Sprint == sprint.ID {
 				names[TaskFilename(t)] = true
 			}
+		}
+	case AttachmentsDir:
+		attached, errc := f.listAttachables()
+		if errc != 0 {
+			return nil, errc
+		}
+		maps.Copy(names, attached)
+	case AttachmentEntityDir:
+		ent, errc := f.lookupAttachable(n.EntityShort)
+		if errc != 0 {
+			return nil, errc
+		}
+		for _, a := range ent.atts {
+			names[a.Name] = true
 		}
 	default:
 		return nil, -fuse.ENOTDIR
@@ -1630,6 +1704,14 @@ func (f *FS) notesSeed(p string, _ *fuse.Stat_t) string {
 			return ""
 		}
 		return string(task.Head)
+	case AttachmentFile:
+		// Content is addressed by oid: replacing an attachment under the
+		// same name changes the seed, so cached pages cannot survive.
+		_, att, errc := f.findAttachment(n)
+		if errc != 0 {
+			return ""
+		}
+		return att.OID
 	default:
 		return ""
 	}

@@ -19,50 +19,62 @@ type anchorDTO struct {
 	Witness *string `json:"witness"`
 }
 
+// attachmentDTO is one attachment reference with its content's local
+// presence: false means the bytes are not in this repository's LFS store yet
+// and download on the next `cc-notes sync`.
+type attachmentDTO struct {
+	Name    string `json:"name"`
+	OID     string `json:"oid"`
+	Size    int64  `json:"size"`
+	Present bool   `json:"present"`
+}
+
 // noteDTO fixes the JSON field order and formats for note output: full hex
 // id, RFC3339 UTC timestamps, sorted set slices, per-anchor witnesses, the
 // verify metadata (null when never verified), the single replacement id (null
 // when not superseded), and the computed drift verdict (null when fresh).
 type noteDTO struct {
-	ID           string      `json:"id"`
-	Title        string      `json:"title"`
-	Body         string      `json:"body"`
-	Tags         []string    `json:"tags"`
-	Anchors      []anchorDTO `json:"anchors"`
-	Author       string      `json:"author"`
-	CreatedAt    string      `json:"created_at"`
-	UpdatedAt    string      `json:"updated_at"`
-	VerifiedAt   *string     `json:"verified_at"`
-	VerifiedBy   *string     `json:"verified_by"`
-	SupersededBy *string     `json:"superseded_by"`
-	Drift        *string     `json:"drift"`
-	Deleted      bool        `json:"deleted"`
-	StaleAt      *string     `json:"stale_at"`
-	StaleBy      *string     `json:"stale_by"`
-	StaleReason  *string     `json:"stale_reason"`
+	ID           string          `json:"id"`
+	Title        string          `json:"title"`
+	Body         string          `json:"body"`
+	Tags         []string        `json:"tags"`
+	Anchors      []anchorDTO     `json:"anchors"`
+	Author       string          `json:"author"`
+	CreatedAt    string          `json:"created_at"`
+	UpdatedAt    string          `json:"updated_at"`
+	VerifiedAt   *string         `json:"verified_at"`
+	VerifiedBy   *string         `json:"verified_by"`
+	SupersededBy *string         `json:"superseded_by"`
+	Drift        *string         `json:"drift"`
+	Deleted      bool            `json:"deleted"`
+	StaleAt      *string         `json:"stale_at"`
+	StaleBy      *string         `json:"stale_by"`
+	StaleReason  *string         `json:"stale_reason"`
+	Attachments  []attachmentDTO `json:"attachments"`
 }
 
 // docDTO fixes the JSON field order and formats for doc output: the noteDTO
 // shape plus the free-text When trigger (always present, surfaced verbatim)
 // placed right after the body.
 type docDTO struct {
-	ID           string      `json:"id"`
-	Title        string      `json:"title"`
-	Body         string      `json:"body"`
-	When         string      `json:"when"`
-	Tags         []string    `json:"tags"`
-	Anchors      []anchorDTO `json:"anchors"`
-	Author       string      `json:"author"`
-	CreatedAt    string      `json:"created_at"`
-	UpdatedAt    string      `json:"updated_at"`
-	VerifiedAt   *string     `json:"verified_at"`
-	VerifiedBy   *string     `json:"verified_by"`
-	SupersededBy *string     `json:"superseded_by"`
-	Drift        *string     `json:"drift"`
-	Deleted      bool        `json:"deleted"`
-	StaleAt      *string     `json:"stale_at"`
-	StaleBy      *string     `json:"stale_by"`
-	StaleReason  *string     `json:"stale_reason"`
+	ID           string          `json:"id"`
+	Title        string          `json:"title"`
+	Body         string          `json:"body"`
+	When         string          `json:"when"`
+	Tags         []string        `json:"tags"`
+	Anchors      []anchorDTO     `json:"anchors"`
+	Author       string          `json:"author"`
+	CreatedAt    string          `json:"created_at"`
+	UpdatedAt    string          `json:"updated_at"`
+	VerifiedAt   *string         `json:"verified_at"`
+	VerifiedBy   *string         `json:"verified_by"`
+	SupersededBy *string         `json:"superseded_by"`
+	Drift        *string         `json:"drift"`
+	Deleted      bool            `json:"deleted"`
+	StaleAt      *string         `json:"stale_at"`
+	StaleBy      *string         `json:"stale_by"`
+	StaleReason  *string         `json:"stale_reason"`
+	Attachments  []attachmentDTO `json:"attachments"`
 }
 
 // logEntryDTO is one append-only log entry with its timestamp rendered RFC3339
@@ -78,15 +90,16 @@ type logEntryDTO struct {
 // entries. A log carries no freshness lifecycle, so there is no
 // witness/verify/stale/superseded/drift.
 type logDTO struct {
-	ID        string        `json:"id"`
-	Title     string        `json:"title"`
-	Entries   []logEntryDTO `json:"entries"`
-	Tags      []string      `json:"tags"`
-	Anchors   []anchorDTO   `json:"anchors"`
-	Author    string        `json:"author"`
-	CreatedAt string        `json:"created_at"`
-	UpdatedAt string        `json:"updated_at"`
-	Deleted   bool          `json:"deleted"`
+	ID          string          `json:"id"`
+	Title       string          `json:"title"`
+	Entries     []logEntryDTO   `json:"entries"`
+	Tags        []string        `json:"tags"`
+	Anchors     []anchorDTO     `json:"anchors"`
+	Author      string          `json:"author"`
+	CreatedAt   string          `json:"created_at"`
+	UpdatedAt   string          `json:"updated_at"`
+	Deleted     bool            `json:"deleted"`
+	Attachments []attachmentDTO `json:"attachments"`
 }
 
 // commentDTO is one task comment with its timestamp rendered RFC3339 UTC.
@@ -238,6 +251,8 @@ type syncDTO struct {
 	FastForwarded int `json:"fast_forwarded"`
 	Merged        int `json:"merged"`
 	Pushed        int `json:"pushed"`
+	Uploaded      int `json:"uploaded"`
+	Downloaded    int `json:"downloaded"`
 	Rounds        int `json:"rounds"`
 }
 
@@ -294,7 +309,7 @@ func newReconcileDTO(r ccsync.ReconcileReport) reconcileDTO {
 	}
 }
 
-func newNoteDTO(n model.Note, drift string) noteDTO {
+func newNoteDTO(n model.Note, drift string, atts []attachmentDTO) noteDTO {
 	byAnchor := witnessIndex(n.Witness)
 	anchors := make([]anchorDTO, len(n.Anchors))
 	for i, a := range n.Anchors {
@@ -327,10 +342,11 @@ func newNoteDTO(n model.Note, drift string) noteDTO {
 		StaleAt:      optTime(n.StaleAt),
 		StaleBy:      optString(string(n.StaleBy)),
 		StaleReason:  optString(n.StaleReason),
+		Attachments:  atts,
 	}
 }
 
-func newDocDTO(d model.Doc, drift string) docDTO {
+func newDocDTO(d model.Doc, drift string, atts []attachmentDTO) docDTO {
 	byAnchor := witnessIndex(d.Witness)
 	anchors := make([]anchorDTO, len(d.Anchors))
 	for i, a := range d.Anchors {
@@ -364,26 +380,28 @@ func newDocDTO(d model.Doc, drift string) docDTO {
 		StaleAt:      optTime(d.StaleAt),
 		StaleBy:      optString(string(d.StaleBy)),
 		StaleReason:  optString(d.StaleReason),
+		Attachments:  atts,
 	}
 }
 
 // newLogDTO renders a log snapshot into its fixed-order DTO. A log carries no
 // per-anchor witness, so every anchor's witness is null.
-func newLogDTO(l model.Log) logDTO {
+func newLogDTO(l model.Log, atts []attachmentDTO) logDTO {
 	anchors := make([]anchorDTO, len(l.Anchors))
 	for i, a := range l.Anchors {
 		anchors[i] = anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: nil}
 	}
 	return logDTO{
-		ID:        string(l.ID),
-		Title:     l.Title,
-		Entries:   logEntryDTOs(l.Entries),
-		Tags:      emptyNotNil(l.Tags),
-		Anchors:   anchors,
-		Author:    string(l.Author),
-		CreatedAt: rfc3339(l.CreatedAt),
-		UpdatedAt: rfc3339(l.UpdatedAt),
-		Deleted:   l.Deleted,
+		ID:          string(l.ID),
+		Title:       l.Title,
+		Entries:     logEntryDTOs(l.Entries),
+		Tags:        emptyNotNil(l.Tags),
+		Anchors:     anchors,
+		Author:      string(l.Author),
+		CreatedAt:   rfc3339(l.CreatedAt),
+		UpdatedAt:   rfc3339(l.UpdatedAt),
+		Deleted:     l.Deleted,
+		Attachments: atts,
 	}
 }
 
@@ -530,9 +548,11 @@ func leanTaskLine(t model.Task) string {
 
 // renderNoteShow renders the lean show view: the fixed-order header block,
 // then the body separated by a blank line. The header carries the verify
-// metadata, the supersede edges in both directions, and the computed drift
-// verdict. The deleted header appears only on a tombstoned note.
-func renderNoteShow(n model.Note, drift string, supersedes []model.EntityID) string {
+// metadata, the supersede edges in both directions, the computed drift
+// verdict, and one attachment line per attachment (with a missing-locally
+// marker when the content has not been synced). The deleted header appears
+// only on a tombstoned note.
+func renderNoteShow(n model.Note, drift string, supersedes []model.EntityID, atts []attachmentDTO) string {
 	var b strings.Builder
 	header(&b, "id", string(n.ID))
 	header(&b, "title", n.Title)
@@ -554,6 +574,7 @@ func renderNoteShow(n model.Note, drift string, supersedes []model.EntityID) str
 		header(&b, "stale_by", string(n.StaleBy))
 		header(&b, "stale_reason", n.StaleReason)
 	}
+	attachmentHeaders(&b, atts)
 	if n.Deleted {
 		header(&b, "deleted", "true")
 	}
@@ -565,12 +586,26 @@ func renderNoteShow(n model.Note, drift string, supersedes []model.EntityID) str
 	return b.String()
 }
 
+// attachmentHeaders writes one attachment header line per attachment:
+// "<name> (<size> bytes, oid <oid7>)", with a missing-locally marker and the
+// sync remediation when the content is not in the local LFS store.
+func attachmentHeaders(b *strings.Builder, atts []attachmentDTO) {
+	for _, a := range atts {
+		line := fmt.Sprintf("%s (%d bytes, oid %s)", a.Name, a.Size, a.OID[:7])
+		if !a.Present {
+			line = fmt.Sprintf("%s (%d bytes, oid %s, missing locally — run `cc-notes sync`)", a.Name, a.Size, a.OID[:7])
+		}
+		header(b, "attachment", line)
+	}
+}
+
 // renderDocShow renders the lean show view of a doc: the fixed-order header
 // block, with the free-text When trigger on a "when" line right after the
 // title, then the body separated by a blank line. The header carries the
-// verify metadata, the supersede edges in both directions, and the computed
-// drift verdict. The deleted header appears only on a tombstoned doc.
-func renderDocShow(d model.Doc, drift string, supersedes []model.EntityID) string {
+// verify metadata, the supersede edges in both directions, the computed
+// drift verdict, and one attachment line per attachment. The deleted header
+// appears only on a tombstoned doc.
+func renderDocShow(d model.Doc, drift string, supersedes []model.EntityID, atts []attachmentDTO) string {
 	var b strings.Builder
 	header(&b, "id", string(d.ID))
 	header(&b, "title", d.Title)
@@ -593,6 +628,7 @@ func renderDocShow(d model.Doc, drift string, supersedes []model.EntityID) strin
 		header(&b, "stale_by", string(d.StaleBy))
 		header(&b, "stale_reason", d.StaleReason)
 	}
+	attachmentHeaders(&b, atts)
 	if d.Deleted {
 		header(&b, "deleted", "true")
 	}
@@ -606,9 +642,10 @@ func renderDocShow(d model.Doc, drift string, supersedes []model.EntityID) strin
 
 // renderLogShow renders the lean show view of a log: the fixed-order header
 // block — dropping all verify/stale/supersede/drift, which a log never carries
-// — then each entry as a "-- <author> <RFC3339>" block, the same block style
-// task comments render in. The deleted header appears only on a tombstoned log.
-func renderLogShow(l model.Log) string {
+// — with one attachment line per attachment, then each entry as a
+// "-- <author> <RFC3339>" block, the same block style task comments render in.
+// The deleted header appears only on a tombstoned log.
+func renderLogShow(l model.Log, atts []attachmentDTO) string {
 	var b strings.Builder
 	header(&b, "id", string(l.ID))
 	header(&b, "title", l.Title)
@@ -620,6 +657,7 @@ func renderLogShow(l model.Log) string {
 	header(&b, "author", string(l.Author))
 	header(&b, "created", rfc3339(l.CreatedAt))
 	header(&b, "updated", rfc3339(l.UpdatedAt))
+	attachmentHeaders(&b, atts)
 	if l.Deleted {
 		header(&b, "deleted", "true")
 	}

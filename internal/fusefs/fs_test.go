@@ -196,7 +196,7 @@ func TestReaddirTreeSynthesis(t *testing.T) {
 		dir  string
 		want []string
 	}{
-		{"/", []string{"docs", "logs", "notes", "projects", "sprints", "tasks"}},
+		{"/", []string{"attachments", "docs", "logs", "notes", "projects", "sprints", "tasks"}},
 		{"/notes", []string{NoteFilename(note)}},
 		{"/docs", []string{DocFilename(doc)}},
 		{"/tasks", wantTasks},

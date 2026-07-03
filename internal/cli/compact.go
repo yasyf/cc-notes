@@ -39,11 +39,11 @@ func newCompactCmd() *cobra.Command {
 			}
 			switch v := snap.(type) {
 			case model.Note:
-				return printNote(cmd, v, jsonOut)
+				return printNote(cmd, s, v, jsonOut)
 			case model.Doc:
-				return printDoc(cmd, v, "", jsonOut)
+				return printDoc(cmd, s, v, "", jsonOut)
 			case model.Log:
-				return printLog(cmd, v, jsonOut)
+				return printLog(cmd, s, v, jsonOut)
 			case model.Task:
 				return printTask(cmd, s, v, jsonOut)
 			default:

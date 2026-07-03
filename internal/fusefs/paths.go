@@ -159,6 +159,23 @@ type SprintTaskLink struct {
 	TaskShort   string
 }
 
+// AttachmentsDir is the read-only /attachments directory, listing every
+// attachment-bearing note, doc, and log by short id.
+type AttachmentsDir struct{}
+
+// AttachmentEntityDir is /attachments/<short>, one attachment-bearing note,
+// doc, or log keyed by its short id.
+type AttachmentEntityDir struct {
+	EntityShort string
+}
+
+// AttachmentFile is /attachments/<short>/<name>, one attachment's content
+// served read-only straight from the local LFS store.
+type AttachmentFile struct {
+	EntityShort string
+	Name        string
+}
+
 func (Root) node()                  {}
 func (NotesDir) node()              {}
 func (DocsDir) node()               {}
@@ -182,6 +199,9 @@ func (ProjectTaskLink) node()       {}
 func (SprintBrowseDir) node()       {}
 func (SprintTasksDir) node()        {}
 func (SprintTaskLink) node()        {}
+func (AttachmentsDir) node()        {}
+func (AttachmentEntityDir) node()   {}
+func (AttachmentFile) node()        {}
 
 // NoteFilename names a note file "<short7>-<slug>.md", dropping the slug
 // part when the title yields none.
@@ -341,6 +361,25 @@ func ParsePath(path string) (Node, error) {
 		return parseSprints(path, tail)
 	case "projects":
 		return parseProjects(path, tail)
+	case "attachments":
+		switch len(tail) {
+		case 0:
+			return AttachmentsDir{}, nil
+		case 1:
+			short, ok := shortIDDir(tail[0])
+			if !ok {
+				return nil, errPath(path)
+			}
+			return AttachmentEntityDir{EntityShort: short}, nil
+		case 2:
+			short, ok := shortIDDir(tail[0])
+			if !ok {
+				return nil, errPath(path)
+			}
+			return AttachmentFile{EntityShort: short, Name: tail[1]}, nil
+		default:
+			return nil, fmt.Errorf("%w: attachments hold no subdirectories: %q", ErrPath, path)
+		}
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrPath, path)
 	}

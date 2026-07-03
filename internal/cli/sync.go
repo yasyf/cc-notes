@@ -155,19 +155,28 @@ func newSyncCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("working directory: %w", err)
 			}
+			// A failed sync can still have done real work — e.g. a download
+			// failure after the push loop converged — so the report prints
+			// before the error propagates to a non-zero exit. A run that
+			// never completed a round has nothing to report.
 			report, err := ccsync.Sync(cmd.Context(), dir, remote, full)
-			if err != nil {
+			if err != nil && report.Rounds == 0 {
 				return err
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSON(out, syncDTO{
+				if perr := printJSON(out, syncDTO{
 					Created:       report.Created,
 					FastForwarded: report.FastForwarded,
 					Merged:        report.Merged,
 					Pushed:        report.Pushed,
+					Uploaded:      report.Uploaded,
+					Downloaded:    report.Downloaded,
 					Rounds:        report.Rounds,
-				})
+				}); perr != nil {
+					return perr
+				}
+				return err
 			}
 			for _, line := range []struct {
 				verb  string
@@ -177,15 +186,19 @@ func newSyncCmd() *cobra.Command {
 				{"fast-forwarded", report.FastForwarded},
 				{"merged", report.Merged},
 				{"pushed", report.Pushed},
+				{"uploaded", report.Uploaded},
+				{"downloaded", report.Downloaded},
 			} {
 				if line.count == 0 {
 					continue
 				}
-				if _, err := fmt.Fprintf(out, "%s: %d\n", line.verb, line.count); err != nil {
-					return err
+				if _, perr := fmt.Fprintf(out, "%s: %d\n", line.verb, line.count); perr != nil {
+					return perr
 				}
 			}
-			_, err = fmt.Fprintf(out, "rounds: %d\n", report.Rounds)
+			if _, perr := fmt.Fprintf(out, "rounds: %d\n", report.Rounds); perr != nil {
+				return perr
+			}
 			return err
 		},
 	}

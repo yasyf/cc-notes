@@ -41,7 +41,7 @@ func newDocCmd() *cobra.Command {
 
 func newDocAddCmd() *cobra.Command {
 	var body, when string
-	var tags, commits, paths, dirs, branches []string
+	var tags, commits, paths, dirs, branches, attach []string
 	var jsonOut, checkout, apply, abort bool
 	cmd := &cobra.Command{
 		Use:   "add TITLE",
@@ -83,7 +83,12 @@ func newDocAddCmd() *cobra.Command {
 				Tags:    tags,
 				Anchors: buildAnchors(commits, paths, dirs, branches),
 			}
-			snapshot, err := s.Create(ctx, []model.Op{create})
+			ops := []model.Op{create}
+			attOps, err := attachOps(ctx, cmd, s, attach)
+			if err != nil {
+				return err
+			}
+			snapshot, err := s.Create(ctx, append(ops, attOps...))
 			if err != nil {
 				return err
 			}
@@ -100,12 +105,13 @@ func newDocAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printDoc(cmd, verified.(model.Doc), "", jsonOut)
+			return printDoc(cmd, s, verified.(model.Doc), "", jsonOut)
 		},
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&body, "body", "", "doc body; - reads stdin")
 	flags.StringVar(&when, "when", "", "free-text read-this-when trigger")
+	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
 	flags.StringArrayVar(&tags, "tag", nil, "tag (repeatable)")
 	flags.StringArrayVar(&commits, "commit", nil, "commit anchor (repeatable)")
 	flags.StringArrayVar(&paths, "path", nil, "path anchor (repeatable)")
@@ -143,7 +149,7 @@ func newDocListCmd() *cobra.Command {
 					(branch != "" && !hasAnchorIn(d.Anchors, model.AnchorBranch, branch))
 			})
 			sortDocs(docs)
-			return printDocList(cmd, docs, jsonOut)
+			return printDocList(cmd, s, docs, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -190,10 +196,14 @@ func newDocShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), newDocDTO(doc, verdict))
+			atts, err := entityAttachments(ctx, s, doc.Attachments)
+			if err != nil {
+				return err
 			}
-			_, err = fmt.Fprint(cmd.OutOrStdout(), renderDocShow(doc, verdict, supersedes))
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), newDocDTO(doc, verdict, atts))
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), renderDocShow(doc, verdict, supersedes, atts))
 			return err
 		},
 	}
@@ -203,7 +213,7 @@ func newDocShowCmd() *cobra.Command {
 
 func newDocEditCmd() *cobra.Command {
 	var title, body, when string
-	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches []string
+	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches, rmAttachments []string
 	var jsonOut, checkout, apply, abort bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
@@ -251,6 +261,9 @@ func newDocEditCmd() *cobra.Command {
 			for _, a := range buildAnchors(rmCommits, rmPaths, rmDirs, rmBranches) {
 				ops = append(ops, model.RemoveAnchor{Anchor: a})
 			}
+			for _, name := range rmAttachments {
+				ops = append(ops, model.RemoveAttachment{Name: name})
+			}
 			if len(ops) == 0 {
 				return &UsageError{Err: errors.New("doc edit requires at least one flag")}
 			}
@@ -265,7 +278,7 @@ func newDocEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printDoc(cmd, snapshot.(model.Doc), "", jsonOut)
+			return printDoc(cmd, s, snapshot.(model.Doc), "", jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -282,6 +295,7 @@ func newDocEditCmd() *cobra.Command {
 	flags.StringArrayVar(&rmCommits, "rm-commit", nil, "remove commit anchor (repeatable)")
 	flags.StringArrayVar(&addBranches, "add-branch", nil, "add branch anchor (repeatable)")
 	flags.StringArrayVar(&rmBranches, "rm-branch", nil, "remove branch anchor (repeatable)")
+	flags.StringArrayVar(&rmAttachments, "rm-attachment", nil, "remove attachment by name (repeatable)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	flags.BoolVar(&checkout, "checkout", false, "write the doc to an editable file and print its path")
 	flags.BoolVar(&apply, "apply", false, "apply edits from the checked-out file")
@@ -312,7 +326,7 @@ func newDocRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printDoc(cmd, snapshot.(model.Doc), "", jsonOut)
+			return printDoc(cmd, s, snapshot.(model.Doc), "", jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -338,7 +352,7 @@ func newDocSearchCmd() *cobra.Command {
 				return err
 			}
 			docs = rankDocs(docs, args[0], tags, author, anchorPath, anchorDir, anchorBranch, anchorCommit, limit)
-			return printDocList(cmd, docs, jsonOut)
+			return printDocList(cmd, s, docs, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -384,7 +398,7 @@ func newDocVerifyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printDoc(cmd, snapshot.(model.Doc), "", jsonOut)
+			return printDoc(cmd, s, snapshot.(model.Doc), "", jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -426,7 +440,7 @@ func newDocSupersedeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printDoc(cmd, snapshot.(model.Doc), "", jsonOut)
+			return printDoc(cmd, s, snapshot.(model.Doc), "", jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -469,7 +483,7 @@ func newDocExpireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printDoc(cmd, snapshot.(model.Doc), "", jsonOut)
+			return printDoc(cmd, s, snapshot.(model.Doc), "", jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -505,7 +519,7 @@ func newDocReviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printDocReview(cmd, filterDocVerdicts(reviewed, drift, unverified, expired), jsonOut)
+			return printDocReview(cmd, s, filterDocVerdicts(reviewed, drift, unverified, expired), jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -536,12 +550,16 @@ func filterDocVerdicts(reviewed []reviewedDoc, drift, unverified, expired bool) 
 
 // printDocReview writes the review set as doc DTOs carrying their verdict in
 // drift, or as lean lines with the verdict appended after a tab.
-func printDocReview(cmd *cobra.Command, reviewed []reviewedDoc, jsonOut bool) error {
+func printDocReview(cmd *cobra.Command, s *store.Store, reviewed []reviewedDoc, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		dtos := make([]docDTO, len(reviewed))
 		for i, r := range reviewed {
-			dtos[i] = newDocDTO(r.doc, r.verdict)
+			atts, err := entityAttachments(cmd.Context(), s, r.doc.Attachments)
+			if err != nil {
+				return err
+			}
+			dtos[i] = newDocDTO(r.doc, r.verdict, atts)
 		}
 		return printJSON(out, dtos)
 	}
@@ -615,12 +633,16 @@ func docTier(d model.Doc, q string) int {
 	return 0
 }
 
-func printDocList(cmd *cobra.Command, docs []model.Doc, jsonOut bool) error {
+func printDocList(cmd *cobra.Command, s *store.Store, docs []model.Doc, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		dtos := make([]docDTO, len(docs))
 		for i, d := range docs {
-			dtos[i] = newDocDTO(d, "")
+			atts, err := entityAttachments(cmd.Context(), s, d.Attachments)
+			if err != nil {
+				return err
+			}
+			dtos[i] = newDocDTO(d, "", atts)
 		}
 		return printJSON(out, dtos)
 	}

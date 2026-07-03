@@ -42,7 +42,7 @@ func newNoteCmd() *cobra.Command {
 
 func newNoteAddCmd() *cobra.Command {
 	var body string
-	var tags, commits, paths, dirs, branches []string
+	var tags, commits, paths, dirs, branches, attach []string
 	var jsonOut, checkout, apply, abort bool
 	cmd := &cobra.Command{
 		Use:   "add TITLE",
@@ -83,7 +83,12 @@ func newNoteAddCmd() *cobra.Command {
 				Tags:    tags,
 				Anchors: buildAnchors(commits, paths, dirs, branches),
 			}
-			snapshot, err := s.Create(ctx, []model.Op{create})
+			ops := []model.Op{create}
+			attOps, err := attachOps(ctx, cmd, s, attach)
+			if err != nil {
+				return err
+			}
+			snapshot, err := s.Create(ctx, append(ops, attOps...))
 			if err != nil {
 				return err
 			}
@@ -100,11 +105,12 @@ func newNoteAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printNote(cmd, verified.(model.Note), jsonOut)
+			return printNote(cmd, s, verified.(model.Note), jsonOut)
 		},
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&body, "body", "", "note body; - reads stdin")
+	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
 	flags.StringArrayVar(&tags, "tag", nil, "tag (repeatable)")
 	flags.StringArrayVar(&commits, "commit", nil, "commit anchor (repeatable)")
 	flags.StringArrayVar(&paths, "path", nil, "path anchor (repeatable)")
@@ -142,7 +148,7 @@ func newNoteListCmd() *cobra.Command {
 					(branch != "" && !hasAnchor(n, model.AnchorBranch, branch))
 			})
 			sortNotes(notes)
-			return printNoteList(cmd, notes, jsonOut)
+			return printNoteList(cmd, s, notes, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -189,10 +195,14 @@ func newNoteShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), newNoteDTO(note, verdict))
+			atts, err := entityAttachments(ctx, s, note.Attachments)
+			if err != nil {
+				return err
 			}
-			_, err = fmt.Fprint(cmd.OutOrStdout(), renderNoteShow(note, verdict, supersedes))
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), newNoteDTO(note, verdict, atts))
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), renderNoteShow(note, verdict, supersedes, atts))
 			return err
 		},
 	}
@@ -202,7 +212,7 @@ func newNoteShowCmd() *cobra.Command {
 
 func newNoteEditCmd() *cobra.Command {
 	var title, body string
-	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches []string
+	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches, rmAttachments []string
 	var jsonOut, checkout, apply, abort bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
@@ -247,6 +257,9 @@ func newNoteEditCmd() *cobra.Command {
 			for _, a := range buildAnchors(rmCommits, rmPaths, rmDirs, rmBranches) {
 				ops = append(ops, model.RemoveAnchor{Anchor: a})
 			}
+			for _, name := range rmAttachments {
+				ops = append(ops, model.RemoveAttachment{Name: name})
+			}
 			if len(ops) == 0 {
 				return &UsageError{Err: errors.New("note edit requires at least one flag")}
 			}
@@ -261,7 +274,7 @@ func newNoteEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printNote(cmd, snapshot.(model.Note), jsonOut)
+			return printNote(cmd, s, snapshot.(model.Note), jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -277,6 +290,7 @@ func newNoteEditCmd() *cobra.Command {
 	flags.StringArrayVar(&rmCommits, "rm-commit", nil, "remove commit anchor (repeatable)")
 	flags.StringArrayVar(&addBranches, "add-branch", nil, "add branch anchor (repeatable)")
 	flags.StringArrayVar(&rmBranches, "rm-branch", nil, "remove branch anchor (repeatable)")
+	flags.StringArrayVar(&rmAttachments, "rm-attachment", nil, "remove attachment by name (repeatable)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	flags.BoolVar(&checkout, "checkout", false, "write the note to an editable file and print its path")
 	flags.BoolVar(&apply, "apply", false, "apply edits from the checked-out file")
@@ -307,7 +321,7 @@ func newNoteRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printNote(cmd, snapshot.(model.Note), jsonOut)
+			return printNote(cmd, s, snapshot.(model.Note), jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -333,7 +347,7 @@ func newNoteSearchCmd() *cobra.Command {
 				return err
 			}
 			notes = rankNotes(notes, args[0], tags, author, anchorPath, anchorDir, anchorBranch, anchorCommit, limit)
-			return printNoteList(cmd, notes, jsonOut)
+			return printNoteList(cmd, s, notes, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -379,7 +393,7 @@ func newNoteVerifyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printNote(cmd, snapshot.(model.Note), jsonOut)
+			return printNote(cmd, s, snapshot.(model.Note), jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -421,7 +435,7 @@ func newNoteSupersedeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printNote(cmd, snapshot.(model.Note), jsonOut)
+			return printNote(cmd, s, snapshot.(model.Note), jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -464,7 +478,7 @@ func newNoteExpireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printNote(cmd, snapshot.(model.Note), jsonOut)
+			return printNote(cmd, s, snapshot.(model.Note), jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -500,7 +514,7 @@ func newNoteReviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printNoteReview(cmd, filterVerdicts(reviewed, drift, unverified, expired), jsonOut)
+			return printNoteReview(cmd, s, filterVerdicts(reviewed, drift, unverified, expired), jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -531,12 +545,16 @@ func filterVerdicts(reviewed []reviewedNote, drift, unverified, expired bool) []
 
 // printNoteReview writes the review set as note DTOs carrying their verdict in
 // drift, or as lean lines with the verdict appended after a tab.
-func printNoteReview(cmd *cobra.Command, reviewed []reviewedNote, jsonOut bool) error {
+func printNoteReview(cmd *cobra.Command, s *store.Store, reviewed []reviewedNote, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		dtos := make([]noteDTO, len(reviewed))
 		for i, r := range reviewed {
-			dtos[i] = newNoteDTO(r.note, r.verdict)
+			atts, err := entityAttachments(cmd.Context(), s, r.note.Attachments)
+			if err != nil {
+				return err
+			}
+			dtos[i] = newNoteDTO(r.note, r.verdict, atts)
 		}
 		return printJSON(out, dtos)
 	}
@@ -610,12 +628,16 @@ func noteTier(n model.Note, q string) int {
 	return 0
 }
 
-func printNoteList(cmd *cobra.Command, notes []model.Note, jsonOut bool) error {
+func printNoteList(cmd *cobra.Command, s *store.Store, notes []model.Note, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		dtos := make([]noteDTO, len(notes))
 		for i, n := range notes {
-			dtos[i] = newNoteDTO(n, "")
+			atts, err := entityAttachments(cmd.Context(), s, n.Attachments)
+			if err != nil {
+				return err
+			}
+			dtos[i] = newNoteDTO(n, "", atts)
 		}
 		return printJSON(out, dtos)
 	}

@@ -61,6 +61,27 @@ rounds: 1
 
 **Long-form handoffs live as docs, not loose files.** A `cc-notes doc` is the long-form sibling of a note — the brief you would otherwise leave in a `HANDOFF.md` nobody opens. It carries a free-text `--when` trigger naming the moment the next agent should read it, so `cc-notes relevant` ranks docs alongside notes and the read-time hooks float its pointer — title, `--when` text, and a `doc show` hint — when that moment arrives; the long body stays in the doc. Docs share the note freshness lifecycle: `doc verify`, `doc supersede`, and `doc expire` keep a handoff current, and `doc review` flags the ones that have drifted. A `cc-notes log` is the append-only sibling — a running, chronological record like an incident timeline or a rollout log, where each `log append` adds an immutable entry and nothing ever drifts.
 
+## Attachments
+
+Notes, docs, and logs carry files — a profiler trace, a screenshot, a core dump — without bloating the repo's object database. `--attach` stores the reference (name, sha256, size) on the entity and the bytes in the standard git-lfs local store under `.git/lfs`; `cc-notes sync` then moves content through your host's LFS API in-process, so the `git-lfs` binary is never required. Attaching is fully offline; sync is the only network step.
+
+```console
+$ cc-notes log add "Perf investigation" --attach flamegraph.svg
+f3ab90c	2026-07-02	-	Perf investigation
+
+$ cc-notes attachment get f3ab90c flamegraph.svg -o /tmp/flamegraph.svg
+
+$ cc-notes attachment path f3ab90c flamegraph.svg
+/work/repo/.git/lfs/objects/9f/86/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+```
+
+`log append --attach` adds files to an existing log (pass `--replace` to overwrite a live name), `--rm-attachment` on `note|doc|log edit` drops one, and `show` lists each attachment with a missing-locally marker until a sync fetches its bytes. With a `_fuse` binary the mount serves content read-only at `.notes/attachments/<short-id>/<name>`.
+
+> [!WARNING]
+> A plain `git push` publishes `refs/cc-notes/*` through the installed wildcard refspec **without** uploading attachment content — a fresh clone then holds references whose bytes 404 at sync. Only `cc-notes sync` holds the objects-before-refs invariant, uploading content before it pushes refs. In an attachment-carrying repo, share with `cc-notes sync`, never a bare `git push`.
+
+Attachment content lives on your git host's LFS endpoint and counts against its LFS quotas — on GitHub, storage and bandwidth are [metered per repository owner](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-storage-and-bandwidth-usage). Removing the last reference (`--rm-attachment`, then sync) stops cc-notes from re-uploading an object, but GitHub only reclaims already-uploaded LFS storage when you delete the objects or the repository.
+
 ## Commands
 
 | Command | What it does |
@@ -76,7 +97,8 @@ rounds: 1
 | `cc-notes relevant` | Rank the notes, docs, and logs most relevant to a path, with the reasons each matched |
 | `cc-notes reconcile` | Carry merged branches' open tasks onto a target branch |
 | `cc-notes blame` | Name the task(s) a commit implemented |
-| `cc-notes sync` | Push and pull `refs/cc-notes/*`, union-merging concurrent edits |
+| `cc-notes attachment get` | Stream an attachment's content from the local LFS store (`path` prints its object path) |
+| `cc-notes sync` | Push and pull `refs/cc-notes/*`, union-merging concurrent edits and transferring attachment content |
 | `cc-notes mount` | Expose notes and tasks as an editable `.notes` filesystem (needs a `_fuse` binary; auto-mounted by `init`) |
 
 Tasks also carry `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, `stale`, `claim`, and `validate`; notes add `verify`, `list`, `edit`, `search`, and `supersede`; docs add `list`, `show`, `edit`, `search`, `verify`, `supersede`, `expire`, and `review`; logs add `append`, `list`, `show`, `edit`, `search`, and `rm`, with no `verify`, `supersede`, or `expire` since a log never drifts. Docs and notes also edit as a file without a mount: `doc edit <id> --checkout` (or `note edit`, or either `add`) renders the entity to a Markdown file and prints its path, and `--apply` commits your edits back. An optional planning layer rolls tasks up into sprints and projects via `cc-notes sprint` and `cc-notes project`. Every note, task, doc, log, sync, reconcile, and status command takes `--json`. Run `cc-notes <noun> --help`, or read the full [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md).

@@ -29,10 +29,11 @@ type logJSON struct {
 		Value   string  `json:"value"`
 		Witness *string `json:"witness"`
 	} `json:"anchors"`
-	Author    string `json:"author"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	Deleted   bool   `json:"deleted"`
+	Author      string           `json:"author"`
+	CreatedAt   string           `json:"created_at"`
+	UpdatedAt   string           `json:"updated_at"`
+	Deleted     bool             `json:"deleted"`
+	Attachments []attachmentJSON `json:"attachments"`
 }
 
 func logIDs(logs []logJSON) []string {

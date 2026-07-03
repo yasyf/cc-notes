@@ -128,7 +128,7 @@ func newRelevantCmd() *cobra.Command {
 			if limit >= 0 && len(scored) > limit {
 				scored = scored[:limit]
 			}
-			return printRelevant(cmd, scored, verdicts, jsonOut)
+			return printRelevant(cmd, s, scored, verdicts, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -546,7 +546,7 @@ func anyCrossAuthor(paths []string, cross map[string]struct{}) bool {
 // A doc line additionally carries a bracketed verdict flag and a "doc show
 // <short-id>" hint, and never the long body. verdicts carries each entity's
 // drift verdict keyed by id.
-func printRelevant(cmd *cobra.Command, scored []scoredEntity, verdicts map[model.EntityID]string, jsonOut bool) error {
+func printRelevant(cmd *cobra.Command, s *store.Store, scored []scoredEntity, verdicts map[model.EntityID]string, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		dtos := make([]relevantDTO, len(scored))
@@ -554,13 +554,25 @@ func printRelevant(cmd *cobra.Command, scored []scoredEntity, verdicts map[model
 			dto := relevantDTO{Kind: string(e.kind), Score: e.score, Reasons: e.reasons}
 			switch e.kind {
 			case refs.KindDoc:
-				d := newDocDTO(e.doc, verdicts[e.doc.ID])
+				atts, err := entityAttachments(cmd.Context(), s, e.doc.Attachments)
+				if err != nil {
+					return err
+				}
+				d := newDocDTO(e.doc, verdicts[e.doc.ID], atts)
 				dto.Doc = &d
 			case refs.KindLog:
-				l := newLogDTO(e.log)
+				atts, err := entityAttachments(cmd.Context(), s, e.log.Attachments)
+				if err != nil {
+					return err
+				}
+				l := newLogDTO(e.log, atts)
 				dto.Log = &l
 			default:
-				n := newNoteDTO(e.note, verdicts[e.note.ID])
+				atts, err := entityAttachments(cmd.Context(), s, e.note.Attachments)
+				if err != nil {
+					return err
+				}
+				n := newNoteDTO(e.note, verdicts[e.note.ID], atts)
 				dto.Note = &n
 			}
 			dtos[i] = dto
