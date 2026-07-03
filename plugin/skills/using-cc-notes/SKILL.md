@@ -3,7 +3,9 @@ name: using-cc-notes
 description: >-
   Use cc-notes to record durable tasks and notes that outlive a session, stored as
   git objects on refs/cc-notes/*. Triggers when an agent records a task or note for
-  later; adopts cc-notes in a repo that has not run init yet; runs status to orient on
+  later; stores an artifact, evidence file, or dump — a VM or CI run log, a panic or
+  crash dump, a repro archive — durably as a log attachment instead of committing it
+  to the repo tree; adopts cc-notes in a repo that has not run init yet; runs status to orient on
   the backlog and who holds what; claims or starts a
   task; coordinates work across branches and multiple agents; manages leases and
   reclaims stale claims; verifies or supersedes a durable fact; syncs tasks and notes
@@ -224,9 +226,53 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes log add "<title>"` | Start an append-only chronological journal |
 | `cc-notes log append <id> "<text>"` | Append one timestamped, authored entry to a log |
 | `cc-notes log show <id>` | Read a log's entries in chronological order |
+| `cc-notes attachment get <id> <name>` | Retrieve an attachment's bytes (stdout, or `-o <path>`) |
 
 Append `--json` to any note, doc, log, task, sync, reconcile, or status command for a
 machine-readable record instead of the lean line.
+
+## Artifacts & evidence
+
+When a session produces machine-generated evidence — a VM or CI run's logs, panic or crash
+dumps, a repro archive — its home is a cc-notes log with the files attached, not the repo
+tree. A `cp -R` of run output under `docs/` or an `assets/` directory bakes megabytes of
+one-shot evidence into git history that every future clone pays for. Attachments store the
+bytes in git-lfs, content-addressed and outside the commit graph, and hang them off the
+entity by name; only the human-facing, publishable report belongs in the tree.
+
+Create one log per investigation, then append one entry per run — verdict in the message,
+evidence attached to the entity:
+
+```console
+$ cc-notes log add "fusekit VM repro: forced unmount" --dir internal/fusefs --tag evidence
+4a81c9e	2026-07-02	evidence	fusekit VM repro: forced unmount
+$ cc-notes log append 4a81c9e -m "phase 2: forced unmount wedges the holder; panic captured" \
+    --attach results/scenario.log --attach results/panics/boot.panic
+4a81c9e	2026-07-02	evidence	fusekit VM repro: forced unmount
+```
+
+`--attach` is repeatable and works the same on `note add`, `doc add`, and `log add`. It is
+fully offline: the file is hashed into the local LFS store at write time, no network. Names
+are unique per entity — a `log append` that reuses a live name fails unless you pass
+`--replace` (a re-run superseding the last run's `scenario.log`), and `--rm-attachment
+<name>` on `note`/`doc`/`log edit` drops one by name.
+
+The sharp edges:
+
+- **Only `cc-notes sync` moves the bytes.** Attachment content transfers over git-lfs
+  during `sync` — uploads before the refs push, downloads after. A plain `git push` (the
+  installed refspecs) publishes the refs *without* the content, so replicas see the entry
+  but not the files until someone who has them runs `cc-notes sync`.
+- **The remote's LFS quota is real.** On GitHub, attachments draw down the repo's LFS
+  storage and bandwidth quota — modest on the free tier and separate from ordinary repo
+  storage. Attach evidence that earns its bytes; when it stops earning them,
+  `--rm-attachment` drops it from the live set and future syncs stop carrying it.
+
+Read evidence back with `cc-notes attachment get <id> <name>` (stdout, or `-o <path>`) or
+`cc-notes attachment path <id> <name>`, which prints the local store path. `show` on the
+entity lists its attachments and flags any not yet downloaded with a `cc-notes sync` hint.
+On a mounted `.notes` tree, attachments also browse read-only at
+`.notes/attachments/<short-id>/<name>`.
 
 ## Memory mirror (automatic)
 

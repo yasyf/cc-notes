@@ -14,7 +14,7 @@ Five tools record "things to remember," and picking the wrong one is the most co
 | `cc-notes task` | Durable, synced | Global; a branch attribute plus a shared backlog | A unit of work that outlives the session or coordinates agents |
 | `cc-notes note` | Durable, synced | Repo-global, shared | A one-line decision or fact worth remembering |
 | `cc-notes doc` | Durable, synced | Repo-global, shared | Long-form guidance written for the next agent, with a when-to-read trigger |
-| `cc-notes log` | Durable, synced | Repo-global, shared | An append-only chronology — each entry an immutable timestamped fact, never edited |
+| `cc-notes log` | Durable, synced | Repo-global, shared | An append-only chronology — each entry an immutable timestamped fact, never edited, optionally carrying attached evidence files |
 
 ## The decision
 
@@ -22,7 +22,7 @@ Ask, in order:
 
 1. **Will this matter after the session ends?** No: native todo. Yes: cc-notes.
 2. **Is it work to do, or knowledge to remember?** Work is a `cc-notes task`; knowledge — a fact, a guide, or a running record — is a note, a doc, or a log (next question).
-3. **A standing fact, living guidance, or a growing chronology?** A single verified fact or decision is a `cc-notes note`. Multi-paragraph guidance written *for the next agent* — a handoff, a current-state brief, a *read this before you touch X* — is a `cc-notes doc`, carrying a free-text `--when` trigger that says when the next agent should read it. A chronology you keep adding to over time — an incident timeline, a rollout log, a debugging session — is a `cc-notes log`: each `log append` is an immutable timestamped entry, and the log never drifts because it never claims to be current truth.
+3. **A standing fact, living guidance, or a growing chronology?** A single verified fact or decision is a `cc-notes note`. Multi-paragraph guidance written *for the next agent* — a handoff, a current-state brief, a *read this before you touch X* — is a `cc-notes doc`, carrying a free-text `--when` trigger that says when the next agent should read it. A chronology you keep adding to over time — an incident timeline, a rollout log, a debugging session — is a `cc-notes log`: each `log append` is an immutable timestamped entry, and the log never drifts because it never claims to be current truth. Machine-generated evidence from a run — logs, panic dumps, repro archives — rides the entry as `--attach` files; only a human-facing, publishable report belongs in the repo tree.
 4. **If it is work, who picks it up?** Anyone — drop it in the shared backlog with `cc-notes task add --backlog`. Only this line of work — file it on your current branch with a plain `cc-notes task add`.
 
 Native todos and cc-notes tasks are not exclusive. Decompose a durable task into in-session native todos while you execute it: the cc-notes task is the durable unit of work, the native todos are your private scratchpad for finishing it.
@@ -94,4 +94,5 @@ e0b8f73	open	P2	-	Read sessions from the new schema
 - **A cc-notes task for in-session steps.** A durable, synced task for "edit this file next" clutters the shared view with one agent's transient scaffolding. Keep those in native todos.
 - **Shared work filed on your branch instead of the backlog.** A plain `task add` lands the task on your current branch, where it stays out of other agents' default view until you `task move` or merge. If anyone could pick it up, use `--backlog` so it is visible to every agent from the start.
 - **A cc-notes note no one can place.** An unanchored note about a specific file rots silently. Anchor decisions to a `--path` or `--commit` so the note is born verified and drift is computed against the real code.
+- **Run evidence committed to the repo tree.** Copying VM or CI run output — scenario logs, panic dumps, repro archives — under `docs/` or an `assets/` directory bakes megabytes of one-shot evidence into git history that every clone downloads forever. The chronology is a `cc-notes log`; each run's files ride `log append --attach`, stored in git-lfs and carried by `cc-notes sync`. Repo files are for the human-facing report, not the evidence behind it.
 - **A loose `HANDOFF.md` for the next agent.** Nothing surfaces a loose markdown file — the next agent never opens it, it drifts unchecked, and it clutters the human-facing tree. Store the same guidance as a `cc-notes doc` with a `--when` trigger: born verified, drift-checked, and floated into the next agent's context the moment the trigger matches.

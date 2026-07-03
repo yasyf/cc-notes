@@ -34,15 +34,16 @@ two directions.
 to it, and a small LLM keeps the subset worth your attention. It fails *open*: if the
 model call errors, every recalled record is shown rather than hide context by breaking.
 
-**Record (push)** takes a write, a commit, or an approved plan, recalls a candidate over
-a cheap glob or diff, and a small LLM confirms the content is durable and routes it to
+**Record (push)** takes a write, a copy, a commit, or an approved plan, recalls a candidate
+over a cheap glob or diff, and a small LLM confirms the content is durable and routes it to
 exactly one primitive — note, doc, log, or task — or to nothing. It fails *closed* to
 silence.
 
 The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
 on purpose; the LLM is the precision gate in both directions. The only deterministic hooks
 are the ones with no "which" to pick: the memory mirror, where the file already declares
-its type, and the pure workflow reminders, where the action is fixed.
+its type, the evidence-archive router, where the kind is always a log with attachments,
+and the pure workflow reminders, where the action is fixed.
 
 ### Surface — pull durable records into context
 
@@ -62,11 +63,12 @@ later. The session-start float is deterministic orientation, not a filtered surf
 | Trigger | Candidate | The LLM picks |
 |---------|-----------|---------------|
 | `Write` / `Edit` / `MultiEdit` of an internal-looking file (PostToolUse) | a status/handoff/notes/runbook/`memory/` file the static `DurableInternalWrite` gate flags | note / doc / log / task — or none; the subtle call is doc (living guidance) vs log (append-only chronology) |
+| Bash `cp`/`mv`/`rsync` landing run output in a durable tree, or a `Write`/`Edit` of an evidence-suffixed file (`.log`, `.panic`, `.dump`, …) anywhere in it, `docs/**` included (PostToolUse) | the transfer the static `EvidenceArchive` gate flags — temp/scratchpad, `testdata/` fixtures, `.git` internals, and relative in-repo bulk copies stay exempt | (static, no model) a log entry carrying the artifacts as `--attach` git-lfs attachments; only `cc-notes sync` uploads their content (plain `git push` moves refs without it), and a >1MB payload strengthens the wording |
 | `git commit` (PostToolUse) | the HEAD commit — message, diffstat, bounded patch | whether the change encodes a durable decision worth a note or doc; the `cc-task:` link reminder always fires regardless, and the sync is an automatic side-effect (see below) |
 | `ExitPlanMode` (PostToolUse) | the approved plan's text (`planFilePath`, else inline) | which few plan items are durable work → `cc-notes task add` (`--backlog` if shared); the native-vs-durable teach always fires regardless |
 | Many open native tasks after `TaskCreate` | the growing native list | (static, no model) mirror the durable or cross-agent items into `cc-notes task add` |
 
-The internal-write router asks once per turn; the commit router judges each HEAD sha once,
+The internal-write and evidence-archive routers share one ask-once-per-turn slot; the commit router judges each HEAD sha once,
 so an amend re-judges while a re-fire on the same commit stays silent; the plan router fires
 once per plan file. Every record nudge falls *closed* to silence on any classifier or git
 error, never invents a record on a degenerate parse (`record` and the kind both default

@@ -28,6 +28,7 @@ Run with the same toolchain the inline tests use::
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -58,13 +59,21 @@ from hooks.memory import (
     parse_memory_file,
 )
 from hooks.record import (
+    durable_dest,
     DurableInternalWrite,
+    EvidenceArchive,
+    evidence_payload_bytes,
+    evidence_transfers,
+    in_git_worktree,
     nudge_plan_tasks,
     nudge_record_durable,
+    nudge_record_evidence,
     PlanTask,
     PlanTasks,
     plan_task_commands,
     plan_text,
+    transfer_operands,
+    tree_bytes,
 )
 from hooks.session import (
     float_session_tasks,
@@ -351,6 +360,230 @@ def test_durable_internal_write_condition() -> None:
     fires(".cc-pool STRONG-named slug excluded (guard beats STRONG)", file="/u/.cc-pool/a/projects/-p/memory/HANDOFF.md", content="## Status\n- [ ] x\n", expected=False)
     fires(".cc-pool MEMORY.md index excluded", file="/u/.cc-pool/a/projects/-p/memory/MEMORY.md", content="# Index\n", expected=False)
     fires(".cc-pool user-memory excluded", file="/u/.cc-pool/a/projects/-p/memory/who-i-am.md", content="next steps:\n- [ ] x\n", expected=False)
+
+
+def test_evidence_archive_condition() -> None:
+    """EvidenceArchive fires on evidence/run-output landing in a durable tree, stays silent elsewhere.
+
+    The historic misses (Bash not Write; non-.md payload; under docs/) each get a positive with a
+    repo-relative dest (the run's cwd is a git worktree). The narrowness matrix (temp-to-temp,
+    testdata fixtures, .git internals, same-parent copies, build-output dirs, rsync value flags,
+    tightened dump-dir segments, .md docs, plugin source, temp writes) is non-negotiable. The
+    other-repo-with-.git and no-repo-at-all destination cases need real repos, proven in
+    test_evidence_dest_requires_worktree.
+    """
+    cond = EvidenceArchive()
+
+    def fires(label: str, *, tool: str = "Bash", command=None, file=None, content=None, expected: bool) -> None:
+        evt = mock_event("PostToolUse", tool=tool, command=command, file=file, content=content)
+        check(f"evidence-archive: {label}", cond.check(evt) == expected, f"command={command!r} file={file!r}")
+
+    # Positives ----------------------------------------------------------------
+    fires(
+        "fusekit cp -R of run output into the repo's docs/ fires",
+        command="mkdir -p docs/reports/assets/vm-repro && "
+        "cp -R /tmp/fusekit-vm/results/run-42 docs/reports/assets/vm-repro/phase2-forced-unmount",
+        expected=True,
+    )
+    fires("mv .panic into docs/ fires", command="mv crash-4821.panic docs/reports/crash-4821.panic", expected=True)
+    fires("rsync from /var/log fires", command="rsync -av /var/log/fusekit/ evidence/latest/", expected=True)
+    fires("cp from a results/ segment fires", command="cp results/soak/out.txt docs/assets/out.txt", expected=True)
+    fires("cp into a crashes/ dir fires", command="cp artifact.bin docs/crashes/artifact.bin", expected=True)
+    fires("Write of .log under docs/ fires", tool="Write", file="docs/reports/soak.log", content="ok\n", expected=True)
+    fires("Write of .panic at repo root fires", tool="Write", file="boot.panic", content="panic: x\n", expected=True)
+
+    # Negatives ----------------------------------------------------------------
+    fires("cp within /tmp silent", command="cp /tmp/run/out.log /tmp/keep/out.log", expected=False)
+    fires("cp into a scratchpad segment silent", command="cp results/out.log /private/tmp/c-1/scratchpad/out.log", expected=False)
+    fires("fixture into testdata/ silent", command="cp fixtures/batch.json internal/lfs/testdata/batch.json", expected=False)
+    fires("mv within .git silent", command="mv .git/objects/tmp_pack .git/objects/pack/p1.pack", expected=False)
+    fires("plain doc copy silent", command="cp README.md docs/index.md", expected=False)
+    fires("same-parent copy inside the repo silent", command="cp -R docs/assets docs/assets-v2", expected=False)
+    # Finding 1: bulk (-R) / multi-source alone is no longer a standalone qualifier.
+    fires("absolute bulk cp -R with no run-output signal silent", command="cp -R /Users/y/runs-archive docs/assets/runs", expected=False)
+    fires("multi-source absolute mv with no run-output signal silent", command="mv /out/a.bin /out/b.bin docs/assets/", expected=False)
+    # Finding 2: rsync value-flag tokens are consumed, not read as sources.
+    fires("rsync --exclude glob is a flag value silent", command="rsync -av --exclude '*.log' src/ docs/mirror/", expected=False)
+    fires("rsync --exclude results value silent", command="rsync -av --exclude results src/ docs/mirror/", expected=False)
+    # Finding 4: build-output dirs are exempt destinations.
+    fires("cp of a build into bin/ silent", command="cp /tmp/built bin/app", expected=False)
+    fires("rsync of a build into dist/ silent", command="rsync -a /var/tmp/build/ dist/", expected=False)
+    # Finding 5: tightened dump-dir segments and same-parent renames.
+    fires("cp of a .go under a 'crash' package dir silent", command="cp internal/crash/handler.go internal/crash2/handler.go", expected=False)
+    fires("same-parent log rotation rename silent", command="mv app.log app.log.1", expected=False)
+    fires("go build silent (not a transfer)", command="go build -o bin/cc-notes ./cmd/cc-notes", expected=False)
+    fires("rsync to a remote host silent", command="rsync -av results/ backup:archive/", expected=False)
+    fires("dest under $TMPDIR silent", command="cp results/out.log $TMPDIR/out.log", expected=False)
+    fires("Write .md under docs/ silent (writing-docs owns it)", tool="Write", file="docs/guide.md", content="# G\n", expected=False)
+    fires("Write .log into /tmp silent", tool="Write", file="/tmp/debug.log", content="x\n", expected=False)
+    fires("Write of the pack's own source silent", tool="Write", file="plugin/hooks/record.py", content="X = '.log'\n", expected=False)
+    fires("no-command no-file Bash event silent", command=None, expected=False)
+
+
+def test_evidence_transfers_parsing() -> None:
+    """The transfer parser walks compound commands, skips flags, consumes rsync value flags, applies the rules."""
+    from captain_hook.command import CommandLine, ParsedCommand
+
+    compound = evidence_transfers(CommandLine.parse("mkdir -p docs/x && cp -R /tmp/r/results/run-1 docs/x/run-1"))
+    check("transfers: compound picks the cp leg", compound == ["docs/x/run-1"], repr(compound))
+    check("transfers: flags are not paths", evidence_transfers(CommandLine.parse("cp -v /tmp/a.log docs/a.log")) == ["docs/a.log"])
+    check("transfers: single-path cp ignored", evidence_transfers(CommandLine.parse("cp -R lone-arg")) == [])
+    # Finding 1: a multi-source absolute mv is NOT run-output on bulkness alone -> silent.
+    check("transfers: multi-source absolute mv no longer bulk-fires", evidence_transfers(CommandLine.parse("mv /out/a.bin /out/b.bin evidence/")) == [], repr(evidence_transfers(CommandLine.parse("mv /out/a.bin /out/b.bin evidence/"))))
+    check("transfers: multi-source relative mv is not", evidence_transfers(CommandLine.parse("mv a.bin b.bin evidence/")) == [])
+    check("transfers: remote rsync dest exempt", evidence_transfers(CommandLine.parse("rsync -av results/ backup:archive/")) == [])
+    # Finding 2: rsync value-flag tokens are consumed, not counted as operands.
+    check("transfer_operands: cp keeps every non-flag token", transfer_operands(ParsedCommand.parse("cp -R /tmp/a /b/")) == ["/tmp/a", "/b/"], repr(transfer_operands(ParsedCommand.parse("cp -R /tmp/a /b/"))))
+    check("transfer_operands: rsync consumes --exclude's value token", transfer_operands(ParsedCommand.parse("rsync -av --exclude '*.log' src/ dest/")) == ["src/", "dest/"], repr(transfer_operands(ParsedCommand.parse("rsync -av --exclude '*.log' src/ dest/"))))
+    check("transfers: rsync exclude glob is not read as a source", evidence_transfers(CommandLine.parse("rsync -av --exclude '*.log' src/ docs/x/")) == [], repr(evidence_transfers(CommandLine.parse("rsync -av --exclude '*.log' src/ docs/x/"))))
+    check("transfers: rsync exclude 'results' value is not read as run-output", evidence_transfers(CommandLine.parse("rsync -av --exclude results src/ docs/x/")) == [], repr(evidence_transfers(CommandLine.parse("rsync -av --exclude results src/ docs/x/"))))
+    check("transfers: rsync still sees the real /tmp/results source past a consumed flag", evidence_transfers(CommandLine.parse("rsync -av --exclude '*.tmp' /tmp/run/results/ docs/x/")) == ["docs/x/"], repr(evidence_transfers(CommandLine.parse("rsync -av --exclude '*.tmp' /tmp/run/results/ docs/x/"))))
+
+
+def test_evidence_router_tool_gate(monkeypatch) -> None:
+    """A Read of an evidence file passes the pure condition but the Tool gate keeps the router silent."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    from captain_hook.conditions import matches_conditions
+
+    read_evt = mock_event("PostToolUse", tool="Read", file="docs/reports/soak.log")
+    check("evidence gate: Read never matches", not matches_conditions(_spec_for(nudge_record_evidence), read_evt))
+    write_evt = mock_event("PostToolUse", tool="Write", file="docs/reports/soak.log", content="x\n")
+    check("evidence gate: Write matches", matches_conditions(_spec_for(nudge_record_evidence), write_evt))
+
+
+def test_evidence_router_fires(monkeypatch, tmp_path) -> None:
+    """The Bash firing path warns with the log+attach recipe, the sync-only transfer rule, and the push hole."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = mock_event(
+        "PostToolUse",
+        tool="Bash",
+        command="cp -R /tmp/fusekit-vm/results/run-42 docs/reports/assets/vm-repro/phase2",
+        session_dir=tmp_path,
+    )
+    result = nudge_record_evidence(evt)
+    check("evidence router: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("evidence router: cites log add", "cc-notes log add" in result.message, result.message)
+        check("evidence router: cites log append --attach", 'log append <id> -m "<verdict>" --attach <file>' in result.message, result.message)
+        check("evidence router: names the sync-only transfer", "only `cc-notes sync` uploads" in result.message, result.message)
+        check("evidence router: names the plain git push hole", "`git push` moves refs without it" in result.message, result.message)
+        check("evidence router: no tripwire wording for an unstatable dest", "LFS attachment is one flag" not in result.message, result.message)
+
+
+def test_evidence_router_size_tripwire(monkeypatch, tmp_path) -> None:
+    """A single Write landing >1MB of evidence strengthens the wording; a small one keeps the plain nudge."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    big = mock_event("PostToolUse", tool="Write", file="docs/reports/soak.log", content="x" * ((1 << 20) + 1), session_dir=tmp_path)
+    result = nudge_record_evidence(big)
+    check("tripwire: big write warns", result is not None, repr(result))
+    if result and result.message:
+        check("tripwire: strengthened wording", "git history is forever; an LFS attachment is one flag" in result.message, result.message)
+    small = mock_event("PostToolUse", tool="Write", file="docs/reports/tiny.log", content="one line\n", session_dir=tmp_path)
+    result2 = nudge_record_evidence(small)
+    check(
+        "tripwire: small write warns without the strengthened wording",
+        result2 is not None and "LFS attachment is one flag" not in (result2.message or ""),
+        repr(result2),
+    )
+
+
+def test_evidence_payload_bytes(tmp_path) -> None:
+    """tree_bytes stats what actually landed; the Bash payload resolves the destination against cwd."""
+    single = tmp_path / "one.log"
+    single.write_bytes(b"x" * 1234)
+    check("tree_bytes: single file size", tree_bytes(single) == 1234)
+    run_dir = tmp_path / "run"
+    (run_dir / "sub").mkdir(parents=True)
+    (run_dir / "a.log").write_bytes(b"a" * 100)
+    (run_dir / "sub" / "b.panic").write_bytes(b"b" * 200)
+    check("tree_bytes: directory sums recursively", tree_bytes(run_dir) == 300)
+    check("tree_bytes: missing path is 0", tree_bytes(tmp_path / "nope") == 0)
+
+    # The Bash payload resolves the relative dest against cwd; durable_dest now requires that
+    # tree to be a git worktree, so init one (mirrors how real evidence lands in a repo).
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    dest = tmp_path / "vm-repro"
+    dest.mkdir()
+    (dest / "boot.log").write_bytes(b"z" * ((1 << 20) + 1))
+    evt = mock_event("PostToolUse", tool="Bash", command="cp -R /tmp/run/results vm-repro")
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        check("payload bytes: Bash sums the landed relative dest", evidence_payload_bytes(evt) > 1 << 20)
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_in_git_worktree_expands_home(tmp_path) -> None:
+    """in_git_worktree expands ~ before walking, so a ~-rooted dest isn't read as a cwd-relative literal.
+
+    Run under a git-init'd cwd: were ``.expanduser()`` dropped, ``~/Downloads/x`` would resolve to
+    ``<cwd>/~/Downloads/x`` and walk up into this repo's .git (True), diverging from the real-home
+    resolution (no repo at $HOME here, so False). Equality proves the expansion is applied.
+    """
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    old = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        expanded = in_git_worktree(os.path.expanduser("~/Downloads/x"))
+        check("tilde: ~ resolves to real home, not a cwd-relative literal", in_git_worktree("~/Downloads/x") == expanded, "expanduser not applied?")
+    finally:
+        os.chdir(old)
+
+
+def test_evidence_dest_requires_worktree(tmp_path) -> None:
+    """durable_dest counts a dest only inside a git worktree: another repo's .git still catches, a non-repo dest is silent (finding 3).
+
+    The two runs differ only in whether the destination tree is a git worktree — same run-output
+    source, same relative dest. Inside a repo (the fusekit archetype landing in ANOTHER repo's
+    docs/) it fires; in a directory outside any repo (`cp /tmp/build/x /usr/local/bin` shape) it
+    is silent.
+    """
+    import shutil
+    import tempfile
+    from captain_hook.command import CommandLine
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)  # the "other repo" — has .git
+    loose = Path(tempfile.mkdtemp())  # a tree outside any repo
+    fusekit = "cp -R /tmp/fusekit-vm/results/run-42 docs/reports/assets/vm-repro/phase2"
+    old = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        fired = evidence_transfers(CommandLine.parse(fusekit))
+        check("worktree: run-output cp into a repo's docs/ fires", fired == ["docs/reports/assets/vm-repro/phase2"], repr(fired))
+        check("worktree: durable_dest True inside a repo", durable_dest("docs/reports/run-1"))
+        check("worktree: in_git_worktree True inside a repo", in_git_worktree("docs/reports/run-1"))
+        os.chdir(loose)
+        silent = evidence_transfers(CommandLine.parse(fusekit))
+        check("worktree: identical cp outside any repo is silent", silent == [], repr(silent))
+        check("worktree: durable_dest False outside any repo", not durable_dest("docs/reports/run-1"))
+        check("worktree: in_git_worktree False outside any repo", not in_git_worktree("docs/reports/run-1"))
+    finally:
+        os.chdir(old)
+        shutil.rmtree(loose, ignore_errors=True)
+
+
+def test_evidence_bulk_not_standalone_trigger(tmp_path) -> None:
+    """Bulk (-R)/multi-source alone no longer qualifies; only a run-output-ish source does (finding 1).
+
+    Run inside a git worktree so the dest is durable and the source rule is isolated: a bulk or
+    multi-source copy of a plain (absolute) source tree is silent, while the same shape from a
+    /tmp results dir still fires.
+    """
+    from captain_hook.command import CommandLine
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    old = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        bulk_src = "cp -R /abs/pkg/internal/store internal/store.bak"
+        multi_src = "cp /abs/a.go /abs/b.go pkg/"
+        run_out = "cp -R /tmp/run/results/run-1 internal/archive"
+        check("bulk: -R of a plain source tree is silent", evidence_transfers(CommandLine.parse(bulk_src)) == [], repr(evidence_transfers(CommandLine.parse(bulk_src))))
+        check("bulk: multi-source absolute copy is silent", evidence_transfers(CommandLine.parse(multi_src)) == [], repr(evidence_transfers(CommandLine.parse(multi_src))))
+        check("bulk: -R from a /tmp results source still fires", evidence_transfers(CommandLine.parse(run_out)) == ["internal/archive"], repr(evidence_transfers(CommandLine.parse(run_out))))
+    finally:
+        os.chdir(old)
 
 
 def test_in_cc_pool_memory() -> None:
@@ -1552,6 +1785,7 @@ def test_pack_loads_under_discover_pack() -> None:
         "float_note_context",
         "check_note_staleness",
         "nudge_record_durable",
+        "nudge_record_evidence",
         "nudge_plan_tasks",
         "mirror_memory_to_note",
         "nudge_commit_record",
@@ -1561,7 +1795,7 @@ def test_pack_loads_under_discover_pack() -> None:
     missing = expected - names
     check("discover_pack: every cc-notes handler registered", not missing, f"missing handlers: {sorted(missing)}; got={sorted(names)}")
     check(
-        "discover_pack: it registered the full pack (10 named @on handlers + the bare many-native-tasks nudge)",
+        "discover_pack: it registered the full pack (11 named @on handlers + the bare many-native-tasks nudge)",
         len(registered) >= len(expected) + 1,
         f"registered {len(registered)} hooks this pass: {sorted(h.name for h in registered)}",
     )
