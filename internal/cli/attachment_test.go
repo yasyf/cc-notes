@@ -219,19 +219,25 @@ func TestAttachInstallsPruneGuardOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first attach: %v", err)
 	}
-	if !strings.Contains(stderr, store.PruneGuardConfig) {
-		t.Fatalf("first attach stderr = %q, want the %s announcement", stderr, store.PruneGuardConfig)
+	for _, line := range store.PruneGuardConfigs {
+		if !strings.Contains(stderr, line) {
+			t.Fatalf("first attach stderr = %q, want the %s announcement", stderr, line)
+		}
 	}
-	if got := mustGit(t, dir, "config", "--get", "lfs.pruneverifyremotealways"); got != "true" {
-		t.Fatalf("lfs.pruneverifyremotealways = %q, want true", got)
+	for _, key := range []string{"lfs.pruneverifyremotealways", "lfs.pruneverifyunreachablealways"} {
+		if got := mustGit(t, dir, "config", "--get", key); got != "true" {
+			t.Fatalf("%s = %q, want true", key, got)
+		}
 	}
 
 	_, stderr, err = runCLI(t, dir, "note", "add", "Second", "--attach", second)
 	if err != nil {
 		t.Fatalf("second attach: %v", err)
 	}
-	if strings.Contains(stderr, store.PruneGuardConfig) {
-		t.Fatalf("second attach stderr = %q, want no repeat announcement", stderr)
+	for _, line := range store.PruneGuardConfigs {
+		if strings.Contains(stderr, line) {
+			t.Fatalf("second attach stderr = %q, want no repeat announcement", stderr)
+		}
 	}
 }
 

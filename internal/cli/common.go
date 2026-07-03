@@ -119,8 +119,8 @@ func attachOps(ctx context.Context, cmd *cobra.Command, s *store.Store, paths []
 			return nil, err
 		}
 		if guarded {
-			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: installed %s in .git/config (makes `git lfs prune` verify remote presence before deleting)\n",
-				store.PruneGuardConfig); err != nil {
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: installed %s in .git/config (makes `git lfs prune` keep objects it cannot verify on the remote)\n",
+				strings.Join(store.PruneGuardConfigs[:], " and ")); err != nil {
 				return nil, err
 			}
 		}

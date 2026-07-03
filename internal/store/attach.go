@@ -16,12 +16,18 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-// PruneGuardConfig is the config line AttachFile installs on a repository's
-// first attachment: it makes `git lfs prune` verify remote presence before
-// deleting, so it never destroys cc-notes content it cannot see referenced
-// from any checkout. Callers print it verbatim the one time AttachFile
-// reports installing it.
-const PruneGuardConfig = "lfs.pruneverifyremotealways=true"
+// PruneGuardConfigs are the config lines AttachFile installs on a
+// repository's first attachment, making `git lfs prune` verify remote
+// presence before deleting. Both keys are required: verify-remote alone
+// covers only objects reachable from git commits, and cc-notes attachments
+// are referenced solely by refs/cc-notes/* — without verify-unreachable,
+// prune deletes an un-synced attachment without ever consulting the remote
+// (verified live: the object is unrecoverable). Callers print these verbatim
+// the one time AttachFile reports installing them.
+var PruneGuardConfigs = [2]string{
+	"lfs.pruneverifyremotealways=true",
+	"lfs.pruneverifyunreachablealways=true",
+}
 
 // AttachmentUse names one live reference to an LFS object: the entity kind
 // and id referencing it, and the attachment name it is referenced under.
@@ -94,22 +100,26 @@ func (s *Store) AttachFile(ctx context.Context, path string) (att model.Attachme
 	return att, guarded, nil
 }
 
-// ensurePruneGuard installs PruneGuardConfig in the repository-local config
-// unless the key is already set in any scope, reporting whether this call
-// wrote it.
+// ensurePruneGuard installs each PruneGuardConfigs line in the
+// repository-local config unless that key is already set in any scope,
+// reporting whether this call wrote any of them.
 func (s *Store) ensurePruneGuard(ctx context.Context) (bool, error) {
-	key, value, _ := strings.Cut(PruneGuardConfig, "=")
-	current, err := s.Git.ConfigGet(ctx, key)
-	if err != nil {
-		return false, err
+	wrote := false
+	for _, line := range PruneGuardConfigs {
+		key, value, _ := strings.Cut(line, "=")
+		current, err := s.Git.ConfigGet(ctx, key)
+		if err != nil {
+			return wrote, err
+		}
+		if current != "" {
+			continue
+		}
+		if err := s.Git.ConfigSet(ctx, key, value); err != nil {
+			return wrote, err
+		}
+		wrote = true
 	}
-	if current != "" {
-		return false, nil
-	}
-	if err := s.Git.ConfigSet(ctx, key, value); err != nil {
-		return false, err
-	}
-	return true, nil
+	return wrote, nil
 }
 
 // ReferencedAttachments scans every local note, doc, and log ref and returns

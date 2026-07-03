@@ -1,14 +1,20 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
@@ -44,10 +50,12 @@ func TestAttachFile(t *testing.T) {
 		t.Errorf("AttachFile = %+v, want %+v", att, want)
 	}
 	if !guarded {
-		t.Errorf("first AttachFile guarded = false, want true (installs %s)", PruneGuardConfig)
+		t.Errorf("first AttachFile guarded = false, want true (installs %s)", strings.Join(PruneGuardConfigs[:], ", "))
 	}
-	if got := mustGit(t, s.Git.Dir, "config", "--get", "lfs.pruneverifyremotealways"); got != "true" {
-		t.Errorf("lfs.pruneverifyremotealways = %q, want %q", got, "true")
+	for _, key := range []string{"lfs.pruneverifyremotealways", "lfs.pruneverifyunreachablealways"} {
+		if got := mustGit(t, s.Git.Dir, "config", "--get", key); got != "true" {
+			t.Errorf("%s = %q, want %q", key, got, "true")
+		}
 	}
 	content2, err := s.LFS(t.Context())
 	if err != nil {
@@ -71,8 +79,10 @@ func TestAttachFile(t *testing.T) {
 	if guarded {
 		t.Error("second AttachFile guarded = true, want false (guard already installed)")
 	}
-	if got := configAll(t, s, "lfs.pruneverifyremotealways"); len(got) != 1 {
-		t.Errorf("lfs.pruneverifyremotealways set %d times, want once: %q", len(got), got)
+	for _, key := range []string{"lfs.pruneverifyremotealways", "lfs.pruneverifyunreachablealways"} {
+		if got := configAll(t, s, key); len(got) != 1 {
+			t.Errorf("%s set %d times, want once: %q", key, len(got), got)
+		}
 	}
 }
 
@@ -114,8 +124,87 @@ func TestAttachFileErrors(t *testing.T) {
 			}
 		})
 	}
-	if got := configAll(t, s, "lfs.pruneverifyremotealways"); len(got) != 0 {
-		t.Errorf("failed attaches wrote the prune guard: %q", got)
+	for _, key := range []string{"lfs.pruneverifyremotealways", "lfs.pruneverifyunreachablealways"} {
+		if got := configAll(t, s, key); len(got) != 0 {
+			t.Errorf("failed attaches wrote the prune guard %s: %q", key, got)
+		}
+	}
+}
+
+// TestPruneGuardRetainsUnsyncedObject pins the exact data-loss scenario the
+// live smoke caught: cc-notes attachments are unreachable from git commits,
+// so without lfs.pruneverifyunreachablealways a real `git lfs prune` deletes
+// an un-synced object without consulting the remote. Skips when git-lfs is
+// not installed. The batch endpoint reports every object missing, matching a
+// remote that never received the object.
+func TestPruneGuardRetainsUnsyncedObject(t *testing.T) {
+	if _, err := exec.LookPath("git-lfs"); err != nil {
+		t.Skip("git-lfs not installed")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/objects/batch" {
+			http.NotFound(w, r)
+			return
+		}
+		var req struct {
+			Objects []struct {
+				OID  string `json:"oid"`
+				Size int64  `json:"size"`
+			} `json:"objects"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		type batchError struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}
+		type batchObject struct {
+			OID   string     `json:"oid"`
+			Size  int64      `json:"size"`
+			Error batchError `json:"error"`
+		}
+		objs := make([]batchObject, len(req.Objects))
+		for i, o := range req.Objects {
+			objs[i] = batchObject{OID: o.OID, Size: o.Size, Error: batchError{Code: 404, Message: "Object does not exist"}}
+		}
+		w.Header().Set("Content-Type", "application/vnd.git-lfs+json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"transfer": "basic", "objects": objs})
+	}))
+	defer srv.Close()
+
+	s := initStore(t)
+	mustGit(t, s.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+	mustGit(t, s.Git.Dir, "remote", "add", "origin", "https://example.invalid/scratch.git")
+	mustGit(t, s.Git.Dir, "config", "lfs.url", srv.URL)
+
+	att, guarded, err := s.AttachFile(t.Context(), writeTempFile(t, "unsynced.bin", []byte("un-pushed evidence")))
+	if err != nil {
+		t.Fatalf("AttachFile: %v", err)
+	}
+	if !guarded {
+		t.Fatal("AttachFile guarded = false, want true")
+	}
+	content, err := s.LFS(t.Context())
+	if err != nil {
+		t.Fatalf("LFS: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	prune := exec.CommandContext(ctx, "git", "lfs", "prune")
+	prune.Dir = s.Git.Dir
+	prune.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "SSH_ASKPASS=")
+	out, err := prune.CombinedOutput()
+	// Under the guard, git-lfs either completes while retaining the
+	// unverified object or refuses the prune outright naming it — both keep
+	// the object; anything else is a real prune failure.
+	if err != nil && !strings.Contains(string(out), "missing on remote") {
+		t.Fatalf("git lfs prune: %v\n%s", err, out)
+	}
+	if !content.Has(att.OID) {
+		t.Fatalf("git lfs prune deleted the un-synced object %s\nprune output:\n%s", att.OID, out)
 	}
 }
 
