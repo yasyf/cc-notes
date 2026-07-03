@@ -24,7 +24,7 @@ func scrubGitEnv(t *testing.T) {
 		"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
 		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
 		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-		"GIT_EDITOR", "EMAIL",
+		"GIT_EDITOR", "EMAIL", "GIT_ASKPASS", "SSH_ASKPASS",
 	} {
 		if value, ok := os.LookupEnv(key); ok {
 			t.Setenv(key, value)
@@ -307,6 +307,85 @@ func TestConfig(t *testing.T) {
 	}
 	if want := []string{"a\nb"}; !slices.Equal(got, want) {
 		t.Fatalf("get-all newline: got %q, want %q", got, want)
+	}
+}
+
+func TestConfigGet(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	got, err := g.ConfigGet(ctx, "ccnotes.missing")
+	if err != nil {
+		t.Fatalf("get missing: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("get missing: got %q, want empty", got)
+	}
+
+	mustGit(t, g.Dir, "config", "ccnotes.single", "local-value")
+	got, err = g.ConfigGet(ctx, "ccnotes.single")
+	if err != nil {
+		t.Fatalf("get local: %v", err)
+	}
+	if got != "local-value" {
+		t.Fatalf("get local: got %q, want local-value", got)
+	}
+
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(global, []byte("[lfs]\n\turl = https://global.example/lfs\n[ccnotes]\n\tsingle = global-value\n"), 0o600); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+
+	got, err = g.ConfigGet(ctx, "lfs.url")
+	if err != nil {
+		t.Fatalf("get global-only: %v", err)
+	}
+	if got != "https://global.example/lfs" {
+		t.Fatalf("full-scope get missed global value: got %q", got)
+	}
+
+	got, err = g.ConfigGet(ctx, "ccnotes.single")
+	if err != nil {
+		t.Fatalf("get layered: %v", err)
+	}
+	if got != "local-value" {
+		t.Fatalf("local must win over global: got %q", got)
+	}
+
+	locals, err := g.ConfigGetAll(ctx, "lfs.url")
+	if err != nil {
+		t.Fatalf("get-all local scope: %v", err)
+	}
+	if len(locals) != 0 {
+		t.Fatalf("ConfigGetAll is local-scope, must not see global: got %q", locals)
+	}
+}
+
+func TestRemoteURL(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	if _, err := g.RemoteURL(ctx, "origin"); err == nil {
+		t.Fatal("missing remote: want error")
+	}
+
+	mustGit(t, g.Dir, "remote", "add", "origin", "https://git-server.com/foo/bar.git")
+	got, err := g.RemoteURL(ctx, "origin")
+	if err != nil {
+		t.Fatalf("remote url: %v", err)
+	}
+	if got != "https://git-server.com/foo/bar.git" {
+		t.Fatalf("remote url: got %q, want https://git-server.com/foo/bar.git", got)
+	}
+
+	mustGit(t, g.Dir, "config", "url.https://mirror.example/.insteadOf", "https://git-server.com/")
+	got, err = g.RemoteURL(ctx, "origin")
+	if err != nil {
+		t.Fatalf("remote url with insteadOf: %v", err)
+	}
+	if got != "https://mirror.example/foo/bar.git" {
+		t.Fatalf("insteadOf not applied: got %q, want https://mirror.example/foo/bar.git", got)
 	}
 }
 

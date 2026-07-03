@@ -1,11 +1,12 @@
 // Package gitcmd execs the system git binary for the operations that need
 // it: ref writes under real ref locks with reflog coverage (update-ref
 // --stdin), fetch and push with the user's credential and SSH handling,
-// repository-local config, and identity. Object writes and all reads belong
-// to internal/gitobj; neither package imports the other. Output parsing
-// sticks to plumbing commands, with one exception: `git remote`, whose
-// name-per-line listing has no plumbing equivalent and has been stable
-// since its introduction.
+// config, identity, and the credential store (fill/approve/reject) for the
+// LFS client. Object writes and all reads belong to internal/gitobj;
+// neither package imports the other. Output parsing sticks to plumbing
+// commands, with one exception: `git remote`, whose name-per-line listing
+// and get-url output have no plumbing equivalent and have been stable
+// since their introduction.
 package gitcmd
 
 import (
@@ -319,6 +320,21 @@ func (g Git) Push(ctx context.Context, remote string, refspecs ...string) error 
 	return nil
 }
 
+// ConfigGet returns the value of key from the full config scope — system,
+// global, local, worktree, later scopes winning — or the empty string when
+// the key is unset everywhere.
+func (g Git) ConfigGet(ctx context.Context, key string) (string, error) {
+	out, err := g.run(ctx, "", "config", "--get", "-z", key)
+	var cmdErr *commandError
+	if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 && cmdErr.stderr == "" {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("config get %s: %w", key, err)
+	}
+	return strings.TrimSuffix(out, "\x00"), nil
+}
+
 // ConfigGetAll returns every value of key in the repository-local config,
 // in order, or an empty slice when the key is unset.
 func (g Git) ConfigGetAll(ctx context.Context, key string) ([]string, error) {
@@ -413,6 +429,16 @@ func (g Git) Remotes(ctx context.Context) ([]string, error) {
 		return nil, nil
 	}
 	return strings.Split(out, "\n"), nil
+}
+
+// RemoteURL returns remote's fetch URL (git remote get-url), with any
+// url.<base>.insteadOf rewrites applied — the URL git itself would dial.
+func (g Git) RemoteURL(ctx context.Context, remote string) (string, error) {
+	out, err := g.run(ctx, "", "remote", "get-url", remote)
+	if err != nil {
+		return "", fmt.Errorf("remote url %s: %w", remote, err)
+	}
+	return strings.TrimSpace(out), nil
 }
 
 // Root returns the absolute path of the worktree root.
