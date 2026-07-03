@@ -5,6 +5,14 @@
 // fast-forward, or union merge, then push — looping on contention, never
 // forcing. Refs are never deleted: deletions do not propagate through
 // refspecs, so a deleted ref would resurrect on the next fetch.
+//
+// Attachment content rides along over the LFS batch API: every referenced,
+// locally-present object uploads before the ref push (a failure blocks the
+// push — a remote ref never references content the server lacks), and every
+// referenced, locally-missing object downloads after the push loop
+// converges (an LFS outage never blocks publishing refs). Sync is the only
+// path holding that invariant: plain git push publishes entity refs through
+// the installed refspec without uploading content.
 package sync
 
 import (
@@ -18,6 +26,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/lfs"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -63,6 +72,12 @@ type Report struct {
 	Reconciled int
 	// Rounds counts fetch-reconcile-push rounds run; 1 is a clean pass.
 	Rounds int
+	// Uploaded counts attachment objects uploaded to the remote LFS
+	// endpoint before the ref push.
+	Uploaded int
+	// Downloaded counts attachment objects fetched from the remote LFS
+	// endpoint after the push loop converged.
+	Downloaded int
 }
 
 // outcome reports what one advance attempt did to a ref.
@@ -76,7 +91,8 @@ const (
 )
 
 // engine carries one Sync run's handles and counters; the atomic counters
-// absorb the reconcile fan-out.
+// absorb the reconcile fan-out, while the LFS state and transfer tallies are
+// touched only by the single-goroutine transfer phases.
 type engine struct {
 	store  *store.Store
 	remote string
@@ -85,6 +101,15 @@ type engine struct {
 	fastForwarded atomic.Int64
 	merged        atomic.Int64
 	reconciled    atomic.Int64
+
+	// endpoint is the remote's LFS endpoint, discovered once per run on the
+	// first transfer; endpointSet distinguishes it from the zero value.
+	endpoint    lfs.Endpoint
+	endpointSet bool
+	// clients holds one lazily-built client per LFS operation.
+	clients    map[string]*lfs.Client
+	uploaded   int
+	downloaded int
 }
 
 // Sync converges the local refs/cc-notes/ namespace with remote and pushes
@@ -96,6 +121,12 @@ type engine struct {
 // whole-namespace reconcile each round, the escape hatch when the scoped
 // scan is suspect. Exhausting maxRounds fails wrapping ErrSyncContended; an
 // unconfigured remote fails wrapping ErrRemoteNotFound.
+//
+// Referenced, locally-present attachment objects upload each round before
+// the push; a failed upload fails the sync with the refs unpushed.
+// Referenced, locally-missing objects download once the push loop
+// converges; a failed download fails the sync while the returned Report
+// still carries everything the run pushed.
 func Sync(ctx context.Context, dir, remote string, full bool) (Report, error) {
 	s, err := store.OpenContext(ctx, dir)
 	if err != nil {
@@ -129,22 +160,36 @@ func Sync(ctx context.Context, dir, remote string, full bool) (Report, error) {
 		if err := e.reconcile(ctx, scope); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
+		if err := e.uploadAttachments(ctx); err != nil {
+			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
+		}
 		pending, err := e.pending(ctx, after)
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
 		if pending == 0 {
-			return e.report(round, 0), nil
+			return e.finish(ctx, round, 0)
 		}
 		switch err := s.Git.Push(ctx, remote, pushRefspec); {
 		case err == nil:
-			return e.report(round, pending), nil
+			return e.finish(ctx, round, pending)
 		case errors.Is(err, gitcmd.ErrNonFastForward):
 		default:
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
 	}
 	return e.report(maxRounds, 0), fmt.Errorf("sync %s: %w: %d rounds exhausted", remote, ErrSyncContended, maxRounds)
+}
+
+// finish runs the download phase once the push loop has converged and
+// returns the run's final report. A download failure is the run's error
+// while the report still carries the pushes that landed: refs published,
+// content missing, exit non-zero.
+func (e *engine) finish(ctx context.Context, round, pushed int) (Report, error) {
+	if err := e.downloadAttachments(ctx); err != nil {
+		return e.report(round, pushed), fmt.Errorf("sync %s: %w", e.remote, err)
+	}
+	return e.report(round, pushed), nil
 }
 
 func (e *engine) report(rounds, pushed int) Report {
@@ -155,6 +200,8 @@ func (e *engine) report(rounds, pushed int) Report {
 		Pushed:        pushed,
 		Reconciled:    int(e.reconciled.Load()),
 		Rounds:        rounds,
+		Uploaded:      e.uploaded,
+		Downloaded:    e.downloaded,
 	}
 }
 
