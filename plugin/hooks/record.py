@@ -18,7 +18,7 @@ from captain_hook import (
     Warn,
     on,
 )
-from captain_hook.command import CommandLine, ParsedCommand
+from cc_transcript.command import Command, CommandLine
 from captain_hook.state import fired_this_turn, record_fire
 from pydantic import BaseModel
 
@@ -229,7 +229,7 @@ def in_git_worktree(path: str) -> bool:
     return any((d / ".git").exists() for d in (resolved, *resolved.parents))
 
 
-def transfer_operands(cmd: ParsedCommand) -> list[str]:
+def transfer_operands(cmd: Command) -> list[str]:
     # Non-flag operands of a transfer command. rsync alone has space-separated value flags
     # (`--exclude PAT`, `-e ssh`, …) whose value token is not a source/dest; consume it so an
     # exclusion glob or a `results` value can't masquerade as run output. cp/mv have none.

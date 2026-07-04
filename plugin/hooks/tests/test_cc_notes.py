@@ -422,7 +422,7 @@ def test_evidence_archive_condition() -> None:
 
 def test_evidence_transfers_parsing() -> None:
     """The transfer parser walks compound commands, skips flags, consumes rsync value flags, applies the rules."""
-    from captain_hook.command import CommandLine, ParsedCommand
+    from cc_transcript.command import Command, CommandLine
 
     compound = evidence_transfers(CommandLine.parse("mkdir -p docs/x && cp -R /tmp/r/results/run-1 docs/x/run-1"))
     check("transfers: compound picks the cp leg", compound == ["docs/x/run-1"], repr(compound))
@@ -433,8 +433,8 @@ def test_evidence_transfers_parsing() -> None:
     check("transfers: multi-source relative mv is not", evidence_transfers(CommandLine.parse("mv a.bin b.bin evidence/")) == [])
     check("transfers: remote rsync dest exempt", evidence_transfers(CommandLine.parse("rsync -av results/ backup:archive/")) == [])
     # Finding 2: rsync value-flag tokens are consumed, not counted as operands.
-    check("transfer_operands: cp keeps every non-flag token", transfer_operands(ParsedCommand.parse("cp -R /tmp/a /b/")) == ["/tmp/a", "/b/"], repr(transfer_operands(ParsedCommand.parse("cp -R /tmp/a /b/"))))
-    check("transfer_operands: rsync consumes --exclude's value token", transfer_operands(ParsedCommand.parse("rsync -av --exclude '*.log' src/ dest/")) == ["src/", "dest/"], repr(transfer_operands(ParsedCommand.parse("rsync -av --exclude '*.log' src/ dest/"))))
+    check("transfer_operands: cp keeps every non-flag token", transfer_operands(Command.parse("cp -R /tmp/a /b/")) == ["/tmp/a", "/b/"], repr(transfer_operands(Command.parse("cp -R /tmp/a /b/"))))
+    check("transfer_operands: rsync consumes --exclude's value token", transfer_operands(Command.parse("rsync -av --exclude '*.log' src/ dest/")) == ["src/", "dest/"], repr(transfer_operands(Command.parse("rsync -av --exclude '*.log' src/ dest/"))))
     check("transfers: rsync exclude glob is not read as a source", evidence_transfers(CommandLine.parse("rsync -av --exclude '*.log' src/ docs/x/")) == [], repr(evidence_transfers(CommandLine.parse("rsync -av --exclude '*.log' src/ docs/x/"))))
     check("transfers: rsync exclude 'results' value is not read as run-output", evidence_transfers(CommandLine.parse("rsync -av --exclude results src/ docs/x/")) == [], repr(evidence_transfers(CommandLine.parse("rsync -av --exclude results src/ docs/x/"))))
     check("transfers: rsync still sees the real /tmp/results source past a consumed flag", evidence_transfers(CommandLine.parse("rsync -av --exclude '*.tmp' /tmp/run/results/ docs/x/")) == ["docs/x/"], repr(evidence_transfers(CommandLine.parse("rsync -av --exclude '*.tmp' /tmp/run/results/ docs/x/"))))
@@ -541,7 +541,7 @@ def test_evidence_dest_requires_worktree(tmp_path) -> None:
     """
     import shutil
     import tempfile
-    from captain_hook.command import CommandLine
+    from cc_transcript.command import CommandLine
 
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)  # the "other repo" — has .git
     loose = Path(tempfile.mkdtemp())  # a tree outside any repo
@@ -570,7 +570,7 @@ def test_evidence_bulk_not_standalone_trigger(tmp_path) -> None:
     multi-source copy of a plain (absolute) source tree is silent, while the same shape from a
     /tmp results dir still fires.
     """
-    from captain_hook.command import CommandLine
+    from cc_transcript.command import CommandLine
 
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     old = os.getcwd()
