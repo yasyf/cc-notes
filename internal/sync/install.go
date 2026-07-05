@@ -9,9 +9,11 @@ import (
 )
 
 const (
-	// fetchRefspec force-mirrors entity refs on plain git fetch; the reflog
-	// (core.logAllRefUpdates=always) is the safety net for the +.
-	fetchRefspec = "+" + namespace + "*:" + namespace + "*"
+	// oldFetchRefspec is the pre-fix same-namespace force-mirror. A plain
+	// git fetch --prune uses it to force-clobber a diverged canonical entity
+	// ref and to prune a locally-created, not-yet-synced one; Install rewrites
+	// it to fetchRefspec so a plain fetch touches only the tracking namespace.
+	oldFetchRefspec = "+" + namespace + "*:" + namespace + "*"
 	// pushRefspec carries entity refs on plain git push, never forced: a
 	// diverged ref must resolve through Sync's union merge, never a clobber.
 	pushRefspec = namespace + "*:" + namespace + "*"
@@ -20,6 +22,18 @@ const (
 	// refspec into a remote that had none must restore the default first.
 	headRefspec = "HEAD"
 )
+
+// fetchRefspec is the plain-fetch refspec Install writes for remote: it
+// force-mirrors the remote's entity refs into the per-remote tracking
+// namespace Sync converges from — refs/cc-notes-sync/<remote>/ — never into
+// the canonical refs/cc-notes/ namespace. So fetch.prune can only prune
+// tracking copies, which mirror the remote by definition, never a
+// locally-created, not-yet-synced canonical ref. It is byte-for-byte the
+// refspec Sync fetches with, so a plain fetch pre-populates exactly the
+// tracking refs Sync then folds into canonical refs via compare-and-swap.
+func fetchRefspec(remote string) string {
+	return "+" + namespace + "*:" + syncNamespace + remote + "/*"
+}
 
 // InstallReport lists what one Install call changed in .git/config.
 type InstallReport struct {
@@ -32,13 +46,15 @@ type InstallReport struct {
 	HeadPushAdded bool
 }
 
-// Install wires remote so plain git fetch and push carry cc-notes entity
-// refs alongside branches, reporting every config line it added. It is
-// idempotent — each line is added only when absent, and a rerun reports
-// nothing — and it preserves existing push behavior: a remote with no push
-// refspec gets HEAD before the cc-notes refspec, while a remote with its
-// own push refspecs keeps them untouched. An unconfigured remote fails
-// wrapping ErrRemoteNotFound.
+// Install wires remote so plain git fetch mirrors cc-notes entity refs into
+// the per-remote tracking namespace Sync converges from and plain git push
+// carries them alongside branches, reporting every config line it added. It
+// is idempotent — each line is added only when absent, and a rerun reports
+// nothing — and it upgrades a repo wired before the prune-safety fix by
+// rewriting the old same-namespace fetch refspec in place. It preserves
+// existing push behavior: a remote with no push refspec gets HEAD before the
+// cc-notes refspec, while a remote with its own push refspecs keeps them
+// untouched. An unconfigured remote fails wrapping ErrRemoteNotFound.
 func Install(ctx context.Context, g gitcmd.Git, remote string) (InstallReport, error) {
 	report, err := install(ctx, g, remote)
 	if err != nil {
@@ -57,11 +73,18 @@ func install(ctx context.Context, g gitcmd.Git, remote string) (InstallReport, e
 	if err != nil {
 		return report, err
 	}
-	if !slices.Contains(fetch, fetchRefspec) {
-		if err := g.ConfigAdd(ctx, fetchKey, fetchRefspec); err != nil {
+	want := fetchRefspec(remote)
+	switch {
+	case slices.Contains(fetch, oldFetchRefspec):
+		if err := g.ConfigReplaceValue(ctx, fetchKey, oldFetchRefspec, want); err != nil {
 			return report, err
 		}
-		report.Added = append(report.Added, fetchKey+"="+fetchRefspec)
+		report.Added = append(report.Added, fetchKey+"="+want)
+	case !slices.Contains(fetch, want):
+		if err := g.ConfigAdd(ctx, fetchKey, want); err != nil {
+			return report, err
+		}
+		report.Added = append(report.Added, fetchKey+"="+want)
 	}
 	pushKey := "remote." + remote + ".push"
 	push, err := g.ConfigGetAll(ctx, pushKey)

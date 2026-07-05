@@ -23,9 +23,15 @@ import (
 )
 
 const (
-	ccFetchRefspec = "+refs/cc-notes/*:refs/cc-notes/*"
-	ccPushRefspec  = "refs/cc-notes/*:refs/cc-notes/*"
-	defaultFetch   = "+refs/heads/*:refs/remotes/origin/*"
+	// ccFetchRefspec is the prune-safe fetch refspec Install writes: it mirrors
+	// the remote's entity refs into the per-remote tracking namespace, never the
+	// canonical one, so fetch.prune can never delete an unsynced canonical ref.
+	ccFetchRefspec = "+refs/cc-notes/*:refs/cc-notes-sync/origin/*"
+	// oldCCFetchRefspec is the pre-fix same-namespace force-mirror Install now
+	// rewrites away on upgrade.
+	oldCCFetchRefspec = "+refs/cc-notes/*:refs/cc-notes/*"
+	ccPushRefspec     = "refs/cc-notes/*:refs/cc-notes/*"
+	defaultFetch      = "+refs/heads/*:refs/remotes/origin/*"
 )
 
 // scrubGitEnv clears every git environment knob that could leak host state
@@ -235,6 +241,49 @@ func TestInstallUnknownRemote(t *testing.T) {
 	}
 }
 
+// TestInstallUpgradesOldFetchRefspec pins the upgrade path: a repo wired before
+// the prune-safety fix carries the same-namespace force-mirror
+// +refs/cc-notes/*:refs/cc-notes/*, which a plain fetch --prune uses to delete
+// unsynced canonical refs. Install rewrites it in place to the tracking-namespace
+// refspec, leaving the default heads refspec and its order untouched, and a rerun
+// is a no-op. Push, HEAD, and the reflog are pre-wired so the only change the
+// upgrade run makes is the fetch rewrite.
+func TestInstallUpgradesOldFetchRefspec(t *testing.T) {
+	bare := initBare(t)
+	s := clone(t, bare, "Alice", "alice@example.com")
+	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
+	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
+	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
+	mustGit(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
+
+	for run := range 2 {
+		report, err := ccsync.Install(t.Context(), s.Git, "origin")
+		if err != nil {
+			t.Fatalf("Install run %d: %v", run, err)
+		}
+		if run == 0 {
+			if want := []string{"remote.origin.fetch=" + ccFetchRefspec}; !slices.Equal(report.Added, want) || report.HeadPushAdded {
+				t.Errorf("upgrade run report = %+v, want Added %q without HeadPushAdded", report, want)
+			}
+		}
+		if run > 0 && (len(report.Added) != 0 || report.HeadPushAdded) {
+			t.Errorf("run %d report = %+v, want empty no-op report", run, report)
+		}
+		if got, want := configAll(t, s, "remote.origin.fetch"), []string{defaultFetch, ccFetchRefspec}; !slices.Equal(got, want) {
+			t.Errorf("run %d: fetch lines = %q, want %q (old rewritten, order kept)", run, got, want)
+		}
+		if slices.Contains(configAll(t, s, "remote.origin.fetch"), oldCCFetchRefspec) {
+			t.Errorf("run %d: old same-namespace fetch refspec still present", run)
+		}
+	}
+}
+
+// TestPlainGitCarry pins the two halves of the plain-git contract after the
+// prune-safety fix. Plain push is unchanged: it publishes canonical entity refs
+// straight to the remote alongside the branch. Plain fetch now mirrors the
+// remote's entity refs into the per-remote tracking namespace only — never the
+// canonical one — so a fresh clone's plain fetch pre-populates exactly the
+// tracking refs Sync folds; a following sync surfaces them as canonical.
 func TestPlainGitCarry(t *testing.T) {
 	bare := initBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
@@ -265,15 +314,28 @@ func TestPlainGitCarry(t *testing.T) {
 	}
 	mustGit(t, b.Git.Dir, "fetch", "-q", "origin")
 
+	// Plain fetch lands the remote tips in the tracking namespace, not canonical.
+	trackNote := "refs/cc-notes-sync/origin/notes/" + string(note.ID)
+	if got := mustGit(t, b.Git.Dir, "rev-parse", trackNote); got != string(note.Head) {
+		t.Errorf("plain fetch: tracking %s at %s, want %s", trackNote, got, note.Head)
+	}
+	if refs := mustGit(t, b.Git.Dir, "for-each-ref", "refs/cc-notes/"); refs != "" {
+		t.Errorf("plain fetch populated canonical refs %q, want tracking only", refs)
+	}
+
+	// Sync folds the pre-populated tracking refs into canonical and loads them.
+	if _, err := ccsync.Sync(t.Context(), b.Git.Dir, "origin", false); err != nil {
+		t.Fatalf("Sync B: %v", err)
+	}
 	if got := mustGit(t, b.Git.Dir, "rev-parse", noteRef); got != string(note.Head) {
-		t.Errorf("plain fetch: local %s at %s, want %s", noteRef, got, note.Head)
+		t.Errorf("after sync: local %s at %s, want %s", noteRef, got, note.Head)
 	}
 	loaded, err := b.Load(t.Context(), taskRef)
 	if err != nil {
-		t.Fatalf("Load fetched task in B: %v", err)
+		t.Fatalf("Load synced task in B: %v", err)
 	}
 	if !reflect.DeepEqual(loaded, model.Snapshot(task)) {
-		t.Errorf("fetched task = %+v, want %+v", loaded, task)
+		t.Errorf("synced task = %+v, want %+v", loaded, task)
 	}
 }
 
@@ -523,6 +585,9 @@ func TestPlainPushDivergedEntityRef(t *testing.T) {
 	mustGit(t, a.Git.Dir, "push", "-q", "origin")
 	mustGit(t, b.Git.Dir, "fetch", "-q", "origin")
 	mustGit(t, b.Git.Dir, "reset", "-q", "--hard", "origin/main")
+	// A plain fetch now only mirrors into the tracking namespace, so B converges
+	// the canonical entity ref via sync before diverging it.
+	sync(t, b)
 
 	appendOps(t, a, taskRef, model.AddLabel{Label: "from-a"})
 	mustGit(t, a.Git.Dir, "push", "-q", "origin")
@@ -545,11 +610,41 @@ func TestPlainPushDivergedEntityRef(t *testing.T) {
 	}
 }
 
-// TestPlainFetchClobberReflog pins the other half of the plain-git contract:
-// the installed fetch refspec is forced, so a diverged local entity tip is
-// clobbered to the remote's — and the reflog, enabled for all refs by
-// Install via core.logAllRefUpdates=always, keeps the old tip recoverable.
-func TestPlainFetchClobberReflog(t *testing.T) {
+// TestPlainFetchPruneKeepsUnsyncedTask is the data-loss regression: a task
+// created but never synced has no counterpart on the remote, so under the old
+// same-namespace force-mirror refspec a plain fetch --prune deleted its
+// canonical ref outright. With the tracking-namespace refspec the canonical ref
+// is no longer a fetch destination, so prune can never touch it: the unsynced
+// task survives the exact fetch --prune that used to erase it.
+func TestPlainFetchPruneKeepsUnsyncedTask(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	if _, err := ccsync.Install(t.Context(), a.Git, "origin"); err != nil {
+		t.Fatalf("Install A: %v", err)
+	}
+	task := createTask(t, a, "unsynced", "main")
+	taskRef := refs.Task(task.ID)
+	if got := mustGit(t, a.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
+		t.Fatalf("before fetch, %s = %s, want %s", taskRef, got, task.Head)
+	}
+
+	mustGit(t, a.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "-q", "origin")
+
+	if got := mustGit(t, a.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
+		t.Fatalf("after plain fetch --prune, %s = %s, want the unsynced task to survive at %s", taskRef, got, task.Head)
+	}
+	if tracking := mustGit(t, a.Git.Dir, "for-each-ref", "refs/cc-notes-sync/"); tracking != "" {
+		t.Errorf("tracking namespace = %q, want empty (remote has no entity refs)", tracking)
+	}
+}
+
+// TestPlainFetchNeverClobbersDivergedRef pins the no-clobber half of the
+// contract that the pre-fix forced same-namespace refspec broke: a local entity
+// ref carrying unsynced ops that has diverged from the advanced remote tip is
+// neither clobbered nor pruned by a plain fetch --prune. The fetch only mirrors
+// the remote tip into the tracking namespace; Sync's union merge remains the one
+// path that folds the two sides, losing neither.
+func TestPlainFetchNeverClobbersDivergedRef(t *testing.T) {
 	bare := initBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
@@ -558,23 +653,37 @@ func TestPlainFetchClobberReflog(t *testing.T) {
 			t.Fatalf("Install: %v", err)
 		}
 	}
-	task := createTask(t, a, "clobbered", "main")
+	task := createTask(t, a, "diverged", "main")
 	taskRef := refs.Task(task.ID)
 	sync(t, a)
 	sync(t, b)
 
-	stranded := appendOps(t, b, taskRef, model.AddComment{Body: "stranded"}).(model.Task).Head
+	local := appendOps(t, b, taskRef, model.AddComment{Body: "unsynced local"}).(model.Task).Head
 	appendOps(t, a, taskRef, model.AddLabel{Label: "remote-wins"})
 	sync(t, a)
 	remoteTip := mustGit(t, bare, "rev-parse", taskRef)
+	trackingRef := "refs/cc-notes-sync/origin/tasks/" + string(task.ID)
 
-	mustGit(t, b.Git.Dir, "fetch", "-q", "origin")
+	mustGit(t, b.Git.Dir, "-c", "fetch.prune=true", "fetch", "-q", "origin")
 
-	if got := mustGit(t, b.Git.Dir, "rev-parse", taskRef); got != remoteTip {
-		t.Fatalf("after plain fetch, %s = %s, want force-clobbered to remote tip %s", taskRef, got, remoteTip)
+	if got := mustGit(t, b.Git.Dir, "rev-parse", taskRef); got != string(local) {
+		t.Fatalf("after plain fetch --prune, %s = %s, want the diverged local tip %s untouched", taskRef, got, local)
 	}
-	if got := mustGit(t, b.Git.Dir, "rev-parse", taskRef+"@{1}"); got != string(stranded) {
-		t.Errorf("%s@{1} = %s, want pre-fetch tip %s recoverable from the reflog", taskRef, got, stranded)
+	if got := mustGit(t, b.Git.Dir, "rev-parse", trackingRef); got != remoteTip {
+		t.Errorf("tracking %s = %s, want remote tip %s", trackingRef, got, remoteTip)
+	}
+
+	sync(t, b)
+	sync(t, a)
+	merged := loadTask(t, b, taskRef)
+	if len(merged.Comments) != 1 || merged.Comments[0].Body != "unsynced local" {
+		t.Errorf("merged Comments = %+v, want the preserved local comment", merged.Comments)
+	}
+	if want := []string{"remote-wins"}; !slices.Equal(merged.Labels, want) {
+		t.Errorf("merged Labels = %v, want %v", merged.Labels, want)
+	}
+	if tipsA, tipsB := ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir); !reflect.DeepEqual(tipsA, tipsB) {
+		t.Errorf("tips diverge after converge: A = %v, B = %v", tipsA, tipsB)
 	}
 }
 
@@ -618,6 +727,53 @@ func TestSyncPreservesDivergedOpsAfterInstall(t *testing.T) {
 	}
 	if tipsA, tipsB := ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir); !reflect.DeepEqual(tipsA, tipsB) {
 		t.Errorf("tips diverge: A = %v, B = %v", tipsA, tipsB)
+	}
+}
+
+// TestPlainPullThenSyncPropagatesDone pins STEP 3 case (c): B marks the shared
+// task done and syncs, A does a plain pull (its fetch half, with prune, is the
+// only part that touches cc-notes refs — the branch merge does not), then A
+// syncs. B's done state propagates into A while A's own unsynced local edit is
+// never clobbered: the plain pull leaves A's canonical ref untouched, and Sync's
+// union merge folds both sides.
+func TestPlainPullThenSyncPropagatesDone(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	for _, s := range []*store.Store{a, b} {
+		if _, err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+	}
+	task := createTask(t, a, "shared", "main")
+	taskRef := refs.Task(task.ID)
+	sync(t, a)
+	sync(t, b)
+
+	// A edits locally without syncing; B marks the task done and publishes it.
+	aLocal := appendOps(t, a, taskRef, model.AddLabel{Label: "a-local"}).(model.Task).Head
+	appendOps(t, b, taskRef, model.SetStatus{Status: model.StatusDone})
+	sync(t, b)
+
+	// A's plain pull (fetch half, prune on) must not clobber A's local tip.
+	mustGit(t, a.Git.Dir, "-c", "fetch.prune=true", "fetch", "-q", "origin")
+	if got := mustGit(t, a.Git.Dir, "rev-parse", taskRef); got != string(aLocal) {
+		t.Fatalf("after plain pull, %s = %s, want A's unsynced local tip %s untouched", taskRef, got, aLocal)
+	}
+
+	sync(t, a)
+	sync(t, b)
+	for _, s := range []*store.Store{a, b} {
+		got := loadTask(t, s, taskRef)
+		if got.Status != model.StatusDone {
+			t.Errorf("%s Status = %s, want done propagated", s.Git.Dir, got.Status)
+		}
+		if want := []string{"a-local"}; !slices.Equal(got.Labels, want) {
+			t.Errorf("%s Labels = %v, want %v (A's local edit not clobbered)", s.Git.Dir, got.Labels, want)
+		}
+	}
+	if tipsA, tipsB := ccRefs(t, a.Git.Dir), ccRefs(t, b.Git.Dir); !reflect.DeepEqual(tipsA, tipsB) {
+		t.Errorf("tips diverge after converge: A = %v, B = %v", tipsA, tipsB)
 	}
 }
 

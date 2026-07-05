@@ -42,8 +42,8 @@ func TestInitInstallsRefspecs(t *testing.T) {
 		t.Fatalf("init output = %q, want %q", out, want)
 	}
 	fetch := mustGit(t, dir, "config", "--get-all", "remote.origin.fetch")
-	if !strings.Contains(fetch, "+refs/cc-notes/*:refs/cc-notes/*") {
-		t.Fatalf("fetch refspecs = %q, want cc-notes refspec", fetch)
+	if !strings.Contains(fetch, "+refs/cc-notes/*:refs/cc-notes-sync/origin/*") {
+		t.Fatalf("fetch refspecs = %q, want cc-notes tracking refspec", fetch)
 	}
 }
 
@@ -122,7 +122,7 @@ func TestSelfInitWiresRefspecsOnFirstWrite(t *testing.T) {
 	mustRun(t, dir, "note", "add", "First")
 
 	fetch := mustGit(t, dir, "config", "--get-all", "remote.origin.fetch")
-	if !strings.Contains(fetch, "+refs/cc-notes/*:refs/cc-notes/*") {
+	if !strings.Contains(fetch, "+refs/cc-notes/*:refs/cc-notes-sync/origin/*") {
 		t.Fatalf("first write did not auto-install the fetch refspec: %q", fetch)
 	}
 	push := mustGit(t, dir, "config", "--get-all", "remote.origin.push")

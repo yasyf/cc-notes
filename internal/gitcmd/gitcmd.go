@@ -370,6 +370,17 @@ func (g Git) ConfigSet(ctx context.Context, key, value string) error {
 	return nil
 }
 
+// ConfigReplaceValue replaces every repository-local line of key equal to
+// oldValue with a single line set to newValue, leaving other values of key in
+// place. oldValue is matched literally (--fixed-value), so refspec
+// metacharacters are not interpreted as a regexp.
+func (g Git) ConfigReplaceValue(ctx context.Context, key, oldValue, newValue string) error {
+	if _, err := g.run(ctx, "", "config", "--local", "--replace-all", "--fixed-value", key, newValue, oldValue); err != nil {
+		return fmt.Errorf("config replace %s value %q: %w", key, oldValue, err)
+	}
+	return nil
+}
+
 // HeadBranch returns the branch HEAD points at, including an unborn branch
 // in a freshly initialized repository. A detached HEAD wraps
 // ErrDetachedHead.

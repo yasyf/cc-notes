@@ -730,7 +730,7 @@ func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
 		t.Fatalf("task add exit = %d (stderr %q)", res.Code, res.Stderr)
 	}
 	want := "cc-notes: installed refspecs in .git/config for \"origin\": " +
-		"remote.origin.fetch=+refs/cc-notes/*:refs/cc-notes/*; " +
+		"remote.origin.fetch=+refs/cc-notes/*:refs/cc-notes-sync/origin/*; " +
 		"remote.origin.push=HEAD; " +
 		"remote.origin.push=refs/cc-notes/*:refs/cc-notes/*; " +
 		"core.logAllRefUpdates=always\n" +
