@@ -2,13 +2,10 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"slices"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -16,6 +13,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
+	"github.com/yasyf/cc-notes/internal/trail"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -114,7 +112,7 @@ func resolveAnyEntity(ctx context.Context, s *store.Store, prefix string) (strin
 }
 
 func printHistory(cmd *cobra.Command, steps []fold.Step, opts historyOpts) error {
-	entries, err := historyEntries(steps)
+	entries, err := trail.Entries(steps)
 	if err != nil {
 		return err
 	}
@@ -135,163 +133,18 @@ func printHistory(cmd *cobra.Command, steps []fold.Step, opts historyOpts) error
 	return renderHistoryText(out, entries)
 }
 
-// histEntry is one commit in an entity's trail: the commit's metadata, a
-// machine kind ("create"|"edit"|"checkpoint"), a human verb for the header,
-// the covered-commit count for checkpoints, and the fields it changed.
-type histEntry struct {
-	commit  model.PackCommit
-	kind    string
-	verb    string
-	covers  int
-	changes []histChange
-}
-
-// histChange is one field's delta: a scalar From→To, or a set of Added and
-// Removed elements. scalar discriminates the two.
-type histChange struct {
-	field   string
-	scalar  bool
-	from    string
-	to      string
-	added   []string
-	removed []string
-}
-
-func historyEntries(steps []fold.Step) ([]histEntry, error) {
-	var entries []histEntry
-	for i, st := range steps {
-		e := histEntry{commit: st.Commit}
-		switch {
-		case isCheckpointCommit(st.Commit):
-			e.kind = "checkpoint"
-			e.covers = checkpointCovers(st.Commit)
-			e.verb = fmt.Sprintf("compacted (covers %d %s)", e.covers, plural(e.covers, "commit", "commits"))
-		case i == 0:
-			e.kind = "create"
-			e.verb = "created " + entityKind(st.Snapshot)
-			changes, err := diffSnapshots(zeroLike(st.Snapshot), st.Snapshot)
-			if err != nil {
-				return nil, err
-			}
-			// A create is "from nothing": render every initial scalar as a
-			// plain set, so a numeric default reads "priority: 2", not "0 → 2".
-			for j := range changes {
-				if changes[j].scalar {
-					changes[j].from = ""
-				}
-			}
-			e.changes = changes
-		default:
-			e.kind = "edit"
-			changes, err := diffSnapshots(steps[i-1].Snapshot, st.Snapshot)
-			if err != nil {
-				return nil, err
-			}
-			// A commit whose only effect was on bookkeeping (a lease heartbeat)
-			// or that was idempotent changes no visible field — it is not an
-			// edit, so it stays out of the trail.
-			if len(changes) == 0 {
-				continue
-			}
-			e.changes = changes
-		}
-		entries = append(entries, e)
+// historyVerb renders the human header verb for one trail entry: a compaction
+// marker for checkpoints, "created <kind>" for the create, and nothing for a
+// plain edit.
+func historyVerb(e trail.Entry) string {
+	switch e.Kind {
+	case "checkpoint":
+		return fmt.Sprintf("compacted (covers %d %s)", e.Covers, plural(e.Covers, "commit", "commits"))
+	case "create":
+		return "created " + trail.EntityKind(e.Snapshot)
+	default:
+		return ""
 	}
-	return entries, nil
-}
-
-// diffSnapshots reports the fields that changed between two snapshots of the
-// same entity, by marshaling each to its canonical JSON map and comparing every
-// field but the bookkeeping ones. Scalars report From→To; set-valued fields
-// report Added and Removed elements.
-func diffSnapshots(before, after model.Snapshot) ([]histChange, error) {
-	bm, err := snapshotMap(before)
-	if err != nil {
-		return nil, err
-	}
-	am, err := snapshotMap(after)
-	if err != nil {
-		return nil, err
-	}
-	var changes []histChange
-	for _, field := range unionKeys(bm, am) {
-		if historyHiddenFields[field] {
-			continue
-		}
-		if ch, ok := diffField(field, bm[field], am[field]); ok {
-			changes = append(changes, ch)
-		}
-	}
-	return changes, nil
-}
-
-func diffField(field string, before, after any) (histChange, bool) {
-	ba, baIsArray := before.([]any)
-	aa, aaIsArray := after.([]any)
-	if baIsArray || aaIsArray {
-		added, removed := diffElements(field, ba, aa)
-		if len(added) == 0 && len(removed) == 0 {
-			return histChange{}, false
-		}
-		return histChange{field: field, added: added, removed: removed}, true
-	}
-	from := formatScalar(field, before)
-	to := formatScalar(field, after)
-	if from == to {
-		return histChange{}, false
-	}
-	return histChange{field: field, scalar: true, from: from, to: to}, true
-}
-
-func diffElements(field string, before, after []any) (added, removed []string) {
-	bset := elementSet(field, before)
-	aset := elementSet(field, after)
-	for s := range aset {
-		if !bset[s] {
-			added = append(added, s)
-		}
-	}
-	for s := range bset {
-		if !aset[s] {
-			removed = append(removed, s)
-		}
-	}
-	sort.Strings(added)
-	sort.Strings(removed)
-	return added, removed
-}
-
-func elementSet(field string, elems []any) map[string]bool {
-	out := make(map[string]bool, len(elems))
-	for _, e := range elems {
-		out[formatElement(field, e)] = true
-	}
-	return out
-}
-
-// historyHiddenFields are snapshot fields excluded from the audit diff:
-// bookkeeping that moves on every commit, or derived content witnesses — none
-// of which is a user edit.
-var historyHiddenFields = map[string]bool{
-	"id":                true,
-	"author":            true,
-	"created_at":        true,
-	"updated_at":        true,
-	"head":              true,
-	"heartbeat_at":      true,
-	"heartbeat_lamport": true,
-	"witness":           true,
-	"verified_commit":   true,
-}
-
-// historyTimeFields are unix-seconds scalars rendered as RFC3339 UTC.
-var historyTimeFields = map[string]bool{
-	"verified_at": true,
-	"started_at":  true,
-	"closed_at":   true,
-	"stale_at":    true,
-	"start_date":  true,
-	"end_date":    true,
 }
 
 // simpleSetFields are string-valued sets rendered on one line; every other
@@ -304,72 +157,16 @@ var simpleSetFields = map[string]bool{
 	"superseded_by": true,
 }
 
-func formatScalar(field string, v any) string {
-	if v == nil {
-		return ""
-	}
-	if historyTimeFields[field] {
-		if n, ok := v.(float64); ok {
-			if n == 0 {
-				return ""
-			}
-			return rfc3339(int64(n))
-		}
-	}
-	return scalarString(v)
-}
-
-// formatElement renders one set element to a stable, human string: a string
-// element verbatim, a known object element (anchor, comment, log entry,
-// criterion) summarized, any other object as compact JSON.
-func formatElement(field string, v any) string {
-	m, ok := v.(map[string]any)
-	if !ok {
-		return scalarString(v)
-	}
-	switch field {
-	case "anchors":
-		return fmt.Sprintf("%s:%s", scalarString(m["kind"]), scalarString(m["value"]))
-	case "comments":
-		return fmt.Sprintf("comment by %s: %q", scalarString(m["author"]), scalarString(m["body"]))
-	case "entries":
-		return fmt.Sprintf("entry by %s: %q", scalarString(m["author"]), scalarString(m["text"]))
-	case "criteria":
-		return fmt.Sprintf("%q [%s]", scalarString(m["text"]), scalarString(m["status"]))
-	}
-	b, _ := json.Marshal(m)
-	return string(b)
-}
-
-func scalarString(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return x
-	case bool:
-		return strconv.FormatBool(x)
-	case float64:
-		if x == float64(int64(x)) {
-			return strconv.FormatInt(int64(x), 10)
-		}
-		return strconv.FormatFloat(x, 'g', -1, 64)
-	default:
-		b, _ := json.Marshal(x)
-		return string(b)
-	}
-}
-
-func renderHistoryText(w io.Writer, entries []histEntry) error {
+func renderHistoryText(w io.Writer, entries []trail.Entry) error {
 	for _, e := range entries {
-		header := fmt.Sprintf("%s  %s  %s", shortSHA(e.commit.SHA), e.commit.Author, rfc3339(e.commit.AuthorTime))
-		if e.verb != "" {
-			header += "  " + e.verb
+		header := fmt.Sprintf("%s  %s  %s", shortSHA(e.Commit.SHA), e.Commit.Author, rfc3339(e.Commit.AuthorTime))
+		if verb := historyVerb(e); verb != "" {
+			header += "  " + verb
 		}
 		if _, err := fmt.Fprintln(w, header); err != nil {
 			return err
 		}
-		for _, ch := range e.changes {
+		for _, ch := range e.Changes {
 			for _, line := range renderChangeLines(ch) {
 				if _, err := fmt.Fprintln(w, "    "+line); err != nil {
 					return err
@@ -380,33 +177,33 @@ func renderHistoryText(w io.Writer, entries []histEntry) error {
 	return nil
 }
 
-func renderChangeLines(ch histChange) []string {
-	if ch.scalar {
+func renderChangeLines(ch trail.Change) []string {
+	if ch.Scalar {
 		switch {
-		case ch.from == "":
-			return []string{fmt.Sprintf("%s: %s", ch.field, ch.to)}
-		case ch.to == "":
-			return []string{fmt.Sprintf("%s: %s → (none)", ch.field, ch.from)}
+		case ch.From == "":
+			return []string{fmt.Sprintf("%s: %s", ch.Field, ch.To)}
+		case ch.To == "":
+			return []string{fmt.Sprintf("%s: %s → (none)", ch.Field, ch.From)}
 		default:
-			return []string{fmt.Sprintf("%s: %s → %s", ch.field, ch.from, ch.to)}
+			return []string{fmt.Sprintf("%s: %s → %s", ch.Field, ch.From, ch.To)}
 		}
 	}
-	if simpleSetFields[ch.field] {
-		tokens := make([]string, 0, len(ch.added)+len(ch.removed))
-		for _, a := range ch.added {
+	if simpleSetFields[ch.Field] {
+		tokens := make([]string, 0, len(ch.Added)+len(ch.Removed))
+		for _, a := range ch.Added {
 			tokens = append(tokens, "+"+a)
 		}
-		for _, r := range ch.removed {
+		for _, r := range ch.Removed {
 			tokens = append(tokens, "-"+r)
 		}
-		return []string{ch.field + ": " + strings.Join(tokens, " ")}
+		return []string{ch.Field + ": " + strings.Join(tokens, " ")}
 	}
-	lines := make([]string, 0, len(ch.added)+len(ch.removed))
-	for _, a := range ch.added {
-		lines = append(lines, fmt.Sprintf("%s: +%s", ch.field, a))
+	lines := make([]string, 0, len(ch.Added)+len(ch.Removed))
+	for _, a := range ch.Added {
+		lines = append(lines, fmt.Sprintf("%s: +%s", ch.Field, a))
 	}
-	for _, r := range ch.removed {
-		lines = append(lines, fmt.Sprintf("%s: -%s", ch.field, r))
+	for _, r := range ch.Removed {
+		lines = append(lines, fmt.Sprintf("%s: -%s", ch.Field, r))
 	}
 	return lines
 }
@@ -435,113 +232,23 @@ type historyEntryDTO struct {
 	Changes []historyChangeDTO `json:"changes"`
 }
 
-func newHistoryEntryDTO(e histEntry) historyEntryDTO {
-	changes := make([]historyChangeDTO, len(e.changes))
-	for i, ch := range e.changes {
-		if ch.scalar {
-			changes[i] = historyChangeDTO{Field: ch.field, From: optString(ch.from), To: optString(ch.to)}
+func newHistoryEntryDTO(e trail.Entry) historyEntryDTO {
+	changes := make([]historyChangeDTO, len(e.Changes))
+	for i, ch := range e.Changes {
+		if ch.Scalar {
+			changes[i] = historyChangeDTO{Field: ch.Field, From: optString(ch.From), To: optString(ch.To)}
 		} else {
-			changes[i] = historyChangeDTO{Field: ch.field, Added: ch.added, Removed: ch.removed}
+			changes[i] = historyChangeDTO{Field: ch.Field, Added: ch.Added, Removed: ch.Removed}
 		}
 	}
 	return historyEntryDTO{
-		SHA:     string(e.commit.SHA),
-		Author:  string(e.commit.Author),
-		Time:    rfc3339(e.commit.AuthorTime),
-		Lamport: uint64(e.commit.Pack.Lamport),
-		Kind:    e.kind,
-		Covers:  e.covers,
+		SHA:     string(e.Commit.SHA),
+		Author:  string(e.Commit.Author),
+		Time:    rfc3339(e.Commit.AuthorTime),
+		Lamport: uint64(e.Commit.Pack.Lamport),
+		Kind:    e.Kind,
+		Covers:  e.Covers,
 		Changes: changes,
-	}
-}
-
-func snapshotMap(snap model.Snapshot) (map[string]any, error) {
-	data, err := json.Marshal(snap)
-	if err != nil {
-		return nil, err
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func unionKeys(a, b map[string]any) []string {
-	seen := map[string]bool{}
-	for k := range a {
-		seen[k] = true
-	}
-	for k := range b {
-		seen[k] = true
-	}
-	keys := make([]string, 0, len(seen))
-	for k := range seen {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// isCheckpointCommit reports whether a commit carries only Checkpoint ops — a
-// compaction marker, not a user edit.
-func isCheckpointCommit(c model.PackCommit) bool {
-	if len(c.Pack.Ops) == 0 {
-		return false
-	}
-	for _, op := range c.Pack.Ops {
-		if _, ok := op.(model.Checkpoint); !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func checkpointCovers(c model.PackCommit) int {
-	n := 0
-	for _, op := range c.Pack.Ops {
-		if cp, ok := op.(model.Checkpoint); ok {
-			n += len(cp.CoversShas)
-		}
-	}
-	return n
-}
-
-func zeroLike(snap model.Snapshot) model.Snapshot {
-	switch snap.(type) {
-	case model.Note:
-		return model.Note{}
-	case model.Doc:
-		return model.Doc{}
-	case model.Log:
-		return model.Log{}
-	case model.Task:
-		return model.Task{}
-	case model.Sprint:
-		return model.Sprint{}
-	case model.Project:
-		return model.Project{}
-	default:
-		panic(fmt.Sprintf("history: unknown snapshot type %T", snap))
-	}
-}
-
-func entityKind(snap model.Snapshot) string {
-	switch snap.(type) {
-	case model.Note:
-		return "note"
-	case model.Doc:
-		return "doc"
-	case model.Log:
-		return "log"
-	case model.Task:
-		return "task"
-	case model.Sprint:
-		return "sprint"
-	case model.Project:
-		return "project"
-	default:
-		panic(fmt.Sprintf("history: unknown snapshot type %T", snap))
 	}
 }
 
