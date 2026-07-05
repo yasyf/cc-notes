@@ -1,1 +1,1 @@
-{"v":1,"lamport":2,"ops":[{"kind":"add_comment","body":"Not a bug — verified 2026-07-04. The pack import failure was environmental: a stale SHA-pinned cached pack plus a stale uv-tool capt-hook 8.0.0 (both since removed); the import fix itself shipped long ago (ceb3078, v0.7.1). Hook tests green in CI today: 238/238 (hook-tests job, yasyf/cc-notes)."}]}
+{"v":1,"lamport":3,"ops":[{"kind":"set_status","status":"cancelled"}]}
