@@ -80,7 +80,7 @@ func (c *Client) putObject(ctx context.Context, store Store, obj batchObject, ac
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, act.Href, f)
 	if err != nil {
 		return err
@@ -94,7 +94,7 @@ func (c *Client) putObject(ctx context.Context, store Store, obj batchObject, ac
 	if err != nil {
 		return fmt.Errorf("put %s: %w", obj.OID, err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode/100 != 2 {
 		return fmt.Errorf("put %s: status %d", obj.OID, res.StatusCode)
 	}
@@ -119,7 +119,7 @@ func (c *Client) verifyObject(ctx context.Context, obj batchObject, act action) 
 	if err != nil {
 		return fmt.Errorf("verify %s: %w", obj.OID, err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode/100 != 2 {
 		return fmt.Errorf("verify %s: status %d", obj.OID, res.StatusCode)
 	}
@@ -138,7 +138,7 @@ func (c *Client) getObject(ctx context.Context, store Store, obj batchObject, ac
 	if err != nil {
 		return fmt.Errorf("get %s: %w", obj.OID, err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode/100 != 2 {
 		return fmt.Errorf("get %s: status %d", obj.OID, res.StatusCode)
 	}

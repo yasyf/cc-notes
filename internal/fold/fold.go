@@ -216,7 +216,7 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 			case model.RemoveSupersededBy:
 				delete(superseded, o.ID)
 			case model.AddAttachment:
-				attachments[o.Name] = model.Attachment{Name: o.Name, OID: o.OID, Size: o.Size}
+				attachments[o.Name] = model.Attachment(o)
 			case model.RemoveAttachment:
 				delete(attachments, o.Name)
 			default:
@@ -331,7 +331,7 @@ func foldDoc(ordered []model.PackCommit) (model.Doc, error) {
 			case model.RemoveSupersededBy:
 				delete(superseded, o.ID)
 			case model.AddAttachment:
-				attachments[o.Name] = model.Attachment{Name: o.Name, OID: o.OID, Size: o.Size}
+				attachments[o.Name] = model.Attachment(o)
 			case model.RemoveAttachment:
 				delete(attachments, o.Name)
 			default:
@@ -427,7 +427,7 @@ func foldLog(ordered []model.PackCommit) (model.Log, error) {
 			case model.DeleteNote:
 				log.Deleted = true
 			case model.AddAttachment:
-				attachments[o.Name] = model.Attachment{Name: o.Name, OID: o.OID, Size: o.Size}
+				attachments[o.Name] = model.Attachment(o)
 			case model.RemoveAttachment:
 				delete(attachments, o.Name)
 			default:

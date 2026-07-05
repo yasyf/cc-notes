@@ -89,7 +89,7 @@ func (s *Store) AttachFile(ctx context.Context, path string) (att model.Attachme
 		return model.Attachment{}, false, fmt.Errorf("attach %s: %w", path, err)
 	}
 	att = model.Attachment{Name: filepath.Base(path), OID: oid, Size: size}
-	op := model.AddAttachment{Name: att.Name, OID: att.OID, Size: att.Size}
+	op := model.AddAttachment(att)
 	if _, err := roundTrip(model.Pack{Lamport: 1, Ops: []model.Op{op}}); err != nil {
 		return model.Attachment{}, false, fmt.Errorf("attach %s: %w", path, err)
 	}

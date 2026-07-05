@@ -156,7 +156,7 @@ func (c *Client) batchOne(ctx context.Context, operation string, objects []Objec
 			return nil, fmt.Errorf("batch %s: %w", operation, err)
 		}
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	return decodeBatch(c.Endpoint, operation, res)
 }
 

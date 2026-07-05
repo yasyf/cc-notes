@@ -40,7 +40,7 @@ func TestPutFileGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	got, err := os.ReadFile(store.Path(oid))
 	if err != nil {
 		t.Fatal(err)

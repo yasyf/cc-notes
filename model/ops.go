@@ -548,7 +548,7 @@ type AddAttachment struct {
 func (AddAttachment) OpKind() string { return "add_attachment" }
 
 func (o AddAttachment) validate() error {
-	return Attachment{Name: o.Name, OID: o.OID, Size: o.Size}.validate()
+	return Attachment(o).validate()
 }
 
 // RemoveAttachment removes the named attachment from a note, doc, or log.

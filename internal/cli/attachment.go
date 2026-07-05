@@ -49,7 +49,7 @@ func newAttachmentGetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			dest := cmd.OutOrStdout()
 			if output != "" {
 				out, cerr := os.Create(output)

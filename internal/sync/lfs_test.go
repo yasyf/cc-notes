@@ -72,8 +72,7 @@ func newFakeLFS(t *testing.T) (*fakeLFS, string) {
 	t.Helper()
 	f := &fakeLFS{objects: map[string][]byte{}, verified: map[string]bool{}}
 	mux := http.NewServeMux()
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.requests++
 		f.mu.Unlock()
@@ -183,7 +182,7 @@ func attachFile(t *testing.T, s *store.Store, ref, name string, content []byte) 
 	if err != nil {
 		t.Fatalf("AttachFile(%s): %v", path, err)
 	}
-	appendOps(t, s, ref, model.AddAttachment{Name: att.Name, OID: att.OID, Size: att.Size})
+	appendOps(t, s, ref, model.AddAttachment(att))
 	return att
 }
 

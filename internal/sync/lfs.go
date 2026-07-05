@@ -177,17 +177,15 @@ func objectErrors(err error) []*lfs.ObjectError {
 		if e == nil {
 			return
 		}
-		if oe, ok := e.(*lfs.ObjectError); ok {
-			out = append(out, oe)
-			return
-		}
-		switch u := e.(type) {
-		case interface{ Unwrap() []error }:
-			for _, child := range u.Unwrap() {
+		if joined, ok := e.(interface{ Unwrap() []error }); ok {
+			for _, child := range joined.Unwrap() {
 				visit(child)
 			}
-		case interface{ Unwrap() error }:
-			visit(u.Unwrap())
+			return
+		}
+		var oe *lfs.ObjectError
+		if errors.As(e, &oe) {
+			out = append(out, oe)
 		}
 	}
 	visit(err)

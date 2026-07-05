@@ -39,7 +39,11 @@ func (s Store) PutFile(path string) (oid string, size int64, err error) {
 	if err != nil {
 		return "", 0, err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+	}()
 	return s.put(f, "", -1)
 }
 
@@ -63,15 +67,15 @@ func (s Store) Open(oid string) (*os.File, error) {
 
 func (s Store) put(r io.Reader, wantOID string, wantSize int64) (string, int64, error) {
 	tmpDir := filepath.Join(s.Dir, "tmp")
-	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+	if err := os.MkdirAll(tmpDir, 0o750); err != nil {
 		return "", 0, err
 	}
 	tmp := filepath.Join(tmpDir, "obj-"+rand.Text())
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return "", 0, err
 	}
-	defer os.Remove(tmp) // no-op after successful rename
+	defer func() { _ = os.Remove(tmp) }() // no-op after successful rename
 	h := sha256.New()
 	size, err := io.Copy(f, io.TeeReader(r, h))
 	if cerr := f.Close(); err == nil {
@@ -85,7 +89,7 @@ func (s Store) put(r io.Reader, wantOID string, wantSize int64) (string, int64, 
 		return "", 0, fmt.Errorf("%w: got %s/%d want %s/%d", ErrCorrupt, oid, size, wantOID, wantSize)
 	}
 	dest := s.Path(oid)
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
 		return "", 0, err
 	}
 	if err := os.Rename(tmp, dest); err != nil {

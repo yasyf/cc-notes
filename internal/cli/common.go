@@ -132,7 +132,7 @@ func attachOps(ctx context.Context, cmd *cobra.Command, s *store.Store, paths []
 				return nil, err
 			}
 		}
-		ops = append(ops, model.AddAttachment{Name: att.Name, OID: att.OID, Size: att.Size})
+		ops = append(ops, model.AddAttachment(att))
 	}
 	return ops, nil
 }
