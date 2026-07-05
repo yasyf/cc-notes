@@ -60,9 +60,12 @@ RFC3339 UTC timestamps, `null` for unset optionals, and sorted set slices.
 
 ### `cc-notes init`
 
-Set up cc-notes in a repository — run once per repo. Installs the `refs/cc-notes/*` fetch and
-push refspecs, then does everything the repo is ready for. After init, plain `git push` and
-`git pull` carry the cc-notes refs alongside your branches.
+Set up cc-notes in a repository — run once per repo. Installs the cc-notes fetch and push
+refspecs, then does everything the repo is ready for. After init, plain `git push`
+publishes the cc-notes refs alongside your branches; a plain `git fetch`/`git pull` stages
+incoming refs in a tracking namespace (`refs/cc-notes-sync/<remote>/*`), and `cc-notes sync`
+folds them into the canonical refs — the capt-hook pack and the reconcile CI workflow run
+sync for you.
 
 When a `.claude/` directory exists, init registers the cc-notes plugin in
 `.claude/settings.json` and enables the cc-notes capt-hook pack (via `capt-hook pack add`). When
@@ -71,7 +74,7 @@ a `.github/` directory exists, it installs the reconcile CI workflow. init never
 
 Under jj, `jj git push`/`jj git fetch` bridge only `refs/heads/*` and leave the
 `refs/cc-notes/*` refs behind; run `cc-notes sync` (it drives the git binary directly, carrying
-the refs regardless of front-end) or real `git push`/`git pull`.
+the refs both ways regardless of front-end).
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -150,7 +153,7 @@ both git and jj; jj never fires git hooks, which is why this is an explicit comm
 | `--into <branch>` | current branch | Target branch to carry tasks onto |
 | `--from <branch>` | (auto-discover) | Restrict to named source branches; repeatable. Deterministic — use in CI |
 | `--force` | off | Skip the ancestry test; only valid with `--from`. For squash-merges and deleted branches |
-| `--dry-run` | off | Report what would change without writing |
+| `--dry-run` | off | Report what would change without writing. The preview reads canonical state only — data staged by a plain fetch is folded only by a real run |
 | `--json` | off | Emit JSON |
 
 ```console

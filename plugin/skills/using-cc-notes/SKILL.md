@@ -18,10 +18,13 @@ allowed-tools: Bash(cc-notes:*), Read
 
 cc-notes is a git-native notes and tasks layer for agents. Every entity — a note or a
 task — is an event-log CRDT: an append-only log of operation packs, one per git commit,
-on hidden `refs/cc-notes/*` refs inside the repo's object database. The data is versioned,
-synced by plain `git push`/`git pull` (or `cc-notes sync` under jj, whose git bridge skips
-the cc-notes refs), and invisible in checkouts and diffs. A deterministic fold replays each
-log into a snapshot, so every replica reads the same state.
+on hidden `refs/cc-notes/*` refs inside the repo's object database. The data is versioned
+and invisible in checkouts and diffs. Plain `git push` publishes your refs; a plain `git
+fetch`/`git pull` stages incoming refs in a tracking namespace, and `cc-notes sync` folds
+them into your view — the cc-notes capt-hook pack and CI workflow run that for you (under
+jj, whose git bridge skips the cc-notes refs, `cc-notes sync` covers both directions). A
+deterministic fold replays each log into a snapshot, so every replica reads the same
+state.
 
 Reach for cc-notes when work or knowledge must survive the current session or reach another
 agent. Track moment-to-moment steps for what you are doing right now in the harness's own
@@ -89,16 +92,18 @@ The mount mechanics — holder model, teardown, the macOS Network Volumes grant 
 
 The spine of day-to-day use. Run `init` once per repo; everything else recurs as you work.
 
-**1. Initialize (once per repo).** `cc-notes init` installs the refspecs so plain `git
-push`/`git pull` carry the cc-notes refs alongside your branches, then wires whatever the
-repo is already set up for: when a `.claude/` directory exists it registers the cc-notes
-plugin in `.claude/settings.json` and enables the cc-notes capt-hook pack (manifest at
+**1. Initialize (once per repo).** `cc-notes init` installs the refspecs: plain `git push`
+publishes the cc-notes refs alongside your branches, and a plain `git fetch`/`git pull`
+stages incoming refs in a tracking namespace that `cc-notes sync` (or the capt-hook pack,
+automatically) folds into your view. init then wires whatever the repo is already set up
+for: when a `.claude/` directory exists it registers the cc-notes plugin in
+`.claude/settings.json` and enables the cc-notes capt-hook pack (manifest at
 `.claude/capt-hook.toml`); when a `.github/` directory exists it installs the reconcile CI
 workflow (`--no-ci` to skip, `--ci` to force without `.github/`). init never creates
 `.claude/` — it wires Claude Code only when the repo already uses it. Under jj the plain-git
 path doesn't hold (`jj git push`/`jj git fetch` bridge only `refs/heads/*`, leaving
 `refs/cc-notes/*` behind), so run `cc-notes sync`, which drives git directly and carries the
-refs regardless of front-end, or real `git push`/`git pull`.
+refs both ways regardless of front-end.
 
 ```console
 $ cc-notes init

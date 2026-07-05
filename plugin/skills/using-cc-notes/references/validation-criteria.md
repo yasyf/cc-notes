@@ -109,7 +109,7 @@ $ cc-notes task show d82c087 --json
 
 ## Running scripts: the validate trust boundary
 
-A criterion's script is **stored content**. It rides the git object database on `refs/cc-notes/tasks/<id>`, so it arrives on your machine over `git push`/`git pull` and `cc-notes sync` from whichever agents and remotes share the repo. Treating it as trusted would mean treating every peer who can write to the remote as trusted to run arbitrary shell in your working tree. cc-notes does not. Stored scripts are inert — nothing execs them implicitly.
+A criterion's script is **stored content**. It rides the git object database on `refs/cc-notes/tasks/<id>`, so it lands on your machine from whichever agents and remotes share the repo — a plain `git fetch`/`git pull` stages it, and `cc-notes sync` folds it into view. Treating it as trusted would mean treating every peer who can write to the remote as trusted to run arbitrary shell in your working tree. cc-notes does not. Stored scripts are inert — nothing execs them implicitly.
 
 `cc-notes task validate TASK` is the single, deliberately awkward exec path, and the only place in cc-notes that runs stored content. Three guards bound it:
 

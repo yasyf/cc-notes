@@ -63,7 +63,7 @@ func newReconcileCmd() *cobra.Command {
 	flags.StringVar(&into, "into", "", "target branch (default: current branch)")
 	flags.StringArrayVar(&from, "from", nil, "source branch to reconcile (repeatable; default: auto-discover)")
 	flags.BoolVar(&force, "force", false, "skip the merge-ancestry test (requires --from)")
-	flags.BoolVar(&dryRun, "dry-run", false, "compute and report the plan without writing")
+	flags.BoolVar(&dryRun, "dry-run", false, "Report what would change without writing. Reads canonical refs only: data staged by a plain fetch is folded only by a real run.")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }

@@ -98,7 +98,7 @@ pushed: 2
 rounds: 1
 ```
 
-After `cc-notes init`, plain `git push` and `git pull` carry the cc-notes refs alongside your branches, so a normal git workflow keeps the data in step. Under jj it does not: `jj git push`/`jj git fetch` bridge only `refs/heads/*`, so the `refs/cc-notes/*` refs never ride along — run `cc-notes sync`, which drives the real git binary directly and carries the refs regardless of front-end. `--full` forces a whole-namespace scan instead of the default changed-refs-only pass. Flags and JSON shape: [CLI reference](cli-reference.md#cc-notes-sync).
+After `cc-notes init`, plain `git push` publishes the cc-notes refs alongside your branches, and a plain `git pull` stages incoming data in a tracking namespace — `cc-notes sync` folds it into your view, and the capt-hook pack and reconcile CI workflow run that for you. Under jj the transport itself doesn't hold: `jj git push`/`jj git fetch` bridge only `refs/heads/*`, so the `refs/cc-notes/*` refs never ride along — run `cc-notes sync`, which drives the real git binary directly and carries the refs both ways regardless of front-end. `--full` forces a whole-namespace scan instead of the default changed-refs-only pass. Flags and JSON shape: [CLI reference](cli-reference.md#cc-notes-sync).
 
 ## Linking commits to tasks
 

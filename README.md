@@ -1,6 +1,6 @@
 # ![cc-notes](docs/assets/readme-banner.webp)
 
-**Delete your HANDOFF.md.** cc-notes keeps agent tasks, notes, and docs as a CRDT op-log on `refs/cc-notes/*`, synced over plain git and invisible to checkout and diff.
+**Delete your HANDOFF.md.** cc-notes keeps agent tasks, notes, and docs as a CRDT op-log on `refs/cc-notes/*`, synced over your existing git remote and invisible to checkout and diff.
 
 [![CI](https://github.com/yasyf/cc-notes/actions/workflows/ci.yml/badge.svg)](https://github.com/yasyf/cc-notes/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/yasyf/cc-notes)](https://github.com/yasyf/cc-notes/releases)

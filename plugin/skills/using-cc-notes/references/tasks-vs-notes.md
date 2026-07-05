@@ -4,7 +4,7 @@ Five tools record "things to remember," and picking the wrong one is the most co
 
 ## The two axes
 
-**Lifetime.** Native todos are ephemeral — they live for one session and vanish when it ends. cc-notes tasks, notes, docs, and logs are durable git objects on `refs/cc-notes/*`, so they persist across sessions, machines, and agents, and ride the repo's normal push and pull.
+**Lifetime.** Native todos are ephemeral — they live for one session and vanish when it ends. cc-notes tasks, notes, docs, and logs are durable git objects on `refs/cc-notes/*`, so they persist across sessions, machines, and agents; `git push` carries them out, and `cc-notes sync` folds in what other agents pushed.
 
 **Scope.** Native todos are private to the current agent. A `cc-notes task` is global: it lives at a single flat ref, and any agent who syncs the repo sees it. Its branch is a mutable attribute, not its identity — `task list` and `task ready` default to tasks on your current branch, but the shared backlog (tasks with no branch) is visible to every agent on every branch. cc-notes notes, docs, and logs are repo-global, shared the same way.
 
