@@ -25,12 +25,157 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   just-pulled work. Plain `git push` still publishes immediately.
   `reconcile --dry-run` stays strictly no-write and reads canonical state only.
 
+## [0.15.1] - 2026-07-03
+
+### Fixed
+- The hooks pack migrated off the `captain_hook.command` module that newer
+  capt-hook releases removed, and the plugin version was bumped so
+  `claude plugin update` re-caches the fix — sessions on current capt-hook no
+  longer break on the cc-notes hooks.
+
 ## [0.15.0] - 2026-07-02
 
 ### Added
-- A `ccn` shorthand for `cc-notes`. Homebrew and the install script now drop a
-  `ccn` symlink next to the binary, and the CLI shows `ccn` in its help/usage
-  when invoked through it.
+- **File attachments on notes, docs, and logs.** A repeatable `--attach` on
+  `note`/`doc`/`log add` and `log append` (replacing a live name requires
+  `--replace`), `--rm-attachment` on edit, `attachment get`/`attachment path`,
+  and `show` rendering attachments with a missing-locally marker plus the sync
+  hint. The FUSE mount serves a read-only `/attachments/<short>/<name>` tree.
+  Content is stored content-addressed under `<git-common-dir>/lfs` and moved by
+  a native, stdlib-only git-lfs client — endpoint discovery, Batch API,
+  `git credential` and ssh `git-lfs-authenticate` auth — with no `git-lfs`
+  binary required. `cc-notes sync` uploads referenced objects before pushing
+  refs and downloads missing content after the push loop converges, so an LFS
+  outage never blocks publishing refs. Only `cc-notes sync` moves LFS content —
+  a plain `git push` publishes refs without it.
+- The plugin nudges evidence archiving: run output copied into a git worktree
+  or machine-generated evidence files suggest `cc-notes log append --attach`,
+  with a tripwire for files over 1 MB headed into git history.
+
+### Fixed
+- **`git lfs prune` can no longer delete un-synced attachments.**
+  `lfs.pruneverifyremotealways` only verifies objects reachable from git
+  commits; attachments are referenced solely by `refs/cc-notes/*`, so prune
+  could drop an un-synced attachment without ever consulting the remote —
+  unrecoverable data loss. The first attach now also installs
+  `lfs.pruneverifyunreachablealways=true`, under which prune either retains the
+  unverified object or refuses outright, naming it.
+
+## [0.14.1] - 2026-07-02
+
+### Changed
+- CI and the embedded `cc-notes workflows install` template moved to the
+  Node-24 actions baseline: `actions/checkout@v7` and
+  `golangci-lint-action@v9`.
+
+## [0.14.0] - 2026-06-27
+
+### Added
+- **Edit docs and notes as plain files, no mount required.** `doc` and `note`
+  `add`/`edit` gain `--checkout`, which renders the entity to a
+  Markdown+frontmatter buffer under `<git-common-dir>/cc-notes/edit/` and
+  prints its path; `--apply` diffs the edited file against the checkout-time
+  snapshot and commits the resulting ops, so concurrent edits to untouched
+  fields merge; `--abort` discards the buffer. File-created entities are born
+  verified, like a flag-driven add.
+
+### Changed
+- **The plugin now syncs and reconciles automatically.** The run-sync and
+  reconcile nudges became side-effects: `cc-notes sync` runs after
+  commit/claim/merge (once per turn), and `cc-notes reconcile --into <branch>`
+  plus a sync run after merge/pull. No-remote and offline repos stay silent; a
+  genuine push rejection surfaces a retry hint instead of being reported as
+  synced. The pack itself split into themed modules.
+
+## [0.13.1] - 2026-06-25
+
+### Changed
+- The release workflow adopted the shared `yasyf/homebrew-tap` actions —
+  tag-on-main verification, Developer-ID import, formula render and publish.
+  The pure/fuse build matrix and smoke tests are unchanged.
+
+## [0.13.0] - 2026-06-24
+
+### Changed
+- **Every plugin nudge now follows one Surface/Record framework.** Surface
+  (pull): `cc-notes relevant` floats the durable records anchored to a touched
+  file, and a small LLM keeps the worthwhile subset — failing open, so a broken
+  filter shows everything instead of hiding context. Record (push): a cheap
+  static gate flags a candidate write and a small LLM confirms it is durable
+  and routes it to exactly one primitive — note, doc, log, or task — failing
+  closed to silence. A new commit handler always emits the `cc-task` link and
+  sync reminders and routes durable decisions to a note or doc; a new plan
+  handler extracts a plan's durable items into `cc-notes task add`.
+  `NUDGE_MAX_FIRES` caps every Record router, with per-key dedup on top. The
+  pack requires capt-hook ≥ 4.2.0.
+
+## [0.12.0] - 2026-06-23
+
+### Added
+- **An append-only `log` primitive.** Logs are a sixth entity: like docs but
+  append-only — a chronological journal (incident timeline, rollout log,
+  debugging session) you keep adding to. Each entry's author and timestamp come
+  from its own commit, and entries fold in linearization order, so cross-branch
+  merges converge with no reconcile. `cc-notes log
+  add/append/list/show/edit/rm/search`; logs float via `relevant` and count in
+  `status`; the FUSE mount serves `/logs/<id>.md` with append-only write-back
+  (tail appends create entries; editing an existing entry fails the flush).
+- `cc-notes history <id>` (and per-noun `history` aliases): a read-only viewer
+  over an entity's op-commit chain that reports the fields each edit changed —
+  who set the status, when a label was added — with `--reverse`, `--limit`, and
+  `--json`. No-op and bookkeeping commits are skipped; checkpoints render as a
+  compacted marker.
+
+## [0.11.0] - 2026-06-23
+
+### Added
+- **cc-pool memory writes now mirror into durable notes.** A PostToolUse
+  handler auto-captures an agent's repo-relevant memory writes (feedback,
+  project, and reference kinds; user memories are skipped) as git-synced notes
+  keyed by a `memory:<slug>` tag, so the first write creates the note and a
+  later edit updates it in place. It falls closed to silence on any cc-notes
+  failure, so the memory write it shadows is never disturbed.
+
+## [0.10.1] - 2026-06-23
+
+### Added
+- A nudge that routes durable internal writes — handoffs, decisions — toward
+  `cc-notes doc`/`note`/`task` instead of loose files.
+
+### Fixed
+- Short commit anchors expand to the full sha at add time.
+
+## [0.10.0] - 2026-06-23
+
+### Changed
+- **`init` now auto-mounts the repo's `.notes` by default.** `--no-mount` opts
+  out, and the preference persists in the `cc-notes.autoMount` git config; the
+  bundled SessionStart hook runs a self-gating, best-effort `mount --auto` so
+  the mount returns each session. The mount holder now spawns from a stable
+  binary copy, so the macOS "Network Volumes" grant survives version upgrades,
+  and a holder left running at an older cc-notes version is converge-replaced
+  on the next mount. A non-fuse binary never spawns or contacts a holder.
+
+### Fixed
+- The plugin version was bumped so `claude plugin update` re-caches the doc
+  skill and handoff-detection nudge shipped in 0.9.0 — clients had stayed
+  pinned to the older cache.
+
+## [0.9.0] - 2026-06-23
+
+### Added
+- **A `doc` primitive for long-form agent handoffs.** A doc is the long-form
+  sibling of a note: durable, repo-global, drift-checked guidance written for
+  future agents, carrying a free-text `--when` read-trigger. It is a full peer
+  of note/task/sprint/project across the model, refs, fold, store, CLI command
+  group, and FUSE mount, with the note freshness lifecycle
+  (verify/witness/expire/supersede). `cc-notes relevant` ranks docs alongside
+  notes, the read- and edit-time hooks float a doc's pointer and verdict —
+  title, `--when`, drift, a `doc show` hint — without ever surfacing the body,
+  and an LLM-backed nudge suggests storing internal agent-handoff `.md` files
+  as docs instead of loose files.
+
+## [0.8.0] - 2026-06-23
 
 ### Changed
 - **`cc-notes mount` now defaults to an in-repo `.notes` symlink.** Run with no
@@ -44,6 +189,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   symlink to its managed mountpoint, and `--stop`/`--shutdown` remove the
   `.notes` symlink they created. A pre-existing real `.notes` file or directory
   is never clobbered — the mount fails fast before serving.
+
+## [0.7.8] - 2026-06-21
+
+### Added
+- A `ccn` shorthand for `cc-notes`. Homebrew and the install script now drop a
+  `ccn` symlink next to the binary, and the CLI shows `ccn` in its help/usage
+  when invoked through it.
+- **The plugin auto-installs the cc-notes binary on first session.** Enabling
+  the plugin adds a bundled SessionStart hook that installs cc-notes when it is
+  missing — preferring Homebrew, falling back to the release download verified
+  against `SHA256SUMS.txt` — and is an instant no-op once present. A visible
+  fallback nudge fires only when the binary is still absent after the
+  bootstrap.
+
+## [0.7.7] - 2026-06-20
+
+### Changed
+- `hooks install` and `init` now pin the hooks pack to
+  `github:yasyf/cc-notes@latest` instead of a frozen version. capt-hook fetches
+  the pack on demand and re-resolves `@latest` at most once a day, so a fresh
+  clone needs no manual `pack update`.
+- `skills install --global` enables the cc-notes plugin in the user's
+  `~/.claude/settings.json`, so the using-cc-notes skill is discoverable in
+  every repo.
+
+### Fixed
+- The adoption nudges now gate on the binary alone instead of also probing
+  `refs/cc-notes/*` — a fresh repo with cc-notes installed gets the nudges that
+  prompt the first write, instead of the chicken-and-egg silence that kept the
+  pack dark until something had already written a ref.
+
+## [0.7.6] - 2026-06-20
+
+### Fixed
+- `mount --shutdown` now reaps a wedged holder whose socket lingered after a
+  timed-out shutdown, killing it by peer credentials — bounded, identity-gated,
+  never by process name.
+
+## [0.7.5] - 2026-06-19
+
+Identical to 0.7.4 — `v0.7.5` tags the same commit as `v0.7.4`, re-tagged to
+re-run the release pipeline. No code changes.
+
+## [0.7.4] - 2026-06-19
+
+### Fixed
+- `cc-notes init` no longer aborts when capt-hook's pack loader tries to import
+  the pack's standalone test script as a hook — the script moved under
+  `plugin/hooks/tests/`, outside the loader's glob.
+
+## [0.7.3] - 2026-06-19
+
+### Fixed
+- **macOS 15/26 no longer SIGKILLs the darwin binaries.** Release binaries are
+  Developer-ID signed and notarized instead of ad-hoc signed; the fuse build
+  disables library validation for FUSE-T.
+
+## [0.7.2] - 2026-06-18
+
+### Changed
+- The Homebrew formula publishes via the shared `yasyf/homebrew-tap` publish
+  action instead of per-repo tap git mechanics.
+
+## [0.7.1] - 2026-06-18
+
+### Added
+- `cc-notes note expire`: an agent-asserted out-of-date flag, distinct from the
+  time-based `STALE` verdict and softer than `rm`/`supersede`. Adds a
+  top-precedence `EXPIRED` review verdict, an `--expired` filter, and `--clear`
+  (also cleared on verify); who/when are stamped from the commit, like
+  `note verify`.
+
+### Changed
+- **Homebrew installs moved to the shared tap:**
+  `brew install yasyf/tap/cc-notes`. The formula publishes to
+  `yasyf/homebrew-tap`, keeping the native-linux FUSE build; the in-repo tap is
+  gone.
+
+## [0.7.0] - 2026-06-18
+
+### Added
+- **A public in-process Go API.** A top-level `notes` package exposes a
+  `Client`, opened over a repo dir, that drives projects, sprints, and tasks —
+  create, read, list, resolve, and lifecycle transitions — and returns folded
+  model snapshots, so external modules can drive cc-notes in-process instead of
+  shelling out to the CLI. The facade's import graph is CGO/FUSE-free, so a
+  consumer links it into a static binary.
+
+### Changed
+- `internal/model` was promoted to the public `model` package at the repo root.
+  The wire format is keyed on JSON kind/tags, not the import path, so existing
+  repos and entity ids are unaffected.
+
+## [0.6.0] - 2026-06-18
+
+### Added
+- **`cc-notes relevant PATH`: predictive note ranking.** Ranks notes by
+  relevance to a file and branch — path, dir-ancestor, sibling, current-branch,
+  and merged-commit/branch signals, plus a cross-author boost — with
+  `--attached` and `--worktree` modes and plain or `--json` output for hook
+  consumption.
+- Directory anchors: a first-class `dir` anchor kind across
+  `note add/edit/list/search`, witnessed by the subtree tree oid so the anchor
+  drifts when the subtree changes.
+- The static session-start nudge became three capt-hook handlers, all
+  warn-only and gated on adoption: a session-start task floater, a note-context
+  floater that runs `cc-notes relevant` on read, and a staleness check that
+  prompts verify/edit/supersede on edit.
+
+### Fixed
+- `scripts/install.sh` is POSIX sh (`#!/bin/sh`, no `pipefail`), so
+  `curl | sh` works on dash-based systems such as Ubuntu; the reconcile
+  workflow's installer step and the `init --ci` template are fixed the same
+  way.
 
 ## [0.5.0] - 2026-06-18
 
@@ -205,7 +464,30 @@ Releases.
 - The Python-era documentation site (GitHub Pages) and the repo homepage link
   that pointed at it.
 
-[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/yasyf/cc-notes/compare/v0.15.1...v0.16.0
+[0.15.1]: https://github.com/yasyf/cc-notes/compare/v0.15.0...v0.15.1
+[0.15.0]: https://github.com/yasyf/cc-notes/compare/v0.14.1...v0.15.0
+[0.14.1]: https://github.com/yasyf/cc-notes/compare/v0.14.0...v0.14.1
+[0.14.0]: https://github.com/yasyf/cc-notes/compare/v0.13.1...v0.14.0
+[0.13.1]: https://github.com/yasyf/cc-notes/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/yasyf/cc-notes/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/yasyf/cc-notes/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/yasyf/cc-notes/compare/v0.10.1...v0.11.0
+[0.10.1]: https://github.com/yasyf/cc-notes/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/yasyf/cc-notes/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/yasyf/cc-notes/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/yasyf/cc-notes/compare/v0.7.8...v0.8.0
+[0.7.8]: https://github.com/yasyf/cc-notes/compare/v0.7.7...v0.7.8
+[0.7.7]: https://github.com/yasyf/cc-notes/compare/v0.7.6...v0.7.7
+[0.7.6]: https://github.com/yasyf/cc-notes/compare/v0.7.5...v0.7.6
+[0.7.5]: https://github.com/yasyf/cc-notes/compare/v0.7.4...v0.7.5
+[0.7.4]: https://github.com/yasyf/cc-notes/compare/v0.7.3...v0.7.4
+[0.7.3]: https://github.com/yasyf/cc-notes/compare/v0.7.2...v0.7.3
+[0.7.2]: https://github.com/yasyf/cc-notes/compare/v0.7.1...v0.7.2
+[0.7.1]: https://github.com/yasyf/cc-notes/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/yasyf/cc-notes/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/yasyf/cc-notes/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/yasyf/cc-notes/compare/v0.4.1...v0.5.0
 [0.4.0]: https://github.com/yasyf/cc-notes/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/yasyf/cc-notes/compare/v0.2.0...v0.3.0
