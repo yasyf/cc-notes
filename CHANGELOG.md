@@ -4,7 +4,28 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.16.0] - 2026-07-04
+
+### Fixed
+- **Plain `git fetch --prune` can no longer delete unsynced cc-notes data.** The
+  installed fetch refspec used to mirror straight into the canonical
+  `refs/cc-notes/*` namespace, so a plain fetch or pull with `fetch.prune`
+  enabled pruned locally-created, not-yet-synced entities and could
+  force-clobber diverged tips. `init`/auto-install now install
+  `+refs/cc-notes/*:refs/cc-notes-sync/<remote>/*` — the same tracking namespace
+  `cc-notes sync` converges from — and upgrade the old refspec in place on every
+  configured remote (announced on stderr) the next time any cc-notes command
+  runs in a wired repo.
+
+### Changed
+- **A plain `git fetch`/`git pull` now stages incoming cc-notes data instead of
+  publishing it into your view.** `cc-notes sync` folds staged data into the
+  canonical refs, and `cc-notes reconcile` now folds before reconciling — so the
+  capt-hook pack, the reconcile CI workflow, and the post-merge hook all see
+  just-pulled work. Plain `git push` still publishes immediately.
+  `reconcile --dry-run` stays strictly no-write and reads canonical state only.
+
+## [0.15.0] - 2026-07-02
 
 ### Added
 - A `ccn` shorthand for `cc-notes`. Homebrew and the install script now drop a
