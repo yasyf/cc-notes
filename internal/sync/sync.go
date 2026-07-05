@@ -139,14 +139,14 @@ func Sync(ctx context.Context, dir, remote string, full bool) (Report, error) {
 	trackingPrefix := syncNamespace + remote + "/"
 	fetchSpec := "+" + namespace + "*:" + trackingPrefix + "*"
 	for round := 1; round <= maxRounds; round++ {
-		before, err := e.remoteView(ctx, trackingPrefix)
+		before, err := trackingView(ctx, s, trackingPrefix)
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
 		if err := s.Git.Fetch(ctx, remote, fetchSpec); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		after, err := e.remoteView(ctx, trackingPrefix)
+		after, err := trackingView(ctx, s, trackingPrefix)
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
@@ -205,11 +205,13 @@ func (e *engine) report(rounds, pushed int) Report {
 	}
 }
 
-// remoteView maps the tracking refs fetched this round back to their
-// canonical refs/cc-notes/ names. A remote ref that does not parse as a
-// cc-notes ref is an error: it was not written by cc-notes.
-func (e *engine) remoteView(ctx context.Context, trackingPrefix string) (map[string]model.SHA, error) {
-	tracking, err := e.store.Repo.ListPrefix(ctx, trackingPrefix)
+// trackingView maps the tracking refs under trackingPrefix back to their
+// canonical refs/cc-notes/ names. A tracking ref that does not parse as a
+// cc-notes ref is an error: it was not written by cc-notes. Sync reads the
+// per-remote view a round fetched; foldTracking reads a remote's whole view to
+// fold a plain fetch's tracking refs locally.
+func trackingView(ctx context.Context, s *store.Store, trackingPrefix string) (map[string]model.SHA, error) {
+	tracking, err := s.Repo.ListPrefix(ctx, trackingPrefix)
 	if err != nil {
 		return nil, err
 	}

@@ -89,6 +89,16 @@ func Reconcile(ctx context.Context, s *store.Store, into model.Branch, from []mo
 	if err != nil {
 		return ReconcileReport{}, fmt.Errorf("resolve target branch %s: %w", into, err)
 	}
+	// Fold the tracking refs a prior plain git fetch/pull left staged into the
+	// canonical namespace, so the scan below reads just-pulled tasks rather than
+	// stale canonical state. It runs only after the target resolves, so a doomed
+	// run never mutates canonical refs; and the fold writes refs, so a dry run —
+	// which promises to touch nothing — skips it.
+	if !dryRun {
+		if err := foldTracking(ctx, s); err != nil {
+			return ReconcileReport{}, err
+		}
+	}
 	all, err := s.ListTasks(ctx)
 	if err != nil {
 		return ReconcileReport{}, err
@@ -133,6 +143,32 @@ func Reconcile(ctx context.Context, s *store.Store, into model.Branch, from []mo
 		}
 	}
 	return report, nil
+}
+
+// foldTracking folds every configured remote's tracking-namespace refs into the
+// canonical refs/cc-notes/ namespace locally, with no network: it reads the
+// tracking refs a prior plain git fetch/pull (or Sync) left under
+// refs/cc-notes-sync/<remote>/ and converges each canonical ref by create,
+// fast-forward, or union merge — the same compare-and-swap path Sync folds
+// with. A canonical ref already containing the tracking tip is kept untouched,
+// so a rerun is a no-op.
+func foldTracking(ctx context.Context, s *store.Store) error {
+	remotes, err := s.Git.Remotes(ctx)
+	if err != nil {
+		return fmt.Errorf("fold tracking refs: %w", err)
+	}
+	for _, remote := range remotes {
+		view, err := trackingView(ctx, s, syncNamespace+remote+"/")
+		if err != nil {
+			return fmt.Errorf("fold tracking refs: %w", err)
+		}
+		for ref, tip := range view {
+			if _, err := ensureContains(ctx, s, ref, tip); err != nil {
+				return fmt.Errorf("fold tracking refs: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 // candidateBranches returns the source branches to examine: the explicit

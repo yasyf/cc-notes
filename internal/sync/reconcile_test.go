@@ -345,6 +345,53 @@ func TestReconcileMissingTarget(t *testing.T) {
 	}
 }
 
+// TestReconcileFoldsPlainFetchedTracking pins the reconcile-after-pull heal: B
+// publishes a task on a feature branch, A does a plain git fetch that stages it
+// in the tracking namespace only — its canonical ref absent — and then A
+// reconciles. Reconcile folds the tracking ref into the canonical namespace
+// before scanning, so it sees the just-fetched task and carries the merged
+// branch's work; without the fold it would read stale canonical state and miss
+// the task entirely.
+func TestReconcileFoldsPlainFetchedTracking(t *testing.T) {
+	bare := initBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	for _, s := range []*store.Store{a, b} {
+		if _, err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+	}
+	mustGit(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+
+	task := createTask(t, b, "from feature", "feature/x")
+	taskRef := refs.Task(task.ID)
+	sync(t, b)
+
+	mustGit(t, a.Git.Dir, "-c", "fetch.prune=true", "fetch", "-q", "origin")
+	if _, err := a.Repo.Tip(t.Context(), taskRef); !errors.Is(err, gitobj.ErrRefNotFound) {
+		t.Fatalf("before reconcile, canonical %s should be absent (plain fetch stages tracking only), got err %v", taskRef, err)
+	}
+	trackingRef := "refs/cc-notes-sync/origin/tasks/" + string(task.ID)
+	if got := mustGit(t, a.Git.Dir, "rev-parse", trackingRef); got != string(task.Head) {
+		t.Fatalf("plain fetch should stage %s at %s, got %s", trackingRef, task.Head, got)
+	}
+
+	report := reconcile(t, a, "main", []model.Branch{"feature/x"}, true, false)
+	if _, err := a.Repo.Tip(t.Context(), taskRef); err != nil {
+		t.Fatalf("after reconcile, canonical %s should exist (folded from tracking), got err %v", taskRef, err)
+	}
+	fr := findBranch(t, report, "feature/x")
+	if !fr.Merged || !slices.Equal(taskIDs(fr.Tasks), []model.EntityID{task.ID}) {
+		t.Fatalf("reconcile did not see the folded task: branch result = %+v", fr)
+	}
+	if report.Carried() != 1 {
+		t.Errorf("Carried() = %d, want 1 (the folded task moved onto main)", report.Carried())
+	}
+	if moved := loadTask(t, a, taskRef); moved.Branch != "main" {
+		t.Errorf("carried task Branch = %q, want main", moved.Branch)
+	}
+}
+
 func mapsEqual(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
