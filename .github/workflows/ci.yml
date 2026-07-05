@@ -100,5 +100,29 @@ jobs:
         with:
           python-version: "3.13"
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build cc-notes binary onto PATH
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          go build -o "$HOME/.local/bin/cc-notes" ./cmd/cc-notes
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Cache NLP resources
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/spacy/models
+            ~/.wn_data
+          key: capt-hook-nlp-en_core_web_sm-oewn2025
+
+      - name: Provision NLP resources (spaCy en_core_web_sm + oewn:2025 lexicon)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run --no-project --with capt-hook python -c "from captain_hook.util.model_cache import ensure_nlp_resources; ensure_nlp_resources()"
+
       - name: capt-hook test
         run: uvx capt-hook --hooks plugin/hooks test
