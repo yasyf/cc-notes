@@ -59,16 +59,22 @@ func newDocAddCmd() *cobra.Command {
 			if checkout || apply || abort {
 				return runFileMode(cmd, docAdapter(), true, args, checkout, apply, abort, jsonOut)
 			}
+			if err := validateTitle(args[0], titleHintBody); err != nil {
+				return err
+			}
+			text, err := bodyArg(cmd, body)
+			if err != nil {
+				return err
+			}
+			if text == "" && len(attach) == 0 {
+				return errEmptyDocBody(docBodyHintAdd)
+			}
 			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			text, err := bodyArg(cmd, body)
-			if err != nil {
 				return err
 			}
 			commits, err := resolveCommits(ctx, s.Git, commits)
@@ -229,12 +235,18 @@ func newDocEditCmd() *cobra.Command {
 			ctx := cmd.Context()
 			var ops []model.Op
 			if cmd.Flags().Changed("title") {
+				if err := validateTitle(title, titleHintBodyEdit); err != nil {
+					return err
+				}
 				ops = append(ops, model.SetTitle{Title: title})
 			}
 			if cmd.Flags().Changed("body") {
 				text, err := bodyArg(cmd, body)
 				if err != nil {
 					return err
+				}
+				if text == "" {
+					return errEmptyDocBody(docBodyHintEdit)
 				}
 				ops = append(ops, model.SetBody{Body: text})
 			}

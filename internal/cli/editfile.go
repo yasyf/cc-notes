@@ -65,14 +65,36 @@ func docAdapter() editAdapter {
 			if err != nil {
 				return nil, err
 			}
-			return fusefs.DiffDoc(base.(model.Doc), p)
+			ops, err := fusefs.DiffDoc(base.(model.Doc), p)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateOpTitles(ops); err != nil {
+				return nil, err
+			}
+			for _, op := range ops {
+				if sb, ok := op.(model.SetBody); ok && sb.Body == "" {
+					return nil, errEmptyDocBody(bufferHint)
+				}
+			}
+			return ops, nil
 		},
 		createOps: func(data []byte) ([]model.Op, error) {
 			p, err := fusefs.ParseDoc(data)
 			if err != nil {
 				return nil, err
 			}
-			return fusefs.NewDoc(p)
+			ops, err := fusefs.NewDoc(p)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateOpTitles(ops); err != nil {
+				return nil, err
+			}
+			if ops[0].(model.CreateDoc).Body == "" {
+				return nil, errEmptyDocBody(bufferHint)
+			}
+			return ops, nil
 		},
 		bornVerify: func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error) {
 			return bornVerify(ctx, s, refs.Doc(snap.EntityID()), snap.(model.Doc).Anchors)
@@ -100,14 +122,28 @@ func noteAdapter() editAdapter {
 			if err != nil {
 				return nil, err
 			}
-			return fusefs.DiffNote(base.(model.Note), p)
+			ops, err := fusefs.DiffNote(base.(model.Note), p)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateOpTitles(ops); err != nil {
+				return nil, err
+			}
+			return ops, nil
 		},
 		createOps: func(data []byte) ([]model.Op, error) {
 			p, err := fusefs.ParseNote(data)
 			if err != nil {
 				return nil, err
 			}
-			return fusefs.NewNote(p)
+			ops, err := fusefs.NewNote(p)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateOpTitles(ops); err != nil {
+				return nil, err
+			}
+			return ops, nil
 		},
 		bornVerify: func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error) {
 			return bornVerify(ctx, s, refs.Note(snap.EntityID()), snap.(model.Note).Anchors)
@@ -116,6 +152,28 @@ func noteAdapter() editAdapter {
 			return printNote(cmd, s, snap.(model.Note), jsonOut)
 		},
 	}
+}
+
+// validateOpTitles applies the title cap to every create-or-rename op, so a
+// file-mode --apply is guarded exactly like the flag-mode add/edit RunE.
+func validateOpTitles(ops []model.Op) error {
+	for _, op := range ops {
+		var title string
+		switch o := op.(type) {
+		case model.CreateNote:
+			title = o.Title
+		case model.CreateDoc:
+			title = o.Title
+		case model.SetTitle:
+			title = o.Title
+		default:
+			continue
+		}
+		if err := validateTitle(title, bufferHint); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // bornVerify appends the verify_note op a freshly created note or doc carries,

@@ -60,6 +60,9 @@ func newNoteAddCmd() *cobra.Command {
 			if checkout || apply || abort {
 				return runFileMode(cmd, noteAdapter(), true, args, checkout, apply, abort, jsonOut)
 			}
+			if err := validateTitle(args[0], titleHintBody); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
@@ -228,6 +231,9 @@ func newNoteEditCmd() *cobra.Command {
 			ctx := cmd.Context()
 			var ops []model.Op
 			if cmd.Flags().Changed("title") {
+				if err := validateTitle(title, titleHintBodyEdit); err != nil {
+					return err
+				}
 				ops = append(ops, model.SetTitle{Title: title})
 			}
 			if cmd.Flags().Changed("body") {

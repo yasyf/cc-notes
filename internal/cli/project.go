@@ -42,6 +42,9 @@ func newProjectAddCmd() *cobra.Command {
 		Short: "Create a project",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateTitle(args[0], titleHintDesc); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
@@ -195,13 +198,16 @@ func newProjectEditCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			flags := cmd.Flags()
+			var ops []model.Op
+			if flags.Changed("title") {
+				if err := validateTitle(title, titleHintDesc); err != nil {
+					return err
+				}
+				ops = append(ops, model.SetTitle{Title: title})
+			}
 			s, err := openStore()
 			if err != nil {
 				return err
-			}
-			var ops []model.Op
-			if flags.Changed("title") {
-				ops = append(ops, model.SetTitle{Title: title})
 			}
 			if flags.Changed("desc") {
 				text, err := bodyArg(cmd, desc)

@@ -52,6 +52,12 @@ $ printf 'The new token endpoint is live behind a feature flag; the legacy handl
 5c7d279	2026-06-23	handoff	Auth migration handoff	resuming the auth cutover
 ```
 
+The anti-pattern is inverting that shape: the handoff prose crammed into the title with an empty
+body, or a body that says "full detail in `/tmp/.../handoff.md`". The title is a handle — the CLI
+caps it at 256 bytes and rejects a body-less doc — and `/tmp` and session scratchpads are purged
+before the next agent ever reads the doc. Carry the content in the record: `--body -` for the
+text, `--attach <file>` for artifacts.
+
 **Recording a production incident as it unfolds.** `cc-notes log`. The value is the chronology, not a single fact: a timeline of timestamped, authored entries that you keep appending as the incident develops, and that nobody ever rewrites afterward. A note would flatten the sequence into one line; a doc would invite editing the body as the situation changed, but an incident record must stay exactly as it was written. Create the log, anchor it to the affected code, then append each entry as you learn more.
 
 ```console

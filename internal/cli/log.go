@@ -44,6 +44,9 @@ func newLogAddCmd() *cobra.Command {
 		Short: "Create a log",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateTitle(args[0], titleHintLog); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
@@ -289,6 +292,9 @@ func newLogEditCmd() *cobra.Command {
 			ctx := cmd.Context()
 			var ops []model.Op
 			if cmd.Flags().Changed("title") {
+				if err := validateTitle(title, titleHintLog); err != nil {
+					return err
+				}
 				ops = append(ops, model.SetTitle{Title: title})
 			}
 			for _, tag := range addTags {

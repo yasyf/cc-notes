@@ -28,6 +28,10 @@ from .common import (
 
 MIRRORED_MEMORY_TYPES = ("feedback", "project", "reference")
 
+# The Go CLI hard-rejects a note title over 256 UTF-8 bytes (exit 2), and run_cc_notes
+# fails closed, so a long memory description would silently stop mirroring without a clamp.
+MAX_TITLE_BYTES = 256
+
 # Frontmatter fenced by `---` then a markdown body.
 MEMORY_FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?(.*)\Z", re.DOTALL)
 
@@ -91,6 +95,19 @@ def note_id_of(out: str | None) -> str:
     return parsed.get("id", "") if isinstance(parsed, dict) else ""
 
 
+def clamp_title(title: str, max_bytes: int = MAX_TITLE_BYTES) -> str:
+    """Clamp ``title`` to at most ``max_bytes`` UTF-8 bytes on a rune boundary.
+
+    Truncating the encoded bytes then decoding with ``errors="ignore"`` drops a
+    partial trailing rune, so the result never exceeds the cap and never splits a
+    character.
+    """
+    encoded = title.encode()
+    if len(encoded) <= max_bytes:
+        return title
+    return encoded[:max_bytes].decode(errors="ignore")
+
+
 class MemoryWrite(CustomCondition):
     """Matches a write to a cc-pool agent-memory file."""
 
@@ -120,7 +137,7 @@ def mirror_memory_to_note(evt: PostToolUseEvent) -> HookResult | None:
     if parsed is None or parsed.type not in MIRRORED_MEMORY_TYPES:
         return None
     slug = evt.file.stem
-    title = parsed.title or slug.replace("-", " ")
+    title = clamp_title(parsed.title or slug.replace("-", " "))
     existing = memory_notes(evt, slug)
     if existing:
         note = existing[0]

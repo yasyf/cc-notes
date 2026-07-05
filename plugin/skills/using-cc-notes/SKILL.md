@@ -60,7 +60,10 @@ lifecycle (`doc verify`/`doc expire`/`doc supersede`), but it holds multi-paragr
 written *for the next agent* where a note holds a one-line fact, and it carries a free-text
 `--when` read-trigger that names when that agent should open it. Like a note it anchors to the
 code it describes, drifts when that code changes, and floats into a relevant agent's context —
-but only its title, `--when` text, and a `doc show` pointer surface, never the body.
+but only its title, `--when` text, and a `doc show` pointer surface, never the body. The title is
+a short handle — capped at 256 bytes, like every title — so the guidance lives in the body: never
+cram it into the title, and never point the doc at a `/tmp` or scratchpad file that is purged
+before the next agent reads it (inline the content with `--body -`, or `--attach` the file).
 
 A **log** looks like a doc — durable, repo-global, anchored, floated on read — but it is the
 opposite kind of record. A doc is *living guidance* kept fresh: you replace its body and re-verify
@@ -225,7 +228,7 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes note expire <id>` | Flag a note as out-of-date; clear it with `note verify` |
 | `cc-notes note review` | Surface expired, drifted, stale, and unverified notes |
 | `cc-notes note search "<query>"` | Ranked search over titles, tags, and bodies |
-| `cc-notes doc add "<title>" --when "<trigger>"` | Store long-form agent guidance, born verified, with a when-to-read trigger |
+| `cc-notes doc add "<title>" --when "<trigger>" --body -` | Store long-form agent guidance (body from stdin), born verified, with a when-to-read trigger |
 | `cc-notes doc edit <id> --checkout` | Render a doc (or note) to an editable file; edit it, then `--apply` (or `--abort`) |
 | `cc-notes doc search "<query>"` | Ranked search over doc titles, tags, and bodies |
 | `cc-notes log add "<title>"` | Start an append-only chronological journal |

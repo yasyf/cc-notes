@@ -61,6 +61,9 @@ func newTaskAddCmd() *cobra.Command {
 		Short: "Create a task",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateTitle(args[0], titleHintDesc); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			if backlog && cmd.Flags().Changed("branch") {
 				return &UsageError{Err: errors.New("--backlog and --branch are mutually exclusive")}
@@ -639,13 +642,16 @@ func newTaskEditCmd() *cobra.Command {
 			if flags.Changed("project") && noProject {
 				return &UsageError{Err: errors.New("--project and --no-project are mutually exclusive")}
 			}
+			var ops []model.Op
+			if flags.Changed("title") {
+				if err := validateTitle(title, titleHintDesc); err != nil {
+					return err
+				}
+				ops = append(ops, model.SetTitle{Title: title})
+			}
 			s, err := openStore()
 			if err != nil {
 				return err
-			}
-			var ops []model.Op
-			if flags.Changed("title") {
-				ops = append(ops, model.SetTitle{Title: title})
 			}
 			if flags.Changed("desc") {
 				text, err := bodyArg(cmd, desc)

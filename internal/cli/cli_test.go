@@ -24,6 +24,10 @@ const (
 	actorB = "Agent B <b@example.com>"
 )
 
+// maxTitleTestBytes mirrors the internal maxTitleBytes cap (unexported), so the
+// boundary tests break loudly if the two ever diverge.
+const maxTitleTestBytes = 256
+
 // noteJSON mirrors the note output DTO for round-trip assertions.
 type noteJSON struct {
 	ID      string   `json:"id"`
@@ -597,6 +601,7 @@ func TestNotFoundAndAmbiguous(t *testing.T) {
 
 func TestUsageErrors(t *testing.T) {
 	dir := initRepo(t)
+	over := strings.Repeat("x", maxTitleTestBytes+1)
 	for _, args := range [][]string{
 		{"frobnicate"},
 		{"note", "frobnicate"},
@@ -606,6 +611,24 @@ func TestUsageErrors(t *testing.T) {
 		{"task", "comment", "abc"},
 		{"task", "list", "--branch", "feat ure"},
 		{"task", "add", "T", "--no-validation-criteria", "--branch", "../evil"},
+		// Over-cap title on every title-taking add rejects before any write.
+		{"note", "add", over},
+		{"doc", "add", over, "--body", "b"},
+		{"log", "add", over},
+		{"task", "add", over, "--no-validation-criteria"},
+		{"sprint", "add", over},
+		{"project", "add", over},
+		// Over-cap title on a rename UsageErrors without resolving the id — validation
+		// fires before the nonexistent "x" resolves, on every noun's edit.
+		{"note", "edit", "x", "--title", over},
+		{"doc", "edit", "x", "--title", over},
+		{"log", "edit", "x", "--title", over},
+		{"task", "edit", "x", "--title", over},
+		{"sprint", "edit", "x", "--title", over},
+		{"project", "edit", "x", "--title", over},
+		// Empty title, and a doc created with no body and no --attach.
+		{"note", "add", ""},
+		{"doc", "add", "Handoff", "--when", "w"},
 	} {
 		_, _, err := runCLI(t, dir, args...)
 		var usage *cli.UsageError
@@ -615,6 +638,79 @@ func TestUsageErrors(t *testing.T) {
 	}
 	if _, _, err := runCLI(t, dir, "task", "edit", "x", "--assignee", "a", "--unassign"); cli.ExitCode(err) != 2 {
 		t.Errorf("conflicting edit flags err = %v, want exit 2", err)
+	}
+}
+
+func TestTitleCap(t *testing.T) {
+	dir := initRepo(t)
+	at := strings.Repeat("x", maxTitleTestBytes)
+	over := strings.Repeat("x", maxTitleTestBytes+1)
+
+	// The byte cap is the boundary: 256 bytes passes on note add and doc
+	// add-with-body, preserving the title verbatim.
+	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", at, "--json"))
+	if note.Title != at {
+		t.Fatalf("note title = %d bytes, want the %d-byte title verbatim", len(note.Title), maxTitleTestBytes)
+	}
+	doc := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", at, "--body", "b", "--json"))
+	if doc.Title != at {
+		t.Fatalf("doc title = %d bytes, want the %d-byte title verbatim", len(doc.Title), maxTitleTestBytes)
+	}
+
+	// 257 bytes fails with a UsageError whose teaching text names every escape
+	// hatch, on both note add and doc add.
+	for _, args := range [][]string{
+		{"note", "add", over},
+		{"doc", "add", over, "--body", "b"},
+	} {
+		_, _, err := runCLI(t, dir, args...)
+		var usage *cli.UsageError
+		if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
+			t.Fatalf("cc-notes %s err = %v (exit %d), want UsageError exit 2", strings.Join(args, " "), err, cli.ExitCode(err))
+		}
+		msg := err.Error()
+		for _, want := range []string{"257 bytes", "max 256", "--body", "--checkout", "--attach"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("cc-notes %s over-cap message %q missing %q", strings.Join(args, " "), msg, want)
+			}
+		}
+	}
+
+	// note/doc edit have no --attach — the rename hint names only the flags that
+	// exist on edit (--body and --checkout), never --attach.
+	for _, args := range [][]string{
+		{"note", "edit", "x", "--title", over},
+		{"doc", "edit", "x", "--title", over},
+	} {
+		_, _, err := runCLI(t, dir, args...)
+		var usage *cli.UsageError
+		if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
+			t.Fatalf("cc-notes %s err = %v (exit %d), want UsageError exit 2", strings.Join(args, " "), err, cli.ExitCode(err))
+		}
+		msg := err.Error()
+		for _, want := range []string{"257 bytes", "max 256", "--body", "--checkout"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("cc-notes %s over-cap message %q missing %q", strings.Join(args, " "), msg, want)
+			}
+		}
+		if strings.Contains(msg, "--attach") {
+			t.Errorf("cc-notes %s over-cap message %q must not name --attach (edit has no --attach)", strings.Join(args, " "), msg)
+		}
+	}
+
+	// task/sprint/project have no --body — their over-cap hint names --desc instead,
+	// so the escape hatch matches the flags that actually exist on the command.
+	_, _, err := runCLI(t, dir, "task", "add", over, "--no-validation-criteria")
+	var usage *cli.UsageError
+	if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
+		t.Fatalf("task add over-cap err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "--desc") {
+		t.Errorf("task over-cap message %q, want it to name --desc", msg)
+	}
+	if strings.Contains(msg, "--body") {
+		t.Errorf("task over-cap message %q must not name --body (task has no --body)", msg)
 	}
 }
 

@@ -4,6 +4,30 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Entity titles are capped at 256 bytes.** Every `add` and `edit --title` —
+  notes, docs, logs, tasks, sprints, projects, and the `--checkout`/`--apply`
+  file mode — rejects a longer (or empty) title with a hint naming where the
+  content belongs on that command (`--body`, the checked-out buffer, `--desc`,
+  or log entries). A title is a short handle: it renders on every lean line and
+  floats into future agents' context, so the content belongs in the body.
+  Existing entities with longer titles stay readable; only new writes through
+  the CLI are held to the cap.
+- **A doc must carry its body.** `doc add` with no `--body` and no `--attach`
+  is rejected, and `doc edit --body ""` can no longer blank one. The failure
+  this guards against: a durable handoff doc whose title is the whole payload
+  and whose "full detail" lives in a purged `/tmp` scratchpad file.
+
+### Added
+- **The capt-hook pack nudges on ephemeral-path references.** A
+  `cc-notes note/doc/log` write whose title or body text points at `/tmp`,
+  `/var`, or a session scratchpad draws a static nudge to carry the content in
+  the record instead — `--body -` for text, `--attach` for artifacts. Tag,
+  branch, and anchor flag values are exempt, as is `--attach` itself. The
+  memory mirror now clamps note titles to the cap instead of silently failing.
+
 ## [0.16.0] - 2026-07-04
 
 ### Fixed

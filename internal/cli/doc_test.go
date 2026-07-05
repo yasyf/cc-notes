@@ -3,6 +3,8 @@ package cli_test
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -93,9 +95,71 @@ func TestDocAddRoundTrip(t *testing.T) {
 	}
 }
 
+// TestDocAddBodyRequired proves a doc must carry content: an empty body with no
+// --attach is a UsageError, but --attach alone satisfies the requirement.
+func TestDocAddBodyRequired(t *testing.T) {
+	dir := initRepo(t)
+
+	// No body, no --attach: rejected before anything is written.
+	_, _, err := runCLI(t, dir, "doc", "add", "Handoff", "--when", "resuming")
+	var usage *cli.UsageError
+	if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
+		t.Fatalf("bodyless doc add err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
+	}
+	if !strings.Contains(err.Error(), "doc body is empty") {
+		t.Fatalf("bodyless doc add message = %q, want it to explain the empty body", err.Error())
+	}
+	if docs := mustJSON[[]docJSON](t, mustRun(t, dir, "doc", "list", "--json")); len(docs) != 0 {
+		t.Fatalf("doc count after rejected add = %d, want 0", len(docs))
+	}
+
+	// --attach with no body succeeds: the attachment is the content.
+	f := filepath.Join(dir, "artifact.txt")
+	if err := os.WriteFile(f, []byte("attached bytes\n"), 0o600); err != nil {
+		t.Fatalf("write attachment: %v", err)
+	}
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff", "--attach", f, "--json"))
+	if added.Title != "Handoff" || added.Body != "" {
+		t.Fatalf("title/body = %q/%q, want Handoff/empty", added.Title, added.Body)
+	}
+	if len(added.Attachments) != 1 || added.Attachments[0].Name != "artifact.txt" {
+		t.Fatalf("attachments = %v, want one named artifact.txt", added.Attachments)
+	}
+}
+
+// TestDocEditRejectsBlankBody proves the empty-doc-body requirement holds at edit
+// time: clearing a doc's body with --body "" is a UsageError that commits nothing,
+// while clearing a NOTE body is legal (a note is not its body).
+func TestDocEditRejectsBlankBody(t *testing.T) {
+	dir := initRepo(t)
+	doc := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff", "--body", "orig", "--json"))
+
+	_, _, err := runCLI(t, dir, "doc", "edit", doc.ID, "--body", "")
+	var usage *cli.UsageError
+	if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
+		t.Fatalf("doc edit --body \"\" err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
+	}
+	if !strings.Contains(err.Error(), "doc body is empty") {
+		t.Fatalf("blank-body doc edit message = %q, want it to explain the empty body", err.Error())
+	}
+	if strings.Contains(err.Error(), "--attach") {
+		t.Errorf("blank-body doc edit message %q must not name --attach (edit has no --attach)", err.Error())
+	}
+	if shown := mustJSON[docJSON](t, mustRun(t, dir, "doc", "show", doc.ID, "--json")); shown.Body != "orig" {
+		t.Fatalf("doc body = %q, want orig (a rejected edit commits nothing)", shown.Body)
+	}
+
+	// A note body, by contrast, may be cleared — the requirement is doc-only.
+	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Fact", "--body", "orig", "--json"))
+	cleared := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", note.ID, "--body", "", "--json"))
+	if cleared.Body != "" {
+		t.Fatalf("note body = %q, want empty (clearing a note body is legal)", cleared.Body)
+	}
+}
+
 func TestDocAddLeanLine(t *testing.T) {
 	dir := initRepo(t)
-	added := mustRun(t, dir, "doc", "add", "Handoff", "--when", "resuming the cutover", "--tag", "b", "--tag", "a")
+	added := mustRun(t, dir, "doc", "add", "Handoff", "--body", "x", "--when", "resuming the cutover", "--tag", "b", "--tag", "a")
 	listed := mustRun(t, dir, "doc", "list")
 	if listed != added {
 		t.Fatalf("doc list = %q, want the line doc add printed %q", listed, added)
@@ -109,7 +173,7 @@ func TestDocAddLeanLine(t *testing.T) {
 
 func TestDocEditWhen(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff", "--when", "first trigger", "--json"))
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff", "--body", "x", "--when", "first trigger", "--json"))
 	if added.When != "first trigger" {
 		t.Fatalf("created when = %q, want %q", added.When, "first trigger")
 	}
@@ -145,7 +209,7 @@ func TestDocCommitAnchorShortSha(t *testing.T) {
 	short := full[:8]
 
 	// add: the short sha is expanded to the full sha on the stored anchor.
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Anchored", "--commit", short, "--json"))
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Anchored", "--body", "x", "--commit", short, "--json"))
 	var addedCommit string
 	for _, a := range added.Anchors {
 		if a.Kind == "commit" {
@@ -191,7 +255,7 @@ func TestDocCommitAnchorShortSha(t *testing.T) {
 	// add of a non-existent commit is a hard error at add time, and nothing is
 	// stored: no new doc is created.
 	before := mustJSON[[]docJSON](t, mustRun(t, dir, "doc", "list", "--json"))
-	_, _, err := runCLI(t, dir, "doc", "add", "Bad", "--commit", "deadbeef")
+	_, _, err := runCLI(t, dir, "doc", "add", "Bad", "--body", "x", "--commit", "deadbeef")
 	if !errors.Is(err, store.ErrNotFound) || cli.ExitCode(err) != 3 {
 		t.Fatalf("add with nonexistent commit err = %v (exit %d), want ErrNotFound exit 3", err, cli.ExitCode(err))
 	}
@@ -203,7 +267,7 @@ func TestDocCommitAnchorShortSha(t *testing.T) {
 
 func TestDocExpireReview(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Stale handoff", "--when", "resuming", "--json"))
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Stale handoff", "--body", "x", "--when", "resuming", "--json"))
 	if out := mustRun(t, dir, "doc", "review"); out != "" {
 		t.Fatalf("review of a fresh born-verified doc = %q, want empty", out)
 	}
@@ -232,8 +296,8 @@ func TestDocExpireReview(t *testing.T) {
 
 func TestDocListFilters(t *testing.T) {
 	dir := initRepo(t)
-	keep := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Kept", "--tag", "keep", "--dir", "internal/api", "--json"))
-	mustRun(t, dir, "doc", "add", "Dropped", "--tag", "skip", "--dir", "internal/sync")
+	keep := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Kept", "--body", "x", "--tag", "keep", "--dir", "internal/api", "--json"))
+	mustRun(t, dir, "doc", "add", "Dropped", "--body", "x", "--tag", "skip", "--dir", "internal/sync")
 
 	byTag := mustJSON[[]docJSON](t, mustRun(t, dir, "doc", "list", "--tag", "keep", "--json"))
 	if len(byTag) != 1 || byTag[0].ID != keep.ID {

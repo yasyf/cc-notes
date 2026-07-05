@@ -940,7 +940,8 @@ the subtree changes — a file added, removed, or edited anywhere beneath it.
 ### `cc-notes note add TITLE`
 
 Create a note. A note is born verified against `HEAD`: its anchors get a content witness at
-creation.
+creation. `TITLE` is capped at 256 bytes — the title is the one-line fact; anything longer
+belongs in `--body`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -1138,11 +1139,13 @@ line, in `relevant`, and in `--json` — so an agent can scan it without opening
 ### `cc-notes doc add TITLE`
 
 Create a doc. Like a note, a doc is born verified against `HEAD`: its anchors get a content
-witness at creation.
+witness at creation. `TITLE` is a short handle, capped at 256 bytes (the same cap applies to every
+`add` and `edit --title`); the content goes in `--body`, the `--checkout` file, or an attachment.
+A doc with no body and no attachment is rejected — a doc *is* its body.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--body <text>` | empty | Doc body; `-` reads stdin |
+| `--body <text>` | required unless `--attach` is given | Doc body; `-` reads stdin |
 | `--when <text>` | empty | Free-text "read this when…" trigger, surfaced verbatim |
 | `--tag <tag>` | none | Tag; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
@@ -1168,7 +1171,8 @@ $ cc-notes doc add "How auth token refresh works" --dir internal/auth --tag desi
 ### `cc-notes doc edit ID`
 
 Edit a doc — at least one flag is required. Title, body, and the `when` trigger replace; anchors
-and tags add or remove individually.
+and tags add or remove individually. The 256-byte title cap applies to `--title`, and `--body`
+must stay non-empty — a doc is its body, at edit time as much as at creation.
 
 | Flag | Meaning |
 |------|---------|

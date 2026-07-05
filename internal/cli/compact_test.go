@@ -54,7 +54,7 @@ func TestCompactTaskAndUnknownID(t *testing.T) {
 
 func TestCompactDocJSONAndLean(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "doc", "add", "Deploy guide", "--tag", "ops", "--json"))
+	added := mustJSON[noteJSON](t, mustRun(t, dir, "doc", "add", "Deploy guide", "--body", "x", "--tag", "ops", "--json"))
 	mustRun(t, dir, "doc", "edit", added.ID, "--title", "Deploy guide v2", "--json")
 
 	got := mustJSON[noteJSON](t, mustRun(t, dir, "compact", added.ID, "--json"))
@@ -105,7 +105,7 @@ func TestCompactAmbiguousAcrossNoteAndDoc(t *testing.T) {
 	for i := 0; i < 32; i++ {
 		n := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", fmt.Sprintf("note-%d", i), "--json"))
 		notesByChar[n.ID[0]] = append(notesByChar[n.ID[0]], n.ID)
-		d := mustJSON[noteJSON](t, mustRun(t, dir, "doc", "add", fmt.Sprintf("doc-%d", i), "--json"))
+		d := mustJSON[noteJSON](t, mustRun(t, dir, "doc", "add", fmt.Sprintf("doc-%d", i), "--body", "x", "--json"))
 		docsByChar[d.ID[0]] = append(docsByChar[d.ID[0]], d.ID)
 		if pick() {
 			break

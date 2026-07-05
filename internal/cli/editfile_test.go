@@ -144,6 +144,107 @@ func TestDocAddCheckoutApply(t *testing.T) {
 	}
 }
 
+// TestDocAddApplyOverCapTitleKeepsBuffer proves the title cap guards the
+// file-mode create path too: an over-cap title in the buffer fails with a
+// UsageError carrying the re-run hint, the buffer survives, and fixing the
+// title lets the same buffer apply.
+func TestDocAddApplyOverCapTitleKeepsBuffer(t *testing.T) {
+	dir := initRepo(t)
+	path := mustCheckout(t, dir, "doc", "add", "--checkout")
+	over := strings.Repeat("x", 257)
+	content := readBuf(t, path)
+	content = strings.Replace(content, "title: \"\"", "title: "+over, 1)
+	content += "a body"
+	writeBuf(t, path, content)
+
+	_, _, err := runCLI(t, dir, "doc", "add", "--apply", path, "--json")
+	var usage *cli.UsageError
+	if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
+		t.Fatalf("apply of over-cap title err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
+	}
+	if !strings.Contains(err.Error(), "re-run --apply") {
+		t.Fatalf("apply error %q, want the re-run --apply hint", err.Error())
+	}
+	if !bufExists(path) {
+		t.Fatalf("buffer %s removed on rejected apply, want kept so the agent can fix it", path)
+	}
+
+	replaceInBuf(t, path, over, "Short title")
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "--apply", path, "--json"))
+	if added.Title != "Short title" {
+		t.Fatalf("title = %q, want Short title after fixing the buffer", added.Title)
+	}
+	if bufExists(path) {
+		t.Fatalf("buffer %s present after a successful apply, want removed", path)
+	}
+}
+
+// TestDocAddApplyEmptyBodyKeepsBuffer proves the doc body requirement guards the
+// file-mode create path: a titled but bodyless buffer is rejected and preserved,
+// and filling in the body lets the same buffer apply.
+func TestDocAddApplyEmptyBodyKeepsBuffer(t *testing.T) {
+	dir := initRepo(t)
+	path := mustCheckout(t, dir, "doc", "add", "--checkout")
+	content := strings.Replace(readBuf(t, path), "title: \"\"", "title: Titled but bodyless", 1)
+	writeBuf(t, path, content)
+
+	_, _, err := runCLI(t, dir, "doc", "add", "--apply", path, "--json")
+	var usage *cli.UsageError
+	if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
+		t.Fatalf("apply of bodyless doc err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
+	}
+	if !strings.Contains(err.Error(), "doc body is empty") {
+		t.Fatalf("apply error %q, want it to explain the empty body", err.Error())
+	}
+	if !bufExists(path) {
+		t.Fatalf("buffer %s removed on rejected apply, want kept", path)
+	}
+
+	writeBuf(t, path, content+"Now it has a body.")
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "--apply", path, "--json"))
+	if added.Body != "Now it has a body." {
+		t.Fatalf("body = %q, want the filled-in body", added.Body)
+	}
+}
+
+// TestDocEditApplyBlankBodyKeepsBuffer proves the doc body requirement guards the
+// file-mode edit path: blanking a checked-out doc's body is rejected, the buffer
+// survives, and the doc is unchanged — while the same blanking on a note buffer
+// applies, since clearing a note body is legal.
+func TestDocEditApplyBlankBodyKeepsBuffer(t *testing.T) {
+	dir := initRepo(t)
+	doc := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff", "--body", "orig body", "--json"))
+	path := mustCheckout(t, dir, "doc", "edit", doc.ID, "--checkout")
+	replaceInBuf(t, path, "orig body", "")
+
+	_, _, err := runCLI(t, dir, "doc", "edit", doc.ID, "--apply")
+	var usage *cli.UsageError
+	if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
+		t.Fatalf("apply of blanked doc body err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
+	}
+	if !strings.Contains(err.Error(), "doc body is empty") {
+		t.Fatalf("apply error %q, want it to explain the empty body", err.Error())
+	}
+	if strings.Contains(err.Error(), "--body") || strings.Contains(err.Error(), "--attach") {
+		t.Errorf("file-mode apply error %q must hint at the buffer, not flags (caller is already in a checked-out file)", err.Error())
+	}
+	if !bufExists(path) {
+		t.Fatalf("buffer %s removed on rejected apply, want kept", path)
+	}
+	if shown := mustJSON[docJSON](t, mustRun(t, dir, "doc", "show", doc.ID, "--json")); shown.Body != "orig body" {
+		t.Fatalf("body = %q, want orig body (a rejected apply commits nothing)", shown.Body)
+	}
+
+	// A note buffer blanked to no body applies cleanly.
+	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Fact", "--body", "orig body", "--json"))
+	npath := mustCheckout(t, dir, "note", "edit", note.ID, "--checkout")
+	replaceInBuf(t, npath, "orig body", "")
+	cleared := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", note.ID, "--apply", "--json"))
+	if cleared.Body != "" {
+		t.Fatalf("note body = %q, want empty (clearing a note body applies)", cleared.Body)
+	}
+}
+
 func TestNoteAddCheckoutApply(t *testing.T) {
 	dir := initRepo(t)
 	path := mustCheckout(t, dir, "note", "add", "--checkout")
@@ -162,7 +263,7 @@ func TestNoteAddCheckoutApply(t *testing.T) {
 
 func TestEditApplyNoBuffer(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--json"))
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
 	_, _, err := runCLI(t, dir, "doc", "edit", added.ID, "--apply")
 	if !errors.Is(err, store.ErrNotFound) || cli.ExitCode(err) != 3 {
 		t.Fatalf("apply with no buffer err = %v (exit %d), want ErrNotFound exit 3", err, cli.ExitCode(err))
@@ -264,7 +365,7 @@ func TestEditConcurrentMerge(t *testing.T) {
 
 func TestFileModeUsageErrors(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--json"))
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
 	for _, args := range [][]string{
 		{"doc", "edit", added.ID, "--checkout", "--apply"},      // mutually exclusive
 		{"doc", "edit", added.ID, "--checkout", "--title", "Y"}, // file mode + content flag

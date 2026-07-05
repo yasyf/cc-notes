@@ -134,7 +134,7 @@ func TestStatusLogs(t *testing.T) {
 // is born-verified, so it counts toward the total without needing review.
 func TestStatusDocs(t *testing.T) {
 	dir := initRepo(t)
-	mustRun(t, dir, "doc", "add", "A doc", "--when", "editing the parser")
+	mustRun(t, dir, "doc", "add", "A doc", "--body", "x", "--when", "editing the parser")
 
 	t.Setenv("CC_NOTES_LEASE_TTL", "8760h")
 	out := mustRun(t, dir, "status")

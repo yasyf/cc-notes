@@ -54,6 +54,8 @@ from hooks.common import (
     run_cc_notes,
 )
 from hooks.memory import (
+    clamp_title,
+    MAX_TITLE_BYTES,
     MemoryWrite,
     mirror_memory_to_note,
     parse_memory_file,
@@ -61,10 +63,13 @@ from hooks.memory import (
 from hooks.record import (
     durable_dest,
     DurableInternalWrite,
+    ephemeral_record_refs,
+    EphemeralRecordReference,
     EvidenceArchive,
     evidence_payload_bytes,
     evidence_transfers,
     in_git_worktree,
+    nudge_ephemeral_record_reference,
     nudge_plan_tasks,
     nudge_record_durable,
     nudge_record_evidence,
@@ -584,6 +589,77 @@ def test_evidence_bulk_not_standalone_trigger(tmp_path) -> None:
         check("bulk: -R from a /tmp results source still fires", evidence_transfers(CommandLine.parse(run_out)) == ["internal/archive"], repr(evidence_transfers(CommandLine.parse(run_out))))
     finally:
         os.chdir(old)
+
+
+def test_ephemeral_record_reference_condition() -> None:
+    """EphemeralRecordReference fires on a record command that leans on a purge-bound path, silent elsewhere.
+
+    The smell is a note/doc/log record whose title or body text points at a /tmp, /var, or
+    session-scratchpad path; an ``--attach`` value (both forms) is the durable fix, not the smell,
+    and a non-record subcommand or a non-cc-notes command stays silent.
+    """
+    cond = EphemeralRecordReference()
+
+    def fires(label: str, command: str, *, expected: bool) -> None:
+        evt = mock_event("PostToolUse", tool="Bash", command=command)
+        check(f"ephemeral-cond: {label}", cond.check(evt) == expected, f"command={command!r}")
+
+    # Positives ----------------------------------------------------------------
+    fires("scratchpad in a doc title fires", 'cc-notes doc add "Handoff — see session scratchpad h.md" --when w', expected=True)
+    fires("/tmp/ in a note body fires", 'cc-notes note add "Fact" --body "detail in /tmp/x.md"', expected=True)
+    fires("/private/var/ in a log append entry fires", 'cc-notes log append abc -m "ran, output in /private/var/folders/x/out.log"', expected=True)
+    fires("/private/tmp/ in a --body= value fires (equals form)", "cc-notes note add Fact --body=/private/tmp/c-1/scratch.md", expected=True)
+
+    # Negatives ----------------------------------------------------------------
+    fires("--attach two-token value is not a smell", "cc-notes log append abc --attach /tmp/out.log", expected=False)
+    fires("--attach=equals value is not a smell", "cc-notes log append abc --attach=/tmp/out.log", expected=False)
+    fires("--tag scratchpad value is skipped, inline body is clean", 'cc-notes note add "Fact" --body "content inline" --tag scratchpad', expected=False)
+    fires("--branch eng/var/cleanup value is skipped, inline body is clean", 'cc-notes note add "Fact" --body "inline" --branch eng/var/cleanup', expected=False)
+    fires("doc show of an ephemeral arg is not a record write", "cc-notes doc show /tmp/whatever", expected=False)
+    fires("non-cc-notes command mentioning /tmp is silent", "cat /tmp/scratch.md", expected=False)
+
+
+def test_ephemeral_record_refs_parsing() -> None:
+    """ephemeral_record_refs collects marker-bearing tokens of record legs, skips --attach values, walks compounds."""
+    from cc_transcript.command import CommandLine
+
+    compound = ephemeral_record_refs(CommandLine.parse('mkdir -p /tmp/x && cc-notes doc add "see scratchpad note.md" --when w'))
+    check("refs: compound picks the cc-notes leg's title, ignores the mkdir /tmp arg", compound == ["see scratchpad note.md"], repr(compound))
+    body = ephemeral_record_refs(CommandLine.parse('cc-notes note add "Fact" --body "detail in /tmp/x.md"'))
+    check("refs: collects an ephemeral --body value", body == ["detail in /tmp/x.md"], repr(body))
+    both = ephemeral_record_refs(CommandLine.parse('cc-notes doc add "in /tmp/a" --body "in /private/var/b/"'))
+    check("refs: collects title and body in order", both == ["in /tmp/a", "in /private/var/b/"], repr(both))
+    attach2 = ephemeral_record_refs(CommandLine.parse("cc-notes log append abc --attach /tmp/out.log"))
+    check("refs: --attach two-token value skipped", attach2 == [], repr(attach2))
+    attach_eq = ephemeral_record_refs(CommandLine.parse("cc-notes log append abc --attach=/tmp/out.log"))
+    check("refs: --attach=equals value skipped", attach_eq == [], repr(attach_eq))
+    mixed = ephemeral_record_refs(CommandLine.parse('cc-notes log append abc "see scratchpad" --attach /tmp/out.log'))
+    check("refs: skips only the attach value, keeps a scratchpad title", mixed == ["see scratchpad"], repr(mixed))
+    non_record = ephemeral_record_refs(CommandLine.parse("cc-notes doc show /tmp/whatever"))
+    check("refs: a non-record subcommand yields nothing", non_record == [], repr(non_record))
+    tag_skip = ephemeral_record_refs(CommandLine.parse('cc-notes note add "Fact" --body "content inline" --tag scratchpad'))
+    check("refs: --tag scratchpad value is skipped, clean body kept out", tag_skip == [], repr(tag_skip))
+    branch_skip = ephemeral_record_refs(CommandLine.parse('cc-notes note add "Fact" --body "inline" --branch eng/var/cleanup'))
+    check("refs: --branch eng/var/cleanup value is skipped", branch_skip == [], repr(branch_skip))
+    body_eq = ephemeral_record_refs(CommandLine.parse("cc-notes note add Fact --body=/private/tmp/c-1/scratch.md"))
+    check("refs: collects an ephemeral --body=equals value", body_eq == ["/private/tmp/c-1/scratch.md"], repr(body_eq))
+
+
+def test_ephemeral_record_reference_fires(monkeypatch, tmp_path) -> None:
+    """The firing handler warns and teaches both --body - and --attach as the durable fix."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = mock_event(
+        "PostToolUse",
+        tool="Bash",
+        command='cc-notes doc add "Handoff — full detail in session scratchpad steering-handoff.md" --when w',
+        session_dir=tmp_path,
+    )
+    result = nudge_ephemeral_record_reference(evt)
+    check("ephemeral nudge: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("ephemeral nudge: teaches --attach", "--attach" in result.message, result.message)
+        check("ephemeral nudge: teaches --body", "--body" in result.message, result.message)
+        check("ephemeral nudge: names a purge-bound path", "purge-bound" in result.message, result.message)
 
 
 def test_in_cc_pool_memory() -> None:
@@ -1551,6 +1627,47 @@ def test_mirror_skips_user_type(monkeypatch, tmp_path) -> None:
     check("mirror user-skip: issues no cc-notes calls at all", calls == [], repr(calls))
 
 
+def test_clamp_title() -> None:
+    """clamp_title caps a title at 256 UTF-8 bytes on a rune boundary, passing short ones through."""
+    check("clamp: cap constant is 256", MAX_TITLE_BYTES == 256)
+    short = "A short handle"
+    check("clamp: short title unchanged", clamp_title(short) == short)
+    at_cap = "x" * 256
+    check("clamp: exactly 256 bytes unchanged", clamp_title(at_cap) == at_cap and len(clamp_title(at_cap).encode()) == 256)
+    over = clamp_title("x" * 300)
+    check("clamp: over-cap ASCII clamps to 256 bytes", over == "x" * 256 and len(over.encode()) == 256, repr(over))
+    # A CJK rune is 3 UTF-8 bytes; 100 of them is 300 bytes. The cap must land on a rune
+    # boundary (256 // 3 == 85 whole runes = 255 bytes), never a partial rune.
+    cjk = clamp_title("包" * 100)
+    check("clamp: CJK clamps on a rune boundary, no partial rune", cjk == "包" * 85 and len(cjk.encode()) == 255, f"{len(cjk.encode())} bytes, {len(cjk)} runes")
+
+
+def test_mirror_clamps_long_title(monkeypatch, tmp_path) -> None:
+    """A memory description over 256 bytes is clamped before shelling `note add`, so the mirror still fires.
+
+    The Go CLI rejects an over-cap title (exit 2) and run_cc_notes fails closed, so without the
+    clamp a long description would silently stop mirroring — this proves the positional title is
+    capped and equals clamp_title of the parsed description.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    long_desc = "A durable handoff description long enough to blow past the cap " * 6  # ~372 bytes
+    mem = write_memory(tmp_path, "long-fact", "feedback", long_desc, "body text")
+    evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
+    call, calls = mirror_cli(list_payload="[]")
+    monkeypatch.setattr(evt.ctx, "call_cli", call)
+
+    result = mirror_memory_to_note(evt)
+    check("clamp mirror: warns 'created'", result is not None and "created" in (result.message or ""), repr(result))
+    adds = [c for c in calls if tuple(c[1:3]) == ("note", "add")]
+    check("clamp mirror: issues exactly one note add", len(adds) == 1, repr(calls))
+    if adds:
+        parsed = parse_memory_file(mem)
+        title_arg = adds[0][-1]
+        check("clamp mirror: title is the positional after --", adds[0][-2] == "--", repr(adds[0]))
+        check("clamp mirror: positional title is <= 256 bytes", len(title_arg.encode()) <= 256, f"{len(title_arg.encode())} bytes")
+        check("clamp mirror: title equals clamp_title(parsed description)", parsed is not None and title_arg == clamp_title(parsed.title), repr(title_arg))
+
+
 def merge_event(tmp_path, monkeypatch, *, branch="feature/x", cli=None):
     """A `git merge` event with the branch-name probe stubbed; ``cli`` is the recording call_cli to use.
 
@@ -1786,6 +1903,7 @@ def test_pack_loads_under_discover_pack() -> None:
         "check_note_staleness",
         "nudge_record_durable",
         "nudge_record_evidence",
+        "nudge_ephemeral_record_reference",
         "nudge_plan_tasks",
         "mirror_memory_to_note",
         "nudge_commit_record",
@@ -1795,7 +1913,7 @@ def test_pack_loads_under_discover_pack() -> None:
     missing = expected - names
     check("discover_pack: every cc-notes handler registered", not missing, f"missing handlers: {sorted(missing)}; got={sorted(names)}")
     check(
-        "discover_pack: it registered the full pack (11 named @on handlers + the bare many-native-tasks nudge)",
+        "discover_pack: it registered the full pack (12 named @on handlers + the bare many-native-tasks nudge)",
         len(registered) >= len(expected) + 1,
         f"registered {len(registered)} hooks this pass: {sorted(h.name for h in registered)}",
     )

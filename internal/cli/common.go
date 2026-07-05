@@ -168,6 +168,44 @@ func readScript(path string) (string, error) {
 	return string(data), nil
 }
 
+// maxTitleBytes caps a title in bytes, mirroring maxAttachmentNameBytes.
+const maxTitleBytes = 256
+
+// Escape hints name, per command surface, the places that actually hold long
+// content: note/doc add carry it in --body/--checkout/--attach, their edits
+// have no --attach, logs carry it in entries, task/sprint/project in --desc,
+// and a checked-out file-mode buffer carries it in the body below the
+// frontmatter (bufferHint serves both the title cap and errEmptyDocBody there).
+const (
+	titleHintBody     = "put the content in --body (- reads stdin), --checkout file mode, or --attach"
+	titleHintBodyEdit = "put the content in --body (- reads stdin) or --checkout file mode"
+	titleHintLog      = "put the content in log entries (--entry on add, or log append)"
+	titleHintDesc     = "put the content in --desc"
+	bufferHint        = "put the content in the body below the frontmatter"
+	docBodyHintAdd    = "pass --body (- reads stdin), --checkout file mode, or --attach the content"
+	docBodyHintEdit   = "pass --body (- reads stdin) or --checkout file mode"
+)
+
+// validateTitle rejects an empty or over-long title as a UsageError, run before
+// openStore/autoInstall so a rejected create or rename mutates nothing. hint names
+// the flags on the calling command that hold the long content a title should not.
+func validateTitle(title, hint string) error {
+	switch {
+	case title == "":
+		return &UsageError{Err: errors.New("title is empty — a title is a short handle for the entity; give it a few descriptive words")}
+	case len(title) > maxTitleBytes:
+		return &UsageError{Err: fmt.Errorf("title is %d bytes (max %d) — a title is a short handle; %s", len(title), maxTitleBytes, hint)}
+	default:
+		return nil
+	}
+}
+
+// errEmptyDocBody is the shared UsageError for a doc created or edited to carry
+// no body; hint names where the content goes on the rejecting surface.
+func errEmptyDocBody(hint string) error {
+	return &UsageError{Err: fmt.Errorf("doc body is empty — a doc is its body; %s", hint)}
+}
+
 // exactArgs is cobra.ExactArgs returning a UsageError, so arity mistakes
 // exit 2.
 func exactArgs(n int) cobra.PositionalArgs {

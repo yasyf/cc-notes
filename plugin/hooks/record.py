@@ -83,6 +83,26 @@ EXEMPT_DEST_SEGMENTS = frozenset(
 )
 EVIDENCE_TRIPWIRE_BYTES = 1 << 20
 
+# EphemeralRecordReference vocabulary: a durable cc-notes record must not lean on a
+# purge-bound path. Each RUN_OUTPUT prefix gains a trailing "/" so "/var" can't match
+# "variant"; "scratchpad" is the very segment EXEMPT_DEST_SEGMENTS treats as a fine
+# landing tree, inverted here — pointing a durable record at one is the smell.
+EPHEMERAL_MARKERS = (*(p + "/" for p in RUN_OUTPUT_PREFIXES), "scratchpad")
+RECORD_SUBCOMMANDS = frozenset((noun, verb) for noun in ("note", "doc", "log") for verb in ("add", "edit", "append"))
+# Flags whose value carries the record's own prose — the title/body surfaces a purge-bound
+# path would betray, so their values are the only flag values worth scanning.
+CONTENT_FLAGS = frozenset({"--title", "--body", "--when", "--entry", "-m", "--message"})
+# Value-taking flags whose value is a tag, anchor, or attachment path — never record prose,
+# so their value is skipped (`--tag scratchpad`, `--branch eng/var/x` must not false-fire).
+SKIPPED_VALUE_FLAGS = frozenset({
+    "--tag", "--add-tag", "--rm-tag",
+    "--branch", "--add-branch", "--rm-branch",
+    "--path", "--add-path", "--rm-path",
+    "--dir", "--add-dir", "--rm-dir",
+    "--commit", "--add-commit", "--rm-commit",
+    "--attach", "--rm-attachment",
+})
+
 
 class DurableInternalWrite(CustomCondition):
     """Matches a write of durable INTERNAL knowledge that belongs out of the public tree."""
@@ -356,6 +376,80 @@ def nudge_record_evidence(evt: PostToolUseEvent) -> HookResult | None:
     )
 
 
+def ephemeral_record_refs(line: CommandLine) -> list[str]:
+    """Content-bearing tokens of a cc-notes note/doc/log record command that name a purge-bound path.
+
+    Inspects only the surfaces a title or body flows through — the positional words
+    after the ``(noun, verb)`` pair (the title, and log-append's ID+TEXT), and the
+    values of the content flags in :data:`CONTENT_FLAGS` (both ``--flag value`` and
+    ``--flag=value``). The value of every other value-taking flag
+    (:data:`SKIPPED_VALUE_FLAGS` — tags, anchors, ``--attach``) is skipped, so
+    ``--tag scratchpad`` or ``--branch eng/var/x`` never false-fires; an unknown flag
+    is treated as valueless.
+    """
+    refs: list[str] = []
+    for cmd in line.commands:
+        if cmd.program != "cc-notes" or cmd.args[:2] not in RECORD_SUBCOMMANDS:
+            continue
+        operands = cmd.args[2:]
+        i = 0
+        while i < len(operands):
+            arg = operands[i]
+            token: str | None = None
+            if not arg.startswith("-"):
+                token, i = arg, i + 1
+            elif "=" in arg:
+                flag, _, value = arg.partition("=")
+                token, i = (value if flag in CONTENT_FLAGS else None), i + 1
+            elif arg in CONTENT_FLAGS:
+                token = operands[i + 1] if i + 1 < len(operands) else None
+                i += 2
+            elif arg in SKIPPED_VALUE_FLAGS:
+                i += 2
+            else:
+                i += 1
+            if token is not None and any(marker in token for marker in EPHEMERAL_MARKERS):
+                refs.append(token)
+    return refs
+
+
+class EphemeralRecordReference(CustomCondition):
+    """Matches a cc-notes note/doc/log record whose title or body text points at a purge-bound path (/tmp, /var, a session scratchpad)."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        line = evt.command_line
+        return line is not None and bool(ephemeral_record_refs(line))
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[Tool("Bash"), EphemeralRecordReference(), CcNotesAvailable()],
+    max_fires=NUDGE_MAX_FIRES,
+    tests={
+        Input(command='cc-notes doc add "Handoff — full detail in session scratchpad steering-handoff.md" --when w'): Warn(pattern="--attach"),
+        Input(command='cc-notes note add "Fact" --body "see /private/tmp/c-1/scratch.md"'): Warn(),
+        # Benign neighbors that must stay silent.
+        Input(command='cc-notes doc add "Handoff" --when w --body -'): Allow(),  # content already in the record
+        Input(command="cc-notes log append abc123 --attach /tmp/out.log"): Allow(),  # attaching the file IS the fix
+        Input(command='cc-notes note add "Fact" --body "content inline" --tag scratchpad'): Allow(),  # --tag value is not content
+        Input(command="cc-notes task list"): Allow(),  # not a record write
+        Input(command="cat /tmp/scratch.md"): Allow(),  # not a cc-notes command
+    },
+)
+def nudge_ephemeral_record_reference(evt: PostToolUseEvent) -> HookResult | None:
+    """Nudge a cc-notes record that leans on a purge-bound path to carry its content in the record itself."""
+    if fired_this_turn(evt):
+        return None
+    record_fire(evt)
+    return evt.warn(
+        "This cc-notes record leans on a purge-bound path (/tmp, /var, or a session scratchpad) — "
+        "those are gone by the next session, so a durable record that points at one outlives its own "
+        "content. Carry the content in the record itself:",
+        "--body - reads the text from stdin (or use --checkout file mode) — the body lives in the record, not a loose file.",
+        "--attach <file> stores an artifact — its bytes land in the git ODB and sync with the repo.",
+    )
+
+
 PLAN_TASKS_SYSTEM = (
     "An agent just had a plan approved. Extract only the work items that are DURABLE — work that "
     "outlives this session, or that another agent might pick up or coordinate on — and worth tracking "
@@ -374,7 +468,8 @@ PLAN_TEACH = (
     "end. Durable work that outlives the session or coordinates agents goes in `cc-notes task`: "
     "`--backlog` for shared work any agent can claim, plain `cc-notes task add` for your branch. "
     "(A decision or durable fact is a `cc-notes note add`; living guidance for the next agent, with a "
-    "`--when` read-trigger, is a `cc-notes doc add`; an append-only chronology whose entries are never "
+    "`--when` read-trigger, is a `cc-notes doc add` — short title, the guidance itself in `--body`, "
+    "`-` reads stdin; an append-only chronology whose entries are never "
     "edited is a `cc-notes log add`.)"
 )
 

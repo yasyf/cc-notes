@@ -42,6 +42,9 @@ func newSprintAddCmd() *cobra.Command {
 		Short: "Create a sprint",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateTitle(args[0], titleHintDesc); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
@@ -237,13 +240,16 @@ func newSprintEditCmd() *cobra.Command {
 			if flags.Changed("end") && noEnd {
 				return &UsageError{Err: errors.New("--end and --no-end are mutually exclusive")}
 			}
+			var ops []model.Op
+			if flags.Changed("title") {
+				if err := validateTitle(title, titleHintDesc); err != nil {
+					return err
+				}
+				ops = append(ops, model.SetTitle{Title: title})
+			}
 			s, err := openStore()
 			if err != nil {
 				return err
-			}
-			var ops []model.Op
-			if flags.Changed("title") {
-				ops = append(ops, model.SetTitle{Title: title})
 			}
 			if flags.Changed("desc") {
 				text, err := bodyArg(cmd, desc)
