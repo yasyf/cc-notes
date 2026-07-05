@@ -35,6 +35,7 @@ func (s Store) Has(oid string) bool {
 
 // PutFile hashes path's content into the store and returns its oid and size.
 func (s Store) PutFile(path string) (oid string, size int64, err error) {
+	//nolint:gosec // G304: path is the file the caller asked PutFile to hash and ingest.
 	f, err := os.Open(path)
 	if err != nil {
 		return "", 0, err
@@ -71,6 +72,7 @@ func (s Store) put(r io.Reader, wantOID string, wantSize int64) (string, int64, 
 		return "", 0, err
 	}
 	tmp := filepath.Join(tmpDir, "obj-"+rand.Text())
+	//nolint:gosec // G304: tmp is an internal staging path under the LFS cache dir, never attacker-supplied.
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return "", 0, err

@@ -20,6 +20,7 @@ func sshAuthenticate(ctx context.Context, ep Endpoint, operation string) (action
 		args = append(args, "-p", ep.SSHPort)
 	}
 	args = append(args, "--", ep.SSHUserHost, "git-lfs-authenticate", ep.SSHPath, operation)
+	//nolint:gosec // G204: ssh args derive solely from the locally-configured git remote URL (validated ssh:// port is digits-only, scp-like sets none); the host sits behind -- so it can't inject ssh flags, and no shell is involved.
 	cmd := exec.CommandContext(ctx, "ssh", args...)
 	var out, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &stderr

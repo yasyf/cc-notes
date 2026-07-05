@@ -52,6 +52,7 @@ func newAttachmentGetCmd() *cobra.Command {
 			defer func() { _ = f.Close() }()
 			dest := cmd.OutOrStdout()
 			if output != "" {
+				//nolint:gosec // G304: output is the CLI's own -o output target for attachment get, taken by design.
 				out, cerr := os.Create(output)
 				if cerr != nil {
 					return fmt.Errorf("write %s: %w", output, cerr)
