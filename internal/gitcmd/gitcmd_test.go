@@ -310,6 +310,40 @@ func TestConfig(t *testing.T) {
 	}
 }
 
+func TestConfigUnsetValue(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	for _, v := range []string{"keep", "drop", "keep"} {
+		if err := g.ConfigAdd(ctx, "ccnotes.fetch", v); err != nil {
+			t.Fatalf("add %q: %v", v, err)
+		}
+	}
+	// Unsetting a present value drops every matching line and leaves the rest.
+	if err := g.ConfigUnsetValue(ctx, "ccnotes.fetch", "drop"); err != nil {
+		t.Fatalf("unset present value: %v", err)
+	}
+	got, err := g.ConfigGetAll(ctx, "ccnotes.fetch")
+	if err != nil {
+		t.Fatalf("get-all after unset: %v", err)
+	}
+	if want := []string{"keep", "keep"}; !slices.Equal(got, want) {
+		t.Fatalf("after unset: got %q, want %q", got, want)
+	}
+	// Unsetting an absent value wraps ErrConfigNoMatch and touches nothing, so a
+	// caller racing a concurrent unset can treat it as already done.
+	if err := g.ConfigUnsetValue(ctx, "ccnotes.fetch", "drop"); !errors.Is(err, gitcmd.ErrConfigNoMatch) {
+		t.Fatalf("unset absent value: got %v, want ErrConfigNoMatch", err)
+	}
+	got, err = g.ConfigGetAll(ctx, "ccnotes.fetch")
+	if err != nil {
+		t.Fatalf("get-all after no-match unset: %v", err)
+	}
+	if want := []string{"keep", "keep"}; !slices.Equal(got, want) {
+		t.Fatalf("after no-match unset: got %q, want %q (unchanged)", got, want)
+	}
+}
+
 func TestConfigGet(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()

@@ -38,6 +38,9 @@ var (
 	// ErrNoDefaultBranch reports that origin/HEAD is unset, so the remote
 	// default branch cannot be resolved.
 	ErrNoDefaultBranch = errors.New("no default branch")
+	// ErrConfigNoMatch reports a config --unset-all whose fixed value matched
+	// no line: the value was already absent.
+	ErrConfigNoMatch = errors.New("config value not found")
 )
 
 // casPatterns match git's ref-transaction failures across the files and
@@ -377,6 +380,22 @@ func (g Git) ConfigSet(ctx context.Context, key, value string) error {
 func (g Git) ConfigReplaceValue(ctx context.Context, key, oldValue, newValue string) error {
 	if _, err := g.run(ctx, "", "config", "--local", "--replace-all", "--fixed-value", key, newValue, oldValue); err != nil {
 		return fmt.Errorf("config replace %s value %q: %w", key, oldValue, err)
+	}
+	return nil
+}
+
+// ConfigUnsetValue removes every repository-local line of key equal to value,
+// matched literally (--fixed-value), leaving other values of key in place. When
+// no line matches — the value was already unset — it wraps ErrConfigNoMatch, so
+// a caller racing a concurrent unset can treat it as already done.
+func (g Git) ConfigUnsetValue(ctx context.Context, key, value string) error {
+	_, err := g.run(ctx, "", "config", "--local", "--unset-all", "--fixed-value", key, value)
+	var cmdErr *commandError
+	if errors.As(err, &cmdErr) && cmdErr.exitCode() == 5 {
+		return fmt.Errorf("config unset %s value %q: %w", key, value, ErrConfigNoMatch)
+	}
+	if err != nil {
+		return fmt.Errorf("config unset %s value %q: %w", key, value, err)
 	}
 	return nil
 }

@@ -278,6 +278,142 @@ func TestInstallUpgradesOldFetchRefspec(t *testing.T) {
 	}
 }
 
+// TestInstallSweepsEveryRemoteOldFetchRefspec pins the multi-remote upgrade: a
+// repo wired before the prune-safety fix on two remotes carries the killer
+// same-namespace refspec on both, so a plain git fetch --all --prune would
+// delete unsynced canonical refs through whichever remote install did not
+// touch. Installing for one remote must rewrite the killer refspec in place on
+// every configured remote — each to its own tracking namespace — so the
+// unsynced task survives the exact fetch --all --prune that used to erase it.
+// The upgrade is idempotent and reported in write order: the wired remote fully
+// first, then the swept remote's fetch rewrite.
+func TestInstallSweepsEveryRemoteOldFetchRefspec(t *testing.T) {
+	bare := initBare(t)
+	s := clone(t, bare, "Alice", "alice@example.com")
+	upstreamBare := initBare(t)
+	mustGit(t, s.Git.Dir, "remote", "add", "upstream", upstreamBare)
+	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
+	mustGit(t, s.Git.Dir, "config", "--add", "remote.upstream.fetch", oldCCFetchRefspec)
+
+	const (
+		upstreamDefaultFetch = "+refs/heads/*:refs/remotes/upstream/*"
+		upstreamFetchRefspec = "+refs/cc-notes/*:refs/cc-notes-sync/upstream/*"
+	)
+	for run := range 2 {
+		report, err := ccsync.Install(t.Context(), s.Git, "origin")
+		if err != nil {
+			t.Fatalf("Install run %d: %v", run, err)
+		}
+		if run == 0 {
+			wantAdded := []string{
+				"remote.origin.fetch=" + ccFetchRefspec,
+				"remote.origin.push=HEAD",
+				"remote.origin.push=" + ccPushRefspec,
+				"core.logAllRefUpdates=always",
+				"remote.upstream.fetch=" + upstreamFetchRefspec,
+			}
+			if !slices.Equal(report.Added, wantAdded) || len(report.Removed) != 0 || !report.HeadPushAdded {
+				t.Errorf("upgrade run report = %+v, want Added %q with HeadPushAdded and no Removed", report, wantAdded)
+			}
+		}
+		if run > 0 && (len(report.Added) != 0 || len(report.Removed) != 0 || report.HeadPushAdded) {
+			t.Errorf("run %d report = %+v, want empty no-op report", run, report)
+		}
+		if got, want := configAll(t, s, "remote.origin.fetch"), []string{defaultFetch, ccFetchRefspec}; !slices.Equal(got, want) {
+			t.Errorf("run %d: origin fetch = %q, want %q", run, got, want)
+		}
+		if got, want := configAll(t, s, "remote.upstream.fetch"), []string{upstreamDefaultFetch, upstreamFetchRefspec}; !slices.Equal(got, want) {
+			t.Errorf("run %d: upstream fetch = %q, want %q", run, got, want)
+		}
+		for _, key := range []string{"remote.origin.fetch", "remote.upstream.fetch"} {
+			if slices.Contains(configAll(t, s, key), oldCCFetchRefspec) {
+				t.Errorf("run %d: %s still carries the killer refspec", run, key)
+			}
+		}
+	}
+
+	task := createTask(t, s, "unsynced", "main")
+	taskRef := refs.Task(task.ID)
+	mustGit(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "--all", "-q")
+	if got := mustGit(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
+		t.Fatalf("after git fetch --all --prune across both upgraded remotes, %s = %s, want the unsynced task to survive at %s", taskRef, got, task.Head)
+	}
+}
+
+// TestUpgradedFetchPruneKeepsUnsyncedTask makes the upgrade's survival contract
+// end-to-end: a repo wired pre-fix carries the same-namespace killer refspec,
+// Install rewrites it to the tracking namespace, and then the exact plain
+// git fetch --prune that used to delete an unsynced canonical ref leaves it
+// intact — proving the rewrite, not just the config line, closes the data loss.
+func TestUpgradedFetchPruneKeepsUnsyncedTask(t *testing.T) {
+	bare := initBare(t)
+	s := clone(t, bare, "Alice", "alice@example.com")
+	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
+	if _, err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
+		t.Fatalf("Install upgrade: %v", err)
+	}
+	if slices.Contains(configAll(t, s, "remote.origin.fetch"), oldCCFetchRefspec) {
+		t.Fatalf("upgrade left the killer refspec in place")
+	}
+	task := createTask(t, s, "unsynced", "main")
+	taskRef := refs.Task(task.ID)
+	mustGit(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "-q", "origin")
+	if got := mustGit(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
+		t.Fatalf("after upgrade then plain fetch --prune, %s = %s, want the unsynced task to survive at %s", taskRef, got, task.Head)
+	}
+}
+
+// TestInstallDropsRedundantOldFetchRefspec pins the dedupe: when an old binary
+// re-added the killer refspec alongside the new tracking one, install drops the
+// redundant old line rather than rewriting it into a second identical new line.
+// The old line is not inert — git still applies it on a plain fetch --prune, so
+// dropping it is a data-loss fix: an unsynced task survives the fetch --prune
+// afterward. Push and the reflog are pre-wired so the only config change is the
+// drop, reported under Removed; a rerun is a clean no-op.
+func TestInstallDropsRedundantOldFetchRefspec(t *testing.T) {
+	bare := initBare(t)
+	s := clone(t, bare, "Alice", "alice@example.com")
+	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
+	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", ccFetchRefspec)
+	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
+	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
+	mustGit(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
+
+	for run := range 2 {
+		report, err := ccsync.Install(t.Context(), s.Git, "origin")
+		if err != nil {
+			t.Fatalf("Install run %d: %v", run, err)
+		}
+		if run == 0 {
+			if want := []string{"remote.origin.fetch=" + oldCCFetchRefspec}; !slices.Equal(report.Removed, want) {
+				t.Errorf("run 0 Removed = %q, want %q", report.Removed, want)
+			}
+			if len(report.Added) != 0 || report.HeadPushAdded {
+				t.Errorf("run 0 report = %+v, want no Added and no HeadPushAdded (only the redundant drop)", report)
+			}
+		}
+		if run > 0 && (len(report.Added) != 0 || len(report.Removed) != 0 || report.HeadPushAdded) {
+			t.Errorf("run %d report = %+v, want empty no-op report", run, report)
+		}
+		if got, want := configAll(t, s, "remote.origin.fetch"), []string{defaultFetch, ccFetchRefspec}; !slices.Equal(got, want) {
+			t.Errorf("run %d: fetch lines = %q, want %q (redundant old dropped, new kept)", run, got, want)
+		}
+		if slices.Contains(configAll(t, s, "remote.origin.fetch"), oldCCFetchRefspec) {
+			t.Errorf("run %d: old killer refspec still present after dedupe", run)
+		}
+	}
+
+	// The drop is a data-loss fix, not cosmetic: with the old line still present
+	// a plain fetch --prune deletes an unsynced canonical ref, so prove the task
+	// survives now that only the tracking-namespace refspec remains.
+	task := createTask(t, s, "unsynced", "main")
+	taskRef := refs.Task(task.ID)
+	mustGit(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "-q", "origin")
+	if got := mustGit(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
+		t.Fatalf("after dropping the redundant old refspec, %s = %s, want the unsynced task to survive at %s", taskRef, got, task.Head)
+	}
+}
+
 // TestPlainGitCarry pins the two halves of the plain-git contract after the
 // prune-safety fix. Plain push is unchanged: it publishes canonical entity refs
 // straight to the remote alongside the branch. Plain fetch now mirrors the

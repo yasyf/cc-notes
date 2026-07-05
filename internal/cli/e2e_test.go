@@ -741,6 +741,46 @@ func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
 	mustBin(t, dir, actorA, "task", "add", "Second write", "--no-validation-criteria")
 }
 
+// TestAutoInstallAnnouncesDroppedRefspec pins the drop disclosure: a repo wired
+// with BOTH the pre-fix killer refspec and the new tracking one (an old binary
+// re-ran after a new one) still prunes unsynced refs through the old line, so
+// the first mutating command drops it and says so on stderr — a data-loss fix,
+// not a silent cosmetic tidy. Push and the reflog are pre-wired so the drop is
+// the only change autoInstall makes, and the next command is a silent no-op.
+func TestAutoInstallAnnouncesDroppedRefspec(t *testing.T) {
+	scrubGitEnv(t)
+	root := t.TempDir()
+	bare := filepath.Join(root, "remote.git")
+	mustGit(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
+	dir := filepath.Join(root, "work")
+	mustGit(t, root, "clone", "-q", bare, "work")
+	mustGit(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
+	mustGit(t, dir, "config", "--add", "remote.origin.fetch", "+refs/cc-notes/*:refs/cc-notes/*")
+	mustGit(t, dir, "config", "--add", "remote.origin.fetch", "+refs/cc-notes/*:refs/cc-notes-sync/origin/*")
+	mustGit(t, dir, "config", "--add", "remote.origin.push", "HEAD")
+	mustGit(t, dir, "config", "--add", "remote.origin.push", "refs/cc-notes/*:refs/cc-notes/*")
+	mustGit(t, dir, "config", "core.logAllRefUpdates", "always")
+
+	res, err := execBin(dir, actorA, "task", "add", "First write", "--no-validation-criteria")
+	if err != nil {
+		t.Fatalf("cc-notes task add: %v", err)
+	}
+	if res.Code != 0 {
+		t.Fatalf("task add exit = %d (stderr %q)", res.Code, res.Stderr)
+	}
+	want := "cc-notes: removed pre-fix fetch refspecs a plain \"git fetch --prune\" would use to delete unsynced refs: remote.origin.fetch=+refs/cc-notes/*:refs/cc-notes/*\n"
+	if res.Stderr != want {
+		t.Fatalf("first mutating command stderr = %q, want %q", res.Stderr, want)
+	}
+	res2, err := execBin(dir, actorA, "task", "add", "Second write", "--no-validation-criteria")
+	if err != nil {
+		t.Fatalf("second task add: %v", err)
+	}
+	if res2.Code != 0 || res2.Stderr != "" {
+		t.Fatalf("second mutating command: exit %d stderr %q, want silent success", res2.Code, res2.Stderr)
+	}
+}
+
 // TestTwoCloneSyncRoundTrip round-trips a task through a bare remote: clone A
 // adds and syncs, clone B syncs and sees a byte-identical task list.
 func TestTwoCloneSyncRoundTrip(t *testing.T) {

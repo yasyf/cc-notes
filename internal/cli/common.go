@@ -66,13 +66,21 @@ func autoInstall(ctx context.Context, cmd *cobra.Command, g gitcmd.Git) error {
 		return nil
 	case err != nil:
 		return err
-	case len(report.Added) == 0:
+	case len(report.Added) == 0 && len(report.Removed) == 0:
 		return nil
 	}
 	stderr := cmd.ErrOrStderr()
-	if _, err := fmt.Fprintf(stderr, "cc-notes: installed refspecs in .git/config for %q: %s\n",
-		defaultRemote, strings.Join(report.Added, "; ")); err != nil {
-		return err
+	if len(report.Added) > 0 {
+		if _, err := fmt.Fprintf(stderr, "cc-notes: installed refspecs in .git/config for %q: %s\n",
+			defaultRemote, strings.Join(report.Added, "; ")); err != nil {
+			return err
+		}
+	}
+	if len(report.Removed) > 0 {
+		if _, err := fmt.Fprintf(stderr, "cc-notes: removed pre-fix fetch refspecs a plain \"git fetch --prune\" would use to delete unsynced refs: %s\n",
+			strings.Join(report.Removed, "; ")); err != nil {
+			return err
+		}
 	}
 	if report.HeadPushAdded {
 		if _, err := fmt.Fprintf(stderr, "cc-notes: note: \"git push\" now pushes the current branch to its same-named remote branch (remote.%s.push overrides push.default)\n",
