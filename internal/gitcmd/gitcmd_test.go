@@ -547,6 +547,86 @@ func TestTaskTrailers(t *testing.T) {
 	}
 }
 
+func TestTaskTrailersRange(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	t.Setenv("GIT_AUTHOR_DATE", "2026-01-01T00:00:00")
+	t.Setenv("GIT_COMMITTER_DATE", "2026-01-01T00:00:00")
+
+	commit := func(subject string, tasks ...string) model.SHA {
+		t.Helper()
+		msg := subject
+		if len(tasks) > 0 {
+			lines := make([]string, len(tasks))
+			for i, task := range tasks {
+				lines[i] = "cc-task: " + task
+			}
+			msg += "\n\n" + strings.Join(lines, "\n")
+		}
+		mustGit(t, g.Dir, "commit", "-q", "--allow-empty", "-m", msg)
+		return model.SHA(mustGit(t, g.Dir, "rev-parse", "HEAD"))
+	}
+
+	c0 := commit("base no trailer")
+	c1 := commit("one", "aaa1111")
+	commit("no trailer commit")
+	c3 := commit("two", "bbb2222", "ccc3333")
+	c4 := commit("spaces", "task with spaces")
+
+	for _, tc := range []struct {
+		name       string
+		base, head model.SHA
+		want       map[model.SHA][]string
+	}{
+		{
+			name: "full range omits no-trailer and base commits",
+			base: c0, head: c4,
+			want: map[model.SHA][]string{
+				c1: {"aaa1111"},
+				c3: {"bbb2222", "ccc3333"},
+				c4: {"task with spaces"},
+			},
+		},
+		{
+			name: "base commit excluded even when it carries a trailer",
+			base: c1, head: c4,
+			want: map[model.SHA][]string{
+				c3: {"bbb2222", "ccc3333"},
+				c4: {"task with spaces"},
+			},
+		},
+		{
+			name: "empty range yields empty map",
+			base: c4, head: c4,
+			want: map[model.SHA][]string{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := g.TaskTrailersRange(ctx, string(tc.base), string(tc.head))
+			if err != nil {
+				t.Fatalf("TaskTrailersRange: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("TaskTrailersRange = %v, want %v", got, tc.want)
+			}
+			for sha, wantValues := range tc.want {
+				if !slices.Equal(got[sha], wantValues) {
+					t.Fatalf("TaskTrailersRange[%s] = %v, want %v", sha, got[sha], wantValues)
+				}
+			}
+		})
+	}
+
+	for _, bad := range []string{
+		"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		"no-such-ref",
+	} {
+		if _, err := g.TaskTrailersRange(ctx, bad, string(c4)); !errors.Is(err, gitcmd.ErrRevNotFound) {
+			t.Fatalf("nonexistent base rev %q: got %v, want ErrRevNotFound", bad, err)
+		}
+	}
+}
+
 func TestRemotes(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()

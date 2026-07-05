@@ -289,6 +289,39 @@ func (g Git) TaskTrailers(ctx context.Context, rev string) ([]string, error) {
 	return values, nil
 }
 
+// TaskTrailersRange maps each commit in base..head to the values of its
+// cc-task: trailers, using one git log invocation; commits without trailers
+// are omitted. A rev that names no commit wraps ErrRevNotFound.
+//
+// The single `git log` invocation emits one record per commit, each beginning
+// with a NUL byte, then the commit hash, then a newline, then that commit's
+// cc-task: trailer values one per line. Splitting on the NUL record separator
+// and reading the first line of each record as the hash and the remaining
+// non-empty lines as trailer values preserves per-commit trailer order.
+func (g Git) TaskTrailersRange(ctx context.Context, base, head string) (map[model.SHA][]string, error) {
+	out, err := g.run(ctx, "", "log", base+".."+head, "--format=%x00%H%n%(trailers:key=cc-task,valueonly)")
+	if err = classify(err, ErrRevNotFound, []string{"unknown revision", "Invalid revision range"}); err != nil {
+		return nil, fmt.Errorf("task trailers range %s..%s: %w", base, head, err)
+	}
+	trailers := make(map[model.SHA][]string)
+	for _, record := range strings.Split(out, "\x00") {
+		lines := strings.Split(record, "\n")
+		if len(lines) == 0 || lines[0] == "" {
+			continue
+		}
+		var values []string
+		for _, value := range lines[1:] {
+			if value != "" {
+				values = append(values, value)
+			}
+		}
+		if len(values) > 0 {
+			trailers[model.SHA(lines[0])] = values
+		}
+	}
+	return trailers, nil
+}
+
 // CheckRefFormat validates branch as a branch name via
 // `git check-ref-format --branch`, surfacing git's own message on failure.
 func (g Git) CheckRefFormat(ctx context.Context, branch string) error {
