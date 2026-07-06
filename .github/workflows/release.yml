@@ -19,6 +19,29 @@ permissions:
   contents: write
 
 jobs:
+  web-dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+
   verify-tag-on-main:
     runs-on: ubuntu-latest
     steps:
@@ -29,7 +52,7 @@ jobs:
 
   pure:
     name: pure ${{ matrix.goos }}/${{ matrix.goarch }}
-    needs: verify-tag-on-main
+    needs: [verify-tag-on-main, web-dist]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -41,6 +64,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist
+      - name: Verify embedded dist present
+        run: test -f web/dist/index.html
       - name: Build static binary
         env:
           GOOS: ${{ matrix.goos }}
@@ -49,7 +78,7 @@ jobs:
           COMMIT="$(git rev-parse --short HEAD)"
           LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${GITHUB_REF_NAME} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT}"
           mkdir -p dist
-          CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o "dist/cc-notes_${GOOS}_${GOARCH}" ./cmd/cc-notes
+          CGO_ENABLED=0 go build -tags webui -ldflags "$LDFLAGS" -o "dist/cc-notes_${GOOS}_${GOARCH}" ./cmd/cc-notes
       - uses: actions/upload-artifact@v7
         with:
           name: cc-notes_${{ matrix.goos }}_${{ matrix.goarch }}
@@ -58,7 +87,7 @@ jobs:
 
   fuse-macos:
     name: fuse darwin (arm64 + amd64)
-    needs: verify-tag-on-main
+    needs: [verify-tag-on-main, web-dist]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -66,6 +95,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist
+      - name: Verify embedded dist present
+        run: test -f web/dist/index.html
       - name: Install fuse-t (build-time headers only)
         # cgofuse compiles against fuse.h; fuse-t ships the headers. The library
         # itself is dlopened lazily at runtime, so it is uninstalled before the smoke
@@ -91,10 +126,10 @@ jobs:
           LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${GITHUB_REF_NAME} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT}"
           mkdir -p dist
           # Native arm64 slice.
-          CGO_ENABLED=1 GOARCH=arm64 go build -tags fuse -ldflags "$LDFLAGS" \
+          CGO_ENABLED=1 GOARCH=arm64 go build -tags "fuse webui" -ldflags "$LDFLAGS" \
             -o dist/cc-notes_darwin_arm64_fuse ./cmd/cc-notes
           # amd64 slice cross-compiles against the fat macOS SDK.
-          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -tags fuse -ldflags "$LDFLAGS" \
+          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -tags "fuse webui" -ldflags "$LDFLAGS" \
             -o dist/cc-notes_darwin_amd64_fuse ./cmd/cc-notes
           # Developer ID sign + notarize each darwin binary via the shared script.
           bash "$MACOS_CODESIGN_SCRIPT" dist/cc-notes_darwin_arm64_fuse darwin_arm64
@@ -137,7 +172,7 @@ jobs:
 
   fuse-linux:
     name: fuse linux/amd64
-    needs: verify-tag-on-main
+    needs: [verify-tag-on-main, web-dist]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -145,6 +180,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist
+      - name: Verify embedded dist present
+        run: test -f web/dist/index.html
       - name: Install libfuse headers
         run: sudo apt-get update && sudo apt-get install -y libfuse-dev
       - name: Build linux/amd64 fuse variant
@@ -152,7 +193,7 @@ jobs:
           COMMIT="$(git rev-parse --short HEAD)"
           LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${GITHUB_REF_NAME} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT}"
           mkdir -p dist
-          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags fuse -ldflags "$LDFLAGS" \
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags "fuse webui" -ldflags "$LDFLAGS" \
             -o dist/cc-notes_linux_amd64_fuse ./cmd/cc-notes
       - uses: actions/upload-artifact@v7
         with:
