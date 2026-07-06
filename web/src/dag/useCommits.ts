@@ -4,9 +4,9 @@
 // re-run over the concatenated list and keep rails continuous across the paging
 // boundary.
 
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { fetchCommits } from "../api";
-import { useDispatch } from "../store";
+import { useDispatch, useStore } from "../store";
 
 export interface CommitsLoader {
   loadFirst: () => void;
@@ -15,20 +15,33 @@ export interface CommitsLoader {
 
 export function useCommitsLoader(): CommitsLoader {
   const dispatch = useDispatch();
+  const { commits } = useStore();
+  // Mirror the committed generation so the stable callbacks below read the
+  // latest value at call time — loadFirst reset()s under gen+1, loadOlder
+  // append()s under the current gen, and the reducer drops any response whose
+  // generation a later reset has already superseded.
+  const genRef = useRef(commits.gen);
+  genRef.current = commits.gen;
 
   const loadFirst = useCallback(() => {
-    dispatch({ type: "commits-load-start", reset: true });
+    const gen = genRef.current + 1;
+    dispatch({ type: "commits-load-start", reset: true, gen });
     fetchCommits()
-      .then((page) => dispatch({ type: "commits-loaded", page, reset: true }))
-      .catch((err: unknown) => dispatch({ type: "commits-load-error", error: String(err) }));
+      .then((page) => dispatch({ type: "commits-loaded", page, reset: true, gen }))
+      .catch((err: unknown) =>
+        dispatch({ type: "commits-load-error", error: String(err), gen }),
+      );
   }, [dispatch]);
 
   const loadOlder = useCallback(
     (before: string) => {
-      dispatch({ type: "commits-load-start", reset: false });
+      const gen = genRef.current;
+      dispatch({ type: "commits-load-start", reset: false, gen });
       fetchCommits(before)
-        .then((page) => dispatch({ type: "commits-loaded", page, reset: false }))
-        .catch((err: unknown) => dispatch({ type: "commits-load-error", error: String(err) }));
+        .then((page) => dispatch({ type: "commits-loaded", page, reset: false, gen }))
+        .catch((err: unknown) =>
+          dispatch({ type: "commits-load-error", error: String(err), gen }),
+        );
     },
     [dispatch],
   );

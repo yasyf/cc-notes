@@ -23,7 +23,10 @@ export interface Selection {
 // CommitsState holds the DAG tab's flattened pages: every fetched page's commits
 // concatenated newest -> oldest, the cursor for the next (older) page, whether
 // the underlying walk hit the DAG horizon, and in-flight/error status. `loaded`
-// gates the tab's lazy first fetch.
+// gates the tab's lazy first fetch. `gen` is the client page-reset generation
+// (distinct from State.gen, the server refs generation): a reset bumps it, and a
+// commits response carrying a superseded generation is dropped, so a stale
+// "Load older" page can never append onto a list a refresh has since reset.
 export interface CommitsState {
   rows: CommitPage[];
   nextBefore: string | null;
@@ -31,6 +34,7 @@ export interface CommitsState {
   loading: boolean;
   loaded: boolean;
   error: string | null;
+  gen: number;
 }
 
 export const initialCommits: CommitsState = {
@@ -40,6 +44,7 @@ export const initialCommits: CommitsState = {
   loading: false,
   loaded: false,
   error: null,
+  gen: 0,
 };
 
 export interface State {
@@ -60,9 +65,9 @@ export type Action =
   | { type: "select"; selection: Selection | null }
   | { type: "connection"; connection: Connection }
   | { type: "gen"; gen: number }
-  | { type: "commits-load-start"; reset: boolean }
-  | { type: "commits-loaded"; page: CommitsPage; reset: boolean }
-  | { type: "commits-load-error"; error: string };
+  | { type: "commits-load-start"; reset: boolean; gen: number }
+  | { type: "commits-loaded"; page: CommitsPage; reset: boolean; gen: number }
+  | { type: "commits-load-error"; error: string; gen: number };
 
 export const initialState: State = {
   repo: null,
@@ -99,10 +104,11 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         commits: action.reset
-          ? { ...initialCommits, loading: true }
+          ? { ...initialCommits, gen: action.gen, loading: true }
           : { ...state.commits, loading: true },
       };
     case "commits-loaded":
+      if (action.gen !== state.commits.gen) return state;
       return {
         ...state,
         commits: {
@@ -114,9 +120,11 @@ export function reducer(state: State, action: Action): State {
           loading: false,
           loaded: true,
           error: null,
+          gen: state.commits.gen,
         },
       };
     case "commits-load-error":
+      if (action.gen !== state.commits.gen) return state;
       return {
         ...state,
         commits: { ...state.commits, loading: false, error: action.error },

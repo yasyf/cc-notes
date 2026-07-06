@@ -3,6 +3,7 @@ import { fetchGraph, fetchRepo } from "./api";
 import { CommitGraph } from "./dag/CommitGraph";
 import { useCommitsLoader } from "./dag/useCommits";
 import { Panel } from "./detail/Panel";
+import { createSequencer } from "./seq";
 import { connectStream, type Connection } from "./stream";
 import {
   StoreProvider,
@@ -30,10 +31,21 @@ function AppShell() {
   const tabRef = useRef(tab);
   tabRef.current = tab;
 
+  // A refs event can fire load() while an earlier load() is still in flight; the
+  // sequencer tags each request and drops any response superseded by a later one
+  // so an older graph never rolls the UI back over fresh data. repo and graph
+  // resolve together under one token, so the repo fetch is covered too.
+  const loadSeq = useRef(createSequencer());
   const load = useCallback(() => {
+    const token = loadSeq.current.next();
     Promise.all([fetchRepo(), fetchGraph()])
-      .then(([repo, graph]) => dispatch({ type: "loaded", repo, graph }))
-      .catch((err: unknown) => dispatch({ type: "load-error", error: String(err) }));
+      .then(([repo, graph]) => {
+        if (loadSeq.current.isLatest(token)) dispatch({ type: "loaded", repo, graph });
+      })
+      .catch((err: unknown) => {
+        if (loadSeq.current.isLatest(token))
+          dispatch({ type: "load-error", error: String(err) });
+      });
   }, [dispatch]);
 
   // A refs event refetches the graph; while the Commits tab is active it also
