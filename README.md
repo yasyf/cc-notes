@@ -119,6 +119,7 @@ Each hit comes back with a verdict:
 | `cc-notes attachment get` | Stream an attachment's content from the local LFS store (`path` prints its object path) |
 | `cc-notes sync` | Push and pull `refs/cc-notes/*`, union-merging concurrent edits and transferring attachment content |
 | `cc-notes mount` | Expose notes and tasks as an editable `.notes` filesystem (needs a `_fuse` binary; auto-mounted by `init`) |
+| `cc-notes viz` | Watch branch flow and note/task/doc lifecycles live in a browser |
 
 Tasks also carry `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, `stale`, `claim`, and `validate`; notes add `verify`, `list`, `edit`, `search`, and `supersede`; docs add `list`, `show`, `edit`, `search`, `verify`, `supersede`, `expire`, and `review`; logs add `append`, `list`, `show`, `edit`, `search`, and `rm`, with no `verify`, `supersede`, or `expire` since a log never drifts. Docs and notes also edit as a file without a mount: `doc edit <id> --checkout` (or `note edit`, or either `add`) renders the entity to a Markdown file and prints its path, and `--apply` commits your edits back. An optional planning layer rolls tasks up into sprints and projects via `cc-notes sprint` and `cc-notes project`. Every mutation echoes the entity's new state as a tab-separated line, and every command takes `--json`. Run `cc-notes <noun> --help`, or read the full [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md).
 
@@ -142,6 +143,16 @@ $ cc-notes attachment path f3ab90c flamegraph.svg
 > A plain `git push` publishes `refs/cc-notes/*` through the installed wildcard refspec **without** uploading attachment content — a fresh clone then holds references whose bytes 404 at sync. Only `cc-notes sync` holds the objects-before-refs invariant, uploading content before it pushes refs. In an attachment-carrying repo, share with `cc-notes sync`, never a bare `git push`.
 
 Attachment content lives on your git host's LFS endpoint and counts against its LFS quotas — on GitHub, storage and bandwidth are [metered per repository owner](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-storage-and-bandwidth-usage). Removing the last reference (`--rm-attachment`, then sync) stops cc-notes from re-uploading an object, but GitHub only reclaims already-uploaded LFS storage when you delete the objects or the repository.
+
+## Visualize
+
+`cc-notes viz` opens a live web view of the current repo. Every branch draws as a swimlane with its fork and merge points, and every note, task, and doc lifecycle event pins to the commit that produced it. One tab is the swimlane timeline, the other a commit DAG; both stream updates over SSE, so the view moves as agents claim, edit, and close work.
+
+```bash
+cc-notes viz
+```
+
+The command binds a loopback port, prints the URL, and opens your browser. `--port` pins the port, `--no-open` skips the browser, and `--poll` sets how often the server checks the refs for changes (default 2s). Release binaries ship the UI. Building from source, run `cd web && npm ci && npm run build` before `go build -tags webui`; a default `go build` serves the JSON API plus a pointer page, no UI.
 
 ## How it works
 

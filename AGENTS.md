@@ -15,9 +15,12 @@ cc-notes/
 │   ├── gitcmd/       #   exec git — fetch/push with user credentials, config, update-ref
 │   ├── store/        #   entity store: create, append (CAS), load, list, resolve
 │   ├── sync/         #   refspec install, sync loop, union merge, reconcile (relocate tasks on merge)
-│   ├── cli/          #   cobra command tree: note/task/sprint/project noun groups, task validation criteria + validate, init, sync, mount
+│   ├── trail/        #   per-commit entity change trails — classify fold steps as create/edit/checkpoint, diff snapshots into field deltas
+│   ├── viz/          #   branch/entity visualization — swimlane graph + lifecycle events, commit DAG API, loopback HTTP server, SSE ref-watcher
+│   ├── cli/          #   cobra command tree: note/task/sprint/project noun groups, task validation criteria + validate, init, sync, mount, viz
 │   ├── fusefs/       #   FUSE mount (build tag fuse) — render/parse/diff + cgofuse ops, flat sprint/project files + nested symlink browse tree
 │   └── version/      #   ldflags-injected build metadata
+├── web/              # viz single-page app (Vite + TypeScript) — dist/ embedded by `-tags webui` builds (embed.go / embed_stub.go)
 ├── scripts/          # install.sh — curl-able release-binary installer
 ├── .github/          # GitHub Actions workflows (CI, tag-driven releases; release.yml renders + publishes the Homebrew formula to the shared yasyf/homebrew-tap)
 ├── AGENTS.md         # This file — shared conventions
@@ -100,6 +103,7 @@ Target Go 1.26+. Full rules live in STYLEGUIDE.md; the build/test loop:
 - **Test**: `go test -race -count=1 ./...`
 - **Vet**: `go vet ./...` before every commit
 - **Fuse variant**: `go build -tags fuse ./...` needs cgo + a FUSE implementation (fuse-t on macOS, fuse3 on Linux); the default build must stay pure Go.
+- **Webui variant**: `go build -tags webui ./...` embeds `web/dist` into the binary; build it first with `cd web && npm ci && npm run build`. The default build compiles the stub instead and must stay pure Go and green with no node and no `dist/` present. CI builds `dist/` and compiles the webui variant; release binaries carry it.
 
 **Comments are terse and used sparingly — the code documents itself** through names, types, and organization. The one exception is documentation-generation comments: godoc on exported types, funcs, and the package, each starting with the identifier's name (`// NewRootCmd builds …`); unexported helpers get none. Beyond godoc, comment only for TODOs, non-obvious workarounds, or disabled code — never to restate the signature.
 

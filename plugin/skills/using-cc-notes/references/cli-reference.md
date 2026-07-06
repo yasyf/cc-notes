@@ -319,6 +319,10 @@ $ cc-notes mount --stop .notes
 cc-notes: unmounted /Users/me/.cc-notes/mnt/repo-1a2b3c4d
 ```
 
+### `cc-notes viz`
+
+Serve a live localhost web view of branch flow and note/task/doc lifecycles (`--port`, `--no-open`, `--poll`); it is a human-facing visualization, so tell the user about it or open it for them rather than running it headless in a session.
+
 ### `cc-notes version`
 
 Print the cc-notes version.
