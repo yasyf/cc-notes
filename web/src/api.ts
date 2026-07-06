@@ -82,6 +82,30 @@ export interface Graph {
   entities: EntitySummary[];
 }
 
+// CommitPage is one commit in a DAG page: identity + parents, the attributed
+// lane (null when unclaimed), the cc-task ids its trailer names, and the
+// lifecycle events landing on it. Mirrors internal/viz.commitPage; author is a
+// bare actor string. parents/tasks/events are non-null after normalization.
+export interface CommitPage {
+  sha: string;
+  parents: string[];
+  author: string;
+  time: number;
+  summary: string;
+  branch: string | null;
+  tasks: string[];
+  events: Event[];
+}
+
+// CommitsPage is the /api/commits payload: a page of commits newest first, the
+// cursor to pass as ?before for the next (older) page, and whether the walk hit
+// the DAG horizon. Mirrors internal/viz.commitsResponse.
+export interface CommitsPage {
+  commits: CommitPage[];
+  next_before: string | null;
+  truncated: boolean;
+}
+
 // TrailChange is one field delta in an entity's change trail: a scalar carries
 // from→to, a set carries added/removed. Mirrors internal/viz.trailChange.
 export interface TrailChange {
@@ -126,6 +150,23 @@ interface RawGraph {
   entities: EntitySummary[] | null;
 }
 
+// RawCommitPage is CommitPage as it arrives on the wire: parents, tasks, and
+// events marshal as null when the Go slice is nil (and each event's detail map
+// likewise, via RawEvent); branch is nullable by design.
+interface RawCommitPage extends Omit<CommitPage, "parents" | "tasks" | "events"> {
+  parents: string[] | null;
+  tasks: string[] | null;
+  events: RawEvent[] | null;
+}
+
+// RawCommitsPage is CommitsPage as it arrives on the wire: the commits slice
+// marshals as null for a repo with no commits in the window.
+interface RawCommitsPage {
+  commits: RawCommitPage[] | null;
+  next_before: string | null;
+  truncated: boolean;
+}
+
 // RawTrailChange is TrailChange as it arrives on the wire: added and removed are
 // Go slices that marshal as null when nil (a scalar change carries neither).
 interface RawTrailChange extends Omit<TrailChange, "added" | "removed"> {
@@ -154,6 +195,23 @@ export function normalizeGraph(raw: RawGraph): Graph {
     lanes: raw.lanes ?? [],
     events: (raw.events ?? []).map((e) => ({ ...e, detail: e.detail ?? {} })),
     entities: raw.entities ?? [],
+  };
+}
+
+// normalizeCommits fills every nil parents/tasks/events slice with [] and every
+// nil event detail map with {}, so downstream code sees non-null arrays and
+// maps. The by-design nullables — each commit's branch and the page's
+// next_before — stay null.
+export function normalizeCommits(raw: RawCommitsPage): CommitsPage {
+  return {
+    commits: (raw.commits ?? []).map((c) => ({
+      ...c,
+      parents: c.parents ?? [],
+      tasks: c.tasks ?? [],
+      events: (c.events ?? []).map((e) => ({ ...e, detail: e.detail ?? {} })),
+    })),
+    next_before: raw.next_before,
+    truncated: raw.truncated,
   };
 }
 
@@ -188,6 +246,19 @@ export function fetchRepo(): Promise<RepoInfo> {
 export async function fetchGraph(since?: number): Promise<Graph> {
   const q = since !== undefined ? `?since=${since}` : "";
   return normalizeGraph(await getJSON<RawGraph>(`/api/graph${q}`));
+}
+
+export async function fetchCommits(
+  before?: string,
+  limit?: number,
+): Promise<CommitsPage> {
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (before !== undefined) params.set("before", before);
+  const q = params.toString();
+  return normalizeCommits(
+    await getJSON<RawCommitsPage>(`/api/commits${q ? `?${q}` : ""}`),
+  );
 }
 
 export async function fetchEntity(kind: string, id: string): Promise<EntityDetail> {

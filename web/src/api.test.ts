@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeEntity, normalizeGraph } from "./api";
+import { normalizeCommits, normalizeEntity, normalizeGraph } from "./api";
 
 // The Go server marshals nil slices and nil maps as JSON null. These payloads are
 // captured shapes the wire can actually emit; the normalizers must turn every
@@ -36,6 +36,49 @@ describe("normalizeGraph", () => {
     expect(g.lanes[0].fork).toBeNull(); // by-design pointer stays null
     expect(g.events[0].detail).toEqual({});
     expect(g.events[1].detail).toEqual({ text: "hi" });
+  });
+});
+
+describe("normalizeCommits", () => {
+  it("fills a null commits slice and keeps by-design nullables", () => {
+    // A repo with no commits in the window: commits null, no next page.
+    const page = normalizeCommits(
+      JSON.parse(`{"commits":null,"next_before":null,"truncated":false}`),
+    );
+    expect(page.commits).toEqual([]);
+    expect(page.next_before).toBeNull();
+    expect(page.truncated).toBe(false);
+  });
+
+  it("fills per-commit null parents/tasks/events and a null event detail map", () => {
+    // Go marshals every nil slice/map as JSON null: a root commit carries null
+    // parents, an unclaimed commit null branch, and an event with null detail.
+    const raw = JSON.parse(
+      `{"commits":[
+          {"sha":"c2","parents":["c1"],"author":"ann","time":20,"summary":"merge",
+            "branch":"main","tasks":["t1"],
+            "events":[{"entity":{"kind":"task","id":"t1","short":"t1","title":"t"},
+              "type":"closed","time":20,"branch":"main","sha":"c2","detail":null}]},
+          {"sha":"c1","parents":null,"author":"ann","time":10,"summary":"root",
+            "branch":null,"tasks":null,"events":null}
+        ],
+        "next_before":"c0","truncated":true}`,
+    );
+    const page = normalizeCommits(raw);
+
+    const [c2, c1] = page.commits;
+    expect(c2.parents).toEqual(["c1"]);
+    expect(c2.tasks).toEqual(["t1"]);
+    expect(c2.events[0].detail).toEqual({}); // null detail -> {}
+    expect(c2.branch).toBe("main");
+
+    expect(c1.parents).toEqual([]); // null parents -> []
+    expect(c1.tasks).toEqual([]);
+    expect(c1.events).toEqual([]);
+    expect(c1.branch).toBeNull(); // by-design nullable stays null
+
+    expect(page.next_before).toBe("c0");
+    expect(page.truncated).toBe(true);
   });
 });
 

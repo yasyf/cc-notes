@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchGraph, fetchRepo } from "./api";
+import { CommitGraph } from "./dag/CommitGraph";
+import { useCommitsLoader } from "./dag/useCommits";
 import { Panel } from "./detail/Panel";
 import { connectStream, type Connection } from "./stream";
 import {
@@ -23,7 +25,10 @@ export default function App() {
 
 function AppShell() {
   const dispatch = useDispatch();
+  const { loadFirst: loadCommits } = useCommitsLoader();
   const [tab, setTab] = useState<Tab>("timeline");
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
 
   const load = useCallback(() => {
     Promise.all([fetchRepo(), fetchGraph()])
@@ -31,15 +36,24 @@ function AppShell() {
       .catch((err: unknown) => dispatch({ type: "load-error", error: String(err) }));
   }, [dispatch]);
 
+  // A refs event refetches the graph; while the Commits tab is active it also
+  // refetches the first commit page and resets paging — an intentional
+  // simplification (re-walking from the tip beats splicing new commits into a
+  // partially-paged stack).
+  const refresh = useCallback(() => {
+    load();
+    if (tabRef.current === "commits") loadCommits();
+  }, [load, loadCommits]);
+
   useEffect(() => {
     load();
     const dispose = connectStream({
-      onRefresh: load,
+      onRefresh: refresh,
       onConnection: (connection) => dispatch({ type: "connection", connection }),
       onGen: (gen) => dispatch({ type: "gen", gen }),
     });
     return dispose;
-  }, [load, dispatch]);
+  }, [load, refresh, dispatch]);
 
   const select = useCallback(
     (selection: Selection | null) => dispatch({ type: "select", selection }),
@@ -73,9 +87,7 @@ function AppShell() {
         {tab === "timeline" ? (
           <TimelinePane onSelect={select} />
         ) : (
-          <section className="pane" aria-label="Commits">
-            <p className="placeholder">Commit DAG view lands in a later phase.</p>
-          </section>
+          <CommitsPane onSelect={select} />
         )}
       </main>
     </div>
@@ -116,6 +128,20 @@ function TimelinePane({ onSelect }: { onSelect: (sel: Selection | null) => void 
     <section className="pane pane-timeline" aria-label="Timeline">
       <div className="timeline-grid">
         <Swimlanes result={result} selection={selection} onSelect={(s) => onSelect(s)} />
+        {selection !== null && (
+          <Panel selection={selection} onClose={() => onSelect(null)} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CommitsPane({ onSelect }: { onSelect: (sel: Selection | null) => void }) {
+  const { selection } = useStore();
+  return (
+    <section className="pane pane-timeline" aria-label="Commits">
+      <div className="timeline-grid">
+        <CommitGraph selection={selection} onSelect={onSelect} />
         {selection !== null && (
           <Panel selection={selection} onClose={() => onSelect(null)} />
         )}

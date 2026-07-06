@@ -11,7 +11,7 @@ import {
   type Dispatch,
   type ReactNode,
 } from "react";
-import type { Graph, RepoInfo } from "./api";
+import type { CommitPage, CommitsPage, Graph, RepoInfo } from "./api";
 import type { Connection } from "./stream";
 
 export interface Selection {
@@ -19,6 +19,28 @@ export interface Selection {
   id: string;
   title: string;
 }
+
+// CommitsState holds the DAG tab's flattened pages: every fetched page's commits
+// concatenated newest -> oldest, the cursor for the next (older) page, whether
+// the underlying walk hit the DAG horizon, and in-flight/error status. `loaded`
+// gates the tab's lazy first fetch.
+export interface CommitsState {
+  rows: CommitPage[];
+  nextBefore: string | null;
+  truncated: boolean;
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+}
+
+export const initialCommits: CommitsState = {
+  rows: [],
+  nextBefore: null,
+  truncated: false,
+  loading: false,
+  loaded: false,
+  error: null,
+};
 
 export interface State {
   repo: RepoInfo | null;
@@ -28,6 +50,7 @@ export interface State {
   loading: boolean;
   error: string | null;
   gen: number;
+  commits: CommitsState;
 }
 
 export type Action =
@@ -36,7 +59,10 @@ export type Action =
   | { type: "load-error"; error: string }
   | { type: "select"; selection: Selection | null }
   | { type: "connection"; connection: Connection }
-  | { type: "gen"; gen: number };
+  | { type: "gen"; gen: number }
+  | { type: "commits-load-start"; reset: boolean }
+  | { type: "commits-loaded"; page: CommitsPage; reset: boolean }
+  | { type: "commits-load-error"; error: string };
 
 export const initialState: State = {
   repo: null,
@@ -46,6 +72,7 @@ export const initialState: State = {
   loading: true,
   error: null,
   gen: 0,
+  commits: initialCommits,
 };
 
 export function reducer(state: State, action: Action): State {
@@ -68,6 +95,32 @@ export function reducer(state: State, action: Action): State {
       return { ...state, connection: action.connection };
     case "gen":
       return { ...state, gen: action.gen };
+    case "commits-load-start":
+      return {
+        ...state,
+        commits: action.reset
+          ? { ...initialCommits, loading: true }
+          : { ...state.commits, loading: true },
+      };
+    case "commits-loaded":
+      return {
+        ...state,
+        commits: {
+          rows: action.reset
+            ? action.page.commits
+            : [...state.commits.rows, ...action.page.commits],
+          nextBefore: action.page.next_before,
+          truncated: action.page.truncated,
+          loading: false,
+          loaded: true,
+          error: null,
+        },
+      };
+    case "commits-load-error":
+      return {
+        ...state,
+        commits: { ...state.commits, loading: false, error: action.error },
+      };
   }
 }
 
