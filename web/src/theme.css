@@ -1,0 +1,139 @@
+:root {
+  color-scheme: light dark;
+
+  --bg: #ffffff;
+  --bg-elevated: #f5f6f8;
+  --fg: #1a1c20;
+  --fg-muted: #5b6270;
+  --border: #d9dce2;
+  --accent: #3b6ef0;
+  --accent-fg: #ffffff;
+  --error: #b4231f;
+  --code-bg: #eceef2;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115;
+    --bg-elevated: #171a20;
+    --fg: #e6e8ec;
+    --fg-muted: #98a0ae;
+    --border: #262b33;
+    --accent: #5b86f5;
+    --accent-fg: #0f1115;
+    --error: #f0736e;
+    --code-bg: #1d222a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.tab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  padding: 0.35rem 0.85rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.tab-active,
+.tab-active:hover {
+  color: var(--accent-fg);
+  background: var(--accent);
+}
+
+.app-main {
+  flex: 1;
+  padding: 1.25rem;
+  overflow: auto;
+}
+
+.pane {
+  height: 100%;
+}
+
+.placeholder {
+  color: var(--fg-muted);
+}
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1.25rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+}
+
+.status-error {
+  color: var(--error);
+}
+
+.status-item code {
+  font-family: var(--font-mono);
+  background: var(--code-bg);
+  color: var(--fg);
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+}
+
+.status-sep {
+  color: var(--border);
+}

@@ -19,3 +19,7 @@ __pycache__/
 bin/
 dist/
 /cc-notes
+
+# Web frontend
+web/dist/
+web/node_modules/
