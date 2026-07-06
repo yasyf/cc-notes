@@ -246,7 +246,8 @@ func claimLane(order []laneClaim, sha model.SHA) *string {
 // the lane tips, keyed by commit sha. Each lane contributes one range —
 // fork..tip for a forked branch (its exclusive commits) and root..tip for the
 // trunk (its whole reachable history) — so a squash-merge trailer on a trunk
-// commit is covered.
+// commit is covered. The root commit's own trailers are merged in separately,
+// since root..tip by range semantics excludes the root itself.
 func commitTrailers(ctx context.Context, st *store.Store, g *Graph, cache map[model.SHA]reachSet) (map[model.SHA][]string, error) {
 	merged := make(map[model.SHA][]string)
 	for _, lane := range g.Lanes {
@@ -262,6 +263,16 @@ func commitTrailers(ctx context.Context, st *store.Store, g *Graph, cache map[mo
 				return nil, err
 			}
 			base = string(rs.root)
+			// root..tip excludes root, so fold in the root's own trailers.
+			rootTrailers, err := st.Git.TaskTrailers(ctx, string(rs.root))
+			if err != nil {
+				return nil, err
+			}
+			if len(rootTrailers) > 0 {
+				if _, ok := merged[rs.root]; !ok {
+					merged[rs.root] = rootTrailers
+				}
+			}
 		}
 		if base == "" || base == string(lane.Tip.SHA) {
 			continue

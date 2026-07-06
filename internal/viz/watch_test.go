@@ -194,6 +194,50 @@ func TestWatchSymbolicHeadCheckout(t *testing.T) {
 	}
 }
 
+// TestWatchRunBaselineIsTakenOnEntry pins FIX A: Run takes its baseline
+// synchronously on entry, so a ref change made after Run starts — a commit landing
+// before the first ticker tick — is diffed against that entry baseline and
+// published, never absorbed. Before the fix the first tick became the baseline, so
+// this change would be swallowed and never reach a subscriber.
+//
+// No manual pre-scan runs here (unlike TestWatchRunPublishesAndStops): the point
+// is that Run itself establishes the baseline. The 200ms interval keeps the commit
+// well inside the entry→first-tick window; Run's entry scan reads refs (its first
+// action) before the commit's ref update lands, so main moving from c1 to c2 is a
+// change against the baseline, not part of it.
+func TestWatchRunBaselineIsTakenOnEntry(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	w, _, _, hub := newWatcher(t, r, 200*time.Millisecond)
+	ch, _ := hub.Subscribe()
+
+	runCtx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(runCtx) }()
+
+	r.commit("c2")
+
+	select {
+	case p := <-ch:
+		var ev refsEvent
+		if err := json.Unmarshal(p, &ev); err != nil {
+			t.Fatalf("decode %s: %v", p, err)
+		}
+		if !hasRef(ev.Heads, "refs/heads/main") {
+			t.Errorf("heads = %v, want to contain refs/heads/main", ev.Heads)
+		}
+	case <-time.After(5 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("Run published no event for a change made after entry within 5s")
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run returned %v, want nil on cancel", err)
+	}
+}
+
 // TestWatchRunPublishesAndStops drives Run on a 10ms interval: after a baseline
 // and a real commit, the subscriber receives the delta, and cancelling the
 // context makes Run return nil promptly.

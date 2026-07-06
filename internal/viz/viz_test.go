@@ -129,6 +129,16 @@ func (r *gitRepo) mergeNoFF(when int64, branch, message string) commitInfo {
 	return commitInfo{sha: r.head(), time: when}
 }
 
+// mergeOctopus merges two or more branches into the current branch in a single
+// octopus merge commit at time when, returning the merge commit. Because each
+// branch touches a distinct file, the current tip stays the first parent and the
+// merged branches follow in the order given.
+func (r *gitRepo) mergeOctopus(when int64, message string, branches ...string) commitInfo {
+	r.t.Helper()
+	r.gitAt(when, append([]string{"merge", "--no-ff", "-m", message}, branches...)...)
+	return commitInfo{sha: r.head(), time: when}
+}
+
 // head returns the current HEAD commit sha.
 func (r *gitRepo) head() model.SHA { return model.SHA(r.git("rev-parse", "HEAD")) }
 

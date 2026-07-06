@@ -18,6 +18,10 @@ import (
 // B's real commits are off-trunk, so a squash is inferred from a cc-task
 // trailer on a trunk commit naming a task folded onto B and done; failing that,
 // B stays active.
+//
+// The first-parent merge scan is bounded by walkLimit (1000): a branch whose
+// merge lies more than that many first-parent merges behind the trunk tip
+// reports "fast-forward" at its tip instead of the true merge commit.
 func (b *Builder) detectMerge(ctx context.Context, s, trunk *branchState, tasks []model.Task, r *topoRun) error {
 	s.status = statusActive
 	anc, err := b.store.Repo.IsAncestor(ctx, s.tip, trunk.tip)
@@ -36,11 +40,20 @@ func (b *Builder) detectMerge(ctx context.Context, s, trunk *branchState, tasks 
 			if len(m.Parents) < 2 {
 				continue
 			}
-			in, err := b.store.Repo.IsAncestor(ctx, s.tip, m.Parents[1])
-			if err != nil {
-				return fmt.Errorf("ancestry %s %s: %w", s.tip, m.Parents[1], err)
+			// An octopus merge carries B under any non-first parent, so scan every
+			// one; the first that contains B's tip is the merge that landed it.
+			matched := false
+			for _, parent := range m.Parents[1:] {
+				in, err := b.store.Repo.IsAncestor(ctx, s.tip, parent)
+				if err != nil {
+					return fmt.Errorf("ancestry %s %s: %w", s.tip, parent, err)
+				}
+				if in {
+					matched = true
+					break
+				}
 			}
-			if in {
+			if matched {
 				base, found, err := b.mergeBaseOf(ctx, s.tip, m.Parents[0])
 				if err != nil {
 					return err
@@ -66,11 +79,14 @@ func (b *Builder) detectMerge(ctx context.Context, s, trunk *branchState, tasks 
 	return b.inferSquash(ctx, s, trunk, tasks, r)
 }
 
-// inferSquash looks for a squash merge of B: a trunk commit in the fork..trunk
-// window carrying a cc-task trailer that names a task folded onto B and done.
-// The newest such commit (ties broken by sha) becomes an "inferred" merge.
+// inferSquash looks for a squash merge of B: a commit on the trunk's
+// first-parent line in the fork..trunk window carrying a cc-task trailer that
+// names a task folded onto B and done. The newest such commit (ties broken by
+// sha) becomes an "inferred" merge. Restricting to the first-parent line keeps a
+// trailer on a merged side branch — which names a task folded onto a different,
+// still-active branch — from falsely marking B squash-merged.
 func (b *Builder) inferSquash(ctx context.Context, s, trunk *branchState, tasks []model.Task, r *topoRun) error {
-	trailers, err := b.store.Git.TaskTrailersRange(ctx, string(s.forkBase), string(trunk.tip))
+	trailers, err := b.store.Git.TaskTrailersFirstParent(ctx, string(s.forkBase), string(trunk.tip))
 	if err != nil {
 		return fmt.Errorf("task trailers %s..%s: %w", s.forkBase, trunk.tip, err)
 	}

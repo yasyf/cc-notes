@@ -627,6 +627,84 @@ func TestTaskTrailersRange(t *testing.T) {
 	}
 }
 
+func TestTaskTrailersFirstParent(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	t.Setenv("GIT_AUTHOR_DATE", "2026-01-01T00:00:00")
+	t.Setenv("GIT_COMMITTER_DATE", "2026-01-01T00:00:00")
+
+	commit := func(subject string, tasks ...string) model.SHA {
+		t.Helper()
+		msg := subject
+		if len(tasks) > 0 {
+			lines := make([]string, len(tasks))
+			for i, task := range tasks {
+				lines[i] = "cc-task: " + task
+			}
+			msg += "\n\n" + strings.Join(lines, "\n")
+		}
+		mustGit(t, g.Dir, "commit", "-q", "--allow-empty", "-m", msg)
+		return model.SHA(mustGit(t, g.Dir, "rev-parse", "HEAD"))
+	}
+
+	c0 := commit("base no trailer")
+	mustGit(t, g.Dir, "checkout", "-q", "-b", "side")
+	side := commit("side work", "sidetask")
+	mustGit(t, g.Dir, "checkout", "-q", "main")
+	mustGit(t, g.Dir, "merge", "--no-ff", "-m", "merge side", "side")
+	mergeSHA := model.SHA(mustGit(t, g.Dir, "rev-parse", "HEAD"))
+	direct := commit("direct trunk", "directtask")
+
+	for _, tc := range []struct {
+		name       string
+		base, head model.SHA
+		want       map[model.SHA][]string
+	}{
+		{
+			name: "first-parent excludes merged side branch, keeps direct trunk commit",
+			base: c0, head: direct,
+			want: map[model.SHA][]string{direct: {"directtask"}},
+		},
+		{
+			name: "merge commit alone carries no trailer and the side branch is excluded",
+			base: c0, head: mergeSHA,
+			want: map[model.SHA][]string{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := g.TaskTrailersFirstParent(ctx, string(tc.base), string(tc.head))
+			if err != nil {
+				t.Fatalf("TaskTrailersFirstParent: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("TaskTrailersFirstParent = %v, want %v", got, tc.want)
+			}
+			for sha, wantValues := range tc.want {
+				if !slices.Equal(got[sha], wantValues) {
+					t.Fatalf("TaskTrailersFirstParent[%s] = %v, want %v", sha, got[sha], wantValues)
+				}
+			}
+			if _, ok := got[side]; ok {
+				t.Fatalf("TaskTrailersFirstParent included side-branch commit %s: %v", side, got[side])
+			}
+		})
+	}
+
+	// Contrast: the full range surfaces the side-branch trailer the first-parent
+	// walk drops, proving the exclusion is the only difference between the two.
+	full, err := g.TaskTrailersRange(ctx, string(c0), string(direct))
+	if err != nil {
+		t.Fatalf("TaskTrailersRange: %v", err)
+	}
+	if want := []string{"sidetask"}; !slices.Equal(full[side], want) {
+		t.Fatalf("TaskTrailersRange[side] = %v, want %v (full range must include the merged side branch)", full[side], want)
+	}
+
+	if _, err := g.TaskTrailersFirstParent(ctx, "no-such-ref", string(direct)); !errors.Is(err, gitcmd.ErrRevNotFound) {
+		t.Fatalf("nonexistent base rev: got %v, want ErrRevNotFound", err)
+	}
+}
+
 func TestRemotes(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()

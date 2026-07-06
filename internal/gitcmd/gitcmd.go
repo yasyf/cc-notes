@@ -292,17 +292,34 @@ func (g Git) TaskTrailers(ctx context.Context, rev string) ([]string, error) {
 // TaskTrailersRange maps each commit in base..head to the values of its
 // cc-task: trailers, using one git log invocation; commits without trailers
 // are omitted. A rev that names no commit wraps ErrRevNotFound.
-//
-// The single `git log` invocation emits one record per commit, each beginning
-// with a NUL byte, then the commit hash, then a newline, then that commit's
-// cc-task: trailer values one per line. Splitting on the NUL record separator
-// and reading the first line of each record as the hash and the remaining
-// non-empty lines as trailer values preserves per-commit trailer order.
 func (g Git) TaskTrailersRange(ctx context.Context, base, head string) (map[model.SHA][]string, error) {
 	out, err := g.run(ctx, "", "log", base+".."+head, "--format=%x00%H%n%(trailers:key=cc-task,valueonly)")
 	if err = classify(err, ErrRevNotFound, []string{"unknown revision", "Invalid revision range"}); err != nil {
 		return nil, fmt.Errorf("task trailers range %s..%s: %w", base, head, err)
 	}
+	return parseTaskTrailerLog(out), nil
+}
+
+// TaskTrailersFirstParent is TaskTrailersRange restricted to the first-parent
+// line of base..head, so trailers on commits pulled in through a merge's second
+// parent — a merged side branch — are excluded and only the trunk's own commits
+// contribute. A rev that names no commit wraps ErrRevNotFound.
+func (g Git) TaskTrailersFirstParent(ctx context.Context, base, head string) (map[model.SHA][]string, error) {
+	out, err := g.run(ctx, "", "log", "--first-parent", base+".."+head, "--format=%x00%H%n%(trailers:key=cc-task,valueonly)")
+	if err = classify(err, ErrRevNotFound, []string{"unknown revision", "Invalid revision range"}); err != nil {
+		return nil, fmt.Errorf("task trailers first-parent %s..%s: %w", base, head, err)
+	}
+	return parseTaskTrailerLog(out), nil
+}
+
+// parseTaskTrailerLog decodes the git log output shared by TaskTrailersRange and
+// TaskTrailersFirstParent, both formatted %x00%H%n%(trailers:key=cc-task,valueonly).
+// Each record begins with a NUL byte, then the commit hash, then a newline, then
+// that commit's cc-task: trailer values one per line. Splitting on the NUL record
+// separator and reading the first line of each record as the hash and the
+// remaining non-empty lines as trailer values preserves per-commit trailer
+// order; commits without trailers are omitted.
+func parseTaskTrailerLog(out string) map[model.SHA][]string {
 	trailers := make(map[model.SHA][]string)
 	for _, record := range strings.Split(out, "\x00") {
 		lines := strings.Split(record, "\n")
@@ -319,7 +336,7 @@ func (g Git) TaskTrailersRange(ctx context.Context, base, head string) (map[mode
 			trailers[model.SHA(lines[0])] = values
 		}
 	}
-	return trailers, nil
+	return trailers
 }
 
 // CheckRefFormat validates branch as a branch name via

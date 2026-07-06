@@ -61,11 +61,20 @@ func NewWatcher(s *store.Store, b *Builder, hub *Hub, interval time.Duration) *W
 	return &Watcher{repo: s.Repo, git: s.Git, builder: b, hub: hub, interval: interval}
 }
 
-// Run scans on every interval tick until ctx is cancelled, at which point it
-// returns nil. The first scan establishes the baseline and publishes nothing; a
-// scan that fails for a reason other than cancellation aborts the loop with the
-// error.
+// Run performs one immediate baseline scan on entry — recording the current ref
+// state and publishing nothing — then scans on every interval tick until ctx is
+// cancelled, at which point it returns nil. Taking the baseline synchronously on
+// entry diffs every change after Run starts against it and publishes it on the
+// next tick, closing the gap where a change landing before the first tick would
+// otherwise be absorbed into a first-tick baseline and never published. A scan
+// that fails for a reason other than cancellation aborts with the error.
 func (w *Watcher) Run(ctx context.Context) error {
+	if err := w.scan(ctx); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return fmt.Errorf("viz watch: %w", err)
+	}
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 	for {

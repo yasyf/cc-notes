@@ -165,6 +165,100 @@ func TestTopologySequentialMerges(t *testing.T) {
 	assertTrunk(t, g, "main")
 }
 
+// TestTopologyOctopusMerge pins FIX B: an octopus merge with three parents lands
+// both feature branches, one under parent index 1 and the other under index 2, so
+// both lanes must report a "merge" at that commit. Before the fix only the second
+// parent was checked, so the branch carried by a later parent fell through to
+// "fast-forward".
+func TestTopologyOctopusMerge(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	c2 := r.commit("c2")
+
+	r.git("checkout", "-q", "-b", "b1")
+	b1 := r.commit("b1-a")
+	r.git("checkout", "-q", "main")
+	r.git("checkout", "-q", "-b", "b2")
+	b2 := r.commit("b2-a")
+	r.git("checkout", "-q", "main")
+	r.clock += fxStep
+	m := r.mergeOctopus(r.clock, "octopus merge", "b1", "b2")
+
+	g, err := NewBuilder(r.openStore()).Graph(t.Context(), fullWindow)
+	if err != nil {
+		t.Fatalf("Graph: %v", err)
+	}
+	for _, tc := range []struct {
+		lane string
+		tip  model.SHA
+	}{
+		{"b1", b1.sha},
+		{"b2", b2.sha},
+	} {
+		t.Run(tc.lane, func(t *testing.T) {
+			l := laneByName(t, g, tc.lane)
+			if l.Status != statusMerged {
+				t.Errorf("%s status = %q, want merged", tc.lane, l.Status)
+			}
+			if l.Merge == nil || l.Merge.Kind != kindMerge || l.Merge.SHA != m.sha {
+				t.Errorf("%s merge = %s, want {%s kind=%s}", tc.lane, mergeString(l.Merge), m.sha, kindMerge)
+			}
+			if l.Tip == nil || l.Tip.SHA != tc.tip {
+				t.Errorf("%s tip = %+v, want %s", tc.lane, l.Tip, tc.tip)
+			}
+			if l.Fork == nil || l.Fork.SHA != c2.sha {
+				t.Errorf("%s fork = %+v, want %s", tc.lane, l.Fork, c2.sha)
+			}
+		})
+	}
+	assertTrunk(t, g, "main")
+}
+
+// TestTopologySquashIgnoresMergedSideBranchTrailer pins FIX C: a cc-task trailer
+// on feature/a — merged into the trunk with a merge commit — that names a task
+// folded onto the still-active feature/b must not mark feature/b squash-merged.
+// Squash inference only walks the trunk's first-parent line, so the trailer, which
+// reaches the trunk through the merge's second parent, is invisible to it.
+func TestTopologySquashIgnoresMergedSideBranchTrailer(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	c2 := r.commit("c2")
+
+	r.git("checkout", "-q", "-b", "feature/b")
+	r.commit("b1")
+	r.git("checkout", "-q", "main")
+	taskB := r.doneTask(r.openStore(), "ship feature/b", model.Branch("feature/b"))
+
+	r.git("checkout", "-q", "-b", "feature/a")
+	r.commitMsg("work a", "cc-task: "+taskB.Short())
+	r.git("checkout", "-q", "main")
+	r.clock += fxStep
+	r.mergeNoFF(r.clock, "feature/a", "merge feature/a")
+
+	g, err := NewBuilder(r.openStore()).Graph(t.Context(), fullWindow)
+	if err != nil {
+		t.Fatalf("Graph: %v", err)
+	}
+	b := laneByName(t, g, "feature/b")
+	if b.Status != statusActive {
+		t.Errorf("feature/b status = %q, want active (a merged side branch's trailer must not squash-merge it)", b.Status)
+	}
+	if b.Merge != nil {
+		t.Errorf("feature/b merge = %s, want nil", mergeString(b.Merge))
+	}
+	if b.Fork == nil || b.Fork.SHA != c2.sha {
+		t.Errorf("feature/b fork = %+v, want %s", b.Fork, c2.sha)
+	}
+}
+
+// mergeString renders a MergePoint for failure messages, or "nil".
+func mergeString(m *MergePoint) string {
+	if m == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("{%s@%d into=%s kind=%s}", m.SHA, m.Time, m.Into, m.Kind)
+}
+
 // TestTopologyNesting covers a branch off a branch: B2 forks from B1, so its
 // parent is B1, not the trunk, while both stay active.
 func TestTopologyNesting(t *testing.T) {

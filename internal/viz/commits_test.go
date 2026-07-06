@@ -140,6 +140,33 @@ func TestCommitsAttribution(t *testing.T) {
 	}
 }
 
+// TestCommitsRootTrailer pins FIX D: a cc-task trailer on the root (parentless)
+// commit reaches its Tasks field. The trunk lane collects trailers over root..tip,
+// which by range semantics excludes the root, so without folding in the root's own
+// trailers the root commit is listed but its task is dropped.
+func TestCommitsRootTrailer(t *testing.T) {
+	r := newGitRepo(t)
+	s := r.openStore()
+	taskID := r.doneTask(s, "root task", model.Branch("main"))
+	root := r.commitMsg("root commit", "cc-task: "+taskID.Short())
+	r.commit("c2")
+
+	ts, _, _ := newVizServer(t, r)
+	resp := getCommits(t, ts.URL, "")
+
+	byName := map[model.SHA]commitPage{}
+	for _, c := range resp.Commits {
+		byName[c.SHA] = c
+	}
+	rootPage, ok := byName[root.sha]
+	if !ok {
+		t.Fatalf("root commit %s absent from page %v", root.sha, shas(resp.Commits))
+	}
+	if len(rootPage.Tasks) != 1 || rootPage.Tasks[0] != string(taskID) {
+		t.Errorf("root tasks = %v, want [%s]", rootPage.Tasks, taskID)
+	}
+}
+
 func equalSHAs(a, b []model.SHA) bool {
 	if len(a) != len(b) {
 		return false
