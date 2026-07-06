@@ -164,7 +164,7 @@ func (b *Builder) topology(ctx context.Context, since int64) (*topology, error) 
 	}
 
 	if since == 0 {
-		since = windowSince(time.Now().Unix(), oldestActiveFork(others))
+		since = windowSince(time.Now().Unix(), oldestRefBackedFork(others))
 	}
 	r.since = since
 
@@ -258,12 +258,16 @@ func (b *Builder) walkTruncated(ctx context.Context, trunk *branchState, others 
 	return truncated, nil
 }
 
-// oldestActiveFork is the earliest fork time among the still-active lanes, or 0
-// when none is active. It floors the default history window.
-func oldestActiveFork(others []*branchState) int64 {
+// oldestRefBackedFork is the earliest fork time among the ref-backed lanes —
+// every enumerated branch, merged included — or 0 when none has a fork. The
+// synthesized inferred and deleted lanes carry no ref and never reach here, so
+// they are naturally excluded. It floors the default history window so a merged
+// branch that forked before every open branch still starts the trunk rail early
+// enough for its fork and merge connectors to land on it.
+func oldestRefBackedFork(others []*branchState) int64 {
 	oldest := int64(0)
 	for _, s := range others {
-		if s.status != statusActive || !s.hasFork {
+		if !s.hasFork {
 			continue
 		}
 		if oldest == 0 || s.forkTime < oldest {
@@ -274,8 +278,8 @@ func oldestActiveFork(others []*branchState) int64 {
 }
 
 // windowSince is the default window lower bound: no earlier than defaultWindow
-// before now, and no earlier than the oldest active lane's fork.
-func windowSince(now, oldestActiveFork int64) int64 {
+// before now, and no earlier than the oldest ref-backed lane's fork.
+func windowSince(now, oldestFork int64) int64 {
 	floor := now - int64(defaultWindow.Seconds())
-	return max(floor, oldestActiveFork)
+	return max(floor, oldestFork)
 }

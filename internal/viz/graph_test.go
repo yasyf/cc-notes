@@ -310,6 +310,45 @@ func TestWindowSince(t *testing.T) {
 	}
 }
 
+// TestOldestRefBackedFork pins that the default-window floor considers every
+// ref-backed lane's fork, merged branches included: a merged branch that forked
+// before every open branch must set the floor, or its fork and merge connectors
+// dangle left of the trunk rail.
+func TestOldestRefBackedFork(t *testing.T) {
+	day := int64(24 * 3600)
+	now := int64(1_000_000_000)
+	cases := []struct {
+		name   string
+		others []*branchState
+		want   int64
+	}{
+		{"no forks", []*branchState{{name: "a", status: statusActive}}, 0},
+		{
+			"merged fork predates the open fork",
+			[]*branchState{
+				{name: "open", status: statusActive, hasFork: true, forkTime: now - 10*day},
+				{name: "merged", status: statusMerged, hasFork: true, forkTime: now - 50*day},
+			},
+			now - 50*day,
+		},
+		{
+			"open fork is oldest",
+			[]*branchState{
+				{name: "open", status: statusActive, hasFork: true, forkTime: now - 80*day},
+				{name: "merged", status: statusMerged, hasFork: true, forkTime: now - 20*day},
+			},
+			now - 80*day,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := oldestRefBackedFork(tc.others); got != tc.want {
+				t.Errorf("oldestRefBackedFork = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 // assertTrunk checks the trunk lane's invariants: it forks from nothing, merges
 // into nothing, has no parent, and stays active with an open end.
 func assertTrunk(t *testing.T, g *Graph, name string) {
