@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-07-07
+
+### Added
+- **`cc-notes viz` serves a live visualization of branch and entity activity.**
+  It binds a loopback web server (`--port`, default ephemeral; `--no-open` to
+  skip the browser) with two views: a swimlane timeline of branches and entity
+  lifecycle events with a detail panel per event, and a commit-DAG view with
+  paging and per-commit entity badges. Both refresh live over SSE as refs move,
+  driven by a poll watcher (`--poll`, default 2s), and the default window
+  reaches back to the oldest fork still backed by a ref.
+- **Release binaries embed the viz web UI.** The published binaries are built
+  with `-tags webui` and carry the compiled single-page app; a plain `go build`
+  stays pure Go and serves a no-UI notice instead.
+
 ## [0.17.0] - 2026-07-05
 
 ### Changed
