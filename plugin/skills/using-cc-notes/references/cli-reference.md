@@ -323,6 +323,27 @@ cc-notes: unmounted /Users/me/.cc-notes/mnt/repo-1a2b3c4d
 
 Serve a live localhost web view of branch flow and note/task/doc lifecycles (`--port`, `--no-open`, `--poll`); it is a human-facing visualization, so tell the user about it or open it for them rather than running it headless in a session.
 
+### `cc-notes mcp [--dir <path>]`
+
+Run the stdio [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the
+command surface as 76 tools — one `noun_verb` tool per command (`doc_add`, `note_edit`,
+`task_claim`, the sprint and project lifecycle verbs, and a single top-level `history` that
+resolves across kinds). Each tool drives the CLI in-process, so a call validates and behaves
+exactly like the command; the result carries the command's `--json` as its primary content block,
+with any stderr notices as a separate block. The Claude Code plugin launches this for you (see the
+README's MCP-server section); run it by hand only to drive cc-notes from another MCP client.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--dir <path>` | `$CLAUDE_PROJECT_DIR`, else cwd | Repository the server operates on |
+
+Two tools depart from their lean CLI shape: `attachment_get` requires an `output` file path and
+writes the bytes there (never inline), and `task_validate` takes a `yes` boolean in place of the
+interactive confirmation. Excluded from the tool surface are the host- and setup-facing commands —
+`init`, `mount`, `gc`/`compact`, `viz`, `version`, the skills/hooks/workflows installers, and the
+`--checkout`/`--apply` file mode, since an agent passes a long body through the `body` tool
+parameter instead.
+
 ### `cc-notes version`
 
 Print the cc-notes version.

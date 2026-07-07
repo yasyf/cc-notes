@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `--attach` on `note edit`/`doc edit` attaches to an entity that already
   exists — a name colliding with a live attachment needs `--replace`, and
   `--rm-attachment` still drops one.
+- **An MCP server exposes the CLI as tools.** `cc-notes mcp` runs a stdio Model
+  Context Protocol server whose tools mirror the command surface one-to-one
+  (`doc_add`, `note_edit`, `task_claim`, …), each driving the CLI in-process so
+  validation and `--json` output match exactly; a long doc or note body rides
+  the `body` parameter instead of a checkout buffer. The Claude Code plugin
+  wires it automatically through a bundled `.mcp.json`, surfacing the tools as
+  `mcp__plugin_cc-notes_cc-notes__<tool>`. Setup and host-facing commands
+  (`init`, mount, `gc`/`compact`, `viz`, `version`, the installers, and the
+  `--checkout`/`--apply` file mode) stay CLI-only; a missing or older binary
+  leaves the server `failed` in `/mcp` without disturbing the session, and
+  `deniedMcpServers` turns it off while keeping the hooks.
 
 ### Changed
 - The authoring guidance — the README, the using-cc-notes skill and CLI

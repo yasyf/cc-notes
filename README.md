@@ -123,6 +123,25 @@ Each hit comes back with a verdict:
 
 Tasks also carry `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, `stale`, `claim`, and `validate`; notes add `verify`, `list`, `edit`, `search`, and `supersede`; docs add `list`, `show`, `edit`, `search`, `verify`, `supersede`, `expire`, and `review`; logs add `append`, `list`, `show`, `edit`, `search`, and `rm`, with no `verify`, `supersede`, or `expire` since a log never drifts. Docs and notes also edit as a file without a mount: `doc edit <id> --checkout` (or `note edit`, or either `add`, which prefills the buffer from the title and anchor flags) renders the entity to a Markdown file and prints its path, and `--apply` commits your edits back. On `add`, `--apply --attach <file>` ingests attachments as the entity is created; to attach to a doc or note that already exists, use `doc edit <id> --attach` (with `--replace` to overwrite a live name). An optional planning layer rolls tasks up into sprints and projects via `cc-notes sprint` and `cc-notes project`. Every mutation echoes the entity's new state as a tab-separated line, and every command takes `--json`. Run `cc-notes <noun> --help`, or read the full [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md).
 
+## MCP server
+
+`cc-notes mcp` runs a stdio [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that mirrors the CLI surface one-to-one: one `noun_verb` tool per command — `doc_add`, `note_edit`, `task_claim`, `task_criterion_met`, `attachment_path`, and the rest. Each tool drives the real CLI in-process, so it validates and returns exactly what the command does — a tool result is the command's `--json`. A long doc or note body rides the `body` parameter, so an agent records a handoff in one call, no scratch file and no stdin.
+
+The Claude Code plugin wires the server for you: it ships a bundled `.mcp.json` pointed at the `cc-notes` on your `PATH`, and the tools surface as `mcp__plugin_cc-notes_cc-notes__<tool>`. Nothing to install or configure. Recording a handoff is one tool call:
+
+```json
+{
+  "tool": "mcp__plugin_cc-notes_cc-notes__doc_add",
+  "arguments": {
+    "title": "Rollout order for the JWT swap",
+    "when": "picking up the auth migration",
+    "body": "Ship the issuer first, then rotate refresh tokens."
+  }
+}
+```
+
+Setup and host-facing commands stay CLI-only — `init`, mount, `gc`/`compact`, `viz`, `version`, the skills/hooks/workflows installers, and the `--checkout`/`--apply` file mode the `body` parameter replaces. If the binary is missing or predates this release, the server shows `failed` in `/mcp`, the session carries on, and the capt-hook nudges keep their CLI wording. To keep those hooks but switch the server off, add it to `deniedMcpServers` in your personal settings.
+
 ## Attachments
 
 Notes, docs, and logs carry files — a profiler trace, a screenshot, a core dump — without bloating the repo's object database. `--attach` stores the reference (name, sha256, size) on the entity and the bytes in the standard git-lfs local store under `.git/lfs`; `cc-notes sync` then moves content through your host's LFS API in-process, so the `git-lfs` binary is never required. Attaching is fully offline; sync is the only network step.

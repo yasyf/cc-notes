@@ -93,6 +93,17 @@ $ cc-notes mount --stop .notes # unmount this repo's .notes
 
 The mount mechanics — holder model, teardown, the macOS Network Volumes grant — live in `references/cli-reference.md`.
 
+## MCP tools (optional)
+
+Where the Claude Code plugin is enabled, cc-notes also exposes its command surface as MCP tools — one
+`noun_verb` tool per command (`doc_add`, `note_edit`, `task_start`, …), surfaced as
+`mcp__plugin_cc-notes_cc-notes__<tool>`. They mirror the CLI one-to-one and drive it in-process, so
+validation, output, and semantics are identical, and a tool result is the command's `--json`. When these
+tools are available, prefer them over shelling out to `cc-notes` — especially `doc_add` and `note_add`,
+where a long body rides the `body` parameter and skips the `--checkout` buffer round-trip entirely. This
+skill and `references/cli-reference.md` still govern every flag and behavior: the tools take the same
+arguments the CLI documents.
+
 ## Canonical agent flow
 
 The spine of day-to-day use. Run `init` once per repo; everything else recurs as you work.
