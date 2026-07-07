@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -393,6 +394,73 @@ func TestConfigGet(t *testing.T) {
 	}
 	if len(locals) != 0 {
 		t.Fatalf("ConfigGetAll is local-scope, must not see global: got %q", locals)
+	}
+}
+
+// TestConfigGetRegexp pins the full-scope enumeration the LFS extraheader path
+// depends on: no match is empty, a multi-valued key yields one pair per value,
+// keys are returned verbatim in config order, and non-matching keys are absent.
+func TestConfigGetRegexp(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	const pattern = `^http\.(.+\.)?extraheader$`
+
+	got, err := g.ConfigGetRegexp(ctx, pattern)
+	if err != nil {
+		t.Fatalf("get-regexp on empty: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("get-regexp on empty = %v, want none", got)
+	}
+
+	mustGit(t, g.Dir, "config", "--add", "http.extraheader", "AUTHORIZATION: basic UNSCOPED")
+	mustGit(t, g.Dir, "config", "--add", "http.https://example.com/.extraheader", "AUTHORIZATION: basic ONE")
+	mustGit(t, g.Dir, "config", "--add", "http.https://example.com/.extraheader", "AUTHORIZATION: basic TWO")
+	mustGit(t, g.Dir, "config", "cc.other", "not an extraheader")
+
+	got, err = g.ConfigGetRegexp(ctx, pattern)
+	if err != nil {
+		t.Fatalf("get-regexp: %v", err)
+	}
+	want := [][2]string{
+		{"http.extraheader", "AUTHORIZATION: basic UNSCOPED"},
+		{"http.https://example.com/.extraheader", "AUTHORIZATION: basic ONE"},
+		{"http.https://example.com/.extraheader", "AUTHORIZATION: basic TWO"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("get-regexp =\n %v\nwant\n %v", got, want)
+	}
+}
+
+// TestConfigURLMatch pins the urlmatch oracle the LFS extraheader path uses to
+// decide which scoped entries apply: a host pattern matches any deeper URL, a
+// path pattern matches only under it, a different host does not match, and the
+// unscoped key matches every URL.
+func TestConfigURLMatch(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	cases := []struct {
+		name string
+		key  string
+		url  string
+		want bool
+	}{
+		{name: "host matches deeper url", key: "http.https://example.com/.extraheader", url: "https://example.com/foo/lfs", want: true},
+		{name: "host does not match other host", key: "http.https://example.com/.extraheader", url: "https://other.example/lfs", want: false},
+		{name: "path matches under it", key: "http.https://example.com/team.extraheader", url: "https://example.com/team/repo", want: true},
+		{name: "path does not match sibling", key: "http.https://example.com/team.extraheader", url: "https://example.com/other", want: false},
+		{name: "unscoped matches any url", key: "http.extraheader", url: "https://anything.test/lfs", want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := g.ConfigURLMatch(ctx, "http.extraheader", tc.key, tc.url)
+			if err != nil {
+				t.Fatalf("ConfigURLMatch(%s, %s): %v", tc.key, tc.url, err)
+			}
+			if got != tc.want {
+				t.Fatalf("ConfigURLMatch(%s, %s) = %v, want %v", tc.key, tc.url, got, tc.want)
+			}
+		})
 	}
 }
 

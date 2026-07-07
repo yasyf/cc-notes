@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -386,6 +387,58 @@ func (g Git) ConfigGet(ctx context.Context, key string) (string, error) {
 		return "", fmt.Errorf("config get %s: %w", key, err)
 	}
 	return strings.TrimSuffix(out, "\x00"), nil
+}
+
+// ConfigGetRegexp returns every config entry whose key matches pattern
+// (git config --get-regexp) from the full config scope, as key/value pairs in
+// config order, or nil when nothing matches. A multi-valued key yields one
+// pair per value.
+func (g Git) ConfigGetRegexp(ctx context.Context, pattern string) ([][2]string, error) {
+	out, err := g.run(ctx, "", "config", "-z", "--get-regexp", pattern)
+	var cmdErr *commandError
+	if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 && cmdErr.stderr == "" {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("config get-regexp %s: %w", pattern, err)
+	}
+	if out == "" {
+		return nil, nil
+	}
+	var pairs [][2]string
+	for _, entry := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
+		key, value, _ := strings.Cut(entry, "\n")
+		pairs = append(pairs, [2]string{key, value})
+	}
+	return pairs, nil
+}
+
+// ConfigURLMatch reports whether the single urlmatch entry keyed by key — a
+// name.<url>.subkey pattern for the two-part name (e.g. name http.extraheader,
+// key http.<url>.extraheader) — matches url. It uses git's own urlmatch as the
+// oracle over a throwaway single-entry config file rather than reimplementing
+// git's URL matching; the entry's value never affects the match, so a
+// placeholder is written.
+func (g Git) ConfigURLMatch(ctx context.Context, name, key, url string) (bool, error) {
+	f, err := os.CreateTemp("", "cc-notes-urlmatch-*")
+	if err != nil {
+		return false, fmt.Errorf("config urlmatch: %w", err)
+	}
+	path := f.Name()
+	_ = f.Close()
+	defer func() { _ = os.Remove(path) }()
+	if _, err := g.run(ctx, "", "config", "--file", path, key, "1"); err != nil {
+		return false, fmt.Errorf("config urlmatch write %s: %w", key, err)
+	}
+	_, err = g.run(ctx, "", "config", "--file", path, "-z", "--get-urlmatch", name, url)
+	var cmdErr *commandError
+	if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 && cmdErr.stderr == "" {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("config urlmatch %s %s: %w", name, url, err)
+	}
+	return true, nil
 }
 
 // ConfigGetAll returns every value of key in the repository-local config,

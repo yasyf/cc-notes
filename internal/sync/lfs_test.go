@@ -5,6 +5,7 @@ package sync_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -31,9 +32,10 @@ type fakeLFS struct {
 	mu        stdsync.Mutex
 	objects   map[string][]byte
 	verified  map[string]bool
-	requests  int
-	failBatch int // when non-zero, batch answers this status
-	failGet   int // when non-zero, content GET answers this status
+	requests    int
+	failBatch   int    // when non-zero, batch answers this status
+	failGet     int    // when non-zero, content GET answers this status
+	requireAuth string // exact batch Authorization demanded when set
 }
 
 func (f *fakeLFS) requestCount() int {
@@ -81,6 +83,13 @@ func newFakeLFS(t *testing.T) (*fakeLFS, string) {
 	t.Cleanup(srv.Close)
 
 	mux.HandleFunc("POST /lfs/objects/batch", func(w http.ResponseWriter, r *http.Request) {
+		if f.requireAuth != "" && r.Header.Get("Authorization") != f.requireAuth {
+			w.Header().Set("LFS-Authenticate", `Basic realm="Git LFS"`)
+			w.Header().Set("Content-Type", lfs.MediaType)
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Credentials needed"})
+			return
+		}
 		var req struct {
 			Operation string       `json:"operation"`
 			Objects   []lfs.Object `json:"objects"`
@@ -254,6 +263,46 @@ func TestSyncAttachmentRoundTrip(t *testing.T) {
 	// own pushed ref into tracking, a no-op fold.
 	if got, want := sync(t, a), (ccsync.Report{Reconciled: 1, Rounds: 1}); got != want {
 		t.Errorf("A quiescent report = %+v, want %+v", got, want)
+	}
+}
+
+// TestSyncAttachmentExtraHeaderAuth drives the CI shape end-to-end: each
+// clone's local http.<url>.extraheader carries Basic auth for the batch
+// endpoint with no credential helper, so clone A's sync uploads and clone B's
+// sync downloads byte-identical content.
+func TestSyncAttachmentExtraHeaderAuth(t *testing.T) {
+	bare := initBare(t)
+	f, endpoint := newFakeLFS(t)
+	authValue := "basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
+	f.requireAuth = authValue
+	base := strings.TrimSuffix(endpoint, "/lfs")
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	for _, s := range []*store.Store{a, b} {
+		mustGit(t, s.Git.Dir, "config", "lfs.url", endpoint)
+		mustGit(t, s.Git.Dir, "config", "http."+base+"/.extraheader", "AUTHORIZATION: "+authValue)
+	}
+
+	content := make([]byte, 1<<20)
+	for i := range content {
+		content[i] = byte(i*17 + 3)
+	}
+	note := createNote(t, a, "with authed attachment")
+	noteRef := refs.Note(note.ID)
+	att := attachFile(t, a, noteRef, "authed.bin", content)
+
+	if got, want := sync(t, a), (ccsync.Report{Pushed: 1, Uploaded: 1, Rounds: 1}); got != want {
+		t.Fatalf("A sync report = %+v, want %+v", got, want)
+	}
+	if !f.isVerified(att.OID) {
+		t.Errorf("server never verified %s after upload", att.OID)
+	}
+
+	if got, want := sync(t, b), (ccsync.Report{Created: 1, Reconciled: 1, Downloaded: 1, Rounds: 1}); got != want {
+		t.Fatalf("B sync report = %+v, want %+v", got, want)
+	}
+	if got := readObject(t, b, att.OID); !bytes.Equal(got, content) {
+		t.Fatalf("B content differs: got %d bytes, want %d byte-identical", len(got), len(content))
 	}
 }
 

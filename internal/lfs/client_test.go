@@ -12,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/lfs"
 )
 
@@ -369,6 +371,258 @@ func TestCredentialForbidden(t *testing.T) {
 	}
 	if got, want := strings.Fields(string(data)), "get"; strings.Join(got, " ") != want {
 		t.Fatalf("helper verbs = %q, want %q (fill once, no reject/approve)", got, want)
+	}
+}
+
+// TestExtraHeaderAuth pins the CI shape actions/checkout produces: the batch
+// endpoint's http.<url>.extraheader carries Basic auth, sent on the very first
+// batch request — no credential helper, no anonymous 401 round-trip — while
+// content transfers stay auth-free (the fake rejects Authorization there).
+func TestExtraHeaderAuth(t *testing.T) {
+	f, srv := newFakeLFS(t)
+	authValue := "basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
+	f.requireAuth = authValue
+	g := initRepo(t)
+	mustGit(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: "+authValue)
+	ctx := t.Context()
+
+	store := lfs.Store{Dir: filepath.Join(t.TempDir(), "lfs")}
+	content := []byte("extraheader payload")
+	oid, size, err := store.PutFile(writeFile(t, "e.bin", content))
+	if err != nil {
+		t.Fatalf("PutFile: %v", err)
+	}
+	objs := []lfs.Object{{OID: oid, Size: size}}
+
+	up, err := lfs.NewClient(ctx, g, lfs.Endpoint{Href: srv.URL + "/lfs"}, "upload")
+	if err != nil {
+		t.Fatalf("NewClient upload: %v", err)
+	}
+	uploaded, err := up.Upload(ctx, store, objs)
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if uploaded != 1 {
+		t.Fatalf("uploaded = %d, want 1", uploaded)
+	}
+	if got := f.batchCount(); got != 1 {
+		t.Fatalf("batch count = %d, want 1 (extraheader authed the first request, no 401 retry)", got)
+	}
+
+	down, err := lfs.NewClient(ctx, g, lfs.Endpoint{Href: srv.URL + "/lfs"}, "download")
+	if err != nil {
+		t.Fatalf("NewClient download: %v", err)
+	}
+	storeB := lfs.Store{Dir: filepath.Join(t.TempDir(), "lfs")}
+	downloaded, err := down.Download(ctx, storeB, objs)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if downloaded != 1 {
+		t.Fatalf("downloaded = %d, want 1", downloaded)
+	}
+	if got, err := os.ReadFile(storeB.Path(oid)); err != nil || !bytes.Equal(got, content) {
+		t.Fatalf("download round-trip: got %q err %v, want %q", got, err, content)
+	}
+}
+
+// uploadOneObject builds a client for op and uploads a single small object,
+// returning the client and the upload count so a test can assert the auth path
+// carried the request.
+func uploadOneObject(t *testing.T, g gitcmd.Git, endpoint, op string) (*lfs.Client, int) {
+	t.Helper()
+	c, err := lfs.NewClient(t.Context(), g, lfs.Endpoint{Href: endpoint}, op)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	store := lfs.Store{Dir: filepath.Join(t.TempDir(), "lfs")}
+	oid, size, err := store.PutFile(writeFile(t, "u.bin", []byte("authed upload payload")))
+	if err != nil {
+		t.Fatalf("PutFile: %v", err)
+	}
+	uploaded, err := c.Upload(t.Context(), store, []lfs.Object{{OID: oid, Size: size}})
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	return c, uploaded
+}
+
+// TestExtraHeaderUnscopedEntry: an unscoped http.extraheader carries auth for
+// every endpoint, so the batch request authenticates with no credential helper.
+func TestExtraHeaderUnscopedEntry(t *testing.T) {
+	f, srv := newFakeLFS(t)
+	authValue := "basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
+	f.requireAuth = authValue
+	g := initRepo(t)
+	mustGit(t, g.Dir, "config", "http.extraheader", "AUTHORIZATION: "+authValue)
+
+	if _, uploaded := uploadOneObject(t, g, srv.URL+"/lfs", "upload"); uploaded != 1 {
+		t.Fatalf("uploaded = %d, want 1 (unscoped extraheader must authenticate)", uploaded)
+	}
+}
+
+// TestExtraHeaderIgnoresNonMatchingScope: a scoped entry for an unrelated host
+// is ignored, leaving exactly one matching entry, so the upload authenticates
+// with no false positive from the non-matching one.
+func TestExtraHeaderIgnoresNonMatchingScope(t *testing.T) {
+	f, srv := newFakeLFS(t)
+	authValue := "basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
+	f.requireAuth = authValue
+	g := initRepo(t)
+	mustGit(t, g.Dir, "config", "--add", "http.https://unrelated.example/.extraheader", "AUTHORIZATION: basic WRONG")
+	mustGit(t, g.Dir, "config", "--add", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: "+authValue)
+
+	if _, uploaded := uploadOneObject(t, g, srv.URL+"/lfs", "upload"); uploaded != 1 {
+		t.Fatalf("uploaded = %d, want 1 (non-matching scope must be ignored)", uploaded)
+	}
+}
+
+// TestExtraHeaderMultipleMatchesError: when more than one extraheader entry
+// matches the endpoint, cc-notes refuses loudly — naming the matching config
+// keys, never their values — instead of silently dropping one.
+func TestExtraHeaderMultipleMatchesError(t *testing.T) {
+	t.Run("unscoped plus matching scoped", func(t *testing.T) {
+		_, srv := newFakeLFS(t)
+		g := initRepo(t)
+		scopedKey := "http." + srv.URL + "/.extraheader"
+		mustGit(t, g.Dir, "config", "--add", "http.extraheader", "AUTHORIZATION: basic UNSCOPEDSECRET")
+		mustGit(t, g.Dir, "config", "--add", scopedKey, "AUTHORIZATION: basic SCOPEDSECRET")
+		_, err := lfs.NewClient(t.Context(), g, lfs.Endpoint{Href: srv.URL + "/lfs"}, "upload")
+		if err == nil {
+			t.Fatal("NewClient succeeded, want multi-match error")
+		}
+		for _, want := range []string{"http.extraheader", scopedKey, "consolidate"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q missing %q", err, want)
+			}
+		}
+		for _, secret := range []string{"UNSCOPEDSECRET", "SCOPEDSECRET"} {
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("error %q leaks a config value (%q)", err, secret)
+			}
+		}
+	})
+
+	t.Run("two adds under one pattern", func(t *testing.T) {
+		_, srv := newFakeLFS(t)
+		g := initRepo(t)
+		mustGit(t, g.Dir, "config", "--add", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: basic ONESECRET")
+		mustGit(t, g.Dir, "config", "--add", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: basic TWOSECRET")
+		_, err := lfs.NewClient(t.Context(), g, lfs.Endpoint{Href: srv.URL + "/lfs"}, "upload")
+		if err == nil || !strings.Contains(err.Error(), "2 entries match") {
+			t.Fatalf("err = %v, want 2-entries-match error", err)
+		}
+		for _, secret := range []string{"ONESECRET", "TWOSECRET"} {
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("error %q leaks a config value (%q)", err, secret)
+			}
+		}
+	})
+}
+
+// TestExtraHeaderMalformedValue: a value with no colon or an empty header name
+// is a config error, reported without the value so a secret cannot leak.
+func TestExtraHeaderMalformedValue(t *testing.T) {
+	cases := []struct {
+		name      string
+		configVal string
+		wantErr   string
+	}{
+		{name: "missing colon", configVal: "no-colon-here", wantErr: "missing colon"},
+		{name: "empty header name", configVal: ": basic leakedsecret", wantErr: "empty header name"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, srv := newFakeLFS(t)
+			g := initRepo(t)
+			mustGit(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", tc.configVal)
+			_, err := lfs.NewClient(t.Context(), g, lfs.Endpoint{Href: srv.URL + "/lfs"}, "upload")
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tc.wantErr)
+			}
+			if strings.Contains(err.Error(), tc.configVal) {
+				t.Fatalf("error %q leaks the raw config value", err)
+			}
+		})
+	}
+}
+
+// TestExtraHeaderTrimsHeaderName: spaces around the colon are trimmed from the
+// header name, which net/http would otherwise silently drop as an invalid name.
+func TestExtraHeaderTrimsHeaderName(t *testing.T) {
+	f, srv := newFakeLFS(t)
+	authValue := "basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
+	f.requireAuth = authValue
+	g := initRepo(t)
+	mustGit(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", "AUTHORIZATION : "+authValue)
+
+	if _, uploaded := uploadOneObject(t, g, srv.URL+"/lfs", "upload"); uploaded != 1 {
+		t.Fatalf("uploaded = %d, want 1 (untrimmed header name would be dropped)", uploaded)
+	}
+}
+
+// TestBatchRefusesCrossOriginRedirect: a batch endpoint that 307-redirects to
+// another origin must not replay the credential header there — the redirect is
+// refused and the target never receives a request.
+func TestBatchRefusesCrossOriginRedirect(t *testing.T) {
+	var targetHits atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		targetHits.Add(1)
+	}))
+	t.Cleanup(target.Close)
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(src.Close)
+
+	c := &lfs.Client{Endpoint: src.URL, Header: map[string]string{"Authorization": "Basic hunter2"}}
+	store := lfs.Store{Dir: filepath.Join(t.TempDir(), "lfs")}
+	_, err := c.Upload(t.Context(), store, []lfs.Object{{OID: strings.Repeat("aa", 32), Size: 1}})
+	if err == nil || !strings.Contains(err.Error(), "refusing cross-origin redirect") {
+		t.Fatalf("err = %v, want cross-origin redirect refusal", err)
+	}
+	if n := targetHits.Load(); n != 0 {
+		t.Fatalf("redirect target received %d requests, want 0 (credential must not leak)", n)
+	}
+}
+
+// TestExtraHeaderStale401FallsBackToCredentialFill: a wrong extraheader still
+// 401s, and the credential-fill fallback survives it — fill then approve —
+// because the retry's Set("Authorization", …) overrides the canonicalized
+// AUTHORIZATION the extraheader wrote.
+func TestExtraHeaderStale401FallsBackToCredentialFill(t *testing.T) {
+	f, srv := newFakeLFS(t)
+	f.requireAuth = basicAuth("alice", "s3cret")
+	g := initRepo(t)
+	mustGit(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: basic WRONG")
+	logPath := filepath.Join(t.TempDir(), "verbs.log")
+	mustGit(t, g.Dir, "config", "credential.helper",
+		fmt.Sprintf(`!f() { echo "$1" >>"%s"; if [ "$1" = get ]; then echo username=alice; echo password=s3cret; fi; }; f`, logPath))
+	ctx := t.Context()
+
+	c, err := lfs.NewClient(ctx, g, lfs.Endpoint{Href: srv.URL + "/lfs"}, "upload")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	store := lfs.Store{Dir: filepath.Join(t.TempDir(), "lfs")}
+	content := []byte("stale extraheader payload")
+	oid, size, err := store.PutFile(writeFile(t, "st.bin", content))
+	if err != nil {
+		t.Fatalf("PutFile: %v", err)
+	}
+	uploaded, err := c.Upload(ctx, store, []lfs.Object{{OID: oid, Size: size}})
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if uploaded != 1 {
+		t.Fatalf("uploaded = %d, want 1", uploaded)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read verb log: %v", err)
+	}
+	if got, want := strings.Fields(string(data)), "get store"; strings.Join(got, " ") != want {
+		t.Fatalf("helper verbs = %q, want %q (stale extraheader 401 → fill → approve)", got, want)
 	}
 }
 

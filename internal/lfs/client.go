@@ -50,8 +50,9 @@ type Credentials interface {
 }
 
 // Client speaks the LFS batch and basic-transfer protocols against one
-// endpoint. Header carries auth headers applied to every batch request (the
-// git-lfs-authenticate grant on ssh endpoints); Creds, when set, supplies
+// endpoint. Header carries auth headers applied to every batch request — the
+// git-lfs-authenticate grant on ssh endpoints, or the endpoint's
+// http.<url>.extraheader config on https endpoints; Creds, when set, supplies
 // Basic auth after a batch 401. Content GET/PUT/verify requests carry only
 // their action's own headers — hrefs are typically pre-signed to other
 // hosts, and API auth must never leak to them. Not safe for concurrent use.
@@ -67,11 +68,16 @@ type Client struct {
 // NewClient builds a client for ep authenticated for operation ("upload" or
 // "download"). An ssh endpoint execs git-lfs-authenticate up front and the
 // grant's href replaces the derived endpoint — the server, not our
-// derivation, knows where its LFS API lives; an https endpoint
-// authenticates lazily via git credential on the first batch 401.
+// derivation, knows where its LFS API lives; an https endpoint sends any
+// matching http.<url>.extraheader from the first batch request and falls back
+// to git credential on a batch 401.
 func NewClient(ctx context.Context, g gitcmd.Git, ep Endpoint, operation string) (*Client, error) {
 	if ep.SSHUserHost == "" {
-		return &Client{Endpoint: ep.Href, Creds: g}, nil
+		header, err := extraHeader(ctx, g, ep.Href)
+		if err != nil {
+			return nil, err
+		}
+		return &Client{Endpoint: ep.Href, Header: header, Creds: g}, nil
 	}
 	grant, err := sshAuthenticate(ctx, ep, operation)
 	if err != nil {
@@ -119,11 +125,36 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
+// batchHTTP is the default client for batch API requests. Batch requests carry
+// credentials, so it refuses any cross-scheme or cross-host redirect: net/http
+// strips only the six canonical auth headers on a cross-origin redirect, which
+// would replay a custom-named extraheader or an ssh grant header verbatim to
+// the redirect target.
+var batchHTTP = &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
+		return fmt.Errorf("batch redirect to %s: refusing cross-origin redirect with credentials", req.URL)
+	}
+	return nil
+}}
+
+// httpClient is the client for content transfers (GET/PUT/verify), which carry
+// only their action's own headers: c.HTTP when set, else the default client,
+// which follows the cross-host redirects that pre-signed CDN hrefs rely on.
 func (c *Client) httpClient() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
 	return http.DefaultClient
+}
+
+// batchClient is the client for the credential-carrying batch API: c.HTTP when
+// set, else batchHTTP, which refuses the cross-origin redirects that would leak
+// the batch credential.
+func (c *Client) batchClient() *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
+	}
+	return batchHTTP
 }
 
 // batch posts operation ("upload" or "download") for objects in
@@ -173,7 +204,7 @@ func (c *Client) post(ctx context.Context, body []byte, auth string) (*http.Resp
 	if auth != "" {
 		req.Header.Set("Authorization", auth)
 	}
-	return c.httpClient().Do(req)
+	return c.batchClient().Do(req)
 }
 
 // retryWithCredential re-sends the batch once with Basic auth from git's
