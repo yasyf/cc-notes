@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-07
+
 ### Added
 - **`--checkout` prefills the edit buffer.** `note add`/`doc add --checkout`
   now seed the frontmatter buffer from the `TITLE` and the
@@ -543,7 +545,9 @@ Releases.
 - The Python-era documentation site (GitHub Pages) and the repo homepage link
   that pointed at it.
 
-[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/yasyf/cc-notes/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/yasyf/cc-notes/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/yasyf/cc-notes/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/yasyf/cc-notes/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/yasyf/cc-notes/compare/v0.15.0...v0.15.1
