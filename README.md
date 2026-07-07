@@ -63,12 +63,12 @@ Both installers prefer the FUSE-capable `_fuse` variant where it ships (it adds 
 
 ### Hand off to the next session without a HANDOFF.md
 
-The brief you leave in a loose file clutters every diff, and the next agent never opens it. Store it as a doc with a `--when` trigger naming the moment it matters:
+The brief you leave in a loose file clutters every diff, and the next agent never opens it. Store it as a doc with a `--when` trigger naming the moment it matters — check out a prefilled buffer, write the brief in, and apply:
 
 ```bash
-cc-notes doc add "Rollout order for the JWT swap" \
-  --when "picking up the auth migration" \
-  --body "Ship the issuer first, then rotate refresh tokens."
+p=$(cc-notes doc add "Rollout order for the JWT swap" --checkout --when "picking up the auth migration")
+# write the rollout steps into $p below the frontmatter, then:
+cc-notes doc add --apply "$p"
 ```
 
 When that moment arrives, `cc-notes relevant <path>` ranks the doc alongside notes and the read-time hooks float its pointer — title, trigger, and a `doc show` hint — while the long body stays out of the context window. Nothing touches the working tree.
@@ -121,7 +121,7 @@ Each hit comes back with a verdict:
 | `cc-notes mount` | Expose notes and tasks as an editable `.notes` filesystem (needs a `_fuse` binary; auto-mounted by `init`) |
 | `cc-notes viz` | Watch branch flow and note/task/doc lifecycles live in a browser |
 
-Tasks also carry `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, `stale`, `claim`, and `validate`; notes add `verify`, `list`, `edit`, `search`, and `supersede`; docs add `list`, `show`, `edit`, `search`, `verify`, `supersede`, `expire`, and `review`; logs add `append`, `list`, `show`, `edit`, `search`, and `rm`, with no `verify`, `supersede`, or `expire` since a log never drifts. Docs and notes also edit as a file without a mount: `doc edit <id> --checkout` (or `note edit`, or either `add`) renders the entity to a Markdown file and prints its path, and `--apply` commits your edits back. An optional planning layer rolls tasks up into sprints and projects via `cc-notes sprint` and `cc-notes project`. Every mutation echoes the entity's new state as a tab-separated line, and every command takes `--json`. Run `cc-notes <noun> --help`, or read the full [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md).
+Tasks also carry `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, `stale`, `claim`, and `validate`; notes add `verify`, `list`, `edit`, `search`, and `supersede`; docs add `list`, `show`, `edit`, `search`, `verify`, `supersede`, `expire`, and `review`; logs add `append`, `list`, `show`, `edit`, `search`, and `rm`, with no `verify`, `supersede`, or `expire` since a log never drifts. Docs and notes also edit as a file without a mount: `doc edit <id> --checkout` (or `note edit`, or either `add`, which prefills the buffer from the title and anchor flags) renders the entity to a Markdown file and prints its path, and `--apply` commits your edits back. On `add`, `--apply --attach <file>` ingests attachments as the entity is created; to attach to a doc or note that already exists, use `doc edit <id> --attach` (with `--replace` to overwrite a live name). An optional planning layer rolls tasks up into sprints and projects via `cc-notes sprint` and `cc-notes project`. Every mutation echoes the entity's new state as a tab-separated line, and every command takes `--json`. Run `cc-notes <noun> --help`, or read the full [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md).
 
 ## Attachments
 
@@ -137,7 +137,7 @@ $ cc-notes attachment path f3ab90c flamegraph.svg
 /work/repo/.git/lfs/objects/9f/86/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
 ```
 
-`log append --attach` adds files to an existing log (pass `--replace` to overwrite a live name), `--rm-attachment` on `note|doc|log edit` drops one, and `show` lists each attachment with a missing-locally marker until a sync fetches its bytes. With a `_fuse` binary the mount serves content read-only at `.notes/attachments/<short-id>/<name>`.
+`log append --attach` adds files to an existing log, and `--attach` on `note edit` or `doc edit` attaches to a note or doc that already exists; a name that collides with a live attachment needs `--replace`. `--rm-attachment` on `note|doc|log edit` drops one, and `show` lists each attachment with a missing-locally marker until a sync fetches its bytes. With a `_fuse` binary the mount serves content read-only at `.notes/attachments/<short-id>/<name>`.
 
 > [!WARNING]
 > A plain `git push` publishes `refs/cc-notes/*` through the installed wildcard refspec **without** uploading attachment content — a fresh clone then holds references whose bytes 404 at sync. Only `cc-notes sync` holds the objects-before-refs invariant, uploading content before it pushes refs. In an attachment-carrying repo, share with `cc-notes sync`, never a bare `git push`.

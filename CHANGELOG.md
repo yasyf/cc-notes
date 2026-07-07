@@ -4,6 +4,27 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`--checkout` prefills the edit buffer.** `note add`/`doc add --checkout`
+  now seed the frontmatter buffer from the `TITLE` and the
+  `--when`/`--tag`/`--commit`/`--path`/`--dir`/`--branch` flags passed alongside
+  it (commit anchors resolved to full SHAs), so the file-mode long-body flow
+  starts from a filled-in template. `TITLE` is optional with `--checkout` — the
+  buffer's `title` field or a leading `# ` heading supplies it.
+- **Attachments ingest at apply and edit time.** `note add`/`doc add --apply
+  <path> --attach <file>` ingests attachments in the same create transaction,
+  and `--attach` on `note edit`/`doc edit` attaches to an entity that already
+  exists — a name colliding with a live attachment needs `--replace`, and
+  `--rm-attachment` still drops one.
+
+### Changed
+- The authoring guidance — the README, the using-cc-notes skill and CLI
+  reference, and the capt-hook record nudges — now leads with the
+  `--checkout`/`--apply` file-mode flow for a long doc or note body, keeping
+  `--body`/`--body -` as the short-body path.
+
 ## [0.18.0] - 2026-07-07
 
 ### Added

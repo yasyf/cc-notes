@@ -955,8 +955,9 @@ belongs in `--body`.
 | `--path <path>` | none | Path anchor; repeatable |
 | `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
 | `--branch <branch>` | none | Branch anchor; repeatable |
-| `--checkout` | off | Write a note template to an editable file and print its path |
-| `--apply <path>` | off | Create the note from the checked-out file |
+| `--attach <file>` | none | Attach a file (git-lfs); repeatable; valid in flag mode and with `--apply`, rejected with `--checkout` |
+| `--checkout` | off | Write a prefilled note buffer (from `TITLE` + anchor flags) to an editable file and print its path |
+| `--apply <path>` | off | Create the note from the checked-out file; takes `--attach` |
 | `--abort <path>` | off | Discard the checked-out file |
 | `--json` | off | Emit JSON |
 
@@ -965,13 +966,16 @@ $ cc-notes note add "Auth tokens expire after 15 minutes" --path services/auth/l
 ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes
 ```
 
-To draft a longer note as a file, run `cc-notes note add --checkout`, fill in the template it
-prints, then `cc-notes note add --apply <path>`. The created note is born verified, the same as a
-flag-driven `note add`.
+To draft a longer note as a file, run `cc-notes note add --checkout` — it writes a buffer prefilled
+from `TITLE` and the anchor flags you pass alongside it and prints its path — fill in the body, then
+`cc-notes note add --apply <path>`. `TITLE` is optional with `--checkout`; the buffer's `title`
+field or a leading `# ` heading supplies it. `--body` and `--attach` are rejected with `--checkout`
+(the buffer is the body), but `--apply` takes `--attach <file>` to ingest artifacts in the same
+create transaction. The created note is born verified, the same as a flag-driven `note add`.
 
 ### `cc-notes note edit ID`
 
-Edit a note. Title and body replace; anchors and tags add or remove individually.
+Edit a note. Title and body replace; anchors, tags, and attachments add or remove individually.
 
 | Flag | Meaning |
 |------|---------|
@@ -982,6 +986,9 @@ Edit a note. Title and body replace; anchors and tags add or remove individually
 | `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
 | `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
 | `--add-branch` / `--rm-branch <branch>` | Add or remove a branch anchor; repeatable |
+| `--attach <file>` | Attach a file to the existing note (git-lfs); repeatable |
+| `--replace` | Allow `--attach` to overwrite a live attachment of the same name |
+| `--rm-attachment <name>` | Drop an attachment by name; repeatable |
 | `--checkout` | Write the note to an editable Markdown file and print its path |
 | `--apply` | Apply the edits from the checked-out file |
 | `--abort` | Discard the checked-out file |
@@ -991,7 +998,8 @@ Editing as a file is the natural path when you want to revise the body with your
 tools instead of passing `--body`: `--checkout` renders the note to a Markdown+frontmatter file
 and prints its path, you edit that file, then `--apply` diffs it against the checked-out version
 and commits only what changed. `--checkout` / `--apply` / `--abort` are mutually exclusive and
-cannot be combined with the content flags above.
+cannot be combined with the content flags above. `--attach` attaches to a note that already exists;
+a name that collides with a live attachment needs `--replace`.
 
 ```console
 $ path=$(cc-notes note edit ebba9fb --checkout)
@@ -1147,6 +1155,15 @@ witness at creation. `TITLE` is a short handle, capped at 256 bytes (the same ca
 `add` and `edit --title`); the content goes in `--body`, the `--checkout` file, or an attachment.
 A doc with no body and no attachment is rejected — a doc *is* its body.
 
+A long body is easier to write as a file than to pass through `--body`. `--checkout` writes a
+**prefilled** frontmatter buffer under `<git-common-dir>/cc-notes/edit/` — seeded with the `TITLE`,
+the `--when` trigger, and the anchor flags you pass alongside it (commit anchors resolved to full
+SHAs) — and prints its path. Write the body into that buffer below the frontmatter, then
+`--apply <path>` creates the doc, born verified. `TITLE` is optional with `--checkout`; the buffer's
+`title` field or a leading `# ` heading supplies it. `--body` and `--attach` are rejected with
+`--checkout` (the buffer is the body), but `--apply` takes `--attach <file>` to ingest artifacts in
+the same create transaction.
+
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--body <text>` | required unless `--attach` is given | Doc body; `-` reads stdin |
@@ -1156,14 +1173,23 @@ A doc with no body and no attachment is rejected — a doc *is* its body.
 | `--path <path>` | none | Path anchor; repeatable |
 | `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
 | `--branch <branch>` | none | Branch anchor; repeatable |
-| `--checkout` | off | Write a doc template to an editable file and print its path |
-| `--apply <path>` | off | Create the doc from the checked-out file |
+| `--attach <file>` | none | Attach a file (git-lfs); repeatable; valid in flag mode and with `--apply`, rejected with `--checkout` |
+| `--checkout` | off | Write a prefilled doc buffer (from `TITLE` + `--when`/anchor flags) to an editable file and print its path |
+| `--apply <path>` | off | Create the doc from the checked-out file; takes `--attach` |
 | `--abort <path>` | off | Discard the checked-out file |
 | `--json` | off | Emit JSON |
 
-To draft a long doc as a file, run `cc-notes doc add --checkout`, fill in the template it prints
-(set `title`, the `when` trigger, and the body), then `cc-notes doc add --apply <path>`. The
-created doc is born verified, the same as a flag-driven `doc add`.
+Check out a long doc, write its body, and apply it — attaching an artifact in the same step:
+
+```console
+$ p=$(cc-notes doc add "How auth token refresh works" --checkout \
+    --when "before touching token refresh or the 401 retry path" --dir internal/auth --tag design)
+$ # write the body into "$p" below the frontmatter with your file tools
+$ cc-notes doc add --apply "$p" --attach refresh-sequence.svg
+62208d7	2026-06-23	design	How auth token refresh works	before touching token refresh or the 401 retry path
+```
+
+A short body goes inline instead, straight through `--body` (`-` reads stdin):
 
 ```console
 $ cc-notes doc add "How auth token refresh works" --dir internal/auth --tag design \
@@ -1174,9 +1200,10 @@ $ cc-notes doc add "How auth token refresh works" --dir internal/auth --tag desi
 
 ### `cc-notes doc edit ID`
 
-Edit a doc — at least one flag is required. Title, body, and the `when` trigger replace; anchors
-and tags add or remove individually. The 256-byte title cap applies to `--title`, and `--body`
-must stay non-empty — a doc is its body, at edit time as much as at creation.
+Edit a doc — at least one flag is required. Title, body, and the `when` trigger replace; anchors,
+tags, and attachments add or remove individually. The 256-byte title cap applies to `--title`. A
+doc is its body, so `--body ""` is rejected on its own — but an edit that also carries `--attach`
+may blank it, leaving an attach-only doc, mirroring a flag-mode `add`.
 
 | Flag | Meaning |
 |------|---------|
@@ -1188,6 +1215,9 @@ must stay non-empty — a doc is its body, at edit time as much as at creation.
 | `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
 | `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
 | `--add-branch` / `--rm-branch <branch>` | Add or remove a branch anchor; repeatable |
+| `--attach <file>` | Attach a file to the existing doc (git-lfs); repeatable |
+| `--replace` | Allow `--attach` to overwrite a live attachment of the same name |
+| `--rm-attachment <name>` | Drop an attachment by name; repeatable |
 | `--checkout` | Write the doc to an editable Markdown file and print its path |
 | `--apply` | Apply the edits from the checked-out file |
 | `--abort` | Discard the checked-out file |
@@ -1197,7 +1227,9 @@ A doc's body is usually long, so editing it as a file is often easier than `--bo
 renders the doc to a Markdown+frontmatter file and prints its path, you edit that file with your
 normal tools, then `--apply` diffs it against the checked-out version and commits only what
 changed — including concurrent edits to fields you left alone. `--checkout` / `--apply` /
-`--abort` are mutually exclusive and cannot be combined with the content flags above.
+`--abort` are mutually exclusive and cannot be combined with the content flags above. `--attach`
+attaches to a doc that already exists; a name that collides with a live attachment needs
+`--replace`.
 
 ```console
 $ path=$(cc-notes doc edit 62208d7 --checkout)

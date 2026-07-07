@@ -436,6 +436,82 @@ func TestDiffDocWhenEdit(t *testing.T) {
 	}
 }
 
+func TestNewTemplateGolden(t *testing.T) {
+	// A zero-value template is the empty add --checkout buffer, byte for byte.
+	const (
+		docTemplate  = "---\ntitle: \"\"\nwhen: \"\"\ntags: []\n---\n"
+		noteTemplate = "---\ntitle: \"\"\ntags: []\n---\n"
+	)
+	if got := string(fusefs.NewDocTemplate("", "", nil, nil)); got != docTemplate {
+		t.Errorf("NewDocTemplate zero value:\n got %q\nwant %q", got, docTemplate)
+	}
+	if got := string(fusefs.NewNoteTemplate("", nil, nil)); got != noteTemplate {
+		t.Errorf("NewNoteTemplate zero value:\n got %q\nwant %q", got, noteTemplate)
+	}
+}
+
+func TestNewDocTemplateRoundTrip(t *testing.T) {
+	anchors := []model.Anchor{
+		{Kind: model.AnchorCommit, Value: "abc1234"},
+		{Kind: model.AnchorPath, Value: "internal/cli/output.go"},
+		{Kind: model.AnchorBranch, Value: "main"},
+	}
+	tmpl := fusefs.NewDocTemplate("Prefilled", "before the cutover", []string{"handoff", "auth"}, anchors)
+	tmpl = append(tmpl, []byte("Body goes here.\n")...)
+
+	ops, err := fusefs.NewDoc(mustParseDoc(t, tmpl))
+	if err != nil {
+		t.Fatalf("NewDoc: %v", err)
+	}
+	create := ops[0].(model.CreateDoc)
+	if len(ops) != 1 || len(create.Nonce) != 32 {
+		t.Fatalf("ops %#v, want one CreateDoc with a 32-char nonce", ops)
+	}
+	create.Nonce = ""
+	want := model.CreateDoc{
+		Title: "Prefilled",
+		Body:  "Body goes here.\n",
+		When:  "before the cutover",
+		Tags:  []string{"auth", "handoff"},
+		Anchors: []model.Anchor{
+			{Kind: model.AnchorCommit, Value: "abc1234"},
+			{Kind: model.AnchorPath, Value: "internal/cli/output.go"},
+			{Kind: model.AnchorBranch, Value: "main"},
+		},
+	}
+	if !reflect.DeepEqual(create, want) {
+		t.Errorf("create %#v, want %#v", create, want)
+	}
+}
+
+func TestNewNoteTemplateRoundTrip(t *testing.T) {
+	anchors := []model.Anchor{
+		{Kind: model.AnchorDir, Value: "internal/auth"},
+		{Kind: model.AnchorCommit, Value: "ffff111"},
+	}
+	tmpl := fusefs.NewNoteTemplate("Fact", []string{"design"}, anchors)
+	tmpl = append(tmpl, []byte("The captured fact.\n")...)
+
+	ops, err := fusefs.NewNote(mustParseNote(t, tmpl))
+	if err != nil {
+		t.Fatalf("NewNote: %v", err)
+	}
+	create := ops[0].(model.CreateNote)
+	create.Nonce = ""
+	want := model.CreateNote{
+		Title: "Fact",
+		Body:  "The captured fact.\n",
+		Tags:  []string{"design"},
+		Anchors: []model.Anchor{
+			{Kind: model.AnchorCommit, Value: "ffff111"},
+			{Kind: model.AnchorDir, Value: "internal/auth"},
+		},
+	}
+	if !reflect.DeepEqual(create, want) {
+		t.Errorf("create %#v, want %#v", create, want)
+	}
+}
+
 func TestRenderTaskGolden(t *testing.T) {
 	if got := string(fusefs.RenderTask(richTask())); got != goldenTask {
 		t.Errorf("rich task render:\n got %q\nwant %q", got, goldenTask)

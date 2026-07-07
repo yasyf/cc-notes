@@ -47,18 +47,26 @@ func newNoteAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add TITLE",
 		Short: "Create a note",
-		Long: "Create a note from flags, or as a file: --checkout writes a template to an\n" +
-			"editable file and prints its path; fill it in, then --apply <path> to create\n" +
-			"the note (or --abort <path> to discard).",
+		Long: "Create a note from flags, or as a file: --checkout writes a template —\n" +
+			"prefilled from any TITLE and anchor/tag flags — to an editable file and\n" +
+			"prints its path; fill it in, then --apply <path> to create the note\n" +
+			"(--abort <path> discards it). --apply also accepts --attach.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if checkout {
-				return exactArgs(0)(cmd, args)
+				return maxArgs(1)(cmd, args)
 			}
 			return exactArgs(1)(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if checkout || apply || abort {
-				return runFileMode(cmd, noteAdapter(), true, args, checkout, apply, abort, jsonOut)
+				var p prefill
+				if checkout {
+					p = prefill{title: optionalTitle(args), tags: tags, commits: commits, paths: paths, dirs: dirs, branches: branches}
+				}
+				return runFileMode(cmd, noteAdapter(), true, args, fileModeOpts{
+					checkout: checkout, apply: apply, abort: abort, jsonOut: jsonOut,
+					prefill: p, attach: attach,
+				})
 			}
 			if err := validateTitle(args[0], titleHintBody); err != nil {
 				return err
@@ -120,8 +128,8 @@ func newNoteAddCmd() *cobra.Command {
 	flags.StringArrayVar(&dirs, "dir", nil, "directory anchor (repeatable)")
 	flags.StringArrayVar(&branches, "branch", nil, "branch anchor (repeatable)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
-	flags.BoolVar(&checkout, "checkout", false, "write a note template to an editable file and print its path")
-	flags.BoolVar(&apply, "apply", false, "create the note from the checked-out file (add --apply PATH)")
+	flags.BoolVar(&checkout, "checkout", false, "write a note template (prefilled from TITLE and anchor/tag flags) to an editable file and print its path")
+	flags.BoolVar(&apply, "apply", false, "create the note from the checked-out file (add --apply PATH); may carry --attach")
 	flags.BoolVar(&abort, "abort", false, "discard the checked-out file (add --abort PATH)")
 	return cmd
 }
@@ -215,8 +223,8 @@ func newNoteShowCmd() *cobra.Command {
 
 func newNoteEditCmd() *cobra.Command {
 	var title, body string
-	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches, rmAttachments []string
-	var jsonOut, checkout, apply, abort bool
+	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches, rmAttachments, attach []string
+	var jsonOut, checkout, apply, abort, replace bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
 		Short: "Edit a note",
@@ -226,9 +234,12 @@ func newNoteEditCmd() *cobra.Command {
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if checkout || apply || abort {
-				return runFileMode(cmd, noteAdapter(), false, args, checkout, apply, abort, jsonOut)
+				return runFileMode(cmd, noteAdapter(), false, args, fileModeOpts{checkout: checkout, apply: apply, abort: abort, jsonOut: jsonOut})
 			}
 			ctx := cmd.Context()
+			if replace && len(attach) == 0 {
+				return &UsageError{Err: errors.New("--replace requires --attach")}
+			}
 			var ops []model.Op
 			if cmd.Flags().Changed("title") {
 				if err := validateTitle(title, titleHintBodyEdit); err != nil {
@@ -266,16 +277,26 @@ func newNoteEditCmd() *cobra.Command {
 			for _, name := range rmAttachments {
 				ops = append(ops, model.RemoveAttachment{Name: name})
 			}
-			if len(ops) == 0 {
+			if len(ops) == 0 && len(attach) == 0 {
 				return &UsageError{Err: errors.New("note edit requires at least one flag")}
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadNote(ctx, s, args[0])
+			ref, note, err := loadNote(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
+			if !replace {
+				if err := checkAttachCollisions(note.Attachments, attach); err != nil {
+					return err
+				}
+			}
+			attOps, err := attachOps(ctx, cmd, s, attach)
+			if err != nil {
+				return err
+			}
+			ops = append(ops, attOps...)
 			snapshot, err := s.Append(ctx, ref, ops)
 			if err != nil {
 				return err
@@ -286,6 +307,8 @@ func newNoteEditCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&title, "title", "", "new title")
 	flags.StringVar(&body, "body", "", "new body; - reads stdin")
+	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
+	flags.BoolVar(&replace, "replace", false, "allow --attach to overwrite a live attachment with the same name")
 	flags.StringArrayVar(&addTags, "add-tag", nil, "add tag (repeatable)")
 	flags.StringArrayVar(&rmTags, "rm-tag", nil, "remove tag (repeatable)")
 	flags.StringArrayVar(&addPaths, "add-path", nil, "add path anchor (repeatable)")

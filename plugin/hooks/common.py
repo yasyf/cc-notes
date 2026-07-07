@@ -161,7 +161,11 @@ def record_command(kind: str, title: str, when: str, area: str) -> list[str]:
     # grows it — so it renders as two lines; the others are a single `add`.
     dir_flag = f" --dir {area}" if area and area != "." else ""
     if kind == "doc":
-        return [f'cc-notes doc add "{title}" --when "{when}"{dir_flag} --body -']
+        return [
+            f'p=$(cc-notes doc add "{title}" --checkout --when "{when}"{dir_flag})   # a prefilled buffer to write the body into',
+            'cc-notes doc add --apply "$p"   # after writing the full body into $p, below the frontmatter',
+            f'# short body? cc-notes doc add "{title}" --when "{when}"{dir_flag} --body - reads it from stdin',
+        ]
     if kind == "log":
         return [
             f'cc-notes log add "{title}"{dir_flag}',

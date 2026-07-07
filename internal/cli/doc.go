@@ -46,18 +46,27 @@ func newDocAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add TITLE",
 		Short: "Create a doc",
-		Long: "Create a doc from flags, or as a file: --checkout writes a template to an\n" +
-			"editable file and prints its path; fill it in, then --apply <path> to create\n" +
-			"the doc (or --abort <path> to discard).",
+		Long: "Create a doc from flags, or as a file: --checkout writes a template —\n" +
+			"prefilled from any TITLE and anchor/tag flags — to an editable file and\n" +
+			"prints its path; fill in the body, then --apply <path> to create the doc\n" +
+			"(--abort <path> discards it). --apply also accepts --attach, but the buffer\n" +
+			"must carry a body, so attach-only docs use flag-mode --attach.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if checkout {
-				return exactArgs(0)(cmd, args)
+				return maxArgs(1)(cmd, args)
 			}
 			return exactArgs(1)(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if checkout || apply || abort {
-				return runFileMode(cmd, docAdapter(), true, args, checkout, apply, abort, jsonOut)
+				var p prefill
+				if checkout {
+					p = prefill{title: optionalTitle(args), when: when, tags: tags, commits: commits, paths: paths, dirs: dirs, branches: branches}
+				}
+				return runFileMode(cmd, docAdapter(), true, args, fileModeOpts{
+					checkout: checkout, apply: apply, abort: abort, jsonOut: jsonOut,
+					prefill: p, attach: attach,
+				})
 			}
 			if err := validateTitle(args[0], titleHintBody); err != nil {
 				return err
@@ -124,8 +133,8 @@ func newDocAddCmd() *cobra.Command {
 	flags.StringArrayVar(&dirs, "dir", nil, "directory anchor (repeatable)")
 	flags.StringArrayVar(&branches, "branch", nil, "branch anchor (repeatable)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
-	flags.BoolVar(&checkout, "checkout", false, "write a doc template to an editable file and print its path")
-	flags.BoolVar(&apply, "apply", false, "create the doc from the checked-out file (add --apply PATH)")
+	flags.BoolVar(&checkout, "checkout", false, "write a doc template (prefilled from TITLE and anchor/tag flags) to an editable file and print its path")
+	flags.BoolVar(&apply, "apply", false, "create the doc from the checked-out file (add --apply PATH); may carry --attach")
 	flags.BoolVar(&abort, "abort", false, "discard the checked-out file (add --abort PATH)")
 	return cmd
 }
@@ -219,8 +228,8 @@ func newDocShowCmd() *cobra.Command {
 
 func newDocEditCmd() *cobra.Command {
 	var title, body, when string
-	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches, rmAttachments []string
-	var jsonOut, checkout, apply, abort bool
+	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches, rmAttachments, attach []string
+	var jsonOut, checkout, apply, abort, replace bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
 		Short: "Edit a doc",
@@ -230,9 +239,12 @@ func newDocEditCmd() *cobra.Command {
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if checkout || apply || abort {
-				return runFileMode(cmd, docAdapter(), false, args, checkout, apply, abort, jsonOut)
+				return runFileMode(cmd, docAdapter(), false, args, fileModeOpts{checkout: checkout, apply: apply, abort: abort, jsonOut: jsonOut})
 			}
 			ctx := cmd.Context()
+			if replace && len(attach) == 0 {
+				return &UsageError{Err: errors.New("--replace requires --attach")}
+			}
 			var ops []model.Op
 			if cmd.Flags().Changed("title") {
 				if err := validateTitle(title, titleHintBodyEdit); err != nil {
@@ -245,7 +257,7 @@ func newDocEditCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if text == "" {
+				if text == "" && len(attach) == 0 {
 					return errEmptyDocBody(docBodyHintEdit)
 				}
 				ops = append(ops, model.SetBody{Body: text})
@@ -276,16 +288,26 @@ func newDocEditCmd() *cobra.Command {
 			for _, name := range rmAttachments {
 				ops = append(ops, model.RemoveAttachment{Name: name})
 			}
-			if len(ops) == 0 {
+			if len(ops) == 0 && len(attach) == 0 {
 				return &UsageError{Err: errors.New("doc edit requires at least one flag")}
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadDoc(ctx, s, args[0])
+			ref, doc, err := loadDoc(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
+			if !replace {
+				if err := checkAttachCollisions(doc.Attachments, attach); err != nil {
+					return err
+				}
+			}
+			attOps, err := attachOps(ctx, cmd, s, attach)
+			if err != nil {
+				return err
+			}
+			ops = append(ops, attOps...)
 			snapshot, err := s.Append(ctx, ref, ops)
 			if err != nil {
 				return err
@@ -297,6 +319,8 @@ func newDocEditCmd() *cobra.Command {
 	flags.StringVar(&title, "title", "", "new title")
 	flags.StringVar(&body, "body", "", "new body; - reads stdin")
 	flags.StringVar(&when, "when", "", "new read-this-when trigger")
+	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
+	flags.BoolVar(&replace, "replace", false, "allow --attach to overwrite a live attachment with the same name")
 	flags.StringArrayVar(&addTags, "add-tag", nil, "add tag (repeatable)")
 	flags.StringArrayVar(&rmTags, "rm-tag", nil, "remove tag (repeatable)")
 	flags.StringArrayVar(&addPaths, "add-path", nil, "add path anchor (repeatable)")

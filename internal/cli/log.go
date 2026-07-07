@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -158,22 +157,6 @@ func newLogAppendCmd() *cobra.Command {
 	flags.BoolVar(&replace, "replace", false, "allow --attach to overwrite a live attachment with the same name")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
-}
-
-// checkAttachCollisions rejects an --attach whose base name collides with a
-// live attachment: replacing content silently would orphan the old bytes
-// behind the same name, so the caller must opt in with --replace.
-func checkAttachCollisions(live []model.Attachment, paths []string) error {
-	names := make(map[string]bool, len(live))
-	for _, a := range live {
-		names[a.Name] = true
-	}
-	for _, p := range paths {
-		if name := filepath.Base(p); names[name] {
-			return &UsageError{Err: fmt.Errorf("attachment %q already exists on this log; pass --replace to overwrite it", name)}
-		}
-	}
-	return nil
 }
 
 // entryText resolves the entry text for log append from exactly one of: the

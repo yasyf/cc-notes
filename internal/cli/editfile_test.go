@@ -367,16 +367,277 @@ func TestFileModeUsageErrors(t *testing.T) {
 	dir := initRepo(t)
 	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
 	for _, args := range [][]string{
-		{"doc", "edit", added.ID, "--checkout", "--apply"},      // mutually exclusive
-		{"doc", "edit", added.ID, "--checkout", "--title", "Y"}, // file mode + content flag
-		{"note", "edit", added.ID, "--apply", "--abort"},        // mutually exclusive
-		{"doc", "add", "--checkout", "extra"},                   // checkout takes no positional
-		{"doc", "add", "--apply"},                               // apply needs the buffer path
+		{"doc", "edit", added.ID, "--checkout", "--apply"},       // mutually exclusive
+		{"doc", "edit", added.ID, "--checkout", "--title", "Y"},  // file mode + content flag
+		{"note", "edit", added.ID, "--apply", "--abort"},         // mutually exclusive
+		{"doc", "add", "--checkout", "one", "two"},               // checkout takes at most one (the optional TITLE)
+		{"doc", "add", "--apply"},                                // apply needs the buffer path
+		{"doc", "add", "--checkout", "--attach", "x"},            // --attach is not a checkout flag
+		{"doc", "add", "--checkout", "--body", "x"},              // --body is not a checkout flag
+		{"doc", "add", "--apply", "P", "--when", "w"},            // --when is not an apply flag
+		{"doc", "edit", added.ID, "--checkout", "--attach", "x"}, // edit checkout takes no content flag
+		{"note", "edit", added.ID, "--apply", "--attach", "x"},   // edit apply has no --attach
+		{"doc", "edit", added.ID, "--replace"},                   // --replace requires --attach
 	} {
 		_, _, err := runCLI(t, dir, args...)
 		var usage *cli.UsageError
 		if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
 			t.Errorf("cc-notes %s err = %v (exit %d), want UsageError exit 2", strings.Join(args, " "), err, cli.ExitCode(err))
 		}
+	}
+}
+
+func TestDocAddCheckoutPrefill(t *testing.T) {
+	dir := initRepo(t)
+	head := commitFile(t, dir, "seed.go", "package main")
+	path := mustCheckout(t, dir, "doc", "add", "--checkout", "Prefilled title", "--when", "resuming",
+		"--tag", "handoff", "--commit", "HEAD", "--path", "internal/cli", "--branch", "main")
+
+	// The buffer carries the prefilled editable keys, and --commit HEAD is
+	// resolved to the full 40-char sha before rendering.
+	buf := readBuf(t, path)
+	for _, want := range []string{
+		"title: Prefilled title", "when: resuming", "tags: [handoff]",
+		"commits: [" + head + "]", "paths: [internal/cli]", "branches: [main]",
+	} {
+		if !strings.Contains(buf, want) {
+			t.Fatalf("checkout buffer missing %q:\n%s", want, buf)
+		}
+	}
+
+	writeBuf(t, path, buf+"The long-form body.")
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "--apply", path, "--json"))
+	if added.Title != "Prefilled title" || added.When != "resuming" {
+		t.Fatalf("title/when = %q/%q, want Prefilled title/resuming", added.Title, added.When)
+	}
+	if added.Body != "The long-form body." {
+		t.Fatalf("body = %q, want the appended body", added.Body)
+	}
+	if strings.Join(added.Tags, ",") != "handoff" {
+		t.Fatalf("tags = %v, want [handoff]", added.Tags)
+	}
+	got := map[string]string{}
+	for _, a := range added.Anchors {
+		got[a.Kind] = a.Value
+	}
+	if got["commit"] != head {
+		t.Fatalf("commit anchor = %q, want the full sha %q from --commit HEAD", got["commit"], head)
+	}
+	if got["path"] != "internal/cli" || got["branch"] != "main" {
+		t.Fatalf("anchors = %+v, want path internal/cli and branch main", got)
+	}
+	if added.VerifiedAt == nil || added.VerifiedBy == nil || *added.VerifiedBy != actorA {
+		t.Fatalf("created doc not born-verified: verified_at=%v verified_by=%v", added.VerifiedAt, added.VerifiedBy)
+	}
+}
+
+func TestNoteAddCheckoutPrefill(t *testing.T) {
+	dir := initRepo(t)
+	head := commitFile(t, dir, "seed.go", "package main")
+	path := mustCheckout(t, dir, "note", "add", "--checkout", "Prefilled note",
+		"--tag", "design", "--commit", "HEAD", "--path", "auth.go")
+
+	buf := readBuf(t, path)
+	if strings.Contains(buf, "when:") {
+		t.Fatalf("note checkout buffer names when; notes have no trigger:\n%s", buf)
+	}
+	for _, want := range []string{"title: Prefilled note", "tags: [design]", "commits: [" + head + "]", "paths: [auth.go]"} {
+		if !strings.Contains(buf, want) {
+			t.Fatalf("checkout buffer missing %q:\n%s", want, buf)
+		}
+	}
+
+	writeBuf(t, path, buf+"The captured fact.")
+	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "--apply", path, "--json"))
+	if added.Title != "Prefilled note" || added.Body != "The captured fact." {
+		t.Fatalf("title/body = %q/%q", added.Title, added.Body)
+	}
+	if strings.Join(added.Tags, ",") != "design" {
+		t.Fatalf("tags = %v, want [design]", added.Tags)
+	}
+	got := map[string]string{}
+	for _, a := range added.Anchors {
+		got[a.Kind] = a.Value
+	}
+	if got["commit"] != head {
+		t.Fatalf("commit anchor = %q, want the full sha %q", got["commit"], head)
+	}
+	if got["path"] != "auth.go" {
+		t.Fatalf("path anchor = %q, want auth.go", got["path"])
+	}
+	if added.VerifiedAt == nil || added.VerifiedBy == nil || *added.VerifiedBy != actorA {
+		t.Fatalf("created note not born-verified: %v/%v", added.VerifiedAt, added.VerifiedBy)
+	}
+}
+
+func TestDocAddApplyAttach(t *testing.T) {
+	dir := initRepo(t)
+	att, oid := writeAttachable(t, "artifact.txt", []byte("attached payload"))
+	path := mustCheckout(t, dir, "doc", "add", "--checkout")
+	writeBuf(t, path, strings.Replace(readBuf(t, path), "title: \"\"", "title: With attachment", 1)+"The doc body.")
+
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "--apply", path, "--attach", att, "--json"))
+	if len(added.Attachments) != 1 || added.Attachments[0].Name != "artifact.txt" || added.Attachments[0].OID != oid {
+		t.Fatalf("attachments = %+v, want one artifact.txt oid %s", added.Attachments, oid)
+	}
+	if added.Body != "The doc body." {
+		t.Fatalf("body = %q, want the doc body", added.Body)
+	}
+	if bufExists(path) {
+		t.Fatalf("buffer %s present after apply, want removed", path)
+	}
+
+	// Duplicate basenames in one invocation → UsageError, buffer kept.
+	dup1, _ := writeAttachable(t, "same.txt", []byte("one"))
+	dup2, _ := writeAttachable(t, "same.txt", []byte("two"))
+	path2 := mustCheckout(t, dir, "doc", "add", "--checkout")
+	writeBuf(t, path2, strings.Replace(readBuf(t, path2), "title: \"\"", "title: Dup", 1)+"body")
+	_, _, err := runCLI(t, dir, "doc", "add", "--apply", path2, "--attach", dup1, "--attach", dup2)
+	if cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "duplicate attachment name") {
+		t.Fatalf("dup attach = %v (exit %d), want UsageError naming the duplicate", err, cli.ExitCode(err))
+	}
+	if !bufExists(path2) {
+		t.Fatalf("buffer %s removed on rejected apply, want kept", path2)
+	}
+
+	// A rejected apply (empty body) with --attach leaves the buffer AND ingests
+	// nothing: createOps fails before attachOps runs, so ok.txt never reaches LFS.
+	path3 := mustCheckout(t, dir, "doc", "add", "--checkout")
+	writeBuf(t, path3, strings.Replace(readBuf(t, path3), "title: \"\"", "title: Bodyless", 1))
+	good, goodOID := writeAttachable(t, "ok.txt", []byte("never ingested"))
+	_, _, err = runCLI(t, dir, "doc", "add", "--apply", path3, "--attach", good)
+	if cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "doc body is empty") {
+		t.Fatalf("bodyless apply+attach = %v (exit %d), want the doc-body UsageError", err, cli.ExitCode(err))
+	}
+	if !bufExists(path3) {
+		t.Fatalf("buffer %s removed on rejected apply, want kept", path3)
+	}
+	artifactObj := strings.TrimSpace(mustRun(t, dir, "attachment", "path", added.ID, "artifact.txt"))
+	objectsRoot := filepath.Dir(filepath.Dir(filepath.Dir(artifactObj)))
+	goodObj := filepath.Join(objectsRoot, goodOID[:2], goodOID[2:4], goodOID)
+	if _, err := os.Stat(goodObj); !os.IsNotExist(err) {
+		t.Fatalf("ok.txt ingested into LFS at %s despite a rejected apply, want nothing ingested", goodObj)
+	}
+}
+
+func TestDocEditAttach(t *testing.T) {
+	dir := initRepo(t)
+	doc := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff", "--body", "orig", "--json"))
+	first, firstOID := writeAttachable(t, "report.txt", []byte("first"))
+	edited := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", doc.ID, "--attach", first, "--json"))
+	if len(edited.Attachments) != 1 || edited.Attachments[0].OID != firstOID {
+		t.Fatalf("attachments = %+v, want report.txt oid %s", edited.Attachments, firstOID)
+	}
+
+	// Re-attach the same name without --replace → collision error naming the file.
+	second, secondOID := writeAttachable(t, "report.txt", []byte("second longer"))
+	_, _, err := runCLI(t, dir, "doc", "edit", doc.ID, "--attach", second)
+	if cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "report.txt") || !strings.Contains(err.Error(), "--replace") {
+		t.Fatalf("colliding edit = %v (exit %d), want usage error naming report.txt and --replace", err, cli.ExitCode(err))
+	}
+	shown := mustJSON[docJSON](t, mustRun(t, dir, "doc", "show", doc.ID, "--json"))
+	if len(shown.Attachments) != 1 || shown.Attachments[0].OID != firstOID {
+		t.Fatalf("attachments after rejected edit = %+v, want the original untouched", shown.Attachments)
+	}
+
+	// With --replace it succeeds.
+	replaced := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", doc.ID, "--attach", second, "--replace", "--json"))
+	if len(replaced.Attachments) != 1 || replaced.Attachments[0].OID != secondOID {
+		t.Fatalf("attachments after --replace = %+v, want oid %s", replaced.Attachments, secondOID)
+	}
+
+	// --rm-attachment coexists with --attach in one invocation.
+	third, thirdOID := writeAttachable(t, "extra.txt", []byte("extra"))
+	both := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", doc.ID, "--rm-attachment", "report.txt", "--attach", third, "--json"))
+	if len(both.Attachments) != 1 || both.Attachments[0].Name != "extra.txt" || both.Attachments[0].OID != thirdOID {
+		t.Fatalf("attachments after rm+attach = %+v, want only extra.txt", both.Attachments)
+	}
+}
+
+func TestNoteEditAttach(t *testing.T) {
+	dir := initRepo(t)
+	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Fact", "--body", "v1", "--json"))
+	first, firstOID := writeAttachable(t, "report.txt", []byte("first"))
+	edited := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", note.ID, "--attach", first, "--json"))
+	if len(edited.Attachments) != 1 || edited.Attachments[0].OID != firstOID {
+		t.Fatalf("attachments = %+v, want report.txt oid %s", edited.Attachments, firstOID)
+	}
+
+	second, secondOID := writeAttachable(t, "report.txt", []byte("second longer"))
+	_, _, err := runCLI(t, dir, "note", "edit", note.ID, "--attach", second)
+	if cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "report.txt") || !strings.Contains(err.Error(), "--replace") {
+		t.Fatalf("colliding edit = %v (exit %d), want usage error naming report.txt and --replace", err, cli.ExitCode(err))
+	}
+
+	replaced := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", note.ID, "--attach", second, "--replace", "--json"))
+	if len(replaced.Attachments) != 1 || replaced.Attachments[0].OID != secondOID {
+		t.Fatalf("attachments after --replace = %+v, want oid %s", replaced.Attachments, secondOID)
+	}
+
+	third, thirdOID := writeAttachable(t, "extra.txt", []byte("extra"))
+	both := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", note.ID, "--rm-attachment", "report.txt", "--attach", third, "--json"))
+	if len(both.Attachments) != 1 || both.Attachments[0].Name != "extra.txt" || both.Attachments[0].OID != thirdOID {
+		t.Fatalf("attachments after rm+attach = %+v, want only extra.txt", both.Attachments)
+	}
+}
+
+// TestEditApplyShortenedCommitAnchorSurvives proves that re-spelling a commit
+// anchor's full sha as a short prefix in an edit buffer is a no-op, not an
+// anchor drop: DiffDoc emits add-short + remove-full, and apply must canonicalize
+// both to the same sha and cancel them, leaving the anchor intact and committing
+// nothing.
+func TestEditApplyShortenedCommitAnchorSurvives(t *testing.T) {
+	dir := initRepo(t)
+	head := commitFile(t, dir, "seed.go", "package main")
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Anchored", "--body", "b", "--commit", "HEAD", "--json"))
+	ref := "refs/cc-notes/docs/" + added.ID
+	before := mustGit(t, dir, "rev-list", "--count", ref)
+
+	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
+	replaceInBuf(t, path, "commits: ["+head+"]", "commits: ["+head[:7]+"]")
+
+	_, stderr, err := runCLI(t, dir, "doc", "edit", added.ID, "--apply")
+	if err != nil {
+		t.Fatalf("apply of a re-spelled sha: %v (stderr %q)", err, stderr)
+	}
+	if !strings.Contains(stderr, "no changes") {
+		t.Fatalf("stderr = %q, want a no-changes note (re-spelling a sha is not an edit)", stderr)
+	}
+	if after := mustGit(t, dir, "rev-list", "--count", ref); after != before {
+		t.Fatalf("chain = %s commits, want unchanged %s (a spelling-only diff commits nothing)", after, before)
+	}
+	shown := mustJSON[docJSON](t, mustRun(t, dir, "doc", "show", added.ID, "--json"))
+	var got string
+	for _, a := range shown.Anchors {
+		if a.Kind == "commit" {
+			got = a.Value
+		}
+	}
+	if got != head {
+		t.Fatalf("commit anchor = %q, want the full sha %q to survive", got, head)
+	}
+}
+
+// TestEditApplyGenuineCommitAnchorChange proves the cancellation is narrow: a
+// buffer that swaps the anchor to a different commit (given as a short prefix)
+// still applies, resolving the new value to its full sha.
+func TestEditApplyGenuineCommitAnchorChange(t *testing.T) {
+	dir := initRepo(t)
+	first := commitFile(t, dir, "a.go", "package main")
+	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Anchored", "--body", "b", "--commit", first, "--json"))
+	second := commitFile(t, dir, "b.go", "package b")
+
+	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
+	replaceInBuf(t, path, "commits: ["+first+"]", "commits: ["+second[:8]+"]")
+
+	applied := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", added.ID, "--apply", "--json"))
+	var got string
+	for _, a := range applied.Anchors {
+		if a.Kind == "commit" {
+			got = a.Value
+		}
+	}
+	if got != second {
+		t.Fatalf("commit anchor = %q, want the new full sha %q (a genuine change applies)", got, second)
 	}
 }

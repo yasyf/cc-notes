@@ -676,8 +676,8 @@ func TestTitleCap(t *testing.T) {
 		}
 	}
 
-	// note/doc edit have no --attach — the rename hint names only the flags that
-	// exist on edit (--body and --checkout), never --attach.
+	// note/doc edit now carry --attach too, so the rename hint names every content
+	// escape hatch that exists on edit: --body, --checkout, and --attach.
 	for _, args := range [][]string{
 		{"note", "edit", "x", "--title", over},
 		{"doc", "edit", "x", "--title", over},
@@ -688,13 +688,10 @@ func TestTitleCap(t *testing.T) {
 			t.Fatalf("cc-notes %s err = %v (exit %d), want UsageError exit 2", strings.Join(args, " "), err, cli.ExitCode(err))
 		}
 		msg := err.Error()
-		for _, want := range []string{"257 bytes", "max 256", "--body", "--checkout"} {
+		for _, want := range []string{"257 bytes", "max 256", "--body", "--checkout", "--attach"} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("cc-notes %s over-cap message %q missing %q", strings.Join(args, " "), msg, want)
 			}
-		}
-		if strings.Contains(msg, "--attach") {
-			t.Errorf("cc-notes %s over-cap message %q must not name --attach (edit has no --attach)", strings.Join(args, " "), msg)
 		}
 	}
 

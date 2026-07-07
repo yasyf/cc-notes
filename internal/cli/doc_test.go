@@ -142,8 +142,8 @@ func TestDocEditRejectsBlankBody(t *testing.T) {
 	if !strings.Contains(err.Error(), "doc body is empty") {
 		t.Fatalf("blank-body doc edit message = %q, want it to explain the empty body", err.Error())
 	}
-	if strings.Contains(err.Error(), "--attach") {
-		t.Errorf("blank-body doc edit message %q must not name --attach (edit has no --attach)", err.Error())
+	if !strings.Contains(err.Error(), "--attach") {
+		t.Errorf("blank-body doc edit message %q should name --attach (edit now carries --attach)", err.Error())
 	}
 	if shown := mustJSON[docJSON](t, mustRun(t, dir, "doc", "show", doc.ID, "--json")); shown.Body != "orig" {
 		t.Fatalf("doc body = %q, want orig (a rejected edit commits nothing)", shown.Body)
@@ -154,6 +154,29 @@ func TestDocEditRejectsBlankBody(t *testing.T) {
 	cleared := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", note.ID, "--body", "", "--json"))
 	if cleared.Body != "" {
 		t.Fatalf("note body = %q, want empty (clearing a note body is legal)", cleared.Body)
+	}
+}
+
+// TestDocEditBlankBodyWithAttach proves --attach satisfies the doc-body
+// requirement on edit exactly as it does on add: clearing the body with
+// --body "" is legal when --attach carries content (the doc becomes
+// attach-only), while a bare --body "" is still rejected.
+func TestDocEditBlankBodyWithAttach(t *testing.T) {
+	dir := initRepo(t)
+	doc := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff", "--body", "orig", "--json"))
+	att, oid := writeAttachable(t, "artifact.txt", []byte("payload"))
+
+	edited := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", doc.ID, "--body", "", "--attach", att, "--json"))
+	if edited.Body != "" {
+		t.Fatalf("body = %q, want empty (--attach lets a doc edit clear the body)", edited.Body)
+	}
+	if len(edited.Attachments) != 1 || edited.Attachments[0].OID != oid {
+		t.Fatalf("attachments = %+v, want one artifact.txt oid %s", edited.Attachments, oid)
+	}
+
+	_, _, err := runCLI(t, dir, "doc", "edit", doc.ID, "--body", "")
+	if cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "doc body is empty") {
+		t.Fatalf("bare blank-body edit = %v (exit %d), want the doc-body UsageError", err, cli.ExitCode(err))
 	}
 }
 

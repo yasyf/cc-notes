@@ -137,6 +137,22 @@ func attachOps(ctx context.Context, cmd *cobra.Command, s *store.Store, paths []
 	return ops, nil
 }
 
+// checkAttachCollisions rejects an --attach whose base name collides with a
+// live attachment: replacing content silently would orphan the old bytes
+// behind the same name, so the caller must opt in with --replace.
+func checkAttachCollisions(live []model.Attachment, paths []string) error {
+	names := make(map[string]bool, len(live))
+	for _, a := range live {
+		names[a.Name] = true
+	}
+	for _, p := range paths {
+		if name := filepath.Base(p); names[name] {
+			return &UsageError{Err: fmt.Errorf("attachment %q already exists; pass --replace to overwrite it", name)}
+		}
+	}
+	return nil
+}
+
 // entityAttachments renders an entity's attachments with their local
 // presence, always non-nil so JSON serializes an empty list rather than
 // null. The LFS store is opened only when there is something to probe, so
@@ -172,18 +188,18 @@ func readScript(path string) (string, error) {
 const maxTitleBytes = 256
 
 // Escape hints name, per command surface, the places that actually hold long
-// content: note/doc add carry it in --body/--checkout/--attach, their edits
-// have no --attach, logs carry it in entries, task/sprint/project in --desc,
-// and a checked-out file-mode buffer carries it in the body below the
-// frontmatter (bufferHint serves both the title cap and errEmptyDocBody there).
+// content: note/doc add and edit both carry it in --body/--checkout/--attach,
+// logs carry it in entries, task/sprint/project in --desc, and a checked-out
+// file-mode buffer carries it in the body below the frontmatter (bufferHint
+// serves both the title cap and errEmptyDocBody there).
 const (
 	titleHintBody     = "put the content in --body (- reads stdin), --checkout file mode, or --attach"
-	titleHintBodyEdit = "put the content in --body (- reads stdin) or --checkout file mode"
+	titleHintBodyEdit = "put the content in --body (- reads stdin), --checkout file mode, or --attach"
 	titleHintLog      = "put the content in log entries (--entry on add, or log append)"
 	titleHintDesc     = "put the content in --desc"
 	bufferHint        = "put the content in the body below the frontmatter"
 	docBodyHintAdd    = "pass --body (- reads stdin), --checkout file mode, or --attach the content"
-	docBodyHintEdit   = "pass --body (- reads stdin) or --checkout file mode"
+	docBodyHintEdit   = "pass --body (- reads stdin), --checkout file mode, or --attach the content"
 )
 
 // validateTitle rejects an empty or over-long title as a UsageError, run before

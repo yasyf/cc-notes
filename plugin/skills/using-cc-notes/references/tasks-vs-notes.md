@@ -45,18 +45,21 @@ $ cc-notes note add "Retry backoff caps at 30s" --path internal/api/client.go --
 b71e0d4	2026-06-16	design	Retry backoff caps at 30s
 ```
 
-**Handing off a half-finished migration.** `cc-notes doc`. It is durable knowledge, not a unit of work, but it is paragraphs of guidance written *for whoever resumes the cutover* — too long for a note's one line. Store it as a doc with a `--when` trigger so the next agent surfaces it exactly when they pick the work back up, and anchor it to the directory so drift is computed against the real code.
+**Handing off a half-finished migration.** `cc-notes doc`. It is durable knowledge, not a unit of work, but it is paragraphs of guidance written *for whoever resumes the cutover* — too long for a note's one line. Store it as a doc with a `--when` trigger so the next agent surfaces it exactly when they pick the work back up, and anchor it to the directory so drift is computed against the real code. The body is long, so check out a prefilled buffer, write the guidance into it, and apply:
 
 ```console
-$ printf 'The new token endpoint is live behind a feature flag; the legacy handler still serves. Resume by flipping the flag in config and deleting the legacy handler. Do not touch the refresh path until the gateway timeout is confirmed.\n' | cc-notes doc add "Auth migration handoff" --when "resuming the auth cutover" --dir internal/api --tag handoff --body -
+$ p=$(cc-notes doc add "Auth migration handoff" --checkout \
+    --when "resuming the auth cutover" --dir internal/api --tag handoff)
+$ # write the guidance into "$p" below the frontmatter with your file tools
+$ cc-notes doc add --apply "$p"
 5c7d279	2026-06-23	handoff	Auth migration handoff	resuming the auth cutover
 ```
 
 The anti-pattern is inverting that shape: the handoff prose crammed into the title with an empty
 body, or a body that says "full detail in `/tmp/.../handoff.md`". The title is a handle — the CLI
 caps it at 256 bytes and rejects a body-less doc — and `/tmp` and session scratchpads are purged
-before the next agent ever reads the doc. Carry the content in the record: `--body -` for the
-text, `--attach <file>` for artifacts.
+before the next agent ever reads the doc. Carry the content in the record: the `--checkout`/`--apply`
+buffer above for a long body, `--body -` for a short one, and `--attach <file>` for artifacts.
 
 **Recording a production incident as it unfolds.** `cc-notes log`. The value is the chronology, not a single fact: a timeline of timestamped, authored entries that you keep appending as the incident develops, and that nobody ever rewrites afterward. A note would flatten the sequence into one line; a doc would invite editing the body as the situation changed, but an incident record must stay exactly as it was written. Create the log, anchor it to the affected code, then append each entry as you learn more.
 

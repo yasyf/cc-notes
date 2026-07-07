@@ -445,7 +445,8 @@ def nudge_ephemeral_record_reference(evt: PostToolUseEvent) -> HookResult | None
         "This cc-notes record leans on a purge-bound path (/tmp, /var, or a session scratchpad) — "
         "those are gone by the next session, so a durable record that points at one outlives its own "
         "content. Carry the content in the record itself:",
-        "--body - reads the text from stdin (or use --checkout file mode) — the body lives in the record, not a loose file.",
+        "--checkout prints a prefilled buffer; write the body into it, then --apply — the body lives in the record, not a loose file.",
+        "--body - reads a short body from stdin instead.",
         "--attach <file> stores an artifact — its bytes land in the git ODB and sync with the repo.",
     )
 
@@ -468,9 +469,9 @@ PLAN_TEACH = (
     "end. Durable work that outlives the session or coordinates agents goes in `cc-notes task`: "
     "`--backlog` for shared work any agent can claim, plain `cc-notes task add` for your branch. "
     "(A decision or durable fact is a `cc-notes note add`; living guidance for the next agent, with a "
-    "`--when` read-trigger, is a `cc-notes doc add` — short title, the guidance itself in `--body`, "
-    "`-` reads stdin; an append-only chronology whose entries are never "
-    "edited is a `cc-notes log add`.)"
+    "`--when` read-trigger, is a `cc-notes doc add` — short title, and for a long body `--checkout` "
+    "prints a prefilled buffer you write the guidance into and `--apply`, or `--body -` reads a short "
+    "one from stdin; an append-only chronology whose entries are never edited is a `cc-notes log add`.)"
 )
 
 

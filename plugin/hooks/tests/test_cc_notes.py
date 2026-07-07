@@ -646,7 +646,7 @@ def test_ephemeral_record_refs_parsing() -> None:
 
 
 def test_ephemeral_record_reference_fires(monkeypatch, tmp_path) -> None:
-    """The firing handler warns and teaches both --body - and --attach as the durable fix."""
+    """The firing handler warns and teaches --checkout file mode, --body -, and --attach as the durable fix."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = mock_event(
         "PostToolUse",
@@ -657,6 +657,7 @@ def test_ephemeral_record_reference_fires(monkeypatch, tmp_path) -> None:
     result = nudge_ephemeral_record_reference(evt)
     check("ephemeral nudge: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
+        check("ephemeral nudge: leads with --checkout file mode", "--checkout" in result.message, result.message)
         check("ephemeral nudge: teaches --attach", "--attach" in result.message, result.message)
         check("ephemeral nudge: teaches --body", "--body" in result.message, result.message)
         check("ephemeral nudge: names a purge-bound path", "purge-bound" in result.message, result.message)
@@ -674,7 +675,12 @@ def test_record_command_per_kind() -> None:
     """Each kind renders the right cc-notes command; log is two lines (add + append), no --when."""
     check("note: add --body -", record_command("note", "Retry cap", "", "internal/api") == ['cc-notes note add "Retry cap" --dir internal/api --body -'], repr(record_command("note", "Retry cap", "", "internal/api")))
     check("note: '.' area drops --dir", "--dir" not in record_command("note", "T", "", ".")[0])
-    check("doc: carries --when", '--when "read me when X"' in record_command("doc", "T", "read me when X", ".")[0])
+    doc_lines = record_command("doc", "T", "read me when X", ".")
+    # A doc leads with the --checkout/--apply file-mode flow for the long body, and keeps a
+    # short-body --body - line last; the first (checkout) line carries the --when trigger.
+    check("doc: leads with --checkout, carries --when", "--checkout" in doc_lines[0] and '--when "read me when X"' in doc_lines[0], repr(doc_lines))
+    check("doc: applies the buffer", any("doc add --apply" in ln for ln in doc_lines), repr(doc_lines))
+    check("doc: keeps a short-body --body - fallback", any("--body -" in ln for ln in doc_lines), repr(doc_lines))
     log_lines = record_command("log", "Outage timeline", "", "ops")
     check("log: two lines, add then append", len(log_lines) == 2 and log_lines[0].startswith('cc-notes log add "Outage timeline"') and "log append" in log_lines[1], repr(log_lines))
     check("log: no --when", all("--when" not in ln for ln in log_lines))

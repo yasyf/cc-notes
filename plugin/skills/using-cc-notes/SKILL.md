@@ -61,9 +61,11 @@ written *for the next agent* where a note holds a one-line fact, and it carries 
 `--when` read-trigger that names when that agent should open it. Like a note it anchors to the
 code it describes, drifts when that code changes, and floats into a relevant agent's context —
 but only its title, `--when` text, and a `doc show` pointer surface, never the body. The title is
-a short handle — capped at 256 bytes, like every title — so the guidance lives in the body: never
-cram it into the title, and never point the doc at a `/tmp` or scratchpad file that is purged
-before the next agent reads it (inline the content with `--body -`, or `--attach` the file).
+a short handle — capped at 256 bytes, like every title — so the guidance lives in the body. For a
+long body, check out a prefilled buffer with `cc-notes doc add --checkout`, write the guidance into
+it with your file tools, then `cc-notes doc add --apply`; `--body -` reads a short body straight
+from stdin. Never cram the guidance into the title, and never point the doc at a `/tmp` or
+scratchpad file purged before the next agent reads it — `--attach` an artifact that must ride along.
 
 A **log** looks like a doc — durable, repo-global, anchored, floated on read — but it is the
 opposite kind of record. A doc is *living guidance* kept fresh: you replace its body and re-verify
@@ -228,7 +230,8 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes note expire <id>` | Flag a note as out-of-date; clear it with `note verify` |
 | `cc-notes note review` | Surface expired, drifted, stale, and unverified notes |
 | `cc-notes note search "<query>"` | Ranked search over titles, tags, and bodies |
-| `cc-notes doc add "<title>" --when "<trigger>" --body -` | Store long-form agent guidance (body from stdin), born verified, with a when-to-read trigger |
+| `cc-notes doc add "<title>" --checkout --when "<trigger>"` | Check out a prefilled buffer for a long body; write it in, then `cc-notes doc add --apply <path>` |
+| `cc-notes doc add "<title>" --when "<trigger>" --body -` | Short body only: store agent guidance from stdin, born verified, with a when-to-read trigger |
 | `cc-notes doc edit <id> --checkout` | Render a doc (or note) to an editable file; edit it, then `--apply` (or `--abort`) |
 | `cc-notes doc search "<query>"` | Ranked search over doc titles, tags, and bodies |
 | `cc-notes log add "<title>"` | Start an append-only chronological journal |
@@ -259,11 +262,14 @@ $ cc-notes log append 4a81c9e -m "phase 2: forced unmount wedges the holder; pan
 4a81c9e	2026-07-02	evidence	fusekit VM repro: forced unmount
 ```
 
-`--attach` is repeatable and works the same on `note add`, `doc add`, and `log add`. It is
-fully offline: the file is hashed into the local LFS store at write time, no network. Names
-are unique per entity — a `log append` that reuses a live name fails unless you pass
-`--replace` (a re-run superseding the last run's `scenario.log`), and `--rm-attachment
-<name>` on `note`/`doc`/`log edit` drops one by name.
+`--attach` is repeatable and works the same on `note add`, `doc add`, and `log add`. On `add`, a
+`--checkout` buffer carries attachments through at apply time — `cc-notes doc add --apply <path>
+--attach <file>` ingests them in the same create transaction — while `--attach` on `note edit` or
+`doc edit` attaches to an entity that already exists (a log grows the same way through `log append
+--attach`). It is fully offline: the file is hashed into the local LFS store at write time, no
+network. Names are unique per entity — an attach that reuses a live name fails unless you pass
+`--replace` (a re-run superseding the last run's `scenario.log`), and `--rm-attachment <name>` on
+`note`/`doc`/`log edit` drops one by name.
 
 The sharp edges:
 

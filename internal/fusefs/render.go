@@ -526,6 +526,58 @@ func RenderDoc(d model.Doc) []byte {
 	return buf.Bytes()
 }
 
+// NewDocTemplate renders the prefilled buffer `doc add --checkout` writes: the
+// editable doc keys (title, when, tags always; non-empty anchor kinds in
+// RenderDoc order) and an empty body, carrying no id so it satisfies NewDoc. A
+// zero-value call reproduces the empty new-doc template byte for byte.
+func NewDocTemplate(title, when string, tags []string, anchors []model.Anchor) []byte {
+	fm := &yaml.Node{Kind: yaml.MappingNode}
+	put := func(key string, value *yaml.Node) {
+		fm.Content = append(fm.Content, scalarNode(key), value)
+	}
+	put("title", scalarNode(title))
+	put("when", scalarNode(when))
+	put("tags", flowNode(tags))
+	putAnchors(put, anchors)
+	return encodeTemplate(fm)
+}
+
+// NewNoteTemplate renders the prefilled buffer `note add --checkout` writes,
+// mirroring NewDocTemplate without the when key (notes have no trigger).
+func NewNoteTemplate(title string, tags []string, anchors []model.Anchor) []byte {
+	fm := &yaml.Node{Kind: yaml.MappingNode}
+	put := func(key string, value *yaml.Node) {
+		fm.Content = append(fm.Content, scalarNode(key), value)
+	}
+	put("title", scalarNode(title))
+	put("tags", flowNode(tags))
+	putAnchors(put, anchors)
+	return encodeTemplate(fm)
+}
+
+func putAnchors(put func(string, *yaml.Node), anchors []model.Anchor) {
+	for _, ak := range anchorKinds {
+		if values := anchorValues(anchors, ak.kind); len(values) > 0 {
+			put(ak.key, flowNode(values))
+		}
+	}
+}
+
+func encodeTemplate(fm *yaml.Node) []byte {
+	var buf bytes.Buffer
+	buf.WriteString(delimiter)
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(fm); err != nil {
+		panic(fmt.Sprintf("fusefs: encode template frontmatter: %v", err))
+	}
+	if err := enc.Close(); err != nil {
+		panic(fmt.Sprintf("fusefs: close frontmatter encoder: %v", err))
+	}
+	buf.WriteString(delimiter)
+	return buf.Bytes()
+}
+
 // ParseDoc decodes a doc file: YAML frontmatter between --- delimiters, body
 // verbatim below. Decoding is strict — a missing delimiter or an unknown
 // frontmatter key fails with ErrParse.

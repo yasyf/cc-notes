@@ -7,37 +7,41 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"github.com/yasyf/cc-notes/internal/fusefs"
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
-// docTemplate and noteTemplate are the empty new-entity buffers that
-// add --checkout writes: only the editable frontmatter keys, then an empty
-// body. They omit id, author, and created on purpose — those keys would make
-// the file parse as an existing entity, which NewDoc/NewNote reject. The
-// leading and trailing --- match the frontmatter RenderDoc/RenderNote produce,
-// so the template round-trips through ParseDoc/ParseNote.
-const (
-	docTemplate  = "---\ntitle: \"\"\nwhen: \"\"\ntags: []\n---\n"
-	noteTemplate = "---\ntitle: \"\"\ntags: []\n---\n"
-)
+// prefill carries the flag values `add --checkout` seeds a new-entity buffer
+// with: the optional TITLE positional plus the anchor and tag flags.
+// noteAdapter ignores when (notes have no trigger).
+type prefill struct {
+	title    string
+	when     string
+	tags     []string
+	commits  []string
+	paths    []string
+	dirs     []string
+	branches []string
+}
 
 // editAdapter binds the file-edit engine to one entity kind: how to load a
 // snapshot and its head, render it to an editable buffer, build the new-entity
-// template, and turn an edited buffer back into ops. doc and note share the
-// engine; only these closures differ.
+// template from a prefill, and turn an edited buffer back into ops. doc and note
+// share the engine; only these closures differ.
 type editAdapter struct {
 	kind       refs.Kind
 	load       func(ctx context.Context, s *store.Store, prefix string) (model.Snapshot, model.SHA, error)
 	render     func(model.Snapshot) []byte
-	template   func() []byte
+	template   func(prefill) []byte
 	diffOps    func(base model.Snapshot, data []byte) ([]model.Op, error)
 	createOps  func(data []byte) ([]model.Op, error)
 	bornVerify func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error)
@@ -58,8 +62,10 @@ func docAdapter() editAdapter {
 			}
 			return d, d.Head, nil
 		},
-		render:   func(snap model.Snapshot) []byte { return fusefs.RenderDoc(snap.(model.Doc)) },
-		template: func() []byte { return []byte(docTemplate) },
+		render: func(snap model.Snapshot) []byte { return fusefs.RenderDoc(snap.(model.Doc)) },
+		template: func(p prefill) []byte {
+			return fusefs.NewDocTemplate(p.title, p.when, p.tags, buildAnchors(p.commits, p.paths, p.dirs, p.branches))
+		},
 		diffOps: func(base model.Snapshot, data []byte) ([]model.Op, error) {
 			p, err := fusefs.ParseDoc(data)
 			if err != nil {
@@ -115,8 +121,10 @@ func noteAdapter() editAdapter {
 			}
 			return n, n.Head, nil
 		},
-		render:   func(snap model.Snapshot) []byte { return fusefs.RenderNote(snap.(model.Note)) },
-		template: func() []byte { return []byte(noteTemplate) },
+		render: func(snap model.Snapshot) []byte { return fusefs.RenderNote(snap.(model.Note)) },
+		template: func(p prefill) []byte {
+			return fusefs.NewNoteTemplate(p.title, p.tags, buildAnchors(p.commits, p.paths, p.dirs, p.branches))
+		},
 		diffOps: func(base model.Snapshot, data []byte) ([]model.Op, error) {
 			p, err := fusefs.ParseNote(data)
 			if err != nil {
@@ -279,17 +287,30 @@ func announceCheckout(cmd *cobra.Command, buffer, applyCmd string) error {
 	return err
 }
 
+// fileModeOpts carries a file-mode request's inputs beyond the mode flags: the
+// prefill an add --checkout seeds its buffer with and the attach paths an add
+// --apply rides on the create. edit and abort branches read neither.
+type fileModeOpts struct {
+	checkout bool
+	apply    bool
+	abort    bool
+	jsonOut  bool
+	prefill  prefill
+	attach   []string
+}
+
 // runFileMode handles a --checkout/--apply/--abort request for an add (isAdd)
-// or edit command. The three flags are mutually exclusive and cannot be
-// combined with content flags. For edit, args[0] is the entity id prefix; for
-// add --apply/--abort it is the buffer path printed at checkout; add --checkout
-// takes no positional. It is only called when one of the three flags is set.
-func runFileMode(cmd *cobra.Command, a editAdapter, isAdd bool, args []string, checkout, apply, abort, jsonOut bool) error {
-	mode, err := soleMode(checkout, apply, abort)
+// or edit command. The three flags are mutually exclusive; each branch permits
+// only the content flags fileModeAllowed lists and rejects the rest. For edit,
+// args[0] is the entity id prefix; for add --apply/--abort it is the buffer path
+// printed at checkout; add --checkout takes an optional TITLE. It is only called
+// when one of the three flags is set.
+func runFileMode(cmd *cobra.Command, a editAdapter, isAdd bool, args []string, opts fileModeOpts) error {
+	mode, err := soleMode(opts.checkout, opts.apply, opts.abort)
 	if err != nil {
 		return err
 	}
-	if changed := changedContentFlags(cmd); len(changed) > 0 {
+	if changed := changedContentFlags(cmd, fileModeAllowed(isAdd, opts.checkout, opts.apply)...); len(changed) > 0 {
 		return &UsageError{Err: fmt.Errorf("--%s cannot be combined with content flags: --%s", mode, strings.Join(changed, ", --"))}
 	}
 	ctx := cmd.Context()
@@ -298,19 +319,43 @@ func runFileMode(cmd *cobra.Command, a editAdapter, isAdd bool, args []string, c
 		return err
 	}
 	switch {
-	case isAdd && checkout:
-		return addCheckout(ctx, cmd, s, a)
-	case isAdd && apply:
-		return addApply(ctx, cmd, s, a, args[0], jsonOut)
+	case isAdd && opts.checkout:
+		return addCheckout(ctx, cmd, s, a, opts.prefill)
+	case isAdd && opts.apply:
+		return addApply(ctx, cmd, s, a, args[0], opts.attach, opts.jsonOut)
 	case isAdd:
 		return abortFiles(cmd, filesForPath(args[0]))
-	case checkout:
+	case opts.checkout:
 		return editCheckout(ctx, cmd, s, a, args[0])
-	case apply:
-		return editApply(ctx, cmd, s, a, args[0], jsonOut)
+	case opts.apply:
+		return editApply(ctx, cmd, s, a, args[0], opts.jsonOut)
 	default:
 		return editAbort(ctx, cmd, s, a, args[0])
 	}
+}
+
+// fileModeAllowed lists the content flags a file-mode branch permits: an add
+// --checkout seeds its buffer from the anchor/tag flags (and when, doc-only), an
+// add --apply may carry --attach, and every edit branch plus add --abort permits
+// none.
+func fileModeAllowed(isAdd, checkout, apply bool) []string {
+	switch {
+	case isAdd && checkout:
+		return []string{"when", "tag", "commit", "path", "dir", "branch"}
+	case isAdd && apply:
+		return []string{"attach"}
+	default:
+		return nil
+	}
+}
+
+// optionalTitle returns the sole optional TITLE an add --checkout may carry, or
+// "" when the user gave none.
+func optionalTitle(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
 }
 
 // soleMode names the single set file-mode flag, or fails if more than one is
@@ -332,17 +377,21 @@ func soleMode(checkout, apply, abort bool) (string, error) {
 	return mode, nil
 }
 
-// changedContentFlags returns the names of the entity-content flags the user
-// set, so file mode can reject combining them with --checkout/--apply/--abort.
-// --json travels with --apply and is not a content flag.
-func changedContentFlags(cmd *cobra.Command) []string {
+// changedContentFlags returns the names of the entity-content flags the user set
+// that are not in allowed, so file mode can reject combining the wrong flags
+// with --checkout/--apply/--abort. The three mode flags and --json are never
+// content flags, so all four are always ignored.
+func changedContentFlags(cmd *cobra.Command, allowed ...string) []string {
 	var names []string
 	cmd.Flags().Visit(func(f *pflag.Flag) {
 		switch f.Name {
 		case "checkout", "apply", "abort", "json":
-		default:
-			names = append(names, f.Name)
+			return
 		}
+		if slices.Contains(allowed, f.Name) {
+			return
+		}
+		names = append(names, f.Name)
 	})
 	return names
 }
@@ -411,6 +460,10 @@ func editApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAd
 	if err != nil {
 		return fmt.Errorf("%w\nfix %s and re-run --apply, or --abort to discard", err, files.buffer)
 	}
+	ops, err = resolveOpCommitAnchors(ctx, s.Git, ops)
+	if err != nil {
+		return fmt.Errorf("%w\nfix %s and re-run --apply, or --abort to discard", err, files.buffer)
+	}
 	if len(ops) == 0 {
 		removeBuffer(files)
 		snap, err := s.Load(ctx, ref)
@@ -445,7 +498,17 @@ func editAbort(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAd
 	return abortFiles(cmd, bufferFiles(dir, id))
 }
 
-func addCheckout(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAdapter) error {
+func addCheckout(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAdapter, p prefill) error {
+	if p.title != "" {
+		if err := validateTitle(p.title, bufferHint); err != nil {
+			return err
+		}
+	}
+	commits, err := resolveCommits(ctx, s.Git, p.commits)
+	if err != nil {
+		return err
+	}
+	p.commits = commits
 	dir, err := editDir(ctx, s)
 	if err != nil {
 		return err
@@ -454,13 +517,13 @@ func addCheckout(ctx context.Context, cmd *cobra.Command, s *store.Store, a edit
 		return fmt.Errorf("create edit dir: %w", err)
 	}
 	files := bufferFiles(dir, "new-"+model.NewNonce())
-	if err := writeBuffer(files, a.template(), editMeta{Kind: a.noun(), New: true}); err != nil {
+	if err := writeBuffer(files, a.template(p), editMeta{Kind: a.noun(), New: true}); err != nil {
 		return err
 	}
 	return announceCheckout(cmd, files.buffer, fmt.Sprintf("cc-notes %s add --apply %s", a.noun(), files.buffer))
 }
 
-func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAdapter, path string, jsonOut bool) error {
+func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAdapter, path string, attach []string, jsonOut bool) error {
 	files := filesForPath(path)
 	meta, data, err := readBuffer(files)
 	if err != nil {
@@ -473,10 +536,18 @@ func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAda
 	if err != nil {
 		return fmt.Errorf("%w\nfix %s and re-run --apply, or --abort to discard", err, files.buffer)
 	}
+	ops, err = resolveOpCommitAnchors(ctx, s.Git, ops)
+	if err != nil {
+		return fmt.Errorf("%w\nfix %s and re-run --apply, or --abort to discard", err, files.buffer)
+	}
 	if err := autoInstall(ctx, cmd, s.Git); err != nil {
 		return err
 	}
-	snap, err := s.Create(ctx, ops)
+	attOps, err := attachOps(ctx, cmd, s, attach)
+	if err != nil {
+		return err
+	}
+	snap, err := s.Create(ctx, append(ops, attOps...))
 	if err != nil {
 		return err
 	}
@@ -486,6 +557,94 @@ func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAda
 	}
 	removeBuffer(files)
 	return a.print(cmd, s, verified, jsonOut)
+}
+
+// resolveOpCommitAnchors rewrites every commit-anchor value in ops to its full
+// 40-char sha via resolveCommits, so a short sha hand-typed into a buffer's
+// commits: lands canonicalized like the flag path does. After canonicalizing it
+// cancels AddAnchor/RemoveAnchor pairs that name the same anchor — those are
+// spurious diffs from a buffer that only re-spelled a sha (a short prefix diffs
+// as add-short + remove-full, which without this would net to a dropped anchor),
+// not real edits. Surviving ops keep their order.
+func resolveOpCommitAnchors(ctx context.Context, g gitcmd.Git, ops []model.Op) ([]model.Op, error) {
+	resolve := func(a model.Anchor) (model.Anchor, error) {
+		if a.Kind != model.AnchorCommit {
+			return a, nil
+		}
+		full, err := resolveCommits(ctx, g, []string{a.Value})
+		if err != nil {
+			return a, err
+		}
+		a.Value = full[0]
+		return a, nil
+	}
+	for i := range ops {
+		switch o := ops[i].(type) {
+		case model.CreateDoc:
+			if err := resolveAnchorsInPlace(o.Anchors, resolve); err != nil {
+				return nil, err
+			}
+		case model.CreateNote:
+			if err := resolveAnchorsInPlace(o.Anchors, resolve); err != nil {
+				return nil, err
+			}
+		case model.AddAnchor:
+			r, err := resolve(o.Anchor)
+			if err != nil {
+				return nil, err
+			}
+			ops[i] = model.AddAnchor{Anchor: r}
+		case model.RemoveAnchor:
+			r, err := resolve(o.Anchor)
+			if err != nil {
+				return nil, err
+			}
+			ops[i] = model.RemoveAnchor{Anchor: r}
+		}
+	}
+	return cancelAnchorPairs(ops), nil
+}
+
+func resolveAnchorsInPlace(anchors []model.Anchor, resolve func(model.Anchor) (model.Anchor, error)) error {
+	for j, a := range anchors {
+		r, err := resolve(a)
+		if err != nil {
+			return err
+		}
+		anchors[j] = r
+	}
+	return nil
+}
+
+// cancelAnchorPairs drops every AddAnchor whose exact anchor is also removed in
+// ops, and every matching RemoveAnchor, leaving the unpaired ops in order.
+func cancelAnchorPairs(ops []model.Op) []model.Op {
+	added := map[model.Anchor]bool{}
+	removed := map[model.Anchor]bool{}
+	for _, op := range ops {
+		switch o := op.(type) {
+		case model.AddAnchor:
+			added[o.Anchor] = true
+		case model.RemoveAnchor:
+			removed[o.Anchor] = true
+		}
+	}
+	spurious := func(a model.Anchor) bool { return added[a] && removed[a] }
+	out := make([]model.Op, 0, len(ops))
+	for _, op := range ops {
+		switch o := op.(type) {
+		case model.AddAnchor:
+			if spurious(o.Anchor) {
+				continue
+			}
+		case model.RemoveAnchor:
+			if spurious(o.Anchor) {
+				continue
+			}
+		}
+		out = append(out, op)
+	}
+	return out
 }
 
 func abortFiles(cmd *cobra.Command, files editFiles) error {
