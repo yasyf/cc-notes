@@ -29,9 +29,9 @@ import (
 // verify, with induced-failure toggles and a request counter for the
 // zero-requests assertion.
 type fakeLFS struct {
-	mu        stdsync.Mutex
-	objects   map[string][]byte
-	verified  map[string]bool
+	mu          stdsync.Mutex
+	objects     map[string][]byte
+	verified    map[string]bool
 	requests    int
 	failBatch   int    // when non-zero, batch answers this status
 	failGet     int    // when non-zero, content GET answers this status
