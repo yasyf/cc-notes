@@ -102,7 +102,8 @@ validation, output, and semantics are identical, and a tool result is the comman
 tools are available, prefer them over shelling out to `cc-notes` — especially `doc_add` and `note_add`,
 where a long body rides the `body` parameter and skips the `--checkout` buffer round-trip entirely. This
 skill and `references/cli-reference.md` still govern every flag and behavior: the tools take the same
-arguments the CLI documents.
+arguments the CLI documents. When the server is active, cc-notes' own capt-hook nudges point at these
+tools rather than the CLI, so the hints you see match the surface you are driving.
 
 ## Canonical agent flow
 

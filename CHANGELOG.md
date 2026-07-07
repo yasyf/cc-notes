@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference, and the capt-hook record nudges — now leads with the
   `--checkout`/`--apply` file-mode flow for a long doc or note body, keeping
   `--body`/`--body -` as the short-body path.
+- **The capt-hook nudges follow the MCP server.** When the cc-notes MCP server
+  is serving the repo — detected best-effort from its liveness marker under the
+  git common dir, or a prior MCP tool call this session — the record, plan,
+  claim, commit, and staleness nudges teach the matching `noun_verb` tools
+  (the `body` param for a long doc/note body, `task_add` with `backlog=true` for
+  shared work) instead of CLI lines. Detection only ever changes wording, never
+  whether a nudge fires, so with the server absent the CLI wording is unchanged.
+  A new nudge also catches an MCP record write (`doc_add`/`note_add`/…) whose
+  body points at a purge-bound `/tmp` or scratchpad path.
 
 ## [0.18.0] - 2026-07-07
 

@@ -41,9 +41,12 @@ sys.path.insert(0, str(Path(__file__).parents[2]))
 import hooks.common as common
 from hooks.common import (
     cap_and_render_tasks,
+    CcNotesMcpToolCall,
     entry_payload,
     filter_drifted,
     in_cc_pool_memory,
+    mcp_active,
+    McpActive,
     parse_relevant,
     parse_tasks,
     record_command,
@@ -69,14 +72,20 @@ from hooks.record import (
     evidence_payload_bytes,
     evidence_transfers,
     in_git_worktree,
+    MCP_RECORD_WRITE_NAMES,
+    mcp_ephemeral_refs,
+    McpEphemeralReference,
     nudge_ephemeral_record_reference,
+    nudge_mcp_ephemeral_reference,
     nudge_plan_tasks,
     nudge_record_durable,
     nudge_record_evidence,
+    PLAN_TEACH_MCP,
     PlanTask,
     PlanTasks,
     plan_task_commands,
     plan_text,
+    record_mcp_active,
     transfer_operands,
     tree_bytes,
 )
@@ -99,7 +108,7 @@ from hooks.workflow import (
     nudge_commit_record,
     reconcile_after_merge,
 )
-from captain_hook.testing.helpers import mock_event
+from captain_hook.testing.helpers import mock_event, mock_tool_event
 from captain_hook.types import Action, Event
 
 FAILURES: list[str] = []
@@ -684,7 +693,8 @@ def test_record_command_per_kind() -> None:
     log_lines = record_command("log", "Outage timeline", "", "ops")
     check("log: two lines, add then append", len(log_lines) == 2 and log_lines[0].startswith('cc-notes log add "Outage timeline"') and "log append" in log_lines[1], repr(log_lines))
     check("log: no --when", all("--when" not in ln for ln in log_lines))
-    check("task: task add", record_command("task", "Do it", "", ".")[0].startswith('cc-notes task add "Do it"'))
+    task_line = record_command("task", "Do it", "", ".")[0]
+    check("task: task add carries a --criterion (task add is rejected without one)", task_line.startswith('cc-notes task add "Do it"') and "--criterion" in task_line, repr(task_line))
 
 
 def stub_cli(mapping: dict[tuple[str, ...], str]):
@@ -1441,7 +1451,7 @@ def test_plan_extracts_tasks_from_file(monkeypatch, tmp_path) -> None:
     result = nudge_plan_tasks(plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=tasks))
     check("plan extract: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("plan extract: shared item gets --backlog", 'cc-notes task add "Build the gateway client" --backlog' in result.message, result.message)
+        check("plan extract: shared item gets --criterion and --backlog", 'cc-notes task add "Build the gateway client" --criterion "<how to verify it is done>" --backlog' in result.message, result.message)
         check(
             "plan extract: branch item has no --backlog",
             'cc-notes task add "Wire the widget"' in result.message and 'cc-notes task add "Wire the widget" --backlog' not in result.message,
@@ -1487,7 +1497,7 @@ def test_plan_task_commands_caps_and_skips_blank(monkeypatch, tmp_path) -> None:
     check("plan cmds: caps at five", len(plan_task_commands(evt, "plan")) == 5)
     monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(PlanTasks(tasks=[PlanTask(title="real"), PlanTask(title="   "), PlanTask(title="real2")])))
     cmds = plan_task_commands(evt, "plan")
-    check("plan cmds: drops blank titles", cmds == ['cc-notes task add "real"', 'cc-notes task add "real2"'], repr(cmds))
+    check("plan cmds: drops blank titles", cmds == ['cc-notes task add "real" --criterion "<how to verify it is done>"', 'cc-notes task add "real2" --criterion "<how to verify it is done>"'], repr(cmds))
     check("plan cmds: empty text -> []", plan_task_commands(evt, None) == [])
 
 
@@ -1907,9 +1917,11 @@ def test_pack_loads_under_discover_pack() -> None:
         "prompt_install_cc_notes",
         "float_note_context",
         "check_note_staleness",
+        "record_mcp_active",
         "nudge_record_durable",
         "nudge_record_evidence",
         "nudge_ephemeral_record_reference",
+        "nudge_mcp_ephemeral_reference",
         "nudge_plan_tasks",
         "mirror_memory_to_note",
         "nudge_commit_record",
@@ -1919,10 +1931,240 @@ def test_pack_loads_under_discover_pack() -> None:
     missing = expected - names
     check("discover_pack: every cc-notes handler registered", not missing, f"missing handlers: {sorted(missing)}; got={sorted(names)}")
     check(
-        "discover_pack: it registered the full pack (12 named @on handlers + the bare many-native-tasks nudge)",
+        "discover_pack: it registered the full pack (14 named @on handlers + the bare many-native-tasks nudge)",
         len(registered) >= len(expected) + 1,
         f"registered {len(registered)} hooks this pass: {sorted(h.name for h in registered)}",
     )
+
+
+def test_record_command_mcp_branch() -> None:
+    """With mcp=True each kind renders tool-call guidance, never CLI lines."""
+    doc = record_command("doc", "Auth handoff", "resuming auth", "internal/api", mcp=True)
+    check("mcp doc: single doc_add tool line with body param", len(doc) == 1 and "doc_add tool" in doc[0] and "body param" in doc[0] and 'title="Auth handoff"' in doc[0], repr(doc))
+    check("mcp doc: no CLI checkout or cc-notes prefix", all("--checkout" not in ln and "cc-notes" not in ln for ln in doc), repr(doc))
+    note = record_command("note", "Retry cap", "", "internal/api", mcp=True)
+    check("mcp note: note_add tool + dirs array (the tool declares dirs, not a singular dir)", "note_add tool" in note[0] and 'dirs=["internal/api"]' in note[0], repr(note))
+    check("mcp note: '.' area drops dirs", "dirs=" not in record_command("note", "T", "", ".", mcp=True)[0], repr(record_command("note", "T", "", ".", mcp=True)))
+    log = record_command("log", "Outage", "", ".", mcp=True)
+    check("mcp log: log_add + log_append tools", "log_add tool" in log[0] and "log_append tool" in log[0], repr(log))
+    task = record_command("task", "Do it", "", ".", mcp=True)
+    check("mcp task: task_add tool + criteria + backlog=true", "task_add tool" in task[0] and "criteria=" in task[0] and "backlog=true" in task[0], repr(task))
+
+
+def _write_mcp_marker(common_dir: Path, pid: int) -> None:
+    """Fabricate a <git-common-dir>/cc-notes/mcp/<pid>.json liveness marker under common_dir."""
+    mcp_dir = common_dir / "cc-notes" / "mcp"
+    mcp_dir.mkdir(parents=True, exist_ok=True)
+    (mcp_dir / f"{pid}.json").write_text(json.dumps({"pid": pid, "started_at": "2026-07-07T00:00:00Z"}), encoding="utf-8")
+
+
+def test_mcp_active_live_marker(monkeypatch, tmp_path) -> None:
+    """A marker whose pid is alive (our own) makes mcp_active True; resolution points at the fixture dir."""
+    common._mcp_active_cache = None
+    _write_mcp_marker(tmp_path, os.getpid())
+    evt = mock_event("PostToolUse", tool="Read", file="x.go")
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: str(tmp_path))
+    check("mcp_active: live own-pid marker -> True", mcp_active(evt) is True)
+
+
+def test_mcp_active_dead_marker(monkeypatch, tmp_path) -> None:
+    """A marker whose pid is dead does not count as active (os.kill raises ProcessLookupError)."""
+    common._mcp_active_cache = None
+    proc = subprocess.Popen(["true"])
+    proc.wait()  # reaped -> the pid is gone
+    _write_mcp_marker(tmp_path, proc.pid)
+    evt = mock_event("PostToolUse", tool="Read", file="x.go")
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: str(tmp_path))
+    check("mcp_active: dead-pid marker -> False", mcp_active(evt) is False)
+
+
+def test_mcp_active_outside_repo(monkeypatch, tmp_path) -> None:
+    """No git repo (git returns None) and no session flag -> False."""
+    common._mcp_active_cache = None
+    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)
+    check("mcp_active: outside a repo -> False", mcp_active(evt) is False)
+
+
+def test_mcp_active_non_dict_marker(monkeypatch, tmp_path) -> None:
+    """A foreign/truncated marker whose JSON is not an object (`[]`, `null`) never crashes mcp_active."""
+    common._mcp_active_cache = None
+    mcp_dir = tmp_path / "cc-notes" / "mcp"
+    mcp_dir.mkdir(parents=True)
+    (mcp_dir / "list.json").write_text("[]", encoding="utf-8")
+    (mcp_dir / "null.json").write_text("null", encoding="utf-8")
+    (mcp_dir / "truncated.json").write_text("{ not json", encoding="utf-8")
+    evt = mock_event("PostToolUse", tool="Read", file="x.go")
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: str(tmp_path))
+    check("mcp_active: non-dict / malformed marker payloads -> False, no crash", mcp_active(evt) is False)
+
+
+def test_mcp_active_session_flag(monkeypatch, tmp_path) -> None:
+    """The fast path: a set session flag makes mcp_active True even with no marker (git None)."""
+    common._mcp_active_cache = None
+    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
+    evt.ctx.s[McpActive].set(McpActive(active=True))
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)
+    check("mcp_active: session flag -> True with no marker", mcp_active(evt) is True)
+
+
+def test_mcp_active_caches_per_process(monkeypatch, tmp_path) -> None:
+    """The result is computed once per process: a second call does not re-probe git."""
+    common._mcp_active_cache = None
+    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
+    calls: list = []
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: calls.append(a) or None)
+    first, second = mcp_active(evt), mcp_active(evt)
+    check("mcp_active: cached (git probed at most once)", first is False and second is False and len(calls) <= 1, repr(calls))
+
+
+def test_record_mcp_active_recorder(monkeypatch, tmp_path) -> None:
+    """The recorder flips the session flag on a cc-notes MCP tool call; a later fire reads it True."""
+    common._mcp_active_cache = None
+    rec_evt = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__doc_add",
+        event=Event.PostToolUse,
+        tool_input={"title": "x"},
+        session_dir=tmp_path,
+    )
+    check("recorder: gate matches a cc-notes MCP tool", CcNotesMcpToolCall().check(rec_evt))
+    check("recorder: gate ignores a bare Edit", not CcNotesMcpToolCall().check(mock_event("PostToolUse", tool="Edit", file="m.py")))
+    record_mcp_active(rec_evt)
+    common._mcp_active_cache = None
+    later = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
+    monkeypatch.setattr(later.ctx, "git", lambda *a: None)  # no marker; only the flag can make it True
+    check("recorder: a later fire reads the flipped flag", mcp_active(later) is True)
+
+
+def test_mcp_ephemeral_refs_scans_content_fields() -> None:
+    """mcp_ephemeral_refs collects tool_input content-field values that name a purge-bound path."""
+    hit = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__note_add", event=Event.PostToolUse, tool_input={"title": "Fact", "body": "detail in /tmp/x.md"})
+    check("mcp refs: /tmp in body collected", mcp_ephemeral_refs(hit) == ["detail in /tmp/x.md"], repr(mcp_ephemeral_refs(hit)))
+    entry = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__log_append", event=Event.PostToolUse, tool_input={"text": "output in /private/var/folders/x/out.log"})
+    check("mcp refs: /private/var in log_append text collected", mcp_ephemeral_refs(entry) == ["output in /private/var/folders/x/out.log"], repr(mcp_ephemeral_refs(entry)))
+    title = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__doc_add", event=Event.PostToolUse, tool_input={"title": "see session scratchpad h.md", "body": "b"})
+    check("mcp refs: scratchpad in title collected", mcp_ephemeral_refs(title) == ["see session scratchpad h.md"], repr(mcp_ephemeral_refs(title)))
+    clean = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__note_add", event=Event.PostToolUse, tool_input={"title": "Fact", "body": "the backoff caps at 30s"})
+    check("mcp refs: clean content -> none", mcp_ephemeral_refs(clean) == [], repr(mcp_ephemeral_refs(clean)))
+
+
+def test_mcp_ephemeral_gate_scopes_to_write_tools(monkeypatch) -> None:
+    """The new nudge's gate matches the 6 MCP write tools with a purge-bound field, never a read tool or clean write."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    from captain_hook.conditions import matches_conditions
+
+    spec = _spec_for(nudge_mcp_ephemeral_reference)
+    hit = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__doc_add", event=Event.PostToolUse, tool_input={"body": "detail in /tmp/x.md"})
+    check("mcp ephemeral gate: doc_add with a marker matches", matches_conditions(spec, hit))
+    show = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__doc_show", event=Event.PostToolUse, tool_input={"body": "detail in /tmp/x.md"})
+    check("mcp ephemeral gate: doc_show never matches (not a write tool)", not matches_conditions(spec, show))
+    clean = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__note_add", event=Event.PostToolUse, tool_input={"body": "inline content"})
+    check("mcp ephemeral gate: a clean write does not match", not matches_conditions(spec, clean))
+
+
+def test_mcp_ephemeral_reference_fires(monkeypatch, tmp_path) -> None:
+    """The MCP ephemeral handler warns and teaches the body and attach params (never CLI flags)."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__doc_add",
+        event=Event.PostToolUse,
+        tool_input={"title": "Handoff", "when": "w", "body": "full detail in session scratchpad steering-handoff.md"},
+        session_dir=tmp_path,
+    )
+    result = nudge_mcp_ephemeral_reference(evt)
+    check("mcp ephemeral: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("mcp ephemeral: teaches the body param", "body param" in result.message, result.message)
+        check("mcp ephemeral: teaches the attach param", "attach param" in result.message, result.message)
+        check("mcp ephemeral: names a purge-bound path", "purge-bound" in result.message, result.message)
+        check("mcp ephemeral: no CLI flags", all(flag not in result.message for flag in ("--body", "--attach", "--checkout")), result.message)
+
+
+def test_ephemeral_reference_mcp_wording(monkeypatch, tmp_path) -> None:
+    """The Bash ephemeral handler switches to body/attach-param wording when the MCP server is active."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    common._mcp_active_cache = True
+    evt = mock_event(
+        "PostToolUse",
+        tool="Bash",
+        command='cc-notes doc add "Handoff — full detail in session scratchpad steering-handoff.md" --when w',
+        session_dir=tmp_path,
+    )
+    result = nudge_ephemeral_record_reference(evt)
+    check("ephemeral mcp: warns", result is not None, repr(result))
+    if result and result.message:
+        check("ephemeral mcp: teaches the body param", "body param" in result.message, result.message)
+        check("ephemeral mcp: drops the CLI --checkout line", "--checkout" not in result.message, result.message)
+
+
+def test_plan_teach_mcp_variant(monkeypatch, tmp_path) -> None:
+    """With the MCP server active, the plan teach is the one-line MCP variant pointing at task_add."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    common._mcp_active_cache = True
+    evt = plan_event(tmp_path, monkeypatch)
+    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # no plan text -> the extractor is never reached
+    result = nudge_plan_tasks(evt)
+    check("plan teach mcp: names the task_add tool", result is not None and "task_add tool" in result.message, repr(result))
+    check("plan teach mcp: is the one-line MCP variant, not the CLI teach", result is not None and PLAN_TEACH_MCP in result.message and "cc-notes task add" not in result.message, result.message if result else "")
+
+
+def test_plan_extract_mcp_wording(monkeypatch, tmp_path) -> None:
+    """Extracted durable items render as task_add tool calls when the MCP server is active."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    common._mcp_active_cache = True
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
+    result = nudge_plan_tasks(plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="Build the gateway client", shared=True)]))
+    check("plan extract mcp: shared item as task_add tool with criteria + backlog=true", result is not None and 'task_add tool: title="Build the gateway client", criteria=["<how to verify it is done>"], backlog=true' in result.message, result.message if result else "")
+    check("plan extract mcp: no CLI task add line", result is not None and "cc-notes task add" not in result.message, result.message if result else "")
+
+
+def test_staleness_mcp_wording(monkeypatch, tmp_path) -> None:
+    """With the MCP server active, the staleness nudge names the verify/edit/supersede/expire tools."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    common._mcp_active_cache = True
+    payload = json.dumps([note_entry("stale00aaaa", drift="STALE", title="Retry ceiling")])
+    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--json"): payload}
+    evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
+    result = check_note_staleness(evt)
+    check("staleness mcp: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("staleness mcp: names the verify tools", "note_verify" in result.message and "doc_verify" in result.message, result.message)
+        check("staleness mcp: names the edit tools + body param", "note_edit" in result.message and "body param" in result.message, result.message)
+        check("staleness mcp: drops the CLI reconciliation line", "cc-notes note verify/edit/supersede/expire" not in result.message, result.message)
+
+
+def test_claim_mcp_wording(monkeypatch, tmp_path) -> None:
+    """With the MCP server active, the claim nudge names the task_renew/task_done/task_claim tools."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    common._mcp_active_cache = True
+    result = nudge_claim(claim_event(tmp_path, monkeypatch))
+    check("claim mcp: names the task_renew tool", result is not None and "task_renew tool" in result.message, result.message if result else "")
+    check("claim mcp: names task_done and task_claim (steal=true)", result is not None and "task_done tool" in result.message and "steal=true" in result.message, result.message if result else "")
+    check("claim mcp: drops the CLI --steal flag", result is not None and "--steal" not in result.message, result.message if result else "")
+
+
+def test_commit_mcp_wording(monkeypatch, tmp_path) -> None:
+    """With the MCP server active, the commit reminder names the blame/history tools and routes via note_add."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    common._mcp_active_cache = True
+    verdict = RecordVerdict(record=True, kind="note", title="Backoff caps at 30s", area="internal/api", reasoning="server drops past 30s")
+    result = nudge_commit_record(commit_event(tmp_path, monkeypatch, verdict=verdict))
+    check("commit mcp: keeps the cc-task trailer", result is not None and "cc-task:" in result.message, result.message if result else "")
+    check("commit mcp: names the blame and history tools", result is not None and "the blame tool" in result.message and "the history tool" in result.message, result.message if result else "")
+    check("commit mcp: routes via the note_add tool, not the CLI", result is not None and "note_add tool" in result.message and "cc-notes note add" not in result.message, result.message if result else "")
+
+
+def test_evidence_router_mcp_wording(monkeypatch, tmp_path) -> None:
+    """With the MCP server active, the evidence nudge teaches the log_add/log_append tools + attach param."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    common._mcp_active_cache = True
+    evt = mock_event("PostToolUse", tool="Bash", command="cp -R /tmp/fusekit-vm/results/run-42 docs/reports/assets/vm-repro/phase2", session_dir=tmp_path)
+    result = nudge_record_evidence(evt)
+    check("evidence mcp: names the log_add tool", result is not None and "log_add tool" in result.message, result.message if result else "")
+    check("evidence mcp: names the log_append tool + attach param", result is not None and "log_append tool" in result.message and "attach param" in result.message, result.message if result else "")
+    check("evidence mcp: drops the CLI log-add recipe line", result is not None and 'cc-notes log add "<what ran>"' not in result.message, result.message if result else "")
 
 
 class MonkeyPatch:
@@ -1956,6 +2198,10 @@ def main() -> int:
         if "tmp_path" in params:
             tmp = tempfile.TemporaryDirectory()
             kwargs["tmp_path"] = Path(tmp.name)
+        # The harness has no live MCP marker, so every test starts MCP-inactive (CLI wording);
+        # an MCP-path test opts in by setting the cache True or resetting it to None and pointing
+        # the marker/session-flag resolution at a controlled fixture.
+        common._mcp_active_cache = False
         try:
             fn(**kwargs)
         finally:

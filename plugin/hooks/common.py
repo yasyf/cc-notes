@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,9 @@ LLM_INPUT_CAP = 6000
 
 RECORD_KINDS = ("note", "doc", "log", "task")
 
+# The Claude Code plugin surfaces the cc-notes MCP server's tools under this name prefix.
+MCP_TOOL_PREFIX = "mcp__plugin_cc-notes_cc-notes__"
+
 
 class RecordVerdict(BaseModel):
     """The router's verdict: whether a freshly written file is durable cc-notes content, as which kind.
@@ -37,6 +41,17 @@ class RecordVerdict(BaseModel):
     when: str = ""
     area: str = ""
     reasoning: str = ""
+
+
+class McpActive(BaseModel):
+    """Session-durable flag: a cc-notes MCP tool has fired this session.
+
+    The fast path for :func:`mcp_active` — flipped once by the MCP-tool recorder in
+    ``record.py`` and read on every later hook fire, so once the server is known
+    active the marker scan is skipped.
+    """
+
+    active: bool = False
 
 
 def run_cc_notes(evt: BaseHookEvent, *args: str) -> str | None:
@@ -156,9 +171,26 @@ def in_cc_pool_memory(path: Path) -> bool:
     return ".cc-pool" in path.parts and path.parent.name == "memory"
 
 
-def record_command(kind: str, title: str, when: str, area: str) -> list[str]:
+def record_command(kind: str, title: str, when: str, area: str, *, mcp: bool = False) -> list[str]:
     # A log takes no body at creation — `log add` opens the journal and `log append`
-    # grows it — so it renders as two lines; the others are a single `add`.
+    # grows it — so it renders as two lines; the others are a single `add`. With the MCP
+    # server active, the whole surface is tool calls: the body param carries the content,
+    # so there is no checkout buffer or stdin.
+    if mcp:
+        dir_arg = f', dirs=["{area}"]' if area and area != "." else ""
+        if kind == "doc":
+            return [
+                f'call the doc_add tool: title="{title}", when="{when}"{dir_arg}, and the FULL markdown guidance as the body param (no scratch file — the body lives in the record; use the attach param for artifact files).'
+            ]
+        if kind == "log":
+            return [
+                f'call the log_add tool (title="{title}"{dir_arg}) to open the journal, then the log_append tool once per entry.'
+            ]
+        if kind == "task":
+            return [
+                f'call the task_add tool: title="{title}", criteria=["<how to verify it is done>"] (backlog=true if any agent should be able to claim it; no_validation_criteria=true only when acceptance genuinely cannot be stated).'
+            ]
+        return [f'call the note_add tool: title="{title}"{dir_arg}, with the fact as the body param.']
     dir_flag = f" --dir {area}" if area and area != "." else ""
     if kind == "doc":
         return [
@@ -172,8 +204,74 @@ def record_command(kind: str, title: str, when: str, area: str) -> list[str]:
             "cc-notes log append <id>   # then add the chronology one entry at a time",
         ]
     if kind == "task":
-        return [f'cc-notes task add "{title}"   # add --backlog if it is shared work']
+        return [
+            f'cc-notes task add "{title}" --criterion "<how to verify it is done>"   # --backlog if shared; --no-validation-criteria only when acceptance cannot be stated'
+        ]
     return [f'cc-notes note add "{title}"{dir_flag} --body -']
+
+
+_mcp_active_cache: bool | None = None
+
+
+def mcp_active(evt: BaseHookEvent) -> bool:
+    """Whether the cc-notes MCP server is serving this repo — for nudge WORDING only.
+
+    Best-effort and cached per hook process. A wrong answer only mis-words a teaching
+    hint and never changes whether a handler fires, so this is called inside handler
+    bodies, never in a condition. True when a cc-notes MCP tool call flipped the session
+    flag this session, or when a live liveness marker sits under the repo's git common
+    dir; outside a git repo, False.
+    """
+    global _mcp_active_cache
+    if _mcp_active_cache is None:
+        _mcp_active_cache = _mcp_session_flag(evt) or _mcp_marker_live(evt)
+    return _mcp_active_cache
+
+
+def _mcp_session_flag(evt: BaseHookEvent) -> bool:
+    try:
+        return evt.ctx.s.load(McpActive).active
+    except Exception:
+        return False
+
+
+def _mcp_marker_live(evt: BaseHookEvent) -> bool:
+    common_dir = evt.ctx.git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not common_dir or not common_dir.strip():
+        return False
+    mcp_dir = Path(common_dir.strip()) / "cc-notes" / "mcp"
+    try:
+        markers = list(mcp_dir.glob("*.json"))
+    except OSError:
+        return False
+    return any(_marker_pid_alive(m) for m in markers)
+
+
+def _marker_pid_alive(marker: Path) -> bool:
+    try:
+        pid = json.loads(marker.read_text(encoding="utf-8")).get("pid")
+    except (OSError, ValueError, AttributeError):
+        # AttributeError: a foreign/truncated marker whose JSON is not an object (`[]`, `null`)
+        # has no .get — must not crash mcp_active's best-effort, never-raise contract.
+        return False
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)  # signal 0 probes liveness only — it never signals the process
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # a live process we do not own (EPERM)
+    except OSError:
+        return False
+    return True
+
+
+class CcNotesMcpToolCall(CustomCondition):
+    """Matches a PostToolUse for any cc-notes MCP server tool, by name prefix."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        return bool(evt.tool_name) and evt.tool_name.startswith(MCP_TOOL_PREFIX)
 
 
 class CcNotesAvailable(CustomCondition):

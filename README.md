@@ -31,7 +31,7 @@ The plugin auto-installs the binary on its first session, and with the capt-hook
 
 ```text
 Install cc-notes with `brew install yasyf/tap/cc-notes`, then run `cc-notes init` in this repo.
-Record each open work item with `cc-notes task add "<title>" --backlog`, then `cc-notes sync` to share.
+Record each open work item with `cc-notes task add "<title>" --criterion "<how to verify it is done>" --backlog`, then `cc-notes sync` to share.
 Run `cc-notes status` at the start of every session to orient; `cc-notes --help` covers the rest.
 ```
 

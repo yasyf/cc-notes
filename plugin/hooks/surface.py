@@ -20,6 +20,7 @@ from .common import (
     CcNotesAvailable,
     entry_payload,
     filter_drifted,
+    mcp_active,
     parse_relevant,
     render_note_lines,
     run_cc_notes,
@@ -122,13 +123,22 @@ def check_note_staleness(evt: PostToolUseEvent) -> HookResult | None:
     picked = surface_filter(evt, fresh, touched="edited")
     if not picked:
         return None
-    return evt.warn(
-        f"You edited {evt.file} — durable cc-notes records anchored here look out of date. "
-        "Reconcile each against its kind — `verify <id>` to re-confirm it against HEAD, `edit <id>` "
-        "to revise it, `supersede <old> --by <new>` to replace it, or `expire <id>` to flag it "
-        "out-of-date: for a note use `cc-notes note verify/edit/supersede/expire`, "
-        "for a doc use `cc-notes doc verify/edit/supersede/expire`. To revise a long "
-        "record with your file tools, `edit <id> --checkout` writes it to a file and "
-        "`--apply` commits the change.",
-        *render_note_lines(picked),
-    )
+    if mcp_active(evt):
+        guidance = (
+            f"You edited {evt.file} — durable cc-notes records anchored here look out of date. "
+            "Reconcile each against its kind with the MCP tools: re-confirm it against HEAD "
+            "(note_verify / doc_verify), revise it (note_edit / doc_edit — pass the full new text "
+            "as the body param), replace it (note_supersede / doc_supersede), or flag it out-of-date "
+            "(note_expire / doc_expire)."
+        )
+    else:
+        guidance = (
+            f"You edited {evt.file} — durable cc-notes records anchored here look out of date. "
+            "Reconcile each against its kind — `verify <id>` to re-confirm it against HEAD, `edit <id>` "
+            "to revise it, `supersede <old> --by <new>` to replace it, or `expire <id>` to flag it "
+            "out-of-date: for a note use `cc-notes note verify/edit/supersede/expire`, "
+            "for a doc use `cc-notes doc verify/edit/supersede/expire`. To revise a long "
+            "record with your file tools, `edit <id> --checkout` writes it to a file and "
+            "`--apply` commits the change."
+        )
+    return evt.warn(guidance, *render_note_lines(picked))

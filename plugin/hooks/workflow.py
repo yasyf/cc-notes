@@ -24,6 +24,7 @@ from .common import (
     NATIVE_TASK_MIRROR_THRESHOLD,
     NUDGE_MAX_FIRES,
     RecordVerdict,
+    mcp_active,
     record_command,
     run_cc_notes,
 )
@@ -105,7 +106,7 @@ def commit_decision(evt: PostToolUseEvent) -> list[str]:
     title = verdict.title or "the decision behind this commit"
     return [
         f"This commit encodes a durable {verdict.kind} ({verdict.reasoning}) — capture it:",
-        *record_command(verdict.kind, title, verdict.when, verdict.area),
+        *record_command(verdict.kind, title, verdict.when, verdict.area, mcp=mcp_active(evt)),
     ]
 
 
@@ -127,9 +128,18 @@ def nudge_commit_record(evt: PostToolUseEvent) -> HookResult | None:
         sha = ""
     if sha and not evt.ctx.s.once(sha, scope="commit"):
         return None
+    if mcp_active(evt):
+        link = (
+            "Commit landed. Link it to its task with a `cc-task: <id>` trailer (queryable via "
+            "`git log --grep`, the blame tool, and the history tool)."
+        )
+    else:
+        link = (
+            "Commit landed. Link it to its task with a `cc-task: <id>` trailer (queryable via "
+            "`git log --grep`, `cc-notes blame <sha>`, and `cc-notes history <id>`)."
+        )
     return evt.warn(
-        "Commit landed. Link it to its task with a `cc-task: <id>` trailer (queryable via "
-        "`git log --grep`, `cc-notes blame <sha>`, and `cc-notes history <id>`).",
+        link,
         *commit_decision(evt),
         *([line] if (line := auto_sync(evt)) else []),
     )
@@ -154,10 +164,20 @@ def reconcile_after_merge(evt: PostToolUseEvent) -> HookResult | None:
 )
 def nudge_claim(evt: PostToolUseEvent) -> HookResult | None:
     """After claiming/starting a task, teach lease upkeep and sync the new claim."""
+    if mcp_active(evt):
+        lease = (
+            "You hold a lease now. Call the task_renew tool on long silent stretches, and the "
+            "task_done tool when finished. A crashed hold whose lease expired is reclaimable with "
+            "the task_claim tool (steal=true)."
+        )
+    else:
+        lease = (
+            "You hold a lease now. `cc-notes task renew <id>` on long silent stretches, "
+            "`cc-notes task done <id>` when finished. A crashed hold whose lease expired is "
+            "reclaimable with `cc-notes task claim <id> --steal`."
+        )
     return evt.warn(
-        "You hold a lease now. `cc-notes task renew <id>` on long silent stretches, "
-        "`cc-notes task done <id>` when finished. A crashed hold whose lease expired is "
-        "reclaimable with `cc-notes task claim <id> --steal`.",
+        lease,
         *([line] if (line := auto_sync(evt)) else []),
     )
 
@@ -165,8 +185,8 @@ def nudge_claim(evt: PostToolUseEvent) -> HookResult | None:
 nudge(
     "Your native task list is getting large. Native tasks vanish at session end "
     "and are private to this agent — mirror any that are durable or cross-agent "
-    "into `cc-notes task add` (`--backlog` if it's shared work anyone can claim). "
-    "Keep the purely in-session steps as native todos.",
+    "into `cc-notes task add` with a `--criterion` (`--backlog` if it's shared work "
+    "anyone can claim). Keep the purely in-session steps as native todos.",
     only_if=[Tool("TaskCreate"), ManyNativeTasks(), CcNotesAvailable()],
     events=Event.PostToolUse,
     max_fires=NUDGE_MAX_FIRES,

@@ -24,11 +24,15 @@ from pydantic import BaseModel
 
 from .common import (
     CcNotesAvailable,
+    CcNotesMcpToolCall,
     LLM_INPUT_CAP,
+    MCP_TOOL_PREFIX,
+    McpActive,
     NUDGE_MAX_FIRES,
     RECORD_KINDS,
     RecordVerdict,
     in_cc_pool_memory,
+    mcp_active,
     record_command,
 )
 
@@ -102,6 +106,34 @@ SKIPPED_VALUE_FLAGS = frozenset({
     "--commit", "--add-commit", "--rm-commit",
     "--attach", "--rm-attachment",
 })
+
+# The MCP analog of the Bash ephemeral vocabulary: the record-write tools whose args carry
+# prose, and the tool_input fields that prose flows through. The Bash-only condition above
+# can't see MCP writes, so a sibling condition scans these fields instead.
+MCP_RECORD_WRITE_TOOLS = ("note_add", "doc_add", "log_add", "log_append", "note_edit", "doc_edit")
+MCP_RECORD_WRITE_NAMES = tuple(MCP_TOOL_PREFIX + t for t in MCP_RECORD_WRITE_TOOLS)
+# The prose-bearing input fields across those tools, per internal/mcpserver/tools_*.go: note/doc
+# carry `body`, log_add a first `entry`, log_append its `text`. No write tool has a `message` field.
+MCP_CONTENT_FIELDS = ("title", "body", "entry", "text")
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[CcNotesMcpToolCall()],
+    tests={
+        Input(tool="mcp__plugin_cc-notes_cc-notes__task_add", tool_input={"title": "x"}): Allow(),
+        Input(tool="Edit", file="m.py"): Allow(),
+    },
+)
+def record_mcp_active(evt: PostToolUseEvent) -> HookResult | None:
+    """Flip the session MCP-active flag on any cc-notes MCP tool call — the mcp_active fast path."""
+    try:
+        if not evt.ctx.s.load(McpActive).active:
+            evt.ctx.s[McpActive].set(McpActive(active=True))
+    except Exception:
+        # No session (inline tests) or a store error must never disturb the tool call.
+        pass
+    return None
 
 
 class DurableInternalWrite(CustomCondition):
@@ -208,7 +240,7 @@ def nudge_record_durable(evt: PostToolUseEvent) -> HookResult | None:
     return evt.warn(
         f"{evt.file} reads like durable {verdict.kind} content for cc-notes, not a loose file in "
         f"the working tree ({verdict.reasoning}). Record it, then delete the loose file:",
-        *record_command(verdict.kind, title, verdict.when, verdict.area),
+        *record_command(verdict.kind, title, verdict.when, verdict.area, mcp=mcp_active(evt)),
         "(Don't put secrets in cc-notes — the refs sync to the remote.)",
     )
 
@@ -367,10 +399,19 @@ def nudge_record_evidence(evt: PostToolUseEvent) -> HookResult | None:
         if evidence_payload_bytes(evt) > EVIDENCE_TRIPWIRE_BYTES
         else " machine-generated evidence in the tracked tree, where git history carries it forever."
     )
+    if mcp_active(evt):
+        recipe = [
+            "call the log_add tool for what ran, then the log_append tool with the verdict as the "
+            "text param and each artifact via the attach param (repeatable).",
+        ]
+    else:
+        recipe = [
+            'cc-notes log add "<what ran>"',
+            'cc-notes log append <id> -m "<verdict>" --attach <file>   # repeat --attach per artifact',
+        ]
     return evt.warn(
         landed + weight + " Record a cc-notes log entry with the artifacts attached instead:",
-        'cc-notes log add "<what ran>"',
-        'cc-notes log append <id> -m "<verdict>" --attach <file>   # repeat --attach per artifact',
+        *recipe,
         "Attachments never touch the checkout, and only `cc-notes sync` uploads their content "
         "(a plain `git push` moves refs without it). Then delete the copied files.",
     )
@@ -441,14 +482,73 @@ def nudge_ephemeral_record_reference(evt: PostToolUseEvent) -> HookResult | None
     if fired_this_turn(evt):
         return None
     record_fire(evt)
-    return evt.warn(
-        "This cc-notes record leans on a purge-bound path (/tmp, /var, or a session scratchpad) — "
-        "those are gone by the next session, so a durable record that points at one outlives its own "
-        "content. Carry the content in the record itself:",
+    return evt.warn(EPHEMERAL_REFERENCE_LEDE, *_carry_content_fixes(mcp_active(evt)))
+
+
+EPHEMERAL_REFERENCE_LEDE = (
+    "This cc-notes record leans on a purge-bound path (/tmp, /var, or a session scratchpad) — "
+    "those are gone by the next session, so a durable record that points at one outlives its own "
+    "content. Carry the content in the record itself:"
+)
+
+
+def _carry_content_fixes(mcp: bool) -> list[str]:
+    if mcp:
+        return [
+            "the body param (note_add/doc_add) or text param (log_append) carries the content — pass the full text there, not a path.",
+            "the attach param stores an artifact file — its bytes land in the git ODB and sync with the repo.",
+        ]
+    return [
         "--checkout prints a prefilled buffer; write the body into it, then --apply — the body lives in the record, not a loose file.",
         "--body - reads a short body from stdin instead.",
         "--attach <file> stores an artifact — its bytes land in the git ODB and sync with the repo.",
-    )
+    ]
+
+
+def mcp_ephemeral_refs(evt: PostToolUseEvent) -> list[str]:
+    """Content-field values of an MCP record-write tool call that name a purge-bound path.
+
+    The MCP analog of :func:`ephemeral_record_refs`: the Bash-only condition can't see a
+    record written through the ``mcp__plugin_cc-notes_cc-notes__*`` tools, so scan the
+    tool_input fields (:data:`MCP_CONTENT_FIELDS`) a title or body flows through.
+    """
+    ti = evt._tool_input
+    return [
+        value
+        for field in MCP_CONTENT_FIELDS
+        if isinstance(value := ti.get(field), str) and any(marker in value for marker in EPHEMERAL_MARKERS)
+    ]
+
+
+class McpEphemeralReference(CustomCondition):
+    """Matches an MCP note/doc/log record write whose title or body text points at a purge-bound path."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        return bool(mcp_ephemeral_refs(evt))
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[Tool(*MCP_RECORD_WRITE_NAMES), McpEphemeralReference(), CcNotesAvailable()],
+    max_fires=NUDGE_MAX_FIRES,
+    tests={
+        Input(
+            tool="mcp__plugin_cc-notes_cc-notes__doc_add",
+            tool_input={"title": "Handoff", "when": "w", "body": "full detail in session scratchpad steering-handoff.md"},
+        ): Warn(pattern="attach"),
+        # Inline content with no purge-bound path stays silent.
+        Input(
+            tool="mcp__plugin_cc-notes_cc-notes__note_add",
+            tool_input={"title": "Fact", "body": "the backoff caps at 30s"},
+        ): Allow(),
+    },
+)
+def nudge_mcp_ephemeral_reference(evt: PostToolUseEvent) -> HookResult | None:
+    """Nudge an MCP record write that leans on a purge-bound path to carry its content in the record."""
+    if fired_this_turn(evt):
+        return None
+    record_fire(evt)
+    return evt.warn(EPHEMERAL_REFERENCE_LEDE, *_carry_content_fixes(mcp=True))
 
 
 PLAN_TASKS_SYSTEM = (
@@ -467,11 +567,21 @@ PLAN_TASKS_SYSTEM = (
 PLAN_TEACH = (
     "Plan approved. Native TaskCreate/TaskUpdate is your private scratchpad — it vanishes at session "
     "end. Durable work that outlives the session or coordinates agents goes in `cc-notes task`: "
-    "`--backlog` for shared work any agent can claim, plain `cc-notes task add` for your branch. "
+    "`--backlog` for shared work any agent can claim, plain `cc-notes task add` for your branch; each "
+    "needs a `--criterion \"<how to verify>\"` (or `--no-validation-criteria` when acceptance can't be "
+    "stated). "
     "(A decision or durable fact is a `cc-notes note add`; living guidance for the next agent, with a "
     "`--when` read-trigger, is a `cc-notes doc add` — short title, and for a long body `--checkout` "
     "prints a prefilled buffer you write the guidance into and `--apply`, or `--body -` reads a short "
     "one from stdin; an append-only chronology whose entries are never edited is a `cc-notes log add`.)"
+)
+
+# The one-line MCP variant: routing lives in the MCP tools' own descriptions, so the teach only
+# needs to point durable/shared work at the task_add tool.
+PLAN_TEACH_MCP = (
+    "Plan approved. Native TaskCreate/TaskUpdate is your private in-session scratchpad; durable work "
+    "that outlives the session or coordinates agents goes to the task_add tool with acceptance criteria "
+    "(backlog=true for shared work any agent can claim)."
 )
 
 
@@ -506,7 +616,7 @@ def plan_text(evt: PostToolUseEvent) -> str | None:
     return inline.strip() if isinstance(inline, str) and inline.strip() else None
 
 
-def plan_task_commands(evt: PostToolUseEvent, text: str | None) -> list[str]:
+def plan_task_commands(evt: PostToolUseEvent, text: str | None, *, mcp: bool = False) -> list[str]:
     if not text:
         return []
     prompt = (
@@ -522,8 +632,12 @@ def plan_task_commands(evt: PostToolUseEvent, text: str | None) -> list[str]:
     commands = []
     for task in extracted.tasks[:5]:
         title = task.title.strip()
-        if title:
-            commands.append(f'cc-notes task add "{title}"' + (" --backlog" if task.shared else ""))
+        if not title:
+            continue
+        if mcp:
+            commands.append(f'task_add tool: title="{title}", criteria=["<how to verify it is done>"]' + (", backlog=true" if task.shared else ""))
+        else:
+            commands.append(f'cc-notes task add "{title}" --criterion "<how to verify it is done>"' + (" --backlog" if task.shared else ""))
     return commands
 
 
@@ -542,8 +656,9 @@ def nudge_plan_tasks(evt: PostToolUseEvent) -> HookResult | None:
     path = evt._tool_input.get("planFilePath")
     if isinstance(path, str) and path and not evt.ctx.s.once(path, scope="plan"):
         return None
-    lines = [PLAN_TEACH]
-    if commands := plan_task_commands(evt, text):
+    mcp = mcp_active(evt)
+    lines = [PLAN_TEACH_MCP if mcp else PLAN_TEACH]
+    if commands := plan_task_commands(evt, text, mcp=mcp):
         lines.append("These items from your plan look like durable work — capture them:")
         lines.extend(commands)
     return evt.warn(*lines)
