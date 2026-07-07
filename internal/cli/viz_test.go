@@ -76,7 +76,7 @@ func TestVizPortInUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("occupy port: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	port := ln.Addr().(*net.TCPAddr).Port
 
 	_, stderr, err := runCLI(t, dir, "viz", "--no-open", "--port", strconv.Itoa(port))

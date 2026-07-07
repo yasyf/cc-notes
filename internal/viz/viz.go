@@ -171,7 +171,7 @@ func (b *Builder) digest(ctx context.Context, since int64) (string, error) {
 		h.Write([]byte(line))
 		h.Write([]byte{'\n'})
 	}
-	fmt.Fprintf(h, "since=%d\nhead=%s", since, head)
+	_, _ = fmt.Fprintf(h, "since=%d\nhead=%s", since, head)
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 

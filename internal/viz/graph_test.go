@@ -23,7 +23,7 @@ func TestTopologyMergedBranches(t *testing.T) {
 	}{
 		{
 			name: "merge commit",
-			build: func(t *testing.T, r *gitRepo) Lane {
+			build: func(_ *testing.T, r *gitRepo) Lane {
 				r.commit("c1")
 				c2 := r.commit("c2")
 				r.git("checkout", "-q", "-b", "B")
@@ -46,7 +46,7 @@ func TestTopologyMergedBranches(t *testing.T) {
 		},
 		{
 			name: "fast forward",
-			build: func(t *testing.T, r *gitRepo) Lane {
+			build: func(_ *testing.T, r *gitRepo) Lane {
 				r.commit("c1")
 				r.commit("c2")
 				r.git("checkout", "-q", "-b", "B")
@@ -70,7 +70,7 @@ func TestTopologyMergedBranches(t *testing.T) {
 		},
 		{
 			name: "squash inferred",
-			build: func(t *testing.T, r *gitRepo) Lane {
+			build: func(_ *testing.T, r *gitRepo) Lane {
 				r.commit("c1")
 				c2 := r.commit("c2")
 				r.git("checkout", "-q", "-b", "B")

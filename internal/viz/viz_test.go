@@ -113,7 +113,8 @@ func (r *gitRepo) commitMsg(messages ...string) commitInfo {
 		r.t.Fatalf("write %s: %v", name, err)
 	}
 	r.git("add", name)
-	args := []string{"commit", "-q"}
+	args := make([]string, 0, 2+2*len(messages))
+	args = append(args, "commit", "-q")
 	for _, m := range messages {
 		args = append(args, "-m", m)
 	}

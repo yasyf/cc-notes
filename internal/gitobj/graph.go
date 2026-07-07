@@ -135,6 +135,9 @@ func (r *Repo) FirstParentMerges(ctx context.Context, tip model.SHA, limit int, 
 
 func newCodeCommit(c *object.Commit) CodeCommit {
 	var parents []model.SHA
+	if len(c.ParentHashes) > 0 {
+		parents = make([]model.SHA, 0, len(c.ParentHashes))
+	}
 	for _, p := range c.ParentHashes {
 		parents = append(parents, model.SHA(p.String()))
 	}

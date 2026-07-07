@@ -61,7 +61,7 @@ func TestStreamFramingAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
 		t.Fatalf("content-type = %q, want text/event-stream", got)
 	}
@@ -102,7 +102,7 @@ func TestStreamClosedByHub(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// The headers are flushed after Subscribe, so the hub has the subscriber.
 	hub.Close()

@@ -68,10 +68,10 @@ func runViz(cmd *cobra.Command, opts vizOptions) error {
 		_ = ln.Close()
 		return err
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes viz serving %s (Ctrl-C to stop)\n", url)
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes viz serving %s (Ctrl-C to stop)\n", url)
 	if !opts.noOpen {
 		if err := viz.OpenBrowser(cmd.Context(), url); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: could not open a browser (%v); open %s yourself\n", err, url)
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: could not open a browser (%v); open %s yourself\n", err, url)
 		}
 	}
 
@@ -88,7 +88,7 @@ func runViz(cmd *cobra.Command, opts vizOptions) error {
 	})
 	g.Go(func() error {
 		<-gctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		shutCtx, cancel := context.WithTimeout(context.WithoutCancel(gctx), 3*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(shutCtx)
 		return nil
