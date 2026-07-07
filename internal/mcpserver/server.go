@@ -49,7 +49,7 @@ func Serve(ctx context.Context, dir string, cfg Config) error {
 	if err := os.Chdir(workdir); err != nil {
 		return fmt.Errorf("chdir %s: %w", workdir, err)
 	}
-	s, err := store.Open(workdir)
+	s, err := store.OpenContext(ctx, workdir)
 	if err != nil {
 		return err
 	}
