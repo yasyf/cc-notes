@@ -357,6 +357,7 @@ func TestHistoryElementJSON(t *testing.T) {
 	}
 	if transition == nil {
 		t.Fatalf("no criteria status transition in task history: %+v", tEntries)
+		return
 	}
 	if len(transition.Added) != 1 || transition.Added[0] != `"tests pass" [met]` {
 		t.Errorf("transition added = %#v, want [\"tests pass\" [met]]", transition.Added)

@@ -59,7 +59,7 @@ func attachContent(t *testing.T, s *store.Store, ref, name string, content []byt
 	if err != nil {
 		t.Fatalf("AttachFile %s: %v", path, err)
 	}
-	appendOps(t, s, ref, model.AddAttachment{Name: att.Name, OID: att.OID, Size: att.Size})
+	appendOps(t, s, ref, model.AddAttachment(att))
 	return att
 }
 

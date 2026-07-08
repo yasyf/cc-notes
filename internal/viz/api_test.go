@@ -269,6 +269,7 @@ func TestAPIEntityTaskWithCheckpoint(t *testing.T) {
 	}
 	if checkpoint == nil {
 		t.Fatalf("trail %+v has no checkpoint entry", resp.Trail)
+		return
 	}
 	if checkpoint.Covers != 2 {
 		t.Errorf("checkpoint covers = %d, want 2 (create + set in_progress)", checkpoint.Covers)
