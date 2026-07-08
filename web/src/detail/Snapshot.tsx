@@ -16,7 +16,8 @@ import type {
 } from "../api";
 import { Attachments } from "./Attachments";
 import { Markdown } from "./Markdown";
-import { AuthoredBlock, Chip, CommitChip, IdChip, StatusBadge, TimeText } from "./parts";
+import { AuthoredBlock } from "./AuthoredBlock";
+import { Chip, CommitChip, IdChip, StatusBadge, TimeText } from "./parts";
 
 export function SnapshotView({ kind, snapshot }: { kind: string; snapshot: Snapshot }) {
   switch (kind) {

@@ -5,7 +5,7 @@
 // is routed. View mode persists to localStorage.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Panel } from "../detail/Panel";
+import { PanelLazy } from "../detail/lazy";
 import { useStore, type Selection } from "../store";
 import { EntityTable, nextSort, sortRows, type ColKey, type SortState } from "./EntityTable";
 import { emptyFilters, FilterBar, matchesFilters, type FacetKey, type Filters } from "./FilterBar";
@@ -163,7 +163,7 @@ export function Browse({ onSelect }: { onSelect: (sel: Selection | null) => void
             )}
           </div>
         </div>
-        {selection !== null && <Panel selection={selection} onClose={() => onSelect(null)} />}
+        {selection !== null && <PanelLazy selection={selection} onClose={() => onSelect(null)} />}
       </div>
     </section>
   );

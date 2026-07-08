@@ -303,8 +303,15 @@ body {
 }
 
 .tl-axis-wrap {
+  display: flex;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
+}
+
+/* Blank corner above the lane-label gutter, matching its fixed width so the axis
+   ticks line up with the chart markers to its right. */
+.tl-axis-corner {
+  flex: 0 0 auto;
 }
 
 .tl-axis {
@@ -325,6 +332,8 @@ body {
 
 .tl-body {
   position: relative;
+  display: flex;
+  align-items: flex-start;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -332,8 +341,20 @@ body {
   overscroll-behavior: contain;
 }
 
+/* Fixed lane-label column: a child of the scrolling body so it tracks lanes
+   vertically, pinned to the left edge so pan/zoom never drifts it off-screen. */
+.tl-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: 0 0 auto;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+
 .tl-svg {
   display: block;
+  flex: 0 0 auto;
   cursor: grab;
   touch-action: pan-y;
 }
@@ -434,22 +455,90 @@ body {
   outline-offset: 1px;
 }
 
-/* Lane label chip: background rect (click → focus lane), chevron (collapse
-   toggle), status dot, name, commit count, and an "older than view" tag. */
-.tl-lane-chip {
-  fill: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
-  stroke: var(--border);
-  stroke-width: 1;
+/* Lane-label gutter row: one strip per packed row, laying out a cell per lane
+   inline (ordered by lane start). Absolute top comes from the row's labelY; cells
+   shrink so a row hosting several packed lanes ellipsizes each chip name rather
+   than stacking labels on one top or overflowing the gutter. */
+.tl-lane-row {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* One lane's cell within a row: a collapse chevron (toggle) plus a focus chip
+   (click → focus lane) carrying a status dot, name, commit count, and an "older
+   than view" tag. Shrinks to share the row when packed siblings sit beside it. */
+.tl-lane-cell {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.tl-lane-chevron {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
   cursor: pointer;
 }
 
+.tl-chevron {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--fg-muted);
+}
+
+.tl-chevron-collapsed {
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-right: none;
+  border-left: 5px solid var(--fg-muted);
+}
+
+.tl-lane-chevron:hover .tl-chevron {
+  border-top-color: var(--accent);
+}
+
+.tl-lane-chevron:hover .tl-chevron-collapsed {
+  border-top-color: transparent;
+  border-left-color: var(--accent);
+}
+
+.tl-lane-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 16px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+  cursor: pointer;
+  font: inherit;
+}
+
 .tl-lane-chip:hover {
-  stroke: var(--accent);
+  border-color: var(--accent);
 }
 
 .tl-lane-chip-on {
-  fill: color-mix(in srgb, var(--accent) 18%, var(--bg));
-  stroke: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
 }
 
 .tl-lane-chip:focus-visible,
@@ -458,52 +547,50 @@ body {
   outline-offset: 1px;
 }
 
-.tl-lane-chevron {
-  cursor: pointer;
-}
-
-.tl-chevron-glyph {
-  fill: var(--fg-muted);
-}
-
-.tl-lane-chevron:hover .tl-chevron-glyph {
-  fill: var(--accent);
-}
-
 .tl-lane-dot {
-  stroke: var(--viz-surface);
-  stroke-width: 1;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--viz-surface);
 }
 
 .tl-lane-dot-active {
-  fill: var(--viz-good);
+  background: var(--viz-good);
 }
 
 .tl-lane-dot-merged {
-  fill: var(--viz-s5);
+  background: var(--viz-s5);
 }
 
 .tl-lane-dot-deleted,
 .tl-lane-dot-deleted-inferred {
-  fill: var(--viz-muted-mark);
+  background: var(--viz-muted-mark);
 }
 
 .tl-lane-name {
-  fill: var(--fg);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
   font-size: 11px;
   font-weight: 500;
 }
 
 .tl-lane-count {
-  fill: var(--fg-muted);
+  flex: 0 0 auto;
+  color: var(--fg-muted);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 
 .tl-lane-tag {
-  fill: var(--fg-muted);
+  flex: 0 0 auto;
+  color: var(--fg-muted);
   font-size: 9px;
   font-style: italic;
+  white-space: nowrap;
 }
 
 .tl-merge {

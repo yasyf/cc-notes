@@ -1,15 +1,15 @@
 // Small presentational atoms shared by the snapshot and trail sections: a
 // copy-on-click chip (with commit- and id-labelled variants), plain/label/anchor
-// chips, a status badge, a lifecycle timestamp, and the authored block (author
-// chip + relative time + markdown body) used for comments and log entries.
+// chips, a status badge, and a lifecycle timestamp. Kept free of the markdown
+// renderer so the entry-chunk browse views can reuse these atoms without pulling
+// it in; the markdown-bearing authored block lives in AuthoredBlock.tsx.
 
 import { useState, type ReactNode } from "react";
 import type { Anchor, Criterion } from "../api";
-import { relativeTime, shortSha } from "../dag/badges";
+import { shortSha } from "../dag/badges";
 import { useCommitsLoader } from "../dag/useCommits";
 import { useDispatch, useStore } from "../store";
-import { formatDateTime, nowSec, shortId } from "./format";
-import { Markdown } from "./Markdown";
+import { formatDateTime, shortId } from "./format";
 
 export function Chip({ children, className }: { children: ReactNode; className?: string }) {
   return <span className={className ? `chip ${className}` : "chip"}>{children}</span>;
@@ -143,41 +143,5 @@ export function TimeText({ sec }: { sec: number }) {
     <span className="time-text" title={new Date(sec * 1000).toISOString()}>
       {formatDateTime(sec)}
     </span>
-  );
-}
-
-export function AuthoredBlock({
-  author,
-  ts,
-  body,
-  sign,
-}: {
-  author: string;
-  ts: number;
-  body: string;
-  sign?: "+" | "-";
-}) {
-  const classes = ["authored", sign === "-" ? "authored-removed" : undefined]
-    .filter(Boolean)
-    .join(" ");
-  return (
-    <div className={classes}>
-      <div className="authored-head">
-        {sign !== undefined && (
-          <span className="authored-sign" aria-hidden="true">
-            {sign === "+" ? "＋" : "−"}
-          </span>
-        )}
-        <span className="chip chip-author">{author}</span>
-        <span className="authored-time" title={formatDateTime(ts)}>
-          {relativeTime(ts, nowSec())}
-        </span>
-      </div>
-      {body.trim() !== "" && (
-        <div className="authored-body">
-          <Markdown>{body}</Markdown>
-        </div>
-      )}
-    </div>
   );
 }

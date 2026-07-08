@@ -21,6 +21,7 @@ import { Legend } from "./Legend";
 import type { TimelineFilters } from "./filters";
 import {
   CONNECTOR_RADIUS,
+  GUTTER_WIDTH,
   MARKER_SIZE,
   RAIL_STROKE,
   SPAN_HEIGHT,
@@ -85,7 +86,10 @@ export function Swimlanes({
   onToggleCollapse,
 }: Props) {
   const [bodyRef, measured] = useMeasure<HTMLDivElement>();
-  const chartWidth = Math.max(measured, 1);
+  // The lane-label gutter occupies a fixed left column of the scrolling body, so
+  // the chart's scale math, ticks, and svg width all run against the remaining
+  // width and start at the gutter's right edge.
+  const chartWidth = Math.max(measured - GUTTER_WIDTH, 1);
   const [zoom, setZoom] = useState<ZoomState>(IDENTITY_ZOOM);
   const [tip, setTip] = useState<Tooltip | null>(null);
 
@@ -106,6 +110,7 @@ export function Swimlanes({
     [base, view.k, view.x],
   );
   const metrics = useMemo(() => rowMetrics(result), [result]);
+  const laneRows = useMemo(() => groupLaneRows(result.lanes), [result.lanes]);
   const tickCount = Math.max(2, Math.round(chartWidth / 120));
   const tickList = makeTicks(scale, tickCount);
   const sx = (t: number) => scale(new Date(t * 1000));
@@ -122,7 +127,7 @@ export function Swimlanes({
       const rect = el.getBoundingClientRect();
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        const px = e.clientX - rect.left;
+        const px = e.clientX - rect.left - GUTTER_WIDTH;
         setZoom(
           zoomAt(zoomRef.current, px, Math.exp(-e.deltaY * 0.0015), limitsRef.current),
         );
@@ -203,9 +208,25 @@ export function Swimlanes({
         </div>
       </div>
       <div className="tl-axis-wrap">
+        <div className="tl-axis-corner" style={{ width: GUTTER_WIDTH }} />
         <Axis ticks={tickList} width={chartWidth} />
       </div>
       <div className="tl-body" ref={bodyRef}>
+        <div className="tl-gutter" style={{ width: GUTTER_WIDTH, height: metrics.totalHeight }}>
+          {laneRows.map((r) => (
+            <div key={`lane-row-${r.row}`} className="tl-lane-row" style={{ top: metrics.labelY(r.row) - 11 }}>
+              {r.lanes.map((lane) => (
+                <LaneChip
+                  key={`label-${lane.name}`}
+                  lane={lane}
+                  focused={filters.lane === lane.name}
+                  onToggleLane={onToggleLane}
+                  onToggleCollapse={onToggleCollapse}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
         <svg
           className="tl-svg"
           width={chartWidth}
@@ -284,19 +305,6 @@ export function Swimlanes({
                 />
               )),
             )}
-          </g>
-          <g className="tl-labels">
-            {result.lanes.map((lane) => (
-              <LaneLabel
-                key={`label-${lane.name}`}
-                lane={lane}
-                x={Math.max(2, sx(lane.start))}
-                y={metrics.labelY(lane.row)}
-                focused={filters.lane === lane.name}
-                onToggleLane={onToggleLane}
-                onToggleCollapse={onToggleCollapse}
-              />
-            ))}
           </g>
         </svg>
         {tip !== null && (
@@ -443,86 +451,74 @@ function MarkerGlyph({
   );
 }
 
-function LaneLabel({
+// groupLaneRows buckets lanes by their packed row so the gutter renders one
+// label strip per row. Layout packs non-overlapping sibling lanes onto a shared
+// row; each row's chips sit inline, ordered by lane start (then name), so a
+// packed row lays its lanes side by side instead of stacking labels on one top.
+function groupLaneRows(lanes: LaneRow[]): { row: number; lanes: LaneRow[] }[] {
+  const byRow = new Map<number, LaneRow[]>();
+  for (const lane of lanes) {
+    const arr = byRow.get(lane.row);
+    if (arr) arr.push(lane);
+    else byRow.set(lane.row, [lane]);
+  }
+  const rows = [...byRow.entries()].map(([row, ls]) => ({
+    row,
+    lanes: ls.sort(
+      (a, b) => a.start - b.start || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
+    ),
+  }));
+  rows.sort((a, b) => a.row - b.row);
+  return rows;
+}
+
+// LaneChip renders one lane's cell within a gutter row: a collapse chevron and a
+// focus chip (status dot, name, commit count, "older than view" tag). Several
+// cells share a row when layout packs their lanes together; each cell shrinks so
+// the chip name ellipsizes gracefully when a row hosts more than one.
+function LaneChip({
   lane,
-  x,
-  y,
   focused,
   onToggleLane,
   onToggleCollapse,
 }: {
   lane: LaneRow;
-  x: number;
-  y: number;
   focused: boolean;
   onToggleLane: (lane: string) => void;
   onToggleCollapse: (lane: string) => void;
 }) {
-  const chevW = 13;
-  const dotSlot = 12;
-  const nameX = chevW + dotSlot;
-  const nameEnd = nameX + Math.max(18, lane.name.length * 7);
-  const hasCount = lane.commits > 0;
-  const countText = hasCount ? String(lane.commits) : "";
-  const countX = nameEnd + 7;
-  const countEnd = hasCount ? countX + countText.length * 6.5 : nameEnd;
-  const tag = lane.autoCollapsed ? "older than view" : "";
-  const tagX = countEnd + (tag !== "" ? 8 : 0);
-  const tagEnd = tag !== "" ? tagX + tag.length * 5.4 : countEnd;
-  const chipW = tagEnd + 8;
-  const chipClass = ["tl-lane-chip", focused ? "tl-lane-chip-on" : ""].filter(Boolean).join(" ");
+  const chipClass = ["tl-lane-chip", focused ? "tl-lane-chip-on" : ""]
+    .filter(Boolean)
+    .join(" ");
+  const title = `${lane.name} — ${lane.laneClass}${lane.commits > 0 ? `, ${lane.commits} commit${lane.commits === 1 ? "" : "s"}` : ""}`;
   return (
-    <g transform={`translate(${x},${y})`}>
-      <rect
-        x={-2}
-        y={-11}
-        width={chipW}
-        height={16}
-        rx={4}
+    <div className="tl-lane-cell">
+      <button
+        type="button"
+        className="tl-lane-chevron"
+        aria-label={lane.collapsed ? `expand lane ${lane.name}` : `collapse lane ${lane.name}`}
+        aria-expanded={!lane.collapsed}
+        onClick={() => onToggleCollapse(lane.name)}
+      >
+        <span
+          className={lane.collapsed ? "tl-chevron tl-chevron-collapsed" : "tl-chevron"}
+          aria-hidden="true"
+        />
+      </button>
+      <button
+        type="button"
         className={chipClass}
-        role="button"
-        tabIndex={0}
+        title={title}
         aria-label={`focus lane ${lane.name}`}
         aria-pressed={focused}
-        onPointerDown={(e) => e.stopPropagation()}
         onClick={() => onToggleLane(lane.name)}
-        onKeyDown={(e) => activate(e, () => onToggleLane(lane.name))}
       >
-        <title>
-          {`${lane.name} — ${lane.laneClass}${lane.commits > 0 ? `, ${lane.commits} commit${lane.commits === 1 ? "" : "s"}` : ""}`}
-        </title>
-      </rect>
-      <g
-        className="tl-lane-chevron"
-        transform={`translate(${chevW / 2},-3)`}
-        role="button"
-        tabIndex={0}
-        aria-label={lane.collapsed ? `expand lane ${lane.name}` : `collapse lane ${lane.name}`}
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleCollapse(lane.name);
-        }}
-        onKeyDown={(e) => activate(e, () => onToggleCollapse(lane.name))}
-      >
-        <path d={lane.collapsed ? "M -2,-3 L 3,0 L -2,3 Z" : "M -3,-2 L 3,-2 L 0,3 Z"} className="tl-chevron-glyph" />
-        <rect x={-6} y={-7} width={13} height={14} fill="transparent" />
-      </g>
-      <circle cx={nameX - dotSlot / 2} cy={-3} r={3.5} className={`tl-lane-dot tl-lane-dot-${lane.laneClass}`} />
-      <text x={nameX} y={0} className="tl-lane-name">
-        {lane.name}
-      </text>
-      {hasCount && (
-        <text x={countX} y={0} className="tl-lane-count">
-          {countText}
-        </text>
-      )}
-      {tag !== "" && (
-        <text x={tagX} y={0} className="tl-lane-tag">
-          {tag}
-        </text>
-      )}
-    </g>
+        <span className={`tl-lane-dot tl-lane-dot-${lane.laneClass}`} aria-hidden="true" />
+        <span className="tl-lane-name">{lane.name}</span>
+        {lane.commits > 0 && <span className="tl-lane-count">{lane.commits}</span>}
+        {lane.autoCollapsed && <span className="tl-lane-tag">older than view</span>}
+      </button>
+    </div>
   );
 }
 

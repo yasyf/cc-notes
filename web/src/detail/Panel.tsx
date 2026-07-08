@@ -15,6 +15,7 @@ import {
 import type { Selection } from "../store";
 import { AttachmentProvider } from "./Attachments";
 import { formatDateTime } from "./format";
+import { clampWidth, persistWidth, readStoredWidth } from "./panelWidth";
 import { Chip, CopyChip, StatusBadge } from "./parts";
 import { SnapshotView } from "./Snapshot";
 import { ChangeValue } from "./values";
@@ -29,31 +30,14 @@ type Load =
   | { state: "error"; message: string }
   | { state: "ready"; detail: EntityDetail };
 
-const WIDTH_KEY = "cc-notes:detail-width";
-const MIN_WIDTH = 320;
-const MAX_WIDTH = 560;
-
-function clampWidth(px: number): number {
-  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, px));
-}
-
-function defaultWidth(): number {
-  const vw = typeof window === "undefined" ? 1200 : window.innerWidth;
-  return clampWidth(Math.round(vw * 0.28));
-}
-
 // useResizableWidth holds the panel width, seeded from localStorage (or the
 // clamp(320px, 28vw, 560px) default) and updated by dragging the left-edge
 // handle. The width persists back to localStorage whenever it settles.
 function useResizableWidth() {
-  const [width, setWidth] = useState<number>(() => {
-    const stored = window.localStorage.getItem(WIDTH_KEY);
-    const n = stored !== null ? Number(stored) : NaN;
-    return Number.isFinite(n) ? clampWidth(n) : defaultWidth();
-  });
+  const [width, setWidth] = useState<number>(readStoredWidth);
 
   useEffect(() => {
-    window.localStorage.setItem(WIDTH_KEY, String(width));
+    persistWidth(width);
   }, [width]);
 
   const onHandleDown = useCallback(

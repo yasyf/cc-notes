@@ -6,7 +6,7 @@ import { relativeTime } from "./dag/badges";
 import { CommitGraph } from "./dag/CommitGraph";
 import { useCommitsLoader } from "./dag/useCommits";
 import { nowSec } from "./detail/format";
-import { Panel } from "./detail/Panel";
+import { PanelLazy } from "./detail/lazy";
 import { formatRoute, parseRoute } from "./route";
 import { createSequencer } from "./seq";
 import { connectStream, type Connection } from "./stream";
@@ -288,7 +288,7 @@ function TimelinePane({ onSelect }: { onSelect: (sel: Selection | null) => void 
           onToggleCollapse={onToggleCollapse}
         />
         {selection !== null && (
-          <Panel selection={selection} onClose={() => onSelect(null)} />
+          <PanelLazy selection={selection} onClose={() => onSelect(null)} />
         )}
       </div>
     </section>
@@ -302,7 +302,7 @@ function CommitsPane({ onSelect }: { onSelect: (sel: Selection | null) => void }
       <div className="timeline-grid">
         <CommitGraph selection={selection} onSelect={onSelect} />
         {selection !== null && (
-          <Panel selection={selection} onClose={() => onSelect(null)} />
+          <PanelLazy selection={selection} onClose={() => onSelect(null)} />
         )}
       </div>
     </section>

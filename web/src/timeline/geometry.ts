@@ -6,6 +6,7 @@ import type { LayoutResult } from "./layout";
 
 export const AXIS_HEIGHT = 30;
 export const LABEL_STRIP = 18; // room above a row's rails for inline labels
+export const GUTTER_WIDTH = 176; // fixed left column holding the lane labels
 export const SUBROW_H = 22;
 export const LANE_PAD = 8;
 export const MARKER_SIZE = 11; // >= 8px per the dataviz mark spec

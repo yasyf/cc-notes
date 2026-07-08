@@ -16,7 +16,8 @@ import type {
 } from "../api";
 import { isTimeField, scalarText } from "./format";
 import { AttachmentChip } from "./Attachments";
-import { AnchorChip, AuthoredBlock, Chip, CommitChip, CriterionChip, IdChip, TimeText } from "./parts";
+import { AuthoredBlock } from "./AuthoredBlock";
+import { AnchorChip, Chip, CommitChip, CriterionChip, IdChip, TimeText } from "./parts";
 
 export function ChangeValue({ change }: { change: TrailChange }) {
   if (change.scalar) {
