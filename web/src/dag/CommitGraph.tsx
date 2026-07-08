@@ -7,7 +7,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Glyph } from "../timeline/Glyph";
 import { EVENT_SPECS, eventSpec } from "../timeline/marks";
 import type { CommitPage } from "../api";
-import { useStore, type Selection } from "../store";
+import { useDispatch, useStore, type Selection } from "../store";
+import { shortTask } from "./badges";
 import { assignColumns } from "./columns";
 import { Row } from "./Row";
 import { useCommitsLoader } from "./useCommits";
@@ -17,20 +18,54 @@ interface Props {
   onSelect: (sel: Selection | null) => void;
 }
 
+// rowMatches reports whether a commit matches the filter query (case-insensitive)
+// across its summary, author, sha, and task ids (full and short form).
+function rowMatches(c: CommitPage, needle: string): boolean {
+  if (
+    c.summary.toLowerCase().includes(needle) ||
+    c.author.toLowerCase().includes(needle) ||
+    c.sha.toLowerCase().includes(needle)
+  ) {
+    return true;
+  }
+  return c.tasks.some(
+    (id) =>
+      id.toLowerCase().includes(needle) || shortTask(id).toLowerCase().includes(needle),
+  );
+}
+
 export function CommitGraph({ selection, onSelect }: Props) {
-  const { commits } = useStore();
+  const { commits, focusCommit } = useStore();
+  const dispatch = useDispatch();
   const { loadFirst, loadOlder } = useCommitsLoader();
   const [activeSha, setActiveSha] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
 
   useEffect(() => {
     if (!commits.loaded && !commits.loading) loadFirst();
   }, [commits.loaded, commits.loading, loadFirst]);
+
+  // A focus request from a detail-panel commit chip flashes the matching row,
+  // then clears itself so the one-shot request does not re-fire on later renders.
+  // The clear waits out the flash animation.
+  useEffect(() => {
+    if (focusCommit === null) return;
+    if (!commits.rows.some((c) => c.sha === focusCommit)) return;
+    const t = window.setTimeout(() => dispatch({ type: "focus-commit", sha: null }), 1600);
+    return () => window.clearTimeout(t);
+  }, [focusCommit, commits.rows, dispatch]);
 
   const now = useMemo(() => Math.floor(Date.now() / 1000), [commits.rows]);
   const layout = useMemo(
     () => assignColumns(commits.rows.map((c) => ({ sha: c.sha, parents: c.parents }))),
     [commits.rows],
   );
+
+  const needle = filter.trim().toLowerCase();
+  const filtering = needle !== "";
+  const visibleCount = filtering
+    ? commits.rows.reduce((n, c) => n + (rowMatches(c, needle) ? 1 : 0), 0)
+    : commits.rows.length;
 
   if (commits.error !== null && commits.rows.length === 0) {
     return (
@@ -59,22 +94,44 @@ export function CommitGraph({ selection, onSelect }: Props) {
   return (
     <div className="dag-root">
       <div className="dag-toolbar">
+        <div className="dag-filter">
+          <input
+            type="search"
+            className="dag-filter-input"
+            placeholder="Filter commits… (summary, author, task)"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            aria-label="Filter commits"
+          />
+          {filtering && (
+            <span className="dag-filter-count">
+              {visibleCount} of {commits.rows.length} loaded
+            </span>
+          )}
+        </div>
         <CommitLegend rows={commits.rows} />
       </div>
       <div className="dag-body" role="table" aria-label="Commit graph">
-        {commits.rows.map((c, i) => (
-          <Row
-            key={c.sha}
-            commit={c}
-            node={layout.rows[i]}
-            totalColumns={layout.totalColumns}
-            now={now}
-            active={activeSha === c.sha}
-            selectedId={selectedId}
-            onSelectRow={setActiveSha}
-            onSelectEntity={(sel) => onSelect(sel)}
-          />
-        ))}
+        {filtering && visibleCount === 0 && (
+          <p className="dag-endcap">No loaded commits match “{filter.trim()}”.</p>
+        )}
+        {commits.rows.map((c, i) =>
+          filtering && !rowMatches(c, needle) ? null : (
+            <Row
+              key={c.sha}
+              commit={c}
+              node={layout.rows[i]}
+              totalColumns={layout.totalColumns}
+              now={now}
+              active={activeSha === c.sha}
+              flash={focusCommit === c.sha}
+              hideGraph={filtering}
+              selectedId={selectedId}
+              onSelectRow={setActiveSha}
+              onSelectEntity={(sel) => onSelect(sel)}
+            />
+          ),
+        )}
         {commits.nextBefore !== null && (
           <div className="dag-more">
             <button

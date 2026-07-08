@@ -28,6 +28,15 @@ function withCommits(overrides: Partial<State["commits"]>): State {
   return { ...initialState, commits: { ...initialState.commits, ...overrides } };
 }
 
+describe("reducer focus-commit", () => {
+  it("sets and clears the one-shot focus sha", () => {
+    const set = reducer(initialState, { type: "focus-commit", sha: "abc123" });
+    expect(set.focusCommit).toBe("abc123");
+    const cleared = reducer(set, { type: "focus-commit", sha: null });
+    expect(cleared.focusCommit).toBeNull();
+  });
+});
+
 describe("reducer commits generation guard", () => {
   it("bumps the generation and clears rows on a reset start", () => {
     const state = withCommits({ rows: [commit("c1")], gen: 1, loaded: true });

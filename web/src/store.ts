@@ -83,6 +83,11 @@ export interface State {
   tab: Tab;
   commits: CommitsState;
   entities: EntitiesState;
+  // focusCommit names a commit the Commits tab should scroll to and flash, set
+  // when a commit chip in the detail panel is clicked. CommitGraph clears it once
+  // the row has flashed, so it is a one-shot request rather than a persistent
+  // selection.
+  focusCommit: string | null;
 }
 
 export type Action =
@@ -93,6 +98,7 @@ export type Action =
   | { type: "connection"; connection: Connection }
   | { type: "gen"; gen: number }
   | { type: "tab"; tab: Tab }
+  | { type: "focus-commit"; sha: string | null }
   | { type: "commits-load-start"; reset: boolean; gen: number }
   | { type: "commits-loaded"; page: CommitsPage; reset: boolean; gen: number }
   | { type: "commits-load-error"; error: string; gen: number }
@@ -111,6 +117,7 @@ export const initialState: State = {
   tab: "timeline",
   commits: initialCommits,
   entities: initialEntities,
+  focusCommit: null,
 };
 
 export function reducer(state: State, action: Action): State {
@@ -135,6 +142,8 @@ export function reducer(state: State, action: Action): State {
       return { ...state, gen: action.gen };
     case "tab":
       return { ...state, tab: action.tab };
+    case "focus-commit":
+      return { ...state, focusCommit: action.sha };
     case "commits-load-start":
       return {
         ...state,

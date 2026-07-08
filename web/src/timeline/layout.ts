@@ -14,6 +14,7 @@ const BAND_KINDS = new Set(["sprint", "project"]);
 // seconds for sub-row collision when no explicit width is injected.
 const DOMAIN_MARKER_DIV = 150;
 const DAY = 86400;
+const EMPTY_SET: ReadonlySet<string> = new Set();
 
 export interface EntityRef {
   kind: string;
@@ -28,6 +29,7 @@ export interface SpanItem {
   end: number; // resolved: open span extends to `now`
   open: boolean; // closed_at was 0
   status: string; // final task status, colours the bar
+  assignee?: string; // task assignee, surfaced in the tooltip
   subRow: number;
   orphanBranch?: string; // set when the task's branch matched no lane
   clamped?: boolean; // an endpoint was clamped into [domainStart, now]
@@ -44,17 +46,27 @@ export interface MarkerItem {
   clamped?: boolean; // time was clamped into [domainStart, now]
 }
 
+// LaneClass is the lane's visual family for the renderer: a live lane, a
+// merged-away lane, a mined deleted lane (real DAG evidence), or a task-rumor
+// deleted lane (inferred, no fork/tip). Derived from status + inferred.
+export type LaneClass = "active" | "merged" | "deleted" | "deleted-inferred";
+
 export interface LaneRow {
   name: string;
   parent: string; // resolved parent lane name ("" for the trunk root)
   status: string; // active | merged | deleted
   inferred: boolean;
+  laneClass: LaneClass;
   isTrunk: boolean;
   row: number; // packed global row index (siblings may share a row)
   depth: number; // tree depth, trunk = 0 — label indent
   start: number; // effective start
   end: number; // effective end (open -> now)
   open: boolean; // lane.end was 0
+  commits: number; // attributed commit count (0 hides the label count)
+  collapsed: boolean; // rendered as a single thin row, spans/markers suppressed
+  autoCollapsed: boolean; // deleted lane wholly before the window — collapsed by
+  // default, still listed and expandable ("older than view")
   fork: { time: number } | null;
   merge: { time: number; into: string; kind: string } | null;
   spans: SpanItem[];
@@ -96,6 +108,11 @@ export interface LayoutInput {
   graph: Graph;
   now: number; // unix seconds, injected for determinism
   markerWidth?: number; // marker footprint in seconds; derived from domain when absent
+  // collapsed carries lane names the caller has toggled away from their default
+  // collapse state: a normal lane in the set renders collapsed; an auto-collapsed
+  // lane in the set renders expanded. So one caller-held set drives both
+  // directions, and layout resolves the effective `collapsed` per lane.
+  collapsed?: ReadonlySet<string>;
 }
 
 interface Attribution {
@@ -229,6 +246,7 @@ export function layout(input: LayoutInput): LayoutResult {
       open: closed <= 0,
       status: e.status ?? "",
       subRow: 0,
+      ...(e.assignee !== undefined && e.assignee !== "" ? { assignee: e.assignee } : {}),
       ...(at.orphanBranch !== undefined ? { orphanBranch: at.orphanBranch } : {}),
       ...(start !== started || end !== rawEnd ? { clamped: true } : {}),
     });
@@ -280,12 +298,20 @@ export function layout(input: LayoutInput): LayoutResult {
     input.markerWidth ??
     Math.max(1, Math.round((domain[1] - domain[0]) / DOMAIN_MARKER_DIV));
 
-  // Assemble one LaneRow per lane, packing its spans+markers onto sub-rows.
+  // Assemble one LaneRow per lane, packing its spans+markers onto sub-rows. A
+  // collapsed lane suppresses its items and reports a single sub-row, so the
+  // shared row tightens; a deleted lane wholly before the window auto-collapses.
+  const toggled = input.collapsed ?? EMPTY_SET;
   const laneRows: LaneRow[] = [];
   for (const l of graph.lanes) {
-    const spans = (spansByLane.get(l.name) ?? []).slice();
-    const markers = (markersByLane.get(l.name) ?? []).slice();
-    const subRows = packSubRows(spans, markers, markerWidth);
+    const cls = classifyLane(l);
+    const deleted = cls === "deleted" || cls === "deleted-inferred";
+    const autoCollapsed =
+      deleted && Number.isFinite(clampFloor) && effEnd(l) < clampFloor;
+    const collapsed = autoCollapsed ? !toggled.has(l.name) : toggled.has(l.name);
+    const spans = collapsed ? [] : (spansByLane.get(l.name) ?? []).slice();
+    const markers = collapsed ? [] : (markersByLane.get(l.name) ?? []).slice();
+    const subRows = collapsed ? 1 : packSubRows(spans, markers, markerWidth);
     spans.sort((a, b) => a.start - b.start || a.end - b.end || cmp(a.ref.id, b.ref.id));
     markers.sort(
       (a, b) => a.time - b.time || cmp(a.type, b.type) || cmp(a.ref.id, b.ref.id),
@@ -295,12 +321,16 @@ export function layout(input: LayoutInput): LayoutResult {
       parent: parentOf(l),
       status: l.status,
       inferred: l.inferred,
+      laneClass: cls,
       isTrunk: l.name === trunk.name,
       row: rowOf.get(l.name) ?? 0,
       depth: depthOf.get(l.name) ?? 0,
       start: l.start,
       end: effEnd(l),
       open: l.end === 0,
+      commits: l.commits,
+      collapsed,
+      autoCollapsed,
       fork: l.fork !== null ? { time: l.fork.time } : null,
       merge:
         l.merge !== null
@@ -453,6 +483,15 @@ function mergeKind(raw: string): ConnectorKind {
   if (raw === "fast-forward") return "fast-forward";
   if (raw === "inferred") return "inferred";
   return "merge";
+}
+
+// classifyLane maps a lane's status + inferred flag to its visual family. A
+// deleted lane splits by inferred: real DAG-mined lanes are "deleted", task-rumor
+// lanes (no fork/tip) are "deleted-inferred" and render most muted.
+function classifyLane(l: Lane): LaneClass {
+  if (l.status === "deleted") return l.inferred ? "deleted-inferred" : "deleted";
+  if (l.status === "merged") return "merged";
+  return "active";
 }
 
 // computeDomain spans every meaningful time in the graph, floored so a marker

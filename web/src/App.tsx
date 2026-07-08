@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchEntities, fetchGraph, fetchRepo } from "./api";
 import { Browse } from "./browse/Browse";
 import { HeaderSearch } from "./browse/HeaderSearch";
@@ -17,6 +17,13 @@ import {
   type Selection,
   type Tab,
 } from "./store";
+import {
+  applyFilters,
+  NO_FILTERS,
+  presentKinds,
+  presentTypes,
+  type TimelineFilters,
+} from "./timeline/filters";
 import { layout } from "./timeline/layout";
 import { Swimlanes } from "./timeline/Swimlanes";
 
@@ -199,12 +206,48 @@ function TabButton({
   );
 }
 
+// toggleMember returns a copy of set with value flipped in or out.
+function toggleMember(set: ReadonlySet<string>, value: string): Set<string> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
+
 function TimelinePane({ onSelect }: { onSelect: (sel: Selection | null) => void }) {
   const { graph, selection, error, loading } = useStore();
+  // Legend/lane filters and lane-collapse toggles are local to the timeline pane:
+  // filters apply before layout so packing tightens, collapse feeds into layout.
+  const [filters, setFilters] = useState<TimelineFilters>(NO_FILTERS);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+
   const now = useMemo(() => Math.floor(Date.now() / 1000), [graph]);
+  const filtered = useMemo(
+    () => (graph !== null ? applyFilters(graph, filters) : null),
+    [graph, filters],
+  );
   const result = useMemo(
-    () => (graph !== null ? layout({ graph, now }) : null),
-    [graph, now],
+    () => (filtered !== null ? layout({ graph: filtered, now, collapsed }) : null),
+    [filtered, now, collapsed],
+  );
+  const kinds = useMemo(() => (graph !== null ? presentKinds(graph) : new Set<string>()), [graph]);
+  const types = useMemo(() => (graph !== null ? presentTypes(graph) : new Set<string>()), [graph]);
+
+  const onToggleKind = useCallback(
+    (k: string) => setFilters((f) => ({ ...f, hiddenKinds: toggleMember(f.hiddenKinds, k) })),
+    [],
+  );
+  const onToggleType = useCallback(
+    (t: string) => setFilters((f) => ({ ...f, hiddenTypes: toggleMember(f.hiddenTypes, t) })),
+    [],
+  );
+  const onToggleLane = useCallback(
+    (l: string) => setFilters((f) => ({ ...f, lane: f.lane === l ? null : l })),
+    [],
+  );
+  const onToggleCollapse = useCallback(
+    (l: string) => setCollapsed((prev) => toggleMember(prev, l)),
+    [],
   );
 
   if (error !== null && graph === null) {
@@ -232,7 +275,18 @@ function TimelinePane({ onSelect }: { onSelect: (sel: Selection | null) => void 
   return (
     <section className="pane pane-timeline" aria-label="Timeline">
       <div className="timeline-grid">
-        <Swimlanes result={result} selection={selection} onSelect={(s) => onSelect(s)} />
+        <Swimlanes
+          result={result}
+          selection={selection}
+          onSelect={(s) => onSelect(s)}
+          filters={filters}
+          presentKinds={kinds}
+          presentTypes={types}
+          onToggleKind={onToggleKind}
+          onToggleType={onToggleType}
+          onToggleLane={onToggleLane}
+          onToggleCollapse={onToggleCollapse}
+        />
         {selection !== null && (
           <Panel selection={selection} onClose={() => onSelect(null)} />
         )}

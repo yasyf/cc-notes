@@ -6,6 +6,8 @@
 import { useState, type ReactNode } from "react";
 import type { Anchor, Criterion } from "../api";
 import { relativeTime, shortSha } from "../dag/badges";
+import { useCommitsLoader } from "../dag/useCommits";
+import { useDispatch, useStore } from "../store";
 import { formatDateTime, nowSec, shortId } from "./format";
 import { Markdown } from "./Markdown";
 
@@ -34,8 +36,54 @@ export function CopyChip({ text, label, className }: { text: string; label?: str
   );
 }
 
+// CommitChip jumps to the Commits tab and flashes the matching row. When the sha
+// is already loaded it navigates straight there; when the commits are not yet
+// loaded it navigates optimistically and triggers the first fetch (the row
+// flashes once it arrives); when the first page is loaded but the sha is absent
+// it falls back to copying. A secondary copy icon always copies the full sha.
 export function CommitChip({ sha }: { sha: string }) {
-  return <CopyChip text={sha} label={shortSha(sha)} className="chip-commit" />;
+  const dispatch = useDispatch();
+  const { commits } = useStore();
+  const { loadFirst } = useCommitsLoader();
+  const [copied, setCopied] = useState(false);
+
+  const present = commits.rows.some((c) => c.sha === sha);
+  const copy = () => {
+    void navigator.clipboard?.writeText(sha);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1000);
+  };
+  const jump = () => {
+    if (present || !commits.loaded) {
+      if (!commits.loaded) loadFirst();
+      dispatch({ type: "tab", tab: "commits" });
+      dispatch({ type: "focus-commit", sha });
+      return;
+    }
+    copy();
+  };
+
+  return (
+    <span className={copied ? "chip chip-commit chip-copied" : "chip chip-commit"}>
+      <button
+        type="button"
+        className="commit-jump"
+        title={present || !commits.loaded ? `jump to commit ${shortSha(sha)}` : `copy ${sha}`}
+        onClick={jump}
+      >
+        {shortSha(sha)}
+      </button>
+      <button
+        type="button"
+        className="commit-copy"
+        aria-label={copied ? "copied" : `copy commit ${sha}`}
+        title={copied ? "copied" : "copy sha"}
+        onClick={copy}
+      >
+        {copied ? "✓" : "⎘"}
+      </button>
+    </span>
+  );
 }
 
 export function IdChip({ id }: { id: string }) {

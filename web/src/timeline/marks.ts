@@ -86,12 +86,20 @@ export function statusSpec(status: string): StatusSpec {
   return TASK_STATUS[status] ?? { color: S1, label: status || "In progress" };
 }
 
-// LANE_STATUS labels the rail status chip.
-export const LANE_STATUS: Record<string, string> = {
-  active: "active",
-  merged: "merged",
-  deleted: "deleted",
+// MERGE_MARKS glyphs a lane's merge point, keyed by merge.kind so a real merge,
+// a fast-forward, and an inferred (task-rumor) merge each read as a distinct
+// shape rather than colour alone.
+export const MERGE_MARKS: Record<string, MarkSpec> = {
+  merge: { shape: "diamond", color: S5, label: "Merge", hollow: false },
+  "fast-forward": { shape: "chevron", color: S2, label: "Fast-forward merge", hollow: false },
+  inferred: { shape: "ring", color: MUTED, label: "Inferred merge", hollow: true },
 };
+
+// mergeMark returns the glyph for a merge kind, defaulting to the plain merge
+// diamond for any unclassified kind.
+export function mergeMark(kind: string): MarkSpec {
+  return MERGE_MARKS[kind] ?? MERGE_MARKS.merge;
+}
 
 export type GlyphGeom =
   | { kind: "circle"; r: number }

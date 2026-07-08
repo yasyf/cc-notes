@@ -168,6 +168,121 @@ describe("layout lane rows", () => {
   });
 });
 
+describe("layout deleted lanes and collapse", () => {
+  it("connects a mined deleted lane with real fork and merge points", () => {
+    const g = graph({
+      lanes: [
+        lane("main", { start: 10 }),
+        lane("gone", {
+          parent: "",
+          status: "deleted",
+          inferred: false,
+          fork: { sha: "f", time: 20 },
+          merge: { sha: "m", time: 60, into: "main", kind: "merge" },
+          start: 20,
+          end: 60,
+          commits: 4,
+        }),
+      ],
+    });
+    const result = layout({ graph: g, now: NOW });
+    const gone = result.lanes.find((l) => l.name === "gone");
+    expect(gone?.laneClass).toBe("deleted");
+    expect(gone?.collapsed).toBe(false);
+    expect(gone?.autoCollapsed).toBe(false);
+    expect(gone?.commits).toBe(4);
+    expect(result.connectors).toEqual([
+      { kind: "fork", time: 20, childRow: 1, parentRow: 0, dashed: false },
+      { kind: "merge", time: 60, childRow: 1, parentRow: 0, dashed: false },
+    ]);
+  });
+
+  it("classifies a mined deleted lane and a task-rumor lane as distinct families", () => {
+    const g = graph({
+      lanes: [
+        lane("main", { start: 10 }),
+        lane("mined", {
+          parent: "",
+          status: "deleted",
+          inferred: false,
+          fork: { sha: "f", time: 20 },
+          merge: { sha: "m", time: 50, into: "main", kind: "merge" },
+          start: 20,
+          end: 50,
+        }),
+        lane("rumor", {
+          parent: "",
+          status: "deleted",
+          inferred: true,
+          merge: { sha: "r", time: 40, into: "main", kind: "inferred" },
+          start: 30,
+          end: 40,
+        }),
+      ],
+    });
+    const result = layout({ graph: g, now: NOW });
+    const byName = new Map(result.lanes.map((l) => [l.name, l]));
+    expect(byName.get("mined")?.laneClass).toBe("deleted");
+    expect(byName.get("rumor")?.laneClass).toBe("deleted-inferred");
+    expect(result.connectors).toEqual([
+      { kind: "fork", time: 20, childRow: 1, parentRow: 0, dashed: false },
+      { kind: "inferred", time: 40, childRow: 2, parentRow: 0, dashed: true },
+      { kind: "merge", time: 50, childRow: 1, parentRow: 0, dashed: false },
+    ]);
+  });
+
+  it("suppresses items and tightens a collapsed lane to a single sub-row", () => {
+    const g = graph({
+      lanes: [
+        lane("main", { start: 5 }),
+        lane("feat", { parent: "main", fork: { sha: "f", time: 10 }, start: 10, end: 0 }),
+      ],
+      entities: [
+        task("t1", { branch: "feat", status: "done", started_at: 12, closed_at: 40 }),
+        task("t2", { branch: "feat", status: "done", started_at: 15, closed_at: 45 }),
+      ],
+    });
+    const open = layout({ graph: g, now: NOW });
+    const featOpen = open.lanes.find((l) => l.name === "feat");
+    expect(featOpen?.subRows).toBe(2);
+    expect(featOpen?.spans).toHaveLength(2);
+    expect(featOpen?.collapsed).toBe(false);
+
+    const shut = layout({ graph: g, now: NOW, collapsed: new Set(["feat"]) });
+    const featShut = shut.lanes.find((l) => l.name === "feat");
+    expect(featShut?.collapsed).toBe(true);
+    expect(featShut?.subRows).toBe(1);
+    expect(featShut?.spans).toEqual([]);
+    expect(featShut?.markers).toEqual([]);
+  });
+
+  it("auto-collapses a deleted lane wholly before the window, and a toggle expands it", () => {
+    const g = graph({
+      lanes: [
+        lane("main", { start: 100, end: 0 }),
+        lane("ancient", {
+          parent: "main",
+          status: "deleted",
+          inferred: false,
+          fork: { sha: "f", time: 20 },
+          merge: { sha: "m", time: 50, into: "main", kind: "merge" },
+          start: 20,
+          end: 50,
+        }),
+      ],
+    });
+    const result = layout({ graph: g, now: NOW });
+    const auto = result.lanes.find((l) => l.name === "ancient");
+    expect(auto?.autoCollapsed).toBe(true);
+    expect(auto?.collapsed).toBe(true);
+
+    const expanded = layout({ graph: g, now: NOW, collapsed: new Set(["ancient"]) });
+    const shown = expanded.lanes.find((l) => l.name === "ancient");
+    expect(shown?.autoCollapsed).toBe(true);
+    expect(shown?.collapsed).toBe(false);
+  });
+});
+
 describe("layout entity items", () => {
   it("renders a claimed-open task as a span running to now", () => {
     const g = graph({

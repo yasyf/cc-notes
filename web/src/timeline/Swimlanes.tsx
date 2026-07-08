@@ -1,7 +1,9 @@
 // SVG swimlane renderer. React owns every node; d3 supplies only math — the
 // scaleTime axis, the x-only zoom transform, and the curveBumpX fork/merge
 // connectors. A sticky axis sits above a vertically scrolling lane body; zoom
-// and pan act on the x axis alone.
+// and pan act on the x axis alone. The toolbar hosts the interactive legend and
+// lane-focus filter; lane labels are chips with a collapse toggle and a
+// click-to-focus filter.
 
 import {
   useEffect,
@@ -12,9 +14,11 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { curveBumpX, line } from "d3-shape";
+import { relativeTime } from "../dag/badges";
 import { Axis } from "./Axis";
 import { Glyph } from "./Glyph";
 import { Legend } from "./Legend";
+import type { TimelineFilters } from "./filters";
 import {
   CONNECTOR_RADIUS,
   MARKER_SIZE,
@@ -23,7 +27,7 @@ import {
   rowMetrics,
 } from "./geometry";
 import type { Band, Connector, LaneRow, LayoutResult, MarkerItem, SpanItem } from "./layout";
-import { LANE_STATUS, eventSpec, statusSpec } from "./marks";
+import { eventSpec, mergeMark, statusSpec } from "./marks";
 import {
   IDENTITY_ZOOM,
   baseScale,
@@ -42,6 +46,13 @@ interface Props {
   result: LayoutResult;
   selection: Selection | null;
   onSelect: (sel: Selection) => void;
+  filters: TimelineFilters;
+  presentKinds: ReadonlySet<string>;
+  presentTypes: ReadonlySet<string>;
+  onToggleKind: (kind: string) => void;
+  onToggleType: (type: string) => void;
+  onToggleLane: (lane: string) => void;
+  onToggleCollapse: (lane: string) => void;
 }
 
 interface TipLine {
@@ -61,7 +72,18 @@ const curve = line<[number, number]>()
   .y((d) => d[1])
   .curve(curveBumpX);
 
-export function Swimlanes({ result, selection, onSelect }: Props) {
+export function Swimlanes({
+  result,
+  selection,
+  onSelect,
+  filters,
+  presentKinds,
+  presentTypes,
+  onToggleKind,
+  onToggleType,
+  onToggleLane,
+  onToggleCollapse,
+}: Props) {
   const [bodyRef, measured] = useMeasure<HTMLDivElement>();
   const chartWidth = Math.max(measured, 1);
   const [zoom, setZoom] = useState<ZoomState>(IDENTITY_ZOOM);
@@ -145,11 +167,29 @@ export function Swimlanes({ result, selection, onSelect }: Props) {
   };
 
   const selected = (id: string) => selection !== null && selection.id === id;
+  const now = result.now;
 
   return (
     <div className="tl-root">
       <div className="tl-toolbar">
-        <Legend result={result} />
+        <Legend
+          result={result}
+          presentKinds={presentKinds}
+          presentTypes={presentTypes}
+          filters={filters}
+          onToggleKind={onToggleKind}
+          onToggleType={onToggleType}
+        />
+        {filters.lane !== null && (
+          <button
+            type="button"
+            className="tl-lane-focus"
+            title="Clear lane focus"
+            onClick={() => onToggleLane(filters.lane as string)}
+          >
+            focus: <span className="tl-lane-focus-name">{filters.lane}</span> ✕
+          </button>
+        )}
         <div className="tl-zoom" role="group" aria-label="Zoom">
           <button type="button" aria-label="Zoom out" onClick={() => zoomStep(1 / 1.4)}>
             −
@@ -202,6 +242,13 @@ export function Swimlanes({ result, selection, onSelect }: Props) {
               />
             ))}
           </g>
+          <g className="tl-merges">
+            {result.connectors
+              .filter((c) => c.kind !== "fork")
+              .map((c, i) => (
+                <MergeGlyph key={`merge-${i}`} c={c} cx={sx(c.time)} cy={metrics.railY(c.parentRow)} />
+              ))}
+          </g>
           <g className="tl-spans">
             {result.lanes.flatMap((lane) =>
               lane.spans.map((s) => (
@@ -209,6 +256,7 @@ export function Swimlanes({ result, selection, onSelect }: Props) {
                   key={`span-${lane.name}-${s.ref.id}`}
                   span={s}
                   lane={lane}
+                  now={now}
                   sx={sx}
                   y={metrics.itemY(lane.row, s.subRow)}
                   selected={selected(s.ref.id)}
@@ -225,6 +273,8 @@ export function Swimlanes({ result, selection, onSelect }: Props) {
                 <MarkerGlyph
                   key={`mk-${lane.name}-${m.ref.id}-${m.type}-${i}`}
                   marker={m}
+                  lane={lane}
+                  now={now}
                   cx={sx(m.time)}
                   cy={metrics.itemY(lane.row, m.subRow)}
                   selected={selected(m.ref.id)}
@@ -237,7 +287,15 @@ export function Swimlanes({ result, selection, onSelect }: Props) {
           </g>
           <g className="tl-labels">
             {result.lanes.map((lane) => (
-              <LaneLabel key={`label-${lane.name}`} lane={lane} x={Math.max(2, sx(lane.start))} y={metrics.labelY(lane.row)} />
+              <LaneLabel
+                key={`label-${lane.name}`}
+                lane={lane}
+                x={Math.max(2, sx(lane.start))}
+                y={metrics.labelY(lane.row)}
+                focused={filters.lane === lane.name}
+                onToggleLane={onToggleLane}
+                onToggleCollapse={onToggleCollapse}
+              />
             ))}
           </g>
         </svg>
@@ -272,9 +330,20 @@ function BandRect({ band, sx, height }: { band: Band; sx: (t: number) => number;
   );
 }
 
+function MergeGlyph({ c, cx, cy }: { c: Connector; cx: number; cy: number }) {
+  const spec = mergeMark(c.kind);
+  return (
+    <g className="tl-merge" transform={`translate(${cx},${cy})`} aria-hidden="true">
+      <Glyph spec={spec} size={9} />
+      <title>{spec.label}</title>
+    </g>
+  );
+}
+
 function SpanBar({
   span,
   lane,
+  now,
   sx,
   y,
   selected,
@@ -284,6 +353,7 @@ function SpanBar({
 }: {
   span: SpanItem;
   lane: LaneRow;
+  now: number;
   sx: (t: number) => number;
   y: number;
   selected: boolean;
@@ -298,13 +368,12 @@ function SpanBar({
   const label = `task ${span.ref.title}, ${spec.label}`;
   const lines: TipLine[] = [
     { label: "status", value: spec.label + (span.open ? " (open)" : "") },
-    { label: "started", value: formatTime(span.start) },
-    { label: span.open ? "now" : "closed", value: formatTime(span.end) },
-    { label: "lane", value: lane.name },
   ];
-  if (span.orphanBranch !== undefined) {
-    lines.push({ label: "branch", value: `${span.orphanBranch} (unknown)` });
-  }
+  if (span.assignee !== undefined) lines.push({ label: "assignee", value: span.assignee });
+  lines.push({ label: "branch", value: branchOf(span.orphanBranch, lane) });
+  lines.push({ label: "started", value: whenText(span.start, now) });
+  lines.push({ label: span.open ? "now" : "closed", value: whenText(span.end, now) });
+  lines.push({ label: "duration", value: formatDuration(span.end - span.start) });
   return (
     <rect
       x={x}
@@ -328,6 +397,8 @@ function SpanBar({
 
 function MarkerGlyph({
   marker,
+  lane,
+  now,
   cx,
   cy,
   selected,
@@ -336,6 +407,8 @@ function MarkerGlyph({
   onLeave,
 }: {
   marker: MarkerItem;
+  lane: LaneRow;
+  now: number;
   cx: number;
   cy: number;
   selected: boolean;
@@ -348,11 +421,9 @@ function MarkerGlyph({
   const lines: TipLine[] = [
     { label: "event", value: spec.label },
     { label: "kind", value: marker.ref.kind },
-    { label: "time", value: formatTime(marker.time) },
+    { label: "branch", value: branchOf(marker.orphanBranch, lane) },
+    { label: "time", value: whenText(marker.time, now) },
   ];
-  if (marker.orphanBranch !== undefined) {
-    lines.push({ label: "branch", value: `${marker.orphanBranch} (unknown)` });
-  }
   return (
     <g
       transform={`translate(${cx},${cy})`}
@@ -372,26 +443,96 @@ function MarkerGlyph({
   );
 }
 
-function LaneLabel({ lane, x, y }: { lane: LaneRow; x: number; y: number }) {
-  const chip = LANE_STATUS[lane.status] ?? lane.status;
-  const chipW = chip.length * 5.4 + 10;
+function LaneLabel({
+  lane,
+  x,
+  y,
+  focused,
+  onToggleLane,
+  onToggleCollapse,
+}: {
+  lane: LaneRow;
+  x: number;
+  y: number;
+  focused: boolean;
+  onToggleLane: (lane: string) => void;
+  onToggleCollapse: (lane: string) => void;
+}) {
+  const chevW = 13;
+  const dotSlot = 12;
+  const nameX = chevW + dotSlot;
+  const nameEnd = nameX + Math.max(18, lane.name.length * 7);
+  const hasCount = lane.commits > 0;
+  const countText = hasCount ? String(lane.commits) : "";
+  const countX = nameEnd + 7;
+  const countEnd = hasCount ? countX + countText.length * 6.5 : nameEnd;
+  const tag = lane.autoCollapsed ? "older than view" : "";
+  const tagX = countEnd + (tag !== "" ? 8 : 0);
+  const tagEnd = tag !== "" ? tagX + tag.length * 5.4 : countEnd;
+  const chipW = tagEnd + 8;
+  const chipClass = ["tl-lane-chip", focused ? "tl-lane-chip-on" : ""].filter(Boolean).join(" ");
   return (
     <g transform={`translate(${x},${y})`}>
-      <rect x={0} y={-9} width={chipW} height={12} rx={3} className={`tl-chip tl-chip-${lane.status}`} />
-      <text x={4} y={0} className="tl-chip-text">
-        {chip}
-      </text>
-      <text x={chipW + 6} y={0} className="tl-lane-name">
+      <rect
+        x={-2}
+        y={-11}
+        width={chipW}
+        height={16}
+        rx={4}
+        className={chipClass}
+        role="button"
+        tabIndex={0}
+        aria-label={`focus lane ${lane.name}`}
+        aria-pressed={focused}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => onToggleLane(lane.name)}
+        onKeyDown={(e) => activate(e, () => onToggleLane(lane.name))}
+      >
+        <title>
+          {`${lane.name} — ${lane.laneClass}${lane.commits > 0 ? `, ${lane.commits} commit${lane.commits === 1 ? "" : "s"}` : ""}`}
+        </title>
+      </rect>
+      <g
+        className="tl-lane-chevron"
+        transform={`translate(${chevW / 2},-3)`}
+        role="button"
+        tabIndex={0}
+        aria-label={lane.collapsed ? `expand lane ${lane.name}` : `collapse lane ${lane.name}`}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleCollapse(lane.name);
+        }}
+        onKeyDown={(e) => activate(e, () => onToggleCollapse(lane.name))}
+      >
+        <path d={lane.collapsed ? "M -2,-3 L 3,0 L -2,3 Z" : "M -3,-2 L 3,-2 L 0,3 Z"} className="tl-chevron-glyph" />
+        <rect x={-6} y={-7} width={13} height={14} fill="transparent" />
+      </g>
+      <circle cx={nameX - dotSlot / 2} cy={-3} r={3.5} className={`tl-lane-dot tl-lane-dot-${lane.laneClass}`} />
+      <text x={nameX} y={0} className="tl-lane-name">
         {lane.name}
       </text>
+      {hasCount && (
+        <text x={countX} y={0} className="tl-lane-count">
+          {countText}
+        </text>
+      )}
+      {tag !== "" && (
+        <text x={tagX} y={0} className="tl-lane-tag">
+          {tag}
+        </text>
+      )}
     </g>
   );
 }
 
+function branchOf(orphanBranch: string | undefined, lane: LaneRow): string {
+  if (orphanBranch !== undefined) return `${orphanBranch} (unknown)`;
+  return lane.name;
+}
+
 function railClass(lane: LaneRow): string {
-  const parts = ["tl-rail", `tl-rail-${lane.status}`];
-  if (lane.inferred) parts.push("tl-rail-inferred");
-  return parts.join(" ");
+  return `tl-rail tl-rail-${lane.laneClass}`;
 }
 
 function connectorPath(
@@ -430,4 +571,22 @@ function formatTime(sec: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+// whenText renders an absolute local time with a compact relative age, e.g.
+// "Jan 3, 2026, 02:15 PM (2d ago)".
+function whenText(sec: number, now: number): string {
+  const rel = relativeTime(sec, now);
+  return `${formatTime(sec)} (${rel === "now" ? "just now" : `${rel} ago`})`;
+}
+
+// formatDuration renders a span length in the two coarsest non-zero units.
+function formatDuration(sec: number): string {
+  if (sec <= 0) return "0m";
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  return `${m}m`;
 }

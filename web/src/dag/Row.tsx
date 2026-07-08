@@ -5,7 +5,7 @@
 // legible where a rail passes behind it (dataviz mark spec). Badges are
 // keyboard-focusable and open the shared detail panel via the store selection.
 
-import { type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent, type MouseEvent } from "react";
 import { curveBumpY, line } from "d3-shape";
 import { Glyph } from "../timeline/Glyph";
 import { eventSpec } from "../timeline/marks";
@@ -40,6 +40,8 @@ interface Props {
   totalColumns: number;
   now: number;
   active: boolean;
+  flash: boolean; // scroll into view and pulse a highlight ring
+  hideGraph: boolean; // drop the column gutter (a filtered list has no DAG)
   selectedId: string | null;
   onSelectRow: (sha: string) => void;
   onSelectEntity: (sel: Selection) => void;
@@ -51,20 +53,30 @@ export function Row({
   totalColumns,
   now,
   active,
+  flash,
+  hideGraph,
   selectedId,
   onSelectRow,
   onSelectEntity,
 }: Props) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (flash) rowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [flash]);
+  const cls = ["dag-row", active ? "dag-row-active" : "", flash ? "dag-row-flash" : ""]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div
-      className={active ? "dag-row dag-row-active" : "dag-row"}
+      ref={rowRef}
+      className={cls}
       role="row"
       tabIndex={0}
       aria-label={`commit ${shortSha(commit.sha)}: ${commit.summary}`}
       onClick={() => onSelectRow(commit.sha)}
       onKeyDown={(e) => activate(e, () => onSelectRow(commit.sha))}
     >
-      <GraphCell node={node} totalColumns={totalColumns} />
+      {!hideGraph && <GraphCell node={node} totalColumns={totalColumns} />}
       <code className="dag-sha">{shortSha(commit.sha)}</code>
       <span className="dag-summary" title={commit.summary}>
         {commit.summary}
