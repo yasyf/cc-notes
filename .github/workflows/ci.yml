@@ -20,7 +20,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version-file: go.mod
           cache: true
 
       - name: go vet
@@ -45,7 +45,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version-file: go.mod
           cache: true
 
       - name: Install fuse-t (build-time headers + dylib)
@@ -167,7 +167,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version-file: go.mod
           cache: true
 
       - uses: actions/download-artifact@v8
