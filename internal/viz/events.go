@@ -17,7 +17,7 @@ func (b *Builder) eventsAndEntities(ctx context.Context, topo *topology) ([]Even
 	if err != nil {
 		return nil, nil, err
 	}
-	live := liveBranches(topo)
+	taken := takenBranches(topo)
 	dead := newDeadBranches()
 
 	var events []Event
@@ -46,13 +46,13 @@ func (b *Builder) eventsAndEntities(ctx context.Context, topo *topology) ([]Even
 				}
 				events = append(events, ev)
 				if ref.Kind == entityTask {
-					dead.observe(ev, live)
+					dead.observe(ev, taken)
 				}
 			}
 		}
 	}
 	sort.SliceStable(events, func(i, j int) bool { return events[i].Time < events[j].Time })
-	topo.extra = dead.lanes(live)
+	topo.extra = dead.lanes(taken)
 
 	entities, err := b.entities(ctx)
 	if err != nil {
@@ -70,6 +70,18 @@ func liveBranches(topo *topology) map[string]bool {
 		live[s.name] = true
 	}
 	return live
+}
+
+// takenBranches is the set of branch names a lane already claims: the live
+// branches plus the DAG-mined deleted branches. The task-trail reconstruction
+// skips these, so a branch with surviving DAG evidence keeps its mined lane
+// rather than being shadowed by a second, weaker task-inferred one.
+func takenBranches(topo *topology) map[string]bool {
+	taken := liveBranches(topo)
+	for _, l := range topo.mined {
+		taken[l.Name] = true
+	}
+	return taken
 }
 
 // deadBranch is one branch named only in task history, with no live ref: its
@@ -93,11 +105,12 @@ func newDeadBranches() *deadBranches { return &deadBranches{m: make(map[string]*
 
 // observe folds one task event into the deleted-branch accumulator: it extends
 // the extent of every dead branch the event names — its own branch, or the from
-// and to of a branch move — and, when the move left a dead branch for a live
-// one, records the inferred merge (the latest such move wins).
-func (d *deadBranches) observe(ev Event, live map[string]bool) {
+// and to of a branch move — and, when the move left a dead branch for a taken
+// one, records the inferred merge (the latest such move wins). A taken branch —
+// live or DAG-mined — never becomes a task-inferred lane.
+func (d *deadBranches) observe(ev Event, taken map[string]bool) {
 	for _, name := range namedBranches(ev) {
-		if name == "" || live[name] {
+		if name == "" || taken[name] {
 			continue
 		}
 		db := d.at(name)
@@ -112,7 +125,7 @@ func (d *deadBranches) observe(ev Event, live map[string]bool) {
 		return
 	}
 	from, to := ev.Detail["from"], ev.Detail["to"]
-	if from != "" && !live[from] && to != "" && live[to] {
+	if from != "" && !taken[from] && to != "" && taken[to] {
 		db := d.at(from)
 		if db.merge == nil || ev.Time >= db.merge.Time {
 			db.merge = &MergePoint{SHA: ev.SHA, Time: ev.Time, Into: to, Kind: kindInferred}
@@ -131,11 +144,11 @@ func (d *deadBranches) at(name string) *deadBranch {
 
 // lanes renders the accumulated dead branches into deleted lanes, sorted by
 // name. Each is inferred, ref-less (nil fork and tip), and spans its event
-// extent.
-func (d *deadBranches) lanes(live map[string]bool) []Lane {
+// extent. A branch a mined or live lane already claims is dropped.
+func (d *deadBranches) lanes(taken map[string]bool) []Lane {
 	lanes := make([]Lane, 0, len(d.m))
 	for name, db := range d.m {
-		if live[name] {
+		if taken[name] {
 			continue
 		}
 		lanes = append(lanes, Lane{

@@ -124,12 +124,14 @@ func (s *Server) handleCommits(w http.ResponseWriter, r *http.Request) {
 }
 
 // liveTips is the deduped tip sha of every lane backed by a live ref, in lane
-// order (trunk first). Deleted and inferred lanes carry no tip and drop out.
+// order (trunk first). Task-inferred lanes carry no tip; mined deleted lanes
+// carry a real tip but it is an ancestor of some carrier tip already seeded, so
+// deleted lanes are skipped to keep the walk to the live frontier.
 func liveTips(g *Graph) []model.SHA {
 	seen := make(map[model.SHA]bool)
 	var tips []model.SHA
 	for _, lane := range g.Lanes {
-		if lane.Tip == nil || seen[lane.Tip.SHA] {
+		if lane.Tip == nil || lane.Status == statusDeleted || seen[lane.Tip.SHA] {
 			continue
 		}
 		seen[lane.Tip.SHA] = true

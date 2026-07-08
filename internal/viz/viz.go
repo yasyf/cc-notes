@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -70,6 +71,14 @@ type Builder struct {
 	// entity state until an entity ref moves; InvalidateRefs also clears it.
 	attMu    sync.Mutex
 	attCache *attIndex
+
+	// minedMu guards minedCache. Mined deleted-branch lanes are keyed by a
+	// digest of the trunk tip, the sorted live branch tips, and the window floor
+	// alone — the inputs that decide which branches were merged and deleted — so
+	// entity-ref churn reuses the cached mining instead of re-walking the DAG.
+	// InvalidateRefs drops it only on a head or remote ref move to bound growth.
+	minedMu    sync.Mutex
+	minedCache map[string][]Lane
 }
 
 // NewBuilder returns a Builder that reads the given store.
@@ -80,6 +89,7 @@ func NewBuilder(s *store.Store) *Builder {
 		trailCache: make(map[model.SHA][]trail.Entry),
 		refTips:    make(map[string]model.SHA),
 		mbCache:    make(map[string]mergeBase),
+		minedCache: make(map[string][]Lane),
 	}
 }
 
@@ -153,6 +163,24 @@ func (b *Builder) InvalidateRefs(refNames []string) {
 	b.attMu.Lock()
 	b.attCache = nil
 	b.attMu.Unlock()
+
+	// The minedCache key already excludes entity tips, so an entity-ref move is
+	// safe to leave; drop it only when a branch or remote ref moves — the moves
+	// that can change which branches were merged and deleted — to bound growth.
+	for _, ref := range refNames {
+		if isBranchRef(ref) {
+			b.minedMu.Lock()
+			b.minedCache = make(map[string][]Lane)
+			b.minedMu.Unlock()
+			break
+		}
+	}
+}
+
+// isBranchRef reports whether ref is a local head or a remote-tracking branch,
+// the ref classes whose movement can change the mined deleted-branch set.
+func isBranchRef(ref string) bool {
+	return strings.HasPrefix(ref, "refs/heads/") || strings.HasPrefix(ref, "refs/remotes/")
 }
 
 // digest hashes the sorted (ref, tip) pairs of every branch and entity ref, the

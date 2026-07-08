@@ -167,6 +167,46 @@ func TestCommitsRootTrailer(t *testing.T) {
 	}
 }
 
+// TestCommitsDeletedBranchAttribution pins that a merged-then-deleted branch's
+// exclusive commits claim its mined lane in /api/commits — the second-parent
+// commits that carried no branch before the DAG was mined now attribute to the
+// reconstructed lane, while the merge commit stays on the trunk.
+func TestCommitsDeletedBranchAttribution(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	c2 := r.commit("c2")
+	r.git("checkout", "-q", "-b", "gone")
+	g1 := r.commit("g1")
+	g2 := r.commit("g2")
+	r.git("checkout", "-q", "main")
+	m := r.mergeNoFF(c2.time+1000, "gone", "Merge branch 'gone'")
+	r.git("branch", "-D", "gone")
+
+	ts, _, _ := newVizServer(t, r)
+	resp := getCommits(t, ts.URL, "")
+
+	byName := map[model.SHA]commitPage{}
+	for _, c := range resp.Commits {
+		byName[c.SHA] = c
+	}
+	for _, sha := range []model.SHA{g1.sha, g2.sha} {
+		c, ok := byName[sha]
+		if !ok {
+			t.Fatalf("commit %s absent from page %v", sha, shas(resp.Commits))
+		}
+		if c.Branch == nil || *c.Branch != "gone" {
+			t.Errorf("commit %s branch = %v, want gone", sha, c.Branch)
+		}
+	}
+	merge, ok := byName[m.sha]
+	if !ok {
+		t.Fatalf("merge commit %s absent from page %v", m.sha, shas(resp.Commits))
+	}
+	if merge.Branch == nil || *merge.Branch != "main" {
+		t.Errorf("merge commit branch = %v, want main", merge.Branch)
+	}
+}
+
 func equalSHAs(a, b []model.SHA) bool {
 	if len(a) != len(b) {
 		return false

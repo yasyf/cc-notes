@@ -74,24 +74,30 @@ func (s *branchState) toLane() Lane {
 
 // topology is the branch-topology half of the graph: the trunk lane, every
 // non-trunk lane sorted by short name, whether the commit walk truncated, and
-// any synthesized lanes with no live ref.
+// two kinds of synthesized lane with no live ref.
 type topology struct {
 	trunk     *branchState
 	branches  []*branchState
 	truncated bool
-	// extra holds synthesized lanes that back no live ref — the deleted-branch
-	// lanes the entity-events pass reconstructs from task trails. lanes() merges
-	// them among the branch lanes in name order.
+	// mined holds the deleted-branch lanes reconstructed from the git DAG — a
+	// merged branch whose ref was later deleted — each DAG-proven with a real
+	// fork, tip, and merge point.
+	mined []Lane
+	// extra holds the deleted-branch lanes the entity-events pass reconstructs
+	// from task trails alone, for branches with no surviving merge commit (a
+	// squash then delete). lanes() merges both kinds among the branch lanes in
+	// name order.
 	extra []Lane
 }
 
 // lanes renders the trunk lane first, then every non-trunk lane — the live
-// branch lanes and any synthesized extra lanes — in name order.
+// branch lanes and the mined and task-inferred deleted lanes — in name order.
 func (t *topology) lanes() []Lane {
-	rest := make([]Lane, 0, len(t.branches)+len(t.extra))
+	rest := make([]Lane, 0, len(t.branches)+len(t.mined)+len(t.extra))
 	for _, b := range t.branches {
 		rest = append(rest, b.toLane())
 	}
+	rest = append(rest, t.mined...)
 	rest = append(rest, t.extra...)
 	sort.Slice(rest, func(i, j int) bool { return rest[i].Name < rest[j].Name })
 	out := make([]Lane, 0, len(rest)+1)
@@ -102,8 +108,9 @@ func (t *topology) lanes() []Lane {
 // topology builds the branch topology over the history window starting at since
 // (unix seconds; 0 selects the default window). It resolves the trunk,
 // enumerates every branch, finds each fork point, infers nested parentage,
-// classifies each branch's merge into the trunk, then attributes walked commits
-// to lanes.
+// classifies each branch's merge into the trunk, attributes walked commits to
+// lanes, then mines the lanes of branches that were merged and deleted from the
+// git DAG.
 func (b *Builder) topology(ctx context.Context, since int64) (*topology, error) {
 	trunkName, err := b.trunkName(ctx)
 	if err != nil {
@@ -175,7 +182,11 @@ func (b *Builder) topology(ctx context.Context, since int64) (*topology, error) 
 	if err := r.attribute(trunk, others); err != nil {
 		return nil, err
 	}
-	return &topology{trunk: trunk, branches: others, truncated: truncated}, nil
+	mined, err := b.mineDeletedBranches(ctx, trunk, others, r)
+	if err != nil {
+		return nil, err
+	}
+	return &topology{trunk: trunk, branches: others, truncated: truncated, mined: mined}, nil
 }
 
 // assignParents infers each branch's parent lane. Every branch defaults to the

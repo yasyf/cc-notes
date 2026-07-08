@@ -72,11 +72,12 @@ func TestGraphGolden(t *testing.T) {
 }
 
 // buildGoldenRepo constructs the golden fixture: trunk main; feature/ff
-// fast-forwarded; feature/merge merged via a merge commit; feature/squash
-// squash-inferred from a cc-task trailer; nested feature/parent and
-// feature/child; a deleted feature/gone reconstructed from a task trail; and one
-// entity of every kind exercising the lifecycle, freshness, log-entry, checkpoint,
-// and sprint/project-membership paths.
+// fast-forwarded; feature/merge merged via a merge commit; feature/mined merged
+// via a merge commit then branch -D deleted, so only the git DAG names it;
+// feature/squash squash-inferred from a cc-task trailer; nested feature/parent
+// and feature/child; a deleted feature/gone reconstructed from a task trail; and
+// one entity of every kind exercising the lifecycle, freshness, log-entry,
+// checkpoint, and sprint/project-membership paths.
 func buildGoldenRepo(t *testing.T) *gitRepo {
 	t.Helper()
 	r := newGitRepo(t)
@@ -95,6 +96,14 @@ func buildGoldenRepo(t *testing.T) *gitRepo {
 	r.git("checkout", "-q", "main")
 	r.clock += fxStep
 	r.mergeNoFF(r.clock, "feature/merge", "merge feature/merge")
+
+	r.git("checkout", "-q", "-b", "feature/mined")
+	r.commit("mn-a")
+	r.commit("mn-b")
+	r.git("checkout", "-q", "main")
+	r.clock += fxStep
+	r.mergeNoFF(r.clock, "feature/mined", "Merge branch 'feature/mined'")
+	r.git("branch", "-D", "feature/mined")
 
 	r.git("checkout", "-q", "-b", "feature/squash")
 	r.commit("sq-a")

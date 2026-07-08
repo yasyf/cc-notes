@@ -195,9 +195,10 @@ func renameSHAs(g *Graph, r *shaRegistry) {
 }
 
 // opTimes collects the distinct op-commit-derived timestamps — random wall-clock
-// seconds — from g. These are event times, deleted-lane extents (a live lane's
-// times are git fixture commit times), and the task/note lifecycle stamps; sprint
-// start/end dates are literal and stay raw.
+// seconds — from g. These are event times, the extents of the task-inferred
+// deleted lanes, and the task/note lifecycle stamps; a live lane's and a
+// DAG-mined deleted lane's times are git fixture commit times, and sprint
+// start/end dates are literal, so both stay raw.
 func opTimes(g *Graph) []int64 {
 	set := make(map[int64]bool)
 	add := func(v int64) {
@@ -209,7 +210,7 @@ func opTimes(g *Graph) []int64 {
 		add(e.Time)
 	}
 	for _, l := range g.Lanes {
-		if l.Status == statusDeleted {
+		if l.Status == statusDeleted && l.Inferred {
 			add(l.Start)
 			add(l.End)
 			if l.Merge != nil {

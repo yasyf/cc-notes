@@ -45,10 +45,13 @@ type MergePoint struct {
 // Lane is one branch's lifeline. Name is the short branch name; Parent is the
 // lane it forked from (the trunk when parentage is flat or unknown). Fork is
 // the divergence point and Merge the rejoin point, each nil when absent. Status
-// is "active", "merged", or "deleted". Inferred marks a lane reconstructed from
-// evidence rather than a live ref. Tip is the branch tip. Start is the fork
-// time and End the merge time, with End 0 meaning still open. Commits counts
-// the walked commits attributed to the lane.
+// is "active", "merged", or "deleted", where "deleted" means no live ref backs
+// the branch. Inferred is true only for a deleted lane reconstructed from task
+// history alone, with no DAG proof — a fork- and tip-less rumor; a ref-backed
+// lane or a deleted lane mined from the git DAG (real fork, tip, and merge) is
+// false. Tip is the branch tip. Start is the fork time and End the merge time,
+// with End 0 meaning still open. Commits counts the walked commits attributed
+// to the lane.
 type Lane struct {
 	Name     string      `json:"name"`
 	Parent   string      `json:"parent"`
