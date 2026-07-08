@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
+
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -500,6 +502,123 @@ func TestListPrefix(t *testing.T) {
 
 	git(t, dir, "pack-refs", "--all")
 	assertPrefix(open(t, dir), "refs/cc-notes/", refs)
+}
+
+// TestListPrefixSkipsLockFiles pins that a git ref-write lock file — created
+// by a concurrent update-ref and surfaced as a ref by go-git's refs walk —
+// never appears in a listing: git forbids the .lock suffix in refnames.
+func TestListPrefixSkipsLockFiles(t *testing.T) {
+	dir := initRepo(t)
+	repo := open(t, dir)
+	note := write(t, repo, nil, t0, createPack)
+	ref := "refs/cc-notes/notes/" + string(note)
+	git(t, dir, "update-ref", ref, string(note))
+
+	lock := filepath.Join(dir, ".git", "refs", "cc-notes", "notes", "other.lock")
+	if err := os.WriteFile(lock, []byte(note+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.ListPrefix(t.Context(), "refs/cc-notes/")
+	if err != nil {
+		t.Fatalf("ListPrefix: %v", err)
+	}
+	want := map[string]model.SHA{ref: note}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ListPrefix = %v, want %v", got, want)
+	}
+}
+
+// TestListPrefixPersistentEmptyRefFile pins the fail-loud bound of the
+// empty-ref retry: a file under refs/ that stays empty — a crashed writer,
+// not a transient lock window — must surface, not be swallowed.
+func TestListPrefixPersistentEmptyRefFile(t *testing.T) {
+	cases := []struct {
+		name string
+		file string
+	}{
+		{"empty lock file", "stuck.lock"},
+		{"empty ref file", "stuck"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			repo := open(t, dir)
+			note := write(t, repo, nil, t0, createPack)
+			git(t, dir, "update-ref", "refs/cc-notes/notes/"+string(note), string(note))
+
+			empty := filepath.Join(dir, ".git", "refs", "cc-notes", "notes", tc.file)
+			if err := os.WriteFile(empty, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := repo.ListPrefix(t.Context(), "refs/cc-notes/")
+			if !errors.Is(err, dotgit.ErrEmptyRefFile) {
+				t.Errorf("ListPrefix = %v, want dotgit.ErrEmptyRefFile", err)
+			}
+		})
+	}
+}
+
+// TestListPrefixDuringRefWrites reproduces the claim-contest race: real git
+// update-ref processes rewrite a ref — each holding a briefly-empty
+// <ref>.lock — while this process lists the prefix through go-git. Without
+// the empty-ref retry the listing fails mid-contest with "ref file is
+// empty"; without the .lock skip it surfaces phantom lock-file refs.
+func TestListPrefixDuringRefWrites(t *testing.T) {
+	dir := initRepo(t)
+	repo := open(t, dir)
+	c1 := write(t, repo, nil, t0, createPack)
+	c2 := write(t, repo, []model.SHA{c1}, t1, retitlePack)
+	ref := "refs/cc-notes/notes/contested"
+	git(t, dir, "update-ref", ref, string(c1))
+
+	const updates = 150
+	shas := [2]model.SHA{c1, c2}
+	writerErr := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range updates {
+			//nolint:gosec // G204: fixed argv[0], test-controlled args.
+			cmd := exec.Command("git", "update-ref", ref, string(shas[i%2]))
+			cmd.Dir = dir
+			cmd.Env = gitEnv()
+			if out, err := cmd.CombinedOutput(); err != nil {
+				writerErr <- fmt.Errorf("update-ref %d: %v\n%s", i, err, out)
+				return
+			}
+		}
+	}()
+
+	for listing := true; listing; {
+		select {
+		case <-done:
+			listing = false
+		default:
+		}
+		tips, err := repo.ListPrefix(t.Context(), "refs/cc-notes/")
+		if err != nil {
+			t.Fatalf("ListPrefix during ref writes: %v", err)
+		}
+		for name := range tips {
+			if strings.HasSuffix(name, ".lock") {
+				t.Fatalf("ListPrefix surfaced lock file %s", name)
+			}
+		}
+		// Directory enumeration during a same-directory rename may
+		// transiently see neither name (unspecified by POSIX), so the ref
+		// may be absent from one listing; when present it must hold a
+		// value some update-ref actually wrote.
+		if got, ok := tips[ref]; ok && got != c1 && got != c2 {
+			t.Fatalf("ListPrefix[%s] = %q, want %s or %s", ref, got, c1, c2)
+		}
+	}
+	select {
+	case err := <-writerErr:
+		t.Fatal(err)
+	default:
+	}
 }
 
 func TestIsAncestor(t *testing.T) {

@@ -7,6 +7,7 @@
 package gitobj
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -97,4 +98,30 @@ func retry[T any](r *Repo, lookup func() (T, error)) (T, error) {
 	}
 	r.storage.Reindex()
 	return lookup()
+}
+
+const (
+	emptyRefAttempts   = 10
+	emptyRefRetryDelay = time.Millisecond
+)
+
+// retryEmptyRef runs lookup, retrying while it fails with
+// dotgit.ErrEmptyRefFile: go-git's refs walk reads every file under refs/,
+// including the <ref>.lock a concurrent git ref write creates empty before
+// filling it in and renaming it over the ref. That window lasts microseconds,
+// so a few spaced attempts outlast any healthy writer; once they exhaust, the
+// error surfaces — a persistently empty file under refs/ means a crashed
+// writer, not a race.
+func retryEmptyRef[T any](ctx context.Context, lookup func() (T, error)) (T, error) {
+	for attempt := 1; ; attempt++ {
+		v, err := lookup()
+		if !errors.Is(err, dotgit.ErrEmptyRefFile) || attempt == emptyRefAttempts {
+			return v, err
+		}
+		select {
+		case <-ctx.Done():
+			return v, ctx.Err()
+		case <-time.After(emptyRefRetryDelay):
+		}
+	}
 }

@@ -83,7 +83,7 @@ func (r *Repo) ListPrefix(ctx context.Context, prefix string) (map[string]model.
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	iter, err := r.repo.References()
+	iter, err := retryEmptyRef(ctx, r.repo.References)
 	if err != nil {
 		return nil, fmt.Errorf("list refs: %w", err)
 	}
@@ -95,7 +95,11 @@ func (r *Repo) ListPrefix(ctx context.Context, prefix string) (map[string]model.
 		if ref.Type() != plumbing.HashReference {
 			return nil
 		}
-		if name := string(ref.Name()); strings.HasPrefix(name, prefix) {
+		name := string(ref.Name())
+		// A name ending in .lock is a concurrent git ref write's lock file
+		// surfaced by go-git's refs walk, never a ref: git forbids the
+		// suffix in refnames and skips such files in its own iteration.
+		if strings.HasPrefix(name, prefix) && !strings.HasSuffix(name, ".lock") {
 			tips[name] = model.SHA(ref.Hash().String())
 		}
 		return nil
