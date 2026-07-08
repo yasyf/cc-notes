@@ -8,7 +8,7 @@ import (
 
 type taskAddArgs struct {
 	Title                string   `json:"title" jsonschema:"short handle for the task"`
-	Desc                 string   `json:"desc,omitempty" jsonschema:"task description (markdown)"`
+	Body                 string   `json:"body,omitempty" jsonschema:"task body (markdown; echoed as 'description' in the task DTO)"`
 	Type                 string   `json:"type,omitempty" jsonschema:"task type: task|bug|epic|question (default task)"`
 	Priority             *int     `json:"priority,omitempty" jsonschema:"priority 0-3, 0 most urgent (default 2)"`
 	Labels               []string `json:"labels,omitempty" jsonschema:"labels"`
@@ -52,33 +52,29 @@ type taskDoneArgs struct {
 }
 
 type taskEditArgs struct {
-	ID        string   `json:"id" jsonschema:"task id prefix"`
-	Title     string   `json:"title,omitempty" jsonschema:"new title"`
-	Desc      string   `json:"desc,omitempty" jsonschema:"new description"`
-	Type      string   `json:"type,omitempty" jsonschema:"new type: task|bug|epic|question"`
-	Priority  *int     `json:"priority,omitempty" jsonschema:"new priority 0-3"`
-	Status    string   `json:"status,omitempty" jsonschema:"new status: open|in_progress|done|cancelled"`
-	Assignee  string   `json:"assignee,omitempty" jsonschema:"new assignee"`
-	Unassign  bool     `json:"unassign,omitempty" jsonschema:"clear the assignee"`
-	AddLabels []string `json:"add_labels,omitempty" jsonschema:"labels to add"`
-	RmLabels  []string `json:"rm_labels,omitempty" jsonschema:"labels to remove"`
-	Parent    string   `json:"parent,omitempty" jsonschema:"new parent task id prefix"`
-	NoParent  bool     `json:"no_parent,omitempty" jsonschema:"clear the parent"`
-	Sprint    string   `json:"sprint,omitempty" jsonschema:"new sprint id prefix"`
-	NoSprint  bool     `json:"no_sprint,omitempty" jsonschema:"clear the sprint"`
-	Project   string   `json:"project,omitempty" jsonschema:"new project id prefix"`
-	NoProject bool     `json:"no_project,omitempty" jsonschema:"clear the project"`
+	ID         string   `json:"id" jsonschema:"task id prefix"`
+	Title      string   `json:"title,omitempty" jsonschema:"new title"`
+	Body       string   `json:"body,omitempty" jsonschema:"new body (echoed as 'description' in the task DTO)"`
+	Type       string   `json:"type,omitempty" jsonschema:"new type: task|bug|epic|question"`
+	Priority   *int     `json:"priority,omitempty" jsonschema:"new priority 0-3"`
+	Status     string   `json:"status,omitempty" jsonschema:"new status: open|in_progress|done|cancelled"`
+	Assignee   string   `json:"assignee,omitempty" jsonschema:"new assignee"`
+	NoAssignee bool     `json:"no_assignee,omitempty" jsonschema:"clear the assignee"`
+	AddLabels  []string `json:"add_labels,omitempty" jsonschema:"labels to add"`
+	RmLabels   []string `json:"rm_labels,omitempty" jsonschema:"labels to remove"`
+	Parent     string   `json:"parent,omitempty" jsonschema:"new parent task id prefix"`
+	NoParent   bool     `json:"no_parent,omitempty" jsonschema:"clear the parent"`
+	Sprint     string   `json:"sprint,omitempty" jsonschema:"new sprint id prefix"`
+	NoSprint   bool     `json:"no_sprint,omitempty" jsonschema:"clear the sprint"`
+	Project    string   `json:"project,omitempty" jsonschema:"new project id prefix"`
+	NoProject  bool     `json:"no_project,omitempty" jsonschema:"clear the project"`
+	Branch     string   `json:"branch,omitempty" jsonschema:"reassign to this branch"`
+	Backlog    bool     `json:"backlog,omitempty" jsonschema:"move to the shared backlog (clear branch)"`
 }
 
 type taskDepArgs struct {
 	ID      string `json:"id" jsonschema:"task id prefix"`
 	Blocker string `json:"blocker" jsonschema:"blocker task id prefix"`
-}
-
-type taskMoveArgs struct {
-	ID      string `json:"id" jsonschema:"task id prefix"`
-	To      string `json:"to,omitempty" jsonschema:"destination branch (required unless backlog)"`
-	Backlog bool   `json:"backlog,omitempty" jsonschema:"move to the backlog (clear branch)"`
 }
 
 type taskStaleArgs struct {
@@ -121,7 +117,7 @@ func registerTask(srv *mcp.Server, b *bridge) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "task_add", Description: "Create a task (durable, cross-agent). Provide acceptance criteria or set no_validation_criteria."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskAddArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
-			flags = optStr(flags, "--desc", in.Desc)
+			flags = optStr(flags, "--body", in.Body)
 			flags = optStr(flags, "--type", in.Type)
 			flags = optInt(flags, "--priority", in.Priority)
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -200,16 +196,16 @@ func registerTask(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"task", "cancel"}, []string{"--json"}, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "task_edit", Description: "Edit a task's title, description, type, priority, status, assignee, labels, and hierarchy."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "task_edit", Description: "Edit a task's title, body, type, priority, status, assignee, branch, labels, and hierarchy."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
-			flags = optStr(flags, "--desc", in.Desc)
+			flags = optStr(flags, "--body", in.Body)
 			flags = optStr(flags, "--type", in.Type)
 			flags = optInt(flags, "--priority", in.Priority)
 			flags = optStr(flags, "--status", in.Status)
 			flags = optStr(flags, "--assignee", in.Assignee)
-			flags = optBool(flags, "--unassign", in.Unassign)
+			flags = optBool(flags, "--no-assignee", in.NoAssignee)
 			flags = optRepeated(flags, "--add-label", in.AddLabels)
 			flags = optRepeated(flags, "--rm-label", in.RmLabels)
 			flags = optStr(flags, "--parent", in.Parent)
@@ -218,6 +214,8 @@ func registerTask(srv *mcp.Server, b *bridge) {
 			flags = optBool(flags, "--no-sprint", in.NoSprint)
 			flags = optStr(flags, "--project", in.Project)
 			flags = optBool(flags, "--no-project", in.NoProject)
+			flags = optStr(flags, "--branch", in.Branch)
+			flags = optBool(flags, "--backlog", in.Backlog)
 			return b.run(ctx, argvFor([]string{"task", "edit"}, flags, in.ID)...)
 		})
 
@@ -234,14 +232,6 @@ func registerTask(srv *mcp.Server, b *bridge) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "task_undep", Description: "Remove a dependency edge between ID and BLOCKER."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskDepArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"task", "undep"}, []string{"--json"}, in.ID, in.Blocker)...)
-		})
-
-	mcp.AddTool(srv, &mcp.Tool{Name: "task_move", Description: "Move a task to another branch, or to the backlog."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in taskMoveArgs) (*mcp.CallToolResult, any, error) {
-			flags := []string{"--json"}
-			flags = optStr(flags, "--to", in.To)
-			flags = optBool(flags, "--backlog", in.Backlog)
-			return b.run(ctx, argvFor([]string{"task", "move"}, flags, in.ID)...)
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "task_stale", Description: "List in-progress tasks whose lease has gone idle past the threshold."},
@@ -276,7 +266,7 @@ func registerCriterion(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"task", "criterion", "add"}, flags, in.Task, in.Text)...)
 		})
 
-	for _, verb := range []string{"rm", "met", "failed", "reset"} {
+	for _, verb := range []string{"rm", "met", "failed", "pending"} {
 		mcp.AddTool(srv, &mcp.Tool{Name: "task_criterion_" + verb, Description: criterionVerbDescription(verb)},
 			func(ctx context.Context, _ *mcp.CallToolRequest, in criterionRefArgs) (*mcp.CallToolResult, any, error) {
 				return b.run(ctx, argvFor([]string{"task", "criterion", verb}, []string{"--json"}, in.Task, in.Crit)...)
@@ -307,7 +297,7 @@ func criterionVerbDescription(verb string) string {
 		return "Mark a criterion as met."
 	case "failed":
 		return "Mark a criterion as failed."
-	default: // reset
+	default: // pending
 		return "Reset a criterion to pending."
 	}
 }

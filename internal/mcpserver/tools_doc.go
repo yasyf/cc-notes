@@ -22,7 +22,7 @@ func registerDoc(srv *mcp.Server, b *bridge) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--body", in.Body)
 			flags = optStr(flags, "--when", in.When)
-			flags = optRepeated(flags, "--tag", in.Tags)
+			flags = optRepeated(flags, "--label", in.Labels)
 			flags = optRepeated(flags, "--commit", in.Commits)
 			flags = optRepeated(flags, "--path", in.Paths)
 			flags = optRepeated(flags, "--dir", in.Dirs)
@@ -31,7 +31,7 @@ func registerDoc(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"doc", "add"}, flags, in.Title)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "doc_edit", Description: "Edit a doc: title, body, when-trigger, tags, anchors, and attachments."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "doc_edit", Description: "Edit a doc: title, body, when-trigger, labels, anchors, and attachments."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in docEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := optStr(noteDocEditFlags(in.noteEditArgs), "--when", in.When)
 			return b.run(ctx, argvFor([]string{"doc", "edit"}, flags, in.ID)...)

@@ -14,17 +14,17 @@ func noteIDs(notes []noteJSON) []string {
 
 func TestNoteSearchWiring(t *testing.T) {
 	dir := initRepo(t)
-	titleHit := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Token expiry", "--tag", "design", "--path", "auth.go", "--json"))
-	bodyHit := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Other", "--body", "token rotation", "--tag", "misc", "--json"))
+	titleHit := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Token expiry", "--label", "design", "--path", "auth.go", "--json"))
+	bodyHit := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Other", "--body", "token rotation", "--label", "misc", "--json"))
 
 	got := mustJSON[[]noteJSON](t, mustRun(t, dir, "note", "search", "token", "--json"))
 	if len(got) != 2 || got[0].ID != titleHit.ID || got[1].ID != bodyHit.ID {
 		t.Fatalf("search token = %v, want title hit %s before body hit %s", noteIDs(got), titleHit.ID, bodyHit.ID)
 	}
 
-	tagged := mustJSON[[]noteJSON](t, mustRun(t, dir, "note", "search", "token", "--tag", "design", "--json"))
+	tagged := mustJSON[[]noteJSON](t, mustRun(t, dir, "note", "search", "token", "--label", "design", "--json"))
 	if len(tagged) != 1 || tagged[0].ID != titleHit.ID {
-		t.Fatalf("search --tag design = %v, want only %s", noteIDs(tagged), titleHit.ID)
+		t.Fatalf("search --label design = %v, want only %s", noteIDs(tagged), titleHit.ID)
 	}
 
 	byAuthor := mustJSON[[]noteJSON](t, mustRun(t, dir, "note", "search", "token", "--author", actorA, "--json"))
@@ -35,9 +35,9 @@ func TestNoteSearchWiring(t *testing.T) {
 		t.Fatalf("search --author nobody = %q, want empty", out)
 	}
 
-	anchored := mustJSON[[]noteJSON](t, mustRun(t, dir, "note", "search", "token", "--anchor-path", "auth.go", "--json"))
+	anchored := mustJSON[[]noteJSON](t, mustRun(t, dir, "note", "search", "token", "--path", "auth.go", "--json"))
 	if len(anchored) != 1 || anchored[0].ID != titleHit.ID {
-		t.Fatalf("search --anchor-path auth.go = %v, want only %s", noteIDs(anchored), titleHit.ID)
+		t.Fatalf("search --path auth.go = %v, want only %s", noteIDs(anchored), titleHit.ID)
 	}
 
 	limited := mustJSON[[]noteJSON](t, mustRun(t, dir, "note", "search", "token", "--limit", "1", "--json"))

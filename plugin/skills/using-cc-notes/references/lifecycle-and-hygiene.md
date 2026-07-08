@@ -11,7 +11,7 @@ A note is a claim about the code, and a claim decays. The verify/drift/supersede
 A note is born verified. When you `cc-notes note add` it against the current HEAD, each anchor records a *witness* — a snapshot of the anchored content at creation. The note asserts "this is true, and here is the proof I checked against."
 
 ```console
-$ cc-notes note add "Auth tokens expire after 15 minutes" --path services/auth/login.go --tag design
+$ cc-notes note add "Auth tokens expire after 15 minutes" --path services/auth/login.go --label design
 ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
 ```
 
@@ -42,15 +42,15 @@ The lean line gains a trailing verdict. `--drift` restricts the listing to drift
 When a decision is replaced instead of re-confirmed, record the replacement as a real edge:
 
 ```console
-$ cc-notes note add "Auth tokens expire after 30 minutes" --path services/auth/login.go --tag design
+$ cc-notes note add "Auth tokens expire after 30 minutes" --path services/auth/login.go --label design
 7a3f10c	2026-06-16	design	Auth tokens expire after 30 minutes
 $ cc-notes note supersede ebba9fb --by 7a3f10c
 ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
 ```
 
-The old note drops out of default listings and points at its replacement; the new note stands in for it. History is preserved — `cc-notes note show ebba9fb` still renders the old note with a `superseded_by` field, and `cc-notes note list --include-superseded` brings it back. Undo the edge with `cc-notes note supersede ebba9fb --by 7a3f10c --remove`.
+The old note drops out of default listings and points at its replacement; the new note stands in for it. History is preserved — `cc-notes note show ebba9fb` still renders the old note with a `superseded_by` field, and `cc-notes note list --include-superseded` brings it back. Undo the edge with `cc-notes note supersede ebba9fb --by 7a3f10c --clear`.
 
-Supersession is an edge, not a tag. There is no "stale" or "superseded" label to maintain by hand — the replacement is recorded structurally, and the default reader honors it.
+Supersession is a structural edge on the note itself — nothing you maintain by hand marks a note "stale" or "superseded". The replacement is recorded once, and the default reader honors it.
 
 ### Expiration
 

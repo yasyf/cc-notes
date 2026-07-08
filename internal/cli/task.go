@@ -41,7 +41,6 @@ func newTaskCmd() *cobra.Command {
 		newTaskCommentCmd(),
 		newTaskDepCmd(),
 		newTaskUndepCmd(),
-		newTaskMoveCmd(),
 		newTaskStaleCmd(),
 		newTaskArchivedCmd(),
 		newTaskCriterionCmd(),
@@ -52,7 +51,7 @@ func newTaskCmd() *cobra.Command {
 }
 
 func newTaskAddCmd() *cobra.Command {
-	var desc, taskType, parent, branch, sprint, project string
+	var body, taskType, parent, branch, sprint, project string
 	var priority int
 	var labels, blockedBy, criteria []string
 	var backlog, noValidation, jsonOut bool
@@ -87,7 +86,7 @@ func newTaskAddCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			text, err := bodyArg(cmd, desc)
+			text, err := bodyArg(cmd, body)
 			if err != nil {
 				return err
 			}
@@ -160,7 +159,7 @@ func newTaskAddCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&desc, "desc", "", "task description; - reads stdin")
+	bindBody(flags, &body, "task description; - reads stdin")
 	flags.StringVar(&taskType, "type", "task", "task type (task|bug|epic|question)")
 	flags.IntVar(&priority, "priority", 2, "priority 0-3 (0 most urgent)")
 	flags.StringArrayVar(&labels, "label", nil, "label (repeatable)")
@@ -298,25 +297,11 @@ func newTaskShowCmd() *cobra.Command {
 		Short: "Show one task",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
-			_, task, err := loadTask(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			live, err := allTasks(ctx, s)
-			if err != nil {
-				return err
-			}
-			blocks := blocksFor(live, task.ID)
-			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), newTaskDTO(task, blocks))
-			}
-			_, err = fmt.Fprint(cmd.OutOrStdout(), renderTaskShow(task, blocks))
-			return err
+			return showTask(cmd, s, args[0], jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -621,10 +606,11 @@ func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
 }
 
 func newTaskEditCmd() *cobra.Command {
-	var title, desc, taskType, status, assignee, parent, sprint, project string
+	var title, body, taskType, status, assignee, parent, sprint, project string
 	var priority int
-	var unassign, noParent, noSprint, noProject bool
+	var noAssignee, noParent, noSprint, noProject bool
 	var addLabels, rmLabels []string
+	var target branchTarget
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
@@ -633,8 +619,8 @@ func newTaskEditCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			flags := cmd.Flags()
-			if flags.Changed("assignee") && unassign {
-				return &UsageError{Err: errors.New("--assignee and --unassign are mutually exclusive")}
+			if flags.Changed("assignee") && noAssignee {
+				return &UsageError{Err: errors.New("--assignee and --no-assignee are mutually exclusive")}
 			}
 			if flags.Changed("parent") && noParent {
 				return &UsageError{Err: errors.New("--parent and --no-parent are mutually exclusive")}
@@ -644,6 +630,9 @@ func newTaskEditCmd() *cobra.Command {
 			}
 			if flags.Changed("project") && noProject {
 				return &UsageError{Err: errors.New("--project and --no-project are mutually exclusive")}
+			}
+			if err := target.validate(flags.Changed("branch")); err != nil {
+				return err
 			}
 			var ops []model.Op
 			if flags.Changed("title") {
@@ -656,8 +645,8 @@ func newTaskEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if flags.Changed("desc") {
-				text, err := bodyArg(cmd, desc)
+			if flags.Changed("body") {
+				text, err := bodyArg(cmd, body)
 				if err != nil {
 					return err
 				}
@@ -687,7 +676,7 @@ func newTaskEditCmd() *cobra.Command {
 			if flags.Changed("assignee") {
 				ops = append(ops, model.SetAssignee{Assignee: model.Actor(assignee)})
 			}
-			if unassign {
+			if noAssignee {
 				ops = append(ops, model.SetAssignee{})
 			}
 			for _, label := range addLabels {
@@ -726,6 +715,15 @@ func newTaskEditCmd() *cobra.Command {
 			if noProject {
 				ops = append(ops, model.SetProject{})
 			}
+			if flags.Changed("branch") {
+				if err := s.Git.CheckRefFormat(ctx, target.branch); err != nil {
+					return &UsageError{Err: err}
+				}
+				ops = append(ops, model.SetBranch{Branch: model.Branch(target.branch)})
+			}
+			if target.backlog {
+				ops = append(ops, model.SetBranch{})
+			}
 			if len(ops) == 0 {
 				return &UsageError{Err: errors.New("task edit requires at least one flag")}
 			}
@@ -745,12 +743,12 @@ func newTaskEditCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&title, "title", "", "new title")
-	flags.StringVar(&desc, "desc", "", "new description; - reads stdin")
+	bindBody(flags, &body, "new description; - reads stdin")
 	flags.StringVar(&taskType, "type", "", "new type (task|bug|epic|question)")
 	flags.IntVar(&priority, "priority", 0, "new priority 0-3")
 	flags.StringVar(&status, "status", "", "new status (open|in_progress|done|cancelled)")
 	flags.StringVar(&assignee, "assignee", "", "new assignee")
-	flags.BoolVar(&unassign, "unassign", false, "clear the assignee")
+	flags.BoolVar(&noAssignee, "no-assignee", false, "clear the assignee")
 	flags.StringArrayVar(&addLabels, "add-label", nil, "add label (repeatable)")
 	flags.StringArrayVar(&rmLabels, "rm-label", nil, "remove label (repeatable)")
 	flags.StringVar(&parent, "parent", "", "new parent task id prefix")
@@ -759,6 +757,7 @@ func newTaskEditCmd() *cobra.Command {
 	flags.BoolVar(&noSprint, "no-sprint", false, "clear the sprint")
 	flags.StringVar(&project, "project", "", "new project id prefix")
 	flags.BoolVar(&noProject, "no-project", false, "clear the project")
+	target.bind(flags)
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
@@ -865,53 +864,6 @@ func newTaskUndepCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
-	return cmd
-}
-
-func newTaskMoveCmd() *cobra.Command {
-	var to string
-	var backlog, jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "move ID --to BRANCH",
-		Short: "Reassign a task to another branch",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			switch {
-			case backlog && cmd.Flags().Changed("to"):
-				return &UsageError{Err: errors.New("--to and --backlog are mutually exclusive")}
-			case !backlog && to == "":
-				return &UsageError{Err: errors.New("required flag --to not set")}
-			}
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			var dest model.Branch
-			if !backlog {
-				if err := s.Git.CheckRefFormat(ctx, to); err != nil {
-					return &UsageError{Err: err}
-				}
-				dest = model.Branch(to)
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			ref, _, err := loadTask(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.SetBranch{Branch: dest}})
-			if err != nil {
-				return err
-			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
-		},
-	}
-	flags := cmd.Flags()
-	flags.StringVar(&to, "to", "", "destination branch")
-	flags.BoolVar(&backlog, "backlog", false, "move to the backlog (clear branch)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
@@ -1030,7 +982,7 @@ func newTaskCriterionCmd() *cobra.Command {
 		newCriterionRemoveCmd(),
 		newCriterionStatusCmd("met", model.CriterionMet),
 		newCriterionStatusCmd("failed", model.CriterionFailed),
-		newCriterionStatusCmd("reset", model.CriterionPending),
+		newCriterionStatusCmd("pending", model.CriterionPending),
 		newCriterionScriptCmd(),
 		newCriterionListCmd(),
 	)

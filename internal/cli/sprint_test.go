@@ -143,7 +143,7 @@ func TestSprintAddShow(t *testing.T) {
 	dir := spInitRepo(t)
 	proj := spID(t, spMust(t, dir, "project", "add", "Roadmap", "--json"))
 
-	out := spMust(t, dir, "sprint", "add", "Sprint 1", "--desc", "first sprint",
+	out := spMust(t, dir, "sprint", "add", "Sprint 1", "--body", "first sprint",
 		"--project", proj, "--label", "x", "--label", "a",
 		"--start", "2026-01-01", "--end", "2026-02-01", "--json")
 	if !strings.HasPrefix(out, `{"id":"`) {
@@ -202,7 +202,7 @@ func TestSprintListOrderAndFilter(t *testing.T) {
 	a := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "A", "--project", proj, "--json"))
 	b := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "B", "--json"))
 	c := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "C", "--json"))
-	spMust(t, dir, "sprint", "start", a.ID)
+	spMust(t, dir, "sprint", "activate", a.ID)
 
 	all := spJSON[[]sprintDTO](t, spMust(t, dir, "sprint", "list", "--json"))
 	if len(all) != 3 {
@@ -303,7 +303,7 @@ func TestSprintStatusTransitions(t *testing.T) {
 		t.Fatalf("fresh sprint = %+v, want planned/null/null", sp)
 	}
 
-	started := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "start", sp.ID, "--json"))
+	started := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "activate", sp.ID, "--json"))
 	if started.Status != "active" || started.StartedAt == nil || started.ClosedAt != nil {
 		t.Fatalf("started = %+v, want active with started_at set, closed_at null", started)
 	}
@@ -316,7 +316,7 @@ func TestSprintStatusTransitions(t *testing.T) {
 		t.Errorf("started_at = null after complete, want the active-transition stamp preserved")
 	}
 
-	for _, verb := range []string{"cancel", "start"} {
+	for _, verb := range []string{"cancel", "activate"} {
 		_, _, err := spRun(t, dir, "", "sprint", verb, sp.ID)
 		var conflict *ConflictError
 		if !errors.As(err, &conflict) || ExitCode(err) != 4 {

@@ -36,7 +36,8 @@ func newLogCmd() *cobra.Command {
 
 func newLogAddCmd() *cobra.Command {
 	var entry string
-	var tags, commits, paths, dirs, branches, attach []string
+	var labels, attach []string
+	var anchors anchorSets
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "add TITLE",
@@ -54,15 +55,15 @@ func newLogAddCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			commits, err := resolveCommits(ctx, s.Git, commits)
+			commits, err := resolveCommits(ctx, s.Git, anchors.commits)
 			if err != nil {
 				return err
 			}
 			create := model.CreateLog{
 				Nonce:   model.NewNonce(),
 				Title:   args[0],
-				Tags:    tags,
-				Anchors: buildAnchors(commits, paths, dirs, branches),
+				Tags:    labels,
+				Anchors: buildAnchors(commits, anchors.paths, anchors.dirs, anchors.branches),
 			}
 			ops := []model.Op{create}
 			attOps, err := attachOps(ctx, cmd, s, attach)
@@ -94,17 +95,14 @@ func newLogAddCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&entry, "entry", "", "optional first entry; - reads stdin")
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
-	flags.StringArrayVar(&tags, "tag", nil, "tag (repeatable)")
-	flags.StringArrayVar(&commits, "commit", nil, "commit anchor (repeatable)")
-	flags.StringArrayVar(&paths, "path", nil, "path anchor (repeatable)")
-	flags.StringArrayVar(&dirs, "dir", nil, "directory anchor (repeatable)")
-	flags.StringArrayVar(&branches, "branch", nil, "branch anchor (repeatable)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindLabels(flags, &labels, "label (repeatable)")
+	anchors.bind(flags)
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
 func newLogAppendCmd() *cobra.Command {
-	var message string
+	var entry string
 	var attach []string
 	var replace, jsonOut bool
 	cmd := &cobra.Command{
@@ -116,15 +114,15 @@ func newLogAppendCmd() *cobra.Command {
 				return &UsageError{Err: errors.New("log append requires a log ID")}
 			}
 			var ops []model.Op
-			if len(args) > 1 || cmd.Flags().Changed("message") {
-				text, err := entryText(cmd, args, message)
+			if len(args) > 1 || cmd.Flags().Changed("entry") {
+				text, err := entryText(cmd, args, entry)
 				if err != nil {
 					return err
 				}
 				ops = append(ops, model.AppendEntry{Text: text})
 			}
 			if len(ops) == 0 && len(attach) == 0 {
-				return &UsageError{Err: errors.New("log append requires entry text (a positional TEXT, -m, or - for stdin) or --attach")}
+				return &UsageError{Err: errors.New("log append requires entry text (a positional TEXT, --entry, or - for stdin) or --attach")}
 			}
 			ctx := cmd.Context()
 			s, err := openStore()
@@ -155,19 +153,19 @@ func newLogAppendCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVarP(&message, "message", "m", "", "entry text")
+	flags.StringVar(&entry, "entry", "", "entry text")
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
 	flags.BoolVar(&replace, "replace", false, "allow --attach to overwrite a live attachment with the same name")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
 // entryText resolves the entry text for log append from exactly one of: the
-// positional TEXT (args[1]), the -m/--message flag, or - read from stdin.
+// positional TEXT (args[1]), the --entry flag, or - read from stdin.
 // Zero or more than one source is a UsageError.
-func entryText(cmd *cobra.Command, args []string, message string) (string, error) {
+func entryText(cmd *cobra.Command, args []string, entry string) (string, error) {
 	positional := len(args) > 1
-	flagged := cmd.Flags().Changed("message")
+	flagged := cmd.Flags().Changed("entry")
 	stdin := positional && args[1] == "-"
 	sources := 0
 	if positional && !stdin {
@@ -181,7 +179,7 @@ func entryText(cmd *cobra.Command, args []string, message string) (string, error
 	}
 	switch sources {
 	case 0:
-		return "", &UsageError{Err: errors.New("log append requires entry text: a positional TEXT, -m, or - for stdin")}
+		return "", &UsageError{Err: errors.New("log append requires entry text: a positional TEXT, --entry, or - for stdin")}
 	case 1:
 		switch {
 		case stdin:
@@ -189,16 +187,16 @@ func entryText(cmd *cobra.Command, args []string, message string) (string, error
 		case positional:
 			return args[1], nil
 		default:
-			return message, nil
+			return entry, nil
 		}
 	default:
-		return "", &UsageError{Err: errors.New("log append takes entry text from exactly one of a positional TEXT, -m, or - for stdin")}
+		return "", &UsageError{Err: errors.New("log append takes entry text from exactly one of a positional TEXT, --entry, or - for stdin")}
 	}
 }
 
 func newLogListCmd() *cobra.Command {
-	var tags []string
-	var path, commit, dir, branch string
+	var labels []string
+	var filters anchorFilters
 	var all, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -214,24 +212,21 @@ func newLogListCmd() *cobra.Command {
 				return err
 			}
 			logs = slices.DeleteFunc(logs, func(l model.Log) bool {
-				return !hasAll(l.Tags, tags) ||
-					(commit != "" && !hasAnchorIn(l.Anchors, model.AnchorCommit, commit)) ||
-					(path != "" && !hasAnchorIn(l.Anchors, model.AnchorPath, path)) ||
-					(dir != "" && !hasAnchorIn(l.Anchors, model.AnchorDir, dir)) ||
-					(branch != "" && !hasAnchorIn(l.Anchors, model.AnchorBranch, branch))
+				return !hasAll(l.Tags, labels) ||
+					(filters.commit != "" && !hasAnchorIn(l.Anchors, model.AnchorCommit, filters.commit)) ||
+					(filters.path != "" && !hasAnchorIn(l.Anchors, model.AnchorPath, filters.path)) ||
+					(filters.dir != "" && !hasAnchorIn(l.Anchors, model.AnchorDir, filters.dir)) ||
+					(filters.branch != "" && !hasAnchorIn(l.Anchors, model.AnchorBranch, filters.branch))
 			})
 			sortLogs(logs)
 			return printLogList(cmd, s, logs, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringArrayVar(&tags, "tag", nil, "require tag (repeatable, ANDed)")
-	flags.StringVar(&path, "path", "", "require path anchor")
-	flags.StringVar(&commit, "commit", "", "require commit anchor")
-	flags.StringVar(&dir, "dir", "", "require directory anchor")
-	flags.StringVar(&branch, "branch", "", "require branch anchor")
+	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
+	filters.bind(flags)
 	flags.BoolVar(&all, "all", false, "include tombstoned logs")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
@@ -242,33 +237,22 @@ func newLogShowCmd() *cobra.Command {
 		Short: "Show one log with its entries in chronological order",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
-			_, log, err := loadLog(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			atts, err := entityAttachments(ctx, s, log.Attachments)
-			if err != nil {
-				return err
-			}
-			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), newLogDTO(log, atts))
-			}
-			_, err = fmt.Fprint(cmd.OutOrStdout(), renderLogShow(log, atts))
-			return err
+			return showLog(cmd, s, args[0], jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(cmd.Flags(), &jsonOut)
 	return cmd
 }
 
 func newLogEditCmd() *cobra.Command {
 	var title string
-	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches, rmAttachments []string
+	var rmAttachments []string
+	var labels labelEdits
+	var anchors anchorEdits
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
@@ -283,24 +267,24 @@ func newLogEditCmd() *cobra.Command {
 				}
 				ops = append(ops, model.SetTitle{Title: title})
 			}
-			for _, tag := range addTags {
-				ops = append(ops, model.AddTag{Tag: tag})
+			for _, l := range labels.add {
+				ops = append(ops, model.AddTag{Tag: l})
 			}
-			for _, tag := range rmTags {
-				ops = append(ops, model.RemoveTag{Tag: tag})
+			for _, l := range labels.rm {
+				ops = append(ops, model.RemoveTag{Tag: l})
 			}
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
-			addCommits, err := resolveCommits(ctx, s.Git, addCommits)
+			addCommits, err := resolveCommits(ctx, s.Git, anchors.addCommits)
 			if err != nil {
 				return err
 			}
-			for _, a := range buildAnchors(addCommits, addPaths, addDirs, addBranches) {
+			for _, a := range buildAnchors(addCommits, anchors.addPaths, anchors.addDirs, anchors.addBranches) {
 				ops = append(ops, model.AddAnchor{Anchor: a})
 			}
-			for _, a := range buildAnchors(rmCommits, rmPaths, rmDirs, rmBranches) {
+			for _, a := range buildAnchors(anchors.rmCommits, anchors.rmPaths, anchors.rmDirs, anchors.rmBranches) {
 				ops = append(ops, model.RemoveAnchor{Anchor: a})
 			}
 			for _, name := range rmAttachments {
@@ -325,18 +309,10 @@ func newLogEditCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&title, "title", "", "new title")
-	flags.StringArrayVar(&addTags, "add-tag", nil, "add tag (repeatable)")
-	flags.StringArrayVar(&rmTags, "rm-tag", nil, "remove tag (repeatable)")
-	flags.StringArrayVar(&addPaths, "add-path", nil, "add path anchor (repeatable)")
-	flags.StringArrayVar(&rmPaths, "rm-path", nil, "remove path anchor (repeatable)")
-	flags.StringArrayVar(&addDirs, "add-dir", nil, "add directory anchor (repeatable)")
-	flags.StringArrayVar(&rmDirs, "rm-dir", nil, "remove directory anchor (repeatable)")
-	flags.StringArrayVar(&addCommits, "add-commit", nil, "add commit anchor (repeatable)")
-	flags.StringArrayVar(&rmCommits, "rm-commit", nil, "remove commit anchor (repeatable)")
-	flags.StringArrayVar(&addBranches, "add-branch", nil, "add branch anchor (repeatable)")
-	flags.StringArrayVar(&rmBranches, "rm-branch", nil, "remove branch anchor (repeatable)")
+	labels.bind(flags)
+	anchors.bind(flags)
 	flags.StringArrayVar(&rmAttachments, "rm-attachment", nil, "remove attachment by name (repeatable)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
@@ -366,18 +342,19 @@ func newLogRmCmd() *cobra.Command {
 			return printLog(cmd, s, snapshot.(model.Log), jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(cmd.Flags(), &jsonOut)
 	return cmd
 }
 
 func newLogSearchCmd() *cobra.Command {
-	var tags []string
-	var author, anchorPath, anchorDir, anchorBranch, anchorCommit string
+	var labels []string
+	var author string
+	var filters anchorFilters
 	var limit int
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
-		Short: "Ranked search across log titles, tags, and entry text",
+		Short: "Ranked search across log titles, labels, and entry text",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := openStore()
@@ -388,19 +365,16 @@ func newLogSearchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logs = rankLogs(logs, args[0], tags, author, anchorPath, anchorDir, anchorBranch, anchorCommit, limit)
+			logs = rankLogs(logs, args[0], labels, author, filters.path, filters.dir, filters.branch, filters.commit, limit)
 			return printLogList(cmd, s, logs, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringArrayVar(&tags, "tag", nil, "require tag (repeatable, ANDed)")
+	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
 	flags.IntVar(&limit, "limit", 20, "maximum results")
 	flags.StringVar(&author, "author", "", "require author")
-	flags.StringVar(&anchorPath, "anchor-path", "", "require path anchor")
-	flags.StringVar(&anchorDir, "anchor-dir", "", "require directory anchor")
-	flags.StringVar(&anchorBranch, "anchor-branch", "", "require branch anchor")
-	flags.StringVar(&anchorCommit, "anchor-commit", "", "require commit anchor")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	filters.bind(flags)
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 

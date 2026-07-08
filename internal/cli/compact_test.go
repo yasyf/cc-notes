@@ -11,7 +11,7 @@ import (
 
 func TestCompactNoteJSONAndLean(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Runbook", "--tag", "ops", "--json"))
+	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Runbook", "--label", "ops", "--json"))
 	mustRun(t, dir, "note", "edit", added.ID, "--title", "Runbook v2", "--json")
 
 	got := mustJSON[noteJSON](t, mustRun(t, dir, "compact", added.ID, "--json"))
@@ -54,7 +54,7 @@ func TestCompactTaskAndUnknownID(t *testing.T) {
 
 func TestCompactDocJSONAndLean(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "doc", "add", "Deploy guide", "--body", "x", "--tag", "ops", "--json"))
+	added := mustJSON[noteJSON](t, mustRun(t, dir, "doc", "add", "Deploy guide", "--body", "x", "--label", "ops", "--json"))
 	mustRun(t, dir, "doc", "edit", added.ID, "--title", "Deploy guide v2", "--json")
 
 	got := mustJSON[noteJSON](t, mustRun(t, dir, "compact", added.ID, "--json"))

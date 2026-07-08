@@ -63,12 +63,12 @@ Create a project. It starts `active`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--desc <text>` | empty | Description; `-` reads stdin |
+| `--body <text>` | empty | Description; `-` reads stdin |
 | `--label <label>` | none | Label; repeatable |
 | `--json` | off | Emit JSON |
 
 ```console
-$ cc-notes project add "Billing platform" --desc "Invoicing, payments, dunning" --label infra
+$ cc-notes project add "Billing platform" --body "Invoicing, payments, dunning" --label infra
 8743887	active	Billing platform
 ```
 
@@ -136,7 +136,7 @@ required. Status changes go through the verbs above, not here.
 | Flag | Meaning |
 |------|---------|
 | `--title <text>` | New title |
-| `--desc <text>` | New description; `-` reads stdin |
+| `--body <text>` | New description; `-` reads stdin |
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--json` | Emit JSON |
 
@@ -167,7 +167,7 @@ Create a sprint. It starts `planned`. `--project` attaches it to a project up fr
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--desc <text>` | empty | Description; `-` reads stdin |
+| `--body <text>` | empty | Description; `-` reads stdin |
 | `--project <id>` | none | Parent project id prefix |
 | `--label <label>` | none | Label; repeatable |
 | `--start <YYYY-MM-DD>` | none | Start date (UTC midnight) |
@@ -222,9 +222,9 @@ commits: -
 tasks: 77bb68a
 ```
 
-### `cc-notes sprint start | complete | cancel ID`
+### `cc-notes sprint activate | complete | cancel ID`
 
-Walk the sprint lifecycle: `start` marks it `active`, `complete` marks it `completed`, `cancel`
+Walk the sprint lifecycle: `activate` marks it `active`, `complete` marks it `completed`, `cancel`
 marks it `cancelled`. All three are accepted from `planned` or `active`; once a sprint is
 `completed` or `cancelled`, every verb refuses with a conflict.
 
@@ -233,7 +233,7 @@ marks it `cancelled`. All three are accepted from `planned` or `active`; once a 
 | `--json` | off | Emit JSON |
 
 ```console
-$ cc-notes sprint start 7016a10
+$ cc-notes sprint activate 7016a10
 7016a10	active	Sprint 12
 ```
 
@@ -246,7 +246,7 @@ exclusive.
 | Flag | Meaning |
 |------|---------|
 | `--title <text>` | New title |
-| `--desc <text>` | New description; `-` reads stdin |
+| `--body <text>` | New description; `-` reads stdin |
 | `--project <id>` | Set the parent project |
 | `--no-project` | Clear the project |
 | `--start <YYYY-MM-DD>` | Set the start date |
@@ -292,8 +292,8 @@ $ cc-notes task edit 77bb68a --no-sprint           # detach from the sprint, kee
 77bb68a	open	P1	-	Add retry backoff to the API client
 ```
 
-Membership is repo-wide, so it survives a `task move` between branches and is unaffected by the
-backlog. A task's `--branch`/`--backlog` scope and its `--sprint`/`--project` membership are
+Membership is repo-wide, so it survives re-homing a task between branches (`task edit --branch`)
+and is unaffected by the backlog. A task's `--branch`/`--backlog` scope and its `--sprint`/`--project` membership are
 orthogonal axes: branch says *which line of work*, sprint and project say *which plan*.
 
 The `taskDTO` gains `sprint`, `project`, and `criteria`, plus a derived `closed_forced` flag (see
@@ -331,7 +331,7 @@ matched case-insensitively), shown 7 chars wide by `criterion list`.
 | `rm TASK CRIT` | Remove a criterion |
 | `met TASK CRIT` | Mark it `met` |
 | `failed TASK CRIT` | Mark it `failed` |
-| `reset TASK CRIT` | Mark it `pending` |
+| `pending TASK CRIT` | Mark it `pending` |
 | `script TASK CRIT FILE` / `script TASK CRIT --clear` | Set or clear its validation script |
 | `list TASK [--json]` | List the task's criteria (`<short7>` `<status>` `<text>`, tab-separated) |
 

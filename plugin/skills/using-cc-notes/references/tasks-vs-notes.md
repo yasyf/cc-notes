@@ -41,7 +41,7 @@ $ cc-notes task add "Login retries ignore the backoff ceiling" --type bug --prio
 **Why the API client retries the way it does.** `cc-notes note`. It is a decision, not a unit of work — a fact about the codebase future readers need. Anchor it to the file with `--path` so the note is born verified against current content and drift is computed for you later.
 
 ```console
-$ cc-notes note add "Retry backoff caps at 30s" --path internal/api/client.go --tag design --body "The server drops connections past 30s, so exponential backoff is clamped. Do not raise the ceiling without checking the gateway timeout."
+$ cc-notes note add "Retry backoff caps at 30s" --path internal/api/client.go --label design --body "The server drops connections past 30s, so exponential backoff is clamped. Do not raise the ceiling without checking the gateway timeout."
 b71e0d4	2026-06-16	design	Retry backoff caps at 30s
 ```
 
@@ -49,7 +49,7 @@ b71e0d4	2026-06-16	design	Retry backoff caps at 30s
 
 ```console
 $ p=$(cc-notes doc add "Auth migration handoff" --checkout \
-    --when "resuming the auth cutover" --dir internal/api --tag handoff)
+    --when "resuming the auth cutover" --dir internal/api --label handoff)
 $ # write the guidance into "$p" below the frontmatter with your file tools
 $ cc-notes doc add --apply "$p"
 5c7d279	2026-06-23	handoff	Auth migration handoff	resuming the auth cutover
@@ -64,7 +64,7 @@ buffer above for a long body, `--body -` for a short one, and `--attach <file>` 
 **Recording a production incident as it unfolds.** `cc-notes log`. The value is the chronology, not a single fact: a timeline of timestamped, authored entries that you keep appending as the incident develops, and that nobody ever rewrites afterward. A note would flatten the sequence into one line; a doc would invite editing the body as the situation changed, but an incident record must stay exactly as it was written. Create the log, anchor it to the affected code, then append each entry as you learn more.
 
 ```console
-$ cc-notes log add "Checkout 500s incident 2026-06-23" --dir internal/checkout --tag incident
+$ cc-notes log add "Checkout 500s incident 2026-06-23" --dir internal/checkout --label incident
 9f2c0e1	2026-06-23	incident	Checkout 500s incident 2026-06-23
 $ cc-notes log append 9f2c0e1 "16:02 — error rate spiked to 12% after the pricing deploy"
 9f2c0e1	2026-06-23	incident	Checkout 500s incident 2026-06-23
@@ -101,7 +101,7 @@ e0b8f73	open	P2	-	Read sessions from the new schema
 - **Native todos for cross-session work.** The session ends and the work is lost. If it must survive, it is a `cc-notes task`.
 - **A cc-notes note for an action item.** Notes are facts, not a queue — they have no claim, lease, status, or ready-list. Track work as a `cc-notes task`.
 - **A cc-notes task for in-session steps.** A durable, synced task for "edit this file next" clutters the shared view with one agent's transient scaffolding. Keep those in native todos.
-- **Shared work filed on your branch instead of the backlog.** A plain `task add` lands the task on your current branch, where it stays out of other agents' default view until you `task move` or merge. If anyone could pick it up, use `--backlog` so it is visible to every agent from the start.
+- **Shared work filed on your branch instead of the backlog.** A plain `task add` lands the task on your current branch, where it stays out of other agents' default view until you re-home it (`task edit --branch`) or merge. If anyone could pick it up, use `--backlog` so it is visible to every agent from the start.
 - **A cc-notes note no one can place.** An unanchored note about a specific file rots silently. Anchor decisions to a `--path` or `--commit` so the note is born verified and drift is computed against the real code.
 - **Run evidence committed to the repo tree.** Copying VM or CI run output — scenario logs, panic dumps, repro archives — under `docs/` or an `assets/` directory bakes megabytes of one-shot evidence into git history that every clone downloads forever. The chronology is a `cc-notes log`; each run's files ride `log append --attach`, stored in git-lfs and carried by `cc-notes sync`. Repo files are for the human-facing report, not the evidence behind it.
 - **A loose `HANDOFF.md` for the next agent.** Nothing surfaces a loose markdown file — the next agent never opens it, it drifts unchecked, and it clutters the human-facing tree. Store the same guidance as a `cc-notes doc` with a `--when` trigger: born verified, drift-checked, and floated into the next agent's context the moment the trigger matches.

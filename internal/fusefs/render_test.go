@@ -1617,7 +1617,7 @@ func TestRenderTaskMatchesCLIJSON(t *testing.T) {
 	parentID := addTaskID(t, dir, "task", "add", "Parent epic", "--type", "epic", "--no-validation-criteria")
 	blockerID := addTaskID(t, dir, "task", "add", "Blocker", "--no-validation-criteria")
 	id := addTaskID(t, dir, "task", "add", "Cross-check & <rich> task",
-		"--desc", "Multi-line\ndescription.", "--label", "render", "--label", "fs",
+		"--body", "Multi-line\ndescription.", "--label", "render", "--label", "fs",
 		"--priority", "1", "--parent", parentID, "--blocked-by", blockerID, "--no-validation-criteria")
 	runCLI(t, dir, "task", "claim", id)
 	runCLI(t, dir, "task", "comment", id, "First comment\nwith a newline")
@@ -1649,11 +1649,11 @@ func TestRenderTaskMatchesCLIJSON(t *testing.T) {
 // task test keeps blocks empty).
 func TestRenderSprintMatchesCLIJSON(t *testing.T) {
 	dir := initRepo(t)
-	projectID := addTaskID(t, dir, "project", "add", "Umbrella project", "--desc", "Holds the sprint.")
+	projectID := addTaskID(t, dir, "project", "add", "Umbrella project", "--body", "Holds the sprint.")
 	id := addTaskID(t, dir, "sprint", "add", "Sprint 7 <core>",
-		"--desc", "Ship the FUSE layer.\nTwo lines.", "--project", projectID,
+		"--body", "Ship the FUSE layer.\nTwo lines.", "--project", projectID,
 		"--label", "fs", "--label", "core", "--start", "2025-12-12", "--end", "2025-12-19")
-	runCLI(t, dir, "sprint", "start", id)
+	runCLI(t, dir, "sprint", "activate", id)
 	runCLI(t, dir, "sprint", "comment", id, "Kickoff comment\nwith a newline")
 
 	raw := runCLI(t, dir, "sprint", "show", id, "--json")
@@ -1683,7 +1683,7 @@ func TestRenderSprintMatchesCLIJSON(t *testing.T) {
 func TestRenderProjectMatchesCLIJSON(t *testing.T) {
 	dir := initRepo(t)
 	id := addTaskID(t, dir, "project", "add", "Platform <v2>",
-		"--desc", "Long-lived effort.\nMany sprints.", "--label", "platform", "--label", "core")
+		"--body", "Long-lived effort.\nMany sprints.", "--label", "platform", "--label", "core")
 	runCLI(t, dir, "project", "complete", id)
 	runCLI(t, dir, "project", "comment", id, "Charter approved\nfinal.")
 

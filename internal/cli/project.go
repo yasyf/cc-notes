@@ -34,7 +34,7 @@ func newProjectCmd() *cobra.Command {
 }
 
 func newProjectAddCmd() *cobra.Command {
-	var desc string
+	var body string
 	var labels []string
 	var jsonOut bool
 	cmd := &cobra.Command{
@@ -53,7 +53,7 @@ func newProjectAddCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			text, err := bodyArg(cmd, desc)
+			text, err := bodyArg(cmd, body)
 			if err != nil {
 				return err
 			}
@@ -73,7 +73,7 @@ func newProjectAddCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&desc, "desc", "", "project description; - reads stdin")
+	bindBody(flags, &body, "project description; - reads stdin")
 	flags.StringArrayVar(&labels, "label", nil, "label (repeatable)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
@@ -127,30 +127,11 @@ func newProjectShowCmd() *cobra.Command {
 		Short: "Show one project",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
-			_, project, err := loadProject(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			sprints, err := s.ListSprints(ctx)
-			if err != nil {
-				return err
-			}
-			tasks, err := s.ListTasks(ctx)
-			if err != nil {
-				return err
-			}
-			projectSprints := sprintsInProject(sprints, project.ID)
-			projectTasks := tasksInProject(tasks, sprints, project.ID)
-			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), newProjectDTO(project, projectSprints, projectTasks))
-			}
-			_, err = fmt.Fprint(cmd.OutOrStdout(), renderProjectShow(project, projectSprints, projectTasks))
-			return err
+			return showProject(cmd, s, args[0], jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -191,7 +172,7 @@ func newProjectStatusCmd(use string, status model.ProjectStatus) *cobra.Command 
 }
 
 func newProjectEditCmd() *cobra.Command {
-	var title, desc string
+	var title, body string
 	var addLabels, rmLabels []string
 	var jsonOut bool
 	cmd := &cobra.Command{
@@ -212,8 +193,8 @@ func newProjectEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if flags.Changed("desc") {
-				text, err := bodyArg(cmd, desc)
+			if flags.Changed("body") {
+				text, err := bodyArg(cmd, body)
 				if err != nil {
 					return err
 				}
@@ -244,7 +225,7 @@ func newProjectEditCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&title, "title", "", "new title")
-	flags.StringVar(&desc, "desc", "", "new description; - reads stdin")
+	bindBody(flags, &body, "new description; - reads stdin")
 	flags.StringArrayVar(&addLabels, "add-label", nil, "add label (repeatable)")
 	flags.StringArrayVar(&rmLabels, "rm-label", nil, "remove label (repeatable)")
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")

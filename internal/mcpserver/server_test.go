@@ -165,7 +165,7 @@ func TestDocAddShowRoundTrip(t *testing.T) {
 		"title":  "Handoff",
 		"body":   "the long body",
 		"when":   "resuming the cutover",
-		"tags":   []string{"design"},
+		"labels": []string{"design"},
 		"attach": []string{att},
 	}))
 	if added.Title != "Handoff" || added.Body != "the long body" || added.When != "resuming the cutover" {
@@ -262,15 +262,15 @@ func TestListToolsInventory(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	const wantCount = 76
+	const wantCount = 75
 	if len(names) != wantCount {
 		t.Errorf("tool count = %d, want %d; got %v", len(names), wantCount, sortedKeys(names))
 	}
 	for _, want := range []string{
 		"status", "relevant", "sync", "reconcile", "history", "blame",
 		"note_add", "note_review", "doc_add", "doc_supersede", "log_append",
-		"task_add", "task_claim", "task_done", "task_criterion_met", "task_criterion_script", "task_validate",
-		"sprint_add", "sprint_start", "project_add", "project_archive",
+		"task_add", "task_claim", "task_done", "task_criterion_met", "task_criterion_pending", "task_criterion_script", "task_validate",
+		"sprint_add", "sprint_activate", "project_add", "project_archive",
 		"attachment_path", "attachment_get",
 	} {
 		if !names[want] {
@@ -280,6 +280,7 @@ func TestListToolsInventory(t *testing.T) {
 	for _, absent := range []string{
 		"mcp", "mount", "mount_holder", "init", "gc", "compact", "version", "viz",
 		"skills", "hooks", "workflows", "doc_checkout", "note_apply",
+		"task_move", "task_criterion_reset", "sprint_start",
 	} {
 		if names[absent] {
 			t.Errorf("excluded tool %q was registered", absent)

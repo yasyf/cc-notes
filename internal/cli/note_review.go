@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"os"
 	"slices"
 	"time"
 
@@ -11,12 +10,6 @@ import (
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
-)
-
-const (
-	noteStaleAfterEnv     = "CC_NOTES_NOTE_STALE_AFTER"
-	noteStaleAfterConfig  = "cc-notes.noteStaleAfter"
-	defaultNoteStaleAfter = 90 * 24 * time.Hour
 )
 
 // Note review verdicts. A note carries at most one: precedence is
@@ -75,32 +68,6 @@ func freshFromDoc(d model.Doc) freshEntity {
 		StaleAt:      d.StaleAt,
 		SupersededBy: d.SupersededBy,
 	}
-}
-
-// noteStaleAfter resolves the note staleness threshold with precedence
-// env > git config > 90d: CC_NOTES_NOTE_STALE_AFTER overrides the last
-// cc-notes.noteStaleAfter git config value (mirrors leaseTTL).
-func noteStaleAfter(ctx context.Context, g gitcmd.Git) (time.Duration, error) {
-	if value, ok := os.LookupEnv(noteStaleAfterEnv); ok {
-		return parseDuration(value)
-	}
-	values, err := g.ConfigGetAll(ctx, noteStaleAfterConfig)
-	if err != nil {
-		return 0, err
-	}
-	if len(values) > 0 {
-		return parseDuration(values[len(values)-1])
-	}
-	return defaultNoteStaleAfter, nil
-}
-
-// resolveNoteStaleAfter returns the flag value when set, otherwise the
-// configured threshold.
-func resolveNoteStaleAfter(ctx context.Context, g gitcmd.Git, flag string) (time.Duration, error) {
-	if flag != "" {
-		return parseDuration(flag)
-	}
-	return noteStaleAfter(ctx, g)
 }
 
 // resolveHead returns the commit HEAD points at, or "" when HEAD is unborn (a

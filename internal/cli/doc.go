@@ -41,13 +41,14 @@ func newDocCmd() *cobra.Command {
 
 func newDocAddCmd() *cobra.Command {
 	var body, when string
-	var tags, commits, paths, dirs, branches, attach []string
+	var labels, attach []string
+	var anchors anchorSets
 	var jsonOut, checkout, apply, abort bool
 	cmd := &cobra.Command{
 		Use:   "add TITLE",
 		Short: "Create a doc",
 		Long: "Create a doc from flags, or as a file: --checkout writes a template —\n" +
-			"prefilled from any TITLE and anchor/tag flags — to an editable file and\n" +
+			"prefilled from any TITLE and anchor/label flags — to an editable file and\n" +
 			"prints its path; fill in the body, then --apply <path> to create the doc\n" +
 			"(--abort <path> discards it). --apply also accepts --attach, but the buffer\n" +
 			"must carry a body, so attach-only docs use flag-mode --attach.",
@@ -61,7 +62,7 @@ func newDocAddCmd() *cobra.Command {
 			if checkout || apply || abort {
 				var p prefill
 				if checkout {
-					p = prefill{title: optionalTitle(args), when: when, tags: tags, commits: commits, paths: paths, dirs: dirs, branches: branches}
+					p = prefill{title: optionalTitle(args), when: when, tags: labels, commits: anchors.commits, paths: anchors.paths, dirs: anchors.dirs, branches: anchors.branches}
 				}
 				return runFileMode(cmd, docAdapter(), true, args, fileModeOpts{
 					checkout: checkout, apply: apply, abort: abort, jsonOut: jsonOut,
@@ -86,7 +87,7 @@ func newDocAddCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			commits, err := resolveCommits(ctx, s.Git, commits)
+			commits, err := resolveCommits(ctx, s.Git, anchors.commits)
 			if err != nil {
 				return err
 			}
@@ -95,8 +96,8 @@ func newDocAddCmd() *cobra.Command {
 				Title:   args[0],
 				Body:    text,
 				When:    when,
-				Tags:    tags,
-				Anchors: buildAnchors(commits, paths, dirs, branches),
+				Tags:    labels,
+				Anchors: buildAnchors(commits, anchors.paths, anchors.dirs, anchors.branches),
 			}
 			ops := []model.Op{create}
 			attOps, err := attachOps(ctx, cmd, s, attach)
@@ -132,24 +133,21 @@ func newDocAddCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&body, "body", "", "doc body; - reads stdin")
+	bindBody(flags, &body, "doc body; - reads stdin")
 	flags.StringVar(&when, "when", "", "free-text read-this-when trigger")
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
-	flags.StringArrayVar(&tags, "tag", nil, "tag (repeatable)")
-	flags.StringArrayVar(&commits, "commit", nil, "commit anchor (repeatable)")
-	flags.StringArrayVar(&paths, "path", nil, "path anchor (repeatable)")
-	flags.StringArrayVar(&dirs, "dir", nil, "directory anchor (repeatable)")
-	flags.StringArrayVar(&branches, "branch", nil, "branch anchor (repeatable)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
-	flags.BoolVar(&checkout, "checkout", false, "write a doc template (prefilled from TITLE and anchor/tag flags) to an editable file and print its path")
+	bindLabels(flags, &labels, "label (repeatable)")
+	anchors.bind(flags)
+	bindJSON(flags, &jsonOut)
+	flags.BoolVar(&checkout, "checkout", false, "write a doc template (prefilled from TITLE and anchor/label flags) to an editable file and print its path")
 	flags.BoolVar(&apply, "apply", false, "create the doc from the checked-out file (add --apply PATH); may carry --attach")
 	flags.BoolVar(&abort, "abort", false, "discard the checked-out file (add --abort PATH)")
 	return cmd
 }
 
 func newDocListCmd() *cobra.Command {
-	var tags []string
-	var path, commit, dir, branch string
+	var labels []string
+	var filters anchorFilters
 	var all, includeSuperseded, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -165,25 +163,22 @@ func newDocListCmd() *cobra.Command {
 				return err
 			}
 			docs = slices.DeleteFunc(docs, func(d model.Doc) bool {
-				return !hasAll(d.Tags, tags) ||
-					(commit != "" && !hasAnchorIn(d.Anchors, model.AnchorCommit, commit)) ||
-					(path != "" && !hasAnchorIn(d.Anchors, model.AnchorPath, path)) ||
-					(dir != "" && !hasAnchorIn(d.Anchors, model.AnchorDir, dir)) ||
-					(branch != "" && !hasAnchorIn(d.Anchors, model.AnchorBranch, branch))
+				return !hasAll(d.Tags, labels) ||
+					(filters.commit != "" && !hasAnchorIn(d.Anchors, model.AnchorCommit, filters.commit)) ||
+					(filters.path != "" && !hasAnchorIn(d.Anchors, model.AnchorPath, filters.path)) ||
+					(filters.dir != "" && !hasAnchorIn(d.Anchors, model.AnchorDir, filters.dir)) ||
+					(filters.branch != "" && !hasAnchorIn(d.Anchors, model.AnchorBranch, filters.branch))
 			})
 			sortDocs(docs)
 			return printDocList(cmd, s, docs, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringArrayVar(&tags, "tag", nil, "require tag (repeatable, ANDed)")
-	flags.StringVar(&path, "path", "", "require path anchor")
-	flags.StringVar(&commit, "commit", "", "require commit anchor")
-	flags.StringVar(&dir, "dir", "", "require directory anchor")
-	flags.StringVar(&branch, "branch", "", "require branch anchor")
+	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
+	filters.bind(flags)
 	flags.BoolVar(&all, "all", false, "include tombstoned docs")
 	flags.BoolVar(&includeSuperseded, "include-superseded", false, "include superseded docs")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
@@ -194,49 +189,22 @@ func newDocShowCmd() *cobra.Command {
 		Short: "Show one doc",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
-			_, doc, err := loadDoc(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			head, err := resolveHead(ctx, s)
-			if err != nil {
-				return err
-			}
-			staleAfter, err := noteStaleAfter(ctx, s.Git)
-			if err != nil {
-				return err
-			}
-			verdict, err := docVerdict(ctx, s, head, doc, time.Now(), staleAfter, false)
-			if err != nil {
-				return err
-			}
-			supersedes, err := reverseSupersedesDocs(ctx, s, doc.ID)
-			if err != nil {
-				return err
-			}
-			atts, err := entityAttachments(ctx, s, doc.Attachments)
-			if err != nil {
-				return err
-			}
-			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), newDocDTO(doc, verdict, atts))
-			}
-			_, err = fmt.Fprint(cmd.OutOrStdout(), renderDocShow(doc, verdict, supersedes, atts))
-			return err
+			return showDoc(cmd, s, args[0], jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(cmd.Flags(), &jsonOut)
 	return cmd
 }
 
 func newDocEditCmd() *cobra.Command {
 	var title, body, when string
-	var addTags, rmTags, addPaths, rmPaths, addDirs, rmDirs, addCommits, rmCommits, addBranches, rmBranches, rmAttachments, attach []string
+	var rmAttachments, attach []string
+	var labels labelEdits
+	var anchors anchorEdits
 	var jsonOut, checkout, apply, abort, replace bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
@@ -273,24 +241,24 @@ func newDocEditCmd() *cobra.Command {
 			if cmd.Flags().Changed("when") {
 				ops = append(ops, model.SetWhen{When: when})
 			}
-			for _, tag := range addTags {
-				ops = append(ops, model.AddTag{Tag: tag})
+			for _, l := range labels.add {
+				ops = append(ops, model.AddTag{Tag: l})
 			}
-			for _, tag := range rmTags {
-				ops = append(ops, model.RemoveTag{Tag: tag})
+			for _, l := range labels.rm {
+				ops = append(ops, model.RemoveTag{Tag: l})
 			}
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
-			addCommits, err := resolveCommits(ctx, s.Git, addCommits)
+			addCommits, err := resolveCommits(ctx, s.Git, anchors.addCommits)
 			if err != nil {
 				return err
 			}
-			for _, a := range buildAnchors(addCommits, addPaths, addDirs, addBranches) {
+			for _, a := range buildAnchors(addCommits, anchors.addPaths, anchors.addDirs, anchors.addBranches) {
 				ops = append(ops, model.AddAnchor{Anchor: a})
 			}
-			for _, a := range buildAnchors(rmCommits, rmPaths, rmDirs, rmBranches) {
+			for _, a := range buildAnchors(anchors.rmCommits, anchors.rmPaths, anchors.rmDirs, anchors.rmBranches) {
 				ops = append(ops, model.RemoveAnchor{Anchor: a})
 			}
 			for _, name := range rmAttachments {
@@ -325,22 +293,14 @@ func newDocEditCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&title, "title", "", "new title")
-	flags.StringVar(&body, "body", "", "new body; - reads stdin")
+	bindBody(flags, &body, "new body; - reads stdin")
 	flags.StringVar(&when, "when", "", "new read-this-when trigger")
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
 	flags.BoolVar(&replace, "replace", false, "allow --attach to overwrite a live attachment with the same name")
-	flags.StringArrayVar(&addTags, "add-tag", nil, "add tag (repeatable)")
-	flags.StringArrayVar(&rmTags, "rm-tag", nil, "remove tag (repeatable)")
-	flags.StringArrayVar(&addPaths, "add-path", nil, "add path anchor (repeatable)")
-	flags.StringArrayVar(&rmPaths, "rm-path", nil, "remove path anchor (repeatable)")
-	flags.StringArrayVar(&addDirs, "add-dir", nil, "add directory anchor (repeatable)")
-	flags.StringArrayVar(&rmDirs, "rm-dir", nil, "remove directory anchor (repeatable)")
-	flags.StringArrayVar(&addCommits, "add-commit", nil, "add commit anchor (repeatable)")
-	flags.StringArrayVar(&rmCommits, "rm-commit", nil, "remove commit anchor (repeatable)")
-	flags.StringArrayVar(&addBranches, "add-branch", nil, "add branch anchor (repeatable)")
-	flags.StringArrayVar(&rmBranches, "rm-branch", nil, "remove branch anchor (repeatable)")
+	labels.bind(flags)
+	anchors.bind(flags)
 	flags.StringArrayVar(&rmAttachments, "rm-attachment", nil, "remove attachment by name (repeatable)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(flags, &jsonOut)
 	flags.BoolVar(&checkout, "checkout", false, "write the doc to an editable file and print its path")
 	flags.BoolVar(&apply, "apply", false, "apply edits from the checked-out file")
 	flags.BoolVar(&abort, "abort", false, "discard the checked-out file")
@@ -373,18 +333,19 @@ func newDocRmCmd() *cobra.Command {
 			return printDoc(cmd, s, snapshot.(model.Doc), "", jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(cmd.Flags(), &jsonOut)
 	return cmd
 }
 
 func newDocSearchCmd() *cobra.Command {
-	var tags []string
-	var author, anchorPath, anchorDir, anchorBranch, anchorCommit string
+	var labels []string
+	var author string
+	var filters anchorFilters
 	var limit int
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
-		Short: "Ranked search across doc titles, tags, and bodies",
+		Short: "Ranked search across doc titles, labels, and bodies",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := openStore()
@@ -395,19 +356,16 @@ func newDocSearchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			docs = rankDocs(docs, args[0], tags, author, anchorPath, anchorDir, anchorBranch, anchorCommit, limit)
+			docs = rankDocs(docs, args[0], labels, author, filters.path, filters.dir, filters.branch, filters.commit, limit)
 			return printDocList(cmd, s, docs, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringArrayVar(&tags, "tag", nil, "require tag (repeatable, ANDed)")
+	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
 	flags.IntVar(&limit, "limit", 20, "maximum results")
 	flags.StringVar(&author, "author", "", "require author")
-	flags.StringVar(&anchorPath, "anchor-path", "", "require path anchor")
-	flags.StringVar(&anchorDir, "anchor-dir", "", "require directory anchor")
-	flags.StringVar(&anchorBranch, "anchor-branch", "", "require branch anchor")
-	flags.StringVar(&anchorCommit, "anchor-commit", "", "require commit anchor")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	filters.bind(flags)
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
@@ -445,16 +403,16 @@ func newDocVerifyCmd() *cobra.Command {
 			return printDoc(cmd, s, snapshot.(model.Doc), "", jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(cmd.Flags(), &jsonOut)
 	return cmd
 }
 
 func newDocSupersedeCmd() *cobra.Command {
 	var by string
-	var remove, jsonOut bool
+	var clear, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "supersede OLD --by NEW",
-		Short: "Record that NEW replaces OLD (--remove undoes the edge)",
+		Short: "Record that NEW replaces OLD (--clear undoes the edge)",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -477,7 +435,7 @@ func newDocSupersedeCmd() *cobra.Command {
 				return err
 			}
 			var op model.Op = model.AddSupersededBy{ID: newDoc.ID}
-			if remove {
+			if clear {
 				op = model.RemoveSupersededBy{ID: newDoc.ID}
 			}
 			snapshot, err := s.Append(ctx, oldRef, []model.Op{op})
@@ -489,8 +447,8 @@ func newDocSupersedeCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&by, "by", "", "the replacement doc (required)")
-	flags.BoolVar(&remove, "remove", false, "remove the supersede edge")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags.BoolVar(&clear, "clear", false, "remove the supersede edge")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
@@ -533,7 +491,7 @@ func newDocExpireCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&reason, "reason", "", "why the doc is out-of-date")
 	flags.BoolVar(&clearFlag, "clear", false, "remove the out-of-date flag")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
@@ -571,7 +529,7 @@ func newDocReviewCmd() *cobra.Command {
 	flags.BoolVar(&drift, "drift", false, "limit to drifted docs")
 	flags.BoolVar(&unverified, "unverified", false, "limit to never-verified docs")
 	flags.BoolVar(&expired, "expired", false, "limit to expired docs")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 

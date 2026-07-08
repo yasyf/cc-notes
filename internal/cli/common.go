@@ -189,14 +189,14 @@ const maxTitleBytes = 256
 
 // Escape hints name, per command surface, the places that actually hold long
 // content: note/doc add and edit both carry it in --body/--checkout/--attach,
-// logs carry it in entries, task/sprint/project in --desc, and a checked-out
+// logs carry it in entries, task/sprint/project in --body, and a checked-out
 // file-mode buffer carries it in the body below the frontmatter (bufferHint
 // serves both the title cap and errEmptyDocBody there).
 const (
 	titleHintBody     = "put the content in --body (- reads stdin), --checkout file mode, or --attach"
 	titleHintBodyEdit = "put the content in --body (- reads stdin), --checkout file mode, or --attach"
 	titleHintLog      = "put the content in log entries (--entry on add, or log append)"
-	titleHintDesc     = "put the content in --desc"
+	titleHintDesc     = "put the content in --body (- reads stdin)"
 	bufferHint        = "put the content in the body below the frontmatter"
 	docBodyHintAdd    = "pass --body (- reads stdin), --checkout file mode, or --attach the content"
 	docBodyHintEdit   = "pass --body (- reads stdin), --checkout file mode, or --attach the content"
@@ -250,7 +250,7 @@ func noUnknownSubcommand(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	return &UsageError{Err: fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath())}
+	return unknownSubcommandErr(cmd, args[0], subcommandHint(cmd, args[0]))
 }
 
 // runHelp makes a command group runnable so cobra validates its args —

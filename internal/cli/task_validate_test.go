@@ -128,7 +128,7 @@ func TestTaskCriterionRoundTrip(t *testing.T) {
 	}{
 		{"met", "met"},
 		{"failed", "failed"},
-		{"reset", "pending"},
+		{"pending", "pending"},
 	} {
 		out := spJSON[taskDTO](t, spMust(t, dir, "task", "criterion", tc.verb, task.ID, cid[:7], "--json"))
 		if out.Criteria[0].Status != tc.want {

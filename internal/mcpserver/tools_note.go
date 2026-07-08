@@ -9,7 +9,7 @@ import (
 type noteAddArgs struct {
 	Title    string   `json:"title" jsonschema:"short handle for the note"`
 	Body     string   `json:"body,omitempty" jsonschema:"note body (markdown)"`
-	Tags     []string `json:"tags,omitempty" jsonschema:"tags"`
+	Labels   []string `json:"labels,omitempty" jsonschema:"labels (echoed as 'tags' in the note DTO)"`
 	Commits  []string `json:"commits,omitempty" jsonschema:"commit anchors (sha or revision; resolved to full sha)"`
 	Paths    []string `json:"paths,omitempty" jsonschema:"path anchors"`
 	Dirs     []string `json:"dirs,omitempty" jsonschema:"directory anchors"`
@@ -21,8 +21,8 @@ type noteEditArgs struct {
 	ID            string   `json:"id" jsonschema:"note id prefix"`
 	Title         string   `json:"title,omitempty" jsonschema:"new title"`
 	Body          string   `json:"body,omitempty" jsonschema:"new body"`
-	AddTags       []string `json:"add_tags,omitempty" jsonschema:"tags to add"`
-	RmTags        []string `json:"rm_tags,omitempty" jsonschema:"tags to remove"`
+	AddLabels     []string `json:"add_labels,omitempty" jsonschema:"labels to add"`
+	RmLabels      []string `json:"rm_labels,omitempty" jsonschema:"labels to remove"`
 	AddPaths      []string `json:"add_paths,omitempty" jsonschema:"path anchors to add"`
 	RmPaths       []string `json:"rm_paths,omitempty" jsonschema:"path anchors to remove"`
 	AddDirs       []string `json:"add_dirs,omitempty" jsonschema:"directory anchors to add"`
@@ -41,7 +41,7 @@ func registerNote(srv *mcp.Server, b *bridge) {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in noteAddArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--body", in.Body)
-			flags = optRepeated(flags, "--tag", in.Tags)
+			flags = optRepeated(flags, "--label", in.Labels)
 			flags = optRepeated(flags, "--commit", in.Commits)
 			flags = optRepeated(flags, "--path", in.Paths)
 			flags = optRepeated(flags, "--dir", in.Dirs)
@@ -50,7 +50,7 @@ func registerNote(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"note", "add"}, flags, in.Title)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "note_edit", Description: "Edit a note: title, body, tags, anchors, and attachments."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "note_edit", Description: "Edit a note: title, body, labels, anchors, and attachments."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in noteEditArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"note", "edit"}, noteDocEditFlags(in), in.ID)...)
 		})
@@ -65,8 +65,8 @@ func noteDocEditFlags(in noteEditArgs) []string {
 	flags := []string{"--json"}
 	flags = optStr(flags, "--title", in.Title)
 	flags = optStr(flags, "--body", in.Body)
-	flags = optRepeated(flags, "--add-tag", in.AddTags)
-	flags = optRepeated(flags, "--rm-tag", in.RmTags)
+	flags = optRepeated(flags, "--add-label", in.AddLabels)
+	flags = optRepeated(flags, "--rm-label", in.RmLabels)
 	flags = optRepeated(flags, "--add-path", in.AddPaths)
 	flags = optRepeated(flags, "--rm-path", in.RmPaths)
 	flags = optRepeated(flags, "--add-dir", in.AddDirs)
@@ -91,7 +91,7 @@ type commentArgs struct {
 }
 
 type entityListArgs struct {
-	Tags              []string `json:"tags,omitempty" jsonschema:"require every tag (ANDed)"`
+	Labels            []string `json:"labels,omitempty" jsonschema:"require every label (ANDed; echoed as 'tags' in the DTO)"`
 	Path              string   `json:"path,omitempty" jsonschema:"require path anchor"`
 	Commit            string   `json:"commit,omitempty" jsonschema:"require commit anchor"`
 	Dir               string   `json:"dir,omitempty" jsonschema:"require directory anchor"`
@@ -101,20 +101,20 @@ type entityListArgs struct {
 }
 
 type entitySearchArgs struct {
-	Query        string   `json:"query" jsonschema:"search query (matches title, tags, body)"`
-	Tags         []string `json:"tags,omitempty" jsonschema:"require every tag (ANDed)"`
-	Limit        *int     `json:"limit,omitempty" jsonschema:"maximum results (default 20)"`
-	Author       string   `json:"author,omitempty" jsonschema:"require author"`
-	AnchorPath   string   `json:"anchor_path,omitempty" jsonschema:"require path anchor"`
-	AnchorDir    string   `json:"anchor_dir,omitempty" jsonschema:"require directory anchor"`
-	AnchorBranch string   `json:"anchor_branch,omitempty" jsonschema:"require branch anchor"`
-	AnchorCommit string   `json:"anchor_commit,omitempty" jsonschema:"require commit anchor"`
+	Query  string   `json:"query" jsonschema:"search query (matches title, labels, body)"`
+	Labels []string `json:"labels,omitempty" jsonschema:"require every label (ANDed; echoed as 'tags' in the DTO)"`
+	Limit  *int     `json:"limit,omitempty" jsonschema:"maximum results (default 20)"`
+	Author string   `json:"author,omitempty" jsonschema:"require author"`
+	Path   string   `json:"path,omitempty" jsonschema:"require path anchor"`
+	Dir    string   `json:"dir,omitempty" jsonschema:"require directory anchor"`
+	Branch string   `json:"branch,omitempty" jsonschema:"require branch anchor"`
+	Commit string   `json:"commit,omitempty" jsonschema:"require commit anchor"`
 }
 
 type supersedeArgs struct {
-	ID     string `json:"id" jsonschema:"the OLD entity being replaced"`
-	By     string `json:"by" jsonschema:"the NEW entity that replaces it"`
-	Remove bool   `json:"remove,omitempty" jsonschema:"remove the supersede edge instead of adding it"`
+	ID    string `json:"id" jsonschema:"the OLD entity being replaced"`
+	By    string `json:"by" jsonschema:"the NEW entity that replaces it"`
+	Clear bool   `json:"clear,omitempty" jsonschema:"clear the supersede edge instead of adding it"`
 }
 
 type expireArgs struct {
@@ -138,10 +138,10 @@ func registerNoteDocShared(srv *mcp.Server, b *bridge, noun string) {
 			return b.run(ctx, argvFor([]string{noun, "rm"}, []string{"--json"}, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_list", Description: "List " + noun + "s, optionally filtered by tag and anchors."},
+	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_list", Description: "List " + noun + "s, optionally filtered by label and anchors."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entityListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
-			flags = optRepeated(flags, "--tag", in.Tags)
+			flags = optRepeated(flags, "--label", in.Labels)
 			flags = optStr(flags, "--path", in.Path)
 			flags = optStr(flags, "--commit", in.Commit)
 			flags = optStr(flags, "--dir", in.Dir)
@@ -156,16 +156,16 @@ func registerNoteDocShared(srv *mcp.Server, b *bridge, noun string) {
 			return b.run(ctx, argvFor([]string{noun, "show"}, []string{"--json"}, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_search", Description: "Ranked search across " + noun + " titles, tags, and bodies."},
+	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_search", Description: "Ranked search across " + noun + " titles, labels, and bodies."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entitySearchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
-			flags = optRepeated(flags, "--tag", in.Tags)
+			flags = optRepeated(flags, "--label", in.Labels)
 			flags = optInt(flags, "--limit", in.Limit)
 			flags = optStr(flags, "--author", in.Author)
-			flags = optStr(flags, "--anchor-path", in.AnchorPath)
-			flags = optStr(flags, "--anchor-dir", in.AnchorDir)
-			flags = optStr(flags, "--anchor-branch", in.AnchorBranch)
-			flags = optStr(flags, "--anchor-commit", in.AnchorCommit)
+			flags = optStr(flags, "--path", in.Path)
+			flags = optStr(flags, "--dir", in.Dir)
+			flags = optStr(flags, "--branch", in.Branch)
+			flags = optStr(flags, "--commit", in.Commit)
 			return b.run(ctx, argvFor([]string{noun, "search"}, flags, in.Query)...)
 		})
 
@@ -177,7 +177,7 @@ func registerNoteDocShared(srv *mcp.Server, b *bridge, noun string) {
 	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_supersede", Description: "Record that a NEW " + noun + " replaces an OLD one (or remove the edge)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in supersedeArgs) (*mcp.CallToolResult, any, error) {
 			flags := optStr([]string{"--json"}, "--by", in.By)
-			flags = optBool(flags, "--remove", in.Remove)
+			flags = optBool(flags, "--clear", in.Clear)
 			return b.run(ctx, argvFor([]string{noun, "supersede"}, flags, in.ID)...)
 		})
 

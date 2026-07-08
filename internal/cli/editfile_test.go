@@ -65,7 +65,7 @@ func bufExists(path string) bool {
 func TestDocEditCheckoutApply(t *testing.T) {
 	dir := initRepo(t)
 	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff",
-		"--when", "later", "--body", "orig body", "--tag", "design", "--json"))
+		"--when", "later", "--body", "orig body", "--label", "design", "--json"))
 	ref := "refs/cc-notes/docs/" + added.ID
 	before := mustGit(t, dir, "rev-list", "--count", ref)
 
@@ -391,7 +391,7 @@ func TestDocAddCheckoutPrefill(t *testing.T) {
 	dir := initRepo(t)
 	head := commitFile(t, dir, "seed.go", "package main")
 	path := mustCheckout(t, dir, "doc", "add", "--checkout", "Prefilled title", "--when", "resuming",
-		"--tag", "handoff", "--commit", "HEAD", "--path", "internal/cli", "--branch", "main")
+		"--label", "handoff", "--commit", "HEAD", "--path", "internal/cli", "--branch", "main")
 
 	// The buffer carries the prefilled editable keys, and --commit HEAD is
 	// resolved to the full 40-char sha before rendering.
@@ -435,7 +435,7 @@ func TestNoteAddCheckoutPrefill(t *testing.T) {
 	dir := initRepo(t)
 	head := commitFile(t, dir, "seed.go", "package main")
 	path := mustCheckout(t, dir, "note", "add", "--checkout", "Prefilled note",
-		"--tag", "design", "--commit", "HEAD", "--path", "auth.go")
+		"--label", "design", "--commit", "HEAD", "--path", "auth.go")
 
 	buf := readBuf(t, path)
 	if strings.Contains(buf, "when:") {

@@ -121,7 +121,7 @@ no git hooks, so after a jj merge you still run `cc-notes reconcile` / `sync` yo
 the repo-relevant ones into notes so they ride the repo instead of living only in the
 harness. A cheap path gate (`MemoryWrite`) rejects everything but a memory slug file before
 any disk read; the body is read back from disk so a `Write` and an `Edit` both yield the
-final content; and the note is keyed by a `memory:<slug>` tag, so the handler upserts —
+final content; and the note is keyed by a `memory:<slug>` label, so the handler upserts —
 `note list` to find an existing mirror, then `note edit` in place (skipping the edit when
 title and body are unchanged) or `note add`. It mirrors only `feedback`, `project`, and
 `reference` memories, never a `user` who-you-are memory or the `MEMORY.md` index. Because it

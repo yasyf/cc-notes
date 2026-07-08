@@ -23,7 +23,7 @@ func newSprintCmd() *cobra.Command {
 		newSprintAddCmd(),
 		newSprintListCmd(),
 		newSprintShowCmd(),
-		newSprintStatusCmd("start", model.SprintActive),
+		newSprintStatusCmd("activate", model.SprintActive),
 		newSprintStatusCmd("complete", model.SprintCompleted),
 		newSprintStatusCmd("cancel", model.SprintCancelled),
 		newSprintEditCmd(),
@@ -34,7 +34,7 @@ func newSprintCmd() *cobra.Command {
 }
 
 func newSprintAddCmd() *cobra.Command {
-	var desc, project, start, end string
+	var body, project, start, end string
 	var labels []string
 	var jsonOut bool
 	cmd := &cobra.Command{
@@ -53,7 +53,7 @@ func newSprintAddCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			text, err := bodyArg(cmd, desc)
+			text, err := bodyArg(cmd, body)
 			if err != nil {
 				return err
 			}
@@ -97,7 +97,7 @@ func newSprintAddCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&desc, "desc", "", "sprint description; - reads stdin")
+	bindBody(flags, &body, "sprint description; - reads stdin")
 	flags.StringVar(&project, "project", "", "project id prefix")
 	flags.StringArrayVar(&labels, "label", nil, "label (repeatable)")
 	flags.StringVar(&start, "start", "", "start date YYYY-MM-DD")
@@ -162,25 +162,11 @@ func newSprintShowCmd() *cobra.Command {
 		Short: "Show one sprint",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
 			s, err := openStore()
 			if err != nil {
 				return err
 			}
-			_, sprint, err := loadSprint(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			tasks, err := s.ListTasks(ctx)
-			if err != nil {
-				return err
-			}
-			members := tasksInSprint(tasks, sprint.ID)
-			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), newSprintDTO(sprint, members))
-			}
-			_, err = fmt.Fprint(cmd.OutOrStdout(), renderSprintShow(sprint, members))
-			return err
+			return showSprint(cmd, s, args[0], jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -223,7 +209,7 @@ func newSprintStatusCmd(use string, status model.SprintStatus) *cobra.Command {
 }
 
 func newSprintEditCmd() *cobra.Command {
-	var title, desc, project, start, end string
+	var title, body, project, start, end string
 	var noProject, noStart, noEnd bool
 	var addLabels, rmLabels []string
 	var jsonOut bool
@@ -254,8 +240,8 @@ func newSprintEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if flags.Changed("desc") {
-				text, err := bodyArg(cmd, desc)
+			if flags.Changed("body") {
+				text, err := bodyArg(cmd, body)
 				if err != nil {
 					return err
 				}
@@ -316,7 +302,7 @@ func newSprintEditCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&title, "title", "", "new title")
-	flags.StringVar(&desc, "desc", "", "new description; - reads stdin")
+	bindBody(flags, &body, "new description; - reads stdin")
 	flags.StringVar(&project, "project", "", "new project id prefix")
 	flags.BoolVar(&noProject, "no-project", false, "clear the project")
 	flags.StringVar(&start, "start", "", "new start date YYYY-MM-DD")

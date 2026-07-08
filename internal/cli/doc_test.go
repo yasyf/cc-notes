@@ -52,7 +52,7 @@ func TestDocAddRoundTrip(t *testing.T) {
 	commitFile(t, dir, "auth.go", "v1\n")
 	out := mustRun(t, dir, "doc", "add", "Auth migration handoff",
 		"--when", "resuming the auth cutover", "--body", "the long body",
-		"--tag", "handoff", "--path", "auth.go", "--json")
+		"--label", "handoff", "--path", "auth.go", "--json")
 	if !strings.HasPrefix(out, `{"id":"`) {
 		t.Fatalf("doc JSON does not lead with id: %q", out)
 	}
@@ -182,7 +182,7 @@ func TestDocEditBlankBodyWithAttach(t *testing.T) {
 
 func TestDocAddLeanLine(t *testing.T) {
 	dir := initRepo(t)
-	added := mustRun(t, dir, "doc", "add", "Handoff", "--body", "x", "--when", "resuming the cutover", "--tag", "b", "--tag", "a")
+	added := mustRun(t, dir, "doc", "add", "Handoff", "--body", "x", "--when", "resuming the cutover", "--label", "b", "--label", "a")
 	listed := mustRun(t, dir, "doc", "list")
 	if listed != added {
 		t.Fatalf("doc list = %q, want the line doc add printed %q", listed, added)
@@ -319,12 +319,12 @@ func TestDocExpireReview(t *testing.T) {
 
 func TestDocListFilters(t *testing.T) {
 	dir := initRepo(t)
-	keep := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Kept", "--body", "x", "--tag", "keep", "--dir", "internal/api", "--json"))
-	mustRun(t, dir, "doc", "add", "Dropped", "--body", "x", "--tag", "skip", "--dir", "internal/sync")
+	keep := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Kept", "--body", "x", "--label", "keep", "--dir", "internal/api", "--json"))
+	mustRun(t, dir, "doc", "add", "Dropped", "--body", "x", "--label", "skip", "--dir", "internal/sync")
 
-	byTag := mustJSON[[]docJSON](t, mustRun(t, dir, "doc", "list", "--tag", "keep", "--json"))
+	byTag := mustJSON[[]docJSON](t, mustRun(t, dir, "doc", "list", "--label", "keep", "--json"))
 	if len(byTag) != 1 || byTag[0].ID != keep.ID {
-		t.Fatalf("list --tag keep = %v, want only %s", docIDs(byTag), keep.ID)
+		t.Fatalf("list --label keep = %v, want only %s", docIDs(byTag), keep.ID)
 	}
 	byDir := mustRun(t, dir, "doc", "list", "--dir", "internal/api")
 	if !strings.HasPrefix(byDir, keep.ID[:7]+"\t") || strings.Count(byDir, "\n") != 1 {

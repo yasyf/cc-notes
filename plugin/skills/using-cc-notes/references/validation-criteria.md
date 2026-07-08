@@ -13,7 +13,7 @@ A criterion is a record attached to a task:
 | `script` | An optional shell check command (`""` means none); its exit code decides the verdict |
 | `status` | The latest verdict: `pending`, `met`, or `failed` |
 
-A new criterion starts `pending`. It moves to `met` or `failed` by hand (`task criterion met` / `failed` / `reset`) or from a `task validate` run, which execs the script and records exit 0 as `met`, a non-zero exit or timeout as `failed`. Text is for a human, script is for a machine — a criterion can carry text alone (judged by hand) or text plus a script (auto-checkable).
+A new criterion starts `pending`. It moves to `met` or `failed` by hand (`task criterion met` / `failed` / `pending`) or from a `task validate` run, which execs the script and records exit 0 as `met`, a non-zero exit or timeout as `failed`. Text is for a human, script is for a machine — a criterion can carry text alone (judged by hand) or text plus a script (auto-checkable).
 
 ## Required by default
 
@@ -56,7 +56,7 @@ b6ec411	pending	p99 latency stays under 200ms
 | `task criterion rm TASK CRIT` | Remove a criterion |
 | `task criterion met TASK CRIT` | Mark it `met` by hand |
 | `task criterion failed TASK CRIT` | Mark it `failed` by hand |
-| `task criterion reset TASK CRIT` | Return it to `pending` |
+| `task criterion pending TASK CRIT` | Return it to `pending` |
 | `task criterion script TASK CRIT FILE` | Set the validation script from a file; `--clear` removes it |
 | `task criterion list TASK [--json]` | List the task's criteria |
 

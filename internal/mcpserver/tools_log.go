@@ -9,7 +9,7 @@ import (
 type logAddArgs struct {
 	Title    string   `json:"title" jsonschema:"short handle for the log"`
 	Entry    string   `json:"entry,omitempty" jsonschema:"optional first entry text"`
-	Tags     []string `json:"tags,omitempty" jsonschema:"tags"`
+	Labels   []string `json:"labels,omitempty" jsonschema:"labels (echoed as 'tags' in the log DTO)"`
 	Commits  []string `json:"commits,omitempty" jsonschema:"commit anchors"`
 	Paths    []string `json:"paths,omitempty" jsonschema:"path anchors"`
 	Dirs     []string `json:"dirs,omitempty" jsonschema:"directory anchors"`
@@ -19,7 +19,7 @@ type logAddArgs struct {
 
 type logAppendArgs struct {
 	ID      string   `json:"id" jsonschema:"log id prefix"`
-	Text    string   `json:"text,omitempty" jsonschema:"entry text (required unless attach is given)"`
+	Entry   string   `json:"entry,omitempty" jsonschema:"entry text (required unless attach is given)"`
 	Attach  []string `json:"attach,omitempty" jsonschema:"file paths to attach via git-lfs"`
 	Replace bool     `json:"replace,omitempty" jsonschema:"allow attach to overwrite a live attachment with the same name"`
 }
@@ -27,8 +27,8 @@ type logAppendArgs struct {
 type logEditArgs struct {
 	ID            string   `json:"id" jsonschema:"log id prefix"`
 	Title         string   `json:"title,omitempty" jsonschema:"new title"`
-	AddTags       []string `json:"add_tags,omitempty" jsonschema:"tags to add"`
-	RmTags        []string `json:"rm_tags,omitempty" jsonschema:"tags to remove"`
+	AddLabels     []string `json:"add_labels,omitempty" jsonschema:"labels to add"`
+	RmLabels      []string `json:"rm_labels,omitempty" jsonschema:"labels to remove"`
 	AddPaths      []string `json:"add_paths,omitempty" jsonschema:"path anchors to add"`
 	RmPaths       []string `json:"rm_paths,omitempty" jsonschema:"path anchors to remove"`
 	AddDirs       []string `json:"add_dirs,omitempty" jsonschema:"directory anchors to add"`
@@ -41,7 +41,7 @@ type logEditArgs struct {
 }
 
 type logListArgs struct {
-	Tags   []string `json:"tags,omitempty" jsonschema:"require every tag (ANDed)"`
+	Labels []string `json:"labels,omitempty" jsonschema:"require every label (ANDed; echoed as 'tags' in the DTO)"`
 	Path   string   `json:"path,omitempty" jsonschema:"require path anchor"`
 	Commit string   `json:"commit,omitempty" jsonschema:"require commit anchor"`
 	Dir    string   `json:"dir,omitempty" jsonschema:"require directory anchor"`
@@ -54,7 +54,7 @@ func registerLog(srv *mcp.Server, b *bridge) {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logAddArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--entry", in.Entry)
-			flags = optRepeated(flags, "--tag", in.Tags)
+			flags = optRepeated(flags, "--label", in.Labels)
 			flags = optRepeated(flags, "--commit", in.Commits)
 			flags = optRepeated(flags, "--path", in.Paths)
 			flags = optRepeated(flags, "--dir", in.Dirs)
@@ -66,18 +66,18 @@ func registerLog(srv *mcp.Server, b *bridge) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "log_append", Description: "Append one entry to a log, and/or attach files. Entries are append-only."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logAppendArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
-			flags = optStr(flags, "--message", in.Text)
+			flags = optStr(flags, "--entry", in.Entry)
 			flags = optRepeated(flags, "--attach", in.Attach)
 			flags = optBool(flags, "--replace", in.Replace)
 			return b.run(ctx, argvFor([]string{"log", "append"}, flags, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "log_edit", Description: "Edit a log's title, tags, and anchors (entries are append-only)."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "log_edit", Description: "Edit a log's title, labels, and anchors (entries are append-only)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
-			flags = optRepeated(flags, "--add-tag", in.AddTags)
-			flags = optRepeated(flags, "--rm-tag", in.RmTags)
+			flags = optRepeated(flags, "--add-label", in.AddLabels)
+			flags = optRepeated(flags, "--rm-label", in.RmLabels)
 			flags = optRepeated(flags, "--add-path", in.AddPaths)
 			flags = optRepeated(flags, "--rm-path", in.RmPaths)
 			flags = optRepeated(flags, "--add-dir", in.AddDirs)
@@ -95,10 +95,10 @@ func registerLog(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"log", "rm"}, []string{"--json"}, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "log_list", Description: "List logs, optionally filtered by tag and anchors."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "log_list", Description: "List logs, optionally filtered by label and anchors."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
-			flags = optRepeated(flags, "--tag", in.Tags)
+			flags = optRepeated(flags, "--label", in.Labels)
 			flags = optStr(flags, "--path", in.Path)
 			flags = optStr(flags, "--commit", in.Commit)
 			flags = optStr(flags, "--dir", in.Dir)
@@ -112,16 +112,16 @@ func registerLog(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"log", "show"}, []string{"--json"}, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "log_search", Description: "Ranked search across log titles, tags, and entry text."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "log_search", Description: "Ranked search across log titles, labels, and entry text."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entitySearchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
-			flags = optRepeated(flags, "--tag", in.Tags)
+			flags = optRepeated(flags, "--label", in.Labels)
 			flags = optInt(flags, "--limit", in.Limit)
 			flags = optStr(flags, "--author", in.Author)
-			flags = optStr(flags, "--anchor-path", in.AnchorPath)
-			flags = optStr(flags, "--anchor-dir", in.AnchorDir)
-			flags = optStr(flags, "--anchor-branch", in.AnchorBranch)
-			flags = optStr(flags, "--anchor-commit", in.AnchorCommit)
+			flags = optStr(flags, "--path", in.Path)
+			flags = optStr(flags, "--dir", in.Dir)
+			flags = optStr(flags, "--branch", in.Branch)
+			flags = optStr(flags, "--commit", in.Commit)
 			return b.run(ctx, argvFor([]string{"log", "search"}, flags, in.Query)...)
 		})
 }

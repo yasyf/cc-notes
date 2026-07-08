@@ -6,8 +6,8 @@ cc-notes is built for more than one agent and more than one moment. Every task a
 
 A task lives at one flat ref keyed by its id, exactly like a note. Its branch is a mutable attribute — a `Branch` field resolved last-write-wins — not part of its identity. Two consequences:
 
-- **Every id-addressed command resolves by id alone.** `show`, `start`, `claim`, `done`, `edit`, `comment`, `dep`, `move`, `renew` — none take a `--branch` flag, because the id is global. `--branch`, `--backlog`, and `--all-branches` are reader filters on `list` and `ready`, and setters on `add`, `move`, and `edit`.
-- **Moving a task between branches is a plain attribute write.** `cc-notes task move <id> --to <branch>` sets the `Branch` field — no ref moves, no relocation machinery, the same CRDT append as editing a title.
+- **Every id-addressed command resolves by id alone.** `show`, `start`, `claim`, `done`, `edit`, `comment`, `dep`, `renew` — the id is global, so none needs a branch qualifier. On `list` and `ready`, `--branch`, `--backlog`, and `--all-branches` filter what you read; on `add` and `edit` they set the task's placement.
+- **Moving a task between branches is a plain attribute write.** `cc-notes task edit <id> --branch <branch>` sets the `Branch` field — no ref moves, no relocation machinery, the same CRDT append as editing a title.
 
 `cc-notes task list` and `cc-notes task ready` default to the tasks on your current branch (`Branch == HEAD`). Point them elsewhere with `--branch <branch>`, or widen to `--all-branches` to see every line of work at once, grouped by branch.
 

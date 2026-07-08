@@ -221,7 +221,7 @@ func dateOf(t *testing.T, rfc string) string {
 
 func TestNoteAddLeanLine(t *testing.T) {
 	dir := initRepo(t)
-	added := mustRun(t, dir, "note", "add", "Fix parser", "--tag", "parser", "--tag", "bug")
+	added := mustRun(t, dir, "note", "add", "Fix parser", "--label", "parser", "--label", "bug")
 	listed := mustRun(t, dir, "note", "list")
 	if listed != added {
 		t.Fatalf("note list = %q, want the line note add printed %q", listed, added)
@@ -237,7 +237,7 @@ func TestNoteJSONRoundTrip(t *testing.T) {
 	dir := initRepo(t)
 	full := commitFile(t, dir, "seed.go", "package main")
 	short := full[:8]
-	out := mustRun(t, dir, "note", "add", "Design", "--body", "decisions", "--tag", "arch",
+	out := mustRun(t, dir, "note", "add", "Design", "--body", "decisions", "--label", "arch",
 		"--commit", short, "--path", "internal/cli", "--dir", "internal/auth", "--branch", "main", "--json")
 	if !strings.HasPrefix(out, `{"id":"`) {
 		t.Fatalf("note JSON does not lead with id: %q", out)
@@ -317,7 +317,7 @@ func TestNoteEditRequiresFlag(t *testing.T) {
 	if code := cli.ExitCode(err); code != 2 {
 		t.Fatalf("ExitCode = %d, want 2", code)
 	}
-	edited := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", dto.ID, "--add-tag", "x", "--title", "M", "--json"))
+	edited := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", dto.ID, "--add-label", "x", "--title", "M", "--json"))
 	if edited.Title != "M" || strings.Join(edited.Tags, ",") != "x" {
 		t.Fatalf("edited title/tags = %q/%v, want M/[x]", edited.Title, edited.Tags)
 	}
@@ -325,8 +325,8 @@ func TestNoteEditRequiresFlag(t *testing.T) {
 
 func TestNoteRmAndSearch(t *testing.T) {
 	dir := initRepo(t)
-	parser := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Parser bug", "--body", "the Tokenizer breaks", "--tag", "bug", "--json"))
-	mustRun(t, dir, "note", "add", "Other", "--tag", "misc")
+	parser := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Parser bug", "--body", "the Tokenizer breaks", "--label", "bug", "--json"))
+	mustRun(t, dir, "note", "add", "Other", "--label", "misc")
 	//nolint:gosec // G101: test fixture, not a credential — "PARSER" is a search query string.
 	for query, wantTitle := range map[string]string{"PARSER": "Parser bug", "tokenizer": "Parser bug", "misc": "Other"} {
 		out := mustRun(t, dir, "note", "search", query)
@@ -356,7 +356,7 @@ func TestNoteRmAndSearch(t *testing.T) {
 func TestTaskJSONRoundTrip(t *testing.T) {
 	dir := initRepo(t)
 	blocker := addTask(t, dir, "Blocker")
-	out := mustRun(t, dir, "task", "add", "Main", "--desc", "Body text", "--type", "bug",
+	out := mustRun(t, dir, "task", "add", "Main", "--body", "Body text", "--type", "bug",
 		"--priority", "1", "--label", "x", "--label", "a", "--no-validation-criteria",
 		"--parent", blocker.ID, "--blocked-by", blocker.ID, "--json")
 	if !strings.HasPrefix(out, `{"id":"`) || !strings.Contains(out, `","branch":"main",`) {
@@ -442,7 +442,7 @@ func TestTaskLifecycleConflicts(t *testing.T) {
 		}
 	}
 
-	reopened := mustJSON[taskJSON](t, mustRun(t, dir, "task", "edit", task.ID, "--status", "open", "--unassign", "--json"))
+	reopened := mustJSON[taskJSON](t, mustRun(t, dir, "task", "edit", task.ID, "--status", "open", "--no-assignee", "--json"))
 	if reopened.Status != "open" || reopened.Assignee != nil || reopened.ClosedAt != nil {
 		t.Fatalf("reopen = %+v, want open/unassigned/closed_at null", reopened)
 	}
@@ -636,7 +636,7 @@ func TestUsageErrors(t *testing.T) {
 			t.Errorf("cc-notes %s err = %v (exit %d), want UsageError exit 2", strings.Join(args, " "), err, cli.ExitCode(err))
 		}
 	}
-	if _, _, err := runCLI(t, dir, "task", "edit", "x", "--assignee", "a", "--unassign"); cli.ExitCode(err) != 2 {
+	if _, _, err := runCLI(t, dir, "task", "edit", "x", "--assignee", "a", "--no-assignee"); cli.ExitCode(err) != 2 {
 		t.Errorf("conflicting edit flags err = %v, want exit 2", err)
 	}
 }
@@ -695,19 +695,20 @@ func TestTitleCap(t *testing.T) {
 		}
 	}
 
-	// task/sprint/project have no --body — their over-cap hint names --desc instead,
-	// so the escape hatch matches the flags that actually exist on the command.
+	// task/sprint/project now carry the content in --body, so their over-cap hint
+	// names --body — the flag that actually exists on the command — and never the
+	// removed --desc.
 	_, _, err := runCLI(t, dir, "task", "add", over, "--no-validation-criteria")
 	var usage *cli.UsageError
 	if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
 		t.Fatalf("task add over-cap err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "--desc") {
-		t.Errorf("task over-cap message %q, want it to name --desc", msg)
+	if !strings.Contains(msg, "--body") {
+		t.Errorf("task over-cap message %q, want it to name --body", msg)
 	}
-	if strings.Contains(msg, "--body") {
-		t.Errorf("task over-cap message %q must not name --body (task has no --body)", msg)
+	if strings.Contains(msg, "--desc") {
+		t.Errorf("task over-cap message %q must not name the removed --desc", msg)
 	}
 }
 
@@ -734,7 +735,7 @@ func TestNoteVerify(t *testing.T) {
 func TestNoteReviewDrift(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "auth.go", "v1\n")
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Auth note", "--path", "auth.go", "--tag", "design", "--json"))
+	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Auth note", "--path", "auth.go", "--label", "design", "--json"))
 	if out := mustRun(t, dir, "note", "review"); out != "" {
 		t.Fatalf("review of a fresh note = %q, want empty", out)
 	}
@@ -793,8 +794,8 @@ func TestNoteCommitAnchorDrift(t *testing.T) {
 
 func TestNoteSupersede(t *testing.T) {
 	dir := initRepo(t)
-	old := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Old decision", "--tag", "design", "--json"))
-	neu := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "New decision", "--tag", "design", "--json"))
+	old := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Old decision", "--label", "design", "--json"))
+	neu := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "New decision", "--label", "design", "--json"))
 
 	if _, _, err := runCLI(t, dir, "note", "supersede", old.ID); err == nil {
 		t.Fatal("supersede without --by, want UsageError")
@@ -828,9 +829,9 @@ func TestNoteSupersede(t *testing.T) {
 		t.Fatalf("show NEW = %q, want a supersedes line for %s", out, old.ID[:7])
 	}
 
-	mustRun(t, dir, "note", "supersede", old.ID, "--by", neu.ID, "--remove")
+	mustRun(t, dir, "note", "supersede", old.ID, "--by", neu.ID, "--clear")
 	if out := mustRun(t, dir, "note", "list"); !strings.Contains(out, old.ID[:7]) {
-		t.Fatalf("list after --remove = %q, want OLD restored", out)
+		t.Fatalf("list after --clear = %q, want OLD restored", out)
 	}
 
 	mustRun(t, dir, "note", "supersede", old.ID, "--by", neu.ID)
@@ -843,9 +844,9 @@ func TestNoteSupersede(t *testing.T) {
 
 func TestNoteSupersedeChainNotDangling(t *testing.T) {
 	dir := initRepo(t)
-	a := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "A decision", "--tag", "design", "--json"))
-	b := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "B decision", "--tag", "design", "--json"))
-	c := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "C decision", "--tag", "design", "--json"))
+	a := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "A decision", "--label", "design", "--json"))
+	b := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "B decision", "--label", "design", "--json"))
+	c := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "C decision", "--label", "design", "--json"))
 
 	mustRun(t, dir, "note", "supersede", a.ID, "--by", b.ID)
 	mustRun(t, dir, "note", "supersede", b.ID, "--by", c.ID)
@@ -863,7 +864,7 @@ func TestNoteJSONContract(t *testing.T) {
 	dir := initRepo(t)
 	base := commitFile(t, dir, "auth.go", "code\n")
 	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Auth note", "--body", "details",
-		"--tag", "design", "--path", "auth.go", "--commit", base, "--branch", "main", "--json"))
+		"--label", "design", "--path", "auth.go", "--commit", base, "--branch", "main", "--json"))
 
 	raw := mustRun(t, dir, "note", "show", added.ID, "--json")
 	if !strings.HasSuffix(raw, "\n") || strings.Count(raw, "\n") != 1 {

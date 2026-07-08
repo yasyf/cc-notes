@@ -230,13 +230,13 @@ func TestSyncLeanAndJSON(t *testing.T) {
 	}
 }
 
-func TestTaskMove(t *testing.T) {
+func TestTaskEditBranch(t *testing.T) {
 	dir := initRepo(t)
 	task := addTask(t, dir, "Ship it")
 
-	out := mustRun(t, dir, "task", "move", task.ID, "--to", "release/1.0")
+	out := mustRun(t, dir, "task", "edit", task.ID, "--branch", "release/1.0")
 	if want := task.ID[:7] + "\topen\tP2\t-\tShip it\n"; out != want {
-		t.Fatalf("move output = %q, want the moved lean line %q", out, want)
+		t.Fatalf("edit --branch output = %q, want the moved lean line %q", out, want)
 	}
 	if out := mustRun(t, dir, "task", "list", "--branch", "release/1.0"); !strings.HasPrefix(out, task.ID[:7]+"\t") {
 		t.Fatalf("destination list = %q, want %s", out, task.ID[:7])
@@ -249,20 +249,39 @@ func TestTaskMove(t *testing.T) {
 		t.Fatalf("moved branch = %q, want release/1.0", shown[0].Branch)
 	}
 
-	if out := mustRun(t, dir, "task", "move", task.ID, "--backlog"); !strings.HasPrefix(out, task.ID[:7]+"\t") {
-		t.Fatalf("move --backlog output = %q, want the moved lean line", out)
+	if out := mustRun(t, dir, "task", "edit", task.ID, "--backlog"); !strings.HasPrefix(out, task.ID[:7]+"\t") {
+		t.Fatalf("edit --backlog output = %q, want the moved lean line", out)
 	}
 	if shown := mustJSON[[]taskJSON](t, mustRun(t, dir, "task", "list", "--backlog", "--json")); len(shown) != 1 || shown[0].Branch != "" {
 		t.Fatalf("backlog list = %+v, want the single backlog task", shown)
 	}
 
+	if _, _, err := runCLI(t, dir, "task", "edit", task.ID, "--branch", "x", "--backlog"); cli.ExitCode(err) != 2 {
+		t.Fatalf("edit --branch --backlog err = %v, want exit 2 (mutually exclusive)", err)
+	}
+	// An explicit empty --branch still conflicts with --backlog: validate() keys
+	// off Changed("branch"), not branch != "", so this is the mutual-exclusion
+	// usage error, not a later invalid-empty-branch error.
+	if _, _, err := runCLI(t, dir, "task", "edit", task.ID, "--branch", "", "--backlog"); err == nil || cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf(`edit --branch "" --backlog err = %v, want exit 2 with "mutually exclusive"`, err)
+	}
+	if _, _, err := runCLI(t, dir, "task", "edit", "feedfacefeedface", "--branch", "release/2.0"); !errors.Is(err, store.ErrNotFound) || cli.ExitCode(err) != 3 {
+		t.Fatalf("edit unknown id err = %v (exit %d), want not-found exit 3", err, cli.ExitCode(err))
+	}
+}
+
+// TestTaskMoveRemoved keeps one negative for the deleted verb: "task move" exits
+// 2 with a hint pointing at the replacement "task edit --branch".
+func TestTaskMoveRemoved(t *testing.T) {
+	dir := initRepo(t)
+	task := addTask(t, dir, "Ship it")
+
 	_, _, err := runCLI(t, dir, "task", "move", task.ID)
 	if cli.ExitCode(err) != 2 {
-		t.Fatalf("move without --to err = %v, want exit 2", err)
+		t.Fatalf("task move err = %v, want exit 2 (removed verb)", err)
 	}
-	_, _, err = runCLI(t, dir, "task", "move", "feedfacefeedface", "--to", "release/2.0")
-	if !errors.Is(err, store.ErrNotFound) || cli.ExitCode(err) != 3 {
-		t.Fatalf("move unknown id err = %v (exit %d), want not-found exit 3", err, cli.ExitCode(err))
+	if !strings.Contains(err.Error(), "task edit --branch") {
+		t.Fatalf("task move error = %q, want the 'task edit --branch' hint", err.Error())
 	}
 }
 

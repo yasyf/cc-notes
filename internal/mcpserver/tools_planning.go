@@ -8,7 +8,7 @@ import (
 
 type sprintAddArgs struct {
 	Title   string   `json:"title" jsonschema:"short handle for the sprint"`
-	Desc    string   `json:"desc,omitempty" jsonschema:"sprint description"`
+	Body    string   `json:"body,omitempty" jsonschema:"sprint body (echoed as 'description' in the sprint DTO)"`
 	Project string   `json:"project,omitempty" jsonschema:"project id prefix"`
 	Labels  []string `json:"labels,omitempty" jsonschema:"labels"`
 	Start   string   `json:"start,omitempty" jsonschema:"start date YYYY-MM-DD"`
@@ -18,7 +18,7 @@ type sprintAddArgs struct {
 type sprintEditArgs struct {
 	ID        string   `json:"id" jsonschema:"sprint id prefix"`
 	Title     string   `json:"title,omitempty" jsonschema:"new title"`
-	Desc      string   `json:"desc,omitempty" jsonschema:"new description"`
+	Body      string   `json:"body,omitempty" jsonschema:"new body (echoed as 'description' in the sprint DTO)"`
 	Project   string   `json:"project,omitempty" jsonschema:"new project id prefix"`
 	NoProject bool     `json:"no_project,omitempty" jsonschema:"clear the project"`
 	Start     string   `json:"start,omitempty" jsonschema:"new start date YYYY-MM-DD"`
@@ -36,14 +36,14 @@ type sprintListArgs struct {
 
 type projectAddArgs struct {
 	Title  string   `json:"title" jsonschema:"short handle for the project"`
-	Desc   string   `json:"desc,omitempty" jsonschema:"project description"`
+	Body   string   `json:"body,omitempty" jsonschema:"project body (echoed as 'description' in the project DTO)"`
 	Labels []string `json:"labels,omitempty" jsonschema:"labels"`
 }
 
 type projectEditArgs struct {
 	ID        string   `json:"id" jsonschema:"project id prefix"`
 	Title     string   `json:"title,omitempty" jsonschema:"new title"`
-	Desc      string   `json:"desc,omitempty" jsonschema:"new description"`
+	Body      string   `json:"body,omitempty" jsonschema:"new body (echoed as 'description' in the project DTO)"`
 	AddLabels []string `json:"add_labels,omitempty" jsonschema:"labels to add"`
 	RmLabels  []string `json:"rm_labels,omitempty" jsonschema:"labels to remove"`
 }
@@ -56,7 +56,7 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "sprint_add", Description: "Create a sprint (a time-boxed grouping of tasks)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in sprintAddArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
-			flags = optStr(flags, "--desc", in.Desc)
+			flags = optStr(flags, "--body", in.Body)
 			flags = optStr(flags, "--project", in.Project)
 			flags = optRepeated(flags, "--label", in.Labels)
 			flags = optStr(flags, "--start", in.Start)
@@ -68,7 +68,7 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in sprintEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
-			flags = optStr(flags, "--desc", in.Desc)
+			flags = optStr(flags, "--body", in.Body)
 			flags = optStr(flags, "--project", in.Project)
 			flags = optBool(flags, "--no-project", in.NoProject)
 			flags = optStr(flags, "--start", in.Start)
@@ -98,7 +98,7 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"sprint", "comment"}, []string{"--json"}, in.ID, in.Body)...)
 		})
 
-	for _, verb := range []string{"start", "complete", "cancel"} {
+	for _, verb := range []string{"activate", "complete", "cancel"} {
 		mcp.AddTool(srv, &mcp.Tool{Name: "sprint_" + verb, Description: "Transition a sprint to " + verb + "."},
 			func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
 				return b.run(ctx, argvFor([]string{"sprint", verb}, []string{"--json"}, in.ID)...)
@@ -108,7 +108,7 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "project_add", Description: "Create a project (a long-lived grouping of sprints and tasks)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectAddArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
-			flags = optStr(flags, "--desc", in.Desc)
+			flags = optStr(flags, "--body", in.Body)
 			flags = optRepeated(flags, "--label", in.Labels)
 			return b.run(ctx, argvFor([]string{"project", "add"}, flags, in.Title)...)
 		})
@@ -117,7 +117,7 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
-			flags = optStr(flags, "--desc", in.Desc)
+			flags = optStr(flags, "--body", in.Body)
 			flags = optRepeated(flags, "--add-label", in.AddLabels)
 			flags = optRepeated(flags, "--rm-label", in.RmLabels)
 			return b.run(ctx, argvFor([]string{"project", "edit"}, flags, in.ID)...)

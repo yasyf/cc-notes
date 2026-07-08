@@ -478,7 +478,7 @@ def test_evidence_router_fires(monkeypatch, tmp_path) -> None:
     check("evidence router: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("evidence router: cites log add", "cc-notes log add" in result.message, result.message)
-        check("evidence router: cites log append --attach", 'log append <id> -m "<verdict>" --attach <file>' in result.message, result.message)
+        check("evidence router: cites log append --attach", 'log append <id> --entry "<verdict>" --attach <file>' in result.message, result.message)
         check("evidence router: names the sync-only transfer", "only `cc-notes sync` uploads" in result.message, result.message)
         check("evidence router: names the plain git push hole", "`git push` moves refs without it" in result.message, result.message)
         check("evidence router: no tripwire wording for an unstatable dest", "LFS attachment is one flag" not in result.message, result.message)
@@ -616,13 +616,13 @@ def test_ephemeral_record_reference_condition() -> None:
     # Positives ----------------------------------------------------------------
     fires("scratchpad in a doc title fires", 'cc-notes doc add "Handoff — see session scratchpad h.md" --when w', expected=True)
     fires("/tmp/ in a note body fires", 'cc-notes note add "Fact" --body "detail in /tmp/x.md"', expected=True)
-    fires("/private/var/ in a log append entry fires", 'cc-notes log append abc -m "ran, output in /private/var/folders/x/out.log"', expected=True)
+    fires("/private/var/ in a log append entry fires", 'cc-notes log append abc --entry "ran, output in /private/var/folders/x/out.log"', expected=True)
     fires("/private/tmp/ in a --body= value fires (equals form)", "cc-notes note add Fact --body=/private/tmp/c-1/scratch.md", expected=True)
 
     # Negatives ----------------------------------------------------------------
     fires("--attach two-token value is not a smell", "cc-notes log append abc --attach /tmp/out.log", expected=False)
     fires("--attach=equals value is not a smell", "cc-notes log append abc --attach=/tmp/out.log", expected=False)
-    fires("--tag scratchpad value is skipped, inline body is clean", 'cc-notes note add "Fact" --body "content inline" --tag scratchpad', expected=False)
+    fires("--label scratchpad value is skipped, inline body is clean", 'cc-notes note add "Fact" --body "content inline" --label scratchpad', expected=False)
     fires("--branch eng/var/cleanup value is skipped, inline body is clean", 'cc-notes note add "Fact" --body "inline" --branch eng/var/cleanup', expected=False)
     fires("doc show of an ephemeral arg is not a record write", "cc-notes doc show /tmp/whatever", expected=False)
     fires("non-cc-notes command mentioning /tmp is silent", "cat /tmp/scratch.md", expected=False)
@@ -646,8 +646,8 @@ def test_ephemeral_record_refs_parsing() -> None:
     check("refs: skips only the attach value, keeps a scratchpad title", mixed == ["see scratchpad"], repr(mixed))
     non_record = ephemeral_record_refs(CommandLine.parse("cc-notes doc show /tmp/whatever"))
     check("refs: a non-record subcommand yields nothing", non_record == [], repr(non_record))
-    tag_skip = ephemeral_record_refs(CommandLine.parse('cc-notes note add "Fact" --body "content inline" --tag scratchpad'))
-    check("refs: --tag scratchpad value is skipped, clean body kept out", tag_skip == [], repr(tag_skip))
+    label_skip = ephemeral_record_refs(CommandLine.parse('cc-notes note add "Fact" --body "content inline" --label scratchpad'))
+    check("refs: --label scratchpad value is skipped, clean body kept out", label_skip == [], repr(label_skip))
     branch_skip = ephemeral_record_refs(CommandLine.parse('cc-notes note add "Fact" --body "inline" --branch eng/var/cleanup'))
     check("refs: --branch eng/var/cleanup value is skipped", branch_skip == [], repr(branch_skip))
     body_eq = ephemeral_record_refs(CommandLine.parse("cc-notes note add Fact --body=/private/tmp/c-1/scratch.md"))
@@ -2040,8 +2040,8 @@ def test_mcp_ephemeral_refs_scans_content_fields() -> None:
     """mcp_ephemeral_refs collects tool_input content-field values that name a purge-bound path."""
     hit = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__note_add", event=Event.PostToolUse, tool_input={"title": "Fact", "body": "detail in /tmp/x.md"})
     check("mcp refs: /tmp in body collected", mcp_ephemeral_refs(hit) == ["detail in /tmp/x.md"], repr(mcp_ephemeral_refs(hit)))
-    entry = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__log_append", event=Event.PostToolUse, tool_input={"text": "output in /private/var/folders/x/out.log"})
-    check("mcp refs: /private/var in log_append text collected", mcp_ephemeral_refs(entry) == ["output in /private/var/folders/x/out.log"], repr(mcp_ephemeral_refs(entry)))
+    entry = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__log_append", event=Event.PostToolUse, tool_input={"entry": "output in /private/var/folders/x/out.log"})
+    check("mcp refs: /private/var in log_append entry collected", mcp_ephemeral_refs(entry) == ["output in /private/var/folders/x/out.log"], repr(mcp_ephemeral_refs(entry)))
     title = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__doc_add", event=Event.PostToolUse, tool_input={"title": "see session scratchpad h.md", "body": "b"})
     check("mcp refs: scratchpad in title collected", mcp_ephemeral_refs(title) == ["see session scratchpad h.md"], repr(mcp_ephemeral_refs(title)))
     clean = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__note_add", event=Event.PostToolUse, tool_input={"title": "Fact", "body": "the backoff caps at 30s"})

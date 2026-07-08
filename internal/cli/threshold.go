@@ -15,6 +15,10 @@ const (
 	leaseTTLEnv       = "CC_NOTES_LEASE_TTL"
 	leaseTTLConfig    = "cc-notes.leaseTTL"
 	defaultArchiveAge = 720 * time.Hour // 30 days
+
+	noteStaleAfterEnv     = "CC_NOTES_NOTE_STALE_AFTER"
+	noteStaleAfterConfig  = "cc-notes.noteStaleAfter"
+	defaultNoteStaleAfter = 90 * 24 * time.Hour
 )
 
 // parseDuration wraps time.ParseDuration, returning a UsageError on failure so
@@ -42,6 +46,32 @@ func leaseTTL(ctx context.Context, g gitcmd.Git) (time.Duration, error) {
 		return parseDuration(values[len(values)-1])
 	}
 	return defaultLeaseTTL, nil
+}
+
+// noteStaleAfter resolves the note staleness threshold with precedence
+// env > git config > 90d: CC_NOTES_NOTE_STALE_AFTER overrides the last
+// cc-notes.noteStaleAfter git config value (mirrors leaseTTL).
+func noteStaleAfter(ctx context.Context, g gitcmd.Git) (time.Duration, error) {
+	if value, ok := os.LookupEnv(noteStaleAfterEnv); ok {
+		return parseDuration(value)
+	}
+	values, err := g.ConfigGetAll(ctx, noteStaleAfterConfig)
+	if err != nil {
+		return 0, err
+	}
+	if len(values) > 0 {
+		return parseDuration(values[len(values)-1])
+	}
+	return defaultNoteStaleAfter, nil
+}
+
+// resolveNoteStaleAfter returns the flag value when set, otherwise the
+// configured threshold.
+func resolveNoteStaleAfter(ctx context.Context, g gitcmd.Git, flag string) (time.Duration, error) {
+	if flag != "" {
+		return parseDuration(flag)
+	}
+	return noteStaleAfter(ctx, g)
 }
 
 // parseWhen parses a --closed-before value: a valid Go duration is relative

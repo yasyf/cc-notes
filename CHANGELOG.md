@@ -6,6 +6,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-08
+
+### Changed
+- **BREAKING: one flag vocabulary across the whole CLI.** Tasks, sprints, and
+  projects take `--body` (was `--desc`); notes, docs, and logs take
+  `--label`/`--add-label`/`--rm-label` (was `--tag`/`--add-tag`/`--rm-tag`);
+  the `note`/`doc`/`log search` anchor filters match `list`
+  (`--path`/`--dir`/`--branch`/`--commit`, were `--anchor-*`); the
+  `note`/`doc supersede` undo is `--clear` (was `--remove`); `log append`
+  takes `--entry` (was `-m`/`--message`), matching `log add`; `task edit`
+  clears the assignee with `--no-assignee` (was `--unassign`) and gains
+  `--branch`/`--backlog`; `sprint start` is now `sprint activate`; and
+  `task criterion reset` is now `task criterion pending`. Hard cutover, no
+  aliases. The MCP tools follow the same vocabulary: inputs renamed to match,
+  `task_move` deleted, `sprint_start` renamed `sprint_activate`, and
+  `task_criterion_reset` renamed `task_criterion_pending`. JSON output and the
+  storage format are unchanged — entities still store and echo `description`
+  and `tags`.
+- The plugin's session bootstrap (`ensure-cc-notes.sh`) now enforces a version
+  floor: an installed binary older than v0.22.0 is re-installed through the
+  canonical installer, so upgraded hooks never run the new flags against an
+  old binary.
+
+### Added
+- **Did-you-mean hints on the old spellings.** An unknown or renamed flag
+  exits 2 with a hint naming the replacement (`unknown flag: --desc (did you
+  mean --body?)`), and a removed or noun-less command names its successor
+  (`task move` hints `task edit --branch`; a bare `list` hints `task list`,
+  `note list`, …).
+- **A kind-agnostic `cc-notes show ID`.** Like `history`, `compact`, and
+  `blame`, `show` is a global read: it resolves any entity id — note, doc,
+  log, task, sprint, or project — with no noun and renders that entity's
+  noun-scoped `show` output, `--json` included.
+
+### Removed
+- `cc-notes task move` — re-home a task with `task edit --branch <branch>`
+  (or `--backlog`); running `task move` exits 2 with that hint.
+
+## [0.21.2] - 2026-07-08
+
+### Fixed
+- Listing cc-notes refs no longer races concurrent git ref writes — a ref
+  rewritten mid-scan is retried instead of failing the listing.
+
+### Security
+- Builds moved to Go 1.26.5, picking up the fix for GO-2026-5856.
+
+## [0.21.1] - 2026-07-08
+
 ### Fixed
 - **A long-lived repo handle no longer misses objects from a freshly landed
   pack.** go-git seeds its packfile index on the first pack-touching read and
@@ -17,6 +66,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database. Genuine misses report `missing from object database` on a full
   clone and keep the `missing (shallow clone)` hint only when `.git/shallow`
   actually exists.
+
+### Changed
+- Entity creation gained a best-effort exact-duplicate guard across all kinds,
+  and the viz web UI refetches on SSE reconnect, lazy-loads the detail chunk,
+  and keeps the lane-label gutter sticky.
+
+## [0.21.0] - 2026-07-08
+
+### Added
+- **The viz web UI grew a Browse tab and a richer detail view.** Browse offers
+  a faceted entity table, a task kanban, global search, and hash routing; the
+  detail sidebar renders markdown, a typed trail, and attachment viewers.
+  Merged-and-deleted branches are mined from the git DAG into real timeline
+  lanes, backed by new `/api/entities` and `/api/blob` endpoints (blob access
+  hardened per security review).
+
+## [0.20.0] - 2026-07-07
+
+### Fixed
+- git-lfs batch auth honors `http.<url>.extraheader`, so attachment sync works
+  behind header-injected credentials (for example, CI tokens).
+
+### Changed
+- The bundled hooks re-registered for capt-hook 8.7.0, adding the SessionEnd
+  and SubagentStop hook groups.
 
 ## [0.19.0] - 2026-07-07
 
@@ -557,7 +631,12 @@ Releases.
 - The Python-era documentation site (GitHub Pages) and the repo homepage link
   that pointed at it.
 
-[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/yasyf/cc-notes/compare/v0.21.2...v0.22.0
+[0.21.2]: https://github.com/yasyf/cc-notes/compare/v0.21.1...v0.21.2
+[0.21.1]: https://github.com/yasyf/cc-notes/compare/v0.21.0...v0.21.1
+[0.21.0]: https://github.com/yasyf/cc-notes/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/yasyf/cc-notes/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/yasyf/cc-notes/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/yasyf/cc-notes/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/yasyf/cc-notes/compare/v0.16.0...v0.17.0

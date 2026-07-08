@@ -48,7 +48,7 @@ func TestLogAddRoundTrip(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "auth.go", "v1\n")
 	out := mustRun(t, dir, "log", "add", "Auth rollout",
-		"--tag", "ops", "--path", "auth.go", "--json")
+		"--label", "ops", "--path", "auth.go", "--json")
 	if !strings.HasPrefix(out, `{"id":"`) {
 		t.Fatalf("log JSON does not lead with id: %q", out)
 	}
@@ -108,8 +108,8 @@ func TestLogAppendSources(t *testing.T) {
 
 	// positional TEXT
 	mustRun(t, dir, "log", "append", added.ID, "first via positional")
-	// -m/--message
-	mustRun(t, dir, "log", "append", added.ID, "-m", "second via message")
+	// --entry flag
+	mustRun(t, dir, "log", "append", added.ID, "--entry", "second via message")
 	// - reads stdin
 	if _, stderr, err := runCLIIn(t, dir, "third via stdin\n", "log", "append", added.ID, "-"); err != nil {
 		t.Fatalf("log append -: %v (stderr %q)", err, stderr)
@@ -161,15 +161,15 @@ func TestLogAppendMultipleSources(t *testing.T) {
 	dir := initRepo(t)
 	added := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "L", "--json"))
 
-	// positional TEXT and -m together is ambiguous.
-	_, _, err := runCLI(t, dir, "log", "append", added.ID, "positional", "-m", "flagged")
+	// positional TEXT and --entry together is ambiguous.
+	_, _, err := runCLI(t, dir, "log", "append", added.ID, "positional", "--entry", "flagged")
 	var usage *cli.UsageError
 	if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
 		t.Fatalf("append with two sources err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
 	}
 
-	// - stdin and -m together is ambiguous.
-	_, _, err = runCLIIn(t, dir, "from stdin\n", "log", "append", added.ID, "-", "-m", "flagged")
+	// - stdin and --entry together is ambiguous.
+	_, _, err = runCLIIn(t, dir, "from stdin\n", "log", "append", added.ID, "-", "--entry", "flagged")
 	if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
 		t.Fatalf("append with stdin+message err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
 	}
@@ -182,7 +182,7 @@ func TestLogAppendMultipleSources(t *testing.T) {
 
 func TestLogAddLeanLine(t *testing.T) {
 	dir := initRepo(t)
-	added := mustRun(t, dir, "log", "add", "Timeline", "--tag", "b", "--tag", "a")
+	added := mustRun(t, dir, "log", "add", "Timeline", "--label", "b", "--label", "a")
 	listed := mustRun(t, dir, "log", "list")
 	if listed != added {
 		t.Fatalf("log list = %q, want the line log add printed %q", listed, added)
@@ -205,7 +205,7 @@ func TestLogEditMetadataOnly(t *testing.T) {
 		t.Fatalf("log edit with no flags err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
 	}
 
-	edited := mustJSON[logJSON](t, mustRun(t, dir, "log", "edit", added.ID, "--title", "Second title", "--add-tag", "ops", "--json"))
+	edited := mustJSON[logJSON](t, mustRun(t, dir, "log", "edit", added.ID, "--title", "Second title", "--add-label", "ops", "--json"))
 	if edited.ID != added.ID {
 		t.Fatalf("edit id = %q, want %q (stable)", edited.ID, added.ID)
 	}
@@ -215,7 +215,7 @@ func TestLogEditMetadataOnly(t *testing.T) {
 	// edit never touches entries: there is no flag to do so, and existing
 	// entries survive metadata edits untouched.
 	mustRun(t, dir, "log", "append", added.ID, "an entry")
-	editedAgain := mustJSON[logJSON](t, mustRun(t, dir, "log", "edit", added.ID, "--add-tag", "rollout", "--json"))
+	editedAgain := mustJSON[logJSON](t, mustRun(t, dir, "log", "edit", added.ID, "--add-label", "rollout", "--json"))
 	if len(editedAgain.Entries) != 1 || editedAgain.Entries[0].Text != "an entry" {
 		t.Fatalf("entries after metadata edit = %+v, want the one append preserved", editedAgain.Entries)
 	}
@@ -223,12 +223,12 @@ func TestLogEditMetadataOnly(t *testing.T) {
 
 func TestLogListFiltersAndRm(t *testing.T) {
 	dir := initRepo(t)
-	keep := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Kept", "--tag", "keep", "--dir", "internal/api", "--json"))
-	mustRun(t, dir, "log", "add", "Dropped", "--tag", "skip", "--dir", "internal/sync")
+	keep := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Kept", "--label", "keep", "--dir", "internal/api", "--json"))
+	mustRun(t, dir, "log", "add", "Dropped", "--label", "skip", "--dir", "internal/sync")
 
-	byTag := mustJSON[[]logJSON](t, mustRun(t, dir, "log", "list", "--tag", "keep", "--json"))
+	byTag := mustJSON[[]logJSON](t, mustRun(t, dir, "log", "list", "--label", "keep", "--json"))
 	if len(byTag) != 1 || byTag[0].ID != keep.ID {
-		t.Fatalf("list --tag keep = %v, want only %s", logIDs(byTag), keep.ID)
+		t.Fatalf("list --label keep = %v, want only %s", logIDs(byTag), keep.ID)
 	}
 	byDir := mustRun(t, dir, "log", "list", "--dir", "internal/api")
 	if !strings.HasPrefix(byDir, keep.ID[:7]+"\t") || strings.Count(byDir, "\n") != 1 {
@@ -249,9 +249,9 @@ func TestLogListFiltersAndRm(t *testing.T) {
 
 func TestLogSearch(t *testing.T) {
 	dir := initRepo(t)
-	rollout := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Rollout log", "--tag", "ops", "--json"))
+	rollout := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Rollout log", "--label", "ops", "--json"))
 	mustRun(t, dir, "log", "append", rollout.ID, "the Tokenizer panicked at noon")
-	mustRun(t, dir, "log", "add", "Other", "--tag", "misc")
+	mustRun(t, dir, "log", "add", "Other", "--label", "misc")
 
 	// title, tag, and entry-text matches all surface the rollout log.
 	for query, wantTitle := range map[string]string{"ROLLOUT": "Rollout log", "ops": "Rollout log", "tokenizer": "Rollout log", "misc": "Other"} {

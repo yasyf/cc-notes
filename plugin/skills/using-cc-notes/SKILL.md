@@ -47,10 +47,10 @@ three durable knowledge records, a note, a doc, and a log, split once more by fo
 Tasks are **global**. Each task is a single flat ref at `refs/cc-notes/tasks/<id>`, exactly
 like a note. Its branch is a *mutable attribute*, not part of its identity: `task list` and
 `task ready` default to your current branch, the shared **backlog** is every task with no
-branch (`task add --backlog`, visible to every agent on every branch), and `task move <id>
---to <branch>` (or `task start`, automatically) re-homes a task by setting that attribute.
-Because the id is global, every id-addressed command resolves by id alone — there is no
-`--branch` on `show`/`claim`/`start`/`done`/`move`/`renew`.
+branch (`task add --backlog`, visible to every agent on every branch), and `task edit <id>
+--branch <branch>` (or `task start`, automatically) re-homes a task by setting that attribute.
+Because the id is global, ids resolve with no branch qualifier — `--branch` filters what
+`list`/`ready` read and sets a task's placement on `add`/`edit`.
 
 A note records when it was last **verified** true; superseding a note points it at its
 replacement and drops it from default listings.
@@ -192,7 +192,7 @@ with `note verify`, flag one that has gone out of date with `note expire`, and r
 decision with `note supersede`.
 
 ```console
-$ cc-notes note add "Retry backoff caps at 30s" --path internal/api/client.go --tag design --body "The server drops connections past 30s, so exponential backoff is clamped."
+$ cc-notes note add "Retry backoff caps at 30s" --path internal/api/client.go --label design --body "The server drops connections past 30s, so exponential backoff is clamped."
 b71e0d4	2026-06-16	design	Retry backoff caps at 30s
 ```
 
@@ -229,6 +229,7 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes sync` | Union-merge the cc-notes refs with the remote and push, looping until stable |
 | `cc-notes reconcile --into <branch>` | Carry merged branches' open tasks onto the target |
 | `cc-notes blame <sha>` | List the task(s) a commit implemented |
+| `cc-notes show <id>` | Show any entity by id — note, doc, log, task, sprint, or project |
 | `cc-notes history <id>` | Show an entity's edit history — who changed which fields, when (`--reverse`, `--limit`, `--json`) |
 | `cc-notes task add "<title>"` | Capture branch work; add `--backlog` for shared work |
 | `cc-notes task ready` | List open, unassigned, unblocked tasks — the pickup queue |
@@ -236,16 +237,16 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes task claim <id> --steal` | Reclaim an in-progress task whose lease expired |
 | `cc-notes task renew <id>` | Refresh the lease heartbeat on a task you hold |
 | `cc-notes task done <id>` | Close a task and anchor HEAD onto it |
-| `cc-notes task move <id> --to <branch>` | Re-home a task by setting its branch |
+| `cc-notes task edit <id> --branch <branch>` | Re-home a task by setting its branch (`--backlog` sends it back to the queue) |
 | `cc-notes note add "<title>"` | Record a durable fact, born verified against HEAD |
 | `cc-notes note verify <id>` | Record that a note is still true as of now |
 | `cc-notes note expire <id>` | Flag a note as out-of-date; clear it with `note verify` |
 | `cc-notes note review` | Surface expired, drifted, stale, and unverified notes |
-| `cc-notes note search "<query>"` | Ranked search over titles, tags, and bodies |
+| `cc-notes note search "<query>"` | Ranked search over titles, labels, and bodies |
 | `cc-notes doc add "<title>" --checkout --when "<trigger>"` | Check out a prefilled buffer for a long body; write it in, then `cc-notes doc add --apply <path>` |
 | `cc-notes doc add "<title>" --when "<trigger>" --body -` | Short body only: store agent guidance from stdin, born verified, with a when-to-read trigger |
 | `cc-notes doc edit <id> --checkout` | Render a doc (or note) to an editable file; edit it, then `--apply` (or `--abort`) |
-| `cc-notes doc search "<query>"` | Ranked search over doc titles, tags, and bodies |
+| `cc-notes doc search "<query>"` | Ranked search over doc titles, labels, and bodies |
 | `cc-notes log add "<title>"` | Start an append-only chronological journal |
 | `cc-notes log append <id> "<text>"` | Append one timestamped, authored entry to a log |
 | `cc-notes log show <id>` | Read a log's entries in chronological order |
@@ -263,13 +264,13 @@ one-shot evidence into git history that every future clone pays for. Attachments
 bytes in git-lfs, content-addressed and outside the commit graph, and hang them off the
 entity by name; only the human-facing, publishable report belongs in the tree.
 
-Create one log per investigation, then append one entry per run — verdict in the message,
+Create one log per investigation, then append one entry per run — verdict in the entry text,
 evidence attached to the entity:
 
 ```console
-$ cc-notes log add "fusekit VM repro: forced unmount" --dir internal/fusefs --tag evidence
+$ cc-notes log add "fusekit VM repro: forced unmount" --dir internal/fusefs --label evidence
 4a81c9e	2026-07-02	evidence	fusekit VM repro: forced unmount
-$ cc-notes log append 4a81c9e -m "phase 2: forced unmount wedges the holder; panic captured" \
+$ cc-notes log append 4a81c9e --entry "phase 2: forced unmount wedges the holder; panic captured" \
     --attach results/scenario.log --attach results/panics/boot.panic
 4a81c9e	2026-07-02	evidence	fusekit VM repro: forced unmount
 ```
@@ -306,11 +307,11 @@ Where the cc-notes capt-hook pack is enabled, an agent's durable *memory* writes
 notes on their own — you never have to choose between the two stores. A `PostToolUse` hook
 watches the harness's memory files and, for the repo-relevant kinds (`feedback`, `project`, and
 `reference` — a `user` "who you are" memory is skipped), upserts a note keyed by a `memory:<slug>`
-tag. The first write to a memory creates the note; a later edit rewrites that same note, so a
+label. The first write to a memory creates the note; a later edit rewrites that same note, so a
 memory and its note stay one-to-one. The note takes the memory's one-line description as its title
-and the memory body verbatim, tagged `memory`, `memory:<slug>`, and `memory-type:<type>`.
+and the memory body verbatim, labeled `memory`, `memory:<slug>`, and `memory-type:<type>`.
 
-List what has been mirrored with `cc-notes note list --tag memory`, then `cc-notes sync` to share
+List what has been mirrored with `cc-notes note list --label memory`, then `cc-notes sync` to share
 it. The memory write itself always lands first and untouched; a mirror that cannot write stays
 silent, so it never disturbs the write it shadows.
 

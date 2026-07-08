@@ -9,7 +9,7 @@ import (
 
 func TestProjectAddShow(t *testing.T) {
 	dir := spInitRepo(t)
-	out := spMust(t, dir, "project", "add", "Platform", "--desc", "the platform",
+	out := spMust(t, dir, "project", "add", "Platform", "--body", "the platform",
 		"--label", "x", "--label", "a", "--json")
 	if !strings.HasPrefix(out, `{"id":"`) {
 		t.Fatalf("project JSON does not lead with id: %q", out)
@@ -84,7 +84,7 @@ func TestProjectEdit(t *testing.T) {
 	p := spJSON[projectDTO](t, spMust(t, dir, "project", "add", "P", "--label", "keep", "--label", "drop", "--json"))
 
 	edited := spJSON[projectDTO](t, spMust(t, dir, "project", "edit", p.ID,
-		"--title", "P2", "--desc", "new", "--add-label", "new", "--rm-label", "drop", "--json"))
+		"--title", "P2", "--body", "new", "--add-label", "new", "--rm-label", "drop", "--json"))
 	if edited.Title != "P2" || edited.Description != "new" {
 		t.Errorf("title/desc = %q/%q, want P2/new", edited.Title, edited.Description)
 	}

@@ -415,10 +415,10 @@ func TestClaimRaceConcurrentActors(t *testing.T) {
 	}
 }
 
-// TestBranchScopingAndMove pins the branch attribute: list scopes to a
-// branch by default and via --branch, move reassigns a task (printing the
-// post-move lean line), and slashed branch names round-trip.
-func TestBranchScopingAndMove(t *testing.T) {
+// TestBranchScopingAndEdit pins the branch attribute: list scopes to a
+// branch by default and via --branch, edit --branch reassigns a task (printing
+// the post-edit lean line), and slashed branch names round-trip.
+func TestBranchScopingAndEdit(t *testing.T) {
 	dir := initRepo(t)
 	feature := addTaskBin(t, dir, "Feature work", "--branch", "feature/x", "--priority", "1")
 	featureLine := feature.ID[:7] + "\topen\tP1\t-\tFeature work\n"
@@ -429,11 +429,11 @@ func TestBranchScopingAndMove(t *testing.T) {
 	if out := mustBin(t, dir, actorA, "task", "list", "--branch", "feature/x"); out != featureLine {
 		t.Fatalf("feature/x list = %q, want %q", out, featureLine)
 	}
-	if out := mustBin(t, dir, actorA, "task", "move", feature.ID, "--to", "main"); out != featureLine {
-		t.Fatalf("move output = %q, want lean line %q", out, featureLine)
+	if out := mustBin(t, dir, actorA, "task", "edit", feature.ID, "--branch", "main"); out != featureLine {
+		t.Fatalf("edit --branch output = %q, want lean line %q", out, featureLine)
 	}
 	if out := mustBin(t, dir, actorA, "task", "list"); out != featureLine {
-		t.Fatalf("main list after move = %q, want %q", out, featureLine)
+		t.Fatalf("main list after edit = %q, want %q", out, featureLine)
 	}
 	if out := mustBin(t, dir, actorA, "task", "list", "--branch", "feature/x"); out != "" {
 		t.Fatalf("feature/x list after move = %q, want empty", out)
@@ -441,8 +441,8 @@ func TestBranchScopingAndMove(t *testing.T) {
 
 	slashed := addTaskBin(t, dir, "Login fix", "--branch", "feature/login/x")
 	slashedLine := slashed.ID[:7] + "\topen\tP2\t-\tLogin fix\n"
-	if out := mustBin(t, dir, actorA, "task", "move", slashed.ID, "--to", "main"); out != slashedLine {
-		t.Fatalf("slashed move output = %q, want %q", out, slashedLine)
+	if out := mustBin(t, dir, actorA, "task", "edit", slashed.ID, "--branch", "main"); out != slashedLine {
+		t.Fatalf("slashed edit --branch output = %q, want %q", out, slashedLine)
 	}
 	if out := mustBin(t, dir, actorA, "task", "list"); out != featureLine+slashedLine {
 		t.Fatalf("main list = %q, want %q", out, featureLine+slashedLine)
@@ -452,10 +452,10 @@ func TestBranchScopingAndMove(t *testing.T) {
 	}
 }
 
-// TestMoveInvalidDestUsage pins the CLI boundary for move: an invalid --to is
-// a usage error (exit 2) raised before any write, so the task is untouched and
-// sync still converges.
-func TestMoveInvalidDestUsage(t *testing.T) {
+// TestEditBranchInvalidDestUsage pins the CLI boundary for edit --branch: an
+// invalid branch is a usage error (exit 2) raised before any write, so the task
+// is untouched and sync still converges.
+func TestEditBranchInvalidDestUsage(t *testing.T) {
 	scrubGitEnv(t)
 	root := t.TempDir()
 	bare := filepath.Join(root, "remote.git")
@@ -467,21 +467,21 @@ func TestMoveInvalidDestUsage(t *testing.T) {
 	task := addTaskBin(t, dir, "Survivor")
 	line := task.ID[:7] + "\topen\tP2\t-\tSurvivor\n"
 
-	res, err := execBin(dir, actorA, "task", "move", task.ID, "--to", "../evil")
+	res, err := execBin(dir, actorA, "task", "edit", task.ID, "--branch", "../evil")
 	if err != nil {
-		t.Fatalf("cc-notes task move: %v", err)
+		t.Fatalf("cc-notes task edit --branch: %v", err)
 	}
 	if res.Code != 2 || res.Stdout != "" {
-		t.Fatalf("move --to ../evil: exit %d stdout %q, want exit 2 with empty stdout (stderr %q)", res.Code, res.Stdout, res.Stderr)
+		t.Fatalf("edit --branch ../evil: exit %d stdout %q, want exit 2 with empty stdout (stderr %q)", res.Code, res.Stdout, res.Stderr)
 	}
 	if want := "usage: invalid branch \"../evil\": "; !strings.HasPrefix(res.Stderr, want) {
 		t.Errorf("stderr = %q, want prefix %q", res.Stderr, want)
 	}
 	if out := mustBin(t, dir, actorA, "task", "list"); out != line {
-		t.Errorf("task list after failed move = %q, want %q", out, line)
+		t.Errorf("task list after failed edit = %q, want %q", out, line)
 	}
 	if out := mustBin(t, dir, actorA, "sync"); out != "pushed: 1\nrounds: 1\n" {
-		t.Errorf("sync after failed move = %q, want pushed: 1 / rounds: 1", out)
+		t.Errorf("sync after failed edit = %q, want pushed: 1 / rounds: 1", out)
 	}
 }
 
@@ -507,26 +507,26 @@ func TestNoteLifecycleViaBinary(t *testing.T) {
 	dir := initRepo(t)
 	short := commitFile(t, dir, "seed.go", "package main")[:8]
 	note := mustJSON[noteJSON](t, mustBin(t, dir, actorA, "note", "add", "Anchored note",
-		"--body", "First body", "--tag", "design", "--tag", "api",
+		"--body", "First body", "--label", "design", "--label", "api",
 		"--commit", short, "--path", "internal/cli", "--json"))
-	mustBin(t, dir, actorA, "note", "add", "Plain", "--tag", "misc")
+	mustBin(t, dir, actorA, "note", "add", "Plain", "--label", "misc")
 
 	noteLine := note.ID[:7] + "\t" + dateOf(t, note.UpdatedAt) + "\tapi,design\tAnchored note\n"
 	if out := mustBin(t, dir, actorA, "note", "search", "anchored"); out != noteLine {
 		t.Fatalf("search = %q, want %q", out, noteLine)
 	}
 
-	edited := mustBin(t, dir, actorA, "note", "edit", note.ID, "--title", "Anchored note v2", "--add-tag", "temp", "--rm-tag", "api")
+	edited := mustBin(t, dir, actorA, "note", "edit", note.ID, "--title", "Anchored note v2", "--add-label", "temp", "--rm-label", "api")
 	shown := mustJSON[noteJSON](t, mustBin(t, dir, actorA, "note", "show", note.ID, "--json"))
 	editedLine := note.ID[:7] + "\t" + dateOf(t, shown.UpdatedAt) + "\tdesign,temp\tAnchored note v2\n"
 	if edited != editedLine {
 		t.Fatalf("edit output = %q, want %q", edited, editedLine)
 	}
-	if out := mustBin(t, dir, actorA, "note", "list", "--tag", "design"); out != editedLine {
-		t.Fatalf("list --tag design = %q, want %q", out, editedLine)
+	if out := mustBin(t, dir, actorA, "note", "list", "--label", "design"); out != editedLine {
+		t.Fatalf("list --label design = %q, want %q", out, editedLine)
 	}
-	if out := mustBin(t, dir, actorA, "note", "list", "--tag", "api"); out != "" {
-		t.Fatalf("list --tag api = %q, want empty after rm-tag", out)
+	if out := mustBin(t, dir, actorA, "note", "list", "--label", "api"); out != "" {
+		t.Fatalf("list --label api = %q, want empty after rm-label", out)
 	}
 
 	removed := mustBin(t, dir, actorA, "note", "rm", note.ID)
@@ -623,7 +623,7 @@ func TestNoteExpireViaBinary(t *testing.T) {
 func TestTaskJSONContract(t *testing.T) {
 	dir := initRepo(t)
 	blocker := addTaskBin(t, dir, "Blocker task")
-	rich := addTaskBin(t, dir, "Rich task", "--desc", "Full description", "--type", "bug",
+	rich := addTaskBin(t, dir, "Rich task", "--body", "Full description", "--type", "bug",
 		"--priority", "1", "--label", "zeta", "--label", "alpha", "--blocked-by", blocker.ID)
 	mustBin(t, dir, actorB, "task", "comment", rich.ID, "observed from B")
 	const winner = "Winner W <w@example.com>"

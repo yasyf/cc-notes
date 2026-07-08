@@ -75,7 +75,7 @@ def front_field(front: str, key: str, *, indented: bool = False) -> str:
 
 
 def memory_notes(evt: PostToolUseEvent, slug: str) -> list[dict[str, Any]]:
-    out = run_cc_notes(evt, "note", "list", "--tag", f"memory:{slug}", "--json")
+    out = run_cc_notes(evt, "note", "list", "--label", f"memory:{slug}", "--json")
     if not out or not out.strip():
         return []
     try:
@@ -153,11 +153,11 @@ def mirror_memory_to_note(evt: PostToolUseEvent) -> HookResult | None:
             "add",
             "--json",
             f"--body={parsed.body}",
-            "--tag",
+            "--label",
             "memory",
-            "--tag",
+            "--label",
             f"memory:{slug}",
-            "--tag",
+            "--label",
             f"memory-type:{parsed.type}",
             "--",
             title,
@@ -169,5 +169,5 @@ def mirror_memory_to_note(evt: PostToolUseEvent) -> HookResult | None:
         note_id, action = note_id_of(out), "created"
     return evt.warn(
         f"Mirrored memory '{slug}' → durable cc-notes note {short_id(note_id)} ({action}), "
-        f"tagged `memory` / `memory:{slug}`. Run `cc-notes sync` to share it.",
+        f"labeled `memory` / `memory:{slug}`. Run `cc-notes sync` to share it.",
     )

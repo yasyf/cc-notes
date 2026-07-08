@@ -19,12 +19,12 @@ joins neither behaves exactly as a task does today.
 - **The backlog** is the shared queue of work pinned to no branch (`Branch == ""`), visible to
   every agent on every branch. Create one with `task add --backlog`; pull from it with
   `task backlog`.
-- **Moving a task to a branch** is an attribute write: `task move <id> --to <branch>`, or
-  automatically when you `task start` it.
+- **Moving a task to a branch** is an attribute write: `task edit <id> --branch <branch>`
+  (or `--backlog`), or automatically when you `task start` it.
 - **Ids are global.** Every id-addressed command (`show`, `claim`, `start`, `done`, `edit`,
-  `comment`, `dep`, `move`, `renew`, …) resolves by id alone — there is no `--branch` flag on
-  id-addressed commands. `--branch`, `--backlog`, and `--all-branches` are reader filters on
-  `list`/`ready` and setters on `add`/`move`.
+  `comment`, `dep`, `renew`, …) resolves by id alone, with no branch qualifier. On
+  `list`/`ready`, `--branch`, `--backlog`, and `--all-branches` filter what you read; on
+  `add`/`edit` they set the task's placement.
 - **Notes are repo-global** with optional commit, path, directory, and branch anchors pointing at
   the code they describe. A directory anchor covers a subtree and drifts on any change beneath it. A
   note records when it was last verified true; a superseded note points at its replacement and drops
@@ -39,6 +39,13 @@ joins neither behaves exactly as a task does today.
   project ids, and criterion ids resolve by id prefix like tasks — an ambiguous prefix exits 5,
   no match exits 3.
 
+This reference describes cc-notes v0.22.0 and later — one flag vocabulary across every noun:
+`--body` for the long text, `--label` for labels. An unknown or renamed flag exits 2 with a hint
+naming the replacement (`unknown flag: --desc (did you mean --body?)`), as does a removed command
+(`task move` points to `task edit --branch`). Output speaks the storage schema: `--body` on a task,
+sprint, or project writes the `description` field, and `--label` on a note, doc, or log writes
+the `tags` field — in `--json` and in `show` headers alike.
+
 ## Lean-line formats
 
 | Entity | Fields (tab-separated) |
@@ -46,9 +53,9 @@ joins neither behaves exactly as a task does today.
 | Task | `<short7-id>` `<status>` `P<priority>` `<assignee\|->` `<title>` |
 | Sprint | `<short7-id>` `<status>` `<title>` |
 | Project | `<short7-id>` `<status>` `<title>` |
-| Note | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<tags csv\|->` `<title>` |
-| Doc | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<tags csv\|->` `<title>` `<when trigger\|->` |
-| Log | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<tags csv\|->` `<title>` |
+| Note | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` |
+| Doc | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` `<when trigger\|->` |
+| Log | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` |
 
 Short ids are the first 7 hex chars; `-` stands in for an empty field. A criterion's short id is
 the first 7 hex chars of its 32-hex nonce; `task criterion list` and the validation logs print
@@ -237,6 +244,17 @@ $ cc-notes blame 4f1c2ab
 d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 ```
 
+### `cc-notes show <id>`
+
+Show any entity by id — note, doc, log, task, sprint, or project. The id resolves across every
+kind, and the output is exactly what the entity's noun-scoped `show` prints. The id-addressed
+read verbs are kind-agnostic: `show`, `history`, and `compact` take any entity id with no noun
+(`blame` does the same for a commit sha).
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
 ### `cc-notes history <id>`
 
 Show an entity's edit trail: one entry per commit in the chain, with the fields that commit
@@ -401,7 +419,7 @@ sets it explicitly.
 | `--priority <0-3>` | `2` | Priority; 0 is most urgent |
 | `--type <type>` | `task` | One of `task`, `bug`, `epic`, `question` |
 | `--label <label>` | none | Label; repeatable |
-| `--desc <text>` | empty | Description; `-` reads stdin |
+| `--body <text>` | empty | Description; `-` reads stdin |
 | `--criterion <text>` | none | Acceptance criterion; repeatable, required by default (see below) |
 | `--no-validation-criteria` | off | Create with no criteria; mutually exclusive with `--criterion` |
 | `--parent <id>` | none | Parent task id |
@@ -564,22 +582,6 @@ Close a task as cancelled.
 |------|---------|---------|
 | `--json` | off | Emit JSON |
 
-### `cc-notes task move ID --to <branch>`
-
-Set the task's `Branch` — handoff or re-home. An attribute write; pass `--backlog` to move it
-back to the backlog. `--to` and `--backlog` are mutually exclusive.
-
-| Flag | Default | Meaning |
-|------|---------|---------|
-| `--to <branch>` | (required unless `--backlog`) | Destination branch |
-| `--backlog` | off | Move to the backlog (clear the branch) |
-| `--json` | off | Emit JSON |
-
-```console
-$ cc-notes task move 5d3e9c1 --to main
-5d3e9c1	open	P2	-	Rotate signing keys quarterly
-```
-
 ### `cc-notes task comment ID BODY`
 
 Append a comment; `BODY` of `-` reads stdin. Any comment refreshes the task's lease.
@@ -608,17 +610,22 @@ Remove a blocked-by edge.
 ### `cc-notes task edit ID`
 
 Edit a task without lifecycle transition checks — the escape hatch when the guided verbs do not
-fit.
+fit. It also re-homes a task: setting `--branch` is a plain attribute write on the `Branch`
+field — no ref moves, the same CRDT append as editing a title — and `--backlog` clears the
+branch, sending the task back to the shared backlog. `--branch` and `--backlog` are mutually
+exclusive.
 
 | Flag | Meaning |
 |------|---------|
 | `--title <text>` | New title |
-| `--desc <text>` | New description; `-` reads stdin |
+| `--body <text>` | New description; `-` reads stdin |
 | `--status <status>` | One of `open`, `in_progress`, `done`, `cancelled` |
 | `--priority <0-3>` | New priority |
 | `--type <type>` | One of `task`, `bug`, `epic`, `question` |
 | `--assignee <user>` | Set assignee |
-| `--unassign` | Clear the assignee |
+| `--no-assignee` | Clear the assignee |
+| `--branch <branch>` | Set the task's branch — handoff or re-home; mutually exclusive with `--backlog` |
+| `--backlog` | Move to the backlog (clear the branch) |
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--parent <id>` | Set parent |
 | `--no-parent` | Clear the parent |
@@ -627,6 +634,11 @@ fit.
 | `--project <id>` | Join a project (id prefix); mutually exclusive with `--no-project` |
 | `--no-project` | Clear the project |
 | `--json` | Emit JSON |
+
+```console
+$ cc-notes task edit 5d3e9c1 --branch main
+5d3e9c1	open	P2	-	Rotate signing keys quarterly
+```
 
 ### `cc-notes task criterion`
 
@@ -642,7 +654,7 @@ id through the task's FUSE JSON file. Every verb takes `--json`; the lean `list`
 | `rm` | `TASK CRIT` | Remove a criterion |
 | `met` | `TASK CRIT` | Mark a criterion `met` |
 | `failed` | `TASK CRIT` | Mark a criterion `failed` |
-| `reset` | `TASK CRIT` | Reset a criterion to `pending` |
+| `pending` | `TASK CRIT` | Return a criterion to `pending` |
 | `script` | `TASK CRIT FILE` \| `TASK CRIT --clear` | Set or clear a criterion's validation script |
 | `list` | `TASK [--json]` | List a task's criteria |
 
@@ -743,12 +755,12 @@ Create a project. It is born `active`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--desc <text>` | empty | Description; `-` reads stdin |
+| `--body <text>` | empty | Description; `-` reads stdin |
 | `--label <label>` | none | Label; repeatable |
 | `--json` | off | Emit JSON |
 
 ```console
-$ cc-notes project add "Billing platform" --desc "Revenue and invoicing" --label infra
+$ cc-notes project add "Billing platform" --body "Revenue and invoicing" --label infra
 07daf88	active	Billing platform
 ```
 
@@ -815,7 +827,7 @@ Edit a project without transition checks — at least one flag is required.
 | Flag | Meaning |
 |------|---------|
 | `--title <text>` | New title |
-| `--desc <text>` | New description; `-` reads stdin |
+| `--body <text>` | New description; `-` reads stdin |
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--json` | Emit JSON |
 
@@ -838,8 +850,8 @@ derived reverse indexes as full-hex ids.
 Sprints are time-boxed, repo-wide groupings of tasks, optionally within a project. A task joins a
 sprint with `--sprint`; a sprint points at an optional project with `--project`. `sprint show`
 derives the task reverse index. Status advances from `planned` to `active` to `completed`, or to
-`cancelled` from either open state; `start`, `complete`, and `cancel` fire only from `planned` or
-`active`. Sprints resolve by id prefix like tasks. Every command takes `--json`.
+`cancelled` from either open state; `activate`, `complete`, and `cancel` fire only from `planned`
+or `active`. Sprints resolve by id prefix like tasks. Every command takes `--json`.
 
 ### `cc-notes sprint add TITLE`
 
@@ -847,7 +859,7 @@ Create a sprint. It is born `planned`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--desc <text>` | empty | Description; `-` reads stdin |
+| `--body <text>` | empty | Description; `-` reads stdin |
 | `--project <id>` | none | Owning project (id prefix) |
 | `--label <label>` | none | Label; repeatable |
 | `--start <YYYY-MM-DD>` | none | Start date |
@@ -904,9 +916,9 @@ Invoicing polish
 tasks: 286d87c
 ```
 
-### `cc-notes sprint start ID` · `complete ID` · `cancel ID`
+### `cc-notes sprint activate ID` · `complete ID` · `cancel ID`
 
-Advance a sprint's status: `start` sets it `active`, `complete` sets it `completed`, `cancel`
+Advance a sprint's status: `activate` sets it `active`, `complete` sets it `completed`, `cancel`
 sets it `cancelled`. Each fires only from `planned` or `active`; a sprint already `completed` or
 `cancelled` is a conflict (exit 4).
 
@@ -915,7 +927,7 @@ sets it `cancelled`. Each fires only from `planned` or `active`; a sprint alread
 | `--json` | off | Emit JSON |
 
 ```console
-$ cc-notes sprint start afd8362
+$ cc-notes sprint activate afd8362
 afd8362	active	Sprint 7
 ```
 
@@ -928,7 +940,7 @@ exclusive.
 | Flag | Meaning |
 |------|---------|
 | `--title <text>` | New title |
-| `--desc <text>` | New description; `-` reads stdin |
+| `--body <text>` | New description; `-` reads stdin |
 | `--project <id>` | Set the owning project (id prefix) |
 | `--no-project` | Clear the project |
 | `--start <YYYY-MM-DD>` | Set the start date |
@@ -954,9 +966,10 @@ user-set dates (`null` when unset); `tasks` is the derived reverse index as full
 
 ## Note commands
 
-Notes are repo-global with optional commit, path, directory, and branch anchors. The `*-tag` and
+Notes are repo-global with optional commit, path, directory, and branch anchors. The `*-label` and
 anchor flags are repeatable arrays. Drift, verification, and supersession are first-class: drift is
-computed against the recorded witness, and supersession is a real edge, not a tag convention.
+computed against the recorded witness, and supersession is recorded structurally — a real edge on
+the note, not a naming convention you maintain by hand.
 
 A directory anchor covers a subtree: it matches `PATH` in `relevant` for the directory itself or
 any file under it, and its witness is the directory's git tree oid, so it drifts when anything in
@@ -971,7 +984,7 @@ belongs in `--body`.
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--body <text>` | empty | Note body; `-` reads stdin |
-| `--tag <tag>` | none | Tag; repeatable |
+| `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
 | `--path <path>` | none | Path anchor; repeatable |
 | `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
@@ -983,7 +996,7 @@ belongs in `--body`.
 | `--json` | off | Emit JSON |
 
 ```console
-$ cc-notes note add "Auth tokens expire after 15 minutes" --path services/auth/login.go --tag design --body "Refresh client-side before expiry; the API returns 401 with no Retry-After header."
+$ cc-notes note add "Auth tokens expire after 15 minutes" --path services/auth/login.go --label design --body "Refresh client-side before expiry; the API returns 401 with no Retry-After header."
 ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes
 ```
 
@@ -996,13 +1009,13 @@ create transaction. The created note is born verified, the same as a flag-driven
 
 ### `cc-notes note edit ID`
 
-Edit a note. Title and body replace; anchors, tags, and attachments add or remove individually.
+Edit a note. Title and body replace; anchors, labels, and attachments add or remove individually.
 
 | Flag | Meaning |
 |------|---------|
 | `--title <text>` | New title |
 | `--body <text>` | New body; `-` reads stdin |
-| `--add-tag` / `--rm-tag <tag>` | Add or remove a tag; repeatable |
+| `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
 | `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
 | `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
@@ -1045,12 +1058,12 @@ ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
 ### `cc-notes note supersede OLD --by NEW`
 
 Record that `NEW` replaces `OLD`. `OLD` drops from default listings and points at `NEW`; history
-is preserved. `--remove` undoes the edge.
+is preserved. `--clear` undoes the edge.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--by <id>` | (required) | The replacement note |
-| `--remove` | off | Remove the supersede edge |
+| `--clear` | off | Remove the supersede edge |
 | `--json` | off | Emit JSON |
 
 ```console
@@ -1088,6 +1101,7 @@ verified), and dangling supersede edges.
 | `--stale-after <dur>` | (config default) | Staleness threshold |
 | `--drift` | off | Limit to drifted notes |
 | `--unverified` | off | Limit to never-verified notes |
+| `--expired` | off | Limit to expired notes |
 | `--json` | off | Emit JSON |
 
 ```console
@@ -1101,7 +1115,7 @@ List notes. Default drops superseded and tombstoned notes.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--tag <tag>` | none | Require tag; repeatable, ANDed |
+| `--label <label>` | none | Require label; repeatable, ANDed |
 | `--commit <sha>` | none | Require commit anchor |
 | `--path <path>` | none | Require path anchor |
 | `--dir <dir>` | none | Require directory anchor |
@@ -1112,21 +1126,21 @@ List notes. Default drops superseded and tombstoned notes.
 
 ### `cc-notes note search QUERY`
 
-Ranked full-text search (title > tags > body, with a recency boost), bounded and scopable.
+Ranked full-text search (title > labels > body, with a recency boost), bounded and scopable.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--tag <tag>` | none | Require tag; repeatable, ANDed |
+| `--label <label>` | none | Require label; repeatable, ANDed |
 | `--limit <N>` | (default cap) | Maximum results |
 | `--author <user>` | none | Require author |
-| `--anchor-path <path>` | none | Require path anchor |
-| `--anchor-dir <dir>` | none | Require directory anchor |
-| `--anchor-branch <branch>` | none | Require branch anchor |
-| `--anchor-commit <sha>` | none | Require commit anchor |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--commit <sha>` | none | Require commit anchor |
 | `--json` | off | Emit JSON |
 
 ```console
-$ cc-notes note search "token expiry" --tag design
+$ cc-notes note search "token expiry" --label design
 ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes
 ```
 
@@ -1161,7 +1175,7 @@ Docs are the long-form sibling of notes: a multi-paragraph internal write-up or 
 the prose that would otherwise sit in a loose `.md` — addressed and kept fresh the same way a note
 is. A doc carries the same optional commit, path, directory, and branch anchors and the same
 first-class drift, verification, supersession, and expiry lifecycle, plus one extra field: a
-free-text `when` trigger that records the situation in which the doc is worth reading. The `--tag`
+free-text `when` trigger that records the situation in which the doc is worth reading. The `--label`
 and anchor flags are repeatable arrays.
 
 A directory anchor covers a subtree exactly as it does for a note: it matches `PATH` in `relevant`
@@ -1189,7 +1203,7 @@ the same create transaction.
 |------|---------|---------|
 | `--body <text>` | required unless `--attach` is given | Doc body; `-` reads stdin |
 | `--when <text>` | empty | Free-text "read this when…" trigger, surfaced verbatim |
-| `--tag <tag>` | none | Tag; repeatable |
+| `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
 | `--path <path>` | none | Path anchor; repeatable |
 | `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
@@ -1204,7 +1218,7 @@ Check out a long doc, write its body, and apply it — attaching an artifact in 
 
 ```console
 $ p=$(cc-notes doc add "How auth token refresh works" --checkout \
-    --when "before touching token refresh or the 401 retry path" --dir internal/auth --tag design)
+    --when "before touching token refresh or the 401 retry path" --dir internal/auth --label design)
 $ # write the body into "$p" below the frontmatter with your file tools
 $ cc-notes doc add --apply "$p" --attach refresh-sequence.svg
 62208d7	2026-06-23	design	How auth token refresh works	before touching token refresh or the 401 retry path
@@ -1213,7 +1227,7 @@ $ cc-notes doc add --apply "$p" --attach refresh-sequence.svg
 A short body goes inline instead, straight through `--body` (`-` reads stdin):
 
 ```console
-$ cc-notes doc add "How auth token refresh works" --dir internal/auth --tag design \
+$ cc-notes doc add "How auth token refresh works" --dir internal/auth --label design \
     --when "before touching token refresh or the 401 retry path" \
     --body "Refresh client-side before expiry; the API returns 401 with no Retry-After header."
 62208d7	2026-06-23	design	How auth token refresh works	before touching token refresh or the 401 retry path
@@ -1222,7 +1236,7 @@ $ cc-notes doc add "How auth token refresh works" --dir internal/auth --tag desi
 ### `cc-notes doc edit ID`
 
 Edit a doc — at least one flag is required. Title, body, and the `when` trigger replace; anchors,
-tags, and attachments add or remove individually. The 256-byte title cap applies to `--title`. A
+labels, and attachments add or remove individually. The 256-byte title cap applies to `--title`. A
 doc is its body, so `--body ""` is rejected on its own — but an edit that also carries `--attach`
 may blank it, leaving an attach-only doc, mirroring a flag-mode `add`.
 
@@ -1231,7 +1245,7 @@ may blank it, leaving an attach-only doc, mirroring a flag-mode `add`.
 | `--title <text>` | New title |
 | `--body <text>` | New body; `-` reads stdin |
 | `--when <text>` | New "read this when…" trigger |
-| `--add-tag` / `--rm-tag <tag>` | Add or remove a tag; repeatable |
+| `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
 | `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
 | `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
@@ -1275,12 +1289,12 @@ $ cc-notes doc verify 62208d7
 ### `cc-notes doc supersede OLD --by NEW`
 
 Record that `NEW` replaces `OLD`. `OLD` drops from default listings and points at `NEW`; history
-is preserved. `--remove` undoes the edge.
+is preserved. `--clear` undoes the edge.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--by <id>` | (required) | The replacement doc |
-| `--remove` | off | Remove the supersede edge |
+| `--clear` | off | Remove the supersede edge |
 | `--json` | off | Emit JSON |
 
 ```console
@@ -1332,7 +1346,7 @@ List docs. Default drops superseded and tombstoned docs.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--tag <tag>` | none | Require tag; repeatable, ANDed |
+| `--label <label>` | none | Require label; repeatable, ANDed |
 | `--commit <sha>` | none | Require commit anchor |
 | `--path <path>` | none | Require path anchor |
 | `--dir <dir>` | none | Require directory anchor |
@@ -1343,22 +1357,22 @@ List docs. Default drops superseded and tombstoned docs.
 
 ### `cc-notes doc search QUERY`
 
-Ranked search across doc titles, tags, and bodies (title > tags > body, ties broken by recency),
-bounded and scopable.
+Ranked search across doc titles, labels, and bodies (title > labels > body, ties broken by
+recency), bounded and scopable.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--tag <tag>` | none | Require tag; repeatable, ANDed |
+| `--label <label>` | none | Require label; repeatable, ANDed |
 | `--limit <N>` | `20` | Maximum results; negative is unlimited |
 | `--author <user>` | none | Require author |
-| `--anchor-path <path>` | none | Require path anchor |
-| `--anchor-dir <dir>` | none | Require directory anchor |
-| `--anchor-branch <branch>` | none | Require branch anchor |
-| `--anchor-commit <sha>` | none | Require commit anchor |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--commit <sha>` | none | Require commit anchor |
 | `--json` | off | Emit JSON |
 
 ```console
-$ cc-notes doc search "token refresh" --tag design
+$ cc-notes doc search "token refresh" --label design
 62208d7	2026-06-23	design	How auth token refresh works	before touching token refresh or the 401 retry path
 ```
 
@@ -1421,7 +1435,7 @@ carries the same optional commit, path, directory, and branch anchors and floats
 exactly like a doc, but it has no verify, supersede, expire, or review machinery: an append-only
 record never claims current truth, so it never drifts. Each entry is appended once and is then
 immutable — its author and timestamp come from the carrying commit, and nothing ever edits or
-reorders it. The `--tag` and anchor flags are repeatable arrays.
+reorders it. The `--label` and anchor flags are repeatable arrays.
 
 A directory anchor covers a subtree exactly as it does for a note or doc: it matches `PATH` in
 `relevant` for the directory or any file under it.
@@ -1435,7 +1449,8 @@ recorded as a separate append so its author and timestamp are honest.
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--entry <text>` | none | Record a first entry; `-` reads stdin |
-| `--tag <tag>` | none | Tag; repeatable |
+| `--attach <file>` | none | Attach a file (git-lfs); repeatable |
+| `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
 | `--path <path>` | none | Path anchor; repeatable |
 | `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
@@ -1443,19 +1458,21 @@ recorded as a separate append so its author and timestamp are honest.
 | `--json` | off | Emit JSON |
 
 ```console
-$ cc-notes log add "Auth rollout" --dir internal/auth --tag ops --entry "flipped to 5%"
+$ cc-notes log add "Auth rollout" --dir internal/auth --label ops --entry "flipped to 5%"
 3d91f0a	2026-06-23	ops	Auth rollout
 ```
 
 ### `cc-notes log append ID [TEXT]`
 
-Append one entry to a log. The text comes from the positional `TEXT`, `-m`/`--message`, or `-`
-(stdin) — exactly one source. The author and timestamp are taken from the commit, and existing
-entries stay immutable; this is the only way an entry is ever added.
+Append one entry to a log. The text comes from the positional `TEXT`, `--entry`, or `-` (stdin) —
+exactly one source, matching `log add --entry`. The author and timestamp are taken from the
+commit, and existing entries stay immutable; this is the only way an entry is ever added.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `-m`, `--message <text>` | none | Entry text; mutually exclusive with the positional and `-` |
+| `--entry <text>` | none | Entry text; mutually exclusive with the positional and `-` |
+| `--attach <file>` | none | Attach a file to the log (git-lfs); repeatable |
+| `--replace` | off | Allow `--attach` to overwrite a live attachment of the same name |
 | `--json` | off | Emit JSON |
 
 ```console
@@ -1467,17 +1484,18 @@ $ echo "ramped to 100%" | cc-notes log append 3d91f0a -
 
 ### `cc-notes log edit ID`
 
-Edit a log's title, tags, and anchors — at least one flag is required. Entries are never editable
-here; append a new entry with `log append` instead.
+Edit a log's title, labels, anchors, and attachments — at least one flag is required. Entries are
+never editable here; append a new entry with `log append` instead.
 
 | Flag | Meaning |
 |------|---------|
 | `--title <text>` | New title |
-| `--add-tag` / `--rm-tag <tag>` | Add or remove a tag; repeatable |
+| `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
 | `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
 | `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
 | `--add-branch` / `--rm-branch <branch>` | Add or remove a branch anchor; repeatable |
+| `--rm-attachment <name>` | Remove an attachment by name; repeatable |
 | `--json` | Emit JSON |
 
 ### `cc-notes log list`
@@ -1486,7 +1504,7 @@ List logs. Default drops tombstoned logs.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--tag <tag>` | none | Require tag; repeatable, ANDed |
+| `--label <label>` | none | Require label; repeatable, ANDed |
 | `--commit <sha>` | none | Require commit anchor |
 | `--path <path>` | none | Require path anchor |
 | `--dir <dir>` | none | Require directory anchor |
@@ -1496,22 +1514,22 @@ List logs. Default drops tombstoned logs.
 
 ### `cc-notes log search QUERY`
 
-Ranked search across log titles, tags, and entry text (title > tags > entries, ties broken by
+Ranked search across log titles, labels, and entry text (title > labels > entries, ties broken by
 recency), bounded and scopable.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--tag <tag>` | none | Require tag; repeatable, ANDed |
+| `--label <label>` | none | Require label; repeatable, ANDed |
 | `--limit <N>` | `20` | Maximum results; negative is unlimited |
 | `--author <user>` | none | Require author |
-| `--anchor-path <path>` | none | Require path anchor |
-| `--anchor-dir <dir>` | none | Require directory anchor |
-| `--anchor-branch <branch>` | none | Require branch anchor |
-| `--anchor-commit <sha>` | none | Require commit anchor |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--commit <sha>` | none | Require commit anchor |
 | `--json` | off | Emit JSON |
 
 ```console
-$ cc-notes log search "rollout" --tag ops
+$ cc-notes log search "rollout" --label ops
 3d91f0a	2026-06-23	ops	Auth rollout
 ```
 

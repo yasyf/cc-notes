@@ -335,13 +335,13 @@ func runFileMode(cmd *cobra.Command, a editAdapter, isAdd bool, args []string, o
 }
 
 // fileModeAllowed lists the content flags a file-mode branch permits: an add
-// --checkout seeds its buffer from the anchor/tag flags (and when, doc-only), an
-// add --apply may carry --attach, and every edit branch plus add --abort permits
-// none.
+// --checkout seeds its buffer from the anchor/label flags (and when, doc-only),
+// an add --apply may carry --attach, and every edit branch plus add --abort
+// permits none.
 func fileModeAllowed(isAdd, checkout, apply bool) []string {
 	switch {
 	case isAdd && checkout:
-		return []string{"when", "tag", "commit", "path", "dir", "branch"}
+		return []string{"when", "label", "commit", "path", "dir", "branch"}
 	case isAdd && apply:
 		return []string{"attach"}
 	default:

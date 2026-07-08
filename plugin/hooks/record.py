@@ -95,11 +95,11 @@ EPHEMERAL_MARKERS = (*(p + "/" for p in RUN_OUTPUT_PREFIXES), "scratchpad")
 RECORD_SUBCOMMANDS = frozenset((noun, verb) for noun in ("note", "doc", "log") for verb in ("add", "edit", "append"))
 # Flags whose value carries the record's own prose — the title/body surfaces a purge-bound
 # path would betray, so their values are the only flag values worth scanning.
-CONTENT_FLAGS = frozenset({"--title", "--body", "--when", "--entry", "-m", "--message"})
-# Value-taking flags whose value is a tag, anchor, or attachment path — never record prose,
-# so their value is skipped (`--tag scratchpad`, `--branch eng/var/x` must not false-fire).
+CONTENT_FLAGS = frozenset({"--title", "--body", "--when", "--entry"})
+# Value-taking flags whose value is a label, anchor, or attachment path — never record prose,
+# so their value is skipped (`--label scratchpad`, `--branch eng/var/x` must not false-fire).
 SKIPPED_VALUE_FLAGS = frozenset({
-    "--tag", "--add-tag", "--rm-tag",
+    "--label", "--add-label", "--rm-label",
     "--branch", "--add-branch", "--rm-branch",
     "--path", "--add-path", "--rm-path",
     "--dir", "--add-dir", "--rm-dir",
@@ -113,8 +113,8 @@ SKIPPED_VALUE_FLAGS = frozenset({
 MCP_RECORD_WRITE_TOOLS = ("note_add", "doc_add", "log_add", "log_append", "note_edit", "doc_edit")
 MCP_RECORD_WRITE_NAMES = tuple(MCP_TOOL_PREFIX + t for t in MCP_RECORD_WRITE_TOOLS)
 # The prose-bearing input fields across those tools, per internal/mcpserver/tools_*.go: note/doc
-# carry `body`, log_add a first `entry`, log_append its `text`. No write tool has a `message` field.
-MCP_CONTENT_FIELDS = ("title", "body", "entry", "text")
+# carry `body`, log_add and log_append both carry `entry`. No write tool has a `message` field.
+MCP_CONTENT_FIELDS = ("title", "body", "entry")
 
 
 @on(
@@ -402,12 +402,12 @@ def nudge_record_evidence(evt: PostToolUseEvent) -> HookResult | None:
     if mcp_active(evt):
         recipe = [
             "call the log_add tool for what ran, then the log_append tool with the verdict as the "
-            "text param and each artifact via the attach param (repeatable).",
+            "entry param and each artifact via the attach param (repeatable).",
         ]
     else:
         recipe = [
             'cc-notes log add "<what ran>"',
-            'cc-notes log append <id> -m "<verdict>" --attach <file>   # repeat --attach per artifact',
+            'cc-notes log append <id> --entry "<verdict>" --attach <file>   # repeat --attach per artifact',
         ]
     return evt.warn(
         landed + weight + " Record a cc-notes log entry with the artifacts attached instead:",
@@ -424,8 +424,8 @@ def ephemeral_record_refs(line: CommandLine) -> list[str]:
     after the ``(noun, verb)`` pair (the title, and log-append's ID+TEXT), and the
     values of the content flags in :data:`CONTENT_FLAGS` (both ``--flag value`` and
     ``--flag=value``). The value of every other value-taking flag
-    (:data:`SKIPPED_VALUE_FLAGS` — tags, anchors, ``--attach``) is skipped, so
-    ``--tag scratchpad`` or ``--branch eng/var/x`` never false-fires; an unknown flag
+    (:data:`SKIPPED_VALUE_FLAGS` — labels, anchors, ``--attach``) is skipped, so
+    ``--label scratchpad`` or ``--branch eng/var/x`` never false-fires; an unknown flag
     is treated as valueless.
     """
     refs: list[str] = []
@@ -472,7 +472,7 @@ class EphemeralRecordReference(CustomCondition):
         # Benign neighbors that must stay silent.
         Input(command='cc-notes doc add "Handoff" --when w --body -'): Allow(),  # content already in the record
         Input(command="cc-notes log append abc123 --attach /tmp/out.log"): Allow(),  # attaching the file IS the fix
-        Input(command='cc-notes note add "Fact" --body "content inline" --tag scratchpad'): Allow(),  # --tag value is not content
+        Input(command='cc-notes note add "Fact" --body "content inline" --label scratchpad'): Allow(),  # --label value is not content
         Input(command="cc-notes task list"): Allow(),  # not a record write
         Input(command="cat /tmp/scratch.md"): Allow(),  # not a cc-notes command
     },
@@ -495,7 +495,7 @@ EPHEMERAL_REFERENCE_LEDE = (
 def _carry_content_fixes(mcp: bool) -> list[str]:
     if mcp:
         return [
-            "the body param (note_add/doc_add) or text param (log_append) carries the content — pass the full text there, not a path.",
+            "the body param (note_add/doc_add) or entry param (log_append) carries the content — pass the full text there, not a path.",
             "the attach param stores an artifact file — its bytes land in the git ODB and sync with the repo.",
         ]
     return [
