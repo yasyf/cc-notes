@@ -3,6 +3,7 @@ package viz
 import (
 	"encoding/json"
 	"io/fs"
+	"net"
 	"net/http"
 	"path"
 	"strings"
@@ -71,9 +72,31 @@ func NewServer(s *store.Store, b *Builder) *Server {
 // shutdown.
 func (s *Server) Hub() *Hub { return s.hub }
 
-// ServeHTTP dispatches through the internal mux.
+// ServeHTTP dispatches through the internal mux behind a loopback Host guard —
+// the SSE stream and SPA routes included — so a non-loopback Host header (a
+// DNS-rebinding attempt against this loopback-bound API) is refused before any
+// handler runs.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !loopbackHost(r.Host) {
+		writeError(w, http.StatusForbidden, "forbidden host "+r.Host)
+		return
+	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// loopbackHost reports whether host (a request Host header, with or without a
+// port) names the loopback interface the viz server binds.
+func loopbackHost(host string) bool {
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		h = strings.Trim(host, "[]")
+	}
+	switch h {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 // handleRoot serves the web UI: an unregistered /api path is a JSON 404 (the

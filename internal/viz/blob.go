@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/lfs"
@@ -91,7 +92,13 @@ func (b *Builder) attDigest(ctx context.Context) (string, error) {
 // handleBlob serves an attachment's content from the local LFS store. It
 // rejects a malformed oid, 404s an oid no live entity references — never serving
 // the code repository's own unrelated git-lfs objects — and turns an object in
-// the referenced set but absent locally into a precise fetch hint.
+// the referenced set but absent locally into a precise fetch hint. The served
+// filename that drives the extension→MIME inference and Content-Disposition is
+// only ever a recorded attachment name: a ?name= query is honored iff it exactly
+// matches one of the object's recorded uses, else the first use's name stands, so
+// an untrusted string can never force a Content-Type. Responses carry
+// X-Content-Type-Options: nosniff and Content-Security-Policy: sandbox so a
+// directly-navigated attachment (SVG, HTML) cannot execute script on this origin.
 func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	oid := r.PathValue("oid")
@@ -126,9 +133,9 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = f.Close() }()
 
-	name := r.URL.Query().Get("name")
-	if name == "" {
-		name = obj.Uses[0].Name
+	name := obj.Uses[0].Name
+	if q := r.URL.Query().Get("name"); slices.ContainsFunc(obj.Uses, func(u store.AttachmentUse) bool { return u.Name == q }) {
+		name = q
 	}
 	ctype := mime.TypeByExtension(filepath.Ext(name))
 	if ctype == "" {
@@ -145,6 +152,8 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 	}
 	h := w.Header()
 	h.Set("Content-Type", ctype)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "sandbox")
 	h.Set("ETag", `"`+oid+`"`)
 	h.Set("Cache-Control", "public, max-age=31536000, immutable")
 	h.Set("Content-Disposition", disposition)

@@ -2,6 +2,8 @@ package cli_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -36,6 +38,26 @@ func histID(t *testing.T, raw string) string {
 func changeByField(e histEntryJSON, field string) (histChangeJSON, bool) {
 	for _, c := range e.Changes {
 		if c.Field == field {
+			return c, true
+		}
+	}
+	return histChangeJSON{}, false
+}
+
+func unmarshalHistory(t *testing.T, raw string) []histEntryJSON {
+	t.Helper()
+	var entries []histEntryJSON
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		t.Fatalf("unmarshal history: %v\n%s", err, raw)
+	}
+	return entries
+}
+
+// firstChange returns the field's delta from the newest entry that carries it,
+// scanning the newest-first trail.
+func firstChange(entries []histEntryJSON, field string) (histChangeJSON, bool) {
+	for _, e := range entries {
+		if c, ok := changeByField(e, field); ok {
 			return c, true
 		}
 	}
@@ -175,6 +197,172 @@ func TestHistoryCheckpointMarker(t *testing.T) {
 	}
 	if !strings.Contains(out, "title: n → n2") {
 		t.Errorf("history lost the real edit after compaction:\n%s", out)
+	}
+}
+
+// TestHistoryElementFormats pins the exact human rendering of every set-element
+// format the CLI emits: log entries, task comments (with %q quote-escaping),
+// task criteria and their status transition, note anchors, and the
+// deterministic sorted order of a simple-set field. A changed format verb in
+// renderChangeLines/formatTrailElement breaks a case here.
+func TestHistoryElementFormats(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		setup  func(t *testing.T, dir string) string // returns the entity id to trail
+		want   []string
+		absent []string
+	}{
+		{
+			name: "log entry",
+			setup: func(t *testing.T, dir string) string {
+				id := histID(t, mustRun(t, dir, "log", "add", "Rollout", "--json"))
+				mustRun(t, dir, "log", "append", id, "flipped to 5%")
+				return id
+			},
+			want: []string{`entries: +entry by ` + actorA + `: "flipped to 5%"`},
+		},
+		{
+			name: "task comment quotes the body",
+			setup: func(t *testing.T, dir string) string {
+				id := histID(t, mustRun(t, dir, "task", "add", "ship", "--no-validation-criteria", "--json"))
+				mustRun(t, dir, "task", "comment", id, `he said "ship it"`)
+				return id
+			},
+			// %q escapes the embedded quotes; %s would drop the surrounding quotes.
+			want: []string{`comments: +comment by ` + actorA + `: "he said \"ship it\""`},
+		},
+		{
+			name: "task criterion and its status transition",
+			setup: func(t *testing.T, dir string) string {
+				id := histID(t, mustRun(t, dir, "task", "add", "build", "--no-validation-criteria", "--json"))
+				task := mustJSON[taskJSON](t, mustRun(t, dir, "task", "criterion", "add", id, "tests pass", "--json"))
+				mustRun(t, dir, "task", "criterion", "met", id, task.Criteria[0].ID)
+				return id
+			},
+			// The add edit renders the pending criterion; the met edit replaces the
+			// pending element with a met one (identity-keyed set diff).
+			want: []string{
+				`criteria: +"tests pass" [pending]`,
+				`criteria: +"tests pass" [met]`,
+				`criteria: -"tests pass" [pending]`,
+			},
+		},
+		{
+			name: "note anchor",
+			setup: func(t *testing.T, dir string) string {
+				commitFile(t, dir, "scripts/vm/setup.sh", "echo hi\n")
+				return histID(t, mustRun(t, dir, "note", "add", "anchored", "--dir", "scripts/vm", "--json"))
+			},
+			want: []string{"anchors: +dir:scripts/vm"},
+		},
+		{
+			name: "simple set renders sorted",
+			setup: func(t *testing.T, dir string) string {
+				id := histID(t, mustRun(t, dir, "task", "add", "sortme", "--no-validation-criteria", "--json"))
+				mustRun(t, dir, "task", "edit", id, "--add-label", "zebra", "--add-label", "alpha")
+				return id
+			},
+			// formatTrailSet sorts the formatted strings, so input order never leaks.
+			want:   []string{"labels: +alpha +zebra"},
+			absent: []string{"labels: +zebra +alpha"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			id := tc.setup(t, dir)
+			out := mustRun(t, dir, "history", id)
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("history missing %q\n--- got ---\n%s", want, out)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(out, absent) {
+					t.Errorf("history contains unexpected %q\n--- got ---\n%s", absent, out)
+				}
+			}
+		})
+	}
+}
+
+// TestHistoryAttachmentJSONFallback pins the compact-JSON rendering an
+// attachment element falls back to (no dedicated formatTrailElement case): a
+// sorted-key object with the name, oid, and integer size.
+func TestHistoryAttachmentJSONFallback(t *testing.T) {
+	dir := initRepo(t)
+	content := []byte("attachment payload bytes")
+	path, oid := writeAttachable(t, "report.txt", content)
+	id := histID(t, mustRun(t, dir, "note", "add", "with file", "--attach", path, "--json"))
+
+	out := mustRun(t, dir, "history", id)
+	want := fmt.Sprintf(`attachments: +{"name":"report.txt","oid":%q,"size":%d}`, oid, len(content))
+	if !strings.Contains(out, want) {
+		t.Errorf("history missing attachment fallback %q\n--- got ---\n%s", want, out)
+	}
+}
+
+// TestHistoryVerifiedAtRFC3339 pins that a time-valued scalar renders as
+// RFC3339 UTC, not the raw unix seconds the snapshot stores. A note is
+// born-verified, so its second commit sets verified_at.
+func TestHistoryVerifiedAtRFC3339(t *testing.T) {
+	dir := initRepo(t)
+	id := histID(t, mustRun(t, dir, "note", "add", "n", "--json"))
+
+	out := mustRun(t, dir, "history", id)
+	rfc := regexp.MustCompile(`verified_at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z`)
+	if !rfc.MatchString(out) {
+		t.Errorf("verified_at not rendered as RFC3339 UTC\n--- got ---\n%s", out)
+	}
+	if raw := regexp.MustCompile(`verified_at: \d+(\s|$)`); raw.MatchString(out) {
+		t.Errorf("verified_at rendered as a raw unix int, want RFC3339\n--- got ---\n%s", out)
+	}
+}
+
+// TestHistoryElementJSON pins the --json DTO's changes[].added / .removed
+// strings for the set-element cases the text renderer shares them with: log
+// entries and task criteria, including the identity-keyed pending→met swap.
+func TestHistoryElementJSON(t *testing.T) {
+	dir := initRepo(t)
+
+	logID := histID(t, mustRun(t, dir, "log", "add", "Rollout", "--json"))
+	mustRun(t, dir, "log", "append", logID, "flipped to 5%")
+	entries := unmarshalHistory(t, mustRun(t, dir, "history", logID, "--json"))
+	ch, ok := firstChange(entries, "entries")
+	if !ok {
+		t.Fatalf("no entries change in log history: %+v", entries)
+	}
+	wantEntry := `entry by ` + actorA + `: "flipped to 5%"`
+	if len(ch.Added) != 1 || ch.Added[0] != wantEntry {
+		t.Errorf("entries added = %#v, want [%q]", ch.Added, wantEntry)
+	}
+
+	taskID := histID(t, mustRun(t, dir, "task", "add", "build", "--no-validation-criteria", "--json"))
+	task := mustJSON[taskJSON](t, mustRun(t, dir, "task", "criterion", "add", taskID, "tests pass", "--json"))
+	mustRun(t, dir, "task", "criterion", "met", taskID, task.Criteria[0].ID)
+	tEntries := unmarshalHistory(t, mustRun(t, dir, "history", taskID, "--json"))
+
+	var addOnly, transition *histChangeJSON
+	for i := range tEntries {
+		if c, ok := changeByField(tEntries[i], "criteria"); ok {
+			cc := c
+			if len(cc.Removed) == 0 {
+				addOnly = &cc
+			} else {
+				transition = &cc
+			}
+		}
+	}
+	if addOnly == nil || len(addOnly.Added) != 1 || addOnly.Added[0] != `"tests pass" [pending]` {
+		t.Errorf("criterion add change = %#v, want added [\"tests pass\" [pending]]", addOnly)
+	}
+	if transition == nil {
+		t.Fatalf("no criteria status transition in task history: %+v", tEntries)
+	}
+	if len(transition.Added) != 1 || transition.Added[0] != `"tests pass" [met]` {
+		t.Errorf("transition added = %#v, want [\"tests pass\" [met]]", transition.Added)
+	}
+	if len(transition.Removed) != 1 || transition.Removed[0] != `"tests pass" [pending]` {
+		t.Errorf("transition removed = %#v, want [\"tests pass\" [pending]]", transition.Removed)
 	}
 }
 

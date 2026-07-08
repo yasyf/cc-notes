@@ -53,6 +53,84 @@ func getBody(t *testing.T, url string) (int, []byte) {
 	return resp.StatusCode, body
 }
 
+// getWithHost issues a GET to url carrying an overridden Host header (the Go
+// client ignores a Host set via Header.Set, so it must be set on req.Host) and
+// returns the status and body.
+func getWithHost(t *testing.T, url, host string) (int, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("new request %s: %v", url, err)
+	}
+	req.Host = host
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s (host %s): %v", url, host, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read %s: %v", url, err)
+	}
+	return resp.StatusCode, body
+}
+
+func TestLoopbackHost(t *testing.T) {
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"localhost", true},
+		{"localhost:5177", true},
+		{"127.0.0.1", true},
+		{"127.0.0.1:5177", true},
+		{"::1", true},
+		{"[::1]", true},
+		{"[::1]:5177", true},
+		{"evil.example.com", false},
+		{"evil.example.com:5177", false},
+		{"169.254.169.254", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := loopbackHost(tc.host); got != tc.want {
+			t.Errorf("loopbackHost(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+	}
+}
+
+// TestServerLoopbackHostGuard proves the whole server refuses a non-loopback
+// Host header (DNS-rebinding hardening) while loopback names pass through to the
+// handlers.
+func TestServerLoopbackHostGuard(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	ts, _, _ := newVizServer(t, r)
+
+	cases := []struct {
+		name       string
+		host       string
+		path       string
+		wantStatus int
+	}{
+		{"rebinding host on repo route", "evil.example.com", "/api/repo", http.StatusForbidden},
+		{"rebinding host on blob route", "evil.example.com:8080", "/api/blob/" + hexOID('a'), http.StatusForbidden},
+		{"loopback ip passes", "127.0.0.1:5177", "/api/repo", http.StatusOK},
+		{"localhost passes", "localhost:5177", "/api/repo", http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, body := getWithHost(t, ts.URL+tc.path, tc.host)
+			if code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d (%s)", code, tc.wantStatus, body)
+			}
+			if tc.wantStatus == http.StatusForbidden && !strings.Contains(string(body), "forbidden host") {
+				t.Errorf("403 body = %q, want it to name the forbidden host", body)
+			}
+		})
+	}
+}
+
 func TestAPIRepo(t *testing.T) {
 	r := newGitRepo(t)
 	r.commit("c1")

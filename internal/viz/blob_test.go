@@ -192,6 +192,64 @@ func TestBlobDeletedLocalObject(t *testing.T) {
 	}
 }
 
+// TestBlobNameContentTypeRule pins that only a recorded attachment name can
+// drive the served Content-Type and Content-Disposition: the default is the
+// first recorded use, a ?name= matching a second recorded use is honored, and an
+// unrecorded ?name= (here evil.html) falls back rather than forcing text/html.
+// Every response carries the nosniff and sandbox hardening headers.
+func TestBlobNameContentTypeRule(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	s := r.openStore()
+	ref := refs.Note(createNote(t, s, "note with two-named png"))
+	content := []byte("\x89PNG\r\n\x1a\nfake image payload for the name rule test")
+	att := attachContent(t, s, ref, "aaa.png", content)
+	// A second live use of the same object, recorded under a distinct name and
+	// extension; folded attachments key by name, so both uses survive.
+	reference(t, s, ref, "zzz.jpg", att.OID, att.Size)
+
+	ts, _, _ := newVizServer(t, r)
+
+	cases := []struct {
+		name         string
+		query        string
+		wantCTPrefix string
+		wantDispName string
+	}{
+		{"no param uses first recorded name", "", "image/png", "aaa.png"},
+		{"param matching second recorded name is honored", "?name=zzz.jpg", "image/jpeg", "zzz.jpg"},
+		{"unrecorded param falls back to first name", "?name=evil.html", "image/png", "aaa.png"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := blobGet(t, ts.URL+"/api/blob/"+att.OID+tc.query, nil)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (%s)", resp.StatusCode, body)
+			}
+			ct := resp.Header.Get("Content-Type")
+			if !strings.HasPrefix(ct, tc.wantCTPrefix) {
+				t.Errorf("Content-Type = %q, want prefix %q", ct, tc.wantCTPrefix)
+			}
+			if strings.Contains(ct, "text/html") {
+				t.Errorf("Content-Type = %q, must never be text/html for an unrecorded name", ct)
+			}
+			cd := resp.Header.Get("Content-Disposition")
+			if !strings.HasPrefix(cd, "inline") || !strings.Contains(cd, tc.wantDispName) {
+				t.Errorf("Content-Disposition = %q, want inline with filename %q", cd, tc.wantDispName)
+			}
+			if tc.query == "?name=evil.html" && strings.Contains(cd, "evil.html") {
+				t.Errorf("Content-Disposition = %q, must not echo the unrecorded name", cd)
+			}
+			if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+			if got := resp.Header.Get("Content-Security-Policy"); got != "sandbox" {
+				t.Errorf("Content-Security-Policy = %q, want sandbox", got)
+			}
+		})
+	}
+}
+
 // TestReferencedAttachmentRebuildsOnNewEntity pins that the memoized index
 // rebuilds when a new attachment lands on a new entity tip, without any explicit
 // invalidation: the entity-ref digest changes, so the next lookup sees it.
