@@ -388,7 +388,7 @@ func TestReindexOnStalePack(t *testing.T) {
 				t.Errorf("WalkCommits = %v, want [%s %s %s]", got, c3, c2, c1)
 			}
 		}},
-		{"FirstParentMerges", func(t *testing.T, repo *gitobj.Repo, c1, c2, c3 model.SHA) {
+		{"FirstParentMerges", func(t *testing.T, repo *gitobj.Repo, _, _, c3 model.SHA) {
 			got, err := repo.FirstParentMerges(t.Context(), c3, 0, 0)
 			if err != nil {
 				t.Fatalf("FirstParentMerges(c3): %v", err)
@@ -397,7 +397,7 @@ func TestReindexOnStalePack(t *testing.T) {
 				t.Errorf("FirstParentMerges = %v, want nil (linear chain has no merges)", got)
 			}
 		}},
-		{"IsAncestor", func(t *testing.T, repo *gitobj.Repo, c1, c2, c3 model.SHA) {
+		{"IsAncestor", func(t *testing.T, repo *gitobj.Repo, c1, _, c3 model.SHA) {
 			got, err := repo.IsAncestor(t.Context(), c1, c3)
 			if err != nil {
 				t.Fatalf("IsAncestor(c1, c3): %v", err)
