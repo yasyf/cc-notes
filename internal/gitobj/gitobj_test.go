@@ -585,7 +585,7 @@ func TestListPrefixDuringRefWrites(t *testing.T) {
 			cmd.Dir = dir
 			cmd.Env = gitEnv()
 			if out, err := cmd.CombinedOutput(); err != nil {
-				writerErr <- fmt.Errorf("update-ref %d: %v\n%s", i, err, out)
+				writerErr <- fmt.Errorf("update-ref %d: %w\n%s", i, err, out)
 				return
 			}
 		}
