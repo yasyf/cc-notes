@@ -1,6 +1,7 @@
 package trail_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/fold"
@@ -54,9 +55,9 @@ func changeByField(e trail.Entry, field string) (trail.Change, bool) {
 }
 
 // TestEntriesNoteTrail pins the trail of a linear note chain: the create renders
-// every initial scalar "from nothing" (From cleared) and the initial tags as a
-// set, the title edit reports a scalar From→To, the tag edit reports sorted
-// Added/Removed, the anchor edit summarizes the object element, the hidden Head
+// every initial scalar "from nothing" (From nil) and the initial tags as a set,
+// the title edit reports a scalar From→To, the tag edit reports sorted
+// Added/Removed, the anchor edit carries the raw anchor object, the hidden Head
 // field never surfaces, and each entry carries its folded post-state Snapshot.
 func TestEntriesNoteTrail(t *testing.T) {
 	chain := []model.PackCommit{
@@ -76,11 +77,11 @@ func TestEntriesNoteTrail(t *testing.T) {
 	if create.Kind != "create" || create.Commit.SHA != "n0" {
 		t.Fatalf("entries[0] = {kind %q sha %q}, want {create n0}", create.Kind, create.Commit.SHA)
 	}
-	if c, ok := changeByField(create, "title"); !ok || !c.Scalar || c.From != "" || c.To != "T" {
-		t.Errorf("create title change = %+v, want scalar from \"\" to \"T\"", c)
+	if c, ok := changeByField(create, "title"); !ok || !c.Scalar || c.From != nil || c.To != "T" {
+		t.Errorf("create title change = %+v, want scalar from nil to \"T\"", c)
 	}
-	if c, ok := changeByField(create, "body"); !ok || !c.Scalar || c.From != "" || c.To != "B" {
-		t.Errorf("create body change = %+v, want scalar from \"\" to \"B\"", c)
+	if c, ok := changeByField(create, "body"); !ok || !c.Scalar || c.From != nil || c.To != "B" {
+		t.Errorf("create body change = %+v, want scalar from nil to \"B\"", c)
 	}
 	if c, ok := changeByField(create, "tags"); !ok || c.Scalar || len(c.Added) != 2 || c.Added[0] != "a" || c.Added[1] != "b" || len(c.Removed) != 0 {
 		t.Errorf("create tags change = %+v, want set added [a b]", c)
@@ -112,8 +113,10 @@ func TestEntriesNoteTrail(t *testing.T) {
 	if anchorEdit.Commit.SHA != "n4" {
 		t.Fatalf("entries[3] sha = %q, want n4", anchorEdit.Commit.SHA)
 	}
-	if c, ok := changeByField(anchorEdit, "anchors"); !ok || c.Scalar || len(c.Added) != 1 || c.Added[0] != "path:x.go" {
-		t.Errorf("anchor edit change = %+v, want added [path:x.go]", c)
+	c, ok := changeByField(anchorEdit, "anchors")
+	wantAnchor := map[string]any{"kind": "path", "value": "x.go"}
+	if !ok || c.Scalar || len(c.Added) != 1 || !reflect.DeepEqual(c.Added[0], wantAnchor) {
+		t.Errorf("anchor edit change = %+v, want added [%v]", c, wantAnchor)
 	}
 }
 
@@ -148,11 +151,11 @@ func TestEntriesTaskLifecycleSkipsBookkeeping(t *testing.T) {
 	}
 
 	create := entries[0]
-	if c, ok := changeByField(create, "priority"); !ok || !c.Scalar || c.From != "" || c.To != "2" {
-		t.Errorf("create priority change = %+v, want scalar from \"\" to \"2\" (not \"0 → 2\")", c)
+	if c, ok := changeByField(create, "priority"); !ok || !c.Scalar || c.From != nil || c.To != float64(2) {
+		t.Errorf("create priority change = %+v, want scalar from nil to 2 (not \"0 → 2\")", c)
 	}
-	if c, ok := changeByField(create, "status"); !ok || !c.Scalar || c.From != "" || c.To != "open" {
-		t.Errorf("create status change = %+v, want scalar from \"\" to \"open\"", c)
+	if c, ok := changeByField(create, "status"); !ok || !c.Scalar || c.From != nil || c.To != "open" {
+		t.Errorf("create status change = %+v, want scalar from nil to \"open\"", c)
 	}
 	if c, ok := changeByField(create, "labels"); !ok || c.Scalar || len(c.Added) != 1 || c.Added[0] != "backend" {
 		t.Errorf("create labels change = %+v, want set added [backend]", c)
@@ -166,7 +169,7 @@ func TestEntriesTaskLifecycleSkipsBookkeeping(t *testing.T) {
 		t.Errorf("claim assignee change = %+v, want \"\" → agent-b", c)
 	}
 
-	if c, ok := changeByField(entries[2], "priority"); !ok || c.From != "2" || c.To != "3" {
+	if c, ok := changeByField(entries[2], "priority"); !ok || c.From != float64(2) || c.To != float64(3) {
 		t.Errorf("priority edit change = %+v, want 2 → 3", c)
 	}
 	if c, ok := changeByField(entries[3], "status"); !ok || c.From != "in_progress" || c.To != "done" {
@@ -209,6 +212,69 @@ func TestEntriesCheckpoint(t *testing.T) {
 	}
 	if c, ok := changeByField(entries[3], "body"); !ok || c.From != "B0" || c.To != "B2" {
 		t.Errorf("edit after checkpoint = %+v, want B0 → B2", c)
+	}
+}
+
+// TestEntriesCriterionScriptEditVisible pins the canonical-JSON identity change:
+// a criterion whose only edit is its check script — same text, same status —
+// now surfaces as a change, where the former formatted-string identity
+// (%q [status]) hid it. The delta drops the old-script criterion and adds the
+// new-script one.
+func TestEntriesCriterionScriptEditVisible(t *testing.T) {
+	chain := []model.PackCommit{
+		mk("t0", nil, "alice", 100, 1, model.CreateTask{Nonce: "x", Title: "ship", Type: model.TypeTask, Branch: "main"}),
+		mk("t1", []string{"t0"}, "alice", 200, 2, model.AddCriterion{ID: "c1", Text: "tests pass", Script: "go test ./..."}),
+		mk("t2", []string{"t1"}, "alice", 300, 3, model.SetCriterionScript{ID: "c1", Script: "go test -race ./..."}),
+	}
+	entries := entriesOf(t, chain)
+
+	last := entries[len(entries)-1]
+	if last.Commit.SHA != "t2" {
+		t.Fatalf("last entry sha = %q, want t2 (a script-only edit is now a visible change)", last.Commit.SHA)
+	}
+	c, ok := changeByField(last, "criteria")
+	if !ok || c.Scalar || len(c.Added) != 1 || len(c.Removed) != 1 {
+		t.Fatalf("criteria change = %+v, want one added and one removed", c)
+	}
+	added := c.Added[0].(map[string]any)
+	removed := c.Removed[0].(map[string]any)
+	if added["script"] != "go test -race ./..." {
+		t.Errorf("added criterion script = %v, want the new script", added["script"])
+	}
+	if removed["script"] != "go test ./..." {
+		t.Errorf("removed criterion script = %v, want the old script", removed["script"])
+	}
+	if added["text"] != removed["text"] || added["status"] != removed["status"] {
+		t.Errorf("added/removed = %v / %v, want identical text and status (only the script changed)", added, removed)
+	}
+}
+
+// TestEntriesDuplicateCommentDiffs pins the canonical-JSON identity change for
+// comments: a second comment with the same author and body but a later
+// timestamp is now a distinct added element, where the former formatted-string
+// identity (comment by AUTHOR: %q) collapsed the two and hid it.
+func TestEntriesDuplicateCommentDiffs(t *testing.T) {
+	chain := []model.PackCommit{
+		mk("t0", nil, "alice", 100, 1, model.CreateTask{Nonce: "x", Title: "ship", Type: model.TypeTask, Branch: "main"}),
+		mk("t1", []string{"t0"}, "bob", 200, 2, model.AddComment{Body: "ping"}),
+		mk("t2", []string{"t1"}, "bob", 300, 3, model.AddComment{Body: "ping"}),
+	}
+	entries := entriesOf(t, chain)
+
+	last := entries[len(entries)-1]
+	if last.Commit.SHA != "t2" {
+		t.Fatalf("last entry sha = %q, want t2 (a duplicate comment now diffs)", last.Commit.SHA)
+	}
+	c, ok := changeByField(last, "comments")
+	if !ok || c.Scalar || len(c.Added) != 1 || len(c.Removed) != 0 {
+		t.Fatalf("comments change = %+v, want exactly one added, none removed", c)
+	}
+	added := c.Added[0].(map[string]any)
+	if added["author"] != "bob" || added["body"] != "ping" {
+		t.Errorf("added comment = %v, want author bob body ping", added)
+	}
+	if added["ts"] != float64(300) {
+		t.Errorf("added comment ts = %v, want 300 (the later duplicate)", added["ts"])
 	}
 }
 

@@ -1,9 +1,15 @@
-// Wire types mirror internal/viz/types.go and the entity-detail DTOs: snake_case
-// JSON keys and unix-second integer times. The Go side marshals a nil slice or
-// nil map as JSON null, so the Raw* types below type those fields honestly
+// Wire types mirror internal/viz/types.go, the entity-detail DTOs, and the
+// folded entity snapshots in github.com/yasyf/cc-notes/model: snake_case JSON
+// keys and unix-second integer times. The Go side marshals a nil slice or nil
+// map as JSON null, so the Raw* types below type those fields honestly
 // (array/map | null) and the fetchers normalize every such field to a non-null
 // [] or {} before it reaches component code. Only genuinely-optional pointers
 // (a lane's fork/merge/tip) stay null by design.
+//
+// The one exception is a folded entity Snapshot (carried on EntityDetail and in
+// the /api/entities buckets): it is canonical model JSON — the storage format —
+// so it is passed through verbatim, never normalized, and its own omitempty/nil
+// fields stay exactly as the Go marshaler emitted them.
 
 export interface RepoInfo {
   root: string;
@@ -106,15 +112,21 @@ export interface CommitsPage {
   truncated: boolean;
 }
 
+// TrailValue is one value in a change delta: a scalar (string, unix-second
+// number, or bool), null (a create entry's pre-image, or a cleared time field),
+// or a folded sub-object (an attachment, anchor, comment, or criterion) carried
+// as its canonical JSON object. Mirrors the Go `any` the trail change holds.
+export type TrailValue = string | number | boolean | null | Record<string, unknown>;
+
 // TrailChange is one field delta in an entity's change trail: a scalar carries
 // from→to, a set carries added/removed. Mirrors internal/viz.trailChange.
 export interface TrailChange {
   field: string;
   scalar: boolean;
-  from: string;
-  to: string;
-  added: string[];
-  removed: string[];
+  from: TrailValue;
+  to: TrailValue;
+  added: TrailValue[];
+  removed: TrailValue[];
 }
 
 // TrailEntry is one change-trail commit. Mirrors internal/viz.trailEntry.
@@ -128,11 +140,216 @@ export interface TrailEntry {
   changes: TrailChange[];
 }
 
-// EntityDetail is the /api/entity/{kind}/{id} payload: the legend summary plus
-// the full change trail, oldest first. Mirrors internal/viz.entityResponse.
+// The interfaces below mirror the folded entity snapshots in
+// github.com/yasyf/cc-notes/model: snake_case keys, unix-second integer times,
+// and `?` exactly where the Go struct tag carries omitempty. They ride on the
+// /api/entity and /api/entities payloads and are passed through verbatim — the
+// canonical model JSON is the storage format, so the fetchers never rewrite it.
+
+// Anchor pins a note/doc/log to a repo location. Mirrors model.Anchor.
+export interface Anchor {
+  kind: string;
+  value: string;
+}
+
+// AnchorWitness records the git oid of an anchor's content at verify time.
+// Mirrors model.AnchorWitness.
+export interface AnchorWitness {
+  anchor: Anchor;
+  oid: string;
+}
+
+// Comment is one append-only comment on a task, sprint, or project; ts is unix
+// seconds. Mirrors model.Comment.
+export interface Comment {
+  author: string;
+  ts: number;
+  body: string;
+}
+
+// LogEntry is one append-only entry in a log; ts is unix seconds. Mirrors
+// model.LogEntry.
+export interface LogEntry {
+  author: string;
+  ts: number;
+  text: string;
+}
+
+// Criterion is one structured acceptance criterion on a task. Mirrors
+// model.Criterion.
+export interface Criterion {
+  id: string;
+  text: string;
+  script: string;
+  status: string;
+}
+
+// Attachment is one named large-content reference; size is bytes. Fetch its
+// bytes via blobURL(oid, name). Mirrors model.Attachment.
+export interface Attachment {
+  name: string;
+  oid: string;
+  size: number;
+}
+
+// NoteSnapshot is the folded snapshot of a note. Mirrors model.Note.
+export interface NoteSnapshot {
+  id: string;
+  title: string;
+  body: string;
+  tags: string[];
+  anchors: Anchor[];
+  author: string;
+  created_at: number;
+  updated_at: number;
+  deleted: boolean;
+  verified_at: number;
+  verified_by: string;
+  verified_commit: string;
+  witness: AnchorWitness[];
+  superseded_by: string[];
+  stale_at: number;
+  stale_by: string;
+  stale_reason: string;
+  head: string;
+  attachments?: Attachment[];
+}
+
+// DocSnapshot is the folded snapshot of a doc: a Note plus the free-text `when`
+// trigger. Mirrors model.Doc.
+export interface DocSnapshot {
+  id: string;
+  title: string;
+  body: string;
+  when: string;
+  tags: string[];
+  anchors: Anchor[];
+  author: string;
+  created_at: number;
+  updated_at: number;
+  deleted: boolean;
+  verified_at: number;
+  verified_by: string;
+  verified_commit: string;
+  witness: AnchorWitness[];
+  superseded_by: string[];
+  stale_at: number;
+  stale_by: string;
+  stale_reason: string;
+  head: string;
+  attachments?: Attachment[];
+}
+
+// LogSnapshot is the folded snapshot of a log. Mirrors model.Log.
+export interface LogSnapshot {
+  id: string;
+  title: string;
+  entries: LogEntry[];
+  tags: string[];
+  anchors: Anchor[];
+  author: string;
+  created_at: number;
+  updated_at: number;
+  deleted: boolean;
+  head: string;
+  attachments?: Attachment[];
+}
+
+// TaskSnapshot is the folded snapshot of a task. Mirrors model.Task.
+export interface TaskSnapshot {
+  id: string;
+  branch: string;
+  title: string;
+  description: string;
+  type: string;
+  status: string;
+  priority: number;
+  assignee: string;
+  heartbeat_at: number;
+  heartbeat_lamport: number;
+  labels: string[];
+  blocked_by: string[];
+  parent: string;
+  comments: Comment[];
+  created_at: number;
+  updated_at: number;
+  started_at: number;
+  closed_at: number;
+  commits: string[];
+  head: string;
+  sprint: string;
+  project: string;
+  criteria: Criterion[];
+}
+
+// SprintSnapshot is the folded snapshot of a sprint. Mirrors model.Sprint.
+export interface SprintSnapshot {
+  id: string;
+  project: string;
+  title: string;
+  description: string;
+  status: string;
+  start_date: number;
+  end_date: number;
+  labels: string[];
+  commits: string[];
+  comments: Comment[];
+  author: string;
+  created_at: number;
+  updated_at: number;
+  started_at: number;
+  closed_at: number;
+  head: string;
+}
+
+// ProjectSnapshot is the folded snapshot of a project. Mirrors model.Project.
+export interface ProjectSnapshot {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  labels: string[];
+  commits: string[];
+  comments: Comment[];
+  author: string;
+  created_at: number;
+  updated_at: number;
+  closed_at: number;
+  head: string;
+}
+
+// Snapshot is the full folded entity carried on an EntityDetail and in the
+// /api/entities buckets. Discriminate it by the summary.kind the caller already
+// holds (note | doc | log | task | sprint | project) — the snapshots carry no
+// intrinsic tag. Mirrors model.Snapshot.
+export type Snapshot =
+  | NoteSnapshot
+  | DocSnapshot
+  | LogSnapshot
+  | TaskSnapshot
+  | SprintSnapshot
+  | ProjectSnapshot;
+
+// EntityDetail is the /api/entity/{kind}/{id} payload: the legend summary, the
+// full folded snapshot, and the change trail, oldest first. Mirrors
+// internal/viz.entityResponse.
 export interface EntityDetail {
   summary: EntitySummary;
+  snapshot: Snapshot;
   trail: TrailEntry[];
+}
+
+// StateResponse is the /api/entities payload: every live entity's full folded
+// snapshot, bucketed by kind. Each bucket marshals as null when its Go slice is
+// nil and is normalized to []. Mirrors the /api/entities response in
+// internal/viz.
+export interface StateResponse {
+  notes: NoteSnapshot[];
+  docs: DocSnapshot[];
+  logs: LogSnapshot[];
+  tasks: TaskSnapshot[];
+  sprints: SprintSnapshot[];
+  projects: ProjectSnapshot[];
 }
 
 // RawEvent is Event as it arrives on the wire: detail is a Go map that marshals
@@ -170,8 +387,8 @@ interface RawCommitsPage {
 // RawTrailChange is TrailChange as it arrives on the wire: added and removed are
 // Go slices that marshal as null when nil (a scalar change carries neither).
 interface RawTrailChange extends Omit<TrailChange, "added" | "removed"> {
-  added: string[] | null;
-  removed: string[] | null;
+  added: TrailValue[] | null;
+  removed: TrailValue[] | null;
 }
 
 // RawTrailEntry is TrailEntry as it arrives on the wire: changes marshals as null
@@ -181,10 +398,24 @@ interface RawTrailEntry extends Omit<TrailEntry, "changes"> {
 }
 
 // RawEntityDetail is EntityDetail as it arrives on the wire: trail marshals as
-// null when nil.
+// null when nil. snapshot is passed through verbatim — its own nil slices are
+// canonical model JSON, not normalized here.
 interface RawEntityDetail {
   summary: EntitySummary;
+  snapshot: Snapshot;
   trail: RawTrailEntry[] | null;
+}
+
+// RawStateResponse is StateResponse as it arrives on the wire: every kind bucket
+// is a Go slice that marshals as null when nil. The snapshots inside are passed
+// through verbatim.
+interface RawStateResponse {
+  notes: NoteSnapshot[] | null;
+  docs: DocSnapshot[] | null;
+  logs: LogSnapshot[] | null;
+  tasks: TaskSnapshot[] | null;
+  sprints: SprintSnapshot[] | null;
+  projects: ProjectSnapshot[] | null;
 }
 
 // normalizeGraph fills every nil slice with [] and every nil detail map with {},
@@ -220,6 +451,7 @@ export function normalizeCommits(raw: RawCommitsPage): CommitsPage {
 export function normalizeEntity(raw: RawEntityDetail): EntityDetail {
   return {
     summary: raw.summary,
+    snapshot: raw.snapshot,
     trail: (raw.trail ?? []).map((entry) => ({
       ...entry,
       changes: (entry.changes ?? []).map((c) => ({
@@ -228,6 +460,19 @@ export function normalizeEntity(raw: RawEntityDetail): EntityDetail {
         removed: c.removed ?? [],
       })),
     })),
+  };
+}
+
+// normalizeEntities fills every nil kind bucket with []. The folded snapshots
+// inside are left verbatim.
+export function normalizeEntities(raw: RawStateResponse): StateResponse {
+  return {
+    notes: raw.notes ?? [],
+    docs: raw.docs ?? [],
+    logs: raw.logs ?? [],
+    tasks: raw.tasks ?? [],
+    sprints: raw.sprints ?? [],
+    projects: raw.projects ?? [],
   };
 }
 
@@ -267,4 +512,15 @@ export async function fetchEntity(kind: string, id: string): Promise<EntityDetai
       `/api/entity/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`,
     ),
   );
+}
+
+export async function fetchEntities(): Promise<StateResponse> {
+  return normalizeEntities(await getJSON<RawStateResponse>("/api/entities"));
+}
+
+// blobURL builds the /api/blob/{oid} URL for an attachment's bytes, appending
+// the optional download name as a query parameter.
+export function blobURL(oid: string, name?: string): string {
+  const q = name !== undefined ? `?name=${encodeURIComponent(name)}` : "";
+  return `/api/blob/${encodeURIComponent(oid)}${q}`;
 }

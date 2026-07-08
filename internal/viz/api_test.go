@@ -18,6 +18,15 @@ import (
 	"github.com/yasyf/cc-notes/web"
 )
 
+// entityResp mirrors entityResponse for decoding: its Snapshot is a raw message
+// because the wire Snapshot is a model.Snapshot interface, which encoding/json
+// cannot unmarshal into directly.
+type entityResp struct {
+	Summary  EntitySummary   `json:"summary"`
+	Snapshot json.RawMessage `json:"snapshot"`
+	Trail    []trailEntry    `json:"trail"`
+}
+
 // newVizServer opens a fresh store over r and serves it, so the server observes
 // every entity and commit written before this call.
 func newVizServer(t *testing.T, r *gitRepo) (*httptest.Server, *store.Store, *Builder) {
@@ -164,7 +173,7 @@ func TestAPIEntityTaskWithCheckpoint(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", code, body)
 	}
-	var resp entityResponse
+	var resp entityResp
 	if err := json.Unmarshal(body, &resp); err != nil {
 		t.Fatalf("decode %s: %v", body, err)
 	}
@@ -189,6 +198,54 @@ func TestAPIEntityTaskWithCheckpoint(t *testing.T) {
 	last := resp.Trail[len(resp.Trail)-1]
 	if last.Kind != "edit" {
 		t.Errorf("last entry kind = %q, want edit", last.Kind)
+	}
+}
+
+// TestAPIEntitySnapshotMatchesTip covers that the entity endpoint carries the
+// full folded tip snapshot, byte-equal to the store's folded state and decoding
+// back to the concrete task.
+func TestAPIEntitySnapshotMatchesTip(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	ctx := t.Context()
+	s := r.openStore()
+	snap, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "snapshot task", Type: model.TypeTask, Branch: "main"}})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	task := snap.(model.Task)
+	tip, err := s.Append(ctx, refs.Task(task.ID), []model.Op{model.SetStatus{Status: model.StatusInProgress}})
+	if err != nil {
+		t.Fatalf("set in_progress: %v", err)
+	}
+
+	ts, _, _ := newVizServer(t, r)
+	code, body := getBody(t, ts.URL+"/api/entity/task/"+string(task.ID))
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", code, body)
+	}
+	var resp entityResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode %s: %v", body, err)
+	}
+	if len(resp.Snapshot) == 0 {
+		t.Fatalf("response carries no snapshot field: %s", body)
+	}
+
+	wantJSON, err := json.Marshal(tip)
+	if err != nil {
+		t.Fatalf("marshal tip: %v", err)
+	}
+	if !bytes.Equal(resp.Snapshot, wantJSON) {
+		t.Errorf("snapshot mismatch\n got: %s\nwant: %s", resp.Snapshot, wantJSON)
+	}
+
+	var got model.Task
+	if err := json.Unmarshal(resp.Snapshot, &got); err != nil {
+		t.Fatalf("decode snapshot into task: %v", err)
+	}
+	if got.ID != task.ID || got.Status != model.StatusInProgress {
+		t.Errorf("snapshot task = {id %s status %s}, want {%s in_progress}", got.ID, got.Status, task.ID)
 	}
 }
 

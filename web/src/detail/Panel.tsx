@@ -3,7 +3,7 @@
 // a plain message — no retries.
 
 import { useEffect, useState } from "react";
-import { fetchEntity, type EntityDetail, type EntitySummary, type TrailChange, type TrailEntry } from "../api";
+import { fetchEntity, type EntityDetail, type EntitySummary, type TrailChange, type TrailEntry, type TrailValue } from "../api";
 import type { Selection } from "../store";
 
 interface Props {
@@ -104,18 +104,22 @@ function ChangeValue({ change }: { change: TrailChange }) {
   if (change.scalar) {
     return (
       <span className="trail-delta">
-        <span className="trail-from">{display(change.from)}</span>
+        <span className="trail-from">{toDisplay(change.from)}</span>
         <span className="trail-arrow" aria-hidden="true">
           →
         </span>
-        <span className="trail-to">{display(change.to)}</span>
+        <span className="trail-to">{toDisplay(change.to)}</span>
       </span>
     );
   }
   return (
     <span className="trail-delta">
-      {change.added.length > 0 && <span className="trail-added">+{change.added.join(", ")}</span>}
-      {change.removed.length > 0 && <span className="trail-removed">−{change.removed.join(", ")}</span>}
+      {change.added.length > 0 && (
+        <span className="trail-added">+{change.added.map(toDisplay).join(", ")}</span>
+      )}
+      {change.removed.length > 0 && (
+        <span className="trail-removed">−{change.removed.map(toDisplay).join(", ")}</span>
+      )}
     </span>
   );
 }
@@ -149,8 +153,14 @@ function summaryFields(s: EntitySummary): Field[] {
   return fields;
 }
 
-function display(v: string): string {
-  return v === "" ? "∅" : v;
+// toDisplay renders one typed trail value as a compact string: null and the
+// empty string as ∅, a folded sub-object as compact JSON, numbers and bools via
+// String. Phase 2 replaces this with per-field renderers.
+function toDisplay(v: TrailValue): string {
+  if (v === null) return "∅";
+  if (typeof v === "object") return JSON.stringify(v);
+  if (typeof v === "string") return v === "" ? "∅" : v;
+  return String(v);
 }
 
 function formatTime(sec: number): string {

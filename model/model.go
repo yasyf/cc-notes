@@ -236,6 +236,12 @@ const maxAttachmentNameBytes = 255
 // 64 lower-hex characters.
 var attachmentOIDRE = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
 
+// ValidAttachmentOID reports whether oid is a well-formed git-lfs object id:
+// the sha256 of the content, 64 lower-hex characters.
+func ValidAttachmentOID(oid string) bool {
+	return attachmentOIDRE.MatchString(oid)
+}
+
 // Attachment is one named large-content reference on a note, doc, or log.
 // Name is the file name, unique per entity (attachments resolve LWW by Name
 // at fold time); OID is the git-lfs object id (sha256 of the content, 64

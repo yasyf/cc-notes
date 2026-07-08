@@ -69,10 +69,12 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 }
 
 // entityResponse is the /api/entity/{kind}/{id} payload: the entity's legend
-// summary and its full change trail, oldest first, checkpoints included.
+// summary, its full folded tip snapshot, and its full change trail, oldest
+// first, checkpoints included.
 type entityResponse struct {
-	Summary EntitySummary `json:"summary"`
-	Trail   []trailEntry  `json:"trail"`
+	Summary  EntitySummary  `json:"summary"`
+	Snapshot model.Snapshot `json:"snapshot"`
+	Trail    []trailEntry   `json:"trail"`
 }
 
 // trailEntry is one change-trail commit in the entity wire format: the commit
@@ -89,14 +91,15 @@ type trailEntry struct {
 }
 
 // trailChange is one field delta: a scalar carries From→To with Scalar true,
-// otherwise Added and Removed hold the set elements.
+// otherwise Added and Removed hold the set elements. Values are canonical-JSON
+// forms — string, number, bool, null, or object — rendered by the client.
 type trailChange struct {
-	Field   string   `json:"field"`
-	Scalar  bool     `json:"scalar"`
-	From    string   `json:"from"`
-	To      string   `json:"to"`
-	Added   []string `json:"added"`
-	Removed []string `json:"removed"`
+	Field   string `json:"field"`
+	Scalar  bool   `json:"scalar"`
+	From    any    `json:"from"`
+	To      any    `json:"to"`
+	Added   []any  `json:"added"`
+	Removed []any  `json:"removed"`
 }
 
 // candidate is one entity matched by an ambiguous id prefix.
@@ -152,9 +155,11 @@ func (s *Server) handleEntity(w http.ResponseWriter, r *http.Request) {
 	for i, e := range entries {
 		changes[i] = trailEntryOf(e)
 	}
+	tip := entries[len(entries)-1].Snapshot
 	writeJSON(w, http.StatusOK, entityResponse{
-		Summary: summaryOf(entries[len(entries)-1].Snapshot),
-		Trail:   changes,
+		Summary:  summaryOf(tip),
+		Snapshot: tip,
+		Trail:    changes,
 	})
 }
 

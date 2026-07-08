@@ -58,7 +58,9 @@ func NewServer(s *store.Store, b *Builder) *Server {
 	srv.mux.HandleFunc("GET /api/repo", srv.handleRepo)
 	srv.mux.HandleFunc("GET /api/graph", srv.handleGraph)
 	srv.mux.HandleFunc("GET /api/commits", srv.handleCommits)
+	srv.mux.HandleFunc("GET /api/entities", srv.handleEntities)
 	srv.mux.HandleFunc("GET /api/entity/{kind}/{id}", srv.handleEntity)
+	srv.mux.HandleFunc("GET /api/blob/{oid}", srv.handleBlob)
 	srv.mux.HandleFunc("GET /api/stream", srv.handleStream)
 	srv.mux.HandleFunc("GET /", srv.handleRoot)
 	return srv

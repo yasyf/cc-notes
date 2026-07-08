@@ -76,24 +76,24 @@ func taskEvents(entry trail.Entry) []eventSpec {
 
 	statusCh, hasStatus := changeFor(entry.Changes, "status")
 	assigneeCh, hasAssignee := changeFor(entry.Changes, "assignee")
-	assigneeSet := hasAssignee && assigneeCh.To != ""
+	assigneeSet := hasAssignee && changeSet(assigneeCh.To)
 	switch {
-	case hasStatus && statusCh.To == string(model.StatusInProgress) && assigneeSet:
+	case hasStatus && changeStr(statusCh.To) == string(model.StatusInProgress) && assigneeSet:
 		specs = append(specs, eventSpec{typ: evClaimed})
 	case !hasStatus && assigneeSet && task.Status == model.StatusInProgress:
 		specs = append(specs, eventSpec{typ: evReclaimed})
-	case hasStatus && (statusCh.To == string(model.StatusDone) || statusCh.To == string(model.StatusCancelled)):
+	case hasStatus && (changeStr(statusCh.To) == string(model.StatusDone) || changeStr(statusCh.To) == string(model.StatusCancelled)):
 		specs = append(specs, eventSpec{typ: evClosed})
 	case hasStatus:
 		specs = append(specs, eventSpec{typ: evStatus})
 	}
 
 	if branchCh, ok := changeFor(entry.Changes, "branch"); ok {
-		specs = append(specs, eventSpec{typ: evBranchMoved, detail: map[string]string{"from": branchCh.From, "to": branchCh.To}})
+		specs = append(specs, eventSpec{typ: evBranchMoved, detail: map[string]string{"from": changeStr(branchCh.From), "to": changeStr(branchCh.To)}})
 	}
 	if commitCh, ok := changeFor(entry.Changes, "commits"); ok {
 		for _, sha := range commitCh.Added {
-			specs = append(specs, eventSpec{typ: evCommitLinked, detail: map[string]string{"sha": sha}})
+			specs = append(specs, eventSpec{typ: evCommitLinked, detail: map[string]string{"sha": sha.(string)}})
 		}
 	}
 
@@ -110,13 +110,13 @@ func noteEvents(entry trail.Entry) []eventSpec {
 	if entry.Kind == trailCreate {
 		return []eventSpec{{typ: evCreated}}
 	}
-	if ch, ok := changeFor(entry.Changes, "verified_at"); ok && ch.To != "" {
+	if ch, ok := changeFor(entry.Changes, "verified_at"); ok && changeSet(ch.To) {
 		return []eventSpec{{typ: evVerified}}
 	}
 	if ch, ok := changeFor(entry.Changes, "superseded_by"); ok && len(ch.Added) > 0 {
 		return []eventSpec{{typ: evSuperseded}}
 	}
-	if ch, ok := changeFor(entry.Changes, "stale_at"); ok && ch.To != "" {
+	if ch, ok := changeFor(entry.Changes, "stale_at"); ok && changeSet(ch.To) {
 		return []eventSpec{{typ: evStale}}
 	}
 	return []eventSpec{{typ: evEdited}}
@@ -160,6 +160,26 @@ func changeFor(changes []trail.Change, field string) (trail.Change, bool) {
 		}
 	}
 	return trail.Change{}, false
+}
+
+// changeStr reads a scalar trail value as a string: a string field's value, or
+// "" for a nil (unset) field.
+func changeStr(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+// changeSet reports whether a scalar trail value is set: a non-empty string or a
+// non-zero number. A nil, empty string, or zero is unset.
+func changeSet(v any) bool {
+	switch x := v.(type) {
+	case string:
+		return x != ""
+	case float64:
+		return x != 0
+	default:
+		return false
+	}
 }
 
 // entityRefOf builds the stable EntityRef for an entity from its tip snapshot.

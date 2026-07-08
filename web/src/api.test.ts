@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { normalizeCommits, normalizeEntity, normalizeGraph } from "./api";
+import {
+  normalizeCommits,
+  normalizeEntities,
+  normalizeEntity,
+  normalizeGraph,
+} from "./api";
 
 // The Go server marshals nil slices and nil maps as JSON null. These payloads are
 // captured shapes the wire can actually emit; the normalizers must turn every
@@ -83,15 +88,18 @@ describe("normalizeCommits", () => {
 });
 
 describe("normalizeEntity", () => {
-  it("fills a null set side of a non-scalar change (removed:null)", () => {
+  it("fills a null set side of a non-scalar change and passes the snapshot through", () => {
     // A claimed task's comments change: added present, removed null — the payload
-    // that crashed Panel before normalization.
+    // that crashed Panel before normalization. The snapshot is folded model JSON
+    // and must arrive verbatim.
     const raw = JSON.parse(
       `{"summary":{"kind":"task","id":"t1","short":"t1","title":"t","status":"in_progress"},
+        "snapshot":{"id":"t1","title":"t","status":"in_progress","priority":1,
+          "labels":["ui"],"comments":[{"author":"a","ts":1,"body":"hi"}]},
         "trail":[
           {"sha":"c1","author":"a","time":1,"lamport":1,"kind":"edit","covers":0,
             "changes":[
-              {"field":"comments","scalar":false,"from":"","to":"","added":["hi"],"removed":null},
+              {"field":"comments","scalar":false,"from":null,"to":null,"added":["hi"],"removed":null},
               {"field":"status","scalar":true,"from":"open","to":"in_progress","added":null,"removed":null}
             ]}
         ]}`,
@@ -102,12 +110,51 @@ describe("normalizeEntity", () => {
     expect(comments.removed).toEqual([]);
     expect(status.added).toEqual([]);
     expect(status.removed).toEqual([]);
+    expect(status.from).toBe("open");
+    expect(status.to).toBe("in_progress");
+    // Snapshot passthrough: identical object, nested fields intact.
+    expect(d.snapshot).toEqual({
+      id: "t1",
+      title: "t",
+      status: "in_progress",
+      priority: 1,
+      labels: ["ui"],
+      comments: [{ author: "a", ts: 1, body: "hi" }],
+    });
+  });
+
+  it("carries typed trail values: null create pre-image, numbers, and an object element", () => {
+    // An entity's creation trail: title created (from null), verified_at as a
+    // unix-second number, and an attachment added as a folded sub-object — none
+    // of which a string-only TrailChange could represent.
+    const raw = JSON.parse(
+      `{"summary":{"kind":"note","id":"n1","short":"n1","title":"n"},
+        "snapshot":{"id":"n1","title":"hello","tags":[]},
+        "trail":[
+          {"sha":"c1","author":"a","time":1,"lamport":1,"kind":"create","covers":0,
+            "changes":[
+              {"field":"title","scalar":true,"from":null,"to":"hello","added":null,"removed":null},
+              {"field":"verified_at","scalar":true,"from":0,"to":1700000000,"added":null,"removed":null},
+              {"field":"attachments","scalar":false,"from":null,"to":null,
+                "added":[{"name":"trace.png","oid":"ab12","size":48}],"removed":null}
+            ]}
+        ]}`,
+    );
+    const d = normalizeEntity(raw);
+    const [title, verifiedAt, attachments] = d.trail[0].changes;
+    expect(title.from).toBeNull(); // create pre-image stays null
+    expect(title.to).toBe("hello");
+    expect(verifiedAt.from).toBe(0); // numeric scalar preserved, not "0"
+    expect(verifiedAt.to).toBe(1700000000);
+    expect(attachments.added).toEqual([{ name: "trace.png", oid: "ab12", size: 48 }]);
+    expect(attachments.removed).toEqual([]);
   });
 
   it("fills a null trail and a null changes slice", () => {
     const nullTrail = normalizeEntity(
       JSON.parse(
-        `{"summary":{"kind":"note","id":"n1","short":"n1","title":"n"},"trail":null}`,
+        `{"summary":{"kind":"note","id":"n1","short":"n1","title":"n"},
+          "snapshot":{"id":"n1","title":"n","tags":[]},"trail":null}`,
       ),
     );
     expect(nullTrail.trail).toEqual([]);
@@ -115,10 +162,44 @@ describe("normalizeEntity", () => {
     const nullChanges = normalizeEntity(
       JSON.parse(
         `{"summary":{"kind":"note","id":"n1","short":"n1","title":"n"},
+          "snapshot":{"id":"n1","title":"n","tags":[]},
           "trail":[{"sha":"c1","author":"a","time":1,"lamport":1,"kind":"create",
             "covers":0,"changes":null}]}`,
       ),
     );
     expect(nullChanges.trail[0].changes).toEqual([]);
+  });
+});
+
+describe("normalizeEntities", () => {
+  it("fills every null kind bucket with []", () => {
+    // An empty repo: the Go side marshals each nil kind slice as null.
+    const state = normalizeEntities(
+      JSON.parse(
+        `{"notes":null,"docs":null,"logs":null,"tasks":null,"sprints":null,"projects":null}`,
+      ),
+    );
+    expect(state.notes).toEqual([]);
+    expect(state.docs).toEqual([]);
+    expect(state.logs).toEqual([]);
+    expect(state.tasks).toEqual([]);
+    expect(state.sprints).toEqual([]);
+    expect(state.projects).toEqual([]);
+  });
+
+  it("keeps present buckets and passes their snapshots through verbatim", () => {
+    const state = normalizeEntities(
+      JSON.parse(
+        `{"notes":[{"id":"n1","title":"n","tags":["x"]}],
+          "docs":null,"logs":null,
+          "tasks":[{"id":"t1","title":"t","status":"open","criteria":[{"id":"c1","text":"ships","script":"","status":"pending"}]}],
+          "sprints":null,"projects":null}`,
+      ),
+    );
+    expect(state.docs).toEqual([]);
+    expect(state.notes).toEqual([{ id: "n1", title: "n", tags: ["x"] }]);
+    expect(state.tasks[0].criteria).toEqual([
+      { id: "c1", text: "ships", script: "", status: "pending" },
+    ]);
   });
 });

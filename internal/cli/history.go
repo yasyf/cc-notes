@@ -2,10 +2,13 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -179,33 +182,120 @@ func renderHistoryText(w io.Writer, entries []trail.Entry) error {
 
 func renderChangeLines(ch trail.Change) []string {
 	if ch.Scalar {
+		from := formatTrailScalar(ch.Field, ch.From)
+		to := formatTrailScalar(ch.Field, ch.To)
 		switch {
-		case ch.From == "":
-			return []string{fmt.Sprintf("%s: %s", ch.Field, ch.To)}
-		case ch.To == "":
-			return []string{fmt.Sprintf("%s: %s → (none)", ch.Field, ch.From)}
+		case from == "":
+			return []string{fmt.Sprintf("%s: %s", ch.Field, to)}
+		case to == "":
+			return []string{fmt.Sprintf("%s: %s → (none)", ch.Field, from)}
 		default:
-			return []string{fmt.Sprintf("%s: %s → %s", ch.Field, ch.From, ch.To)}
+			return []string{fmt.Sprintf("%s: %s → %s", ch.Field, from, to)}
 		}
 	}
+	added := formatTrailSet(ch.Field, ch.Added)
+	removed := formatTrailSet(ch.Field, ch.Removed)
 	if simpleSetFields[ch.Field] {
-		tokens := make([]string, 0, len(ch.Added)+len(ch.Removed))
-		for _, a := range ch.Added {
+		tokens := make([]string, 0, len(added)+len(removed))
+		for _, a := range added {
 			tokens = append(tokens, "+"+a)
 		}
-		for _, r := range ch.Removed {
+		for _, r := range removed {
 			tokens = append(tokens, "-"+r)
 		}
 		return []string{ch.Field + ": " + strings.Join(tokens, " ")}
 	}
-	lines := make([]string, 0, len(ch.Added)+len(ch.Removed))
-	for _, a := range ch.Added {
+	lines := make([]string, 0, len(added)+len(removed))
+	for _, a := range added {
 		lines = append(lines, fmt.Sprintf("%s: +%s", ch.Field, a))
 	}
-	for _, r := range ch.Removed {
+	for _, r := range removed {
 		lines = append(lines, fmt.Sprintf("%s: -%s", ch.Field, r))
 	}
 	return lines
+}
+
+// timeFields are unix-seconds scalars rendered as RFC3339 UTC in the trail.
+var timeFields = map[string]bool{
+	"verified_at": true,
+	"started_at":  true,
+	"closed_at":   true,
+	"stale_at":    true,
+	"start_date":  true,
+	"end_date":    true,
+}
+
+// formatTrailScalar renders a scalar trail value to its history string: "" for a
+// nil (unset) field, RFC3339 UTC for a time field, else the plain value.
+func formatTrailScalar(field string, v any) string {
+	if v == nil {
+		return ""
+	}
+	if timeFields[field] {
+		if n, ok := v.(float64); ok {
+			if n == 0 {
+				return ""
+			}
+			return rfc3339(int64(n))
+		}
+	}
+	return scalarString(v)
+}
+
+// formatTrailElement renders one set element to a stable, human string: a string
+// element verbatim, a known object element (anchor, comment, log entry,
+// criterion) summarized, any other object as compact JSON.
+func formatTrailElement(field string, v any) string {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return scalarString(v)
+	}
+	switch field {
+	case "anchors":
+		return fmt.Sprintf("%s:%s", scalarString(m["kind"]), scalarString(m["value"]))
+	case "comments":
+		return fmt.Sprintf("comment by %s: %q", scalarString(m["author"]), scalarString(m["body"]))
+	case "entries":
+		return fmt.Sprintf("entry by %s: %q", scalarString(m["author"]), scalarString(m["text"]))
+	case "criteria":
+		return fmt.Sprintf("%q [%s]", scalarString(m["text"]), scalarString(m["status"]))
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+// formatTrailSet renders a set field's elements to sorted history strings,
+// preserving the trail's former formatted-string ordering; it returns nil for an
+// empty set so the JSON DTO omits it.
+func formatTrailSet(field string, elems []any) []string {
+	if len(elems) == 0 {
+		return nil
+	}
+	out := make([]string, len(elems))
+	for i, e := range elems {
+		out[i] = formatTrailElement(field, e)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func scalarString(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case bool:
+		return strconv.FormatBool(x)
+	case float64:
+		if x == float64(int64(x)) {
+			return strconv.FormatInt(int64(x), 10)
+		}
+		return strconv.FormatFloat(x, 'g', -1, 64)
+	default:
+		b, _ := json.Marshal(x)
+		return string(b)
+	}
 }
 
 // historyChangeDTO is one field delta in JSON: a scalar carries from/to (null
@@ -236,9 +326,9 @@ func newHistoryEntryDTO(e trail.Entry) historyEntryDTO {
 	changes := make([]historyChangeDTO, len(e.Changes))
 	for i, ch := range e.Changes {
 		if ch.Scalar {
-			changes[i] = historyChangeDTO{Field: ch.Field, From: optString(ch.From), To: optString(ch.To)}
+			changes[i] = historyChangeDTO{Field: ch.Field, From: optString(formatTrailScalar(ch.Field, ch.From)), To: optString(formatTrailScalar(ch.Field, ch.To))}
 		} else {
-			changes[i] = historyChangeDTO{Field: ch.Field, Added: ch.Added, Removed: ch.Removed}
+			changes[i] = historyChangeDTO{Field: ch.Field, Added: formatTrailSet(ch.Field, ch.Added), Removed: formatTrailSet(ch.Field, ch.Removed)}
 		}
 	}
 	return historyEntryDTO{

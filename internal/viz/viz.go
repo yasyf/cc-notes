@@ -64,6 +64,12 @@ type Builder struct {
 	// immutable, so entries never go stale and survive invalidation.
 	mbMu    sync.Mutex
 	mbCache map[string]mergeBase
+
+	// attMu guards attCache. The referenced-attachment index is keyed by a
+	// digest over every entity ref tip, so a cached index matches the live
+	// entity state until an entity ref moves; InvalidateRefs also clears it.
+	attMu    sync.Mutex
+	attCache *attIndex
 }
 
 // NewBuilder returns a Builder that reads the given store.
@@ -143,6 +149,10 @@ func (b *Builder) InvalidateRefs(refNames []string) {
 		}
 	}
 	b.trailMu.Unlock()
+
+	b.attMu.Lock()
+	b.attCache = nil
+	b.attMu.Unlock()
 }
 
 // digest hashes the sorted (ref, tip) pairs of every branch and entity ref, the

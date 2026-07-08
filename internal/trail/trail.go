@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
-	"time"
 
 	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/model"
@@ -28,15 +26,18 @@ type Entry struct {
 	Snapshot model.Snapshot
 }
 
-// Change is one field's delta: a scalar From→To when Scalar is true, otherwise a
-// set of Added and Removed elements.
+// Change is one field's delta: a scalar From→To when Scalar is true, otherwise
+// the Added and Removed set elements. Values are the fields' canonical-JSON
+// forms — string, float64, bool, nil, or map[string]any — not rendered strings;
+// presentation lives with the caller. Set elements are deduplicated and ordered
+// by canonical-JSON identity, which is also the scalar equality.
 type Change struct {
 	Field   string
 	Scalar  bool
-	From    string
-	To      string
-	Added   []string
-	Removed []string
+	From    any
+	To      any
+	Added   []any
+	Removed []any
 }
 
 // Entries turns the linearized steps of an entity into its change trail: one
@@ -58,11 +59,11 @@ func Entries(steps []fold.Step) ([]Entry, error) {
 			if err != nil {
 				return nil, err
 			}
-			// A create is "from nothing": render every initial scalar as a
-			// plain set, so a numeric default reads "priority: 2", not "0 → 2".
+			// A create is "from nothing": clear every initial scalar's From so a
+			// caller renders "priority: 2", not "0 → 2".
 			for j := range changes {
 				if changes[j].Scalar {
-					changes[j].From = ""
+					changes[j].From = nil
 				}
 			}
 			e.Changes = changes
@@ -111,44 +112,57 @@ func diffField(field string, before, after any) (Change, bool) {
 	ba, baIsArray := before.([]any)
 	aa, aaIsArray := after.([]any)
 	if baIsArray || aaIsArray {
-		added, removed := diffElements(field, ba, aa)
+		added, removed := diffElements(ba, aa)
 		if len(added) == 0 && len(removed) == 0 {
 			return Change{}, false
 		}
 		return Change{Field: field, Added: added, Removed: removed}, true
 	}
-	from := formatScalar(field, before)
-	to := formatScalar(field, after)
-	if from == to {
+	if identity(before) == identity(after) {
 		return Change{}, false
 	}
-	return Change{Field: field, Scalar: true, From: from, To: to}, true
+	return Change{Field: field, Scalar: true, From: before, To: after}, true
 }
 
-func diffElements(field string, before, after []any) (added, removed []string) {
-	bset := elementSet(field, before)
-	aset := elementSet(field, after)
-	for s := range aset {
-		if !bset[s] {
-			added = append(added, s)
+func diffElements(before, after []any) (added, removed []any) {
+	bset := identitySet(before)
+	aset := identitySet(after)
+	for id, v := range aset {
+		if _, ok := bset[id]; !ok {
+			added = append(added, v)
 		}
 	}
-	for s := range bset {
-		if !aset[s] {
-			removed = append(removed, s)
+	for id, v := range bset {
+		if _, ok := aset[id]; !ok {
+			removed = append(removed, v)
 		}
 	}
-	sort.Strings(added)
-	sort.Strings(removed)
+	sortByIdentity(added)
+	sortByIdentity(removed)
 	return added, removed
 }
 
-func elementSet(field string, elems []any) map[string]bool {
-	out := make(map[string]bool, len(elems))
+func identitySet(elems []any) map[string]any {
+	out := make(map[string]any, len(elems))
 	for _, e := range elems {
-		out[formatElement(field, e)] = true
+		out[identity(e)] = e
 	}
 	return out
+}
+
+func sortByIdentity(elems []any) {
+	sort.Slice(elems, func(i, j int) bool { return identity(elems[i]) < identity(elems[j]) })
+}
+
+// identity is the canonical-JSON encoding of a snapshot value: the key by which
+// set elements are deduplicated and scalars compared. Go marshals maps with
+// sorted keys, so the encoding is deterministic.
+func identity(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Sprintf("trail: canonical value not marshalable: %v", err))
+	}
+	return string(b)
 }
 
 // hiddenFields are snapshot fields excluded from the audit diff: bookkeeping
@@ -164,72 +178,6 @@ var hiddenFields = map[string]bool{
 	"heartbeat_lamport": true,
 	"witness":           true,
 	"verified_commit":   true,
-}
-
-// timeFields are unix-seconds scalars rendered as RFC3339 UTC.
-var timeFields = map[string]bool{
-	"verified_at": true,
-	"started_at":  true,
-	"closed_at":   true,
-	"stale_at":    true,
-	"start_date":  true,
-	"end_date":    true,
-}
-
-func formatScalar(field string, v any) string {
-	if v == nil {
-		return ""
-	}
-	if timeFields[field] {
-		if n, ok := v.(float64); ok {
-			if n == 0 {
-				return ""
-			}
-			return rfc3339(int64(n))
-		}
-	}
-	return scalarString(v)
-}
-
-// formatElement renders one set element to a stable, human string: a string
-// element verbatim, a known object element (anchor, comment, log entry,
-// criterion) summarized, any other object as compact JSON.
-func formatElement(field string, v any) string {
-	m, ok := v.(map[string]any)
-	if !ok {
-		return scalarString(v)
-	}
-	switch field {
-	case "anchors":
-		return fmt.Sprintf("%s:%s", scalarString(m["kind"]), scalarString(m["value"]))
-	case "comments":
-		return fmt.Sprintf("comment by %s: %q", scalarString(m["author"]), scalarString(m["body"]))
-	case "entries":
-		return fmt.Sprintf("entry by %s: %q", scalarString(m["author"]), scalarString(m["text"]))
-	case "criteria":
-		return fmt.Sprintf("%q [%s]", scalarString(m["text"]), scalarString(m["status"]))
-	}
-	b, _ := json.Marshal(m)
-	return string(b)
-}
-
-func scalarString(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return x
-	case bool:
-		return strconv.FormatBool(x)
-	case float64:
-		if x == float64(int64(x)) {
-			return strconv.FormatInt(int64(x), 10)
-		}
-		return strconv.FormatFloat(x, 'g', -1, 64)
-	default:
-		b, _ := json.Marshal(x)
-		return string(b)
-	}
 }
 
 func snapshotMap(snap model.Snapshot) (map[string]any, error) {
@@ -323,5 +271,3 @@ func EntityKind(snap model.Snapshot) string {
 		panic(fmt.Sprintf("trail: unknown snapshot type %T", snap))
 	}
 }
-
-func rfc3339(ts int64) string { return time.Unix(ts, 0).UTC().Format(time.RFC3339) }
