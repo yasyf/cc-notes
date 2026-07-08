@@ -80,7 +80,7 @@ func makeNote(t *testing.T, dir, title string, anchors ...model.Anchor) model.En
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	snap, err := s.Create(t.Context(), []model.Op{model.CreateNote{
+	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateNote{
 		Nonce:   model.NewNonce(),
 		Title:   title,
 		Anchors: anchors,
@@ -100,7 +100,7 @@ func makeDoc(t *testing.T, dir, title, when string, anchors ...model.Anchor) mod
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	snap, err := s.Create(t.Context(), []model.Op{model.CreateDoc{
+	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateDoc{
 		Nonce:   model.NewNonce(),
 		Title:   title,
 		When:    when,
@@ -121,7 +121,7 @@ func makeLog(t *testing.T, dir, title, entry string, anchors ...model.Anchor) mo
 		t.Fatalf("store.Open: %v", err)
 	}
 	ctx := t.Context()
-	snap, err := s.Create(ctx, []model.Op{model.CreateLog{
+	snap, _, err := s.Create(ctx, []model.Op{model.CreateLog{
 		Nonce:   model.NewNonce(),
 		Title:   title,
 		Anchors: anchors,

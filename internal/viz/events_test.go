@@ -65,7 +65,7 @@ func buildGraph(t *testing.T, r *gitRepo) *Graph {
 
 func createTask(t *testing.T, s *store.Store, title string, branch model.Branch) model.EntityID {
 	t.Helper()
-	snap, err := s.Create(t.Context(), []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: title, Type: model.TypeTask, Branch: branch}})
+	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: title, Type: model.TypeTask, Branch: branch}})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
@@ -74,7 +74,7 @@ func createTask(t *testing.T, s *store.Store, title string, branch model.Branch)
 
 func createNote(t *testing.T, s *store.Store, title string) model.EntityID {
 	t.Helper()
-	snap, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: title}})
+	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: title}})
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
@@ -83,7 +83,7 @@ func createNote(t *testing.T, s *store.Store, title string) model.EntityID {
 
 func createDoc(t *testing.T, s *store.Store, title string) model.EntityID {
 	t.Helper()
-	snap, err := s.Create(t.Context(), []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: title}})
+	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: title}})
 	if err != nil {
 		t.Fatalf("create doc: %v", err)
 	}
@@ -92,7 +92,7 @@ func createDoc(t *testing.T, s *store.Store, title string) model.EntityID {
 
 func createLog(t *testing.T, s *store.Store, title string) model.EntityID {
 	t.Helper()
-	snap, err := s.Create(t.Context(), []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: title}})
+	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: title}})
 	if err != nil {
 		t.Fatalf("create log: %v", err)
 	}

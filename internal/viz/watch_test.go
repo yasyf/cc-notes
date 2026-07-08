@@ -131,7 +131,7 @@ func TestWatchEntityAppend(t *testing.T) {
 	ch, _ := hub.Subscribe()
 	ctx := t.Context()
 
-	snap, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "ship", Type: model.TypeTask, Branch: "main"}})
+	snap, _, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "ship", Type: model.TypeTask, Branch: "main"}})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}

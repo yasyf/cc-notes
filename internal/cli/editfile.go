@@ -547,16 +547,24 @@ func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAda
 	if err != nil {
 		return err
 	}
-	snap, err := s.Create(ctx, append(ops, attOps...))
+	snap, deduped, err := s.Create(ctx, append(ops, attOps...))
 	if err != nil {
 		return err
 	}
-	verified, err := a.bornVerify(ctx, s, snap)
+	if deduped {
+		warnDuplicate(cmd, a.noun(), snap.EntityID())
+	}
+	// A file-mode add re-asserts the fact now, so a dedupe hit re-verifies the
+	// reused entity rather than skipping it: bornVerify appends a VerifyNote that
+	// refreshes the survivor's witness and verified_at/by (fold.foldNote/foldDoc),
+	// exactly as a fresh add. The dedupe scan excludes stale twins, so the
+	// survivor here is live.
+	snap, err = a.bornVerify(ctx, s, snap)
 	if err != nil {
 		return err
 	}
 	removeBuffer(files)
-	return a.print(cmd, s, verified, jsonOut)
+	return a.print(cmd, s, snap, jsonOut)
 }
 
 // resolveOpCommitAnchors rewrites every commit-anchor value in ops to its full

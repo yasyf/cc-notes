@@ -667,7 +667,7 @@ func (f *FS) commitDocument(p string, data []byte) (string, model.Snapshot, int)
 		return "", nil, errno(err)
 	}
 	f.mu.Unlock()
-	snap, cerr := f.store.Create(f.ctx, ops)
+	snap, _, cerr := f.store.Create(f.ctx, ops)
 	f.mu.Lock()
 	if cerr != nil {
 		return "", nil, errno(cerr)

@@ -47,22 +47,26 @@ type TaskSpec struct {
 	BlockedBy      []model.EntityID
 }
 
-// CreateProject roots a new project chain and returns its folded snapshot.
-func (c *Client) CreateProject(ctx context.Context, spec ProjectSpec) (model.Project, error) {
-	snapshot, err := c.s.Create(ctx, []model.Op{model.CreateProject{
+// CreateProject roots a new project chain and returns its folded snapshot and
+// whether an existing exact-duplicate project was returned instead of creating a
+// new one.
+func (c *Client) CreateProject(ctx context.Context, spec ProjectSpec) (model.Project, bool, error) {
+	snapshot, deduped, err := c.s.Create(ctx, []model.Op{model.CreateProject{
 		Nonce:       model.NewNonce(),
 		Title:       spec.Title,
 		Description: spec.Description,
 		Labels:      spec.Labels,
 	}})
 	if err != nil {
-		return model.Project{}, err
+		return model.Project{}, false, err
 	}
-	return snapshot.(model.Project), nil
+	return snapshot.(model.Project), deduped, nil
 }
 
-// CreateSprint roots a new sprint chain and returns its folded snapshot.
-func (c *Client) CreateSprint(ctx context.Context, spec SprintSpec) (model.Sprint, error) {
+// CreateSprint roots a new sprint chain and returns its folded snapshot and
+// whether an existing exact-duplicate sprint was returned instead of creating a
+// new one.
+func (c *Client) CreateSprint(ctx context.Context, spec SprintSpec) (model.Sprint, bool, error) {
 	ops := []model.Op{model.CreateSprint{
 		Nonce:       model.NewNonce(),
 		Title:       spec.Title,
@@ -76,22 +80,23 @@ func (c *Client) CreateSprint(ctx context.Context, spec SprintSpec) (model.Sprin
 	if spec.EndDate != 0 {
 		ops = append(ops, model.SetEndDate{Date: spec.EndDate})
 	}
-	snapshot, err := c.s.Create(ctx, ops)
+	snapshot, deduped, err := c.s.Create(ctx, ops)
 	if err != nil {
-		return model.Sprint{}, err
+		return model.Sprint{}, false, err
 	}
-	return snapshot.(model.Sprint), nil
+	return snapshot.(model.Sprint), deduped, nil
 }
 
-// CreateTask roots a new task chain and returns its folded snapshot. SetSprint
-// and SetProject ops follow the create when the spec names them, one
+// CreateTask roots a new task chain and returns its folded snapshot and whether
+// an existing exact-duplicate task was returned instead of creating a new one.
+// SetSprint and SetProject ops follow the create when the spec names them, one
 // AddCriterion per Criteria text, and one AddDep per BlockedBy id.
-func (c *Client) CreateTask(ctx context.Context, spec TaskSpec) (model.Task, error) {
+func (c *Client) CreateTask(ctx context.Context, spec TaskSpec) (model.Task, bool, error) {
 	branch := spec.Branch
 	if spec.BranchFromHead {
 		head, err := c.s.Git.HeadBranch(ctx)
 		if err != nil {
-			return model.Task{}, err
+			return model.Task{}, false, err
 		}
 		branch = head
 	}
@@ -121,9 +126,9 @@ func (c *Client) CreateTask(ctx context.Context, spec TaskSpec) (model.Task, err
 	for _, dep := range spec.BlockedBy {
 		ops = append(ops, model.AddDep{ID: dep})
 	}
-	snapshot, err := c.s.Create(ctx, ops)
+	snapshot, deduped, err := c.s.Create(ctx, ops)
 	if err != nil {
-		return model.Task{}, err
+		return model.Task{}, false, err
 	}
-	return snapshot.(model.Task), nil
+	return snapshot.(model.Task), deduped, nil
 }

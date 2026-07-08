@@ -57,7 +57,7 @@ func newProjectAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Create(ctx, []model.Op{model.CreateProject{
+			snapshot, deduped, err := s.Create(ctx, []model.Op{model.CreateProject{
 				Nonce:       model.NewNonce(),
 				Title:       args[0],
 				Description: text,
@@ -65,6 +65,9 @@ func newProjectAddCmd() *cobra.Command {
 			}})
 			if err != nil {
 				return err
+			}
+			if deduped {
+				warnDuplicate(cmd, "project", snapshot.EntityID())
 			}
 			return printProject(cmd, s, snapshot.(model.Project), jsonOut)
 		},

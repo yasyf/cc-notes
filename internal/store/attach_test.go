@@ -239,19 +239,19 @@ func TestReferencedAttachments(t *testing.T) {
 		t.Fatalf("empty repo referenced = %+v, want none", got)
 	}
 
-	note, err := s.Create(t.Context(), noteOps("note with attachments"))
+	note, _, err := s.Create(t.Context(), noteOps("note with attachments"))
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
-	doc, err := s.Create(t.Context(), []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: "doc", When: "always"}})
+	doc, _, err := s.Create(t.Context(), []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: "doc", When: "always"}})
 	if err != nil {
 		t.Fatalf("create doc: %v", err)
 	}
-	logEntity, err := s.Create(t.Context(), []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "log"}})
+	logEntity, _, err := s.Create(t.Context(), []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "log"}})
 	if err != nil {
 		t.Fatalf("create log: %v", err)
 	}
-	if _, err := s.Create(t.Context(), []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "no attachments", Type: model.TypeTask, Branch: "main"}}); err != nil {
+	if _, _, err := s.Create(t.Context(), []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "no attachments", Type: model.TypeTask, Branch: "main"}}); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 	noteRef := refs.Note(note.EntityID())
@@ -298,7 +298,7 @@ func TestReferencedAttachments(t *testing.T) {
 // able to resolve its content.
 func TestReferencedAttachmentsKeepsCheckpointState(t *testing.T) {
 	s := initStore(t)
-	note, err := s.Create(t.Context(), noteOps("checkpointed"))
+	note, _, err := s.Create(t.Context(), noteOps("checkpointed"))
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestReferencedAttachmentsKeepsCheckpointState(t *testing.T) {
 // set.
 func TestReferencedAttachmentsColdCache(t *testing.T) {
 	s := initStore(t)
-	note, err := s.Create(t.Context(), noteOps("cold"))
+	note, _, err := s.Create(t.Context(), noteOps("cold"))
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}

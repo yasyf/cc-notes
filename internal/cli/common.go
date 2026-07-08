@@ -556,6 +556,13 @@ func hasAll(have, want []string) bool {
 	return true
 }
 
+// warnDuplicate reports on stderr that Create's best-effort duplicate guard
+// reused an existing entity of kind (identified by its short id) instead of
+// writing a twin. The caller still emits the reused entity on stdout.
+func warnDuplicate(cmd *cobra.Command, kind string, id model.EntityID) {
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: exact duplicate of %s %s; reusing the existing %s (nothing created)\n", kind, id.Short(), kind)
+}
+
 // printNote writes n as its JSON DTO or its lean line. A mutation echo carries
 // no drift verdict.
 func printNote(cmd *cobra.Command, s *store.Store, n model.Note, jsonOut bool) error {

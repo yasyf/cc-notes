@@ -1,0 +1,404 @@
+package store
+
+import (
+	"testing"
+	"time"
+
+	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/model"
+)
+
+func TestDedupeNote(t *testing.T) {
+	anchors := []model.Anchor{
+		{Kind: model.AnchorPath, Value: "x"},
+		{Kind: model.AnchorBranch, Value: "main"},
+	}
+	revAnchors := []model.Anchor{anchors[1], anchors[0]}
+	mk := func(title, body string, tags []string, anch []model.Anchor) []model.Op {
+		return []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: title, Body: body, Tags: tags, Anchors: anch}}
+	}
+	base := mk("T", "B", []string{"a", "b"}, anchors)
+
+	for _, tc := range []struct {
+		name       string
+		ops        []model.Op
+		wantDedupe bool
+	}{
+		{"exact", mk("T", "B", []string{"a", "b"}, anchors), true},
+		{"permuted tags", mk("T", "B", []string{"b", "a"}, anchors), true},
+		{"permuted anchors", mk("T", "B", []string{"a", "b"}, revAnchors), true},
+		{"diff title", mk("T2", "B", []string{"a", "b"}, anchors), false},
+		{"diff body", mk("T", "B2", []string{"a", "b"}, anchors), false},
+		{"diff tag", mk("T", "B", []string{"a", "c"}, anchors), false},
+		{"extra tag", mk("T", "B", []string{"a", "b", "c"}, anchors), false},
+		{"diff anchor", mk("T", "B", []string{"a", "b"}, []model.Anchor{{Kind: model.AnchorPath, Value: "y"}}), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := initStore(t)
+			first, deduped, err := s.Create(t.Context(), base)
+			if err != nil {
+				t.Fatalf("baseline create: %v", err)
+			}
+			if deduped {
+				t.Fatal("baseline create deduped, want fresh write")
+			}
+			got, deduped, err := s.Create(t.Context(), tc.ops)
+			if err != nil {
+				t.Fatalf("second create: %v", err)
+			}
+			if deduped != tc.wantDedupe {
+				t.Fatalf("deduped = %v, want %v", deduped, tc.wantDedupe)
+			}
+			if tc.wantDedupe && got.EntityID() != first.EntityID() {
+				t.Errorf("deduped id = %s, want existing %s", got.EntityID(), first.EntityID())
+			}
+			if !tc.wantDedupe && got.EntityID() == first.EntityID() {
+				t.Errorf("distinct content reused id %s", got.EntityID())
+			}
+		})
+	}
+}
+
+func TestDedupePerKind(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		base []model.Op
+		diff []model.Op
+	}{
+		{
+			name: "doc",
+			base: []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: "T", Body: "B", When: "release", Tags: []string{"a"}}},
+			diff: []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: "T", Body: "B", When: "later", Tags: []string{"a"}}},
+		},
+		{
+			name: "log",
+			base: []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "T", Tags: []string{"a"}}},
+			diff: []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "T2", Tags: []string{"a"}}},
+		},
+		{
+			name: "task",
+			base: []model.Op{
+				model.CreateTask{Nonce: model.NewNonce(), Title: "T", Description: "D", Type: model.TypeTask, Priority: 2, Branch: "main", Labels: []string{"a"}},
+				model.AddCriterion{ID: model.NewNonce(), Text: "builds"},
+			},
+			diff: []model.Op{
+				model.CreateTask{Nonce: model.NewNonce(), Title: "T", Description: "D", Type: model.TypeTask, Priority: 1, Branch: "main", Labels: []string{"a"}},
+				model.AddCriterion{ID: model.NewNonce(), Text: "builds"},
+			},
+		},
+		{
+			name: "sprint",
+			base: []model.Op{
+				model.CreateSprint{Nonce: model.NewNonce(), Title: "T", Description: "D", Labels: []string{"a"}},
+				model.SetStartDate{Date: 1000},
+			},
+			diff: []model.Op{
+				model.CreateSprint{Nonce: model.NewNonce(), Title: "T", Description: "D", Labels: []string{"a"}},
+				model.SetStartDate{Date: 2000},
+			},
+		},
+		{
+			name: "project",
+			base: []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: "T", Description: "D", Labels: []string{"a"}}},
+			diff: []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: "T", Description: "D", Labels: []string{"a", "b"}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := initStore(t)
+			first, deduped, err := s.Create(t.Context(), tc.base)
+			if err != nil {
+				t.Fatalf("baseline create: %v", err)
+			}
+			if deduped {
+				t.Fatal("baseline create deduped, want fresh write")
+			}
+			got, deduped, err := s.Create(t.Context(), tc.base)
+			if err != nil {
+				t.Fatalf("exact-dup create: %v", err)
+			}
+			if !deduped {
+				t.Fatal("exact-dup create wrote a twin, want dedupe")
+			}
+			if got.EntityID() != first.EntityID() {
+				t.Errorf("deduped id = %s, want existing %s", got.EntityID(), first.EntityID())
+			}
+			got, deduped, err = s.Create(t.Context(), tc.diff)
+			if err != nil {
+				t.Fatalf("differing create: %v", err)
+			}
+			if deduped {
+				t.Fatal("differing create deduped, want fresh write")
+			}
+			if got.EntityID() == first.EntityID() {
+				t.Errorf("differing content reused id %s", got.EntityID())
+			}
+		})
+	}
+}
+
+// TestDedupeTaskCriteriaIgnoresID proves the comparison is over criterion
+// content: two tasks whose criteria carry the same text but different nonce ids
+// dedupe.
+func TestDedupeTaskCriteriaIgnoresID(t *testing.T) {
+	s := initStore(t)
+	mk := func() []model.Op {
+		return []model.Op{
+			model.CreateTask{Nonce: model.NewNonce(), Title: "T", Type: model.TypeTask, Branch: "main"},
+			model.AddCriterion{ID: model.NewNonce(), Text: "builds", Script: "go build ./..."},
+		}
+	}
+	first, deduped, err := s.Create(t.Context(), mk())
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if deduped {
+		t.Fatal("first create deduped, want fresh write")
+	}
+	got, deduped, err := s.Create(t.Context(), mk())
+	if err != nil {
+		t.Fatalf("second create: %v", err)
+	}
+	if !deduped {
+		t.Fatal("second create wrote a twin, want dedupe across differing criterion ids")
+	}
+	if got.EntityID() != first.EntityID() {
+		t.Errorf("deduped id = %s, want existing %s", got.EntityID(), first.EntityID())
+	}
+}
+
+// TestDedupeSkipsTombstonedNote proves a soft-deleted twin never suppresses a
+// re-add: after DeleteNote the identical content roots a fresh note.
+func TestDedupeSkipsTombstonedNote(t *testing.T) {
+	s := initStore(t)
+	ops := []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "gone"}}
+	first := create(t, s, ops).(model.Note)
+	if _, err := s.Append(t.Context(), refs.Note(first.ID), []model.Op{model.DeleteNote{}}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	got, deduped, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "gone"}})
+	if err != nil {
+		t.Fatalf("re-create: %v", err)
+	}
+	if deduped {
+		t.Fatal("re-create deduped against a tombstoned note, want fresh write")
+	}
+	if got.EntityID() == first.EntityID() {
+		t.Errorf("re-create reused tombstoned id %s", got.EntityID())
+	}
+}
+
+// TestDedupeSkipsSupersededNote proves a superseded twin never suppresses a
+// re-add: the survivor is skipped by the live-set query.
+func TestDedupeSkipsSupersededNote(t *testing.T) {
+	s := initStore(t)
+	old := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "old"}}).(model.Note)
+	replacement := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "new"}}).(model.Note)
+	if _, err := s.Append(t.Context(), refs.Note(old.ID), []model.Op{model.AddSupersededBy{ID: replacement.ID}}); err != nil {
+		t.Fatalf("supersede: %v", err)
+	}
+	got, deduped, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "old"}})
+	if err != nil {
+		t.Fatalf("re-create: %v", err)
+	}
+	if deduped {
+		t.Fatal("re-create deduped against a superseded note, want fresh write")
+	}
+	if got.EntityID() == old.EntityID() {
+		t.Errorf("re-create reused superseded id %s", got.EntityID())
+	}
+}
+
+// TestDedupeSkipsClosed proves a done task, completed sprint, and archived
+// project never block re-adding identical content — the live-set filter drops
+// entities with ClosedAt set.
+func TestDedupeSkipsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		mk    func() []model.Op
+		close model.Op
+		ref   func(model.EntityID) string
+	}{
+		{
+			name: "task",
+			mk: func() []model.Op {
+				return []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "T", Type: model.TypeTask, Branch: "main"}}
+			},
+			close: model.SetStatus{Status: model.StatusDone},
+			ref:   refs.Task,
+		},
+		{
+			name:  "sprint",
+			mk:    func() []model.Op { return []model.Op{model.CreateSprint{Nonce: model.NewNonce(), Title: "T"}} },
+			close: model.SetSprintStatus{Status: model.SprintCompleted},
+			ref:   refs.Sprint,
+		},
+		{
+			name:  "project",
+			mk:    func() []model.Op { return []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: "T"}} },
+			close: model.SetProjectStatus{Status: model.ProjectArchived},
+			ref:   refs.Project,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := initStore(t)
+			first := create(t, s, tc.mk())
+			if _, err := s.Append(t.Context(), tc.ref(first.EntityID()), []model.Op{tc.close}); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+			got, deduped, err := s.Create(t.Context(), tc.mk())
+			if err != nil {
+				t.Fatalf("re-create: %v", err)
+			}
+			if deduped {
+				t.Fatalf("re-create deduped against a closed %s, want fresh write", tc.name)
+			}
+			if got.EntityID() == first.EntityID() {
+				t.Errorf("re-create reused closed id %s", got.EntityID())
+			}
+		})
+	}
+}
+
+// TestDedupeSkipsStale proves an expired note or doc never blocks re-asserting
+// its fact: after MarkStale the identical content roots a fresh entity — the
+// live-set query keeps stale entities, so the scan itself skips them.
+func TestDedupeSkipsStale(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mk   func() []model.Op
+		ref  func(model.EntityID) string
+	}{
+		{
+			name: "note",
+			mk:   func() []model.Op { return []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "fact"}} },
+			ref:  refs.Note,
+		},
+		{
+			name: "doc",
+			mk: func() []model.Op {
+				return []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: "fact", Body: "B"}}
+			},
+			ref: refs.Doc,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := initStore(t)
+			first := create(t, s, tc.mk())
+			if _, err := s.Append(t.Context(), tc.ref(first.EntityID()), []model.Op{model.MarkStale{Reason: "outdated"}}); err != nil {
+				t.Fatalf("mark stale: %v", err)
+			}
+			got, deduped, err := s.Create(t.Context(), tc.mk())
+			if err != nil {
+				t.Fatalf("re-create: %v", err)
+			}
+			if deduped {
+				t.Fatalf("re-create deduped against a stale %s, want fresh write", tc.name)
+			}
+			if got.EntityID() == first.EntityID() {
+				t.Errorf("re-create reused stale id %s", got.EntityID())
+			}
+		})
+	}
+}
+
+// TestDedupeReturnsOldest seeds two live notes with identical folded content
+// (the second reaches it by an appended SetTitle, bypassing Create's guard) and
+// checks a third identical create reuses the (CreatedAt, ID)-smallest survivor.
+func TestDedupeReturnsOldest(t *testing.T) {
+	s := initStore(t)
+	var tick int64
+	s.now = func() time.Time { tick++; return time.Unix(1000+tick, 0) }
+
+	oldest := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "dup"}}).(model.Note)
+	twin := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "other"}}).(model.Note)
+	if _, err := s.Append(t.Context(), refs.Note(twin.ID), []model.Op{model.SetTitle{Title: "dup"}}); err != nil {
+		t.Fatalf("retitle twin: %v", err)
+	}
+	if oldest.CreatedAt >= twin.CreatedAt {
+		t.Fatalf("oldest CreatedAt %d not before twin %d", oldest.CreatedAt, twin.CreatedAt)
+	}
+
+	got, deduped, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "dup"}})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !deduped {
+		t.Fatal("create wrote a twin, want dedupe")
+	}
+	if got.EntityID() != oldest.EntityID() {
+		t.Errorf("deduped id = %s, want oldest %s", got.EntityID(), oldest.EntityID())
+	}
+}
+
+// TestDedupeSkipsUncoveredPack proves the pack-shape gate: a create pack that
+// bundles an op folding into a field the comparator ignores — AppendEntry into a
+// log's Entries (the FUSE NewLog path), AddComment into a task's Comments — roots
+// a fresh entity even when its comparator-covered fields match an existing one,
+// so the bundled op is never silently dropped by a reuse.
+func TestDedupeSkipsUncoveredPack(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		base []model.Op
+		pack []model.Op
+	}{
+		{
+			name: "log with initial entry",
+			base: []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "T", Tags: []string{"a"}}},
+			pack: []model.Op{
+				model.CreateLog{Nonce: model.NewNonce(), Title: "T", Tags: []string{"a"}},
+				model.AppendEntry{Text: "first"},
+			},
+		},
+		{
+			name: "task with comment",
+			base: []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "T", Type: model.TypeTask, Branch: "main"}},
+			pack: []model.Op{
+				model.CreateTask{Nonce: model.NewNonce(), Title: "T", Type: model.TypeTask, Branch: "main"},
+				model.AddComment{Body: "note"},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := initStore(t)
+			first, deduped, err := s.Create(t.Context(), tc.base)
+			if err != nil {
+				t.Fatalf("baseline create: %v", err)
+			}
+			if deduped {
+				t.Fatal("baseline create deduped, want fresh write")
+			}
+			got, deduped, err := s.Create(t.Context(), tc.pack)
+			if err != nil {
+				t.Fatalf("uncovered-pack create: %v", err)
+			}
+			if deduped {
+				t.Fatal("uncovered-pack create deduped, want fresh write (a bundled op would be dropped)")
+			}
+			if got.EntityID() == first.EntityID() {
+				t.Errorf("uncovered-pack create reused id %s", got.EntityID())
+			}
+		})
+	}
+}
+
+// TestDedupeLogIgnoresEntries proves the log comparator no longer compares
+// Entries: a fresh create with the same title and tags dedupes against an
+// existing log that has since accrued entries, where comparing Entries would
+// have minted a twin.
+func TestDedupeLogIgnoresEntries(t *testing.T) {
+	s := initStore(t)
+	first := create(t, s, []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "incident", Tags: []string{"ops"}}}).(model.Log)
+	if _, err := s.Append(t.Context(), refs.Log(first.ID), []model.Op{model.AppendEntry{Text: "started"}}); err != nil {
+		t.Fatalf("append entry: %v", err)
+	}
+	got, deduped, err := s.Create(t.Context(), []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "incident", Tags: []string{"ops"}}})
+	if err != nil {
+		t.Fatalf("re-create: %v", err)
+	}
+	if !deduped {
+		t.Fatal("re-create against an entried log did not dedupe, want reuse")
+	}
+	if got.EntityID() != first.ID {
+		t.Errorf("deduped id = %s, want existing %s", got.EntityID(), first.ID)
+	}
+}

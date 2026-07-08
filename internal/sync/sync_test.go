@@ -90,7 +90,7 @@ func clone(t *testing.T, bare, name, email string) *store.Store {
 
 func createNote(t *testing.T, s *store.Store, title string) model.Note {
 	t.Helper()
-	snapshot, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: title}})
+	snapshot, _, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: title}})
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
@@ -100,7 +100,7 @@ func createNote(t *testing.T, s *store.Store, title string) model.Note {
 func createTask(t *testing.T, s *store.Store, title string, branch model.Branch) model.Task {
 	t.Helper()
 	ops := []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: title, Type: model.TypeTask, Branch: branch}}
-	snapshot, err := s.Create(t.Context(), ops)
+	snapshot, _, err := s.Create(t.Context(), ops)
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}

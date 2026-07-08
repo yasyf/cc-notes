@@ -21,10 +21,18 @@ import (
 // created atomically: a ref that already exists fails with gitcmd.ErrCASMismatch.
 // Notes, tasks, sprints, projects, docs, and logs share a flat namespace keyed
 // by entity id. The pack is validated and folded before the ref is created, so
-// a bad op never publishes. It returns the folded snapshot.
-func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, error) {
+// a bad op never publishes.
+//
+// Before writing anything Create runs a best-effort duplicate scan (findDuplicate):
+// when a live entity of the same kind already folds to identical content it
+// returns that entity with deduped true and writes nothing, so a doubled create
+// reuses the survivor instead of rooting a twin. The scan takes no lock — two
+// truly concurrent creates can still both land — and closed, tombstoned, or
+// superseded twins never suppress a re-add. On a fresh create it returns the
+// folded snapshot with deduped false.
+func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, bool, error) {
 	if len(ops) == 0 {
-		return nil, errors.New("create: no ops")
+		return nil, false, errors.New("create: no ops")
 	}
 	var kind string
 	var refFor func(model.EntityID) string
@@ -42,30 +50,37 @@ func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, err
 	case model.CreateLog:
 		kind, refFor = "log", refs.Log
 	default:
-		return nil, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, create_project, create_doc, or create_log", ops[0].OpKind())
+		return nil, false, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, create_project, create_doc, or create_log", ops[0].OpKind())
 	}
 	pack, err := roundTrip(model.Pack{Lamport: 1, Ops: ops})
 	if err != nil {
-		return nil, fmt.Errorf("create %s: %w", kind, err)
+		return nil, false, fmt.Errorf("create %s: %w", kind, err)
+	}
+	existing, err := s.findDuplicate(ctx, kind, pack)
+	if err != nil {
+		return nil, false, fmt.Errorf("create %s: %w", kind, err)
+	}
+	if existing != nil {
+		return existing, true, nil
 	}
 	sig, actor, err := s.signature(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("create %s: %w", kind, err)
+		return nil, false, fmt.Errorf("create %s: %w", kind, err)
 	}
 	sha, err := s.Repo.WriteOpsCommit(ctx, nil, sig, "cc-notes: "+kind+" create", pack)
 	if err != nil {
-		return nil, fmt.Errorf("create %s: %w", kind, err)
+		return nil, false, fmt.Errorf("create %s: %w", kind, err)
 	}
 	root := model.PackCommit{SHA: sha, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack}
 	snapshot, err := fold.Fold([]model.PackCommit{root})
 	if err != nil {
-		return nil, fmt.Errorf("create %s: %w", kind, err)
+		return nil, false, fmt.Errorf("create %s: %w", kind, err)
 	}
 	if err := s.Git.UpdateRef(ctx, refFor(model.EntityID(sha)), sha, ""); err != nil {
-		return nil, fmt.Errorf("create %s: %w", kind, err)
+		return nil, false, fmt.Errorf("create %s: %w", kind, err)
 	}
 	s.cache.put(sha, snapshot)
-	return snapshot, nil
+	return snapshot, false, nil
 }
 
 // Append extends the chain at ref with one commit carrying ops, at lamport

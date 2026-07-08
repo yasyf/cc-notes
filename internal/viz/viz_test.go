@@ -158,7 +158,7 @@ func (r *gitRepo) openStore() *store.Store {
 func (r *gitRepo) doneTask(s *store.Store, title string, branch model.Branch) model.EntityID {
 	r.t.Helper()
 	ctx := r.t.Context()
-	snap, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: title, Type: model.TypeTask, Branch: branch}})
+	snap, _, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: title, Type: model.TypeTask, Branch: branch}})
 	if err != nil {
 		r.t.Fatalf("create task: %v", err)
 	}

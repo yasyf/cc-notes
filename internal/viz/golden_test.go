@@ -175,7 +175,7 @@ func buildGoldenEntities(t *testing.T, s *store.Store, c1, c2, c4 commitInfo) {
 // createDocWhen creates a doc carrying a --when qualifier, returning its id.
 func createDocWhen(t *testing.T, s *store.Store, title, when string) model.EntityID {
 	t.Helper()
-	snap, err := s.Create(t.Context(), []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: title, When: when}})
+	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: title, When: when}})
 	if err != nil {
 		t.Fatalf("create doc: %v", err)
 	}
@@ -185,7 +185,7 @@ func createDocWhen(t *testing.T, s *store.Store, title, when string) model.Entit
 // createProject creates a project, returning its id.
 func createProject(t *testing.T, s *store.Store, title string) model.EntityID {
 	t.Helper()
-	snap, err := s.Create(t.Context(), []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: title}})
+	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: title}})
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -195,7 +195,7 @@ func createProject(t *testing.T, s *store.Store, title string) model.EntityID {
 // createSprint creates a sprint in the given project, returning its id.
 func createSprint(t *testing.T, s *store.Store, title string, project model.EntityID) model.EntityID {
 	t.Helper()
-	snap, err := s.Create(t.Context(), []model.Op{model.CreateSprint{Nonce: model.NewNonce(), Title: title, Project: project}})
+	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateSprint{Nonce: model.NewNonce(), Title: title, Project: project}})
 	if err != nil {
 		t.Fatalf("create sprint: %v", err)
 	}

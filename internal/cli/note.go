@@ -99,11 +99,14 @@ func newNoteAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Create(ctx, append(ops, attOps...))
+			snapshot, deduped, err := s.Create(ctx, append(ops, attOps...))
 			if err != nil {
 				return err
 			}
 			note := snapshot.(model.Note)
+			if deduped {
+				warnDuplicate(cmd, "note", note.ID)
+			}
 			head, err := resolveHead(ctx, s)
 			if err != nil {
 				return err
@@ -112,6 +115,11 @@ func newNoteAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A note add re-asserts the fact now, so a dedupe hit re-verifies the
+			// reused note rather than skipping it: VerifyNote refreshes the
+			// survivor's witness, verified_at/by, and verified_commit and clears
+			// any stale flag (fold.foldNote), exactly as a fresh add is born
+			// verified. The dedupe scan excludes stale twins, so this survivor is live.
 			verified, err := s.Append(ctx, refs.Note(note.ID), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}})
 			if err != nil {
 				return err

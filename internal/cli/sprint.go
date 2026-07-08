@@ -86,9 +86,12 @@ func newSprintAddCmd() *cobra.Command {
 				}
 				ops = append(ops, model.SetEndDate{Date: date})
 			}
-			snapshot, err := s.Create(ctx, ops)
+			snapshot, deduped, err := s.Create(ctx, ops)
 			if err != nil {
 				return err
+			}
+			if deduped {
+				warnDuplicate(cmd, "sprint", snapshot.EntityID())
 			}
 			return printSprint(cmd, s, snapshot.(model.Sprint), jsonOut)
 		},

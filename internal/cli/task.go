@@ -149,9 +149,12 @@ func newTaskAddCmd() *cobra.Command {
 				}
 				ops = append(ops, model.AddDep{ID: blocker})
 			}
-			snapshot, err := s.Create(ctx, ops)
+			snapshot, deduped, err := s.Create(ctx, ops)
 			if err != nil {
 				return err
+			}
+			if deduped {
+				warnDuplicate(cmd, "task", snapshot.EntityID())
 			}
 			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
 		},
