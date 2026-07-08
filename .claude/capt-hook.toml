@@ -1,4 +1,4 @@
 name = "cc-notes"
-version = "0.21.1"
+version = "0.21.2"
 description = "cc-notes adoption nudges — keep git work in step with cc-notes tasks, notes, docs, and logs"
 hooks = "plugin/hooks"
