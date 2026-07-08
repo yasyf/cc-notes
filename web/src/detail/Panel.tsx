@@ -1,10 +1,23 @@
-// Side panel for the selected entity: fetches /api/entity/{kind}/{id}, renders
-// the per-kind summary fields and the change trail as a compact list. Errors are
-// a plain message — no retries.
+// Side panel for the selected entity: fetches /api/entity/{kind}/{id} and
+// renders a header (kind, title, copyable short-id, status/branch/assignee
+// chips), the full current snapshot per kind, and the change trail. Its width is
+// drag-resizable from the left edge and persisted to localStorage. Errors are a
+// plain message — no retries.
 
-import { useEffect, useState } from "react";
-import { fetchEntity, type EntityDetail, type EntitySummary, type TrailChange, type TrailEntry, type TrailValue } from "../api";
+import { useCallback, useEffect, useState, type PointerEvent } from "react";
+import {
+  fetchEntity,
+  type EntityDetail,
+  type EntitySummary,
+  type TrailChange,
+  type TrailEntry,
+} from "../api";
 import type { Selection } from "../store";
+import { AttachmentProvider } from "./Attachments";
+import { formatDateTime } from "./format";
+import { Chip, CopyChip, StatusBadge } from "./parts";
+import { SnapshotView } from "./Snapshot";
+import { ChangeValue } from "./values";
 
 interface Props {
   selection: Selection;
@@ -16,8 +29,57 @@ type Load =
   | { state: "error"; message: string }
   | { state: "ready"; detail: EntityDetail };
 
+const WIDTH_KEY = "cc-notes:detail-width";
+const MIN_WIDTH = 320;
+const MAX_WIDTH = 560;
+
+function clampWidth(px: number): number {
+  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, px));
+}
+
+function defaultWidth(): number {
+  const vw = typeof window === "undefined" ? 1200 : window.innerWidth;
+  return clampWidth(Math.round(vw * 0.28));
+}
+
+// useResizableWidth holds the panel width, seeded from localStorage (or the
+// clamp(320px, 28vw, 560px) default) and updated by dragging the left-edge
+// handle. The width persists back to localStorage whenever it settles.
+function useResizableWidth() {
+  const [width, setWidth] = useState<number>(() => {
+    const stored = window.localStorage.getItem(WIDTH_KEY);
+    const n = stored !== null ? Number(stored) : NaN;
+    return Number.isFinite(n) ? clampWidth(n) : defaultWidth();
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(WIDTH_KEY, String(width));
+  }, [width]);
+
+  const onHandleDown = useCallback(
+    (e: PointerEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = width;
+      const onMove = (ev: globalThis.PointerEvent) => {
+        setWidth(clampWidth(startW + (startX - ev.clientX)));
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [width],
+  );
+
+  return { width, onHandleDown };
+}
+
 export function Panel({ selection, onClose }: Props) {
   const [load, setLoad] = useState<Load>({ state: "loading" });
+  const { width, onHandleDown } = useResizableWidth();
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +97,18 @@ export function Panel({ selection, onClose }: Props) {
   }, [selection.kind, selection.id]);
 
   return (
-    <aside className="detail" aria-label="Entity detail">
+    <aside
+      className="detail"
+      style={{ width, flex: `0 0 ${width}px` }}
+      aria-label="Entity detail"
+    >
+      <div
+        className="detail-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize panel"
+        onPointerDown={onHandleDown}
+      />
       <header className="detail-header">
         <div className="detail-heading">
           <span className="detail-kind">{selection.kind}</span>
@@ -47,31 +120,46 @@ export function Panel({ selection, onClose }: Props) {
       </header>
       {load.state === "loading" && <p className="detail-msg">Loading…</p>}
       {load.state === "error" && <p className="detail-msg detail-error">{load.message}</p>}
-      {load.state === "ready" && <DetailBody detail={load.detail} />}
+      {load.state === "ready" && (
+        <AttachmentProvider>
+          <DetailBody detail={load.detail} />
+        </AttachmentProvider>
+      )}
     </aside>
   );
 }
 
 function DetailBody({ detail }: { detail: EntityDetail }) {
-  const fields = summaryFields(detail.summary);
+  const { summary, snapshot, trail } = detail;
   return (
     <div className="detail-body">
-      {fields.length > 0 && (
-        <dl className="detail-fields">
-          {fields.map((f) => (
-            <div className="detail-field" key={f.label}>
-              <dt>{f.label}</dt>
-              <dd>{f.value}</dd>
-            </div>
+      <HeaderChips summary={summary} />
+      <SnapshotView kind={summary.kind} snapshot={snapshot} />
+      <section className="snap-section">
+        <h4 className="snap-head">Trail</h4>
+        <ol className="trail">
+          {trail.map((e, i) => (
+            <TrailRow key={`${e.sha}-${i}`} entry={e} />
           ))}
-        </dl>
+        </ol>
+      </section>
+    </div>
+  );
+}
+
+function HeaderChips({ summary }: { summary: EntitySummary }) {
+  return (
+    <div className="detail-chips">
+      <CopyChip text={summary.id} label={summary.short} className="chip-id" />
+      {summary.status !== undefined && summary.status !== "" && (
+        <StatusBadge status={summary.status} />
       )}
-      <h3 className="detail-subhead">Trail</h3>
-      <ol className="trail">
-        {detail.trail.map((e, i) => (
-          <TrailRow key={`${e.sha}-${i}`} entry={e} />
-        ))}
-      </ol>
+      {summary.branch !== undefined && summary.branch !== "" && (
+        <Chip className="chip-branch">{summary.branch}</Chip>
+      )}
+      {summary.assignee !== undefined && summary.assignee !== "" && (
+        <Chip className="chip-assignee">{summary.assignee}</Chip>
+      )}
     </div>
   );
 }
@@ -81,14 +169,17 @@ function TrailRow({ entry }: { entry: TrailEntry }) {
     <li className="trail-row">
       <div className="trail-meta">
         <span className={`trail-kind trail-kind-${entry.kind}`}>{entry.kind}</span>
-        <span className="trail-time">{formatTime(entry.time)}</span>
+        <span className="trail-time" title={new Date(entry.time * 1000).toISOString()}>
+          {formatDateTime(entry.time)}
+        </span>
+        {entry.author !== "" && <span className="trail-author">{entry.author}</span>}
         {entry.kind === "checkpoint" && entry.covers > 0 && (
           <span className="trail-covers">covers {entry.covers}</span>
         )}
       </div>
       {entry.changes.length > 0 && (
         <ul className="trail-changes">
-          {entry.changes.map((c, i) => (
+          {entry.changes.map((c: TrailChange, i) => (
             <li className="trail-change" key={`${c.field}-${i}`}>
               <span className="trail-field">{c.field}</span>
               <ChangeValue change={c} />
@@ -98,77 +189,4 @@ function TrailRow({ entry }: { entry: TrailEntry }) {
       )}
     </li>
   );
-}
-
-function ChangeValue({ change }: { change: TrailChange }) {
-  if (change.scalar) {
-    return (
-      <span className="trail-delta">
-        <span className="trail-from">{toDisplay(change.from)}</span>
-        <span className="trail-arrow" aria-hidden="true">
-          →
-        </span>
-        <span className="trail-to">{toDisplay(change.to)}</span>
-      </span>
-    );
-  }
-  return (
-    <span className="trail-delta">
-      {change.added.length > 0 && (
-        <span className="trail-added">+{change.added.map(toDisplay).join(", ")}</span>
-      )}
-      {change.removed.length > 0 && (
-        <span className="trail-removed">−{change.removed.map(toDisplay).join(", ")}</span>
-      )}
-    </span>
-  );
-}
-
-interface Field {
-  label: string;
-  value: string;
-}
-
-function summaryFields(s: EntitySummary): Field[] {
-  const fields: Field[] = [];
-  const add = (label: string, value: string | undefined) => {
-    if (value !== undefined && value !== "") fields.push({ label, value });
-  };
-  const addTime = (label: string, value: number | undefined) => {
-    if (value !== undefined && value > 0) fields.push({ label, value: formatTime(value) });
-  };
-  add("id", s.short);
-  add("status", s.status);
-  add("branch", s.branch);
-  add("assignee", s.assignee);
-  addTime("started", s.started_at);
-  addTime("closed", s.closed_at);
-  add("sprint", s.sprint);
-  add("project", s.project);
-  addTime("verified", s.verified_at);
-  if (s.stale === true) add("stale", "yes");
-  if (s.superseded === true) add("superseded", "yes");
-  addTime("start", s.start_date);
-  addTime("end", s.end_date);
-  return fields;
-}
-
-// toDisplay renders one typed trail value as a compact string: null and the
-// empty string as ∅, a folded sub-object as compact JSON, numbers and bools via
-// String. Phase 2 replaces this with per-field renderers.
-function toDisplay(v: TrailValue): string {
-  if (v === null) return "∅";
-  if (typeof v === "object") return JSON.stringify(v);
-  if (typeof v === "string") return v === "" ? "∅" : v;
-  return String(v);
-}
-
-function formatTime(sec: number): string {
-  return new Date(sec * 1000).toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }

@@ -899,3 +899,742 @@ body {
   font-size: 11px;
   color: var(--fg-muted);
 }
+
+/* ── Detail sidebar overhaul (Phase 2) ──────────────────────────────────── */
+
+:root {
+  --modal-backdrop: rgba(20, 22, 28, 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --modal-backdrop: rgba(0, 0, 0, 0.66);
+  }
+}
+
+/* Resizable width + left-edge drag handle */
+.detail {
+  position: relative;
+  width: auto;
+}
+
+.detail-resize {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 3;
+  touch-action: none;
+}
+
+.detail-resize:hover {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* Header id + status/branch/assignee chips */
+.detail-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.9rem;
+}
+
+/* Chips */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: var(--code-bg);
+  color: var(--fg);
+  font-size: 11px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+button.chip {
+  appearance: none;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chip-copy:hover {
+  outline: 1px solid var(--accent);
+}
+
+.chip-copied {
+  outline: 1px solid var(--viz-good);
+  color: var(--viz-good);
+}
+
+.chip-commit,
+.chip-id {
+  font-family: var(--font-mono);
+}
+
+.chip-branch {
+  font-family: var(--font-mono);
+  background: color-mix(in srgb, var(--viz-s5) 18%, var(--bg));
+}
+
+.chip-tag {
+  background: color-mix(in srgb, var(--viz-s1) 16%, var(--bg));
+}
+
+.chip-author {
+  background: color-mix(in srgb, var(--viz-s2) 18%, var(--bg));
+  font-weight: 600;
+}
+
+.chip-anchor .chip-key,
+.chip-key {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-muted);
+  padding-right: 0.2rem;
+  border-right: 1px solid var(--border);
+}
+
+.chip-criterion {
+  gap: 0.35rem;
+}
+
+.chip-crit-text {
+  color: var(--fg);
+}
+
+.chip-json {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-muted);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+/* Status / criterion-status badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.4rem;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.badge-good {
+  background: color-mix(in srgb, var(--viz-good) 18%, var(--bg));
+  color: var(--viz-good);
+}
+
+.badge-bad {
+  background: color-mix(in srgb, var(--error) 18%, var(--bg));
+  color: var(--error);
+}
+
+.badge-warn {
+  background: color-mix(in srgb, var(--viz-warning) 22%, var(--bg));
+  color: color-mix(in srgb, var(--viz-warning) 70%, var(--fg));
+}
+
+.badge-accent {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  color: var(--accent);
+}
+
+.badge-muted {
+  background: var(--code-bg);
+  color: var(--fg-muted);
+}
+
+.time-text {
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  color: var(--fg-muted);
+}
+
+/* Snapshot sections */
+.snap-section {
+  margin-bottom: 1.1rem;
+}
+
+.snap-head {
+  margin: 0 0 0.4rem;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+
+.snap-text {
+  margin: 0;
+  word-break: break-word;
+}
+
+.snap-fields {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+}
+
+.snap-field {
+  display: contents;
+}
+
+.snap-field dt {
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.snap-field dd {
+  margin: 0;
+  font-size: 12px;
+  word-break: break-word;
+}
+
+/* Criteria checklist */
+.crit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.crit-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.crit-text {
+  font-size: 12px;
+  word-break: break-word;
+}
+
+/* Lifecycle banners */
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.6rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  font-size: 11px;
+  border: 1px solid transparent;
+}
+
+.banner-good {
+  background: color-mix(in srgb, var(--viz-good) 12%, var(--bg));
+  border-color: color-mix(in srgb, var(--viz-good) 30%, transparent);
+}
+
+.banner-warn {
+  background: color-mix(in srgb, var(--viz-warning) 14%, var(--bg));
+  border-color: color-mix(in srgb, var(--viz-warning) 34%, transparent);
+}
+
+.banner-muted {
+  background: var(--code-bg);
+  border-color: var(--border);
+  color: var(--fg-muted);
+}
+
+/* Authored blocks (comments, log entries) */
+.authored-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.authored {
+  border-left: 2px solid var(--border);
+  padding-left: 0.6rem;
+}
+
+.authored-removed {
+  opacity: 0.6;
+}
+
+.authored-removed .authored-body {
+  text-decoration: line-through;
+}
+
+.authored-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.15rem;
+}
+
+.authored-sign {
+  font-weight: 700;
+  color: var(--fg-muted);
+}
+
+.authored-time {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.authored-body {
+  font-size: 12px;
+}
+
+/* Attachment chips */
+.attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.attach-chip:hover {
+  border-color: var(--accent);
+}
+
+.attach-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 16rem;
+}
+
+.attach-size {
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Trail: richer values */
+.trail-change {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 0.4rem;
+  align-items: baseline;
+  font-size: 11px;
+}
+
+.trail-author {
+  color: var(--fg-muted);
+}
+
+.trail-set {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: baseline;
+}
+
+.trail-set-block {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.set-add,
+.set-remove {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.15rem;
+}
+
+.set-sign {
+  font-weight: 700;
+}
+
+.set-add > .set-sign {
+  color: var(--viz-good);
+}
+
+.set-remove > .set-sign {
+  color: var(--error);
+}
+
+/* Markdown typography */
+.md {
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p,
+.md ul,
+.md ol,
+.md blockquote,
+.md table,
+.md .md-pre {
+  margin: 0 0 0.6rem;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 0.8rem 0 0.4rem;
+  line-height: 1.3;
+}
+
+.md h1 {
+  font-size: 1.2rem;
+}
+
+.md h2 {
+  font-size: 1.1rem;
+}
+
+.md h3 {
+  font-size: 1rem;
+}
+
+.md h4 {
+  font-size: 0.92rem;
+}
+
+.md ul,
+.md ol {
+  padding-left: 1.3rem;
+}
+
+.md li {
+  margin: 0.15rem 0;
+}
+
+.md a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.md blockquote {
+  padding-left: 0.7rem;
+  border-left: 3px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.md img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+.md hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.8rem 0;
+}
+
+.md table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.md th,
+.md td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+
+.md th {
+  background: var(--bg-elevated);
+}
+
+.md-code-inline {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  padding: 0.08rem 0.3rem;
+  border-radius: 4px;
+  background: var(--code-bg);
+}
+
+.md-pre {
+  overflow-x: auto;
+  padding: 0.6rem 0.75rem;
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+.md-code {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--fg);
+}
+
+/* Attachment modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5vmin;
+  background: var(--modal-backdrop);
+}
+
+.modal-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(960px, 92vw);
+  max-height: 90vh;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.modal-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.modal-size {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.modal-close {
+  flex: 0 0 auto;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.2rem;
+}
+
+.modal-close:hover {
+  color: var(--fg);
+}
+
+.modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.9rem;
+  display: flex;
+}
+
+.modal-body > * {
+  margin: auto;
+}
+
+.modal-md {
+  width: 100%;
+  margin: 0;
+}
+
+.modal-image {
+  max-width: 100%;
+  max-height: 78vh;
+  object-fit: contain;
+}
+
+.modal-pdf {
+  width: 100%;
+  height: 78vh;
+}
+
+.modal-note {
+  margin: auto;
+  color: var(--fg-muted);
+}
+
+.modal-error {
+  color: var(--error);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.modal-foot {
+  flex: 0 0 auto;
+  padding: 0.6rem 0.9rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+  text-align: right;
+}
+
+.modal-download {
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.modal-download:hover {
+  text-decoration: underline;
+}
+
+/* Code viewer with a line-number gutter */
+.code-view {
+  display: flex;
+  width: 100%;
+  margin: 0;
+  border-radius: 6px;
+  background: var(--code-bg);
+  overflow: hidden;
+}
+
+.code-nums {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.6rem 0.5rem;
+  text-align: right;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: none;
+  border-right: 1px solid var(--border);
+  white-space: pre;
+}
+
+.code-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+/* highlight.js token colours mapped to the viz palette (auto light/dark) */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-doctag,
+.hljs-name,
+.hljs-strong {
+  color: var(--viz-s5);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attribute {
+  color: var(--viz-s2);
+}
+
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+  color: var(--fg-muted);
+  font-style: italic;
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link {
+  color: var(--viz-s6);
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-built_in {
+  color: var(--viz-s1);
+}
+
+.hljs-type,
+.hljs-params,
+.hljs-selector-class {
+  color: var(--viz-s3);
+}
+
+.hljs-attr,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-selector-attr {
+  color: var(--viz-s1);
+}
+
+.hljs-tag {
+  color: var(--fg-muted);
+}
+
+.hljs-deletion {
+  color: var(--error);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}

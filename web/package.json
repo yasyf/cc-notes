@@ -14,8 +14,11 @@
     "d3-scale": "^4.0.2",
     "d3-shape": "^3.2.0",
     "d3-zoom": "^3.0.0",
+    "highlight.js": "^11.11.1",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/d3-array": "^3.2.2",
