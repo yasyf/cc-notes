@@ -256,6 +256,9 @@ func TestReadChainIncompleteFabricatedParent(t *testing.T) {
 	if !strings.Contains(err.Error(), string(fake)) {
 		t.Errorf("error %q does not name the missing sha %s", err, fake)
 	}
+	if !strings.Contains(err.Error(), "missing from object database") {
+		t.Errorf("error %q does not report a non-shallow miss", err)
+	}
 }
 
 func TestReadChainIncompleteDeletedObject(t *testing.T) {
@@ -275,6 +278,140 @@ func TestReadChainIncompleteDeletedObject(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), string(c1)) {
 		t.Errorf("error %q does not name the missing sha %s", err, c1)
+	}
+	if !strings.Contains(err.Error(), "missing from object database") {
+		t.Errorf("error %q does not report a non-shallow miss", err)
+	}
+}
+
+// TestReadChainIncompleteShallow points refs/heads/main at an ops commit, then
+// clones it --depth 1 over file://: the tip's parent is beyond the shallow
+// boundary, so ReadChain fails ErrIncompleteChain naming the absent parent and
+// reports a shallow clone (the .git/shallow file exists).
+func TestReadChainIncompleteShallow(t *testing.T) {
+	origin := initRepo(t)
+	repo := open(t, origin)
+	c1 := write(t, repo, nil, t0, createPack)
+	c2 := write(t, repo, []model.SHA{c1}, t1, retitlePack)
+	git(t, origin, "update-ref", "refs/heads/main", string(c2))
+
+	clone := filepath.Join(t.TempDir(), "clone")
+	git(t, filepath.Dir(clone), "-c", "protocol.file.allow=always", "clone", "-q", "--depth", "1", "file://"+origin, clone)
+
+	_, err := open(t, clone).ReadChain(t.Context(), c2)
+	if !errors.Is(err, gitobj.ErrIncompleteChain) {
+		t.Fatalf("ReadChain = %v, want ErrIncompleteChain", err)
+	}
+	if !strings.Contains(err.Error(), "shallow clone") {
+		t.Errorf("error %q does not report a shallow clone", err)
+	}
+	if !strings.Contains(err.Error(), string(c1)) {
+		t.Errorf("error %q does not name the missing sha %s", err, c1)
+	}
+}
+
+// stalePack reproduces the go-git pack-index staleness the reindex fix heals:
+// origin packs an ops chain c1<-c2, a handle seeds its index with a successful
+// packed ReadChain(c2), then a peer's c3 is fetched into a *second* pack
+// invisible to that seeded index. It returns the pre-seeded handle plus the
+// three commit shas; every reader must reindex on the c3 miss to see it.
+func stalePack(t *testing.T) (repo *gitobj.Repo, c1, c2, c3 model.SHA) {
+	t.Helper()
+	origin := initRepo(t)
+	repo = open(t, origin)
+	c1 = write(t, repo, nil, t0, createPack)
+	c2 = write(t, repo, []model.SHA{c1}, t1, retitlePack)
+	ref := "refs/cc-notes/notes/n1"
+	git(t, origin, "update-ref", ref, string(c2))
+	git(t, origin, "repack", "-a", "-d", "-q")
+
+	if _, err := repo.ReadChain(t.Context(), c2); err != nil {
+		t.Fatalf("seed ReadChain(c2): %v", err)
+	}
+
+	peer := initRepo(t)
+	peerRepo := open(t, peer)
+	write(t, peerRepo, nil, t0, createPack)
+	write(t, peerRepo, []model.SHA{c1}, t1, retitlePack)
+	c3 = write(t, peerRepo, []model.SHA{c2}, t2, bodyPack)
+	git(t, peer, "update-ref", ref, string(c3))
+
+	git(t, origin, "-c", "transfer.unpackLimit=1", "-c", "protocol.file.allow=always",
+		"fetch", "-q", "file://"+peer, ref+":"+ref)
+
+	packs, err := filepath.Glob(filepath.Join(origin, ".git", "objects", "pack", "*.pack"))
+	if err != nil {
+		t.Fatalf("glob packs: %v", err)
+	}
+	if len(packs) != 2 {
+		t.Fatalf("want exactly 2 packs after unpackLimit=1 fetch, got %d: %v", len(packs), packs)
+	}
+	loose := filepath.Join(origin, ".git", "objects", string(c3)[:2], string(c3)[2:])
+	if _, err := os.Stat(loose); !os.IsNotExist(err) {
+		t.Fatalf("c3 %s must stay packed, but stat of loose object gave %v", c3, err)
+	}
+	return repo, c1, c2, c3
+}
+
+// TestReindexOnStalePack proves every public reader reindexes on a miss caused
+// by a pack landed after the index was seeded (the sync incident). Each case
+// gets its own stalePack fixture so its own wrap site is exercised: reverting
+// the reindex retry fails every case with ErrIncompleteChain/ErrCommitNotFound.
+func TestReindexOnStalePack(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(t *testing.T, repo *gitobj.Repo, c1, c2, c3 model.SHA)
+	}{
+		{"ReadChain", func(t *testing.T, repo *gitobj.Repo, c1, c2, c3 model.SHA) {
+			got, err := repo.ReadChain(t.Context(), c3)
+			if err != nil {
+				t.Fatalf("ReadChain(c3): %v", err)
+			}
+			want := []model.PackCommit{
+				{SHA: c3, Parents: []model.SHA{c2}, Author: testActor, AuthorTime: t2.Unix(), Pack: bodyPack},
+				{SHA: c2, Parents: []model.SHA{c1}, Author: testActor, AuthorTime: t1.Unix(), Pack: retitlePack},
+				{SHA: c1, Parents: nil, Author: testActor, AuthorTime: t0.Unix(), Pack: createPack},
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("ReadChain = %+v, want %+v", got, want)
+			}
+		}},
+		{"WalkCommits", func(t *testing.T, repo *gitobj.Repo, c1, c2, c3 model.SHA) {
+			got, truncated, err := repo.WalkCommits(t.Context(), []model.SHA{c3}, 0, 0)
+			if err != nil {
+				t.Fatalf("WalkCommits([c3]): %v", err)
+			}
+			if truncated {
+				t.Errorf("truncated = true, want false (c3 reachable after reindex)")
+			}
+			if shas := []model.SHA{got[0].SHA, got[1].SHA, got[2].SHA}; len(got) != 3 || shas[0] != c3 || shas[1] != c2 || shas[2] != c1 {
+				t.Errorf("WalkCommits = %v, want [%s %s %s]", got, c3, c2, c1)
+			}
+		}},
+		{"FirstParentMerges", func(t *testing.T, repo *gitobj.Repo, c1, c2, c3 model.SHA) {
+			got, err := repo.FirstParentMerges(t.Context(), c3, 0, 0)
+			if err != nil {
+				t.Fatalf("FirstParentMerges(c3): %v", err)
+			}
+			if got != nil {
+				t.Errorf("FirstParentMerges = %v, want nil (linear chain has no merges)", got)
+			}
+		}},
+		{"IsAncestor", func(t *testing.T, repo *gitobj.Repo, c1, c2, c3 model.SHA) {
+			got, err := repo.IsAncestor(t.Context(), c1, c3)
+			if err != nil {
+				t.Fatalf("IsAncestor(c1, c3): %v", err)
+			}
+			if !got {
+				t.Errorf("IsAncestor(c1, c3) = false, want true")
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, c1, c2, c3 := stalePack(t)
+			tc.run(t, repo, c1, c2, c3)
+		})
 	}
 }
 

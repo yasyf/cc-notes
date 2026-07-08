@@ -35,9 +35,9 @@ func (r *Repo) ReadChain(ctx context.Context, tip model.SHA) ([]model.PackCommit
 		}
 		hash := queue[0]
 		queue = queue[1:]
-		commit, err := object.GetCommit(r.repo.Storer, hash)
+		commit, err := r.lookupCommit(hash)
 		if errors.Is(err, plumbing.ErrObjectNotFound) {
-			return nil, fmt.Errorf("%w: commit %s missing (shallow clone?)", ErrIncompleteChain, hash)
+			return nil, fmt.Errorf("%w: commit %s %s", ErrIncompleteChain, hash, r.missingSuffix())
 		}
 		if err != nil {
 			return nil, fmt.Errorf("read commit %s: %w", hash, err)
@@ -121,18 +121,28 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b model.SHA) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	ok, err := ancestor.IsAncestor(descendant)
+	ok, err := retry(r, func() (bool, error) {
+		return ancestor.IsAncestor(descendant)
+	})
 	if err != nil {
 		return false, fmt.Errorf("walk ancestry of %s: %w", b, err)
 	}
 	return ok, nil
 }
 
+// lookupCommit resolves hash to its commit object, reindexing and retrying once
+// on a stale-index miss. The caller must hold r.mu.
+func (r *Repo) lookupCommit(hash plumbing.Hash) (*object.Commit, error) {
+	return retry(r, func() (*object.Commit, error) {
+		return object.GetCommit(r.repo.Storer, hash)
+	})
+}
+
 func (r *Repo) commit(sha model.SHA) (*object.Commit, error) {
 	if !plumbing.IsHash(string(sha)) {
 		return nil, fmt.Errorf("invalid sha %q", sha)
 	}
-	commit, err := object.GetCommit(r.repo.Storer, plumbing.NewHash(string(sha)))
+	commit, err := r.lookupCommit(plumbing.NewHash(string(sha)))
 	if errors.Is(err, plumbing.ErrObjectNotFound) {
 		return nil, fmt.Errorf("%w: %s", ErrCommitNotFound, sha)
 	}
@@ -142,10 +152,21 @@ func (r *Repo) commit(sha model.SHA) (*object.Commit, error) {
 	return commit, nil
 }
 
+// missingSuffix explains an absent object: a shallow clone (the .git/shallow
+// boundary) or a genuinely incomplete object database. It reads .git/shallow
+// fresh; a read error on this already-failing path falls back to non-shallow.
+func (r *Repo) missingSuffix() string {
+	shallow, err := r.repo.Storer.Shallow()
+	if err == nil && len(shallow) > 0 {
+		return "missing (shallow clone)"
+	}
+	return "missing from object database"
+}
+
 func (r *Repo) packCommit(commit *object.Commit) (model.PackCommit, error) {
-	tree, err := commit.Tree()
+	tree, err := retry(r, commit.Tree)
 	if errors.Is(err, plumbing.ErrObjectNotFound) {
-		return model.PackCommit{}, fmt.Errorf("%w: tree of commit %s missing (shallow clone?)", ErrIncompleteChain, commit.Hash)
+		return model.PackCommit{}, fmt.Errorf("%w: tree of commit %s %s", ErrIncompleteChain, commit.Hash, r.missingSuffix())
 	}
 	if err != nil {
 		return model.PackCommit{}, fmt.Errorf("read tree of commit %s: %w", commit.Hash, err)
@@ -154,9 +175,11 @@ func (r *Repo) packCommit(commit *object.Commit) (model.PackCommit, error) {
 	if err != nil {
 		return model.PackCommit{}, fmt.Errorf("%w: commit %s has no %s", ErrCorruptCommit, commit.Hash, opsFile)
 	}
-	blob, err := object.GetBlob(r.repo.Storer, entry.Hash)
+	blob, err := retry(r, func() (*object.Blob, error) {
+		return object.GetBlob(r.repo.Storer, entry.Hash)
+	})
 	if errors.Is(err, plumbing.ErrObjectNotFound) {
-		return model.PackCommit{}, fmt.Errorf("%w: ops blob of commit %s missing (shallow clone?)", ErrIncompleteChain, commit.Hash)
+		return model.PackCommit{}, fmt.Errorf("%w: ops blob of commit %s %s", ErrIncompleteChain, commit.Hash, r.missingSuffix())
 	}
 	if err != nil {
 		return model.PackCommit{}, fmt.Errorf("read ops blob of commit %s: %w", commit.Hash, err)

@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A long-lived repo handle no longer misses objects from a freshly landed
+  pack.** go-git seeds its packfile index on the first pack-touching read and
+  never rescans it, so a pack that arrived afterward — a later `sync` fetch
+  round, the `viz`/mount holder's long-running handle, or an external
+  `repack`/`gc` — was invisible, surfacing as a spurious `incomplete chain …
+  (shallow clone?)` in `sync` and as silently truncated graphs in `viz`. Object
+  reads now reindex and retry once on a miss, mirroring git's own object
+  database. Genuine misses report `missing from object database` on a full
+  clone and keep the `missing (shallow clone)` hint only when `.git/shallow`
+  actually exists.
+
 ## [0.19.0] - 2026-07-07
 
 ### Added

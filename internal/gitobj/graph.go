@@ -40,7 +40,7 @@ func (r *Repo) WalkCommits(ctx context.Context, tips []model.SHA, limit int, sin
 		if seen[hash] {
 			continue
 		}
-		commit, err := object.GetCommit(r.repo.Storer, hash)
+		commit, err := r.lookupCommit(hash)
 		if errors.Is(err, plumbing.ErrObjectNotFound) {
 			return nil, false, fmt.Errorf("%w: %s", ErrCommitNotFound, tip)
 		}
@@ -71,7 +71,7 @@ func (r *Repo) WalkCommits(ctx context.Context, tips []model.SHA, limit int, sin
 			if seen[parent] {
 				continue
 			}
-			pc, err := object.GetCommit(r.repo.Storer, parent)
+			pc, err := r.lookupCommit(parent)
 			if errors.Is(err, plumbing.ErrObjectNotFound) {
 				truncated = true
 				continue
@@ -96,7 +96,7 @@ func (r *Repo) FirstParentMerges(ctx context.Context, tip model.SHA, limit int, 
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	cur, err := object.GetCommit(r.repo.Storer, plumbing.NewHash(string(tip)))
+	cur, err := r.lookupCommit(plumbing.NewHash(string(tip)))
 	if errors.Is(err, plumbing.ErrObjectNotFound) {
 		return nil, fmt.Errorf("%w: %s", ErrCommitNotFound, tip)
 	}
@@ -121,7 +121,7 @@ func (r *Repo) FirstParentMerges(ctx context.Context, tip model.SHA, limit int, 
 			break
 		}
 		first := cur.ParentHashes[0]
-		next, err := object.GetCommit(r.repo.Storer, first)
+		next, err := r.lookupCommit(first)
 		if errors.Is(err, plumbing.ErrObjectNotFound) {
 			break
 		}
