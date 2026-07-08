@@ -46,7 +46,7 @@ The install script picks the right binary for your platform, drops it in `~/.loc
 curl -fsSL https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh | sh
 ```
 
-Both installers prefer the FUSE-capable `_fuse` variant where it ships (it adds `cc-notes mount`) and install a `ccn` shorthand for `cc-notes`.
+Both installers prefer the FUSE-capable `_fuse` variant where it ships (it adds `cc-notes mount`) and install a `ccn` shorthand for `cc-notes`. The mount itself needs FUSE on the host: `brew install macos-fuse-t/cask/fuse-t` on macOS, `fuse3` on Linux.
 
 | Platform | Binary | With FUSE mount |
 |---|---|---|
@@ -112,7 +112,7 @@ Each hit comes back with a verdict:
 | `cc-notes note add` | Add a note, optionally anchored to a path, directory, commit, or branch |
 | `cc-notes note review` | Flag notes as `DRIFTED`, `STALE`, or `UNVERIFIED` |
 | `cc-notes doc add` | Store a long-form handoff with a `--when` trigger, surfaced to the next agent by `cc-notes relevant` |
-| `cc-notes log add` | Start an append-only chronological journal, surfaced to the next agent by `cc-notes relevant` |
+| `cc-notes log add` | Start an append-only journal, surfaced by `cc-notes relevant`; logs skip the review lifecycle since they never drift |
 | `cc-notes relevant` | Rank the notes, docs, and logs most relevant to a path, with the reasons each matched |
 | `cc-notes reconcile` | Carry merged branches' open tasks onto a target branch |
 | `cc-notes blame` | Name the task(s) a commit implemented |
@@ -121,7 +121,7 @@ Each hit comes back with a verdict:
 | `cc-notes mount` | Expose notes and tasks as an editable `.notes` filesystem (needs a `_fuse` binary; auto-mounted by `init`) |
 | `cc-notes viz` | Watch branch flow and note/task/doc lifecycles live in a browser |
 
-Tasks also carry `list`, `ready`, `backlog`, `edit`, `comment`, `dep`/`undep`, `cancel`, `move`, `renew`, `stale`, `claim`, and `validate`; notes add `verify`, `list`, `edit`, `search`, and `supersede`; docs add `list`, `show`, `edit`, `search`, `verify`, `supersede`, `expire`, and `review`; logs add `append`, `list`, `show`, `edit`, `search`, and `rm`, with no `verify`, `supersede`, or `expire` since a log never drifts. Docs and notes also edit as a file without a mount: `doc edit <id> --checkout` (or `note edit`, or either `add`, which prefills the buffer from the title and anchor flags) renders the entity to a Markdown file and prints its path, and `--apply` commits your edits back. On `add`, `--apply --attach <file>` ingests attachments as the entity is created; to attach to a doc or note that already exists, use `doc edit <id> --attach` (with `--replace` to overwrite a live name). An optional planning layer rolls tasks up into sprints and projects via `cc-notes sprint` and `cc-notes project`. Every mutation echoes the entity's new state as a tab-separated line, and every command takes `--json`. Run `cc-notes <noun> --help`, or read the full [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md).
+Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) covers every flag. Docs and notes also edit as plain files without a mount: `doc edit <id> --checkout` (or `note edit`) renders the entity to Markdown and prints its path, and `--apply` commits your edits back. An optional planning layer rolls tasks up into sprints and projects via `cc-notes sprint` and `cc-notes project`. Every mutation echoes the entity's new state as a tab-separated line, and every command takes `--json`.
 
 ## MCP server
 
@@ -171,10 +171,10 @@ Attachment content lives on your git host's LFS endpoint and counts against its 
 cc-notes viz
 ```
 
-The command binds a loopback port, prints the URL, and opens your browser. `--port` pins the port, `--no-open` skips the browser, and `--poll` sets how often the server checks the refs for changes (default 2s). Release binaries ship the UI. Building from source, run `cd web && npm ci && npm run build` before `go build -tags webui`; a default `go build` serves the JSON API plus a pointer page, no UI.
+The command binds a loopback port, prints the URL, and opens your browser. `--port` pins the port, `--no-open` skips the browser, and `--poll` sets how often the server checks the refs for changes (default 2s). Release binaries ship the UI.
 
 ## How it works
 
-Each entity is an event-log CRDT (conflict-free replicated data type) riding git as its transport — an approach pioneered by [git-bug](https://github.com/git-bug/git-bug). Mutations append kind-tagged ops to a per-entity op-log on a hidden ref; readers linearize and deterministically fold the log into the current snapshot, so concurrent edits union-merge instead of conflicting. Syncing rides plain git (and works under jj, where `cc-notes sync` drives git directly). With a `_fuse` binary, `cc-notes mount` exposes everything as an editable filesystem — Markdown notes, JSON tasks — needing `brew install macos-fuse-t/cask/fuse-t` on macOS or `fuse3` on Linux; see the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) for mount mechanics. On a `_fuse` binary `init` mounts this `.notes` tree by default (`--no-mount` to skip) and records the preference, so each session re-mounts it; a pure binary records the preference but mounts nothing.
+Each entity is an event-log CRDT (conflict-free replicated data type) riding git as its transport — an approach pioneered by [git-bug](https://github.com/git-bug/git-bug). Mutations append kind-tagged ops to a per-entity op-log on a hidden ref; readers linearize and deterministically fold the log into the current snapshot, so concurrent edits union-merge instead of conflicting. Syncing rides plain git, and works under jj, where `cc-notes sync` drives git directly.
 
 Release history lives in [CHANGELOG.md](CHANGELOG.md). Licensed under [PolyForm Noncommercial 1.0.0](LICENSE) — free for noncommercial use.

@@ -3,7 +3,9 @@
 #
 # Stages a throwaway repo (local bare remote, fake identity), runs `cc-notes
 # init`, seeds a backlog, claims one task on a feature branch, then freezes
-# the status board as seen from main. Requires cc-notes and freeze on PATH.
+# the status board as seen from main. The board prints no ANSI of its own, so
+# bat paints the captured text (yaml reads the board best) before freeze
+# renders it. Requires cc-notes, bat, and freeze on PATH.
 set -eu
 
 OUT=$(cd "$(dirname "$0")/../assets" && pwd)/demo.png
@@ -41,6 +43,12 @@ git checkout -qb api-retries
 cc-notes task start "$FIRST" >/dev/null
 git checkout -q main
 
-freeze --execute "cc-notes status" \
+CAPTURE="$STAGE/demo.ansi"
+{
+	printf '$ cc-notes status\n' | bat --plain --color=always --language bash
+	cc-notes status | bat --plain --color=always --language yaml
+} >"$CAPTURE"
+
+freeze "$CAPTURE" --language ansi \
 	--theme github-dark --background "#0d1117" --window --padding 24 --font.size 28 \
 	--output "$OUT"
