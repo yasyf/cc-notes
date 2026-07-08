@@ -1,1 +1,1 @@
-{"v":1,"lamport":2,"ops":[{"kind":"add_comment","body":"Both criteria verified: cc-pool run 28857577196 rerun green on v0.20.0 (LFS batch auth via extraheader succeeded where credential fill failed); drifted workflows re-synced to checkout@v7 with green triggered runs — dailies 7f8ce8f70/run 28907673771, yclaw f5c122f5e/run 28907688537, rescue-chai f589169eb/run 28907672862, yasyf.com 3d1e41ce/run 28910112747 (remote API commit; local user stack untouched)."}]}
+{"v":1,"lamport":3,"ops":[{"kind":"set_criterion_status","id":"9f7538c8a6e6c70b039f030a8d3b1736","status":"met"}]}
