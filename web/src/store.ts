@@ -11,8 +11,12 @@ import {
   type Dispatch,
   type ReactNode,
 } from "react";
-import type { CommitPage, CommitsPage, Graph, RepoInfo } from "./api";
+import type { CommitPage, CommitsPage, Graph, RepoInfo, StateResponse } from "./api";
 import type { Connection } from "./stream";
+
+// Tab is the active top-level view. The hash route (route.ts) is its source of
+// truth, so it lives in the store rather than local component state.
+export type Tab = "timeline" | "commits" | "browse";
 
 export interface Selection {
   kind: string;
@@ -47,6 +51,27 @@ export const initialCommits: CommitsState = {
   gen: 0,
 };
 
+// EntitiesState holds the full folded snapshot of every live entity, powering
+// the Browse tab's table/kanban and the header's global jump-to search. `gen` is
+// a latest-wins guard mirroring CommitsState: each fetch carries the generation
+// it was issued under and the reducer drops any response a later fetch has
+// superseded, so an in-flight refetch can never overwrite fresher data.
+export interface EntitiesState {
+  data: StateResponse | null;
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+  gen: number;
+}
+
+export const initialEntities: EntitiesState = {
+  data: null,
+  loading: false,
+  loaded: false,
+  error: null,
+  gen: 0,
+};
+
 export interface State {
   repo: RepoInfo | null;
   graph: Graph | null;
@@ -55,7 +80,9 @@ export interface State {
   loading: boolean;
   error: string | null;
   gen: number;
+  tab: Tab;
   commits: CommitsState;
+  entities: EntitiesState;
 }
 
 export type Action =
@@ -65,9 +92,13 @@ export type Action =
   | { type: "select"; selection: Selection | null }
   | { type: "connection"; connection: Connection }
   | { type: "gen"; gen: number }
+  | { type: "tab"; tab: Tab }
   | { type: "commits-load-start"; reset: boolean; gen: number }
   | { type: "commits-loaded"; page: CommitsPage; reset: boolean; gen: number }
-  | { type: "commits-load-error"; error: string; gen: number };
+  | { type: "commits-load-error"; error: string; gen: number }
+  | { type: "entities-load-start"; gen: number }
+  | { type: "entities-loaded"; data: StateResponse; gen: number }
+  | { type: "entities-load-error"; error: string; gen: number };
 
 export const initialState: State = {
   repo: null,
@@ -77,7 +108,9 @@ export const initialState: State = {
   loading: true,
   error: null,
   gen: 0,
+  tab: "timeline",
   commits: initialCommits,
+  entities: initialEntities,
 };
 
 export function reducer(state: State, action: Action): State {
@@ -100,6 +133,8 @@ export function reducer(state: State, action: Action): State {
       return { ...state, connection: action.connection };
     case "gen":
       return { ...state, gen: action.gen };
+    case "tab":
+      return { ...state, tab: action.tab };
     case "commits-load-start":
       return {
         ...state,
@@ -128,6 +163,29 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         commits: { ...state.commits, loading: false, error: action.error },
+      };
+    case "entities-load-start":
+      return {
+        ...state,
+        entities: { ...state.entities, loading: true, gen: action.gen },
+      };
+    case "entities-loaded":
+      if (action.gen !== state.entities.gen) return state;
+      return {
+        ...state,
+        entities: {
+          data: action.data,
+          loading: false,
+          loaded: true,
+          error: null,
+          gen: state.entities.gen,
+        },
+      };
+    case "entities-load-error":
+      if (action.gen !== state.entities.gen) return state;
+      return {
+        ...state,
+        entities: { ...state.entities, loading: false, error: action.error },
       };
   }
 }
