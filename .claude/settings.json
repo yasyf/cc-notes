@@ -55,6 +55,7 @@
     }
   },
   "enabledPlugins": {
+    "cc-context@skills": true,
     "codex@skills": true,
     "slop-cop@skills": true,
     "llm-prompts@skills": true,
