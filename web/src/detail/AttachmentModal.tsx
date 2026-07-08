@@ -1,12 +1,13 @@
 // Modal viewer for one attachment, portalled to <body>. Escape or a backdrop
 // click closes it. The viewer is chosen by the file name's extension: images and
-// PDFs stream straight from /api/blob; markdown, code, and text are fetched and
-// rendered (highlighted, with a line-number gutter, for code) up to a 1 MB cap;
-// anything else is download-only. A fetch failure renders the server's JSON
-// error verbatim — an unfetched object's message already says how to fix it. The
-// footer always offers the raw download.
+// PDFs stream straight from /api/blob behind a one-byte Range probe; markdown,
+// code, and text are fetched and rendered (highlighted, with a line-number
+// gutter, for code) up to a 1 MB cap; anything else is download-only. Every
+// viewer surfaces a blob failure as the server's JSON error verbatim — an
+// unfetched object's message already says how to fix it. The footer always
+// offers the raw download.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { blobURL, type Attachment } from "../api";
 import { codeLanguage, formatBytes, viewerKind, type ViewerKind } from "./format";
@@ -74,8 +75,20 @@ function Viewer({
   attachment: Attachment;
   href: string;
 }) {
-  if (kind === "image") return <img className="modal-image" src={href} alt={attachment.name} />;
-  if (kind === "pdf") return <embed className="modal-pdf" src={href} type="application/pdf" />;
+  if (kind === "image") {
+    return (
+      <BlobGate href={href}>
+        <img className="modal-image" src={href} alt={attachment.name} />
+      </BlobGate>
+    );
+  }
+  if (kind === "pdf") {
+    return (
+      <BlobGate href={href}>
+        <embed className="modal-pdf" src={href} type="application/pdf" />
+      </BlobGate>
+    );
+  }
   if (kind === "binary") {
     return <p className="modal-note">No inline preview for this file type — use the download link below.</p>;
   }
@@ -94,6 +107,35 @@ type Fetched =
   | { state: "loading" }
   | { state: "error"; message: string }
   | { state: "ready"; text: string };
+
+// BlobGate probes the blob with a one-byte Range request before letting a
+// browser-streamed viewer (img, embed) render, so a missing object shows the
+// server's error message instead of a broken-media icon.
+function BlobGate({ href, children }: { href: string; children: ReactNode }) {
+  const [f, setF] = useState<Fetched>({ state: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    setF({ state: "loading" });
+    fetch(href, { headers: { Range: "bytes=0-0" } })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await errorMessage(res));
+        if (!cancelled) setF({ state: "ready", text: "" });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setF({ state: "error", message: err instanceof Error ? err.message : String(err) });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [href]);
+
+  if (f.state === "loading") return <p className="modal-note">Loading…</p>;
+  if (f.state === "error") return <p className="modal-note modal-error">{f.message}</p>;
+  return <>{children}</>;
+}
 
 function TextViewer({
   kind,
