@@ -1,1 +1,1 @@
-{"v":1,"lamport":5,"ops":[{"kind":"set_status","status":"done"},{"kind":"link_commit","sha":"c1b8afa16d002b2598002eb2146a757477f8da37"}]}
+{"v":1,"lamport":6,"ops":[{"kind":"set_title","title":"Ship v0.22.0: one CLI flag vocabulary (+ did-you-mean hints, global show)"}]}
