@@ -52,7 +52,7 @@ func flagError(cmd *cobra.Command, err error) error {
 	}
 	for _, cand := range flagSynonyms[name] {
 		if cmd.Flags().Lookup(cand) != nil {
-			return &UsageError{Err: fmt.Errorf("%s (did you mean --%s?)", err, cand)}
+			return &UsageError{Err: fmt.Errorf("%w (did you mean --%s?)", err, cand)}
 		}
 	}
 	return &UsageError{Err: err}

@@ -409,7 +409,7 @@ func newDocVerifyCmd() *cobra.Command {
 
 func newDocSupersedeCmd() *cobra.Command {
 	var by string
-	var clear, jsonOut bool
+	var clearFlag, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "supersede OLD --by NEW",
 		Short: "Record that NEW replaces OLD (--clear undoes the edge)",
@@ -435,7 +435,7 @@ func newDocSupersedeCmd() *cobra.Command {
 				return err
 			}
 			var op model.Op = model.AddSupersededBy{ID: newDoc.ID}
-			if clear {
+			if clearFlag {
 				op = model.RemoveSupersededBy{ID: newDoc.ID}
 			}
 			snapshot, err := s.Append(ctx, oldRef, []model.Op{op})
@@ -447,7 +447,7 @@ func newDocSupersedeCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&by, "by", "", "the replacement doc (required)")
-	flags.BoolVar(&clear, "clear", false, "remove the supersede edge")
+	flags.BoolVar(&clearFlag, "clear", false, "remove the supersede edge")
 	bindJSON(flags, &jsonOut)
 	return cmd
 }

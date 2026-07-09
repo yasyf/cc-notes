@@ -24,10 +24,6 @@ func bindBody(f *pflag.FlagSet, p *string, usage string) {
 	f.StringVar(p, "body", "", usage)
 }
 
-func bindTitleEdit(f *pflag.FlagSet, p *string) {
-	f.StringVar(p, "title", "", "new title")
-}
-
 func bindLabels(f *pflag.FlagSet, p *[]string, usage string) {
 	f.StringArrayVar(p, "label", nil, usage)
 }
