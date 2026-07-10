@@ -22,6 +22,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          check-latest: true
 
       - name: go vet
         run: go vet ./...
@@ -47,6 +48,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          check-latest: true
 
       - name: Install fuse-t (build-time headers + dylib)
         run: brew install macos-fuse-t/cask/fuse-t
@@ -73,6 +75,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          check-latest: true
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
@@ -86,6 +89,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          check-latest: true
       - name: govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -104,6 +108,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          check-latest: true
 
       - name: Build cc-notes binary onto PATH
         run: |
@@ -169,6 +174,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          check-latest: true
 
       - uses: actions/download-artifact@v8
         with:

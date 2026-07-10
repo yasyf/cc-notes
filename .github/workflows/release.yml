@@ -64,6 +64,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          check-latest: true
       - uses: actions/download-artifact@v8
         with:
           name: web-dist
@@ -95,6 +96,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          check-latest: true
       - uses: actions/download-artifact@v8
         with:
           name: web-dist
@@ -180,6 +182,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          check-latest: true
       - uses: actions/download-artifact@v8
         with:
           name: web-dist

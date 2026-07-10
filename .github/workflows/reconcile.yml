@@ -23,6 +23,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          check-latest: true
 
       - name: Install cc-notes
         run: go install ./cmd/cc-notes
