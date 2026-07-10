@@ -12,8 +12,8 @@ func TestRetryEmptyRef(t *testing.T) {
 	errOther := errors.New("boom")
 	cases := []struct {
 		name      string
-		failures  int   // leading lookups that fail with ErrEmptyRefFile
-		always    error // when set, every lookup fails with this
+		failures  int
+		always    error
 		cancel    bool
 		wantCalls int
 		wantErr   error

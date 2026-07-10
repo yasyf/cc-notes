@@ -13,12 +13,9 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-// ReadChain walks every commit reachable from tip — breadth-first from the
-// tip, deduplicated, so diamond merges yield each commit once — and decodes
-// each one's ops.json into a model.PackCommit. Callers needing a total order
-// feed the result to fold.Linearize. A commit, tree, or ops blob absent from
-// the object database fails with ErrIncompleteChain naming the commit; a
-// commit whose tree has no ops.json entry fails with ErrCorruptCommit.
+// ReadChain walks every commit reachable from tip breadth-first, deduplicated,
+// and decodes each one's ops.json into a model.PackCommit. A missing object
+// fails with ErrIncompleteChain; a commit with no ops.json with ErrCorruptCommit.
 func (r *Repo) ReadChain(ctx context.Context, tip model.SHA) ([]model.PackCommit, error) {
 	if !plumbing.IsHash(string(tip)) {
 		return nil, fmt.Errorf("invalid tip sha %q", tip)
@@ -96,9 +93,6 @@ func (r *Repo) ListPrefix(ctx context.Context, prefix string) (map[string]model.
 			return nil
 		}
 		name := string(ref.Name())
-		// A name ending in .lock is a concurrent git ref write's lock file
-		// surfaced by go-git's refs walk, never a ref: git forbids the
-		// suffix in refnames and skips such files in its own iteration.
 		if strings.HasPrefix(name, prefix) && !strings.HasSuffix(name, ".lock") {
 			tips[name] = model.SHA(ref.Hash().String())
 		}
@@ -134,8 +128,6 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b model.SHA) (bool, error) {
 	return ok, nil
 }
 
-// lookupCommit resolves hash to its commit object, reindexing and retrying once
-// on a stale-index miss. The caller must hold r.mu.
 func (r *Repo) lookupCommit(hash plumbing.Hash) (*object.Commit, error) {
 	return retry(r, func() (*object.Commit, error) {
 		return object.GetCommit(r.repo.Storer, hash)
@@ -156,9 +148,6 @@ func (r *Repo) commit(sha model.SHA) (*object.Commit, error) {
 	return commit, nil
 }
 
-// missingSuffix explains an absent object: a shallow clone (the .git/shallow
-// boundary) or a genuinely incomplete object database. It reads .git/shallow
-// fresh; a read error on this already-failing path falls back to non-shallow.
 func (r *Repo) missingSuffix() string {
 	shallow, err := r.repo.Storer.Shallow()
 	if err == nil && len(shallow) > 0 {

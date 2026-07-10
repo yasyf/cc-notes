@@ -233,8 +233,6 @@ func TestReadChainMergeDiamond(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadChain: %v", err)
 	}
-	// The empty-ops merge pack round-trips as "ops":[], so the decoded
-	// slice is empty but non-nil.
 	want := []model.PackCommit{
 		{SHA: merge, Parents: []model.SHA{left, right}, Author: testActor, AuthorTime: t3.Unix(), Pack: model.Pack{Lamport: 3, Ops: []model.Op{}}},
 		{SHA: left, Parents: []model.SHA{root}, Author: testActor, AuthorTime: t1.Unix(), Pack: retitlePack},
@@ -286,10 +284,6 @@ func TestReadChainIncompleteDeletedObject(t *testing.T) {
 	}
 }
 
-// TestReadChainIncompleteShallow points refs/heads/main at an ops commit, then
-// clones it --depth 1 over file://: the tip's parent is beyond the shallow
-// boundary, so ReadChain fails ErrIncompleteChain naming the absent parent and
-// reports a shallow clone (the .git/shallow file exists).
 func TestReadChainIncompleteShallow(t *testing.T) {
 	origin := initRepo(t)
 	repo := open(t, origin)
@@ -312,11 +306,6 @@ func TestReadChainIncompleteShallow(t *testing.T) {
 	}
 }
 
-// stalePack reproduces the go-git pack-index staleness the reindex fix heals:
-// origin packs an ops chain c1<-c2, a handle seeds its index with a successful
-// packed ReadChain(c2), then a peer's c3 is fetched into a *second* pack
-// invisible to that seeded index. It returns the pre-seeded handle plus the
-// three commit shas; every reader must reindex on the c3 miss to see it.
 func stalePack(t *testing.T) (repo *gitobj.Repo, c1, c2, c3 model.SHA) {
 	t.Helper()
 	origin := initRepo(t)
@@ -355,10 +344,6 @@ func stalePack(t *testing.T) (repo *gitobj.Repo, c1, c2, c3 model.SHA) {
 	return repo, c1, c2, c3
 }
 
-// TestReindexOnStalePack proves every public reader reindexes on a miss caused
-// by a pack landed after the index was seeded (the sync incident). Each case
-// gets its own stalePack fixture so its own wrap site is exercised: reverting
-// the reindex retry fails every case with ErrIncompleteChain/ErrCommitNotFound.
 func TestReindexOnStalePack(t *testing.T) {
 	cases := []struct {
 		name string
@@ -504,9 +489,6 @@ func TestListPrefix(t *testing.T) {
 	assertPrefix(open(t, dir), "refs/cc-notes/", refs)
 }
 
-// TestListPrefixSkipsLockFiles pins that a git ref-write lock file — created
-// by a concurrent update-ref and surfaced as a ref by go-git's refs walk —
-// never appears in a listing: git forbids the .lock suffix in refnames.
 func TestListPrefixSkipsLockFiles(t *testing.T) {
 	dir := initRepo(t)
 	repo := open(t, dir)
@@ -529,9 +511,6 @@ func TestListPrefixSkipsLockFiles(t *testing.T) {
 	}
 }
 
-// TestListPrefixPersistentEmptyRefFile pins the fail-loud bound of the
-// empty-ref retry: a file under refs/ that stays empty — a crashed writer,
-// not a transient lock window — must surface, not be swallowed.
 func TestListPrefixPersistentEmptyRefFile(t *testing.T) {
 	cases := []struct {
 		name string
@@ -560,11 +539,6 @@ func TestListPrefixPersistentEmptyRefFile(t *testing.T) {
 	}
 }
 
-// TestListPrefixDuringRefWrites reproduces the claim-contest race: real git
-// update-ref processes rewrite a ref — each holding a briefly-empty
-// <ref>.lock — while this process lists the prefix through go-git. Without
-// the empty-ref retry the listing fails mid-contest with "ref file is
-// empty"; without the .lock skip it surfaces phantom lock-file refs.
 func TestListPrefixDuringRefWrites(t *testing.T) {
 	dir := initRepo(t)
 	repo := open(t, dir)
@@ -606,10 +580,6 @@ func TestListPrefixDuringRefWrites(t *testing.T) {
 				t.Fatalf("ListPrefix surfaced lock file %s", name)
 			}
 		}
-		// Directory enumeration during a same-directory rename may
-		// transiently see neither name (unspecified by POSIX), so the ref
-		// may be absent from one listing; when present it must hold a
-		// value some update-ref actually wrote.
 		if got, ok := tips[ref]; ok && got != c1 && got != c2 {
 			t.Fatalf("ListPrefix[%s] = %q, want %s or %s", ref, got, c1, c2)
 		}
@@ -720,10 +690,6 @@ func TestOpenLinkedWorktree(t *testing.T) {
 	}
 }
 
-// TestConcurrentAccess pins Repo's synchronization story: go-git's
-// filesystem storage caches are not thread-safe, so concurrent writes and
-// reads through one Repo must serialize internally (fails under -race
-// without the Repo mutex).
 func TestConcurrentAccess(t *testing.T) {
 	repo := open(t, initRepo(t))
 	root := write(t, repo, nil, t0, createPack)

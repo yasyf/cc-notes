@@ -49,8 +49,7 @@ var (
 	// the concrete error is an *AmbiguousError carrying the candidates.
 	ErrAmbiguous = errors.New("ambiguous entity prefix")
 	// ErrDuplicate reports a Create whose content exactly duplicates a live
-	// entity of the same kind; the concrete error is a *DuplicateError carrying
-	// the survivor that was reused instead of rooting a twin.
+	// entity; the concrete error is a *DuplicateError carrying the survivor.
 	ErrDuplicate = errors.New("duplicate entity")
 )
 
@@ -81,8 +80,7 @@ func (e *AmbiguousError) Error() string {
 func (e *AmbiguousError) Is(target error) bool { return target == ErrAmbiguous }
 
 // DuplicateError reports that Create found a live entity of Kind whose folded
-// content equals the create pack's and returned Existing instead of rooting a
-// twin. It matches ErrDuplicate under errors.Is.
+// content equals the create pack's and returned Existing instead of a twin.
 type DuplicateError struct {
 	Kind     refs.Kind
 	Existing model.Snapshot

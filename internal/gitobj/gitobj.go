@@ -19,23 +19,17 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 )
 
-// opsFile is the single tree entry every entity commit carries.
 const opsFile = "ops.json"
 
 var (
 	// ErrRefNotFound reports a ref that does not exist in the repository.
 	ErrRefNotFound = errors.New("ref not found")
-	// ErrIncompleteChain reports a chain commit whose object (or tree or
-	// ops blob) is absent from the object database even after a reindex.
-	// The message names the commit and reports whether the repository is a
-	// shallow clone (the usual cause) or the object is missing from an
-	// otherwise complete object database.
+	// ErrIncompleteChain reports a chain commit, tree, or ops blob absent from
+	// the object database even after a reindex.
 	ErrIncompleteChain = errors.New("incomplete chain")
-	// ErrCorruptCommit reports a chain commit whose tree has no ops.json
-	// entry: it was not written by cc-notes.
+	// ErrCorruptCommit reports a chain commit whose tree has no ops.json entry.
 	ErrCorruptCommit = errors.New("corrupt commit")
-	// ErrCommitNotFound reports a commit whose object is absent from the
-	// repository — distinct from a malformed sha, which is a caller error.
+	// ErrCommitNotFound reports a commit whose object is absent from the repository.
 	ErrCommitNotFound = errors.New("commit not found")
 )
 
@@ -49,23 +43,18 @@ type Signature struct {
 }
 
 // Repo is a read/object-write handle on a git repository, backed by go-git.
-// It is safe for concurrent use: go-git's filesystem storage builds lazy
-// caches (DotGit object/pack lists, ObjectStorage pack indexes) with no
-// locking of its own, so every method serializes on mu. The pack index is
-// seeded on the first pack-touching read and never rescanned, so a pack
-// landed afterward (a fetch round, the mount holder, an external repack/gc)
-// is invisible until reindexed: every object read goes through retry or
-// lookupCommit, which reindexes and retries once on a miss.
+// It is safe for concurrent use.
 type Repo struct {
+	// go-git's filesystem storage builds lazy caches (DotGit object/pack
+	// lists, ObjectStorage pack indexes) with no locking of its own, so every
+	// method serializes on mu.
 	mu      sync.Mutex
 	repo    *gogit.Repository
 	storage *filesystem.Storage
 }
 
-// Open opens the git repository containing dir. It detects the .git
-// directory from any subdirectory and follows the .git file plus commondir
-// indirection of a linked worktree (git worktree add), so refs and objects
-// are the shared ones from the main repository.
+// Open opens the git repository containing dir, following worktree and
+// subdirectory indirection so refs and objects are the main repository's.
 func Open(dir string) (*Repo, error) {
 	repo, err := gogit.PlainOpenWithOptions(dir, &gogit.PlainOpenOptions{
 		DetectDotGit:          true,
@@ -77,20 +66,10 @@ func Open(dir string) (*Repo, error) {
 	return &Repo{repo: repo, storage: repo.Storer.(*filesystem.Storage)}, nil
 }
 
-// staleIndex reports whether err signals a packfile index out of date with the
-// packs on disk — go-git seeds the index once and never rescans it. An object
-// in an unindexed pack reads as ErrObjectNotFound; an index entry pointing at a
-// pack an external repack/gc removed reads as ErrPackfileNotFound. Both heal
-// with a reindex.
 func staleIndex(err error) bool {
 	return errors.Is(err, plumbing.ErrObjectNotFound) || errors.Is(err, dotgit.ErrPackfileNotFound)
 }
 
-// retry runs lookup and, on a stale-index miss, reindexes the packfiles once
-// and re-runs — mirroring git's own object database, which rescans packs and
-// retries once before reporting a missing object. The second answer is
-// authoritative. The caller must hold r.mu: go-git's index rebuild is not
-// concurrency-safe.
 func retry[T any](r *Repo, lookup func() (T, error)) (T, error) {
 	v, err := lookup()
 	if !staleIndex(err) {
@@ -105,13 +84,6 @@ const (
 	emptyRefRetryDelay = time.Millisecond
 )
 
-// retryEmptyRef runs lookup, retrying while it fails with
-// dotgit.ErrEmptyRefFile: go-git's refs walk reads every file under refs/,
-// including the <ref>.lock a concurrent git ref write creates empty before
-// filling it in and renaming it over the ref. That window lasts microseconds,
-// so a few spaced attempts outlast any healthy writer; once they exhaust, the
-// error surfaces — a persistently empty file under refs/ means a crashed
-// writer, not a race.
 func retryEmptyRef[T any](ctx context.Context, lookup func() (T, error)) (T, error) {
 	for attempt := 1; ; attempt++ {
 		v, err := lookup()

@@ -13,23 +13,10 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-// Create roots a new entity chain: ops must begin with the create op, which
-// the caller stamps with a fresh nonce. The pack is written at lamport 1 as
-// a parentless commit whose sha becomes the entity id, then the entity ref —
-// refs.Note for a note, refs.Task for a task, refs.Sprint for a sprint,
-// refs.Project for a project, refs.Doc for a doc, refs.Log for a log — is
-// created atomically: a ref that already exists fails with gitcmd.ErrCASMismatch.
-// Notes, tasks, sprints, projects, docs, and logs share a flat namespace keyed
-// by entity id. The pack is validated and folded before the ref is created, so
-// a bad op never publishes.
-//
-// Before writing anything Create runs a best-effort duplicate scan (findDuplicate):
-// when a live entity of the same kind already folds to identical content it
-// returns a *DuplicateError carrying that survivor and writes nothing, so a
-// doubled create reuses the existing entity instead of rooting a twin. The scan
-// takes no lock — two truly concurrent creates can still both land — and closed,
-// tombstoned, or superseded twins never suppress a re-add. On a fresh create it
-// returns the folded snapshot and a nil error.
+// Create roots a new entity chain from ops (beginning with the create op). An
+// exact duplicate of a live entity of the same kind writes nothing and returns
+// a *DuplicateError carrying the survivor; the scan is best-effort and takes no
+// lock, so two truly concurrent creates can still both land.
 func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, error) {
 	if len(ops) == 0 {
 		return nil, errors.New("create: no ops")
@@ -83,11 +70,9 @@ func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, err
 	return snapshot, nil
 }
 
-// Append extends the chain at ref with one commit carrying ops, at lamport
-// max(chain)+1, under ref compare-and-swap: a lost race re-reads the chain
-// and retries with jittered backoff, and exhausting maxAttempts fails
-// wrapping ErrContended. The pack is validated and folded before the ref
-// moves, so a bad op never publishes. It returns the new folded snapshot.
+// Append extends the chain at ref with one commit carrying ops under ref
+// compare-and-swap with bounded retries, returning the new folded snapshot.
+// Exhausting the retries fails wrapping ErrContended.
 func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.Snapshot, error) {
 	if len(ops) == 0 {
 		return nil, fmt.Errorf("append to %s: no ops", ref)
@@ -145,16 +130,9 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 	return nil, fmt.Errorf("append to %s: %w: %w", ref, ErrContended, lastErr)
 }
 
-// Compact collapses ref's chain into a checkpoint commit: it folds the chain,
-// appends a Checkpoint op carrying the folded State, the covered tip lamport,
-// and every covered sha, then advances ref to the new commit under ref
-// compare-and-swap with the same bounded retry as Append. The entity id and
-// the folded State are preserved — compaction is a re-encoding that lets future
-// folds seed from the checkpoint instead of replaying every op, never a loss of
-// history: the covered objects stay in the object database. A lost race
-// re-reads the chain and retries; exhausting maxAttempts fails wrapping
-// ErrContended. It returns the post-compaction snapshot, equal to the pre-
-// compaction fold except for Head.
+// Compact collapses ref's chain into a checkpoint commit under ref
+// compare-and-swap, preserving the entity id and folded State. It returns the
+// post-compaction snapshot; exhausting the retries fails wrapping ErrContended.
 func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error) {
 	name, email, err := s.actor(ctx)
 	if err != nil {
@@ -217,12 +195,9 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 	return nil, fmt.Errorf("compact %s: %w: %w", ref, ErrContended, lastErr)
 }
 
-// Merge writes the union merge commit joining ours and theirs — two tips of
-// the same entity — carrying an empty-ops pack at lamport max(both chains)+1,
-// then compare-and-swaps ref from ours to the merge. The union is folded
-// before the ref moves, so merging two different entities never publishes. A
-// lost race fails with gitcmd.ErrCASMismatch; the caller (internal/sync)
-// re-reads the tips and redoes the merge.
+// Merge writes the union merge commit joining ours and theirs — two tips of the
+// same entity — then compare-and-swaps ref from ours to it. A lost race fails
+// with gitcmd.ErrCASMismatch.
 func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (model.SHA, error) {
 	ourChain, err := s.Repo.ReadChain(ctx, ours)
 	if err != nil {
