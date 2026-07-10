@@ -52,7 +52,11 @@ func init() {
 // fusekit.Serve owns the whole lifecycle; see mount.go for the cross-build
 // contract.
 func Mount(ctx context.Context, repoRoot string, mountpoint string) error {
-	return fusekit.Serve(ctx, buildConfig(repoRoot, mountpoint))
+	cfg, err := buildConfig(fusekit.MountSpec{Base: repoRoot, Dir: mountpoint})
+	if err != nil {
+		return err
+	}
+	return fusekit.Serve(ctx, cfg)
 }
 
 // hasMountRoot reports whether mountpoint serves the synthesized notes/tasks

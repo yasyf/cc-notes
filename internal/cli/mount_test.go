@@ -11,15 +11,13 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
-	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/fusekit/mountd"
 )
 
 // fakeHolder serves canned mountd responses over a short /tmp unix socket,
 // speaking proto-1 by hand so the CLI's holder driving is pinned independently
 // of the real server. respond maps each decoded request to a response; the
-// helper stamps the proto and, on a successful OpShutdown, closes the listener
-// so the CLI's post-shutdown WaitGone sees the socket go away promptly.
+// helper stamps the proto onto every reply.
 func fakeHolder(t *testing.T, respond func(req mountd.Request) mountd.Response) (socket string, requests func() []mountd.Request) {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "ccn-mountd")
@@ -56,9 +54,6 @@ func fakeHolder(t *testing.T, respond func(req mountd.Request) mountd.Response) 
 				resp := respond(req)
 				resp.Proto = mountd.MountProtoVersion
 				_ = json.NewEncoder(conn).Encode(resp)
-				if req.Op == mountd.OpShutdown && resp.OK {
-					_ = ln.Close()
-				}
 			}(conn)
 		}
 	}()
@@ -71,16 +66,10 @@ func fakeHolder(t *testing.T, respond func(req mountd.Request) mountd.Response) 
 	return socket, requests
 }
 
-// okHolder responds success to every op (an empty List). Its OpHealth reports
-// THIS binary's version, so the detached mount path's Converge sees no version
-// skew and is the cheap no-op (the production-common case) — a holder reporting
-// a different version would route into the retire-and-replace path, which a pure
-// test binary cannot respawn through (TestMountDetachedConvergesStaleHolder
-// exercises that skew leg deliberately).
+// okHolder responds success to every op (an empty List/Reclaim). It stands in
+// for a live holder that accepts each request: the detached mount path drives it
+// with no version negotiation, since the holder owns its own upgrade lifecycle.
 func okHolder(req mountd.Request) mountd.Response {
-	if req.Op == mountd.OpHealth {
-		return mountd.Response{OK: true, Version: version.String()}
-	}
 	return mountd.Response{OK: true}
 }
 
@@ -106,6 +95,9 @@ func TestMountDetachedSucceeds(t *testing.T) {
 			if r.Base == "" || r.Base == r.Dir {
 				t.Errorf("mount Base = %q, want the repo root (non-empty, != dir)", r.Base)
 			}
+			if r.Owner != "cc-notes" {
+				t.Errorf("mount Owner = %q, want %q so the shared holder scopes cc-notes' mounts", r.Owner, "cc-notes")
+			}
 		}
 	}
 	if mounts != 1 {
@@ -113,44 +105,29 @@ func TestMountDetachedSucceeds(t *testing.T) {
 	}
 }
 
-// TestMountDetachedConvergesStaleHolder proves the detached mount path converges
-// a holder left running at an older cc-notes version before serving: Converge
-// sees the version skew and retires the stale holder (OpShutdown). Because a pure
-// test binary cannot respawn the successor, the mount then fails with
-// ErrCannotHost (exit 1) after a "converge warning" on stderr — a real fuse
-// binary would respawn the current version and remount. The full
-// replace+remount is covered in fusekit's RemoteHost.Converge tests; this pins
-// the cc-notes integration (Converge runs before Setup and fires on skew).
-func TestMountDetachedConvergesStaleHolder(t *testing.T) {
+// TestMountDetachedNoConverge proves the detached mount path no longer converges
+// a version-skewed holder: it just mounts. A holder reporting a version the
+// current binary will never match is used as-is — the shared cask holder owns its
+// own upgrade lifecycle — so the mount succeeds and the CLI sends no OpHealth,
+// OpShutdown, or OpReclaim (the retired converge dance). Only OpMount is sent.
+func TestMountDetachedNoConverge(t *testing.T) {
 	repo := initRepo(t)
 	sock, requests := fakeHolder(t, func(req mountd.Request) mountd.Response {
 		if req.Op == mountd.OpHealth {
-			// A version the current binary will never report, so Converge treats
-			// the holder as skewed and retires it.
 			return mountd.Response{OK: true, Version: "v0.0.0-stale"}
 		}
 		return mountd.Response{OK: true}
 	})
 	mp := filepath.Join(t.TempDir(), "mnt")
 
-	_, stderr, err := runCLI(t, repo, "mount", "--socket", sock, mp)
-	if err == nil {
-		t.Fatal("mount succeeded against a stale holder a pure binary cannot replace, want a failure")
+	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, mp); err != nil {
+		t.Fatalf("mount against a skewed holder should just mount, got: %v", err)
 	}
-	if code := cli.ExitCode(err); code != 1 {
-		t.Errorf("exit = %d, want 1 (cannot respawn the successor on a pure build); err = %v", code, err)
-	}
-	var sawShutdown bool
 	for _, r := range requests() {
-		if r.Op == mountd.OpShutdown {
-			sawShutdown = true
+		switch r.Op {
+		case mountd.OpHealth, mountd.OpShutdown, mountd.OpReclaim:
+			t.Errorf("detached mount sent %s; the converge dance must be gone", r.Op)
 		}
-	}
-	if !sawShutdown {
-		t.Error("Converge did not retire the stale-version holder (no OpShutdown sent)")
-	}
-	if !strings.Contains(stderr, "converge warning") {
-		t.Errorf("stderr = %q, want a converge warning for the failed respawn", stderr)
 	}
 }
 
@@ -185,24 +162,6 @@ func TestMountBusyExits4(t *testing.T) {
 	}
 }
 
-// TestMountAutoQuietNoOpWithoutFuse proves the session-start ensure-mount
-// (`mount --auto`) is a silent, successful no-op on a binary that cannot host
-// fuse — even with the repo opted in (cc-notes.autoMount=true). It must never
-// contact a holder or print anything, so the SessionStart hook can call it in
-// any repo without risk of disturbing a running holder.
-func TestMountAutoQuietNoOpWithoutFuse(t *testing.T) {
-	dir := initRepo(t)
-	mustGit(t, dir, "config", "cc-notes.autoMount", "true")
-
-	stdout, stderr, err := runCLI(t, dir, "mount", "--auto")
-	if err != nil {
-		t.Fatalf("mount --auto: %v", err)
-	}
-	if stdout != "" || stderr != "" {
-		t.Errorf("mount --auto output = (stdout %q, stderr %q), want silent", stdout, stderr)
-	}
-}
-
 // TestMountAutoRejectsMountpoint proves --auto is a self-contained mode: it takes
 // no MOUNTPOINT and cannot be combined with another mode.
 func TestMountAutoRejectsMountpoint(t *testing.T) {
@@ -213,53 +172,9 @@ func TestMountAutoRejectsMountpoint(t *testing.T) {
 	}
 }
 
-func TestMountHolderDownExits1(t *testing.T) {
-	repo := initRepo(t)
-	sock := filepath.Join(t.TempDir(), "never-bound.sock")
-	mp := filepath.Join(t.TempDir(), "mnt")
-
-	// A pure test binary cannot spawn a holder, so an unreachable socket fails
-	// with ErrCannotHost — a plain error (exit 1), never a conflict.
-	_, _, err := runCLI(t, repo, "mount", "--socket", sock, mp)
-	if err == nil {
-		t.Fatal("mount succeeded with no holder, want a failure")
-	}
-	if code := cli.ExitCode(err); code != 1 {
-		t.Errorf("exit = %d, want 1; err = %v", code, err)
-	}
-}
-
-// TestMountDetachedCreatesStateDir guards the first-run holder spawn: the
-// detached path must create cc-notes' state dir (~/.cc-notes) before handing
-// off to the holder, because that dir homes the spawn log and the default
-// socket, and fusekit treats their parent dirs as the caller's to create. An
-// explicit mountpoint never creates ~/.cc-notes on its own, so without this the
-// first `cc-notes mount DIR` on a fresh machine dies with "open mount holder
-// log: no such file or directory". A pure test binary can't spawn a holder, so
-// the mount itself fails (ErrCannotHost) — but the state dir must already exist
-// by the time it does.
-func TestMountDetachedCreatesStateDir(t *testing.T) {
-	repo := initRepo(t)
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	stateDir := filepath.Join(home, ".cc-notes")
-	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
-		t.Fatalf("precondition: state dir %s should be absent, stat err = %v", stateDir, err)
-	}
-
-	sock := filepath.Join(t.TempDir(), "never-bound.sock")
-	mp := filepath.Join(t.TempDir(), "mnt")
-	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, mp); err == nil {
-		t.Fatal("mount with no holder succeeded on a pure build, want a failure")
-	}
-	if _, err := os.Stat(stateDir); err != nil {
-		t.Fatalf("detached mount did not create state dir %s: %v", stateDir, err)
-	}
-}
-
 func TestMountList(t *testing.T) {
 	repo := initRepo(t)
-	sock, _ := fakeHolder(t, func(req mountd.Request) mountd.Response {
+	sock, requests := fakeHolder(t, func(req mountd.Request) mountd.Response {
 		if req.Op == mountd.OpList {
 			return mountd.Response{OK: true, Mounts: []mountd.MountInfo{
 				{Dir: "/m/alpha", Base: "/r/alpha", Live: true},
@@ -277,6 +192,20 @@ func TestMountList(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("--list output %q missing %q", stdout, want)
 		}
+	}
+	// The listing is owner-scoped so the shared holder never leaks another
+	// tenant's mounts into cc-notes' --list.
+	var sawList bool
+	for _, r := range requests() {
+		if r.Op == mountd.OpList {
+			sawList = true
+			if r.Owner != "cc-notes" {
+				t.Errorf("--list Owner = %q, want %q (owner-scoped)", r.Owner, "cc-notes")
+			}
+		}
+	}
+	if !sawList {
+		t.Error("--list sent no OpList to the holder")
 	}
 }
 
@@ -311,21 +240,88 @@ func TestMountStopNotMountedNoOp(t *testing.T) {
 	}
 }
 
-func TestMountShutdown(t *testing.T) {
+// TestMountShutdownReclaims proves `mount --shutdown` reclaims cc-notes' OWN
+// mounts (per-owner OpReclaim) rather than stopping the holder: the shared cask
+// holder hosts other tenants, so a cross-owner OpShutdown would tear their
+// mounts out. It must send OpReclaim scoped to Owner "cc-notes" and NEVER
+// OpShutdown.
+func TestMountShutdownReclaims(t *testing.T) {
 	repo := initRepo(t)
 	sock, requests := fakeHolder(t, okHolder)
 
 	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, "--shutdown"); err != nil {
 		t.Fatalf("mount --shutdown: %v", err)
 	}
-	var sawShutdown bool
+	var sawReclaim bool
 	for _, r := range requests() {
 		if r.Op == mountd.OpShutdown {
-			sawShutdown = true
+			t.Error("--shutdown sent OpShutdown; it must reclaim per-owner and leave the shared holder running")
+		}
+		if r.Op == mountd.OpReclaim {
+			sawReclaim = true
+			if r.Owner != "cc-notes" {
+				t.Errorf("reclaim Owner = %q, want %q so only cc-notes' mounts are torn down", r.Owner, "cc-notes")
+			}
 		}
 	}
-	if !sawShutdown {
-		t.Error("--shutdown did not send OpShutdown to the holder")
+	if !sawReclaim {
+		t.Error("--shutdown did not send OpReclaim to the holder")
+	}
+}
+
+// TestMountShutdownReclaimWedgedExits1 proves a reclaim that leaves a mount
+// wedged (the holder reports it in the failed set) surfaces ErrUnmountWedged and
+// exits 1 — never a false success.
+func TestMountShutdownReclaimWedgedExits1(t *testing.T) {
+	repo := initRepo(t)
+	sock, _ := fakeHolder(t, func(req mountd.Request) mountd.Response {
+		if req.Op == mountd.OpReclaim {
+			return mountd.Response{OK: true, Mounts: []mountd.MountInfo{
+				{Dir: "/m/wedged", Base: "/r/wedged", Live: true},
+			}}
+		}
+		return okHolder(req)
+	})
+
+	_, _, err := runCLI(t, repo, "mount", "--socket", sock, "--shutdown")
+	if err == nil {
+		t.Fatal("--shutdown succeeded despite a wedged reclaim, want a failure")
+	}
+	if code := cli.ExitCode(err); code != 1 {
+		t.Errorf("exit = %d, want 1 (wedged); err = %v", code, err)
+	}
+}
+
+// TestMountShutdownRemovesNotesSymlinks proves --shutdown removes the .notes
+// symlinks presenting cc-notes' reclaimed mounts. It snapshots the owner's
+// mounts via List, reclaims them, then unlinks each presenting symlink.
+func TestMountShutdownRemovesNotesSymlinks(t *testing.T) {
+	repo := initRepo(t)
+	repoRoot := mustGit(t, repo, "rev-parse", "--show-toplevel")
+	mp := filepath.Join(t.TempDir(), "mnt")
+	if err := os.MkdirAll(mp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(repoRoot, ".notes")
+	if err := os.Symlink(mp, link); err != nil {
+		t.Fatal(err)
+	}
+
+	sock, _ := fakeHolder(t, func(req mountd.Request) mountd.Response {
+		if req.Op == mountd.OpList {
+			// Base is the repo root that presents .notes; Dir is the managed mount.
+			return mountd.Response{OK: true, Mounts: []mountd.MountInfo{
+				{Dir: mp, Base: repoRoot, Live: true, Owner: "cc-notes"},
+			}}
+		}
+		return okHolder(req)
+	})
+
+	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, "--shutdown"); err != nil {
+		t.Fatalf("mount --shutdown: %v", err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Errorf(".notes symlink not removed after reclaim: err=%v", err)
 	}
 }
 

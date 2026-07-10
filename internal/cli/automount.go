@@ -46,8 +46,9 @@ func setAutoMount(ctx context.Context, g gitcmd.Git, on bool) error {
 // never fails the caller. The durable preference (cc-notes.autoMount) is
 // persisted separately by the caller, so a later session-start ensure-mount in a
 // fuse-capable build still brings the mount up. It reuses serveDetached, so an
-// auto-mount is identical to a manual `cc-notes mount` (Converge, then Setup,
-// then the .notes presentation).
+// auto-mount is identical to a manual `cc-notes mount` (Setup, then the .notes
+// presentation) against the same holder the CLI defaults to — the shared cask
+// holder, or the private one when CC_NOTES_CASKLESS_HOLDER is set.
 func autoMount(cmd *cobra.Command, repoRoot string) {
 	if !fusefs.Hostable {
 		// A build that cannot host fuse (the pure binary, dev, CI) never
@@ -68,7 +69,8 @@ func autoMount(cmd *cobra.Command, repoRoot string) {
 		warnAutoMount(cmd, err)
 		return
 	}
-	if err := serveDetached(cmd, mountsSocketPath(), repoRoot, mp, true); err != nil {
+	caskless := casklessEnv()
+	if err := serveDetached(cmd, holderSocket("", caskless), caskless, repoRoot, mp, true); err != nil {
 		warnAutoMount(cmd, err)
 	}
 }

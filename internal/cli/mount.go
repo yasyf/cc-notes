@@ -9,14 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/fusefs"
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/store"
-	"github.com/yasyf/cc-notes/internal/version"
+	"github.com/yasyf/fusekit"
 	"github.com/yasyf/fusekit/mountd"
 )
 
@@ -32,6 +31,7 @@ type mountOpts struct {
 	shutdown   bool
 	stop       string
 	socket     string
+	caskless   bool
 	auto       bool
 }
 
@@ -59,11 +59,13 @@ func newMountCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVarP(&opts.foreground, "foreground", "f", false, "serve in the foreground and unmount on Ctrl-C (bypasses the mount holder)")
-	f.BoolVar(&opts.list, "list", false, "list the mounts the holder serves, then exit")
-	f.BoolVar(&opts.shutdown, "shutdown", false, "unmount everything and stop the mount holder, then exit")
+	f.BoolVar(&opts.list, "list", false, "list cc-notes' mounts on the holder, then exit")
+	f.BoolVar(&opts.shutdown, "shutdown", false, "unmount cc-notes' own mounts (the shared holder keeps running), then exit")
 	f.StringVar(&opts.stop, "stop", "", "unmount the mount at DIR, then exit")
-	f.StringVar(&opts.socket, "socket", mountsSocketPath(), "mount-holder unix socket path")
+	f.StringVar(&opts.socket, "socket", "", "mount-holder unix socket path (default: the shared fusekit-holder cask socket, or ~/.cc-notes/mounts.sock with --caskless)")
 	_ = f.MarkHidden("socket")
+	f.BoolVar(&opts.caskless, "caskless", false, "drive cc-notes' own self-exec mount holder instead of the shared fusekit-holder cask (also via CC_NOTES_CASKLESS_HOLDER)")
+	_ = f.MarkHidden("caskless")
 	f.BoolVar(&opts.auto, "auto", false, "session-start ensure-mount: mount only if this repo opted in (cc-notes.autoMount) and the binary can host fuse; self-gating, best-effort, quiet")
 	_ = f.MarkHidden("auto")
 	return cmd
@@ -95,15 +97,21 @@ func runMount(cmd *cobra.Command, args []string, opts mountOpts) error {
 		return &UsageError{Err: errors.New("--auto takes no MOUNTPOINT and cannot be combined with --foreground, --list, --shutdown, or --stop")}
 	}
 
+	// Resolve the holder mode and its socket once: the shared fusekit-holder cask
+	// (default) or cc-notes' own self-exec holder (--caskless / env). --caskless is
+	// orthogonal to the modes above — it selects WHICH holder, not what to do.
+	caskless := opts.caskless || casklessEnv()
+	socket := holderSocket(opts.socket, caskless)
+
 	switch {
 	case opts.auto:
 		return runMountAuto(cmd)
 	case opts.list:
-		return runMountList(cmd, opts.socket)
+		return runMountList(cmd, socket)
 	case opts.shutdown:
-		return runMountShutdown(cmd, opts.socket)
+		return runMountShutdown(cmd, socket)
 	case opts.stop != "":
-		return runMountStop(cmd, opts.socket, opts.stop)
+		return runMountStop(cmd, socket, caskless, opts.stop)
 	}
 
 	cwd, err := os.Getwd()
@@ -140,33 +148,24 @@ func runMount(cmd *cobra.Command, args []string, opts mountOpts) error {
 		return fusefs.Mount(cmd.Context(), repoRoot, mp)
 	}
 
-	// Detached default: hand the mount to the holder, converging a stale-version
-	// holder first and presenting the managed .notes symlink. serveDetached owns
-	// that whole path so `init`'s auto-mount reuses it verbatim.
-	return serveDetached(cmd, opts.socket, repoRoot, mp, usedDefault)
+	// Detached default: hand the mount to the holder and present the managed
+	// .notes symlink. serveDetached owns that whole path so `init`'s auto-mount
+	// reuses it verbatim.
+	return serveDetached(cmd, socket, caskless, repoRoot, mp, usedDefault)
 }
 
 // serveDetached hands repoRoot's mount to the holder on socket and returns —
-// the mount persists. It converges a stale-version holder first (a holder left
-// running at an older cc-notes version never self-replaces, the wire protocol
-// being frozen), then ensures the mount via Setup, then — for the managed
+// the mount persists. It ensures the mount via Setup, then — for the managed
 // default (usedDefault) — presents it in the repo as a .notes symlink and prints
 // that path; an explicit mountpoint prints itself. The state dir is created
-// first: it homes the spawn log and the default socket, and fusekit treats both
-// paths' parent dirs as the caller's to create. Shared by `mount` and `init`.
-func serveDetached(cmd *cobra.Command, socket, repoRoot, mp string, usedDefault bool) error {
+// first: it homes the spawn log (and, in cask-less mode, the default socket), and
+// fusekit treats both paths' parent dirs as the caller's to create. Shared by
+// `mount` and `init`.
+func serveDetached(cmd *cobra.Command, socket string, caskless bool, repoRoot, mp string, usedDefault bool) error {
 	if err := os.MkdirAll(stateDir(), 0o700); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
 	}
-	host := newRemoteHost(socket)
-	// Converge is best-effort: a failure must not block this mount (Setup below
-	// brings a holder up and serves the requested dir regardless), so it is
-	// surfaced as a warning, not returned.
-	if err := host.Converge(cmd.Context()); err != nil {
-		if _, werr := fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: converge warning: %v\n", err); werr != nil {
-			return werr
-		}
-	}
+	host := newRemoteHost(socket, caskless)
 	if err := host.Setup(repoRoot, mp); err != nil {
 		return err
 	}
@@ -190,11 +189,12 @@ func serveDetached(cmd *cobra.Command, socket, repoRoot, mp string, usedDefault 
 	return nil
 }
 
-// runMountList prints the mounts the holder serves, one tab-separated
-// dir/base/liveness line each. A holder that is not running surfaces
-// mountd.ErrHolderUnavailable (exit 1).
+// runMountList prints the mounts cc-notes owns on the holder, one tab-separated
+// dir/base/liveness line each. The listing is owner-scoped: on the shared cask
+// holder it shows only cc-notes' mounts, never another tenant's. A holder that
+// is not running surfaces mountd.ErrHolderUnavailable (exit 1).
 func runMountList(cmd *cobra.Command, socket string) error {
-	mounts, err := mountd.NewClient(socket).List()
+	mounts, err := ownedClient(socket).List()
 	if err != nil {
 		return err
 	}
@@ -211,15 +211,22 @@ func runMountList(cmd *cobra.Command, socket string) error {
 	return nil
 }
 
-// runMountShutdown unmounts everything the holder owns and stops it. Dirs that
-// fail to come down surface ErrUnmountWedged (exit 1).
+// runMountShutdown reclaims cc-notes' own mounts on the holder — a per-owner
+// unmount of every mount tagged Owner "cc-notes" — and removes the .notes
+// symlinks presenting them. It does NOT stop the holder: the shared
+// fusekit-holder cask hosts other consumers' mounts and refuses a cross-owner
+// Shutdown, so cc-notes only ever tears down its own mounts and leaves the
+// holder running for its other tenants. Dirs that fail to come down surface
+// ErrUnmountWedged (exit 1).
 func runMountShutdown(cmd *cobra.Command, socket string) error {
-	client := mountd.NewClient(socket)
-	// Snapshot the mounts before teardown so the .notes symlinks presenting them
-	// can be removed afterward — Shutdown drops them from the holder's registry.
-	// Best-effort: a List failure just leaves the symlinks for the next mount.
+	client := ownedClient(socket)
+	// Snapshot cc-notes' mounts before teardown so the .notes symlinks presenting
+	// them can be removed afterward — Reclaim drops them from the holder's
+	// registry. Owner-scoped, so a foreign tenant's mount is never listed or
+	// touched. Best-effort: a List failure just leaves the symlinks for the next
+	// mount.
 	mounts, _ := client.List()
-	failed, err := client.Shutdown()
+	failed, err := client.Reclaim()
 	if err != nil {
 		return err
 	}
@@ -230,19 +237,12 @@ func runMountShutdown(cmd *cobra.Command, socket string) error {
 		}
 		return fmt.Errorf("%w: %s", fusefs.ErrUnmountWedged, strings.Join(dirs, ", "))
 	}
-	if !client.WaitGone(5 * time.Second) {
-		// The holder swept its mounts and acked Shutdown but kept its socket —
-		// reap it by peer credentials (bounded, identity-gated; never a name
-		// kill) so a wedged process cannot linger holding the socket.
-		_, _ = client.Kill()
-		client.WaitGone(2 * time.Second)
-	}
 	// Every mount came down (failed is empty above), so remove each presenting
 	// .notes symlink that still points at its now-unmounted dir.
 	for _, m := range mounts {
 		_ = unlinkNotes(m.Base, m.Dir)
 	}
-	if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "cc-notes: mount holder stopped"); err != nil {
+	if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "cc-notes: reclaimed cc-notes mounts"); err != nil {
 		return err
 	}
 	return nil
@@ -250,8 +250,9 @@ func runMountShutdown(cmd *cobra.Command, socket string) error {
 
 // runMountStop unmounts the mount at dir via the holder. Nothing mounted at dir
 // is an immediate no-op (no holder contact); a live mount or a carcass routes
-// through the holder's bounded teardown.
-func runMountStop(cmd *cobra.Command, socket, dir string) error {
+// through the holder's bounded teardown — unless the holder registers dir to
+// another owner, which is refused (the shared holder hosts other tenants).
+func runMountStop(cmd *cobra.Command, socket string, caskless bool, dir string) error {
 	mp, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("mountpoint: %w", err)
@@ -267,11 +268,25 @@ func runMountStop(cmd *cobra.Command, socket, dir string) error {
 		namedLink = mp
 		mp = absSymlinkTarget(mp, target)
 	}
+	// The holder's unmount is path-keyed, so on the shared holder a --stop
+	// aimed at another tenant's registered mount would tear it down. Refuse a
+	// dir the holder registers to a foreign owner. An unreachable holder has no
+	// registry — anything still mounted then is a carcass teardown may clear —
+	// and an unmounted dir stays a local no-op that contacts no holder.
+	if fusekit.Mounted(mp) {
+		mounts, err := (&mountd.Client{Socket: socket}).List()
+		if err != nil && !errors.Is(err, mountd.ErrHolderUnavailable) {
+			return fmt.Errorf("unmount %s: %w", mp, err)
+		}
+		if err := refuseForeignStop(mounts, mp); err != nil {
+			return err
+		}
+	}
 	// Teardown needs a base only for its base != dir refusal: a registered mount
 	// is torn down by the base the holder recorded, and an unregistered carcass
 	// ignores base entirely (a forced kernel unmount). The mountpoint's parent
 	// is a stable non-dir value that satisfies the refusal.
-	if err := newRemoteHost(socket).Teardown(filepath.Dir(mp), mp); err != nil {
+	if err := newRemoteHost(socket, caskless).Teardown(filepath.Dir(mp), mp); err != nil {
 		return err
 	}
 	if namedLink != "" {
@@ -285,20 +300,54 @@ func runMountStop(cmd *cobra.Command, socket, dir string) error {
 	return nil
 }
 
-// newRemoteHost builds the holder-backed mount driver for socket, carrying
-// cc-notes' holder argv and pure-build install hint. SpawnTimeout is left zero
-// (mountd.DefaultSpawnTimeout). StableExecDir spawns the holder from a stable
-// binary copy so the macOS TCC grant survives upgrades; Version lets Converge
-// replace a holder left running at an older cc-notes version.
-func newRemoteHost(socket string) *mountd.RemoteHost {
-	return &mountd.RemoteHost{
+// refuseForeignStop returns the refusal for a --stop aimed at a mount the
+// holder registers to another owner. mounts is the holder's unscoped listing;
+// an mp it does not register — a carcass, or a dir the holder never served —
+// is not refused, since the bounded teardown owns those.
+func refuseForeignStop(mounts []mountd.MountInfo, mp string) error {
+	for _, m := range mounts {
+		if m.Dir == mp && m.Owner != holderOwner {
+			return fmt.Errorf("refusing to unmount %s: the holder registers it to owner %q, not %q", mp, m.Owner, holderOwner)
+		}
+	}
+	return nil
+}
+
+// holderOwner tags cc-notes' mounts on the shared cask holder. It scopes List
+// and Reclaim to cc-notes' own mounts so a per-owner teardown never disturbs
+// another tenant, and it is the identity a cross-owner Shutdown is refused by.
+const holderOwner = "cc-notes"
+
+// ownedClient is a bare holder client scoped to cc-notes' owner — for the
+// no-spawn RPCs (List, Reclaim) that drive an already-running holder.
+func ownedClient(socket string) *mountd.Client {
+	return &mountd.Client{Socket: socket, Owner: holderOwner}
+}
+
+// newRemoteHost builds the holder-backed mount driver for socket, tagged with
+// cc-notes' owner. SpawnTimeout is left zero (mountd.DefaultSpawnTimeout).
+//
+// The default (caskless=false) drives the shared fusekit-holder cask: ExecPath
+// is the installed cask binary, which spawn launches via `open -g`; it is
+// already stable-path, so no StableExecDir is needed and no Version is set
+// (the holder owns its own upgrade lifecycle — cc-notes never converge-replaces
+// it). Caskless mode drives cc-notes' own self-exec holder (the mount-holder
+// subcommand): the holder is this binary respawned from a stable copy so the
+// macOS TCC grant survives upgrades.
+func newRemoteHost(socket string, caskless bool) *mountd.RemoteHost {
+	h := &mountd.RemoteHost{
 		Socket:         socket,
 		LogPath:        mountHolderLogPath(),
-		Args:           []string{"mount-holder", "--socket", socket},
 		CannotHostHint: cannotHostHint,
-		StableExecDir:  stableExecDir(),
-		Version:        version.String(),
+		Owner:          holderOwner,
 	}
+	if caskless {
+		h.Args = []string{"mount-holder", "--socket", socket}
+		h.StableExecDir = stableExecDir()
+	} else {
+		h.ExecPath = mountd.HolderExe
+	}
+	return h
 }
 
 // resolveRepoAndMountpoint resolves the repository root the mount renders over

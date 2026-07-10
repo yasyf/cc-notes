@@ -3,7 +3,13 @@ package cli
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/yasyf/fusekit/mountd"
 )
+
+// casklessEnvVar opts a machine without the shared fusekit-holder cask into
+// cc-notes' own self-exec mount holder. Any non-empty value selects it.
+const casklessEnvVar = "CC_NOTES_CASKLESS_HOLDER"
 
 // cc-notes' own state lives under ~/.cc-notes/, mirroring cc-pool's ~/.cc-pool:
 // one well-known mount-holder socket (a per-repo socket is impossible — the
@@ -43,7 +49,29 @@ func mountHolderLogPath() string {
 // stableExecDir is where the mount holder's binary is materialized as a stable
 // copy before spawning (~/.cc-notes/bin), so the holder's resolved executable
 // path stays put across version upgrades and the macOS "Network Volumes" TCC
-// grant survives them; see fusekit/mountd.RemoteHost.StableExecDir.
+// grant survives them; see fusekit/mountd.RemoteHost.StableExecDir. Used only
+// by the cask-less holder mode — the shared cask holder is already stable-path.
 func stableExecDir() string {
 	return filepath.Join(stateDir(), "bin")
+}
+
+// casklessEnv reports whether the private, cask-less mount holder is selected
+// via the environment (CC_NOTES_CASKLESS_HOLDER set to any non-empty value).
+func casklessEnv() bool {
+	return os.Getenv(casklessEnvVar) != ""
+}
+
+// holderSocket resolves the effective mount-holder socket for the selected
+// mode. An explicit --socket (chosen != "") wins; otherwise the shared cask
+// holder binds mountd.DefaultHolderSocket() and the private cask-less holder
+// binds ~/.cc-notes/mounts.sock.
+func holderSocket(chosen string, caskless bool) string {
+	switch {
+	case chosen != "":
+		return chosen
+	case caskless:
+		return mountsSocketPath()
+	default:
+		return mountd.DefaultHolderSocket()
+	}
 }

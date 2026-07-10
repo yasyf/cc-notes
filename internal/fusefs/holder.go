@@ -34,18 +34,18 @@ func HolderHost() mountd.Host {
 	return &fusekit.MountSet{Build: buildConfig, StateFn: probeState}
 }
 
-// buildConfig constructs the fusekit Config for serving base's notes and tasks
-// at dir. base is the repo ROOT — the caller (the CLI, before it ever reaches
-// the holder) resolves it through the store and passes it over the wire, so
-// store.Open(base) is opening an already-validated repository; a failure here
-// is an unreachable invariant violation (the root vanished mid-flight), loud by
-// design. The cache-defeat callbacks route cc-notes' NFS data-cache defeats
-// through fusekit: notesSeed feeds the per-version mtime nanosecond on Getattr,
-// notesCommit commits on both Flush and Fsync.
-func buildConfig(base, dir string) fusekit.Config {
-	s, err := store.Open(base)
+// buildConfig constructs the fusekit Config for serving spec.Base's notes and
+// tasks at spec.Dir. spec.Base is the repo ROOT — the caller (the CLI, before it
+// ever reaches the holder) resolves it through the store and passes it over the
+// wire, so store.Open(spec.Base) opens an already-validated repository; a failure
+// returns the error so MountSet.Build fails the mount loudly (the root vanished
+// mid-flight — never serve the wrong bytes). The cache-defeat callbacks route
+// cc-notes' NFS data-cache defeats through fusekit: notesSeed feeds the
+// per-version mtime nanosecond on Getattr, notesCommit commits on Flush and Fsync.
+func buildConfig(spec fusekit.MountSpec) (fusekit.Config, error) {
+	s, err := store.Open(spec.Base)
 	if err != nil {
-		panic(fmt.Sprintf("fusefs: open store at repo root %s: %v", base, err))
+		return fusekit.Config{}, fmt.Errorf("fusefs: open store at repo root %s: %w", spec.Base, err)
 	}
 	fs := newFS(context.Background(), s)
 
@@ -60,13 +60,14 @@ func buildConfig(base, dir string) fusekit.Config {
 	var opts []string
 	if runtime.GOOS == "darwin" {
 		opts = fusekit.MountOptions{
-			Volname:  "cc-notes-" + filepath.Base(base),
+			Volname:  "cc-notes-" + filepath.Base(spec.Base),
 			NoBrowse: true,
 		}.Build()
 	}
 
+	dir := spec.Dir
 	return fusekit.Config{
-		Base:    base,
+		Base:    spec.Base,
 		Dir:     dir,
 		FS:      fs,
 		Options: opts,
@@ -83,7 +84,7 @@ func buildConfig(base, dir string) fusekit.Config {
 			VersionSeed: fs.notesSeed,
 			Commit:      fs.notesCommit,
 		},
-	}
+	}, nil
 }
 
 // probeState reports the (mounted, alive) liveness pair for dir. Liveness is
