@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"add_comment","body":"Manual reconnect criterion not individually re-run; feature shipped v0.21.1 and has been in production 3 releases. Force-closing."}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_status","status":"done"},{"kind":"link_commit","sha":"e16a2fabd487b6f663833ec1f640a4059557c75f"}]}
