@@ -1,1 +1,1 @@
-{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"3e86bc4d25879b00946a3155e80c2c75","title":"viz web: split highlight.js/react-markdown into a lazy chunk","description":"","type":"task","priority":2,"branch":"","parent":"","labels":null},{"kind":"add_criterion","id":"0199fc6ad7b4b5b277c03a1f99b687b9","text":"npm run build emits no \u003e500kB chunk warning and the attachment/code viewers still highlight","script":""}]}
+{"v":1,"lamport":2,"ops":[{"kind":"add_comment","body":"Shipped in v0.21.1 via 47de46d1 (cc-task trailer); closing retroactively."}]}
