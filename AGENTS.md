@@ -1,4 +1,4 @@
-<!-- cc-guides 0.1.8 src=AGENTS.src.md | GENERATED — do not edit: change AGENTS.src.md and run 'cc-guides render'. Everything below is in force. -->
+<!-- cc-guides 0.1.10 src=.claude/fragments/AGENTS.md fragments=cc-skills@a91b043bdbd2 | GENERATED — do not edit: edit .claude/fragments/AGENTS.md/ and run 'cc-guides render'. Everything below is in force. -->
 # cc-notes Development Guide
 
 Git-native notes and tasks layer for agents, written in Go (module `github.com/yasyf/cc-notes`). Ships as a single static binary `cc-notes`, distributed via GitHub Release assets. All data lives as objects in the git ODB on `refs/cc-notes/*` — synced with the repo, invisible in checkouts.

@@ -1,0 +1,5 @@
+fragments = [
+  "cc-notes-development-guide",
+  "cc-skills:ccx",
+  "go-style",
+]
