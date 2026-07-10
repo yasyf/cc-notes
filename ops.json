@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_criterion_status","id":"0199fc6ad7b4b5b277c03a1f99b687b9","status":"met"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"add_comment","body":"Criterion verified 2026-07-10: npm run build emits no \u003e500kB warning (Panel lazy chunk 242.68 kB, index 316.11 kB)."}]}
