@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -29,7 +28,7 @@ func newCompactCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ref, err := resolveEntity(ctx, s, args[0])
+			ref, err := resolveAnyEntity(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -46,6 +45,12 @@ func newCompactCmd() *cobra.Command {
 				return printLog(cmd, s, v, jsonOut)
 			case model.Task:
 				return printTask(cmd, s, v, jsonOut)
+			case model.Sprint:
+				return printSprint(cmd, s, v, jsonOut)
+			case model.Project:
+				return printProject(cmd, s, v, jsonOut)
+			case model.Runbook:
+				return printRunbook(cmd, v, jsonOut)
 			default:
 				return fmt.Errorf("compact: unexpected snapshot %T", snap)
 			}
@@ -53,50 +58,6 @@ func newCompactCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
-}
-
-// resolveEntity expands a kind-agnostic id prefix into a ref. An entity is a
-// note, a task, a doc, or a log and ids are globally unique, so it resolves
-// against all four namespaces; a prefix that matches an entity in more than one
-// is ambiguous and fails with an *AmbiguousError listing each match.
-func resolveEntity(ctx context.Context, s *store.Store, prefix string) (string, error) {
-	noteRef, noteErr := s.Resolve(ctx, refs.KindNote, prefix)
-	if noteErr != nil && !errors.Is(noteErr, store.ErrNotFound) {
-		return "", noteErr
-	}
-	taskRef, taskErr := s.Resolve(ctx, refs.KindTask, prefix)
-	if taskErr != nil && !errors.Is(taskErr, store.ErrNotFound) {
-		return "", taskErr
-	}
-	docRef, docErr := s.Resolve(ctx, refs.KindDoc, prefix)
-	if docErr != nil && !errors.Is(docErr, store.ErrNotFound) {
-		return "", docErr
-	}
-	logRef, logErr := s.Resolve(ctx, refs.KindLog, prefix)
-	if logErr != nil && !errors.Is(logErr, store.ErrNotFound) {
-		return "", logErr
-	}
-	matched := make([]string, 0, 4)
-	if noteErr == nil {
-		matched = append(matched, noteRef)
-	}
-	if taskErr == nil {
-		matched = append(matched, taskRef)
-	}
-	if docErr == nil {
-		matched = append(matched, docRef)
-	}
-	if logErr == nil {
-		matched = append(matched, logRef)
-	}
-	switch len(matched) {
-	case 0:
-		return "", fmt.Errorf("%w: no note, task, doc, or log matches %q", store.ErrNotFound, prefix)
-	case 1:
-		return matched[0], nil
-	default:
-		return "", ambiguousAcrossKinds(ctx, s, prefix, matched)
-	}
 }
 
 func ambiguousAcrossKinds(ctx context.Context, s *store.Store, prefix string, matched []string) error {

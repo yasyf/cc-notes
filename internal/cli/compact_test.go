@@ -47,8 +47,98 @@ func TestCompactTaskAndUnknownID(t *testing.T) {
 		t.Fatalf("compact status = %q, want in_progress (state preserved)", got.Status)
 	}
 
-	if _, _, err := runCLI(t, dir, "compact", "ffffffff"); err == nil {
+	_, _, err := runCLI(t, dir, "compact", "ffffffff")
+	if err == nil {
 		t.Fatal("compact of an unknown id returned nil error")
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("compact unknown id error = %v, want ErrNotFound", err)
+	}
+	if want := `no entity matches "ffffffff"`; !strings.Contains(err.Error(), want) {
+		t.Fatalf("compact unknown id error = %q, want it to contain %q", err.Error(), want)
+	}
+}
+
+// commonJSON captures the id/title/status subset shared by the sprint, project,
+// and runbook output DTOs — the fields compact's round-trip assertions pin.
+type commonJSON struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+}
+
+func TestCompactSprintJSONAndLean(t *testing.T) {
+	dir := initRepo(t)
+	added := mustJSON[commonJSON](t, mustRun(t, dir, "sprint", "add", "Q3 sprint", "--json"))
+	mustRun(t, dir, "sprint", "activate", added.ID, "--json")
+
+	got := mustJSON[commonJSON](t, mustRun(t, dir, "compact", added.ID, "--json"))
+	if got.ID != added.ID {
+		t.Fatalf("compact id = %s, want %s (id is immutable)", got.ID, added.ID)
+	}
+	if got.Title != "Q3 sprint" {
+		t.Fatalf("compact title = %q, want Q3 sprint (state preserved)", got.Title)
+	}
+	if got.Status != "active" {
+		t.Fatalf("compact status = %q, want active (state preserved)", got.Status)
+	}
+
+	lean := mustRun(t, dir, "compact", added.ID)
+	if !strings.HasPrefix(lean, added.ID[:7]) {
+		t.Fatalf("compact lean = %q, want prefix %s", lean, added.ID[:7])
+	}
+	if !strings.Contains(lean, "Q3 sprint") {
+		t.Fatalf("compact lean = %q, want it to carry the title", lean)
+	}
+}
+
+func TestCompactProjectJSONAndLean(t *testing.T) {
+	dir := initRepo(t)
+	added := mustJSON[commonJSON](t, mustRun(t, dir, "project", "add", "Roadmap", "--json"))
+	mustRun(t, dir, "project", "complete", added.ID, "--json")
+
+	got := mustJSON[commonJSON](t, mustRun(t, dir, "compact", added.ID, "--json"))
+	if got.ID != added.ID {
+		t.Fatalf("compact id = %s, want %s (id is immutable)", got.ID, added.ID)
+	}
+	if got.Title != "Roadmap" {
+		t.Fatalf("compact title = %q, want Roadmap (state preserved)", got.Title)
+	}
+	if got.Status != "completed" {
+		t.Fatalf("compact status = %q, want completed (state preserved)", got.Status)
+	}
+
+	lean := mustRun(t, dir, "compact", added.ID)
+	if !strings.HasPrefix(lean, added.ID[:7]) {
+		t.Fatalf("compact lean = %q, want prefix %s", lean, added.ID[:7])
+	}
+	if !strings.Contains(lean, "Roadmap") {
+		t.Fatalf("compact lean = %q, want it to carry the title", lean)
+	}
+}
+
+func TestCompactRunbookJSONAndLean(t *testing.T) {
+	dir := initRepo(t)
+	added := mustJSON[commonJSON](t, mustRun(t, dir, "runbook", "add", "Deploy", "--json"))
+	mustRun(t, dir, "runbook", "archive", added.ID, "--json")
+
+	got := mustJSON[commonJSON](t, mustRun(t, dir, "compact", added.ID, "--json"))
+	if got.ID != added.ID {
+		t.Fatalf("compact id = %s, want %s (id is immutable)", got.ID, added.ID)
+	}
+	if got.Title != "Deploy" {
+		t.Fatalf("compact title = %q, want Deploy (state preserved)", got.Title)
+	}
+	if got.Status != "archived" {
+		t.Fatalf("compact status = %q, want archived (state preserved)", got.Status)
+	}
+
+	lean := mustRun(t, dir, "compact", added.ID)
+	if !strings.HasPrefix(lean, added.ID[:7]) {
+		t.Fatalf("compact lean = %q, want prefix %s", lean, added.ID[:7])
+	}
+	if !strings.Contains(lean, "Deploy") {
+		t.Fatalf("compact lean = %q, want it to carry the title", lean)
 	}
 }
 

@@ -6,6 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-10
+
+### Added
+- **Runbooks: ordered procedures with tracked runs.** A runbook is a sequence
+  of steps — instruction text plus an optional command — whose executions are
+  first-class: each run records the runner, timestamps, per-step outcomes
+  (done/failed/skipped), an overall status, and an optional task cite. Runs
+  live as ops on the runbook's own chain (`refs/cc-notes/runbooks/*`), folded
+  with the same rules as every other kind; step positions use fractional
+  indexing so inserts never renumber neighbors. Surfaces: a full `runbook`
+  CLI noun group (`runbook` / `step` / `run` verbs, with writes gated on
+  active runbooks), nine MCP tools covering the run loop, viz timeline +
+  browse + detail, read-only FUSE rendering, a runbooks reference in the
+  using-cc-notes skill, and the plugin record-router now routes
+  runbook-shaped content to `runbook add` instead of `doc add`.
+
+### Changed
+- `cc-notes compact ID` now accepts all seven entity kinds — sprint, project,
+  and runbook join note, doc, log, and task — resolving the id across every
+  kind the way `show` and `history` already do. Its unknown-id failure is now
+  the shared `no entity matches "<id>"`, unifying the message with `show` and
+  `history`.
+- Duplicate creates now report as a typed `DuplicateError` (sentinel
+  `ErrDuplicate`) carrying the surviving snapshot: the CLI warns on stderr
+  and echoes the survivor, and the `notes` client treats create as
+  idempotent over content. Sprint and project also join the fold disk cache
+  alongside runbook.
+
 ## [0.22.0] - 2026-07-08
 
 ### Changed

@@ -258,7 +258,7 @@ d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 
 ### `cc-notes show <id>`
 
-Show any entity by id — note, doc, log, task, sprint, or project. The id resolves across every
+Show any entity by id — note, doc, log, task, sprint, project, or runbook. The id resolves across every
 kind, and the output is exactly what the entity's noun-scoped `show` prints. The id-addressed
 read verbs are kind-agnostic: `show`, `history`, and `compact` take any entity id with no noun
 (`blame` does the same for a commit sha).
@@ -296,8 +296,9 @@ $ cc-notes history 0914cfb
 
 ### `cc-notes compact <id>`
 
-Collapse an entity's op-log into a checkpoint so future folds are cheap. The id and the full
-folded state are preserved; objects stay in the ODB.
+Collapse any entity's op-log — note, doc, log, task, sprint, project, or runbook — into a
+checkpoint so future folds are cheap; the id and the full folded state are preserved and objects
+stay in the ODB.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
