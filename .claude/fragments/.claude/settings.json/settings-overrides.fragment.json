@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python:*)",
+      "Bash(uv build:*)",
+      "Bash(uv lock:*)",
+      "Bash(uv run:*)",
+      "Bash(uv sync:*)"
+    ]
+  },
+  "extraKnownMarketplaces": {
+    "captain-hook": {
+      "autoUpdate": true
+    },
+    "cc-notes": {
+      "autoUpdate": true
+    },
+    "cc-context": {
+      "autoUpdate": true
+    }
+  }
+}
