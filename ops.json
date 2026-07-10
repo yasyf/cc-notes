@@ -1,1 +1,1 @@
-{"v":1,"lamport":4,"ops":[{"kind":"add_comment","body":"Criterion verified 2026-07-10: npm run build emits no \u003e500kB warning (Panel lazy chunk 242.68 kB, index 316.11 kB)."}]}
+{"v":1,"lamport":5,"ops":[{"kind":"set_status","status":"done"},{"kind":"link_commit","sha":"e16a2fabd487b6f663833ec1f640a4059557c75f"}]}
