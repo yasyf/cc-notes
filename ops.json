@@ -1,1 +1,1 @@
-{"v":1,"lamport":2,"ops":[{"kind":"add_comment","body":"Shipped in v0.21.1 via 47de46d1 (cc-task trailer); closing retroactively."}]}
+{"v":1,"lamport":3,"ops":[{"kind":"add_comment","body":"Manual pan/zoom criterion not individually re-run; feature shipped v0.21.1 and has been in production 3 releases. Force-closing."}]}
