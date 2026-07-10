@@ -45,19 +45,22 @@
       "source": {
         "source": "github",
         "repo": "yasyf/captain-hook"
-      }
+      },
+      "autoUpdate": true
     },
     "cc-notes": {
       "source": {
         "source": "github",
         "repo": "yasyf/cc-notes"
-      }
+      },
+      "autoUpdate": true
     },
     "cc-context": {
       "source": {
         "source": "github",
         "repo": "yasyf/cc-context"
-      }
+      },
+      "autoUpdate": true
     }
   },
   "enabledPlugins": {
