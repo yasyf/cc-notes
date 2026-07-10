@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"renew"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"1911705d79dc3720a069bdc3d9df3395","status":"met"}]}
