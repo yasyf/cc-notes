@@ -96,7 +96,7 @@ func TestHasNotes(t *testing.T) {
 		t.Fatal("fresh repo HasNotes = true, want false")
 	}
 
-	if _, _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "p"}); err != nil {
+	if _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "p"}); err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
@@ -111,7 +111,7 @@ func TestHasNotes(t *testing.T) {
 
 func TestCreateProject(t *testing.T) {
 	c, _ := newClient(t)
-	p, _, err := c.CreateProject(t.Context(), notes.ProjectSpec{Title: "Platform", Description: "infra", Labels: []string{"b", "a"}})
+	p, err := c.CreateProject(t.Context(), notes.ProjectSpec{Title: "Platform", Description: "infra", Labels: []string{"b", "a"}})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
@@ -135,11 +135,11 @@ func TestCreateProject(t *testing.T) {
 func TestCreateSprint(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
-	p, _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "P"})
+	p, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "P"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	s, _, err := c.CreateSprint(ctx, notes.SprintSpec{Title: "Sprint 1", Project: p.ID, StartDate: 1000, EndDate: 2000})
+	s, err := c.CreateSprint(ctx, notes.SprintSpec{Title: "Sprint 1", Project: p.ID, StartDate: 1000, EndDate: 2000})
 	if err != nil {
 		t.Fatalf("CreateSprint: %v", err)
 	}
@@ -160,14 +160,14 @@ func TestCreateSprint(t *testing.T) {
 func TestCreateTask(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
-	p, _, _ := c.CreateProject(ctx, notes.ProjectSpec{Title: "P"})
-	s, _, _ := c.CreateSprint(ctx, notes.SprintSpec{Title: "S", Project: p.ID})
-	blocker, _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "blocker", Branch: "main"})
+	p, _ := c.CreateProject(ctx, notes.ProjectSpec{Title: "P"})
+	s, _ := c.CreateSprint(ctx, notes.SprintSpec{Title: "S", Project: p.ID})
+	blocker, err := c.CreateTask(ctx, notes.TaskSpec{Title: "blocker", Branch: "main"})
 	if err != nil {
 		t.Fatalf("CreateTask blocker: %v", err)
 	}
 
-	task, _, err := c.CreateTask(ctx, notes.TaskSpec{
+	task, err := c.CreateTask(ctx, notes.TaskSpec{
 		Title:     "ship it",
 		Branch:    "feature/x",
 		Sprint:    s.ID,
@@ -200,7 +200,7 @@ func TestCreateTask(t *testing.T) {
 
 	// An empty Criteria slice creates a task with no acceptance criteria — the
 	// in-process equivalent of the CLI's --no-validation-criteria.
-	bare, _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "bare", Branch: "main"})
+	bare, err := c.CreateTask(ctx, notes.TaskSpec{Title: "bare", Branch: "main"})
 	if err != nil {
 		t.Fatalf("CreateTask bare: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestCreateTaskBranchFromHead(t *testing.T) {
 	ctx := t.Context()
 	mustGit(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
 
-	task, _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "on head", BranchFromHead: true})
+	task, err := c.CreateTask(ctx, notes.TaskSpec{Title: "on head", BranchFromHead: true})
 	if err != nil {
 		t.Fatalf("CreateTask BranchFromHead: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestCreateTaskBranchFromHead(t *testing.T) {
 	}
 
 	mustGit(t, dir, "checkout", "-q", "--detach", "HEAD")
-	if _, _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "detached", BranchFromHead: true}); !errors.Is(err, notes.ErrDetachedHead) {
+	if _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "detached", BranchFromHead: true}); !errors.Is(err, notes.ErrDetachedHead) {
 		t.Fatalf("CreateTask on detached HEAD = %v, want ErrDetachedHead", err)
 	}
 }
@@ -231,11 +231,11 @@ func TestCreateTaskBranchFromHead(t *testing.T) {
 func TestReadAndList(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
-	created, _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "t1", Branch: "main"})
+	created, err := c.CreateTask(ctx, notes.TaskSpec{Title: "t1", Branch: "main"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if _, _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "t2", Branch: "main"}); err != nil {
+	if _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "t2", Branch: "main"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
@@ -263,8 +263,8 @@ func TestReadAndList(t *testing.T) {
 func TestResolve(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
-	p1, _, _ := c.CreateProject(ctx, notes.ProjectSpec{Title: "p1"})
-	if _, _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "p2"}); err != nil {
+	p1, _ := c.CreateProject(ctx, notes.ProjectSpec{Title: "p1"})
+	if _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "p2"}); err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
@@ -291,7 +291,7 @@ func TestTaskLifecycle(t *testing.T) {
 	headSHA := model.SHA(mustGit(t, dir, "rev-parse", "HEAD"))
 	_ = head
 
-	task, _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "work", Branch: "feature/x"})
+	task, err := c.CreateTask(ctx, notes.TaskSpec{Title: "work", Branch: "feature/x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestStartTask(t *testing.T) {
 	ctx := t.Context()
 	mustGit(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
 
-	task, _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "work", Branch: "backlog-ish"})
+	task, err := c.CreateTask(ctx, notes.TaskSpec{Title: "work", Branch: "backlog-ish"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestStartTask(t *testing.T) {
 func TestClaimConflict(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
-	task, _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "contested", Branch: "main"})
+	task, err := c.CreateTask(ctx, notes.TaskSpec{Title: "contested", Branch: "main"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestClaimConflict(t *testing.T) {
 func TestSprintTransitions(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
-	s, _, err := c.CreateSprint(ctx, notes.SprintSpec{Title: "S"})
+	s, err := c.CreateSprint(ctx, notes.SprintSpec{Title: "S"})
 	if err != nil {
 		t.Fatalf("CreateSprint: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestSprintTransitions(t *testing.T) {
 func TestProjectTransitions(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
-	p, _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "P"})
+	p, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "P"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
@@ -428,55 +428,43 @@ func TestCreateRejectsInvalid(t *testing.T) {
 		{"bad branch", notes.TaskSpec{Title: "x", Branch: "bad branch"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := c.CreateTask(ctx, tc.spec); !errors.Is(err, model.ErrInvalidValue) {
+			if _, err := c.CreateTask(ctx, tc.spec); !errors.Is(err, model.ErrInvalidValue) {
 				t.Fatalf("CreateTask(%+v) = %v, want ErrInvalidValue", tc.spec, err)
 			}
 		})
 	}
 }
 
-// TestCreateDedupe proves the create helpers report an exact-duplicate reuse:
-// the second identical create returns deduped true and the first entity's id,
-// rooting nothing new. It covers a single-op pack (project) and a multi-op pack
+// TestCreateDedupe proves the create helpers are idempotent over content: a
+// second identical create converges on the first entity — same id, nil error,
+// nothing new rooted. It covers a single-op pack (project) and a multi-op pack
 // (task with a criterion).
 func TestCreateDedupe(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
 
-	first, deduped, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "dup", Description: "d"})
+	first, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "dup", Description: "d"})
 	if err != nil {
 		t.Fatalf("first CreateProject: %v", err)
 	}
-	if deduped {
-		t.Fatal("first CreateProject deduped, want fresh create")
-	}
-	again, deduped, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "dup", Description: "d"})
+	again, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "dup", Description: "d"})
 	if err != nil {
 		t.Fatalf("second CreateProject: %v", err)
 	}
-	if !deduped {
-		t.Fatal("second CreateProject deduped = false, want true (exact duplicate)")
-	}
 	if again.ID != first.ID {
-		t.Errorf("deduped project id = %s, want existing %s", again.ID, first.ID)
+		t.Errorf("second CreateProject id = %s, want existing %s (idempotent)", again.ID, first.ID)
 	}
 
-	firstTask, deduped, err := c.CreateTask(ctx, notes.TaskSpec{Title: "t", Branch: "main", Criteria: []string{"builds"}})
+	firstTask, err := c.CreateTask(ctx, notes.TaskSpec{Title: "t", Branch: "main", Criteria: []string{"builds"}})
 	if err != nil {
 		t.Fatalf("first CreateTask: %v", err)
 	}
-	if deduped {
-		t.Fatal("first CreateTask deduped, want fresh create")
-	}
-	againTask, deduped, err := c.CreateTask(ctx, notes.TaskSpec{Title: "t", Branch: "main", Criteria: []string{"builds"}})
+	againTask, err := c.CreateTask(ctx, notes.TaskSpec{Title: "t", Branch: "main", Criteria: []string{"builds"}})
 	if err != nil {
 		t.Fatalf("second CreateTask: %v", err)
 	}
-	if !deduped {
-		t.Fatal("second CreateTask deduped = false, want true (exact duplicate)")
-	}
 	if againTask.ID != firstTask.ID {
-		t.Errorf("deduped task id = %s, want existing %s", againTask.ID, firstTask.ID)
+		t.Errorf("second CreateTask id = %s, want existing %s (idempotent)", againTask.ID, firstTask.ID)
 	}
 }
 

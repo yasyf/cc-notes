@@ -547,12 +547,9 @@ func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAda
 	if err != nil {
 		return err
 	}
-	snap, deduped, err := s.Create(ctx, append(ops, attOps...))
+	snap, err := createEntity(ctx, cmd, s, append(ops, attOps...))
 	if err != nil {
 		return err
-	}
-	if deduped {
-		warnDuplicate(cmd, a.noun(), snap.EntityID())
 	}
 	// A file-mode add re-asserts the fact now, so a dedupe hit re-verifies the
 	// reused entity rather than skipping it: bornVerify appends a VerifyNote that

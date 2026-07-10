@@ -1,12 +1,25 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
+
+// mustDedupe asserts Create hit an existing live duplicate — a *DuplicateError
+// matching ErrDuplicate — and returns the reused survivor snapshot.
+func mustDedupe(t *testing.T, s *Store, ops []model.Op) model.Snapshot {
+	t.Helper()
+	_, err := s.Create(t.Context(), ops)
+	var dup *DuplicateError
+	if !errors.As(err, &dup) || !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("Create err = %v, want *DuplicateError matching ErrDuplicate", err)
+	}
+	return dup.Existing
+}
 
 func TestDedupeNote(t *testing.T) {
 	anchors := []model.Anchor{
@@ -35,24 +48,16 @@ func TestDedupeNote(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := initStore(t)
-			first, deduped, err := s.Create(t.Context(), base)
-			if err != nil {
-				t.Fatalf("baseline create: %v", err)
+			first := create(t, s, base)
+			if tc.wantDedupe {
+				got := mustDedupe(t, s, tc.ops)
+				if got.EntityID() != first.EntityID() {
+					t.Errorf("reused id = %s, want existing %s", got.EntityID(), first.EntityID())
+				}
+				return
 			}
-			if deduped {
-				t.Fatal("baseline create deduped, want fresh write")
-			}
-			got, deduped, err := s.Create(t.Context(), tc.ops)
-			if err != nil {
-				t.Fatalf("second create: %v", err)
-			}
-			if deduped != tc.wantDedupe {
-				t.Fatalf("deduped = %v, want %v", deduped, tc.wantDedupe)
-			}
-			if tc.wantDedupe && got.EntityID() != first.EntityID() {
-				t.Errorf("deduped id = %s, want existing %s", got.EntityID(), first.EntityID())
-			}
-			if !tc.wantDedupe && got.EntityID() == first.EntityID() {
+			got := create(t, s, tc.ops)
+			if got.EntityID() == first.EntityID() {
 				t.Errorf("distinct content reused id %s", got.EntityID())
 			}
 		})
@@ -105,30 +110,12 @@ func TestDedupePerKind(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := initStore(t)
-			first, deduped, err := s.Create(t.Context(), tc.base)
-			if err != nil {
-				t.Fatalf("baseline create: %v", err)
-			}
-			if deduped {
-				t.Fatal("baseline create deduped, want fresh write")
-			}
-			got, deduped, err := s.Create(t.Context(), tc.base)
-			if err != nil {
-				t.Fatalf("exact-dup create: %v", err)
-			}
-			if !deduped {
-				t.Fatal("exact-dup create wrote a twin, want dedupe")
-			}
+			first := create(t, s, tc.base)
+			got := mustDedupe(t, s, tc.base)
 			if got.EntityID() != first.EntityID() {
-				t.Errorf("deduped id = %s, want existing %s", got.EntityID(), first.EntityID())
+				t.Errorf("reused id = %s, want existing %s", got.EntityID(), first.EntityID())
 			}
-			got, deduped, err = s.Create(t.Context(), tc.diff)
-			if err != nil {
-				t.Fatalf("differing create: %v", err)
-			}
-			if deduped {
-				t.Fatal("differing create deduped, want fresh write")
-			}
+			got = create(t, s, tc.diff)
 			if got.EntityID() == first.EntityID() {
 				t.Errorf("differing content reused id %s", got.EntityID())
 			}
@@ -147,22 +134,10 @@ func TestDedupeTaskCriteriaIgnoresID(t *testing.T) {
 			model.AddCriterion{ID: model.NewNonce(), Text: "builds", Script: "go build ./..."},
 		}
 	}
-	first, deduped, err := s.Create(t.Context(), mk())
-	if err != nil {
-		t.Fatalf("first create: %v", err)
-	}
-	if deduped {
-		t.Fatal("first create deduped, want fresh write")
-	}
-	got, deduped, err := s.Create(t.Context(), mk())
-	if err != nil {
-		t.Fatalf("second create: %v", err)
-	}
-	if !deduped {
-		t.Fatal("second create wrote a twin, want dedupe across differing criterion ids")
-	}
+	first := create(t, s, mk())
+	got := mustDedupe(t, s, mk())
 	if got.EntityID() != first.EntityID() {
-		t.Errorf("deduped id = %s, want existing %s", got.EntityID(), first.EntityID())
+		t.Errorf("reused id = %s, want existing %s", got.EntityID(), first.EntityID())
 	}
 }
 
@@ -175,13 +150,7 @@ func TestDedupeSkipsTombstonedNote(t *testing.T) {
 	if _, err := s.Append(t.Context(), refs.Note(first.ID), []model.Op{model.DeleteNote{}}); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	got, deduped, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "gone"}})
-	if err != nil {
-		t.Fatalf("re-create: %v", err)
-	}
-	if deduped {
-		t.Fatal("re-create deduped against a tombstoned note, want fresh write")
-	}
+	got := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "gone"}})
 	if got.EntityID() == first.EntityID() {
 		t.Errorf("re-create reused tombstoned id %s", got.EntityID())
 	}
@@ -196,13 +165,7 @@ func TestDedupeSkipsSupersededNote(t *testing.T) {
 	if _, err := s.Append(t.Context(), refs.Note(old.ID), []model.Op{model.AddSupersededBy{ID: replacement.ID}}); err != nil {
 		t.Fatalf("supersede: %v", err)
 	}
-	got, deduped, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "old"}})
-	if err != nil {
-		t.Fatalf("re-create: %v", err)
-	}
-	if deduped {
-		t.Fatal("re-create deduped against a superseded note, want fresh write")
-	}
+	got := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "old"}})
 	if got.EntityID() == old.EntityID() {
 		t.Errorf("re-create reused superseded id %s", got.EntityID())
 	}
@@ -245,13 +208,7 @@ func TestDedupeSkipsClosed(t *testing.T) {
 			if _, err := s.Append(t.Context(), tc.ref(first.EntityID()), []model.Op{tc.close}); err != nil {
 				t.Fatalf("close: %v", err)
 			}
-			got, deduped, err := s.Create(t.Context(), tc.mk())
-			if err != nil {
-				t.Fatalf("re-create: %v", err)
-			}
-			if deduped {
-				t.Fatalf("re-create deduped against a closed %s, want fresh write", tc.name)
-			}
+			got := create(t, s, tc.mk())
 			if got.EntityID() == first.EntityID() {
 				t.Errorf("re-create reused closed id %s", got.EntityID())
 			}
@@ -287,13 +244,7 @@ func TestDedupeSkipsStale(t *testing.T) {
 			if _, err := s.Append(t.Context(), tc.ref(first.EntityID()), []model.Op{model.MarkStale{Reason: "outdated"}}); err != nil {
 				t.Fatalf("mark stale: %v", err)
 			}
-			got, deduped, err := s.Create(t.Context(), tc.mk())
-			if err != nil {
-				t.Fatalf("re-create: %v", err)
-			}
-			if deduped {
-				t.Fatalf("re-create deduped against a stale %s, want fresh write", tc.name)
-			}
+			got := create(t, s, tc.mk())
 			if got.EntityID() == first.EntityID() {
 				t.Errorf("re-create reused stale id %s", got.EntityID())
 			}
@@ -318,15 +269,9 @@ func TestDedupeReturnsOldest(t *testing.T) {
 		t.Fatalf("oldest CreatedAt %d not before twin %d", oldest.CreatedAt, twin.CreatedAt)
 	}
 
-	got, deduped, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "dup"}})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if !deduped {
-		t.Fatal("create wrote a twin, want dedupe")
-	}
+	got := mustDedupe(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "dup"}})
 	if got.EntityID() != oldest.EntityID() {
-		t.Errorf("deduped id = %s, want oldest %s", got.EntityID(), oldest.EntityID())
+		t.Errorf("reused id = %s, want oldest %s", got.EntityID(), oldest.EntityID())
 	}
 }
 
@@ -360,20 +305,8 @@ func TestDedupeSkipsUncoveredPack(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := initStore(t)
-			first, deduped, err := s.Create(t.Context(), tc.base)
-			if err != nil {
-				t.Fatalf("baseline create: %v", err)
-			}
-			if deduped {
-				t.Fatal("baseline create deduped, want fresh write")
-			}
-			got, deduped, err := s.Create(t.Context(), tc.pack)
-			if err != nil {
-				t.Fatalf("uncovered-pack create: %v", err)
-			}
-			if deduped {
-				t.Fatal("uncovered-pack create deduped, want fresh write (a bundled op would be dropped)")
-			}
+			first := create(t, s, tc.base)
+			got := create(t, s, tc.pack)
 			if got.EntityID() == first.EntityID() {
 				t.Errorf("uncovered-pack create reused id %s", got.EntityID())
 			}
@@ -391,14 +324,8 @@ func TestDedupeLogIgnoresEntries(t *testing.T) {
 	if _, err := s.Append(t.Context(), refs.Log(first.ID), []model.Op{model.AppendEntry{Text: "started"}}); err != nil {
 		t.Fatalf("append entry: %v", err)
 	}
-	got, deduped, err := s.Create(t.Context(), []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "incident", Tags: []string{"ops"}}})
-	if err != nil {
-		t.Fatalf("re-create: %v", err)
-	}
-	if !deduped {
-		t.Fatal("re-create against an entried log did not dedupe, want reuse")
-	}
+	got := mustDedupe(t, s, []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "incident", Tags: []string{"ops"}}})
 	if got.EntityID() != first.ID {
-		t.Errorf("deduped id = %s, want existing %s", got.EntityID(), first.ID)
+		t.Errorf("reused id = %s, want existing %s", got.EntityID(), first.ID)
 	}
 }

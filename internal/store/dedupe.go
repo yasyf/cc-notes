@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/yasyf/cc-notes/internal/fold"
+	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -30,99 +31,58 @@ import (
 // bundles any op folding into a field the comparator ignores skips dedupe and
 // creates normally, so reusing an existing entity can never silently drop one
 // of the pack's ops.
-func (s *Store) findDuplicate(ctx context.Context, kind string, pack model.Pack) (model.Snapshot, error) {
+func (s *Store) findDuplicate(ctx context.Context, kind refs.Kind, pack model.Pack) (model.Snapshot, error) {
 	if !dedupeCovered(pack.Ops) {
 		return nil, nil
 	}
 	candidate := []model.PackCommit{{SHA: "candidate", Pack: pack}}
 	switch kind {
-	case "note":
-		cand, err := fold.Note(candidate)
-		if err != nil {
-			return nil, err
-		}
-		notes, err := s.ListNotes(ctx, false, false)
-		if err != nil {
-			return nil, err
-		}
-		for _, n := range notes {
-			// An expired note never blocks re-asserting its fact — skip it so a
-			// repeat add roots a fresh note instead of reviving the stale twin.
-			if n.StaleAt == 0 && sameNoteContent(cand, n) {
-				return n, nil
-			}
-		}
-	case "doc":
-		cand, err := fold.Doc(candidate)
-		if err != nil {
-			return nil, err
-		}
-		docs, err := s.ListDocs(ctx, false, false)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range docs {
-			// An expired doc never blocks re-asserting its fact — skip it so a
-			// repeat add roots a fresh doc instead of reviving the stale twin.
-			if d.StaleAt == 0 && sameDocContent(cand, d) {
-				return d, nil
-			}
-		}
-	case "log":
-		cand, err := fold.Log(candidate)
-		if err != nil {
-			return nil, err
-		}
-		logs, err := s.ListLogs(ctx, false)
-		if err != nil {
-			return nil, err
-		}
-		for _, l := range logs {
-			if sameLogContent(cand, l) {
-				return l, nil
-			}
-		}
-	case "task":
-		cand, err := fold.Task(candidate)
-		if err != nil {
-			return nil, err
-		}
-		tasks, err := s.ListTasks(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, t := range tasks {
-			if t.ClosedAt == 0 && sameTaskContent(cand, t) {
-				return t, nil
-			}
-		}
-	case "sprint":
-		cand, err := fold.Sprint(candidate)
-		if err != nil {
-			return nil, err
-		}
-		sprints, err := s.ListSprints(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, sp := range sprints {
-			if sp.ClosedAt == 0 && sameSprintContent(cand, sp) {
-				return sp, nil
-			}
-		}
-	case "project":
-		cand, err := fold.Project(candidate)
-		if err != nil {
-			return nil, err
-		}
-		projects, err := s.ListProjects(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, p := range projects {
-			if p.ClosedAt == 0 && sameProjectContent(cand, p) {
-				return p, nil
-			}
+	case refs.KindNote:
+		return scanDup(candidate, fold.Note,
+			func() ([]model.Note, error) { return s.ListNotes(ctx, false, false) },
+			func(n model.Note) bool { return n.StaleAt == 0 }, sameNoteContent)
+	case refs.KindDoc:
+		return scanDup(candidate, fold.Doc,
+			func() ([]model.Doc, error) { return s.ListDocs(ctx, false, false) },
+			func(d model.Doc) bool { return d.StaleAt == 0 }, sameDocContent)
+	case refs.KindLog:
+		return scanDup(candidate, fold.Log,
+			func() ([]model.Log, error) { return s.ListLogs(ctx, false) },
+			func(model.Log) bool { return true }, sameLogContent)
+	case refs.KindTask:
+		return scanDup(candidate, fold.Task,
+			func() ([]model.Task, error) { return s.ListTasks(ctx) },
+			func(t model.Task) bool { return t.ClosedAt == 0 }, sameTaskContent)
+	case refs.KindSprint:
+		return scanDup(candidate, fold.Sprint,
+			func() ([]model.Sprint, error) { return s.ListSprints(ctx) },
+			func(sp model.Sprint) bool { return sp.ClosedAt == 0 }, sameSprintContent)
+	case refs.KindProject:
+		return scanDup(candidate, fold.Project,
+			func() ([]model.Project, error) { return s.ListProjects(ctx) },
+			func(p model.Project) bool { return p.ClosedAt == 0 }, sameProjectContent)
+	}
+	return nil, nil
+}
+
+func scanDup[S model.Snapshot](
+	candidate []model.PackCommit,
+	foldCand func([]model.PackCommit) (S, error),
+	list func() ([]S, error),
+	live func(S) bool,
+	same func(a, b S) bool,
+) (model.Snapshot, error) {
+	cand, err := foldCand(candidate)
+	if err != nil {
+		return nil, err
+	}
+	items, err := list()
+	if err != nil {
+		return nil, err
+	}
+	for _, it := range items {
+		if live(it) && same(cand, it) {
+			return it, nil
 		}
 	}
 	return nil, nil

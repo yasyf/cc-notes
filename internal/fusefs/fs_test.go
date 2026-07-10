@@ -103,7 +103,7 @@ func newTestFS(t *testing.T) (*FS, *store.Store) {
 
 func createNote(t *testing.T, s *store.Store, title, body string) model.Note {
 	t.Helper()
-	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: title, Body: body}})
+	snap, err := s.Create(t.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: title, Body: body}})
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
@@ -112,7 +112,7 @@ func createNote(t *testing.T, s *store.Store, title, body string) model.Note {
 
 func createDoc(t *testing.T, s *store.Store, title, body, when string) model.Doc {
 	t.Helper()
-	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: title, Body: body, When: when}})
+	snap, err := s.Create(t.Context(), []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: title, Body: body, When: when}})
 	if err != nil {
 		t.Fatalf("create doc: %v", err)
 	}
@@ -121,7 +121,7 @@ func createDoc(t *testing.T, s *store.Store, title, body, when string) model.Doc
 
 func createLog(t *testing.T, s *store.Store, title string, entries ...string) model.Log {
 	t.Helper()
-	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: title}})
+	snap, err := s.Create(t.Context(), []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: title}})
 	if err != nil {
 		t.Fatalf("create log: %v", err)
 	}
@@ -138,7 +138,7 @@ func createLog(t *testing.T, s *store.Store, title string, entries ...string) mo
 
 func createTask(t *testing.T, s *store.Store, branch model.Branch, title string) model.Task {
 	t.Helper()
-	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateTask{
+	snap, err := s.Create(t.Context(), []model.Op{model.CreateTask{
 		Nonce: model.NewNonce(), Title: title, Type: model.TypeTask, Priority: 2, Branch: branch,
 	}})
 	if err != nil {
@@ -939,7 +939,7 @@ func TestLogCLIEntriesMountRoundTrip(t *testing.T) {
 
 func createSprint(t *testing.T, s *store.Store, title string) model.Sprint {
 	t.Helper()
-	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateSprint{Nonce: model.NewNonce(), Title: title}})
+	snap, err := s.Create(t.Context(), []model.Op{model.CreateSprint{Nonce: model.NewNonce(), Title: title}})
 	if err != nil {
 		t.Fatalf("create sprint: %v", err)
 	}
@@ -948,7 +948,7 @@ func createSprint(t *testing.T, s *store.Store, title string) model.Sprint {
 
 func createProject(t *testing.T, s *store.Store, title string) model.Project {
 	t.Helper()
-	snap, _, err := s.Create(t.Context(), []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: title}})
+	snap, err := s.Create(t.Context(), []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: title}})
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}

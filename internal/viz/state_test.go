@@ -21,12 +21,12 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 
 	// Two notes: keep is the superseding target (live); old is superseded by it
 	// (must appear, flagged); gone is tombstoned (must not appear).
-	keepSnap, _, err := s.Create(ctx, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "keep note", Body: "current"}})
+	keepSnap, err := s.Create(ctx, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "keep note", Body: "current"}})
 	if err != nil {
 		t.Fatalf("create keep note: %v", err)
 	}
 	keep := keepSnap.(model.Note)
-	oldSnap, _, err := s.Create(ctx, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "old note", Body: "stale"}})
+	oldSnap, err := s.Create(ctx, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "old note", Body: "stale"}})
 	if err != nil {
 		t.Fatalf("create old note: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 	if _, err := s.Append(ctx, refs.Note(old.ID), []model.Op{model.AddSupersededBy{ID: keep.ID}}); err != nil {
 		t.Fatalf("supersede old note: %v", err)
 	}
-	goneSnap, _, err := s.Create(ctx, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "gone note"}})
+	goneSnap, err := s.Create(ctx, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "gone note"}})
 	if err != nil {
 		t.Fatalf("create gone note: %v", err)
 	}
@@ -43,11 +43,11 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 		t.Fatalf("delete gone note: %v", err)
 	}
 
-	if _, _, err := s.Create(ctx, []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: "a doc", Body: "doc body"}}); err != nil {
+	if _, err := s.Create(ctx, []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: "a doc", Body: "doc body"}}); err != nil {
 		t.Fatalf("create doc: %v", err)
 	}
 
-	logSnap, _, err := s.Create(ctx, []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "a log"}})
+	logSnap, err := s.Create(ctx, []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "a log"}})
 	if err != nil {
 		t.Fatalf("create log: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 		t.Fatalf("append log entry: %v", err)
 	}
 
-	taskSnap, _, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "a task", Type: model.TypeTask, Branch: "main"}})
+	taskSnap, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "a task", Type: model.TypeTask, Branch: "main"}})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
@@ -67,10 +67,10 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 		t.Fatalf("add criterion: %v", err)
 	}
 
-	if _, _, err := s.Create(ctx, []model.Op{model.CreateSprint{Nonce: model.NewNonce(), Title: "a sprint"}}); err != nil {
+	if _, err := s.Create(ctx, []model.Op{model.CreateSprint{Nonce: model.NewNonce(), Title: "a sprint"}}); err != nil {
 		t.Fatalf("create sprint: %v", err)
 	}
-	if _, _, err := s.Create(ctx, []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: "a project"}}); err != nil {
+	if _, err := s.Create(ctx, []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: "a project"}}); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
 

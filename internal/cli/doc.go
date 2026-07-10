@@ -104,14 +104,11 @@ func newDocAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			snapshot, deduped, err := s.Create(ctx, append(ops, attOps...))
+			snapshot, err := createEntity(ctx, cmd, s, append(ops, attOps...))
 			if err != nil {
 				return err
 			}
 			doc := snapshot.(model.Doc)
-			if deduped {
-				warnDuplicate(cmd, "doc", doc.ID)
-			}
 			head, err := resolveHead(ctx, s)
 			if err != nil {
 				return err

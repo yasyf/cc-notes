@@ -29,7 +29,7 @@ func attachNote(t *testing.T, s *store.Store, title, name string, content []byte
 	if err != nil {
 		t.Fatalf("AttachFile: %v", err)
 	}
-	snap, _, err := s.Create(t.Context(), []model.Op{
+	snap, err := s.Create(t.Context(), []model.Op{
 		model.CreateNote{Nonce: model.NewNonce(), Title: title},
 		model.AddAttachment{Name: att.Name, OID: att.OID, Size: att.Size},
 	})

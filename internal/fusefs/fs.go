@@ -667,9 +667,12 @@ func (f *FS) commitDocument(p string, data []byte) (string, model.Snapshot, int)
 		return "", nil, errno(err)
 	}
 	f.mu.Unlock()
-	snap, _, cerr := f.store.Create(f.ctx, ops)
+	snap, cerr := f.store.Create(f.ctx, ops)
 	f.mu.Lock()
-	if cerr != nil {
+	var dup *store.DuplicateError
+	if errors.As(cerr, &dup) {
+		snap = dup.Existing
+	} else if cerr != nil {
 		return "", nil, errno(cerr)
 	}
 	f.cacheRender(snap)

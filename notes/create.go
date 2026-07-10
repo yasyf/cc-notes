@@ -2,7 +2,9 @@ package notes
 
 import (
 	"context"
+	"errors"
 
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -47,26 +49,32 @@ type TaskSpec struct {
 	BlockedBy      []model.EntityID
 }
 
-// CreateProject roots a new project chain and returns its folded snapshot and
-// whether an existing exact-duplicate project was returned instead of creating a
-// new one.
-func (c *Client) CreateProject(ctx context.Context, spec ProjectSpec) (model.Project, bool, error) {
-	snapshot, deduped, err := c.s.Create(ctx, []model.Op{model.CreateProject{
+// CreateProject roots a new project chain and returns its folded snapshot.
+// Create is idempotent over content on a best-effort basis: an exact duplicate
+// of a live project returns that existing project instead of rooting a new
+// one, though truly concurrent identical creates can both land.
+func (c *Client) CreateProject(ctx context.Context, spec ProjectSpec) (model.Project, error) {
+	snapshot, err := c.s.Create(ctx, []model.Op{model.CreateProject{
 		Nonce:       model.NewNonce(),
 		Title:       spec.Title,
 		Description: spec.Description,
 		Labels:      spec.Labels,
 	}})
-	if err != nil {
-		return model.Project{}, false, err
+	var dup *store.DuplicateError
+	if errors.As(err, &dup) {
+		return dup.Existing.(model.Project), nil
 	}
-	return snapshot.(model.Project), deduped, nil
+	if err != nil {
+		return model.Project{}, err
+	}
+	return snapshot.(model.Project), nil
 }
 
-// CreateSprint roots a new sprint chain and returns its folded snapshot and
-// whether an existing exact-duplicate sprint was returned instead of creating a
-// new one.
-func (c *Client) CreateSprint(ctx context.Context, spec SprintSpec) (model.Sprint, bool, error) {
+// CreateSprint roots a new sprint chain and returns its folded snapshot.
+// Create is idempotent over content on a best-effort basis: an exact duplicate
+// of a live sprint returns that existing sprint instead of rooting a new one,
+// though truly concurrent identical creates can both land.
+func (c *Client) CreateSprint(ctx context.Context, spec SprintSpec) (model.Sprint, error) {
 	ops := []model.Op{model.CreateSprint{
 		Nonce:       model.NewNonce(),
 		Title:       spec.Title,
@@ -80,23 +88,29 @@ func (c *Client) CreateSprint(ctx context.Context, spec SprintSpec) (model.Sprin
 	if spec.EndDate != 0 {
 		ops = append(ops, model.SetEndDate{Date: spec.EndDate})
 	}
-	snapshot, deduped, err := c.s.Create(ctx, ops)
-	if err != nil {
-		return model.Sprint{}, false, err
+	snapshot, err := c.s.Create(ctx, ops)
+	var dup *store.DuplicateError
+	if errors.As(err, &dup) {
+		return dup.Existing.(model.Sprint), nil
 	}
-	return snapshot.(model.Sprint), deduped, nil
+	if err != nil {
+		return model.Sprint{}, err
+	}
+	return snapshot.(model.Sprint), nil
 }
 
-// CreateTask roots a new task chain and returns its folded snapshot and whether
-// an existing exact-duplicate task was returned instead of creating a new one.
-// SetSprint and SetProject ops follow the create when the spec names them, one
-// AddCriterion per Criteria text, and one AddDep per BlockedBy id.
-func (c *Client) CreateTask(ctx context.Context, spec TaskSpec) (model.Task, bool, error) {
+// CreateTask roots a new task chain and returns its folded snapshot. Create is
+// idempotent over content on a best-effort basis: an exact duplicate of a live
+// task returns that existing task instead of rooting a new one, though truly
+// concurrent identical creates can both land. SetSprint and SetProject ops
+// follow the create when the spec names them, one AddCriterion per Criteria
+// text, and one AddDep per BlockedBy id.
+func (c *Client) CreateTask(ctx context.Context, spec TaskSpec) (model.Task, error) {
 	branch := spec.Branch
 	if spec.BranchFromHead {
 		head, err := c.s.Git.HeadBranch(ctx)
 		if err != nil {
-			return model.Task{}, false, err
+			return model.Task{}, err
 		}
 		branch = head
 	}
@@ -126,9 +140,13 @@ func (c *Client) CreateTask(ctx context.Context, spec TaskSpec) (model.Task, boo
 	for _, dep := range spec.BlockedBy {
 		ops = append(ops, model.AddDep{ID: dep})
 	}
-	snapshot, deduped, err := c.s.Create(ctx, ops)
-	if err != nil {
-		return model.Task{}, false, err
+	snapshot, err := c.s.Create(ctx, ops)
+	var dup *store.DuplicateError
+	if errors.As(err, &dup) {
+		return dup.Existing.(model.Task), nil
 	}
-	return snapshot.(model.Task), deduped, nil
+	if err != nil {
+		return model.Task{}, err
+	}
+	return snapshot.(model.Task), nil
 }

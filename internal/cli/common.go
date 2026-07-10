@@ -563,6 +563,24 @@ func warnDuplicate(cmd *cobra.Command, kind string, id model.EntityID) {
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: exact duplicate of %s %s; reusing the existing %s (nothing created)\n", kind, id.Short(), kind)
 }
 
+// createEntity roots the entity ops describe, mapping Create's best-effort
+// duplicate guard onto a warning: on a *store.DuplicateError it warns on stderr
+// (naming the reused kind and id) and returns the existing survivor with a nil
+// error, so callers treat a dedupe hit as a successful create of the survivor.
+// Any other error propagates.
+func createEntity(ctx context.Context, cmd *cobra.Command, s *store.Store, ops []model.Op) (model.Snapshot, error) {
+	snap, err := s.Create(ctx, ops)
+	var dup *store.DuplicateError
+	if errors.As(err, &dup) {
+		warnDuplicate(cmd, string(dup.Kind), dup.Existing.EntityID())
+		return dup.Existing, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return snap, nil
+}
+
 // printNote writes n as its JSON DTO or its lean line. A mutation echo carries
 // no drift verdict.
 func printNote(cmd *cobra.Command, s *store.Store, n model.Note, jsonOut bool) error {

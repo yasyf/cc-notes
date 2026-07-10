@@ -70,14 +70,11 @@ func newLogAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			snapshot, deduped, err := s.Create(ctx, append(ops, attOps...))
+			snapshot, err := createEntity(ctx, cmd, s, append(ops, attOps...))
 			if err != nil {
 				return err
 			}
 			log := snapshot.(model.Log)
-			if deduped {
-				warnDuplicate(cmd, "log", log.ID)
-			}
 			if cmd.Flags().Changed("entry") {
 				text, err := bodyArg(cmd, entry)
 				if err != nil {

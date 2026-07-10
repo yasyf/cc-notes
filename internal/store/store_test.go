@@ -93,7 +93,7 @@ func logOps(title string) []model.Op {
 
 func create(t *testing.T, s *Store, ops []model.Op) model.Snapshot {
 	t.Helper()
-	snapshot, _, err := s.Create(t.Context(), ops)
+	snapshot, err := s.Create(t.Context(), ops)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestCreateRejects(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := initStore(t)
-			_, _, err := s.Create(t.Context(), tc.ops)
+			_, err := s.Create(t.Context(), tc.ops)
 			if err == nil {
 				t.Fatal("Create succeeded, want error")
 			}
@@ -258,22 +258,20 @@ func TestCreateDedupesSameContent(t *testing.T) {
 	s := initStore(t)
 	ops := []model.Op{model.CreateNote{Nonce: strings.Repeat("ab", 16), Title: "dup"}}
 
-	first, deduped, err := s.Create(t.Context(), ops)
+	first, err := s.Create(t.Context(), ops)
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	if deduped {
-		t.Fatal("first create deduped, want a fresh write")
+	_, err = s.Create(t.Context(), ops)
+	var dup *DuplicateError
+	if !errors.As(err, &dup) || !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("second create err = %v, want *DuplicateError matching ErrDuplicate", err)
 	}
-	second, deduped, err := s.Create(t.Context(), ops)
-	if err != nil {
-		t.Fatalf("second create: %v", err)
+	if dup.Kind != refs.KindNote {
+		t.Errorf("dup kind = %s, want note", dup.Kind)
 	}
-	if !deduped {
-		t.Fatal("second create wrote a twin, want dedupe")
-	}
-	if second.EntityID() != first.EntityID() {
-		t.Errorf("deduped id = %s, want existing %s", second.EntityID(), first.EntityID())
+	if dup.Existing.EntityID() != first.EntityID() {
+		t.Errorf("reused id = %s, want existing %s", dup.Existing.EntityID(), first.EntityID())
 	}
 	tips, err := s.Repo.ListPrefix(t.Context(), refs.NotesPrefix)
 	if err != nil {
@@ -1034,7 +1032,7 @@ func TestActorMalformed(t *testing.T) {
 		t.Run(fmt.Sprintf("%q", value), func(t *testing.T) {
 			s := initStore(t)
 			t.Setenv(actorEnv, value)
-			_, _, err := s.Create(t.Context(), noteOps("x"))
+			_, err := s.Create(t.Context(), noteOps("x"))
 			if err == nil || !strings.Contains(err.Error(), actorEnv) {
 				t.Fatalf("Create = %v, want loud %s parse error", err, actorEnv)
 			}

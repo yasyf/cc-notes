@@ -230,7 +230,7 @@ func TestAPIEntityTaskWithCheckpoint(t *testing.T) {
 	r.commit("c1")
 	ctx := t.Context()
 	s := r.openStore()
-	snap, _, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "Ship viz server", Type: model.TypeTask, Branch: "main"}})
+	snap, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "Ship viz server", Type: model.TypeTask, Branch: "main"}})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestAPIEntitySnapshotMatchesTip(t *testing.T) {
 	r.commit("c1")
 	ctx := t.Context()
 	s := r.openStore()
-	snap, _, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "snapshot task", Type: model.TypeTask, Branch: "main"}})
+	snap, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "snapshot task", Type: model.TypeTask, Branch: "main"}})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}

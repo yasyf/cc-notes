@@ -100,14 +100,11 @@ func newNoteAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			snapshot, deduped, err := s.Create(ctx, append(ops, attOps...))
+			snapshot, err := createEntity(ctx, cmd, s, append(ops, attOps...))
 			if err != nil {
 				return err
 			}
 			note := snapshot.(model.Note)
-			if deduped {
-				warnDuplicate(cmd, "note", note.ID)
-			}
 			head, err := resolveHead(ctx, s)
 			if err != nil {
 				return err

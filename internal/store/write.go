@@ -25,62 +25,62 @@ import (
 //
 // Before writing anything Create runs a best-effort duplicate scan (findDuplicate):
 // when a live entity of the same kind already folds to identical content it
-// returns that entity with deduped true and writes nothing, so a doubled create
-// reuses the survivor instead of rooting a twin. The scan takes no lock — two
-// truly concurrent creates can still both land — and closed, tombstoned, or
-// superseded twins never suppress a re-add. On a fresh create it returns the
-// folded snapshot with deduped false.
-func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, bool, error) {
+// returns a *DuplicateError carrying that survivor and writes nothing, so a
+// doubled create reuses the existing entity instead of rooting a twin. The scan
+// takes no lock — two truly concurrent creates can still both land — and closed,
+// tombstoned, or superseded twins never suppress a re-add. On a fresh create it
+// returns the folded snapshot and a nil error.
+func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, error) {
 	if len(ops) == 0 {
-		return nil, false, errors.New("create: no ops")
+		return nil, errors.New("create: no ops")
 	}
-	var kind string
+	var kind refs.Kind
 	var refFor func(model.EntityID) string
 	switch ops[0].(type) {
 	case model.CreateNote:
-		kind, refFor = "note", refs.Note
+		kind, refFor = refs.KindNote, refs.Note
 	case model.CreateTask:
-		kind, refFor = "task", refs.Task
+		kind, refFor = refs.KindTask, refs.Task
 	case model.CreateSprint:
-		kind, refFor = "sprint", refs.Sprint
+		kind, refFor = refs.KindSprint, refs.Sprint
 	case model.CreateProject:
-		kind, refFor = "project", refs.Project
+		kind, refFor = refs.KindProject, refs.Project
 	case model.CreateDoc:
-		kind, refFor = "doc", refs.Doc
+		kind, refFor = refs.KindDoc, refs.Doc
 	case model.CreateLog:
-		kind, refFor = "log", refs.Log
+		kind, refFor = refs.KindLog, refs.Log
 	default:
-		return nil, false, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, create_project, create_doc, or create_log", ops[0].OpKind())
+		return nil, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, create_project, create_doc, or create_log", ops[0].OpKind())
 	}
 	pack, err := roundTrip(model.Pack{Lamport: 1, Ops: ops})
 	if err != nil {
-		return nil, false, fmt.Errorf("create %s: %w", kind, err)
+		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	existing, err := s.findDuplicate(ctx, kind, pack)
 	if err != nil {
-		return nil, false, fmt.Errorf("create %s: %w", kind, err)
+		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	if existing != nil {
-		return existing, true, nil
+		return nil, &DuplicateError{Kind: kind, Existing: existing}
 	}
 	sig, actor, err := s.signature(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("create %s: %w", kind, err)
+		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
-	sha, err := s.Repo.WriteOpsCommit(ctx, nil, sig, "cc-notes: "+kind+" create", pack)
+	sha, err := s.Repo.WriteOpsCommit(ctx, nil, sig, "cc-notes: "+string(kind)+" create", pack)
 	if err != nil {
-		return nil, false, fmt.Errorf("create %s: %w", kind, err)
+		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	root := model.PackCommit{SHA: sha, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack}
 	snapshot, err := fold.Fold([]model.PackCommit{root})
 	if err != nil {
-		return nil, false, fmt.Errorf("create %s: %w", kind, err)
+		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	if err := s.Git.UpdateRef(ctx, refFor(model.EntityID(sha)), sha, ""); err != nil {
-		return nil, false, fmt.Errorf("create %s: %w", kind, err)
+		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	s.cache.put(sha, snapshot)
-	return snapshot, false, nil
+	return snapshot, nil
 }
 
 // Append extends the chain at ref with one commit carrying ops, at lamport

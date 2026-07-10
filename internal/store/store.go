@@ -48,6 +48,10 @@ var (
 	// ErrAmbiguous reports a Resolve prefix matching more than one entity;
 	// the concrete error is an *AmbiguousError carrying the candidates.
 	ErrAmbiguous = errors.New("ambiguous entity prefix")
+	// ErrDuplicate reports a Create whose content exactly duplicates a live
+	// entity of the same kind; the concrete error is a *DuplicateError carrying
+	// the survivor that was reused instead of rooting a twin.
+	ErrDuplicate = errors.New("duplicate entity")
 )
 
 // Candidate is one entity matched by an ambiguous Resolve prefix.
@@ -75,6 +79,22 @@ func (e *AmbiguousError) Error() string {
 
 // Is reports whether target is ErrAmbiguous.
 func (e *AmbiguousError) Is(target error) bool { return target == ErrAmbiguous }
+
+// DuplicateError reports that Create found a live entity of Kind whose folded
+// content equals the create pack's and returned Existing instead of rooting a
+// twin. It matches ErrDuplicate under errors.Is.
+type DuplicateError struct {
+	Kind     refs.Kind
+	Existing model.Snapshot
+}
+
+// Error names the reused entity's kind and short id.
+func (e *DuplicateError) Error() string {
+	return fmt.Sprintf("exact duplicate of %s %s", e.Kind, e.Existing.EntityID().Short())
+}
+
+// Is reports whether target is ErrDuplicate.
+func (e *DuplicateError) Is(target error) bool { return target == ErrDuplicate }
 
 // Store reads and writes entities in one repository. Repo carries object
 // writes and all reads; Git carries ref compare-and-swap, config, identity,
