@@ -8,16 +8,25 @@ import type {
   LogSnapshot,
   NoteSnapshot,
   ProjectSnapshot,
+  RunbookSnapshot,
   SprintSnapshot,
   StateResponse,
   TaskSnapshot,
 } from "../api";
 import type { SearchTarget } from "./search";
 
-export type EntityKind = "note" | "doc" | "log" | "task" | "sprint" | "project";
+export type EntityKind = "note" | "doc" | "log" | "task" | "sprint" | "project" | "runbook";
 
 // KINDS is the fixed display order of the kind facet and kind badges.
-export const KINDS: readonly EntityKind[] = ["task", "note", "doc", "log", "sprint", "project"];
+export const KINDS: readonly EntityKind[] = [
+  "task",
+  "note",
+  "doc",
+  "log",
+  "runbook",
+  "sprint",
+  "project",
+];
 
 // TASK_STATUSES is the kanban column order and the task status lifecycle.
 export const TASK_STATUSES = ["open", "in_progress", "done", "cancelled"] as const;
@@ -185,6 +194,38 @@ function projectRow(s: ProjectSnapshot): Row {
   };
 }
 
+function runbookRow(s: RunbookSnapshot): Row {
+  return {
+    kind: "runbook",
+    id: s.id,
+    title: s.title,
+    titleLower: s.title.toLowerCase(),
+    bodyLower: haystack([
+      s.description,
+      ...s.steps.map((step) => step.text),
+      ...s.steps.map((step) => step.command),
+      ...s.labels,
+      ...s.comments.map((c) => c.body),
+      s.id,
+    ]),
+    status: s.status,
+    priority: null,
+    assignee: "",
+    branch: "",
+    sprint: "",
+    project: "",
+    tags: s.labels,
+    updated: s.updated_at,
+    verifiedAt: 0,
+    verifiable: false,
+    stale: false,
+    superseded: false,
+    neverVerified: false,
+    criteriaMet: 0,
+    criteriaTotal: 0,
+  };
+}
+
 // buildIndex folds a StateResponse into the flat Row index, in kind order.
 export function buildIndex(state: StateResponse): Row[] {
   return [
@@ -192,6 +233,7 @@ export function buildIndex(state: StateResponse): Row[] {
     ...state.notes.map((n) => noteDocRow("note", n)),
     ...state.docs.map((d) => noteDocRow("doc", d)),
     ...state.logs.map(logRow),
+    ...state.runbooks.map(runbookRow),
     ...state.sprints.map(sprintRow),
     ...state.projects.map(projectRow),
   ];

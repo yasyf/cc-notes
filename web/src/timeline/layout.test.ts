@@ -404,6 +404,35 @@ describe("layout entity items", () => {
       },
     ]);
   });
+
+  it("renders a runbook event as a lane marker and emits no band for the runbook", () => {
+    const g = graph({
+      lanes: [lane("main")],
+      events: [
+        {
+          entity: { kind: "runbook", id: "rb1", short: "rb1", title: "deploy" },
+          type: "run_started",
+          time: 100,
+          branch: "",
+          sha: "sha-rb1",
+          detail: { run: "abc1234" },
+        },
+      ],
+      entities: [{ kind: "runbook", id: "rb1", short: "rb1", title: "deploy", status: "active" }],
+    });
+    const result = layout({ graph: g, now: NOW });
+    expect(result.bands).toEqual([]);
+    expect(result.lanes.find((l) => l.name === "main")?.markers).toEqual([
+      {
+        ref: { kind: "runbook", id: "rb1", short: "rb1", title: "deploy" },
+        type: "run_started",
+        time: 100,
+        sha: "sha-rb1",
+        detail: { run: "abc1234" },
+        subRow: 0,
+      },
+    ]);
+  });
 });
 
 describe("layout window clamping", () => {

@@ -8,7 +8,8 @@ description: >-
   to the repo tree; adopts cc-notes in a repo that has not run init yet; runs status to orient on
   the backlog and who holds what; claims or starts a
   task; coordinates work across branches and multiple agents; manages leases and
-  reclaims stale claims; verifies or supersedes a durable fact; syncs tasks and notes
+  reclaims stale claims; verifies or supersedes a durable fact; records or executes a
+  repeatable procedure as a runbook with per-run step tracking; syncs tasks and notes
   with a remote; reconciles tasks after merging a branch; or links commits to the task
   they implemented.
 allowed-tools: Bash(cc-notes:*), Read
@@ -97,7 +98,8 @@ The mount mechanics — holder model, teardown, the macOS Network Volumes grant 
 
 Where the Claude Code plugin is enabled, cc-notes also exposes its command surface as MCP tools — one
 `noun_verb` tool per command (`doc_add`, `note_edit`, `task_start`, …), surfaced as
-`mcp__plugin_cc-notes_cc-notes__<tool>`. They mirror the CLI one-to-one and drive it in-process, so
+`mcp__plugin_cc-notes_cc-notes__<tool>`. They mirror the CLI and drive it in-process — the record
+nouns tool-for-command, the planning nouns (sprint, project, runbook) as a curated subset — so
 validation, output, and semantics are identical, and a tool result is the command's `--json`. When these
 tools are available, prefer them over shelling out to `cc-notes` — especially `doc_add` and `note_add`,
 where a long body rides the `body` parameter and skips the `--checkout` buffer round-trip entirely. This
@@ -229,7 +231,7 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes sync` | Union-merge the cc-notes refs with the remote and push, looping until stable |
 | `cc-notes reconcile --into <branch>` | Carry merged branches' open tasks onto the target |
 | `cc-notes blame <sha>` | List the task(s) a commit implemented |
-| `cc-notes show <id>` | Show any entity by id — note, doc, log, task, sprint, or project |
+| `cc-notes show <id>` | Show any entity by id — note, doc, log, task, sprint, project, or runbook |
 | `cc-notes history <id>` | Show an entity's edit history — who changed which fields, when (`--reverse`, `--limit`, `--json`) |
 | `cc-notes task add "<title>"` | Capture branch work; add `--backlog` for shared work |
 | `cc-notes task ready` | List open, unassigned, unblocked tasks — the pickup queue |
@@ -251,6 +253,11 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes log append <id> "<text>"` | Append one timestamped, authored entry to a log |
 | `cc-notes log show <id>` | Read a log's entries in chronological order |
 | `cc-notes attachment get <id> <name>` | Retrieve an attachment's bytes (stdout, or `-o <path>`) |
+| `cc-notes runbook add "<title>" --step "<text>"` | Store a repeatable procedure as ordered steps (`--step` repeats) |
+| `cc-notes runbook step add <id> "<text>"` | Append a step; `--command` attaches a shell command, `--after <step>` places it |
+| `cc-notes runbook run start <id>` | Begin a tracked run (`--task <id>` cites the task it serves) |
+| `cc-notes runbook run done <id> <step>` | Record a step outcome (`skip`/`fail` are siblings; `--note` adds context) |
+| `cc-notes runbook run finish <id>` | Close the run — succeeded by default, `--failed`/`--abandoned` otherwise |
 
 Append `--json` to any note, doc, log, task, sync, reconcile, or status command for a
 machine-readable record instead of the lean line.
@@ -344,6 +351,22 @@ criteria** (`cc-notes task add --criterion`, or the `cc-notes task criterion` su
 and `cc-notes task validate` runs each criterion's check script behind an explicit
 confirmation. See `references/sprints-and-projects.md` and `references/validation-criteria.md`.
 
+## Runbooks (optional)
+
+A **runbook** stores a repeatable procedure — a release checklist, a deploy sequence, an
+incident response — as ordered steps, each an instruction with an optional shell command.
+The split from a doc is execution: a doc *describes* and is kept fresh; a runbook is
+*executed*, and every execution is a first-class **run** recording who ran it, when, and a
+per-step outcome (`done`, `failed`, or `skipped` — a step with no recorded outcome is
+pending). Runbooks are repo-wide like sprints and projects, with no freshness lifecycle;
+retire one with `runbook archive`.
+
+The execution loop: `runbook run start <id>` (add `--task <task-id>` to cite the task the
+run serves), `runbook run done|skip|fail <id> <step>` per step as you go, then `runbook run
+finish <id>`. Steps insert and reorder without renumbering (`step add --after <step>`,
+`step move --first`), and concurrent runs by different agents merge cleanly. See
+`references/runbooks.md`.
+
 ## References
 
 - `references/cli-reference.md` — the complete command surface: every flag, default, and the
@@ -357,5 +380,7 @@ confirmation. See `references/sprints-and-projects.md` and `references/validatio
   staleness, note verification, drift, and supersession, and the maintenance verbs.
 - `references/sprints-and-projects.md` — the optional planning layer: tasks rolling up into
   sprints and projects, the repo-wide upward pointers, and the derived reverse indexes.
+- `references/runbooks.md` — repeatable procedures: the runbook-vs-doc call, authoring
+  steps with positions and commands, and the tracked run loop.
 - `references/validation-criteria.md` — structured acceptance criteria on a task, the gated
   `task done`, and the explicit, confirmation-gated `task validate` trust boundary.

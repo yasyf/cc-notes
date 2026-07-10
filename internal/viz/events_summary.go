@@ -62,6 +62,13 @@ func (b *Builder) entities(ctx context.Context) ([]EntitySummary, error) {
 	for _, p := range projects {
 		rows = append(rows, summaryRow{p.CreatedAt, projectSummary(p)})
 	}
+	runbooks, err := b.store.ListRunbooks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, rb := range runbooks {
+		rows = append(rows, summaryRow{rb.CreatedAt, runbookSummary(rb)})
+	}
 
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].createdAt != rows[j].createdAt {
@@ -145,5 +152,15 @@ func projectSummary(p model.Project) EntitySummary {
 		Short:  p.ID.Short(),
 		Title:  p.Title,
 		Status: string(p.Status),
+	}
+}
+
+func runbookSummary(rb model.Runbook) EntitySummary {
+	return EntitySummary{
+		Kind:   entityRunbook,
+		ID:     rb.ID,
+		Short:  rb.ID.Short(),
+		Title:  rb.Title,
+		Status: string(rb.Status),
 	}
 }

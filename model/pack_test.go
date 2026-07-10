@@ -130,6 +130,21 @@ func TestPackRoundTripEveryOpKind(t *testing.T) {
 		{"set_criterion_script", SetCriterionScript{ID: "crit-1", Script: "make check"}},
 		{"add_attachment", AddAttachment{Name: "trace.png", OID: testOID, Size: 2048}},
 		{"remove_attachment", RemoveAttachment{Name: "trace.png"}},
+		{"create_runbook", CreateRunbook{
+			Nonce:       testNonce,
+			Title:       "Deploy",
+			Description: "Ship from green main only.",
+			Labels:      []string{"deploy", "ops"},
+		}},
+		{"add_step", AddStep{ID: "step-1", Text: "run tests", Command: "go test ./...", Position: "i"}},
+		{"remove_step", RemoveStep{ID: "step-1"}},
+		{"set_step_text", SetStepText{ID: "step-1", Text: "run tests under -race"}},
+		{"set_step_command", SetStepCommand{ID: "step-1", Command: "go test -race ./..."}},
+		{"set_step_position", SetStepPosition{ID: "step-1", Position: "a"}},
+		{"start_run", StartRun{ID: "run-1", Task: testID}},
+		{"set_run_step_status", SetRunStepStatus{RunID: "run-1", StepID: "step-1", Status: StepDone, Note: "green"}},
+		{"finish_run", FinishRun{ID: "run-1", Status: RunSucceeded}},
+		{"set_runbook_status", SetRunbookStatus{Status: RunbookArchived}},
 		{"checkpoint", Checkpoint{
 			EntityID: testID,
 			State: Note{
@@ -397,6 +412,52 @@ func TestPackRoundTripCheckpointProjectState(t *testing.T) {
 	}
 }
 
+func TestPackRoundTripCheckpointRunbookState(t *testing.T) {
+	op := Checkpoint{
+		EntityID: testID,
+		State: Runbook{
+			ID: testID, Title: "Deploy", Description: "Ship from green main only.",
+			Status: RunbookActive,
+			Steps: []RunbookStep{
+				{ID: "step-1", Text: "run tests", Command: "go test ./...", Position: "a"},
+				{ID: "step-2", Text: "tag release", Command: "", Position: "i"},
+			},
+			Runs: []RunbookRun{
+				{
+					ID: "run-1", Task: testParent, Status: RunSucceeded,
+					Runner: "agent-7", StartedAt: 200, FinishedAt: 300,
+					Results: []RunbookStepResult{
+						{StepID: "step-1", Status: StepDone, Note: "green", Actor: "agent-7", TS: 250},
+					},
+				},
+			},
+			Labels: []string{"deploy"}, Comments: []Comment{{Author: "ada", TS: 100, Body: "init"}},
+			Author: "ada", CreatedAt: 100, UpdatedAt: 300, ArchivedAt: 0, Head: testParent,
+		},
+		CoversLamport: 6,
+		CoversShas:    []SHA{testParent, testID},
+	}
+	pack := Pack{Lamport: 7, Ops: []Op{op}}
+	data, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got, err := DecodePack(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !reflect.DeepEqual(got, pack) {
+		t.Fatalf("round-trip = %#v, want %#v", got, pack)
+	}
+	cp, ok := got.Ops[0].(Checkpoint)
+	if !ok {
+		t.Fatalf("Ops[0] = %T, want Checkpoint", got.Ops[0])
+	}
+	if _, ok := cp.State.(Runbook); !ok {
+		t.Fatalf("decoded State = %T, want Runbook", cp.State)
+	}
+}
+
 func TestPackGoldenBytes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -644,6 +705,23 @@ func TestDecodePackFailures(t *testing.T) {
 		{"negative attachment size", `{"v":1,"lamport":1,"ops":[{"kind":"add_attachment","name":"a.png","oid":"` + testOID + `","size":-1}]}`, ErrInvalidValue},
 		{"empty remove_attachment name", `{"v":1,"lamport":1,"ops":[{"kind":"remove_attachment","name":""}]}`, ErrInvalidValue},
 		{"traversal remove_attachment name", `{"v":1,"lamport":1,"ops":[{"kind":"remove_attachment","name":".."}]}`, ErrInvalidValue},
+		{"empty add_step position", `{"v":1,"lamport":1,"ops":[{"kind":"add_step","id":"s1","text":"t","command":"","position":""}]}`, ErrInvalidValue},
+		{"trailing-zero add_step position", `{"v":1,"lamport":1,"ops":[{"kind":"add_step","id":"s1","text":"t","command":"","position":"a0"}]}`, ErrInvalidValue},
+		{"non-digit add_step position", `{"v":1,"lamport":1,"ops":[{"kind":"add_step","id":"s1","text":"t","command":"","position":"A"}]}`, ErrInvalidValue},
+		{"empty set_step_position position", `{"v":1,"lamport":1,"ops":[{"kind":"set_step_position","id":"s1","position":""}]}`, ErrInvalidValue},
+		{"finish_run running", `{"v":1,"lamport":1,"ops":[{"kind":"finish_run","id":"r1","status":"running"}]}`, ErrInvalidValue},
+		{"finish_run bogus status", `{"v":1,"lamport":1,"ops":[{"kind":"finish_run","id":"r1","status":"paused"}]}`, ErrInvalidValue},
+		{"bogus set_run_step_status status", `{"v":1,"lamport":1,"ops":[{"kind":"set_run_step_status","run_id":"r1","step_id":"s1","status":"pending","note":""}]}`, ErrInvalidValue},
+		{"bogus set_runbook_status status", `{"v":1,"lamport":1,"ops":[{"kind":"set_runbook_status","status":"deleted"}]}`, ErrInvalidValue},
+		{"empty add_step id", `{"v":1,"lamport":1,"ops":[{"kind":"add_step","id":"","text":"t","command":"","position":"a"}]}`, ErrInvalidValue},
+		{"empty remove_step id", `{"v":1,"lamport":1,"ops":[{"kind":"remove_step","id":""}]}`, ErrInvalidValue},
+		{"empty set_step_text id", `{"v":1,"lamport":1,"ops":[{"kind":"set_step_text","id":"","text":"t"}]}`, ErrInvalidValue},
+		{"empty set_step_command id", `{"v":1,"lamport":1,"ops":[{"kind":"set_step_command","id":"","command":"go test"}]}`, ErrInvalidValue},
+		{"empty set_step_position id", `{"v":1,"lamport":1,"ops":[{"kind":"set_step_position","id":"","position":"a"}]}`, ErrInvalidValue},
+		{"empty start_run id", `{"v":1,"lamport":1,"ops":[{"kind":"start_run","id":"","task":""}]}`, ErrInvalidValue},
+		{"empty set_run_step_status run_id", `{"v":1,"lamport":1,"ops":[{"kind":"set_run_step_status","run_id":"","step_id":"s1","status":"done","note":""}]}`, ErrInvalidValue},
+		{"empty set_run_step_status step_id", `{"v":1,"lamport":1,"ops":[{"kind":"set_run_step_status","run_id":"r1","step_id":"","status":"done","note":""}]}`, ErrInvalidValue},
+		{"empty finish_run id", `{"v":1,"lamport":1,"ops":[{"kind":"finish_run","id":"","status":"succeeded"}]}`, ErrInvalidValue},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

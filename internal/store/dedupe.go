@@ -39,6 +39,10 @@ func (s *Store) findDuplicate(ctx context.Context, kind refs.Kind, pack model.Pa
 		return scanDup(candidate, fold.Project,
 			func() ([]model.Project, error) { return s.ListProjects(ctx) },
 			func(p model.Project) bool { return p.ClosedAt == 0 }, sameProjectContent)
+	case refs.KindRunbook:
+		return scanDup(candidate, fold.Runbook,
+			func() ([]model.Runbook, error) { return s.ListRunbooks(ctx) },
+			func(rb model.Runbook) bool { return rb.ArchivedAt == 0 }, sameRunbookContent)
 	}
 	return nil, nil
 }
@@ -71,6 +75,7 @@ func dedupeCovered(ops []model.Op) bool {
 		switch op.(type) {
 		case model.CreateNote, model.CreateDoc, model.CreateLog,
 			model.CreateTask, model.CreateSprint, model.CreateProject,
+			model.CreateRunbook, model.AddStep,
 			model.AddAttachment,
 			model.SetSprint, model.SetProject,
 			model.AddCriterion, model.AddDep,
@@ -139,4 +144,19 @@ func sameProjectContent(a, b model.Project) bool {
 	return a.Title == b.Title &&
 		a.Description == b.Description &&
 		slices.Equal(a.Labels, b.Labels)
+}
+
+func sameRunbookContent(a, b model.Runbook) bool {
+	return a.Title == b.Title &&
+		a.Description == b.Description &&
+		slices.Equal(a.Labels, b.Labels) &&
+		sameSteps(a.Steps, b.Steps)
+}
+
+// sameSteps compares steps by content — text and command, in folded (position)
+// order — ignoring the per-step nonce id and the position encoding itself.
+func sameSteps(a, b []model.RunbookStep) bool {
+	return slices.EqualFunc(a, b, func(x, y model.RunbookStep) bool {
+		return x.Text == y.Text && x.Command == y.Command
+	})
 }

@@ -166,6 +166,10 @@ func (f *FS) Getattr(p string, stat *fuse.Stat_t, fh uint64) int {
 			f.fillStat(stat, fuse.S_IFREG|0o444, h.ino, h.size, fuse.Timespec{Sec: h.mtime}, h.birth)
 			return 0
 		}
+		if underRunbooks(h.path) {
+			f.fillStat(stat, fuse.S_IFREG|0o444, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime}, h.birth)
+			return 0
+		}
 		f.fillStat(stat, fuse.S_IFREG|0o644, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime}, h.birth)
 		return 0
 	}
@@ -185,6 +189,9 @@ func (f *FS) Open(p string, flags int) (int, uint64) {
 		h := &handle{path: p, buf: slices.Clone(sc.data), ino: pathIno(p), mtime: sc.mtime.Unix(), birth: sc.mtime.Unix()}
 		truncateOnOpen(h, flags)
 		return 0, f.newHandle(h)
+	}
+	if underRunbooks(p) && flags&(fuse.O_WRONLY|fuse.O_RDWR|fuse.O_TRUNC|fuse.O_APPEND) != 0 {
+		return -fuse.EACCES, invalidFh
 	}
 	ref, r, errc := f.openEntity(p)
 	if errc != 0 {
@@ -210,7 +217,7 @@ func (f *FS) Create(p string, flags int, mode uint32) (int, uint64) {
 	if JunkName(path.Base(p)) {
 		return -fuse.EPERM, invalidFh
 	}
-	if underAttachments(p) {
+	if underAttachments(p) || underRunbooks(p) {
 		return -fuse.EPERM, invalidFh
 	}
 	f.mu.Lock()
@@ -256,7 +263,7 @@ func (f *FS) Write(p string, buff []byte, ofst int64, fh uint64) int {
 	if h == nil {
 		return -fuse.EBADF
 	}
-	if h.file != nil {
+	if h.file != nil || underRunbooks(h.path) {
 		return -fuse.EACCES
 	}
 	if end := ofst + int64(len(buff)); end > int64(len(h.buf)) {
@@ -273,7 +280,7 @@ func (f *FS) Truncate(p string, size int64, fh uint64) int {
 	if JunkName(path.Base(p)) {
 		return -fuse.ENOENT
 	}
-	if underAttachments(p) {
+	if underAttachments(p) || underRunbooks(p) {
 		return -fuse.EACCES
 	}
 	f.mu.Lock()
@@ -368,7 +375,7 @@ func (f *FS) Rename(oldpath string, newpath string) int {
 	if JunkName(path.Base(oldpath)) {
 		return -fuse.ENOENT
 	}
-	if JunkName(path.Base(newpath)) || underAttachments(newpath) {
+	if JunkName(path.Base(newpath)) || underAttachments(newpath) || underRunbooks(newpath) {
 		return -fuse.EPERM
 	}
 	f.mu.Lock()
@@ -721,6 +728,8 @@ func (f *FS) resolveEntity(kind refs.Kind, shortID string) (string, rendered, er
 		return f.resolveSprint(shortID)
 	case refs.KindProject:
 		return f.resolveProject(shortID)
+	case refs.KindRunbook:
+		return f.resolveRunbook(shortID)
 	default:
 		panic("fusefs: resolveEntity on unknown kind " + string(kind))
 	}
@@ -793,6 +802,12 @@ func entityTarget(p string) (kind refs.Kind, ok bool) {
 	return "", false
 }
 
+// underRunbooks reports whether p lies in the read-only /runbooks subtree,
+// where every create, write, truncate, and write-intent open is rejected.
+func underRunbooks(p string) bool {
+	return p == "/runbooks" || strings.HasPrefix(p, "/runbooks/")
+}
+
 func refFor(snap model.Snapshot) string {
 	switch s := snap.(type) {
 	case model.Note:
@@ -807,6 +822,8 @@ func refFor(snap model.Snapshot) string {
 		return refs.Sprint(s.ID)
 	case model.Project:
 		return refs.Project(s.ID)
+	case model.Runbook:
+		return refs.Runbook(s.ID)
 	default:
 		panic(fmt.Sprintf("fusefs: unknown snapshot type %T", snap))
 	}
@@ -866,6 +883,12 @@ func (f *FS) openEntity(p string) (string, rendered, int) {
 		return ref, r, 0
 	case ProjectFile:
 		ref, r, err := f.resolveProject(n.ShortID)
+		if err != nil {
+			return "", rendered{}, errno(err)
+		}
+		return ref, r, 0
+	case RunbookFile:
+		ref, r, err := f.resolveRunbook(n.ShortID)
 		if err != nil {
 			return "", rendered{}, errno(err)
 		}
@@ -990,6 +1013,22 @@ func (f *FS) resolveProject(shortID string) (string, rendered, error) {
 	return ref, r, nil
 }
 
+// resolveRunbook maps a short id to the runbook it names.
+func (f *FS) resolveRunbook(shortID string) (string, rendered, error) {
+	ref, tip, err := f.resolveRef(refs.RunbooksRoot, shortID)
+	if err != nil {
+		return "", rendered{}, err
+	}
+	r, err := f.renderTip(tip)
+	if err != nil {
+		return "", rendered{}, err
+	}
+	if _, ok := r.snapshot.(model.Runbook); !ok {
+		return "", rendered{}, fmt.Errorf("ref %s folds as %T, want runbook", ref, r.snapshot)
+	}
+	return ref, r, nil
+}
+
 func (f *FS) resolveRef(prefix, shortID string) (string, model.SHA, error) {
 	tips, err := f.store.Repo.ListPrefix(f.ctx, prefix)
 	if err != nil {
@@ -1060,6 +1099,8 @@ func renderDocument(snap model.Snapshot) []byte {
 		return RenderSprint(s)
 	case model.Project:
 		return RenderProject(s)
+	case model.Runbook:
+		return RenderRunbook(s)
 	default:
 		panic(fmt.Sprintf("fusefs: unknown snapshot type %T", snap))
 	}
@@ -1079,6 +1120,8 @@ func headOf(snap model.Snapshot) model.SHA {
 		return s.Head
 	case model.Project:
 		return s.Head
+	case model.Runbook:
+		return s.Head
 	default:
 		panic(fmt.Sprintf("fusefs: unknown snapshot type %T", snap))
 	}
@@ -1097,6 +1140,8 @@ func snapshotTimes(snap model.Snapshot) (created, updated int64) {
 	case model.Sprint:
 		return s.CreatedAt, s.UpdatedAt
 	case model.Project:
+		return s.CreatedAt, s.UpdatedAt
+	case model.Runbook:
 		return s.CreatedAt, s.UpdatedAt
 	default:
 		panic(fmt.Sprintf("fusefs: unknown snapshot type %T", snap))
@@ -1129,7 +1174,7 @@ func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 		return -fuse.ENOENT
 	}
 	switch n := node.(type) {
-	case Root, NotesDir, DocsDir, LogsDir, TasksRoot, SprintsDir, ProjectsDir:
+	case Root, NotesDir, DocsDir, LogsDir, RunbooksDir, TasksRoot, SprintsDir, ProjectsDir:
 		f.fillDirStat(stat, p)
 		return 0
 	case NoteFile:
@@ -1173,6 +1218,13 @@ func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 			return errno(rerr)
 		}
 		f.fillEntityStat(stat, r)
+		return 0
+	case RunbookFile:
+		_, r, rerr := f.resolveRunbook(n.ShortID)
+		if rerr != nil {
+			return errno(rerr)
+		}
+		f.fillReadonlyEntityStat(stat, r)
 		return 0
 	case ProjectBrowseDir, ProjectSprintsDir, ProjectSprintDir, ProjectSprintTasksDir, ProjectTasksDir, SprintBrowseDir, SprintTasksDir:
 		if errc := f.validateBrowseDir(node); errc != 0 {
@@ -1218,7 +1270,7 @@ func (f *FS) listDir(p string) ([]string, int) {
 	names := map[string]bool{}
 	switch n := node.(type) {
 	case Root:
-		names["notes"], names["docs"], names["logs"], names["tasks"], names["sprints"], names["projects"], names["attachments"] = true, true, true, true, true, true, true
+		names["notes"], names["docs"], names["logs"], names["runbooks"], names["tasks"], names["sprints"], names["projects"], names["attachments"] = true, true, true, true, true, true, true, true
 	case NotesDir:
 		notes, err := f.store.ListNotes(f.ctx, false, false)
 		if err != nil {
@@ -1242,6 +1294,14 @@ func (f *FS) listDir(p string) ([]string, int) {
 		}
 		for _, l := range logs {
 			names[LogFilename(l)] = true
+		}
+	case RunbooksDir:
+		runbooks, err := f.store.ListRunbooks(f.ctx)
+		if err != nil {
+			return nil, errno(err)
+		}
+		for _, r := range runbooks {
+			names[RunbookFilename(r)] = true
 		}
 	case TasksRoot:
 		tasks, err := f.store.ListTasks(f.ctx)
@@ -1586,6 +1646,14 @@ func (f *FS) fillEntityStat(stat *fuse.Stat_t, r rendered) {
 	f.fillStat(stat, fuse.S_IFREG|0o644, idIno(r.snapshot.EntityID()), int64(len(r.data)), mtime, created)
 }
 
+// fillReadonlyEntityStat mirrors fillEntityStat for the read-only /runbooks
+// subtree: mode 0o444 so an editor opens the file read-only.
+func (f *FS) fillReadonlyEntityStat(stat *fuse.Stat_t, r rendered) {
+	created, updated := snapshotTimes(r.snapshot)
+	mtime := fuse.Timespec{Sec: updated}
+	f.fillStat(stat, fuse.S_IFREG|0o444, idIno(r.snapshot.EntityID()), int64(len(r.data)), mtime, created)
+}
+
 // fillSymlinkStat fills a browse-tree leaf as a symlink: S_IFLNK with the
 // target length as size — the kernel reads exactly that many bytes from
 // Readlink — and the linked task's times, so the leaf ages with its target.
@@ -1697,6 +1765,12 @@ func (f *FS) notesSeed(p string, _ *fuse.Stat_t) string {
 		return string(headOf(r.snapshot))
 	case ProjectFile:
 		_, r, err := f.resolveProject(n.ShortID)
+		if err != nil {
+			return ""
+		}
+		return string(headOf(r.snapshot))
+	case RunbookFile:
+		_, r, err := f.resolveRunbook(n.ShortID)
 		if err != nil {
 			return ""
 		}

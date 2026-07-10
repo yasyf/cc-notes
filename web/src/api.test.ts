@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import type { RunbookRunSnapshot, RunbookStepSnapshot } from "./api";
 import {
   normalizeCommits,
   normalizeEntities,
   normalizeEntity,
   normalizeGraph,
+  projectRunSteps,
 } from "./api";
 
 // The Go server marshals nil slices and nil maps as JSON null. These payloads are
@@ -176,7 +178,7 @@ describe("normalizeEntities", () => {
     // An empty repo: the Go side marshals each nil kind slice as null.
     const state = normalizeEntities(
       JSON.parse(
-        `{"notes":null,"docs":null,"logs":null,"tasks":null,"sprints":null,"projects":null}`,
+        `{"notes":null,"docs":null,"logs":null,"tasks":null,"sprints":null,"projects":null,"runbooks":null}`,
       ),
     );
     expect(state.notes).toEqual([]);
@@ -185,6 +187,7 @@ describe("normalizeEntities", () => {
     expect(state.tasks).toEqual([]);
     expect(state.sprints).toEqual([]);
     expect(state.projects).toEqual([]);
+    expect(state.runbooks).toEqual([]);
   });
 
   it("keeps present buckets and passes their snapshots through verbatim", () => {
@@ -193,7 +196,11 @@ describe("normalizeEntities", () => {
         `{"notes":[{"id":"n1","title":"n","tags":["x"]}],
           "docs":null,"logs":null,
           "tasks":[{"id":"t1","title":"t","status":"open","criteria":[{"id":"c1","text":"ships","script":"","status":"pending"}]}],
-          "sprints":null,"projects":null}`,
+          "sprints":null,"projects":null,
+          "runbooks":[{"id":"rb1","title":"deploy","status":"active",
+            "steps":[{"id":"s1","text":"build","command":"make","position":"a0"}],
+            "runs":[{"id":"r1","task":"","status":"running","runner":"ann","started_at":5,"finished_at":0,
+              "results":[{"step_id":"s1","status":"done","note":"","actor":"ann","ts":6}]}]}]}`,
       ),
     );
     expect(state.docs).toEqual([]);
@@ -201,5 +208,71 @@ describe("normalizeEntities", () => {
     expect(state.tasks[0].criteria).toEqual([
       { id: "c1", text: "ships", script: "", status: "pending" },
     ]);
+    expect(state.runbooks[0].steps).toEqual([
+      { id: "s1", text: "build", command: "make", position: "a0" },
+    ]);
+    expect(state.runbooks[0].runs[0].results).toEqual([
+      { step_id: "s1", status: "done", note: "", actor: "ann", ts: 6 },
+    ]);
+  });
+});
+
+describe("projectRunSteps", () => {
+  const steps: RunbookStepSnapshot[] = [
+    { id: "a", text: "step A", command: "do-a", position: "a0" },
+    { id: "b", text: "step B", command: "", position: "a1" },
+    { id: "c", text: "step C", command: "", position: "a2" },
+  ];
+
+  function run(over: Partial<RunbookRunSnapshot> = {}): RunbookRunSnapshot {
+    return {
+      id: "r1",
+      task: "",
+      status: "running",
+      runner: "ann",
+      started_at: 1,
+      finished_at: 0,
+      results: [],
+      ...over,
+    };
+  }
+
+  it("projects results into procedure order with pending for absent steps", () => {
+    // Results recorded C then A (sparse, out of order): the projection lists
+    // every current step in step order, with B pending between them.
+    const projected = projectRunSteps(
+      steps,
+      run({
+        results: [
+          { step_id: "c", status: "done", note: "shipped", actor: "ann", ts: 3 },
+          { step_id: "a", status: "failed", note: "flaky", actor: "ann", ts: 2 },
+        ],
+      }),
+    );
+    expect(projected).toEqual([
+      { stepId: "a", text: "step A", command: "do-a", status: "failed", note: "flaky" },
+      { stepId: "b", text: "step B", command: "", status: "pending", note: "" },
+      { stepId: "c", text: "step C", command: "", status: "done", note: "shipped" },
+    ]);
+  });
+
+  it("omits results whose step no longer exists", () => {
+    const projected = projectRunSteps(
+      steps,
+      run({
+        results: [
+          { step_id: "b", status: "skipped", note: "", actor: "ann", ts: 2 },
+          { step_id: "gone", status: "done", note: "orphan", actor: "ann", ts: 4 },
+        ],
+      }),
+    );
+    expect(projected.map((s) => s.stepId)).toEqual(["a", "b", "c"]);
+    expect(projected.find((s) => s.stepId === "b")?.status).toBe("skipped");
+    expect(projected.some((s) => s.note === "orphan")).toBe(false);
+  });
+
+  it("marks every step pending when the run has no results", () => {
+    const projected = projectRunSteps(steps, run());
+    expect(projected.map((s) => s.status)).toEqual(["pending", "pending", "pending"]);
   });
 });

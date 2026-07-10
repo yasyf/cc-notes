@@ -1,5 +1,7 @@
 package model
 
+import "fmt"
+
 // Op is a single immutable operation in an entity's history. Each op
 // serializes as a JSON object whose first field is the "kind" discriminator;
 // the set of kinds is closed and enforced by the pack codec.
@@ -561,15 +563,188 @@ func (RemoveAttachment) OpKind() string { return "remove_attachment" }
 
 func (o RemoveAttachment) validate() error { return validateAttachmentName(o.Name) }
 
+// CreateRunbook is the root operation of a runbook chain. The nonce makes
+// otherwise-identical creates hash to distinct entity ids. Initial steps ride
+// in the same create pack as AddStep ops.
+type CreateRunbook struct {
+	Nonce       string   `json:"nonce"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Labels      []string `json:"labels"`
+}
+
+// OpKind returns "create_runbook".
+func (CreateRunbook) OpKind() string { return "create_runbook" }
+
+// AddStep adds one step to a runbook. The id is a client-generated nonce that
+// makes the add idempotent; Position places the step (see PositionBetween).
+type AddStep struct {
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	Command  string `json:"command"`
+	Position string `json:"position"`
+}
+
+// OpKind returns "add_step".
+func (AddStep) OpKind() string { return "add_step" }
+
+func (o AddStep) validate() error {
+	if o.ID == "" {
+		return fmt.Errorf("%w: add_step id is empty", ErrInvalidValue)
+	}
+	return validatePosition(o.Position)
+}
+
+// RemoveStep removes the step with the given id. Run results that reference the
+// step keep their recorded StepID — history is not rewritten.
+type RemoveStep struct {
+	ID string `json:"id"`
+}
+
+// OpKind returns "remove_step".
+func (RemoveStep) OpKind() string { return "remove_step" }
+
+func (o RemoveStep) validate() error {
+	if o.ID == "" {
+		return fmt.Errorf("%w: remove_step id is empty", ErrInvalidValue)
+	}
+	return nil
+}
+
+// SetStepText replaces the instruction text of the step with the given id.
+type SetStepText struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// OpKind returns "set_step_text".
+func (SetStepText) OpKind() string { return "set_step_text" }
+
+func (o SetStepText) validate() error {
+	if o.ID == "" {
+		return fmt.Errorf("%w: set_step_text id is empty", ErrInvalidValue)
+	}
+	return nil
+}
+
+// SetStepCommand replaces the command of the step with the given id; an empty
+// command clears it.
+type SetStepCommand struct {
+	ID      string `json:"id"`
+	Command string `json:"command"`
+}
+
+// OpKind returns "set_step_command".
+func (SetStepCommand) OpKind() string { return "set_step_command" }
+
+func (o SetStepCommand) validate() error {
+	if o.ID == "" {
+		return fmt.Errorf("%w: set_step_command id is empty", ErrInvalidValue)
+	}
+	return nil
+}
+
+// SetStepPosition moves the step with the given id to a new position.
+type SetStepPosition struct {
+	ID       string `json:"id"`
+	Position string `json:"position"`
+}
+
+// OpKind returns "set_step_position".
+func (SetStepPosition) OpKind() string { return "set_step_position" }
+
+func (o SetStepPosition) validate() error {
+	if o.ID == "" {
+		return fmt.Errorf("%w: set_step_position id is empty", ErrInvalidValue)
+	}
+	return validatePosition(o.Position)
+}
+
+// StartRun begins a tracked run of a runbook. The id is a client-generated
+// nonce that makes the start idempotent; Task optionally cites the task this
+// run serves — a loose reference, never folded into the task. Runner and start
+// time come from the carrying commit at fold time.
+type StartRun struct {
+	ID   string   `json:"id"`
+	Task EntityID `json:"task"`
+}
+
+// OpKind returns "start_run".
+func (StartRun) OpKind() string { return "start_run" }
+
+func (o StartRun) validate() error {
+	if o.ID == "" {
+		return fmt.Errorf("%w: start_run id is empty", ErrInvalidValue)
+	}
+	return nil
+}
+
+// SetRunStepStatus records the outcome of one step within a run, upserting the
+// run's result for that step id. The note carries free-form context (error
+// output, a skip reason); recorder and timestamp come from the carrying commit.
+type SetRunStepStatus struct {
+	RunID  string           `json:"run_id"`
+	StepID string           `json:"step_id"`
+	Status StepResultStatus `json:"status"`
+	Note   string           `json:"note"`
+}
+
+// OpKind returns "set_run_step_status".
+func (SetRunStepStatus) OpKind() string { return "set_run_step_status" }
+
+func (o SetRunStepStatus) validate() error {
+	if o.RunID == "" {
+		return fmt.Errorf("%w: set_run_step_status run_id is empty", ErrInvalidValue)
+	}
+	if o.StepID == "" {
+		return fmt.Errorf("%w: set_run_step_status step_id is empty", ErrInvalidValue)
+	}
+	return o.Status.validate()
+}
+
+// FinishRun ends a run with a terminal status; RunRunning is not a finish and
+// fails validation. Finish time comes from the carrying commit.
+type FinishRun struct {
+	ID     string    `json:"id"`
+	Status RunStatus `json:"status"`
+}
+
+// OpKind returns "finish_run".
+func (FinishRun) OpKind() string { return "finish_run" }
+
+func (o FinishRun) validate() error {
+	if o.ID == "" {
+		return fmt.Errorf("%w: finish_run id is empty", ErrInvalidValue)
+	}
+	if err := o.Status.validate(); err != nil {
+		return err
+	}
+	if o.Status == RunRunning {
+		return fmt.Errorf("%w: finish_run status %q", ErrInvalidValue, o.Status)
+	}
+	return nil
+}
+
+// SetRunbookStatus moves a runbook between active and archived.
+type SetRunbookStatus struct {
+	Status RunbookStatus `json:"status"`
+}
+
+// OpKind returns "set_runbook_status".
+func (SetRunbookStatus) OpKind() string { return "set_runbook_status" }
+
+func (o SetRunbookStatus) validate() error { return o.Status.validate() }
+
 // Checkpoint compacts an entity's history into a single seed. State is the
 // full folded snapshot of every commit in CoversShas, CoversLamport is the
 // lamport of the covered tip, and EntityID is the immutable root sha the
 // snapshot belongs to. Checkpoint is always appended, never a root, so it
 // never changes an entity id: a fold uses the newest seed-safe checkpoint as
 // its starting snapshot and treats every other checkpoint as a no-op. The pack
-// codec carries State kind-tagged (note, doc, log, task, sprint, or project) so
-// it decodes back to the concrete model.Note/Doc/Log/Task/Sprint/Project; the
-// snapshot's kind drives fold dispatch.
+// codec carries State kind-tagged (note, doc, log, task, sprint, project, or
+// runbook) so it decodes back to the concrete
+// model.Note/Doc/Log/Task/Sprint/Project/Runbook; the snapshot's kind drives
+// fold dispatch.
 type Checkpoint struct {
 	EntityID      EntityID
 	State         Snapshot

@@ -24,11 +24,13 @@ func TestBuildGolden(t *testing.T) {
 		{"sprint", Sprint(hex40), "refs/cc-notes/sprints/" + hex40},
 		{"project", Project(hex40), "refs/cc-notes/projects/" + hex40},
 		{"doc", Doc(hex40), "refs/cc-notes/docs/" + hex40},
+		{"runbook", Runbook(hex40), "refs/cc-notes/runbooks/" + hex40},
 		{"notes prefix", NotesPrefix, "refs/cc-notes/notes/"},
 		{"tasks root", TasksRoot, "refs/cc-notes/tasks/"},
 		{"sprints root", SprintsRoot, "refs/cc-notes/sprints/"},
 		{"projects root", ProjectsRoot, "refs/cc-notes/projects/"},
 		{"docs root", DocsRoot, "refs/cc-notes/docs/"},
+		{"runbooks root", RunbooksRoot, "refs/cc-notes/runbooks/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -51,6 +53,7 @@ func TestKindValues(t *testing.T) {
 		{"sprint", KindSprint, "sprint"},
 		{"project", KindProject, "project"},
 		{"doc", KindDoc, "doc"},
+		{"runbook", KindRunbook, "runbook"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,6 +80,8 @@ func TestParseRoundTrip(t *testing.T) {
 		{"project sha256 id", Project(hex64), Ref{Kind: KindProject, ID: hex64}},
 		{"doc", Doc(hex40), Ref{Kind: KindDoc, ID: hex40}},
 		{"doc sha256 id", Doc(hex64), Ref{Kind: KindDoc, ID: hex64}},
+		{"runbook", Runbook(hex40), Ref{Kind: KindRunbook, ID: hex40}},
+		{"runbook sha256 id", Runbook(hex64), Ref{Kind: KindRunbook, ID: hex64}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

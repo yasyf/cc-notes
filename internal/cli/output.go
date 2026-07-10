@@ -200,6 +200,57 @@ type projectDTO struct {
 	Tasks       []string     `json:"tasks"`
 }
 
+// runbookStepDTO is one ordered runbook step: the full nonce id, its
+// instruction text, the optional shell command (empty when none), and the
+// fractional-index position string.
+type runbookStepDTO struct {
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	Command  string `json:"command"`
+	Position string `json:"position"`
+}
+
+// runbookRunStepDTO is one step's status within a run, in runbook step order:
+// the full step id, its recorded status ("pending" when no result), and the
+// recorded note.
+type runbookRunStepDTO struct {
+	Step   string `json:"step"`
+	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
+}
+
+// runbookRunDTO fixes the JSON field order for one tracked run: the full run
+// id, the optional cited task (null when none), the runner, the run status,
+// RFC3339 UTC start/finish (finish null while running), and one entry per
+// current step in order.
+type runbookRunDTO struct {
+	ID         string              `json:"id"`
+	Task       *string             `json:"task"`
+	Runner     string              `json:"runner"`
+	Status     string              `json:"status"`
+	StartedAt  string              `json:"started_at"`
+	FinishedAt *string             `json:"finished_at"`
+	Steps      []runbookRunStepDTO `json:"steps"`
+}
+
+// runbookDTO fixes the JSON field order and formats for runbook output: full
+// hex ids, RFC3339 UTC timestamps, null for the unset archived stamp, sorted
+// set slices, the ordered steps, and the append-only runs.
+type runbookDTO struct {
+	ID          string           `json:"id"`
+	Title       string           `json:"title"`
+	Description string           `json:"description"`
+	Status      string           `json:"status"`
+	Steps       []runbookStepDTO `json:"steps"`
+	Runs        []runbookRunDTO  `json:"runs"`
+	Labels      []string         `json:"labels"`
+	Comments    []commentDTO     `json:"comments"`
+	Author      string           `json:"author"`
+	CreatedAt   string           `json:"created_at"`
+	UpdatedAt   string           `json:"updated_at"`
+	ArchivedAt  *string          `json:"archived_at"`
+}
+
 // statusDTO fixes the JSON field order for a status report: the current
 // branch, the backlog and your-branch task slices, the in-progress tasks
 // grouped by assignee, and the note, doc, and log summaries.
@@ -768,6 +819,198 @@ func leanProjectLine(p model.Project) string {
 	return fmt.Sprintf("%s\t%s\t%s", p.ID.Short(), p.Status, p.Title)
 }
 
+// runbookStepPending is the display status of a run step with no recorded
+// result: pending is absence, not a StepResultStatus value.
+const runbookStepPending = "pending"
+
+// runbookStepDTOs renders a folded step slice into its fixed-order DTO form,
+// always non-nil so an empty runbook marshals steps as [].
+func runbookStepDTOs(steps []model.RunbookStep) []runbookStepDTO {
+	out := make([]runbookStepDTO, len(steps))
+	for i, st := range steps {
+		out[i] = runbookStepDTO{ID: st.ID, Text: st.Text, Command: st.Command, Position: st.Position}
+	}
+	return out
+}
+
+// newRunbookRunDTO renders one run into its DTO, projecting the run's recorded
+// results onto the runbook's current steps in order: a step with no result is
+// "pending". Results for removed steps are historical and not shown.
+func newRunbookRunDTO(rb model.Runbook, run model.RunbookRun) runbookRunDTO {
+	byStep := make(map[string]model.RunbookStepResult, len(run.Results))
+	for _, r := range run.Results {
+		byStep[r.StepID] = r
+	}
+	steps := make([]runbookRunStepDTO, len(rb.Steps))
+	for i, st := range rb.Steps {
+		entry := runbookRunStepDTO{Step: st.ID, Status: runbookStepPending}
+		if res, ok := byStep[st.ID]; ok {
+			entry.Status = string(res.Status)
+			entry.Note = res.Note
+		}
+		steps[i] = entry
+	}
+	return runbookRunDTO{
+		ID:         run.ID,
+		Task:       optString(string(run.Task)),
+		Runner:     string(run.Runner),
+		Status:     string(run.Status),
+		StartedAt:  rfc3339(run.StartedAt),
+		FinishedAt: optTime(run.FinishedAt),
+		Steps:      steps,
+	}
+}
+
+// newRunbookDTO renders a runbook snapshot into its fixed-order DTO.
+func newRunbookDTO(rb model.Runbook) runbookDTO {
+	runs := make([]runbookRunDTO, len(rb.Runs))
+	for i, r := range rb.Runs {
+		runs[i] = newRunbookRunDTO(rb, r)
+	}
+	return runbookDTO{
+		ID:          string(rb.ID),
+		Title:       rb.Title,
+		Description: rb.Description,
+		Status:      string(rb.Status),
+		Steps:       runbookStepDTOs(rb.Steps),
+		Runs:        runs,
+		Labels:      emptyNotNil(rb.Labels),
+		Comments:    commentDTOs(rb.Comments),
+		Author:      string(rb.Author),
+		CreatedAt:   rfc3339(rb.CreatedAt),
+		UpdatedAt:   rfc3339(rb.UpdatedAt),
+		ArchivedAt:  optTime(rb.ArchivedAt),
+	}
+}
+
+// leanRunbookLine renders the tab-separated runbook line:
+// <short7>\t<status>\t<title>.
+func leanRunbookLine(rb model.Runbook) string {
+	return fmt.Sprintf("%s\t%s\t%s", rb.ID.Short(), rb.Status, rb.Title)
+}
+
+// leanRunLine renders the tab-separated run line:
+// <short7>\t<status>\t<runner>\t<YYYY-MM-DD started>\t<done+skipped>/<total steps>.
+func leanRunLine(rb model.Runbook, run model.RunbookRun) string {
+	done, _, _ := runStepCounts(rb, run)
+	return fmt.Sprintf("%s\t%s\t%s\t%s\t%d/%d", shortWireID(run.ID), run.Status, run.Runner, dateUTC(run.StartedAt), done, len(rb.Steps))
+}
+
+// runStepCounts tallies a run's results over the runbook's current steps: the
+// number done-or-skipped (progress), the number skipped, and the number
+// failed. Results for removed steps are excluded so the tallies never exceed
+// the current step count.
+func runStepCounts(rb model.Runbook, run model.RunbookRun) (progress, skipped, failed int) {
+	byStep := make(map[string]model.RunbookStepResult, len(run.Results))
+	for _, r := range run.Results {
+		byStep[r.StepID] = r
+	}
+	for _, st := range rb.Steps {
+		switch byStep[st.ID].Status {
+		case model.StepDone:
+			progress++
+		case model.StepSkipped:
+			progress++
+			skipped++
+		case model.StepFailed:
+			failed++
+		}
+	}
+	return progress, skipped, failed
+}
+
+// renderRunbookShow renders the lean show view of a runbook: the fixed-order
+// header block, the description separated by a blank line, the numbered steps
+// (each with an indented "$ command" line when set), then the runs newest
+// first, capped at five with a "(+N older)" trailer.
+func renderRunbookShow(rb model.Runbook) string {
+	var b strings.Builder
+	header(&b, "id", string(rb.ID))
+	header(&b, "title", rb.Title)
+	header(&b, "status", string(rb.Status))
+	header(&b, "labels", csvOrDash(rb.Labels))
+	header(&b, "created", rfc3339(rb.CreatedAt))
+	header(&b, "updated", rfc3339(rb.UpdatedAt))
+	header(&b, "archived", orDash(optTimeString(rb.ArchivedAt)))
+	if rb.Description != "" {
+		b.WriteByte('\n')
+		b.WriteString(rb.Description)
+		b.WriteByte('\n')
+	}
+	for _, c := range rb.Comments {
+		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, rfc3339(c.TS), c.Body)
+	}
+	b.WriteString("\nsteps:\n")
+	for i, st := range rb.Steps {
+		fmt.Fprintf(&b, "  %d. [%s] %s\n", i+1, shortWireID(st.ID), st.Text)
+		if st.Command != "" {
+			fmt.Fprintf(&b, "     $ %s\n", st.Command)
+		}
+	}
+	b.WriteString("\nruns:\n")
+	const runCap = 5
+	runs := make([]model.RunbookRun, len(rb.Runs))
+	for i, r := range rb.Runs {
+		runs[len(rb.Runs)-1-i] = r
+	}
+	older := 0
+	if len(runs) > runCap {
+		older = len(runs) - runCap
+		runs = runs[:runCap]
+	}
+	for _, r := range runs {
+		fmt.Fprintln(&b, runbookRunSummaryLine(rb, r))
+	}
+	if older > 0 {
+		fmt.Fprintf(&b, "  (+%d older — use run list)\n", older)
+	}
+	return b.String()
+}
+
+// runbookRunSummaryLine renders one run's summary line under the runs header of
+// renderRunbookShow.
+func runbookRunSummaryLine(rb model.Runbook, run model.RunbookRun) string {
+	progress, skipped, failed := runStepCounts(rb, run)
+	done := progress - skipped
+	finished := "running"
+	if run.FinishedAt != 0 {
+		finished = rfc3339(run.FinishedAt)
+	}
+	return fmt.Sprintf("-- %s %s by %s %s → %s (%d done, %d skipped, %d failed / %d) task %s",
+		shortWireID(run.ID), run.Status, run.Runner, rfc3339(run.StartedAt), finished, done, skipped, failed, len(rb.Steps), orDash(shortID(run.Task)))
+}
+
+// renderRunShow renders one run: the fixed-order run header, then one line per
+// current step in runbook order carrying the step's status ("pending" when no
+// result) and, indented, the recorded note when set.
+func renderRunShow(rb model.Runbook, run model.RunbookRun) string {
+	var b strings.Builder
+	header(&b, "run", run.ID)
+	header(&b, "runbook", string(rb.ID))
+	header(&b, "status", string(run.Status))
+	header(&b, "runner", string(run.Runner))
+	header(&b, "started", rfc3339(run.StartedAt))
+	header(&b, "finished", orDash(optTimeString(run.FinishedAt)))
+	header(&b, "task", orDash(shortID(run.Task)))
+	byStep := make(map[string]model.RunbookStepResult, len(run.Results))
+	for _, r := range run.Results {
+		byStep[r.StepID] = r
+	}
+	b.WriteString("\nsteps:\n")
+	for _, st := range rb.Steps {
+		status, note := runbookStepPending, ""
+		if res, ok := byStep[st.ID]; ok {
+			status = string(res.Status)
+			note = res.Note
+		}
+		fmt.Fprintf(&b, "  %s %s %s\n", shortWireID(st.ID), status, st.Text)
+		if note != "" {
+			fmt.Fprintf(&b, "     note: %s\n", note)
+		}
+	}
+	return b.String()
+}
+
 // printJSON writes v as one compact JSON document with a trailing newline.
 func printJSON(w io.Writer, v any) error {
 	data, err := json.Marshal(v)
@@ -830,6 +1073,17 @@ func shortID(id model.EntityID) string {
 		return ""
 	}
 	return id.Short()
+}
+
+// shortWireID clamps an opaque runbook wire id (step or run) to its 7-char
+// display prefix, tolerating ids shorter than 7 — a pack synced from another
+// client may carry one. EntityID.Short slices unconditionally and is only safe
+// for full-length entity shas.
+func shortWireID(id string) string {
+	if len(id) < 7 {
+		return id
+	}
+	return id[:7]
 }
 
 func shortIDs(ids []model.EntityID) []string {

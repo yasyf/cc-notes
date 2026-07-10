@@ -326,6 +326,7 @@ func TestEntityKind(t *testing.T) {
 		{"task", model.Task{}, "task"},
 		{"sprint", model.Sprint{}, "sprint"},
 		{"project", model.Project{}, "project"},
+		{"runbook", model.Runbook{}, "runbook"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

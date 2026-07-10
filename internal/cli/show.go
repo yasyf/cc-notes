@@ -19,7 +19,7 @@ func newShowCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "show ID",
-		Short: "Show any note, doc, log, task, sprint, or project by id",
+		Short: "Show any note, doc, log, task, sprint, project, or runbook by id",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -49,6 +49,8 @@ func newShowCmd() *cobra.Command {
 				return showSprint(cmd, s, id, jsonOut)
 			case refs.KindProject:
 				return showProject(cmd, s, id, jsonOut)
+			case refs.KindRunbook:
+				return showRunbook(cmd, s, id, jsonOut)
 			default:
 				panic(fmt.Sprintf("resolveAnyEntity returned unknown kind %q", parsed.Kind))
 			}
@@ -174,6 +176,19 @@ func showSprint(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool)
 		return printJSON(cmd.OutOrStdout(), newSprintDTO(sprint, members))
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), renderSprintShow(sprint, members))
+	return err
+}
+
+func showRunbook(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
+	ctx := cmd.Context()
+	_, rb, err := loadRunbook(ctx, s, prefix)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), newRunbookDTO(rb))
+	}
+	_, err = fmt.Fprint(cmd.OutOrStdout(), renderRunbookShow(rb))
 	return err
 }
 

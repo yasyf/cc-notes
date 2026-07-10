@@ -1,10 +1,11 @@
 // Package refs defines the cc-notes ref naming scheme: pure build and parse
 // functions with no git access. Notes live at refs/cc-notes/notes/<id>, tasks
 // at refs/cc-notes/tasks/<id>, sprints at refs/cc-notes/sprints/<id>, projects
-// at refs/cc-notes/projects/<id>, docs at refs/cc-notes/docs/<id>, and logs at
-// refs/cc-notes/logs/<id>, all flat — the entity id is the only component after
-// the namespace, and a task's branch is a folded attribute, not part of its ref
-// name. Sync-tracking refs shadow the namespace under
+// at refs/cc-notes/projects/<id>, docs at refs/cc-notes/docs/<id>, logs at
+// refs/cc-notes/logs/<id>, and runbooks at refs/cc-notes/runbooks/<id>, all
+// flat — the entity id is the only component after the namespace, and a task's
+// branch is a folded attribute, not part of its ref name. Sync-tracking refs
+// shadow the namespace under
 // refs/cc-notes-sync/<remote>/, outside refs/cc-notes/ so the wildcard push
 // refspec never republishes them.
 package refs
@@ -23,9 +24,9 @@ const (
 )
 
 // Namespace is the ref prefix holding every cc-notes entity — notes, tasks,
-// sprints, projects, docs, and logs — including the trailing slash. Listing it
-// enumerates the whole entity set; it never matches the refs/cc-notes-sync/
-// tracking refs.
+// sprints, projects, docs, logs, and runbooks — including the trailing slash.
+// Listing it enumerates the whole entity set; it never matches the
+// refs/cc-notes-sync/ tracking refs.
 const Namespace = namespace
 
 // NotesPrefix is the ref namespace holding all notes, including the trailing
@@ -52,6 +53,10 @@ const DocsRoot = namespace + "docs/"
 // slash.
 const LogsRoot = namespace + "logs/"
 
+// RunbooksRoot is the ref namespace holding every runbook, including the
+// trailing slash.
+const RunbooksRoot = namespace + "runbooks/"
+
 var (
 	// ErrNotCCNotes reports a ref outside the cc-notes namespaces.
 	ErrNotCCNotes = errors.New("not a cc-notes ref")
@@ -71,6 +76,7 @@ const (
 	KindProject Kind = "project"
 	KindDoc     Kind = "doc"
 	KindLog     Kind = "log"
+	KindRunbook Kind = "runbook"
 )
 
 // Ref is one parsed cc-notes ref name.
@@ -97,9 +103,13 @@ func Doc(id model.EntityID) string { return DocsRoot + string(id) }
 // Log returns the ref name for the log with the given id.
 func Log(id model.EntityID) string { return LogsRoot + string(id) }
 
+// Runbook returns the ref name for the runbook with the given id.
+func Runbook(id model.EntityID) string { return RunbooksRoot + string(id) }
+
 // Parse decodes a cc-notes ref name. The id is the only component after the
-// notes/, tasks/, sprints/, projects/, docs/, or logs/ namespace. It returns
-// ErrNotCCNotes for refs outside refs/cc-notes/ and ErrMalformed for anything
+// notes/, tasks/, sprints/, projects/, docs/, logs/, or runbooks/ namespace. It
+// returns ErrNotCCNotes for refs outside refs/cc-notes/ and ErrMalformed for
+// anything
 // that does not match the scheme, including ids that are not 40 or 64 lowercase
 // hex characters.
 func Parse(ref string) (Ref, error) {
@@ -160,6 +170,14 @@ func Parse(ref string) (Ref, error) {
 			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
 		}
 		return Ref{Kind: KindLog, ID: model.EntityID(tail)}, nil
+	case "runbooks":
+		if strings.ContainsRune(tail, '/') {
+			return Ref{}, fmt.Errorf("%w: nested components in runbook ref %q", ErrMalformed, ref)
+		}
+		if !validID(tail) {
+			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
+		}
+		return Ref{Kind: KindRunbook, ID: model.EntityID(tail)}, nil
 	default:
 		return Ref{}, fmt.Errorf("%w: unknown namespace %q in %q", ErrMalformed, kind, ref)
 	}

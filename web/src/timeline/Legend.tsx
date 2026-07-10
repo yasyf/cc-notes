@@ -9,7 +9,7 @@ import type { TimelineFilters } from "./filters";
 import type { LayoutResult } from "./layout";
 import { EVENT_SPECS, eventSpec, statusSpec } from "./marks";
 
-const KIND_ORDER = ["task", "note", "doc", "log", "sprint", "project"];
+const KIND_ORDER = ["task", "note", "doc", "log", "runbook", "sprint", "project"];
 const STATUS_ORDER = ["in_progress", "done", "cancelled", "open"];
 
 interface Props {

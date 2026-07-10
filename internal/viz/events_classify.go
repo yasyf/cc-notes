@@ -14,6 +14,7 @@ const (
 	entityTask    = "task"
 	entitySprint  = "sprint"
 	entityProject = "project"
+	entityRunbook = "runbook"
 )
 
 // trailCreate is the internal/trail Entry.Kind for a chain's root commit.
@@ -34,6 +35,8 @@ const (
 	evSuperseded   = "superseded"
 	evStale        = "stale"
 	evEntry        = "entry"
+	evRunStarted   = "run_started"
+	evRunFinished  = "run_finished"
 )
 
 // statusDeleted is the Lane.Status of a synthesized deleted-branch lane.
@@ -59,6 +62,8 @@ func classify(entry trail.Entry) []eventSpec {
 		return logEvents(entry)
 	case model.Sprint, model.Project:
 		return groupEvents(entry)
+	case model.Runbook:
+		return runbookEvents(entry)
 	default:
 		return nil
 	}
@@ -152,6 +157,93 @@ func groupEvents(entry trail.Entry) []eventSpec {
 	return []eventSpec{{typ: evEdited}}
 }
 
+// runbookEvents classifies a runbook entry: create, then — accumulated like
+// taskEvents across orthogonal axes — a status change and the run starts and
+// finishes read off the runs set-delta, or a plain edit when neither axis fired.
+func runbookEvents(entry trail.Entry) []eventSpec {
+	if entry.Kind == trailCreate {
+		return []eventSpec{{typ: evCreated}}
+	}
+	var specs []eventSpec
+	if _, ok := changeFor(entry.Changes, "status"); ok {
+		specs = append(specs, eventSpec{typ: evStatus})
+	}
+	if ch, ok := changeFor(entry.Changes, "runs"); ok {
+		specs = append(specs, runEvents(ch)...)
+	}
+	if len(specs) == 0 {
+		specs = append(specs, eventSpec{typ: evEdited})
+	}
+	return specs
+}
+
+// runEvents reads a runs set-delta into lifecycle events. Runs diff by
+// whole-object identity, so each changed run adds and, unless new, removes a
+// same-id twin. An added run with no twin started (run_started); an added run
+// that transitioned into a terminal status — no twin, or a twin still running —
+// finished (run_finished). Every other pairing (a twin already terminal, or
+// both still running) is a step-result correction carrying no event, folded to
+// the caller's edit fallback rather than a spurious second run_finished.
+func runEvents(ch trail.Change) []eventSpec {
+	prev := make(map[string]string, len(ch.Removed))
+	for _, r := range ch.Removed {
+		prev[runElemID(r)] = runElemStatus(r)
+	}
+	var specs []eventSpec
+	for _, a := range ch.Added {
+		id, status := runElemID(a), runElemStatus(a)
+		was, paired := prev[id]
+		switch {
+		case status == string(model.RunRunning) && !paired:
+			specs = append(specs, eventSpec{typ: evRunStarted, detail: runStartedDetail(a)})
+		case status != string(model.RunRunning) && (!paired || was == string(model.RunRunning)):
+			specs = append(specs, eventSpec{typ: evRunFinished, detail: map[string]string{"run": shortID(id), "status": status}})
+		}
+	}
+	return specs
+}
+
+// runStartedDetail carries the started run's short id and, when the run cites a
+// task, that task's short id.
+func runStartedDetail(elem any) map[string]string {
+	d := map[string]string{"run": shortID(runElemID(elem))}
+	if m, ok := elem.(map[string]any); ok {
+		if task, _ := m["task"].(string); task != "" {
+			d["task"] = shortID(task)
+		}
+	}
+	return d
+}
+
+// runElemID reads the id of a runs set element, canonical-JSON decoded to a map.
+func runElemID(elem any) string {
+	m, ok := elem.(map[string]any)
+	if !ok {
+		return ""
+	}
+	id, _ := m["id"].(string)
+	return id
+}
+
+// runElemStatus reads the status of a runs set element.
+func runElemStatus(elem any) string {
+	m, ok := elem.(map[string]any)
+	if !ok {
+		return ""
+	}
+	status, _ := m["status"].(string)
+	return status
+}
+
+// shortID is the 7-character short form of an entity or nonce id, or the whole
+// string when it is already that short.
+func shortID(id string) string {
+	if len(id) <= 7 {
+		return id
+	}
+	return id[:7]
+}
+
 // changeFor returns the change to the named snapshot field in changes, if any.
 func changeFor(changes []trail.Change, field string) (trail.Change, bool) {
 	for _, c := range changes {
@@ -207,6 +299,8 @@ func entityTitle(snap model.Snapshot) string {
 	case model.Sprint:
 		return s.Title
 	case model.Project:
+		return s.Title
+	case model.Runbook:
 		return s.Title
 	default:
 		return ""

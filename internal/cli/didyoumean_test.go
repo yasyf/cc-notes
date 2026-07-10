@@ -88,6 +88,9 @@ func TestGlobalShow(t *testing.T) {
 
 	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "A note", "--body", "the body", "--label", "x", "--json"))
 	task := addTask(t, dir, "A task")
+	runbook := mustJSON[struct {
+		ID string `json:"id"`
+	}](t, mustRun(t, dir, "runbook", "add", "A runbook", "--step", "do the thing", "--json"))
 
 	cases := []struct {
 		kind string
@@ -95,6 +98,7 @@ func TestGlobalShow(t *testing.T) {
 	}{
 		{"note", note.ID},
 		{"task", task.ID},
+		{"runbook", runbook.ID},
 	}
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {

@@ -328,6 +328,54 @@ func TestAPIEntitySnapshotMatchesTip(t *testing.T) {
 	}
 }
 
+// TestAPIEntityRunbook drives the entity endpoint over a runbook with a step and
+// a started run, asserting the summary is the runbook kind and the snapshot
+// decodes back to the concrete model.Runbook with its step and run intact.
+func TestAPIEntityRunbook(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	ctx := t.Context()
+	s := r.openStore()
+	snap, err := s.Create(ctx, []model.Op{
+		model.CreateRunbook{Nonce: model.NewNonce(), Title: "release runbook"},
+		model.AddStep{ID: model.NewNonce(), Text: "cut the tag", Position: model.PositionBetween("", "")},
+	})
+	if err != nil {
+		t.Fatalf("create runbook: %v", err)
+	}
+	rb := snap.(model.Runbook)
+	runID := model.NewNonce()
+	if _, err := s.Append(ctx, refs.Runbook(rb.ID), []model.Op{model.StartRun{ID: runID}}); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	ts, _, _ := newVizServer(t, r)
+	code, body := getBody(t, ts.URL+"/api/entity/runbook/"+string(rb.ID))
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", code, body)
+	}
+	var resp entityResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode %s: %v", body, err)
+	}
+	if resp.Summary.Kind != entityRunbook || resp.Summary.ID != rb.ID {
+		t.Errorf("summary = %+v, want kind runbook id %s", resp.Summary, rb.ID)
+	}
+	if resp.Summary.Status != string(model.RunbookActive) {
+		t.Errorf("summary status = %q, want active", resp.Summary.Status)
+	}
+	var got model.Runbook
+	if err := json.Unmarshal(resp.Snapshot, &got); err != nil {
+		t.Fatalf("decode snapshot into runbook: %v", err)
+	}
+	if len(got.Steps) != 1 || got.Steps[0].Text != "cut the tag" {
+		t.Errorf("snapshot steps = %+v, want one step", got.Steps)
+	}
+	if len(got.Runs) != 1 || got.Runs[0].Status != model.RunRunning {
+		t.Errorf("snapshot runs = %+v, want one running run", got.Runs)
+	}
+}
+
 func TestAPIEntityNotFound(t *testing.T) {
 	r := newGitRepo(t)
 	r.commit("c1")

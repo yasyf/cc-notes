@@ -36,8 +36,10 @@ func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, err
 		kind, refFor = refs.KindDoc, refs.Doc
 	case model.CreateLog:
 		kind, refFor = refs.KindLog, refs.Log
+	case model.CreateRunbook:
+		kind, refFor = refs.KindRunbook, refs.Runbook
 	default:
-		return nil, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, create_project, create_doc, or create_log", ops[0].OpKind())
+		return nil, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, create_project, create_doc, create_log, or create_runbook", ops[0].OpKind())
 	}
 	pack, err := roundTrip(model.Pack{Lamport: 1, Ops: ops})
 	if err != nil {

@@ -1,7 +1,7 @@
 package model
 
 // Snapshot is the folded state of one entity chain: a Note, Doc, Log, Task,
-// Sprint, or Project. The concrete type discriminates the entity kind.
+// Sprint, Project, or Runbook. The concrete type discriminates the entity kind.
 type Snapshot interface {
 	// EntityID returns the entity id: the full oid of the chain's root commit.
 	EntityID() EntityID
@@ -24,3 +24,6 @@ func (s Sprint) EntityID() EntityID { return s.ID }
 
 // EntityID returns the project's entity id.
 func (p Project) EntityID() EntityID { return p.ID }
+
+// EntityID returns the runbook's entity id.
+func (r Runbook) EntityID() EntityID { return r.ID }

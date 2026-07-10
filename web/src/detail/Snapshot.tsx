@@ -10,10 +10,12 @@ import type {
   LogSnapshot,
   NoteSnapshot,
   ProjectSnapshot,
+  RunbookSnapshot,
   Snapshot,
   SprintSnapshot,
   TaskSnapshot,
 } from "../api";
+import { projectRunSteps } from "../api";
 import { Attachments } from "./Attachments";
 import { Markdown } from "./Markdown";
 import { AuthoredBlock } from "./AuthoredBlock";
@@ -32,6 +34,8 @@ export function SnapshotView({ kind, snapshot }: { kind: string; snapshot: Snaps
       return <SprintView snap={snapshot as SprintSnapshot} />;
     case "project":
       return <ProjectView snap={snapshot as ProjectSnapshot} />;
+    case "runbook":
+      return <RunbookView snap={snapshot as RunbookSnapshot} />;
     default:
       return null;
   }
@@ -272,6 +276,76 @@ function SprintView({ snap }: { snap: SprintSnapshot }) {
         </Section>
       )}
       <CommitsSection commits={snap.commits} />
+    </>
+  );
+}
+
+function RunbookView({ snap }: { snap: RunbookSnapshot }) {
+  return (
+    <>
+      {snap.description.trim() !== "" && (
+        <Section title="Description">
+          <Markdown>{snap.description}</Markdown>
+        </Section>
+      )}
+      {snap.steps.length > 0 && (
+        <Section title="Steps">
+          <ol className="runbook-steps">
+            {snap.steps.map((step) => (
+              <li key={step.id} className="runbook-step">
+                <span className="runbook-step-text">{step.text}</span>
+                {step.command !== "" && <code className="runbook-cmd">{step.command}</code>}
+              </li>
+            ))}
+          </ol>
+        </Section>
+      )}
+      {snap.runs.length > 0 && (
+        <Section title="Runs">
+          <div className="runbook-runs">
+            {snap.runs.map((run) => {
+              const steps = projectRunSteps(snap.steps, run);
+              return (
+                <div key={run.id} className="runbook-run">
+                  <div className="runbook-run-head">
+                    <StatusBadge status={run.status} />
+                    {run.runner !== "" && <span className="runbook-runner">{run.runner}</span>}
+                    <span className="runbook-run-time">
+                      <TimeText sec={run.started_at} />
+                      {" → "}
+                      <TimeText sec={run.finished_at} />
+                    </span>
+                    {run.task !== "" && <IdChip id={run.task} />}
+                  </div>
+                  {steps.length > 0 && (
+                    <ul className="runbook-results">
+                      {steps.map((step) => (
+                        <li key={step.stepId} className="runbook-result">
+                          <StatusBadge status={step.status} />
+                          <span className="runbook-result-step">{step.text}</span>
+                          {step.note !== "" && <span className="runbook-note">{step.note}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+      <CommentsSection comments={snap.comments} />
+      {snap.labels.length > 0 && (
+        <Section title="Labels">
+          <ChipRow>
+            {snap.labels.map((l) => (
+              <Chip key={l} className="chip-tag">
+                {l}
+              </Chip>
+            ))}
+          </ChipRow>
+        </Section>
+      )}
     </>
   );
 }

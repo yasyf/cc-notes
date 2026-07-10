@@ -246,13 +246,15 @@ func zeroLike(snap model.Snapshot) model.Snapshot {
 		return model.Sprint{}
 	case model.Project:
 		return model.Project{}
+	case model.Runbook:
+		return model.Runbook{}
 	default:
 		panic(fmt.Sprintf("trail: unknown snapshot type %T", snap))
 	}
 }
 
 // EntityKind returns the lowercase kind name of a snapshot: note, doc, log,
-// task, sprint, or project.
+// task, sprint, project, or runbook.
 func EntityKind(snap model.Snapshot) string {
 	switch snap.(type) {
 	case model.Note:
@@ -267,6 +269,8 @@ func EntityKind(snap model.Snapshot) string {
 		return "sprint"
 	case model.Project:
 		return "project"
+	case model.Runbook:
+		return "runbook"
 	default:
 		panic(fmt.Sprintf("trail: unknown snapshot type %T", snap))
 	}

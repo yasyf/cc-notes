@@ -29,6 +29,7 @@ export interface MarkSpec {
 const S1 = "var(--viz-s1)"; // blue — creation
 const S2 = "var(--viz-s2)"; // aqua — content append
 const S3 = "var(--viz-s3)"; // yellow — status change
+const S4 = "var(--viz-s4)"; // magenta — runbook run
 const S5 = "var(--viz-s5)"; // violet — branch move
 const S6 = "var(--viz-s6)"; // orange — commit link
 const GOOD = "var(--viz-good)";
@@ -51,6 +52,8 @@ export const EVENT_SPECS: Record<string, MarkSpec> = {
   stale: { shape: "diamond", color: WARN, label: "Stale", hollow: true },
   superseded: { shape: "slash", color: SERIOUS, label: "Superseded", hollow: false },
   entry: { shape: "square", color: S2, label: "Log entry", hollow: false },
+  run_started: { shape: "triangle-up", color: S4, label: "Run started", hollow: false },
+  run_finished: { shape: "square", color: S4, label: "Run finished", hollow: false },
   comment: { shape: "dot", color: MUTED, label: "Comment", hollow: false },
   edited: { shape: "ring", color: MUTED, label: "Edited", hollow: true },
 };

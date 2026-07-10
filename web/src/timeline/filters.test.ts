@@ -128,4 +128,12 @@ describe("present sets", () => {
     });
     expect([...presentTypes(g)].sort()).toEqual(["created", "edited"]);
   });
+
+  it("counts runbook as a present marker kind and its run events as present types", () => {
+    const g = graph({
+      events: [ev("runbook", "run_started", ""), ev("runbook", "run_finished", "")],
+    });
+    expect([...presentKinds(g)]).toEqual(["runbook"]);
+    expect([...presentTypes(g)].sort()).toEqual(["run_finished", "run_started"]);
+  });
 });

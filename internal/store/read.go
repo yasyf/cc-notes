@@ -231,6 +231,28 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.Project, error) {
 	return projects, nil
 }
 
+// ListRunbooks folds every runbook in the repository, ordered by creation time
+// then id.
+func (s *Store) ListRunbooks(ctx context.Context) ([]model.Runbook, error) {
+	entries, err := s.children(ctx, refs.RunbooksRoot)
+	if err != nil {
+		return nil, err
+	}
+	all, err := foldAll(ctx, s, entries, fold.Runbook)
+	if err != nil {
+		return nil, err
+	}
+	runbooks := make([]model.Runbook, 0, len(all))
+	runbooks = append(runbooks, all...)
+	slices.SortFunc(runbooks, func(a, b model.Runbook) int {
+		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return runbooks, nil
+}
+
 // children lists the refs that are immediate children of prefix, excluding
 // nested namespaces.
 func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error) {

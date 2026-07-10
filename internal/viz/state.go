@@ -16,6 +16,7 @@ type stateResponse struct {
 	Tasks    []model.Task    `json:"tasks"`
 	Sprints  []model.Sprint  `json:"sprints"`
 	Projects []model.Project `json:"projects"`
+	Runbooks []model.Runbook `json:"runbooks"`
 }
 
 func (s *Server) handleEntities(w http.ResponseWriter, r *http.Request) {
@@ -50,6 +51,11 @@ func (s *Server) handleEntities(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	runbooks, err := s.store.ListRunbooks(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, stateResponse{
 		Notes:    notes,
 		Docs:     docs,
@@ -57,5 +63,6 @@ func (s *Server) handleEntities(w http.ResponseWriter, r *http.Request) {
 		Tasks:    tasks,
 		Sprints:  sprints,
 		Projects: projects,
+		Runbooks: runbooks,
 	})
 }

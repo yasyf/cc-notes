@@ -120,6 +120,62 @@ func (s ProjectStatus) validate() error {
 	return fmt.Errorf("%w: project status %q", ErrInvalidValue, s)
 }
 
+// RunbookStatus is the lifecycle state of a runbook.
+type RunbookStatus string
+
+// Runbook lifecycle states.
+const (
+	RunbookActive   RunbookStatus = "active"
+	RunbookArchived RunbookStatus = "archived"
+)
+
+func (s RunbookStatus) validate() error {
+	switch s {
+	case RunbookActive, RunbookArchived:
+		return nil
+	}
+	return fmt.Errorf("%w: runbook status %q", ErrInvalidValue, s)
+}
+
+// RunStatus is the lifecycle state of one tracked runbook run. A run is running
+// from StartRun until a FinishRun records one of the three terminal states.
+type RunStatus string
+
+// Run lifecycle states.
+const (
+	RunRunning   RunStatus = "running"
+	RunSucceeded RunStatus = "succeeded"
+	RunFailed    RunStatus = "failed"
+	RunAbandoned RunStatus = "abandoned"
+)
+
+func (s RunStatus) validate() error {
+	switch s {
+	case RunRunning, RunSucceeded, RunFailed, RunAbandoned:
+		return nil
+	}
+	return fmt.Errorf("%w: run status %q", ErrInvalidValue, s)
+}
+
+// StepResultStatus is the recorded outcome of one step within a run. A step
+// with no recorded result is pending — pending is absence, not a value.
+type StepResultStatus string
+
+// Step result outcomes.
+const (
+	StepDone    StepResultStatus = "done"
+	StepFailed  StepResultStatus = "failed"
+	StepSkipped StepResultStatus = "skipped"
+)
+
+func (s StepResultStatus) validate() error {
+	switch s {
+	case StepDone, StepFailed, StepSkipped:
+		return nil
+	}
+	return fmt.Errorf("%w: step result status %q", ErrInvalidValue, s)
+}
+
 // CriterionStatus is the validation state of a task acceptance criterion.
 type CriterionStatus string
 
@@ -481,6 +537,62 @@ type Project struct {
 	CreatedAt   int64         `json:"created_at"`
 	UpdatedAt   int64         `json:"updated_at"`
 	ClosedAt    int64         `json:"closed_at"`
+	Head        SHA           `json:"head"`
+}
+
+// RunbookStep is one ordered instruction in a runbook: free text plus an
+// optional shell command. Position is a fractional-index string (see
+// PositionBetween); steps sort by (Position, ID).
+type RunbookStep struct {
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	Command  string `json:"command"`
+	Position string `json:"position"`
+}
+
+// RunbookStepResult is the recorded outcome of one step within a run, stamped
+// with the recording commit's author and time. Results are keyed by StepID
+// within their run: re-recording a step overwrites its result.
+type RunbookStepResult struct {
+	StepID string           `json:"step_id"`
+	Status StepResultStatus `json:"status"`
+	Note   string           `json:"note"`
+	Actor  Actor            `json:"actor"`
+	TS     int64            `json:"ts"`
+}
+
+// RunbookRun is one tracked execution of a runbook, embedded in the runbook's
+// own chain. Task is an optional loose citation of the task this run served — a
+// plain EntityID with no fold coupling. Runner and StartedAt come from the
+// StartRun commit; results reference steps by id and survive step removal as
+// historical record.
+type RunbookRun struct {
+	ID         string              `json:"id"`
+	Task       EntityID            `json:"task"`
+	Status     RunStatus           `json:"status"`
+	Runner     Actor               `json:"runner"`
+	StartedAt  int64               `json:"started_at"`
+	FinishedAt int64               `json:"finished_at"`
+	Results    []RunbookStepResult `json:"results"`
+}
+
+// Runbook is the folded state of a runbook chain: an ordered procedure of steps
+// plus the append-only record of its runs. Timestamps are unix seconds; zero
+// means unset for ArchivedAt. Labels are a folded collection; Head is the chain
+// tip the snapshot was folded from.
+type Runbook struct {
+	ID          EntityID      `json:"id"`
+	Title       string        `json:"title"`
+	Description string        `json:"description"`
+	Status      RunbookStatus `json:"status"`
+	Steps       []RunbookStep `json:"steps"`
+	Runs        []RunbookRun  `json:"runs"`
+	Labels      []string      `json:"labels"`
+	Comments    []Comment     `json:"comments"`
+	Author      Actor         `json:"author"`
+	CreatedAt   int64         `json:"created_at"`
+	UpdatedAt   int64         `json:"updated_at"`
+	ArchivedAt  int64         `json:"archived_at"`
 	Head        SHA           `json:"head"`
 }
 

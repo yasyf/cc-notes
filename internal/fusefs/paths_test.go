@@ -78,6 +78,28 @@ func TestDocFilename(t *testing.T) {
 	}
 }
 
+func TestRunbookFilename(t *testing.T) {
+	id := model.EntityID("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0")
+	cases := []struct {
+		name  string
+		title string
+		want  string
+	}{
+		{"simple", "Deploy the service", "a1b2c3d-deploy-the-service.md"},
+		{"punctuation collapses", "Roll back! (fast)", "a1b2c3d-roll-back-fast.md"},
+		{"empty title", "", "a1b2c3d.md"},
+		{"symbols only", "---???!!!", "a1b2c3d.md"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fusefs.RunbookFilename(model.Runbook{ID: id, Title: tc.title})
+			if got != tc.want {
+				t.Errorf("RunbookFilename(%q) = %q, want %q", tc.title, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTaskFilename(t *testing.T) {
 	task := model.Task{ID: "0123abcd4567ef890123abcd4567ef890123abcd"}
 	if got, want := fusefs.TaskFilename(task), "0123abc.json"; got != want {
@@ -161,6 +183,9 @@ func TestParsePath(t *testing.T) {
 		{"/docs/a1b2c3d.md", fusefs.DocFile{ShortID: "a1b2c3d"}},
 		{"/logs/a1b2c3d-auth-rollout.md", fusefs.LogFile{ShortID: "a1b2c3d"}},
 		{"/logs/a1b2c3d.md", fusefs.LogFile{ShortID: "a1b2c3d"}},
+		{"/runbooks", fusefs.RunbooksDir{}},
+		{"/runbooks/a1b2c3d-deploy-service.md", fusefs.RunbookFile{ShortID: "a1b2c3d"}},
+		{"/runbooks/a1b2c3d.md", fusefs.RunbookFile{ShortID: "a1b2c3d"}},
 		{"/tasks/0123abc.json", fusefs.TaskFile{ShortID: "0123abc"}},
 		{"/tasks/0123abc-slug.json", fusefs.TaskFile{ShortID: "0123abc"}},
 		// Flat sprint and project dirs and files.
@@ -211,6 +236,9 @@ func TestParsePathErrors(t *testing.T) {
 		// Logs are flat like docs: same rejection shapes.
 		"/logs/", "/logs/readme.md", "/logs/.md", "/logs/a1b2c3d.json",
 		"/logs/deep/a1b2c3d.md",
+		// Runbooks are flat like logs: same rejection shapes.
+		"/runbooks/", "/runbooks/readme.md", "/runbooks/.md", "/runbooks/a1b2c3d.json",
+		"/runbooks/deep/a1b2c3d.md",
 		// Tasks are flat: a non-id name, a non-.json name, and any nesting
 		// under /tasks all fail.
 		"/tasks/main", "/tasks/0123abc.md", "/tasks/main/0123abc.json",

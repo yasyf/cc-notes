@@ -81,6 +81,7 @@ var subcommandHints = map[string]map[string]string{
 	"task":      {"move": `use "task edit --branch BRANCH" (or --backlog)`},
 	"sprint":    {"start": `use "sprint activate"`},
 	"criterion": {"reset": `use "task criterion pending"`},
+	"run":       {"reset": `a wrong step mark is corrected by re-marking (runbook run done|skip|fail)`},
 }
 
 // rootNounVerbs are the bare verbs an agent guesses at the top level; every

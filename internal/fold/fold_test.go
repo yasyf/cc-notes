@@ -1007,6 +1007,7 @@ func TestFoldErrors(t *testing.T) {
 	taskRoot := mk("aaa", nil, "alice", 100, 1, model.CreateTask{Nonce: "n", Type: model.TypeTask, Branch: "main"})
 	sprintRoot := mk("aaa", nil, "alice", 100, 1, model.CreateSprint{Nonce: "n"})
 	projectRoot := mk("aaa", nil, "alice", 100, 1, model.CreateProject{Nonce: "n"})
+	runbookRoot := mk("aaa", nil, "alice", 100, 1, model.CreateRunbook{Nonce: "n"})
 	cases := []struct {
 		name    string
 		commits []model.PackCommit
@@ -1374,6 +1375,117 @@ func TestFoldErrors(t *testing.T) {
 				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddAttachment{Name: "trace.png", OID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Size: 1}),
 			},
 			via:  projectErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name:    "runbook chain folded as note",
+			commits: []model.PackCommit{runbookRoot},
+			via:     noteErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "runbook chain folded as doc",
+			commits: []model.PackCommit{runbookRoot},
+			via:     docErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "runbook chain folded as log",
+			commits: []model.PackCommit{runbookRoot},
+			via:     logErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "runbook chain folded as task",
+			commits: []model.PackCommit{runbookRoot},
+			via:     taskErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "runbook chain folded as sprint",
+			commits: []model.PackCommit{runbookRoot},
+			via:     sprintErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "runbook chain folded as project",
+			commits: []model.PackCommit{runbookRoot},
+			via:     projectErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "note chain folded as runbook",
+			commits: []model.PackCommit{noteRoot},
+			via:     runbookErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name:    "task chain folded as runbook",
+			commits: []model.PackCommit{taskRoot},
+			via:     runbookErr,
+			want:    fold.ErrKindMismatch,
+		},
+		{
+			name: "create_runbook after create_task",
+			commits: []model.PackCommit{
+				taskRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.CreateRunbook{Nonce: "m"}),
+			},
+			via:  taskErr,
+			want: fold.ErrDuplicateCreate,
+		},
+		{
+			name: "create_runbook after create_sprint",
+			commits: []model.PackCommit{
+				sprintRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.CreateRunbook{Nonce: "m"}),
+			},
+			via:  sprintErr,
+			want: fold.ErrDuplicateCreate,
+		},
+		{
+			name: "second create_runbook",
+			commits: []model.PackCommit{
+				runbookRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.CreateRunbook{Nonce: "m"}),
+			},
+			via:  runbookErr,
+			want: fold.ErrDuplicateCreate,
+		},
+		{
+			name: "create_task after create_runbook",
+			commits: []model.PackCommit{
+				runbookRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.CreateTask{Nonce: "m", Type: model.TypeTask, Branch: "main"}),
+			},
+			via:  runbookErr,
+			want: fold.ErrDuplicateCreate,
+		},
+		{
+			name: "sprint status op on a runbook chain",
+			commits: []model.PackCommit{
+				runbookRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetSprintStatus{Status: model.SprintActive}),
+			},
+			via:  runbookErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "task status op on a runbook chain",
+			commits: []model.PackCommit{
+				runbookRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetStatus{Status: model.StatusDone}),
+			},
+			via:  runbookErr,
+			want: fold.ErrKindMismatch,
+		},
+		{
+			name: "note op on a runbook chain",
+			commits: []model.PackCommit{
+				runbookRoot,
+				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddTag{Tag: "x"}),
+			},
+			via:  runbookErr,
 			want: fold.ErrKindMismatch,
 		},
 		{
@@ -2150,5 +2262,10 @@ func sprintErr(commits []model.PackCommit) error {
 
 func projectErr(commits []model.PackCommit) error {
 	_, err := fold.Project(commits)
+	return err
+}
+
+func runbookErr(commits []model.PackCommit) error {
+	_, err := fold.Runbook(commits)
 	return err
 }

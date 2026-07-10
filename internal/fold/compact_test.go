@@ -364,6 +364,140 @@ func TestFoldProjectCompactedEqualsFull(t *testing.T) {
 	}
 }
 
+// TestFoldRunbookCompactedEqualsFull folds a runbook chain where a run's start
+// and results straddle a seed-safe checkpoint, then a post-checkpoint result
+// upsert, finish, comment, and archive land in the suffix. The seeded fold must
+// equal the full replay, including the deep-cloned run results.
+func TestFoldRunbookCompactedEqualsFull(t *testing.T) {
+	c0 := mk("c0", nil, "alice", 100, 1,
+		model.CreateRunbook{Nonce: "n", Title: "RB", Description: "d", Labels: []string{"ops"}},
+		model.AddStep{ID: "s1", Text: "build", Command: "", Position: "a"},
+	)
+	c1 := mk("c1", []string{"c0"}, "bob", 200, 2,
+		model.StartRun{ID: "r1", Task: "task0"},
+		model.SetRunStepStatus{RunID: "r1", StepID: "s1", Status: model.StepDone, Note: "ok"},
+	)
+	c2 := mk("c2", []string{"c1"}, "bob", 300, 3,
+		model.AddStep{ID: "s2", Text: "test", Command: "go test", Position: "i"},
+		model.SetRunStepStatus{RunID: "r1", StepID: "s2", Status: model.StepDone, Note: "green"},
+	)
+	state, err := fold.Runbook([]model.PackCommit{c0, c1, c2})
+	if err != nil {
+		t.Fatalf("fold prefix: %v", err)
+	}
+	cK := cp("cK", "c2", "compactor", 350, 4, state, 3, "c0", "c1", "c2")
+	cKempty := mk("cK", []string{"c2"}, "compactor", 350, 4)
+	c3 := mk("c3", []string{"cK"}, "carol", 400, 5,
+		model.SetRunStepStatus{RunID: "r1", StepID: "s1", Status: model.StepFailed, Note: "redo"},
+		model.FinishRun{ID: "r1", Status: model.RunSucceeded},
+	)
+	c4 := mk("c4", []string{"c3"}, "carol", 500, 6,
+		model.AddComment{Body: "done"},
+		model.SetRunbookStatus{Status: model.RunbookArchived},
+	)
+	compacted := []model.PackCommit{c0, c1, c2, cK, c3, c4}
+	full := []model.PackCommit{c0, c1, c2, cKempty, c3, c4}
+
+	gotFull, err := fold.Runbook(full)
+	if err != nil {
+		t.Fatalf("fold full: %v", err)
+	}
+	gotCompact, err := fold.Runbook(compacted)
+	if err != nil {
+		t.Fatalf("fold compacted: %v", err)
+	}
+	if !reflect.DeepEqual(gotCompact, gotFull) {
+		t.Fatalf("compacted = %+v\nfull = %+v", gotCompact, gotFull)
+	}
+	if gotFull.Status != model.RunbookArchived || gotFull.ArchivedAt != 500 {
+		t.Fatalf("status/archived = (%q,%d), want (archived,500)", gotFull.Status, gotFull.ArchivedAt)
+	}
+	if len(gotFull.Runs) != 1 || gotFull.Runs[0].Status != model.RunSucceeded || gotFull.Runs[0].FinishedAt != 400 {
+		t.Fatalf("run = %+v, want succeeded/finished-at-400", gotFull.Runs)
+	}
+	wantResults := []model.RunbookStepResult{
+		{StepID: "s1", Status: model.StepFailed, Note: "redo", Actor: "carol", TS: 400},
+		{StepID: "s2", Status: model.StepDone, Note: "green", Actor: "bob", TS: 300},
+	}
+	if !reflect.DeepEqual(gotFull.Runs[0].Results, wantResults) {
+		t.Fatalf("results = %+v, want %+v", gotFull.Runs[0].Results, wantResults)
+	}
+	if gotFull.Head != "c4" {
+		t.Fatalf("Head = %q, want c4", gotFull.Head)
+	}
+	//nolint:gosec // G404: deterministic PRNG seeds a reproducible fold fuzz; not security-relevant.
+	r := rand.New(rand.NewPCG(17, 19))
+	for i := range 30 {
+		got, err := fold.Runbook(shuffled(compacted, r))
+		if err != nil {
+			t.Fatalf("shuffle %d: %v", i, err)
+		}
+		if !reflect.DeepEqual(got, gotFull) {
+			t.Fatalf("shuffle %d = %+v, want %+v", i, got, gotFull)
+		}
+	}
+}
+
+// TestFoldRunbookConcurrentCheckpoints is the runbook convergence trap: two
+// replicas each start a distinct run and compact over their own frontier, then
+// a union merge joins both checkpoints. The newest-coverage checkpoint is not
+// seed-safe (the other branch's ops have lamport <= its CoversLamport), so the
+// fold falls back to the full replay where both runs survive.
+func TestFoldRunbookConcurrentCheckpoints(t *testing.T) {
+	c0 := mk("c0", nil, "root", 100, 1, model.CreateRunbook{Nonce: "n", Title: "RB"})
+	c1 := mk("c1", []string{"c0"}, "root", 150, 2, model.AddStep{ID: "s1", Text: "base", Command: "", Position: "a"})
+	a1 := mk("a1", []string{"c1"}, "alice", 200, 3,
+		model.StartRun{ID: "rA", Task: "taskA"},
+		model.SetRunStepStatus{RunID: "rA", StepID: "s1", Status: model.StepDone, Note: "a"},
+	)
+	b1 := mk("b1", []string{"c1"}, "bob", 210, 3,
+		model.StartRun{ID: "rB", Task: "taskB"},
+		model.SetRunStepStatus{RunID: "rB", StepID: "s1", Status: model.StepFailed, Note: "b"},
+	)
+	stateA, err := fold.Runbook([]model.PackCommit{c0, c1, a1})
+	if err != nil {
+		t.Fatalf("fold A: %v", err)
+	}
+	stateB, err := fold.Runbook([]model.PackCommit{c0, c1, b1})
+	if err != nil {
+		t.Fatalf("fold B: %v", err)
+	}
+	ka := cp("ka", "a1", "alice", 250, 4, stateA, 3, "c0", "c1", "a1")
+	kb := cp("kb", "b1", "bob", 260, 4, stateB, 3, "c0", "c1", "b1")
+	merge := mk("mmm", []string{"ka", "kb"}, "alice", 300, 5)
+	combined := []model.PackCommit{c0, c1, a1, ka, b1, kb, merge}
+
+	kaEmpty := mk("ka", []string{"a1"}, "alice", 250, 4)
+	kbEmpty := mk("kb", []string{"b1"}, "bob", 260, 4)
+	plain := []model.PackCommit{c0, c1, a1, kaEmpty, b1, kbEmpty, merge}
+
+	want, err := fold.Runbook(plain)
+	if err != nil {
+		t.Fatalf("fold plain: %v", err)
+	}
+	got, err := fold.Runbook(combined)
+	if err != nil {
+		t.Fatalf("fold combined: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("combined = %+v\nplain = %+v", got, want)
+	}
+	if len(got.Runs) != 2 || got.Runs[0].ID != "rA" || got.Runs[1].ID != "rB" {
+		t.Fatalf("runs = %+v, want [rA rB] both surviving", got.Runs)
+	}
+	//nolint:gosec // G404: deterministic PRNG seeds a reproducible fold fuzz; not security-relevant.
+	r := rand.New(rand.NewPCG(23, 29))
+	for i := range 50 {
+		s, err := fold.Runbook(shuffled(combined, r))
+		if err != nil {
+			t.Fatalf("shuffle %d: %v", i, err)
+		}
+		if !reflect.DeepEqual(s, want) {
+			t.Fatalf("shuffle %d = %+v, want %+v", i, s, want)
+		}
+	}
+}
+
 // TestFoldTwoConcurrentCheckpoints is the convergence trap: two replicas diverge
 // from a common prefix, each appends an op and compacts over its own frontier,
 // then a union merge joins both checkpoints. The newest-coverage checkpoint is

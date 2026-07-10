@@ -11,7 +11,7 @@ export interface Route {
 }
 
 const TABS: readonly Tab[] = ["timeline", "commits", "browse"];
-const KINDS: readonly string[] = ["note", "doc", "log", "task", "sprint", "project"];
+const KINDS: readonly string[] = ["note", "doc", "log", "task", "sprint", "project", "runbook"];
 
 function toTab(path: string): Tab {
   const name = path.replace(/^\//, "");

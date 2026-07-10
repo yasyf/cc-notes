@@ -33,6 +33,7 @@ func New(cfg Config) *mcp.Server {
 	registerLog(srv, b)
 	registerTask(srv, b)
 	registerPlanning(srv, b)
+	registerRunbook(srv, b)
 	return srv
 }
 

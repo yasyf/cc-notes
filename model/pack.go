@@ -349,6 +349,56 @@ func marshalOp(op Op) ([]byte, error) {
 			Kind string `json:"kind"`
 			RemoveAttachment
 		}{o.OpKind(), o})
+	case CreateRunbook:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			CreateRunbook
+		}{o.OpKind(), o})
+	case AddStep:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			AddStep
+		}{o.OpKind(), o})
+	case RemoveStep:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			RemoveStep
+		}{o.OpKind(), o})
+	case SetStepText:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetStepText
+		}{o.OpKind(), o})
+	case SetStepCommand:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetStepCommand
+		}{o.OpKind(), o})
+	case SetStepPosition:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetStepPosition
+		}{o.OpKind(), o})
+	case StartRun:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			StartRun
+		}{o.OpKind(), o})
+	case SetRunStepStatus:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetRunStepStatus
+		}{o.OpKind(), o})
+	case FinishRun:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			FinishRun
+		}{o.OpKind(), o})
+	case SetRunbookStatus:
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			SetRunbookStatus
+		}{o.OpKind(), o})
 	case Checkpoint:
 		return marshalCheckpoint(o)
 	}
@@ -386,6 +436,8 @@ func marshalCheckpoint(o Checkpoint) ([]byte, error) {
 		stateKind = "sprint"
 	case Project:
 		stateKind = "project"
+	case Runbook:
+		stateKind = "runbook"
 	default:
 		return nil, fmt.Errorf("%w: checkpoint state %T", ErrUnknownKind, o.State)
 	}
@@ -455,6 +507,12 @@ func decodeCheckpoint(raw json.RawMessage) (Op, error) {
 			return nil, fmt.Errorf("unmarshal checkpoint project state: %w", err)
 		}
 		state = p
+	case "runbook":
+		var rb Runbook
+		if err := json.Unmarshal(wire.State, &rb); err != nil {
+			return nil, fmt.Errorf("unmarshal checkpoint runbook state: %w", err)
+		}
+		state = rb
 	default:
 		return nil, fmt.Errorf("%w: checkpoint state_kind %q", ErrInvalidValue, wire.StateKind)
 	}
@@ -533,6 +591,16 @@ var opDecoders = map[string]func(json.RawMessage) (Op, error){
 	SetCriterionScript{}.OpKind(): decodeAs[SetCriterionScript],
 	AddAttachment{}.OpKind():      decodeAs[AddAttachment],
 	RemoveAttachment{}.OpKind():   decodeAs[RemoveAttachment],
+	CreateRunbook{}.OpKind():      decodeAs[CreateRunbook],
+	AddStep{}.OpKind():            decodeAs[AddStep],
+	RemoveStep{}.OpKind():         decodeAs[RemoveStep],
+	SetStepText{}.OpKind():        decodeAs[SetStepText],
+	SetStepCommand{}.OpKind():     decodeAs[SetStepCommand],
+	SetStepPosition{}.OpKind():    decodeAs[SetStepPosition],
+	StartRun{}.OpKind():           decodeAs[StartRun],
+	SetRunStepStatus{}.OpKind():   decodeAs[SetRunStepStatus],
+	FinishRun{}.OpKind():          decodeAs[FinishRun],
+	SetRunbookStatus{}.OpKind():   decodeAs[SetRunbookStatus],
 	Checkpoint{}.OpKind():         decodeCheckpoint,
 }
 

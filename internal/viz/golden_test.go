@@ -126,8 +126,9 @@ func buildGoldenRepo(t *testing.T) *gitRepo {
 // buildGoldenEntities writes one entity of every kind onto the store: a verified
 // then superseded note, a compacted note, a doc marked stale, a log with two
 // entries, an archived project, an active sprint carrying literal dates, a task in
-// both, a full-lifecycle task linking a real commit, and a task stranded on the
-// deleted feature/gone branch.
+// both, a full-lifecycle task linking a real commit, a task stranded on the
+// deleted feature/gone branch, and a runbook run through start, a step mark, and
+// finish.
 func buildGoldenEntities(t *testing.T, s *store.Store, c1, c2, c4 commitInfo) {
 	t.Helper()
 	ctx := t.Context()
@@ -170,6 +171,13 @@ func buildGoldenEntities(t *testing.T, s *store.Store, c1, c2, c4 commitInfo) {
 
 	goneID := createTask(t, s, "gone branch task", model.Branch("feature/gone"))
 	appendOps(t, s, refs.Task(goneID), model.SetBranch{Branch: model.Branch("main")})
+
+	rb := createRunbook(t, s, "deploy runbook", "build image", "roll out")
+	rbRef := refs.Runbook(rb.ID)
+	runID := model.NewNonce()
+	appendOps(t, s, rbRef, model.StartRun{ID: runID})
+	appendOps(t, s, rbRef, model.SetRunStepStatus{RunID: runID, StepID: rb.Steps[0].ID, Status: model.StepDone})
+	appendOps(t, s, rbRef, model.FinishRun{ID: runID, Status: model.RunSucceeded})
 }
 
 // createDocWhen creates a doc carrying a --when qualifier, returning its id.

@@ -25,7 +25,7 @@ import (
 // linearization order with the fields it changed; it is read-only and never
 // touches the remote.
 func newHistoryCmd() *cobra.Command {
-	return historyCmd("history ID", "Show the edit history of any note, doc, log, task, sprint, or project", resolveAnyEntity)
+	return historyCmd("history ID", "Show the edit history of any note, doc, log, task, sprint, project, or runbook", resolveAnyEntity)
 }
 
 func newNoteHistoryCmd() *cobra.Command    { return kindHistoryCmd(refs.KindNote, "note") }
@@ -84,7 +84,7 @@ func historyCmd(use, short string, resolve func(context.Context, *store.Store, s
 
 // entityKinds is every prefix-resolvable entity kind, in the order the
 // top-level history command probes them.
-var entityKinds = []refs.Kind{refs.KindNote, refs.KindDoc, refs.KindLog, refs.KindTask, refs.KindSprint, refs.KindProject}
+var entityKinds = []refs.Kind{refs.KindNote, refs.KindDoc, refs.KindLog, refs.KindTask, refs.KindSprint, refs.KindProject, refs.KindRunbook}
 
 // resolveAnyEntity expands a kind-agnostic id prefix into a ref by resolving it
 // against every kind. Ids are globally unique, so at most one kind matches a
@@ -259,6 +259,10 @@ func formatTrailElement(field string, v any) string {
 		return fmt.Sprintf("entry by %s: %q", scalarString(m["author"]), scalarString(m["text"]))
 	case "criteria":
 		return fmt.Sprintf("%q [%s]", scalarString(m["text"]), scalarString(m["status"]))
+	case "steps":
+		return fmt.Sprintf("%q", scalarString(m["text"]))
+	case "runs":
+		return fmt.Sprintf("run by %s [%s]", scalarString(m["runner"]), scalarString(m["status"]))
 	}
 	b, _ := json.Marshal(m)
 	return string(b)

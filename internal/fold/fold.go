@@ -29,7 +29,9 @@ var (
 // Fold linearizes the chain and replays its operation packs into a snapshot,
 // dispatching on the create op: a create_note chain folds to model.Note, a
 // create_doc chain to model.Doc, a create_log chain to model.Log, a create_task
-// chain to model.Task. Set-valued snapshot fields come back as
+// chain to model.Task, a create_sprint chain to model.Sprint, a create_project
+// chain to model.Project, and a create_runbook chain to model.Runbook.
+// Set-valued snapshot fields come back as
 // non-nil sorted slices; anchors sort by (kind, value). The one exception is
 // Attachments (LWW by name), which sorts by name and comes back nil when
 // empty — the field marshals omitempty, so attachment-less snapshots keep
@@ -59,6 +61,8 @@ func Fold(commits []model.PackCommit) (model.Snapshot, error) {
 		return foldSprint(ordered)
 	case model.CreateProject:
 		return foldProject(ordered)
+	case model.CreateRunbook:
+		return foldRunbook(ordered)
 	case nil:
 		return nil, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
 	default:
@@ -126,6 +130,16 @@ func Project(commits []model.PackCommit) (model.Project, error) {
 	return foldProject(ordered)
 }
 
+// Runbook linearizes the chain and folds it as a runbook. It fails with
+// ErrKindMismatch when the chain was created as a different kind.
+func Runbook(commits []model.PackCommit) (model.Runbook, error) {
+	ordered, err := Linearize(commits)
+	if err != nil {
+		return model.Runbook{}, err
+	}
+	return foldRunbook(ordered)
+}
+
 func foldNote(ordered []model.PackCommit) (model.Note, error) {
 	base, seedSHA, covered, seeded := selectSeed(ordered)
 	var note model.Note
@@ -174,7 +188,7 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 					for _, a := range o.Anchors {
 						anchors[a] = true
 					}
-				case model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
+				case model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject, model.CreateRunbook:
 					return model.Note{}, fmt.Errorf("%w: %s chain folded as a note", ErrKindMismatch, op.OpKind())
 				default:
 					return model.Note{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
@@ -185,7 +199,7 @@ func foldNote(ordered []model.PackCommit) (model.Note, error) {
 			case model.Checkpoint:
 				// A non-seed checkpoint is a fold no-op: its covered ops replay
 				// through their original commits, which remain in the chain.
-			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject, model.CreateRunbook:
 				return model.Note{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
 				note.Title = o.Title
@@ -287,7 +301,7 @@ func foldDoc(ordered []model.PackCommit) (model.Doc, error) {
 					for _, a := range o.Anchors {
 						anchors[a] = true
 					}
-				case model.CreateNote, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
+				case model.CreateNote, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject, model.CreateRunbook:
 					return model.Doc{}, fmt.Errorf("%w: %s chain folded as a doc", ErrKindMismatch, op.OpKind())
 				default:
 					return model.Doc{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
@@ -298,7 +312,7 @@ func foldDoc(ordered []model.PackCommit) (model.Doc, error) {
 			case model.Checkpoint:
 				// A non-seed checkpoint is a fold no-op: its covered ops replay
 				// through their original commits, which remain in the chain.
-			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject, model.CreateRunbook:
 				return model.Doc{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
 				doc.Title = o.Title
@@ -399,7 +413,7 @@ func foldLog(ordered []model.PackCommit) (model.Log, error) {
 					for _, a := range o.Anchors {
 						anchors[a] = true
 					}
-				case model.CreateNote, model.CreateDoc, model.CreateTask, model.CreateSprint, model.CreateProject:
+				case model.CreateNote, model.CreateDoc, model.CreateTask, model.CreateSprint, model.CreateProject, model.CreateRunbook:
 					return model.Log{}, fmt.Errorf("%w: %s chain folded as a log", ErrKindMismatch, op.OpKind())
 				default:
 					return model.Log{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
@@ -410,7 +424,7 @@ func foldLog(ordered []model.PackCommit) (model.Log, error) {
 			case model.Checkpoint:
 				// A non-seed checkpoint is a fold no-op: its covered ops replay
 				// through their original commits, which remain in the chain.
-			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject, model.CreateRunbook:
 				return model.Log{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
 				log.Title = o.Title
@@ -498,7 +512,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 					for _, l := range o.Labels {
 						labels[l] = true
 					}
-				case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateSprint, model.CreateProject:
+				case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateSprint, model.CreateProject, model.CreateRunbook:
 					return model.Task{}, fmt.Errorf("%w: %s chain folded as a task", ErrKindMismatch, op.OpKind())
 				default:
 					return model.Task{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
@@ -509,7 +523,7 @@ func foldTask(ordered []model.PackCommit) (model.Task, error) {
 			case model.Checkpoint:
 				// A non-seed checkpoint is a fold no-op: its covered ops replay
 				// through their original commits, which remain in the chain.
-			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject, model.CreateRunbook:
 				return model.Task{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
 				task.Title = o.Title
@@ -670,7 +684,7 @@ func foldSprint(ordered []model.PackCommit) (model.Sprint, error) {
 					for _, l := range o.Labels {
 						labels[l] = true
 					}
-				case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateProject:
+				case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateProject, model.CreateRunbook:
 					return model.Sprint{}, fmt.Errorf("%w: %s chain folded as a sprint", ErrKindMismatch, op.OpKind())
 				default:
 					return model.Sprint{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
@@ -681,7 +695,7 @@ func foldSprint(ordered []model.PackCommit) (model.Sprint, error) {
 			case model.Checkpoint:
 				// A non-seed checkpoint is a fold no-op: its covered ops replay
 				// through their original commits, which remain in the chain.
-			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject, model.CreateRunbook:
 				return model.Sprint{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
 				sprint.Title = o.Title
@@ -773,7 +787,7 @@ func foldProject(ordered []model.PackCommit) (model.Project, error) {
 					for _, l := range o.Labels {
 						labels[l] = true
 					}
-				case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint:
+				case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateRunbook:
 					return model.Project{}, fmt.Errorf("%w: %s chain folded as a project", ErrKindMismatch, op.OpKind())
 				default:
 					return model.Project{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
@@ -784,7 +798,7 @@ func foldProject(ordered []model.PackCommit) (model.Project, error) {
 			case model.Checkpoint:
 				// A non-seed checkpoint is a fold no-op: its covered ops replay
 				// through their original commits, which remain in the chain.
-			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject, model.CreateRunbook:
 				return model.Project{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
 			case model.SetTitle:
 				project.Title = o.Title
@@ -827,6 +841,190 @@ func applyProjectStatus(p *model.Project, status model.ProjectStatus, at int64) 
 	case model.ProjectActive:
 		p.ClosedAt = 0
 	}
+}
+
+func foldRunbook(ordered []model.PackCommit) (model.Runbook, error) {
+	base, seedSHA, covered, seeded := selectSeed(ordered)
+	var rb model.Runbook
+	labels := map[string]bool{}
+	var steps []model.RunbookStep
+	var runs []model.RunbookRun
+	created := false
+	if seeded {
+		seed, ok := base.State.(model.Runbook)
+		if !ok {
+			return model.Runbook{}, fmt.Errorf("%w: checkpoint over a non-runbook folded as a runbook", ErrKindMismatch)
+		}
+		rb = seed
+		rb.Comments = slices.Clone(seed.Comments)
+		steps = slices.Clone(seed.Steps)
+		runs = cloneRuns(seed.Runs)
+		for _, l := range seed.Labels {
+			labels[l] = true
+		}
+		created = true
+	} else {
+		rb = model.Runbook{ID: model.EntityID(ordered[0].SHA), CreatedAt: ordered[0].AuthorTime, Comments: []model.Comment{}}
+		steps = []model.RunbookStep{}
+		runs = []model.RunbookRun{}
+	}
+	for _, c := range ordered {
+		if seeded && (c.SHA == seedSHA || covered[c.SHA]) {
+			continue
+		}
+		for _, op := range c.Pack.Ops {
+			if !created {
+				switch o := op.(type) {
+				case model.CreateRunbook:
+					created = true
+					rb.Title, rb.Description = o.Title, o.Description
+					rb.Author = c.Author
+					rb.Status = model.RunbookActive
+					for _, l := range o.Labels {
+						labels[l] = true
+					}
+				case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject:
+					return model.Runbook{}, fmt.Errorf("%w: %s chain folded as a runbook", ErrKindMismatch, op.OpKind())
+				default:
+					return model.Runbook{}, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
+				}
+				continue
+			}
+			switch o := op.(type) {
+			case model.Checkpoint:
+				// A non-seed checkpoint is a fold no-op: its covered ops replay
+				// through their original commits, which remain in the chain.
+			case model.CreateNote, model.CreateDoc, model.CreateLog, model.CreateTask, model.CreateSprint, model.CreateProject, model.CreateRunbook:
+				return model.Runbook{}, fmt.Errorf("%w: %s", ErrDuplicateCreate, op.OpKind())
+			case model.SetTitle:
+				rb.Title = o.Title
+			case model.SetDescription:
+				rb.Description = o.Description
+			case model.SetRunbookStatus:
+				applyRunbookStatus(&rb, o.Status, c.AuthorTime)
+			case model.AddLabel:
+				labels[o.Label] = true
+			case model.RemoveLabel:
+				delete(labels, o.Label)
+			case model.AddComment:
+				rb.Comments = append(rb.Comments, model.Comment{Author: c.Author, TS: c.AuthorTime, Body: o.Body})
+			case model.AddStep:
+				if stepIndex(steps, o.ID) < 0 {
+					steps = append(steps, model.RunbookStep{ID: o.ID, Text: o.Text, Command: o.Command, Position: o.Position})
+				}
+			case model.RemoveStep:
+				if i := stepIndex(steps, o.ID); i >= 0 {
+					steps = slices.Delete(steps, i, i+1)
+				}
+			case model.SetStepText:
+				if i := stepIndex(steps, o.ID); i >= 0 {
+					steps[i].Text = o.Text
+				}
+			case model.SetStepCommand:
+				if i := stepIndex(steps, o.ID); i >= 0 {
+					steps[i].Command = o.Command
+				}
+			case model.SetStepPosition:
+				if i := stepIndex(steps, o.ID); i >= 0 {
+					steps[i].Position = o.Position
+				}
+			case model.StartRun:
+				if runIndex(runs, o.ID) < 0 {
+					runs = append(runs, model.RunbookRun{
+						ID:        o.ID,
+						Task:      o.Task,
+						Status:    model.RunRunning,
+						Runner:    c.Author,
+						StartedAt: c.AuthorTime,
+						Results:   []model.RunbookStepResult{},
+					})
+				}
+			case model.SetRunStepStatus:
+				if i := runIndex(runs, o.RunID); i >= 0 {
+					result := model.RunbookStepResult{StepID: o.StepID, Status: o.Status, Note: o.Note, Actor: c.Author, TS: c.AuthorTime}
+					if j := resultIndex(runs[i].Results, o.StepID); j >= 0 {
+						runs[i].Results[j] = result
+					} else {
+						runs[i].Results = append(runs[i].Results, result)
+					}
+				}
+			case model.FinishRun:
+				if i := runIndex(runs, o.ID); i >= 0 {
+					runs[i].Status = o.Status
+					runs[i].FinishedAt = c.AuthorTime
+				}
+			default:
+				return model.Runbook{}, fmt.Errorf("%w: %s on a runbook", ErrKindMismatch, op.OpKind())
+			}
+		}
+		if hasNonCheckpointOp(c) {
+			rb.UpdatedAt = c.AuthorTime
+		}
+	}
+	if !created {
+		return model.Runbook{}, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
+	}
+	rb.Labels = sortedKeys(labels)
+	slices.SortFunc(steps, func(a, b model.RunbookStep) int {
+		if c := cmp.Compare(a.Position, b.Position); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	rb.Steps = steps
+	rb.Runs = runs
+	rb.Head = ordered[len(ordered)-1].SHA
+	return rb, nil
+}
+
+func applyRunbookStatus(r *model.Runbook, status model.RunbookStatus, at int64) {
+	r.Status = status
+	switch status {
+	case model.RunbookArchived:
+		r.ArchivedAt = at
+	case model.RunbookActive:
+		r.ArchivedAt = 0
+	}
+}
+
+func stepIndex(steps []model.RunbookStep, id string) int {
+	for i := range steps {
+		if steps[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func runIndex(runs []model.RunbookRun, id string) int {
+	for i := range runs {
+		if runs[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func resultIndex(results []model.RunbookStepResult, stepID string) int {
+	for i := range results {
+		if results[i].StepID == stepID {
+			return i
+		}
+	}
+	return -1
+}
+
+// cloneRuns deep-copies a seeded checkpoint's runs. slices.Clone alone is not
+// enough: each run's Results slice would share its backing array with the
+// checkpoint State, and fold.History re-folds prefixes over the same decoded
+// chain, so an in-place result upsert in one prefix fold would corrupt the seed
+// for the next.
+func cloneRuns(runs []model.RunbookRun) []model.RunbookRun {
+	out := slices.Clone(runs)
+	for i := range out {
+		out[i].Results = slices.Clone(out[i].Results)
+	}
+	return out
 }
 
 func firstOp(ordered []model.PackCommit) model.Op {

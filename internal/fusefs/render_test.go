@@ -2058,3 +2058,126 @@ func TestNewLog(t *testing.T) {
 		}
 	})
 }
+
+const goldenRunbook = "---\n" +
+	"id: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0\n" +
+	"title: Deploy the service\n" +
+	"status: active\n" +
+	"labels: [deploy, ops]\n" +
+	"created: \"2025-12-12T02:54:56Z\"\n" +
+	"updated: \"2025-12-13T02:54:56Z\"\n" +
+	"---\n" +
+	"Roll a new build to production.\n" +
+	"\n" +
+	"## Steps\n" +
+	"\n" +
+	"<!-- cc-notes:step 1111111 -->\n" +
+	"1. Pull the latest image\n" +
+	"\n" +
+	"```sh\n" +
+	"docker pull myapp:latest\n" +
+	"```\n" +
+	"\n" +
+	"<!-- cc-notes:step 2222222 -->\n" +
+	"2. Restart the service\n" +
+	"\n" +
+	"## Runs\n" +
+	"\n" +
+	"- 3333333 succeeded — Agent A <a@example.com>, 2025-12-12T02:54:56Z → 2025-12-13T02:54:56Z, 1 done / 1 skipped / 0 failed (task ffff000)\n" +
+	"- 4444444 running — Agent B <b@example.com>, 2025-12-14T02:54:56Z → in progress, 0 done / 0 skipped / 0 failed\n"
+
+const goldenMinimalRunbook = "---\n" +
+	"id: b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1\n" +
+	"title: Rollback\n" +
+	"status: active\n" +
+	"labels: []\n" +
+	"created: \"1970-01-01T00:00:00Z\"\n" +
+	"updated: \"1970-01-01T00:00:00Z\"\n" +
+	"---\n" +
+	"## Steps\n" +
+	"\n" +
+	"_No steps._\n" +
+	"\n" +
+	"## Runs\n" +
+	"\n" +
+	"_No runs yet._\n"
+
+func richRunbook() model.Runbook {
+	return model.Runbook{
+		ID:          "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+		Title:       "Deploy the service",
+		Description: "Roll a new build to production.",
+		Status:      model.RunbookActive,
+		Steps: []model.RunbookStep{
+			{ID: "1111111aaaabbbbccccddddeeeeffff0", Text: "Pull the latest image", Command: "docker pull myapp:latest", Position: "a"},
+			{ID: "2222222aaaabbbbccccddddeeeeffff0", Text: "Restart the service", Position: "b"},
+		},
+		Runs: []model.RunbookRun{
+			{
+				ID:         "3333333aaaabbbbccccddddeeeeffff0",
+				Task:       "ffff0000ffff0000ffff0000ffff0000ffff0000",
+				Status:     model.RunSucceeded,
+				Runner:     "Agent A <a@example.com>",
+				StartedAt:  1765508096,
+				FinishedAt: 1765594496,
+				Results: []model.RunbookStepResult{
+					{StepID: "1111111aaaabbbbccccddddeeeeffff0", Status: model.StepDone, Actor: "Agent A <a@example.com>", TS: 1765508196},
+					{StepID: "2222222aaaabbbbccccddddeeeeffff0", Status: model.StepSkipped, Actor: "Agent A <a@example.com>", TS: 1765508296},
+				},
+			},
+			{
+				ID:        "4444444aaaabbbbccccddddeeeeffff0",
+				Status:    model.RunRunning,
+				Runner:    "Agent B <b@example.com>",
+				StartedAt: 1765680896,
+			},
+		},
+		Labels:    []string{"deploy", "ops"},
+		Author:    "Agent A <a@example.com>",
+		CreatedAt: 1765508096,
+		UpdatedAt: 1765594496,
+		Head:      "ffff0000ffff0000ffff0000ffff0000ffff0000",
+	}
+}
+
+func TestRenderRunbookGolden(t *testing.T) {
+	if got := string(fusefs.RenderRunbook(richRunbook())); got != goldenRunbook {
+		t.Errorf("rich runbook render:\n got %q\nwant %q", got, goldenRunbook)
+	}
+	minimal := model.Runbook{
+		ID:     "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1",
+		Title:  "Rollback",
+		Status: model.RunbookActive,
+		Author: "A <a@x>",
+	}
+	if got := string(fusefs.RenderRunbook(minimal)); got != goldenMinimalRunbook {
+		t.Errorf("minimal runbook render:\n got %q\nwant %q", got, goldenMinimalRunbook)
+	}
+}
+
+// TestRenderRunbookForeignShortIDs guards RenderRunbook against a pack synced
+// from another client whose step/run wire ids are shorter than 7 chars: the
+// render must clamp, not slice-panic, and echo the short id verbatim.
+func TestRenderRunbookForeignShortIDs(t *testing.T) {
+	rb := model.Runbook{
+		ID:        "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+		Title:     "Foreign",
+		Status:    model.RunbookActive,
+		CreatedAt: 1765508096,
+		UpdatedAt: 1765508096,
+		Steps:     []model.RunbookStep{{ID: "s1", Text: "build", Position: "a"}},
+		Runs: []model.RunbookRun{{
+			ID:        "r12",
+			Status:    model.RunRunning,
+			Runner:    "Agent B <b@example.com>",
+			StartedAt: 1765680896,
+		}},
+	}
+	got := string(fusefs.RenderRunbook(rb))
+	if !strings.Contains(got, "<!-- cc-notes:step s1 -->") {
+		t.Fatalf("step fence lost short id:\n%s", got)
+	}
+	if !strings.Contains(got, "- r12 running — Agent B <b@example.com>") {
+		t.Fatalf("run line lost short id:\n%s", got)
+	}
+}

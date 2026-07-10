@@ -120,6 +120,8 @@ func ambiguousAcrossKinds(ctx context.Context, s *store.Store, prefix string, ma
 			title = v.Title
 		case model.Project:
 			title = v.Title
+		case model.Runbook:
+			title = v.Title
 		}
 		candidates = append(candidates, store.Candidate{ID: snap.EntityID(), Title: title})
 	}

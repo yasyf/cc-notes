@@ -74,6 +74,23 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 
+	const stepText = "restart the service"
+	rbSnap, err := s.Create(ctx, []model.Op{
+		model.CreateRunbook{Nonce: model.NewNonce(), Title: "a runbook"},
+		model.AddStep{ID: model.NewNonce(), Text: stepText, Position: model.PositionBetween("", "")},
+	})
+	if err != nil {
+		t.Fatalf("create runbook: %v", err)
+	}
+	rb := rbSnap.(model.Runbook)
+	runID := model.NewNonce()
+	if _, err := s.Append(ctx, refs.Runbook(rb.ID), []model.Op{
+		model.StartRun{ID: runID},
+		model.SetRunStepStatus{RunID: runID, StepID: rb.Steps[0].ID, Status: model.StepDone},
+	}); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
 	ts, _, _ := newVizServer(t, r)
 	code, body := getBody(t, ts.URL+"/api/entities")
 	if code != http.StatusOK {
@@ -102,6 +119,9 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 	if len(resp.Projects) != 1 {
 		t.Errorf("projects = %d, want 1", len(resp.Projects))
 	}
+	if len(resp.Runbooks) != 1 {
+		t.Errorf("runbooks = %d, want 1", len(resp.Runbooks))
+	}
 
 	byID := make(map[model.EntityID]model.Note, len(resp.Notes))
 	for _, n := range resp.Notes {
@@ -123,5 +143,11 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 	}
 	if got := resp.Tasks[0].Criteria; len(got) != 1 || got[0].Text != criterionText {
 		t.Errorf("task criteria = %+v, want one criterion %q", got, criterionText)
+	}
+	if got := resp.Runbooks[0].Steps; len(got) != 1 || got[0].Text != stepText {
+		t.Errorf("runbook steps = %+v, want one step %q", got, stepText)
+	}
+	if got := resp.Runbooks[0].Runs; len(got) != 1 || len(got[0].Results) != 1 || got[0].Results[0].Status != model.StepDone {
+		t.Errorf("runbook runs = %+v, want one run with a done step result", got)
 	}
 }

@@ -153,6 +153,25 @@ type taskOut struct {
 	Assignee *string `json:"assignee"`
 }
 
+type runbookOut struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+	Steps  []struct {
+		ID   string `json:"id"`
+		Text string `json:"text"`
+	} `json:"steps"`
+	Runs []struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+		Steps  []struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+			Note   string `json:"note"`
+		} `json:"steps"`
+	} `json:"runs"`
+}
+
 func TestDocAddShowRoundTrip(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
@@ -233,6 +252,53 @@ func TestTaskLifecycle(t *testing.T) {
 	}
 }
 
+// TestRunbookRunLoop drives create → run start → done/skip → finish → show
+// through the MCP tools, proving the hand-typed argv resolves semantically.
+func TestRunbookRunLoop(t *testing.T) {
+	initRepo(t)
+	cs := connect(t)
+
+	added := decode[runbookOut](t, call(t, cs, "runbook_add", map[string]any{
+		"title": "Deploy",
+		"steps": []string{"build", "ship"},
+	}))
+	if added.Status != "active" {
+		t.Fatalf("added status = %q, want active", added.Status)
+	}
+	if len(added.Steps) != 2 || added.Steps[0].Text != "build" || added.Steps[1].Text != "ship" {
+		t.Fatalf("steps = %+v, want build then ship in order", added.Steps)
+	}
+
+	started := decode[runbookOut](t, call(t, cs, "runbook_run_start", map[string]any{"id": added.ID}))
+	if len(started.Runs) != 1 || started.Runs[0].Status != "running" {
+		t.Fatalf("runs = %+v, want one running run", started.Runs)
+	}
+
+	// done/skip omit run: default-run resolution picks the sole running run.
+	call(t, cs, "runbook_run_done", map[string]any{"id": added.ID, "step": added.Steps[0].ID, "note": "built clean"})
+	call(t, cs, "runbook_run_skip", map[string]any{"id": added.ID, "step": added.Steps[1].ID})
+
+	finished := decode[runbookOut](t, call(t, cs, "runbook_run_finish", map[string]any{"id": added.ID}))
+	if len(finished.Runs) != 1 {
+		t.Fatalf("finished runs = %+v, want exactly one", finished.Runs)
+	}
+	run := finished.Runs[0]
+	if run.Status != "succeeded" {
+		t.Fatalf("run status = %q, want succeeded (a skip is not a failure)", run.Status)
+	}
+	if run.Steps[0].Status != "done" || run.Steps[0].Note != "built clean" {
+		t.Fatalf("run step[0] = %+v, want done with note", run.Steps[0])
+	}
+	if run.Steps[1].Status != "skipped" {
+		t.Fatalf("run step[1] = %+v, want skipped", run.Steps[1])
+	}
+
+	shown := decode[runbookOut](t, call(t, cs, "runbook_show", map[string]any{"id": added.ID}))
+	if len(shown.Runs) != 1 || shown.Runs[0].Status != "succeeded" {
+		t.Fatalf("show runs = %+v, want one succeeded run", shown.Runs)
+	}
+}
+
 func TestErrorMappingCarriesLabel(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
@@ -262,7 +328,7 @@ func TestListToolsInventory(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	const wantCount = 75
+	const wantCount = 84
 	if len(names) != wantCount {
 		t.Errorf("tool count = %d, want %d; got %v", len(names), wantCount, sortedKeys(names))
 	}
@@ -271,6 +337,8 @@ func TestListToolsInventory(t *testing.T) {
 		"note_add", "note_review", "doc_add", "doc_supersede", "log_append",
 		"task_add", "task_claim", "task_done", "task_criterion_met", "task_criterion_pending", "task_criterion_script", "task_validate",
 		"sprint_add", "sprint_activate", "project_add", "project_archive",
+		"runbook_add", "runbook_list", "runbook_show", "runbook_step_add",
+		"runbook_run_start", "runbook_run_done", "runbook_run_skip", "runbook_run_fail", "runbook_run_finish",
 		"attachment_path", "attachment_get",
 	} {
 		if !names[want] {

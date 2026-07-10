@@ -318,17 +318,97 @@ export interface ProjectSnapshot {
   head: string;
 }
 
+// RunbookStepSnapshot is one ordered step of a runbook. Mirrors model.RunbookStep.
+export interface RunbookStepSnapshot {
+  id: string;
+  text: string;
+  command: string;
+  position: string;
+}
+
+// RunbookStepResultSnapshot is the recorded outcome of one step within a run; ts
+// is unix seconds. Mirrors model.RunbookStepResult.
+export interface RunbookStepResultSnapshot {
+  step_id: string;
+  status: string;
+  note: string;
+  actor: string;
+  ts: number;
+}
+
+// RunbookRunSnapshot is one tracked execution of a runbook. results is an ordered
+// list, keyed by step within the run. Mirrors model.RunbookRun.
+export interface RunbookRunSnapshot {
+  id: string;
+  task: string;
+  status: string;
+  runner: string;
+  started_at: number;
+  finished_at: number;
+  results: RunbookStepResultSnapshot[];
+}
+
+// RunbookSnapshot is the folded snapshot of a runbook. Mirrors model.Runbook.
+export interface RunbookSnapshot {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  steps: RunbookStepSnapshot[];
+  runs: RunbookRunSnapshot[];
+  labels: string[];
+  comments: Comment[];
+  author: string;
+  created_at: number;
+  updated_at: number;
+  archived_at: number;
+  head: string;
+}
+
+// ProjectedRunStep is one current step with the run's recorded status/note, or
+// "pending" when the run has no result for it.
+export interface ProjectedRunStep {
+  stepId: string;
+  text: string;
+  command: string;
+  status: string;
+  note: string;
+}
+
+const runStepPending = "pending";
+
+// projectRunSteps projects a run's recorded results onto the runbook's current
+// steps in procedure order: every current step once, "pending" when absent;
+// results for removed steps are omitted. Mirrors the CLI's newRunbookRunDTO.
+export function projectRunSteps(
+  steps: RunbookStepSnapshot[],
+  run: RunbookRunSnapshot,
+): ProjectedRunStep[] {
+  const byStep = new Map(run.results.map((r) => [r.step_id, r]));
+  return steps.map((step) => {
+    const res = byStep.get(step.id);
+    return {
+      stepId: step.id,
+      text: step.text,
+      command: step.command,
+      status: res ? res.status : runStepPending,
+      note: res ? res.note : "",
+    };
+  });
+}
+
 // Snapshot is the full folded entity carried on an EntityDetail and in the
 // /api/entities buckets. Discriminate it by the summary.kind the caller already
-// holds (note | doc | log | task | sprint | project) — the snapshots carry no
-// intrinsic tag. Mirrors model.Snapshot.
+// holds (note | doc | log | task | sprint | project | runbook) — the snapshots
+// carry no intrinsic tag. Mirrors model.Snapshot.
 export type Snapshot =
   | NoteSnapshot
   | DocSnapshot
   | LogSnapshot
   | TaskSnapshot
   | SprintSnapshot
-  | ProjectSnapshot;
+  | ProjectSnapshot
+  | RunbookSnapshot;
 
 // EntityDetail is the /api/entity/{kind}/{id} payload: the legend summary, the
 // full folded snapshot, and the change trail, oldest first. Mirrors
@@ -350,6 +430,7 @@ export interface StateResponse {
   tasks: TaskSnapshot[];
   sprints: SprintSnapshot[];
   projects: ProjectSnapshot[];
+  runbooks: RunbookSnapshot[];
 }
 
 // RawEvent is Event as it arrives on the wire: detail is a Go map that marshals
@@ -416,6 +497,7 @@ interface RawStateResponse {
   tasks: TaskSnapshot[] | null;
   sprints: SprintSnapshot[] | null;
   projects: ProjectSnapshot[] | null;
+  runbooks: RunbookSnapshot[] | null;
 }
 
 // normalizeGraph fills every nil slice with [] and every nil detail map with {},
@@ -473,6 +555,7 @@ export function normalizeEntities(raw: RawStateResponse): StateResponse {
     tasks: raw.tasks ?? [],
     sprints: raw.sprints ?? [],
     projects: raw.projects ?? [],
+    runbooks: raw.runbooks ?? [],
   };
 }
 

@@ -7,7 +7,7 @@ import type { Graph, Lane } from "../api";
 
 // Kinds whose events render as point markers on a lane. Tasks render as spans,
 // projects as bands, so neither contributes markers.
-const MARKER_KINDS = new Set(["note", "doc", "log", "sprint"]);
+const MARKER_KINDS = new Set(["note", "doc", "log", "sprint", "runbook"]);
 // Kinds that contribute background bands from their date range.
 const BAND_KINDS = new Set(["sprint", "project"]);
 // Fallback marker footprint divisor: a marker occupies domain/DOMAIN_MARKER_DIV

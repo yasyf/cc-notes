@@ -1,13 +1,14 @@
 # cc-notes CLI reference
 
-The command surface, grouped by noun: repo, task, sprint, project, note, doc, log. Every command
-takes `-h`/`--help`. Every note, doc, log, task, sprint, project, sync, and reconcile command takes
-`--json` for a machine-readable record; without it, mutations echo a lean tab-separated line and
-listings print one lean line per entity.
+The command surface, grouped by noun: repo, task, sprint, project, runbook, note, doc, log. Every
+command takes `-h`/`--help`. Every note, doc, log, task, sprint, project, runbook, sync, and
+reconcile command takes `--json` for a machine-readable record; without it, mutations echo a lean
+tab-separated line and listings print one lean line per entity.
 
 Sprints and projects are an optional planning layer over tasks — group work into a time-boxed
 sprint or a long-lived project without touching the canonical task and note flow. A task that
-joins neither behaves exactly as a task does today.
+joins neither behaves exactly as a task does today. Runbooks are the layer's third noun: a
+repeatable procedure of ordered steps whose every execution is a tracked run.
 
 ## The model in one screen
 
@@ -38,6 +39,13 @@ joins neither behaves exactly as a task does today.
   (direct ∪ via-sprint, deduplicated) are derived reverse indexes, never stored. Sprint ids,
   project ids, and criterion ids resolve by id prefix like tasks — an ambiguous prefix exits 5,
   no match exits 3.
+- **Runbooks are repo-wide.** A runbook is an ordered procedure — steps carrying an instruction,
+  an optional command, and a position that lets `step add --after`/`step move` insert and reorder
+  without renumbering — plus the record of its runs. A run stamps its runner and start time,
+  records a per-step outcome (`done`, `failed`, or `skipped`; a step with no recorded outcome is
+  pending), and closes `succeeded`, `failed`, or `abandoned`. Step and run ids are nonces that
+  resolve by prefix like criterion ids. A runbook is `active` or `archived`; every mutating verb
+  conflicts (exit 4) on an archived runbook until `activate` restores it.
 
 This reference describes cc-notes v0.22.0 and later — one flag vocabulary across every noun:
 `--body` for the long text, `--label` for labels. An unknown or renamed flag exits 2 with a hint
@@ -53,13 +61,17 @@ the `tags` field — in `--json` and in `show` headers alike.
 | Task | `<short7-id>` `<status>` `P<priority>` `<assignee\|->` `<title>` |
 | Sprint | `<short7-id>` `<status>` `<title>` |
 | Project | `<short7-id>` `<status>` `<title>` |
+| Runbook | `<short7-id>` `<status>` `<title>` |
 | Note | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` |
 | Doc | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` `<when trigger\|->` |
 | Log | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` |
 
 Short ids are the first 7 hex chars; `-` stands in for an empty field. A criterion's short id is
 the first 7 hex chars of its 32-hex nonce; `task criterion list` and the validation logs print
-`<short7-crit-id>` `<status>` `<text>`. `task stale` appends a trailing idle marker to the task
+`<short7-crit-id>` `<status>` `<text>`. Runbook step and run ids are nonces with the same short
+form: `runbook step list` prints `<short7-step-id>` `<n>` `<text>` `<command|->` (n is the
+1-based position), and `runbook run list` prints `<short7-run-id>` `<status>` `<runner>`
+`<YYYY-MM-DD started>` `<done+skipped>/<total>` (steps progressed over the step count). `task stale` appends a trailing idle marker to the task
 line; `note review` and `doc review` append a verdict to the note or doc line. JSON output uses full 40-hex ids,
 RFC3339 UTC timestamps, `null` for unset optionals, and sorted set slices.
 
@@ -963,6 +975,176 @@ Append a comment; `BODY` of `-` reads stdin.
 `{"id":string,"project":id|null,"title":string,"description":string,"status":string,"start_date":rfc3339|null,"end_date":rfc3339|null,"labels":[…],"commits":[sha,…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339|null,"closed_at":rfc3339|null,"tasks":[id,…]}`.
 `status` is `planned`, `active`, `completed`, or `cancelled`; `start_date`/`end_date` are the
 user-set dates (`null` when unset); `tasks` is the derived reverse index as full-hex ids.
+
+## Runbook commands
+
+A runbook is a repeatable procedure: ordered steps (instruction text plus an optional shell
+command) and the tracked record of its runs. Runbooks are repo-wide and resolve by id prefix like
+sprints; step and run ids are nonces that resolve by prefix within their runbook. A runbook is
+born `active`; `archive` retires it, and every mutating verb on an archived runbook is a conflict
+(exit 4) until `activate` restores it. Every command takes `--json`.
+
+### `cc-notes runbook add TITLE`
+
+Create a runbook. `--step` repeats, in order.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--body <text>` | empty | Description; `-` reads stdin |
+| `--label <label>` | none | Label; repeatable |
+| `--step <text>` | none | Initial step; repeatable, kept in flag order |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes runbook add "Deploy hotfix" --step "drain traffic" --step "deploy" --step "verify health"
+2b808c6	active	Deploy hotfix
+```
+
+### `cc-notes runbook list`
+
+List runbooks, one lean line each. Default hides archived.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--all` | off | Include archived runbooks |
+| `--json` | off | Emit JSON |
+
+### `cc-notes runbook show ID`
+
+Show one runbook: a fixed-order header block (id, title, status, labels, created, updated,
+archived), the description after a blank line, each comment as a `-- <author> <rfc3339>` block,
+the numbered steps in position order (each step's short id in brackets, its command on an
+indented `$` line), then the five most recent runs, newest first, with a `(+N older — use run
+list)` tail when truncated.
+
+```console
+$ cc-notes runbook show 2b808c6
+id: 2b808c69e1f0a4d2c8b7365e9a01f4b2d6c81e57
+title: Deploy hotfix
+status: active
+labels: -
+created: 2026-07-10T16:02:11Z
+updated: 2026-07-10T16:40:09Z
+archived: -
+
+steps:
+1. [6ec7607] drain traffic
+2. [6af6dff] deploy
+   $ ./scripts/deploy.sh
+3. [03c14b6] verify health
+
+runs:
+-- ad53687 succeeded by ada <ada@example.com> 2026-07-10T16:31:02Z → 2026-07-10T16:40:09Z (2 done, 1 skipped, 0 failed / 3) task d82c087
+```
+
+### `cc-notes runbook activate ID` · `archive ID`
+
+Move a runbook between `active` and `archived`. Archiving an archived runbook (or activating an
+active one) is a conflict (exit 4).
+
+```console
+$ cc-notes runbook archive 2b808c6
+2b808c6	archived	Deploy hotfix
+```
+
+### `cc-notes runbook edit ID`
+
+Edit title, description, or labels — at least one flag is required.
+
+| Flag | Meaning |
+|------|---------|
+| `--title <text>` | New title |
+| `--body <text>` | New description; `-` reads stdin |
+| `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
+| `--json` | Emit JSON |
+
+### `cc-notes runbook comment ID BODY`
+
+Append a comment; `BODY` of `-` reads stdin.
+
+### `cc-notes runbook history ID`
+
+The runbook's edit trail — who changed which fields, when. Takes `--reverse`, `--limit`, and
+`--json` like `cc-notes history`.
+
+### `cc-notes runbook step add RUNBOOK TEXT`
+
+Append or insert a step. Placement flags are mutually exclusive; the default is `--last`. Steps
+carry positions, so an insert never renumbers its neighbors.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--command <cmd>` | none | Shell command the step canonically runs |
+| `--first` / `--last` | `--last` | Place at the start or end |
+| `--before <step>` / `--after <step>` | none | Place next to a step (id prefix) |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes runbook step add 2b808c6 "warm caches" --after 6af6dff
+2b808c6	active	Deploy hotfix
+```
+
+### `cc-notes runbook step rm RUNBOOK STEP` · `edit` · `move` · `list`
+
+`step rm` deletes a step — recorded run results that reference it survive as history. `step edit`
+takes `--text`, `--command`, or `--no-command` (at least one; the last two are mutually
+exclusive). `step move` takes exactly one placement flag (`--first`/`--last`/`--before`/`--after`).
+`step list` prints `<short7-step-id>` `<n>` `<text>` `<command|->` per step in position order.
+
+### `cc-notes runbook run start RUNBOOK`
+
+Begin a tracked run. The run stamps your actor identity and start time; concurrent runs by
+different agents are allowed and merge cleanly.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--task <id>` | none | Task this run serves (id prefix) — a loose citation on the run |
+| `--json` | off | Emit JSON |
+
+### `cc-notes runbook run done RUNBOOK STEP` · `skip` · `fail`
+
+Record one step's outcome in a run. With `--run` omitted, the sole running run is used — zero
+running runs is a conflict (exit 4), several is ambiguous (exit 5). `--run` accepts a run id
+prefix and may target a finished run to correct its record. Re-recording a step overwrites its
+outcome; there is no reset — a step with no recorded outcome is pending.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--note <text>` | none | Context for the outcome (error output, a skip reason) |
+| `--run <id>` | sole running run | Target run (id prefix) |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes runbook run done 2b808c6 6ec7607 --note "connections drained in 40s"
+2b808c6	active	Deploy hotfix
+```
+
+### `cc-notes runbook run finish RUNBOOK`
+
+Close a run. With no flag the status is `succeeded`, or `failed` when any step recorded `failed`;
+`--failed` and `--abandoned` (mutually exclusive) force a terminal status.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--run <id>` | sole running run | Target run (id prefix) |
+| `--failed` | off | Close as `failed` |
+| `--abandoned` | off | Close as `abandoned` |
+| `--json` | off | Emit JSON |
+
+### `cc-notes runbook run list RUNBOOK` · `run show RUNBOOK RUN`
+
+`run list` prints `<short7-run-id>` `<status>` `<runner>` `<YYYY-MM-DD started>`
+`<done+skipped>/<total>` per run. `run show` prints the run header, then one line per step in
+runbook order — `<short7-step-id>` `<status>` `<text>`, with an indented `note:` line where one
+was recorded.
+
+### JSON runbook shape
+
+`{"id":string,"title":string,"description":string,"status":string,"steps":[{"id":string,"text":string,"command":string,"position":string}],"runs":[{"id":string,"task":id|null,"runner":string,"status":string,"started_at":rfc3339,"finished_at":rfc3339|null,"steps":[{"step":string,"status":string,"note":string?}]}],"labels":[…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"archived_at":rfc3339|null}`.
+`status` is `active` or `archived`; a run's `status` is `running`, `succeeded`, `failed`, or
+`abandoned`. A run's `steps` lists every current step in position order with a `status` of
+`done`, `failed`, `skipped`, or `pending` (no outcome recorded); results for since-removed steps
+are historical and not shown. `position` is an opaque ordering key — compare, never parse.
 
 ## Note commands
 

@@ -1,6 +1,6 @@
 // Package cli wires the cobra command tree for cc-notes: the note, doc, log,
-// task, sprint, project, attachment, skills, hooks, and workflows noun groups
-// plus init, sync, and version. Output is agents-first — lean
+// task, sprint, project, runbook, attachment, skills, hooks, and workflows noun
+// groups plus init, sync, and version. Output is agents-first — lean
 // deterministic lines or compact JSON on stdout, one labeled error line on
 // stderr, exit codes mapped from typed errors via ExitCode.
 package cli
@@ -25,6 +25,6 @@ func NewRootCmd() *cobra.Command {
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetFlagErrorFunc(flagError)
-	root.AddCommand(newInitCmd(), newSyncCmd(), newStatusCmd(), newReconcileCmd(), newBlameCmd(), newHistoryCmd(), newShowCmd(), newRelevantCmd(), newCompactCmd(), newGCCmd(), newMountCmd(), newMountHolderCmd(), newVizCmd(), newMCPCmd(), newVersionCmd(), newNoteCmd(), newDocCmd(), newLogCmd(), newTaskCmd(), newSprintCmd(), newProjectCmd(), newAttachmentCmd(), newSkillsCmd(), newHooksCmd(), newWorkflowsCmd())
+	root.AddCommand(newInitCmd(), newSyncCmd(), newStatusCmd(), newReconcileCmd(), newBlameCmd(), newHistoryCmd(), newShowCmd(), newRelevantCmd(), newCompactCmd(), newGCCmd(), newMountCmd(), newMountHolderCmd(), newVizCmd(), newMCPCmd(), newVersionCmd(), newNoteCmd(), newDocCmd(), newLogCmd(), newTaskCmd(), newSprintCmd(), newProjectCmd(), newRunbookCmd(), newAttachmentCmd(), newSkillsCmd(), newHooksCmd(), newWorkflowsCmd())
 	return root
 }

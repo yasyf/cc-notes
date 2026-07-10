@@ -1638,6 +1638,117 @@ func NewProject(p ParsedProject) ([]model.Op, error) {
 	}}, nil
 }
 
+const runbookStepFencePrefix = "<!-- cc-notes:step "
+
+// runbookStepFence renders the viewer-invisible marker line carrying a step's
+// short id, mirroring the log entry fence idiom.
+func runbookStepFence(id string) string {
+	return runbookStepFencePrefix + shortWireID(id) + " -->"
+}
+
+// shortWireID clamps an opaque runbook wire id (step or run) to its 7-char
+// display prefix, tolerating ids shorter than 7 — a pack synced from another
+// client may carry one.
+func shortWireID(id string) string {
+	if len(id) < 7 {
+		return id
+	}
+	return id[:7]
+}
+
+// RenderRunbook renders rb as read-only markdown: YAML frontmatter (id, title,
+// status, labels, created, updated), the description, a numbered "## Steps"
+// section whose items each carry a viewer-invisible step-id marker and an
+// optional fenced sh block for the step command, then a "## Runs" section with
+// one summary line per run in fold order. The runbook filesystem file is
+// read-only — there is no ParseRunbook or DiffRunbook, so this render carries no
+// round-trip obligation and is tuned for a human reading the procedure. Output
+// is deterministic byte for byte.
+func RenderRunbook(rb model.Runbook) []byte {
+	fm := &yaml.Node{Kind: yaml.MappingNode}
+	put := func(key string, value *yaml.Node) {
+		fm.Content = append(fm.Content, scalarNode(key), value)
+	}
+	put("id", scalarNode(string(rb.ID)))
+	put("title", scalarNode(rb.Title))
+	put("status", scalarNode(string(rb.Status)))
+	put("labels", flowNode(rb.Labels))
+	put("created", scalarNode(stamp(rb.CreatedAt)))
+	put("updated", scalarNode(stamp(rb.UpdatedAt)))
+
+	var buf bytes.Buffer
+	buf.WriteString(delimiter)
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(fm); err != nil {
+		panic(fmt.Sprintf("fusefs: encode runbook frontmatter: %v", err))
+	}
+	if err := enc.Close(); err != nil {
+		panic(fmt.Sprintf("fusefs: close frontmatter encoder: %v", err))
+	}
+	buf.WriteString(delimiter)
+
+	if rb.Description != "" {
+		buf.WriteString(ensureTrailingNewline(rb.Description))
+		buf.WriteString("\n")
+	}
+
+	buf.WriteString("## Steps\n\n")
+	if len(rb.Steps) == 0 {
+		buf.WriteString("_No steps._\n")
+	}
+	for i, s := range rb.Steps {
+		buf.WriteString(runbookStepFence(s.ID))
+		buf.WriteString("\n")
+		fmt.Fprintf(&buf, "%d. %s\n", i+1, s.Text)
+		if s.Command != "" {
+			buf.WriteString("\n```sh\n")
+			buf.WriteString(ensureTrailingNewline(s.Command))
+			buf.WriteString("```\n")
+		}
+		if i < len(rb.Steps)-1 {
+			buf.WriteString("\n")
+		}
+	}
+
+	buf.WriteString("\n## Runs\n\n")
+	if len(rb.Runs) == 0 {
+		buf.WriteString("_No runs yet._\n")
+	}
+	for _, r := range rb.Runs {
+		buf.WriteString(runbookRunLine(r))
+		buf.WriteString("\n")
+	}
+	return buf.Bytes()
+}
+
+// runbookRunLine renders one run summary line: short id, status, runner, the
+// started→finished window (an unfinished run reads "in progress"), the
+// per-outcome step tally, and the served task when the run cites one.
+func runbookRunLine(r model.RunbookRun) string {
+	finished := stampOrEmpty(r.FinishedAt)
+	if finished == "" {
+		finished = "in progress"
+	}
+	var done, skipped, failed int
+	for _, res := range r.Results {
+		switch res.Status {
+		case model.StepDone:
+			done++
+		case model.StepSkipped:
+			skipped++
+		case model.StepFailed:
+			failed++
+		}
+	}
+	line := fmt.Sprintf("- %s %s — %s, %s → %s, %d done / %d skipped / %d failed",
+		shortWireID(r.ID), r.Status, r.Runner, stamp(r.StartedAt), finished, done, skipped, failed)
+	if r.Task != "" {
+		line += fmt.Sprintf(" (task %s)", r.Task.Short())
+	}
+	return line
+}
+
 func cliOnly(kind, field string, set bool) error {
 	if set {
 		return fmt.Errorf("%w: %s on a new %s changes via the CLI", ErrParse, field, kind)

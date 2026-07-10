@@ -1168,6 +1168,38 @@ def test_record_router_routes_log(monkeypatch, tmp_path) -> None:
         check("router log: no --when on a log", "--when" not in result.message, result.message)
 
 
+def test_record_router_routes_runbook(monkeypatch, tmp_path) -> None:
+    """kind=runbook routes to the runbook primitive — `runbook add` + `step add`, never `doc add`."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Write", file="runbook-deploy.md", content="## Steps\n1. drain\n2. deploy\n", session_dir=tmp_path)
+    verdict = RecordVerdict(record=True, kind="runbook", title="Deploy hotfix", reasoning="a re-executed procedure")
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
+    result = nudge_record_durable(evt)
+    check("router runbook: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("router runbook: names runbook add", "cc-notes runbook add" in result.message, result.message)
+        check("router runbook: names step add", "cc-notes runbook step add" in result.message, result.message)
+        check("router runbook: never doc add", "doc add" not in result.message, result.message)
+        check("router runbook: uses title", '"Deploy hotfix"' in result.message, result.message)
+
+
+def test_record_router_runbook_mcp_wording(monkeypatch, tmp_path) -> None:
+    """With the MCP server active, the runbook route names the tools, not the CLI."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    common._mcp_active_cache = True
+    try:
+        evt = mock_event("PostToolUse", tool="Write", file="runbook-deploy.md", content="## Steps\n1. drain\n", session_dir=tmp_path)
+        monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="runbook", title="Deploy hotfix", reasoning="a procedure")))
+        result = nudge_record_durable(evt)
+        check("router runbook mcp: warns", result is not None and result.action is Action.warn, repr(result))
+        if result and result.message:
+            check("router runbook mcp: names runbook_add", "runbook_add" in result.message, result.message)
+            check("router runbook mcp: names runbook_step_add", "runbook_step_add" in result.message, result.message)
+            check("router runbook mcp: no CLI spelling", "cc-notes runbook add" not in result.message, result.message)
+    finally:
+        common._mcp_active_cache = None
+
+
 def test_record_router_silent_when_not_recorded(monkeypatch, tmp_path) -> None:
     """record=False (a static-gate false positive) stays silent — the LLM is the precision step."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")

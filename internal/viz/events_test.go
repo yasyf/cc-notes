@@ -99,6 +99,24 @@ func createLog(t *testing.T, s *store.Store, title string) model.EntityID {
 	return snap.(model.Log).ID
 }
 
+// createRunbook creates a runbook whose initial steps ride in the create pack,
+// returning the folded snapshot so callers can drive runs against its step ids.
+func createRunbook(t *testing.T, s *store.Store, title string, steps ...string) model.Runbook {
+	t.Helper()
+	ops := []model.Op{model.CreateRunbook{Nonce: model.NewNonce(), Title: title}}
+	prev := ""
+	for _, text := range steps {
+		pos := model.PositionBetween(prev, "")
+		ops = append(ops, model.AddStep{ID: model.NewNonce(), Text: text, Position: pos})
+		prev = pos
+	}
+	snap, err := s.Create(t.Context(), ops)
+	if err != nil {
+		t.Fatalf("create runbook: %v", err)
+	}
+	return snap.(model.Runbook)
+}
+
 func appendOps(t *testing.T, s *store.Store, ref string, ops ...model.Op) {
 	t.Helper()
 	if _, err := s.Append(t.Context(), ref, ops); err != nil {
@@ -202,6 +220,124 @@ func TestEventsLogEntries(t *testing.T) {
 		{typ: evCreated},
 		{typ: evEntry, detail: map[string]string{"text": "first entry"}},
 		{typ: evEntry, detail: map[string]string{"text": "second entry"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// TestEventsRunbookLifecycle pins a runbook's lifecycle in trail order: create,
+// a run started against a task (detail carrying the run and task short ids), a
+// mid-run step-result update folding to a single edit, the run finished
+// (detail carrying the terminal status), and the runbook archived.
+func TestEventsRunbookLifecycle(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	s := r.openStore()
+
+	taskID := createTask(t, s, "deploy task", "")
+	rb := createRunbook(t, s, "deploy runbook", "build image", "roll out")
+	ref := refs.Runbook(rb.ID)
+	runID := model.NewNonce()
+	appendOps(t, s, ref, model.StartRun{ID: runID, Task: taskID})
+	appendOps(t, s, ref, model.SetRunStepStatus{RunID: runID, StepID: rb.Steps[0].ID, Status: model.StepDone})
+	appendOps(t, s, ref, model.FinishRun{ID: runID, Status: model.RunSucceeded})
+	appendOps(t, s, ref, model.SetRunbookStatus{Status: model.RunbookArchived})
+
+	g := buildGraph(t, r)
+	got := shapesFor(g, rb.ID)
+	want := []evShape{
+		{typ: evCreated},
+		{typ: evRunStarted, detail: map[string]string{"run": runID[:7], "task": string(taskID)[:7]}},
+		{typ: evEdited},
+		{typ: evRunFinished, detail: map[string]string{"run": runID[:7], "status": string(model.RunSucceeded)}},
+		{typ: evStatus},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// TestEventsRunbookRunFinishStatuses covers that each terminal finish status
+// surfaces as a run_finished carrying that status, and that a run started
+// without a task omits the task detail.
+func TestEventsRunbookRunFinishStatuses(t *testing.T) {
+	for _, status := range []model.RunStatus{model.RunSucceeded, model.RunFailed, model.RunAbandoned} {
+		t.Run(string(status), func(t *testing.T) {
+			r := newGitRepo(t)
+			r.commit("c1")
+			s := r.openStore()
+			rb := createRunbook(t, s, "procedure", "only step")
+			ref := refs.Runbook(rb.ID)
+			runID := model.NewNonce()
+			appendOps(t, s, ref, model.StartRun{ID: runID})
+			appendOps(t, s, ref, model.FinishRun{ID: runID, Status: status})
+
+			g := buildGraph(t, r)
+			got := shapesFor(g, rb.ID)
+			want := []evShape{
+				{typ: evCreated},
+				{typ: evRunStarted, detail: map[string]string{"run": runID[:7]}},
+				{typ: evRunFinished, detail: map[string]string{"run": runID[:7], "status": string(status)}},
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("events =\n%+v\nwant\n%+v", got, want)
+			}
+		})
+	}
+}
+
+// TestEventsRunbookFinishedRunCorrection covers correcting a step result on an
+// already-finished run: the run diffs as a terminal-on-both-sides pair, a
+// content correction that folds to a single edit after the real run_finished —
+// never a spurious second run_finished.
+func TestEventsRunbookFinishedRunCorrection(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	s := r.openStore()
+	rb := createRunbook(t, s, "procedure", "only step")
+	ref := refs.Runbook(rb.ID)
+	runID := model.NewNonce()
+	appendOps(t, s, ref, model.StartRun{ID: runID})
+	appendOps(t, s, ref, model.FinishRun{ID: runID, Status: model.RunSucceeded})
+	appendOps(t, s, ref, model.SetRunStepStatus{RunID: runID, StepID: rb.Steps[0].ID, Status: model.StepDone})
+
+	g := buildGraph(t, r)
+	got := shapesFor(g, rb.ID)
+	want := []evShape{
+		{typ: evCreated},
+		{typ: evRunStarted, detail: map[string]string{"run": runID[:7]}},
+		{typ: evRunFinished, detail: map[string]string{"run": runID[:7], "status": string(model.RunSucceeded)}},
+		{typ: evEdited},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// TestEventsRunbookStatusAndRunInOnePack covers that a status change and run
+// activity folded into one op-pack surface as distinct events — the accumulate
+// pattern taskEvents uses across orthogonal axes — rather than the status
+// swallowing the run finish.
+func TestEventsRunbookStatusAndRunInOnePack(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	s := r.openStore()
+	rb := createRunbook(t, s, "procedure", "only step")
+	ref := refs.Runbook(rb.ID)
+	runID := model.NewNonce()
+	appendOps(t, s, ref, model.StartRun{ID: runID})
+	appendOps(t, s, ref,
+		model.SetRunbookStatus{Status: model.RunbookArchived},
+		model.FinishRun{ID: runID, Status: model.RunSucceeded})
+
+	g := buildGraph(t, r)
+	got := shapesFor(g, rb.ID)
+	want := []evShape{
+		{typ: evCreated},
+		{typ: evRunStarted, detail: map[string]string{"run": runID[:7]}},
+		{typ: evStatus},
+		{typ: evRunFinished, detail: map[string]string{"run": runID[:7], "status": string(model.RunSucceeded)}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)

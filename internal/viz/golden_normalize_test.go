@@ -27,6 +27,10 @@ const (
 // hexSHA matches a full 40-character lowercase-hex commit sha or entity id.
 var hexSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
+// hexShort matches a 7-character lowercase-hex short id — a run's short id and a
+// cited task's short id ride event detail in this form, random per run.
+var hexShort = regexp.MustCompile(`^[0-9a-f]{7}$`)
+
 // normalizeGraph renders g as deterministic JSON for golden comparison, without
 // mutating g. The store stamps op-commit signatures from an unexported wall
 // clock — no external package can pin it — so op-commit shas, entity ids, and
@@ -180,7 +184,7 @@ func renameSHAs(g *Graph, r *shaRegistry) {
 		e.Entity.ID, e.Entity.Short = model.EntityID(id), id
 		e.SHA = model.SHA(r.name(string(e.SHA)))
 		for _, k := range sortedKeys(e.Detail) {
-			if hexSHA.MatchString(e.Detail[k]) {
+			if hexSHA.MatchString(e.Detail[k]) || hexShort.MatchString(e.Detail[k]) {
 				e.Detail[k] = r.name(e.Detail[k])
 			}
 		}

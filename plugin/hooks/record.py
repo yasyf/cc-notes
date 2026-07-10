@@ -183,17 +183,22 @@ RECORD_ROUTER_SYSTEM = (
     "When record=true, choose exactly one kind:\n"
     "- note: a single durable fact or decision — one verifiable claim about the code (e.g. 'retry "
     "backoff caps at 30s because the server drops connections past it').\n"
-    "- doc: living, long-form guidance for the next agent that you keep fresh — a handoff brief, a "
-    "runbook, design rationale for an in-flight change, an investigation write-up. A doc is "
+    "- doc: living, long-form guidance for the next agent that you keep fresh — a handoff brief, "
+    "design rationale for an in-flight change, an investigation write-up. A doc is "
     "re-verified, drifts when the code moves, and carries a 'read this when…' trigger.\n"
     "- log: an immutable, append-only chronology — an incident timeline, a rollout log, a debugging "
     "session — or an evidence archive: machine-generated artifacts belong on log entries as "
     "`--attach <file>` attachments, never as files in the tree. Its value is the running record "
     "itself; entries are never edited and it has no freshness lifecycle.\n"
     "- task: actionable work still to be done — a TODO or checklist of follow-ups.\n"
+    "- runbook: a repeatable step-by-step operational procedure meant to be re-executed — deploy "
+    "steps, a release checklist, an incident-response procedure. cc-notes has a first-class "
+    "runbook primitive that tracks each execution's per-step status.\n"
     "\n"
     "doc vs log is the subtle call: choose doc when the content is guidance you would keep current, "
-    "log when it is a dated record of what happened that you would only ever append to.\n"
+    "log when it is a dated record of what happened that you would only ever append to. doc vs "
+    "runbook splits on execution: a doc describes and explains; a runbook is an ordered procedure "
+    "an agent re-executes step by step.\n"
     "\n"
     "When record=true also return: title — a short title; when — for a doc, the free-text 'read "
     "this when…' trigger (leave empty for other kinds); area — the repo directory the record is "
@@ -226,13 +231,35 @@ def nudge_record_durable(evt: PostToolUseEvent) -> HookResult | None:
         .system(RECORD_ROUTER_SYSTEM)
         .context("path", str(evt.file))
         .context("content", (evt.content or "")[:LLM_INPUT_CAP])
-        .ask("Does this belong in cc-notes, and if so as which record (note/doc/log/task)?")
+        .ask("Does this belong in cc-notes, and if so as which record (note/doc/log/task/runbook)?")
     )
     try:
         verdict = evt.ctx.call_llm(prompt, response_model=RecordVerdict, model="small", agent=False, transcript=False)
     except Exception:
         # Fail closed: a classifier error must never crash a nudge fire — the pack only warns.
         return None
+    if verdict.record and verdict.kind == "runbook":
+        # Routed to the runbook primitive, not through record_command: runbooks are not a
+        # RECORD_KIND (no --when, no anchors) and the suggestion is the two-verb authoring flow.
+        record_fire(evt)
+        title = verdict.title or (evt.file.stem if evt.file else "untitled")
+        if mcp_active(evt):
+            lines = (
+                f'runbook_add — {{"title": "{title}", "steps": ["<step one>", "<step two>", …]}}',
+                "runbook_step_add — one call per later step, in order",
+            )
+        else:
+            lines = (
+                f'cc-notes runbook add "{title}" --body - --step "<step one>" --step "<step two>"   # description on stdin',
+                'cc-notes runbook step add <id> "<step text>" --command "<cmd>"   # later steps, in order',
+            )
+        return evt.warn(
+            f"{evt.file} reads like a repeatable procedure — cc-notes has a first-class runbook "
+            f"primitive with per-run step tracking ({verdict.reasoning}). Record it, then delete "
+            "the loose file:",
+            *lines,
+            "(Don't put secrets in cc-notes — the refs sync to the remote.)",
+        )
     if not verdict.record or verdict.kind not in RECORD_KINDS:
         return None
     record_fire(evt)

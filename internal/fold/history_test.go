@@ -158,6 +158,68 @@ func TestHistoryCheckpointStateNeutral(t *testing.T) {
 	}
 }
 
+// TestHistoryRunbookRunResultsStateNeutral is the cloneRuns regression. History
+// re-folds every prefix over the same decoded chain, so the seed-safe
+// checkpoint's State is shared across folds. A post-checkpoint result upsert
+// overwrites an existing result in place; a shallow clone of the seed's runs
+// would write through into the checkpoint State and into the already-stored
+// checkpoint-step snapshot, corrupting both. The seed step must keep its
+// original result.
+func TestHistoryRunbookRunResultsStateNeutral(t *testing.T) {
+	c0 := mk("c0", nil, "alice", 100, 1,
+		model.CreateRunbook{Nonce: "n", Title: "RB"},
+		model.AddStep{ID: "s1", Text: "build", Command: "", Position: "a"},
+	)
+	c1 := mk("c1", []string{"c0"}, "bob", 200, 2,
+		model.StartRun{ID: "r1", Task: "task0"},
+		model.SetRunStepStatus{RunID: "r1", StepID: "s1", Status: model.StepDone, Note: "seed"},
+	)
+	state, err := fold.Runbook([]model.PackCommit{c0, c1})
+	if err != nil {
+		t.Fatalf("Runbook() error = %v", err)
+	}
+	cK := cp("cK", "c1", "compactor", 250, 3, state, 2, "c0", "c1")
+	c2 := mk("c2", []string{"cK"}, "carol", 300, 4,
+		model.SetRunStepStatus{RunID: "r1", StepID: "s1", Status: model.StepFailed, Note: "post"},
+	)
+	chain := []model.PackCommit{c0, c1, cK, c2}
+
+	steps, err := fold.History(chain)
+	if err != nil {
+		t.Fatalf("History() error = %v", err)
+	}
+	if len(steps) != 4 {
+		t.Fatalf("len(steps) = %d, want 4", len(steps))
+	}
+	if steps[2].Commit.SHA != "cK" {
+		t.Fatalf("step 2 sha = %q, want cK", steps[2].Commit.SHA)
+	}
+	seedResult := steps[2].Snapshot.(model.Runbook).Runs[0].Results[0]
+	wantSeed := model.RunbookStepResult{StepID: "s1", Status: model.StepDone, Note: "seed", Actor: "bob", TS: 200}
+	if seedResult != wantSeed {
+		t.Fatalf("checkpoint-step result = %+v, want %+v (seed corrupted by shallow clone)", seedResult, wantSeed)
+	}
+	before := steps[1].Snapshot.(model.Runbook)
+	at := steps[2].Snapshot.(model.Runbook)
+	before.Head, at.Head = "", ""
+	if !reflect.DeepEqual(before, at) {
+		t.Fatalf("checkpoint step changed state beyond Head:\n before = %+v\n at     = %+v", before, at)
+	}
+	full, err := fold.Runbook(chain)
+	if err != nil {
+		t.Fatalf("Runbook() error = %v", err)
+	}
+	last := steps[3].Snapshot.(model.Runbook)
+	postResult := last.Runs[0].Results[0]
+	wantPost := model.RunbookStepResult{StepID: "s1", Status: model.StepFailed, Note: "post", Actor: "carol", TS: 300}
+	if postResult != wantPost {
+		t.Fatalf("last-step result = %+v, want %+v", postResult, wantPost)
+	}
+	if !reflect.DeepEqual(last, full) {
+		t.Fatalf("last step = %+v, want %+v", last, full)
+	}
+}
+
 // TestHistoryErrors covers the empty chain and a chain whose root carries no
 // create op.
 func TestHistoryErrors(t *testing.T) {

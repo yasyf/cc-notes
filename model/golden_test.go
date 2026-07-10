@@ -399,6 +399,108 @@ func TestPackGoldenBytesAttachmentOps(t *testing.T) {
 	}
 }
 
+// TestPackGoldenBytesRunbookOps pins the exact v1 wire bytes of every runbook
+// op kind and a runbook checkpoint, both directions: marshal to the pinned
+// bytes and decode back to the identical op. These bytes are storage format —
+// entity ids derive from them — so any marshal-layout drift fails here.
+func TestPackGoldenBytesRunbookOps(t *testing.T) {
+	cases := []struct {
+		kind string
+		op   Op
+		want string
+	}{
+		{
+			"create_runbook",
+			CreateRunbook{Nonce: testNonce, Title: "Deploy", Description: "ship", Labels: []string{"deploy", "ops"}},
+			`{"v":1,"lamport":42,"ops":[{"kind":"create_runbook","nonce":"0123456789abcdef0123456789abcdef","title":"Deploy","description":"ship","labels":["deploy","ops"]}]}`,
+		},
+		{
+			"add_step",
+			AddStep{ID: "s1", Text: "run tests", Command: "go test ./...", Position: "i"},
+			`{"v":1,"lamport":42,"ops":[{"kind":"add_step","id":"s1","text":"run tests","command":"go test ./...","position":"i"}]}`,
+		},
+		{
+			"remove_step",
+			RemoveStep{ID: "s1"},
+			`{"v":1,"lamport":42,"ops":[{"kind":"remove_step","id":"s1"}]}`,
+		},
+		{
+			"set_step_text",
+			SetStepText{ID: "s1", Text: "run tests under -race"},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_step_text","id":"s1","text":"run tests under -race"}]}`,
+		},
+		{
+			"set_step_command",
+			SetStepCommand{ID: "s1", Command: "go test -race ./..."},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_step_command","id":"s1","command":"go test -race ./..."}]}`,
+		},
+		{
+			"set_step_position",
+			SetStepPosition{ID: "s1", Position: "a"},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_step_position","id":"s1","position":"a"}]}`,
+		},
+		{
+			"start_run",
+			StartRun{ID: "r1", Task: testID},
+			`{"v":1,"lamport":42,"ops":[{"kind":"start_run","id":"r1","task":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"}]}`,
+		},
+		{
+			"set_run_step_status",
+			SetRunStepStatus{RunID: "r1", StepID: "s1", Status: StepDone, Note: "green"},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_run_step_status","run_id":"r1","step_id":"s1","status":"done","note":"green"}]}`,
+		},
+		{
+			"finish_run",
+			FinishRun{ID: "r1", Status: RunSucceeded},
+			`{"v":1,"lamport":42,"ops":[{"kind":"finish_run","id":"r1","status":"succeeded"}]}`,
+		},
+		{
+			"set_runbook_status",
+			SetRunbookStatus{Status: RunbookArchived},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_runbook_status","status":"archived"}]}`,
+		},
+		{
+			"checkpoint_runbook",
+			Checkpoint{
+				EntityID: testID,
+				State: Runbook{
+					ID: testID, Title: "Deploy", Description: "ship", Status: RunbookActive,
+					Steps: []RunbookStep{{ID: "s1", Text: "test", Command: "go test", Position: "i"}},
+					Runs: []RunbookRun{{
+						ID: "r1", Task: testParent, Status: RunSucceeded,
+						Runner: "ada", StartedAt: 200, FinishedAt: 300,
+						Results: []RunbookStepResult{{StepID: "s1", Status: StepDone, Note: "ok", Actor: "ada", TS: 250}},
+					}},
+					Labels: []string{"ops"}, Comments: []Comment{{Author: "ada", TS: 100, Body: "init"}},
+					Author: "ada", CreatedAt: 100, UpdatedAt: 300, ArchivedAt: 0, Head: testParent,
+				},
+				CoversLamport: 6,
+				CoversShas:    []SHA{testParent, testID},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"runbook","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Deploy","description":"ship","status":"active","steps":[{"id":"s1","text":"test","command":"go test","position":"i"}],"runs":[{"id":"r1","task":"00112233445566778899aabbccddeeff00112233","status":"succeeded","runner":"ada","started_at":200,"finished_at":300,"results":[{"step_id":"s1","status":"done","note":"ok","actor":"ada","ts":250}]}],"labels":["ops"],"comments":[{"author":"ada","ts":100,"body":"init"}],"author":"ada","created_at":100,"updated_at":300,"archived_at":0,"head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":6,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			pack := Pack{Lamport: 42, Ops: []Op{tc.op}}
+			got, err := json.Marshal(pack)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("marshal =\n%s\nwant\n%s", got, tc.want)
+			}
+			back, err := DecodePack([]byte(tc.want))
+			if err != nil {
+				t.Fatalf("decode golden: %v", err)
+			}
+			if !reflect.DeepEqual(back, pack) {
+				t.Fatalf("decode = %#v, want %#v", back, pack)
+			}
+		})
+	}
+}
+
 // TestSnapshotGoldenBytesAttachmentless pins the exact json.Marshal bytes of
 // attachment-less Note, Doc, and Log snapshots. Checkpoint State embeds these
 // bytes verbatim in the wire form, and checkpoint encode determinism across

@@ -66,6 +66,8 @@ func prefixFolder(first model.Op) (func([]model.PackCommit) (model.Snapshot, err
 		return func(o []model.PackCommit) (model.Snapshot, error) { return foldSprint(o) }, nil
 	case model.CreateProject:
 		return func(o []model.PackCommit) (model.Snapshot, error) { return foldProject(o) }, nil
+	case model.CreateRunbook:
+		return func(o []model.PackCommit) (model.Snapshot, error) { return foldRunbook(o) }, nil
 	case nil:
 		return nil, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
 	default:
