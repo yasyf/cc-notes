@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"add_comment","body":"Verified retroactively: v0.21.1 release has 8 assets (7 binaries + SHA256SUMS), tap now at 0.22.0. v0.21.1/v0.21.2/v0.22.0 all shipped; remaining unreleased scope (runbooks + create-dedupe) goes out as v0.23.0."}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_status","status":"done"},{"kind":"link_commit","sha":"e16a2fabd487b6f663833ec1f640a4059557c75f"}]}
