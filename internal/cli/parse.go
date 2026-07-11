@@ -2,7 +2,6 @@ package cli
 
 import (
 	"cmp"
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,40 +11,35 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-func parseStatus(value string) (model.Status, error) {
-	switch s := model.Status(value); s {
-	case model.StatusOpen, model.StatusInProgress, model.StatusDone, model.StatusCancelled:
-		return s, nil
-	default:
-		return "", fmt.Errorf("invalid status %q (open|in_progress|done|cancelled)", value)
+// parseEnum validates value against the ordered set of accepted values for a
+// string enum, returning it typed or an "invalid <label> %q (a|b|c)" error
+// whose pipe-list is the accepted values in declaration order.
+func parseEnum[S ~string](value, label string, valid []S) (S, error) {
+	if v := S(value); slices.Contains(valid, v) {
+		return v, nil
 	}
+	names := make([]string, len(valid))
+	for i, v := range valid {
+		names[i] = string(v)
+	}
+	var zero S
+	return zero, fmt.Errorf("invalid %s %q (%s)", label, value, strings.Join(names, "|"))
+}
+
+func parseStatus(value string) (model.Status, error) {
+	return parseEnum(value, "status", []model.Status{model.StatusOpen, model.StatusInProgress, model.StatusDone, model.StatusCancelled})
 }
 
 func parseTaskType(value string) (model.TaskType, error) {
-	switch t := model.TaskType(value); t {
-	case model.TypeTask, model.TypeBug, model.TypeEpic, model.TypeQuestion:
-		return t, nil
-	default:
-		return "", fmt.Errorf("invalid type %q (task|bug|epic|question)", value)
-	}
+	return parseEnum(value, "type", []model.TaskType{model.TypeTask, model.TypeBug, model.TypeEpic, model.TypeQuestion})
 }
 
 func parseSprintStatus(value string) (model.SprintStatus, error) {
-	switch s := model.SprintStatus(value); s {
-	case model.SprintPlanned, model.SprintActive, model.SprintCompleted, model.SprintCancelled:
-		return s, nil
-	default:
-		return "", fmt.Errorf("invalid sprint status %q (planned|active|completed|cancelled)", value)
-	}
+	return parseEnum(value, "sprint status", []model.SprintStatus{model.SprintPlanned, model.SprintActive, model.SprintCompleted, model.SprintCancelled})
 }
 
 func parseProjectStatus(value string) (model.ProjectStatus, error) {
-	switch s := model.ProjectStatus(value); s {
-	case model.ProjectActive, model.ProjectCompleted, model.ProjectArchived, model.ProjectCancelled:
-		return s, nil
-	default:
-		return "", fmt.Errorf("invalid project status %q (active|completed|archived|cancelled)", value)
-	}
+	return parseEnum(value, "project status", []model.ProjectStatus{model.ProjectActive, model.ProjectCompleted, model.ProjectArchived, model.ProjectCancelled})
 }
 
 func validatePriority(p int) (model.Priority, error) {
@@ -95,124 +89,14 @@ func resolveCriterion(task model.Task, prefix string) (model.Criterion, error) {
 	}
 }
 
-// loadNote resolves a note id prefix and folds its chain.
-func loadNote(ctx context.Context, s *store.Store, prefix string) (string, model.Note, error) {
-	ref, err := s.Resolve(ctx, model.KindNote, prefix)
-	if err != nil {
-		return "", model.Note{}, err
-	}
-	snapshot, err := s.Load(ctx, ref)
-	if err != nil {
-		return "", model.Note{}, err
-	}
-	return ref, snapshot.(model.Note), nil
-}
-
-// loadDoc resolves a doc id prefix and folds its chain.
-func loadDoc(ctx context.Context, s *store.Store, prefix string) (string, model.Doc, error) {
-	ref, err := s.Resolve(ctx, model.KindDoc, prefix)
-	if err != nil {
-		return "", model.Doc{}, err
-	}
-	snapshot, err := s.Load(ctx, ref)
-	if err != nil {
-		return "", model.Doc{}, err
-	}
-	return ref, snapshot.(model.Doc), nil
-}
-
-// loadLog resolves a log id prefix and folds its chain.
-func loadLog(ctx context.Context, s *store.Store, prefix string) (string, model.Log, error) {
-	ref, err := s.Resolve(ctx, model.KindLog, prefix)
-	if err != nil {
-		return "", model.Log{}, err
-	}
-	snapshot, err := s.Load(ctx, ref)
-	if err != nil {
-		return "", model.Log{}, err
-	}
-	return ref, snapshot.(model.Log), nil
-}
-
-// loadTask resolves a task id prefix globally and folds its chain.
-func loadTask(ctx context.Context, s *store.Store, prefix string) (string, model.Task, error) {
-	ref, err := s.Resolve(ctx, model.KindTask, prefix)
-	if err != nil {
-		return "", model.Task{}, err
-	}
-	snapshot, err := s.Load(ctx, ref)
-	if err != nil {
-		return "", model.Task{}, err
-	}
-	return ref, snapshot.(model.Task), nil
-}
-
-// loadSprint resolves a sprint id prefix and folds its chain.
-func loadSprint(ctx context.Context, s *store.Store, prefix string) (string, model.Sprint, error) {
-	ref, err := s.Resolve(ctx, model.KindSprint, prefix)
-	if err != nil {
-		return "", model.Sprint{}, err
-	}
-	snapshot, err := s.Load(ctx, ref)
-	if err != nil {
-		return "", model.Sprint{}, err
-	}
-	return ref, snapshot.(model.Sprint), nil
-}
-
-// loadProject resolves a project id prefix and folds its chain.
-func loadProject(ctx context.Context, s *store.Store, prefix string) (string, model.Project, error) {
-	ref, err := s.Resolve(ctx, model.KindProject, prefix)
-	if err != nil {
-		return "", model.Project{}, err
-	}
-	snapshot, err := s.Load(ctx, ref)
-	if err != nil {
-		return "", model.Project{}, err
-	}
-	return ref, snapshot.(model.Project), nil
-}
-
-// loadRunbook resolves a runbook id prefix and folds its chain.
-func loadRunbook(ctx context.Context, s *store.Store, prefix string) (string, model.Runbook, error) {
-	ref, err := s.Resolve(ctx, model.KindRunbook, prefix)
-	if err != nil {
-		return "", model.Runbook{}, err
-	}
-	snapshot, err := s.Load(ctx, ref)
-	if err != nil {
-		return "", model.Runbook{}, err
-	}
-	return ref, snapshot.(model.Runbook), nil
-}
-
-// sortNotes orders notes by updated_at descending, then id ascending.
-func sortNotes(notes []model.Note) {
-	slices.SortFunc(notes, func(a, b model.Note) int {
-		if c := cmp.Compare(b.UpdatedAt, a.UpdatedAt); c != 0 {
+// sortByUpdated orders any snapshot slice by updated_at descending, then id
+// ascending, reading both through the kind-agnostic Meta header.
+func sortByUpdated[T model.Snapshot](items []T) {
+	slices.SortFunc(items, func(a, b T) int {
+		if c := b.Meta().UpdatedAt.Compare(a.Meta().UpdatedAt); c != 0 {
 			return c
 		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-}
-
-// sortDocs orders docs by updated_at descending, then id ascending.
-func sortDocs(docs []model.Doc) {
-	slices.SortFunc(docs, func(a, b model.Doc) int {
-		if c := cmp.Compare(b.UpdatedAt, a.UpdatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-}
-
-// sortLogs orders logs by updated_at descending, then id ascending.
-func sortLogs(logs []model.Log) {
-	slices.SortFunc(logs, func(a, b model.Log) int {
-		if c := cmp.Compare(b.UpdatedAt, a.UpdatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.ID, b.ID)
+		return cmp.Compare(a.EntityID(), b.EntityID())
 	})
 }
 

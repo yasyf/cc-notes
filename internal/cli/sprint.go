@@ -59,7 +59,7 @@ func newSprintAddCmd() *cobra.Command {
 			}
 			var projectID model.EntityID
 			if project != "" {
-				_, proj, err := loadProject(ctx, s, project)
+				_, proj, err := projectSpec.load(ctx, s, project)
 				if err != nil {
 					return err
 				}
@@ -128,7 +128,7 @@ func newSprintListCmd() *cobra.Command {
 			}
 			var projectID model.EntityID
 			if project != "" {
-				_, proj, err := loadProject(ctx, s, project)
+				_, proj, err := projectSpec.load(ctx, s, project)
 				if err != nil {
 					return err
 				}
@@ -185,7 +185,7 @@ func newSprintStatusCmd(use string, status model.SprintStatus) *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, sprint, err := loadSprint(ctx, s, args[0])
+			ref, sprint, err := sprintSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -245,7 +245,7 @@ func newSprintEditCmd() *cobra.Command {
 				ops = append(ops, model.SetDescription{Description: text})
 			}
 			if flags.Changed("project") {
-				_, proj, err := loadProject(ctx, s, project)
+				_, proj, err := projectSpec.load(ctx, s, project)
 				if err != nil {
 					return err
 				}
@@ -286,7 +286,7 @@ func newSprintEditCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadSprint(ctx, s, args[0])
+			ref, _, err := sprintSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -331,7 +331,7 @@ func newSprintCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ref, _, err := loadSprint(ctx, s, args[0])
+			ref, _, err := sprintSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}

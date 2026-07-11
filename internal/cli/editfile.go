@@ -56,7 +56,7 @@ func docAdapter() editAdapter {
 	return editAdapter{
 		kind: model.KindDoc,
 		load: func(ctx context.Context, s *store.Store, prefix string) (model.Snapshot, model.SHA, error) {
-			_, d, err := loadDoc(ctx, s, prefix)
+			_, d, err := docSpec.load(ctx, s, prefix)
 			if err != nil {
 				return nil, "", err
 			}
@@ -115,7 +115,7 @@ func noteAdapter() editAdapter {
 	return editAdapter{
 		kind: model.KindNote,
 		load: func(ctx context.Context, s *store.Store, prefix string) (model.Snapshot, model.SHA, error) {
-			_, n, err := loadNote(ctx, s, prefix)
+			_, n, err := noteSpec.load(ctx, s, prefix)
 			if err != nil {
 				return nil, "", err
 			}

@@ -113,7 +113,7 @@ func lookupAttachment(ctx context.Context, s *store.Store, prefix, name string) 
 	if err != nil {
 		return model.Attachment{}, lfs.Store{}, err
 	}
-	atts := snapshotAttachments(snapshot)
+	atts := snapshot.Meta().Attachments
 	for _, a := range atts {
 		if a.Name == name {
 			content, err := s.LFS(ctx)
@@ -153,21 +153,6 @@ func resolveAttachable(ctx context.Context, s *store.Store, prefix string) (stri
 		return matched[0], nil
 	default:
 		return "", ambiguousAcrossKinds(ctx, s, prefix, matched)
-	}
-}
-
-// snapshotAttachments returns the attachment set of a note, doc, or log
-// snapshot; resolveAttachable only yields those kinds.
-func snapshotAttachments(snapshot model.Snapshot) []model.Attachment {
-	switch v := snapshot.(type) {
-	case model.Note:
-		return v.Attachments
-	case model.Doc:
-		return v.Attachments
-	case model.Log:
-		return v.Attachments
-	default:
-		panic(fmt.Sprintf("attachment lookup on non-attachable snapshot %T", snapshot))
 	}
 }
 

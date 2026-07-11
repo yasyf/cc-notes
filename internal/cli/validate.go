@@ -40,7 +40,7 @@ func newTaskValidateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, args[0])
+			ref, task, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}

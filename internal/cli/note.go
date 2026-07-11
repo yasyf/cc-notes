@@ -156,12 +156,12 @@ func newNoteListCmd() *cobra.Command {
 			}
 			notes = slices.DeleteFunc(notes, func(n model.Note) bool {
 				return !hasAll(n.Tags, labels) ||
-					(filters.commit != "" && !hasAnchor(n, model.AnchorCommit, filters.commit)) ||
-					(filters.path != "" && !hasAnchor(n, model.AnchorPath, filters.path)) ||
-					(filters.dir != "" && !hasAnchor(n, model.AnchorDir, filters.dir)) ||
-					(filters.branch != "" && !hasAnchor(n, model.AnchorBranch, filters.branch))
+					(filters.commit != "" && !hasAnchorIn(n.Anchors, model.AnchorCommit, filters.commit)) ||
+					(filters.path != "" && !hasAnchorIn(n.Anchors, model.AnchorPath, filters.path)) ||
+					(filters.dir != "" && !hasAnchorIn(n.Anchors, model.AnchorDir, filters.dir)) ||
+					(filters.branch != "" && !hasAnchorIn(n.Anchors, model.AnchorBranch, filters.branch))
 			})
-			sortNotes(notes)
+			sortByUpdated(notes)
 			return printNoteList(cmd, s, notes, jsonOut)
 		},
 	}
@@ -256,7 +256,7 @@ func newNoteEditCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, note, err := loadNote(ctx, s, args[0])
+			ref, note, err := noteSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -307,7 +307,7 @@ func newNoteRmCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadNote(ctx, s, args[0])
+			ref, _, err := noteSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -369,7 +369,7 @@ func newNoteVerifyCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, note, err := loadNote(ctx, s, args[0])
+			ref, note, err := noteSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -411,11 +411,11 @@ func newNoteSupersedeCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			oldRef, _, err := loadNote(ctx, s, args[0])
+			oldRef, _, err := noteSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
-			_, newNote, err := loadNote(ctx, s, by)
+			_, newNote, err := noteSpec.load(ctx, s, by)
 			if err != nil {
 				return err
 			}
@@ -456,7 +456,7 @@ func newNoteExpireCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadNote(ctx, s, args[0])
+			ref, _, err := noteSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -571,10 +571,10 @@ func rankNotes(notes []model.Note, query string, tags []string, author, anchorPa
 	for _, n := range notes {
 		if !hasAll(n.Tags, tags) ||
 			(author != "" && string(n.Author) != author) ||
-			(anchorPath != "" && !hasAnchor(n, model.AnchorPath, anchorPath)) ||
-			(anchorDir != "" && !hasAnchor(n, model.AnchorDir, anchorDir)) ||
-			(anchorBranch != "" && !hasAnchor(n, model.AnchorBranch, anchorBranch)) ||
-			(anchorCommit != "" && !hasAnchor(n, model.AnchorCommit, anchorCommit)) {
+			(anchorPath != "" && !hasAnchorIn(n.Anchors, model.AnchorPath, anchorPath)) ||
+			(anchorDir != "" && !hasAnchorIn(n.Anchors, model.AnchorDir, anchorDir)) ||
+			(anchorBranch != "" && !hasAnchorIn(n.Anchors, model.AnchorBranch, anchorBranch)) ||
+			(anchorCommit != "" && !hasAnchorIn(n.Anchors, model.AnchorCommit, anchorCommit)) {
 			continue
 		}
 		tier := noteTier(n, q)
@@ -639,10 +639,6 @@ func printNoteList(cmd *cobra.Command, s *store.Store, notes []model.Note, jsonO
 		}
 	}
 	return nil
-}
-
-func hasAnchor(n model.Note, kind model.AnchorKind, value string) bool {
-	return slices.Contains(n.Anchors, model.Anchor{Kind: kind, Value: value})
 }
 
 // resolveCommits expands every user-supplied commit anchor — an abbreviated

@@ -48,7 +48,7 @@ func newBlameCmd() *cobra.Command {
 				return err
 			}
 			for _, val := range trailers {
-				_, task, err := loadTask(ctx, s, val)
+				_, task, err := taskSpec.load(ctx, s, val)
 				if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrAmbiguous) {
 					continue
 				}

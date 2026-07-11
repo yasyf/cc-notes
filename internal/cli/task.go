@@ -100,7 +100,7 @@ func newTaskAddCmd() *cobra.Command {
 			}
 			var parentID model.EntityID
 			if parent != "" {
-				_, parentTask, err := loadTask(ctx, s, parent)
+				_, parentTask, err := taskSpec.load(ctx, s, parent)
 				if err != nil {
 					return err
 				}
@@ -108,7 +108,7 @@ func newTaskAddCmd() *cobra.Command {
 			}
 			var sprintID model.EntityID
 			if sprint != "" {
-				_, sp, err := loadSprint(ctx, s, sprint)
+				_, sp, err := sprintSpec.load(ctx, s, sprint)
 				if err != nil {
 					return err
 				}
@@ -116,7 +116,7 @@ func newTaskAddCmd() *cobra.Command {
 			}
 			var projectID model.EntityID
 			if project != "" {
-				_, proj, err := loadProject(ctx, s, project)
+				_, proj, err := projectSpec.load(ctx, s, project)
 				if err != nil {
 					return err
 				}
@@ -327,7 +327,7 @@ func newTaskStartCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, args[0])
+			ref, task, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -375,7 +375,7 @@ func newTaskClaimCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, args[0])
+			ref, task, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -450,7 +450,7 @@ func claimSyncYield(cmd *cobra.Command, s *store.Store, task model.Task, me mode
 	if _, err := ccsync.Sync(ctx, dir, defaultRemote, false); err != nil {
 		return err
 	}
-	if _, task, err = loadTask(ctx, s, string(task.ID)); err != nil {
+	if _, task, err = taskSpec.load(ctx, s, string(task.ID)); err != nil {
 		return err
 	}
 	if task.Assignee != me {
@@ -474,7 +474,7 @@ func newTaskRenewCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, args[0])
+			ref, task, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -511,7 +511,7 @@ func newTaskDoneCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, args[0])
+			ref, task, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -582,7 +582,7 @@ func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, args[0])
+			ref, task, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -683,7 +683,7 @@ func newTaskEditCmd() *cobra.Command {
 				ops = append(ops, model.RemoveLabel{Label: label})
 			}
 			if flags.Changed("parent") {
-				_, parentTask, err := loadTask(ctx, s, parent)
+				_, parentTask, err := taskSpec.load(ctx, s, parent)
 				if err != nil {
 					return err
 				}
@@ -693,7 +693,7 @@ func newTaskEditCmd() *cobra.Command {
 				ops = append(ops, model.SetParent{})
 			}
 			if flags.Changed("sprint") {
-				_, sp, err := loadSprint(ctx, s, sprint)
+				_, sp, err := sprintSpec.load(ctx, s, sprint)
 				if err != nil {
 					return err
 				}
@@ -703,7 +703,7 @@ func newTaskEditCmd() *cobra.Command {
 				ops = append(ops, model.SetSprint{})
 			}
 			if flags.Changed("project") {
-				_, proj, err := loadProject(ctx, s, project)
+				_, proj, err := projectSpec.load(ctx, s, project)
 				if err != nil {
 					return err
 				}
@@ -727,7 +727,7 @@ func newTaskEditCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadTask(ctx, s, args[0])
+			ref, _, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -778,7 +778,7 @@ func newTaskCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ref, _, err := loadTask(ctx, s, args[0])
+			ref, _, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -808,7 +808,7 @@ func newTaskDepCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, args[0])
+			ref, task, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -845,7 +845,7 @@ func newTaskUndepCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadTask(ctx, s, args[0])
+			ref, _, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -1008,7 +1008,7 @@ func newCriterionAddCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadTask(ctx, s, args[0])
+			ref, _, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -1040,7 +1040,7 @@ func newCriterionRemoveCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, args[0])
+			ref, task, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -1074,7 +1074,7 @@ func newCriterionStatusCmd(use string, status model.CriterionStatus) *cobra.Comm
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, args[0])
+			ref, task, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -1120,7 +1120,7 @@ func newCriterionScriptCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := loadTask(ctx, s, args[0])
+			ref, task, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -1153,7 +1153,7 @@ func newCriterionListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, task, err := loadTask(ctx, s, args[0])
+			_, task, err := taskSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}

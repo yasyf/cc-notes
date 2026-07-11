@@ -129,7 +129,7 @@ func newLogAppendCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, log, err := loadLog(ctx, s, args[0])
+			ref, log, err := logSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -215,7 +215,7 @@ func newLogListCmd() *cobra.Command {
 					(filters.dir != "" && !hasAnchorIn(l.Anchors, model.AnchorDir, filters.dir)) ||
 					(filters.branch != "" && !hasAnchorIn(l.Anchors, model.AnchorBranch, filters.branch))
 			})
-			sortLogs(logs)
+			sortByUpdated(logs)
 			return printLogList(cmd, s, logs, jsonOut)
 		},
 	}
@@ -293,7 +293,7 @@ func newLogEditCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadLog(ctx, s, args[0])
+			ref, _, err := logSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -328,7 +328,7 @@ func newLogRmCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadLog(ctx, s, args[0])
+			ref, _, err := logSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}

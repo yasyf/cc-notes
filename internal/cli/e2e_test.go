@@ -72,7 +72,8 @@ func binEnv(actor string) []string {
 			env = append(env, kv)
 		}
 	}
-	return append(env,
+	return append(
+		env,
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_SYSTEM="+os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",

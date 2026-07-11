@@ -110,7 +110,7 @@ func TestSortDocs(t *testing.T) {
 		{ID: "d", UpdatedAt: 100},
 		{ID: "c", UpdatedAt: 100},
 	}
-	sortDocs(docs)
+	sortByUpdated(docs)
 	got := make([]string, len(docs))
 	for i, d := range docs {
 		got[i] = string(d.ID)

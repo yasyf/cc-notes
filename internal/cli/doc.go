@@ -166,7 +166,7 @@ func newDocListCmd() *cobra.Command {
 					(filters.dir != "" && !hasAnchorIn(d.Anchors, model.AnchorDir, filters.dir)) ||
 					(filters.branch != "" && !hasAnchorIn(d.Anchors, model.AnchorBranch, filters.branch))
 			})
-			sortDocs(docs)
+			sortByUpdated(docs)
 			return printDocList(cmd, s, docs, jsonOut)
 		},
 	}
@@ -267,7 +267,7 @@ func newDocEditCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, doc, err := loadDoc(ctx, s, args[0])
+			ref, doc, err := docSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -319,7 +319,7 @@ func newDocRmCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadDoc(ctx, s, args[0])
+			ref, _, err := docSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -381,7 +381,7 @@ func newDocVerifyCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, doc, err := loadDoc(ctx, s, args[0])
+			ref, doc, err := docSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -423,11 +423,11 @@ func newDocSupersedeCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			oldRef, _, err := loadDoc(ctx, s, args[0])
+			oldRef, _, err := docSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
-			_, newDoc, err := loadDoc(ctx, s, by)
+			_, newDoc, err := docSpec.load(ctx, s, by)
 			if err != nil {
 				return err
 			}
@@ -468,7 +468,7 @@ func newDocExpireCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadDoc(ctx, s, args[0])
+			ref, _, err := docSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}

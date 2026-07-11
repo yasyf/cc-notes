@@ -150,7 +150,7 @@ func newRunbookStatusCmd(use string, status model.RunbookStatus) *cobra.Command 
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := loadRunbook(ctx, s, args[0])
+			ref, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -209,7 +209,7 @@ func newRunbookEditCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := loadRunbook(ctx, s, args[0])
+			ref, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -250,7 +250,7 @@ func newRunbookCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ref, rb, err := loadRunbook(ctx, s, args[0])
+			ref, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -308,7 +308,7 @@ func newStepAddCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := loadRunbook(ctx, s, args[0])
+			ref, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -349,7 +349,7 @@ func newStepRemoveCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := loadRunbook(ctx, s, args[0])
+			ref, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -394,7 +394,7 @@ func newStepEditCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := loadRunbook(ctx, s, args[0])
+			ref, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -450,7 +450,7 @@ func newStepMoveCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := loadRunbook(ctx, s, args[0])
+			ref, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -490,7 +490,7 @@ func newStepListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, rb, err := loadRunbook(ctx, s, args[0])
+			_, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -545,7 +545,7 @@ func newRunStartCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := loadRunbook(ctx, s, args[0])
+			ref, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -554,7 +554,7 @@ func newRunStartCmd() *cobra.Command {
 			}
 			var taskID model.EntityID
 			if task != "" {
-				_, t, err := loadTask(ctx, s, task)
+				_, t, err := taskSpec.load(ctx, s, task)
 				if err != nil {
 					return err
 				}
@@ -585,7 +585,7 @@ func newRunListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, rb, err := loadRunbook(ctx, s, args[0])
+			_, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -621,7 +621,7 @@ func newRunShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, rb, err := loadRunbook(ctx, s, args[0])
+			_, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -657,7 +657,7 @@ func newRunStepStatusCmd(use string, status model.StepResultStatus) *cobra.Comma
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := loadRunbook(ctx, s, args[0])
+			ref, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -706,7 +706,7 @@ func newRunFinishCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := loadRunbook(ctx, s, args[0])
+			ref, rb, err := runbookSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}

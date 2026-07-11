@@ -150,7 +150,7 @@ func newProjectStatusCmd(use string, status model.ProjectStatus) *cobra.Command 
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, project, err := loadProject(ctx, s, args[0])
+			ref, project, err := projectSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -209,7 +209,7 @@ func newProjectEditCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := loadProject(ctx, s, args[0])
+			ref, _, err := projectSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -248,7 +248,7 @@ func newProjectCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ref, _, err := loadProject(ctx, s, args[0])
+			ref, _, err := projectSpec.load(ctx, s, args[0])
 			if err != nil {
 				return err
 			}

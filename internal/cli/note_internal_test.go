@@ -32,7 +32,8 @@ func driftRepoGit(t *testing.T, dir string, args ...string) {
 	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(
+		os.Environ(),
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
 	)

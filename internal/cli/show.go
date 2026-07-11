@@ -63,7 +63,7 @@ func newShowCmd() *cobra.Command {
 
 func showNote(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
-	_, note, err := loadNote(ctx, s, prefix)
+	_, note, err := noteSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func showNote(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) e
 
 func showDoc(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
-	_, doc, err := loadDoc(ctx, s, prefix)
+	_, doc, err := docSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func showDoc(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) er
 
 func showLog(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
-	_, log, err := loadLog(ctx, s, prefix)
+	_, log, err := logSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
@@ -146,7 +146,7 @@ func showLog(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) er
 
 func showTask(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
-	_, task, err := loadTask(ctx, s, prefix)
+	_, task, err := taskSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func showTask(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) e
 
 func showSprint(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
-	_, sprint, err := loadSprint(ctx, s, prefix)
+	_, sprint, err := sprintSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func showSprint(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool)
 
 func showRunbook(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
-	_, rb, err := loadRunbook(ctx, s, prefix)
+	_, rb, err := runbookSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func showRunbook(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool
 
 func showProject(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
-	_, project, err := loadProject(ctx, s, prefix)
+	_, project, err := projectSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}

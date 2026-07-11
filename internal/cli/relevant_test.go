@@ -39,7 +39,8 @@ func relevantGit(t *testing.T, dir, email string, args ...string) {
 	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(
+		os.Environ(),
 		"GIT_AUTHOR_NAME=Author", "GIT_AUTHOR_EMAIL="+email,
 		"GIT_COMMITTER_NAME=Author", "GIT_COMMITTER_EMAIL="+email,
 	)
@@ -147,7 +148,7 @@ func verifyNote(t *testing.T, dir string, id model.EntityID) {
 		t.Fatalf("store.Open: %v", err)
 	}
 	ctx := t.Context()
-	_, note, err := loadNote(ctx, s, string(id))
+	_, note, err := noteSpec.load(ctx, s, string(id))
 	if err != nil {
 		t.Fatalf("load note %s: %v", id, err)
 	}
@@ -256,7 +257,8 @@ func TestRelevantDirAncestorMatch(t *testing.T) {
 	// A dir anchor two levels up still matches a nested path.
 	ancestor := makeNote(t, dir, "ancestor dir", model.Anchor{Kind: model.AnchorDir, Value: "internal"})
 	// Overlapping dir anchors do not stack: the deepest wins, scored once.
-	stacked := makeNote(t, dir, "stacked dirs",
+	stacked := makeNote(
+		t, dir, "stacked dirs",
 		model.Anchor{Kind: model.AnchorDir, Value: "internal"},
 		model.Anchor{Kind: model.AnchorDir, Value: "internal/auth"},
 	)
