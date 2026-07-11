@@ -48,6 +48,60 @@ var anchorKinds = []struct {
 	{"branches", model.AnchorBranch},
 }
 
+// fmKey is one frontmatter key in a kind's ordered key list: node builds its
+// yaml value from the snapshot, and keep (nil means always) decides whether the
+// key renders at all. The slice order is the byte contract.
+type fmKey[S any] struct {
+	key  string
+	node func(S) *yaml.Node
+	keep func(S) bool
+}
+
+// renderFrontmatter encodes snap's frontmatter into a fresh buffer — the leading
+// delimiter, the ordered keys whose keep passes, then the closing delimiter —
+// which the caller appends the body to. SetIndent(2) and the node styles match
+// the hand-rolled per-kind renderers byte for byte.
+func renderFrontmatter[S any](snap S, keys []fmKey[S]) *bytes.Buffer {
+	fm := &yaml.Node{Kind: yaml.MappingNode}
+	for _, k := range keys {
+		if k.keep == nil || k.keep(snap) {
+			fm.Content = append(fm.Content, scalarNode(k.key), k.node(snap))
+		}
+	}
+	return encodeFrontmatter(fm)
+}
+
+// encodeFrontmatter writes fm between delimiters into a fresh buffer at indent
+// 2 — the frontmatter block the renderers and the new-file templates share.
+func encodeFrontmatter(fm *yaml.Node) *bytes.Buffer {
+	var buf bytes.Buffer
+	buf.WriteString(delimiter)
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(fm); err != nil {
+		panic(fmt.Sprintf("fusefs: encode frontmatter: %v", err))
+	}
+	if err := enc.Close(); err != nil {
+		panic(fmt.Sprintf("fusefs: close frontmatter encoder: %v", err))
+	}
+	buf.WriteString(delimiter)
+	return &buf
+}
+
+// anchorKeys builds the ordered anchor frontmatter keys for a kind, each
+// rendered only when it carries values, in anchorKinds order.
+func anchorKeys[S any](anchors func(S) []model.Anchor) []fmKey[S] {
+	keys := make([]fmKey[S], len(anchorKinds))
+	for i, ak := range anchorKinds {
+		keys[i] = fmKey[S]{
+			key:  ak.key,
+			node: func(s S) *yaml.Node { return flowNode(anchorValues(anchors(s), ak.kind)) },
+			keep: func(s S) bool { return len(anchorValues(anchors(s), ak.kind)) > 0 },
+		}
+	}
+	return keys
+}
+
 // Field is one optional document field. Set reports that the key was
 // present, Null that its value was an explicit JSON or YAML null. An unset
 // field diffs as untouched — only keys the editor actually wrote can
@@ -82,51 +136,12 @@ func (f *Field[T]) UnmarshalYAML(value *yaml.Node) error {
 	return value.Decode(&f.Value)
 }
 
-// ParsedNote is the decoded form of a note file: the frontmatter keys plus
-// the body below the closing delimiter. Every frontmatter field is optional
-// so a minimal new file parses; DiffNote treats unset fields as untouched.
-type ParsedNote struct {
-	ID             Field[string]          `yaml:"id"`
-	Title          Field[string]          `yaml:"title"`
-	Tags           Field[[]string]        `yaml:"tags"`
-	Commits        Field[[]string]        `yaml:"commits"`
-	Paths          Field[[]string]        `yaml:"paths"`
-	Dirs           Field[[]string]        `yaml:"dirs"`
-	Branches       Field[[]string]        `yaml:"branches"`
-	Author         Field[string]          `yaml:"author"`
-	Created        Field[string]          `yaml:"created"`
-	Updated        Field[string]          `yaml:"updated"`
-	VerifiedAt     Field[string]          `yaml:"verified_at"`
-	VerifiedBy     Field[string]          `yaml:"verified_by"`
-	VerifiedCommit Field[string]          `yaml:"verified_commit"`
-	Witness        Field[[]ParsedWitness] `yaml:"witness"`
-	SupersededBy   Field[[]string]        `yaml:"superseded_by"`
-	StaleAt        Field[string]          `yaml:"stale_at"`
-	StaleBy        Field[string]          `yaml:"stale_by"`
-	StaleReason    Field[string]          `yaml:"stale_reason"`
-	Body           string                 `yaml:"-"`
-}
-
 // ParsedWitness is one entry in a note document's witness sequence: the anchor
 // kind and value plus the git oid recorded for it at verify time.
 type ParsedWitness struct {
 	Kind  string `yaml:"kind"`
 	Value string `yaml:"value"`
 	OID   string `yaml:"oid"`
-}
-
-func (p ParsedNote) anchors(kind model.AnchorKind) Field[[]string] {
-	switch kind {
-	case model.AnchorCommit:
-		return p.Commits
-	case model.AnchorPath:
-		return p.Paths
-	case model.AnchorDir:
-		return p.Dirs
-	case model.AnchorBranch:
-		return p.Branches
-	}
-	panic("fusefs: unknown anchor kind " + string(kind))
 }
 
 // ParsedComment is one comment in a task document. TS stays the rendered
@@ -218,85 +233,73 @@ type leaseDoc struct {
 	Heartbeat *string `json:"heartbeat"`
 }
 
-// RenderNote renders n as markdown with YAML frontmatter: fixed key order
-// (id, title, tags, commits, paths, dirs, branches, author, created, updated,
-// verified_at, verified_by, verified_commit, witness, superseded_by), anchor
-// values split by kind with empty kinds omitted, tags as a flow sequence,
-// RFC3339 UTC timestamps, and the body verbatim below the closing delimiter.
-// The verification keys are omitted when empty so a never-verified note stays
-// clean; witness renders as a block sequence in stored anchor order, never
-// re-sorted. The output is deterministic byte for byte.
-func RenderNote(n model.Note) []byte {
-	fm := &yaml.Node{Kind: yaml.MappingNode}
-	put := func(key string, value *yaml.Node) {
-		fm.Content = append(fm.Content, scalarNode(key), value)
-	}
-	put("id", scalarNode(string(n.ID)))
-	put("title", scalarNode(n.Title))
-	put("tags", flowNode(n.Tags))
-	for _, ak := range anchorKinds {
-		if values := anchorValues(n.Anchors, ak.kind); len(values) > 0 {
-			put(ak.key, flowNode(values))
-		}
-	}
-	put("author", scalarNode(string(n.Author)))
-	put("created", scalarNode(stamp(n.CreatedAt)))
-	put("updated", scalarNode(stamp(n.UpdatedAt)))
-	if n.VerifiedAt != 0 {
-		put("verified_at", scalarNode(stamp(n.VerifiedAt)))
-	}
-	if n.VerifiedBy != "" {
-		put("verified_by", scalarNode(string(n.VerifiedBy)))
-	}
-	if n.VerifiedCommit != "" {
-		put("verified_commit", scalarNode(string(n.VerifiedCommit)))
-	}
-	if len(n.Witness) > 0 {
-		put("witness", witnessNode(n.Witness))
-	}
-	if len(n.SupersededBy) > 0 {
-		put("superseded_by", flowNode(idStrings(n.SupersededBy)))
-	}
-	if n.StaleAt != 0 {
-		put("stale_at", scalarNode(stamp(n.StaleAt)))
-	}
-	if n.StaleBy != "" {
-		put("stale_by", scalarNode(string(n.StaleBy)))
-	}
-	if n.StaleReason != "" {
-		put("stale_reason", scalarNode(n.StaleReason))
-	}
+// noteKeys is the ordered note frontmatter contract: id, title, and tags
+// always, the non-empty anchor kinds, then author/created/updated and the
+// verification and stale keys, each rendered only when set. Anchor values split
+// by kind with empty kinds omitted, tags as a flow sequence, RFC3339 UTC
+// timestamps; witness renders as a block sequence in stored anchor order, never
+// re-sorted.
+var noteKeys = slices.Concat(
+	[]fmKey[model.Note]{
+		{key: "id", node: func(n model.Note) *yaml.Node { return scalarNode(string(n.ID)) }},
+		{key: "title", node: func(n model.Note) *yaml.Node { return scalarNode(n.Title) }},
+		{key: "tags", node: func(n model.Note) *yaml.Node { return flowNode(n.Tags) }},
+	},
+	anchorKeys(func(n model.Note) []model.Anchor { return n.Anchors }),
+	[]fmKey[model.Note]{
+		{key: "author", node: func(n model.Note) *yaml.Node { return scalarNode(string(n.Author)) }},
+		{key: "created", node: func(n model.Note) *yaml.Node { return scalarNode(stamp(n.CreatedAt)) }},
+		{key: "updated", node: func(n model.Note) *yaml.Node { return scalarNode(stamp(n.UpdatedAt)) }},
+		{key: "verified_at", keep: func(n model.Note) bool { return n.VerifiedAt != 0 }, node: func(n model.Note) *yaml.Node { return scalarNode(stamp(n.VerifiedAt)) }},
+		{key: "verified_by", keep: func(n model.Note) bool { return n.VerifiedBy != "" }, node: func(n model.Note) *yaml.Node { return scalarNode(string(n.VerifiedBy)) }},
+		{key: "verified_commit", keep: func(n model.Note) bool { return n.VerifiedCommit != "" }, node: func(n model.Note) *yaml.Node { return scalarNode(string(n.VerifiedCommit)) }},
+		{key: "witness", keep: func(n model.Note) bool { return len(n.Witness) > 0 }, node: func(n model.Note) *yaml.Node { return witnessNode(n.Witness) }},
+		{key: "superseded_by", keep: func(n model.Note) bool { return len(n.SupersededBy) > 0 }, node: func(n model.Note) *yaml.Node { return flowNode(idStrings(n.SupersededBy)) }},
+		{key: "stale_at", keep: func(n model.Note) bool { return n.StaleAt != 0 }, node: func(n model.Note) *yaml.Node { return scalarNode(stamp(n.StaleAt)) }},
+		{key: "stale_by", keep: func(n model.Note) bool { return n.StaleBy != "" }, node: func(n model.Note) *yaml.Node { return scalarNode(string(n.StaleBy)) }},
+		{key: "stale_reason", keep: func(n model.Note) bool { return n.StaleReason != "" }, node: func(n model.Note) *yaml.Node { return scalarNode(n.StaleReason) }},
+	},
+)
 
-	var buf bytes.Buffer
-	buf.WriteString(delimiter)
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(fm); err != nil {
-		panic(fmt.Sprintf("fusefs: encode note frontmatter: %v", err))
-	}
-	if err := enc.Close(); err != nil {
-		panic(fmt.Sprintf("fusefs: close frontmatter encoder: %v", err))
-	}
-	buf.WriteString(delimiter)
+// RenderNote renders n as markdown: the noteKeys YAML frontmatter, then the
+// body verbatim below the closing delimiter. The output is deterministic byte
+// for byte.
+func RenderNote(n model.Note) []byte {
+	buf := renderFrontmatter(n, noteKeys)
 	buf.WriteString(n.Body)
 	return buf.Bytes()
 }
 
-// ParseNote decodes a note file: YAML frontmatter between --- delimiters,
-// body verbatim below. Decoding is strict — a missing delimiter or an
-// unknown frontmatter key fails with ErrParse.
-func ParseNote(data []byte) (ParsedNote, error) {
+// ParseNote decodes a note file into the shared ParsedDoc: YAML frontmatter
+// between --- delimiters, body verbatim below. Decoding is strict — a missing
+// delimiter or an unknown frontmatter key fails with ErrParse, and a note
+// carrying the doc-only when field is rejected.
+func ParseNote(data []byte) (ParsedDoc, error) {
+	p, err := parseFrontmatterDoc(data)
+	if err != nil {
+		return ParsedDoc{}, err
+	}
+	if p.When.Set {
+		return ParsedDoc{}, fmt.Errorf("%w: notes have no when field", ErrParse)
+	}
+	return p, nil
+}
+
+// parseFrontmatterDoc decodes a note or doc file into the shared ParsedDoc: YAML
+// frontmatter between --- delimiters, body verbatim below. Decoding is strict —
+// a missing delimiter or an unknown frontmatter key fails with ErrParse.
+func parseFrontmatterDoc(data []byte) (ParsedDoc, error) {
 	fm, body, err := splitFrontmatter(string(data))
 	if err != nil {
-		return ParsedNote{}, err
+		return ParsedDoc{}, err
 	}
-	var p ParsedNote
+	var p ParsedDoc
 	dec := yaml.NewDecoder(strings.NewReader(fm))
 	dec.KnownFields(true)
 	switch err := dec.Decode(&p); {
 	case errors.Is(err, io.EOF):
 	case err != nil:
-		return ParsedNote{}, fmt.Errorf("%w: %w", ErrParse, err)
+		return ParsedDoc{}, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 	p.Body = body
 	return p, nil
@@ -332,7 +335,7 @@ func splitFrontmatter(doc string) (fm, body string, err error) {
 // one, so any value is accepted and never diffed. Ops come out in a fixed
 // order — set_title, set_body, tag adds then removes, anchor adds then
 // removes per kind — each group sorted by value.
-func DiffNote(base model.Note, p ParsedNote) ([]model.Op, error) {
+func DiffNote(base model.Note, p ParsedDoc) ([]model.Op, error) {
 	if err := errors.Join(
 		immutable("id", p.ID, string(base.ID)),
 		immutable("author", p.Author, string(base.Author)),
@@ -386,7 +389,7 @@ func DiffNote(base model.Note, p ParsedNote) ([]model.Op, error) {
 // from the frontmatter, falling back to the first "# " heading in the body;
 // neither is an error. A new file claiming an id is a contradiction and
 // fails; author, created, and updated are informational and ignored.
-func NewNote(p ParsedNote) ([]model.Op, error) {
+func NewNote(p ParsedDoc) ([]model.Op, error) {
 	if p.ID.Set {
 		return nil, fmt.Errorf("%w: id on a new note", ErrParse)
 	}
@@ -421,11 +424,11 @@ func firstHeading(body string) string {
 	return ""
 }
 
-// ParsedDoc is the decoded form of a doc file: the frontmatter keys plus the
-// body below the closing delimiter. It mirrors ParsedNote with one added key,
-// when, the free-text "read this when…" trigger. Every frontmatter field is
-// optional so a minimal new file parses; DiffDoc treats unset fields as
-// untouched.
+// ParsedDoc is the decoded form of a note or doc file — the frontmatter keys
+// note and doc share plus the body below the closing delimiter. The when key
+// (the free-text "read this when…" trigger) is a doc field; ParseNote rejects a
+// note that sets it. Every frontmatter field is optional so a minimal new file
+// parses; the differ treats unset fields as untouched.
 type ParsedDoc struct {
 	ID             Field[string]          `yaml:"id"`
 	Title          Field[string]          `yaml:"title"`
@@ -463,65 +466,36 @@ func (p ParsedDoc) anchors(kind model.AnchorKind) Field[[]string] {
 	panic("fusefs: unknown anchor kind " + string(kind))
 }
 
-// RenderDoc renders d as markdown with YAML frontmatter, mirroring RenderNote
-// with one added key: when renders right after title, always (even when empty)
-// so the document round-trips byte for byte. The remaining key order, anchor
-// splitting by kind, verification and stale handling, and the verbatim body
-// below the closing delimiter all match RenderNote. The output is deterministic
-// byte for byte.
-func RenderDoc(d model.Doc) []byte {
-	fm := &yaml.Node{Kind: yaml.MappingNode}
-	put := func(key string, value *yaml.Node) {
-		fm.Content = append(fm.Content, scalarNode(key), value)
-	}
-	put("id", scalarNode(string(d.ID)))
-	put("title", scalarNode(d.Title))
-	put("when", scalarNode(d.When))
-	put("tags", flowNode(d.Tags))
-	for _, ak := range anchorKinds {
-		if values := anchorValues(d.Anchors, ak.kind); len(values) > 0 {
-			put(ak.key, flowNode(values))
-		}
-	}
-	put("author", scalarNode(string(d.Author)))
-	put("created", scalarNode(stamp(d.CreatedAt)))
-	put("updated", scalarNode(stamp(d.UpdatedAt)))
-	if d.VerifiedAt != 0 {
-		put("verified_at", scalarNode(stamp(d.VerifiedAt)))
-	}
-	if d.VerifiedBy != "" {
-		put("verified_by", scalarNode(string(d.VerifiedBy)))
-	}
-	if d.VerifiedCommit != "" {
-		put("verified_commit", scalarNode(string(d.VerifiedCommit)))
-	}
-	if len(d.Witness) > 0 {
-		put("witness", witnessNode(d.Witness))
-	}
-	if len(d.SupersededBy) > 0 {
-		put("superseded_by", flowNode(idStrings(d.SupersededBy)))
-	}
-	if d.StaleAt != 0 {
-		put("stale_at", scalarNode(stamp(d.StaleAt)))
-	}
-	if d.StaleBy != "" {
-		put("stale_by", scalarNode(string(d.StaleBy)))
-	}
-	if d.StaleReason != "" {
-		put("stale_reason", scalarNode(d.StaleReason))
-	}
+// docKeys mirrors noteKeys with one added key: when renders right after title,
+// always (even when empty), so a doc round-trips byte for byte.
+var docKeys = slices.Concat(
+	[]fmKey[model.Doc]{
+		{key: "id", node: func(d model.Doc) *yaml.Node { return scalarNode(string(d.ID)) }},
+		{key: "title", node: func(d model.Doc) *yaml.Node { return scalarNode(d.Title) }},
+		{key: "when", node: func(d model.Doc) *yaml.Node { return scalarNode(d.When) }},
+		{key: "tags", node: func(d model.Doc) *yaml.Node { return flowNode(d.Tags) }},
+	},
+	anchorKeys(func(d model.Doc) []model.Anchor { return d.Anchors }),
+	[]fmKey[model.Doc]{
+		{key: "author", node: func(d model.Doc) *yaml.Node { return scalarNode(string(d.Author)) }},
+		{key: "created", node: func(d model.Doc) *yaml.Node { return scalarNode(stamp(d.CreatedAt)) }},
+		{key: "updated", node: func(d model.Doc) *yaml.Node { return scalarNode(stamp(d.UpdatedAt)) }},
+		{key: "verified_at", keep: func(d model.Doc) bool { return d.VerifiedAt != 0 }, node: func(d model.Doc) *yaml.Node { return scalarNode(stamp(d.VerifiedAt)) }},
+		{key: "verified_by", keep: func(d model.Doc) bool { return d.VerifiedBy != "" }, node: func(d model.Doc) *yaml.Node { return scalarNode(string(d.VerifiedBy)) }},
+		{key: "verified_commit", keep: func(d model.Doc) bool { return d.VerifiedCommit != "" }, node: func(d model.Doc) *yaml.Node { return scalarNode(string(d.VerifiedCommit)) }},
+		{key: "witness", keep: func(d model.Doc) bool { return len(d.Witness) > 0 }, node: func(d model.Doc) *yaml.Node { return witnessNode(d.Witness) }},
+		{key: "superseded_by", keep: func(d model.Doc) bool { return len(d.SupersededBy) > 0 }, node: func(d model.Doc) *yaml.Node { return flowNode(idStrings(d.SupersededBy)) }},
+		{key: "stale_at", keep: func(d model.Doc) bool { return d.StaleAt != 0 }, node: func(d model.Doc) *yaml.Node { return scalarNode(stamp(d.StaleAt)) }},
+		{key: "stale_by", keep: func(d model.Doc) bool { return d.StaleBy != "" }, node: func(d model.Doc) *yaml.Node { return scalarNode(string(d.StaleBy)) }},
+		{key: "stale_reason", keep: func(d model.Doc) bool { return d.StaleReason != "" }, node: func(d model.Doc) *yaml.Node { return scalarNode(d.StaleReason) }},
+	},
+)
 
-	var buf bytes.Buffer
-	buf.WriteString(delimiter)
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(fm); err != nil {
-		panic(fmt.Sprintf("fusefs: encode doc frontmatter: %v", err))
-	}
-	if err := enc.Close(); err != nil {
-		panic(fmt.Sprintf("fusefs: close frontmatter encoder: %v", err))
-	}
-	buf.WriteString(delimiter)
+// RenderDoc renders d as markdown with YAML frontmatter, mirroring RenderNote
+// with the always-present when key (docKeys), and the verbatim body below the
+// closing delimiter. The output is deterministic byte for byte.
+func RenderDoc(d model.Doc) []byte {
+	buf := renderFrontmatter(d, docKeys)
 	buf.WriteString(d.Body)
 	return buf.Bytes()
 }
@@ -539,7 +513,7 @@ func NewDocTemplate(title, when string, tags []string, anchors []model.Anchor) [
 	put("when", scalarNode(when))
 	put("tags", flowNode(tags))
 	putAnchors(put, anchors)
-	return encodeTemplate(fm)
+	return encodeFrontmatter(fm).Bytes()
 }
 
 // NewNoteTemplate renders the prefilled buffer `note add --checkout` writes,
@@ -552,7 +526,7 @@ func NewNoteTemplate(title string, tags []string, anchors []model.Anchor) []byte
 	put("title", scalarNode(title))
 	put("tags", flowNode(tags))
 	putAnchors(put, anchors)
-	return encodeTemplate(fm)
+	return encodeFrontmatter(fm).Bytes()
 }
 
 func putAnchors(put func(string, *yaml.Node), anchors []model.Anchor) {
@@ -563,39 +537,11 @@ func putAnchors(put func(string, *yaml.Node), anchors []model.Anchor) {
 	}
 }
 
-func encodeTemplate(fm *yaml.Node) []byte {
-	var buf bytes.Buffer
-	buf.WriteString(delimiter)
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(fm); err != nil {
-		panic(fmt.Sprintf("fusefs: encode template frontmatter: %v", err))
-	}
-	if err := enc.Close(); err != nil {
-		panic(fmt.Sprintf("fusefs: close frontmatter encoder: %v", err))
-	}
-	buf.WriteString(delimiter)
-	return buf.Bytes()
-}
-
-// ParseDoc decodes a doc file: YAML frontmatter between --- delimiters, body
-// verbatim below. Decoding is strict — a missing delimiter or an unknown
-// frontmatter key fails with ErrParse.
+// ParseDoc decodes a doc file into the shared ParsedDoc: YAML frontmatter
+// between --- delimiters, body verbatim below. Decoding is strict — a missing
+// delimiter or an unknown frontmatter key fails with ErrParse.
 func ParseDoc(data []byte) (ParsedDoc, error) {
-	fm, body, err := splitFrontmatter(string(data))
-	if err != nil {
-		return ParsedDoc{}, err
-	}
-	var p ParsedDoc
-	dec := yaml.NewDecoder(strings.NewReader(fm))
-	dec.KnownFields(true)
-	switch err := dec.Decode(&p); {
-	case errors.Is(err, io.EOF):
-	case err != nil:
-		return ParsedDoc{}, fmt.Errorf("%w: %w", ErrParse, err)
-	}
-	p.Body = body
-	return p, nil
+	return parseFrontmatterDoc(data)
 }
 
 // DiffDoc compares an edited doc document against the snapshot it was rendered
@@ -756,43 +702,30 @@ func (p ParsedLog) anchors(kind model.AnchorKind) Field[[]string] {
 	panic("fusefs: unknown anchor kind " + string(kind))
 }
 
-// RenderLog renders l as markdown with YAML frontmatter (id, title, tags,
-// <non-empty anchor kinds>, author, created, updated — the Doc keys minus when
-// and the whole freshness block) followed by one block per entry: a
-// viewer-invisible fence line carrying the entry's author and timestamp, then
-// the entry text. Each non-empty entry is terminated with a newline if it lacks
-// one (CLI-created entries store text verbatim with no trailing newline), so the
-// following fence — or EOF — always lands at a line start; DiffLog compares
-// stored entries against this same canonicalized form. The output is
-// deterministic byte for byte.
-func RenderLog(l model.Log) []byte {
-	fm := &yaml.Node{Kind: yaml.MappingNode}
-	put := func(key string, value *yaml.Node) {
-		fm.Content = append(fm.Content, scalarNode(key), value)
-	}
-	put("id", scalarNode(string(l.ID)))
-	put("title", scalarNode(l.Title))
-	put("tags", flowNode(l.Tags))
-	for _, ak := range anchorKinds {
-		if values := anchorValues(l.Anchors, ak.kind); len(values) > 0 {
-			put(ak.key, flowNode(values))
-		}
-	}
-	put("author", scalarNode(string(l.Author)))
-	put("created", scalarNode(stamp(l.CreatedAt)))
-	put("updated", scalarNode(stamp(l.UpdatedAt)))
+// logKeys is the Doc keys minus when and the whole freshness block: id, title,
+// tags, the non-empty anchor kinds, then author/created/updated.
+var logKeys = slices.Concat(
+	[]fmKey[model.Log]{
+		{key: "id", node: func(l model.Log) *yaml.Node { return scalarNode(string(l.ID)) }},
+		{key: "title", node: func(l model.Log) *yaml.Node { return scalarNode(l.Title) }},
+		{key: "tags", node: func(l model.Log) *yaml.Node { return flowNode(l.Tags) }},
+	},
+	anchorKeys(func(l model.Log) []model.Anchor { return l.Anchors }),
+	[]fmKey[model.Log]{
+		{key: "author", node: func(l model.Log) *yaml.Node { return scalarNode(string(l.Author)) }},
+		{key: "created", node: func(l model.Log) *yaml.Node { return scalarNode(stamp(l.CreatedAt)) }},
+		{key: "updated", node: func(l model.Log) *yaml.Node { return scalarNode(stamp(l.UpdatedAt)) }},
+	},
+)
 
-	var buf bytes.Buffer
-	buf.WriteString(delimiter)
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(fm); err != nil {
-		panic(fmt.Sprintf("fusefs: encode log frontmatter: %v", err))
-	}
-	if err := enc.Close(); err != nil {
-		panic(fmt.Sprintf("fusefs: close frontmatter encoder: %v", err))
-	}
-	buf.WriteString(delimiter)
+// RenderLog renders l as markdown: the logKeys frontmatter, then one block per
+// entry — a viewer-invisible fence line carrying the entry's author and
+// timestamp, then the entry text. Each non-empty entry is terminated with a
+// newline if it lacks one, so the following fence or EOF always lands at a line
+// start; DiffLog compares stored entries against this same canonicalized form.
+// The output is deterministic byte for byte.
+func RenderLog(l model.Log) []byte {
+	buf := renderFrontmatter(l, logKeys)
 	for _, e := range l.Entries {
 		buf.WriteString(logEntryFence(string(e.Author), stamp(e.TS)))
 		buf.WriteString("\n")
@@ -1656,37 +1589,25 @@ func shortWireID(id string) string {
 	return id[:7]
 }
 
-// RenderRunbook renders rb as read-only markdown: YAML frontmatter (id, title,
-// status, labels, created, updated), the description, a numbered "## Steps"
-// section whose items each carry a viewer-invisible step-id marker and an
-// optional fenced sh block for the step command, then a "## Runs" section with
-// one summary line per run in fold order. The runbook filesystem file is
-// read-only — there is no ParseRunbook or DiffRunbook, so this render carries no
-// round-trip obligation and is tuned for a human reading the procedure. Output
-// is deterministic byte for byte.
-func RenderRunbook(rb model.Runbook) []byte {
-	fm := &yaml.Node{Kind: yaml.MappingNode}
-	put := func(key string, value *yaml.Node) {
-		fm.Content = append(fm.Content, scalarNode(key), value)
-	}
-	put("id", scalarNode(string(rb.ID)))
-	put("title", scalarNode(rb.Title))
-	put("status", scalarNode(string(rb.Status)))
-	put("labels", flowNode(rb.Labels))
-	put("created", scalarNode(stamp(rb.CreatedAt)))
-	put("updated", scalarNode(stamp(rb.UpdatedAt)))
+// runbookKeys is the runbook frontmatter contract, all keys always present:
+// id, title, status, labels, created, updated.
+var runbookKeys = []fmKey[model.Runbook]{
+	{key: "id", node: func(r model.Runbook) *yaml.Node { return scalarNode(string(r.ID)) }},
+	{key: "title", node: func(r model.Runbook) *yaml.Node { return scalarNode(r.Title) }},
+	{key: "status", node: func(r model.Runbook) *yaml.Node { return scalarNode(string(r.Status)) }},
+	{key: "labels", node: func(r model.Runbook) *yaml.Node { return flowNode(r.Labels) }},
+	{key: "created", node: func(r model.Runbook) *yaml.Node { return scalarNode(stamp(r.CreatedAt)) }},
+	{key: "updated", node: func(r model.Runbook) *yaml.Node { return scalarNode(stamp(r.UpdatedAt)) }},
+}
 
-	var buf bytes.Buffer
-	buf.WriteString(delimiter)
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(fm); err != nil {
-		panic(fmt.Sprintf("fusefs: encode runbook frontmatter: %v", err))
-	}
-	if err := enc.Close(); err != nil {
-		panic(fmt.Sprintf("fusefs: close frontmatter encoder: %v", err))
-	}
-	buf.WriteString(delimiter)
+// RenderRunbook renders rb as read-only markdown: the runbookKeys frontmatter,
+// the description, a numbered "## Steps" section whose items each carry a
+// viewer-invisible step-id marker and an optional fenced sh block, then a
+// "## Runs" section with one summary line per run in fold order. The file is
+// read-only — no ParseRunbook or DiffRunbook — so it carries no round-trip
+// obligation. Output is deterministic byte for byte.
+func RenderRunbook(rb model.Runbook) []byte {
+	buf := renderFrontmatter(rb, runbookKeys)
 
 	if rb.Description != "" {
 		buf.WriteString(ensureTrailingNewline(rb.Description))
@@ -1700,7 +1621,7 @@ func RenderRunbook(rb model.Runbook) []byte {
 	for i, s := range rb.Steps {
 		buf.WriteString(runbookStepFence(s.ID))
 		buf.WriteString("\n")
-		fmt.Fprintf(&buf, "%d. %s\n", i+1, s.Text)
+		fmt.Fprintf(buf, "%d. %s\n", i+1, s.Text)
 		if s.Command != "" {
 			buf.WriteString("\n```sh\n")
 			buf.WriteString(ensureTrailingNewline(s.Command))

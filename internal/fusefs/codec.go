@@ -58,7 +58,7 @@ func (c codec[S, P]) New(data []byte) ([]model.Op, error) {
 // render: /runbooks is read-only, so the mount rejects every write before a
 // commit path reaches its parse/diff/create hooks.
 var codecs = map[model.Kind]entityCodec{
-	model.KindNote:    codec[model.Note, ParsedNote]{kind: model.KindNote, render: RenderNote, parse: ParseNote, diff: DiffNote, create: NewNote},
+	model.KindNote:    codec[model.Note, ParsedDoc]{kind: model.KindNote, render: RenderNote, parse: ParseNote, diff: DiffNote, create: NewNote},
 	model.KindDoc:     codec[model.Doc, ParsedDoc]{kind: model.KindDoc, render: RenderDoc, parse: ParseDoc, diff: DiffDoc, create: NewDoc},
 	model.KindLog:     codec[model.Log, ParsedLog]{kind: model.KindLog, render: RenderLog, parse: ParseLog, diff: DiffLog, create: NewLog},
 	model.KindTask:    codec[model.Task, ParsedTask]{kind: model.KindTask, render: RenderTask, parse: ParseTask, diff: DiffTask, create: newTaskOps},

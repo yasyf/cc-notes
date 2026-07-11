@@ -340,7 +340,7 @@ func set[T any](v T) fusefs.Field[T] { return fusefs.Field[T]{Set: true, Value: 
 
 func null[T any]() fusefs.Field[T] { return fusefs.Field[T]{Set: true, Null: true} }
 
-func mustParseNote(t *testing.T, data []byte) fusefs.ParsedNote {
+func mustParseNote(t *testing.T, data []byte) fusefs.ParsedDoc {
 	t.Helper()
 	p, err := fusefs.ParseNote(data)
 	if err != nil {
@@ -605,31 +605,31 @@ func TestDiffNoteEditable(t *testing.T) {
 	base := richNote()
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedNote)
+		mutate func(*fusefs.ParsedDoc)
 		want   []model.Op
 	}{
 		{
-			"title", func(p *fusefs.ParsedNote) { p.Title = set("New title") },
+			"title", func(p *fusefs.ParsedDoc) { p.Title = set("New title") },
 			[]model.Op{model.SetTitle{Title: "New title"}},
 		},
 		{
-			"title removed entirely is untouched", func(p *fusefs.ParsedNote) { p.Title = fusefs.Field[string]{} },
+			"title removed entirely is untouched", func(p *fusefs.ParsedDoc) { p.Title = fusefs.Field[string]{} },
 			nil,
 		},
 		{
-			"body", func(p *fusefs.ParsedNote) { p.Body = "rewritten\n" },
+			"body", func(p *fusefs.ParsedDoc) { p.Body = "rewritten\n" },
 			[]model.Op{model.SetBody{Body: "rewritten\n"}},
 		},
 		{
-			"add tag", func(p *fusefs.ParsedNote) { p.Tags.Value = append(p.Tags.Value, "urgent") },
+			"add tag", func(p *fusefs.ParsedDoc) { p.Tags.Value = append(p.Tags.Value, "urgent") },
 			[]model.Op{model.AddTag{Tag: "urgent"}},
 		},
 		{
-			"remove tag", func(p *fusefs.ParsedNote) { p.Tags = set([]string{"parser"}) },
+			"remove tag", func(p *fusefs.ParsedDoc) { p.Tags = set([]string{"parser"}) },
 			[]model.Op{model.RemoveTag{Tag: "bug"}},
 		},
 		{
-			"swap tags adds before removes", func(p *fusefs.ParsedNote) { p.Tags = set([]string{"bb", "aa"}) },
+			"swap tags adds before removes", func(p *fusefs.ParsedDoc) { p.Tags = set([]string{"bb", "aa"}) },
 			[]model.Op{
 				model.AddTag{Tag: "aa"},
 				model.AddTag{Tag: "bb"},
@@ -638,19 +638,19 @@ func TestDiffNoteEditable(t *testing.T) {
 			},
 		},
 		{
-			"tags null clears all", func(p *fusefs.ParsedNote) { p.Tags = null[[]string]() },
+			"tags null clears all", func(p *fusefs.ParsedDoc) { p.Tags = null[[]string]() },
 			[]model.Op{model.RemoveTag{Tag: "bug"}, model.RemoveTag{Tag: "parser"}},
 		},
 		{
-			"add commit anchor", func(p *fusefs.ParsedNote) { p.Commits.Value = append(p.Commits.Value, "0099aab") },
+			"add commit anchor", func(p *fusefs.ParsedDoc) { p.Commits.Value = append(p.Commits.Value, "0099aab") },
 			[]model.Op{model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorCommit, Value: "0099aab"}}},
 		},
 		{
-			"remove path anchor", func(p *fusefs.ParsedNote) { p.Paths = set([]string{}) },
+			"remove path anchor", func(p *fusefs.ParsedDoc) { p.Paths = set([]string{}) },
 			[]model.Op{model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "internal/cli/output.go"}}},
 		},
 		{
-			"replace branch anchor", func(p *fusefs.ParsedNote) { p.Branches = set([]string{"main"}) },
+			"replace branch anchor", func(p *fusefs.ParsedDoc) { p.Branches = set([]string{"main"}) },
 			[]model.Op{
 				model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorBranch, Value: "main"}},
 				model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorBranch, Value: "feature/login"}},
@@ -676,20 +676,20 @@ func TestDiffNoteImmutable(t *testing.T) {
 	base := richNote()
 	cases := []struct {
 		field  string
-		mutate func(*fusefs.ParsedNote)
+		mutate func(*fusefs.ParsedDoc)
 	}{
-		{"id", func(p *fusefs.ParsedNote) { p.ID = set("0000000000000000000000000000000000000000") }},
-		{"author", func(p *fusefs.ParsedNote) { p.Author = set("Mallory <m@example.com>") }},
-		{"created", func(p *fusefs.ParsedNote) { p.Created = set("2020-01-01T00:00:00Z") }},
-		{"verified_at", func(p *fusefs.ParsedNote) { p.VerifiedAt = set("2020-01-01T00:00:00Z") }},
-		{"verified_by", func(p *fusefs.ParsedNote) { p.VerifiedBy = set("Mallory <m@example.com>") }},
-		{"verified_commit", func(p *fusefs.ParsedNote) { p.VerifiedCommit = set("0000000000000000000000000000000000000000") }},
-		{"superseded_by", func(p *fusefs.ParsedNote) {
+		{"id", func(p *fusefs.ParsedDoc) { p.ID = set("0000000000000000000000000000000000000000") }},
+		{"author", func(p *fusefs.ParsedDoc) { p.Author = set("Mallory <m@example.com>") }},
+		{"created", func(p *fusefs.ParsedDoc) { p.Created = set("2020-01-01T00:00:00Z") }},
+		{"verified_at", func(p *fusefs.ParsedDoc) { p.VerifiedAt = set("2020-01-01T00:00:00Z") }},
+		{"verified_by", func(p *fusefs.ParsedDoc) { p.VerifiedBy = set("Mallory <m@example.com>") }},
+		{"verified_commit", func(p *fusefs.ParsedDoc) { p.VerifiedCommit = set("0000000000000000000000000000000000000000") }},
+		{"superseded_by", func(p *fusefs.ParsedDoc) {
 			p.SupersededBy.Value = append(p.SupersededBy.Value, "eeee3333eeee3333eeee3333eeee3333eeee3333")
 		}},
-		{"superseded_by", func(p *fusefs.ParsedNote) { p.SupersededBy = set([]string{}) }},
-		{"witness", func(p *fusefs.ParsedNote) { p.Witness.Value[0].OID = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" }},
-		{"witness", func(p *fusefs.ParsedNote) { p.Witness = set([]fusefs.ParsedWitness{}) }},
+		{"superseded_by", func(p *fusefs.ParsedDoc) { p.SupersededBy = set([]string{}) }},
+		{"witness", func(p *fusefs.ParsedDoc) { p.Witness.Value[0].OID = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" }},
+		{"witness", func(p *fusefs.ParsedDoc) { p.Witness = set([]fusefs.ParsedWitness{}) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.field, func(t *testing.T) {
