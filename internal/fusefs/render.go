@@ -325,6 +325,149 @@ func splitFrontmatter(doc string) (fm, body string, err error) {
 	return "", "", fmt.Errorf("%w: missing closing frontmatter delimiter", ErrParse)
 }
 
+// check is one immutability guard: it returns ErrImmutableField when a frozen
+// field was edited, nil otherwise. diffWith joins a kind's checks before it
+// produces any ops.
+type check func() error
+
+// fieldDiff produces the ordered ops for one editable field group, returning a
+// parse error for an invalid value. diffWith runs a kind's fieldDiffs in slice
+// order and concatenates their ops.
+type fieldDiff func() ([]model.Op, error)
+
+// diffWith joins every check's error and returns on failure, then runs each
+// fieldDiff in slice order, concatenating ops and propagating the first field
+// error. Immutability is decided before any op is emitted — the byte contract.
+func diffWith(checks []check, fields []fieldDiff) ([]model.Op, error) {
+	errs := make([]error, len(checks))
+	for i, c := range checks {
+		errs[i] = c()
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	var ops []model.Op
+	for _, f := range fields {
+		fieldOps, err := f()
+		if err != nil {
+			return nil, err
+		}
+		ops = append(ops, fieldOps...)
+	}
+	return ops, nil
+}
+
+func pin(field string, f Field[string], want string) check {
+	return func() error { return immutable(field, f, want) }
+}
+
+func pinStrings(field string, f Field[[]string], want []string) check {
+	return func() error { return immutableStrings(field, f, want) }
+}
+
+func pinComments(f Field[[]ParsedComment], base []model.Comment) check {
+	return func() error { return immutableComments(f, base) }
+}
+
+func pinWitness(f Field[[]ParsedWitness], base []model.AnchorWitness) check {
+	return func() error { return immutableWitness(f, base) }
+}
+
+// scalar emits op(value) when a Set string field differs from base.
+func scalar(f Field[string], base string, op func(string) model.Op) fieldDiff {
+	return func() ([]model.Op, error) {
+		if !f.Set {
+			return nil, nil
+		}
+		if v := stringValue(f); v != base {
+			return []model.Op{op(v)}, nil
+		}
+		return nil, nil
+	}
+}
+
+// body emits SetBody when the parsed body differs from base.
+func body(parsed, base string) fieldDiff {
+	return func() ([]model.Op, error) {
+		if parsed != base {
+			return []model.Op{model.SetBody{Body: parsed}}, nil
+		}
+		return nil, nil
+	}
+}
+
+// enum parses a Set field through parse and emits op(value) when it differs from
+// base, propagating a parse error; it backs statuses, priority, and dates.
+func enum[F any, V comparable](f Field[F], base V, parse func(Field[F]) (V, error), op func(V) model.Op) fieldDiff {
+	return func() ([]model.Op, error) {
+		if !f.Set {
+			return nil, nil
+		}
+		v, err := parse(f)
+		if err != nil {
+			return nil, err
+		}
+		if v != base {
+			return []model.Op{op(v)}, nil
+		}
+		return nil, nil
+	}
+}
+
+// stringSet diffs a Set string-slice field against base, emitting add(value) for
+// each addition then remove(value) for each removal, each group sorted.
+func stringSet(f Field[[]string], base []string, add, remove func(string) model.Op) fieldDiff {
+	return func() ([]model.Op, error) {
+		if !f.Set {
+			return nil, nil
+		}
+		adds, removes := diffSets(base, stringsValue(f))
+		var ops []model.Op
+		for _, v := range adds {
+			ops = append(ops, add(v))
+		}
+		for _, v := range removes {
+			ops = append(ops, remove(v))
+		}
+		return ops, nil
+	}
+}
+
+// anchorSet diffs each Set anchor kind against base in anchorKinds order,
+// emitting AddAnchor then RemoveAnchor per kind.
+func anchorSet(anchors func(model.AnchorKind) Field[[]string], base []model.Anchor) fieldDiff {
+	return func() ([]model.Op, error) {
+		var ops []model.Op
+		for _, ak := range anchorKinds {
+			field := anchors(ak.kind)
+			if !field.Set {
+				continue
+			}
+			adds, removes := diffSets(anchorValues(base, ak.kind), stringsValue(field))
+			for _, value := range adds {
+				ops = append(ops, model.AddAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
+			}
+			for _, value := range removes {
+				ops = append(ops, model.RemoveAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
+			}
+		}
+		return ops, nil
+	}
+}
+
+// criteria wraps diffCriteria as a fieldDiff.
+func criteria(f Field[[]ParsedCriterion], base []model.Criterion) fieldDiff {
+	return func() ([]model.Op, error) { return diffCriteria(base, f) }
+}
+
+func setTitle(s string) model.Op       { return model.SetTitle{Title: s} }
+func setWhen(s string) model.Op        { return model.SetWhen{When: s} }
+func setDescription(s string) model.Op { return model.SetDescription{Description: s} }
+func addTag(s string) model.Op         { return model.AddTag{Tag: s} }
+func removeTag(s string) model.Op      { return model.RemoveTag{Tag: s} }
+func addLabel(s string) model.Op       { return model.AddLabel{Label: s} }
+func removeLabel(s string) model.Op    { return model.RemoveLabel{Label: s} }
+
 // DiffNote compares an edited note document against the snapshot it was
 // rendered from and returns the ops that reproduce the edit. Title, body,
 // tags, and anchors are editable; id, author, created, and the verification
@@ -336,53 +479,27 @@ func splitFrontmatter(doc string) (fm, body string, err error) {
 // order — set_title, set_body, tag adds then removes, anchor adds then
 // removes per kind — each group sorted by value.
 func DiffNote(base model.Note, p ParsedDoc) ([]model.Op, error) {
-	if err := errors.Join(
-		immutable("id", p.ID, string(base.ID)),
-		immutable("author", p.Author, string(base.Author)),
-		immutable("created", p.Created, stamp(base.CreatedAt)),
-		immutable("verified_at", p.VerifiedAt, stampOrEmpty(base.VerifiedAt)),
-		immutable("verified_by", p.VerifiedBy, string(base.VerifiedBy)),
-		immutable("verified_commit", p.VerifiedCommit, string(base.VerifiedCommit)),
-		immutableStrings("superseded_by", p.SupersededBy, idStrings(base.SupersededBy)),
-		immutableWitness(p.Witness, base.Witness),
-		immutable("stale_at", p.StaleAt, stampOrEmpty(base.StaleAt)),
-		immutable("stale_by", p.StaleBy, string(base.StaleBy)),
-		immutable("stale_reason", p.StaleReason, base.StaleReason),
-	); err != nil {
-		return nil, err
-	}
-	var ops []model.Op
-	if p.Title.Set {
-		if title := stringValue(p.Title); title != base.Title {
-			ops = append(ops, model.SetTitle{Title: title})
-		}
-	}
-	if p.Body != base.Body {
-		ops = append(ops, model.SetBody{Body: p.Body})
-	}
-	if p.Tags.Set {
-		adds, removes := diffSets(base.Tags, stringsValue(p.Tags))
-		for _, tag := range adds {
-			ops = append(ops, model.AddTag{Tag: tag})
-		}
-		for _, tag := range removes {
-			ops = append(ops, model.RemoveTag{Tag: tag})
-		}
-	}
-	for _, ak := range anchorKinds {
-		field := p.anchors(ak.kind)
-		if !field.Set {
-			continue
-		}
-		adds, removes := diffSets(anchorValues(base.Anchors, ak.kind), stringsValue(field))
-		for _, value := range adds {
-			ops = append(ops, model.AddAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
-		}
-		for _, value := range removes {
-			ops = append(ops, model.RemoveAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
-		}
-	}
-	return ops, nil
+	return diffWith(
+		[]check{
+			pin("id", p.ID, string(base.ID)),
+			pin("author", p.Author, string(base.Author)),
+			pin("created", p.Created, stamp(base.CreatedAt)),
+			pin("verified_at", p.VerifiedAt, stampOrEmpty(base.VerifiedAt)),
+			pin("verified_by", p.VerifiedBy, string(base.VerifiedBy)),
+			pin("verified_commit", p.VerifiedCommit, string(base.VerifiedCommit)),
+			pinStrings("superseded_by", p.SupersededBy, idStrings(base.SupersededBy)),
+			pinWitness(p.Witness, base.Witness),
+			pin("stale_at", p.StaleAt, stampOrEmpty(base.StaleAt)),
+			pin("stale_by", p.StaleBy, string(base.StaleBy)),
+			pin("stale_reason", p.StaleReason, base.StaleReason),
+		},
+		[]fieldDiff{
+			scalar(p.Title, base.Title, setTitle),
+			body(p.Body, base.Body),
+			stringSet(p.Tags, base.Tags, addTag, removeTag),
+			anchorSet(p.anchors, base.Anchors),
+		},
+	)
 }
 
 // NewNote builds the create op for a brand-new note file. The title comes
@@ -555,58 +672,28 @@ func ParseDoc(data []byte) (ParsedDoc, error) {
 // set_title, set_when, set_body, tag adds then removes, anchor adds then removes
 // per kind — each group sorted by value.
 func DiffDoc(base model.Doc, p ParsedDoc) ([]model.Op, error) {
-	if err := errors.Join(
-		immutable("id", p.ID, string(base.ID)),
-		immutable("author", p.Author, string(base.Author)),
-		immutable("created", p.Created, stamp(base.CreatedAt)),
-		immutable("verified_at", p.VerifiedAt, stampOrEmpty(base.VerifiedAt)),
-		immutable("verified_by", p.VerifiedBy, string(base.VerifiedBy)),
-		immutable("verified_commit", p.VerifiedCommit, string(base.VerifiedCommit)),
-		immutableStrings("superseded_by", p.SupersededBy, idStrings(base.SupersededBy)),
-		immutableWitness(p.Witness, base.Witness),
-		immutable("stale_at", p.StaleAt, stampOrEmpty(base.StaleAt)),
-		immutable("stale_by", p.StaleBy, string(base.StaleBy)),
-		immutable("stale_reason", p.StaleReason, base.StaleReason),
-	); err != nil {
-		return nil, err
-	}
-	var ops []model.Op
-	if p.Title.Set {
-		if title := stringValue(p.Title); title != base.Title {
-			ops = append(ops, model.SetTitle{Title: title})
-		}
-	}
-	if p.When.Set {
-		if when := stringValue(p.When); when != base.When {
-			ops = append(ops, model.SetWhen{When: when})
-		}
-	}
-	if p.Body != base.Body {
-		ops = append(ops, model.SetBody{Body: p.Body})
-	}
-	if p.Tags.Set {
-		adds, removes := diffSets(base.Tags, stringsValue(p.Tags))
-		for _, tag := range adds {
-			ops = append(ops, model.AddTag{Tag: tag})
-		}
-		for _, tag := range removes {
-			ops = append(ops, model.RemoveTag{Tag: tag})
-		}
-	}
-	for _, ak := range anchorKinds {
-		field := p.anchors(ak.kind)
-		if !field.Set {
-			continue
-		}
-		adds, removes := diffSets(anchorValues(base.Anchors, ak.kind), stringsValue(field))
-		for _, value := range adds {
-			ops = append(ops, model.AddAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
-		}
-		for _, value := range removes {
-			ops = append(ops, model.RemoveAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
-		}
-	}
-	return ops, nil
+	return diffWith(
+		[]check{
+			pin("id", p.ID, string(base.ID)),
+			pin("author", p.Author, string(base.Author)),
+			pin("created", p.Created, stamp(base.CreatedAt)),
+			pin("verified_at", p.VerifiedAt, stampOrEmpty(base.VerifiedAt)),
+			pin("verified_by", p.VerifiedBy, string(base.VerifiedBy)),
+			pin("verified_commit", p.VerifiedCommit, string(base.VerifiedCommit)),
+			pinStrings("superseded_by", p.SupersededBy, idStrings(base.SupersededBy)),
+			pinWitness(p.Witness, base.Witness),
+			pin("stale_at", p.StaleAt, stampOrEmpty(base.StaleAt)),
+			pin("stale_by", p.StaleBy, string(base.StaleBy)),
+			pin("stale_reason", p.StaleReason, base.StaleReason),
+		},
+		[]fieldDiff{
+			scalar(p.Title, base.Title, setTitle),
+			scalar(p.When, base.When, setWhen),
+			body(p.Body, base.Body),
+			stringSet(p.Tags, base.Tags, addTag, removeTag),
+			anchorSet(p.anchors, base.Anchors),
+		},
+	)
 }
 
 // NewDoc builds the create op for a brand-new doc file. The title comes from
@@ -821,57 +908,54 @@ func splitLogEntries(body string) ([]ParsedLogEntry, error) {
 // informational. Ops come out in a fixed order — set_title, tag adds then
 // removes, anchor adds then removes per kind, then the new entries in order.
 func DiffLog(base model.Log, p ParsedLog) ([]model.Op, error) {
-	if err := errors.Join(
-		immutable("id", p.ID, string(base.ID)),
-		immutable("author", p.Author, string(base.Author)),
-		immutable("created", p.Created, stamp(base.CreatedAt)),
-	); err != nil {
-		return nil, err
+	return diffWith(
+		[]check{
+			pin("id", p.ID, string(base.ID)),
+			pin("author", p.Author, string(base.Author)),
+			pin("created", p.Created, stamp(base.CreatedAt)),
+		},
+		[]fieldDiff{
+			logAppendOnly(base, p),
+			scalar(p.Title, base.Title, setTitle),
+			stringSet(p.Tags, base.Tags, addTag, removeTag),
+			anchorSet(p.anchors, base.Anchors),
+			logNewEntries(base, p),
+		},
+	)
+}
+
+// logAppendOnly guards the stored entries: the first len(base.Entries) parsed
+// entries must reproduce the stored author, ts, and text, and the count may not
+// drop. It emits no ops, running before the frontmatter fields so a tampered
+// entry fails before any op is produced.
+func logAppendOnly(base model.Log, p ParsedLog) fieldDiff {
+	return func() ([]model.Op, error) {
+		if len(p.Entries) < len(base.Entries) {
+			return nil, fmt.Errorf("%w: removed existing entries", ErrImmutableField)
+		}
+		for i, be := range base.Entries {
+			pe := p.Entries[i]
+			if pe.Author != string(be.Author) || pe.TS != stamp(be.TS) || pe.Text != ensureTrailingNewline(be.Text) {
+				return nil, fmt.Errorf("%w: log entry %d is append-only", ErrImmutableField, i)
+			}
+		}
+		return nil, nil
 	}
-	if len(p.Entries) < len(base.Entries) {
-		return nil, fmt.Errorf("%w: removed existing entries", ErrImmutableField)
+}
+
+// logNewEntries emits an AppendEntry for each trailing entry beyond the base
+// count; an empty new entry fails with ErrParse.
+func logNewEntries(base model.Log, p ParsedLog) fieldDiff {
+	return func() ([]model.Op, error) {
+		var ops []model.Op
+		for _, pe := range p.Entries[len(base.Entries):] {
+			if pe.Text == "" {
+				return nil, fmt.Errorf("%w: new log entry is empty", ErrParse)
+			}
+			ops = append(ops, model.AppendEntry{Text: pe.Text})
+		}
+		return ops, nil
 	}
-	for i, be := range base.Entries {
-		pe := p.Entries[i]
-		if pe.Author != string(be.Author) || pe.TS != stamp(be.TS) || pe.Text != ensureTrailingNewline(be.Text) {
-			return nil, fmt.Errorf("%w: log entry %d is append-only", ErrImmutableField, i)
-		}
-	}
-	var ops []model.Op
-	if p.Title.Set {
-		if title := stringValue(p.Title); title != base.Title {
-			ops = append(ops, model.SetTitle{Title: title})
-		}
-	}
-	if p.Tags.Set {
-		adds, removes := diffSets(base.Tags, stringsValue(p.Tags))
-		for _, tag := range adds {
-			ops = append(ops, model.AddTag{Tag: tag})
-		}
-		for _, tag := range removes {
-			ops = append(ops, model.RemoveTag{Tag: tag})
-		}
-	}
-	for _, ak := range anchorKinds {
-		field := p.anchors(ak.kind)
-		if !field.Set {
-			continue
-		}
-		adds, removes := diffSets(anchorValues(base.Anchors, ak.kind), stringsValue(field))
-		for _, value := range adds {
-			ops = append(ops, model.AddAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
-		}
-		for _, value := range removes {
-			ops = append(ops, model.RemoveAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
-		}
-	}
-	for _, pe := range p.Entries[len(base.Entries):] {
-		if pe.Text == "" {
-			return nil, fmt.Errorf("%w: new log entry is empty", ErrParse)
-		}
-		ops = append(ops, model.AppendEntry{Text: pe.Text})
-	}
-	return ops, nil
 }
 
 // NewLog builds the create op plus any initial entries for a brand-new log file.
@@ -1000,76 +1084,40 @@ func ParseTask(data []byte) (ParsedTask, error) {
 // type, assignee, blocked_by, blocks, parent, comments, sprint, project, and
 // every timestamp are immutable — echoing them unchanged is fine, changing them
 // fails with ErrImmutableField (coordination and membership fields change via
-// the CLI, not the filesystem). closed_forced is informational, like the
-// updated stamp: parsed, never diffed. Ops come out in a fixed order —
+// the CLI, not the filesystem). closed_forced is informational: parsed, never
+// diffed. Ops come out in a fixed order —
 // set_title, set_description, set_status, set_priority, label adds then removes
 // sorted by value, then the criteria ops (see diffCriteria).
 func DiffTask(base model.Task, p ParsedTask) ([]model.Op, error) {
-	if err := errors.Join(
-		immutable("id", p.ID, string(base.ID)),
-		immutable("branch", p.Branch, string(base.Branch)),
-		immutable("type", p.Type, string(base.Type)),
-		immutable("assignee", p.Assignee, string(base.Assignee)),
-		immutableStrings("blocked_by", p.BlockedBy, idStrings(base.BlockedBy)),
-		immutableStrings("blocks", p.Blocks, nil),
-		immutable("parent", p.Parent, string(base.Parent)),
-		immutableComments(p.Comments, base.Comments),
-		immutableStrings("commits", p.Commits, shaStrings(base.Commits)),
-		immutable("lease.holder", p.Lease.Holder, string(base.Assignee)),
-		immutable("lease.heartbeat", p.Lease.Heartbeat, stampOrEmpty(base.HeartbeatAt)),
-		immutable("created_at", p.CreatedAt, stamp(base.CreatedAt)),
-		immutable("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
-		immutable("started_at", p.StartedAt, stampOrEmpty(base.StartedAt)),
-		immutable("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
-		immutable("sprint", p.Sprint, string(base.Sprint)),
-		immutable("project", p.Project, string(base.Project)),
-	); err != nil {
-		return nil, err
-	}
-	var ops []model.Op
-	if p.Title.Set {
-		if title := stringValue(p.Title); title != base.Title {
-			ops = append(ops, model.SetTitle{Title: title})
-		}
-	}
-	if p.Description.Set {
-		if description := stringValue(p.Description); description != base.Description {
-			ops = append(ops, model.SetDescription{Description: description})
-		}
-	}
-	if p.Status.Set {
-		status, err := parseStatus(p.Status)
-		if err != nil {
-			return nil, err
-		}
-		if status != base.Status {
-			ops = append(ops, model.SetStatus{Status: status})
-		}
-	}
-	if p.Priority.Set {
-		priority, err := parsePriority(p.Priority)
-		if err != nil {
-			return nil, err
-		}
-		if priority != base.Priority {
-			ops = append(ops, model.SetPriority{Priority: priority})
-		}
-	}
-	if p.Labels.Set {
-		adds, removes := diffSets(base.Labels, stringsValue(p.Labels))
-		for _, label := range adds {
-			ops = append(ops, model.AddLabel{Label: label})
-		}
-		for _, label := range removes {
-			ops = append(ops, model.RemoveLabel{Label: label})
-		}
-	}
-	criteriaOps, err := diffCriteria(base.Criteria, p.Criteria)
-	if err != nil {
-		return nil, err
-	}
-	ops = append(ops, criteriaOps...)
-	return ops, nil
+	return diffWith(
+		[]check{
+			pin("id", p.ID, string(base.ID)),
+			pin("branch", p.Branch, string(base.Branch)),
+			pin("type", p.Type, string(base.Type)),
+			pin("assignee", p.Assignee, string(base.Assignee)),
+			pinStrings("blocked_by", p.BlockedBy, idStrings(base.BlockedBy)),
+			pinStrings("blocks", p.Blocks, nil),
+			pin("parent", p.Parent, string(base.Parent)),
+			pinComments(p.Comments, base.Comments),
+			pinStrings("commits", p.Commits, shaStrings(base.Commits)),
+			pin("lease.holder", p.Lease.Holder, string(base.Assignee)),
+			pin("lease.heartbeat", p.Lease.Heartbeat, stampOrEmpty(base.HeartbeatAt)),
+			pin("created_at", p.CreatedAt, stamp(base.CreatedAt)),
+			pin("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
+			pin("started_at", p.StartedAt, stampOrEmpty(base.StartedAt)),
+			pin("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
+			pin("sprint", p.Sprint, string(base.Sprint)),
+			pin("project", p.Project, string(base.Project)),
+		},
+		[]fieldDiff{
+			scalar(p.Title, base.Title, setTitle),
+			scalar(p.Description, base.Description, setDescription),
+			enum(p.Status, base.Status, parseStatus, func(s model.Status) model.Op { return model.SetStatus{Status: s} }),
+			enum(p.Priority, base.Priority, parsePriority, func(pr model.Priority) model.Op { return model.SetPriority{Priority: pr} }),
+			stringSet(p.Labels, base.Labels, addLabel, removeLabel),
+			criteria(p.Criteria, base.Criteria),
+		},
+	)
 }
 
 // diffCriteria diffs an edited criteria array against the base, matching by id.
@@ -1309,68 +1357,28 @@ func ParseSprint(data []byte) (ParsedSprint, error) {
 // Ops come out in a fixed order — set_title, set_description, set_sprint_status,
 // set_start_date, set_end_date, label adds then removes sorted by value.
 func DiffSprint(base model.Sprint, p ParsedSprint) ([]model.Op, error) {
-	if err := errors.Join(
-		immutable("id", p.ID, string(base.ID)),
-		immutable("project", p.Project, string(base.Project)),
-		immutableStrings("commits", p.Commits, shaStrings(base.Commits)),
-		immutableComments(p.Comments, base.Comments),
-		immutable("author", p.Author, string(base.Author)),
-		immutable("created_at", p.CreatedAt, stamp(base.CreatedAt)),
-		immutable("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
-		immutable("started_at", p.StartedAt, stampOrEmpty(base.StartedAt)),
-		immutable("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
-		immutableStrings("tasks", p.Tasks, nil),
-	); err != nil {
-		return nil, err
-	}
-	var ops []model.Op
-	if p.Title.Set {
-		if title := stringValue(p.Title); title != base.Title {
-			ops = append(ops, model.SetTitle{Title: title})
-		}
-	}
-	if p.Description.Set {
-		if description := stringValue(p.Description); description != base.Description {
-			ops = append(ops, model.SetDescription{Description: description})
-		}
-	}
-	if p.Status.Set {
-		status, err := parseSprintStatus(p.Status)
-		if err != nil {
-			return nil, err
-		}
-		if status != base.Status {
-			ops = append(ops, model.SetSprintStatus{Status: status})
-		}
-	}
-	if p.StartDate.Set {
-		date, err := parseDate(p.StartDate)
-		if err != nil {
-			return nil, err
-		}
-		if date != base.StartDate {
-			ops = append(ops, model.SetStartDate{Date: date})
-		}
-	}
-	if p.EndDate.Set {
-		date, err := parseDate(p.EndDate)
-		if err != nil {
-			return nil, err
-		}
-		if date != base.EndDate {
-			ops = append(ops, model.SetEndDate{Date: date})
-		}
-	}
-	if p.Labels.Set {
-		adds, removes := diffSets(base.Labels, stringsValue(p.Labels))
-		for _, label := range adds {
-			ops = append(ops, model.AddLabel{Label: label})
-		}
-		for _, label := range removes {
-			ops = append(ops, model.RemoveLabel{Label: label})
-		}
-	}
-	return ops, nil
+	return diffWith(
+		[]check{
+			pin("id", p.ID, string(base.ID)),
+			pin("project", p.Project, string(base.Project)),
+			pinStrings("commits", p.Commits, shaStrings(base.Commits)),
+			pinComments(p.Comments, base.Comments),
+			pin("author", p.Author, string(base.Author)),
+			pin("created_at", p.CreatedAt, stamp(base.CreatedAt)),
+			pin("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
+			pin("started_at", p.StartedAt, stampOrEmpty(base.StartedAt)),
+			pin("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
+			pinStrings("tasks", p.Tasks, nil),
+		},
+		[]fieldDiff{
+			scalar(p.Title, base.Title, setTitle),
+			scalar(p.Description, base.Description, setDescription),
+			enum(p.Status, base.Status, parseSprintStatus, func(s model.SprintStatus) model.Op { return model.SetSprintStatus{Status: s} }),
+			enum(p.StartDate, base.StartDate, parseDate, func(d int64) model.Op { return model.SetStartDate{Date: d} }),
+			enum(p.EndDate, base.EndDate, parseDate, func(d int64) model.Op { return model.SetEndDate{Date: d} }),
+			stringSet(p.Labels, base.Labels, addLabel, removeLabel),
+		},
+	)
 }
 
 // NewSprint builds the create op for a brand-new sprint file. The title is
@@ -1496,49 +1504,25 @@ func ParseProject(data []byte) (ParsedProject, error) {
 // Ops come out in a fixed order — set_title, set_description,
 // set_project_status, label adds then removes sorted by value.
 func DiffProject(base model.Project, p ParsedProject) ([]model.Op, error) {
-	if err := errors.Join(
-		immutable("id", p.ID, string(base.ID)),
-		immutableStrings("commits", p.Commits, shaStrings(base.Commits)),
-		immutableComments(p.Comments, base.Comments),
-		immutable("author", p.Author, string(base.Author)),
-		immutable("created_at", p.CreatedAt, stamp(base.CreatedAt)),
-		immutable("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
-		immutable("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
-		immutableStrings("sprints", p.Sprints, nil),
-		immutableStrings("tasks", p.Tasks, nil),
-	); err != nil {
-		return nil, err
-	}
-	var ops []model.Op
-	if p.Title.Set {
-		if title := stringValue(p.Title); title != base.Title {
-			ops = append(ops, model.SetTitle{Title: title})
-		}
-	}
-	if p.Description.Set {
-		if description := stringValue(p.Description); description != base.Description {
-			ops = append(ops, model.SetDescription{Description: description})
-		}
-	}
-	if p.Status.Set {
-		status, err := parseProjectStatus(p.Status)
-		if err != nil {
-			return nil, err
-		}
-		if status != base.Status {
-			ops = append(ops, model.SetProjectStatus{Status: status})
-		}
-	}
-	if p.Labels.Set {
-		adds, removes := diffSets(base.Labels, stringsValue(p.Labels))
-		for _, label := range adds {
-			ops = append(ops, model.AddLabel{Label: label})
-		}
-		for _, label := range removes {
-			ops = append(ops, model.RemoveLabel{Label: label})
-		}
-	}
-	return ops, nil
+	return diffWith(
+		[]check{
+			pin("id", p.ID, string(base.ID)),
+			pinStrings("commits", p.Commits, shaStrings(base.Commits)),
+			pinComments(p.Comments, base.Comments),
+			pin("author", p.Author, string(base.Author)),
+			pin("created_at", p.CreatedAt, stamp(base.CreatedAt)),
+			pin("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
+			pin("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
+			pinStrings("sprints", p.Sprints, nil),
+			pinStrings("tasks", p.Tasks, nil),
+		},
+		[]fieldDiff{
+			scalar(p.Title, base.Title, setTitle),
+			scalar(p.Description, base.Description, setDescription),
+			enum(p.Status, base.Status, parseProjectStatus, func(s model.ProjectStatus) model.Op { return model.SetProjectStatus{Status: s} }),
+			stringSet(p.Labels, base.Labels, addLabel, removeLabel),
+		},
+	)
 }
 
 // NewProject builds the create op for a brand-new project file. The title is
@@ -1815,8 +1799,8 @@ func stringsValue(f Field[[]string]) []string {
 }
 
 func diffSets(have, want []string) (adds, removes []string) {
-	haveSet := stringSet(have)
-	wantSet := stringSet(want)
+	haveSet := toSet(have)
+	wantSet := toSet(want)
 	for value := range wantSet {
 		if !haveSet[value] {
 			adds = append(adds, value)
@@ -1832,7 +1816,7 @@ func diffSets(have, want []string) (adds, removes []string) {
 	return adds, removes
 }
 
-func stringSet(values []string) map[string]bool {
+func toSet(values []string) map[string]bool {
 	set := make(map[string]bool, len(values))
 	for _, v := range values {
 		set[v] = true
