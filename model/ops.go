@@ -10,6 +10,13 @@ type Op interface {
 	OpKind() string
 }
 
+// CreateOp is the root operation that starts an entity chain. CreateKind
+// reports the kind the chain folds to.
+type CreateOp interface {
+	Op
+	CreateKind() Kind
+}
+
 // CreateNote is the root operation of a note chain. The nonce makes
 // otherwise-identical creates hash to distinct entity ids.
 type CreateNote struct {
@@ -22,6 +29,9 @@ type CreateNote struct {
 
 // OpKind returns "create_note".
 func (CreateNote) OpKind() string { return "create_note" }
+
+// CreateKind returns KindNote.
+func (CreateNote) CreateKind() Kind { return KindNote }
 
 func (o CreateNote) validate() error {
 	for _, a := range o.Anchors {
@@ -173,6 +183,9 @@ type CreateTask struct {
 // OpKind returns "create_task".
 func (CreateTask) OpKind() string { return "create_task" }
 
+// CreateKind returns KindTask.
+func (CreateTask) CreateKind() Kind { return KindTask }
+
 func (o CreateTask) validate() error {
 	if err := o.Type.validate(); err != nil {
 		return err
@@ -200,6 +213,9 @@ type CreateSprint struct {
 // OpKind returns "create_sprint".
 func (CreateSprint) OpKind() string { return "create_sprint" }
 
+// CreateKind returns KindSprint.
+func (CreateSprint) CreateKind() Kind { return KindSprint }
+
 // CreateProject is the root operation of a project chain. The nonce makes
 // otherwise-identical creates hash to distinct entity ids.
 type CreateProject struct {
@@ -211,6 +227,9 @@ type CreateProject struct {
 
 // OpKind returns "create_project".
 func (CreateProject) OpKind() string { return "create_project" }
+
+// CreateKind returns KindProject.
+func (CreateProject) CreateKind() Kind { return KindProject }
 
 // CreateDoc is the root operation of a doc chain. The nonce makes
 // otherwise-identical creates hash to distinct entity ids.
@@ -225,6 +244,9 @@ type CreateDoc struct {
 
 // OpKind returns "create_doc".
 func (CreateDoc) OpKind() string { return "create_doc" }
+
+// CreateKind returns KindDoc.
+func (CreateDoc) CreateKind() Kind { return KindDoc }
 
 func (o CreateDoc) validate() error {
 	for _, a := range o.Anchors {
@@ -246,6 +268,9 @@ type CreateLog struct {
 
 // OpKind returns "create_log".
 func (CreateLog) OpKind() string { return "create_log" }
+
+// CreateKind returns KindLog.
+func (CreateLog) CreateKind() Kind { return KindLog }
 
 func (o CreateLog) validate() error {
 	for _, a := range o.Anchors {
@@ -575,6 +600,9 @@ type CreateRunbook struct {
 
 // OpKind returns "create_runbook".
 func (CreateRunbook) OpKind() string { return "create_runbook" }
+
+// CreateKind returns KindRunbook.
+func (CreateRunbook) CreateKind() Kind { return KindRunbook }
 
 // AddStep adds one step to a runbook. The id is a client-generated nonce that
 // makes the add idempotent; Position places the step (see PositionBetween).
