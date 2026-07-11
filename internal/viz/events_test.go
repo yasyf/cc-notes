@@ -103,7 +103,8 @@ func createLog(t *testing.T, s *store.Store, title string) model.EntityID {
 // returning the folded snapshot so callers can drive runs against its step ids.
 func createRunbook(t *testing.T, s *store.Store, title string, steps ...string) model.Runbook {
 	t.Helper()
-	ops := []model.Op{model.CreateRunbook{Nonce: model.NewNonce(), Title: title}}
+	ops := make([]model.Op, 0, 1+len(steps))
+	ops = append(ops, model.CreateRunbook{Nonce: model.NewNonce(), Title: title})
 	prev := ""
 	for _, text := range steps {
 		pos := model.PositionBetween(prev, "")

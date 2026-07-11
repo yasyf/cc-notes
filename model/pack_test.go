@@ -868,7 +868,7 @@ var everySnapshot = []Snapshot{Note{}, Doc{}, Log{}, Task{}, Sprint{}, Project{}
 func TestNoOpOrSnapshotHasCustomJSON(t *testing.T) {
 	marshaler := reflect.TypeOf((*json.Marshaler)(nil)).Elem()
 	unmarshaler := reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
-	check := func(name string, typ reflect.Type) {
+	check := func(_ string, typ reflect.Type) {
 		for _, probe := range []reflect.Type{typ, reflect.PointerTo(typ)} {
 			if probe.Implements(marshaler) {
 				t.Errorf("%s implements json.Marshaler; the byte-splicing codec requires plain structs", probe)

@@ -436,7 +436,7 @@ command: cc-notes mount
     --foreground shorthand=-f type=bool default="false" usage="serve in the foreground and unmount on Ctrl-C (bypasses the mount holder)"
     --list shorthand=none type=bool default="false" usage="list the mounts the holder serves, then exit"
     --shutdown shorthand=none type=bool default="false" usage="unmount everything and stop the mount holder, then exit"
-    --socket shorthand=none type=string default="/Users/yasyf/.cc-notes/mounts.sock" usage="mount-holder unix socket path"
+    --socket shorthand=none type=string default="~/.cc-notes/mounts.sock" usage="mount-holder unix socket path"
     --stop shorthand=none type=string default="" usage="unmount the mount at DIR, then exit"
   inherited:
     (none)
@@ -447,7 +447,7 @@ command: cc-notes mount-holder
   short: Run the detached fuse mount holder
   hidden: true
   flags:
-    --socket shorthand=none type=string default="/Users/yasyf/.cc-notes/mounts.sock" usage="unix socket path to serve"
+    --socket shorthand=none type=string default="~/.cc-notes/mounts.sock" usage="unix socket path to serve"
   inherited:
     (none)
 

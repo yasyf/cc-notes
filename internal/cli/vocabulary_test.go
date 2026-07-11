@@ -72,6 +72,16 @@ func writeCommandVocabulary(b *strings.Builder, c *cobra.Command) {
 	b.WriteByte('\n')
 }
 
+// portableDefault rewrites a flag default rooted in the current user's home
+// directory to a ~-prefixed form so the golden is machine-independent.
+func portableDefault(def string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || !strings.HasPrefix(def, home+string(filepath.Separator)) {
+		return def
+	}
+	return "~" + strings.TrimPrefix(def, home)
+}
+
 // writeFlagSection renders a flag set sorted by name. When own is non-nil each
 // flag is tagged persistent if it is one of own's persistent flags.
 func writeFlagSection(b *strings.Builder, label string, fs *pflag.FlagSet, own *cobra.Command) {
@@ -94,6 +104,6 @@ func writeFlagSection(b *strings.Builder, label string, fs *pflag.FlagSet, own *
 			persistent = " persistent"
 		}
 		fmt.Fprintf(b, "    --%s shorthand=%s type=%s default=%q usage=%q%s\n",
-			f.Name, shorthand, f.Value.Type(), f.DefValue, f.Usage, persistent)
+			f.Name, shorthand, f.Value.Type(), portableDefault(f.DefValue), f.Usage, persistent)
 	}
 }

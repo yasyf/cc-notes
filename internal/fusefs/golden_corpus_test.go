@@ -755,37 +755,61 @@ type goldenEdit struct {
 // bytes. Each entry pins the exact op sequence a targeted edit reproduces.
 var goldenEdits = map[string][]goldenEdit{
 	"note_rich": {
-		{"title", "title: Deploy notes", "title: Renamed notes",
-			[]model.Op{model.SetTitle{Title: "Renamed notes"}}},
-		{"body", "Long-form analysis.", "Rewritten analysis.",
-			[]model.Op{model.SetBody{Body: "Rewritten analysis.\n\nWith a second paragraph.\n"}}},
-		{"add tag", "tags: [bug, parser]", "tags: [bug, parser, urgent]",
-			[]model.Op{model.AddTag{Tag: "urgent"}}},
-		{"add commit anchor", "commits: [abc1234, def5678]", "commits: [abc1234, def5678, 0099aab]",
-			[]model.Op{model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorCommit, Value: "0099aab"}}}},
-		{"clear dir anchors", "dirs: [internal/auth]", "dirs: []",
-			[]model.Op{model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorDir, Value: "internal/auth"}}}},
+		{
+			"title", "title: Deploy notes", "title: Renamed notes",
+			[]model.Op{model.SetTitle{Title: "Renamed notes"}},
+		},
+		{
+			"body", "Long-form analysis.", "Rewritten analysis.",
+			[]model.Op{model.SetBody{Body: "Rewritten analysis.\n\nWith a second paragraph.\n"}},
+		},
+		{
+			"add tag", "tags: [bug, parser]", "tags: [bug, parser, urgent]",
+			[]model.Op{model.AddTag{Tag: "urgent"}},
+		},
+		{
+			"add commit anchor", "commits: [abc1234, def5678]", "commits: [abc1234, def5678, 0099aab]",
+			[]model.Op{model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorCommit, Value: "0099aab"}}},
+		},
+		{
+			"clear dir anchors", "dirs: [internal/auth]", "dirs: []",
+			[]model.Op{model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorDir, Value: "internal/auth"}}},
+		},
 	},
 	"doc_rich": {
-		{"when", "when: before touching the auth flow", "when: after the migration",
-			[]model.Op{model.SetWhen{When: "after the migration"}}},
+		{
+			"when", "when: before touching the auth flow", "when: after the migration",
+			[]model.Op{model.SetWhen{When: "after the migration"}},
+		},
 	},
 	"log_rich": {
-		{"append entry", "still entry two\n",
+		{
+			"append entry", "still entry two\n",
 			"still entry two\n<!-- cc-notes:entry author=\"ci\" ts=\"2025-01-01T00:00:00Z\" -->\nnew rollout note\n",
-			[]model.Op{model.AppendEntry{Text: "new rollout note\n"}}},
+			[]model.Op{model.AppendEntry{Text: "new rollout note\n"}},
+		},
 	},
 	"task_rich": {
-		{"flip status", `"status": "in_progress"`, `"status": "done"`,
-			[]model.Op{model.SetStatus{Status: model.StatusDone}}},
-		{"set priority", `"priority": 1`, `"priority": 3`,
-			[]model.Op{model.SetPriority{Priority: 3}}},
-		{"add label", "    \"render\"\n  ],", "    \"render\",\n    \"urgent\"\n  ],",
-			[]model.Op{model.AddLabel{Label: "urgent"}}},
-		{"edit criterion text", `"text": "Tests pass"`, `"text": "Tests still pass"`,
-			[]model.Op{model.SetCriterionText{ID: "bbbb2222bbbb2222bbbb2222bbbb2222", Text: "Tests still pass"}}},
-		{"flip criterion status", `"status": "pending"`, `"status": "met"`,
-			[]model.Op{model.SetCriterionStatus{ID: "bbbb2222bbbb2222bbbb2222bbbb2222", Status: model.CriterionMet}}},
+		{
+			"flip status", `"status": "in_progress"`, `"status": "done"`,
+			[]model.Op{model.SetStatus{Status: model.StatusDone}},
+		},
+		{
+			"set priority", `"priority": 1`, `"priority": 3`,
+			[]model.Op{model.SetPriority{Priority: 3}},
+		},
+		{
+			"add label", "    \"render\"\n  ],", "    \"render\",\n    \"urgent\"\n  ],",
+			[]model.Op{model.AddLabel{Label: "urgent"}},
+		},
+		{
+			"edit criterion text", `"text": "Tests pass"`, `"text": "Tests still pass"`,
+			[]model.Op{model.SetCriterionText{ID: "bbbb2222bbbb2222bbbb2222bbbb2222", Text: "Tests still pass"}},
+		},
+		{
+			"flip criterion status", `"status": "pending"`, `"status": "met"`,
+			[]model.Op{model.SetCriterionStatus{ID: "bbbb2222bbbb2222bbbb2222bbbb2222", Status: model.CriterionMet}},
+		},
 		{
 			"add criterion",
 			"      \"status\": \"pending\"\n    }\n  ],",
@@ -794,16 +818,24 @@ var goldenEdits = map[string][]goldenEdit{
 		},
 	},
 	"sprint_rich": {
-		{"flip status", `"status": "active"`, `"status": "completed"`,
-			[]model.Op{model.SetSprintStatus{Status: model.SprintCompleted}}},
-		{"clear end date", `"end_date": "2025-12-19T02:54:56Z"`, `"end_date": null`,
-			[]model.Op{model.SetEndDate{Date: 0}}},
+		{
+			"flip status", `"status": "active"`, `"status": "completed"`,
+			[]model.Op{model.SetSprintStatus{Status: model.SprintCompleted}},
+		},
+		{
+			"clear end date", `"end_date": "2025-12-19T02:54:56Z"`, `"end_date": null`,
+			[]model.Op{model.SetEndDate{Date: 0}},
+		},
 	},
 	"project_rich": {
-		{"flip status", `"status": "active"`, `"status": "archived"`,
-			[]model.Op{model.SetProjectStatus{Status: model.ProjectArchived}}},
-		{"title", `"title": "Platform v2"`, `"title": "Platform v3"`,
-			[]model.Op{model.SetTitle{Title: "Platform v3"}}},
+		{
+			"flip status", `"status": "active"`, `"status": "archived"`,
+			[]model.Op{model.SetProjectStatus{Status: model.ProjectArchived}},
+		},
+		{
+			"title", `"title": "Platform v2"`, `"title": "Platform v3"`,
+			[]model.Op{model.SetTitle{Title: "Platform v3"}},
+		},
 	},
 }
 

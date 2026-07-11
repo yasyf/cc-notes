@@ -910,7 +910,7 @@ func foldRunbook(ordered []model.PackCommit) (model.Runbook, error) {
 				rb.Comments = append(rb.Comments, model.Comment{Author: c.Author, TS: c.AuthorTime, Body: o.Body})
 			case model.AddStep:
 				if stepIndex(steps, o.ID) < 0 {
-					steps = append(steps, model.RunbookStep{ID: o.ID, Text: o.Text, Command: o.Command, Position: o.Position})
+					steps = append(steps, model.RunbookStep(o))
 				}
 			case model.RemoveStep:
 				if i := stepIndex(steps, o.ID); i >= 0 {

@@ -28,10 +28,10 @@ func TestMidPositionGoldens(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("midPosition(%q, %q) = %q, want %q", tc.before, tc.after, got, tc.want)
 			}
-			if tc.before != "" && !(tc.before < got) {
+			if tc.before != "" && got <= tc.before {
 				t.Fatalf("midPosition(%q, %q) = %q not after before", tc.before, tc.after, got)
 			}
-			if tc.after != "" && !(got < tc.after) {
+			if tc.after != "" && got >= tc.after {
 				t.Fatalf("midPosition(%q, %q) = %q not before after", tc.before, tc.after, got)
 			}
 		})
@@ -60,10 +60,10 @@ func TestPositionBetweenValidBounds(t *testing.T) {
 			if err := validatePosition(got); err != nil {
 				t.Fatalf("PositionBetween(%q, %q) = %q, invalid: %v", tc.before, tc.after, got, err)
 			}
-			if tc.before != "" && !(tc.before < got) {
+			if tc.before != "" && got <= tc.before {
 				t.Fatalf("PositionBetween(%q, %q) = %q not after before", tc.before, tc.after, got)
 			}
-			if tc.after != "" && !(got < tc.after) {
+			if tc.after != "" && got >= tc.after {
 				t.Fatalf("PositionBetween(%q, %q) = %q not before after", tc.before, tc.after, got)
 			}
 		})
@@ -77,10 +77,10 @@ func TestPositionBetweenSqueezeLeft(t *testing.T) {
 		if err := validatePosition(mid); err != nil {
 			t.Fatalf("iter %d: invalid midpoint %q: %v", i, mid, err)
 		}
-		if before != "" && !(before < mid) {
+		if before != "" && mid <= before {
 			t.Fatalf("iter %d: before %q not < mid %q", i, before, mid)
 		}
-		if after != "" && !(mid < after) {
+		if after != "" && mid >= after {
 			t.Fatalf("iter %d: mid %q not < after %q", i, mid, after)
 		}
 		after = mid
@@ -94,10 +94,10 @@ func TestPositionBetweenSqueezeRight(t *testing.T) {
 		if err := validatePosition(mid); err != nil {
 			t.Fatalf("iter %d: invalid midpoint %q: %v", i, mid, err)
 		}
-		if before != "" && !(before < mid) {
+		if before != "" && mid <= before {
 			t.Fatalf("iter %d: before %q not < mid %q", i, before, mid)
 		}
-		if after != "" && !(mid < after) {
+		if after != "" && mid >= after {
 			t.Fatalf("iter %d: mid %q not < after %q", i, mid, after)
 		}
 		before = mid
@@ -112,7 +112,7 @@ func TestPositionBetweenSqueezeMiddle(t *testing.T) {
 		if err := validatePosition(mid); err != nil {
 			t.Fatalf("iter %d: invalid midpoint %q: %v", i, mid, err)
 		}
-		if !(before < mid && mid < after) {
+		if mid <= before || mid >= after {
 			t.Fatalf("iter %d: not before %q < mid %q < after %q", i, before, mid, after)
 		}
 		if rng.Intn(2) == 0 {

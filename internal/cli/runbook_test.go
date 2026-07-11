@@ -46,7 +46,7 @@ func TestRunbookAddWithSteps(t *testing.T) {
 	if got := rbStepTexts(rb); strings.Join(got, ",") != "build,test,ship" {
 		t.Errorf("step order = %v, want [build test ship]", got)
 	}
-	if !(rb.Steps[0].Position < rb.Steps[1].Position && rb.Steps[1].Position < rb.Steps[2].Position) {
+	if rb.Steps[0].Position >= rb.Steps[1].Position || rb.Steps[1].Position >= rb.Steps[2].Position {
 		t.Errorf("positions not strictly increasing: %q %q %q", rb.Steps[0].Position, rb.Steps[1].Position, rb.Steps[2].Position)
 	}
 	if strings.Join(rb.Labels, ",") != "ops" {
