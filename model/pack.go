@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 )
 
@@ -93,316 +94,46 @@ func DecodePack(data []byte) (Pack, error) {
 	return Pack{Lamport: wire.Lamport, Ops: ops}, nil
 }
 
-// marshalOp wraps op in an envelope struct that puts the "kind" discriminator
-// first, followed by the op's fields in declaration order. Every op struct
-// must have a case here and an entry in opDecoders; the round-trip test
-// enforces coverage.
+// marshalOp encodes op as {"kind":"<k>",<op fields>} — the discriminator first,
+// then the op's own fields in declaration order. Checkpoint alone needs
+// kind-tagged encoding of its interface State, so it routes to
+// marshalCheckpoint; every other op splices through spliceKind. The kind comes
+// from opKinds keyed by op's concrete type, so a pointer, foreign, or nil Op —
+// none a registered value type — fails with ErrUnknownKind rather than emitting
+// a malformed or mis-tagged pack into the content-addressed store.
 func marshalOp(op Op) ([]byte, error) {
-	switch o := op.(type) {
-	case CreateNote:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			CreateNote
-		}{o.OpKind(), o})
-	case SetTitle:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetTitle
-		}{o.OpKind(), o})
-	case SetBody:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetBody
-		}{o.OpKind(), o})
-	case SetWhen:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetWhen
-		}{o.OpKind(), o})
-	case AddTag:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			AddTag
-		}{o.OpKind(), o})
-	case RemoveTag:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			RemoveTag
-		}{o.OpKind(), o})
-	case AddAnchor:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			AddAnchor
-		}{o.OpKind(), o})
-	case RemoveAnchor:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			RemoveAnchor
-		}{o.OpKind(), o})
-	case DeleteNote:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			DeleteNote
-		}{o.OpKind(), o})
-	case VerifyNote:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			VerifyNote
-		}{o.OpKind(), o})
-	case AddSupersededBy:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			AddSupersededBy
-		}{o.OpKind(), o})
-	case RemoveSupersededBy:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			RemoveSupersededBy
-		}{o.OpKind(), o})
-	case MarkStale:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			MarkStale
-		}{o.OpKind(), o})
-	case ClearStale:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			ClearStale
-		}{o.OpKind(), o})
-	case CreateTask:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			CreateTask
-		}{o.OpKind(), o})
-	case CreateSprint:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			CreateSprint
-		}{o.OpKind(), o})
-	case CreateProject:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			CreateProject
-		}{o.OpKind(), o})
-	case CreateDoc:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			CreateDoc
-		}{o.OpKind(), o})
-	case CreateLog:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			CreateLog
-		}{o.OpKind(), o})
-	case AppendEntry:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			AppendEntry
-		}{o.OpKind(), o})
-	case SetDescription:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetDescription
-		}{o.OpKind(), o})
-	case SetType:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetType
-		}{o.OpKind(), o})
-	case SetPriority:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetPriority
-		}{o.OpKind(), o})
-	case SetStatus:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetStatus
-		}{o.OpKind(), o})
-	case SetAssignee:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetAssignee
-		}{o.OpKind(), o})
-	case Claim:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			Claim
-		}{o.OpKind(), o})
-	case Renew:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			Renew
-		}{o.OpKind(), o})
-	case Reclaim:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			Reclaim
-		}{o.OpKind(), o})
-	case AddLabel:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			AddLabel
-		}{o.OpKind(), o})
-	case RemoveLabel:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			RemoveLabel
-		}{o.OpKind(), o})
-	case AddDep:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			AddDep
-		}{o.OpKind(), o})
-	case RemoveDep:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			RemoveDep
-		}{o.OpKind(), o})
-	case LinkCommit:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			LinkCommit
-		}{o.OpKind(), o})
-	case UnlinkCommit:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			UnlinkCommit
-		}{o.OpKind(), o})
-	case SetParent:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetParent
-		}{o.OpKind(), o})
-	case AddComment:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			AddComment
-		}{o.OpKind(), o})
-	case SetBranch:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetBranch
-		}{o.OpKind(), o})
-	case SetSprint:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetSprint
-		}{o.OpKind(), o})
-	case SetProject:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetProject
-		}{o.OpKind(), o})
-	case SetSprintStatus:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetSprintStatus
-		}{o.OpKind(), o})
-	case SetProjectStatus:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetProjectStatus
-		}{o.OpKind(), o})
-	case SetStartDate:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetStartDate
-		}{o.OpKind(), o})
-	case SetEndDate:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetEndDate
-		}{o.OpKind(), o})
-	case AddCriterion:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			AddCriterion
-		}{o.OpKind(), o})
-	case RemoveCriterion:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			RemoveCriterion
-		}{o.OpKind(), o})
-	case SetCriterionText:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetCriterionText
-		}{o.OpKind(), o})
-	case SetCriterionStatus:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetCriterionStatus
-		}{o.OpKind(), o})
-	case SetCriterionScript:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetCriterionScript
-		}{o.OpKind(), o})
-	case AddAttachment:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			AddAttachment
-		}{o.OpKind(), o})
-	case RemoveAttachment:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			RemoveAttachment
-		}{o.OpKind(), o})
-	case CreateRunbook:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			CreateRunbook
-		}{o.OpKind(), o})
-	case AddStep:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			AddStep
-		}{o.OpKind(), o})
-	case RemoveStep:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			RemoveStep
-		}{o.OpKind(), o})
-	case SetStepText:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetStepText
-		}{o.OpKind(), o})
-	case SetStepCommand:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetStepCommand
-		}{o.OpKind(), o})
-	case SetStepPosition:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetStepPosition
-		}{o.OpKind(), o})
-	case StartRun:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			StartRun
-		}{o.OpKind(), o})
-	case SetRunStepStatus:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetRunStepStatus
-		}{o.OpKind(), o})
-	case FinishRun:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			FinishRun
-		}{o.OpKind(), o})
-	case SetRunbookStatus:
-		return json.Marshal(struct {
-			Kind string `json:"kind"`
-			SetRunbookStatus
-		}{o.OpKind(), o})
-	case Checkpoint:
-		return marshalCheckpoint(o)
+	if cp, ok := op.(Checkpoint); ok {
+		return marshalCheckpoint(cp)
 	}
-	return nil, fmt.Errorf("%w: %T", ErrUnknownKind, op)
+	kind, ok := opKinds[reflect.TypeOf(op)]
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrUnknownKind, op)
+	}
+	return spliceKind(kind, op)
+}
+
+// spliceKind builds {"kind":"<k>",<fields>} by marshaling op and inserting the
+// kind tag as the first key. This byte layout is part of the storage format —
+// entity ids hash it. The splice reproduces the old per-op envelope only because
+// every op is a plain struct with no custom JSON (TestNoOpOrSnapshotHasCustomJSON);
+// a field-less op marshals to "{}" and becomes {"kind":"<k>"}.
+func spliceKind(kind string, op Op) ([]byte, error) {
+	body, err := json.Marshal(op)
+	if err != nil {
+		return nil, err
+	}
+	tag, err := json.Marshal(kind)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(tag)+len(body)+8)
+	out = append(out, `{"kind":`...)
+	out = append(out, tag...)
+	if len(body) == 2 {
+		return append(out, '}'), nil
+	}
+	out = append(out, ',')
+	return append(out, body[1:]...), nil
 }
 
 // checkpointWire is the deterministic wire layout for a Checkpoint op: the
@@ -421,24 +152,16 @@ type checkpointWire struct {
 	CoversShas    []SHA           `json:"covers_shas"`
 }
 
+// marshalCheckpoint encodes a Checkpoint, deriving the state_kind tag from the
+// snapshot's Meta. A nil State, or one whose kind is unregistered, fails with
+// ErrUnknownKind — the pack would otherwise carry an empty or bogus state_kind
+// into the content-addressed store.
 func marshalCheckpoint(o Checkpoint) ([]byte, error) {
-	var stateKind string
-	switch o.State.(type) {
-	case Note:
-		stateKind = "note"
-	case Doc:
-		stateKind = "doc"
-	case Log:
-		stateKind = "log"
-	case Task:
-		stateKind = "task"
-	case Sprint:
-		stateKind = "sprint"
-	case Project:
-		stateKind = "project"
-	case Runbook:
-		stateKind = "runbook"
-	default:
+	if o.State == nil {
+		return nil, fmt.Errorf("%w: checkpoint state %T", ErrUnknownKind, o.State)
+	}
+	kind := o.State.Meta().Kind
+	if _, err := ParseKind(string(kind)); err != nil {
 		return nil, fmt.Errorf("%w: checkpoint state %T", ErrUnknownKind, o.State)
 	}
 	state, err := json.Marshal(o.State)
@@ -450,7 +173,7 @@ func marshalCheckpoint(o Checkpoint) ([]byte, error) {
 	return json.Marshal(checkpointWire{
 		Kind:          o.OpKind(),
 		EntityID:      o.EntityID,
-		StateKind:     stateKind,
+		StateKind:     string(kind),
 		State:         state,
 		CoversLamport: o.CoversLamport,
 		CoversShas:    shas,
@@ -469,52 +192,13 @@ func decodeCheckpoint(raw json.RawMessage) (Op, error) {
 	if len(wire.State) == 0 {
 		return nil, fmt.Errorf("%w: checkpoint state is empty", ErrInvalidValue)
 	}
-	var state Snapshot
-	switch wire.StateKind {
-	case "note":
-		var n Note
-		if err := json.Unmarshal(wire.State, &n); err != nil {
-			return nil, fmt.Errorf("unmarshal checkpoint note state: %w", err)
-		}
-		state = n
-	case "doc":
-		var d Doc
-		if err := json.Unmarshal(wire.State, &d); err != nil {
-			return nil, fmt.Errorf("unmarshal checkpoint doc state: %w", err)
-		}
-		state = d
-	case "log":
-		var l Log
-		if err := json.Unmarshal(wire.State, &l); err != nil {
-			return nil, fmt.Errorf("unmarshal checkpoint log state: %w", err)
-		}
-		state = l
-	case "task":
-		var t Task
-		if err := json.Unmarshal(wire.State, &t); err != nil {
-			return nil, fmt.Errorf("unmarshal checkpoint task state: %w", err)
-		}
-		state = t
-	case "sprint":
-		var s Sprint
-		if err := json.Unmarshal(wire.State, &s); err != nil {
-			return nil, fmt.Errorf("unmarshal checkpoint sprint state: %w", err)
-		}
-		state = s
-	case "project":
-		var p Project
-		if err := json.Unmarshal(wire.State, &p); err != nil {
-			return nil, fmt.Errorf("unmarshal checkpoint project state: %w", err)
-		}
-		state = p
-	case "runbook":
-		var rb Runbook
-		if err := json.Unmarshal(wire.State, &rb); err != nil {
-			return nil, fmt.Errorf("unmarshal checkpoint runbook state: %w", err)
-		}
-		state = rb
-	default:
-		return nil, fmt.Errorf("%w: checkpoint state_kind %q", ErrInvalidValue, wire.StateKind)
+	kind, err := ParseKind(wire.StateKind)
+	if err != nil {
+		return nil, err
+	}
+	state, err := kind.DecodeSnapshot(wire.State)
+	if err != nil {
+		return nil, err
 	}
 	return Checkpoint{
 		EntityID:      wire.EntityID,
@@ -538,70 +222,90 @@ func decodeOp(raw json.RawMessage) (Op, error) {
 	return decode(raw)
 }
 
-// opDecoders maps each wire kind to its decoder; the round-trip test asserts
-// it covers every op struct.
-var opDecoders = map[string]func(json.RawMessage) (Op, error){
-	CreateNote{}.OpKind():         decodeAs[CreateNote],
-	SetTitle{}.OpKind():           decodeAs[SetTitle],
-	SetBody{}.OpKind():            decodeAs[SetBody],
-	SetWhen{}.OpKind():            decodeAs[SetWhen],
-	AddTag{}.OpKind():             decodeAs[AddTag],
-	RemoveTag{}.OpKind():          decodeAs[RemoveTag],
-	AddAnchor{}.OpKind():          decodeAs[AddAnchor],
-	RemoveAnchor{}.OpKind():       decodeAs[RemoveAnchor],
-	DeleteNote{}.OpKind():         decodeAs[DeleteNote],
-	VerifyNote{}.OpKind():         decodeAs[VerifyNote],
-	AddSupersededBy{}.OpKind():    decodeAs[AddSupersededBy],
-	RemoveSupersededBy{}.OpKind(): decodeAs[RemoveSupersededBy],
-	MarkStale{}.OpKind():          decodeAs[MarkStale],
-	ClearStale{}.OpKind():         decodeAs[ClearStale],
-	CreateTask{}.OpKind():         decodeAs[CreateTask],
-	CreateSprint{}.OpKind():       decodeAs[CreateSprint],
-	CreateProject{}.OpKind():      decodeAs[CreateProject],
-	CreateDoc{}.OpKind():          decodeAs[CreateDoc],
-	CreateLog{}.OpKind():          decodeAs[CreateLog],
-	AppendEntry{}.OpKind():        decodeAs[AppendEntry],
-	SetDescription{}.OpKind():     decodeAs[SetDescription],
-	SetType{}.OpKind():            decodeAs[SetType],
-	SetPriority{}.OpKind():        decodeAs[SetPriority],
-	SetStatus{}.OpKind():          decodeAs[SetStatus],
-	SetAssignee{}.OpKind():        decodeAs[SetAssignee],
-	Claim{}.OpKind():              decodeAs[Claim],
-	Renew{}.OpKind():              decodeAs[Renew],
-	Reclaim{}.OpKind():            decodeAs[Reclaim],
-	AddLabel{}.OpKind():           decodeAs[AddLabel],
-	RemoveLabel{}.OpKind():        decodeAs[RemoveLabel],
-	AddDep{}.OpKind():             decodeAs[AddDep],
-	RemoveDep{}.OpKind():          decodeAs[RemoveDep],
-	LinkCommit{}.OpKind():         decodeAs[LinkCommit],
-	UnlinkCommit{}.OpKind():       decodeAs[UnlinkCommit],
-	SetParent{}.OpKind():          decodeAs[SetParent],
-	AddComment{}.OpKind():         decodeAs[AddComment],
-	SetBranch{}.OpKind():          decodeAs[SetBranch],
-	SetSprint{}.OpKind():          decodeAs[SetSprint],
-	SetProject{}.OpKind():         decodeAs[SetProject],
-	SetSprintStatus{}.OpKind():    decodeAs[SetSprintStatus],
-	SetProjectStatus{}.OpKind():   decodeAs[SetProjectStatus],
-	SetStartDate{}.OpKind():       decodeAs[SetStartDate],
-	SetEndDate{}.OpKind():         decodeAs[SetEndDate],
-	AddCriterion{}.OpKind():       decodeAs[AddCriterion],
-	RemoveCriterion{}.OpKind():    decodeAs[RemoveCriterion],
-	SetCriterionText{}.OpKind():   decodeAs[SetCriterionText],
-	SetCriterionStatus{}.OpKind(): decodeAs[SetCriterionStatus],
-	SetCriterionScript{}.OpKind(): decodeAs[SetCriterionScript],
-	AddAttachment{}.OpKind():      decodeAs[AddAttachment],
-	RemoveAttachment{}.OpKind():   decodeAs[RemoveAttachment],
-	CreateRunbook{}.OpKind():      decodeAs[CreateRunbook],
-	AddStep{}.OpKind():            decodeAs[AddStep],
-	RemoveStep{}.OpKind():         decodeAs[RemoveStep],
-	SetStepText{}.OpKind():        decodeAs[SetStepText],
-	SetStepCommand{}.OpKind():     decodeAs[SetStepCommand],
-	SetStepPosition{}.OpKind():    decodeAs[SetStepPosition],
-	StartRun{}.OpKind():           decodeAs[StartRun],
-	SetRunStepStatus{}.OpKind():   decodeAs[SetRunStepStatus],
-	FinishRun{}.OpKind():          decodeAs[FinishRun],
-	SetRunbookStatus{}.OpKind():   decodeAs[SetRunbookStatus],
-	Checkpoint{}.OpKind():         decodeCheckpoint,
+// opDecoders maps each wire kind to its decoder; opKinds maps each op's concrete
+// type to its wire kind, the discriminator marshalOp splices by. registerOp
+// populates both from one per-op registration, so the two never drift; the
+// round-trip test asserts the decoder registry covers every op struct, and
+// marshaling every op sample exercises the type gate. Checkpoint decodes through
+// decodeCheckpoint and marshals through marshalOp's special-case, so it carries a
+// decoder entry but no type-gate entry.
+var (
+	opDecoders = map[string]func(json.RawMessage) (Op, error){}
+	opKinds    = map[reflect.Type]string{}
+)
+
+// registerOp binds op type T to its wire kind in both registries. Keying opKinds
+// by the concrete reflect.Type is what lets the marshal gate reject a pointer,
+// foreign, or nil Op whose OpKind() string alone would otherwise pass.
+func registerOp[T Op]() {
+	var zero T
+	kind := zero.OpKind()
+	opDecoders[kind] = decodeAs[T]
+	opKinds[reflect.TypeOf(zero)] = kind
+}
+
+func init() {
+	registerOp[CreateNote]()
+	registerOp[SetTitle]()
+	registerOp[SetBody]()
+	registerOp[SetWhen]()
+	registerOp[AddTag]()
+	registerOp[RemoveTag]()
+	registerOp[AddAnchor]()
+	registerOp[RemoveAnchor]()
+	registerOp[DeleteNote]()
+	registerOp[VerifyNote]()
+	registerOp[AddSupersededBy]()
+	registerOp[RemoveSupersededBy]()
+	registerOp[MarkStale]()
+	registerOp[ClearStale]()
+	registerOp[CreateTask]()
+	registerOp[CreateSprint]()
+	registerOp[CreateProject]()
+	registerOp[CreateDoc]()
+	registerOp[CreateLog]()
+	registerOp[AppendEntry]()
+	registerOp[SetDescription]()
+	registerOp[SetType]()
+	registerOp[SetPriority]()
+	registerOp[SetStatus]()
+	registerOp[SetAssignee]()
+	registerOp[Claim]()
+	registerOp[Renew]()
+	registerOp[Reclaim]()
+	registerOp[AddLabel]()
+	registerOp[RemoveLabel]()
+	registerOp[AddDep]()
+	registerOp[RemoveDep]()
+	registerOp[LinkCommit]()
+	registerOp[UnlinkCommit]()
+	registerOp[SetParent]()
+	registerOp[AddComment]()
+	registerOp[SetBranch]()
+	registerOp[SetSprint]()
+	registerOp[SetProject]()
+	registerOp[SetSprintStatus]()
+	registerOp[SetProjectStatus]()
+	registerOp[SetStartDate]()
+	registerOp[SetEndDate]()
+	registerOp[AddCriterion]()
+	registerOp[RemoveCriterion]()
+	registerOp[SetCriterionText]()
+	registerOp[SetCriterionStatus]()
+	registerOp[SetCriterionScript]()
+	registerOp[AddAttachment]()
+	registerOp[RemoveAttachment]()
+	registerOp[CreateRunbook]()
+	registerOp[AddStep]()
+	registerOp[RemoveStep]()
+	registerOp[SetStepText]()
+	registerOp[SetStepCommand]()
+	registerOp[SetStepPosition]()
+	registerOp[StartRun]()
+	registerOp[SetRunStepStatus]()
+	registerOp[FinishRun]()
+	registerOp[SetRunbookStatus]()
+	opDecoders[Checkpoint{}.OpKind()] = decodeCheckpoint
 }
 
 func decodeAs[T Op](raw json.RawMessage) (Op, error) {

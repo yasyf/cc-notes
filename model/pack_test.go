@@ -833,6 +833,52 @@ func TestMarshalUnregisteredOpFails(t *testing.T) {
 	}
 }
 
+// foreignOp is an Op whose OpKind() can collide with a registered kind: it stands
+// in for a foreign implementation of the public Op interface. The marshal gate
+// keys by concrete type, so it must reject foreignOp even when its kind string
+// matches a real op.
+type foreignOp struct{ kind string }
+
+func (f foreignOp) OpKind() string { return f.kind }
+
+// foreignSnapshot is a Snapshot whose Meta().Kind is the empty (unregistered)
+// kind — a foreign implementation of the public Snapshot interface used as a
+// checkpoint state.
+type foreignSnapshot struct{}
+
+func (foreignSnapshot) EntityID() EntityID { return "" }
+func (foreignSnapshot) Meta() Meta         { return Meta{} }
+
+// TestMarshalRejectsTypeImposters pins that the marshal gate keys ops by concrete
+// type, not the OpKind() string. A pointer op, a foreign Op whose OpKind()
+// collides with a registered kind, a nil op, a pointer Checkpoint, a checkpoint
+// with a nil State, and a checkpoint over a foreign Snapshot each fail with
+// ErrUnknownKind — without panicking — instead of emitting a malformed or
+// mis-tagged pack into the content-addressed store. These are the exact holes a
+// string-keyed gate leaves open that the fakeOp test does not catch.
+func TestMarshalRejectsTypeImposters(t *testing.T) {
+	note := Note{ID: testID, Title: "t", SupersededBy: []EntityID{}}
+	cases := []struct {
+		name string
+		op   Op
+	}{
+		{"pointer op", &SetTitle{Title: "x"}},
+		{"foreign op with colliding kind", foreignOp{kind: "create_note"}},
+		{"nil op", nil},
+		{"pointer checkpoint", &Checkpoint{EntityID: testID, State: note, CoversLamport: 1}},
+		{"checkpoint with nil state", Checkpoint{EntityID: testID, CoversLamport: 1}},
+		{"checkpoint over foreign snapshot", Checkpoint{EntityID: testID, State: foreignSnapshot{}, CoversLamport: 1}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := json.Marshal(Pack{Lamport: 1, Ops: []Op{tc.op}})
+			if !errors.Is(err, ErrUnknownKind) {
+				t.Fatalf("marshal = %v, want errors.Is ErrUnknownKind", err)
+			}
+		})
+	}
+}
+
 var opKindCharset = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 // TestOpKindCharset asserts every registered op kind is a lower-snake token.
