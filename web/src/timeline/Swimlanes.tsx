@@ -15,6 +15,7 @@ import {
 } from "react";
 import { curveBumpX, line } from "d3-shape";
 import { relativeTime } from "../dag/badges";
+import { formatDateTime } from "../detail/format";
 import { Axis } from "./Axis";
 import { Glyph } from "./Glyph";
 import { Legend } from "./Legend";
@@ -559,21 +560,11 @@ function activate(e: KeyboardEvent, fn: () => void) {
   }
 }
 
-function formatTime(sec: number): string {
-  return new Date(sec * 1000).toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 // whenText renders an absolute local time with a compact relative age, e.g.
 // "Jan 3, 2026, 02:15 PM (2d ago)".
 function whenText(sec: number, now: number): string {
   const rel = relativeTime(sec, now);
-  return `${formatTime(sec)} (${rel === "now" ? "just now" : `${rel} ago`})`;
+  return `${formatDateTime(sec)} (${rel === "now" ? "just now" : `${rel} ago`})`;
 }
 
 // formatDuration renders a span length in the two coarsest non-zero units.

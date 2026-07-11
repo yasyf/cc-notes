@@ -7,8 +7,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Glyph } from "../timeline/Glyph";
 import { EVENT_SPECS, eventSpec } from "../timeline/marks";
 import type { CommitPage } from "../api";
+import { shortId } from "../detail/format";
 import { useDispatch, useStore, type Selection } from "../store";
-import { shortTask } from "./badges";
 import { assignColumns } from "./columns";
 import { Row } from "./Row";
 import { useCommitsLoader } from "./useCommits";
@@ -30,7 +30,7 @@ function rowMatches(c: CommitPage, needle: string): boolean {
   }
   return c.tasks.some(
     (id) =>
-      id.toLowerCase().includes(needle) || shortTask(id).toLowerCase().includes(needle),
+      id.toLowerCase().includes(needle) || shortId(id).toLowerCase().includes(needle),
   );
 }
 

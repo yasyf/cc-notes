@@ -698,36 +698,6 @@ body {
   padding: 0.75rem 0.9rem;
 }
 
-.detail-fields {
-  margin: 0 0 1rem;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.2rem 0.75rem;
-}
-
-.detail-field {
-  display: contents;
-}
-
-.detail-field dt {
-  color: var(--fg-muted);
-  font-size: 11px;
-}
-
-.detail-field dd {
-  margin: 0;
-  font-size: 12px;
-  word-break: break-word;
-}
-
-.detail-subhead {
-  margin: 0 0 0.4rem;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--fg-muted);
-}
-
 .trail {
   list-style: none;
   margin: 0;
@@ -808,14 +778,6 @@ body {
 
 .trail-to {
   color: var(--fg);
-}
-
-.trail-added {
-  color: var(--viz-good);
-}
-
-.trail-removed {
-  color: var(--error);
 }
 
 /* Commit DAG tab */

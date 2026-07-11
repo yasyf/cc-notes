@@ -26,12 +26,6 @@ export function shortSha(sha: string): string {
   return sha.slice(0, 8);
 }
 
-// shortTask abbreviates a task id (a sha-like id or a raw trailer value) for a
-// chip, keeping short values whole.
-export function shortTask(id: string): string {
-  return id.length > 8 ? id.slice(0, 8) : id;
-}
-
 const MINUTE = 60;
 const HOUR = 3600;
 const DAY = 86400;

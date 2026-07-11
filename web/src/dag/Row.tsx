@@ -10,9 +10,10 @@ import { curveBumpY, line } from "d3-shape";
 import { Glyph } from "../timeline/Glyph";
 import { eventSpec } from "../timeline/marks";
 import type { CommitPage, Event } from "../api";
+import { shortId } from "../detail/format";
 import type { Selection } from "../store";
 import type { ColumnEdge, CommitLayout } from "./columns";
-import { columnColor, relativeTime, shortSha, shortTask } from "./badges";
+import { columnColor, relativeTime, shortSha } from "./badges";
 
 export const ROW_H = 34;
 const COL_W = 16;
@@ -104,7 +105,7 @@ export function Row({
             title={`task ${id}`}
             onClick={(e) => openEntity(e, { kind: "task", id, title: id }, onSelectEntity, onSelectRow, commit.sha)}
           >
-            {shortTask(id)}
+            {shortId(id)}
           </button>
         ))}
         {commit.events.map((ev, i) => (

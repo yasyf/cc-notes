@@ -4,19 +4,20 @@
 // renderer so the entry-chunk browse views can reuse these atoms without pulling
 // it in; the markdown-bearing authored block lives in AuthoredBlock.tsx.
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { Anchor, Criterion } from "../api";
 import { shortSha } from "../dag/badges";
 import { useCommitsLoader } from "../dag/useCommits";
 import { useDispatch, useStore } from "../store";
 import { formatDateTime, shortId } from "./format";
+import { useCopyFeedback } from "./useCopyFeedback";
 
 export function Chip({ children, className }: { children: ReactNode; className?: string }) {
   return <span className={className ? `chip ${className}` : "chip"}>{children}</span>;
 }
 
 export function CopyChip({ text, label, className }: { text: string; label?: string; className?: string }) {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback();
   const classes = ["chip", "chip-copy", className, copied ? "chip-copied" : undefined]
     .filter(Boolean)
     .join(" ");
@@ -25,11 +26,7 @@ export function CopyChip({ text, label, className }: { text: string; label?: str
       type="button"
       className={classes}
       title={copied ? "copied" : `copy ${text}`}
-      onClick={() => {
-        void navigator.clipboard?.writeText(text);
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1000);
-      }}
+      onClick={() => copy(text)}
     >
       {label ?? text}
     </button>
@@ -45,14 +42,9 @@ export function CommitChip({ sha }: { sha: string }) {
   const dispatch = useDispatch();
   const { commits } = useStore();
   const { loadFirst } = useCommitsLoader();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback();
 
   const present = commits.rows.some((c) => c.sha === sha);
-  const copy = () => {
-    void navigator.clipboard?.writeText(sha);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1000);
-  };
   const jump = () => {
     if (present || !commits.loaded) {
       if (!commits.loaded) loadFirst();
@@ -60,7 +52,7 @@ export function CommitChip({ sha }: { sha: string }) {
       dispatch({ type: "focus-commit", sha });
       return;
     }
-    copy();
+    copy(sha);
   };
 
   return (
@@ -78,7 +70,7 @@ export function CommitChip({ sha }: { sha: string }) {
         className="commit-copy"
         aria-label={copied ? "copied" : `copy commit ${sha}`}
         title={copied ? "copied" : "copy sha"}
-        onClick={copy}
+        onClick={() => copy(sha)}
       >
         {copied ? "✓" : "⎘"}
       </button>
