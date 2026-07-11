@@ -68,14 +68,14 @@ describe("search ranking", () => {
 
   it("highlights a title word-prefix match", () => {
     const hits = search([mk("a", "Fix Sync")], "sync");
-    expect(hits[0].score).toBe(4);
-    expect(hits[0].spans).toEqual([[4, 8]]);
+    expect(hits[0]?.score).toBe(4);
+    expect(hits[0]?.spans).toEqual([[4, 8]]);
   });
 
   it("highlights a subsequence match with merged runs", () => {
     const hits = search([mk("a", "task")], "tsk");
-    expect(hits[0].score).toBe(1);
-    expect(hits[0].spans).toEqual([
+    expect(hits[0]?.score).toBe(1);
+    expect(hits[0]?.spans).toEqual([
       [0, 1],
       [2, 4],
     ]);

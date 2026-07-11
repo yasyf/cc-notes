@@ -42,6 +42,7 @@ describe("runbookRow", () => {
     const rows = buildIndex(emptyState({ runbooks: [runbook()] }));
     expect(rows).toHaveLength(1);
     const row = rows[0];
+    if (row === undefined) throw new Error("expected a row");
     expect(row.kind).toBe("runbook");
     expect(row.id).toBe("rb1");
     expect(row.title).toBe("Deploy service");

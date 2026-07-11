@@ -173,7 +173,7 @@ export function viewerKind(name: string): ViewerKind {
 // when its extension has no registered highlighter.
 export function codeLanguage(name: string): string | null {
   const ext = fileExt(name);
-  if (ext !== "" && ext in CODE_LANG) return CODE_LANG[ext];
+  if (ext !== "" && ext in CODE_LANG) return CODE_LANG[ext] ?? null;
   if (basename(name).toLowerCase().replace(/^\./, "") === "dockerfile") return "dockerfile";
   return null;
 }

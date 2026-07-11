@@ -89,11 +89,15 @@ export function statusSpec(status: string): StatusSpec {
   return TASK_STATUS[status] ?? { color: S1, label: status || "In progress" };
 }
 
+// MERGE_MARK_DEFAULT is the plain merge diamond, also the fallback for any
+// unclassified merge kind.
+const MERGE_MARK_DEFAULT: MarkSpec = { shape: "diamond", color: S5, label: "Merge", hollow: false };
+
 // MERGE_MARKS glyphs a lane's merge point, keyed by merge.kind so a real merge,
 // a fast-forward, and an inferred (task-rumor) merge each read as a distinct
 // shape rather than colour alone.
 export const MERGE_MARKS: Record<string, MarkSpec> = {
-  merge: { shape: "diamond", color: S5, label: "Merge", hollow: false },
+  merge: MERGE_MARK_DEFAULT,
   "fast-forward": { shape: "chevron", color: S2, label: "Fast-forward merge", hollow: false },
   inferred: { shape: "ring", color: MUTED, label: "Inferred merge", hollow: true },
 };
@@ -101,7 +105,7 @@ export const MERGE_MARKS: Record<string, MarkSpec> = {
 // mergeMark returns the glyph for a merge kind, defaulting to the plain merge
 // diamond for any unclassified kind.
 export function mergeMark(kind: string): MarkSpec {
-  return MERGE_MARKS[kind] ?? MERGE_MARKS.merge;
+  return MERGE_MARKS[kind] ?? MERGE_MARK_DEFAULT;
 }
 
 export type GlyphGeom =

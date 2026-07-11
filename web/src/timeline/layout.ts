@@ -183,17 +183,20 @@ export function layout(input: LayoutInput): LayoutResult {
     depthOf.set(lane.name, depth);
     const start = lane.start;
     let chosen = -1;
-    for (let r = 0; r < rows.length; r++) {
-      if (rows[r].parent === parent && rows[r].lastEnd < start) {
+    let target: { parent: string; lastEnd: number } | undefined;
+    for (const [r, row] of rows.entries()) {
+      if (row.parent === parent && row.lastEnd < start) {
         chosen = r;
+        target = row;
         break;
       }
     }
-    if (chosen === -1) {
+    if (target === undefined) {
       chosen = rows.length;
-      rows.push({ parent, lastEnd: Number.NEGATIVE_INFINITY });
+      target = { parent, lastEnd: Number.NEGATIVE_INFINITY };
+      rows.push(target);
     }
-    rows[chosen].lastEnd = effEnd(lane);
+    target.lastEnd = effEnd(lane);
     rowOf.set(lane.name, chosen);
     for (const child of children.get(lane.name) ?? []) {
       place(child, lane.name, depth + 1);
@@ -361,7 +364,8 @@ export function layout(input: LayoutInput): LayoutResult {
 function resolveTrunk(graph: Graph, byName: Map<string, Lane>): Lane | null {
   const named = byName.get(graph.repo.trunk);
   if (named !== undefined) return named;
-  return graph.lanes.length > 0 ? graph.lanes[0] : null;
+  const [first] = graph.lanes;
+  return first ?? null;
 }
 
 // packSubRows greedily packs spans and markers onto the fewest sub-rows: items
@@ -408,8 +412,8 @@ function packSubRows(
   const lastEnd: number[] = [];
   for (const it of items) {
     let row = -1;
-    for (let r = 0; r < lastEnd.length; r++) {
-      if (lastEnd[r] < it.start) {
+    for (const [r, end] of lastEnd.entries()) {
+      if (end < it.start) {
         row = r;
         break;
       }

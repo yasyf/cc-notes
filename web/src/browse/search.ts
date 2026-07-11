@@ -50,7 +50,7 @@ function isWordChar(c: string): boolean {
 // q, or -1. Index 0 is excluded — a whole-title prefix is a stronger tier.
 function wordPrefix(hay: string, q: string): number {
   for (let i = 1; i < hay.length; i++) {
-    if (!isWordChar(hay[i - 1]) && isWordChar(hay[i]) && hay.startsWith(q, i)) {
+    if (!isWordChar(hay.charAt(i - 1)) && isWordChar(hay.charAt(i)) && hay.startsWith(q, i)) {
       return i;
     }
   }

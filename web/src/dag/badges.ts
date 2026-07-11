@@ -18,7 +18,9 @@ const COLUMN_COLORS = [
 // columnColor returns the decoration colour for a column, cycling the categorical
 // set so a deep graph stays coloured without inventing new hues.
 export function columnColor(column: number): string {
-  return COLUMN_COLORS[((column % COLUMN_COLORS.length) + COLUMN_COLORS.length) % COLUMN_COLORS.length];
+  const idx = ((column % COLUMN_COLORS.length) + COLUMN_COLORS.length) % COLUMN_COLORS.length;
+  // idx is always in [0, COLUMN_COLORS.length) by construction.
+  return COLUMN_COLORS[idx]!;
 }
 
 // shortSha abbreviates a commit sha to its first eight hex characters.

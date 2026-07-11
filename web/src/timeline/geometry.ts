@@ -29,7 +29,7 @@ export function rowMetrics(result: LayoutResult): RowMetrics {
   const subRows = new Array<number>(result.rowCount).fill(1);
   for (const lane of result.lanes) {
     if (lane.row < subRows.length) {
-      subRows[lane.row] = Math.max(subRows[lane.row], lane.subRows);
+      subRows[lane.row] = Math.max(subRows[lane.row] ?? 1, lane.subRows);
     }
   }
   const rowHeight = subRows.map((n) => LABEL_STRIP + n * SUBROW_H + LANE_PAD);

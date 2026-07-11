@@ -115,12 +115,16 @@ export function CommitGraph({ selection, onSelect }: Props) {
         {filtering && visibleCount === 0 && (
           <p className="dag-endcap">No loaded commits match “{filter.trim()}”.</p>
         )}
-        {commits.rows.map((c, i) =>
-          filtering && !rowMatches(c, needle) ? null : (
+        {commits.rows.map((c, i) => {
+          if (filtering && !rowMatches(c, needle)) return null;
+          // layout.rows is built 1:1 from commits.rows in the same order
+          // (assignColumns pushes exactly one row per input commit).
+          const node = layout.rows[i]!;
+          return (
             <Row
               key={c.sha}
               commit={c}
-              node={layout.rows[i]}
+              node={node}
               totalColumns={layout.totalColumns}
               now={now}
               active={activeSha === c.sha}
@@ -130,8 +134,8 @@ export function CommitGraph({ selection, onSelect }: Props) {
               onSelectRow={setActiveSha}
               onSelectEntity={(sel) => onSelect(sel)}
             />
-          ),
-        )}
+          );
+        })}
         {commits.nextBefore !== null && (
           <div className="dag-more">
             <button

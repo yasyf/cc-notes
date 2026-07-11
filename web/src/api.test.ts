@@ -40,9 +40,9 @@ describe("normalizeGraph", () => {
         "entities":null}`,
     );
     const g = normalizeGraph(raw);
-    expect(g.lanes[0].fork).toBeNull(); // by-design pointer stays null
-    expect(g.events[0].detail).toEqual({});
-    expect(g.events[1].detail).toEqual({ text: "hi" });
+    expect(g.lanes[0]?.fork).toBeNull(); // by-design pointer stays null
+    expect(g.events[0]?.detail).toEqual({});
+    expect(g.events[1]?.detail).toEqual({ text: "hi" });
   });
 });
 
@@ -74,9 +74,10 @@ describe("normalizeCommits", () => {
     const page = normalizeCommits(raw);
 
     const [c2, c1] = page.commits;
+    if (c2 === undefined || c1 === undefined) throw new Error("expected 2 commits");
     expect(c2.parents).toEqual(["c1"]);
     expect(c2.tasks).toEqual(["t1"]);
-    expect(c2.events[0].detail).toEqual({}); // null detail -> {}
+    expect(c2.events[0]?.detail).toEqual({}); // null detail -> {}
     expect(c2.branch).toBe("main");
 
     expect(c1.parents).toEqual([]); // null parents -> []
@@ -107,7 +108,10 @@ describe("normalizeEntity", () => {
         ]}`,
     );
     const d = normalizeEntity(raw);
-    const [comments, status] = d.trail[0].changes;
+    const trail0 = d.trail[0];
+    if (trail0 === undefined) throw new Error("expected a trail entry");
+    const [comments, status] = trail0.changes;
+    if (comments === undefined || status === undefined) throw new Error("expected 2 changes");
     expect(comments.added).toEqual(["hi"]);
     expect(comments.removed).toEqual([]);
     expect(status.added).toEqual([]);
@@ -143,7 +147,12 @@ describe("normalizeEntity", () => {
         ]}`,
     );
     const d = normalizeEntity(raw);
-    const [title, verifiedAt, attachments] = d.trail[0].changes;
+    const trail0 = d.trail[0];
+    if (trail0 === undefined) throw new Error("expected a trail entry");
+    const [title, verifiedAt, attachments] = trail0.changes;
+    if (title === undefined || verifiedAt === undefined || attachments === undefined) {
+      throw new Error("expected 3 changes");
+    }
     expect(title.from).toBeNull(); // create pre-image stays null
     expect(title.to).toBe("hello");
     expect(verifiedAt.from).toBe(0); // numeric scalar preserved, not "0"
@@ -169,7 +178,7 @@ describe("normalizeEntity", () => {
             "covers":0,"changes":null}]}`,
       ),
     );
-    expect(nullChanges.trail[0].changes).toEqual([]);
+    expect(nullChanges.trail[0]?.changes).toEqual([]);
   });
 });
 
@@ -205,13 +214,13 @@ describe("normalizeEntities", () => {
     );
     expect(state.docs).toEqual([]);
     expect(state.notes).toEqual([{ id: "n1", title: "n", tags: ["x"] }]);
-    expect(state.tasks[0].criteria).toEqual([
+    expect(state.tasks[0]?.criteria).toEqual([
       { id: "c1", text: "ships", script: "", status: "pending" },
     ]);
-    expect(state.runbooks[0].steps).toEqual([
+    expect(state.runbooks[0]?.steps).toEqual([
       { id: "s1", text: "build", command: "make", position: "a0" },
     ]);
-    expect(state.runbooks[0].runs[0].results).toEqual([
+    expect(state.runbooks[0]?.runs[0]?.results).toEqual([
       { step_id: "s1", status: "done", note: "", actor: "ann", ts: 6 },
     ]);
   });

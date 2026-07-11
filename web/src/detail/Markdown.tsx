@@ -19,7 +19,7 @@ const components: Components = {
     const block = match !== null || text.includes("\n");
     if (!block) return <code className="md-code-inline">{children}</code>;
 
-    const language = match ? match[1] : null;
+    const language = match?.[1] ?? null;
     const code = text.replace(/\n$/, "");
     const html = highlightHTML(code, language);
     return (

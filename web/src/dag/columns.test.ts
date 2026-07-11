@@ -77,7 +77,7 @@ describe("assignColumns", () => {
       ],
     });
     // The reuse invariant, called out explicitly.
-    expect(out.rows[3].edges).toContainEqual({ fromColumn: 0, toColumn: 1, kind: "fork" });
+    expect(out.rows[3]?.edges).toContainEqual({ fromColumn: 0, toColumn: 1, kind: "fork" });
     expect(out.totalColumns).toBe(2);
   });
 
@@ -133,7 +133,7 @@ describe("assignColumns", () => {
 
   it("terminates a parent outside the page as an open edge", () => {
     const single = run([{ sha: "X", parents: ["Y"] }]);
-    expect(single.rows[0].edges).toEqual([{ fromColumn: 0, toColumn: 0, kind: "open" }]);
+    expect(single.rows[0]?.edges).toEqual([{ fromColumn: 0, toColumn: 0, kind: "open" }]);
     expect(single.totalColumns).toBe(1);
 
     // A merge whose second parent is off-page: the in-page first parent still
@@ -142,7 +142,7 @@ describe("assignColumns", () => {
       { sha: "M", parents: ["A", "Q"] },
       { sha: "A", parents: [] },
     ]);
-    expect(merge.rows[0].edges).toEqual([
+    expect(merge.rows[0]?.edges).toEqual([
       { fromColumn: 0, toColumn: 0, kind: "pass" },
       { fromColumn: 0, toColumn: 0, kind: "open" },
     ]);
@@ -158,7 +158,9 @@ describe("assignColumns", () => {
       { sha: "C", parents: ["P"] },
     ]);
     expect(out.rows[0]).toEqual({ sha: "P", column: 0, edges: [] });
-    expect(out.rows[1].edges).toEqual([{ fromColumn: out.rows[1].column, toColumn: out.rows[1].column, kind: "open" }]);
+    const c = out.rows[1];
+    if (c === undefined) throw new Error("expected a second row");
+    expect(c.edges).toEqual([{ fromColumn: c.column, toColumn: c.column, kind: "open" }]);
   });
 
   it("dedupes duplicate parents without opening a spurious column", () => {
@@ -167,7 +169,7 @@ describe("assignColumns", () => {
       { sha: "X", parents: [] },
     ]);
     expect(out.totalColumns).toBe(1);
-    expect(out.rows[0].edges).toEqual([{ fromColumn: 0, toColumn: 0, kind: "pass" }]);
+    expect(out.rows[0]?.edges).toEqual([{ fromColumn: 0, toColumn: 0, kind: "pass" }]);
   });
 
   it("is invariant to paging: concatenated pages equal a single fetch", () => {
@@ -188,8 +190,8 @@ describe("assignColumns", () => {
     // Paging actually matters: page 1 alone dangles C's parent B as open, while
     // the concatenated run resolves it to a straight pass.
     const firstPageOnly = run(page1);
-    expect(firstPageOnly.rows[2].edges).toEqual([{ fromColumn: 0, toColumn: 0, kind: "open" }]);
-    expect(run(full).rows[2].edges).toEqual([{ fromColumn: 0, toColumn: 0, kind: "pass" }]);
+    expect(firstPageOnly.rows[2]?.edges).toEqual([{ fromColumn: 0, toColumn: 0, kind: "open" }]);
+    expect(run(full).rows[2]?.edges).toEqual([{ fromColumn: 0, toColumn: 0, kind: "pass" }]);
   });
 
   it("is deterministic across repeated runs", () => {

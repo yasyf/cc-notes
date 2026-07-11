@@ -33,7 +33,8 @@ export function filtersActive(f: TimelineFilters): boolean {
 function trunkName(graph: Graph): string {
   const names = new Set(graph.lanes.map((l) => l.name));
   if (names.has(graph.repo.trunk)) return graph.repo.trunk;
-  return graph.lanes.length > 0 ? graph.lanes[0].name : "";
+  const [first] = graph.lanes;
+  return first !== undefined ? first.name : "";
 }
 
 // applyFilters returns a graph whose events and entities are narrowed to the
