@@ -165,7 +165,7 @@ Attachment content lives on your git host's LFS endpoint and counts against its 
 
 ## Visualize
 
-`cc-notes viz` opens a live web view of the current repo. Every branch draws as a swimlane with its fork and merge points, and every note, task, and doc lifecycle event pins to the commit that produced it. One tab is the swimlane timeline, the other a commit DAG; both stream updates over SSE, so the view moves as agents claim, edit, and close work.
+`cc-notes viz` opens a live web view of the current repo. Every branch draws as a swimlane with its fork and merge points, and every note, task, and doc lifecycle event pins to the commit that produced it. Three tabs: the swimlane timeline, a commit DAG, and Browse — a faceted entity table with a task kanban, global search, and a markdown detail sidebar. All of them stream updates over SSE, so the view moves as agents claim, edit, and close work.
 
 ```bash
 cc-notes viz
