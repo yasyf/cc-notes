@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -496,7 +497,7 @@ func newStepListCmd() *cobra.Command {
 				return printJSON(out, runbookStepDTOs(rb.Steps))
 			}
 			for i, st := range rb.Steps {
-				if _, err := fmt.Fprintf(out, "%s\t%d\t%s\t%s\n", shortWireID(st.ID), i+1, st.Text, orDash(st.Command)); err != nil {
+				if _, err := fmt.Fprintf(out, "%s\t%d\t%s\t%s\n", render.ShortWireID(st.ID), i+1, st.Text, orDash(st.Command)); err != nil {
 					return err
 				}
 			}
@@ -715,7 +716,7 @@ func newRunFinishCmd() *cobra.Command {
 				return err
 			}
 			if target.Status != model.RunRunning {
-				return &ConflictError{Msg: fmt.Sprintf("run %s already %s", shortWireID(target.ID), target.Status)}
+				return &ConflictError{Msg: fmt.Sprintf("run %s already %s", render.ShortWireID(target.ID), target.Status)}
 			}
 			snapshot, err := s.Append(ctx, ref, []model.Op{model.FinishRun{ID: target.ID, Status: finishStatus(target, failed, abandoned)}})
 			if err != nil {

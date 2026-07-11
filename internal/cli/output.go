@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/render"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -380,19 +381,19 @@ func newNoteDTO(n model.Note, drift string, atts []attachmentDTO) noteDTO {
 		ID:           string(n.ID),
 		Title:        n.Title,
 		Body:         n.Body,
-		Tags:         emptyNotNil(n.Tags),
+		Tags:         render.EmptyNotNil(n.Tags),
 		Anchors:      anchors,
 		Author:       string(n.Author),
-		CreatedAt:    rfc3339(n.CreatedAt),
-		UpdatedAt:    rfc3339(n.UpdatedAt),
-		VerifiedAt:   optTime(n.VerifiedAt),
-		VerifiedBy:   optString(string(n.VerifiedBy)),
+		CreatedAt:    render.RFC3339(n.CreatedAt),
+		UpdatedAt:    render.RFC3339(n.UpdatedAt),
+		VerifiedAt:   render.OptTime(n.VerifiedAt),
+		VerifiedBy:   render.OptString(string(n.VerifiedBy)),
 		SupersededBy: superseded,
-		Drift:        optString(drift),
+		Drift:        render.OptString(drift),
 		Deleted:      n.Deleted,
-		StaleAt:      optTime(n.StaleAt),
-		StaleBy:      optString(string(n.StaleBy)),
-		StaleReason:  optString(n.StaleReason),
+		StaleAt:      render.OptTime(n.StaleAt),
+		StaleBy:      render.OptString(string(n.StaleBy)),
+		StaleReason:  render.OptString(n.StaleReason),
 		Attachments:  atts,
 	}
 }
@@ -418,19 +419,19 @@ func newDocDTO(d model.Doc, drift string, atts []attachmentDTO) docDTO {
 		Title:        d.Title,
 		Body:         d.Body,
 		When:         d.When,
-		Tags:         emptyNotNil(d.Tags),
+		Tags:         render.EmptyNotNil(d.Tags),
 		Anchors:      anchors,
 		Author:       string(d.Author),
-		CreatedAt:    rfc3339(d.CreatedAt),
-		UpdatedAt:    rfc3339(d.UpdatedAt),
-		VerifiedAt:   optTime(d.VerifiedAt),
-		VerifiedBy:   optString(string(d.VerifiedBy)),
+		CreatedAt:    render.RFC3339(d.CreatedAt),
+		UpdatedAt:    render.RFC3339(d.UpdatedAt),
+		VerifiedAt:   render.OptTime(d.VerifiedAt),
+		VerifiedBy:   render.OptString(string(d.VerifiedBy)),
 		SupersededBy: superseded,
-		Drift:        optString(drift),
+		Drift:        render.OptString(drift),
 		Deleted:      d.Deleted,
-		StaleAt:      optTime(d.StaleAt),
-		StaleBy:      optString(string(d.StaleBy)),
-		StaleReason:  optString(d.StaleReason),
+		StaleAt:      render.OptTime(d.StaleAt),
+		StaleBy:      render.OptString(string(d.StaleBy)),
+		StaleReason:  render.OptString(d.StaleReason),
 		Attachments:  atts,
 	}
 }
@@ -446,11 +447,11 @@ func newLogDTO(l model.Log, atts []attachmentDTO) logDTO {
 		ID:          string(l.ID),
 		Title:       l.Title,
 		Entries:     logEntryDTOs(l.Entries),
-		Tags:        emptyNotNil(l.Tags),
+		Tags:        render.EmptyNotNil(l.Tags),
 		Anchors:     anchors,
 		Author:      string(l.Author),
-		CreatedAt:   rfc3339(l.CreatedAt),
-		UpdatedAt:   rfc3339(l.UpdatedAt),
+		CreatedAt:   render.RFC3339(l.CreatedAt),
+		UpdatedAt:   render.RFC3339(l.UpdatedAt),
 		Deleted:     l.Deleted,
 		Attachments: atts,
 	}
@@ -461,7 +462,7 @@ func newLogDTO(l model.Log, atts []attachmentDTO) logDTO {
 func logEntryDTOs(entries []model.LogEntry) []logEntryDTO {
 	out := make([]logEntryDTO, len(entries))
 	for i, e := range entries {
-		out[i] = logEntryDTO{Author: string(e.Author), TS: rfc3339(e.TS), Text: e.Text}
+		out[i] = logEntryDTO{Author: string(e.Author), TS: render.RFC3339(e.TS), Text: e.Text}
 	}
 	return out
 }
@@ -475,20 +476,20 @@ func newTaskDTO(t model.Task, blocks []model.EntityID) taskDTO {
 		Type:         string(t.Type),
 		Status:       string(t.Status),
 		Priority:     int(t.Priority),
-		Assignee:     optString(string(t.Assignee)),
-		Labels:       emptyNotNil(t.Labels),
-		BlockedBy:    idStrings(t.BlockedBy),
-		Blocks:       idStrings(blocks),
-		Parent:       optString(string(t.Parent)),
+		Assignee:     render.OptString(string(t.Assignee)),
+		Labels:       render.EmptyNotNil(t.Labels),
+		BlockedBy:    render.IDStrings(t.BlockedBy),
+		Blocks:       render.IDStrings(blocks),
+		Parent:       render.OptString(string(t.Parent)),
 		Comments:     commentDTOs(t.Comments),
-		Commits:      shaStrings(t.Commits),
-		Lease:        leaseDTO{Holder: optString(string(t.Assignee)), Heartbeat: optTime(t.HeartbeatAt)},
-		CreatedAt:    rfc3339(t.CreatedAt),
-		UpdatedAt:    rfc3339(t.UpdatedAt),
-		StartedAt:    optTime(t.StartedAt),
-		ClosedAt:     optTime(t.ClosedAt),
-		Sprint:       optString(string(t.Sprint)),
-		Project:      optString(string(t.Project)),
+		Commits:      render.SHAStrings(t.Commits),
+		Lease:        leaseDTO{Holder: render.OptString(string(t.Assignee)), Heartbeat: render.OptTime(t.HeartbeatAt)},
+		CreatedAt:    render.RFC3339(t.CreatedAt),
+		UpdatedAt:    render.RFC3339(t.UpdatedAt),
+		StartedAt:    render.OptTime(t.StartedAt),
+		ClosedAt:     render.OptTime(t.ClosedAt),
+		Sprint:       render.OptString(string(t.Sprint)),
+		Project:      render.OptString(string(t.Project)),
 		Criteria:     criterionDTOs(t.Criteria),
 		ClosedForced: closedForced(t),
 	}
@@ -523,7 +524,7 @@ func closedForced(t model.Task) bool {
 func commentDTOs(comments []model.Comment) []commentDTO {
 	out := make([]commentDTO, len(comments))
 	for i, c := range comments {
-		out[i] = commentDTO{Author: string(c.Author), TS: rfc3339(c.TS), Body: c.Body}
+		out[i] = commentDTO{Author: string(c.Author), TS: render.RFC3339(c.TS), Body: c.Body}
 	}
 	return out
 }
@@ -533,21 +534,21 @@ func commentDTOs(comments []model.Comment) []commentDTO {
 func newSprintDTO(s model.Sprint, tasks []model.EntityID) sprintDTO {
 	return sprintDTO{
 		ID:          string(s.ID),
-		Project:     optString(string(s.Project)),
+		Project:     render.OptString(string(s.Project)),
 		Title:       s.Title,
 		Description: s.Description,
 		Status:      string(s.Status),
-		StartDate:   optTime(s.StartDate),
-		EndDate:     optTime(s.EndDate),
-		Labels:      emptyNotNil(s.Labels),
-		Commits:     shaStrings(s.Commits),
+		StartDate:   render.OptTime(s.StartDate),
+		EndDate:     render.OptTime(s.EndDate),
+		Labels:      render.EmptyNotNil(s.Labels),
+		Commits:     render.SHAStrings(s.Commits),
 		Comments:    commentDTOs(s.Comments),
 		Author:      string(s.Author),
-		CreatedAt:   rfc3339(s.CreatedAt),
-		UpdatedAt:   rfc3339(s.UpdatedAt),
-		StartedAt:   optTime(s.StartedAt),
-		ClosedAt:    optTime(s.ClosedAt),
-		Tasks:       idStrings(tasks),
+		CreatedAt:   render.RFC3339(s.CreatedAt),
+		UpdatedAt:   render.RFC3339(s.UpdatedAt),
+		StartedAt:   render.OptTime(s.StartedAt),
+		ClosedAt:    render.OptTime(s.ClosedAt),
+		Tasks:       render.IDStrings(tasks),
 	}
 }
 
@@ -559,15 +560,15 @@ func newProjectDTO(p model.Project, sprints, tasks []model.EntityID) projectDTO 
 		Title:       p.Title,
 		Description: p.Description,
 		Status:      string(p.Status),
-		Labels:      emptyNotNil(p.Labels),
-		Commits:     shaStrings(p.Commits),
+		Labels:      render.EmptyNotNil(p.Labels),
+		Commits:     render.SHAStrings(p.Commits),
 		Comments:    commentDTOs(p.Comments),
 		Author:      string(p.Author),
-		CreatedAt:   rfc3339(p.CreatedAt),
-		UpdatedAt:   rfc3339(p.UpdatedAt),
-		ClosedAt:    optTime(p.ClosedAt),
-		Sprints:     idStrings(sprints),
-		Tasks:       idStrings(tasks),
+		CreatedAt:   render.RFC3339(p.CreatedAt),
+		UpdatedAt:   render.RFC3339(p.UpdatedAt),
+		ClosedAt:    render.OptTime(p.ClosedAt),
+		Sprints:     render.IDStrings(sprints),
+		Tasks:       render.IDStrings(tasks),
 	}
 }
 
@@ -608,20 +609,20 @@ func renderNoteShow(n model.Note, drift string, supersedes []model.EntityID, att
 	header(&b, "id", string(n.ID))
 	header(&b, "title", n.Title)
 	header(&b, "tags", csvOrDash(n.Tags))
-	header(&b, "commits", csvOrDash(anchorValues(n.Anchors, model.AnchorCommit)))
-	header(&b, "paths", csvOrDash(anchorValues(n.Anchors, model.AnchorPath)))
-	header(&b, "dirs", csvOrDash(anchorValues(n.Anchors, model.AnchorDir)))
-	header(&b, "branches", csvOrDash(anchorValues(n.Anchors, model.AnchorBranch)))
+	header(&b, "commits", csvOrDash(render.AnchorValues(n.Anchors, model.AnchorCommit)))
+	header(&b, "paths", csvOrDash(render.AnchorValues(n.Anchors, model.AnchorPath)))
+	header(&b, "dirs", csvOrDash(render.AnchorValues(n.Anchors, model.AnchorDir)))
+	header(&b, "branches", csvOrDash(render.AnchorValues(n.Anchors, model.AnchorBranch)))
 	header(&b, "author", string(n.Author))
-	header(&b, "created", rfc3339(n.CreatedAt))
-	header(&b, "updated", rfc3339(n.UpdatedAt))
-	header(&b, "verified_at", orDash(optTimeString(n.VerifiedAt)))
+	header(&b, "created", render.RFC3339(n.CreatedAt))
+	header(&b, "updated", render.RFC3339(n.UpdatedAt))
+	header(&b, "verified_at", orDash(render.OptTimeString(n.VerifiedAt)))
 	header(&b, "verified_by", orDash(string(n.VerifiedBy)))
 	header(&b, "superseded_by", csvOrDash(shortIDs(n.SupersededBy)))
 	header(&b, "supersedes", csvOrDash(shortIDs(supersedes)))
 	header(&b, "drift", orDash(drift))
 	if n.StaleAt != 0 {
-		header(&b, "stale_at", orDash(optTimeString(n.StaleAt)))
+		header(&b, "stale_at", orDash(render.OptTimeString(n.StaleAt)))
 		header(&b, "stale_by", string(n.StaleBy))
 		header(&b, "stale_reason", n.StaleReason)
 	}
@@ -662,20 +663,20 @@ func renderDocShow(d model.Doc, drift string, supersedes []model.EntityID, atts 
 	header(&b, "title", d.Title)
 	header(&b, "when", orDash(d.When))
 	header(&b, "tags", csvOrDash(d.Tags))
-	header(&b, "commits", csvOrDash(anchorValues(d.Anchors, model.AnchorCommit)))
-	header(&b, "paths", csvOrDash(anchorValues(d.Anchors, model.AnchorPath)))
-	header(&b, "dirs", csvOrDash(anchorValues(d.Anchors, model.AnchorDir)))
-	header(&b, "branches", csvOrDash(anchorValues(d.Anchors, model.AnchorBranch)))
+	header(&b, "commits", csvOrDash(render.AnchorValues(d.Anchors, model.AnchorCommit)))
+	header(&b, "paths", csvOrDash(render.AnchorValues(d.Anchors, model.AnchorPath)))
+	header(&b, "dirs", csvOrDash(render.AnchorValues(d.Anchors, model.AnchorDir)))
+	header(&b, "branches", csvOrDash(render.AnchorValues(d.Anchors, model.AnchorBranch)))
 	header(&b, "author", string(d.Author))
-	header(&b, "created", rfc3339(d.CreatedAt))
-	header(&b, "updated", rfc3339(d.UpdatedAt))
-	header(&b, "verified_at", orDash(optTimeString(d.VerifiedAt)))
+	header(&b, "created", render.RFC3339(d.CreatedAt))
+	header(&b, "updated", render.RFC3339(d.UpdatedAt))
+	header(&b, "verified_at", orDash(render.OptTimeString(d.VerifiedAt)))
 	header(&b, "verified_by", orDash(string(d.VerifiedBy)))
 	header(&b, "superseded_by", csvOrDash(shortIDs(d.SupersededBy)))
 	header(&b, "supersedes", csvOrDash(shortIDs(supersedes)))
 	header(&b, "drift", orDash(drift))
 	if d.StaleAt != 0 {
-		header(&b, "stale_at", orDash(optTimeString(d.StaleAt)))
+		header(&b, "stale_at", orDash(render.OptTimeString(d.StaleAt)))
 		header(&b, "stale_by", string(d.StaleBy))
 		header(&b, "stale_reason", d.StaleReason)
 	}
@@ -701,19 +702,19 @@ func renderLogShow(l model.Log, atts []attachmentDTO) string {
 	header(&b, "id", string(l.ID))
 	header(&b, "title", l.Title)
 	header(&b, "tags", csvOrDash(l.Tags))
-	header(&b, "commits", csvOrDash(anchorValues(l.Anchors, model.AnchorCommit)))
-	header(&b, "paths", csvOrDash(anchorValues(l.Anchors, model.AnchorPath)))
-	header(&b, "dirs", csvOrDash(anchorValues(l.Anchors, model.AnchorDir)))
-	header(&b, "branches", csvOrDash(anchorValues(l.Anchors, model.AnchorBranch)))
+	header(&b, "commits", csvOrDash(render.AnchorValues(l.Anchors, model.AnchorCommit)))
+	header(&b, "paths", csvOrDash(render.AnchorValues(l.Anchors, model.AnchorPath)))
+	header(&b, "dirs", csvOrDash(render.AnchorValues(l.Anchors, model.AnchorDir)))
+	header(&b, "branches", csvOrDash(render.AnchorValues(l.Anchors, model.AnchorBranch)))
 	header(&b, "author", string(l.Author))
-	header(&b, "created", rfc3339(l.CreatedAt))
-	header(&b, "updated", rfc3339(l.UpdatedAt))
+	header(&b, "created", render.RFC3339(l.CreatedAt))
+	header(&b, "updated", render.RFC3339(l.UpdatedAt))
 	attachmentHeaders(&b, atts)
 	if l.Deleted {
 		header(&b, "deleted", "true")
 	}
 	for _, e := range l.Entries {
-		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", e.Author, rfc3339(e.TS), e.Text)
+		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", e.Author, render.RFC3339(e.TS), e.Text)
 	}
 	return b.String()
 }
@@ -734,10 +735,10 @@ func renderTaskShow(t model.Task, blocks []model.EntityID) string {
 	header(&b, "blocked_by", csvOrDash(shortIDs(t.BlockedBy)))
 	header(&b, "blocks", csvOrDash(shortIDs(blocks)))
 	header(&b, "parent", orDash(shortID(t.Parent)))
-	header(&b, "created", rfc3339(t.CreatedAt))
-	header(&b, "updated", rfc3339(t.UpdatedAt))
-	header(&b, "started", orDash(optTimeString(t.StartedAt)))
-	header(&b, "closed", orDash(optTimeString(t.ClosedAt)))
+	header(&b, "created", render.RFC3339(t.CreatedAt))
+	header(&b, "updated", render.RFC3339(t.UpdatedAt))
+	header(&b, "started", orDash(render.OptTimeString(t.StartedAt)))
+	header(&b, "closed", orDash(render.OptTimeString(t.ClosedAt)))
 	header(&b, "commits", csvOrDash(shortSHAs(t.Commits)))
 	if t.Description != "" {
 		b.WriteByte('\n')
@@ -745,7 +746,7 @@ func renderTaskShow(t model.Task, blocks []model.EntityID) string {
 		b.WriteByte('\n')
 	}
 	for _, c := range t.Comments {
-		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, rfc3339(c.TS), c.Body)
+		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, render.RFC3339(c.TS), c.Body)
 	}
 	return b.String()
 }
@@ -760,13 +761,13 @@ func renderSprintShow(s model.Sprint, tasks []model.EntityID) string {
 	header(&b, "project", orDash(shortID(s.Project)))
 	header(&b, "title", s.Title)
 	header(&b, "status", string(s.Status))
-	header(&b, "start_date", orDash(optTimeString(s.StartDate)))
-	header(&b, "end_date", orDash(optTimeString(s.EndDate)))
+	header(&b, "start_date", orDash(render.OptTimeString(s.StartDate)))
+	header(&b, "end_date", orDash(render.OptTimeString(s.EndDate)))
 	header(&b, "labels", csvOrDash(s.Labels))
-	header(&b, "created", rfc3339(s.CreatedAt))
-	header(&b, "updated", rfc3339(s.UpdatedAt))
-	header(&b, "started", orDash(optTimeString(s.StartedAt)))
-	header(&b, "closed", orDash(optTimeString(s.ClosedAt)))
+	header(&b, "created", render.RFC3339(s.CreatedAt))
+	header(&b, "updated", render.RFC3339(s.UpdatedAt))
+	header(&b, "started", orDash(render.OptTimeString(s.StartedAt)))
+	header(&b, "closed", orDash(render.OptTimeString(s.ClosedAt)))
 	header(&b, "commits", csvOrDash(shortSHAs(s.Commits)))
 	if s.Description != "" {
 		b.WriteByte('\n')
@@ -774,7 +775,7 @@ func renderSprintShow(s model.Sprint, tasks []model.EntityID) string {
 		b.WriteByte('\n')
 	}
 	for _, c := range s.Comments {
-		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, rfc3339(c.TS), c.Body)
+		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, render.RFC3339(c.TS), c.Body)
 	}
 	header(&b, "tasks", csvOrDash(shortIDs(tasks)))
 	return b.String()
@@ -790,9 +791,9 @@ func renderProjectShow(p model.Project, sprints, tasks []model.EntityID) string 
 	header(&b, "title", p.Title)
 	header(&b, "status", string(p.Status))
 	header(&b, "labels", csvOrDash(p.Labels))
-	header(&b, "created", rfc3339(p.CreatedAt))
-	header(&b, "updated", rfc3339(p.UpdatedAt))
-	header(&b, "closed", orDash(optTimeString(p.ClosedAt)))
+	header(&b, "created", render.RFC3339(p.CreatedAt))
+	header(&b, "updated", render.RFC3339(p.UpdatedAt))
+	header(&b, "closed", orDash(render.OptTimeString(p.ClosedAt)))
 	header(&b, "commits", csvOrDash(shortSHAs(p.Commits)))
 	if p.Description != "" {
 		b.WriteByte('\n')
@@ -800,7 +801,7 @@ func renderProjectShow(p model.Project, sprints, tasks []model.EntityID) string 
 		b.WriteByte('\n')
 	}
 	for _, c := range p.Comments {
-		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, rfc3339(c.TS), c.Body)
+		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, render.RFC3339(c.TS), c.Body)
 	}
 	header(&b, "sprints", csvOrDash(shortIDs(sprints)))
 	header(&b, "tasks", csvOrDash(shortIDs(tasks)))
@@ -852,11 +853,11 @@ func newRunbookRunDTO(rb model.Runbook, run model.RunbookRun) runbookRunDTO {
 	}
 	return runbookRunDTO{
 		ID:         run.ID,
-		Task:       optString(string(run.Task)),
+		Task:       render.OptString(string(run.Task)),
 		Runner:     string(run.Runner),
 		Status:     string(run.Status),
-		StartedAt:  rfc3339(run.StartedAt),
-		FinishedAt: optTime(run.FinishedAt),
+		StartedAt:  render.RFC3339(run.StartedAt),
+		FinishedAt: render.OptTime(run.FinishedAt),
 		Steps:      steps,
 	}
 }
@@ -874,12 +875,12 @@ func newRunbookDTO(rb model.Runbook) runbookDTO {
 		Status:      string(rb.Status),
 		Steps:       runbookStepDTOs(rb.Steps),
 		Runs:        runs,
-		Labels:      emptyNotNil(rb.Labels),
+		Labels:      render.EmptyNotNil(rb.Labels),
 		Comments:    commentDTOs(rb.Comments),
 		Author:      string(rb.Author),
-		CreatedAt:   rfc3339(rb.CreatedAt),
-		UpdatedAt:   rfc3339(rb.UpdatedAt),
-		ArchivedAt:  optTime(rb.ArchivedAt),
+		CreatedAt:   render.RFC3339(rb.CreatedAt),
+		UpdatedAt:   render.RFC3339(rb.UpdatedAt),
+		ArchivedAt:  render.OptTime(rb.ArchivedAt),
 	}
 }
 
@@ -893,7 +894,7 @@ func leanRunbookLine(rb model.Runbook) string {
 // <short7>\t<status>\t<runner>\t<YYYY-MM-DD started>\t<done+skipped>/<total steps>.
 func leanRunLine(rb model.Runbook, run model.RunbookRun) string {
 	done, _, _ := runStepCounts(rb, run)
-	return fmt.Sprintf("%s\t%s\t%s\t%s\t%d/%d", shortWireID(run.ID), run.Status, run.Runner, dateUTC(run.StartedAt), done, len(rb.Steps))
+	return fmt.Sprintf("%s\t%s\t%s\t%s\t%d/%d", render.ShortWireID(run.ID), run.Status, run.Runner, dateUTC(run.StartedAt), done, len(rb.Steps))
 }
 
 // runStepCounts tallies a run's results over the runbook's current steps: the
@@ -929,20 +930,20 @@ func renderRunbookShow(rb model.Runbook) string {
 	header(&b, "title", rb.Title)
 	header(&b, "status", string(rb.Status))
 	header(&b, "labels", csvOrDash(rb.Labels))
-	header(&b, "created", rfc3339(rb.CreatedAt))
-	header(&b, "updated", rfc3339(rb.UpdatedAt))
-	header(&b, "archived", orDash(optTimeString(rb.ArchivedAt)))
+	header(&b, "created", render.RFC3339(rb.CreatedAt))
+	header(&b, "updated", render.RFC3339(rb.UpdatedAt))
+	header(&b, "archived", orDash(render.OptTimeString(rb.ArchivedAt)))
 	if rb.Description != "" {
 		b.WriteByte('\n')
 		b.WriteString(rb.Description)
 		b.WriteByte('\n')
 	}
 	for _, c := range rb.Comments {
-		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, rfc3339(c.TS), c.Body)
+		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, render.RFC3339(c.TS), c.Body)
 	}
 	b.WriteString("\nsteps:\n")
 	for i, st := range rb.Steps {
-		fmt.Fprintf(&b, "  %d. [%s] %s\n", i+1, shortWireID(st.ID), st.Text)
+		fmt.Fprintf(&b, "  %d. [%s] %s\n", i+1, render.ShortWireID(st.ID), st.Text)
 		if st.Command != "" {
 			fmt.Fprintf(&b, "     $ %s\n", st.Command)
 		}
@@ -974,10 +975,10 @@ func runbookRunSummaryLine(rb model.Runbook, run model.RunbookRun) string {
 	done := progress - skipped
 	finished := "running"
 	if run.FinishedAt != 0 {
-		finished = rfc3339(run.FinishedAt)
+		finished = render.RFC3339(run.FinishedAt)
 	}
 	return fmt.Sprintf("-- %s %s by %s %s → %s (%d done, %d skipped, %d failed / %d) task %s",
-		shortWireID(run.ID), run.Status, run.Runner, rfc3339(run.StartedAt), finished, done, skipped, failed, len(rb.Steps), orDash(shortID(run.Task)))
+		render.ShortWireID(run.ID), run.Status, run.Runner, render.RFC3339(run.StartedAt), finished, done, skipped, failed, len(rb.Steps), orDash(shortID(run.Task)))
 }
 
 // renderRunShow renders one run: the fixed-order run header, then one line per
@@ -989,8 +990,8 @@ func renderRunShow(rb model.Runbook, run model.RunbookRun) string {
 	header(&b, "runbook", string(rb.ID))
 	header(&b, "status", string(run.Status))
 	header(&b, "runner", string(run.Runner))
-	header(&b, "started", rfc3339(run.StartedAt))
-	header(&b, "finished", orDash(optTimeString(run.FinishedAt)))
+	header(&b, "started", render.RFC3339(run.StartedAt))
+	header(&b, "finished", orDash(render.OptTimeString(run.FinishedAt)))
 	header(&b, "task", orDash(shortID(run.Task)))
 	byStep := make(map[string]model.RunbookStepResult, len(run.Results))
 	for _, r := range run.Results {
@@ -1003,7 +1004,7 @@ func renderRunShow(rb model.Runbook, run model.RunbookRun) string {
 			status = string(res.Status)
 			note = res.Note
 		}
-		fmt.Fprintf(&b, "  %s %s %s\n", shortWireID(st.ID), status, st.Text)
+		fmt.Fprintf(&b, "  %s %s %s\n", render.ShortWireID(st.ID), status, st.Text)
 		if note != "" {
 			fmt.Fprintf(&b, "     note: %s\n", note)
 		}
@@ -1028,31 +1029,7 @@ func header(b *strings.Builder, key, value string) {
 	b.WriteByte('\n')
 }
 
-func rfc3339(ts int64) string { return time.Unix(ts, 0).UTC().Format(time.RFC3339) }
-
 func dateUTC(ts int64) string { return time.Unix(ts, 0).UTC().Format("2006-01-02") }
-
-func optTime(ts int64) *string {
-	if ts == 0 {
-		return nil
-	}
-	s := rfc3339(ts)
-	return &s
-}
-
-func optTimeString(ts int64) string {
-	if ts == 0 {
-		return ""
-	}
-	return rfc3339(ts)
-}
-
-func optString(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
 
 func orDash(s string) string {
 	if s == "" {
@@ -1075,37 +1052,10 @@ func shortID(id model.EntityID) string {
 	return id.Short()
 }
 
-// shortWireID clamps an opaque runbook wire id (step or run) to its 7-char
-// display prefix, tolerating ids shorter than 7 — a pack synced from another
-// client may carry one. EntityID.Short slices unconditionally and is only safe
-// for full-length entity shas.
-func shortWireID(id string) string {
-	if len(id) < 7 {
-		return id
-	}
-	return id[:7]
-}
-
 func shortIDs(ids []model.EntityID) []string {
 	out := make([]string, len(ids))
 	for i, id := range ids {
 		out[i] = id.Short()
-	}
-	return out
-}
-
-func idStrings(ids []model.EntityID) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, string(id))
-	}
-	return out
-}
-
-func shaStrings(shas []model.SHA) []string {
-	out := make([]string, 0, len(shas))
-	for _, s := range shas {
-		out = append(out, string(s))
 	}
 	return out
 }
@@ -1116,21 +1066,4 @@ func shortSHAs(shas []model.SHA) []string {
 		out[i] = string(s)[:7]
 	}
 	return out
-}
-
-func emptyNotNil(items []string) []string {
-	if items == nil {
-		return []string{}
-	}
-	return items
-}
-
-func anchorValues(anchors []model.Anchor, kind model.AnchorKind) []string {
-	var values []string
-	for _, a := range anchors {
-		if a.Kind == kind {
-			values = append(values, a.Value)
-		}
-	}
-	return values
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/fold"
+	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/internal/trail"
 	"github.com/yasyf/cc-notes/model"
@@ -158,7 +159,7 @@ var simpleSetFields = map[string]bool{
 
 func renderHistoryText(w io.Writer, entries []trail.Entry) error {
 	for _, e := range entries {
-		header := fmt.Sprintf("%s  %s  %s", shortSHA(e.Commit.SHA), e.Commit.Author, rfc3339(e.Commit.AuthorTime))
+		header := fmt.Sprintf("%s  %s  %s", shortSHA(e.Commit.SHA), e.Commit.Author, render.RFC3339(e.Commit.AuthorTime))
 		if verb := historyVerb(e); verb != "" {
 			header += "  " + verb
 		}
@@ -232,7 +233,7 @@ func formatTrailScalar(field string, v any) string {
 			if n == 0 {
 				return ""
 			}
-			return rfc3339(int64(n))
+			return render.RFC3339(int64(n))
 		}
 	}
 	return scalarString(v)
@@ -326,7 +327,7 @@ func newHistoryEntryDTO(e trail.Entry) historyEntryDTO {
 	changes := make([]historyChangeDTO, len(e.Changes))
 	for i, ch := range e.Changes {
 		if ch.Scalar {
-			changes[i] = historyChangeDTO{Field: ch.Field, From: optString(formatTrailScalar(ch.Field, ch.From)), To: optString(formatTrailScalar(ch.Field, ch.To))}
+			changes[i] = historyChangeDTO{Field: ch.Field, From: render.OptString(formatTrailScalar(ch.Field, ch.From)), To: render.OptString(formatTrailScalar(ch.Field, ch.To))}
 		} else {
 			changes[i] = historyChangeDTO{Field: ch.Field, Added: formatTrailSet(ch.Field, ch.Added), Removed: formatTrailSet(ch.Field, ch.Removed)}
 		}
@@ -334,7 +335,7 @@ func newHistoryEntryDTO(e trail.Entry) historyEntryDTO {
 	return historyEntryDTO{
 		SHA:     string(e.Commit.SHA),
 		Author:  string(e.Commit.Author),
-		Time:    rfc3339(e.Commit.AuthorTime),
+		Time:    render.RFC3339(e.Commit.AuthorTime),
 		Lamport: uint64(e.Commit.Pack.Lamport),
 		Kind:    e.Kind,
 		Covers:  e.Covers,

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
@@ -459,7 +460,7 @@ func resolveStep(rb model.Runbook, prefix string) (model.RunbookStep, error) {
 			if i > 0 {
 				b.WriteString("; ")
 			}
-			fmt.Fprintf(&b, "%s %s", shortWireID(st.ID), st.Text)
+			fmt.Fprintf(&b, "%s %s", render.ShortWireID(st.ID), st.Text)
 		}
 		return model.RunbookStep{}, fmt.Errorf("%w: step prefix %q matches %d: %s", store.ErrAmbiguous, prefix, len(matches), b.String())
 	}
@@ -519,7 +520,7 @@ func runCandidates(runs []model.RunbookRun) string {
 		if i > 0 {
 			b.WriteString("; ")
 		}
-		fmt.Fprintf(&b, "%s %s %s", shortWireID(r.ID), r.Status, dateUTC(r.StartedAt))
+		fmt.Fprintf(&b, "%s %s %s", render.ShortWireID(r.ID), r.Status, dateUTC(r.StartedAt))
 	}
 	return b.String()
 }
