@@ -23,18 +23,6 @@ const (
 	verdictDangling   = "DANGLING"
 )
 
-// reviewedNote pairs a note with its computed review verdict.
-type reviewedNote struct {
-	note    model.Note
-	verdict string
-}
-
-// reviewedDoc pairs a doc with its computed review verdict.
-type reviewedDoc struct {
-	doc     model.Doc
-	verdict string
-}
-
 // freshEntity carries the freshness-relevant fields a Note and a Doc share —
 // anchors, content witness, last-verify time, the out-of-date flag, and
 // supersede edges — so one verdict/drift implementation serves both kinds.
@@ -226,7 +214,7 @@ func liveAnchorOID(ctx context.Context, s *store.Store, head model.SHA, a model.
 // a superseded note is surfaced only when its edge dangles — it points at a
 // note that has been tombstoned. Fresh notes are dropped. Order follows
 // ListNotes: creation time then id.
-func reviewNotes(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) ([]reviewedNote, error) {
+func reviewNotes(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) ([]reviewed[model.Note], error) {
 	all, err := s.ListNotes(ctx, false, true)
 	if err != nil {
 		return nil, err
@@ -235,11 +223,11 @@ func reviewNotes(ctx context.Context, s *store.Store, head model.SHA, now time.T
 	for _, n := range all {
 		exists[n.ID] = true
 	}
-	var reviewed []reviewedNote
+	var out []reviewed[model.Note]
 	for _, n := range all {
 		if len(n.SupersededBy) > 0 {
 			if supersedeDangling(freshFromNote(n), exists) {
-				reviewed = append(reviewed, reviewedNote{note: n, verdict: verdictDangling})
+				out = append(out, reviewed[model.Note]{entity: n, verdict: verdictDangling})
 			}
 			continue
 		}
@@ -248,10 +236,10 @@ func reviewNotes(ctx context.Context, s *store.Store, head model.SHA, now time.T
 			return nil, err
 		}
 		if verdict != "" {
-			reviewed = append(reviewed, reviewedNote{note: n, verdict: verdict})
+			out = append(out, reviewed[model.Note]{entity: n, verdict: verdict})
 		}
 	}
-	return reviewed, nil
+	return out, nil
 }
 
 // reviewDocs folds the doc review set (non-deleted, including superseded for
@@ -260,7 +248,7 @@ func reviewNotes(ctx context.Context, s *store.Store, head model.SHA, now time.T
 // (UNVERIFIED/DRIFTED/STALE/EXPIRED); a superseded doc is surfaced only when its
 // edge dangles. Fresh docs are dropped. Order follows ListDocs: creation time
 // then id.
-func reviewDocs(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) ([]reviewedDoc, error) {
+func reviewDocs(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) ([]reviewed[model.Doc], error) {
 	all, err := s.ListDocs(ctx, false, true)
 	if err != nil {
 		return nil, err
@@ -269,11 +257,11 @@ func reviewDocs(ctx context.Context, s *store.Store, head model.SHA, now time.Ti
 	for _, d := range all {
 		exists[d.ID] = true
 	}
-	var reviewed []reviewedDoc
+	var out []reviewed[model.Doc]
 	for _, d := range all {
 		if len(d.SupersededBy) > 0 {
 			if supersedeDangling(freshFromDoc(d), exists) {
-				reviewed = append(reviewed, reviewedDoc{doc: d, verdict: verdictDangling})
+				out = append(out, reviewed[model.Doc]{entity: d, verdict: verdictDangling})
 			}
 			continue
 		}
@@ -282,10 +270,10 @@ func reviewDocs(ctx context.Context, s *store.Store, head model.SHA, now time.Ti
 			return nil, err
 		}
 		if verdict != "" {
-			reviewed = append(reviewed, reviewedDoc{doc: d, verdict: verdict})
+			out = append(out, reviewed[model.Doc]{entity: d, verdict: verdict})
 		}
 	}
-	return reviewed, nil
+	return out, nil
 }
 
 // supersedeDangling reports whether any of fe's supersede targets has been

@@ -1,16 +1,11 @@
 package cli
 
 import (
-	"cmp"
 	"errors"
-	"fmt"
-	"slices"
-	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/refs"
-	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -192,39 +187,7 @@ func entryText(cmd *cobra.Command, args []string, entry string) (string, error) 
 }
 
 func newLogListCmd() *cobra.Command {
-	var labels []string
-	var filters anchorFilters
-	var all, jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List logs",
-		Args:  exactArgs(0),
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			logs, err := s.ListLogs(cmd.Context(), all)
-			if err != nil {
-				return err
-			}
-			logs = slices.DeleteFunc(logs, func(l model.Log) bool {
-				return !hasAll(l.Tags, labels) ||
-					(filters.commit != "" && !hasAnchorIn(l.Anchors, model.AnchorCommit, filters.commit)) ||
-					(filters.path != "" && !hasAnchorIn(l.Anchors, model.AnchorPath, filters.path)) ||
-					(filters.dir != "" && !hasAnchorIn(l.Anchors, model.AnchorDir, filters.dir)) ||
-					(filters.branch != "" && !hasAnchorIn(l.Anchors, model.AnchorBranch, filters.branch))
-			})
-			sortByUpdated(logs)
-			return printLogList(cmd, s, logs, jsonOut)
-		},
-	}
-	flags := cmd.Flags()
-	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
-	filters.bind(flags)
-	flags.BoolVar(&all, "all", false, "include tombstoned logs")
-	bindJSON(flags, &jsonOut)
-	return cmd
+	return logList.listVerb()
 }
 
 func newLogShowCmd() *cobra.Command {
@@ -304,119 +267,10 @@ func newLogRmCmd() *cobra.Command {
 }
 
 func newLogSearchCmd() *cobra.Command {
-	var labels []string
-	var author string
-	var filters anchorFilters
-	var limit int
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "search QUERY",
-		Short: "Ranked search across log titles, labels, and entry text",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			logs, err := s.ListLogs(cmd.Context(), false)
-			if err != nil {
-				return err
-			}
-			logs = rankLogs(logs, args[0], labels, author, filters.path, filters.dir, filters.branch, filters.commit, limit)
-			return printLogList(cmd, s, logs, jsonOut)
-		},
-	}
-	flags := cmd.Flags()
-	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
-	flags.IntVar(&limit, "limit", 20, "maximum results")
-	flags.StringVar(&author, "author", "", "require author")
-	filters.bind(flags)
-	bindJSON(flags, &jsonOut)
-	return cmd
+	return logList.searchVerb()
 }
 
 // rankLogs filters logs by tag, author, and anchors, keeps those matching
 // query in their title, a tag, or any entry text, then orders by match tier
 // (title > tag > entry), UpdatedAt descending, id ascending, truncated to
 // limit.
-func rankLogs(logs []model.Log, query string, tags []string, author, anchorPath, anchorDir, anchorBranch, anchorCommit string, limit int) []model.Log {
-	q := strings.ToLower(query)
-	type scored struct {
-		log  model.Log
-		tier int
-	}
-	var ranked []scored
-	for _, l := range logs {
-		if !hasAll(l.Tags, tags) ||
-			(author != "" && string(l.Author) != author) ||
-			(anchorPath != "" && !hasAnchorIn(l.Anchors, model.AnchorPath, anchorPath)) ||
-			(anchorDir != "" && !hasAnchorIn(l.Anchors, model.AnchorDir, anchorDir)) ||
-			(anchorBranch != "" && !hasAnchorIn(l.Anchors, model.AnchorBranch, anchorBranch)) ||
-			(anchorCommit != "" && !hasAnchorIn(l.Anchors, model.AnchorCommit, anchorCommit)) {
-			continue
-		}
-		tier := logTier(l, q)
-		if tier == 0 {
-			continue
-		}
-		ranked = append(ranked, scored{log: l, tier: tier})
-	}
-	slices.SortFunc(ranked, func(a, b scored) int {
-		if c := cmp.Compare(b.tier, a.tier); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(b.log.UpdatedAt, a.log.UpdatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.log.ID, b.log.ID)
-	})
-	if limit >= 0 && len(ranked) > limit {
-		ranked = ranked[:limit]
-	}
-	out := make([]model.Log, len(ranked))
-	for i, r := range ranked {
-		out[i] = r.log
-	}
-	return out
-}
-
-// logTier ranks how l matches q: a title substring is tier 3, a tag substring
-// tier 2, any entry text substring tier 1, and no match tier 0. The comparison
-// is case-insensitive; q must already be lowercased.
-func logTier(l model.Log, q string) int {
-	if strings.Contains(strings.ToLower(l.Title), q) {
-		return 3
-	}
-	for _, tag := range l.Tags {
-		if strings.Contains(strings.ToLower(tag), q) {
-			return 2
-		}
-	}
-	for _, e := range l.Entries {
-		if strings.Contains(strings.ToLower(e.Text), q) {
-			return 1
-		}
-	}
-	return 0
-}
-
-func printLogList(cmd *cobra.Command, s *store.Store, logs []model.Log, jsonOut bool) error {
-	out := cmd.OutOrStdout()
-	if jsonOut {
-		dtos := make([]logDTO, len(logs))
-		for i, l := range logs {
-			atts, err := entityAttachments(cmd.Context(), s, l.Attachments)
-			if err != nil {
-				return err
-			}
-			dtos[i] = newLogDTO(l, atts)
-		}
-		return printJSON(out, dtos)
-	}
-	for _, l := range logs {
-		if _, err := fmt.Fprintln(out, leanLogLine(l)); err != nil {
-			return err
-		}
-	}
-	return nil
-}

@@ -157,24 +157,24 @@ func TestNoteVerdict(t *testing.T) {
 }
 
 func TestFilterVerdicts(t *testing.T) {
-	reviewed := []reviewedNote{
-		{note: model.Note{ID: "a"}, verdict: verdictDrifted},
-		{note: model.Note{ID: "b"}, verdict: verdictStale},
-		{note: model.Note{ID: "c"}, verdict: verdictUnverified},
-		{note: model.Note{ID: "d"}, verdict: verdictExpired},
+	rs := []reviewed[model.Note]{
+		{entity: model.Note{ID: "a"}, verdict: verdictDrifted},
+		{entity: model.Note{ID: "b"}, verdict: verdictStale},
+		{entity: model.Note{ID: "c"}, verdict: verdictUnverified},
+		{entity: model.Note{ID: "d"}, verdict: verdictExpired},
 	}
-	if got := filterVerdicts(append([]reviewedNote(nil), reviewed...), false, false, false); len(got) != 4 {
+	if got := filterVerdicts(append([]reviewed[model.Note](nil), rs...), false, false, false); len(got) != 4 {
 		t.Fatalf("no flags kept %d, want all 4", len(got))
 	}
-	drift := filterVerdicts(append([]reviewedNote(nil), reviewed...), true, false, false)
+	drift := filterVerdicts(append([]reviewed[model.Note](nil), rs...), true, false, false)
 	if len(drift) != 1 || drift[0].verdict != verdictDrifted {
 		t.Fatalf("--drift = %+v, want only DRIFTED", drift)
 	}
-	unverified := filterVerdicts(append([]reviewedNote(nil), reviewed...), false, true, false)
+	unverified := filterVerdicts(append([]reviewed[model.Note](nil), rs...), false, true, false)
 	if len(unverified) != 1 || unverified[0].verdict != verdictUnverified {
 		t.Fatalf("--unverified = %+v, want only UNVERIFIED", unverified)
 	}
-	expired := filterVerdicts(append([]reviewedNote(nil), reviewed...), false, false, true)
+	expired := filterVerdicts(append([]reviewed[model.Note](nil), rs...), false, false, true)
 	if len(expired) != 1 || expired[0].verdict != verdictExpired {
 		t.Fatalf("--expired = %+v, want only EXPIRED", expired)
 	}
@@ -209,7 +209,7 @@ func TestRankNotes(t *testing.T) {
 			{ID: "tag", Title: "Other", Tags: []string{"widget"}},
 			{ID: "none", Title: "unrelated", Body: "nothing here"},
 		}
-		got := rankNotes(notes, "widget", nil, "", "", "", "", "", 20)
+		got := rankEntities(notes, "widget", nil, "", "", "", "", "", 20, noteRank)
 		eqIDs(t, got, "title", "tag", "body")
 	})
 
@@ -220,7 +220,7 @@ func TestRankNotes(t *testing.T) {
 			{ID: "d", Title: "widget D", UpdatedAt: 100},
 			{ID: "c", Title: "widget C", UpdatedAt: 100},
 		}
-		got := rankNotes(notes, "widget", nil, "", "", "", "", "", 20)
+		got := rankEntities(notes, "widget", nil, "", "", "", "", "", 20, noteRank)
 		eqIDs(t, got, "a", "b", "c", "d")
 	})
 
@@ -230,7 +230,7 @@ func TestRankNotes(t *testing.T) {
 			{ID: "b", Title: "widget B", UpdatedAt: 200},
 			{ID: "c", Title: "widget C", UpdatedAt: 100},
 		}
-		got := rankNotes(notes, "widget", nil, "", "", "", "", "", 2)
+		got := rankEntities(notes, "widget", nil, "", "", "", "", "", 2, noteRank)
 		eqIDs(t, got, "a", "b")
 	})
 
@@ -239,7 +239,7 @@ func TestRankNotes(t *testing.T) {
 			{ID: "yes", Title: "widget one", Tags: []string{"design"}},
 			{ID: "no", Title: "widget two", Tags: []string{"misc"}},
 		}
-		got := rankNotes(notes, "widget", []string{"design"}, "", "", "", "", "", 20)
+		got := rankEntities(notes, "widget", []string{"design"}, "", "", "", "", "", 20, noteRank)
 		eqIDs(t, got, "yes")
 	})
 
@@ -248,7 +248,7 @@ func TestRankNotes(t *testing.T) {
 			{ID: "yes", Title: "widget", Author: "ada <ada@example.com>"},
 			{ID: "no", Title: "widget", Author: "ben <ben@example.com>"},
 		}
-		got := rankNotes(notes, "widget", nil, "ada <ada@example.com>", "", "", "", "", 20)
+		got := rankEntities(notes, "widget", nil, "ada <ada@example.com>", "", "", "", "", 20, noteRank)
 		eqIDs(t, got, "yes")
 	})
 
@@ -257,7 +257,7 @@ func TestRankNotes(t *testing.T) {
 			{ID: "yes", Title: "widget", Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "a.go"}}},
 			{ID: "no", Title: "widget", Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "b.go"}}},
 		}
-		got := rankNotes(notes, "widget", nil, "", "a.go", "", "", "", 20)
+		got := rankEntities(notes, "widget", nil, "", "a.go", "", "", "", 20, noteRank)
 		eqIDs(t, got, "yes")
 	})
 
@@ -266,13 +266,13 @@ func TestRankNotes(t *testing.T) {
 			{ID: "yes", Title: "widget", Anchors: []model.Anchor{{Kind: model.AnchorDir, Value: "internal/auth"}}},
 			{ID: "no", Title: "widget", Anchors: []model.Anchor{{Kind: model.AnchorDir, Value: "internal/sync"}}},
 		}
-		got := rankNotes(notes, "widget", nil, "", "", "internal/auth", "", "", 20)
+		got := rankEntities(notes, "widget", nil, "", "", "internal/auth", "", "", 20, noteRank)
 		eqIDs(t, got, "yes")
 	})
 
 	t.Run("case-insensitive match", func(t *testing.T) {
 		notes := []model.Note{{ID: "a", Title: "The Widget Factory"}}
-		got := rankNotes(notes, "WIDGET", nil, "", "", "", "", "", 20)
+		got := rankEntities(notes, "WIDGET", nil, "", "", "", "", "", 20, noteRank)
 		eqIDs(t, got, "a")
 	})
 }
