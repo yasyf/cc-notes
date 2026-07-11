@@ -1,0 +1,12 @@
+name: Download web-dist
+description: Downloads the web-dist build artifact into web/dist and verifies it was embedded.
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v8
+      with:
+        name: web-dist
+        path: web/dist
+    - name: Verify embedded dist present
+      shell: bash
+      run: test -f web/dist/index.html

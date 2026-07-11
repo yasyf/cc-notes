@@ -1,0 +1,23 @@
+name: Setup Go
+description: Installs Go via actions/setup-go with this repo's standard inputs. Run actions/checkout first.
+inputs:
+  go-version-file:
+    description: Path to the go.mod file to read the Go version from.
+    required: false
+    default: go.mod
+  cache:
+    description: Whether to cache Go module and build artifacts.
+    required: false
+    default: "true"
+  check-latest:
+    description: Whether to check for the latest available Go version.
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v6
+      with:
+        go-version-file: ${{ inputs.go-version-file }}
+        cache: ${{ inputs.cache }}
+        check-latest: ${{ inputs.check-latest }}

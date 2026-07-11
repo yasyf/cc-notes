@@ -60,17 +60,8 @@ jobs:
         goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          check-latest: true
-      - uses: actions/download-artifact@v8
-        with:
-          name: web-dist
-          path: web/dist
-      - name: Verify embedded dist present
-        run: test -f web/dist/index.html
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/web-dist
       - name: Build static binary
         env:
           GOOS: ${{ matrix.goos }}
@@ -92,17 +83,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          check-latest: true
-      - uses: actions/download-artifact@v8
-        with:
-          name: web-dist
-          path: web/dist
-      - name: Verify embedded dist present
-        run: test -f web/dist/index.html
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/web-dist
       - name: Install fuse-t (build-time headers only)
         # cgofuse compiles against fuse.h; fuse-t ships the headers. The library
         # itself is dlopened lazily at runtime, so it is uninstalled before the smoke
@@ -178,17 +160,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          check-latest: true
-      - uses: actions/download-artifact@v8
-        with:
-          name: web-dist
-          path: web/dist
-      - name: Verify embedded dist present
-        run: test -f web/dist/index.html
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/web-dist
       - name: Install libfuse headers
         run: sudo apt-get update && sudo apt-get install -y libfuse-dev
       - name: Build linux/amd64 fuse variant
@@ -252,10 +225,41 @@ jobs:
           bin/cc-notes_linux_amd64_fuse mount --shutdown 2>&1 || true
           rm -rf "$HOME/.cc-notes"
 
+  smoke-macos:
+    name: smoke macos (pure)
+    runs-on: macos-latest
+    needs: [pure]
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: cc-notes_darwin_arm64
+          path: bin
+      - name: Smoke pure darwin binary (init, note add/list round-trip)
+        run: |
+          chmod +x bin/cc-notes_darwin_arm64
+          BIN="$PWD/bin/cc-notes_darwin_arm64"
+          "$BIN" version | grep -q "${GITHUB_REF_NAME}"
+          export HOME="$RUNNER_TEMP/ccn-home"
+          mkdir -p "$HOME"
+          REMOTE="$RUNNER_TEMP/ccn-remote"
+          REPO="$RUNNER_TEMP/ccn-repo"
+          git init -q --bare "$REMOTE"
+          mkdir -p "$REPO"
+          cd "$REPO"
+          git init -q
+          git config user.name smoke
+          git config user.email smoke@example.com
+          git remote add origin "$REMOTE"
+          "$BIN" init --no-mount
+          "$BIN" note add "smoke test note"
+          out="$("$BIN" note list)"
+          echo "$out"
+          echo "$out" | grep -q "smoke test note"
+
   release:
     name: publish release
     runs-on: ubuntu-latest
-    needs: [pure, fuse-macos, fuse-linux, smoke-linux]
+    needs: [pure, fuse-macos, fuse-linux, smoke-linux, smoke-macos]
     steps:
       - uses: actions/download-artifact@v8
         with:

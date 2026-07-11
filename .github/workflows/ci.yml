@@ -18,11 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          check-latest: true
+      - uses: ./.github/actions/setup
 
       - name: go vet
         run: go vet ./...
@@ -44,11 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          check-latest: true
+      - uses: ./.github/actions/setup
 
       - name: Install fuse-t (build-time headers + dylib)
         run: brew install macos-fuse-t/cask/fuse-t
@@ -71,11 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          check-latest: true
+      - uses: ./.github/actions/setup
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
@@ -85,11 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          check-latest: true
+      - uses: ./.github/actions/setup
       - name: govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -104,11 +88,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          check-latest: true
+      - uses: ./.github/actions/setup
 
       - name: Build cc-notes binary onto PATH
         run: |
@@ -170,11 +150,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          check-latest: true
+      - uses: ./.github/actions/setup
 
       - uses: actions/download-artifact@v8
         with:
