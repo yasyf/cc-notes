@@ -1,0 +1,29 @@
+{
+  "id": "5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa",
+  "project": "6666dddd6666dddd6666dddd6666dddd6666dddd",
+  "title": "Sprint 7 core",
+  "description": "Ship the FUSE layer.\nTwo lines.",
+  "status": "active",
+  "start_date": "2025-12-12T02:54:56Z",
+  "end_date": "2025-12-19T02:54:56Z",
+  "labels": [
+    "core",
+    "fs"
+  ],
+  "commits": [
+    "cafe0000cafe0000cafe0000cafe0000cafe0000"
+  ],
+  "comments": [
+    {
+      "author": "Agent B \u003cb@example.com\u003e",
+      "ts": "2025-12-12T03:26:40Z",
+      "body": "Kickoff."
+    }
+  ],
+  "author": "Agent A \u003ca@example.com\u003e",
+  "created_at": "2025-12-12T02:54:56Z",
+  "updated_at": "2025-12-13T02:54:56Z",
+  "started_at": "2025-12-12T03:10:00Z",
+  "closed_at": null,
+  "tasks": []
+}

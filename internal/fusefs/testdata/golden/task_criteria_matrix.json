@@ -1,0 +1,47 @@
+{
+  "id": "4567abcd8901ef014567abcd8901ef014567abcd",
+  "branch": "main",
+  "title": "Criteria matrix",
+  "description": "",
+  "type": "task",
+  "status": "in_progress",
+  "priority": 2,
+  "assignee": "Agent A \u003ca@example.com\u003e",
+  "labels": [],
+  "blocked_by": [],
+  "blocks": [],
+  "parent": null,
+  "comments": [],
+  "commits": [],
+  "lease": {
+    "holder": "Agent A \u003ca@example.com\u003e",
+    "heartbeat": null
+  },
+  "created_at": "2025-12-12T02:54:56Z",
+  "updated_at": "2025-12-13T02:54:56Z",
+  "started_at": "2025-12-12T03:10:00Z",
+  "closed_at": null,
+  "sprint": null,
+  "project": null,
+  "criteria": [
+    {
+      "id": "1111aaaa1111aaaa1111aaaa1111aaaa",
+      "text": "pending no script",
+      "script": "",
+      "status": "pending"
+    },
+    {
+      "id": "2222bbbb2222bbbb2222bbbb2222bbbb",
+      "text": "met with script",
+      "script": "go vet ./...",
+      "status": "met"
+    },
+    {
+      "id": "3333cccc3333cccc3333cccc3333cccc",
+      "text": "failed with script",
+      "script": "exit 1",
+      "status": "failed"
+    }
+  ],
+  "closed_forced": false
+}

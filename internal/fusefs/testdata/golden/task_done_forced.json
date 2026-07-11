@@ -1,0 +1,41 @@
+{
+  "id": "2345abcd6789ef012345abcd6789ef012345abcd",
+  "branch": "main",
+  "title": "Force-closed epic",
+  "description": "",
+  "type": "epic",
+  "status": "done",
+  "priority": 0,
+  "assignee": null,
+  "labels": [],
+  "blocked_by": [],
+  "blocks": [],
+  "parent": null,
+  "comments": [],
+  "commits": [],
+  "lease": {
+    "holder": null,
+    "heartbeat": null
+  },
+  "created_at": "2025-12-12T02:54:56Z",
+  "updated_at": "2025-12-15T02:54:56Z",
+  "started_at": "2025-12-12T03:10:00Z",
+  "closed_at": "2025-12-15T02:54:56Z",
+  "sprint": null,
+  "project": null,
+  "criteria": [
+    {
+      "id": "cccc3333cccc3333cccc3333cccc3333",
+      "text": "Docs updated",
+      "script": "",
+      "status": "met"
+    },
+    {
+      "id": "dddd4444dddd4444dddd4444dddd4444",
+      "text": "Perf benchmark",
+      "script": "go test -bench=.",
+      "status": "failed"
+    }
+  ],
+  "closed_forced": true
+}

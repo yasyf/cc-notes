@@ -1,0 +1,55 @@
+{
+  "id": "0123abcd4567ef890123abcd4567ef890123abcd",
+  "branch": "feature/login",
+  "title": "Wire the FUSE layer \u003curgently\u003e",
+  "description": "Render, parse, diff.\nNo kernel needed.",
+  "type": "bug",
+  "status": "in_progress",
+  "priority": 1,
+  "assignee": "Agent A \u003ca@example.com\u003e",
+  "labels": [
+    "fs",
+    "render"
+  ],
+  "blocked_by": [
+    "9999aaaa9999aaaa9999aaaa9999aaaa9999aaaa"
+  ],
+  "blocks": [],
+  "parent": "8888bbbb8888bbbb8888bbbb8888bbbb8888bbbb",
+  "comments": [
+    {
+      "author": "Agent B \u003cb@example.com\u003e",
+      "ts": "2025-12-12T03:26:40Z",
+      "body": "On it.\nETA tonight."
+    }
+  ],
+  "commits": [
+    "cafe0000cafe0000cafe0000cafe0000cafe0000",
+    "feed1111feed1111feed1111feed1111feed1111"
+  ],
+  "lease": {
+    "holder": "Agent A \u003ca@example.com\u003e",
+    "heartbeat": "2025-12-13T02:54:56Z"
+  },
+  "created_at": "2025-12-12T02:54:56Z",
+  "updated_at": "2025-12-13T02:54:56Z",
+  "started_at": "2025-12-12T03:10:00Z",
+  "closed_at": null,
+  "sprint": "7777cccc7777cccc7777cccc7777cccc7777cccc",
+  "project": "6666dddd6666dddd6666dddd6666dddd6666dddd",
+  "criteria": [
+    {
+      "id": "aaaa1111aaaa1111aaaa1111aaaa1111",
+      "text": "Compiles clean",
+      "script": "go build ./...",
+      "status": "met"
+    },
+    {
+      "id": "bbbb2222bbbb2222bbbb2222bbbb2222",
+      "text": "Tests pass",
+      "script": "",
+      "status": "pending"
+    }
+  ],
+  "closed_forced": false
+}
