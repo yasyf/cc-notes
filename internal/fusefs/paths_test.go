@@ -34,9 +34,9 @@ func TestNoteFilename(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := fusefs.NoteFilename(model.Note{ID: id, Title: tc.title})
+			got := fusefs.Filename(model.Note{ID: id, Title: tc.title})
 			if got != tc.want {
-				t.Errorf("NoteFilename(%q) = %q, want %q", tc.title, got, tc.want)
+				t.Errorf("Filename(note %q) = %q, want %q", tc.title, got, tc.want)
 			}
 			if slug := strings.TrimSuffix(strings.TrimPrefix(got, "a1b2c3d-"), ".md"); len(slug) > 40 {
 				t.Errorf("slug %q longer than 40", slug)
@@ -67,9 +67,9 @@ func TestDocFilename(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := fusefs.DocFilename(model.Doc{ID: id, Title: tc.title})
+			got := fusefs.Filename(model.Doc{ID: id, Title: tc.title})
 			if got != tc.want {
-				t.Errorf("DocFilename(%q) = %q, want %q", tc.title, got, tc.want)
+				t.Errorf("Filename(doc %q) = %q, want %q", tc.title, got, tc.want)
 			}
 			if slug := strings.TrimSuffix(strings.TrimPrefix(got, "a1b2c3d-"), ".md"); len(slug) > 40 {
 				t.Errorf("slug %q longer than 40", slug)
@@ -92,9 +92,9 @@ func TestRunbookFilename(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := fusefs.RunbookFilename(model.Runbook{ID: id, Title: tc.title})
+			got := fusefs.Filename(model.Runbook{ID: id, Title: tc.title})
 			if got != tc.want {
-				t.Errorf("RunbookFilename(%q) = %q, want %q", tc.title, got, tc.want)
+				t.Errorf("Filename(runbook %q) = %q, want %q", tc.title, got, tc.want)
 			}
 		})
 	}
@@ -102,22 +102,22 @@ func TestRunbookFilename(t *testing.T) {
 
 func TestTaskFilename(t *testing.T) {
 	task := model.Task{ID: "0123abcd4567ef890123abcd4567ef890123abcd"}
-	if got, want := fusefs.TaskFilename(task), "0123abc.json"; got != want {
-		t.Errorf("TaskFilename = %q, want %q", got, want)
+	if got, want := fusefs.Filename(task), "0123abc.json"; got != want {
+		t.Errorf("Filename(task) = %q, want %q", got, want)
 	}
 }
 
 func TestSprintFilename(t *testing.T) {
 	s := model.Sprint{ID: "5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa"}
-	if got, want := fusefs.SprintFilename(s), "5555aaa.json"; got != want {
-		t.Errorf("SprintFilename = %q, want %q", got, want)
+	if got, want := fusefs.Filename(s), "5555aaa.json"; got != want {
+		t.Errorf("Filename(sprint) = %q, want %q", got, want)
 	}
 }
 
 func TestProjectFilename(t *testing.T) {
 	p := model.Project{ID: "6666dddd6666dddd6666dddd6666dddd6666dddd"}
-	if got, want := fusefs.ProjectFilename(p), "6666ddd.json"; got != want {
-		t.Errorf("ProjectFilename = %q, want %q", got, want)
+	if got, want := fusefs.Filename(p), "6666ddd.json"; got != want {
+		t.Errorf("Filename(project) = %q, want %q", got, want)
 	}
 }
 
@@ -173,26 +173,26 @@ func TestParsePath(t *testing.T) {
 		want fusefs.Node
 	}{
 		{"/", fusefs.Root{}},
-		{"/notes", fusefs.NotesDir{}},
-		{"/docs", fusefs.DocsDir{}},
-		{"/logs", fusefs.LogsDir{}},
-		{"/tasks", fusefs.TasksRoot{}},
-		{"/notes/a1b2c3d-fix-the-parser.md", fusefs.NoteFile{ShortID: "a1b2c3d"}},
-		{"/notes/a1b2c3d.md", fusefs.NoteFile{ShortID: "a1b2c3d"}},
-		{"/docs/a1b2c3d-fix-the-parser.md", fusefs.DocFile{ShortID: "a1b2c3d"}},
-		{"/docs/a1b2c3d.md", fusefs.DocFile{ShortID: "a1b2c3d"}},
-		{"/logs/a1b2c3d-auth-rollout.md", fusefs.LogFile{ShortID: "a1b2c3d"}},
-		{"/logs/a1b2c3d.md", fusefs.LogFile{ShortID: "a1b2c3d"}},
-		{"/runbooks", fusefs.RunbooksDir{}},
-		{"/runbooks/a1b2c3d-deploy-service.md", fusefs.RunbookFile{ShortID: "a1b2c3d"}},
-		{"/runbooks/a1b2c3d.md", fusefs.RunbookFile{ShortID: "a1b2c3d"}},
-		{"/tasks/0123abc.json", fusefs.TaskFile{ShortID: "0123abc"}},
-		{"/tasks/0123abc-slug.json", fusefs.TaskFile{ShortID: "0123abc"}},
+		{"/notes", fusefs.KindDir{Kind: model.KindNote}},
+		{"/docs", fusefs.KindDir{Kind: model.KindDoc}},
+		{"/logs", fusefs.KindDir{Kind: model.KindLog}},
+		{"/tasks", fusefs.KindDir{Kind: model.KindTask}},
+		{"/notes/a1b2c3d-fix-the-parser.md", fusefs.EntityFile{Kind: model.KindNote, ShortID: "a1b2c3d"}},
+		{"/notes/a1b2c3d.md", fusefs.EntityFile{Kind: model.KindNote, ShortID: "a1b2c3d"}},
+		{"/docs/a1b2c3d-fix-the-parser.md", fusefs.EntityFile{Kind: model.KindDoc, ShortID: "a1b2c3d"}},
+		{"/docs/a1b2c3d.md", fusefs.EntityFile{Kind: model.KindDoc, ShortID: "a1b2c3d"}},
+		{"/logs/a1b2c3d-auth-rollout.md", fusefs.EntityFile{Kind: model.KindLog, ShortID: "a1b2c3d"}},
+		{"/logs/a1b2c3d.md", fusefs.EntityFile{Kind: model.KindLog, ShortID: "a1b2c3d"}},
+		{"/runbooks", fusefs.KindDir{Kind: model.KindRunbook}},
+		{"/runbooks/a1b2c3d-deploy-service.md", fusefs.EntityFile{Kind: model.KindRunbook, ShortID: "a1b2c3d"}},
+		{"/runbooks/a1b2c3d.md", fusefs.EntityFile{Kind: model.KindRunbook, ShortID: "a1b2c3d"}},
+		{"/tasks/0123abc.json", fusefs.EntityFile{Kind: model.KindTask, ShortID: "0123abc"}},
+		{"/tasks/0123abc-slug.json", fusefs.EntityFile{Kind: model.KindTask, ShortID: "0123abc"}},
 		// Flat sprint and project dirs and files.
-		{"/sprints", fusefs.SprintsDir{}},
-		{"/projects", fusefs.ProjectsDir{}},
-		{"/sprints/5555aaa.json", fusefs.SprintFile{ShortID: "5555aaa"}},
-		{"/projects/6666ddd.json", fusefs.ProjectFile{ShortID: "6666ddd"}},
+		{"/sprints", fusefs.KindDir{Kind: model.KindSprint}},
+		{"/projects", fusefs.KindDir{Kind: model.KindProject}},
+		{"/sprints/5555aaa.json", fusefs.EntityFile{Kind: model.KindSprint, ShortID: "5555aaa"}},
+		{"/projects/6666ddd.json", fusefs.EntityFile{Kind: model.KindProject, ShortID: "6666ddd"}},
 		// Project browse tree: dirs without .json, task leaves as links.
 		{"/projects/6666ddd", fusefs.ProjectBrowseDir{ProjShort: "6666ddd"}},
 		{"/projects/6666ddd/tasks", fusefs.ProjectTasksDir{ProjShort: "6666ddd"}},

@@ -698,19 +698,14 @@ func (f *FS) resolveEntity(kind model.Kind, shortID string) (string, rendered, e
 // scratch files.
 func entityTarget(p string) (kind model.Kind, ok bool) {
 	dir, name := path.Dir(p), path.Base(p)
-	switch {
-	case dir == "/notes" && strings.HasSuffix(name, ".md") && name != ".md":
-		return model.KindNote, true
-	case dir == "/docs" && strings.HasSuffix(name, ".md") && name != ".md":
-		return model.KindDoc, true
-	case dir == "/logs" && strings.HasSuffix(name, ".md") && name != ".md":
-		return model.KindLog, true
-	case dir == "/tasks" && strings.HasSuffix(name, ".json") && name != ".json":
-		return model.KindTask, true
-	case dir == "/sprints" && strings.HasSuffix(name, ".json") && name != ".json":
-		return model.KindSprint, true
-	case dir == "/projects" && strings.HasSuffix(name, ".json") && name != ".json":
-		return model.KindProject, true
+	for k, layout := range layouts {
+		if layout.dir != dir || codecOf(k).ReadOnly() {
+			continue
+		}
+		if strings.HasSuffix(name, layout.ext) && name != layout.ext {
+			return k, true
+		}
+		return "", false
 	}
 	return "", false
 }
@@ -747,20 +742,8 @@ func (f *FS) openEntity(p string) (string, rendered, int) {
 		return "", rendered{}, -fuse.ENOENT
 	}
 	switch n := node.(type) {
-	case NoteFile:
-		return f.openResolved(model.KindNote, n.ShortID)
-	case DocFile:
-		return f.openResolved(model.KindDoc, n.ShortID)
-	case LogFile:
-		return f.openResolved(model.KindLog, n.ShortID)
-	case TaskFile:
-		return f.openResolved(model.KindTask, n.ShortID)
-	case SprintFile:
-		return f.openResolved(model.KindSprint, n.ShortID)
-	case ProjectFile:
-		return f.openResolved(model.KindProject, n.ShortID)
-	case RunbookFile:
-		return f.openResolved(model.KindRunbook, n.ShortID)
+	case EntityFile:
+		return f.openResolved(n.Kind, n.ShortID)
 	default:
 		return "", rendered{}, -fuse.EISDIR
 	}
@@ -871,23 +854,11 @@ func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
 		return -fuse.ENOENT
 	}
 	switch n := node.(type) {
-	case Root, NotesDir, DocsDir, LogsDir, RunbooksDir, TasksRoot, SprintsDir, ProjectsDir:
+	case Root, KindDir:
 		f.fillDirStat(stat, p)
 		return 0
-	case NoteFile:
-		return f.statEntity(stat, model.KindNote, n.ShortID)
-	case DocFile:
-		return f.statEntity(stat, model.KindDoc, n.ShortID)
-	case LogFile:
-		return f.statEntity(stat, model.KindLog, n.ShortID)
-	case TaskFile:
-		return f.statEntity(stat, model.KindTask, n.ShortID)
-	case SprintFile:
-		return f.statEntity(stat, model.KindSprint, n.ShortID)
-	case ProjectFile:
-		return f.statEntity(stat, model.KindProject, n.ShortID)
-	case RunbookFile:
-		return f.statEntity(stat, model.KindRunbook, n.ShortID)
+	case EntityFile:
+		return f.statEntity(stat, n.Kind, n.ShortID)
 	case ProjectBrowseDir, ProjectSprintsDir, ProjectSprintDir, ProjectSprintTasksDir, ProjectTasksDir, SprintBrowseDir, SprintTasksDir:
 		if errc := f.validateBrowseDir(node); errc != 0 {
 			return errc
@@ -933,63 +904,19 @@ func (f *FS) listDir(p string) ([]string, int) {
 	switch n := node.(type) {
 	case Root:
 		names["notes"], names["docs"], names["logs"], names["runbooks"], names["tasks"], names["sprints"], names["projects"], names["attachments"] = true, true, true, true, true, true, true, true
-	case NotesDir:
-		notes, err := f.store.ListNotes(f.ctx, false, false)
+	case KindDir:
+		snaps, err := f.store.ListSnapshots(f.ctx, n.Kind, store.ListOpts{})
 		if err != nil {
 			return nil, errno(err)
 		}
-		for _, note := range notes {
-			names[NoteFilename(note)] = true
-		}
-	case DocsDir:
-		docs, err := f.store.ListDocs(f.ctx, false, false)
-		if err != nil {
-			return nil, errno(err)
-		}
-		for _, doc := range docs {
-			names[DocFilename(doc)] = true
-		}
-	case LogsDir:
-		logs, err := f.store.ListLogs(f.ctx, false)
-		if err != nil {
-			return nil, errno(err)
-		}
-		for _, l := range logs {
-			names[LogFilename(l)] = true
-		}
-	case RunbooksDir:
-		runbooks, err := f.store.ListRunbooks(f.ctx)
-		if err != nil {
-			return nil, errno(err)
-		}
-		for _, r := range runbooks {
-			names[RunbookFilename(r)] = true
-		}
-	case TasksRoot:
-		tasks, err := f.store.ListTasks(f.ctx)
-		if err != nil {
-			return nil, errno(err)
-		}
-		for _, t := range tasks {
-			names[TaskFilename(t)] = true
-		}
-	case SprintsDir:
-		sprints, err := f.store.ListSprints(f.ctx)
-		if err != nil {
-			return nil, errno(err)
-		}
-		for _, s := range sprints {
-			names[SprintFilename(s)] = true
-			names[s.ID.Short()] = true
-		}
-	case ProjectsDir:
-		projects, err := f.store.ListProjects(f.ctx)
-		if err != nil {
-			return nil, errno(err)
-		}
-		for _, p := range projects {
-			names[ProjectFilename(p)] = true
-			names[p.ID.Short()] = true
+		browsable := codecOf(n.Kind).Browsable()
+		for _, snap := range snaps {
+			names[Filename(snap)] = true
+			if browsable {
+				// Sprints and projects list their browse directory beside
+				// the flat file, both keyed by the entity's short id.
+				names[snap.EntityID().Short()] = true
+			}
 		}
 	case ProjectBrowseDir:
 		if _, errc := f.lookupProject(n.ProjShort); errc != 0 {
@@ -1026,7 +953,7 @@ func (f *FS) listDir(p string) ([]string, int) {
 		}
 		for _, t := range tasks {
 			if t.Sprint == sprint.ID {
-				names[TaskFilename(t)] = true
+				names[Filename(t)] = true
 			}
 		}
 	case ProjectTasksDir:
@@ -1045,7 +972,7 @@ func (f *FS) listDir(p string) ([]string, int) {
 		inProject := projectTaskSet(tasks, sprints, project.ID)
 		for _, t := range tasks {
 			if inProject[t.ID] {
-				names[TaskFilename(t)] = true
+				names[Filename(t)] = true
 			}
 		}
 	case SprintBrowseDir:
@@ -1064,7 +991,7 @@ func (f *FS) listDir(p string) ([]string, int) {
 		}
 		for _, t := range tasks {
 			if t.Sprint == sprint.ID {
-				names[TaskFilename(t)] = true
+				names[Filename(t)] = true
 			}
 		}
 	case AttachmentsDir:
@@ -1202,7 +1129,7 @@ func (f *FS) resolveLink(p string, node Node) (model.Task, string, int) {
 	if errc != 0 {
 		return model.Task{}, "", errc
 	}
-	return task, SymlinkTarget(p, "tasks/"+TaskFilename(task)), 0
+	return task, SymlinkTarget(p, "tasks/"+Filename(task)), 0
 }
 
 // linkTask validates the membership chain a browse-tree link encodes and
@@ -1420,20 +1347,8 @@ func (f *FS) notesSeed(p string, _ *fuse.Stat_t) string {
 		return ""
 	}
 	switch n := node.(type) {
-	case NoteFile:
-		return f.entitySeed(model.KindNote, n.ShortID)
-	case DocFile:
-		return f.entitySeed(model.KindDoc, n.ShortID)
-	case LogFile:
-		return f.entitySeed(model.KindLog, n.ShortID)
-	case TaskFile:
-		return f.entitySeed(model.KindTask, n.ShortID)
-	case SprintFile:
-		return f.entitySeed(model.KindSprint, n.ShortID)
-	case ProjectFile:
-		return f.entitySeed(model.KindProject, n.ShortID)
-	case RunbookFile:
-		return f.entitySeed(model.KindRunbook, n.ShortID)
+	case EntityFile:
+		return f.entitySeed(n.Kind, n.ShortID)
 	case ProjectSprintTaskLink, ProjectTaskLink, SprintTaskLink:
 		task, errc := f.linkTask(node)
 		if errc != 0 {

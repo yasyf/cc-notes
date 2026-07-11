@@ -28,11 +28,31 @@ var junkNames = map[string]bool{
 	".localized":            true,
 }
 
-// Node is one parsed mount path: the roots (Root, NotesDir, DocsDir, LogsDir,
-// RunbooksDir, TasksRoot, SprintsDir, ProjectsDir), the flat editable entity
-// files (NoteFile, DocFile, LogFile, TaskFile, SprintFile, ProjectFile), the
-// read-only flat RunbookFile, and the read-only nested browse tree of sprints
-// and projects whose task leaves are symlinks to the flat files.
+// flatLayout is the mount-namespace shape of an entity kind's flat files: the
+// directory they live directly under, their file extension, and whether the
+// filename carries a title slug. It is the single source ParsePath and Filename
+// share, so a kind's directory and naming stay defined in one place.
+type flatLayout struct {
+	dir     string
+	ext     string
+	slugged bool
+}
+
+var layouts = map[model.Kind]flatLayout{
+	model.KindNote:    {dir: "/notes", ext: ".md", slugged: true},
+	model.KindDoc:     {dir: "/docs", ext: ".md", slugged: true},
+	model.KindLog:     {dir: "/logs", ext: ".md", slugged: true},
+	model.KindRunbook: {dir: "/runbooks", ext: ".md", slugged: true},
+	model.KindTask:    {dir: "/tasks", ext: ".json"},
+	model.KindSprint:  {dir: "/sprints", ext: ".json"},
+	model.KindProject: {dir: "/projects", ext: ".json"},
+}
+
+// Node is one parsed mount path: the mount root (Root), the flat per-kind
+// directories (KindDir) and the editable entity files under them (EntityFile,
+// read-only for runbooks), the read-only nested browse tree of sprints and
+// projects whose task leaves are symlinks to the flat files, and the attachment
+// tree.
 type Node interface {
 	node()
 }
@@ -40,66 +60,18 @@ type Node interface {
 // Root is the mount root.
 type Root struct{}
 
-// NotesDir is the /notes directory.
-type NotesDir struct{}
-
-// DocsDir is the /docs directory.
-type DocsDir struct{}
-
-// LogsDir is the /logs directory.
-type LogsDir struct{}
-
-// RunbooksDir is the /runbooks directory.
-type RunbooksDir struct{}
-
-// TasksRoot is the /tasks directory.
-type TasksRoot struct{}
-
-// NoteFile is a note file under /notes, keyed by its short id prefix so a
-// stale slug still resolves.
-type NoteFile struct {
-	ShortID string
+// KindDir is a flat per-kind directory: /notes, /docs, /logs, /runbooks,
+// /tasks, /sprints, or /projects.
+type KindDir struct {
+	Kind model.Kind
 }
 
-// DocFile is a doc file under /docs, keyed by its short id prefix so a stale
-// slug still resolves.
-type DocFile struct {
-	ShortID string
-}
-
-// LogFile is a log file under /logs, keyed by its short id prefix so a stale
-// slug still resolves.
-type LogFile struct {
-	ShortID string
-}
-
-// RunbookFile is a read-only runbook file under /runbooks, keyed by its short
-// id prefix so a stale slug still resolves.
-type RunbookFile struct {
-	ShortID string
-}
-
-// TaskFile is a task file directly under /tasks, keyed by its short id
-// prefix. Branch is a folded attribute, not part of the path.
-type TaskFile struct {
-	ShortID string
-}
-
-// SprintsDir is the /sprints directory.
-type SprintsDir struct{}
-
-// ProjectsDir is the /projects directory.
-type ProjectsDir struct{}
-
-// SprintFile is a flat editable sprint file directly under /sprints, keyed by
-// its short id prefix.
-type SprintFile struct {
-	ShortID string
-}
-
-// ProjectFile is a flat editable project file directly under /projects, keyed
-// by its short id prefix.
-type ProjectFile struct {
+// EntityFile is a flat editable entity file directly under its kind's
+// directory, keyed by its short id prefix so a stale slug still resolves. The
+// runbook kind is read-only; the sprint and project files coexist with their
+// browse directories of the same short id.
+type EntityFile struct {
+	Kind    model.Kind
 	ShortID string
 }
 
@@ -186,20 +158,8 @@ type AttachmentFile struct {
 }
 
 func (Root) node()                  {}
-func (NotesDir) node()              {}
-func (DocsDir) node()               {}
-func (LogsDir) node()               {}
-func (RunbooksDir) node()           {}
-func (TasksRoot) node()             {}
-func (NoteFile) node()              {}
-func (DocFile) node()               {}
-func (LogFile) node()               {}
-func (RunbookFile) node()           {}
-func (TaskFile) node()              {}
-func (SprintsDir) node()            {}
-func (ProjectsDir) node()           {}
-func (SprintFile) node()            {}
-func (ProjectFile) node()           {}
+func (KindDir) node()               {}
+func (EntityFile) node()            {}
 func (ProjectBrowseDir) node()      {}
 func (ProjectSprintsDir) node()     {}
 func (ProjectSprintDir) node()      {}
@@ -214,50 +174,19 @@ func (AttachmentsDir) node()        {}
 func (AttachmentEntityDir) node()   {}
 func (AttachmentFile) node()        {}
 
-// NoteFilename names a note file "<short7>-<slug>.md", dropping the slug
-// part when the title yields none.
-func NoteFilename(n model.Note) string {
-	if s := slug(n.Title); s != "" {
-		return n.ID.Short() + "-" + s + ".md"
+// Filename names snap's flat file. Slugged kinds get "<short7>-<slug><ext>",
+// dropping the slug when the title yields none; the rest get "<short7><ext>".
+func Filename(snap model.Snapshot) string {
+	m := snap.Meta()
+	layout := layouts[m.Kind]
+	base := snap.EntityID().Short()
+	if layout.slugged {
+		if s := slug(m.Title); s != "" {
+			base += "-" + s
+		}
 	}
-	return n.ID.Short() + ".md"
+	return base + layout.ext
 }
-
-// DocFilename names a doc file "<short7>-<slug>.md", dropping the slug part
-// when the title yields none.
-func DocFilename(d model.Doc) string {
-	if s := slug(d.Title); s != "" {
-		return d.ID.Short() + "-" + s + ".md"
-	}
-	return d.ID.Short() + ".md"
-}
-
-// LogFilename names a log file "<short7>-<slug>.md", dropping the slug part
-// when the title yields none.
-func LogFilename(l model.Log) string {
-	if s := slug(l.Title); s != "" {
-		return l.ID.Short() + "-" + s + ".md"
-	}
-	return l.ID.Short() + ".md"
-}
-
-// RunbookFilename names a runbook file "<short7>-<slug>.md", dropping the slug
-// part when the title yields none.
-func RunbookFilename(r model.Runbook) string {
-	if s := slug(r.Title); s != "" {
-		return r.ID.Short() + "-" + s + ".md"
-	}
-	return r.ID.Short() + ".md"
-}
-
-// TaskFilename names a task file "<short7>.json".
-func TaskFilename(t model.Task) string { return t.ID.Short() + ".json" }
-
-// SprintFilename names a sprint file "<short7>.json".
-func SprintFilename(s model.Sprint) string { return s.ID.Short() + ".json" }
-
-// ProjectFilename names a project file "<short7>.json".
-func ProjectFilename(p model.Project) string { return p.ID.Short() + ".json" }
 
 // slug lowercases the title and joins its [a-z0-9]+ runs with dashes,
 // capped at maxSlugLen.
@@ -305,11 +234,10 @@ func JunkName(name string) bool {
 }
 
 // ParsePath decodes an absolute mount path into its syntactic Node. Notes,
-// docs, logs, runbooks, and tasks are flat: a ".md" name under /notes is a
-// NoteFile, a ".md" name under /docs is a DocFile, a ".md" name under /logs is
-// a LogFile, a ".md" name under /runbooks is a RunbookFile, and a ".json" name
-// under /tasks is a TaskFile, all keyed by short id. Paths outside the tree
-// shape fail with ErrPath.
+// docs, logs, runbooks, tasks, sprints, and projects are flat: a name carrying
+// the kind's extension directly under its directory is an EntityFile keyed by
+// short id, and the bare directory a KindDir. Sprints and projects additionally
+// nest a browse tree. Paths outside the tree shape fail with ErrPath.
 func ParsePath(path string) (Node, error) {
 	if path == "/" {
 		return Root{}, nil
@@ -326,71 +254,6 @@ func ParsePath(path string) (Node, error) {
 	}
 	head, tail := parts[0], parts[1:]
 	switch head {
-	case "notes":
-		switch len(tail) {
-		case 0:
-			return NotesDir{}, nil
-		case 1:
-			shortID, ok := ShortIDOf(tail[0])
-			if !ok || !strings.HasSuffix(tail[0], ".md") {
-				return nil, fmt.Errorf("%w: %q", ErrPath, path)
-			}
-			return NoteFile{ShortID: shortID}, nil
-		default:
-			return nil, fmt.Errorf("%w: notes do not nest: %q", ErrPath, path)
-		}
-	case "docs":
-		switch len(tail) {
-		case 0:
-			return DocsDir{}, nil
-		case 1:
-			shortID, ok := ShortIDOf(tail[0])
-			if !ok || !strings.HasSuffix(tail[0], ".md") {
-				return nil, fmt.Errorf("%w: %q", ErrPath, path)
-			}
-			return DocFile{ShortID: shortID}, nil
-		default:
-			return nil, fmt.Errorf("%w: docs do not nest: %q", ErrPath, path)
-		}
-	case "logs":
-		switch len(tail) {
-		case 0:
-			return LogsDir{}, nil
-		case 1:
-			shortID, ok := ShortIDOf(tail[0])
-			if !ok || !strings.HasSuffix(tail[0], ".md") {
-				return nil, fmt.Errorf("%w: %q", ErrPath, path)
-			}
-			return LogFile{ShortID: shortID}, nil
-		default:
-			return nil, fmt.Errorf("%w: logs do not nest: %q", ErrPath, path)
-		}
-	case "runbooks":
-		switch len(tail) {
-		case 0:
-			return RunbooksDir{}, nil
-		case 1:
-			shortID, ok := ShortIDOf(tail[0])
-			if !ok || !strings.HasSuffix(tail[0], ".md") {
-				return nil, fmt.Errorf("%w: %q", ErrPath, path)
-			}
-			return RunbookFile{ShortID: shortID}, nil
-		default:
-			return nil, fmt.Errorf("%w: runbooks do not nest: %q", ErrPath, path)
-		}
-	case "tasks":
-		switch len(tail) {
-		case 0:
-			return TasksRoot{}, nil
-		case 1:
-			shortID, ok := ShortIDOf(tail[0])
-			if !ok || !strings.HasSuffix(tail[0], ".json") {
-				return nil, fmt.Errorf("%w: %q", ErrPath, path)
-			}
-			return TaskFile{ShortID: shortID}, nil
-		default:
-			return nil, fmt.Errorf("%w: tasks do not nest: %q", ErrPath, path)
-		}
 	case "sprints":
 		return parseSprints(path, tail)
 	case "projects":
@@ -415,7 +278,39 @@ func ParsePath(path string) (Node, error) {
 			return nil, fmt.Errorf("%w: attachments hold no subdirectories: %q", ErrPath, path)
 		}
 	default:
+		if kind, ok := kindForDir(head); ok {
+			return parseFlat(path, kind, tail)
+		}
 		return nil, fmt.Errorf("%w: %q", ErrPath, path)
+	}
+}
+
+// kindForDir maps a top-level directory base name (no leading slash) to the
+// entity kind that lives flatly under it. In ParsePath, sprints and projects
+// are matched by name before reaching this so their browse trees parse first.
+func kindForDir(name string) (model.Kind, bool) {
+	for kind, layout := range layouts {
+		if strings.TrimPrefix(layout.dir, "/") == name {
+			return kind, true
+		}
+	}
+	return "", false
+}
+
+// parseFlat decodes a flat entity directory: the bare directory, or a single
+// "<short7>[-slug]<ext>" file keyed by short id. Flat kinds do not nest.
+func parseFlat(full string, kind model.Kind, tail []string) (Node, error) {
+	switch len(tail) {
+	case 0:
+		return KindDir{Kind: kind}, nil
+	case 1:
+		shortID, ok := ShortIDOf(tail[0])
+		if !ok || !strings.HasSuffix(tail[0], layouts[kind].ext) {
+			return nil, errPath(full)
+		}
+		return EntityFile{Kind: kind, ShortID: shortID}, nil
+	default:
+		return nil, errPath(full)
 	}
 }
 
@@ -425,14 +320,14 @@ func ParsePath(path string) (Node, error) {
 func parseSprints(full string, tail []string) (Node, error) {
 	switch len(tail) {
 	case 0:
-		return SprintsDir{}, nil
+		return KindDir{Kind: model.KindSprint}, nil
 	case 1:
 		if strings.HasSuffix(tail[0], ".json") {
 			shortID, ok := ShortIDOf(tail[0])
 			if !ok {
 				return nil, errPath(full)
 			}
-			return SprintFile{ShortID: shortID}, nil
+			return EntityFile{Kind: model.KindSprint, ShortID: shortID}, nil
 		}
 		sprint, ok := shortIDDir(tail[0])
 		if !ok {
@@ -464,14 +359,14 @@ func parseSprints(full string, tail []string) (Node, error) {
 func parseProjects(full string, tail []string) (Node, error) {
 	switch len(tail) {
 	case 0:
-		return ProjectsDir{}, nil
+		return KindDir{Kind: model.KindProject}, nil
 	case 1:
 		if strings.HasSuffix(tail[0], ".json") {
 			shortID, ok := ShortIDOf(tail[0])
 			if !ok {
 				return nil, errPath(full)
 			}
-			return ProjectFile{ShortID: shortID}, nil
+			return EntityFile{Kind: model.KindProject, ShortID: shortID}, nil
 		}
 		proj, ok := shortIDDir(tail[0])
 		if !ok {

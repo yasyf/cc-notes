@@ -154,7 +154,7 @@ func TestReaddirTreeSynthesis(t *testing.T) {
 	doc := createDoc(t, s, "Alpha Doc", "doc body\n", "editing the parser")
 	taskMain := createTask(t, s, "main", "On main")
 	taskNested := createTask(t, s, "feature/login", "On nested branch")
-	wantTasks := []string{TaskFilename(taskMain), TaskFilename(taskNested)}
+	wantTasks := []string{Filename(taskMain), Filename(taskNested)}
 	slices.Sort(wantTasks)
 
 	for _, tc := range []struct {
@@ -162,8 +162,8 @@ func TestReaddirTreeSynthesis(t *testing.T) {
 		want []string
 	}{
 		{"/", []string{"attachments", "docs", "logs", "notes", "projects", "runbooks", "sprints", "tasks"}},
-		{"/notes", []string{NoteFilename(note)}},
-		{"/docs", []string{DocFilename(doc)}},
+		{"/notes", []string{Filename(note)}},
+		{"/docs", []string{Filename(doc)}},
 		{"/tasks", wantTasks},
 	} {
 		if got := readNames(t, f, tc.dir); !slices.Equal(got, tc.want) {
@@ -172,8 +172,8 @@ func TestReaddirTreeSynthesis(t *testing.T) {
 	}
 
 	var st fuse.Stat_t
-	if errc := f.Getattr("/tasks/"+TaskFilename(taskMain), &st, invalidFh); errc != 0 || st.Mode&fuse.S_IFREG == 0 {
-		t.Errorf("Getattr(/tasks/%s) = %d mode %o, want file", TaskFilename(taskMain), errc, st.Mode)
+	if errc := f.Getattr("/tasks/"+Filename(taskMain), &st, invalidFh); errc != 0 || st.Mode&fuse.S_IFREG == 0 {
+		t.Errorf("Getattr(/tasks/%s) = %d mode %o, want file", Filename(taskMain), errc, st.Mode)
 	}
 	if errc := f.Getattr("/tasks/deadbee.json", &st, invalidFh); errc != -fuse.ENOENT {
 		t.Errorf("Getattr(/tasks/deadbee.json) = %d, want -ENOENT", errc)
@@ -186,8 +186,8 @@ func TestGetattrSizeMatchesRead(t *testing.T) {
 	task := createTask(t, s, "feature/login", "Sized task")
 
 	for _, p := range []string{
-		"/notes/" + NoteFilename(note),
-		"/tasks/" + TaskFilename(task),
+		"/notes/" + Filename(note),
+		"/tasks/" + Filename(task),
 	} {
 		var st fuse.Stat_t
 		if errc := f.Getattr(p, &st, invalidFh); errc != 0 {
@@ -210,7 +210,7 @@ func TestFlushCommitsDiffedOps(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Editable", "first line\n")
 	ref := refs.For(model.KindNote, note.ID)
-	p := "/notes/" + NoteFilename(note)
+	p := "/notes/" + Filename(note)
 	before := mustTip(t, s, ref)
 
 	errc, fh := f.Open(p, fuse.O_RDWR)
@@ -263,7 +263,7 @@ func TestIdenticalRewriteNoCommit(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Stable", "unchanged body\n")
 	ref := refs.For(model.KindNote, note.ID)
-	p := "/notes/" + NoteFilename(note)
+	p := "/notes/" + Filename(note)
 	before := mustTip(t, s, ref)
 
 	errc, fh := f.Open(p, fuse.O_RDWR)
@@ -285,7 +285,7 @@ func TestParseErrorEINVAL(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Fragile", "body\n")
 	ref := refs.For(model.KindNote, note.ID)
-	p := "/notes/" + NoteFilename(note)
+	p := "/notes/" + Filename(note)
 	before := mustTip(t, s, ref)
 
 	errc, fh := f.Open(p, fuse.O_RDWR)
@@ -318,7 +318,7 @@ func TestStrippedOTruncRewrite(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Rewritten", "old body\n")
 	ref := refs.For(model.KindNote, note.ID)
-	p := "/notes/" + NoteFilename(note)
+	p := "/notes/" + Filename(note)
 
 	errc, fh := f.Open(p, fuse.O_RDWR)
 	if errc != 0 {
@@ -357,7 +357,7 @@ func TestStrippedOTruncRewrite(t *testing.T) {
 func TestMtimeChangesPerVersion(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Versioned", "v1\n")
-	p := "/notes/" + NoteFilename(note)
+	p := "/notes/" + Filename(note)
 
 	var before fuse.Stat_t
 	if errc := getattrDefeated(f, p, &before, invalidFh); errc != 0 {
@@ -380,7 +380,7 @@ func TestMtimeChangesPerVersion(t *testing.T) {
 func TestFsyncSurfacesParseError(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Guarded", "body\n")
-	p := "/notes/" + NoteFilename(note)
+	p := "/notes/" + Filename(note)
 
 	errc, fh := f.Open(p, fuse.O_RDWR)
 	if errc != 0 {
@@ -402,7 +402,7 @@ func TestImmutableEditEPERM(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Locked", "body\n")
 	ref := refs.For(model.KindNote, note.ID)
-	p := "/notes/" + NoteFilename(note)
+	p := "/notes/" + Filename(note)
 	before := mustTip(t, s, ref)
 
 	doc := bytes.Replace(RenderNote(note), []byte(string(note.ID)), []byte(strings.Repeat("0", len(note.ID))), 1)
@@ -469,8 +469,8 @@ func TestAtomicSaveCreatesNote(t *testing.T) {
 	if errc := f.Getattr(target, &st, invalidFh); errc != 0 || st.Size != int64(len(RenderNote(created))) {
 		t.Errorf("Getattr(target) = %d size %d, want render size %d", errc, st.Size, len(RenderNote(created)))
 	}
-	if got := readNames(t, f, "/notes"); !slices.Contains(got, NoteFilename(created)) {
-		t.Errorf("readdir /notes = %v, missing %s", got, NoteFilename(created))
+	if got := readNames(t, f, "/notes"); !slices.Contains(got, Filename(created)) {
+		t.Errorf("readdir /notes = %v, missing %s", got, Filename(created))
 	}
 }
 
@@ -545,7 +545,7 @@ func TestScratchUnlink(t *testing.T) {
 func TestEntityImmovableAndJunk(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Pinned", "body\n")
-	p := "/notes/" + NoteFilename(note)
+	p := "/notes/" + Filename(note)
 
 	if errc := f.Unlink(p); errc != -fuse.EPERM {
 		t.Errorf("Unlink(entity) = %d, want -EPERM", errc)
@@ -558,7 +558,7 @@ func TestEntityImmovableAndJunk(t *testing.T) {
 	}
 
 	var st fuse.Stat_t
-	for _, junk := range []string{"/notes/.DS_Store", "/notes/._" + NoteFilename(note), "/.Spotlight-V100"} {
+	for _, junk := range []string{"/notes/.DS_Store", "/notes/._" + Filename(note), "/.Spotlight-V100"} {
 		if errc := f.Getattr(junk, &st, invalidFh); errc != -fuse.ENOENT {
 			t.Errorf("Getattr(%s) = %d, want -ENOENT", junk, errc)
 		}
@@ -572,7 +572,7 @@ func TestExternalAppendMergesWithFlush(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Original Title", "original body\n")
 	ref := refs.For(model.KindNote, note.ID)
-	p := "/notes/" + NoteFilename(note)
+	p := "/notes/" + Filename(note)
 
 	errc, fh := f.Open(p, fuse.O_RDWR)
 	if errc != 0 {
@@ -612,11 +612,11 @@ func TestDeletedNoteHidden(t *testing.T) {
 		t.Fatalf("tombstone: %v", err)
 	}
 
-	if got := readNames(t, f, "/notes"); slices.Contains(got, NoteFilename(note)) {
+	if got := readNames(t, f, "/notes"); slices.Contains(got, Filename(note)) {
 		t.Errorf("tombstoned note still listed: %v", got)
 	}
 	var st fuse.Stat_t
-	if errc := f.Getattr("/notes/"+NoteFilename(note), &st, invalidFh); errc != -fuse.ENOENT {
+	if errc := f.Getattr("/notes/"+Filename(note), &st, invalidFh); errc != -fuse.ENOENT {
 		t.Errorf("Getattr(deleted) = %d, want -ENOENT", errc)
 	}
 }
@@ -625,7 +625,7 @@ func TestDocFlushSetsWhen(t *testing.T) {
 	f, s := newTestFS(t)
 	doc := createDoc(t, s, "Triggers", "doc body\n", "before editing the parser")
 	ref := refs.For(model.KindDoc, doc.ID)
-	p := "/docs/" + DocFilename(doc)
+	p := "/docs/" + Filename(doc)
 	before := mustTip(t, s, ref)
 
 	edited := bytes.Replace(RenderDoc(doc), []byte("before editing the parser"), []byte("after touching the parser"), 1)
@@ -719,8 +719,8 @@ func TestAtomicSaveCreatesDoc(t *testing.T) {
 	if errc := f.Getattr(target, &st, invalidFh); errc != 0 || st.Size != int64(len(RenderDoc(created))) {
 		t.Errorf("Getattr(target) = %d size %d, want render size %d", errc, st.Size, len(RenderDoc(created)))
 	}
-	if got := readNames(t, f, "/docs"); !slices.Contains(got, DocFilename(created)) {
-		t.Errorf("readdir /docs = %v, missing %s", got, DocFilename(created))
+	if got := readNames(t, f, "/docs"); !slices.Contains(got, Filename(created)) {
+		t.Errorf("readdir /docs = %v, missing %s", got, Filename(created))
 	}
 }
 
@@ -731,11 +731,11 @@ func TestDeletedDocHidden(t *testing.T) {
 		t.Fatalf("tombstone: %v", err)
 	}
 
-	if got := readNames(t, f, "/docs"); slices.Contains(got, DocFilename(doc)) {
+	if got := readNames(t, f, "/docs"); slices.Contains(got, Filename(doc)) {
 		t.Errorf("tombstoned doc still listed: %v", got)
 	}
 	var st fuse.Stat_t
-	if errc := f.Getattr("/docs/"+DocFilename(doc), &st, invalidFh); errc != -fuse.ENOENT {
+	if errc := f.Getattr("/docs/"+Filename(doc), &st, invalidFh); errc != -fuse.ENOENT {
 		t.Errorf("Getattr(deleted) = %d, want -ENOENT", errc)
 	}
 }
@@ -744,7 +744,7 @@ func TestLogAppendEntryFlush(t *testing.T) {
 	f, s := newTestFS(t)
 	log := createLog(t, s, "Rollout", "flipped to 5%\n")
 	ref := refs.For(model.KindLog, log.ID)
-	p := "/logs/" + LogFilename(log)
+	p := "/logs/" + Filename(log)
 	before := mustTip(t, s, ref)
 
 	// Append a new fenced entry at EOF, exactly as an editor would: the fence
@@ -800,7 +800,7 @@ func TestLogMidFileEditEPERM(t *testing.T) {
 	f, s := newTestFS(t)
 	log := createLog(t, s, "Locked", "first entry\n", "second entry\n")
 	ref := refs.For(model.KindLog, log.ID)
-	p := "/logs/" + LogFilename(log)
+	p := "/logs/" + Filename(log)
 	before := mustTip(t, s, ref)
 
 	canonical := RenderLog(log)
@@ -844,7 +844,7 @@ func TestLogCLIEntriesMountRoundTrip(t *testing.T) {
 	f, s := newTestFS(t)
 	log := createLog(t, s, "Rollout", "flipped to 5%", "rolled back to 0%")
 	ref := refs.For(model.KindLog, log.ID)
-	p := "/logs/" + LogFilename(log)
+	p := "/logs/" + Filename(log)
 	before := mustTip(t, s, ref)
 
 	canonical := RenderLog(log)
@@ -946,7 +946,7 @@ func browseFixture(t *testing.T) (f *FS, s *store.Store, p model.Project, sp mod
 func TestBrowseTreeReaddir(t *testing.T) {
 	f, _, p, sp, taskT, direct := browseFixture(t)
 	pShort, sShort := p.ID.Short(), sp.ID.Short()
-	tFile, dFile := TaskFilename(taskT), TaskFilename(direct)
+	tFile, dFile := Filename(taskT), Filename(direct)
 
 	// /projects and /sprints carry both the flat <short>.json file and the
 	// <short> browse dir.
@@ -976,7 +976,7 @@ func TestBrowseTreeReaddir(t *testing.T) {
 
 func TestBrowseTreeSymlinkStatAndReadlink(t *testing.T) {
 	f, _, p, sp, taskT, _ := browseFixture(t)
-	tFile := TaskFilename(taskT)
+	tFile := Filename(taskT)
 	link := "/projects/" + p.ID.Short() + "/sprints/" + sp.ID.Short() + "/tasks/" + tFile
 
 	var st fuse.Stat_t
@@ -1003,7 +1003,7 @@ func TestBrowseTreeSymlinkStatAndReadlink(t *testing.T) {
 // symlink to the flat task file and editing there must change the real entity.
 func TestBrowseTreeReadThrough(t *testing.T) {
 	f, s, p, sp, taskT, _ := browseFixture(t)
-	tFile := TaskFilename(taskT)
+	tFile := Filename(taskT)
 	link := "/projects/" + p.ID.Short() + "/sprints/" + sp.ID.Short() + "/tasks/" + tFile
 
 	// Follow the symlink to the flat file, exactly as the kernel would.
@@ -1047,7 +1047,7 @@ func TestBrowseTreeBrokenChain(t *testing.T) {
 	f, s, p, sp, taskT, direct := browseFixture(t)
 	orphan := createSprint(t, s, "Orphan") // no project membership
 	pShort, sShort := p.ID.Short(), sp.ID.Short()
-	tFile, dFile := TaskFilename(taskT), TaskFilename(direct)
+	tFile, dFile := Filename(taskT), Filename(direct)
 
 	var st fuse.Stat_t
 	// D is direct in the project, never in sprint S.
@@ -1072,7 +1072,7 @@ func TestBrowseTreeBrokenChain(t *testing.T) {
 func TestFlatSprintFileEdit(t *testing.T) {
 	f, s, p, sp, _, _ := browseFixture(t)
 	ref := refs.For(model.KindSprint, sp.ID)
-	flat := "/sprints/" + SprintFilename(sp)
+	flat := "/sprints/" + Filename(sp)
 
 	// Editable: change the title through the flat file.
 	cur, err := s.Load(t.Context(), ref)

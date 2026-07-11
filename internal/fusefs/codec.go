@@ -13,6 +13,9 @@ type entityCodec interface {
 	Kind() model.Kind
 	// ReadOnly reports whether the kind's flat files reject writes (runbooks).
 	ReadOnly() bool
+	// Browsable reports whether the kind's directory also nests a browse tree
+	// under each entity's short id (sprints and projects).
+	Browsable() bool
 	Render(snap model.Snapshot) []byte
 	Diff(base model.Snapshot, data []byte) ([]model.Op, error)
 	New(data []byte) ([]model.Op, error)
@@ -21,16 +24,18 @@ type entityCodec interface {
 // codec adapts a kind's typed render/parse/diff/create funcs to entityCodec:
 // S is the snapshot type, P the parsed document DTO.
 type codec[S model.Snapshot, P any] struct {
-	kind     model.Kind
-	readOnly bool
-	render   func(S) []byte
-	parse    func([]byte) (P, error)
-	diff     func(S, P) ([]model.Op, error)
-	create   func(P) ([]model.Op, error)
+	kind      model.Kind
+	readOnly  bool
+	browsable bool
+	render    func(S) []byte
+	parse     func([]byte) (P, error)
+	diff      func(S, P) ([]model.Op, error)
+	create    func(P) ([]model.Op, error)
 }
 
 func (c codec[S, P]) Kind() model.Kind                  { return c.kind }
 func (c codec[S, P]) ReadOnly() bool                    { return c.readOnly }
+func (c codec[S, P]) Browsable() bool                   { return c.browsable }
 func (c codec[S, P]) Render(snap model.Snapshot) []byte { return c.render(snap.(S)) }
 
 func (c codec[S, P]) Diff(base model.Snapshot, data []byte) ([]model.Op, error) {
@@ -57,8 +62,8 @@ var codecs = map[model.Kind]entityCodec{
 	model.KindDoc:     codec[model.Doc, ParsedDoc]{kind: model.KindDoc, render: RenderDoc, parse: ParseDoc, diff: DiffDoc, create: NewDoc},
 	model.KindLog:     codec[model.Log, ParsedLog]{kind: model.KindLog, render: RenderLog, parse: ParseLog, diff: DiffLog, create: NewLog},
 	model.KindTask:    codec[model.Task, ParsedTask]{kind: model.KindTask, render: RenderTask, parse: ParseTask, diff: DiffTask, create: newTaskOps},
-	model.KindSprint:  codec[model.Sprint, ParsedSprint]{kind: model.KindSprint, render: RenderSprint, parse: ParseSprint, diff: DiffSprint, create: NewSprint},
-	model.KindProject: codec[model.Project, ParsedProject]{kind: model.KindProject, render: RenderProject, parse: ParseProject, diff: DiffProject, create: NewProject},
+	model.KindSprint:  codec[model.Sprint, ParsedSprint]{kind: model.KindSprint, browsable: true, render: RenderSprint, parse: ParseSprint, diff: DiffSprint, create: NewSprint},
+	model.KindProject: codec[model.Project, ParsedProject]{kind: model.KindProject, browsable: true, render: RenderProject, parse: ParseProject, diff: DiffProject, create: NewProject},
 	model.KindRunbook: codec[model.Runbook, struct{}]{kind: model.KindRunbook, readOnly: true, render: RenderRunbook},
 }
 
