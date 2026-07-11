@@ -6,6 +6,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Auto-sync now covers the whole publish surface, with a SessionEnd
+  backstop.** The capt-hook pack syncs after jj commits (`jj commit`,
+  `jj describe`, `ccx vcs ship`), pushes (`git push`/`jj git push` — jj's git
+  bridge never carries `refs/cc-notes/*`), `jj git fetch` (the reconcile
+  path), and every cc-notes write — mutating CLI subcommands and MCP tools;
+  reads never trigger — still deduped to one sync per turn. A new async
+  SessionEnd hook backstops write-only sessions: a zero-network dirty check
+  of `refs/cc-notes/*` against the `refs/cc-notes-sync/origin/*` tracking
+  namespace, syncing only when something is unpushed and staying silent on
+  no-remote/offline/timeout. The backstop requires capt-hook >= 9.2, whose
+  captain-hook plugin dispatches `run SessionEnd --async`.
+
+### Changed
+- Auto-reconcile falls back to a plain sync on a detached HEAD (the
+  colocated-jj norm) or a failed reconcile instead of staying silent, so
+  fetched refs still ship; manual `cc-notes reconcile` remains only for jj
+  merges and rebases.
+- The pack's command matching moved from regexes to capt-hook's structured
+  `Runs()` argv-prefix conditions: compound lines match, quoted mentions
+  don't, and flag-interleaved forms (`git --no-pager commit`) are missed by
+  design.
+- The pack owns session bootstrap: an async SessionStart hook installs or
+  upgrades the binary (>= 0.22.0) and re-ensures the mount, and a
+  once-per-session UserPromptSubmit nudge announces availability, replacing
+  the plugin's `ensure-cc-notes.sh` SessionStart script and the plugin.json
+  hooks block, both removed.
+- `cc-notes init` now enables the captain-hook plugin (`uvx capt-hook skills
+  install`, the dispatcher) before adding the pack; under capt-hook 9.0.0,
+  `capt-hook pack add` writes only `.claude/hooks/packs.toml` — event wiring
+  ships in the captain-hook plugin's hooks.json, and settings generation is
+  gone.
+
 ## [0.24.0] - 2026-07-11
 
 ### Changed

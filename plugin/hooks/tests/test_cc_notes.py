@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.13"
-# dependencies = ["capt-hook>=4.2.0", "pydantic>=2"]
+# dependencies = ["capt-hook>=8", "pydantic>=2"]
 # ///
 """Direct unit tests for the cc-notes capt-hook pack's pure helpers and handlers.
 
@@ -47,6 +47,7 @@ from hooks.common import (
     in_cc_pool_memory,
     mcp_active,
     McpActive,
+    MCP_TOOL_PREFIX,
     parse_relevant,
     parse_tasks,
     record_command,
@@ -90,6 +91,7 @@ from hooks.record import (
     tree_bytes,
 )
 from hooks.session import (
+    announce_cc_notes_available,
     float_session_tasks,
     prompt_install_cc_notes,
 )
@@ -102,12 +104,25 @@ from hooks.surface import (
 from hooks.workflow import (
     auto_reconcile,
     auto_sync,
+    cc_notes_refs_dirty,
+    CcNotesCliWrite,
+    CcNotesMcpWrite,
+    CLAIM_COMMANDS,
+    COMMIT_COMMANDS,
     commit_decision,
     do_sync,
+    FETCH_MERGE_COMMANDS,
     nudge_claim,
     nudge_commit_record,
+    PUSH_COMMANDS,
     reconcile_after_merge,
+    sync_after_push,
+    sync_after_record_write,
+    sync_at_session_end,
 )
+import hooks.bootstrap as bootstrap
+from hooks.bootstrap import ensure_cc_notes_binary, ensure_mount
+from captain_hook.conditions import check_condition
 from captain_hook.testing.helpers import mock_event, mock_tool_event
 from captain_hook.types import Action, Event
 
@@ -932,6 +947,51 @@ def test_install_nudge_message(monkeypatch, tmp_path) -> None:
         check("install nudge: mentions PATH", "PATH" in result.message, result.message)
 
 
+def test_announce_available_gate(monkeypatch, tmp_path) -> None:
+    """CcNotesAvailable gates the availability nudge: OPEN when the binary is present, CLOSED when absent."""
+    from captain_hook.conditions import matches_conditions
+
+    evt = mock_event("UserPromptSubmit", prompt="start work", session_dir=tmp_path)
+
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    check("announce nudge: gate opens when binary present", matches_conditions(_spec_for(announce_cc_notes_available), evt))
+
+    monkeypatch.setattr(common.shutil, "which", lambda _name: None)
+    check("announce nudge: gate closes when binary absent", not matches_conditions(_spec_for(announce_cc_notes_available), evt))
+
+
+def test_announce_available_fires_once(monkeypatch, tmp_path) -> None:
+    """First prompt warns the installed version + durable tooling line; the once-guard silences later prompts."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    mapping = {("version",): "0.22.0 (abc123)"}
+
+    first = mock_event("UserPromptSubmit", prompt="hello", session_dir=tmp_path)
+    monkeypatch.setattr(first.ctx, "call_cli", stub_cli(mapping))
+    result = announce_cc_notes_available(first)
+    check("announce fires: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("announce fires: names the installed version", "cc-notes 0.22.0 (abc123) is installed" in result.message, result.message)
+        check("announce fires: names the durable tooling", "durable task, note, doc, and log tooling is available" in result.message, result.message)
+
+    second = mock_event("UserPromptSubmit", prompt="again", session_dir=tmp_path)
+    monkeypatch.setattr(second.ctx, "call_cli", stub_cli(mapping))
+    check("announce fires: once-guard silences the second prompt", announce_cc_notes_available(second) is None)
+
+
+def test_announce_available_empty_version_preserves_shot(monkeypatch, tmp_path) -> None:
+    """An empty version read stays silent WITHOUT claiming the once-shot, so a later good read still announces."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+
+    empty = mock_event("UserPromptSubmit", prompt="hello", session_dir=tmp_path)
+    monkeypatch.setattr(empty.ctx, "call_cli", stub_cli({}))  # ("version",) absent -> run_cc_notes returns None
+    check("announce empty: silent when version read comes back empty", announce_cc_notes_available(empty) is None)
+
+    good = mock_event("UserPromptSubmit", prompt="again", session_dir=tmp_path)
+    monkeypatch.setattr(good.ctx, "call_cli", stub_cli({("version",): "0.22.0 (x)"}))
+    result = announce_cc_notes_available(good)
+    check("announce empty: later good read still announces (shot not burned)", result is not None and result.action is Action.warn, repr(result))
+
+
 def test_float_note_context_dedup(monkeypatch, tmp_path) -> None:
     """First read floats the note; a second read of the same note is deduped to silence."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
@@ -1335,16 +1395,17 @@ COMMIT_DIFF = (
 )
 
 
-def commit_event(tmp_path, monkeypatch, *, sha="deadsha000", verdict=None, diff=COMMIT_DIFF):
+def commit_event(tmp_path, monkeypatch, *, sha="deadsha000", verdict=None, diff=COMMIT_DIFF, command="git commit -m x"):
     """A commit event with rev-parse (git), the commit diff primitive, call_llm, and a sync CLI stubbed.
 
     The handler reads the sha via ``evt.ctx.git("rev-parse", "HEAD")`` for per-sha dedup, the patch
     via ``evt.ctx.diff(commit="HEAD")`` for the record-router, and then auto-syncs via
-    ``evt.ctx.call_cli(["cc-notes", "sync"])`` — all stubbed. The recording ``call_cli`` answers
+    ``evt.ctx.call_cli(["cc-notes", "sync"])`` — all stubbed. ``command`` parameterizes the driving
+    Bash line so the jj/ccx commit variants reuse this builder. The recording ``call_cli`` answers
     ``cc-notes sync`` with success and is exposed on ``evt._sync_calls`` so a test can assert the
     sync ran (and how often).
     """
-    evt = mock_event("PostToolUse", tool="Bash", command="git commit -m x", session_dir=tmp_path)
+    evt = mock_event("PostToolUse", tool="Bash", command=command, session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "git", stub_git({("rev-parse", "HEAD"): sha}))
     monkeypatch.setattr(evt.ctx, "diff", lambda *a, **k: diff)
     monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict if verdict is not None else RecordVerdict(record=False)))
@@ -1886,25 +1947,58 @@ def test_reconcile_no_remote_omits_sync_claim(monkeypatch, tmp_path) -> None:
     check("reconcile-noremote: a sync was attempted", _calls_of(calls, "sync") == [1], repr(calls))
 
 
-def test_reconcile_detached_head_silent(monkeypatch, tmp_path) -> None:
-    """A detached HEAD (rev-parse returns 'HEAD') reconciles nothing and syncs nothing — None."""
+def test_jj_fetch_detached_head_falls_back_to_sync(monkeypatch, tmp_path) -> None:
+    """A detached HEAD (the colocated-jj norm `jj git fetch` targets) can't reconcile onto a branch, so it falls back to a plain sync."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = merge_event(tmp_path, monkeypatch, branch="HEAD")
-    check("detached: handler returns None", reconcile_after_merge(evt) is None)
-    check("detached: no reconcile ran", _calls_of(evt._cli_calls, "reconcile", "--into", "HEAD") == [], repr(evt._cli_calls))
-    check("detached: no sync ran", _calls_of(evt._cli_calls, "sync") == [], repr(evt._cli_calls))
+    result = reconcile_after_merge(evt)
+    check("detached fallback: warns the sync confirmation", result is not None and "Synced cc-notes refs." in (result.message or ""), repr(result))
+    check("detached fallback: no reconcile ran", _calls_of(evt._cli_calls, "reconcile", "--into", "HEAD") == [], repr(evt._cli_calls))
+    check("detached fallback: a sync ran", _calls_of(evt._cli_calls, "sync") == [0], repr(evt._cli_calls))
 
 
-def test_reconcile_failure_silent(monkeypatch, tmp_path) -> None:
-    """A reconcile that fails closed (run_cc_notes -> None) suppresses the warn and never syncs."""
+def test_reconcile_failure_falls_back_to_sync(monkeypatch, tmp_path) -> None:
+    """A reconcile that fails closed (run_cc_notes -> None) still falls back to a plain sync — the fetched refs ship."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    # No mapping entry for reconcile -> run_cc_notes (throw=False) returns None; sync would map to "ok"
-    # if it were reached, so a missing sync proves the early-return before the sync.
+    # No mapping entry for reconcile -> run_cc_notes (throw=False) returns None; sync maps to "ok", so a
+    # sync AFTER the attempted reconcile proves the fallback, not the success path.
     cli, calls = recording_cli({("sync",): "ok"})
     evt = merge_event(tmp_path, monkeypatch, branch="feature/x", cli=cli)
-    check("reconcile-fail: handler returns None", reconcile_after_merge(evt) is None)
-    check("reconcile-fail: a reconcile was attempted", _calls_of(calls, "reconcile", "--into", "feature/x") == [0], repr(calls))
-    check("reconcile-fail: no sync ran after the failed reconcile", _calls_of(calls, "sync") == [], repr(calls))
+    result = reconcile_after_merge(evt)
+    check("reconcile-fail fallback: warns the sync confirmation", result is not None and "Synced cc-notes refs." in (result.message or ""), repr(result))
+    check("reconcile-fail fallback: a reconcile was attempted", _calls_of(calls, "reconcile", "--into", "feature/x") == [0], repr(calls))
+    check("reconcile-fail fallback: a sync ran after the failed reconcile", _calls_of(calls, "sync") == [1], repr(calls))
+
+
+def test_reconcile_respects_turn_token(monkeypatch, tmp_path) -> None:
+    """A commit then a merge in ONE turn sync once: reconcile still runs, but its sync rides the shared per-turn token.
+
+    Before the fix, auto_reconcile claimed the token yet synced unconditionally, so a commit-then-merge
+    turn issued two syncs. Now the sync goes through auto_sync like every other trigger, so the second
+    (merge) handler reconciles locally but does not re-sync — one sync across the turn.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    cli, calls = recording_cli({("reconcile", "--into", "feature/x"): "ok", ("sync",): "ok"})
+
+    commit = commit_event(tmp_path, monkeypatch)
+    monkeypatch.setattr(commit.ctx, "call_cli", cli)  # one recorder shared across both handlers = one turn
+    commit_result = nudge_commit_record(commit)
+    check("reconcile-token: commit handler fires", commit_result is not None, repr(commit_result))
+
+    merge = merge_event(tmp_path, monkeypatch, branch="feature/x", cli=cli)
+    merge_result = reconcile_after_merge(merge)
+    check("reconcile-token: merge handler fires", merge_result is not None, repr(merge_result))
+
+    check("reconcile-token: exactly one sync across the turn", len(_calls_of(calls, "sync")) == 1, repr(calls))
+    check("reconcile-token: the reconcile still ran", _calls_of(calls, "reconcile", "--into", "feature/x") != [], repr(calls))
+    check("reconcile-token: commit confirmed the sync", "Synced cc-notes refs." in (commit_result.message or ""), repr(commit_result))
+    if merge_result and merge_result.message:
+        check(
+            "reconcile-token: merge reconciled without re-syncing",
+            "Reconciled merged tasks onto feature/x" in merge_result.message
+            and "Synced cc-notes refs." not in merge_result.message,
+            repr(merge_result.message),
+        )
 
 
 def test_claim_keeps_renew_teach_and_syncs(monkeypatch, tmp_path) -> None:
@@ -1946,6 +2040,7 @@ def test_pack_loads_under_discover_pack() -> None:
     names = {h.name for h in registered}
     expected = {
         "float_session_tasks",
+        "announce_cc_notes_available",
         "prompt_install_cc_notes",
         "float_note_context",
         "check_note_staleness",
@@ -1959,11 +2054,15 @@ def test_pack_loads_under_discover_pack() -> None:
         "nudge_commit_record",
         "reconcile_after_merge",
         "nudge_claim",
+        "sync_after_push",
+        "sync_after_record_write",
+        "sync_at_session_end",
+        "ensure_cc_notes_binary",
     }
     missing = expected - names
     check("discover_pack: every cc-notes handler registered", not missing, f"missing handlers: {sorted(missing)}; got={sorted(names)}")
     check(
-        "discover_pack: it registered the full pack (14 named @on handlers + the bare many-native-tasks nudge)",
+        "discover_pack: it registered the full pack (19 named @on handlers + the bare many-native-tasks nudge)",
         len(registered) >= len(expected) + 1,
         f"registered {len(registered)} hooks this pass: {sorted(h.name for h in registered)}",
     )
@@ -2197,6 +2296,423 @@ def test_evidence_router_mcp_wording(monkeypatch, tmp_path) -> None:
     check("evidence mcp: names the log_add tool", result is not None and "log_add tool" in result.message, result.message if result else "")
     check("evidence mcp: names the log_append tool + attach param", result is not None and "log_append tool" in result.message and "attach param" in result.message, result.message if result else "")
     check("evidence mcp: drops the CLI log-add recipe line", result is not None and 'cc-notes log add "<what ran>"' not in result.message, result.message if result else "")
+
+
+def _matches(cond, command: str) -> bool:
+    return check_condition(cond, mock_event("PostToolUse", tool="Bash", command=command))
+
+
+def test_push_commands_match_structurally(monkeypatch) -> None:
+    """PUSH_COMMANDS matches git/jj push argv prefixes (incl. compound), not quoted or unrelated commands."""
+    truth = {
+        "git push": True,
+        "jj git push": True,
+        "git push --force origin main": True,
+        "cd sub && jj git push": True,
+        "git status": False,
+        "echo 'jj git push'": False,
+        "git log --grep 'git push'": False,
+        "jj rebase -d main": False,
+        # A dry-run push publishes nothing, so it must not trigger a cc-notes sync.
+        "git push --dry-run": False,
+        "git push -n": False,
+        "git push -n origin main": False,
+        "jj git push --dry-run": False,
+    }
+    for cmd, want in truth.items():
+        check(f"PUSH_COMMANDS[{cmd!r}] == {want}", _matches(PUSH_COMMANDS, cmd) == want, f"got {_matches(PUSH_COMMANDS, cmd)}")
+
+
+def test_commit_commands_match_structurally(monkeypatch) -> None:
+    """COMMIT_COMMANDS matches git/jj commit, jj describe, and ccx vcs ship — never a quoted or unrelated line."""
+    truth = {
+        "git commit -m x": True,
+        "jj commit -m x": True,
+        "jj describe -m x": True,
+        "ccx vcs ship -m x": True,
+        "cd sub && jj commit": True,
+        "jj diff": False,
+        "git log": False,
+        "echo 'jj commit now'": False,
+        "ccx vcs diff": False,
+        # A dry-run commit writes nothing, but `git commit -n` is --no-verify (a real commit),
+        # NOT dry-run — only push treats -n as dry-run.
+        "git commit --dry-run": False,
+        "git commit -n": True,
+        "git commit -n -m x": True,
+    }
+    for cmd, want in truth.items():
+        check(f"COMMIT_COMMANDS[{cmd!r}] == {want}", _matches(COMMIT_COMMANDS, cmd) == want, f"got {_matches(COMMIT_COMMANDS, cmd)}")
+
+
+def test_fetch_merge_commands_match_structurally(monkeypatch) -> None:
+    """FETCH_MERGE_COMMANDS matches git merge/pull and jj git fetch, not their read-only or quoted neighbors."""
+    truth = {
+        "git merge feature": True,
+        "git pull": True,
+        "jj git fetch": True,
+        "cd x && jj git fetch": True,
+        "git log --no-merges": False,
+        "jj git remote list": False,
+        "echo 'git merge'": False,
+        "git status": False,
+    }
+    for cmd, want in truth.items():
+        check(f"FETCH_MERGE_COMMANDS[{cmd!r}] == {want}", _matches(FETCH_MERGE_COMMANDS, cmd) == want, f"got {_matches(FETCH_MERGE_COMMANDS, cmd)}")
+
+
+def test_claim_commands_match_structurally(monkeypatch) -> None:
+    """CLAIM_COMMANDS fires on cc-notes/ccn task claim|start, never on a read or a --help/-h invocation."""
+    truth = {
+        "cc-notes task claim abc": True,
+        "cc-notes task start abc": True,
+        "ccn task claim abc": True,
+        "ccn task start abc": True,
+        "cc-notes task list": False,
+        "cc-notes task show abc": False,
+        "echo 'cc-notes task claim'": False,
+        # A help invocation claims no lease, so it must not fire the lease teach.
+        "cc-notes task claim abc --help": False,
+        "cc-notes task claim abc -h": False,
+        "ccn task start abc --help": False,
+    }
+    for cmd, want in truth.items():
+        check(f"CLAIM_COMMANDS[{cmd!r}] == {want}", _matches(CLAIM_COMMANDS, cmd) == want, f"got {_matches(CLAIM_COMMANDS, cmd)}")
+
+
+def test_cli_write_matcher(monkeypatch) -> None:
+    """CcNotesCliWrite fires on cc-notes state changes (incl. reconcile, criterion writes, compound) but never on reads."""
+    truth = {
+        'cc-notes note add "x" --body -': True,
+        "cc-notes task done abc": True,
+        "cc-notes task criterion add abc c": True,
+        "cc-notes reconcile --into main": True,
+        "cc-notes project complete abc": True,
+        "cc-notes sprint activate abc": True,
+        "cd sub && cc-notes note edit abc": True,
+        # runbook: top-level verbs and step/run mutations write; list/show/history read.
+        "cc-notes runbook add x": True,
+        "cc-notes runbook edit abc --title y": True,
+        "cc-notes runbook archive abc": True,
+        "cc-notes runbook step add abc do": True,
+        "cc-notes runbook step rm abc s1": True,
+        "cc-notes runbook run start abc": True,
+        "cc-notes runbook run done abc s1": True,
+        "cc-notes runbook run finish abc": True,
+        # the `ccn` shorthand is the same binary, so it writes just like cc-notes.
+        'ccn note add "x" --body -': True,
+        "ccn task done abc": True,
+        "ccn reconcile --into main": True,
+        "cc-notes note list --json": False,
+        "cc-notes task criterion list abc": False,
+        "cc-notes task show abc": False,
+        "cc-notes runbook list": False,
+        "cc-notes runbook show abc": False,
+        "cc-notes runbook history abc": False,
+        "cc-notes runbook step list abc": False,
+        "cc-notes runbook run list abc": False,
+        "cc-notes runbook run show abc": False,
+        "cc-notes status": False,
+        "cc-notes sync": False,
+        "echo 'cc-notes note add'": False,
+        # help/dry-run legs write nothing, so they never sync.
+        "cc-notes note add x --help": False,
+        "cc-notes task done abc -h": False,
+        "cc-notes reconcile --dry-run": False,
+        "cc-notes reconcile --dry-run --into main": False,
+        "ccn task done abc --help": False,
+    }
+    for cmd, want in truth.items():
+        check(f"CcNotesCliWrite[{cmd!r}] == {want}", _matches(CcNotesCliWrite(), cmd) == want, f"got {_matches(CcNotesCliWrite(), cmd)}")
+
+
+def test_mcp_write_matcher(monkeypatch) -> None:
+    """CcNotesMcpWrite fires on every cc-notes MCP tool whose suffix is not a known reader (fails open on the unknown)."""
+    def w(tool: str) -> bool:
+        return check_condition(CcNotesMcpWrite(), mock_event("PostToolUse", tool=tool))
+
+    P = MCP_TOOL_PREFIX
+    truth = {
+        P + "note_add": True,
+        P + "task_done": True,
+        P + "task_criterion_met": True,
+        P + "doc_supersede": True,
+        P + "reconcile": True,
+        P + "project_complete": True,
+        P + "sprint_activate": True,
+        P + "runbook_add": True,
+        P + "runbook_step_add": True,
+        P + "runbook_run_start": True,
+        P + "runbook_run_done": True,
+        P + "runbook_run_finish": True,
+        P + "note_list": False,
+        P + "task_criterion_list": False,
+        P + "task_show": False,
+        P + "runbook_list": False,
+        P + "runbook_show": False,
+        P + "status": False,
+        P + "sync": False,
+        P + "blame": False,
+        P + "attachment_get": False,
+        "Edit": False,
+        "Bash": False,
+    }
+    for tool, want in truth.items():
+        check(f"CcNotesMcpWrite[{tool!r}] == {want}", w(tool) == want, f"got {w(tool)}")
+
+
+def test_mcp_reconcile_dry_run_is_not_a_write(monkeypatch) -> None:
+    """An MCP reconcile with dry_run set only reports the plan (tools_repo.go), so it is not a sync trigger."""
+    def w(dry_run: object) -> bool:
+        tool_input = {} if dry_run is None else {"dry_run": dry_run}
+        evt = mock_tool_event(tool=MCP_TOOL_PREFIX + "reconcile", event=Event.PostToolUse, tool_input=tool_input)
+        return check_condition(CcNotesMcpWrite(), evt)
+
+    check("mcp reconcile dry_run=True is not a write", w(True) is False, repr(w(True)))
+    check("mcp reconcile dry_run=False is a write", w(False) is True, repr(w(False)))
+    check("mcp reconcile without dry_run is a write", w(None) is True, repr(w(None)))
+
+
+def test_sync_after_push_syncs_and_confirms(monkeypatch, tmp_path) -> None:
+    """A jj/git push funnels through auto_sync: exactly one cc-notes sync, and a 'Synced cc-notes refs.' confirmation."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Bash", command="jj git push", session_dir=tmp_path)
+    cli, calls = recording_cli({("sync",): "ok"})
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    result = sync_after_push(evt)
+    check("push-sync: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("push-sync: confirms the sync", "Synced cc-notes refs." in result.message, result.message)
+    check("push-sync: exactly one sync ran", _calls_of(calls, "sync") == [0], repr(calls))
+
+
+def test_mcp_write_triggers_sync(monkeypatch, tmp_path) -> None:
+    """A cc-notes MCP write tool call auto-syncs the new refs and confirms it."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = mock_tool_event(tool=MCP_TOOL_PREFIX + "note_add", event=Event.PostToolUse, tool_input={"title": "x"}, session_dir=tmp_path)
+    cli, calls = recording_cli({("sync",): "ok"})
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    result = sync_after_record_write(evt)
+    check("mcp-write sync: warns + confirms", result is not None and "Synced cc-notes refs." in (result.message or ""), repr(result))
+    check("mcp-write sync: exactly one sync ran", _calls_of(calls, "sync") == [0], repr(calls))
+
+
+def test_jj_commit_and_describe_trigger_commit_nudge(monkeypatch, tmp_path) -> None:
+    """The commit nudge (trailer teach + auto-sync) fires for jj commit, jj describe, and ccx vcs ship, not just git commit."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    for i, cmd in enumerate(("jj commit -m x", "jj describe -m x", "ccx vcs ship -m x")):
+        sub = tmp_path / f"s{i}"  # isolate session state so each variant fires fresh (per-sha + once-per-turn)
+        sub.mkdir()
+        evt = commit_event(sub, monkeypatch, command=cmd)
+        result = nudge_commit_record(evt)
+        check(f"commit nudge fires for {cmd!r}", result is not None and "cc-task:" in (result.message or ""), repr(result))
+        check(f"a sync ran for {cmd!r}", _calls_of(evt._sync_calls, "sync") == [0], repr(evt._sync_calls))
+
+
+def test_write_sync_still_once_per_turn(monkeypatch, tmp_path) -> None:
+    """A commit nudge and a cc-notes MCP write in the SAME turn issue exactly one cc-notes sync total."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    cli, calls = recording_cli({("sync",): "ok"})
+    commit = commit_event(tmp_path, monkeypatch)
+    monkeypatch.setattr(commit.ctx, "call_cli", cli)  # share the single recorder across both handlers
+    check("write-once: commit handler fires", nudge_commit_record(commit) is not None)
+    write = mock_tool_event(tool=MCP_TOOL_PREFIX + "note_add", event=Event.PostToolUse, tool_input={"title": "x"}, session_dir=tmp_path)
+    monkeypatch.setattr(write.ctx, "call_cli", cli)
+    write_result = sync_after_record_write(write)
+    check("write-once: the second write did not re-sync", write_result is None, repr(write_result))
+    check("write-once: exactly one sync across the turn", len(_calls_of(calls, "sync")) == 1, repr(calls))
+
+
+_FER_KEY = ("for-each-ref", "--format=%(refname) %(objectname)", "refs/cc-notes/", "refs/cc-notes-sync/origin/")
+
+
+def _session_end_event(tmp_path, monkeypatch, *, for_each_ref, sync="ok", raises=None):
+    """A SessionEnd event with the for-each-ref dirty probe and a recording sync CLI stubbed."""
+    evt = mock_event("SessionEnd", reason="other", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "git", stub_git({_FER_KEY: for_each_ref}))
+    cli, calls = recording_cli({("sync",): sync} if sync is not None else None, raises=raises)
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    return evt, calls
+
+
+def test_session_end_syncs_when_ref_dirty(monkeypatch, tmp_path) -> None:
+    """A local ref whose sha differs from its tracking copy is dirty — SessionEnd pushes exactly once."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    out = "refs/cc-notes/notes/abc aaa\nrefs/cc-notes-sync/origin/notes/abc bbb\n"
+    evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=out)
+    sync_at_session_end(evt)
+    check("session-end dirty: exactly one sync ran", _calls_of(calls, "sync") == [0], repr(calls))
+
+
+def test_session_end_syncs_when_tracking_missing(monkeypatch, tmp_path) -> None:
+    """A local ref with no tracking counterpart (never synced) is dirty — SessionEnd pushes it."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    out = "refs/cc-notes/notes/abc aaa\n"
+    evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=out)
+    sync_at_session_end(evt)
+    check("session-end tracking-missing: exactly one sync ran", _calls_of(calls, "sync") == [0], repr(calls))
+
+
+def test_session_end_skips_when_clean(monkeypatch, tmp_path) -> None:
+    """Every local ref matches its tracking sha — clean, so SessionEnd never syncs."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    out = "refs/cc-notes/notes/abc aaa\nrefs/cc-notes-sync/origin/notes/abc aaa\n"
+    evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=out)
+    sync_at_session_end(evt)
+    check("session-end clean: no sync ran", _calls_of(calls, "sync") == [], repr(calls))
+
+
+def test_session_end_skips_when_no_local_refs(monkeypatch, tmp_path) -> None:
+    """A repo with no local cc-notes refs (empty for-each-ref) reads clean — no sync."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref="")
+    sync_at_session_end(evt)
+    check("session-end no-local: no sync ran", _calls_of(calls, "sync") == [], repr(calls))
+
+
+def test_session_end_skips_when_tracking_only(monkeypatch, tmp_path) -> None:
+    """A tracking-only ref (remote ahead, no local) is no push moment — clean, no sync."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    out = "refs/cc-notes-sync/origin/notes/abc bbb\n"
+    evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=out)
+    sync_at_session_end(evt)
+    check("session-end tracking-only: no sync ran", _calls_of(calls, "sync") == [], repr(calls))
+
+
+def test_session_end_skips_when_git_fails(monkeypatch, tmp_path) -> None:
+    """A git failure (for-each-ref returns None) reads clean — SessionEnd stays silent, no sync."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=None)
+    sync_at_session_end(evt)
+    check("session-end git-fail: no sync ran", _calls_of(calls, "sync") == [], repr(calls))
+
+
+def test_session_end_silent_on_sync_failure(monkeypatch, tmp_path) -> None:
+    """A dirty ref whose sync raises (rejected push / timeout / missing binary) returns None and never raises."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    out = "refs/cc-notes/notes/abc aaa\n"
+    for exc in (
+        subprocess.CalledProcessError(1, ["cc-notes", "sync"], stderr="! [rejected] non-fast-forward\n"),
+        subprocess.TimeoutExpired(cmd="cc-notes sync", timeout=15),
+        FileNotFoundError("cc-notes"),
+    ):
+        evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=out, sync=None, raises={("sync",): exc})
+        try:
+            result = sync_at_session_end(evt)
+            ok = result is None and _calls_of(calls, "sync") == [0]
+        except Exception as e:  # noqa: BLE001 — the point of the test is that it must not raise
+            ok = False
+            check(f"session-end must not raise on {type(exc).__name__}", False, repr(e))
+            continue
+        check(f"session-end silent on {type(exc).__name__}: attempted the sync, returned None", ok, repr(calls))
+
+
+def test_cc_notes_refs_dirty_maps_suffix_exactly(monkeypatch, tmp_path) -> None:
+    """The dirty check keys on the ref suffix, so a same-suffix sha mismatch is dirty while distinct suffixes stay independent."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    # Two suffixes: tasks/main matches (clean), notes/x differs (dirty) -> overall dirty.
+    out = (
+        "refs/cc-notes/tasks/main aaa\n"
+        "refs/cc-notes-sync/origin/tasks/main aaa\n"
+        "refs/cc-notes/notes/x ccc\n"
+        "refs/cc-notes-sync/origin/notes/x ddd\n"
+    )
+    evt = mock_event("SessionEnd", reason="other", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "git", stub_git({_FER_KEY: out}))
+    check("dirty check: one differing suffix makes the repo dirty", cc_notes_refs_dirty(evt) is True)
+
+
+def test_bootstrap_parse_version(monkeypatch) -> None:
+    """_parse_version extracts an (X, Y, Z) tuple from the cc-notes version line, None when unreadable."""
+    check("parse: v-prefixed", bootstrap._parse_version("v0.22.0 (abc)") == (0, 22, 0))
+    check("parse: bare with sha", bootstrap._parse_version("0.22.1 (deadbeef)") == (0, 22, 1))
+    check("parse: pre-release suffix", bootstrap._parse_version("0.23.0-dirty") == (0, 23, 0))
+    check("parse: unparseable -> None", bootstrap._parse_version("garbage") is None)
+    check("parse: empty -> None", bootstrap._parse_version("") is None)
+    check("parse: None -> None", bootstrap._parse_version(None) is None)
+
+
+def test_bootstrap_installs_when_absent(monkeypatch, tmp_path) -> None:
+    """An absent binary runs the curl installer, then ensures the mount. Async dispatch ignores the return."""
+    state = {"installed": False}
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda _n: "/usr/bin/cc-notes" if state["installed"] else None)
+    calls: list[tuple] = []
+
+    def cli(args, *, input=None, timeout=30, env=None, throw=True):
+        calls.append(tuple(args))
+        if args[:2] == ["sh", "-c"]:
+            state["installed"] = True  # the installer lands the binary on PATH
+            return ""
+        return ""
+
+    evt = mock_event("SessionStart", source="startup", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    result = ensure_cc_notes_binary(evt)
+    check("bootstrap absent: ran the curl installer", any(c[:2] == ("sh", "-c") and "install.sh" in c[2] for c in calls), repr(calls))
+    check("bootstrap absent: ensured the mount after a successful install", ("cc-notes", "mount", "--auto") in calls, repr(calls))
+    check("bootstrap absent: returns None (async dispatch drops the output)", result is None, repr(result))
+
+
+def test_bootstrap_upgrades_when_stale(monkeypatch, tmp_path) -> None:
+    """A present-but-stale binary reinstalls, then ensures the mount, returning no context line."""
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    calls: list[tuple] = []
+
+    def cli(args, *, input=None, timeout=30, env=None, throw=True):
+        calls.append(tuple(args))
+        return "0.21.0 (old)" if args == ["cc-notes", "version"] else ""
+
+    evt = mock_event("SessionStart", source="startup", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    result = ensure_cc_notes_binary(evt)
+    check("bootstrap stale: ran the installer", any(c[:2] == ("sh", "-c") for c in calls), repr(calls))
+    check("bootstrap stale: ensured the mount", ("cc-notes", "mount", "--auto") in calls, repr(calls))
+    check("bootstrap stale: returns None", result is None, repr(result))
+
+
+def test_bootstrap_noop_when_current(monkeypatch, tmp_path) -> None:
+    """A current binary skips the installer but still ensures the mount, returning no context line."""
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    calls: list[tuple] = []
+
+    def cli(args, *, input=None, timeout=30, env=None, throw=True):
+        calls.append(tuple(args))
+        return "0.22.0 (cur)" if args == ["cc-notes", "version"] else ""
+
+    evt = mock_event("SessionStart", source="startup", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    result = ensure_cc_notes_binary(evt)
+    check("bootstrap current: no installer ran", not any(c[:2] == ("sh", "-c") for c in calls), repr(calls))
+    check("bootstrap current: ensured the mount", ("cc-notes", "mount", "--auto") in calls, repr(calls))
+    check("bootstrap current: returns None", result is None, repr(result))
+
+
+def test_bootstrap_skips_non_startup_source(monkeypatch, tmp_path) -> None:
+    """A clear/compact SessionStart returns None before any shell-out (matcher parity with startup|resume)."""
+    calls: list[tuple] = []
+
+    def cli(args, **kwargs):
+        calls.append(tuple(args))
+        return ""
+
+    evt = mock_event("SessionStart", source="clear", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    check("bootstrap gate: clear source returns None", ensure_cc_notes_binary(evt) is None)
+    check("bootstrap gate: no cli calls", calls == [], repr(calls))
+
+
+def test_bootstrap_ensure_mount(monkeypatch, tmp_path) -> None:
+    """ensure_mount shells `cc-notes mount --auto` best-effort."""
+    calls: list[tuple] = []
+
+    def cli(args, *, input=None, timeout=30, env=None, throw=True):
+        calls.append(tuple(args))
+        return ""
+
+    evt = mock_event("SessionStart", source="startup", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    ensure_mount(evt)
+    check("ensure_mount: calls cc-notes mount --auto", ("cc-notes", "mount", "--auto") in calls, repr(calls))
 
 
 class MonkeyPatch:

@@ -37,6 +37,24 @@ def float_session_tasks(evt: UserPromptSubmitEvent) -> HookResult | None:
 
 @on(
     Event.UserPromptSubmit,
+    only_if=[CcNotesAvailable()],
+)
+def announce_cc_notes_available(evt: UserPromptSubmitEvent) -> HookResult | None:
+    """Once per session, surface that cc-notes is installed and its durable tooling is available.
+
+    The SessionStart bootstrap (bootstrap.py) does the install/upgrade under async dispatch, whose
+    output the harness drops — so the version line the agent reads lands here on the first prompt.
+    ``ctx.s.once`` claims the shot only when the line actually emits, so a transient version read that
+    comes back empty doesn't burn the announcement.
+    """
+    version = (run_cc_notes(evt, "version") or "").strip()
+    if not version or not evt.ctx.s.once("announce", scope="availability"):
+        return None
+    return evt.warn(f"cc-notes {version} is installed; its durable task, note, doc, and log tooling is available.")
+
+
+@on(
+    Event.UserPromptSubmit,
     only_if=[CcNotesMissing()],
     max_fires=1,
 )

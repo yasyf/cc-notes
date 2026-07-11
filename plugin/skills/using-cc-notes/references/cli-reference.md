@@ -87,13 +87,16 @@ folds them into the canonical refs — the capt-hook pack and the reconcile CI w
 sync for you.
 
 When a `.claude/` directory exists, init registers the cc-notes plugin in
-`.claude/settings.json` and enables the cc-notes capt-hook pack (via `capt-hook pack add`). When
-a `.github/` directory exists, it installs the reconcile CI workflow. init never creates
-`.claude/` — it wires Claude Code only when the repo already uses it.
+`.claude/settings.json`, enables the captain-hook plugin (via `uvx capt-hook skills install`,
+the dispatcher that runs every pack's hooks), and enables the cc-notes capt-hook pack (via
+`capt-hook pack add`). When a `.github/` directory exists, it installs the reconcile CI
+workflow. init never creates `.claude/` — it wires Claude Code only when the repo already
+uses it.
 
 Under jj, `jj git push`/`jj git fetch` bridge only `refs/heads/*` and leave the
-`refs/cc-notes/*` refs behind; run `cc-notes sync` (it drives the git binary directly, carrying
-the refs both ways regardless of front-end).
+`refs/cc-notes/*` refs behind; the capt-hook pack syncs after each of those commands and
+sweeps anything unpushed at session end. Outside a hook-managed session, run `cc-notes sync`
+(it drives the git binary directly, carrying the refs both ways regardless of front-end).
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -101,6 +104,7 @@ the refs both ways regardless of front-end).
 | `--ci` | auto | Force-install the reconcile workflow even without a `.github/` directory (installed by default when `.github/` exists); mutually exclusive with `--no-ci` |
 | `--no-ci` | off | Skip the reconcile workflow even when a `.github/` directory exists |
 | `--hook` | off | Also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj, rebase, and server-side squash) |
+| `--no-mount` | off | Skip auto-mounting the `.notes` filesystem and disable the session-start ensure-mount |
 
 ```console
 $ cc-notes init
@@ -400,10 +404,12 @@ plugin in the user-global `~/.claude/settings.json` instead of the repo.
 ### `cc-notes hooks install`
 
 Enable the cc-notes capt-hook pack. Runs `uvx capt-hook pack add
-github:yasyf/cc-notes@latest`, which caches the pack tarball, records `[packs.cc-notes]` in
-`.claude/hooks/packs.toml`, and wires the events into `.claude/settings.local.json`. The source
-tracks `@latest` (unpinned) so `uvx capt-hook pack update` carries pack fixes without re-running
-install. The pack manifest lives at `.claude/capt-hook.toml`. Takes no flags.
+github:yasyf/cc-notes@latest`, which caches the pack tarball and records `[packs.cc-notes]` in
+`.claude/hooks/packs.toml` — the only file it writes; event wiring ships in the captain-hook
+plugin's own hooks.json, and that plugin is enabled by `uvx capt-hook skills install` (which
+`cc-notes init` runs). The source tracks `@latest` (unpinned) so `uvx capt-hook pack update`
+carries pack fixes without re-running install. The pack manifest lives at
+`.claude/capt-hook.toml`. Takes no flags.
 
 ### `cc-notes workflows install`
 

@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,58 @@ import (
 
 	"github.com/yasyf/cc-notes/plugin"
 )
+
+// fakeUvx installs a fake `uvx` on PATH that appends each invocation's argv to a
+// log and exits with skillsRC for a `skills install` call, packRC for a
+// `pack add` call, and 0 otherwise. It returns the log path so a test can assert
+// which capt-hook steps ran. Mocking only the external `uvx` subprocess leaves
+// the enable-capt-hook flow itself real.
+func fakeUvx(t *testing.T, skillsRC, packRC int) string {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "uvx.log")
+	script := fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %q\ncase \"$*\" in\n  *\"skills install\"*) exit %d ;;\n  *\"pack add\"*) exit %d ;;\nesac\nexit 0\n", log, skillsRC, packRC)
+	//nolint:gosec // G306: the fake `uvx` must be world-executable for exec.LookPath to run it.
+	if err := os.WriteFile(filepath.Join(dir, "uvx"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake uvx: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return log
+}
+
+// TestHooksInstallEnablesPackAndDispatcher proves `cc-notes hooks install` runs
+// BOTH capt-hook steps — `skills install` (the dispatcher plugin) and `pack add`
+// (the cc-notes pack) — and that each is independently best-effort: a failure of
+// one still runs the other and surfaces as an error. init reuses the same
+// enableCaptHook helper, so this covers both entry points.
+func TestHooksInstallEnablesPackAndDispatcher(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		skillsRC, packRC int
+		wantErr          bool
+	}{
+		{"both succeed", 0, 0, false},
+		{"skills install fails, pack add still runs", 1, 0, true},
+		{"pack add fails, skills install still runs", 0, 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			log := fakeUvx(t, tc.skillsRC, tc.packRC)
+			_, stderr, err := runCLI(t, dir, "hooks", "install")
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("hooks install err = %v (stderr %q), wantErr %v", err, stderr, tc.wantErr)
+			}
+			//nolint:gosec // G304: reads the fake uvx log under the test's own temp dir.
+			calls, _ := os.ReadFile(log)
+			if !strings.Contains(string(calls), "skills install") {
+				t.Fatalf("hooks install never ran `skills install` (dispatcher left off):\n%s", calls)
+			}
+			if !strings.Contains(string(calls), "pack add") {
+				t.Fatalf("hooks install never ran `pack add` (a prior failure short-circuited it):\n%s", calls)
+			}
+		})
+	}
+}
 
 func TestSkillsInstallRegistersPlugin(t *testing.T) {
 	dir := initRepo(t)

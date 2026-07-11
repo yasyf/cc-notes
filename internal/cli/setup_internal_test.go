@@ -22,6 +22,15 @@ func TestPackAddArgs(t *testing.T) {
 	}
 }
 
+func TestSkillsInstallArgs(t *testing.T) {
+	// init runs this to enable captain-hook@captain-hook (the dispatcher); the argv
+	// is fixed, so pin it — a rename here silently leaves init's pack non-dispatching.
+	want := []string{"capt-hook", "skills", "install"}
+	if got := skillsInstallArgs(); !slices.Equal(got, want) {
+		t.Fatalf("skillsInstallArgs() = %v, want %v", got, want)
+	}
+}
+
 func TestRegisterPluginPreservesOrderAndMerges(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o750); err != nil {

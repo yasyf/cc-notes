@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -105,14 +106,14 @@ func newHooksCmd() *cobra.Command {
 func newHooksInstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install",
-		Short: "Enable the cc-notes capt-hook pack via `capt-hook pack add`",
+		Short: "Enable the cc-notes capt-hook pack and its dispatcher plugin",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, err := repoRoot(cmd)
 			if err != nil {
 				return err
 			}
-			return runCaptHookPackAdd(cmd, root)
+			return enableCaptHook(cmd, root)
 		},
 	}
 	return cmd
@@ -127,19 +128,41 @@ func packAddArgs() []string {
 	return []string{"capt-hook", "pack", "add", "github:yasyf/cc-notes@latest"}
 }
 
-// runCaptHookPackAdd shells out to `uvx capt-hook pack add` from the repo root,
-// streaming the subcommand's stdio so its progress reaches the operator.
-func runCaptHookPackAdd(cmd *cobra.Command, root string) error {
-	args := append([]string{"uvx"}, packAddArgs()...)
+// skillsInstallArgs builds the argv after `uvx` that enables the captain-hook
+// plugin (`captain-hook@captain-hook`), the dispatcher that runs every pack's
+// hooks. `pack add` and `registerPlugin` never turn it on, so init runs this too.
+func skillsInstallArgs() []string {
+	return []string{"capt-hook", "skills", "install"}
+}
+
+// runCaptHook shells out to `uvx <captHookArgs...>` from the repo root, streaming
+// the subcommand's stdio. Both `pack add` and `skills install` route through here.
+func runCaptHook(cmd *cobra.Command, root string, captHookArgs []string) error {
+	args := append([]string{"uvx"}, captHookArgs...)
 	//nolint:gosec // G204: args[0] is the literal "uvx"; the rest is this command's own fixed capt-hook invocation, by design.
 	c := exec.CommandContext(cmd.Context(), args[0], args[1:]...)
 	c.Dir = root
 	c.Stdout = cmd.OutOrStdout()
 	c.Stderr = cmd.ErrOrStderr()
 	if err := c.Run(); err != nil {
-		return fmt.Errorf("uvx capt-hook pack add: %w", err)
+		return fmt.Errorf("uvx %s: %w", strings.Join(captHookArgs, " "), err)
 	}
 	return nil
+}
+
+// runCaptHookPackAdd enables the cc-notes capt-hook pack via `uvx capt-hook pack add`.
+func runCaptHookPackAdd(cmd *cobra.Command, root string) error {
+	return runCaptHook(cmd, root, packAddArgs())
+}
+
+// enableCaptHook enables the captain-hook dispatcher plugin (`skills install`) and registers the
+// cc-notes pack (`pack add`). The two are independent installs, so each runs regardless of the
+// other's outcome — a network blip on one never suppresses the other — and both errors are joined.
+func enableCaptHook(cmd *cobra.Command, root string) error {
+	return errors.Join(
+		runCaptHook(cmd, root, skillsInstallArgs()),
+		runCaptHookPackAdd(cmd, root),
+	)
 }
 
 // repoRoot returns the absolute worktree root of the repository containing the

@@ -98,11 +98,15 @@ func newInitCmd() *cobra.Command {
 			if !noMount {
 				autoMount(cmd, root)
 			}
-			// The capt-hook pack add shells out to uvx over the network, so it runs
+			// The capt-hook calls shell out to uvx over the network, so they run
 			// last: a failure here never blocks the local-only refspecs, plugin
 			// registration, CI workflow, post-merge hook, or auto-mount above.
+			// `skills install` enables captain-hook@captain-hook (the dispatcher);
+			// `pack add` registers the cc-notes pack it dispatches — without the
+			// former the pack is installed but dormant. Each step is independently
+			// best-effort, so one uvx failure never suppresses the other.
 			if claudeExists {
-				if err := runCaptHookPackAdd(cmd, root); err != nil {
+				if err := enableCaptHook(cmd, root); err != nil {
 					return err
 				}
 			}

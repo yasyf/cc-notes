@@ -1,8 +1,8 @@
 # cc-notes nudge hooks
 
-`cc_notes.py` is a [capt-hook](https://pypi.org/project/capt-hook/) hook module
-that nudges agents to keep cc-notes in step with the git work they do. It ships
-as the cc-notes capt-hook pack, enabled in a repo by `cc-notes hooks install`.
+This directory is a [capt-hook](https://pypi.org/project/capt-hook/) pack whose
+hooks nudge agents to keep cc-notes in step with the git work they do. It is
+enabled in a repo by `cc-notes hooks install`.
 
 These are **nudges, never gates**. cc-notes complements Claude's native task
 tracking, so every hook only ever warns, and none can block a tool call.
@@ -65,7 +65,7 @@ later. The session-start float is deterministic orientation, not a filtered surf
 | `Write` / `Edit` / `MultiEdit` of an internal-looking file (PostToolUse) | a status/handoff/notes/runbook/`memory/` file the static `DurableInternalWrite` gate flags | note / doc / log / task / runbook — or none; the subtle calls are doc (living guidance) vs log (append-only chronology) and doc (describes) vs runbook (a procedure you re-execute, tracked per run) |
 | Bash `cp`/`mv`/`rsync` landing run output in a durable tree, or a `Write`/`Edit` of an evidence-suffixed file (`.log`, `.panic`, `.dump`, …) anywhere in it, `docs/**` included (PostToolUse) | the transfer the static `EvidenceArchive` gate flags — temp/scratchpad, `testdata/` fixtures, `.git` internals, and relative in-repo bulk copies stay exempt | (static, no model) a log entry carrying the artifacts as `--attach` git-lfs attachments; only `cc-notes sync` uploads their content (plain `git push` moves refs without it), and a >1MB payload strengthens the wording |
 | Bash `cc-notes note`/`doc`/`log` `add`/`edit`/`append` whose title or body text names a purge-bound path (`/tmp`, `/var`, a session scratchpad) the static `EphemeralRecordReference` gate flags — an `--attach` value is exempt (PostToolUse) | the record command the gate flags | (static, no model) carry the content in the record itself — `--body -` (or `--checkout` file mode) for text, `--attach <file>` for artifacts, whose bytes land in the ODB and sync with the repo |
-| `git commit` (PostToolUse) | the HEAD commit — message, diffstat, bounded patch | whether the change encodes a durable decision worth a note or doc; the `cc-task:` link reminder always fires regardless, and the sync is an automatic side-effect (see below) |
+| `git commit` / `jj commit` / `jj describe` / `ccx vcs ship` (PostToolUse) | the HEAD commit — message, diffstat, bounded patch | whether the change encodes a durable decision worth a note or doc; the `cc-task:` link reminder always fires regardless, and the sync is an automatic side-effect (see below) |
 | `ExitPlanMode` (PostToolUse) | the approved plan's text (`planFilePath`, else inline) | which few plan items are durable work → `cc-notes task add` (`--backlog` if shared); the native-vs-durable teach always fires regardless |
 | Many open native tasks after `TaskCreate` | the growing native list | (static, no model) mirror the durable or cross-agent items into `cc-notes task add` |
 
@@ -79,42 +79,78 @@ empty), and only ever suggests — it never blocks.
 
 | Trigger | Reminder |
 |---------|----------|
-| `git merge` / `git pull` (PostToolUse) | the pack auto-runs `cc-notes reconcile --into <current branch>` (carrying the merged branch's still-open tasks onto your branch) then syncs, confirming "Reconciled merged tasks onto <branch>. Synced cc-notes refs." (a failed push surfaces the retry hint instead; jj merges fire no git hooks, so after a jj merge you still run `cc-notes reconcile` / `sync` yourself) |
+| `git merge` / `git pull` / `jj git fetch` (PostToolUse) | the pack auto-runs `cc-notes reconcile --into <current branch>` (carrying the merged branch's still-open tasks onto your branch) then syncs, confirming "Reconciled merged tasks onto <branch>. Synced cc-notes refs." (a failed push surfaces the retry hint instead; a detached HEAD — the colocated-jj norm — or a failed reconcile falls back to a plain sync, so the fetched refs still ship) |
+| `git push` / `jj git push` (PostToolUse) | the pack runs `cc-notes sync` so the cc-notes refs follow the branch push — jj's git bridge carries only `refs/heads/*`, so under jj this sync is the only thing that moves them |
+| a cc-notes write — any mutating CLI subcommand or MCP tool (PostToolUse) | the pack syncs the fresh refs to the remote; reads (`list`, `show`, `search`, `status`, …) never trigger |
 | `cc-notes task claim` / `task start` (PostToolUse) | you hold a lease — `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold (sync is automatic now) |
 | `cc-notes` binary missing, first `UserPromptSubmit` (once) | the pack is enabled but the binary is off `PATH` — name the two install paths (`brew install yasyf/tap/cc-notes` or `curl -fsSL …/install.sh \| sh`) so an opt-in repo isn't left silent |
 
 ### Firing policy
 
-One cap by class. Every Record router and Workflow reminder is capped at `NUDGE_MAX_FIRES`
-(three) per session as a backstop, and additionally deduped by its own key — the turn, the
-HEAD sha, or the plan path — so it speaks once per real event rather than on every fire. The
-auto-sync action deduplicates per turn across all of its triggers (commit, claim/start,
-merge/pull), so the several events of one turn drive a single sync. The Surface floaters
-carry no cap: their per-record session dedup already bounds them. The two
-once-per-session orientations (the session-start task float and the install hint) fire
-exactly once.
+One cap by class. Every Record router and teach-carrying Workflow reminder is capped at
+`NUDGE_MAX_FIRES` (three) per session as a backstop, and additionally deduped by its own
+key — the turn, the HEAD sha, or the plan path — so it speaks once per real event rather
+than on every fire. The pure sync actions (after a merge/pull/fetch, a push, or a cc-notes
+write) carry no session cap: their only output is the sync confirm, and the per-turn dedup
+already bounds them. The auto-sync action deduplicates per turn across all of its triggers — a commit
+(`git commit` / `jj commit` / `jj describe` / `ccx vcs ship`), a claim/start, a
+merge/pull/fetch, a push (`git push` / `jj git push`), and every cc-notes write (CLI or
+MCP) — so the several events of one turn drive a single sync. The Surface floaters carry no
+cap: their per-record session dedup already bounds them. The two once-per-session
+orientations (the session-start task float and the install hint) fire exactly once.
+
+Command triggers match on structured argv-prefix conditions, not regexes: any leg of a
+compound line matches (`git commit -m x && git push`), a quoted mention (`echo "jj commit
+now"`) does not, and the match is a literal prefix — a flag-interleaved form like `git
+--no-pager commit` is missed on purpose. A matched leg carrying an effect-nullifying flag —
+a `--dry-run`/`-n` push, a `--dry-run` reconcile, a `--help`/`-h` cc-notes invocation — is
+dropped, since it publishes or runs nothing.
 
 ### The action hooks — side-effecting handlers
 
-Three handlers *do* something rather than nudge, all deterministic, idempotent, and
-fail-closed. The auto-sync triggers (a commit, a claim/start, a merge/pull) dedup to **at
-most one sync per turn** — a commit and a claim in the same turn sync once. The failure
-policy is uniform: a repo with no remote or an offline box is a legitimate state, so the
-handler is silent (no nag); a genuine sync failure — a non-fast-forward push rejection, say
-— surfaces a short "cc-notes sync failed — run `cc-notes sync` to retry."; and a detached
-HEAD or a reconcile error stays silent, since it is local-only and carries no hazard.
+A handful of handlers *do* something rather than nudge, all deterministic, idempotent, and
+fail-closed. The auto-sync triggers dedup to **at most one sync per turn** — a commit and a
+claim in the same turn sync once. The failure policy is uniform: a repo with no remote or an
+offline box is a legitimate state, so the handler is silent (no nag); a genuine sync failure
+— a non-fast-forward push rejection, say — surfaces a short "cc-notes sync failed — run
+`cc-notes sync` to retry."; and a detached HEAD or a reconcile error downgrades to a plain
+sync rather than going silent, since the refs can still ship even when reconcile can't run.
 
-**Auto-sync.** After a `git commit`, a `cc-notes task claim` / `task start`, or a
-`git merge` / `git pull`, the pack runs `cc-notes sync` itself and confirms with "Synced
-cc-notes refs." — once per turn across every trigger. This replaces the old "run cc-notes
-sync" nudge.
+**Auto-sync.** After a commit (`git commit`, `jj commit`, `jj describe`, `ccx vcs ship`), a
+`cc-notes task claim` / `task start`, a `git merge` / `git pull` / `jj git fetch`, a push
+(`git push`, `jj git push` — jj's git bridge moves only `refs/heads/*`, never the cc-notes
+refs), or any cc-notes write — a mutating CLI subcommand (every noun's write verbs, bare
+`reconcile`, and the two-level `task criterion` / `runbook step` / `runbook run` mutations)
+or an MCP tool that isn't a known reader (a deny-list of the read tools, so the matcher
+fails open: an unlisted future tool costs one harmless idempotent sync) — the pack runs
+`cc-notes sync` itself and confirms with
+"Synced cc-notes refs." — once per turn across every trigger. Reads never sync. This
+replaces the old "run cc-notes sync" nudge.
 
-**Auto-reconcile.** After a `git merge` / `git pull`, the pack runs
+**Auto-reconcile.** After a `git merge` / `git pull` / `jj git fetch`, the pack runs
 `cc-notes reconcile --into <current branch>` — carrying the merged branch's still-open tasks
 onto your branch — then syncs, confirming "Reconciled merged tasks onto <branch>. Synced
 cc-notes refs.". The push outcome rides along, so a failed push surfaces the same retry hint
-rather than reading as synced. This replaces the old reconcile-then-sync nudge. jj merges fire
-no git hooks, so after a jj merge you still run `cc-notes reconcile` / `sync` yourself.
+rather than reading as synced. On a detached HEAD (the colocated-jj norm — exactly where
+`jj git fetch` runs) or a failed reconcile it falls back to a plain sync — the
+fetched refs still ship; the tasks stay put. This replaces the old reconcile-then-sync
+nudge. jj merges and rebases match no trigger, so after one of those you still run
+`cc-notes reconcile` yourself.
+
+**The SessionEnd backstop.** A write-only session can end without ever hitting a sync
+trigger (the memory mirror is the canonical case). At session end an async handler runs a
+zero-network dirty check — local `refs/cc-notes/*` tips against their fetched copies under
+`refs/cc-notes-sync/origin/*` — and runs `cc-notes sync` only when a local ref is missing
+from tracking or points elsewhere; a tracking-only ref (remote ahead) is no push moment. It
+is silent best-effort end to end — no remote, offline, and timeout all stay quiet, and async
+dispatch drops its output anyway. Needs capt-hook >= 9.2, whose captain-hook plugin
+dispatches `run SessionEnd --async`.
+
+Known limitations of this dirty check: it compares only against the `origin` tracking refs,
+so a repo whose cc-notes remote is not `origin` reads clean; ref-tip equality can't tell
+that a plain `git push` already shipped an attachment's git-lfs content, so matching tips
+read clean even when that payload never synced; and a remote-ahead ref (tracking newer than
+local) counts as clean, since the backstop is a push-moment check, not a pull.
 
 **The memory mirror.** The harness records durable agent memories as
 `<slug>.md` files under a `memory/` dir inside a `.cc-pool` tree, and this handler mirrors
@@ -128,19 +164,22 @@ title and body are unchanged) or `note add`. It mirrors only `feedback`, `projec
 runs at `PostToolUse` the memory write has already landed, and every cc-notes call falls
 closed to silence, so a failed mirror never disturbs it. A memory write is *not* an auto-sync
 trigger: the mirror still nudges "Run `cc-notes sync` to share it" rather than syncing for
-you. The cc-pool memory tree is the mirror's alone: the internal-write record router
-hard-excludes it, so a memory write is captured once, by the mirror, never also nudged.
+you, and the SessionEnd backstop sweeps an unpushed mirror at exit. The cc-pool memory tree
+is the mirror's alone: the internal-write record router hard-excludes it, so a memory write
+is captured once, by the mirror, never also nudged.
 
-### The session-start mount
+### The session bootstrap
 
-Enabling the cc-notes plugin runs a `SessionStart` hook (`scripts/ensure-cc-notes.sh`) that
-auto-installs the binary — Homebrew-preferred, the release download as fallback — so it is
-usually present before the first prompt; the install reminder above speaks only when that
-bootstrap couldn't produce one. That same hook also runs `cc-notes mount --auto`, which
-self-gates on the repo's opt-in (`cc-notes.autoMount=true`, set by `cc-notes init` unless
-you pass `--no-mount`) and on a fuse-capable binary, adopts an already-live mount with zero
-overhead, and is quiet and best-effort. Both are shell `SessionStart` hooks, not capt-hook
-nudges.
+The pack bootstraps its own binary. `ensure_cc_notes_binary` runs at `SessionStart` under
+async dispatch (the captain-hook plugin's `run SessionStart --async`): it installs the
+binary through the canonical installer when missing, reinstalls one older than v0.22.0 (the
+flag-cutover floor), then runs `cc-notes mount --auto` — which self-gates on the repo's
+opt-in (`cc-notes.autoMount=true`, set by `cc-notes init` unless you pass `--no-mount`) and
+on a fuse-capable binary, adopts an already-live mount with zero overhead, and is quiet and
+best-effort. Async dispatch drops the handler's output, so the availability line the agent
+reads comes from `announce_cc_notes_available`, a once-per-session `UserPromptSubmit` nudge
+that surfaces the installed version at the first prompt. The install reminder above speaks
+only when the bootstrap couldn't land a binary.
 
 ## Silent unless cc-notes is installed
 
@@ -161,9 +200,10 @@ leaves the pack out. Where the pack is enabled but the repo has no cc-notes data
 yet, the Surface floaters shell out to `cc-notes` and get nothing back,
 so they fall closed to silence on their own. `run_cc_notes` returns `None` on any
 failure (missing flag, non-zero exit, timeout) and the parse helpers turn empty
-output into nothing to render. The auto-reconcile action
-serves `jj` users too. Since `jj` never runs git hooks, `cc-notes reconcile` is
-the explicit step they run by hand after a merge.
+output into nothing to render. The triggers cover the jj surface too —
+`jj commit` / `jj describe`, `jj git push`, and `jj git fetch` all sync on their
+own; only a jj merge or rebase still calls for a by-hand `cc-notes reconcile`,
+since no matched command marks one.
 
 ## Install
 
@@ -172,18 +212,20 @@ $ cc-notes hooks install
 ```
 
 This runs `uvx capt-hook pack add github:yasyf/cc-notes@latest`, which resolves
-`@latest` to the newest release, caches the pack tarball, records
-`[packs.cc-notes]` in `.claude/hooks/packs.toml`, and regenerates the event wiring
-in `.claude/settings.local.json`. The source is unpinned on purpose: the pack
-tracks `@latest`, and capt-hook re-resolves it at most once a day and auto-fetches
-new releases, so the nudges stay current on their own. capt-hook derives the event
-set from the pack, and the dispatcher runs via `uvx`, so there is nothing else to
-install.
+`@latest` to the newest release, caches the pack tarball, and records
+`[packs.cc-notes]` in `.claude/hooks/packs.toml` — that file is all it writes.
+The event wiring ships in the captain-hook plugin's own `hooks.json`; enable that
+plugin (the dispatcher) with `uvx capt-hook skills install`, which `cc-notes init`
+runs before the pack add — without it the pack is installed but dormant. The
+source is unpinned on purpose: the pack tracks `@latest`, and capt-hook
+re-resolves it at most once a day and auto-fetches new releases, so the nudges
+stay current on their own.
 
-The pack cache (`~/.cache/captain-hook`) and `.claude/settings.local.json` aren't
-committed, but capt-hook auto-fetches the declared pack on the next hook event, so a
-teammate who clones the repo only re-runs `cc-notes hooks install` to regenerate the
-local event wiring.
+The pack cache (`~/.cache/captain-hook`) isn't committed, but `packs.toml` is, and
+capt-hook auto-fetches the declared pack on the next hook event — a teammate who
+clones the repo needs only the captain-hook plugin enabled. The SessionEnd
+backstop needs capt-hook >= 9.2, the first release whose plugin dispatches
+`run SessionEnd --async`.
 
 ## Test
 
@@ -205,6 +247,14 @@ nothing, so a positive can never fire there. What the gate lets through, what th
 routes to (note vs doc vs log vs task), the always-on commit and plan teaches, and the
 per-key dedup are proven in `tests/test_cc_notes.py`, which stubs `evt.ctx.call_llm`
 (and `evt.ctx.git`) directly.
+
+Two handlers carry no inline tests at all: `sync_at_session_end` and
+`announce_cc_notes_available`. This repo self-adopts the pack, so their firing paths run
+real side-effects — a real sync, a real `cc-notes version` shell-out — the inline harness
+can't contain; their coverage lives in `tests/test_cc_notes.py`. Relatedly, the `record.py`
+inline tests read red when run *inside* a session with a live cc-notes MCP marker:
+`mcp_active` flips the suggested commands to MCP-tool wording and the inline `Warn`
+patterns stop matching. Run them from a plain shell.
 
 The Surface floaters split into thin event wiring over pure helpers for parsing,
 rendering, dedup, drift filtering, the precision filter, and task capping. Those

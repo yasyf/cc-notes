@@ -268,7 +268,7 @@ command: cc-notes hooks
 command: cc-notes hooks install
   use: install
   aliases: -
-  short: Enable the cc-notes capt-hook pack via `capt-hook pack add`
+  short: Enable the cc-notes capt-hook pack and its dispatcher plugin
   hidden: false
   flags:
     (none)
