@@ -180,21 +180,7 @@ func newDocListCmd() *cobra.Command {
 }
 
 func newDocShowCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "show ID",
-		Short: "Show one doc",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			return showDoc(cmd, s, args[0], jsonOut)
-		},
-	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return docSpec.showVerb("Show one doc", showDoc)
 }
 
 func newDocEditCmd() *cobra.Command {
@@ -305,33 +291,7 @@ func newDocEditCmd() *cobra.Command {
 }
 
 func newDocRmCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "rm ID",
-		Short: "Tombstone a doc",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			ref, _, err := docSpec.load(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}})
-			if err != nil {
-				return err
-			}
-			return printDoc(cmd, s, snapshot.(model.Doc), "", jsonOut)
-		},
-	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return docSpec.rmVerb()
 }
 
 func newDocSearchCmd() *cobra.Command {

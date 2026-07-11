@@ -288,21 +288,7 @@ func newTaskReadyCmd() *cobra.Command {
 }
 
 func newTaskShowCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "show ID",
-		Short: "Show one task",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			return showTask(cmd, s, args[0], jsonOut)
-		},
-	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
-	return cmd
+	return taskSpec.showVerb("Show one task", showTask)
 }
 
 func newTaskStartCmd() *cobra.Command {
@@ -760,37 +746,7 @@ func newTaskEditCmd() *cobra.Command {
 }
 
 func newTaskCommentCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "comment ID BODY",
-		Short: "Append a comment; BODY - reads stdin",
-		Args:  exactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			body, err := bodyArg(cmd, args[1])
-			if err != nil {
-				return err
-			}
-			ref, _, err := taskSpec.load(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.AddComment{Body: body}})
-			if err != nil {
-				return err
-			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
-		},
-	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
-	return cmd
+	return taskSpec.commentVerb(nil)
 }
 
 func newTaskDepCmd() *cobra.Command {

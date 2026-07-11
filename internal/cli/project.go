@@ -118,54 +118,20 @@ func newProjectListCmd() *cobra.Command {
 }
 
 func newProjectShowCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "show ID",
-		Short: "Show one project",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			return showProject(cmd, s, args[0], jsonOut)
-		},
-	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
-	return cmd
+	return projectSpec.showVerb("Show one project", showProject)
 }
 
 func newProjectStatusCmd(use string, status model.ProjectStatus) *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   use + " ID",
-		Short: "Mark a project " + string(status),
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			ref, project, err := projectSpec.load(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			if project.Status != model.ProjectActive {
-				return &ConflictError{Msg: fmt.Sprintf("%s already %s", project.ID.Short(), project.Status)}
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.SetProjectStatus{Status: status}})
-			if err != nil {
-				return err
-			}
-			return printProject(cmd, s, snapshot.(model.Project), jsonOut)
-		},
+	return projectSpec.statusVerb(use, string(status), guardProjectTransition, model.SetProjectStatus{Status: status})
+}
+
+// guardProjectTransition allows a status change only from active; a project
+// already closed refuses further transitions.
+func guardProjectTransition(project model.Project) error {
+	if project.Status != model.ProjectActive {
+		return &ConflictError{Msg: fmt.Sprintf("%s already %s", project.ID.Short(), project.Status)}
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
-	return cmd
+	return nil
 }
 
 func newProjectEditCmd() *cobra.Command {
@@ -230,37 +196,7 @@ func newProjectEditCmd() *cobra.Command {
 }
 
 func newProjectCommentCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "comment ID BODY",
-		Short: "Append a comment; BODY - reads stdin",
-		Args:  exactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			body, err := bodyArg(cmd, args[1])
-			if err != nil {
-				return err
-			}
-			ref, _, err := projectSpec.load(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.AddComment{Body: body}})
-			if err != nil {
-				return err
-			}
-			return printProject(cmd, s, snapshot.(model.Project), jsonOut)
-		},
-	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
-	return cmd
+	return projectSpec.commentVerb(nil)
 }
 
 // printProjectList writes projects as a JSON array of their DTOs — each carrying

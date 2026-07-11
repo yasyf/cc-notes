@@ -118,54 +118,19 @@ func newRunbookListCmd() *cobra.Command {
 }
 
 func newRunbookShowCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "show ID",
-		Short: "Show one runbook with its steps and runs",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			return showRunbook(cmd, s, args[0], jsonOut)
-		},
-	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return runbookSpec.showVerb("Show one runbook with its steps and runs", showRunbook)
 }
 
 func newRunbookStatusCmd(use string, status model.RunbookStatus) *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   use + " ID",
-		Short: "Mark a runbook " + string(status),
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			ref, rb, err := runbookSpec.load(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			if rb.Status == status {
-				return &ConflictError{Msg: fmt.Sprintf("%s already %s", rb.ID.Short(), rb.Status)}
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.SetRunbookStatus{Status: status}})
-			if err != nil {
-				return err
-			}
-			return printRunbook(cmd, snapshot.(model.Runbook), jsonOut)
-		},
+	// A runbook transition refuses only a no-op to the same status, so
+	// reactivating an archived runbook is allowed.
+	guard := func(rb model.Runbook) error {
+		if rb.Status == status {
+			return &ConflictError{Msg: fmt.Sprintf("%s already %s", rb.ID.Short(), rb.Status)}
+		}
+		return nil
 	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return runbookSpec.statusVerb(use, string(status), guard, model.SetRunbookStatus{Status: status})
 }
 
 func newRunbookEditCmd() *cobra.Command {
@@ -232,40 +197,7 @@ func newRunbookEditCmd() *cobra.Command {
 }
 
 func newRunbookCommentCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "comment ID BODY",
-		Short: "Append a comment; BODY - reads stdin",
-		Args:  exactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			body, err := bodyArg(cmd, args[1])
-			if err != nil {
-				return err
-			}
-			ref, rb, err := runbookSpec.load(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			if err := ensureRunbookActive(rb); err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.AddComment{Body: body}})
-			if err != nil {
-				return err
-			}
-			return printRunbook(cmd, snapshot.(model.Runbook), jsonOut)
-		},
-	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return runbookSpec.commentVerb(ensureRunbookActive)
 }
 
 func newRunbookHistoryCmd() *cobra.Command { return kindHistoryCmd(model.KindRunbook, "runbook") }

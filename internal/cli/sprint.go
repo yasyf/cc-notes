@@ -153,56 +153,22 @@ func newSprintListCmd() *cobra.Command {
 }
 
 func newSprintShowCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "show ID",
-		Short: "Show one sprint",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			return showSprint(cmd, s, args[0], jsonOut)
-		},
-	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
-	return cmd
+	return sprintSpec.showVerb("Show one sprint", showSprint)
 }
 
 func newSprintStatusCmd(use string, status model.SprintStatus) *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   use + " ID",
-		Short: "Mark a sprint " + string(status),
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			ref, sprint, err := sprintSpec.load(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			switch sprint.Status {
-			case model.SprintPlanned, model.SprintActive:
-			default:
-				return &ConflictError{Msg: fmt.Sprintf("%s already %s", sprint.ID.Short(), sprint.Status)}
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.SetSprintStatus{Status: status}})
-			if err != nil {
-				return err
-			}
-			return printSprint(cmd, s, snapshot.(model.Sprint), jsonOut)
-		},
+	return sprintSpec.statusVerb(use, string(status), guardSprintTransition, model.SetSprintStatus{Status: status})
+}
+
+// guardSprintTransition allows a status change only from planned or active, so
+// activate on an active sprint stays idempotent while a closed sprint refuses.
+func guardSprintTransition(sprint model.Sprint) error {
+	switch sprint.Status {
+	case model.SprintPlanned, model.SprintActive:
+		return nil
+	default:
+		return &ConflictError{Msg: fmt.Sprintf("%s already %s", sprint.ID.Short(), sprint.Status)}
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
-	return cmd
 }
 
 func newSprintEditCmd() *cobra.Command {
@@ -313,37 +279,7 @@ func newSprintEditCmd() *cobra.Command {
 }
 
 func newSprintCommentCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "comment ID BODY",
-		Short: "Append a comment; BODY - reads stdin",
-		Args:  exactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			body, err := bodyArg(cmd, args[1])
-			if err != nil {
-				return err
-			}
-			ref, _, err := sprintSpec.load(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.AddComment{Body: body}})
-			if err != nil {
-				return err
-			}
-			return printSprint(cmd, s, snapshot.(model.Sprint), jsonOut)
-		},
-	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
-	return cmd
+	return sprintSpec.commentVerb(nil)
 }
 
 // printSprintList writes sprints as a JSON array of their DTOs — each carrying

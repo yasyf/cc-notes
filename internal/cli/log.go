@@ -228,21 +228,7 @@ func newLogListCmd() *cobra.Command {
 }
 
 func newLogShowCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "show ID",
-		Short: "Show one log with its entries in chronological order",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			return showLog(cmd, s, args[0], jsonOut)
-		},
-	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return logSpec.showVerb("Show one log with its entries in chronological order", showLog)
 }
 
 func newLogEditCmd() *cobra.Command {
@@ -314,33 +300,7 @@ func newLogEditCmd() *cobra.Command {
 }
 
 func newLogRmCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "rm ID",
-		Short: "Tombstone a log",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			ref, _, err := logSpec.load(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}})
-			if err != nil {
-				return err
-			}
-			return printLog(cmd, s, snapshot.(model.Log), jsonOut)
-		},
-	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return logSpec.rmVerb()
 }
 
 func newLogSearchCmd() *cobra.Command {

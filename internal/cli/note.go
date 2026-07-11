@@ -175,21 +175,7 @@ func newNoteListCmd() *cobra.Command {
 }
 
 func newNoteShowCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "show ID",
-		Short: "Show one note",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			return showNote(cmd, s, args[0], jsonOut)
-		},
-	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return noteSpec.showVerb("Show one note", showNote)
 }
 
 func newNoteEditCmd() *cobra.Command {
@@ -293,33 +279,7 @@ func newNoteEditCmd() *cobra.Command {
 }
 
 func newNoteRmCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "rm ID",
-		Short: "Tombstone a note",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			ref, _, err := noteSpec.load(ctx, s, args[0])
-			if err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}})
-			if err != nil {
-				return err
-			}
-			return printNote(cmd, s, snapshot.(model.Note), jsonOut)
-		},
-	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return noteSpec.rmVerb()
 }
 
 func newNoteSearchCmd() *cobra.Command {
