@@ -1,1 +1,1 @@
-{"v":1,"lamport":6,"ops":[{"kind":"add_criterion","id":"713c74609eecc1ab7043fa73f6d8b07f","text":"SessionStart bootstrap handlers registered async_=True; availability line emitted once per session via UserPromptSubmit","script":""}]}
+{"v":1,"lamport":7,"ops":[{"kind":"add_criterion","id":"5cb36c2a2acd9c4968a2ff1c396197bf","text":"upstream capt-hook: once-guard claim key includes async flag; hooks.json dispatches run SessionEnd --async (with regression tests, released to PyPI/plugin)","script":""}]}
