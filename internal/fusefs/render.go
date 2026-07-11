@@ -20,6 +20,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -95,8 +96,8 @@ func anchorKeys[S any](anchors func(S) []model.Anchor) []fmKey[S] {
 	for i, ak := range anchorKinds {
 		keys[i] = fmKey[S]{
 			key:  ak.key,
-			node: func(s S) *yaml.Node { return flowNode(anchorValues(anchors(s), ak.kind)) },
-			keep: func(s S) bool { return len(anchorValues(anchors(s), ak.kind)) > 0 },
+			node: func(s S) *yaml.Node { return flowNode(render.AnchorValues(anchors(s), ak.kind)) },
+			keep: func(s S) bool { return len(render.AnchorValues(anchors(s), ak.kind)) > 0 },
 		}
 	}
 	return keys
@@ -248,14 +249,14 @@ var noteKeys = slices.Concat(
 	anchorKeys(func(n model.Note) []model.Anchor { return n.Anchors }),
 	[]fmKey[model.Note]{
 		{key: "author", node: func(n model.Note) *yaml.Node { return scalarNode(string(n.Author)) }},
-		{key: "created", node: func(n model.Note) *yaml.Node { return scalarNode(stamp(n.CreatedAt)) }},
-		{key: "updated", node: func(n model.Note) *yaml.Node { return scalarNode(stamp(n.UpdatedAt)) }},
-		{key: "verified_at", keep: func(n model.Note) bool { return n.VerifiedAt != 0 }, node: func(n model.Note) *yaml.Node { return scalarNode(stamp(n.VerifiedAt)) }},
+		{key: "created", node: func(n model.Note) *yaml.Node { return scalarNode(render.RFC3339(n.CreatedAt)) }},
+		{key: "updated", node: func(n model.Note) *yaml.Node { return scalarNode(render.RFC3339(n.UpdatedAt)) }},
+		{key: "verified_at", keep: func(n model.Note) bool { return n.VerifiedAt != 0 }, node: func(n model.Note) *yaml.Node { return scalarNode(render.RFC3339(n.VerifiedAt)) }},
 		{key: "verified_by", keep: func(n model.Note) bool { return n.VerifiedBy != "" }, node: func(n model.Note) *yaml.Node { return scalarNode(string(n.VerifiedBy)) }},
 		{key: "verified_commit", keep: func(n model.Note) bool { return n.VerifiedCommit != "" }, node: func(n model.Note) *yaml.Node { return scalarNode(string(n.VerifiedCommit)) }},
 		{key: "witness", keep: func(n model.Note) bool { return len(n.Witness) > 0 }, node: func(n model.Note) *yaml.Node { return witnessNode(n.Witness) }},
-		{key: "superseded_by", keep: func(n model.Note) bool { return len(n.SupersededBy) > 0 }, node: func(n model.Note) *yaml.Node { return flowNode(idStrings(n.SupersededBy)) }},
-		{key: "stale_at", keep: func(n model.Note) bool { return n.StaleAt != 0 }, node: func(n model.Note) *yaml.Node { return scalarNode(stamp(n.StaleAt)) }},
+		{key: "superseded_by", keep: func(n model.Note) bool { return len(n.SupersededBy) > 0 }, node: func(n model.Note) *yaml.Node { return flowNode(render.IDStrings(n.SupersededBy)) }},
+		{key: "stale_at", keep: func(n model.Note) bool { return n.StaleAt != 0 }, node: func(n model.Note) *yaml.Node { return scalarNode(render.RFC3339(n.StaleAt)) }},
 		{key: "stale_by", keep: func(n model.Note) bool { return n.StaleBy != "" }, node: func(n model.Note) *yaml.Node { return scalarNode(string(n.StaleBy)) }},
 		{key: "stale_reason", keep: func(n model.Note) bool { return n.StaleReason != "" }, node: func(n model.Note) *yaml.Node { return scalarNode(n.StaleReason) }},
 	},
@@ -443,7 +444,7 @@ func anchorSet(anchors func(model.AnchorKind) Field[[]string], base []model.Anch
 			if !field.Set {
 				continue
 			}
-			adds, removes := diffSets(anchorValues(base, ak.kind), stringsValue(field))
+			adds, removes := diffSets(render.AnchorValues(base, ak.kind), stringsValue(field))
 			for _, value := range adds {
 				ops = append(ops, model.AddAnchor{Anchor: model.Anchor{Kind: ak.kind, Value: value}})
 			}
@@ -483,13 +484,13 @@ func DiffNote(base model.Note, p ParsedDoc) ([]model.Op, error) {
 		[]check{
 			pin("id", p.ID, string(base.ID)),
 			pin("author", p.Author, string(base.Author)),
-			pin("created", p.Created, stamp(base.CreatedAt)),
-			pin("verified_at", p.VerifiedAt, stampOrEmpty(base.VerifiedAt)),
+			pin("created", p.Created, render.RFC3339(base.CreatedAt)),
+			pin("verified_at", p.VerifiedAt, render.OptTimeString(base.VerifiedAt)),
 			pin("verified_by", p.VerifiedBy, string(base.VerifiedBy)),
 			pin("verified_commit", p.VerifiedCommit, string(base.VerifiedCommit)),
-			pinStrings("superseded_by", p.SupersededBy, idStrings(base.SupersededBy)),
+			pinStrings("superseded_by", p.SupersededBy, render.IDStrings(base.SupersededBy)),
 			pinWitness(p.Witness, base.Witness),
-			pin("stale_at", p.StaleAt, stampOrEmpty(base.StaleAt)),
+			pin("stale_at", p.StaleAt, render.OptTimeString(base.StaleAt)),
 			pin("stale_by", p.StaleBy, string(base.StaleBy)),
 			pin("stale_reason", p.StaleReason, base.StaleReason),
 		},
@@ -595,14 +596,14 @@ var docKeys = slices.Concat(
 	anchorKeys(func(d model.Doc) []model.Anchor { return d.Anchors }),
 	[]fmKey[model.Doc]{
 		{key: "author", node: func(d model.Doc) *yaml.Node { return scalarNode(string(d.Author)) }},
-		{key: "created", node: func(d model.Doc) *yaml.Node { return scalarNode(stamp(d.CreatedAt)) }},
-		{key: "updated", node: func(d model.Doc) *yaml.Node { return scalarNode(stamp(d.UpdatedAt)) }},
-		{key: "verified_at", keep: func(d model.Doc) bool { return d.VerifiedAt != 0 }, node: func(d model.Doc) *yaml.Node { return scalarNode(stamp(d.VerifiedAt)) }},
+		{key: "created", node: func(d model.Doc) *yaml.Node { return scalarNode(render.RFC3339(d.CreatedAt)) }},
+		{key: "updated", node: func(d model.Doc) *yaml.Node { return scalarNode(render.RFC3339(d.UpdatedAt)) }},
+		{key: "verified_at", keep: func(d model.Doc) bool { return d.VerifiedAt != 0 }, node: func(d model.Doc) *yaml.Node { return scalarNode(render.RFC3339(d.VerifiedAt)) }},
 		{key: "verified_by", keep: func(d model.Doc) bool { return d.VerifiedBy != "" }, node: func(d model.Doc) *yaml.Node { return scalarNode(string(d.VerifiedBy)) }},
 		{key: "verified_commit", keep: func(d model.Doc) bool { return d.VerifiedCommit != "" }, node: func(d model.Doc) *yaml.Node { return scalarNode(string(d.VerifiedCommit)) }},
 		{key: "witness", keep: func(d model.Doc) bool { return len(d.Witness) > 0 }, node: func(d model.Doc) *yaml.Node { return witnessNode(d.Witness) }},
-		{key: "superseded_by", keep: func(d model.Doc) bool { return len(d.SupersededBy) > 0 }, node: func(d model.Doc) *yaml.Node { return flowNode(idStrings(d.SupersededBy)) }},
-		{key: "stale_at", keep: func(d model.Doc) bool { return d.StaleAt != 0 }, node: func(d model.Doc) *yaml.Node { return scalarNode(stamp(d.StaleAt)) }},
+		{key: "superseded_by", keep: func(d model.Doc) bool { return len(d.SupersededBy) > 0 }, node: func(d model.Doc) *yaml.Node { return flowNode(render.IDStrings(d.SupersededBy)) }},
+		{key: "stale_at", keep: func(d model.Doc) bool { return d.StaleAt != 0 }, node: func(d model.Doc) *yaml.Node { return scalarNode(render.RFC3339(d.StaleAt)) }},
 		{key: "stale_by", keep: func(d model.Doc) bool { return d.StaleBy != "" }, node: func(d model.Doc) *yaml.Node { return scalarNode(string(d.StaleBy)) }},
 		{key: "stale_reason", keep: func(d model.Doc) bool { return d.StaleReason != "" }, node: func(d model.Doc) *yaml.Node { return scalarNode(d.StaleReason) }},
 	},
@@ -648,7 +649,7 @@ func NewNoteTemplate(title string, tags []string, anchors []model.Anchor) []byte
 
 func putAnchors(put func(string, *yaml.Node), anchors []model.Anchor) {
 	for _, ak := range anchorKinds {
-		if values := anchorValues(anchors, ak.kind); len(values) > 0 {
+		if values := render.AnchorValues(anchors, ak.kind); len(values) > 0 {
 			put(ak.key, flowNode(values))
 		}
 	}
@@ -676,13 +677,13 @@ func DiffDoc(base model.Doc, p ParsedDoc) ([]model.Op, error) {
 		[]check{
 			pin("id", p.ID, string(base.ID)),
 			pin("author", p.Author, string(base.Author)),
-			pin("created", p.Created, stamp(base.CreatedAt)),
-			pin("verified_at", p.VerifiedAt, stampOrEmpty(base.VerifiedAt)),
+			pin("created", p.Created, render.RFC3339(base.CreatedAt)),
+			pin("verified_at", p.VerifiedAt, render.OptTimeString(base.VerifiedAt)),
 			pin("verified_by", p.VerifiedBy, string(base.VerifiedBy)),
 			pin("verified_commit", p.VerifiedCommit, string(base.VerifiedCommit)),
-			pinStrings("superseded_by", p.SupersededBy, idStrings(base.SupersededBy)),
+			pinStrings("superseded_by", p.SupersededBy, render.IDStrings(base.SupersededBy)),
 			pinWitness(p.Witness, base.Witness),
-			pin("stale_at", p.StaleAt, stampOrEmpty(base.StaleAt)),
+			pin("stale_at", p.StaleAt, render.OptTimeString(base.StaleAt)),
 			pin("stale_by", p.StaleBy, string(base.StaleBy)),
 			pin("stale_reason", p.StaleReason, base.StaleReason),
 		},
@@ -800,8 +801,8 @@ var logKeys = slices.Concat(
 	anchorKeys(func(l model.Log) []model.Anchor { return l.Anchors }),
 	[]fmKey[model.Log]{
 		{key: "author", node: func(l model.Log) *yaml.Node { return scalarNode(string(l.Author)) }},
-		{key: "created", node: func(l model.Log) *yaml.Node { return scalarNode(stamp(l.CreatedAt)) }},
-		{key: "updated", node: func(l model.Log) *yaml.Node { return scalarNode(stamp(l.UpdatedAt)) }},
+		{key: "created", node: func(l model.Log) *yaml.Node { return scalarNode(render.RFC3339(l.CreatedAt)) }},
+		{key: "updated", node: func(l model.Log) *yaml.Node { return scalarNode(render.RFC3339(l.UpdatedAt)) }},
 	},
 )
 
@@ -814,7 +815,7 @@ var logKeys = slices.Concat(
 func RenderLog(l model.Log) []byte {
 	buf := renderFrontmatter(l, logKeys)
 	for _, e := range l.Entries {
-		buf.WriteString(logEntryFence(string(e.Author), stamp(e.TS)))
+		buf.WriteString(logEntryFence(string(e.Author), render.RFC3339(e.TS)))
 		buf.WriteString("\n")
 		buf.WriteString(ensureTrailingNewline(e.Text))
 	}
@@ -912,7 +913,7 @@ func DiffLog(base model.Log, p ParsedLog) ([]model.Op, error) {
 		[]check{
 			pin("id", p.ID, string(base.ID)),
 			pin("author", p.Author, string(base.Author)),
-			pin("created", p.Created, stamp(base.CreatedAt)),
+			pin("created", p.Created, render.RFC3339(base.CreatedAt)),
 		},
 		[]fieldDiff{
 			logAppendOnly(base, p),
@@ -935,7 +936,7 @@ func logAppendOnly(base model.Log, p ParsedLog) fieldDiff {
 		}
 		for i, be := range base.Entries {
 			pe := p.Entries[i]
-			if pe.Author != string(be.Author) || pe.TS != stamp(be.TS) || pe.Text != ensureTrailingNewline(be.Text) {
+			if pe.Author != string(be.Author) || pe.TS != render.RFC3339(be.TS) || pe.Text != ensureTrailingNewline(be.Text) {
 				return nil, fmt.Errorf("%w: log entry %d is append-only", ErrImmutableField, i)
 			}
 		}
@@ -1010,20 +1011,20 @@ func RenderTask(t model.Task) []byte {
 		Type:         string(t.Type),
 		Status:       string(t.Status),
 		Priority:     int(t.Priority),
-		Assignee:     optString(string(t.Assignee)),
-		Labels:       emptyNotNil(t.Labels),
-		BlockedBy:    idStrings(t.BlockedBy),
+		Assignee:     render.OptString(string(t.Assignee)),
+		Labels:       render.EmptyNotNil(t.Labels),
+		BlockedBy:    render.IDStrings(t.BlockedBy),
 		Blocks:       []string{},
-		Parent:       optString(string(t.Parent)),
+		Parent:       render.OptString(string(t.Parent)),
 		Comments:     renderComments(t.Comments),
-		Commits:      shaStrings(t.Commits),
-		Lease:        leaseDoc{Holder: optString(string(t.Assignee)), Heartbeat: optStamp(t.HeartbeatAt)},
-		CreatedAt:    stamp(t.CreatedAt),
-		UpdatedAt:    stamp(t.UpdatedAt),
-		StartedAt:    optStamp(t.StartedAt),
-		ClosedAt:     optStamp(t.ClosedAt),
-		Sprint:       optString(string(t.Sprint)),
-		Project:      optString(string(t.Project)),
+		Commits:      render.SHAStrings(t.Commits),
+		Lease:        leaseDoc{Holder: render.OptString(string(t.Assignee)), Heartbeat: render.OptTime(t.HeartbeatAt)},
+		CreatedAt:    render.RFC3339(t.CreatedAt),
+		UpdatedAt:    render.RFC3339(t.UpdatedAt),
+		StartedAt:    render.OptTime(t.StartedAt),
+		ClosedAt:     render.OptTime(t.ClosedAt),
+		Sprint:       render.OptString(string(t.Sprint)),
+		Project:      render.OptString(string(t.Project)),
 		Criteria:     renderCriteria(t.Criteria),
 		ClosedForced: taskClosedForced(t),
 	}
@@ -1095,17 +1096,17 @@ func DiffTask(base model.Task, p ParsedTask) ([]model.Op, error) {
 			pin("branch", p.Branch, string(base.Branch)),
 			pin("type", p.Type, string(base.Type)),
 			pin("assignee", p.Assignee, string(base.Assignee)),
-			pinStrings("blocked_by", p.BlockedBy, idStrings(base.BlockedBy)),
+			pinStrings("blocked_by", p.BlockedBy, render.IDStrings(base.BlockedBy)),
 			pinStrings("blocks", p.Blocks, nil),
 			pin("parent", p.Parent, string(base.Parent)),
 			pinComments(p.Comments, base.Comments),
-			pinStrings("commits", p.Commits, shaStrings(base.Commits)),
+			pinStrings("commits", p.Commits, render.SHAStrings(base.Commits)),
 			pin("lease.holder", p.Lease.Holder, string(base.Assignee)),
-			pin("lease.heartbeat", p.Lease.Heartbeat, stampOrEmpty(base.HeartbeatAt)),
-			pin("created_at", p.CreatedAt, stamp(base.CreatedAt)),
-			pin("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
-			pin("started_at", p.StartedAt, stampOrEmpty(base.StartedAt)),
-			pin("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
+			pin("lease.heartbeat", p.Lease.Heartbeat, render.OptTimeString(base.HeartbeatAt)),
+			pin("created_at", p.CreatedAt, render.RFC3339(base.CreatedAt)),
+			pin("updated_at", p.UpdatedAt, render.RFC3339(base.UpdatedAt)),
+			pin("started_at", p.StartedAt, render.OptTimeString(base.StartedAt)),
+			pin("closed_at", p.ClosedAt, render.OptTimeString(base.ClosedAt)),
 			pin("sprint", p.Sprint, string(base.Sprint)),
 			pin("project", p.Project, string(base.Project)),
 		},
@@ -1305,20 +1306,20 @@ type ParsedSprint struct {
 func RenderSprint(s model.Sprint) []byte {
 	doc := sprintDoc{
 		ID:          string(s.ID),
-		Project:     optString(string(s.Project)),
+		Project:     render.OptString(string(s.Project)),
 		Title:       s.Title,
 		Description: s.Description,
 		Status:      string(s.Status),
-		StartDate:   optStamp(s.StartDate),
-		EndDate:     optStamp(s.EndDate),
-		Labels:      emptyNotNil(s.Labels),
-		Commits:     shaStrings(s.Commits),
+		StartDate:   render.OptTime(s.StartDate),
+		EndDate:     render.OptTime(s.EndDate),
+		Labels:      render.EmptyNotNil(s.Labels),
+		Commits:     render.SHAStrings(s.Commits),
 		Comments:    renderComments(s.Comments),
 		Author:      string(s.Author),
-		CreatedAt:   stamp(s.CreatedAt),
-		UpdatedAt:   stamp(s.UpdatedAt),
-		StartedAt:   optStamp(s.StartedAt),
-		ClosedAt:    optStamp(s.ClosedAt),
+		CreatedAt:   render.RFC3339(s.CreatedAt),
+		UpdatedAt:   render.RFC3339(s.UpdatedAt),
+		StartedAt:   render.OptTime(s.StartedAt),
+		ClosedAt:    render.OptTime(s.ClosedAt),
 		Tasks:       []string{},
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
@@ -1361,13 +1362,13 @@ func DiffSprint(base model.Sprint, p ParsedSprint) ([]model.Op, error) {
 		[]check{
 			pin("id", p.ID, string(base.ID)),
 			pin("project", p.Project, string(base.Project)),
-			pinStrings("commits", p.Commits, shaStrings(base.Commits)),
+			pinStrings("commits", p.Commits, render.SHAStrings(base.Commits)),
 			pinComments(p.Comments, base.Comments),
 			pin("author", p.Author, string(base.Author)),
-			pin("created_at", p.CreatedAt, stamp(base.CreatedAt)),
-			pin("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
-			pin("started_at", p.StartedAt, stampOrEmpty(base.StartedAt)),
-			pin("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
+			pin("created_at", p.CreatedAt, render.RFC3339(base.CreatedAt)),
+			pin("updated_at", p.UpdatedAt, render.RFC3339(base.UpdatedAt)),
+			pin("started_at", p.StartedAt, render.OptTimeString(base.StartedAt)),
+			pin("closed_at", p.ClosedAt, render.OptTimeString(base.ClosedAt)),
 			pinStrings("tasks", p.Tasks, nil),
 		},
 		[]fieldDiff{
@@ -1459,13 +1460,13 @@ func RenderProject(pr model.Project) []byte {
 		Title:       pr.Title,
 		Description: pr.Description,
 		Status:      string(pr.Status),
-		Labels:      emptyNotNil(pr.Labels),
-		Commits:     shaStrings(pr.Commits),
+		Labels:      render.EmptyNotNil(pr.Labels),
+		Commits:     render.SHAStrings(pr.Commits),
 		Comments:    renderComments(pr.Comments),
 		Author:      string(pr.Author),
-		CreatedAt:   stamp(pr.CreatedAt),
-		UpdatedAt:   stamp(pr.UpdatedAt),
-		ClosedAt:    optStamp(pr.ClosedAt),
+		CreatedAt:   render.RFC3339(pr.CreatedAt),
+		UpdatedAt:   render.RFC3339(pr.UpdatedAt),
+		ClosedAt:    render.OptTime(pr.ClosedAt),
 		Sprints:     []string{},
 		Tasks:       []string{},
 	}
@@ -1507,12 +1508,12 @@ func DiffProject(base model.Project, p ParsedProject) ([]model.Op, error) {
 	return diffWith(
 		[]check{
 			pin("id", p.ID, string(base.ID)),
-			pinStrings("commits", p.Commits, shaStrings(base.Commits)),
+			pinStrings("commits", p.Commits, render.SHAStrings(base.Commits)),
 			pinComments(p.Comments, base.Comments),
 			pin("author", p.Author, string(base.Author)),
-			pin("created_at", p.CreatedAt, stamp(base.CreatedAt)),
-			pin("updated_at", p.UpdatedAt, stamp(base.UpdatedAt)),
-			pin("closed_at", p.ClosedAt, stampOrEmpty(base.ClosedAt)),
+			pin("created_at", p.CreatedAt, render.RFC3339(base.CreatedAt)),
+			pin("updated_at", p.UpdatedAt, render.RFC3339(base.UpdatedAt)),
+			pin("closed_at", p.ClosedAt, render.OptTimeString(base.ClosedAt)),
 			pinStrings("sprints", p.Sprints, nil),
 			pinStrings("tasks", p.Tasks, nil),
 		},
@@ -1560,17 +1561,7 @@ const runbookStepFencePrefix = "<!-- cc-notes:step "
 // runbookStepFence renders the viewer-invisible marker line carrying a step's
 // short id, mirroring the log entry fence idiom.
 func runbookStepFence(id string) string {
-	return runbookStepFencePrefix + shortWireID(id) + " -->"
-}
-
-// shortWireID clamps an opaque runbook wire id (step or run) to its 7-char
-// display prefix, tolerating ids shorter than 7 — a pack synced from another
-// client may carry one.
-func shortWireID(id string) string {
-	if len(id) < 7 {
-		return id
-	}
-	return id[:7]
+	return runbookStepFencePrefix + render.ShortWireID(id) + " -->"
 }
 
 // runbookKeys is the runbook frontmatter contract, all keys always present:
@@ -1580,8 +1571,8 @@ var runbookKeys = []fmKey[model.Runbook]{
 	{key: "title", node: func(r model.Runbook) *yaml.Node { return scalarNode(r.Title) }},
 	{key: "status", node: func(r model.Runbook) *yaml.Node { return scalarNode(string(r.Status)) }},
 	{key: "labels", node: func(r model.Runbook) *yaml.Node { return flowNode(r.Labels) }},
-	{key: "created", node: func(r model.Runbook) *yaml.Node { return scalarNode(stamp(r.CreatedAt)) }},
-	{key: "updated", node: func(r model.Runbook) *yaml.Node { return scalarNode(stamp(r.UpdatedAt)) }},
+	{key: "created", node: func(r model.Runbook) *yaml.Node { return scalarNode(render.RFC3339(r.CreatedAt)) }},
+	{key: "updated", node: func(r model.Runbook) *yaml.Node { return scalarNode(render.RFC3339(r.UpdatedAt)) }},
 }
 
 // RenderRunbook renders rb as read-only markdown: the runbookKeys frontmatter,
@@ -1631,7 +1622,7 @@ func RenderRunbook(rb model.Runbook) []byte {
 // started→finished window (an unfinished run reads "in progress"), the
 // per-outcome step tally, and the served task when the run cites one.
 func runbookRunLine(r model.RunbookRun) string {
-	finished := stampOrEmpty(r.FinishedAt)
+	finished := render.OptTimeString(r.FinishedAt)
 	if finished == "" {
 		finished = "in progress"
 	}
@@ -1647,7 +1638,7 @@ func runbookRunLine(r model.RunbookRun) string {
 		}
 	}
 	line := fmt.Sprintf("- %s %s — %s, %s → %s, %d done / %d skipped / %d failed",
-		shortWireID(r.ID), r.Status, r.Runner, stamp(r.StartedAt), finished, done, skipped, failed)
+		render.ShortWireID(r.ID), r.Status, r.Runner, render.RFC3339(r.StartedAt), finished, done, skipped, failed)
 	if r.Task != "" {
 		line += fmt.Sprintf(" (task %s)", r.Task.Short())
 	}
@@ -1757,7 +1748,7 @@ func immutableComments(f Field[[]ParsedComment], base []model.Comment) error {
 func renderComments(comments []model.Comment) []ParsedComment {
 	out := make([]ParsedComment, len(comments))
 	for i, c := range comments {
-		out[i] = ParsedComment{Author: string(c.Author), TS: stamp(c.TS), Body: c.Body}
+		out[i] = ParsedComment{Author: string(c.Author), TS: render.RFC3339(c.TS), Body: c.Body}
 	}
 	return out
 }
@@ -1828,16 +1819,6 @@ func sortedSet(values []string) []string {
 	return slices.Compact(slices.Sorted(slices.Values(values)))
 }
 
-func anchorValues(anchors []model.Anchor, kind model.AnchorKind) []string {
-	var values []string
-	for _, a := range anchors {
-		if a.Kind == kind {
-			values = append(values, a.Value)
-		}
-	}
-	return values
-}
-
 func scalarNode(value string) *yaml.Node {
 	n := &yaml.Node{}
 	n.SetString(value)
@@ -1856,7 +1837,8 @@ func witnessNode(witness []model.AnchorWitness) *yaml.Node {
 	n := &yaml.Node{Kind: yaml.SequenceNode}
 	for _, w := range witness {
 		m := &yaml.Node{Kind: yaml.MappingNode}
-		m.Content = append(m.Content,
+		m.Content = append(
+			m.Content,
 			scalarNode("kind"), scalarNode(string(w.Anchor.Kind)),
 			scalarNode("value"), scalarNode(w.Anchor.Value),
 			scalarNode("oid"), scalarNode(string(w.OID)),
@@ -1864,51 +1846,4 @@ func witnessNode(witness []model.AnchorWitness) *yaml.Node {
 		n.Content = append(n.Content, m)
 	}
 	return n
-}
-
-func stamp(ts int64) string { return time.Unix(ts, 0).UTC().Format(time.RFC3339) }
-
-func stampOrEmpty(ts int64) string {
-	if ts == 0 {
-		return ""
-	}
-	return stamp(ts)
-}
-
-func optStamp(ts int64) *string {
-	if ts == 0 {
-		return nil
-	}
-	s := stamp(ts)
-	return &s
-}
-
-func optString(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func idStrings(ids []model.EntityID) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, string(id))
-	}
-	return out
-}
-
-func shaStrings(shas []model.SHA) []string {
-	out := make([]string, 0, len(shas))
-	for _, s := range shas {
-		out = append(out, string(s))
-	}
-	return out
-}
-
-func emptyNotNil(items []string) []string {
-	if items == nil {
-		return []string{}
-	}
-	return items
 }
