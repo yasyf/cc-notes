@@ -560,3 +560,158 @@ func TestSnapshotGoldenBytesAttachmentless(t *testing.T) {
 		})
 	}
 }
+
+// TestPackGoldenBytesCheckpointFullState pins the exact v1 wire bytes of a
+// checkpoint over a fully-populated snapshot of every entity kind that had no
+// maximally-set golden — doc, log, task, sprint, and project. Every field is
+// non-zero, including the nested structures (doc verification/witness/supersede/
+// stale/attachments, log entries and attachments, task criteria/lease/comments,
+// sprint dates/comments, project comments), so a marshal-layout drift on any
+// field fails here. These bytes are storage format: entity ids derive from
+// them, so the byte-splicing codec that replaces marshalOp must reproduce them.
+func TestPackGoldenBytesCheckpointFullState(t *testing.T) {
+	cases := []struct {
+		kind string
+		op   Op
+		want string
+	}{
+		{
+			"checkpoint_doc",
+			Checkpoint{
+				EntityID: testID,
+				State: Doc{
+					ID: testID, Title: "Auth architecture", Body: "How the token refresh loop works.",
+					When: "before touching the auth flow", Tags: []string{"arch", "auth"},
+					Anchors: []Anchor{
+						{Kind: AnchorCommit, Value: testID},
+						{Kind: AnchorPath, Value: "internal/auth/token.go"},
+						{Kind: AnchorDir, Value: "internal/auth"},
+						{Kind: AnchorBranch, Value: "main"},
+					},
+					Author: "ada <ada@example.com>", CreatedAt: 100, UpdatedAt: 200,
+					VerifiedAt: 150, VerifiedBy: "bob", VerifiedCommit: testParent,
+					Witness: []AnchorWitness{
+						{Anchor: Anchor{Kind: AnchorCommit, Value: testID}, OID: testID},
+						{Anchor: Anchor{Kind: AnchorPath, Value: "internal/auth/token.go"}, OID: testParent},
+					},
+					SupersededBy: []EntityID{testParent}, StaleAt: 160, StaleBy: "carol", StaleReason: "drifted",
+					Head: testParent,
+					Attachments: []Attachment{
+						{Name: "diagram.svg", OID: testOID, Size: 512},
+						{Name: "trace.png", OID: testOID, Size: 2048},
+					},
+				},
+				CoversLamport: 5,
+				CoversShas:    []SHA{testParent, testID},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"doc","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Auth architecture","body":"How the token refresh loop works.","when":"before touching the auth flow","tags":["arch","auth"],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},{"kind":"path","value":"internal/auth/token.go"},{"kind":"dir","value":"internal/auth"},{"kind":"branch","value":"main"}],"author":"ada \u003cada@example.com\u003e","created_at":100,"updated_at":200,"deleted":false,"verified_at":150,"verified_by":"bob","verified_commit":"00112233445566778899aabbccddeeff00112233","witness":[{"anchor":{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},"oid":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},{"anchor":{"kind":"path","value":"internal/auth/token.go"},"oid":"00112233445566778899aabbccddeeff00112233"}],"superseded_by":["00112233445566778899aabbccddeeff00112233"],"stale_at":160,"stale_by":"carol","stale_reason":"drifted","head":"00112233445566778899aabbccddeeff00112233","attachments":[{"name":"diagram.svg","oid":"e3b1c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":512},{"name":"trace.png","oid":"e3b1c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":2048}]},"covers_lamport":5,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+		{
+			"checkpoint_log",
+			Checkpoint{
+				EntityID: testID,
+				State: Log{
+					ID: testID, Title: "Auth rollout",
+					Entries: []LogEntry{
+						{Author: "ada", TS: 150, Text: "flipped to 5%"},
+						{Author: "bob", TS: 250, Text: "flipped to 50%"},
+					},
+					Tags: []string{"auth", "ops"},
+					Anchors: []Anchor{
+						{Kind: AnchorCommit, Value: testID},
+						{Kind: AnchorDir, Value: "internal/auth"},
+					},
+					Author: "ada", CreatedAt: 100, UpdatedAt: 250, Head: testParent,
+					Attachments: []Attachment{{Name: "trace.png", OID: testOID, Size: 2048}},
+				},
+				CoversLamport: 5,
+				CoversShas:    []SHA{testParent, testID},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"log","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Auth rollout","entries":[{"author":"ada","ts":150,"text":"flipped to 5%"},{"author":"bob","ts":250,"text":"flipped to 50%"}],"tags":["auth","ops"],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},{"kind":"dir","value":"internal/auth"}],"author":"ada","created_at":100,"updated_at":250,"deleted":false,"head":"00112233445566778899aabbccddeeff00112233","attachments":[{"name":"trace.png","oid":"e3b1c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":2048}]},"covers_lamport":5,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+		{
+			"checkpoint_task",
+			Checkpoint{
+				EntityID: testID,
+				State: Task{
+					ID: testID, Branch: "feature/sync", Title: "Fix flaky sync",
+					Description: "Two-clone round-trip flakes", Type: TypeBug, Status: StatusDone,
+					Priority: 1, Assignee: "agent-7", HeartbeatAt: 300, HeartbeatLamport: 4,
+					Labels: []string{"ci", "sync"}, BlockedBy: []EntityID{testParent}, Parent: testParent,
+					Comments: []Comment{
+						{Author: "agent-7", TS: 300, Body: "on it"},
+						{Author: "ada", TS: 320, Body: "thanks"},
+					},
+					CreatedAt: 100, UpdatedAt: 320, StartedAt: 200, ClosedAt: 400,
+					Commits: []SHA{testID}, Head: testParent, Sprint: testID, Project: testParent,
+					Criteria: []Criterion{
+						{ID: "crit-1", Text: "all tests pass", Script: "go test ./...", Status: CriterionMet},
+						{ID: "crit-2", Text: "no data races", Script: "", Status: CriterionMet},
+					},
+				},
+				CoversLamport: 7,
+				CoversShas:    []SHA{testParent, testID},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"task","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","branch":"feature/sync","title":"Fix flaky sync","description":"Two-clone round-trip flakes","type":"bug","status":"done","priority":1,"assignee":"agent-7","heartbeat_at":300,"heartbeat_lamport":4,"labels":["ci","sync"],"blocked_by":["00112233445566778899aabbccddeeff00112233"],"parent":"00112233445566778899aabbccddeeff00112233","comments":[{"author":"agent-7","ts":300,"body":"on it"},{"author":"ada","ts":320,"body":"thanks"}],"created_at":100,"updated_at":320,"started_at":200,"closed_at":400,"commits":["a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"],"head":"00112233445566778899aabbccddeeff00112233","sprint":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","project":"00112233445566778899aabbccddeeff00112233","criteria":[{"id":"crit-1","text":"all tests pass","script":"go test ./...","status":"met"},{"id":"crit-2","text":"no data races","script":"","status":"met"}]},"covers_lamport":7,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+		{
+			"checkpoint_sprint",
+			Checkpoint{
+				EntityID: testID,
+				State: Sprint{
+					ID: testID, Project: testParent, Title: "Q3 sync hardening",
+					Description: "Stabilize two-clone sync", Status: SprintCompleted,
+					StartDate: 1700000000, EndDate: 1701000000, Labels: []string{"ops", "sync"},
+					Commits: []SHA{testID},
+					Comments: []Comment{
+						{Author: "ada", TS: 150, Body: "kickoff"},
+						{Author: "bob", TS: 900, Body: "wrap-up"},
+					},
+					Author: "ada", CreatedAt: 100, UpdatedAt: 900, StartedAt: 120, ClosedAt: 950,
+					Head: testParent,
+				},
+				CoversLamport: 7,
+				CoversShas:    []SHA{testParent, testID},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"sprint","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","project":"00112233445566778899aabbccddeeff00112233","title":"Q3 sync hardening","description":"Stabilize two-clone sync","status":"completed","start_date":1700000000,"end_date":1701000000,"labels":["ops","sync"],"commits":["a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"],"comments":[{"author":"ada","ts":150,"body":"kickoff"},{"author":"bob","ts":900,"body":"wrap-up"}],"author":"ada","created_at":100,"updated_at":900,"started_at":120,"closed_at":950,"head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":7,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+		{
+			"checkpoint_project",
+			Checkpoint{
+				EntityID: testID,
+				State: Project{
+					ID: testID, Title: "Platform", Description: "Core infrastructure",
+					Status: ProjectCompleted, Labels: []string{"infra", "platform"},
+					Commits: []SHA{testParent, testID},
+					Comments: []Comment{
+						{Author: "ada", TS: 100, Body: "init"},
+						{Author: "carol", TS: 800, Body: "shipped"},
+					},
+					Author: "ada", CreatedAt: 100, UpdatedAt: 800, ClosedAt: 850, Head: testParent,
+				},
+				CoversLamport: 9,
+				CoversShas:    []SHA{testParent, testID},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"project","state":{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Platform","description":"Core infrastructure","status":"completed","labels":["infra","platform"],"commits":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"],"comments":[{"author":"ada","ts":100,"body":"init"},{"author":"carol","ts":800,"body":"shipped"}],"author":"ada","created_at":100,"updated_at":800,"closed_at":850,"head":"00112233445566778899aabbccddeeff00112233"},"covers_lamport":9,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			pack := Pack{Lamport: 42, Ops: []Op{tc.op}}
+			got, err := json.Marshal(pack)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("marshal =\n%s\nwant\n%s", got, tc.want)
+			}
+			back, err := DecodePack([]byte(tc.want))
+			if err != nil {
+				t.Fatalf("decode golden: %v", err)
+			}
+			if !reflect.DeepEqual(back, pack) {
+				t.Fatalf("decode = %#v, want %#v", back, pack)
+			}
+		})
+	}
+}
