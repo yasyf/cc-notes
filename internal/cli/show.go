@@ -8,6 +8,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // newShowCmd builds the top-level "cc-notes show ID": show any entity, resolving
@@ -37,19 +38,19 @@ func newShowCmd() *cobra.Command {
 			}
 			id := string(parsed.ID)
 			switch parsed.Kind {
-			case refs.KindNote:
+			case model.KindNote:
 				return showNote(cmd, s, id, jsonOut)
-			case refs.KindDoc:
+			case model.KindDoc:
 				return showDoc(cmd, s, id, jsonOut)
-			case refs.KindLog:
+			case model.KindLog:
 				return showLog(cmd, s, id, jsonOut)
-			case refs.KindTask:
+			case model.KindTask:
 				return showTask(cmd, s, id, jsonOut)
-			case refs.KindSprint:
+			case model.KindSprint:
 				return showSprint(cmd, s, id, jsonOut)
-			case refs.KindProject:
+			case model.KindProject:
 				return showProject(cmd, s, id, jsonOut)
-			case refs.KindRunbook:
+			case model.KindRunbook:
 				return showRunbook(cmd, s, id, jsonOut)
 			default:
 				panic(fmt.Sprintf("resolveAnyEntity returned unknown kind %q", parsed.Kind))

@@ -70,7 +70,7 @@ func TestBlobServesReferencedContent(t *testing.T) {
 	r := newGitRepo(t)
 	r.commit("c1")
 	s := r.openStore()
-	ref := refs.Note(createNote(t, s, "note with png"))
+	ref := refs.For(model.KindNote, createNote(t, s, "note with png"))
 	content := []byte("\x89PNG\r\n\x1a\nfake image payload for the viz blob test")
 	att := attachContent(t, s, ref, "trace.png", content)
 
@@ -128,7 +128,7 @@ func TestBlobUnreferenced(t *testing.T) {
 	s := r.openStore()
 	// A referenced note attachment exists, but the requested oid is a different,
 	// well-formed oid nothing references.
-	reference(t, s, refs.Note(createNote(t, s, "unrelated")), "real.bin", hexOID('a'), 5)
+	reference(t, s, refs.For(model.KindNote, createNote(t, s, "unrelated")), "real.bin", hexOID('a'), 5)
 	ts, _, _ := newVizServer(t, r)
 
 	unref := hexOID('c')
@@ -150,7 +150,7 @@ func TestBlobReferencedButAbsent(t *testing.T) {
 	s := r.openStore()
 	id := createNote(t, s, "note missing content")
 	oid := hexOID('d')
-	reference(t, s, refs.Note(id), "absent.png", oid, 49152)
+	reference(t, s, refs.For(model.KindNote, id), "absent.png", oid, 49152)
 	ts, _, _ := newVizServer(t, r)
 
 	resp, body := blobGet(t, ts.URL+"/api/blob/"+oid, nil)
@@ -172,7 +172,7 @@ func TestBlobDeletedLocalObject(t *testing.T) {
 	r := newGitRepo(t)
 	r.commit("c1")
 	s := r.openStore()
-	att := attachContent(t, s, refs.Note(createNote(t, s, "deleted object")), "gone.txt", []byte("about to be deleted"))
+	att := attachContent(t, s, refs.For(model.KindNote, createNote(t, s, "deleted object")), "gone.txt", []byte("about to be deleted"))
 
 	content, err := s.LFS(t.Context())
 	if err != nil {
@@ -201,7 +201,7 @@ func TestBlobNameContentTypeRule(t *testing.T) {
 	r := newGitRepo(t)
 	r.commit("c1")
 	s := r.openStore()
-	ref := refs.Note(createNote(t, s, "note with two-named png"))
+	ref := refs.For(model.KindNote, createNote(t, s, "note with two-named png"))
 	content := []byte("\x89PNG\r\n\x1a\nfake image payload for the name rule test")
 	att := attachContent(t, s, ref, "aaa.png", content)
 	// A second live use of the same object, recorded under a distinct name and
@@ -261,7 +261,7 @@ func TestReferencedAttachmentRebuildsOnNewEntity(t *testing.T) {
 	ctx := t.Context()
 
 	first := hexOID('a')
-	reference(t, s, refs.Note(createNote(t, s, "first")), "first.bin", first, 5)
+	reference(t, s, refs.For(model.KindNote, createNote(t, s, "first")), "first.bin", first, 5)
 	if _, ok, err := b.ReferencedAttachment(ctx, first); err != nil || !ok {
 		t.Fatalf("ReferencedAttachment(first) = ok %v err %v, want true nil", ok, err)
 	}
@@ -271,7 +271,7 @@ func TestReferencedAttachmentRebuildsOnNewEntity(t *testing.T) {
 		t.Fatalf("ReferencedAttachment(second) before it exists = ok %v err %v, want false nil", ok, err)
 	}
 
-	reference(t, s, refs.Note(createNote(t, s, "second")), "second.bin", second, 9)
+	reference(t, s, refs.For(model.KindNote, createNote(t, s, "second")), "second.bin", second, 9)
 	obj, ok, err := b.ReferencedAttachment(ctx, second)
 	if err != nil {
 		t.Fatalf("ReferencedAttachment(second): %v", err)

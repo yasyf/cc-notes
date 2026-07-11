@@ -134,46 +134,46 @@ func buildGoldenEntities(t *testing.T, s *store.Store, c1, c2, c4 commitInfo) {
 	ctx := t.Context()
 
 	noteID := createNote(t, s, "verified superseded note")
-	appendOps(t, s, refs.Note(noteID), model.VerifyNote{VerifiedCommit: c2.sha})
-	appendOps(t, s, refs.Note(noteID), model.AddSupersededBy{ID: model.EntityID("0123456789abcdef0123456789abcdef01234567")})
+	appendOps(t, s, refs.For(model.KindNote, noteID), model.VerifyNote{VerifiedCommit: c2.sha})
+	appendOps(t, s, refs.For(model.KindNote, noteID), model.AddSupersededBy{ID: model.EntityID("0123456789abcdef0123456789abcdef01234567")})
 
 	compactID := createNote(t, s, "compacted note")
-	appendOps(t, s, refs.Note(compactID), model.VerifyNote{VerifiedCommit: c1.sha})
-	if _, err := s.Compact(ctx, refs.Note(compactID)); err != nil {
+	appendOps(t, s, refs.For(model.KindNote, compactID), model.VerifyNote{VerifiedCommit: c1.sha})
+	if _, err := s.Compact(ctx, refs.For(model.KindNote, compactID)); err != nil {
 		t.Fatalf("compact note: %v", err)
 	}
 
 	docID := createDocWhen(t, s, "stale design doc", "before the auth rewrite")
-	appendOps(t, s, refs.Doc(docID), model.MarkStale{Reason: "rewritten"})
+	appendOps(t, s, refs.For(model.KindDoc, docID), model.MarkStale{Reason: "rewritten"})
 
 	logID := createLog(t, s, "rollout log")
-	appendOps(t, s, refs.Log(logID), model.AppendEntry{Text: "flipped to 5%"})
-	appendOps(t, s, refs.Log(logID), model.AppendEntry{Text: "flipped to 100%"})
+	appendOps(t, s, refs.For(model.KindLog, logID), model.AppendEntry{Text: "flipped to 5%"})
+	appendOps(t, s, refs.For(model.KindLog, logID), model.AppendEntry{Text: "flipped to 100%"})
 
 	projID := createProject(t, s, "platform project")
-	appendOps(t, s, refs.Project(projID), model.SetProjectStatus{Status: model.ProjectArchived})
+	appendOps(t, s, refs.For(model.KindProject, projID), model.SetProjectStatus{Status: model.ProjectArchived})
 
 	sprintID := createSprint(t, s, "q3 hardening sprint", projID)
-	appendOps(t, s, refs.Sprint(sprintID),
+	appendOps(t, s, refs.For(model.KindSprint, sprintID),
 		model.SetSprintStatus{Status: model.SprintActive},
 		model.SetStartDate{Date: goldenStartDate},
 		model.SetEndDate{Date: goldenEndDate})
 
 	memberID := createTask(t, s, "member task in sprint", "")
-	appendOps(t, s, refs.Task(memberID), model.SetProject{Project: projID}, model.SetSprint{Sprint: sprintID})
+	appendOps(t, s, refs.For(model.KindTask, memberID), model.SetProject{Project: projID}, model.SetSprint{Sprint: sprintID})
 
 	lifeID := createTask(t, s, "lifecycle task across branches", model.Branch("feature/parent"))
-	lref := refs.Task(lifeID)
+	lref := refs.For(model.KindTask, lifeID)
 	appendOps(t, s, lref, model.Claim{Assignee: model.Actor("alice <alice@example.com>")})
 	appendOps(t, s, lref, model.SetBranch{Branch: model.Branch("main")})
 	appendOps(t, s, lref, model.SetStatus{Status: model.StatusDone})
 	appendOps(t, s, lref, model.LinkCommit{SHA: c4.sha})
 
 	goneID := createTask(t, s, "gone branch task", model.Branch("feature/gone"))
-	appendOps(t, s, refs.Task(goneID), model.SetBranch{Branch: model.Branch("main")})
+	appendOps(t, s, refs.For(model.KindTask, goneID), model.SetBranch{Branch: model.Branch("main")})
 
 	rb := createRunbook(t, s, "deploy runbook", "build image", "roll out")
-	rbRef := refs.Runbook(rb.ID)
+	rbRef := refs.For(model.KindRunbook, rb.ID)
 	runID := model.NewNonce()
 	appendOps(t, s, rbRef, model.StartRun{ID: runID})
 	appendOps(t, s, rbRef, model.SetRunStepStatus{RunID: runID, StepID: rb.Steps[0].ID, Status: model.StepDone})

@@ -122,7 +122,7 @@ func TestInvalidateRefsDropsTrailCache(t *testing.T) {
 	r.commit("c1")
 	s := r.openStore()
 	id := createTask(t, s, "cache task", model.Branch("main"))
-	ref := refs.Task(id)
+	ref := refs.For(model.KindTask, id)
 	b := NewBuilder(s)
 
 	g1, err := b.Graph(t.Context(), fullWindow)

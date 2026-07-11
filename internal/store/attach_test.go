@@ -255,9 +255,9 @@ func TestReferencedAttachments(t *testing.T) {
 	if _, err := s.Create(t.Context(), []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "no attachments", Type: model.TypeTask, Branch: "main"}}); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	noteRef := refs.Note(note.EntityID())
-	docRef := refs.Doc(doc.EntityID())
-	logRef := refs.Log(logEntity.EntityID())
+	noteRef := refs.For(model.KindNote, note.EntityID())
+	docRef := refs.For(model.KindDoc, doc.EntityID())
+	logRef := refs.For(model.KindLog, logEntity.EntityID())
 
 	attach(t, s, noteRef, "shared.bin", oidA, 5)
 	attach(t, s, docRef, "copy.bin", oidA, 5)
@@ -265,11 +265,11 @@ func TestReferencedAttachments(t *testing.T) {
 
 	want := []ReferencedObject{
 		{OID: oidA, Size: 5, Uses: []AttachmentUse{
-			{Kind: refs.KindDoc, Entity: doc.EntityID(), Name: "copy.bin"},
-			{Kind: refs.KindNote, Entity: note.EntityID(), Name: "shared.bin"},
+			{Kind: model.KindDoc, Entity: doc.EntityID(), Name: "copy.bin"},
+			{Kind: model.KindNote, Entity: note.EntityID(), Name: "shared.bin"},
 		}},
 		{OID: oidB, Size: 9, Uses: []AttachmentUse{
-			{Kind: refs.KindLog, Entity: logEntity.EntityID(), Name: "solo.txt"},
+			{Kind: model.KindLog, Entity: logEntity.EntityID(), Name: "solo.txt"},
 		}},
 	}
 	if got := referenced(t, s); !reflect.DeepEqual(got, want) {
@@ -280,7 +280,7 @@ func TestReferencedAttachments(t *testing.T) {
 	detach(t, s, logRef, "solo.txt")
 	want = []ReferencedObject{
 		{OID: oidA, Size: 5, Uses: []AttachmentUse{
-			{Kind: refs.KindNote, Entity: note.EntityID(), Name: "shared.bin"},
+			{Kind: model.KindNote, Entity: note.EntityID(), Name: "shared.bin"},
 		}},
 	}
 	if got := referenced(t, s); !reflect.DeepEqual(got, want) {
@@ -303,7 +303,7 @@ func TestReferencedAttachmentsKeepsCheckpointState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
-	noteRef := refs.Note(note.EntityID())
+	noteRef := refs.For(model.KindNote, note.EntityID())
 	attach(t, s, noteRef, "pinned.bin", oidA, 5)
 	if _, err := s.Compact(t.Context(), noteRef); err != nil {
 		t.Fatalf("Compact: %v", err)
@@ -312,7 +312,7 @@ func TestReferencedAttachmentsKeepsCheckpointState(t *testing.T) {
 
 	want := []ReferencedObject{
 		{OID: oidA, Size: 5, Uses: []AttachmentUse{
-			{Kind: refs.KindNote, Entity: note.EntityID(), Name: "pinned.bin"},
+			{Kind: model.KindNote, Entity: note.EntityID(), Name: "pinned.bin"},
 		}},
 	}
 	if got := referenced(t, s); !reflect.DeepEqual(got, want) {
@@ -329,7 +329,7 @@ func TestReferencedAttachmentsColdCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
-	attach(t, s, refs.Note(note.EntityID()), "cold.bin", oidB, 3)
+	attach(t, s, refs.For(model.KindNote, note.EntityID()), "cold.bin", oidB, 3)
 	warm := referenced(t, s)
 
 	reopened, err := Open(s.Git.Dir)

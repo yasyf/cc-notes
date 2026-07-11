@@ -29,34 +29,6 @@ const (
 // refs/cc-notes-sync/ tracking refs.
 const Namespace = namespace
 
-// NotesPrefix is the ref namespace holding all notes, including the trailing
-// slash.
-const NotesPrefix = namespace + "notes/"
-
-// TasksRoot is the ref namespace holding every task, including the trailing
-// slash.
-const TasksRoot = namespace + "tasks/"
-
-// SprintsRoot is the ref namespace holding every sprint, including the trailing
-// slash.
-const SprintsRoot = namespace + "sprints/"
-
-// ProjectsRoot is the ref namespace holding every project, including the
-// trailing slash.
-const ProjectsRoot = namespace + "projects/"
-
-// DocsRoot is the ref namespace holding every doc, including the trailing
-// slash.
-const DocsRoot = namespace + "docs/"
-
-// LogsRoot is the ref namespace holding every log, including the trailing
-// slash.
-const LogsRoot = namespace + "logs/"
-
-// RunbooksRoot is the ref namespace holding every runbook, including the
-// trailing slash.
-const RunbooksRoot = namespace + "runbooks/"
-
 var (
 	// ErrNotCCNotes reports a ref outside the cc-notes namespaces.
 	ErrNotCCNotes = errors.New("not a cc-notes ref")
@@ -65,46 +37,54 @@ var (
 	ErrMalformed = errors.New("malformed cc-notes ref")
 )
 
-// Kind discriminates the entity namespace a ref belongs to.
-type Kind string
+// roots maps each entity kind to its ref namespace root, trailing slash
+// included. The root strings are ref-namespace layout — part of the storage
+// format — so they are frozen; changing one strands existing entities. Root and
+// For build ref names from this table and Parse reverse-maps it, so it is the
+// single source of the kind-to-namespace binding. It must cover exactly
+// model.Kinds(), asserted by TestRootsCoverKinds.
+var roots = map[model.Kind]string{
+	model.KindNote:    namespace + "notes/",
+	model.KindTask:    namespace + "tasks/",
+	model.KindSprint:  namespace + "sprints/",
+	model.KindProject: namespace + "projects/",
+	model.KindDoc:     namespace + "docs/",
+	model.KindLog:     namespace + "logs/",
+	model.KindRunbook: namespace + "runbooks/",
+}
 
-// Entity namespaces.
-const (
-	KindNote    Kind = "note"
-	KindTask    Kind = "task"
-	KindSprint  Kind = "sprint"
-	KindProject Kind = "project"
-	KindDoc     Kind = "doc"
-	KindLog     Kind = "log"
-	KindRunbook Kind = "runbook"
-)
+// kindBySegment reverses roots by ref path segment (the plural namespace token,
+// e.g. "notes") for Parse.
+var kindBySegment = func() map[string]model.Kind {
+	m := make(map[string]model.Kind, len(roots))
+	for k, root := range roots {
+		seg := strings.TrimSuffix(strings.TrimPrefix(root, namespace), "/")
+		m[seg] = k
+	}
+	return m
+}()
 
 // Ref is one parsed cc-notes ref name.
 type Ref struct {
-	Kind Kind
+	Kind model.Kind
 	ID   model.EntityID
 }
 
-// Note returns the ref name for the note with the given id.
-func Note(id model.EntityID) string { return NotesPrefix + string(id) }
+// Root returns the ref namespace holding every entity of kind, trailing slash
+// included: refs/cc-notes/<segment>/. It panics on a kind with no root, a
+// programmer error the registry cannot express.
+func Root(kind model.Kind) string {
+	root, ok := roots[kind]
+	if !ok {
+		panic(fmt.Sprintf("refs: no root for kind %q", kind))
+	}
+	return root
+}
 
-// Task returns the ref name for the task with the given id.
-func Task(id model.EntityID) string { return TasksRoot + string(id) }
-
-// Sprint returns the ref name for the sprint with the given id.
-func Sprint(id model.EntityID) string { return SprintsRoot + string(id) }
-
-// Project returns the ref name for the project with the given id.
-func Project(id model.EntityID) string { return ProjectsRoot + string(id) }
-
-// Doc returns the ref name for the doc with the given id.
-func Doc(id model.EntityID) string { return DocsRoot + string(id) }
-
-// Log returns the ref name for the log with the given id.
-func Log(id model.EntityID) string { return LogsRoot + string(id) }
-
-// Runbook returns the ref name for the runbook with the given id.
-func Runbook(id model.EntityID) string { return RunbooksRoot + string(id) }
+// For returns the ref name for the entity of kind with the given id.
+func For(kind model.Kind, id model.EntityID) string {
+	return Root(kind) + string(id)
+}
 
 // Parse decodes a cc-notes ref name. The id is the only component after the
 // notes/, tasks/, sprints/, projects/, docs/, logs/, or runbooks/ namespace. It
@@ -117,70 +97,21 @@ func Parse(ref string) (Ref, error) {
 	if !ok {
 		return Ref{}, fmt.Errorf("%w: %q", ErrNotCCNotes, ref)
 	}
-	kind, tail, ok := strings.Cut(rest, "/")
+	seg, tail, ok := strings.Cut(rest, "/")
 	if !ok || tail == "" {
 		return Ref{}, fmt.Errorf("%w: missing id in %q", ErrMalformed, ref)
 	}
-	switch kind {
-	case "notes":
-		if strings.ContainsRune(tail, '/') {
-			return Ref{}, fmt.Errorf("%w: nested components in note ref %q", ErrMalformed, ref)
-		}
-		if !validID(tail) {
-			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
-		}
-		return Ref{Kind: KindNote, ID: model.EntityID(tail)}, nil
-	case "tasks":
-		if strings.ContainsRune(tail, '/') {
-			return Ref{}, fmt.Errorf("%w: nested components in task ref %q", ErrMalformed, ref)
-		}
-		if !validID(tail) {
-			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
-		}
-		return Ref{Kind: KindTask, ID: model.EntityID(tail)}, nil
-	case "sprints":
-		if strings.ContainsRune(tail, '/') {
-			return Ref{}, fmt.Errorf("%w: nested components in sprint ref %q", ErrMalformed, ref)
-		}
-		if !validID(tail) {
-			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
-		}
-		return Ref{Kind: KindSprint, ID: model.EntityID(tail)}, nil
-	case "projects":
-		if strings.ContainsRune(tail, '/') {
-			return Ref{}, fmt.Errorf("%w: nested components in project ref %q", ErrMalformed, ref)
-		}
-		if !validID(tail) {
-			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
-		}
-		return Ref{Kind: KindProject, ID: model.EntityID(tail)}, nil
-	case "docs":
-		if strings.ContainsRune(tail, '/') {
-			return Ref{}, fmt.Errorf("%w: nested components in doc ref %q", ErrMalformed, ref)
-		}
-		if !validID(tail) {
-			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
-		}
-		return Ref{Kind: KindDoc, ID: model.EntityID(tail)}, nil
-	case "logs":
-		if strings.ContainsRune(tail, '/') {
-			return Ref{}, fmt.Errorf("%w: nested components in log ref %q", ErrMalformed, ref)
-		}
-		if !validID(tail) {
-			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
-		}
-		return Ref{Kind: KindLog, ID: model.EntityID(tail)}, nil
-	case "runbooks":
-		if strings.ContainsRune(tail, '/') {
-			return Ref{}, fmt.Errorf("%w: nested components in runbook ref %q", ErrMalformed, ref)
-		}
-		if !validID(tail) {
-			return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
-		}
-		return Ref{Kind: KindRunbook, ID: model.EntityID(tail)}, nil
-	default:
-		return Ref{}, fmt.Errorf("%w: unknown namespace %q in %q", ErrMalformed, kind, ref)
+	kind, ok := kindBySegment[seg]
+	if !ok {
+		return Ref{}, fmt.Errorf("%w: unknown namespace %q in %q", ErrMalformed, seg, ref)
 	}
+	if strings.ContainsRune(tail, '/') {
+		return Ref{}, fmt.Errorf("%w: nested components in %s ref %q", ErrMalformed, kind, ref)
+	}
+	if !validID(tail) {
+		return Ref{}, fmt.Errorf("%w: id %q in %q", ErrMalformed, tail, ref)
+	}
+	return Ref{Kind: kind, ID: model.EntityID(tail)}, nil
 }
 
 // DirectChild reports whether ref names an immediate child of prefix: the

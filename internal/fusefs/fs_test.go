@@ -92,7 +92,7 @@ func createLog(t *testing.T, s *store.Store, title string, entries ...string) mo
 	}
 	log := snap.(model.Log)
 	for _, text := range entries {
-		next, err := s.Append(t.Context(), refs.Log(log.ID), []model.Op{model.AppendEntry{Text: text}})
+		next, err := s.Append(t.Context(), refs.For(model.KindLog, log.ID), []model.Op{model.AppendEntry{Text: text}})
 		if err != nil {
 			t.Fatalf("append entry: %v", err)
 		}
@@ -209,7 +209,7 @@ func TestGetattrSizeMatchesRead(t *testing.T) {
 func TestFlushCommitsDiffedOps(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Editable", "first line\n")
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 	p := "/notes/" + NoteFilename(note)
 	before := mustTip(t, s, ref)
 
@@ -262,7 +262,7 @@ func TestFlushCommitsDiffedOps(t *testing.T) {
 func TestIdenticalRewriteNoCommit(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Stable", "unchanged body\n")
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 	p := "/notes/" + NoteFilename(note)
 	before := mustTip(t, s, ref)
 
@@ -284,7 +284,7 @@ func TestIdenticalRewriteNoCommit(t *testing.T) {
 func TestParseErrorEINVAL(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Fragile", "body\n")
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 	p := "/notes/" + NoteFilename(note)
 	before := mustTip(t, s, ref)
 
@@ -317,7 +317,7 @@ func TestParseErrorEINVAL(t *testing.T) {
 func TestStrippedOTruncRewrite(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Rewritten", "old body\n")
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 	p := "/notes/" + NoteFilename(note)
 
 	errc, fh := f.Open(p, fuse.O_RDWR)
@@ -363,7 +363,7 @@ func TestMtimeChangesPerVersion(t *testing.T) {
 	if errc := getattrDefeated(f, p, &before, invalidFh); errc != 0 {
 		t.Fatalf("Getattr = %d", errc)
 	}
-	if _, err := s.Append(t.Context(), refs.Note(note.ID), []model.Op{model.SetBody{Body: "v2\n"}}); err != nil {
+	if _, err := s.Append(t.Context(), refs.For(model.KindNote, note.ID), []model.Op{model.SetBody{Body: "v2\n"}}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	var after fuse.Stat_t
@@ -401,7 +401,7 @@ func TestFsyncSurfacesParseError(t *testing.T) {
 func TestImmutableEditEPERM(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Locked", "body\n")
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 	p := "/notes/" + NoteFilename(note)
 	before := mustTip(t, s, ref)
 
@@ -571,7 +571,7 @@ func TestEntityImmovableAndJunk(t *testing.T) {
 func TestExternalAppendMergesWithFlush(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Original Title", "original body\n")
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 	p := "/notes/" + NoteFilename(note)
 
 	errc, fh := f.Open(p, fuse.O_RDWR)
@@ -608,7 +608,7 @@ func TestExternalAppendMergesWithFlush(t *testing.T) {
 func TestDeletedNoteHidden(t *testing.T) {
 	f, s := newTestFS(t)
 	note := createNote(t, s, "Doomed", "body\n")
-	if _, err := s.Append(t.Context(), refs.Note(note.ID), []model.Op{model.DeleteNote{}}); err != nil {
+	if _, err := s.Append(t.Context(), refs.For(model.KindNote, note.ID), []model.Op{model.DeleteNote{}}); err != nil {
 		t.Fatalf("tombstone: %v", err)
 	}
 
@@ -624,7 +624,7 @@ func TestDeletedNoteHidden(t *testing.T) {
 func TestDocFlushSetsWhen(t *testing.T) {
 	f, s := newTestFS(t)
 	doc := createDoc(t, s, "Triggers", "doc body\n", "before editing the parser")
-	ref := refs.Doc(doc.ID)
+	ref := refs.For(model.KindDoc, doc.ID)
 	p := "/docs/" + DocFilename(doc)
 	before := mustTip(t, s, ref)
 
@@ -727,7 +727,7 @@ func TestAtomicSaveCreatesDoc(t *testing.T) {
 func TestDeletedDocHidden(t *testing.T) {
 	f, s := newTestFS(t)
 	doc := createDoc(t, s, "Doomed Doc", "body\n", "")
-	if _, err := s.Append(t.Context(), refs.Doc(doc.ID), []model.Op{model.DeleteNote{}}); err != nil {
+	if _, err := s.Append(t.Context(), refs.For(model.KindDoc, doc.ID), []model.Op{model.DeleteNote{}}); err != nil {
 		t.Fatalf("tombstone: %v", err)
 	}
 
@@ -743,7 +743,7 @@ func TestDeletedDocHidden(t *testing.T) {
 func TestLogAppendEntryFlush(t *testing.T) {
 	f, s := newTestFS(t)
 	log := createLog(t, s, "Rollout", "flipped to 5%\n")
-	ref := refs.Log(log.ID)
+	ref := refs.For(model.KindLog, log.ID)
 	p := "/logs/" + LogFilename(log)
 	before := mustTip(t, s, ref)
 
@@ -799,7 +799,7 @@ func TestLogAppendEntryFlush(t *testing.T) {
 func TestLogMidFileEditEPERM(t *testing.T) {
 	f, s := newTestFS(t)
 	log := createLog(t, s, "Locked", "first entry\n", "second entry\n")
-	ref := refs.Log(log.ID)
+	ref := refs.For(model.KindLog, log.ID)
 	p := "/logs/" + LogFilename(log)
 	before := mustTip(t, s, ref)
 
@@ -843,7 +843,7 @@ func TestLogMidFileEditEPERM(t *testing.T) {
 func TestLogCLIEntriesMountRoundTrip(t *testing.T) {
 	f, s := newTestFS(t)
 	log := createLog(t, s, "Rollout", "flipped to 5%", "rolled back to 0%")
-	ref := refs.Log(log.ID)
+	ref := refs.For(model.KindLog, log.ID)
 	p := "/logs/" + LogFilename(log)
 	before := mustTip(t, s, ref)
 
@@ -935,11 +935,11 @@ func browseFixture(t *testing.T) (f *FS, s *store.Store, p model.Project, sp mod
 	f, s = newTestFS(t)
 	p = createProject(t, s, "Proj")
 	sp = createSprint(t, s, "Sprint One")
-	appendOps(t, s, refs.Sprint(sp.ID), model.SetProject{Project: p.ID})
+	appendOps(t, s, refs.For(model.KindSprint, sp.ID), model.SetProject{Project: p.ID})
 	taskT = createTask(t, s, "main", "In sprint")
-	appendOps(t, s, refs.Task(taskT.ID), model.SetSprint{Sprint: sp.ID})
+	appendOps(t, s, refs.For(model.KindTask, taskT.ID), model.SetSprint{Sprint: sp.ID})
 	direct = createTask(t, s, "main", "Direct in project")
-	appendOps(t, s, refs.Task(direct.ID), model.SetProject{Project: p.ID})
+	appendOps(t, s, refs.For(model.KindTask, direct.ID), model.SetProject{Project: p.ID})
 	return f, s, p, sp, taskT, direct
 }
 
@@ -1017,7 +1017,7 @@ func TestBrowseTreeReadThrough(t *testing.T) {
 	}
 
 	// Edit the title through the flat file the symlink points at.
-	cur, err := s.Load(t.Context(), refs.Task(taskT.ID))
+	cur, err := s.Load(t.Context(), refs.For(model.KindTask, taskT.ID))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -1034,7 +1034,7 @@ func TestBrowseTreeReadThrough(t *testing.T) {
 	}
 	f.Release(flat, fh)
 
-	folded, err := s.Load(t.Context(), refs.Task(taskT.ID))
+	folded, err := s.Load(t.Context(), refs.For(model.KindTask, taskT.ID))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -1071,7 +1071,7 @@ func TestBrowseTreeBrokenChain(t *testing.T) {
 
 func TestFlatSprintFileEdit(t *testing.T) {
 	f, s, p, sp, _, _ := browseFixture(t)
-	ref := refs.Sprint(sp.ID)
+	ref := refs.For(model.KindSprint, sp.ID)
 	flat := "/sprints/" + SprintFilename(sp)
 
 	// Editable: change the title through the flat file.

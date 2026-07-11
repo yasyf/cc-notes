@@ -133,7 +133,7 @@ func TestEventsTaskLifecycle(t *testing.T) {
 	c1 := r.commit("c1")
 	s := r.openStore()
 	id := createTask(t, s, "ship it", model.Branch("alpha"))
-	ref := refs.Task(id)
+	ref := refs.For(model.KindTask, id)
 	appendOps(t, s, ref, model.Claim{Assignee: model.Actor("alice <alice@example.com>")})
 	appendOps(t, s, ref, model.SetBranch{Branch: model.Branch("beta")})
 	appendOps(t, s, ref, model.SetStatus{Status: model.StatusDone})
@@ -161,7 +161,7 @@ func TestEventsReclaimDistinctFromClaim(t *testing.T) {
 	r.commit("c1")
 	s := r.openStore()
 	id := createTask(t, s, "hand off", "")
-	ref := refs.Task(id)
+	ref := refs.For(model.KindTask, id)
 	appendOps(t, s, ref, model.Claim{Assignee: model.Actor("alice <alice@example.com>")})
 	appendOps(t, s, ref, model.SetAssignee{Assignee: model.Actor("bob <bob@example.com>")})
 
@@ -185,11 +185,11 @@ func TestEventsNoteAndDoc(t *testing.T) {
 	s := r.openStore()
 
 	noteID := createNote(t, s, "durable fact")
-	appendOps(t, s, refs.Note(noteID), model.VerifyNote{VerifiedCommit: c1.sha})
-	appendOps(t, s, refs.Note(noteID), model.AddSupersededBy{ID: model.EntityID("0123456789abcdef0123456789abcdef01234567")})
+	appendOps(t, s, refs.For(model.KindNote, noteID), model.VerifyNote{VerifiedCommit: c1.sha})
+	appendOps(t, s, refs.For(model.KindNote, noteID), model.AddSupersededBy{ID: model.EntityID("0123456789abcdef0123456789abcdef01234567")})
 
 	docID := createDoc(t, s, "design doc")
-	appendOps(t, s, refs.Doc(docID), model.MarkStale{Reason: "rewritten"})
+	appendOps(t, s, refs.For(model.KindDoc, docID), model.MarkStale{Reason: "rewritten"})
 
 	g := buildGraph(t, r)
 	gotNote := shapesFor(g, noteID)
@@ -211,7 +211,7 @@ func TestEventsLogEntries(t *testing.T) {
 	r.commit("c1")
 	s := r.openStore()
 	logID := createLog(t, s, "incident timeline")
-	ref := refs.Log(logID)
+	ref := refs.For(model.KindLog, logID)
 	appendOps(t, s, ref, model.AppendEntry{Text: "first entry"})
 	appendOps(t, s, ref, model.AppendEntry{Text: "second entry"})
 
@@ -238,7 +238,7 @@ func TestEventsRunbookLifecycle(t *testing.T) {
 
 	taskID := createTask(t, s, "deploy task", "")
 	rb := createRunbook(t, s, "deploy runbook", "build image", "roll out")
-	ref := refs.Runbook(rb.ID)
+	ref := refs.For(model.KindRunbook, rb.ID)
 	runID := model.NewNonce()
 	appendOps(t, s, ref, model.StartRun{ID: runID, Task: taskID})
 	appendOps(t, s, ref, model.SetRunStepStatus{RunID: runID, StepID: rb.Steps[0].ID, Status: model.StepDone})
@@ -269,7 +269,7 @@ func TestEventsRunbookRunFinishStatuses(t *testing.T) {
 			r.commit("c1")
 			s := r.openStore()
 			rb := createRunbook(t, s, "procedure", "only step")
-			ref := refs.Runbook(rb.ID)
+			ref := refs.For(model.KindRunbook, rb.ID)
 			runID := model.NewNonce()
 			appendOps(t, s, ref, model.StartRun{ID: runID})
 			appendOps(t, s, ref, model.FinishRun{ID: runID, Status: status})
@@ -297,7 +297,7 @@ func TestEventsRunbookFinishedRunCorrection(t *testing.T) {
 	r.commit("c1")
 	s := r.openStore()
 	rb := createRunbook(t, s, "procedure", "only step")
-	ref := refs.Runbook(rb.ID)
+	ref := refs.For(model.KindRunbook, rb.ID)
 	runID := model.NewNonce()
 	appendOps(t, s, ref, model.StartRun{ID: runID})
 	appendOps(t, s, ref, model.FinishRun{ID: runID, Status: model.RunSucceeded})
@@ -325,7 +325,7 @@ func TestEventsRunbookStatusAndRunInOnePack(t *testing.T) {
 	r.commit("c1")
 	s := r.openStore()
 	rb := createRunbook(t, s, "procedure", "only step")
-	ref := refs.Runbook(rb.ID)
+	ref := refs.For(model.KindRunbook, rb.ID)
 	runID := model.NewNonce()
 	appendOps(t, s, ref, model.StartRun{ID: runID})
 	appendOps(t, s, ref,
@@ -353,7 +353,7 @@ func TestEventsCheckpointSkipped(t *testing.T) {
 	c1 := r.commit("c1")
 	s := r.openStore()
 	noteID := createNote(t, s, "compact me")
-	ref := refs.Note(noteID)
+	ref := refs.For(model.KindNote, noteID)
 	appendOps(t, s, ref, model.VerifyNote{VerifiedCommit: c1.sha})
 	if _, err := s.Compact(t.Context(), ref); err != nil {
 		t.Fatalf("compact: %v", err)
@@ -376,7 +376,7 @@ func TestEventsDeletedBranchLane(t *testing.T) {
 	r.commit("c1")
 	s := r.openStore()
 	id := createTask(t, s, "stranded", model.Branch("feature/gone"))
-	ref := refs.Task(id)
+	ref := refs.For(model.KindTask, id)
 	appendOps(t, s, ref, model.SetBranch{Branch: model.Branch("main")})
 
 	g := buildGraph(t, r)
@@ -427,7 +427,7 @@ func TestEventsBranchAttribution(t *testing.T) {
 	r.commit("c1")
 	s := r.openStore()
 	id := createTask(t, s, "moves", model.Branch("wip"))
-	ref := refs.Task(id)
+	ref := refs.For(model.KindTask, id)
 	appendOps(t, s, ref, model.SetBranch{Branch: model.Branch("main")})
 	appendOps(t, s, ref, model.SetStatus{Status: model.StatusInProgress})
 
@@ -451,11 +451,11 @@ func TestEntitiesSummary(t *testing.T) {
 	s := r.openStore()
 
 	taskID := createTask(t, s, "summary task", model.Branch("feat"))
-	appendOps(t, s, refs.Task(taskID), model.Claim{Assignee: model.Actor("alice <alice@example.com>")})
-	appendOps(t, s, refs.Task(taskID), model.SetStatus{Status: model.StatusDone})
+	appendOps(t, s, refs.For(model.KindTask, taskID), model.Claim{Assignee: model.Actor("alice <alice@example.com>")})
+	appendOps(t, s, refs.For(model.KindTask, taskID), model.SetStatus{Status: model.StatusDone})
 
 	noteID := createNote(t, s, "summary note")
-	appendOps(t, s, refs.Note(noteID), model.VerifyNote{VerifiedCommit: c1.sha})
+	appendOps(t, s, refs.For(model.KindNote, noteID), model.VerifyNote{VerifiedCommit: c1.sha})
 
 	g := buildGraph(t, r)
 

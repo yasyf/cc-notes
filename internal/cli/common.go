@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
@@ -349,7 +348,7 @@ func resolveCriterion(task model.Task, prefix string) (model.Criterion, error) {
 
 // loadNote resolves a note id prefix and folds its chain.
 func loadNote(ctx context.Context, s *store.Store, prefix string) (string, model.Note, error) {
-	ref, err := s.Resolve(ctx, refs.KindNote, prefix)
+	ref, err := s.Resolve(ctx, model.KindNote, prefix)
 	if err != nil {
 		return "", model.Note{}, err
 	}
@@ -362,7 +361,7 @@ func loadNote(ctx context.Context, s *store.Store, prefix string) (string, model
 
 // loadDoc resolves a doc id prefix and folds its chain.
 func loadDoc(ctx context.Context, s *store.Store, prefix string) (string, model.Doc, error) {
-	ref, err := s.Resolve(ctx, refs.KindDoc, prefix)
+	ref, err := s.Resolve(ctx, model.KindDoc, prefix)
 	if err != nil {
 		return "", model.Doc{}, err
 	}
@@ -375,7 +374,7 @@ func loadDoc(ctx context.Context, s *store.Store, prefix string) (string, model.
 
 // loadLog resolves a log id prefix and folds its chain.
 func loadLog(ctx context.Context, s *store.Store, prefix string) (string, model.Log, error) {
-	ref, err := s.Resolve(ctx, refs.KindLog, prefix)
+	ref, err := s.Resolve(ctx, model.KindLog, prefix)
 	if err != nil {
 		return "", model.Log{}, err
 	}
@@ -388,7 +387,7 @@ func loadLog(ctx context.Context, s *store.Store, prefix string) (string, model.
 
 // loadTask resolves a task id prefix globally and folds its chain.
 func loadTask(ctx context.Context, s *store.Store, prefix string) (string, model.Task, error) {
-	ref, err := s.Resolve(ctx, refs.KindTask, prefix)
+	ref, err := s.Resolve(ctx, model.KindTask, prefix)
 	if err != nil {
 		return "", model.Task{}, err
 	}
@@ -401,7 +400,7 @@ func loadTask(ctx context.Context, s *store.Store, prefix string) (string, model
 
 // loadSprint resolves a sprint id prefix and folds its chain.
 func loadSprint(ctx context.Context, s *store.Store, prefix string) (string, model.Sprint, error) {
-	ref, err := s.Resolve(ctx, refs.KindSprint, prefix)
+	ref, err := s.Resolve(ctx, model.KindSprint, prefix)
 	if err != nil {
 		return "", model.Sprint{}, err
 	}
@@ -414,7 +413,7 @@ func loadSprint(ctx context.Context, s *store.Store, prefix string) (string, mod
 
 // loadProject resolves a project id prefix and folds its chain.
 func loadProject(ctx context.Context, s *store.Store, prefix string) (string, model.Project, error) {
-	ref, err := s.Resolve(ctx, refs.KindProject, prefix)
+	ref, err := s.Resolve(ctx, model.KindProject, prefix)
 	if err != nil {
 		return "", model.Project{}, err
 	}
@@ -427,7 +426,7 @@ func loadProject(ctx context.Context, s *store.Store, prefix string) (string, mo
 
 // loadRunbook resolves a runbook id prefix and folds its chain.
 func loadRunbook(ctx context.Context, s *store.Store, prefix string) (string, model.Runbook, error) {
-	ref, err := s.Resolve(ctx, refs.KindRunbook, prefix)
+	ref, err := s.Resolve(ctx, model.KindRunbook, prefix)
 	if err != nil {
 		return "", model.Runbook{}, err
 	}
@@ -565,7 +564,7 @@ func resolveBlocker(ctx context.Context, s *store.Store, prefix string) (model.E
 		for i, id := range matches {
 			candidates[i] = store.Candidate{ID: id, Title: live[id].Title}
 		}
-		return "", nil, &store.AmbiguousError{Kind: refs.KindTask, Prefix: prefix, Candidates: candidates}
+		return "", nil, &store.AmbiguousError{Kind: model.KindTask, Prefix: prefix, Candidates: candidates}
 	}
 }
 

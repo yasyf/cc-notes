@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/lfs"
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -137,7 +136,7 @@ func lookupAttachment(ctx context.Context, s *store.Store, prefix, name string) 
 // kind matching is ambiguous.
 func resolveAttachable(ctx context.Context, s *store.Store, prefix string) (string, error) {
 	matched := make([]string, 0, 3)
-	for _, kind := range []refs.Kind{refs.KindNote, refs.KindDoc, refs.KindLog} {
+	for _, kind := range []model.Kind{model.KindNote, model.KindDoc, model.KindLog} {
 		ref, err := s.Resolve(ctx, kind, prefix)
 		if errors.Is(err, store.ErrNotFound) {
 			continue

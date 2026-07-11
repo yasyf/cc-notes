@@ -689,7 +689,7 @@ func (f *FS) commitDocument(p string, data []byte) (string, model.Snapshot, int)
 // resolveTarget resolves a commit target: an alias first, then the short
 // id embedded in the filename. -ENOENT means "no such entity yet" — the
 // caller falls through to create.
-func (f *FS) resolveTarget(p string, kind refs.Kind) (string, rendered, int) {
+func (f *FS) resolveTarget(p string, kind model.Kind) (string, rendered, int) {
 	if ref, ok := f.aliases[p]; ok {
 		tip, err := f.store.Repo.Tip(f.ctx, ref)
 		if err != nil {
@@ -714,60 +714,60 @@ func (f *FS) resolveTarget(p string, kind refs.Kind) (string, rendered, int) {
 }
 
 // resolveEntity routes a short id to the resolver for its kind.
-func (f *FS) resolveEntity(kind refs.Kind, shortID string) (string, rendered, error) {
+func (f *FS) resolveEntity(kind model.Kind, shortID string) (string, rendered, error) {
 	switch kind {
-	case refs.KindNote:
+	case model.KindNote:
 		return f.resolveNote(shortID)
-	case refs.KindDoc:
+	case model.KindDoc:
 		return f.resolveDoc(shortID)
-	case refs.KindLog:
+	case model.KindLog:
 		return f.resolveLog(shortID)
-	case refs.KindTask:
+	case model.KindTask:
 		return f.resolveTask(shortID)
-	case refs.KindSprint:
+	case model.KindSprint:
 		return f.resolveSprint(shortID)
-	case refs.KindProject:
+	case model.KindProject:
 		return f.resolveProject(shortID)
-	case refs.KindRunbook:
+	case model.KindRunbook:
 		return f.resolveRunbook(shortID)
 	default:
 		panic("fusefs: resolveEntity on unknown kind " + string(kind))
 	}
 }
 
-func newEntityOps(kind refs.Kind, data []byte) ([]model.Op, error) {
+func newEntityOps(kind model.Kind, data []byte) ([]model.Op, error) {
 	switch kind {
-	case refs.KindNote:
+	case model.KindNote:
 		parsed, err := ParseNote(data)
 		if err != nil {
 			return nil, err
 		}
 		return NewNote(parsed)
-	case refs.KindDoc:
+	case model.KindDoc:
 		parsed, err := ParseDoc(data)
 		if err != nil {
 			return nil, err
 		}
 		return NewDoc(parsed)
-	case refs.KindLog:
+	case model.KindLog:
 		parsed, err := ParseLog(data)
 		if err != nil {
 			return nil, err
 		}
 		return NewLog(parsed)
-	case refs.KindTask:
+	case model.KindTask:
 		parsed, err := ParseTask(data)
 		if err != nil {
 			return nil, err
 		}
 		return NewTask(parsed, model.Branch(stringValue(parsed.Branch)))
-	case refs.KindSprint:
+	case model.KindSprint:
 		parsed, err := ParseSprint(data)
 		if err != nil {
 			return nil, err
 		}
 		return NewSprint(parsed)
-	case refs.KindProject:
+	case model.KindProject:
 		parsed, err := ParseProject(data)
 		if err != nil {
 			return nil, err
@@ -783,21 +783,21 @@ func newEntityOps(kind refs.Kind, data []byte) ([]model.Op, error) {
 // /sprints, or /projects. The nested browse-tree leaves live at deeper paths
 // and never match. ok is false for everything else; those paths stay in-memory
 // scratch files.
-func entityTarget(p string) (kind refs.Kind, ok bool) {
+func entityTarget(p string) (kind model.Kind, ok bool) {
 	dir, name := path.Dir(p), path.Base(p)
 	switch {
 	case dir == "/notes" && strings.HasSuffix(name, ".md") && name != ".md":
-		return refs.KindNote, true
+		return model.KindNote, true
 	case dir == "/docs" && strings.HasSuffix(name, ".md") && name != ".md":
-		return refs.KindDoc, true
+		return model.KindDoc, true
 	case dir == "/logs" && strings.HasSuffix(name, ".md") && name != ".md":
-		return refs.KindLog, true
+		return model.KindLog, true
 	case dir == "/tasks" && strings.HasSuffix(name, ".json") && name != ".json":
-		return refs.KindTask, true
+		return model.KindTask, true
 	case dir == "/sprints" && strings.HasSuffix(name, ".json") && name != ".json":
-		return refs.KindSprint, true
+		return model.KindSprint, true
 	case dir == "/projects" && strings.HasSuffix(name, ".json") && name != ".json":
-		return refs.KindProject, true
+		return model.KindProject, true
 	}
 	return "", false
 }
@@ -811,19 +811,19 @@ func underRunbooks(p string) bool {
 func refFor(snap model.Snapshot) string {
 	switch s := snap.(type) {
 	case model.Note:
-		return refs.Note(s.ID)
+		return refs.For(model.KindNote, s.ID)
 	case model.Doc:
-		return refs.Doc(s.ID)
+		return refs.For(model.KindDoc, s.ID)
 	case model.Log:
-		return refs.Log(s.ID)
+		return refs.For(model.KindLog, s.ID)
 	case model.Task:
-		return refs.Task(s.ID)
+		return refs.For(model.KindTask, s.ID)
 	case model.Sprint:
-		return refs.Sprint(s.ID)
+		return refs.For(model.KindSprint, s.ID)
 	case model.Project:
-		return refs.Project(s.ID)
+		return refs.For(model.KindProject, s.ID)
 	case model.Runbook:
-		return refs.Runbook(s.ID)
+		return refs.For(model.KindRunbook, s.ID)
 	default:
 		panic(fmt.Sprintf("fusefs: unknown snapshot type %T", snap))
 	}
@@ -902,7 +902,7 @@ func (f *FS) openEntity(p string) (string, rendered, int) {
 // and ambiguous short ids all read as ErrPath — the filesystem namespace
 // has no way to disambiguate a colliding prefix.
 func (f *FS) resolveNote(shortID string) (string, rendered, error) {
-	ref, tip, err := f.resolveRef(refs.NotesPrefix, shortID)
+	ref, tip, err := f.resolveRef(refs.Root(model.KindNote), shortID)
 	if err != nil {
 		return "", rendered{}, err
 	}
@@ -924,7 +924,7 @@ func (f *FS) resolveNote(shortID string) (string, rendered, error) {
 // ambiguous short ids all read as ErrPath — the filesystem namespace has no way
 // to disambiguate a colliding prefix.
 func (f *FS) resolveDoc(shortID string) (string, rendered, error) {
-	ref, tip, err := f.resolveRef(refs.DocsRoot, shortID)
+	ref, tip, err := f.resolveRef(refs.Root(model.KindDoc), shortID)
 	if err != nil {
 		return "", rendered{}, err
 	}
@@ -946,7 +946,7 @@ func (f *FS) resolveDoc(shortID string) (string, rendered, error) {
 // ambiguous short ids all read as ErrPath — the filesystem namespace has no way
 // to disambiguate a colliding prefix.
 func (f *FS) resolveLog(shortID string) (string, rendered, error) {
-	ref, tip, err := f.resolveRef(refs.LogsRoot, shortID)
+	ref, tip, err := f.resolveRef(refs.Root(model.KindLog), shortID)
 	if err != nil {
 		return "", rendered{}, err
 	}
@@ -967,7 +967,7 @@ func (f *FS) resolveLog(shortID string) (string, rendered, error) {
 // resolveTask maps a short id to the task it names in the flat task
 // namespace.
 func (f *FS) resolveTask(shortID string) (string, rendered, error) {
-	ref, tip, err := f.resolveRef(refs.TasksRoot, shortID)
+	ref, tip, err := f.resolveRef(refs.Root(model.KindTask), shortID)
 	if err != nil {
 		return "", rendered{}, err
 	}
@@ -983,7 +983,7 @@ func (f *FS) resolveTask(shortID string) (string, rendered, error) {
 
 // resolveSprint maps a short id to the sprint it names.
 func (f *FS) resolveSprint(shortID string) (string, rendered, error) {
-	ref, tip, err := f.resolveRef(refs.SprintsRoot, shortID)
+	ref, tip, err := f.resolveRef(refs.Root(model.KindSprint), shortID)
 	if err != nil {
 		return "", rendered{}, err
 	}
@@ -999,7 +999,7 @@ func (f *FS) resolveSprint(shortID string) (string, rendered, error) {
 
 // resolveProject maps a short id to the project it names.
 func (f *FS) resolveProject(shortID string) (string, rendered, error) {
-	ref, tip, err := f.resolveRef(refs.ProjectsRoot, shortID)
+	ref, tip, err := f.resolveRef(refs.Root(model.KindProject), shortID)
 	if err != nil {
 		return "", rendered{}, err
 	}
@@ -1015,7 +1015,7 @@ func (f *FS) resolveProject(shortID string) (string, rendered, error) {
 
 // resolveRunbook maps a short id to the runbook it names.
 func (f *FS) resolveRunbook(shortID string) (string, rendered, error) {
-	ref, tip, err := f.resolveRef(refs.RunbooksRoot, shortID)
+	ref, tip, err := f.resolveRef(refs.Root(model.KindRunbook), shortID)
 	if err != nil {
 		return "", rendered{}, err
 	}

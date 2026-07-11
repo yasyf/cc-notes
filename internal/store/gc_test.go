@@ -26,7 +26,7 @@ func TestPruneTombstonesDeletesNoteRefLocalAndRemote(t *testing.T) {
 	bare := initBareRemote(t, s)
 
 	note := create(t, s, noteOps("doomed")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
 		t.Fatalf("DeleteNote: %v", err)
 	}
@@ -68,13 +68,13 @@ func TestPruneTombstonesSkipsSupersededAndTasks(t *testing.T) {
 
 	old := create(t, s, noteOps("old")).(model.Note)
 	replacement := create(t, s, noteOps("new")).(model.Note)
-	oldRef := refs.Note(old.ID)
+	oldRef := refs.For(model.KindNote, old.ID)
 	if _, err := s.Append(ctx, oldRef, []model.Op{model.AddSupersededBy{ID: replacement.ID}}); err != nil {
 		t.Fatalf("supersede: %v", err)
 	}
 
 	task := create(t, s, taskOps("ship it", "main")).(model.Task)
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	if _, err := s.Append(ctx, taskRef, []model.Op{model.SetStatus{Status: model.StatusDone}}); err != nil {
 		t.Fatalf("done: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestPruneTombstonesDeletesDocRefLocalAndRemote(t *testing.T) {
 	bare := initBareRemote(t, s)
 
 	doc := create(t, s, docOps("doomed")).(model.Doc)
-	ref := refs.Doc(doc.ID)
+	ref := refs.For(model.KindDoc, doc.ID)
 	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
 		t.Fatalf("DeleteNote: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestPruneTombstonesDeletesLogRefLocalAndRemote(t *testing.T) {
 	bare := initBareRemote(t, s)
 
 	log := create(t, s, logOps("doomed")).(model.Log)
-	ref := refs.Log(log.ID)
+	ref := refs.For(model.KindLog, log.ID)
 	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
 		t.Fatalf("DeleteNote: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestPruneTombstonesSkipsSupersededDoc(t *testing.T) {
 
 	old := create(t, s, docOps("old")).(model.Doc)
 	replacement := create(t, s, docOps("new")).(model.Doc)
-	oldRef := refs.Doc(old.ID)
+	oldRef := refs.For(model.KindDoc, old.ID)
 	if _, err := s.Append(ctx, oldRef, []model.Op{model.AddSupersededBy{ID: replacement.ID}}); err != nil {
 		t.Fatalf("supersede: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestGCLocalPrunesOrphanedCacheEntry(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
 	note := create(t, s, noteOps("v1")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 
 	// Populate the cache against the current tip, then append so that tip is
 	// orphaned and a fresh entry is written for the new tip.

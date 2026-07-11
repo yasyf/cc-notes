@@ -7,7 +7,6 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/gitobj"
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
@@ -17,7 +16,7 @@ import (
 
 func TestExitCodeAndLabel(t *testing.T) {
 	ambiguous := &store.AmbiguousError{
-		Kind:   refs.KindTask,
+		Kind:   model.KindTask,
 		Prefix: "a",
 		Candidates: []store.Candidate{
 			{ID: model.EntityID("aaaaaaa1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), Title: "one"},

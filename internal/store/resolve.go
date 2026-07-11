@@ -17,23 +17,23 @@ import (
 // are globally unique, so a task resolves regardless of its folded branch.
 // No match fails with ErrNotFound; several matches fail with an
 // *AmbiguousError carrying each candidate's id and title.
-func (s *Store) Resolve(ctx context.Context, kind refs.Kind, prefix string) (string, error) {
+func (s *Store) Resolve(ctx context.Context, kind model.Kind, prefix string) (string, error) {
 	var namespace string
 	switch kind {
-	case refs.KindNote:
-		namespace = refs.NotesPrefix
-	case refs.KindTask:
-		namespace = refs.TasksRoot
-	case refs.KindSprint:
-		namespace = refs.SprintsRoot
-	case refs.KindProject:
-		namespace = refs.ProjectsRoot
-	case refs.KindDoc:
-		namespace = refs.DocsRoot
-	case refs.KindLog:
-		namespace = refs.LogsRoot
-	case refs.KindRunbook:
-		namespace = refs.RunbooksRoot
+	case model.KindNote:
+		namespace = refs.Root(model.KindNote)
+	case model.KindTask:
+		namespace = refs.Root(model.KindTask)
+	case model.KindSprint:
+		namespace = refs.Root(model.KindSprint)
+	case model.KindProject:
+		namespace = refs.Root(model.KindProject)
+	case model.KindDoc:
+		namespace = refs.Root(model.KindDoc)
+	case model.KindLog:
+		namespace = refs.Root(model.KindLog)
+	case model.KindRunbook:
+		namespace = refs.Root(model.KindRunbook)
 	default:
 		return "", fmt.Errorf("resolve: unknown kind %q", kind)
 	}

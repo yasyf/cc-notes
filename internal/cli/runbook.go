@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -266,7 +265,7 @@ func newRunbookCommentCmd() *cobra.Command {
 	return cmd
 }
 
-func newRunbookHistoryCmd() *cobra.Command { return kindHistoryCmd(refs.KindRunbook, "runbook") }
+func newRunbookHistoryCmd() *cobra.Command { return kindHistoryCmd(model.KindRunbook, "runbook") }
 
 func newRunbookStepCmd() *cobra.Command {
 	cmd := &cobra.Command{

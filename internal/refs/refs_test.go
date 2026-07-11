@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/yasyf/cc-notes/model"
 )
 
 const (
@@ -19,18 +21,18 @@ func TestBuildGolden(t *testing.T) {
 		got  string
 		want string
 	}{
-		{"note", Note(hex40), "refs/cc-notes/notes/" + hex40},
-		{"task", Task(hex40), "refs/cc-notes/tasks/" + hex40},
-		{"sprint", Sprint(hex40), "refs/cc-notes/sprints/" + hex40},
-		{"project", Project(hex40), "refs/cc-notes/projects/" + hex40},
-		{"doc", Doc(hex40), "refs/cc-notes/docs/" + hex40},
-		{"runbook", Runbook(hex40), "refs/cc-notes/runbooks/" + hex40},
-		{"notes prefix", NotesPrefix, "refs/cc-notes/notes/"},
-		{"tasks root", TasksRoot, "refs/cc-notes/tasks/"},
-		{"sprints root", SprintsRoot, "refs/cc-notes/sprints/"},
-		{"projects root", ProjectsRoot, "refs/cc-notes/projects/"},
-		{"docs root", DocsRoot, "refs/cc-notes/docs/"},
-		{"runbooks root", RunbooksRoot, "refs/cc-notes/runbooks/"},
+		{"note", For(model.KindNote, hex40), "refs/cc-notes/notes/" + hex40},
+		{"task", For(model.KindTask, hex40), "refs/cc-notes/tasks/" + hex40},
+		{"sprint", For(model.KindSprint, hex40), "refs/cc-notes/sprints/" + hex40},
+		{"project", For(model.KindProject, hex40), "refs/cc-notes/projects/" + hex40},
+		{"doc", For(model.KindDoc, hex40), "refs/cc-notes/docs/" + hex40},
+		{"runbook", For(model.KindRunbook, hex40), "refs/cc-notes/runbooks/" + hex40},
+		{"notes prefix", Root(model.KindNote), "refs/cc-notes/notes/"},
+		{"tasks root", Root(model.KindTask), "refs/cc-notes/tasks/"},
+		{"sprints root", Root(model.KindSprint), "refs/cc-notes/sprints/"},
+		{"projects root", Root(model.KindProject), "refs/cc-notes/projects/"},
+		{"docs root", Root(model.KindDoc), "refs/cc-notes/docs/"},
+		{"runbooks root", Root(model.KindRunbook), "refs/cc-notes/runbooks/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,26 +43,15 @@ func TestBuildGolden(t *testing.T) {
 	}
 }
 
-func TestKindValues(t *testing.T) {
-	// Kind strings tag the entity namespace; pin them so a rename can't drift.
-	cases := []struct {
-		name string
-		got  Kind
-		want Kind
-	}{
-		{"note", KindNote, "note"},
-		{"task", KindTask, "task"},
-		{"sprint", KindSprint, "sprint"},
-		{"project", KindProject, "project"},
-		{"doc", KindDoc, "doc"},
-		{"runbook", KindRunbook, "runbook"},
+func TestRootsCoverKinds(t *testing.T) {
+	kinds := model.Kinds()
+	if got, want := len(roots), len(kinds); got != want {
+		t.Fatalf("roots has %d entries, model.Kinds() has %d", got, want)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.got != tc.want {
-				t.Errorf("Kind = %q, want %q", tc.got, tc.want)
-			}
-		})
+	for _, k := range kinds {
+		if _, ok := roots[k]; !ok {
+			t.Errorf("roots missing kind %q", k)
+		}
 	}
 }
 
@@ -70,18 +61,18 @@ func TestParseRoundTrip(t *testing.T) {
 		ref  string
 		want Ref
 	}{
-		{"note", Note(hex40), Ref{Kind: KindNote, ID: hex40}},
-		{"note sha256 id", Note(hex64), Ref{Kind: KindNote, ID: hex64}},
-		{"task", Task(hex40), Ref{Kind: KindTask, ID: hex40}},
-		{"task sha256 id", Task(hex64), Ref{Kind: KindTask, ID: hex64}},
-		{"sprint", Sprint(hex40), Ref{Kind: KindSprint, ID: hex40}},
-		{"sprint sha256 id", Sprint(hex64), Ref{Kind: KindSprint, ID: hex64}},
-		{"project", Project(hex40), Ref{Kind: KindProject, ID: hex40}},
-		{"project sha256 id", Project(hex64), Ref{Kind: KindProject, ID: hex64}},
-		{"doc", Doc(hex40), Ref{Kind: KindDoc, ID: hex40}},
-		{"doc sha256 id", Doc(hex64), Ref{Kind: KindDoc, ID: hex64}},
-		{"runbook", Runbook(hex40), Ref{Kind: KindRunbook, ID: hex40}},
-		{"runbook sha256 id", Runbook(hex64), Ref{Kind: KindRunbook, ID: hex64}},
+		{"note", For(model.KindNote, hex40), Ref{Kind: model.KindNote, ID: hex40}},
+		{"note sha256 id", For(model.KindNote, hex64), Ref{Kind: model.KindNote, ID: hex64}},
+		{"task", For(model.KindTask, hex40), Ref{Kind: model.KindTask, ID: hex40}},
+		{"task sha256 id", For(model.KindTask, hex64), Ref{Kind: model.KindTask, ID: hex64}},
+		{"sprint", For(model.KindSprint, hex40), Ref{Kind: model.KindSprint, ID: hex40}},
+		{"sprint sha256 id", For(model.KindSprint, hex64), Ref{Kind: model.KindSprint, ID: hex64}},
+		{"project", For(model.KindProject, hex40), Ref{Kind: model.KindProject, ID: hex40}},
+		{"project sha256 id", For(model.KindProject, hex64), Ref{Kind: model.KindProject, ID: hex64}},
+		{"doc", For(model.KindDoc, hex40), Ref{Kind: model.KindDoc, ID: hex40}},
+		{"doc sha256 id", For(model.KindDoc, hex64), Ref{Kind: model.KindDoc, ID: hex64}},
+		{"runbook", For(model.KindRunbook, hex40), Ref{Kind: model.KindRunbook, ID: hex40}},
+		{"runbook sha256 id", For(model.KindRunbook, hex64), Ref{Kind: model.KindRunbook, ID: hex64}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -150,12 +141,12 @@ func TestDirectChild(t *testing.T) {
 		ref    string
 		want   bool
 	}{
-		{"note under notes prefix", NotesPrefix, Note(hex40), true},
-		{"task under tasks root", TasksRoot, Task(hex40), true},
-		{"doc under docs root", DocsRoot, Doc(hex40), true},
-		{"task not under notes prefix", NotesPrefix, Task(hex40), false},
-		{"doc not under notes prefix", NotesPrefix, Doc(hex40), false},
-		{"ref equal to prefix", TasksRoot, TasksRoot, false},
+		{"note under notes prefix", Root(model.KindNote), For(model.KindNote, hex40), true},
+		{"task under tasks root", Root(model.KindTask), For(model.KindTask, hex40), true},
+		{"doc under docs root", Root(model.KindDoc), For(model.KindDoc, hex40), true},
+		{"task not under notes prefix", Root(model.KindNote), For(model.KindTask, hex40), false},
+		{"doc not under notes prefix", Root(model.KindNote), For(model.KindDoc, hex40), false},
+		{"ref equal to prefix", Root(model.KindTask), Root(model.KindTask), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -173,8 +164,8 @@ func TestTrackingRoundTrip(t *testing.T) {
 		ref    string
 		want   string
 	}{
-		{"note", "origin", Note(hex40), "refs/cc-notes-sync/origin/notes/" + hex40},
-		{"task", "upstream", Task(hex40), "refs/cc-notes-sync/upstream/tasks/" + hex40},
+		{"note", "origin", For(model.KindNote, hex40), "refs/cc-notes-sync/origin/notes/" + hex40},
+		{"task", "upstream", For(model.KindTask, hex40), "refs/cc-notes-sync/upstream/tasks/" + hex40},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -16,7 +16,7 @@ func TestHistory(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
 	id := create(t, s, noteOps("v1")).EntityID()
-	ref := refs.Note(id)
+	ref := refs.For(model.KindNote, id)
 	if _, err := s.Append(ctx, ref, []model.Op{model.SetTitle{Title: "v2"}}); err != nil {
 		t.Fatalf("Append set_title: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestHistory(t *testing.T) {
 		t.Errorf("step 0 entity id = %q, want %q", steps[0].Snapshot.EntityID(), id)
 	}
 
-	missing := refs.Note("0000000000000000000000000000000000000000")
+	missing := refs.For(model.KindNote, "0000000000000000000000000000000000000000")
 	if _, err := s.History(ctx, missing); !errors.Is(err, gitobj.ErrRefNotFound) {
 		t.Fatalf("History(missing) error = %v, want ErrRefNotFound", err)
 	}

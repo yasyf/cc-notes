@@ -41,7 +41,7 @@ func mergeInto(t *testing.T, dir, target, source string) {
 
 func setStatus(t *testing.T, s *store.Store, _ model.Branch, id model.EntityID, status model.Status) {
 	t.Helper()
-	appendOps(t, s, refs.Task(id), model.SetStatus{Status: status})
+	appendOps(t, s, refs.For(model.KindTask, id), model.SetStatus{Status: status})
 }
 
 func taskIDs(tasks []model.Task) []model.EntityID {
@@ -327,7 +327,7 @@ func TestReconcileDryRun(t *testing.T) {
 	if got := ccRefs(t, dir); !mapsEqual(got, before) {
 		t.Errorf("dry-run moved refs: %v -> %v", before, got)
 	}
-	if got := loadTask(t, s, refs.Task(task.ID)).Branch; got != "feature/x" {
+	if got := loadTask(t, s, refs.For(model.KindTask, task.ID)).Branch; got != "feature/x" {
 		t.Errorf("dry-run moved task to branch %q, want feature/x untouched", got)
 	}
 	if got := taskIDs(listTasks(t, s, "feature/x")); !slices.Equal(got, []model.EntityID{task.ID}) {
@@ -365,7 +365,7 @@ func TestReconcileFoldsPlainFetchedTracking(t *testing.T) {
 	gittest.Git(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
 
 	task := createTask(t, b, "from feature", "feature/x")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	sync(t, b)
 
 	gittest.Git(t, a.Git.Dir, "-c", "fetch.prune=true", "fetch", "-q", "origin")

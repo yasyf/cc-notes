@@ -296,7 +296,7 @@ func TestInstallSweepsEveryRemoteOldFetchRefspec(t *testing.T) {
 	}
 
 	task := createTask(t, s, "unsynced", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	gittest.Git(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "--all", "-q")
 	if got := gittest.Git(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
 		t.Fatalf("after git fetch --all --prune across both upgraded remotes, %s = %s, want the unsynced task to survive at %s", taskRef, got, task.Head)
@@ -319,7 +319,7 @@ func TestUpgradedFetchPruneKeepsUnsyncedTask(t *testing.T) {
 		t.Fatalf("upgrade left the killer refspec in place")
 	}
 	task := createTask(t, s, "unsynced", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	gittest.Git(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "-q", "origin")
 	if got := gittest.Git(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
 		t.Fatalf("after upgrade then plain fetch --prune, %s = %s, want the unsynced task to survive at %s", taskRef, got, task.Head)
@@ -370,7 +370,7 @@ func TestInstallDropsRedundantOldFetchRefspec(t *testing.T) {
 	// a plain fetch --prune deletes an unsynced canonical ref, so prove the task
 	// survives now that only the tracking-namespace refspec remains.
 	task := createTask(t, s, "unsynced", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	gittest.Git(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "-q", "origin")
 	if got := gittest.Git(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
 		t.Fatalf("after dropping the redundant old refspec, %s = %s, want the unsynced task to survive at %s", taskRef, got, task.Head)
@@ -393,7 +393,7 @@ func TestPlainGitCarry(t *testing.T) {
 	}
 	note := createNote(t, a, "carried note")
 	task := createTask(t, a, "carried task", "main")
-	noteRef, taskRef := refs.Note(note.ID), refs.Task(task.ID)
+	noteRef, taskRef := refs.For(model.KindNote, note.ID), refs.For(model.KindTask, task.ID)
 
 	gittest.Git(t, a.Git.Dir, "push", "-q", "origin")
 
@@ -476,7 +476,7 @@ func TestTwoCloneConvergence(t *testing.T) {
 	b := clone(t, bare, "Bob", "bob@example.com")
 	note := createNote(t, a, "shared note")
 	task := createTask(t, a, "shared task", "main")
-	noteRef, taskRef := refs.Note(note.ID), refs.Task(task.ID)
+	noteRef, taskRef := refs.For(model.KindNote, note.ID), refs.For(model.KindTask, task.ID)
 
 	if got, want := sync(t, a), (ccsync.Report{Pushed: 2, Rounds: 1}); got != want {
 		t.Fatalf("A first sync report = %+v, want %+v", got, want)
@@ -552,7 +552,7 @@ func TestConcurrentSameFieldLWW(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "contested", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -633,7 +633,7 @@ func TestSymmetricMergeRace(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "mirrored", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -680,7 +680,7 @@ func TestPlainPushDivergedEntityRef(t *testing.T) {
 	}
 	gittest.Git(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
 	task := createTask(t, a, "diverged", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	gittest.Git(t, a.Git.Dir, "push", "-q", "origin")
 	gittest.Git(t, b.Git.Dir, "fetch", "-q", "origin")
 	gittest.Git(t, b.Git.Dir, "reset", "-q", "--hard", "origin/main")
@@ -722,7 +722,7 @@ func TestPlainFetchPruneKeepsUnsyncedTask(t *testing.T) {
 		t.Fatalf("Install A: %v", err)
 	}
 	task := createTask(t, a, "unsynced", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	if got := gittest.Git(t, a.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
 		t.Fatalf("before fetch, %s = %s, want %s", taskRef, got, task.Head)
 	}
@@ -753,7 +753,7 @@ func TestPlainFetchNeverClobbersDivergedRef(t *testing.T) {
 		}
 	}
 	task := createTask(t, a, "diverged", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -801,7 +801,7 @@ func TestSyncPreservesDivergedOpsAfterInstall(t *testing.T) {
 		}
 	}
 	task := createTask(t, a, "diverged", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -845,7 +845,7 @@ func TestPlainPullThenSyncPropagatesDone(t *testing.T) {
 		}
 	}
 	task := createTask(t, a, "shared", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -902,7 +902,7 @@ func TestSyncScopedReconcilesOnlyChanged(t *testing.T) {
 	b := clone(t, bare, "Bob", "bob@example.com")
 	createNote(t, a, "shared note")
 	task := createTask(t, a, "shared task", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -939,7 +939,7 @@ func TestSyncScopedHealsBehindAfterInterruptedSync(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "shared task", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -969,7 +969,7 @@ func TestSyncScopedHealsDivergedAfterInterruptedSync(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "shared task", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	sync(t, a)
 	sync(t, b)
 
@@ -1037,7 +1037,7 @@ func TestSetBranchConvergesAcrossClones(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "contested branch", "main")
-	taskRef := refs.Task(task.ID)
+	taskRef := refs.For(model.KindTask, task.ID)
 	sync(t, a)
 	sync(t, b)
 

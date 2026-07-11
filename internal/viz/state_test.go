@@ -31,7 +31,7 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 		t.Fatalf("create old note: %v", err)
 	}
 	old := oldSnap.(model.Note)
-	if _, err := s.Append(ctx, refs.Note(old.ID), []model.Op{model.AddSupersededBy{ID: keep.ID}}); err != nil {
+	if _, err := s.Append(ctx, refs.For(model.KindNote, old.ID), []model.Op{model.AddSupersededBy{ID: keep.ID}}); err != nil {
 		t.Fatalf("supersede old note: %v", err)
 	}
 	goneSnap, err := s.Create(ctx, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "gone note"}})
@@ -39,7 +39,7 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 		t.Fatalf("create gone note: %v", err)
 	}
 	gone := goneSnap.(model.Note)
-	if _, err := s.Append(ctx, refs.Note(gone.ID), []model.Op{model.DeleteNote{}}); err != nil {
+	if _, err := s.Append(ctx, refs.For(model.KindNote, gone.ID), []model.Op{model.DeleteNote{}}); err != nil {
 		t.Fatalf("delete gone note: %v", err)
 	}
 
@@ -53,7 +53,7 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 	}
 	logID := logSnap.(model.Log).ID
 	const entryText = "deploy rolled out to us-east-1"
-	if _, err := s.Append(ctx, refs.Log(logID), []model.Op{model.AppendEntry{Text: entryText}}); err != nil {
+	if _, err := s.Append(ctx, refs.For(model.KindLog, logID), []model.Op{model.AppendEntry{Text: entryText}}); err != nil {
 		t.Fatalf("append log entry: %v", err)
 	}
 
@@ -63,7 +63,7 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 	}
 	taskID := taskSnap.(model.Task).ID
 	const criterionText = "binary builds with CGO disabled"
-	if _, err := s.Append(ctx, refs.Task(taskID), []model.Op{model.AddCriterion{ID: model.NewNonce(), Text: criterionText}}); err != nil {
+	if _, err := s.Append(ctx, refs.For(model.KindTask, taskID), []model.Op{model.AddCriterion{ID: model.NewNonce(), Text: criterionText}}); err != nil {
 		t.Fatalf("add criterion: %v", err)
 	}
 
@@ -84,7 +84,7 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 	}
 	rb := rbSnap.(model.Runbook)
 	runID := model.NewNonce()
-	if _, err := s.Append(ctx, refs.Runbook(rb.ID), []model.Op{
+	if _, err := s.Append(ctx, refs.For(model.KindRunbook, rb.ID), []model.Op{
 		model.StartRun{ID: runID},
 		model.SetRunStepStatus{RunID: runID, StepID: rb.Steps[0].ID, Status: model.StepDone},
 	}); err != nil {

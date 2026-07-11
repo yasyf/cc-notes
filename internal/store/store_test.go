@@ -127,7 +127,7 @@ func TestCreateNoteRoundTrip(t *testing.T) {
 		t.Errorf("timestamps = %d/%d, want equal non-zero", note.CreatedAt, note.UpdatedAt)
 	}
 
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 	loaded, err := s.Load(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -162,7 +162,7 @@ func TestCreateTaskRoundTrip(t *testing.T) {
 		t.Errorf("task = %+v, want title/branch/status/type = ship it/%s/open/task", task, branch)
 	}
 
-	ref := refs.Task(task.ID)
+	ref := refs.For(model.KindTask, task.ID)
 	loaded, err := s.Load(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -230,13 +230,13 @@ func TestCreateDedupesSameContent(t *testing.T) {
 	if !errors.As(err, &dup) || !errors.Is(err, ErrDuplicate) {
 		t.Fatalf("second create err = %v, want *DuplicateError matching ErrDuplicate", err)
 	}
-	if dup.Kind != refs.KindNote {
+	if dup.Kind != model.KindNote {
 		t.Errorf("dup kind = %s, want note", dup.Kind)
 	}
 	if dup.Existing.EntityID() != first.EntityID() {
 		t.Errorf("reused id = %s, want existing %s", dup.Existing.EntityID(), first.EntityID())
 	}
-	tips, err := s.Repo.ListPrefix(t.Context(), refs.NotesPrefix)
+	tips, err := s.Repo.ListPrefix(t.Context(), refs.Root(model.KindNote))
 	if err != nil {
 		t.Fatalf("ListPrefix: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestCreateDedupesSameContent(t *testing.T) {
 func TestAppendRoundTrip(t *testing.T) {
 	s := initStore(t)
 	note := create(t, s, noteOps("v1")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 
 	snapshot, err := s.Append(t.Context(), ref, []model.Op{model.SetTitle{Title: "v2"}, model.AddTag{Tag: "x"}})
 	if err != nil {
@@ -289,7 +289,7 @@ func TestAppendConcurrent(t *testing.T) {
 	s := initStore(t)
 	gittest.Git(t, s.Git.Dir, "config", "core.filesRefLockTimeout", "3000")
 	note := create(t, s, noteOps("contended")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 
 	tags := []string{"a", "b"}
 	errs := make([]error, len(tags))
@@ -331,7 +331,7 @@ func TestAppendConcurrent(t *testing.T) {
 
 func TestAppendMissingRef(t *testing.T) {
 	s := initStore(t)
-	ref := refs.Note(model.EntityID(strings.Repeat("ab", 20)))
+	ref := refs.For(model.KindNote, model.EntityID(strings.Repeat("ab", 20)))
 	if _, err := s.Append(t.Context(), ref, []model.Op{model.AddTag{Tag: "x"}}); !errors.Is(err, gitobj.ErrRefNotFound) {
 		t.Fatalf("Append = %v, want ErrRefNotFound", err)
 	}
@@ -340,7 +340,7 @@ func TestAppendMissingRef(t *testing.T) {
 func TestAppendRejectsDuplicateCreate(t *testing.T) {
 	s := initStore(t)
 	note := create(t, s, noteOps("v1")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 
 	if _, err := s.Append(t.Context(), ref, noteOps("again")); !errors.Is(err, fold.ErrDuplicateCreate) {
 		t.Fatalf("Append = %v, want ErrDuplicateCreate", err)
@@ -362,7 +362,7 @@ func TestAppendContended(t *testing.T) {
 	s := initStore(t)
 	note := create(t, s, noteOps("victim")).(model.Note)
 	decoy := create(t, s, noteOps("decoy")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 
 	blocked := t.TempDir()
 	gittest.Git(t, blocked, "init", "-q", "-b", "main")
@@ -386,7 +386,7 @@ func TestAppendContended(t *testing.T) {
 
 func TestLoadMissingRef(t *testing.T) {
 	s := initStore(t)
-	ref := refs.Note(model.EntityID(strings.Repeat("ab", 20)))
+	ref := refs.For(model.KindNote, model.EntityID(strings.Repeat("ab", 20)))
 	if _, err := s.Load(t.Context(), ref); !errors.Is(err, gitobj.ErrRefNotFound) {
 		t.Fatalf("Load = %v, want ErrRefNotFound", err)
 	}
@@ -397,7 +397,7 @@ func TestListNotesDeleted(t *testing.T) {
 	keep := create(t, s, noteOps("keep")).(model.Note)
 	gone := create(t, s, noteOps("gone")).(model.Note)
 
-	snapshot, err := s.Append(t.Context(), refs.Note(gone.ID), []model.Op{model.DeleteNote{}})
+	snapshot, err := s.Append(t.Context(), refs.For(model.KindNote, gone.ID), []model.Op{model.DeleteNote{}})
 	if err != nil {
 		t.Fatalf("Append delete: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestListNotesSuperseded(t *testing.T) {
 	keep := create(t, s, noteOps("keep")).(model.Note)
 	old := create(t, s, noteOps("old")).(model.Note)
 
-	snapshot, err := s.Append(t.Context(), refs.Note(old.ID), []model.Op{model.AddSupersededBy{ID: keep.ID}})
+	snapshot, err := s.Append(t.Context(), refs.For(model.KindNote, old.ID), []model.Op{model.AddSupersededBy{ID: keep.ID}})
 	if err != nil {
 		t.Fatalf("Append supersede: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestVerifyNoteKeepsEntityID(t *testing.T) {
 	}
 
 	witness := []model.AnchorWitness{{Anchor: model.Anchor{Kind: model.AnchorCommit, Value: "abc1234"}, OID: "abc1234"}}
-	snapshot, err := s.Append(t.Context(), refs.Note(rootID), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: "deadbeef"}})
+	snapshot, err := s.Append(t.Context(), refs.For(model.KindNote, rootID), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: "deadbeef"}})
 	if err != nil {
 		t.Fatalf("Append verify: %v", err)
 	}
@@ -523,35 +523,35 @@ func TestResolve(t *testing.T) {
 	}
 	unique := string(a.ID)[:shared+1]
 
-	got, err := s.Resolve(ctx, refs.KindNote, unique)
+	got, err := s.Resolve(ctx, model.KindNote, unique)
 	if err != nil {
 		t.Fatalf("Resolve unique: %v", err)
 	}
-	if want := refs.Note(a.ID); got != want {
+	if want := refs.For(model.KindNote, a.ID); got != want {
 		t.Errorf("Resolve(%q) = %q, want %q", unique, got, want)
 	}
 
-	got, err = s.Resolve(ctx, refs.KindNote, strings.ToUpper(unique))
+	got, err = s.Resolve(ctx, model.KindNote, strings.ToUpper(unique))
 	if err != nil {
 		t.Fatalf("Resolve uppercase: %v", err)
 	}
-	if want := refs.Note(a.ID); got != want {
+	if want := refs.For(model.KindNote, a.ID); got != want {
 		t.Errorf("Resolve(upper %q) = %q, want %q", unique, got, want)
 	}
 
-	if _, err := s.Resolve(ctx, refs.KindNote, "zzz"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Resolve(ctx, model.KindNote, "zzz"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve(zzz) = %v, want ErrNotFound", err)
 	}
 
-	got, err = s.Resolve(ctx, refs.KindTask, string(task.ID))
+	got, err = s.Resolve(ctx, model.KindTask, string(task.ID))
 	if err != nil {
 		t.Fatalf("Resolve task: %v", err)
 	}
-	if want := refs.Task(task.ID); got != want {
+	if want := refs.For(model.KindTask, task.ID); got != want {
 		t.Errorf("Resolve task = %q, want %q", got, want)
 	}
 
-	if _, err := s.Resolve(ctx, refs.KindTask, string(a.ID)); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Resolve(ctx, model.KindTask, string(a.ID)); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve note id as task = %v, want ErrNotFound", err)
 	}
 }
@@ -578,7 +578,7 @@ func TestResolveAmbiguous(t *testing.T) {
 	}
 
 	prefix := string(shared[0])[:1]
-	_, err := s.Resolve(t.Context(), refs.KindNote, prefix)
+	_, err := s.Resolve(t.Context(), model.KindNote, prefix)
 	if !errors.Is(err, ErrAmbiguous) {
 		t.Fatalf("Resolve(%q) = %v, want ErrAmbiguous", prefix, err)
 	}
@@ -586,7 +586,7 @@ func TestResolveAmbiguous(t *testing.T) {
 	if !errors.As(err, &ambiguous) {
 		t.Fatalf("Resolve(%q) = %v, want *AmbiguousError", prefix, err)
 	}
-	if ambiguous.Kind != refs.KindNote || ambiguous.Prefix != prefix {
+	if ambiguous.Kind != model.KindNote || ambiguous.Prefix != prefix {
 		t.Errorf("AmbiguousError = %+v, want kind note prefix %q", ambiguous, prefix)
 	}
 
@@ -636,7 +636,7 @@ func TestCreateDocRoundTrip(t *testing.T) {
 		t.Errorf("timestamps = %d/%d, want equal non-zero", doc.CreatedAt, doc.UpdatedAt)
 	}
 
-	ref := refs.Doc(doc.ID)
+	ref := refs.For(model.KindDoc, doc.ID)
 	loaded, err := s.Load(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -661,7 +661,7 @@ func TestCreateDocRoundTrip(t *testing.T) {
 func TestSetWhenUpdatesDoc(t *testing.T) {
 	s := initStore(t)
 	doc := create(t, s, docOps("trigger")).(model.Doc)
-	ref := refs.Doc(doc.ID)
+	ref := refs.For(model.KindDoc, doc.ID)
 
 	snapshot, err := s.Append(t.Context(), ref, []model.Op{model.SetWhen{When: "after deploy fails"}})
 	if err != nil {
@@ -681,7 +681,7 @@ func TestListDocsDeleted(t *testing.T) {
 	keep := create(t, s, docOps("keep")).(model.Doc)
 	gone := create(t, s, docOps("gone")).(model.Doc)
 
-	snapshot, err := s.Append(t.Context(), refs.Doc(gone.ID), []model.Op{model.DeleteNote{}})
+	snapshot, err := s.Append(t.Context(), refs.For(model.KindDoc, gone.ID), []model.Op{model.DeleteNote{}})
 	if err != nil {
 		t.Fatalf("Append delete: %v", err)
 	}
@@ -714,7 +714,7 @@ func TestListDocsSuperseded(t *testing.T) {
 	keep := create(t, s, docOps("keep")).(model.Doc)
 	old := create(t, s, docOps("old")).(model.Doc)
 
-	snapshot, err := s.Append(t.Context(), refs.Doc(old.ID), []model.Op{model.AddSupersededBy{ID: keep.ID}})
+	snapshot, err := s.Append(t.Context(), refs.For(model.KindDoc, old.ID), []model.Op{model.AddSupersededBy{ID: keep.ID}})
 	if err != nil {
 		t.Fatalf("Append supersede: %v", err)
 	}
@@ -780,35 +780,35 @@ func TestResolveDoc(t *testing.T) {
 	}
 	unique := string(a.ID)[:shared+1]
 
-	got, err := s.Resolve(ctx, refs.KindDoc, unique)
+	got, err := s.Resolve(ctx, model.KindDoc, unique)
 	if err != nil {
 		t.Fatalf("Resolve unique: %v", err)
 	}
-	if want := refs.Doc(a.ID); got != want {
+	if want := refs.For(model.KindDoc, a.ID); got != want {
 		t.Errorf("Resolve(%q) = %q, want %q", unique, got, want)
 	}
 
-	got, err = s.Resolve(ctx, refs.KindDoc, strings.ToUpper(unique))
+	got, err = s.Resolve(ctx, model.KindDoc, strings.ToUpper(unique))
 	if err != nil {
 		t.Fatalf("Resolve uppercase: %v", err)
 	}
-	if want := refs.Doc(a.ID); got != want {
+	if want := refs.For(model.KindDoc, a.ID); got != want {
 		t.Errorf("Resolve(upper %q) = %q, want %q", unique, got, want)
 	}
 
-	got, err = s.Resolve(ctx, refs.KindDoc, string(b.ID))
+	got, err = s.Resolve(ctx, model.KindDoc, string(b.ID))
 	if err != nil {
 		t.Fatalf("Resolve full id: %v", err)
 	}
-	if want := refs.Doc(b.ID); got != want {
+	if want := refs.For(model.KindDoc, b.ID); got != want {
 		t.Errorf("Resolve(%q) = %q, want %q", b.ID, got, want)
 	}
 
-	if _, err := s.Resolve(ctx, refs.KindDoc, "zzz"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Resolve(ctx, model.KindDoc, "zzz"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve(zzz) = %v, want ErrNotFound", err)
 	}
 
-	if _, err := s.Resolve(ctx, refs.KindDoc, string(note.ID)); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Resolve(ctx, model.KindDoc, string(note.ID)); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve note id as doc = %v, want ErrNotFound", err)
 	}
 }
@@ -851,7 +851,7 @@ func TestCreateLogRoundTrip(t *testing.T) {
 		t.Errorf("timestamps = %d/%d, want equal non-zero", log.CreatedAt, log.UpdatedAt)
 	}
 
-	ref := refs.Log(log.ID)
+	ref := refs.For(model.KindLog, log.ID)
 	if msg := gittest.Git(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: log create" {
 		t.Errorf("commit message = %q, want %q", msg, "cc-notes: log create")
 	}
@@ -906,7 +906,7 @@ func TestListLogsDeleted(t *testing.T) {
 	keep := create(t, s, logOps("keep")).(model.Log)
 	gone := create(t, s, logOps("gone")).(model.Log)
 
-	snapshot, err := s.Append(t.Context(), refs.Log(gone.ID), []model.Op{model.DeleteNote{}})
+	snapshot, err := s.Append(t.Context(), refs.For(model.KindLog, gone.ID), []model.Op{model.DeleteNote{}})
 	if err != nil {
 		t.Fatalf("Append delete: %v", err)
 	}
@@ -947,27 +947,27 @@ func TestResolveLog(t *testing.T) {
 	}
 	unique := string(a.ID)[:shared+1]
 
-	got, err := s.Resolve(ctx, refs.KindLog, unique)
+	got, err := s.Resolve(ctx, model.KindLog, unique)
 	if err != nil {
 		t.Fatalf("Resolve unique: %v", err)
 	}
-	if want := refs.Log(a.ID); got != want {
+	if want := refs.For(model.KindLog, a.ID); got != want {
 		t.Errorf("Resolve(%q) = %q, want %q", unique, got, want)
 	}
 
-	got, err = s.Resolve(ctx, refs.KindLog, string(b.ID))
+	got, err = s.Resolve(ctx, model.KindLog, string(b.ID))
 	if err != nil {
 		t.Fatalf("Resolve full id: %v", err)
 	}
-	if want := refs.Log(b.ID); got != want {
+	if want := refs.For(model.KindLog, b.ID); got != want {
 		t.Errorf("Resolve(%q) = %q, want %q", b.ID, got, want)
 	}
 
-	if _, err := s.Resolve(ctx, refs.KindLog, "zzz"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Resolve(ctx, model.KindLog, "zzz"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve(zzz) = %v, want ErrNotFound", err)
 	}
 
-	if _, err := s.Resolve(ctx, refs.KindLog, string(note.ID)); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Resolve(ctx, model.KindLog, string(note.ID)); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve note id as log = %v, want ErrNotFound", err)
 	}
 }
@@ -981,7 +981,7 @@ func TestActorOverride(t *testing.T) {
 		t.Errorf("Author = %q, want %q", note.Author, want)
 	}
 
-	loaded, err := s.Load(t.Context(), refs.Note(note.ID))
+	loaded, err := s.Load(t.Context(), refs.For(model.KindNote, note.ID))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -1007,7 +1007,7 @@ func TestMerge(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
 	note := create(t, s, noteOps("base")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 
 	snapshot, err := s.Append(ctx, ref, []model.Op{model.SetTitle{Title: "ours"}})
 	if err != nil {
@@ -1094,7 +1094,7 @@ func TestCreateSprintRoundTrip(t *testing.T) {
 		t.Errorf("timestamps = %d/%d, want equal non-zero", sprint.CreatedAt, sprint.UpdatedAt)
 	}
 
-	ref := refs.Sprint(sprint.ID)
+	ref := refs.For(model.KindSprint, sprint.ID)
 	if got := gittest.Git(t, s.Git.Dir, "rev-parse", ref); got != string(sprint.ID) {
 		t.Errorf("ref %s -> %s, want %s", ref, got, sprint.ID)
 	}
@@ -1146,7 +1146,7 @@ func TestCreateProjectRoundTrip(t *testing.T) {
 		t.Errorf("timestamps = %d/%d, want equal non-zero", project.CreatedAt, project.UpdatedAt)
 	}
 
-	ref := refs.Project(project.ID)
+	ref := refs.For(model.KindProject, project.ID)
 	if got := gittest.Git(t, s.Git.Dir, "rev-parse", ref); got != string(project.ID) {
 		t.Errorf("ref %s -> %s, want %s", ref, got, project.ID)
 	}
@@ -1253,25 +1253,25 @@ func TestResolveSprint(t *testing.T) {
 	}
 
 	full := shared[0]
-	got, err := s.Resolve(ctx, refs.KindSprint, string(full))
+	got, err := s.Resolve(ctx, model.KindSprint, string(full))
 	if err != nil {
 		t.Fatalf("Resolve(%q): %v", full, err)
 	}
-	if want := refs.Sprint(full); got != want {
+	if want := refs.For(model.KindSprint, full); got != want {
 		t.Errorf("Resolve(%q) = %q, want %q", full, got, want)
 	}
 
-	if _, err := s.Resolve(ctx, refs.KindSprint, "zzz"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Resolve(ctx, model.KindSprint, "zzz"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve(zzz) = %v, want ErrNotFound", err)
 	}
 
 	prefix := string(shared[0])[:1]
-	_, err = s.Resolve(ctx, refs.KindSprint, prefix)
+	_, err = s.Resolve(ctx, model.KindSprint, prefix)
 	var ambiguous *AmbiguousError
 	if !errors.As(err, &ambiguous) {
 		t.Fatalf("Resolve(%q) = %v, want *AmbiguousError", prefix, err)
 	}
-	if ambiguous.Kind != refs.KindSprint || ambiguous.Prefix != prefix {
+	if ambiguous.Kind != model.KindSprint || ambiguous.Prefix != prefix {
 		t.Errorf("AmbiguousError = %+v, want kind sprint prefix %q", ambiguous, prefix)
 	}
 	slices.Sort(shared)
@@ -1305,25 +1305,25 @@ func TestResolveProject(t *testing.T) {
 	}
 
 	full := shared[0]
-	got, err := s.Resolve(ctx, refs.KindProject, string(full))
+	got, err := s.Resolve(ctx, model.KindProject, string(full))
 	if err != nil {
 		t.Fatalf("Resolve(%q): %v", full, err)
 	}
-	if want := refs.Project(full); got != want {
+	if want := refs.For(model.KindProject, full); got != want {
 		t.Errorf("Resolve(%q) = %q, want %q", full, got, want)
 	}
 
-	if _, err := s.Resolve(ctx, refs.KindProject, "zzz"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Resolve(ctx, model.KindProject, "zzz"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve(zzz) = %v, want ErrNotFound", err)
 	}
 
 	prefix := string(shared[0])[:1]
-	_, err = s.Resolve(ctx, refs.KindProject, prefix)
+	_, err = s.Resolve(ctx, model.KindProject, prefix)
 	var ambiguous *AmbiguousError
 	if !errors.As(err, &ambiguous) {
 		t.Fatalf("Resolve(%q) = %v, want *AmbiguousError", prefix, err)
 	}
-	if ambiguous.Kind != refs.KindProject || ambiguous.Prefix != prefix {
+	if ambiguous.Kind != model.KindProject || ambiguous.Prefix != prefix {
 		t.Errorf("AmbiguousError = %+v, want kind project prefix %q", ambiguous, prefix)
 	}
 	slices.Sort(shared)

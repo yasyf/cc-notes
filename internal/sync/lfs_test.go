@@ -235,7 +235,7 @@ func TestSyncAttachmentRoundTrip(t *testing.T) {
 		content[i] = byte(i*31 + 7)
 	}
 	note := createNote(t, a, "with attachment")
-	noteRef := refs.Note(note.ID)
+	noteRef := refs.For(model.KindNote, note.ID)
 	att := attachFile(t, a, noteRef, "trace.bin", content)
 
 	if got, want := sync(t, a), (ccsync.Report{Pushed: 1, Uploaded: 1, Rounds: 1}); got != want {
@@ -289,7 +289,7 @@ func TestSyncAttachmentExtraHeaderAuth(t *testing.T) {
 		content[i] = byte(i*17 + 3)
 	}
 	note := createNote(t, a, "with authed attachment")
-	noteRef := refs.Note(note.ID)
+	noteRef := refs.For(model.KindNote, note.ID)
 	att := attachFile(t, a, noteRef, "authed.bin", content)
 
 	if got, want := sync(t, a), (ccsync.Report{Pushed: 1, Uploaded: 1, Rounds: 1}); got != want {
@@ -317,7 +317,7 @@ func TestSyncUploadFailureBlocksPush(t *testing.T) {
 	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
 
 	note := createNote(t, a, "blocked")
-	att := attachFile(t, a, refs.Note(note.ID), "blocked.bin", []byte("payload"))
+	att := attachFile(t, a, refs.For(model.KindNote, note.ID), "blocked.bin", []byte("payload"))
 
 	f.setFailBatch(http.StatusServiceUnavailable)
 	report, err := ccsync.Sync(t.Context(), a.Git.Dir, "origin", false)
@@ -338,8 +338,8 @@ func TestSyncUploadFailureBlocksPush(t *testing.T) {
 	if got, want := sync(t, a), (ccsync.Report{Pushed: 1, Uploaded: 1, Rounds: 1}); got != want {
 		t.Fatalf("healed sync report = %+v, want %+v", got, want)
 	}
-	if got := gittest.Git(t, bare, "rev-parse", refs.Note(note.ID)); got == "" {
-		t.Errorf("remote missing %s after healed sync", refs.Note(note.ID))
+	if got := gittest.Git(t, bare, "rev-parse", refs.For(model.KindNote, note.ID)); got == "" {
+		t.Errorf("remote missing %s after healed sync", refs.For(model.KindNote, note.ID))
 	}
 	if !f.isVerified(att.OID) {
 		t.Errorf("server never verified %s after the healed upload", att.OID)
@@ -381,7 +381,7 @@ func TestSyncInterruptedDownloadHealsNextSync(t *testing.T) {
 
 	content := []byte("heals on the next run")
 	note := createNote(t, a, "interrupted")
-	att := attachFile(t, a, refs.Note(note.ID), "heal.bin", content)
+	att := attachFile(t, a, refs.For(model.KindNote, note.ID), "heal.bin", content)
 	sync(t, a)
 
 	f.setFailGet(http.StatusServiceUnavailable)
@@ -414,7 +414,7 @@ func TestSyncRemoveLastAttachmentUnbricksLFSlessRemote(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 
 	note := createNote(t, a, "bricked")
-	noteRef := refs.Note(note.ID)
+	noteRef := refs.For(model.KindNote, note.ID)
 	att := attachFile(t, a, noteRef, "brick.bin", []byte("no endpoint will take this"))
 
 	_, err := ccsync.Sync(t.Context(), a.Git.Dir, "origin", false)
@@ -457,7 +457,7 @@ func TestSyncDownloadMissingObjectNamesEntity(t *testing.T) {
 	gittest.Git(t, b.Git.Dir, "config", "lfs.url", endpoint)
 
 	note := createNote(t, a, "stranded content")
-	att := attachFile(t, a, refs.Note(note.ID), "gone.bin", []byte("uploaded then lost"))
+	att := attachFile(t, a, refs.For(model.KindNote, note.ID), "gone.bin", []byte("uploaded then lost"))
 	sync(t, a)
 	f.remove(att.OID)
 
@@ -469,7 +469,7 @@ func TestSyncDownloadMissingObjectNamesEntity(t *testing.T) {
 	if want := (ccsync.Report{Created: 1, Pushed: 1, Reconciled: 1, Rounds: 1}); report != want {
 		t.Fatalf("report = %+v, want %+v (pushes still reported alongside the error)", report, want)
 	}
-	if got := gittest.Git(t, bare, "rev-parse", refs.Note(own.ID)); got == "" {
+	if got := gittest.Git(t, bare, "rev-parse", refs.For(model.KindNote, own.ID)); got == "" {
 		t.Errorf("B's own ref never published despite the download failure")
 	}
 	for _, fragment := range []string{

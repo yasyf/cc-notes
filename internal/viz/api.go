@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/internal/trail"
 	"github.com/yasyf/cc-notes/model"
@@ -163,24 +162,24 @@ func (s *Server) handleEntity(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// entityKind maps a URL kind segment to its refs.Kind, reporting whether it is
+// entityKind maps a URL kind segment to its model.Kind, reporting whether it is
 // one of the six entity kinds.
-func entityKind(seg string) (refs.Kind, bool) {
+func entityKind(seg string) (model.Kind, bool) {
 	switch seg {
 	case entityNote:
-		return refs.KindNote, true
+		return model.KindNote, true
 	case entityDoc:
-		return refs.KindDoc, true
+		return model.KindDoc, true
 	case entityLog:
-		return refs.KindLog, true
+		return model.KindLog, true
 	case entityTask:
-		return refs.KindTask, true
+		return model.KindTask, true
 	case entitySprint:
-		return refs.KindSprint, true
+		return model.KindSprint, true
 	case entityProject:
-		return refs.KindProject, true
+		return model.KindProject, true
 	case entityRunbook:
-		return refs.KindRunbook, true
+		return model.KindRunbook, true
 	default:
 		return "", false
 	}

@@ -45,7 +45,7 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 		if !n.Deleted {
 			continue
 		}
-		ref := refs.Note(n.ID)
+		ref := refs.For(model.KindNote, n.ID)
 		if err := s.Git.DeleteRef(ctx, ref, n.Head); err != nil {
 			failed++
 			continue
@@ -65,7 +65,7 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 		if !d.Deleted {
 			continue
 		}
-		ref := refs.Doc(d.ID)
+		ref := refs.For(model.KindDoc, d.ID)
 		if err := s.Git.DeleteRef(ctx, ref, d.Head); err != nil {
 			failed++
 			continue
@@ -85,7 +85,7 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 		if !l.Deleted {
 			continue
 		}
-		ref := refs.Log(l.ID)
+		ref := refs.For(model.KindLog, l.ID)
 		if err := s.Git.DeleteRef(ctx, ref, l.Head); err != nil {
 			failed++
 			continue
@@ -103,19 +103,19 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 // liveTips returns the set of commit shas that are the current tip of some
 // entity ref — every note, every task, every doc, and every log.
 func (s *Store) liveTips(ctx context.Context) (map[model.SHA]bool, error) {
-	notes, err := s.children(ctx, refs.NotesPrefix)
+	notes, err := s.children(ctx, refs.Root(model.KindNote))
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := s.children(ctx, refs.TasksRoot)
+	tasks, err := s.children(ctx, refs.Root(model.KindTask))
 	if err != nil {
 		return nil, err
 	}
-	docs, err := s.children(ctx, refs.DocsRoot)
+	docs, err := s.children(ctx, refs.Root(model.KindDoc))
 	if err != nil {
 		return nil, err
 	}
-	logs, err := s.children(ctx, refs.LogsRoot)
+	logs, err := s.children(ctx, refs.Root(model.KindLog))
 	if err != nil {
 		return nil, err
 	}

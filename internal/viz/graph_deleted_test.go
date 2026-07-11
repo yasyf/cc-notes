@@ -142,7 +142,7 @@ func TestMineDeletedBranches(t *testing.T) {
 		r.git("checkout", "-q", "main")
 		s := r.openStore()
 		taskID := createTask(t, s, "ship B", model.Branch("B"))
-		ref := refs.Task(taskID)
+		ref := refs.For(model.KindTask, taskID)
 		appendOps(t, s, ref, model.SetStatus{Status: model.StatusDone})
 		r.commitMsg("squash B", "cc-task: "+taskID.Short())
 		appendOps(t, s, ref, model.SetBranch{Branch: model.Branch("main")})
@@ -226,7 +226,7 @@ func TestMinedLanesMemoSurvivesEntityChurn(t *testing.T) {
 	}
 
 	id := createTask(t, s, "churn task", model.Branch("main"))
-	ref := refs.Task(id)
+	ref := refs.For(model.KindTask, id)
 	appendOps(t, s, ref, model.SetStatus{Status: model.StatusDone})
 	b.InvalidateRefs([]string{ref})
 

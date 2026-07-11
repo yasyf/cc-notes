@@ -32,7 +32,7 @@ var PruneGuardConfigs = [2]string{
 // AttachmentUse names one live reference to an LFS object: the entity kind
 // and id referencing it, and the attachment name it is referenced under.
 type AttachmentUse struct {
-	Kind   refs.Kind
+	Kind   model.Kind
 	Entity model.EntityID
 	Name   string
 }
@@ -133,7 +133,7 @@ func (s *Store) ensurePruneGuard(ctx context.Context) (bool, error) {
 // sorted uses, so transfer errors name entities deterministically.
 func (s *Store) ReferencedAttachments(ctx context.Context) ([]ReferencedObject, error) {
 	var entries []tipEntry
-	for _, prefix := range []string{refs.NotesPrefix, refs.DocsRoot, refs.LogsRoot} {
+	for _, prefix := range []string{refs.Root(model.KindNote), refs.Root(model.KindDoc), refs.Root(model.KindLog)} {
 		children, err := s.children(ctx, prefix)
 		if err != nil {
 			return nil, fmt.Errorf("referenced attachments: %w", err)

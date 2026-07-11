@@ -80,7 +80,7 @@ func newLogAddCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				appended, err := s.Append(ctx, refs.Log(log.ID), []model.Op{model.AppendEntry{Text: text}})
+				appended, err := s.Append(ctx, refs.For(model.KindLog, log.ID), []model.Op{model.AppendEntry{Text: text}})
 				if err != nil {
 					return err
 				}

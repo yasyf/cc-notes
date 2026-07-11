@@ -5,41 +5,40 @@ import (
 	"slices"
 
 	"github.com/yasyf/cc-notes/internal/fold"
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
 
-func (s *Store) findDuplicate(ctx context.Context, kind refs.Kind, pack model.Pack) (model.Snapshot, error) {
+func (s *Store) findDuplicate(ctx context.Context, kind model.Kind, pack model.Pack) (model.Snapshot, error) {
 	if !dedupeCovered(pack.Ops) {
 		return nil, nil
 	}
 	candidate := []model.PackCommit{{SHA: "candidate", Pack: pack}}
 	switch kind {
-	case refs.KindNote:
+	case model.KindNote:
 		return scanDup(candidate, fold.Note,
 			func() ([]model.Note, error) { return s.ListNotes(ctx, false, false) },
 			func(n model.Note) bool { return n.StaleAt == 0 }, sameNoteContent)
-	case refs.KindDoc:
+	case model.KindDoc:
 		return scanDup(candidate, fold.Doc,
 			func() ([]model.Doc, error) { return s.ListDocs(ctx, false, false) },
 			func(d model.Doc) bool { return d.StaleAt == 0 }, sameDocContent)
-	case refs.KindLog:
+	case model.KindLog:
 		return scanDup(candidate, fold.Log,
 			func() ([]model.Log, error) { return s.ListLogs(ctx, false) },
 			func(model.Log) bool { return true }, sameLogContent)
-	case refs.KindTask:
+	case model.KindTask:
 		return scanDup(candidate, fold.Task,
 			func() ([]model.Task, error) { return s.ListTasks(ctx) },
 			func(t model.Task) bool { return t.ClosedAt == 0 }, sameTaskContent)
-	case refs.KindSprint:
+	case model.KindSprint:
 		return scanDup(candidate, fold.Sprint,
 			func() ([]model.Sprint, error) { return s.ListSprints(ctx) },
 			func(sp model.Sprint) bool { return sp.ClosedAt == 0 }, sameSprintContent)
-	case refs.KindProject:
+	case model.KindProject:
 		return scanDup(candidate, fold.Project,
 			func() ([]model.Project, error) { return s.ListProjects(ctx) },
 			func(p model.Project) bool { return p.ClosedAt == 0 }, sameProjectContent)
-	case refs.KindRunbook:
+	case model.KindRunbook:
 		return scanDup(candidate, fold.Runbook,
 			func() ([]model.Runbook, error) { return s.ListRunbooks(ctx) },
 			func(rb model.Runbook) bool { return rb.ArchivedAt == 0 }, sameRunbookContent)

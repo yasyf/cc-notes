@@ -137,7 +137,7 @@ func Reconcile(ctx context.Context, s *store.Store, into model.Branch, from []mo
 			continue
 		}
 		for _, t := range open {
-			if _, err := s.Append(ctx, refs.Task(t.ID), []model.Op{model.SetBranch{Branch: into}}); err != nil {
+			if _, err := s.Append(ctx, refs.For(model.KindTask, t.ID), []model.Op{model.SetBranch{Branch: into}}); err != nil {
 				return ReconcileReport{}, fmt.Errorf("move task %s: %w", t.ID.Short(), err)
 			}
 		}

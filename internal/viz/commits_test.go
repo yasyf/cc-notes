@@ -106,7 +106,7 @@ func TestCommitsAttribution(t *testing.T) {
 	s := r.openStore()
 	taskID := r.doneTask(s, "ship feature", model.Branch("feature"))
 	c3 := r.commitMsg("squash feature", "cc-task: "+taskID.Short())
-	if _, err := s.Append(t.Context(), refs.Task(taskID), []model.Op{model.LinkCommit{SHA: c3.sha}}); err != nil {
+	if _, err := s.Append(t.Context(), refs.For(model.KindTask, taskID), []model.Op{model.LinkCommit{SHA: c3.sha}}); err != nil {
 		t.Fatalf("link commit: %v", err)
 	}
 

@@ -30,7 +30,7 @@ func TestGCPruneRemoteDeletesTombstone(t *testing.T) {
 	gittest.Git(t, dir, "remote", "add", "origin", bare)
 
 	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Doomed", "--json"))
-	ref := refs.Note(model.EntityID(note.ID))
+	ref := refs.For(model.KindNote, model.EntityID(note.ID))
 	mustRun(t, dir, "note", "rm", note.ID)
 	gittest.Git(t, dir, "push", "origin", ref+":"+ref)
 

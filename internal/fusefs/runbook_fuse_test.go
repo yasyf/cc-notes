@@ -29,7 +29,7 @@ func createRunbook(t *testing.T, s *store.Store, title string) model.Runbook {
 	}
 	rb := snap.(model.Runbook)
 	runID := model.NewNonce()
-	next, err := s.Append(t.Context(), refs.Runbook(rb.ID), []model.Op{
+	next, err := s.Append(t.Context(), refs.For(model.KindRunbook, rb.ID), []model.Op{
 		model.StartRun{ID: runID},
 		model.SetRunStepStatus{RunID: runID, StepID: step1, Status: model.StepDone},
 		model.FinishRun{ID: runID, Status: model.RunSucceeded},
@@ -62,7 +62,7 @@ func TestRunbookMountReadOnly(t *testing.T) {
 	if n < 0 {
 		t.Fatalf("Read = %d", n)
 	}
-	loaded, err := s.Load(t.Context(), refs.Runbook(rb.ID))
+	loaded, err := s.Load(t.Context(), refs.For(model.KindRunbook, rb.ID))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRunbookMountReadOnly(t *testing.T) {
 func TestRunbookReaddirIncludesArchived(t *testing.T) {
 	f, s := newTestFS(t)
 	rb := createRunbook(t, s, "Legacy")
-	appendOps(t, s, refs.Runbook(rb.ID), model.SetRunbookStatus{Status: model.RunbookArchived})
+	appendOps(t, s, refs.For(model.KindRunbook, rb.ID), model.SetRunbookStatus{Status: model.RunbookArchived})
 	if names := readNames(t, f, "/runbooks"); !slices.Contains(names, RunbookFilename(rb)) {
 		t.Errorf("Readdir(/runbooks) = %v, want to include archived runbook %q", names, RunbookFilename(rb))
 	}
@@ -120,7 +120,7 @@ func TestRunbookReaddirIncludesArchived(t *testing.T) {
 func TestRunbookExternalAppendVisible(t *testing.T) {
 	f, s := newTestFS(t)
 	rb := createRunbook(t, s, "Deploy")
-	ref := refs.Runbook(rb.ID)
+	ref := refs.For(model.KindRunbook, rb.ID)
 	flat := "/runbooks/" + RunbookFilename(rb)
 
 	var st fuse.Stat_t

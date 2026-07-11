@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -86,5 +85,5 @@ func ambiguousAcrossKinds(ctx context.Context, s *store.Store, prefix string, ma
 		}
 		candidates = append(candidates, store.Candidate{ID: snap.EntityID(), Title: title})
 	}
-	return &store.AmbiguousError{Kind: refs.KindNote, Prefix: prefix, Candidates: candidates}
+	return &store.AmbiguousError{Kind: model.KindNote, Prefix: prefix, Candidates: candidates}
 }

@@ -143,7 +143,7 @@ func (r *gitRepo) doneTask(s *store.Store, title string, branch model.Branch) mo
 		r.t.Fatalf("create task: %v", err)
 	}
 	task := snap.(model.Task)
-	if _, err := s.Append(ctx, refs.Task(task.ID), []model.Op{model.SetStatus{Status: model.StatusDone}}); err != nil {
+	if _, err := s.Append(ctx, refs.For(model.KindTask, task.ID), []model.Op{model.SetStatus{Status: model.StatusDone}}); err != nil {
 		r.t.Fatalf("set task done: %v", err)
 	}
 	return task.ID

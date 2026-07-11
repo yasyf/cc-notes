@@ -147,7 +147,7 @@ func TestDedupeSkipsTombstonedNote(t *testing.T) {
 	s := initStore(t)
 	ops := []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "gone"}}
 	first := create(t, s, ops).(model.Note)
-	if _, err := s.Append(t.Context(), refs.Note(first.ID), []model.Op{model.DeleteNote{}}); err != nil {
+	if _, err := s.Append(t.Context(), refs.For(model.KindNote, first.ID), []model.Op{model.DeleteNote{}}); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	got := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "gone"}})
@@ -162,7 +162,7 @@ func TestDedupeSkipsSupersededNote(t *testing.T) {
 	s := initStore(t)
 	old := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "old"}}).(model.Note)
 	replacement := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "new"}}).(model.Note)
-	if _, err := s.Append(t.Context(), refs.Note(old.ID), []model.Op{model.AddSupersededBy{ID: replacement.ID}}); err != nil {
+	if _, err := s.Append(t.Context(), refs.For(model.KindNote, old.ID), []model.Op{model.AddSupersededBy{ID: replacement.ID}}); err != nil {
 		t.Fatalf("supersede: %v", err)
 	}
 	got := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "old"}})
@@ -179,7 +179,7 @@ func TestDedupeSkipsClosed(t *testing.T) {
 		name  string
 		mk    func() []model.Op
 		close model.Op
-		ref   func(model.EntityID) string
+		kind  model.Kind
 	}{
 		{
 			name: "task",
@@ -187,25 +187,25 @@ func TestDedupeSkipsClosed(t *testing.T) {
 				return []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "T", Type: model.TypeTask, Branch: "main"}}
 			},
 			close: model.SetStatus{Status: model.StatusDone},
-			ref:   refs.Task,
+			kind:  model.KindTask,
 		},
 		{
 			name:  "sprint",
 			mk:    func() []model.Op { return []model.Op{model.CreateSprint{Nonce: model.NewNonce(), Title: "T"}} },
 			close: model.SetSprintStatus{Status: model.SprintCompleted},
-			ref:   refs.Sprint,
+			kind:  model.KindSprint,
 		},
 		{
 			name:  "project",
 			mk:    func() []model.Op { return []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: "T"}} },
 			close: model.SetProjectStatus{Status: model.ProjectArchived},
-			ref:   refs.Project,
+			kind:  model.KindProject,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := initStore(t)
 			first := create(t, s, tc.mk())
-			if _, err := s.Append(t.Context(), tc.ref(first.EntityID()), []model.Op{tc.close}); err != nil {
+			if _, err := s.Append(t.Context(), refs.For(tc.kind, first.EntityID()), []model.Op{tc.close}); err != nil {
 				t.Fatalf("close: %v", err)
 			}
 			got := create(t, s, tc.mk())
@@ -223,25 +223,25 @@ func TestDedupeSkipsStale(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		mk   func() []model.Op
-		ref  func(model.EntityID) string
+		kind model.Kind
 	}{
 		{
 			name: "note",
 			mk:   func() []model.Op { return []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "fact"}} },
-			ref:  refs.Note,
+			kind: model.KindNote,
 		},
 		{
 			name: "doc",
 			mk: func() []model.Op {
 				return []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: "fact", Body: "B"}}
 			},
-			ref: refs.Doc,
+			kind: model.KindDoc,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := initStore(t)
 			first := create(t, s, tc.mk())
-			if _, err := s.Append(t.Context(), tc.ref(first.EntityID()), []model.Op{model.MarkStale{Reason: "outdated"}}); err != nil {
+			if _, err := s.Append(t.Context(), refs.For(tc.kind, first.EntityID()), []model.Op{model.MarkStale{Reason: "outdated"}}); err != nil {
 				t.Fatalf("mark stale: %v", err)
 			}
 			got := create(t, s, tc.mk())
@@ -262,7 +262,7 @@ func TestDedupeReturnsOldest(t *testing.T) {
 
 	oldest := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "dup"}}).(model.Note)
 	twin := create(t, s, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "other"}}).(model.Note)
-	if _, err := s.Append(t.Context(), refs.Note(twin.ID), []model.Op{model.SetTitle{Title: "dup"}}); err != nil {
+	if _, err := s.Append(t.Context(), refs.For(model.KindNote, twin.ID), []model.Op{model.SetTitle{Title: "dup"}}); err != nil {
 		t.Fatalf("retitle twin: %v", err)
 	}
 	if oldest.CreatedAt >= twin.CreatedAt {
@@ -321,7 +321,7 @@ func TestDedupeSkipsUncoveredPack(t *testing.T) {
 func TestDedupeLogIgnoresEntries(t *testing.T) {
 	s := initStore(t)
 	first := create(t, s, []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "incident", Tags: []string{"ops"}}}).(model.Log)
-	if _, err := s.Append(t.Context(), refs.Log(first.ID), []model.Op{model.AppendEntry{Text: "started"}}); err != nil {
+	if _, err := s.Append(t.Context(), refs.For(model.KindLog, first.ID), []model.Op{model.AppendEntry{Text: "started"}}); err != nil {
 		t.Fatalf("append entry: %v", err)
 	}
 	got := mustDedupe(t, s, []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "incident", Tags: []string{"ops"}}})

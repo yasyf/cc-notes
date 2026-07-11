@@ -63,7 +63,7 @@ func TestCreateRunbookRoundTrip(t *testing.T) {
 		t.Errorf("timestamps = %d/%d, want equal non-zero", rb.CreatedAt, rb.UpdatedAt)
 	}
 
-	ref := refs.Runbook(rb.ID)
+	ref := refs.For(model.KindRunbook, rb.ID)
 	if got := gittest.Git(t, s.Git.Dir, "rev-parse", ref); got != string(rb.ID) {
 		t.Errorf("ref %s -> %s, want %s", ref, got, rb.ID)
 	}
@@ -166,7 +166,7 @@ func TestDedupeRunbook(t *testing.T) {
 func TestDedupeRunbookSkipsArchived(t *testing.T) {
 	s := initStore(t)
 	first := create(t, s, runbookOps("Deploy")).(model.Runbook)
-	if _, err := s.Append(t.Context(), refs.Runbook(first.ID), []model.Op{model.SetRunbookStatus{Status: model.RunbookArchived}}); err != nil {
+	if _, err := s.Append(t.Context(), refs.For(model.KindRunbook, first.ID), []model.Op{model.SetRunbookStatus{Status: model.RunbookArchived}}); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 	got := create(t, s, runbookOps("Deploy"))
@@ -209,25 +209,25 @@ func TestResolveRunbook(t *testing.T) {
 	}
 
 	full := shared[0]
-	got, err := s.Resolve(ctx, refs.KindRunbook, string(full))
+	got, err := s.Resolve(ctx, model.KindRunbook, string(full))
 	if err != nil {
 		t.Fatalf("Resolve(%q): %v", full, err)
 	}
-	if want := refs.Runbook(full); got != want {
+	if want := refs.For(model.KindRunbook, full); got != want {
 		t.Errorf("Resolve(%q) = %q, want %q", full, got, want)
 	}
 
-	if _, err := s.Resolve(ctx, refs.KindRunbook, "zzz"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Resolve(ctx, model.KindRunbook, "zzz"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Resolve(zzz) = %v, want ErrNotFound", err)
 	}
 
 	prefix := string(shared[0])[:1]
-	_, err = s.Resolve(ctx, refs.KindRunbook, prefix)
+	_, err = s.Resolve(ctx, model.KindRunbook, prefix)
 	var ambiguous *AmbiguousError
 	if !errors.As(err, &ambiguous) {
 		t.Fatalf("Resolve(%q) = %v, want *AmbiguousError", prefix, err)
 	}
-	if ambiguous.Kind != refs.KindRunbook || ambiguous.Prefix != prefix {
+	if ambiguous.Kind != model.KindRunbook || ambiguous.Prefix != prefix {
 		t.Errorf("AmbiguousError = %+v, want kind runbook prefix %q", ambiguous, prefix)
 	}
 	slices.Sort(shared)
@@ -244,7 +244,7 @@ func TestMergeRunbook(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
 	rb := create(t, s, runbookOps("Deploy")).(model.Runbook)
-	ref := refs.Runbook(rb.ID)
+	ref := refs.For(model.KindRunbook, rb.ID)
 
 	snapshot, err := s.Append(ctx, ref, []model.Op{
 		model.StartRun{ID: "r1", Task: "taskA"},

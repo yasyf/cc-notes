@@ -122,7 +122,7 @@ func newDocAddCmd() *cobra.Command {
 			// survivor's witness, verified_at/by, and verified_commit and clears
 			// any stale flag (fold.foldDoc), exactly as a fresh add is born
 			// verified. The dedupe scan excludes stale twins, so this survivor is live.
-			verified, err := s.Append(ctx, refs.Doc(doc.ID), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}})
+			verified, err := s.Append(ctx, refs.For(model.KindDoc, doc.ID), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}})
 			if err != nil {
 				return err
 			}

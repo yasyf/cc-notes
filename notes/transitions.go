@@ -18,7 +18,7 @@ func (c *Client) ClaimTask(ctx context.Context, id model.EntityID) (model.Task, 
 	if err != nil {
 		return model.Task{}, err
 	}
-	snapshot, err := c.s.Append(ctx, refs.Task(id), []model.Op{model.Claim{Assignee: me}})
+	snapshot, err := c.s.Append(ctx, refs.For(model.KindTask, id), []model.Op{model.Claim{Assignee: me}})
 	if err != nil {
 		return model.Task{}, err
 	}
@@ -41,7 +41,7 @@ func (c *Client) StartTask(ctx context.Context, id model.EntityID) (model.Task, 
 	if err != nil {
 		return model.Task{}, err
 	}
-	ref := refs.Task(id)
+	ref := refs.For(model.KindTask, id)
 	snapshot, err := c.s.Append(ctx, ref, []model.Op{model.Claim{Assignee: me}})
 	if err != nil {
 		return model.Task{}, err
@@ -70,7 +70,7 @@ func (c *Client) RenewTask(ctx context.Context, id model.EntityID) (model.Task, 
 	if task.Assignee != me {
 		return model.Task{}, &ConflictError{ID: id, Msg: fmt.Sprintf("held by %s, not you", task.Assignee)}
 	}
-	snapshot, err := c.s.Append(ctx, refs.Task(id), []model.Op{model.Renew{}})
+	snapshot, err := c.s.Append(ctx, refs.For(model.KindTask, id), []model.Op{model.Renew{}})
 	if err != nil {
 		return model.Task{}, err
 	}
@@ -96,7 +96,7 @@ func (c *Client) DoneTask(ctx context.Context, id model.EntityID) (model.Task, e
 	if head != "" {
 		ops = append(ops, model.LinkCommit{SHA: head})
 	}
-	snapshot, err := c.s.Append(ctx, refs.Task(id), ops)
+	snapshot, err := c.s.Append(ctx, refs.For(model.KindTask, id), ops)
 	if err != nil {
 		return model.Task{}, err
 	}
@@ -113,7 +113,7 @@ func (c *Client) CancelTask(ctx context.Context, id model.EntityID) (model.Task,
 	if err := openOrInProgress(id, task.Status); err != nil {
 		return model.Task{}, err
 	}
-	snapshot, err := c.s.Append(ctx, refs.Task(id), []model.Op{model.SetStatus{Status: model.StatusCancelled}})
+	snapshot, err := c.s.Append(ctx, refs.For(model.KindTask, id), []model.Op{model.SetStatus{Status: model.StatusCancelled}})
 	if err != nil {
 		return model.Task{}, err
 	}
@@ -182,7 +182,7 @@ func (c *Client) setSprintStatus(ctx context.Context, id model.EntityID, status 
 	default:
 		return model.Sprint{}, &ConflictError{ID: id, Msg: "already " + string(sprint.Status)}
 	}
-	snapshot, err := c.s.Append(ctx, refs.Sprint(id), []model.Op{model.SetSprintStatus{Status: status}})
+	snapshot, err := c.s.Append(ctx, refs.For(model.KindSprint, id), []model.Op{model.SetSprintStatus{Status: status}})
 	if err != nil {
 		return model.Sprint{}, err
 	}
@@ -197,7 +197,7 @@ func (c *Client) setProjectStatus(ctx context.Context, id model.EntityID, status
 	if project.Status != model.ProjectActive {
 		return model.Project{}, &ConflictError{ID: id, Msg: "already " + string(project.Status)}
 	}
-	snapshot, err := c.s.Append(ctx, refs.Project(id), []model.Op{model.SetProjectStatus{Status: status}})
+	snapshot, err := c.s.Append(ctx, refs.For(model.KindProject, id), []model.Op{model.SetProjectStatus{Status: status}})
 	if err != nil {
 		return model.Project{}, err
 	}

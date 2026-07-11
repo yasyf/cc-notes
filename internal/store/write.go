@@ -21,23 +21,22 @@ func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, err
 	if len(ops) == 0 {
 		return nil, errors.New("create: no ops")
 	}
-	var kind refs.Kind
-	var refFor func(model.EntityID) string
+	var kind model.Kind
 	switch ops[0].(type) {
 	case model.CreateNote:
-		kind, refFor = refs.KindNote, refs.Note
+		kind = model.KindNote
 	case model.CreateTask:
-		kind, refFor = refs.KindTask, refs.Task
+		kind = model.KindTask
 	case model.CreateSprint:
-		kind, refFor = refs.KindSprint, refs.Sprint
+		kind = model.KindSprint
 	case model.CreateProject:
-		kind, refFor = refs.KindProject, refs.Project
+		kind = model.KindProject
 	case model.CreateDoc:
-		kind, refFor = refs.KindDoc, refs.Doc
+		kind = model.KindDoc
 	case model.CreateLog:
-		kind, refFor = refs.KindLog, refs.Log
+		kind = model.KindLog
 	case model.CreateRunbook:
-		kind, refFor = refs.KindRunbook, refs.Runbook
+		kind = model.KindRunbook
 	default:
 		return nil, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, create_project, create_doc, create_log, or create_runbook", ops[0].OpKind())
 	}
@@ -65,7 +64,7 @@ func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, err
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
-	if err := s.Git.UpdateRef(ctx, refFor(model.EntityID(sha)), sha, ""); err != nil {
+	if err := s.Git.UpdateRef(ctx, refs.For(kind, model.EntityID(sha)), sha, ""); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	s.cache.put(sha, snapshot)

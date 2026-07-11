@@ -10,7 +10,7 @@ import (
 // Project loads the project with the given id and folds it. A missing entity
 // fails with ErrRefNotFound.
 func (c *Client) Project(ctx context.Context, id model.EntityID) (model.Project, error) {
-	snapshot, err := c.s.Load(ctx, refs.Project(id))
+	snapshot, err := c.s.Load(ctx, refs.For(model.KindProject, id))
 	if err != nil {
 		return model.Project{}, err
 	}
@@ -20,7 +20,7 @@ func (c *Client) Project(ctx context.Context, id model.EntityID) (model.Project,
 // Sprint loads the sprint with the given id and folds it. A missing entity
 // fails with ErrRefNotFound.
 func (c *Client) Sprint(ctx context.Context, id model.EntityID) (model.Sprint, error) {
-	snapshot, err := c.s.Load(ctx, refs.Sprint(id))
+	snapshot, err := c.s.Load(ctx, refs.For(model.KindSprint, id))
 	if err != nil {
 		return model.Sprint{}, err
 	}
@@ -30,7 +30,7 @@ func (c *Client) Sprint(ctx context.Context, id model.EntityID) (model.Sprint, e
 // Task loads the task with the given id and folds it. A missing entity fails
 // with ErrRefNotFound.
 func (c *Client) Task(ctx context.Context, id model.EntityID) (model.Task, error) {
-	snapshot, err := c.s.Load(ctx, refs.Task(id))
+	snapshot, err := c.s.Load(ctx, refs.For(model.KindTask, id))
 	if err != nil {
 		return model.Task{}, err
 	}
@@ -57,22 +57,22 @@ func (c *Client) Tasks(ctx context.Context) ([]model.Task, error) {
 // ResolveProject expands a project id prefix to its full EntityID. No match
 // fails with ErrNotFound; an ambiguous prefix fails with ErrAmbiguous.
 func (c *Client) ResolveProject(ctx context.Context, prefix string) (model.EntityID, error) {
-	return c.resolve(ctx, refs.KindProject, prefix)
+	return c.resolve(ctx, model.KindProject, prefix)
 }
 
 // ResolveSprint expands a sprint id prefix to its full EntityID. No match
 // fails with ErrNotFound; an ambiguous prefix fails with ErrAmbiguous.
 func (c *Client) ResolveSprint(ctx context.Context, prefix string) (model.EntityID, error) {
-	return c.resolve(ctx, refs.KindSprint, prefix)
+	return c.resolve(ctx, model.KindSprint, prefix)
 }
 
 // ResolveTask expands a task id prefix to its full EntityID. No match fails
 // with ErrNotFound; an ambiguous prefix fails with ErrAmbiguous.
 func (c *Client) ResolveTask(ctx context.Context, prefix string) (model.EntityID, error) {
-	return c.resolve(ctx, refs.KindTask, prefix)
+	return c.resolve(ctx, model.KindTask, prefix)
 }
 
-func (c *Client) resolve(ctx context.Context, kind refs.Kind, prefix string) (model.EntityID, error) {
+func (c *Client) resolve(ctx context.Context, kind model.Kind, prefix string) (model.EntityID, error) {
 	ref, err := c.s.Resolve(ctx, kind, prefix)
 	if err != nil {
 		return "", err

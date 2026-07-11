@@ -78,7 +78,7 @@ func (s *Store) HasNotes(ctx context.Context) (bool, error) {
 // superseded notes (those with any SupersededBy edge) are skipped unless
 // includeSuperseded is set.
 func (s *Store) ListNotes(ctx context.Context, includeDeleted, includeSuperseded bool) ([]model.Note, error) {
-	entries, err := s.children(ctx, refs.NotesPrefix)
+	entries, err := s.children(ctx, refs.Root(model.KindNote))
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func (s *Store) ListNotes(ctx context.Context, includeDeleted, includeSuperseded
 // superseded docs (those with any SupersededBy edge) are skipped unless
 // includeSuperseded is set.
 func (s *Store) ListDocs(ctx context.Context, includeDeleted, includeSuperseded bool) ([]model.Doc, error) {
-	entries, err := s.children(ctx, refs.DocsRoot)
+	entries, err := s.children(ctx, refs.Root(model.KindDoc))
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (s *Store) ListDocs(ctx context.Context, includeDeleted, includeSuperseded 
 // id. Tombstoned logs are skipped unless includeDeleted is set. Logs carry no
 // supersede lifecycle, so there is no superseded filter.
 func (s *Store) ListLogs(ctx context.Context, includeDeleted bool) ([]model.Log, error) {
-	entries, err := s.children(ctx, refs.LogsRoot)
+	entries, err := s.children(ctx, refs.Root(model.KindLog))
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +168,7 @@ func (s *Store) ListLogs(ctx context.Context, includeDeleted bool) ([]model.Log,
 // ListTasks folds every task in the repository, ordered by creation time
 // then id. Branch is a folded attribute; callers filter by it.
 func (s *Store) ListTasks(ctx context.Context) ([]model.Task, error) {
-	entries, err := s.children(ctx, refs.TasksRoot)
+	entries, err := s.children(ctx, refs.Root(model.KindTask))
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +190,7 @@ func (s *Store) ListTasks(ctx context.Context) ([]model.Task, error) {
 // ListSprints folds every sprint in the repository, ordered by creation time
 // then id.
 func (s *Store) ListSprints(ctx context.Context) ([]model.Sprint, error) {
-	entries, err := s.children(ctx, refs.SprintsRoot)
+	entries, err := s.children(ctx, refs.Root(model.KindSprint))
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +212,7 @@ func (s *Store) ListSprints(ctx context.Context) ([]model.Sprint, error) {
 // ListProjects folds every project in the repository, ordered by creation time
 // then id.
 func (s *Store) ListProjects(ctx context.Context) ([]model.Project, error) {
-	entries, err := s.children(ctx, refs.ProjectsRoot)
+	entries, err := s.children(ctx, refs.Root(model.KindProject))
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +234,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.Project, error) {
 // ListRunbooks folds every runbook in the repository, ordered by creation time
 // then id.
 func (s *Store) ListRunbooks(ctx context.Context) ([]model.Runbook, error) {
-	entries, err := s.children(ctx, refs.RunbooksRoot)
+	entries, err := s.children(ctx, refs.Root(model.KindRunbook))
 	if err != nil {
 		return nil, err
 	}

@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/fold"
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/internal/trail"
 	"github.com/yasyf/cc-notes/model"
@@ -28,17 +27,17 @@ func newHistoryCmd() *cobra.Command {
 	return historyCmd("history ID", "Show the edit history of any note, doc, log, task, sprint, project, or runbook", resolveAnyEntity)
 }
 
-func newNoteHistoryCmd() *cobra.Command    { return kindHistoryCmd(refs.KindNote, "note") }
-func newDocHistoryCmd() *cobra.Command     { return kindHistoryCmd(refs.KindDoc, "doc") }
-func newLogHistoryCmd() *cobra.Command     { return kindHistoryCmd(refs.KindLog, "log") }
-func newTaskHistoryCmd() *cobra.Command    { return kindHistoryCmd(refs.KindTask, "task") }
-func newSprintHistoryCmd() *cobra.Command  { return kindHistoryCmd(refs.KindSprint, "sprint") }
-func newProjectHistoryCmd() *cobra.Command { return kindHistoryCmd(refs.KindProject, "project") }
+func newNoteHistoryCmd() *cobra.Command    { return kindHistoryCmd(model.KindNote, "note") }
+func newDocHistoryCmd() *cobra.Command     { return kindHistoryCmd(model.KindDoc, "doc") }
+func newLogHistoryCmd() *cobra.Command     { return kindHistoryCmd(model.KindLog, "log") }
+func newTaskHistoryCmd() *cobra.Command    { return kindHistoryCmd(model.KindTask, "task") }
+func newSprintHistoryCmd() *cobra.Command  { return kindHistoryCmd(model.KindSprint, "sprint") }
+func newProjectHistoryCmd() *cobra.Command { return kindHistoryCmd(model.KindProject, "project") }
 
 // kindHistoryCmd builds a noun-scoped "history ID" subcommand that resolves the
 // id within a single kind, so a wrong-kind id fails cleanly rather than
 // resolving to a sibling entity that happens to share the prefix.
-func kindHistoryCmd(kind refs.Kind, noun string) *cobra.Command {
+func kindHistoryCmd(kind model.Kind, noun string) *cobra.Command {
 	resolve := func(ctx context.Context, s *store.Store, prefix string) (string, error) {
 		return s.Resolve(ctx, kind, prefix)
 	}
@@ -82,18 +81,15 @@ func historyCmd(use, short string, resolve func(context.Context, *store.Store, s
 	return cmd
 }
 
-// entityKinds is every prefix-resolvable entity kind, in the order the
-// top-level history command probes them.
-var entityKinds = []refs.Kind{refs.KindNote, refs.KindDoc, refs.KindLog, refs.KindTask, refs.KindSprint, refs.KindProject, refs.KindRunbook}
-
 // resolveAnyEntity expands a kind-agnostic id prefix into a ref by resolving it
 // against every kind. Ids are globally unique, so at most one kind matches a
 // full id; a prefix that matches entities in more than one kind is ambiguous
 // and fails with an *AmbiguousError listing each match. A prefix that is
 // ambiguous within a single kind surfaces that kind's *AmbiguousError directly.
 func resolveAnyEntity(ctx context.Context, s *store.Store, prefix string) (string, error) {
-	matched := make([]string, 0, len(entityKinds))
-	for _, kind := range entityKinds {
+	kinds := model.Kinds()
+	matched := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
 		ref, err := s.Resolve(ctx, kind, prefix)
 		switch {
 		case err == nil:

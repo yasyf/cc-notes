@@ -235,7 +235,7 @@ func TestAPIEntityTaskWithCheckpoint(t *testing.T) {
 		t.Fatalf("create task: %v", err)
 	}
 	task := snap.(model.Task)
-	ref := refs.Task(task.ID)
+	ref := refs.For(model.KindTask, task.ID)
 	if _, err := s.Append(ctx, ref, []model.Op{model.SetStatus{Status: model.StatusInProgress}}); err != nil {
 		t.Fatalf("set in_progress: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestAPIEntitySnapshotMatchesTip(t *testing.T) {
 		t.Fatalf("create task: %v", err)
 	}
 	task := snap.(model.Task)
-	tip, err := s.Append(ctx, refs.Task(task.ID), []model.Op{model.SetStatus{Status: model.StatusInProgress}})
+	tip, err := s.Append(ctx, refs.For(model.KindTask, task.ID), []model.Op{model.SetStatus{Status: model.StatusInProgress}})
 	if err != nil {
 		t.Fatalf("set in_progress: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestAPIEntityRunbook(t *testing.T) {
 	}
 	rb := snap.(model.Runbook)
 	runID := model.NewNonce()
-	if _, err := s.Append(ctx, refs.Runbook(rb.ID), []model.Op{model.StartRun{ID: runID}}); err != nil {
+	if _, err := s.Append(ctx, refs.For(model.KindRunbook, rb.ID), []model.Op{model.StartRun{ID: runID}}); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 

@@ -140,7 +140,7 @@ func TestWatchEntityAppend(t *testing.T) {
 		t.Fatalf("baseline scan: %v", err)
 	}
 
-	if _, err := s.Append(ctx, refs.Task(task.ID), []model.Op{model.SetStatus{Status: model.StatusDone}}); err != nil {
+	if _, err := s.Append(ctx, refs.For(model.KindTask, task.ID), []model.Op{model.SetStatus{Status: model.StatusDone}}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	if err := w.scan(ctx); err != nil {
@@ -148,7 +148,7 @@ func TestWatchEntityAppend(t *testing.T) {
 	}
 
 	ev := recvEvent(t, ch)
-	wantRef := refs.Task(task.ID)
+	wantRef := refs.For(model.KindTask, task.ID)
 	if !hasRef(ev.Entities, wantRef) {
 		t.Errorf("entities = %v, want to contain %s", ev.Entities, wantRef)
 	}

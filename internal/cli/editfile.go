@@ -38,7 +38,7 @@ type prefill struct {
 // template from a prefill, and turn an edited buffer back into ops. doc and note
 // share the engine; only these closures differ.
 type editAdapter struct {
-	kind       refs.Kind
+	kind       model.Kind
 	load       func(ctx context.Context, s *store.Store, prefix string) (model.Snapshot, model.SHA, error)
 	render     func(model.Snapshot) []byte
 	template   func(prefill) []byte
@@ -54,7 +54,7 @@ func (a editAdapter) noun() string { return string(a.kind) }
 
 func docAdapter() editAdapter {
 	return editAdapter{
-		kind: refs.KindDoc,
+		kind: model.KindDoc,
 		load: func(ctx context.Context, s *store.Store, prefix string) (model.Snapshot, model.SHA, error) {
 			_, d, err := loadDoc(ctx, s, prefix)
 			if err != nil {
@@ -103,7 +103,7 @@ func docAdapter() editAdapter {
 			return ops, nil
 		},
 		bornVerify: func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error) {
-			return bornVerify(ctx, s, refs.Doc(snap.EntityID()), snap.(model.Doc).Anchors)
+			return bornVerify(ctx, s, refs.For(model.KindDoc, snap.EntityID()), snap.(model.Doc).Anchors)
 		},
 		print: func(cmd *cobra.Command, s *store.Store, snap model.Snapshot, jsonOut bool) error {
 			return printDoc(cmd, s, snap.(model.Doc), "", jsonOut)
@@ -113,7 +113,7 @@ func docAdapter() editAdapter {
 
 func noteAdapter() editAdapter {
 	return editAdapter{
-		kind: refs.KindNote,
+		kind: model.KindNote,
 		load: func(ctx context.Context, s *store.Store, prefix string) (model.Snapshot, model.SHA, error) {
 			_, n, err := loadNote(ctx, s, prefix)
 			if err != nil {
@@ -154,7 +154,7 @@ func noteAdapter() editAdapter {
 			return ops, nil
 		},
 		bornVerify: func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error) {
-			return bornVerify(ctx, s, refs.Note(snap.EntityID()), snap.(model.Note).Anchors)
+			return bornVerify(ctx, s, refs.For(model.KindNote, snap.EntityID()), snap.(model.Note).Anchors)
 		},
 		print: func(cmd *cobra.Command, s *store.Store, snap model.Snapshot, jsonOut bool) error {
 			return printNote(cmd, s, snap.(model.Note), jsonOut)

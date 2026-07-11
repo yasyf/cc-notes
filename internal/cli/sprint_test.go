@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gittest"
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -91,7 +90,7 @@ func spAppendTask(t *testing.T, dir, taskID string, op model.Op) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	ref, err := s.Resolve(t.Context(), refs.KindTask, taskID)
+	ref, err := s.Resolve(t.Context(), model.KindTask, taskID)
 	if err != nil {
 		t.Fatalf("resolve task %s: %v", taskID, err)
 	}

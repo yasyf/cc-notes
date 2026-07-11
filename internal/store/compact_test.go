@@ -36,7 +36,7 @@ func TestCompactAdvancesRef(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
 	note := create(t, s, noteOps("v1")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 	if _, err := s.Append(ctx, ref, []model.Op{model.SetTitle{Title: "v2"}, model.AddTag{Tag: "x"}}); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestCompactFreshCloneFoldsIdentically(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
 	task := create(t, s, taskOps("ship it", "main")).(model.Task)
-	ref := refs.Task(task.ID)
+	ref := refs.For(model.KindTask, task.ID)
 	if _, err := s.Append(ctx, ref, []model.Op{model.Claim{Assignee: testActor}, model.AddComment{Body: "mine"}}); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestCompactIdempotent(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
 	note := create(t, s, noteOps("v1")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 	if _, err := s.Append(ctx, ref, []model.Op{model.AddTag{Tag: "x"}}); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestCompactConcurrentCAS(t *testing.T) {
 	gittest.Git(t, s.Git.Dir, "config", "core.filesRefLockTimeout", "3000")
 	ctx := t.Context()
 	note := create(t, s, noteOps("v1")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 	if _, err := s.Append(ctx, ref, []model.Op{model.SetTitle{Title: "v2"}, model.AddTag{Tag: "x"}}); err != nil {
 		t.Fatalf("Append: %v", err)
 	}

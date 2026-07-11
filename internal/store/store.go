@@ -20,7 +20,6 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -62,7 +61,7 @@ type Candidate struct {
 // AmbiguousError reports the candidates matching an ambiguous Resolve
 // prefix, ordered by id. It matches ErrAmbiguous under errors.Is.
 type AmbiguousError struct {
-	Kind       refs.Kind
+	Kind       model.Kind
 	Prefix     string
 	Candidates []Candidate
 }
@@ -82,7 +81,7 @@ func (e *AmbiguousError) Is(target error) bool { return target == ErrAmbiguous }
 // DuplicateError reports that Create found a live entity of Kind whose folded
 // content equals the create pack's and returned Existing instead of a twin.
 type DuplicateError struct {
-	Kind     refs.Kind
+	Kind     model.Kind
 	Existing model.Snapshot
 }
 

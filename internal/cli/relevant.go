@@ -14,7 +14,6 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -75,7 +74,7 @@ type scoredNote struct {
 // and matched reasons. Notes, docs, and logs are ranked together by
 // compareScored.
 type scoredEntity struct {
-	kind    refs.Kind
+	kind    model.Kind
 	note    model.Note
 	doc     model.Doc
 	log     model.Log
@@ -86,9 +85,9 @@ type scoredEntity struct {
 // id returns the kept entity's id, regardless of kind.
 func (e scoredEntity) id() model.EntityID {
 	switch e.kind {
-	case refs.KindDoc:
+	case model.KindDoc:
 		return e.doc.ID
-	case refs.KindLog:
+	case model.KindLog:
 		return e.log.ID
 	default:
 		return e.note.ID
@@ -98,9 +97,9 @@ func (e scoredEntity) id() model.EntityID {
 // updatedAt returns the kept entity's last-update time, regardless of kind.
 func (e scoredEntity) updatedAt() int64 {
 	switch e.kind {
-	case refs.KindDoc:
+	case model.KindDoc:
 		return e.doc.UpdatedAt
-	case refs.KindLog:
+	case model.KindLog:
 		return e.log.UpdatedAt
 	default:
 		return e.note.UpdatedAt
@@ -188,7 +187,7 @@ func relevantNotes(ctx context.Context, s *store.Store, target, branchFlag, base
 		if attached && !anchoredNear(match.reasons) {
 			continue
 		}
-		scored = append(scored, scoredEntity{kind: refs.KindNote, note: match.note, score: match.score, reasons: match.reasons})
+		scored = append(scored, scoredEntity{kind: model.KindNote, note: match.note, score: match.score, reasons: match.reasons})
 	}
 
 	docs, err := s.ListDocs(ctx, false, false)
@@ -206,7 +205,7 @@ func relevantNotes(ctx context.Context, s *store.Store, target, branchFlag, base
 		if attached && !anchoredNear(reasons) {
 			continue
 		}
-		scored = append(scored, scoredEntity{kind: refs.KindDoc, doc: d, score: score, reasons: reasons})
+		scored = append(scored, scoredEntity{kind: model.KindDoc, doc: d, score: score, reasons: reasons})
 	}
 
 	logs, err := s.ListLogs(ctx, false)
@@ -224,7 +223,7 @@ func relevantNotes(ctx context.Context, s *store.Store, target, branchFlag, base
 		if attached && !anchoredNear(reasons) {
 			continue
 		}
-		scored = append(scored, scoredEntity{kind: refs.KindLog, log: l, score: score, reasons: reasons})
+		scored = append(scored, scoredEntity{kind: model.KindLog, log: l, score: score, reasons: reasons})
 	}
 
 	verdicts := make(map[model.EntityID]string, len(scored))
@@ -253,9 +252,9 @@ func anchoredNear(reasons []string) bool {
 // empty verdict.
 func entityVerdict(ctx context.Context, s *store.Store, head model.SHA, e scoredEntity, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
 	switch e.kind {
-	case refs.KindDoc:
+	case model.KindDoc:
 		return docVerdict(ctx, s, head, e.doc, now, staleAfter, worktree)
-	case refs.KindLog:
+	case model.KindLog:
 		return "", nil
 	default:
 		return noteVerdict(ctx, s, head, e.note, now, staleAfter, worktree)
@@ -553,14 +552,14 @@ func printRelevant(cmd *cobra.Command, s *store.Store, scored []scoredEntity, ve
 		for i, e := range scored {
 			dto := relevantDTO{Kind: string(e.kind), Score: e.score, Reasons: e.reasons}
 			switch e.kind {
-			case refs.KindDoc:
+			case model.KindDoc:
 				atts, err := entityAttachments(cmd.Context(), s, e.doc.Attachments)
 				if err != nil {
 					return err
 				}
 				d := newDocDTO(e.doc, verdicts[e.doc.ID], atts)
 				dto.Doc = &d
-			case refs.KindLog:
+			case model.KindLog:
 				atts, err := entityAttachments(cmd.Context(), s, e.log.Attachments)
 				if err != nil {
 					return err
@@ -582,13 +581,13 @@ func printRelevant(cmd *cobra.Command, s *store.Store, scored []scoredEntity, ve
 	for _, e := range scored {
 		var line string
 		switch e.kind {
-		case refs.KindDoc:
+		case model.KindDoc:
 			line = leanDocLine(e.doc) + "\t" + csvOrDash(e.reasons)
 			if v := verdicts[e.doc.ID]; v != "" {
 				line += "\t" + verdictFlag(v)
 			}
 			line += "\tdoc show " + e.doc.ID.Short()
-		case refs.KindLog:
+		case model.KindLog:
 			line = leanLogLine(e.log) + "\t" + csvOrDash(e.reasons) + "\tlog show " + e.log.ID.Short()
 		default:
 			line = leanNoteLine(e.note) + "\t" + csvOrDash(e.reasons)

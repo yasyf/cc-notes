@@ -107,7 +107,7 @@ func TestDocReviewCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildWitness: %v", err)
 	}
-	if _, err := s.Append(ctx, refs.Doc(fresh.ID), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}}); err != nil {
+	if _, err := s.Append(ctx, refs.For(model.KindDoc, fresh.ID), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}}); err != nil {
 		t.Fatalf("verify fresh doc: %v", err)
 	}
 

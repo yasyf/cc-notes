@@ -14,7 +14,7 @@ func TestFoldCacheHitMiss(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
 	note := create(t, s, noteOps("real")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 
 	if _, err := s.Load(ctx, ref); err != nil {
 		t.Fatalf("Load (populate): %v", err)
@@ -45,7 +45,7 @@ func TestFoldCacheRebuildAfterDelete(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
 	note := create(t, s, noteOps("rebuild")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 
 	if _, err := s.Load(ctx, ref); err != nil {
 		t.Fatalf("Load (populate): %v", err)
@@ -321,7 +321,7 @@ func TestFoldCacheCorruptEntryIsMiss(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
 	note := create(t, s, noteOps("corrupt")).(model.Note)
-	ref := refs.Note(note.ID)
+	ref := refs.For(model.KindNote, note.ID)
 
 	if _, err := s.Load(ctx, ref); err != nil {
 		t.Fatalf("Load (populate): %v", err)

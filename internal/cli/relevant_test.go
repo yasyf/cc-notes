@@ -131,7 +131,7 @@ func makeLog(t *testing.T, dir, title, entry string, anchors ...model.Anchor) mo
 	}
 	id := snap.(model.Log).ID
 	if entry != "" {
-		if _, err := s.Append(ctx, refs.Log(id), []model.Op{model.AppendEntry{Text: entry}}); err != nil {
+		if _, err := s.Append(ctx, refs.For(model.KindLog, id), []model.Op{model.AppendEntry{Text: entry}}); err != nil {
 			t.Fatalf("append entry to log %s: %v", id, err)
 		}
 	}
@@ -159,7 +159,7 @@ func verifyNote(t *testing.T, dir string, id model.EntityID) {
 	if err != nil {
 		t.Fatalf("buildWitness: %v", err)
 	}
-	if _, err := s.Append(ctx, refs.Note(id), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}}); err != nil {
+	if _, err := s.Append(ctx, refs.For(model.KindNote, id), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}}); err != nil {
 		t.Fatalf("verify note %s: %v", id, err)
 	}
 }
@@ -504,7 +504,7 @@ func nonEmptyLines(s string) []string {
 // reliably distinguish UpdatedAt at the engine's second granularity.
 func scoredFixture(id string, score int, updatedAt int64) scoredEntity {
 	return scoredEntity{
-		kind:  refs.KindNote,
+		kind:  model.KindNote,
 		note:  model.Note{ID: model.EntityID(id), UpdatedAt: updatedAt},
 		score: score,
 	}
@@ -707,13 +707,13 @@ func TestRelevantRanksDocs(t *testing.T) {
 	}
 
 	note := findScored(t, scored, pathNote)
-	if note.kind != refs.KindNote {
-		t.Fatalf("note entry kind = %q, want %q", note.kind, refs.KindNote)
+	if note.kind != model.KindNote {
+		t.Fatalf("note entry kind = %q, want %q", note.kind, model.KindNote)
 	}
 
 	doc := findScored(t, scored, dirDoc)
-	if doc.kind != refs.KindDoc {
-		t.Fatalf("doc entry kind = %q, want %q", doc.kind, refs.KindDoc)
+	if doc.kind != model.KindDoc {
+		t.Fatalf("doc entry kind = %q, want %q", doc.kind, model.KindDoc)
 	}
 	if doc.doc.When != "resuming the auth cutover" {
 		t.Fatalf("doc when = %q, want the verbatim trigger", doc.doc.When)
@@ -743,7 +743,7 @@ func TestRelevantDocJSON(t *testing.T) {
 	// keeps its "note" key and omits "doc"; a doc entry carries "doc" (with the
 	// verbatim trigger and verdict) and omits "note".
 	noteEntry := dtos[0]
-	if noteEntry.Kind != string(refs.KindNote) || noteEntry.Note == nil || noteEntry.Doc != nil {
+	if noteEntry.Kind != string(model.KindNote) || noteEntry.Note == nil || noteEntry.Doc != nil {
 		t.Fatalf("entry[0] kind=%q note=%v doc=%v, want a note entry", noteEntry.Kind, noteEntry.Note, noteEntry.Doc)
 	}
 	if noteEntry.Note.ID != string(noteID) {
@@ -751,7 +751,7 @@ func TestRelevantDocJSON(t *testing.T) {
 	}
 
 	docEntry := dtos[1]
-	if docEntry.Kind != string(refs.KindDoc) || docEntry.Doc == nil || docEntry.Note != nil {
+	if docEntry.Kind != string(model.KindDoc) || docEntry.Doc == nil || docEntry.Note != nil {
 		t.Fatalf("entry[1] kind=%q note=%v doc=%v, want a doc entry", docEntry.Kind, docEntry.Note, docEntry.Doc)
 	}
 	if docEntry.Doc.ID != string(docID) {
@@ -794,8 +794,8 @@ func TestRelevantRanksLogs(t *testing.T) {
 	}
 
 	log := findScored(t, scored, dirLog)
-	if log.kind != refs.KindLog {
-		t.Fatalf("log entry kind = %q, want %q", log.kind, refs.KindLog)
+	if log.kind != model.KindLog {
+		t.Fatalf("log entry kind = %q, want %q", log.kind, model.KindLog)
 	}
 	if log.score != scoreDir || len(log.reasons) != 1 || log.reasons[0] != reasonDir {
 		t.Fatalf("log = score %d reasons %v, want %d [dir]", log.score, log.reasons, scoreDir)
@@ -826,7 +826,7 @@ func TestRelevantLogJSONAndLeanLine(t *testing.T) {
 		t.Fatalf("json results = %d, want 1", len(dtos))
 	}
 	entry := dtos[0]
-	if entry.Kind != string(refs.KindLog) || entry.Log == nil || entry.Note != nil || entry.Doc != nil {
+	if entry.Kind != string(model.KindLog) || entry.Log == nil || entry.Note != nil || entry.Doc != nil {
 		t.Fatalf("entry kind=%q note=%v doc=%v log=%v, want a log entry", entry.Kind, entry.Note, entry.Doc, entry.Log)
 	}
 	if entry.Log.ID != string(logID) {
