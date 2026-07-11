@@ -51,7 +51,7 @@ func newCompactCmd() *cobra.Command {
 			case model.Runbook:
 				return printRunbook(cmd, v, jsonOut)
 			default:
-				return fmt.Errorf("compact: unexpected snapshot %T", snap)
+				panic(fmt.Sprintf("compact: unexpected snapshot %T", snap))
 			}
 		},
 	}

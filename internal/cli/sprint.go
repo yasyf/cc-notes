@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -37,62 +38,42 @@ func newSprintAddCmd() *cobra.Command {
 	var body, project, start, end string
 	var labels []string
 	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "add TITLE",
-		Short: "Create a sprint",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateTitle(args[0], titleHintDesc); err != nil {
-				return err
-			}
-			ctx := cmd.Context()
-			s, err := openStore()
+	cmd := sprintSpec.createVerb("Create a sprint", &jsonOut, func(ctx context.Context, cmd *cobra.Command, s *store.Store, title string) ([]model.Op, error) {
+		text, err := bodyArg(cmd, body)
+		if err != nil {
+			return nil, err
+		}
+		var projectID model.EntityID
+		if project != "" {
+			_, proj, err := projectSpec.load(ctx, s, project)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			text, err := bodyArg(cmd, body)
+			projectID = proj.ID
+		}
+		ops := []model.Op{model.CreateSprint{
+			Nonce:       model.NewNonce(),
+			Title:       title,
+			Description: text,
+			Project:     projectID,
+			Labels:      labels,
+		}}
+		if cmd.Flags().Changed("start") {
+			date, err := parseDate(start)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			var projectID model.EntityID
-			if project != "" {
-				_, proj, err := projectSpec.load(ctx, s, project)
-				if err != nil {
-					return err
-				}
-				projectID = proj.ID
-			}
-			ops := []model.Op{model.CreateSprint{
-				Nonce:       model.NewNonce(),
-				Title:       args[0],
-				Description: text,
-				Project:     projectID,
-				Labels:      labels,
-			}}
-			if cmd.Flags().Changed("start") {
-				date, err := parseDate(start)
-				if err != nil {
-					return err
-				}
-				ops = append(ops, model.SetStartDate{Date: date})
-			}
-			if cmd.Flags().Changed("end") {
-				date, err := parseDate(end)
-				if err != nil {
-					return err
-				}
-				ops = append(ops, model.SetEndDate{Date: date})
-			}
-			snapshot, err := createEntity(ctx, cmd, s, ops)
+			ops = append(ops, model.SetStartDate{Date: date})
+		}
+		if cmd.Flags().Changed("end") {
+			date, err := parseDate(end)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			return printSprint(cmd, s, snapshot.(model.Sprint), jsonOut)
-		},
-	}
+			ops = append(ops, model.SetEndDate{Date: date})
+		}
+		return ops, nil
+	})
 	flags := cmd.Flags()
 	bindBody(flags, &body, "sprint description; - reads stdin")
 	flags.StringVar(&project, "project", "", "project id prefix")

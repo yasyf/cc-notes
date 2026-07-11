@@ -161,15 +161,9 @@ func registerTask(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, "task", "backlog", "--json")
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "task_show", Description: "Show one task with its full detail and derived blocks index."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"task", "show"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, "task_show", "Show one task with its full detail and derived blocks index.", "task", "show")
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "task_start", Description: "Claim a task and set its branch to the current HEAD branch."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"task", "start"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, "task_start", "Claim a task and set its branch to the current HEAD branch.", "task", "start")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "task_claim", Description: "Claim a task (lease it). Use steal for an expired lease, sync to yield if another agent won."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskClaimArgs) (*mcp.CallToolResult, any, error) {
@@ -179,10 +173,7 @@ func registerTask(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"task", "claim"}, flags, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "task_renew", Description: "Renew the lease on a task you hold."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"task", "renew"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, "task_renew", "Renew the lease on a task you hold.", "task", "renew")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "task_done", Description: "Close a task as done (refuses with unmet criteria unless force); links the current commit."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskDoneArgs) (*mcp.CallToolResult, any, error) {
@@ -191,10 +182,7 @@ func registerTask(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"task", "done"}, flags, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "task_cancel", Description: "Cancel a task (from open or in-progress)."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"task", "cancel"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, "task_cancel", "Cancel a task (from open or in-progress).", "task", "cancel")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "task_edit", Description: "Edit a task's title, body, type, priority, status, assignee, branch, labels, and hierarchy."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskEditArgs) (*mcp.CallToolResult, any, error) {
@@ -219,10 +207,7 @@ func registerTask(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"task", "edit"}, flags, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "task_comment", Description: "Add a comment to a task."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in commentArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"task", "comment"}, []string{"--json"}, in.ID, in.Body)...)
-		})
+	commentTool(srv, b, "task")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "task_dep", Description: "Add a dependency: ID is blocked by BLOCKER (rejects cycles)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskDepArgs) (*mcp.CallToolResult, any, error) {

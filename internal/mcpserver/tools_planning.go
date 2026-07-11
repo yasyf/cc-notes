@@ -88,22 +88,11 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"sprint", "list"}, flags)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "sprint_show", Description: "Show one sprint with its tasks."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"sprint", "show"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, "sprint_show", "Show one sprint with its tasks.", "sprint", "show")
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "sprint_comment", Description: "Add a comment to a sprint."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in commentArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"sprint", "comment"}, []string{"--json"}, in.ID, in.Body)...)
-		})
+	commentTool(srv, b, "sprint")
 
-	for _, verb := range []string{"activate", "complete", "cancel"} {
-		mcp.AddTool(srv, &mcp.Tool{Name: "sprint_" + verb, Description: "Transition a sprint to " + verb + "."},
-			func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-				return b.run(ctx, argvFor([]string{"sprint", verb}, []string{"--json"}, in.ID)...)
-			})
-	}
+	statusTools(srv, b, "sprint", "activate", "complete", "cancel")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "project_add", Description: "Create a project (a long-lived grouping of sprints and tasks)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectAddArgs) (*mcp.CallToolResult, any, error) {
@@ -130,20 +119,9 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"project", "list"}, flags)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "project_show", Description: "Show one project with its sprints and tasks."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"project", "show"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, "project_show", "Show one project with its sprints and tasks.", "project", "show")
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "project_comment", Description: "Add a comment to a project."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in commentArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"project", "comment"}, []string{"--json"}, in.ID, in.Body)...)
-		})
+	commentTool(srv, b, "project")
 
-	for _, verb := range []string{"complete", "archive", "cancel"} {
-		mcp.AddTool(srv, &mcp.Tool{Name: "project_" + verb, Description: "Transition a project to " + verb + "."},
-			func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-				return b.run(ctx, argvFor([]string{"project", verb}, []string{"--json"}, in.ID)...)
-			})
-	}
+	statusTools(srv, b, "project", "complete", "archive", "cancel")
 }

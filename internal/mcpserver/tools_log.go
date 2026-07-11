@@ -90,10 +90,7 @@ func registerLog(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"log", "edit"}, flags, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "log_rm", Description: "Tombstone a log."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"log", "rm"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, "log_rm", "Tombstone a log.", "log", "rm")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "log_list", Description: "List logs, optionally filtered by label and anchors."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logListArgs) (*mcp.CallToolResult, any, error) {
@@ -107,10 +104,7 @@ func registerLog(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"log", "list"}, flags)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "log_show", Description: "Show one log with its entries in chronological order."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"log", "show"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, "log_show", "Show one log with its entries in chronological order.", "log", "show")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "log_search", Description: "Ranked search across log titles, labels, and entry text."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entitySearchArgs) (*mcp.CallToolResult, any, error) {

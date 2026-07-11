@@ -1,11 +1,47 @@
 package cli
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
+
+// createVerb builds an "add TITLE" command for a planning entity: validate the
+// title (before the store opens, so a bad title never installs refspecs), open
+// the store, auto-install, then create the entity from the ops build assembles
+// — build reads the body and the kind's own flags — and echo the result.
+func (k kindSpec[T]) createVerb(short string, jsonOut *bool, build func(ctx context.Context, cmd *cobra.Command, s *store.Store, title string) ([]model.Op, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "add TITLE",
+		Short: short,
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateTitle(args[0], titleHintDesc); err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			s, err := openStore()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			ops, err := build(ctx, cmd, s, args[0])
+			if err != nil {
+				return err
+			}
+			snapshot, err := createEntity(ctx, cmd, s, ops)
+			if err != nil {
+				return err
+			}
+			return k.print(cmd, s, snapshot.(T), *jsonOut)
+		},
+	}
+}
 
 // appendVerb is the shared skeleton behind the entity mutation verbs: open the
 // store, auto-install refspecs, build the ops before the load so a bad flag or

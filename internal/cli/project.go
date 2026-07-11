@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -37,38 +38,18 @@ func newProjectAddCmd() *cobra.Command {
 	var body string
 	var labels []string
 	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "add TITLE",
-		Short: "Create a project",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateTitle(args[0], titleHintDesc); err != nil {
-				return err
-			}
-			ctx := cmd.Context()
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			text, err := bodyArg(cmd, body)
-			if err != nil {
-				return err
-			}
-			snapshot, err := createEntity(ctx, cmd, s, []model.Op{model.CreateProject{
-				Nonce:       model.NewNonce(),
-				Title:       args[0],
-				Description: text,
-				Labels:      labels,
-			}})
-			if err != nil {
-				return err
-			}
-			return printProject(cmd, s, snapshot.(model.Project), jsonOut)
-		},
-	}
+	cmd := projectSpec.createVerb("Create a project", &jsonOut, func(_ context.Context, cmd *cobra.Command, _ *store.Store, title string) ([]model.Op, error) {
+		text, err := bodyArg(cmd, body)
+		if err != nil {
+			return nil, err
+		}
+		return []model.Op{model.CreateProject{
+			Nonce:       model.NewNonce(),
+			Title:       title,
+			Description: text,
+			Labels:      labels,
+		}}, nil
+	})
 	flags := cmd.Flags()
 	bindBody(flags, &body, "project description; - reads stdin")
 	flags.StringArrayVar(&labels, "label", nil, "label (repeatable)")

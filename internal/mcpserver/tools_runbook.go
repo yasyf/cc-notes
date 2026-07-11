@@ -59,10 +59,7 @@ func registerRunbook(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"runbook", "list"}, flags)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "runbook_show", Description: "Show one runbook with its steps and runs."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"runbook", "show"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, "runbook_show", "Show one runbook with its steps and runs.", "runbook", "show")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "runbook_step_add", Description: "Append a step to a runbook's procedure."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runbookStepAddArgs) (*mcp.CallToolResult, any, error) {

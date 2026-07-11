@@ -133,10 +133,7 @@ type reviewArgs struct {
 // registerNoteDocShared registers the rm/list/show/search/verify/supersede/
 // expire/review tools common to note and doc under the given noun.
 func registerNoteDocShared(srv *mcp.Server, b *bridge, noun string) {
-	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_rm", Description: "Tombstone a " + noun + "."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{noun, "rm"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, noun+"_rm", "Tombstone a "+noun+".", noun, "rm")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_list", Description: "List " + noun + "s, optionally filtered by label and anchors."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entityListArgs) (*mcp.CallToolResult, any, error) {
@@ -151,10 +148,7 @@ func registerNoteDocShared(srv *mcp.Server, b *bridge, noun string) {
 			return b.run(ctx, argvFor([]string{noun, "list"}, flags)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_show", Description: "Show one " + noun + " with its verdict and attachments."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{noun, "show"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, noun+"_show", "Show one "+noun+" with its verdict and attachments.", noun, "show")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_search", Description: "Ranked search across " + noun + " titles, labels, and bodies."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entitySearchArgs) (*mcp.CallToolResult, any, error) {
@@ -169,10 +163,7 @@ func registerNoteDocShared(srv *mcp.Server, b *bridge, noun string) {
 			return b.run(ctx, argvFor([]string{noun, "search"}, flags, in.Query)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_verify", Description: "Re-verify a " + noun + ", refreshing its witness against current HEAD."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in entityIDArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{noun, "verify"}, []string{"--json"}, in.ID)...)
-		})
+	idTool(srv, b, noun+"_verify", "Re-verify a "+noun+", refreshing its witness against current HEAD.", noun, "verify")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_supersede", Description: "Record that a NEW " + noun + " replaces an OLD one (or remove the edge)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in supersedeArgs) (*mcp.CallToolResult, any, error) {
