@@ -54,8 +54,8 @@ func attachmentNode(p string) (AttachmentFile, bool) {
 // would mask an internal error as a missing file.
 func (f *FS) lookupAttachable(shortID string) (attachable, int) {
 	var matches []attachable
-	for _, resolve := range []func(string) (string, rendered, error){f.resolveNote, f.resolveDoc, f.resolveLog} {
-		_, r, err := resolve(shortID)
+	for _, kind := range []model.Kind{model.KindNote, model.KindDoc, model.KindLog} {
+		_, r, err := f.resolveEntity(kind, shortID)
 		if err != nil {
 			if ec := errno(err); ec != -fuse.ENOENT {
 				return attachable{}, ec
