@@ -8,42 +8,60 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
+// dupChecker scans one kind's live entities for an exact-content duplicate of a
+// create candidate. Each row binds scanDup to that kind's folder, list method,
+// liveness predicate, and content comparator — the genuinely per-kind identity
+// semantics. dupCheckers must cover exactly model.Kinds() (TestDupCheckersCoverKinds).
+type dupChecker func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error)
+
+var dupCheckers = map[model.Kind]dupChecker{
+	model.KindNote: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
+		return scanDup(candidate, fold.Note,
+			func() ([]model.Note, error) { return s.ListNotes(ctx, false, false) },
+			func(n model.Note) bool { return n.StaleAt == 0 }, sameNoteContent)
+	},
+	model.KindDoc: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
+		return scanDup(candidate, fold.Doc,
+			func() ([]model.Doc, error) { return s.ListDocs(ctx, false, false) },
+			func(d model.Doc) bool { return d.StaleAt == 0 }, sameDocContent)
+	},
+	model.KindLog: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
+		return scanDup(candidate, fold.Log,
+			func() ([]model.Log, error) { return s.ListLogs(ctx, false) },
+			func(model.Log) bool { return true }, sameLogContent)
+	},
+	model.KindTask: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
+		return scanDup(candidate, fold.Task,
+			func() ([]model.Task, error) { return s.ListTasks(ctx) },
+			func(t model.Task) bool { return t.ClosedAt == 0 }, sameTaskContent)
+	},
+	model.KindSprint: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
+		return scanDup(candidate, fold.Sprint,
+			func() ([]model.Sprint, error) { return s.ListSprints(ctx) },
+			func(sp model.Sprint) bool { return sp.ClosedAt == 0 }, sameSprintContent)
+	},
+	model.KindProject: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
+		return scanDup(candidate, fold.Project,
+			func() ([]model.Project, error) { return s.ListProjects(ctx) },
+			func(p model.Project) bool { return p.ClosedAt == 0 }, sameProjectContent)
+	},
+	model.KindRunbook: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
+		return scanDup(candidate, fold.Runbook,
+			func() ([]model.Runbook, error) { return s.ListRunbooks(ctx) },
+			func(rb model.Runbook) bool { return rb.ArchivedAt == 0 }, sameRunbookContent)
+	},
+}
+
 func (s *Store) findDuplicate(ctx context.Context, kind model.Kind, pack model.Pack) (model.Snapshot, error) {
 	if !dedupeCovered(pack.Ops) {
 		return nil, nil
 	}
-	candidate := []model.PackCommit{{SHA: "candidate", Pack: pack}}
-	switch kind {
-	case model.KindNote:
-		return scanDup(candidate, fold.Note,
-			func() ([]model.Note, error) { return s.ListNotes(ctx, false, false) },
-			func(n model.Note) bool { return n.StaleAt == 0 }, sameNoteContent)
-	case model.KindDoc:
-		return scanDup(candidate, fold.Doc,
-			func() ([]model.Doc, error) { return s.ListDocs(ctx, false, false) },
-			func(d model.Doc) bool { return d.StaleAt == 0 }, sameDocContent)
-	case model.KindLog:
-		return scanDup(candidate, fold.Log,
-			func() ([]model.Log, error) { return s.ListLogs(ctx, false) },
-			func(model.Log) bool { return true }, sameLogContent)
-	case model.KindTask:
-		return scanDup(candidate, fold.Task,
-			func() ([]model.Task, error) { return s.ListTasks(ctx) },
-			func(t model.Task) bool { return t.ClosedAt == 0 }, sameTaskContent)
-	case model.KindSprint:
-		return scanDup(candidate, fold.Sprint,
-			func() ([]model.Sprint, error) { return s.ListSprints(ctx) },
-			func(sp model.Sprint) bool { return sp.ClosedAt == 0 }, sameSprintContent)
-	case model.KindProject:
-		return scanDup(candidate, fold.Project,
-			func() ([]model.Project, error) { return s.ListProjects(ctx) },
-			func(p model.Project) bool { return p.ClosedAt == 0 }, sameProjectContent)
-	case model.KindRunbook:
-		return scanDup(candidate, fold.Runbook,
-			func() ([]model.Runbook, error) { return s.ListRunbooks(ctx) },
-			func(rb model.Runbook) bool { return rb.ArchivedAt == 0 }, sameRunbookContent)
+	check, ok := dupCheckers[kind]
+	if !ok {
+		return nil, nil
 	}
-	return nil, nil
+	candidate := []model.PackCommit{{SHA: "candidate", Pack: pack}}
+	return check(s, ctx, candidate)
 }
 
 func scanDup[S model.Snapshot](

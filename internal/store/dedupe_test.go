@@ -9,6 +9,18 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
+func TestDupCheckersCoverKinds(t *testing.T) {
+	kinds := model.Kinds()
+	if got, want := len(dupCheckers), len(kinds); got != want {
+		t.Fatalf("dupCheckers has %d entries, model.Kinds() has %d", got, want)
+	}
+	for _, k := range kinds {
+		if _, ok := dupCheckers[k]; !ok {
+			t.Errorf("dupCheckers missing kind %q", k)
+		}
+	}
+}
+
 // mustDedupe asserts Create hit an existing live duplicate — a *DuplicateError
 // matching ErrDuplicate — and returns the reused survivor snapshot.
 func mustDedupe(t *testing.T, s *Store, ops []model.Op) model.Snapshot {

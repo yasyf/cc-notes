@@ -178,11 +178,11 @@ func (s *Store) refAttachments(ctx context.Context, e tipEntry) (refAttachments,
 		}
 		s.cache.put(e.tip, snap)
 	}
-	atts := slices.Clone(snapshotAttachments(snap))
+	atts := slices.Clone(snap.Meta().Attachments)
 	for _, c := range chain {
 		for _, op := range c.Pack.Ops {
 			if cp, ok := op.(model.Checkpoint); ok {
-				atts = append(atts, snapshotAttachments(cp.State)...)
+				atts = append(atts, cp.State.Meta().Attachments...)
 			}
 		}
 	}
@@ -223,19 +223,4 @@ func mergeReferenced(perRef []refAttachments) []ReferencedObject {
 	}
 	slices.SortFunc(out, func(a, b ReferencedObject) int { return cmp.Compare(a.OID, b.OID) })
 	return out
-}
-
-// snapshotAttachments returns the attachment set of a note, doc, or log
-// snapshot; the other kinds carry none.
-func snapshotAttachments(snap model.Snapshot) []model.Attachment {
-	switch v := snap.(type) {
-	case model.Note:
-		return v.Attachments
-	case model.Doc:
-		return v.Attachments
-	case model.Log:
-		return v.Attachments
-	default:
-		return nil
-	}
 }

@@ -26,16 +26,6 @@ const (
 	foldCacheSubdir = "cc-notes/folds"
 )
 
-const (
-	foldCacheKindNote    = "note"
-	foldCacheKindTask    = "task"
-	foldCacheKindDoc     = "doc"
-	foldCacheKindLog     = "log"
-	foldCacheKindSprint  = "sprint"
-	foldCacheKindProject = "project"
-	foldCacheKindRunbook = "runbook"
-)
-
 // foldCache is a persistent, local, tip-keyed snapshot cache: a pure
 // accelerator derived from the object database that lets short-lived CLI
 // processes skip re-folding cold chains. The file name is the chain tip sha,
@@ -269,34 +259,15 @@ func (c *foldCache) delete(tip model.SHA) {
 
 // encodeFoldEntry serializes a snapshot as a version-and-kind header line
 // followed by the snapshot's own JSON. The model types carry Head, so the
-// serialized form self-identifies its tip. An unknown concrete type returns
-// ok=false.
+// serialized form self-identifies its tip. The header kind is the snapshot's
+// Meta().Kind, whose wire values are the same tokens the decoder parses.
 func encodeFoldEntry(snap model.Snapshot) ([]byte, bool) {
-	var kind string
-	switch snap.(type) {
-	case model.Note:
-		kind = foldCacheKindNote
-	case model.Task:
-		kind = foldCacheKindTask
-	case model.Doc:
-		kind = foldCacheKindDoc
-	case model.Log:
-		kind = foldCacheKindLog
-	case model.Sprint:
-		kind = foldCacheKindSprint
-	case model.Project:
-		kind = foldCacheKindProject
-	case model.Runbook:
-		kind = foldCacheKindRunbook
-	default:
-		return nil, false
-	}
 	body, err := json.Marshal(snap)
 	if err != nil {
 		return nil, false
 	}
 	header := []byte{byte('0' + foldCacheVersion), ' '}
-	header = append(header, kind...)
+	header = append(header, string(snap.Meta().Kind)...)
 	header = append(header, '\n')
 	return append(header, body...), true
 }
@@ -313,52 +284,15 @@ func decodeFoldEntry(data []byte) (model.Snapshot, bool) {
 	if len(header) < 2 || header[0] != byte('0'+foldCacheVersion) || header[1] != ' ' {
 		return nil, false
 	}
-	switch string(header[2:]) {
-	case foldCacheKindNote:
-		var n model.Note
-		if err := json.Unmarshal(body, &n); err != nil {
-			return nil, false
-		}
-		return n, true
-	case foldCacheKindTask:
-		var t model.Task
-		if err := json.Unmarshal(body, &t); err != nil {
-			return nil, false
-		}
-		return t, true
-	case foldCacheKindDoc:
-		var d model.Doc
-		if err := json.Unmarshal(body, &d); err != nil {
-			return nil, false
-		}
-		return d, true
-	case foldCacheKindLog:
-		var l model.Log
-		if err := json.Unmarshal(body, &l); err != nil {
-			return nil, false
-		}
-		return l, true
-	case foldCacheKindSprint:
-		var sp model.Sprint
-		if err := json.Unmarshal(body, &sp); err != nil {
-			return nil, false
-		}
-		return sp, true
-	case foldCacheKindProject:
-		var p model.Project
-		if err := json.Unmarshal(body, &p); err != nil {
-			return nil, false
-		}
-		return p, true
-	case foldCacheKindRunbook:
-		var rb model.Runbook
-		if err := json.Unmarshal(body, &rb); err != nil {
-			return nil, false
-		}
-		return rb, true
-	default:
+	kind, err := model.ParseKind(string(header[2:]))
+	if err != nil {
 		return nil, false
 	}
+	snap, err := kind.DecodeSnapshot(body)
+	if err != nil {
+		return nil, false
+	}
+	return snap, true
 }
 
 // writeFileAtomic writes data to name within dir via a temp file and rename,

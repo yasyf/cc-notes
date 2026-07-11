@@ -1,6 +1,8 @@
 package store
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,6 +11,38 @@ import (
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
+
+// TestFoldEntryByteFormat pins the exact on-disk entry bytes: the
+// version-and-kind header line (kind spelled as the Meta().Kind wire value)
+// followed by the snapshot's own JSON. The format is frozen — a cross-binary
+// entry read must byte-match — so this guards the Meta().Kind-derived header
+// against any drift from the pre-refactor per-type switch, and a hand-crafted
+// old-format entry must still decode.
+func TestFoldEntryByteFormat(t *testing.T) {
+	note := model.Note{ID: "noteid", Title: "t", Head: "abc123"}
+	body, err := json.Marshal(note)
+	if err != nil {
+		t.Fatalf("marshal note: %v", err)
+	}
+	want := append([]byte{byte('0' + foldCacheVersion), ' '}, "note\n"...)
+	want = append(want, body...)
+
+	got, ok := encodeFoldEntry(note)
+	if !ok {
+		t.Fatal("encodeFoldEntry: ok=false")
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("encodeFoldEntry bytes =\n%q\nwant\n%q", got, want)
+	}
+
+	back, ok := decodeFoldEntry(want)
+	if !ok {
+		t.Fatal("decodeFoldEntry of hand-crafted entry: ok=false")
+	}
+	if !reflect.DeepEqual(back, note) {
+		t.Fatalf("decodeFoldEntry = %#v, want %#v", back, note)
+	}
+}
 
 func TestFoldCacheHitMiss(t *testing.T) {
 	s := initStore(t)

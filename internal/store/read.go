@@ -73,184 +73,106 @@ func (s *Store) HasNotes(ctx context.Context) (bool, error) {
 	return len(tips) > 0, nil
 }
 
-// ListNotes folds every note in the repository, ordered by creation time
-// then id. Tombstoned notes are skipped unless includeDeleted is set, and
-// superseded notes (those with any SupersededBy edge) are skipped unless
-// includeSuperseded is set.
+// ListOpts are the inclusion knobs the List methods honor. A kind that does not
+// model a lifecycle leaves the matching Meta field zero, so one set of options
+// serves every kind: IncludeSuperseded is inert for logs and the coarse kinds,
+// IncludeDeleted inert for the kinds with no delete tombstone.
+type ListOpts struct {
+	IncludeDeleted    bool
+	IncludeSuperseded bool
+}
+
+// keepInList reports whether a snapshot with meta survives the list filter under
+// opts: deleted tombstones and superseded entities are hidden unless explicitly
+// included. Meta reports Deleted and Superseded false for kinds that model
+// neither, so this one predicate reproduces every kind's filter.
+func keepInList(meta model.Meta, opts ListOpts) bool {
+	if meta.Deleted && !opts.IncludeDeleted {
+		return false
+	}
+	if meta.Superseded && !opts.IncludeSuperseded {
+		return false
+	}
+	return true
+}
+
+// listOf folds every entity of kind, drops the ones opts filters out, and sorts
+// the survivors by creation time then id. foldFn is the kind's typed folder; the
+// typed ListX methods and ListSnapshots are thin wrappers over it.
+func listOf[T model.Snapshot](ctx context.Context, s *Store, kind model.Kind, foldFn func([]model.PackCommit) (T, error), opts ListOpts) ([]T, error) {
+	entries, err := s.children(ctx, refs.Root(kind))
+	if err != nil {
+		return nil, err
+	}
+	all, err := foldAll(ctx, s, entries, foldFn)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]T, 0, len(all))
+	for _, v := range all {
+		if keepInList(v.Meta(), opts) {
+			out = append(out, v)
+		}
+	}
+	slices.SortFunc(out, func(a, b T) int {
+		am, bm := a.Meta(), b.Meta()
+		if c := am.CreatedAt.Compare(bm.CreatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.EntityID(), b.EntityID())
+	})
+	return out, nil
+}
+
+// ListSnapshots folds every entity of kind, applying the same inclusion filter
+// and (created, id) ordering as the typed ListX methods, for consumers that
+// dispatch on a runtime kind rather than a static type.
+func (s *Store) ListSnapshots(ctx context.Context, kind model.Kind, opts ListOpts) ([]model.Snapshot, error) {
+	return listOf(ctx, s, kind, fold.Fold, opts)
+}
+
+// ListNotes folds every note in the repository, ordered by creation time then
+// id. Tombstoned notes are skipped unless includeDeleted is set, and superseded
+// notes (those with any SupersededBy edge) unless includeSuperseded is set.
 func (s *Store) ListNotes(ctx context.Context, includeDeleted, includeSuperseded bool) ([]model.Note, error) {
-	entries, err := s.children(ctx, refs.Root(model.KindNote))
-	if err != nil {
-		return nil, err
-	}
-	all, err := foldAll(ctx, s, entries, fold.Note)
-	if err != nil {
-		return nil, err
-	}
-	notes := make([]model.Note, 0, len(all))
-	for _, n := range all {
-		if !includeDeleted && n.Deleted {
-			continue
-		}
-		if !includeSuperseded && len(n.SupersededBy) > 0 {
-			continue
-		}
-		notes = append(notes, n)
-	}
-	slices.SortFunc(notes, func(a, b model.Note) int {
-		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-	return notes, nil
+	return listOf(ctx, s, model.KindNote, fold.Note, ListOpts{IncludeDeleted: includeDeleted, IncludeSuperseded: includeSuperseded})
 }
 
-// ListDocs folds every doc in the repository, ordered by creation time
-// then id. Tombstoned docs are skipped unless includeDeleted is set, and
-// superseded docs (those with any SupersededBy edge) are skipped unless
-// includeSuperseded is set.
+// ListDocs folds every doc in the repository, ordered by creation time then id.
+// Same tombstone and supersede filters as ListNotes.
 func (s *Store) ListDocs(ctx context.Context, includeDeleted, includeSuperseded bool) ([]model.Doc, error) {
-	entries, err := s.children(ctx, refs.Root(model.KindDoc))
-	if err != nil {
-		return nil, err
-	}
-	all, err := foldAll(ctx, s, entries, fold.Doc)
-	if err != nil {
-		return nil, err
-	}
-	docs := make([]model.Doc, 0, len(all))
-	for _, d := range all {
-		if !includeDeleted && d.Deleted {
-			continue
-		}
-		if !includeSuperseded && len(d.SupersededBy) > 0 {
-			continue
-		}
-		docs = append(docs, d)
-	}
-	slices.SortFunc(docs, func(a, b model.Doc) int {
-		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-	return docs, nil
+	return listOf(ctx, s, model.KindDoc, fold.Doc, ListOpts{IncludeDeleted: includeDeleted, IncludeSuperseded: includeSuperseded})
 }
 
-// ListLogs folds every log in the repository, ordered by creation time then
-// id. Tombstoned logs are skipped unless includeDeleted is set. Logs carry no
-// supersede lifecycle, so there is no superseded filter.
+// ListLogs folds every log in the repository, ordered by creation time then id.
+// Tombstoned logs are skipped unless includeDeleted is set; logs carry no
+// supersede lifecycle.
 func (s *Store) ListLogs(ctx context.Context, includeDeleted bool) ([]model.Log, error) {
-	entries, err := s.children(ctx, refs.Root(model.KindLog))
-	if err != nil {
-		return nil, err
-	}
-	all, err := foldAll(ctx, s, entries, fold.Log)
-	if err != nil {
-		return nil, err
-	}
-	logs := make([]model.Log, 0, len(all))
-	for _, l := range all {
-		if !includeDeleted && l.Deleted {
-			continue
-		}
-		logs = append(logs, l)
-	}
-	slices.SortFunc(logs, func(a, b model.Log) int {
-		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-	return logs, nil
+	return listOf(ctx, s, model.KindLog, fold.Log, ListOpts{IncludeDeleted: includeDeleted})
 }
 
-// ListTasks folds every task in the repository, ordered by creation time
-// then id. Branch is a folded attribute; callers filter by it.
+// ListTasks folds every task in the repository, ordered by creation time then
+// id. Branch is a folded attribute; callers filter by it.
 func (s *Store) ListTasks(ctx context.Context) ([]model.Task, error) {
-	entries, err := s.children(ctx, refs.Root(model.KindTask))
-	if err != nil {
-		return nil, err
-	}
-	all, err := foldAll(ctx, s, entries, fold.Task)
-	if err != nil {
-		return nil, err
-	}
-	tasks := make([]model.Task, 0, len(all))
-	tasks = append(tasks, all...)
-	slices.SortFunc(tasks, func(a, b model.Task) int {
-		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-	return tasks, nil
+	return listOf(ctx, s, model.KindTask, fold.Task, ListOpts{})
 }
 
 // ListSprints folds every sprint in the repository, ordered by creation time
 // then id.
 func (s *Store) ListSprints(ctx context.Context) ([]model.Sprint, error) {
-	entries, err := s.children(ctx, refs.Root(model.KindSprint))
-	if err != nil {
-		return nil, err
-	}
-	all, err := foldAll(ctx, s, entries, fold.Sprint)
-	if err != nil {
-		return nil, err
-	}
-	sprints := make([]model.Sprint, 0, len(all))
-	sprints = append(sprints, all...)
-	slices.SortFunc(sprints, func(a, b model.Sprint) int {
-		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-	return sprints, nil
+	return listOf(ctx, s, model.KindSprint, fold.Sprint, ListOpts{})
 }
 
 // ListProjects folds every project in the repository, ordered by creation time
 // then id.
 func (s *Store) ListProjects(ctx context.Context) ([]model.Project, error) {
-	entries, err := s.children(ctx, refs.Root(model.KindProject))
-	if err != nil {
-		return nil, err
-	}
-	all, err := foldAll(ctx, s, entries, fold.Project)
-	if err != nil {
-		return nil, err
-	}
-	projects := make([]model.Project, 0, len(all))
-	projects = append(projects, all...)
-	slices.SortFunc(projects, func(a, b model.Project) int {
-		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-	return projects, nil
+	return listOf(ctx, s, model.KindProject, fold.Project, ListOpts{})
 }
 
 // ListRunbooks folds every runbook in the repository, ordered by creation time
 // then id.
 func (s *Store) ListRunbooks(ctx context.Context) ([]model.Runbook, error) {
-	entries, err := s.children(ctx, refs.Root(model.KindRunbook))
-	if err != nil {
-		return nil, err
-	}
-	all, err := foldAll(ctx, s, entries, fold.Runbook)
-	if err != nil {
-		return nil, err
-	}
-	runbooks := make([]model.Runbook, 0, len(all))
-	runbooks = append(runbooks, all...)
-	slices.SortFunc(runbooks, func(a, b model.Runbook) int {
-		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-	return runbooks, nil
+	return listOf(ctx, s, model.KindRunbook, fold.Runbook, ListOpts{})
 }
 
 // children lists the refs that are immediate children of prefix, excluding

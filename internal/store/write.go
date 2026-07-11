@@ -21,25 +21,11 @@ func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, err
 	if len(ops) == 0 {
 		return nil, errors.New("create: no ops")
 	}
-	var kind model.Kind
-	switch ops[0].(type) {
-	case model.CreateNote:
-		kind = model.KindNote
-	case model.CreateTask:
-		kind = model.KindTask
-	case model.CreateSprint:
-		kind = model.KindSprint
-	case model.CreateProject:
-		kind = model.KindProject
-	case model.CreateDoc:
-		kind = model.KindDoc
-	case model.CreateLog:
-		kind = model.KindLog
-	case model.CreateRunbook:
-		kind = model.KindRunbook
-	default:
+	create, ok := ops[0].(model.CreateOp)
+	if !ok {
 		return nil, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, create_project, create_doc, create_log, or create_runbook", ops[0].OpKind())
 	}
+	kind := create.CreateKind()
 	pack, err := roundTrip(model.Pack{Lamport: 1, Ops: ops})
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
