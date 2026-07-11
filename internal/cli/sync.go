@@ -220,3 +220,14 @@ func newVersionCmd() *cobra.Command {
 		},
 	}
 }
+
+// syncDTO fixes the JSON field order for a sync report.
+type syncDTO struct {
+	Created       int `json:"created"`
+	FastForwarded int `json:"fast_forwarded"`
+	Merged        int `json:"merged"`
+	Pushed        int `json:"pushed"`
+	Uploaded      int `json:"uploaded"`
+	Downloaded    int `json:"downloaded"`
+	Rounds        int `json:"rounds"`
+}

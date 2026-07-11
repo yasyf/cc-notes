@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"github.com/yasyf/cc-notes/internal/render"
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -887,4 +889,91 @@ func printRunbookList(cmd *cobra.Command, runbooks []model.Runbook, jsonOut bool
 		}
 	}
 	return nil
+}
+
+// resolveStep expands a step id prefix — matched case-insensitively — against a
+// runbook's steps. No match fails with ErrNotFound; several matches fail with
+// an error listing each candidate's short id and text; one match returns it.
+func resolveStep(rb model.Runbook, prefix string) (model.RunbookStep, error) {
+	lowered := strings.ToLower(prefix)
+	var matches []model.RunbookStep
+	for _, st := range rb.Steps {
+		if strings.HasPrefix(strings.ToLower(st.ID), lowered) {
+			matches = append(matches, st)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return model.RunbookStep{}, fmt.Errorf("%w: no step matches %q", store.ErrNotFound, prefix)
+	case 1:
+		return matches[0], nil
+	default:
+		var b strings.Builder
+		for i, st := range matches {
+			if i > 0 {
+				b.WriteString("; ")
+			}
+			fmt.Fprintf(&b, "%s %s", render.ShortWireID(st.ID), st.Text)
+		}
+		return model.RunbookStep{}, fmt.Errorf("%w: step prefix %q matches %d: %s", store.ErrAmbiguous, prefix, len(matches), b.String())
+	}
+}
+
+// resolveRun expands a run id prefix — matched case-insensitively — against a
+// runbook's runs. No match fails with ErrNotFound; several matches fail with an
+// error listing each candidate's short id, status, and start date; one match
+// returns it.
+func resolveRun(rb model.Runbook, prefix string) (model.RunbookRun, error) {
+	lowered := strings.ToLower(prefix)
+	var matches []model.RunbookRun
+	for _, r := range rb.Runs {
+		if strings.HasPrefix(strings.ToLower(r.ID), lowered) {
+			matches = append(matches, r)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return model.RunbookRun{}, fmt.Errorf("%w: no run matches %q", store.ErrNotFound, prefix)
+	case 1:
+		return matches[0], nil
+	default:
+		return model.RunbookRun{}, fmt.Errorf("%w: run prefix %q matches %d: %s", store.ErrAmbiguous, prefix, len(matches), runCandidates(matches))
+	}
+}
+
+// resolveTargetRun picks the run a step-status or finish verb operates on: the
+// --run prefix when set (may target a finished run — the core upserts results
+// after finish), else the runbook's sole running run. Zero running runs is a
+// ConflictError; several is an ErrAmbiguous listing them.
+func resolveTargetRun(rb model.Runbook, runPrefix string) (model.RunbookRun, error) {
+	if runPrefix != "" {
+		return resolveRun(rb, runPrefix)
+	}
+	var running []model.RunbookRun
+	for _, r := range rb.Runs {
+		if r.Status == model.RunRunning {
+			running = append(running, r)
+		}
+	}
+	switch len(running) {
+	case 1:
+		return running[0], nil
+	case 0:
+		return model.RunbookRun{}, &ConflictError{Msg: fmt.Sprintf("no running run for %s; start one with `runbook run start` or pass --run", rb.ID.Short())}
+	default:
+		return model.RunbookRun{}, fmt.Errorf("%w: %s has %d running runs; pass --run: %s", store.ErrAmbiguous, rb.ID.Short(), len(running), runCandidates(running))
+	}
+}
+
+// runCandidates renders an ambiguity list of runs as "<id7> <status> <date>"
+// joined by "; ".
+func runCandidates(runs []model.RunbookRun) string {
+	var b strings.Builder
+	for i, r := range runs {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		fmt.Fprintf(&b, "%s %s %s", render.ShortWireID(r.ID), r.Status, dateUTC(r.StartedAt))
+	}
+	return b.String()
 }

@@ -109,3 +109,47 @@ func printReconcile(cmd *cobra.Command, report ccsync.ReconcileReport, jsonOut b
 	}
 	return nil
 }
+
+// reconcileDTO fixes the JSON field order for a reconcile report: the target
+// branch, the scanned/merged/carried tallies, and one nested entry per
+// scanned source branch.
+type reconcileDTO struct {
+	Into     string               `json:"into"`
+	Scanned  int                  `json:"scanned"`
+	Merged   int                  `json:"merged"`
+	Carried  int                  `json:"carried"`
+	Branches []reconcileBranchDTO `json:"branches"`
+}
+
+// reconcileBranchDTO is one source branch in a reconcile report: its merged
+// verdict, the skip reason (empty when carried), and the full-hex ids of the
+// open and in-progress tasks it carried.
+type reconcileBranchDTO struct {
+	Branch string   `json:"branch"`
+	Merged bool     `json:"merged"`
+	Reason string   `json:"reason"`
+	Tasks  []string `json:"tasks"`
+}
+
+func newReconcileDTO(r ccsync.ReconcileReport) reconcileDTO {
+	branches := make([]reconcileBranchDTO, len(r.Branches))
+	for i, b := range r.Branches {
+		ids := make([]string, len(b.Tasks))
+		for j, t := range b.Tasks {
+			ids[j] = string(t.ID)
+		}
+		branches[i] = reconcileBranchDTO{
+			Branch: string(b.Branch),
+			Merged: b.Merged,
+			Reason: b.Reason,
+			Tasks:  ids,
+		}
+	}
+	return reconcileDTO{
+		Into:     string(r.Into),
+		Scanned:  r.Scanned(),
+		Merged:   r.Merged(),
+		Carried:  r.Carried(),
+		Branches: branches,
+	}
+}

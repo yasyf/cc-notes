@@ -177,3 +177,41 @@ func taskDTOs(tasks []model.Task, live map[model.EntityID]model.Task) []taskDTO 
 	}
 	return dtos
 }
+
+// statusDTO fixes the JSON field order for a status report: the current
+// branch, the backlog and your-branch task slices, the in-progress tasks
+// grouped by assignee, and the note, doc, and log summaries.
+type statusDTO struct {
+	Branch     string              `json:"branch"`
+	Backlog    []taskDTO           `json:"backlog"`
+	YourBranch []taskDTO           `json:"your_branch"`
+	InProgress []statusAssigneeDTO `json:"in_progress"`
+	Notes      statusNotesDTO      `json:"notes"`
+	Docs       statusNotesDTO      `json:"docs"`
+	Logs       statusLogsDTO       `json:"logs"`
+}
+
+// statusAssigneeDTO groups one assignee's in-progress tasks.
+type statusAssigneeDTO struct {
+	Assignee string           `json:"assignee"`
+	Tasks    []statusStaleDTO `json:"tasks"`
+}
+
+// statusStaleDTO embeds a taskDTO, inlining its fields, plus the reader-side
+// stale verdict.
+type statusStaleDTO struct {
+	taskDTO
+	Stale bool `json:"stale"`
+}
+
+// statusNotesDTO is the note summary: total notes and the count needing review.
+type statusNotesDTO struct {
+	Total       int `json:"total"`
+	NeedsReview int `json:"needs_review"`
+}
+
+// statusLogsDTO is the log summary: total logs. Logs have no freshness
+// lifecycle, so there is no needs_review count.
+type statusLogsDTO struct {
+	Total int `json:"total"`
+}

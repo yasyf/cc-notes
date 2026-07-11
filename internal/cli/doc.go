@@ -220,7 +220,7 @@ func newDocEditCmd() *cobra.Command {
 			}
 			var ops []model.Op
 			if cmd.Flags().Changed("title") {
-				if err := validateTitle(title, titleHintBodyEdit); err != nil {
+				if err := validateTitle(title, titleHintBody); err != nil {
 					return err
 				}
 				ops = append(ops, model.SetTitle{Title: title})
@@ -231,7 +231,7 @@ func newDocEditCmd() *cobra.Command {
 					return err
 				}
 				if text == "" && len(attach) == 0 {
-					return errEmptyDocBody(docBodyHintEdit)
+					return errEmptyDocBody(docBodyHintAdd)
 				}
 				ops = append(ops, model.SetBody{Body: text})
 			}

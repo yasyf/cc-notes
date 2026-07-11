@@ -1279,3 +1279,10 @@ func claimable(t model.Task) error {
 		return nil
 	}
 }
+
+// staleTaskDTO embeds a taskDTO, inlining its fields, plus the idle duration in
+// seconds for a stale task.
+type staleTaskDTO struct {
+	taskDTO
+	IdleSeconds int64 `json:"idle_seconds"`
+}

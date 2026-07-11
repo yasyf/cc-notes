@@ -215,7 +215,7 @@ func newNoteEditCmd() *cobra.Command {
 			}
 			var ops []model.Op
 			if cmd.Flags().Changed("title") {
-				if err := validateTitle(title, titleHintBodyEdit); err != nil {
+				if err := validateTitle(title, titleHintBody); err != nil {
 					return err
 				}
 				ops = append(ops, model.SetTitle{Title: title})

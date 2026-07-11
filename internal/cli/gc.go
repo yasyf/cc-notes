@@ -71,3 +71,12 @@ func newGCCmd() *cobra.Command {
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
+
+// gcDTO fixes the JSON field order for a gc report: local entries tidied, and
+// the tombstoned refs pruned and failed under --prune-remote (both zero
+// without it).
+type gcDTO struct {
+	Tidied int `json:"tidied"`
+	Pruned int `json:"pruned"`
+	Failed int `json:"failed"`
+}
