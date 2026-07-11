@@ -1,10 +1,6 @@
 package fold
 
-import (
-	"fmt"
-
-	"github.com/yasyf/cc-notes/model"
-)
+import "github.com/yasyf/cc-notes/model"
 
 // Step is one commit in an entity's linearized history paired with the folded
 // snapshot of every op up to and including that commit. Snapshot's concrete
@@ -34,7 +30,7 @@ func History(commits []model.PackCommit) ([]Step, error) {
 	if err != nil {
 		return nil, err
 	}
-	foldPrefix, err := prefixFolder(firstOp(ordered))
+	foldPrefix, err := dispatch(firstOp(ordered))
 	if err != nil {
 		return nil, err
 	}
@@ -47,30 +43,4 @@ func History(commits []model.PackCommit) ([]Step, error) {
 		steps[k] = Step{Commit: ordered[k], Snapshot: snapshot}
 	}
 	return steps, nil
-}
-
-// prefixFolder returns the folder for an already-linearized chain whose first
-// op is first, dispatching on the create kind exactly as Fold does. The
-// returned function boxes the concrete snapshot into model.Snapshot.
-func prefixFolder(first model.Op) (func([]model.PackCommit) (model.Snapshot, error), error) {
-	switch first.(type) {
-	case model.CreateNote:
-		return func(o []model.PackCommit) (model.Snapshot, error) { return foldNote(o) }, nil
-	case model.CreateDoc:
-		return func(o []model.PackCommit) (model.Snapshot, error) { return foldDoc(o) }, nil
-	case model.CreateLog:
-		return func(o []model.PackCommit) (model.Snapshot, error) { return foldLog(o) }, nil
-	case model.CreateTask:
-		return func(o []model.PackCommit) (model.Snapshot, error) { return foldTask(o) }, nil
-	case model.CreateSprint:
-		return func(o []model.PackCommit) (model.Snapshot, error) { return foldSprint(o) }, nil
-	case model.CreateProject:
-		return func(o []model.PackCommit) (model.Snapshot, error) { return foldProject(o) }, nil
-	case model.CreateRunbook:
-		return func(o []model.PackCommit) (model.Snapshot, error) { return foldRunbook(o) }, nil
-	case nil:
-		return nil, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
-	default:
-		return nil, fmt.Errorf("%w: got %s", ErrNoCreate, first.OpKind())
-	}
 }
