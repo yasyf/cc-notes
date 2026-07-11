@@ -1,1 +1,1 @@
-{"v":1,"lamport":5,"ops":[{"kind":"remove_criterion","id":"2d0d150c231713023ec8942021a1c320"}]}
+{"v":1,"lamport":6,"ops":[{"kind":"add_criterion","id":"713c74609eecc1ab7043fa73f6d8b07f","text":"SessionStart bootstrap handlers registered async_=True; availability line emitted once per session via UserPromptSubmit","script":""}]}
