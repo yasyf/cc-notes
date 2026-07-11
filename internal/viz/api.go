@@ -163,49 +163,46 @@ func (s *Server) handleEntity(w http.ResponseWriter, r *http.Request) {
 }
 
 // entityKind maps a URL kind segment to its model.Kind, reporting whether it is
-// one of the six entity kinds.
+// one of the entity kinds. The kind values are the URL segments, so an unknown
+// segment fails the same way it always did (ok=false → 400), never panics.
 func entityKind(seg string) (model.Kind, bool) {
-	switch seg {
-	case entityNote:
-		return model.KindNote, true
-	case entityDoc:
-		return model.KindDoc, true
-	case entityLog:
-		return model.KindLog, true
-	case entityTask:
-		return model.KindTask, true
-	case entitySprint:
-		return model.KindSprint, true
-	case entityProject:
-		return model.KindProject, true
-	case entityRunbook:
-		return model.KindRunbook, true
-	default:
-		return "", false
-	}
+	kind, err := model.ParseKind(seg)
+	return kind, err == nil
 }
 
-// summaryOf builds the legend summary for any entity snapshot, dispatching to
-// the same per-kind builders the whole-graph legend uses.
+// summaryOf builds the legend summary for any entity snapshot: the common
+// fields from Meta, then the genuinely per-kind extras. A snapshot of an
+// unhandled kind panics — a programmer error the closed kind set cannot express.
 func summaryOf(snap model.Snapshot) EntitySummary {
+	m := snap.Meta()
+	id := snap.EntityID()
+	s := EntitySummary{
+		Kind:  string(m.Kind),
+		ID:    id,
+		Short: id.Short(),
+		Title: m.Title,
+	}
 	switch v := snap.(type) {
 	case model.Note:
-		return noteSummary(v)
+		s.VerifiedAt, s.Stale, s.Superseded = v.VerifiedAt, v.StaleAt != 0, len(v.SupersededBy) > 0
 	case model.Doc:
-		return docSummary(v)
+		s.VerifiedAt, s.Stale, s.Superseded = v.VerifiedAt, v.StaleAt != 0, len(v.SupersededBy) > 0
 	case model.Log:
-		return logSummary(v)
+		// logs carry no summary extras.
 	case model.Task:
-		return taskSummary(v)
+		s.Status, s.Branch, s.Assignee = string(v.Status), string(v.Branch), string(v.Assignee)
+		s.StartedAt, s.ClosedAt = v.StartedAt, v.ClosedAt
+		s.Sprint, s.Project = string(v.Sprint), string(v.Project)
 	case model.Sprint:
-		return sprintSummary(v)
+		s.Status, s.StartDate, s.EndDate, s.Project = string(v.Status), v.StartDate, v.EndDate, string(v.Project)
 	case model.Project:
-		return projectSummary(v)
+		s.Status = string(v.Status)
 	case model.Runbook:
-		return runbookSummary(v)
+		s.Status = string(v.Status)
 	default:
 		panic(fmt.Sprintf("viz: no summary for snapshot %T", snap))
 	}
+	return s
 }
 
 // trailEntryOf projects one trail.Entry into the entity wire format.

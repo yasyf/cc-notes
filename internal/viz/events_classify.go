@@ -287,24 +287,7 @@ func entityRefOf(snap model.Snapshot) EntityRef {
 
 // entityTitle returns the title of any entity snapshot.
 func entityTitle(snap model.Snapshot) string {
-	switch s := snap.(type) {
-	case model.Note:
-		return s.Title
-	case model.Doc:
-		return s.Title
-	case model.Log:
-		return s.Title
-	case model.Task:
-		return s.Title
-	case model.Sprint:
-		return s.Title
-	case model.Project:
-		return s.Title
-	case model.Runbook:
-		return s.Title
-	default:
-		return ""
-	}
+	return snap.Meta().Title
 }
 
 // branchOf attributes a snapshot to a branch at its step: a task's branch

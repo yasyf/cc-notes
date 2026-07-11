@@ -55,7 +55,7 @@ func Entries(steps []fold.Step) ([]Entry, error) {
 			e.Covers = checkpointCovers(st.Commit)
 		case i == 0:
 			e.Kind = "create"
-			changes, err := diffSnapshots(zeroLike(st.Snapshot), st.Snapshot)
+			changes, err := diffSnapshots(st.Snapshot.Meta().Kind.Zero(), st.Snapshot)
 			if err != nil {
 				return nil, err
 			}
@@ -232,46 +232,8 @@ func checkpointCovers(c model.PackCommit) int {
 	return n
 }
 
-func zeroLike(snap model.Snapshot) model.Snapshot {
-	switch snap.(type) {
-	case model.Note:
-		return model.Note{}
-	case model.Doc:
-		return model.Doc{}
-	case model.Log:
-		return model.Log{}
-	case model.Task:
-		return model.Task{}
-	case model.Sprint:
-		return model.Sprint{}
-	case model.Project:
-		return model.Project{}
-	case model.Runbook:
-		return model.Runbook{}
-	default:
-		panic(fmt.Sprintf("trail: unknown snapshot type %T", snap))
-	}
-}
-
 // EntityKind returns the lowercase kind name of a snapshot: note, doc, log,
 // task, sprint, project, or runbook.
 func EntityKind(snap model.Snapshot) string {
-	switch snap.(type) {
-	case model.Note:
-		return "note"
-	case model.Doc:
-		return "doc"
-	case model.Log:
-		return "log"
-	case model.Task:
-		return "task"
-	case model.Sprint:
-		return "sprint"
-	case model.Project:
-		return "project"
-	case model.Runbook:
-		return "runbook"
-	default:
-		panic(fmt.Sprintf("trail: unknown snapshot type %T", snap))
-	}
+	return string(snap.Meta().Kind)
 }
