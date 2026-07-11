@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/internal/version"
@@ -30,8 +31,8 @@ func initRepoWithRemote(t *testing.T) (dir, bare string) {
 	t.Helper()
 	dir = initRepo(t)
 	bare = t.TempDir()
-	mustGit(t, bare, "init", "-q", "--bare")
-	mustGit(t, dir, "remote", "add", "origin", bare)
+	gittest.Git(t, bare, "init", "-q", "--bare")
+	gittest.Git(t, dir, "remote", "add", "origin", bare)
 	return dir, bare
 }
 
@@ -41,7 +42,7 @@ func TestInitInstallsRefspecs(t *testing.T) {
 	if want := "initialized: refs/cc-notes/* refspecs installed for origin\n"; out != want {
 		t.Fatalf("init output = %q, want %q", out, want)
 	}
-	fetch := mustGit(t, dir, "config", "--get-all", "remote.origin.fetch")
+	fetch := gittest.Git(t, dir, "config", "--get-all", "remote.origin.fetch")
 	if !strings.Contains(fetch, "+refs/cc-notes/*:refs/cc-notes-sync/origin/*") {
 		t.Fatalf("fetch refspecs = %q, want cc-notes tracking refspec", fetch)
 	}
@@ -58,7 +59,7 @@ func TestInitAutoMountEnabledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	if got := strings.TrimSpace(mustGit(t, dir, "config", "--get", "cc-notes.autoMount")); got != "true" {
+	if got := strings.TrimSpace(gittest.Git(t, dir, "config", "--get", "cc-notes.autoMount")); got != "true" {
 		t.Errorf("cc-notes.autoMount = %q, want \"true\"", got)
 	}
 	// This pure test binary cannot host fuse, so auto-mount silently skips — no
@@ -78,7 +79,7 @@ func TestInitNoMountDisablesAutoMount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init --no-mount: %v", err)
 	}
-	if got := strings.TrimSpace(mustGit(t, dir, "config", "--get", "cc-notes.autoMount")); got != "false" {
+	if got := strings.TrimSpace(gittest.Git(t, dir, "config", "--get", "cc-notes.autoMount")); got != "false" {
 		t.Errorf("cc-notes.autoMount = %q, want \"false\"", got)
 	}
 	if strings.Contains(stderr, "auto-mount") {
@@ -92,19 +93,19 @@ func TestInitNoMountDisablesAutoMount(t *testing.T) {
 // passing assertion documents that self-init on first mutation already works.
 func TestSelfInitOnFirstWriteNoRemote(t *testing.T) {
 	dir := initRepo(t)
-	if refs := mustGit(t, dir, "for-each-ref", "refs/cc-notes/"); refs != "" {
+	if refs := gittest.Git(t, dir, "for-each-ref", "refs/cc-notes/"); refs != "" {
 		t.Fatalf("fresh repo already has cc-notes refs %q; want none before any write", refs)
 	}
 
 	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "First", "--json"))
 	noteRef := "refs/cc-notes/notes/" + note.ID
-	if got := mustGit(t, dir, "rev-parse", "--verify", noteRef); got == "" {
+	if got := gittest.Git(t, dir, "rev-parse", "--verify", noteRef); got == "" {
 		t.Fatalf("note add did not create %s", noteRef)
 	}
 
 	task := addTask(t, dir, "Ship it")
 	taskRef := "refs/cc-notes/tasks/" + task.ID
-	if got := mustGit(t, dir, "rev-parse", "--verify", taskRef); got == "" {
+	if got := gittest.Git(t, dir, "rev-parse", "--verify", taskRef); got == "" {
 		t.Fatalf("task add did not create %s", taskRef)
 	}
 }
@@ -115,23 +116,23 @@ func TestSelfInitOnFirstWriteNoRemote(t *testing.T) {
 // note it just created can sync. No `cc-notes init` runs first.
 func TestSelfInitWiresRefspecsOnFirstWrite(t *testing.T) {
 	dir, bare := initRepoWithRemote(t)
-	if fetch := mustGit(t, dir, "config", "--get-all", "remote.origin.fetch"); strings.Contains(fetch, "refs/cc-notes/*") {
+	if fetch := gittest.Git(t, dir, "config", "--get-all", "remote.origin.fetch"); strings.Contains(fetch, "refs/cc-notes/*") {
 		t.Fatalf("fresh repo already has cc-notes fetch refspec %q; want none before any write", fetch)
 	}
 
 	mustRun(t, dir, "note", "add", "First")
 
-	fetch := mustGit(t, dir, "config", "--get-all", "remote.origin.fetch")
+	fetch := gittest.Git(t, dir, "config", "--get-all", "remote.origin.fetch")
 	if !strings.Contains(fetch, "+refs/cc-notes/*:refs/cc-notes-sync/origin/*") {
 		t.Fatalf("first write did not auto-install the fetch refspec: %q", fetch)
 	}
-	push := mustGit(t, dir, "config", "--get-all", "remote.origin.push")
+	push := gittest.Git(t, dir, "config", "--get-all", "remote.origin.push")
 	if !strings.Contains(push, "refs/cc-notes/*:refs/cc-notes/*") {
 		t.Fatalf("first write did not auto-install the push refspec: %q", push)
 	}
 
 	mustRun(t, dir, "sync")
-	if remote := mustGit(t, bare, "for-each-ref", "refs/cc-notes/"); !strings.Contains(remote, "refs/cc-notes/notes/") {
+	if remote := gittest.Git(t, bare, "for-each-ref", "refs/cc-notes/"); !strings.Contains(remote, "refs/cc-notes/notes/") {
 		t.Fatalf("synced remote refs = %q, want the note ref pushed without a prior `cc-notes init`", remote)
 	}
 }
@@ -210,7 +211,7 @@ func TestInitWithoutCIWritesNoWorkflow(t *testing.T) {
 func TestSyncLeanAndJSON(t *testing.T) {
 	dir, bare := initRepoWithRemote(t)
 	mustRun(t, dir, "note", "add", "Synced")
-	push := mustGit(t, dir, "config", "--get-all", "remote.origin.push")
+	push := gittest.Git(t, dir, "config", "--get-all", "remote.origin.push")
 	if !strings.Contains(push, "refs/cc-notes/*:refs/cc-notes/*") {
 		t.Fatalf("mutation did not auto-install push refspec: %q", push)
 	}
@@ -218,7 +219,7 @@ func TestSyncLeanAndJSON(t *testing.T) {
 	if want := "pushed: 1\nrounds: 1\n"; out != want {
 		t.Fatalf("sync output = %q, want %q", out, want)
 	}
-	if refs := mustGit(t, bare, "for-each-ref", "refs/cc-notes/"); strings.Count(refs, "\n")+1 != 1 {
+	if refs := gittest.Git(t, bare, "for-each-ref", "refs/cc-notes/"); strings.Count(refs, "\n")+1 != 1 {
 		t.Fatalf("remote refs = %q, want exactly one", refs)
 	}
 	report := mustJSON[syncJSON](t, mustRun(t, dir, "sync", "--json"))

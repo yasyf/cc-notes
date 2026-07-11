@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -47,33 +48,12 @@ func newGitRepo(t *testing.T) *gitRepo { return newGitRepoOn(t, "main") }
 // newGitRepoOn initializes a repository on the named initial branch.
 func newGitRepoOn(t *testing.T, branch string) *gitRepo {
 	t.Helper()
-	scrubGitEnv(t)
+	gittest.ScrubEnv(t)
 	r := &gitRepo{t: t, dir: t.TempDir(), clock: fxBase}
 	r.git("init", "-q", "-b", branch)
 	r.git("config", "user.name", fxName)
 	r.git("config", "user.email", fxEmail)
 	return r
-}
-
-// scrubGitEnv clears every git environment knob that could leak host state into
-// a test and pins global/system config to /dev/null.
-func scrubGitEnv(t *testing.T) {
-	t.Helper()
-	for _, key := range []string{
-		"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-		"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
-		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
-		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-		"GIT_EDITOR", "EMAIL", "CC_NOTES_ACTOR",
-	} {
-		if value, ok := os.LookupEnv(key); ok {
-			t.Setenv(key, value)
-			_ = os.Unsetenv(key)
-		}
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 }
 
 // git runs a git plumbing command with no date override and returns stdout.

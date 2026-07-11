@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
 // showTaskBin folds a task through `task show --json` as actor.
@@ -64,7 +66,7 @@ func TestTaskStartDetachedHead(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "a.txt", "one")
 	task := addTaskBin(t, dir, "Detached", "--backlog")
-	mustGit(t, dir, "checkout", "-q", "--detach")
+	gittest.Git(t, dir, "checkout", "-q", "--detach")
 
 	res, err := execBin(dir, actorA, "task", "start", task.ID)
 	if err != nil {
@@ -124,7 +126,7 @@ func TestTaskClaimSteal(t *testing.T) {
 	mustBin(t, dir, actorA, "task", "claim", task.ID)
 
 	// Fresh lease: a steal is refused with the remaining time, exit 4.
-	mustGit(t, dir, "config", "cc-notes.leaseTTL", "8760h")
+	gittest.Git(t, dir, "config", "cc-notes.leaseTTL", "8760h")
 	res, err := execBin(dir, actorB, "task", "claim", task.ID, "--steal")
 	if err != nil {
 		t.Fatalf("steal fresh: %v", err)
@@ -137,7 +139,7 @@ func TestTaskClaimSteal(t *testing.T) {
 	}
 
 	// Stale lease: the steal reclaims it.
-	mustGit(t, dir, "config", "cc-notes.leaseTTL", "0s")
+	gittest.Git(t, dir, "config", "cc-notes.leaseTTL", "0s")
 	out := mustBin(t, dir, actorB, "task", "claim", task.ID, "--steal")
 	if want := task.ID[:7] + "\tin_progress\tP2\t" + actorB + "\tCrashed agent's task\n"; out != want {
 		t.Fatalf("steal stale lean line = %q, want %q", out, want)
@@ -214,20 +216,20 @@ func commitWithTrailer(t *testing.T, dir, path, content, id string) string {
 	if err := os.WriteFile(filepath.Join(dir, path), []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
-	mustGit(t, dir, "add", path)
-	mustGit(t, dir, "commit", "-q", "-m", "implement\n\ncc-task: "+id)
-	return mustGit(t, dir, "rev-parse", "HEAD")
+	gittest.Git(t, dir, "add", path)
+	gittest.Git(t, dir, "commit", "-q", "-m", "implement\n\ncc-task: "+id)
+	return gittest.Git(t, dir, "rev-parse", "HEAD")
 }
 
 func TestTaskClaimSyncYield(t *testing.T) {
-	scrubGitEnv(t)
+	gittest.ScrubEnv(t)
 	root := t.TempDir()
 	bare := filepath.Join(root, "remote.git")
-	mustGit(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
+	gittest.Git(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
 	clone := func(name string) string {
 		dir := filepath.Join(root, name)
-		mustGit(t, root, "clone", "-q", bare, name)
-		mustGit(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
+		gittest.Git(t, root, "clone", "-q", bare, name)
+		gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 		return dir
 	}
 
@@ -262,15 +264,15 @@ func TestTaskClaimSyncYield(t *testing.T) {
 }
 
 func TestTwoCloneStealConverges(t *testing.T) {
-	scrubGitEnv(t)
+	gittest.ScrubEnv(t)
 	root := t.TempDir()
 	bare := filepath.Join(root, "remote.git")
-	mustGit(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
+	gittest.Git(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
 	clone := func(name string) string {
 		dir := filepath.Join(root, name)
-		mustGit(t, root, "clone", "-q", bare, name)
-		mustGit(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
-		mustGit(t, dir, "config", "cc-notes.leaseTTL", "0s")
+		gittest.Git(t, root, "clone", "-q", bare, name)
+		gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
+		gittest.Git(t, dir, "config", "cc-notes.leaseTTL", "0s")
 		return dir
 	}
 

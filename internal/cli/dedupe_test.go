@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
 // TestNoteAddDedupe drives two identical `note add` runs in-process: the second
@@ -161,7 +163,7 @@ func TestNoteAddDedupeRefreshesWitness(t *testing.T) {
 	if w2 == w1 {
 		t.Fatalf("witness unchanged after dedupe re-add (%s); want refreshed to the new blob", w2)
 	}
-	if wantOID := mustGit(t, dir, "rev-parse", "HEAD:f.go"); w2 != wantOID {
+	if wantOID := gittest.Git(t, dir, "rev-parse", "HEAD:f.go"); w2 != wantOID {
 		t.Fatalf("refreshed witness = %s, want new blob %s", w2, wantOID)
 	}
 	if dup.VerifiedAt == nil {
@@ -196,7 +198,7 @@ func TestNoteAddDedupeBinary(t *testing.T) {
 	if dupID := mustJSON[noteJSON](t, res.Stdout).ID; dupID != firstID {
 		t.Errorf("dup add id = %s, want existing %s", dupID, firstID)
 	}
-	refsOut := mustGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/cc-notes/notes/")
+	refsOut := gittest.Git(t, dir, "for-each-ref", "--format=%(refname)", "refs/cc-notes/notes/")
 	if refCount := len(strings.Fields(refsOut)); refCount != 1 {
 		t.Fatalf("note refs after dup = %d, want 1 (%q)", refCount, refsOut)
 	}

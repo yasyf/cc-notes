@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
 )
 
@@ -65,7 +66,7 @@ func TestLogAddRoundTrip(t *testing.T) {
 		t.Fatalf("entries = %+v, want empty on a bare add", added.Entries)
 	}
 	ref := "refs/cc-notes/logs/" + added.ID
-	if got := mustGit(t, dir, "rev-list", "--count", ref); got != "1" {
+	if got := gittest.Git(t, dir, "rev-list", "--count", ref); got != "1" {
 		t.Errorf("log chain has %s commits, want 1 (create only)", got)
 	}
 
@@ -97,7 +98,7 @@ func TestLogAddWithFirstEntry(t *testing.T) {
 	// The first entry is a separate AppendEntry commit, so the chain is create
 	// + append (two commits), and the entry's author/ts come from its own commit.
 	ref := "refs/cc-notes/logs/" + added.ID
-	if got := mustGit(t, dir, "rev-list", "--count", ref); got != "2" {
+	if got := gittest.Git(t, dir, "rev-list", "--count", ref); got != "2" {
 		t.Errorf("log chain has %s commits, want 2 (create + first entry)", got)
 	}
 }

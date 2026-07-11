@@ -18,6 +18,7 @@ import (
 	stdsync "sync"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/lfs"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
@@ -222,12 +223,12 @@ func hasObject(t *testing.T, s *store.Store, oid string) bool {
 // (upload before push), sync a fresh clone B (download after convergence),
 // and the content is byte-identical.
 func TestSyncAttachmentRoundTrip(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	f, endpoint := newFakeLFS(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
-	mustGit(t, a.Git.Dir, "config", "lfs.url", endpoint)
-	mustGit(t, b.Git.Dir, "config", "lfs.url", endpoint)
+	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
+	gittest.Git(t, b.Git.Dir, "config", "lfs.url", endpoint)
 
 	content := make([]byte, 1<<20)
 	for i := range content {
@@ -271,7 +272,7 @@ func TestSyncAttachmentRoundTrip(t *testing.T) {
 // endpoint with no credential helper, so clone A's sync uploads and clone B's
 // sync downloads byte-identical content.
 func TestSyncAttachmentExtraHeaderAuth(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	f, endpoint := newFakeLFS(t)
 	authValue := "basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
 	f.requireAuth = authValue
@@ -279,8 +280,8 @@ func TestSyncAttachmentExtraHeaderAuth(t *testing.T) {
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	for _, s := range []*store.Store{a, b} {
-		mustGit(t, s.Git.Dir, "config", "lfs.url", endpoint)
-		mustGit(t, s.Git.Dir, "config", "http."+base+"/.extraheader", "AUTHORIZATION: "+authValue)
+		gittest.Git(t, s.Git.Dir, "config", "lfs.url", endpoint)
+		gittest.Git(t, s.Git.Dir, "config", "http."+base+"/.extraheader", "AUTHORIZATION: "+authValue)
 	}
 
 	content := make([]byte, 1<<20)
@@ -310,10 +311,10 @@ func TestSyncAttachmentExtraHeaderAuth(t *testing.T) {
 // failing LFS server leaves the remote's ref namespace untouched, and the
 // next sync against a healed server publishes both content and refs.
 func TestSyncUploadFailureBlocksPush(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	f, endpoint := newFakeLFS(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
-	mustGit(t, a.Git.Dir, "config", "lfs.url", endpoint)
+	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
 
 	note := createNote(t, a, "blocked")
 	att := attachFile(t, a, refs.Note(note.ID), "blocked.bin", []byte("payload"))
@@ -337,7 +338,7 @@ func TestSyncUploadFailureBlocksPush(t *testing.T) {
 	if got, want := sync(t, a), (ccsync.Report{Pushed: 1, Uploaded: 1, Rounds: 1}); got != want {
 		t.Fatalf("healed sync report = %+v, want %+v", got, want)
 	}
-	if got := mustGit(t, bare, "rev-parse", refs.Note(note.ID)); got == "" {
+	if got := gittest.Git(t, bare, "rev-parse", refs.Note(note.ID)); got == "" {
 		t.Errorf("remote missing %s after healed sync", refs.Note(note.ID))
 	}
 	if !f.isVerified(att.OID) {
@@ -349,12 +350,12 @@ func TestSyncUploadFailureBlocksPush(t *testing.T) {
 // no attachments never touches the LFS endpoint: no discovery, no batch, no
 // transfers.
 func TestSyncZeroAttachmentsZeroLFSRequests(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	f, endpoint := newFakeLFS(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
-	mustGit(t, a.Git.Dir, "config", "lfs.url", endpoint)
-	mustGit(t, b.Git.Dir, "config", "lfs.url", endpoint)
+	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
+	gittest.Git(t, b.Git.Dir, "config", "lfs.url", endpoint)
 
 	createNote(t, a, "plain note")
 	createTask(t, a, "plain task", "main")
@@ -371,12 +372,12 @@ func TestSyncZeroAttachmentsZeroLFSRequests(t *testing.T) {
 // that dies mid-sync leaves no partial object, and the next sync's full
 // referenced scan fetches it with no flag.
 func TestSyncInterruptedDownloadHealsNextSync(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	f, endpoint := newFakeLFS(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
-	mustGit(t, a.Git.Dir, "config", "lfs.url", endpoint)
-	mustGit(t, b.Git.Dir, "config", "lfs.url", endpoint)
+	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
+	gittest.Git(t, b.Git.Dir, "config", "lfs.url", endpoint)
 
 	content := []byte("heals on the next run")
 	note := createNote(t, a, "interrupted")
@@ -409,7 +410,7 @@ func TestSyncInterruptedDownloadHealsNextSync(t *testing.T) {
 // fails the sync loudly with per-entity remediation, and removing the
 // attachment empties the transfer set so the same remote syncs clean.
 func TestSyncRemoveLastAttachmentUnbricksLFSlessRemote(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 
 	note := createNote(t, a, "bricked")
@@ -438,7 +439,7 @@ func TestSyncRemoveLastAttachmentUnbricksLFSlessRemote(t *testing.T) {
 	if got, want := sync(t, a), (ccsync.Report{Pushed: 1, Rounds: 1}); got != want {
 		t.Fatalf("unbricked sync report = %+v, want %+v", got, want)
 	}
-	if got := mustGit(t, bare, "rev-parse", noteRef); got == "" {
+	if got := gittest.Git(t, bare, "rev-parse", noteRef); got == "" {
 		t.Errorf("remote missing %s after unbrick", noteRef)
 	}
 }
@@ -448,12 +449,12 @@ func TestSyncRemoveLastAttachmentUnbricksLFSlessRemote(t *testing.T) {
 // error is non-nil, and it names the entity, the oid, the remediation, and
 // the plain-git-push hole that strands content.
 func TestSyncDownloadMissingObjectNamesEntity(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	f, endpoint := newFakeLFS(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
-	mustGit(t, a.Git.Dir, "config", "lfs.url", endpoint)
-	mustGit(t, b.Git.Dir, "config", "lfs.url", endpoint)
+	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
+	gittest.Git(t, b.Git.Dir, "config", "lfs.url", endpoint)
 
 	note := createNote(t, a, "stranded content")
 	att := attachFile(t, a, refs.Note(note.ID), "gone.bin", []byte("uploaded then lost"))
@@ -468,7 +469,7 @@ func TestSyncDownloadMissingObjectNamesEntity(t *testing.T) {
 	if want := (ccsync.Report{Created: 1, Pushed: 1, Reconciled: 1, Rounds: 1}); report != want {
 		t.Fatalf("report = %+v, want %+v (pushes still reported alongside the error)", report, want)
 	}
-	if got := mustGit(t, bare, "rev-parse", refs.Note(own.ID)); got == "" {
+	if got := gittest.Git(t, bare, "rev-parse", refs.Note(own.ID)); got == "" {
 		t.Errorf("B's own ref never published despite the download failure")
 	}
 	for _, fragment := range []string{

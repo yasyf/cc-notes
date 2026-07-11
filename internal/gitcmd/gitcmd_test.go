@@ -3,7 +3,6 @@ package gitcmd_test
 import (
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -12,74 +11,32 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/model"
 )
 
-// scrubGitEnv clears every git environment knob that could leak host state
-// into a test and pins global/system config to /dev/null. t.Setenv with the
-// original value registers the restore before os.Unsetenv removes the key.
-func scrubGitEnv(t *testing.T) {
-	t.Helper()
-	for _, key := range []string{
-		"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-		"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
-		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
-		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-		"GIT_EDITOR", "EMAIL", "GIT_ASKPASS", "SSH_ASKPASS",
-	} {
-		if value, ok := os.LookupEnv(key); ok {
-			t.Setenv(key, value)
-			_ = os.Unsetenv(key)
-		}
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-}
-
-func mustGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
 func initRepoNoIdentity(t *testing.T) gitcmd.Git {
 	t.Helper()
-	scrubGitEnv(t)
-	g := gitcmd.Git{Dir: t.TempDir()}
-	mustGit(t, g.Dir, "init", "-q", "-b", "main")
-	return g
+	gittest.ScrubEnv(t)
+	dir := t.TempDir()
+	gittest.Git(t, dir, "init", "-q", "-b", "main")
+	return gitcmd.Git{Dir: dir}
 }
 
 func initRepo(t *testing.T) gitcmd.Git {
 	t.Helper()
-	g := initRepoNoIdentity(t)
-	mustGit(t, g.Dir, "config", "user.name", "Test User")
-	mustGit(t, g.Dir, "config", "user.email", "test@example.com")
-	return g
-}
-
-func initBare(t *testing.T) string {
-	t.Helper()
-	scrubGitEnv(t)
-	dir := t.TempDir()
-	mustGit(t, dir, "init", "-q", "--bare")
-	return dir
+	return gitcmd.Git{Dir: gittest.InitRepo(t)}
 }
 
 func commitEmpty(t *testing.T, g gitcmd.Git, msg string) model.SHA {
 	t.Helper()
-	mustGit(t, g.Dir, "commit", "-q", "--allow-empty", "-m", msg)
-	return model.SHA(mustGit(t, g.Dir, "rev-parse", "HEAD"))
+	gittest.Git(t, g.Dir, "commit", "-q", "--allow-empty", "-m", msg)
+	return model.SHA(gittest.Git(t, g.Dir, "rev-parse", "HEAD"))
 }
 
 func resolve(t *testing.T, dir, ref string) model.SHA {
 	t.Helper()
-	return model.SHA(mustGit(t, dir, "rev-parse", "--verify", ref))
+	return model.SHA(gittest.Git(t, dir, "rev-parse", "--verify", ref))
 }
 
 func TestUpdateRefCreateAndCAS(t *testing.T) {
@@ -173,7 +130,7 @@ func TestCheckRefFormat(t *testing.T) {
 
 func TestUpdateRefConcurrentRace(t *testing.T) {
 	g := initRepo(t)
-	mustGit(t, g.Dir, "config", "core.filesRefLockTimeout", "3000")
+	gittest.Git(t, g.Dir, "config", "core.filesRefLockTimeout", "3000")
 	ctx := t.Context()
 	base := commitEmpty(t, g, "base")
 	ref := "refs/cc-notes/notes/" + string(base)
@@ -218,9 +175,9 @@ func TestUpdateRefConcurrentRace(t *testing.T) {
 }
 
 func TestFetchPushRoundTrip(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := initRepo(t)
-	mustGit(t, a.Dir, "remote", "add", "origin", bare)
+	gittest.Git(t, a.Dir, "remote", "add", "origin", bare)
 	ctx := t.Context()
 	c1 := commitEmpty(t, a, "c1")
 	ref := "refs/cc-notes/notes/" + string(c1)
@@ -236,10 +193,10 @@ func TestFetchPushRoundTrip(t *testing.T) {
 	}
 
 	b := gitcmd.Git{Dir: t.TempDir()}
-	mustGit(t, b.Dir, "init", "-q", "-b", "main")
-	mustGit(t, b.Dir, "remote", "add", "origin", bare)
-	mustGit(t, b.Dir, "config", "user.name", "Other User")
-	mustGit(t, b.Dir, "config", "user.email", "other@example.com")
+	gittest.Git(t, b.Dir, "init", "-q", "-b", "main")
+	gittest.Git(t, b.Dir, "remote", "add", "origin", bare)
+	gittest.Git(t, b.Dir, "config", "user.name", "Other User")
+	gittest.Git(t, b.Dir, "config", "user.email", "other@example.com")
 	if err := b.Fetch(ctx, "origin", "refs/cc-notes/*:refs/cc-notes/*"); err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -357,7 +314,7 @@ func TestConfigGet(t *testing.T) {
 		t.Fatalf("get missing: got %q, want empty", got)
 	}
 
-	mustGit(t, g.Dir, "config", "ccnotes.single", "local-value")
+	gittest.Git(t, g.Dir, "config", "ccnotes.single", "local-value")
 	got, err = g.ConfigGet(ctx, "ccnotes.single")
 	if err != nil {
 		t.Fatalf("get local: %v", err)
@@ -413,10 +370,10 @@ func TestConfigGetRegexp(t *testing.T) {
 		t.Fatalf("get-regexp on empty = %v, want none", got)
 	}
 
-	mustGit(t, g.Dir, "config", "--add", "http.extraheader", "AUTHORIZATION: basic UNSCOPED")
-	mustGit(t, g.Dir, "config", "--add", "http.https://example.com/.extraheader", "AUTHORIZATION: basic ONE")
-	mustGit(t, g.Dir, "config", "--add", "http.https://example.com/.extraheader", "AUTHORIZATION: basic TWO")
-	mustGit(t, g.Dir, "config", "cc.other", "not an extraheader")
+	gittest.Git(t, g.Dir, "config", "--add", "http.extraheader", "AUTHORIZATION: basic UNSCOPED")
+	gittest.Git(t, g.Dir, "config", "--add", "http.https://example.com/.extraheader", "AUTHORIZATION: basic ONE")
+	gittest.Git(t, g.Dir, "config", "--add", "http.https://example.com/.extraheader", "AUTHORIZATION: basic TWO")
+	gittest.Git(t, g.Dir, "config", "cc.other", "not an extraheader")
 
 	got, err = g.ConfigGetRegexp(ctx, pattern)
 	if err != nil {
@@ -472,7 +429,7 @@ func TestRemoteURL(t *testing.T) {
 		t.Fatal("missing remote: want error")
 	}
 
-	mustGit(t, g.Dir, "remote", "add", "origin", "https://git-server.com/foo/bar.git")
+	gittest.Git(t, g.Dir, "remote", "add", "origin", "https://git-server.com/foo/bar.git")
 	got, err := g.RemoteURL(ctx, "origin")
 	if err != nil {
 		t.Fatalf("remote url: %v", err)
@@ -481,7 +438,7 @@ func TestRemoteURL(t *testing.T) {
 		t.Fatalf("remote url: got %q, want https://git-server.com/foo/bar.git", got)
 	}
 
-	mustGit(t, g.Dir, "config", "url.https://mirror.example/.insteadOf", "https://git-server.com/")
+	gittest.Git(t, g.Dir, "config", "url.https://mirror.example/.insteadOf", "https://git-server.com/")
 	got, err = g.RemoteURL(ctx, "origin")
 	if err != nil {
 		t.Fatalf("remote url with insteadOf: %v", err)
@@ -503,7 +460,7 @@ func TestHeadBranch(t *testing.T) {
 		t.Fatalf("unborn: got %q, want main", got)
 	}
 
-	mustGit(t, g.Dir, "checkout", "-q", "-b", "feature/x")
+	gittest.Git(t, g.Dir, "checkout", "-q", "-b", "feature/x")
 	got, err = g.HeadBranch(ctx)
 	if err != nil {
 		t.Fatalf("feature branch: %v", err)
@@ -513,7 +470,7 @@ func TestHeadBranch(t *testing.T) {
 	}
 
 	commitEmpty(t, g, "c1")
-	mustGit(t, g.Dir, "checkout", "-q", "--detach")
+	gittest.Git(t, g.Dir, "checkout", "-q", "--detach")
 	if _, err = g.HeadBranch(ctx); !errors.Is(err, gitcmd.ErrDetachedHead) {
 		t.Fatalf("detached: got %v, want ErrDetachedHead", err)
 	}
@@ -544,7 +501,7 @@ func TestAuthorIdent(t *testing.T) {
 
 func TestAuthorIdentMissing(t *testing.T) {
 	g := initRepoNoIdentity(t)
-	mustGit(t, g.Dir, "config", "user.useConfigOnly", "true")
+	gittest.Git(t, g.Dir, "config", "user.useConfigOnly", "true")
 	_, _, err := g.AuthorIdent(t.Context())
 	if err == nil {
 		t.Fatal("missing identity: want error")
@@ -594,8 +551,8 @@ func TestTaskTrailers(t *testing.T) {
 		t.Fatalf("none: got %q, want empty", got)
 	}
 
-	mustGit(t, g.Dir, "commit", "-q", "--allow-empty", "-m", "one\n\ncc-task: d82c087")
-	single := model.SHA(mustGit(t, g.Dir, "rev-parse", "HEAD"))
+	gittest.Git(t, g.Dir, "commit", "-q", "--allow-empty", "-m", "one\n\ncc-task: d82c087")
+	single := model.SHA(gittest.Git(t, g.Dir, "rev-parse", "HEAD"))
 	got, err = g.TaskTrailers(ctx, string(single))
 	if err != nil {
 		t.Fatalf("single: %v", err)
@@ -604,8 +561,8 @@ func TestTaskTrailers(t *testing.T) {
 		t.Fatalf("single: got %q, want %q", got, want)
 	}
 
-	mustGit(t, g.Dir, "commit", "-q", "--allow-empty", "-m", "two\n\ncc-task: aaa1111\ncc-task: bbb2222")
-	multi := model.SHA(mustGit(t, g.Dir, "rev-parse", "HEAD"))
+	gittest.Git(t, g.Dir, "commit", "-q", "--allow-empty", "-m", "two\n\ncc-task: aaa1111\ncc-task: bbb2222")
+	multi := model.SHA(gittest.Git(t, g.Dir, "rev-parse", "HEAD"))
 	got, err = g.TaskTrailers(ctx, string(multi))
 	if err != nil {
 		t.Fatalf("multi: %v", err)
@@ -631,8 +588,8 @@ func TestTaskTrailersRange(t *testing.T) {
 			}
 			msg += "\n\n" + strings.Join(lines, "\n")
 		}
-		mustGit(t, g.Dir, "commit", "-q", "--allow-empty", "-m", msg)
-		return model.SHA(mustGit(t, g.Dir, "rev-parse", "HEAD"))
+		gittest.Git(t, g.Dir, "commit", "-q", "--allow-empty", "-m", msg)
+		return model.SHA(gittest.Git(t, g.Dir, "rev-parse", "HEAD"))
 	}
 
 	c0 := commit("base no trailer")
@@ -711,16 +668,16 @@ func TestTaskTrailersFirstParent(t *testing.T) {
 			}
 			msg += "\n\n" + strings.Join(lines, "\n")
 		}
-		mustGit(t, g.Dir, "commit", "-q", "--allow-empty", "-m", msg)
-		return model.SHA(mustGit(t, g.Dir, "rev-parse", "HEAD"))
+		gittest.Git(t, g.Dir, "commit", "-q", "--allow-empty", "-m", msg)
+		return model.SHA(gittest.Git(t, g.Dir, "rev-parse", "HEAD"))
 	}
 
 	c0 := commit("base no trailer")
-	mustGit(t, g.Dir, "checkout", "-q", "-b", "side")
+	gittest.Git(t, g.Dir, "checkout", "-q", "-b", "side")
 	side := commit("side work", "sidetask")
-	mustGit(t, g.Dir, "checkout", "-q", "main")
-	mustGit(t, g.Dir, "merge", "--no-ff", "-m", "merge side", "side")
-	mergeSHA := model.SHA(mustGit(t, g.Dir, "rev-parse", "HEAD"))
+	gittest.Git(t, g.Dir, "checkout", "-q", "main")
+	gittest.Git(t, g.Dir, "merge", "--no-ff", "-m", "merge side", "side")
+	mergeSHA := model.SHA(gittest.Git(t, g.Dir, "rev-parse", "HEAD"))
 	direct := commit("direct trunk", "directtask")
 
 	for _, tc := range []struct {
@@ -785,8 +742,8 @@ func TestRemotes(t *testing.T) {
 		t.Fatalf("no remotes: got %q, want empty", got)
 	}
 
-	mustGit(t, g.Dir, "remote", "add", "origin", t.TempDir())
-	mustGit(t, g.Dir, "remote", "add", "upstream", t.TempDir())
+	gittest.Git(t, g.Dir, "remote", "add", "origin", t.TempDir())
+	gittest.Git(t, g.Dir, "remote", "add", "upstream", t.TempDir())
 	got, err = g.Remotes(ctx)
 	if err != nil {
 		t.Fatalf("remotes: %v", err)
@@ -820,7 +777,7 @@ func TestCommonDir(t *testing.T) {
 	}
 
 	linked := t.TempDir()
-	mustGit(t, g.Dir, "worktree", "add", "-q", linked)
+	gittest.Git(t, g.Dir, "worktree", "add", "-q", linked)
 	gotLinked, err := (gitcmd.Git{Dir: linked}).CommonDir(ctx)
 	if err != nil {
 		t.Fatalf("common dir from linked worktree: %v", err)
@@ -871,10 +828,10 @@ func TestMergeBase(t *testing.T) {
 	ctx := t.Context()
 
 	base := commitEmpty(t, g, "base")
-	mustGit(t, g.Dir, "checkout", "-q", "-b", "feature")
+	gittest.Git(t, g.Dir, "checkout", "-q", "-b", "feature")
 	commitEmpty(t, g, "feature tip")
 	feature := resolve(t, g.Dir, "HEAD")
-	mustGit(t, g.Dir, "checkout", "-q", "main")
+	gittest.Git(t, g.Dir, "checkout", "-q", "main")
 	commitEmpty(t, g, "main tip")
 	main := resolve(t, g.Dir, "HEAD")
 
@@ -886,7 +843,7 @@ func TestMergeBase(t *testing.T) {
 		t.Fatalf("MergeBase = %q, want fork point %q", got, base)
 	}
 
-	mustGit(t, g.Dir, "checkout", "-q", "--orphan", "unrelated")
+	gittest.Git(t, g.Dir, "checkout", "-q", "--orphan", "unrelated")
 	orphan := commitEmpty(t, g, "orphan root")
 	if _, err := g.MergeBase(ctx, string(main), string(orphan)); !errors.Is(err, gitcmd.ErrRevNotFound) {
 		t.Fatalf("MergeBase on unrelated histories = %v, want ErrRevNotFound", err)
@@ -902,7 +859,7 @@ func TestDefaultBranch(t *testing.T) {
 		t.Fatalf("unset origin/HEAD = %v, want ErrNoDefaultBranch", err)
 	}
 
-	mustGit(t, g.Dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	gittest.Git(t, g.Dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 	got, err := g.DefaultBranch(ctx)
 	if err != nil {
 		t.Fatalf("set origin/HEAD: %v", err)
@@ -921,8 +878,8 @@ func TestRevRangeFileAuthors(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(g.Dir, path), []byte(content), 0o600); err != nil {
 			t.Fatalf("write %s: %v", path, err)
 		}
-		mustGit(t, g.Dir, "add", path)
-		mustGit(t, g.Dir,
+		gittest.Git(t, g.Dir, "add", path)
+		gittest.Git(t, g.Dir,
 			"-c", "user.name="+name, "-c", "user.email="+email,
 			"commit", "-q", "-m", "edit "+path)
 	}
@@ -943,7 +900,7 @@ func TestRevRangeFileAuthors(t *testing.T) {
 	}
 
 	// A merge-only-or-empty commit contributes no paths.
-	mustGit(t, g.Dir,
+	gittest.Git(t, g.Dir,
 		"-c", "user.name=Alice", "-c", "user.email=alice@x.com",
 		"commit", "-q", "--allow-empty", "-m", "empty by alice")
 	commitFile("Alice", "alice@x.com", "shared.txt", "a\nb\n") // alice touches shared + onlysecond
@@ -987,7 +944,7 @@ func TestWorktreeBlobOID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WorktreeBlobOID: %v", err)
 	}
-	if want := mustGit(t, g.Dir, "hash-object", "--", path); oid != want {
+	if want := gittest.Git(t, g.Dir, "hash-object", "--", path); oid != want {
 		t.Fatalf("WorktreeBlobOID = %q, want %q", oid, want)
 	}
 
@@ -1018,14 +975,14 @@ func TestPathOID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("first\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	mustGit(t, g.Dir, "add", path)
-	mustGit(t, g.Dir, "commit", "-q", "-m", "add file")
+	gittest.Git(t, g.Dir, "add", path)
+	gittest.Git(t, g.Dir, "commit", "-q", "-m", "add file")
 
 	oid, err := g.PathOID(ctx, "HEAD", path)
 	if err != nil {
 		t.Fatalf("PathOID: %v", err)
 	}
-	if want := mustGit(t, g.Dir, "rev-parse", "HEAD:"+path); oid != want {
+	if want := gittest.Git(t, g.Dir, "rev-parse", "HEAD:"+path); oid != want {
 		t.Fatalf("PathOID = %q, want %q", oid, want)
 	}
 
@@ -1036,7 +993,7 @@ func TestPathOID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(g.Dir, path), []byte("second\n"), 0o600); err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
-	mustGit(t, g.Dir, "commit", "-q", "-am", "edit file")
+	gittest.Git(t, g.Dir, "commit", "-q", "-am", "edit file")
 	edited, err := g.PathOID(ctx, "HEAD", path)
 	if err != nil {
 		t.Fatalf("PathOID after edit: %v", err)

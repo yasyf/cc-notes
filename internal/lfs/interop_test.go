@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/lfs"
 )
 
@@ -53,16 +54,16 @@ func TestGitLFSCLIInterop(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "file.bin"), []byte(pointer), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustGit(t, dir, "add", ".gitattributes")
-	mustGit(t, dir, "-c", "filter.lfs.clean=cat", "-c", "filter.lfs.smudge=cat", "-c", "filter.lfs.process=", "-c", "filter.lfs.required=false", "add", "file.bin")
-	mustGit(t, dir, "commit", "-q", "-m", "pointer")
-	mustGit(t, dir, "lfs", "install", "--local")
+	gittest.Git(t, dir, "add", ".gitattributes")
+	gittest.Git(t, dir, "-c", "filter.lfs.clean=cat", "-c", "filter.lfs.smudge=cat", "-c", "filter.lfs.process=", "-c", "filter.lfs.required=false", "add", "file.bin")
+	gittest.Git(t, dir, "commit", "-q", "-m", "pointer")
+	gittest.Git(t, dir, "lfs", "install", "--local")
 
 	if err := os.Remove(filepath.Join(dir, "file.bin")); err != nil {
 		t.Fatal(err)
 	}
-	mustGit(t, dir, "lfs", "checkout", "file.bin")
-	if fsck := mustGit(t, dir, "lfs", "fsck"); !strings.Contains(fsck, "OK") {
+	gittest.Git(t, dir, "lfs", "checkout", "file.bin")
+	if fsck := gittest.Git(t, dir, "lfs", "fsck"); !strings.Contains(fsck, "OK") {
 		t.Fatalf("git lfs fsck: %s", fsck)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "file.bin"))

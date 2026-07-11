@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
 // verbLogHelper installs an inline credential.helper that appends the verb
@@ -20,7 +21,7 @@ func verbLogHelper(t *testing.T, g gitcmd.Git, username, password string) (logPa
 	helper := fmt.Sprintf(
 		`!f() { echo "$1" >>"%s"; if [ "$1" = get ]; then echo username=%s; echo password=%s; fi; }; f`,
 		logPath, username, password)
-	mustGit(t, g.Dir, "config", "credential.helper", helper)
+	gittest.Git(t, g.Dir, "config", "credential.helper", helper)
 	return logPath
 }
 

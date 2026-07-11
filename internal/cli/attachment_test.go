@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
 )
 
@@ -225,7 +226,7 @@ func TestAttachInstallsPruneGuardOnce(t *testing.T) {
 		}
 	}
 	for _, key := range []string{"lfs.pruneverifyremotealways", "lfs.pruneverifyunreachablealways"} {
-		if got := mustGit(t, dir, "config", "--get", key); got != "true" {
+		if got := gittest.Git(t, dir, "config", "--get", key); got != "true" {
 			t.Fatalf("%s = %q, want true", key, got)
 		}
 	}
@@ -322,7 +323,7 @@ func newFakeLFS(t *testing.T) (*fakeLFS, string) {
 func TestSyncTransfersAttachments(t *testing.T) {
 	dir, bare := initRepoWithRemote(t)
 	server, endpoint := newFakeLFS(t)
-	mustGit(t, dir, "config", "lfs.url", endpoint)
+	gittest.Git(t, dir, "config", "lfs.url", endpoint)
 
 	content := []byte("synced attachment bytes")
 	path, oid := writeAttachable(t, "artifact.bin", content)
@@ -340,11 +341,11 @@ func TestSyncTransfersAttachments(t *testing.T) {
 	}
 
 	clone := t.TempDir()
-	mustGit(t, clone, "clone", "-q", bare, "repo")
+	gittest.Git(t, clone, "clone", "-q", bare, "repo")
 	cloneDir := filepath.Join(clone, "repo")
-	mustGit(t, cloneDir, "config", "user.name", "Test User")
-	mustGit(t, cloneDir, "config", "user.email", "test@example.com")
-	mustGit(t, cloneDir, "config", "lfs.url", endpoint)
+	gittest.Git(t, cloneDir, "config", "user.name", "Test User")
+	gittest.Git(t, cloneDir, "config", "user.email", "test@example.com")
+	gittest.Git(t, cloneDir, "config", "lfs.url", endpoint)
 	report := mustJSON[syncJSON](t, mustRun(t, cloneDir, "sync", "--json"))
 	if report.Downloaded != 1 || report.Created != 1 {
 		t.Fatalf("clone sync = %+v, want created: 1 and downloaded: 1", report)
@@ -380,7 +381,7 @@ func TestSyncUnsupportedLFSRemote(t *testing.T) {
 	if !strings.Contains(stdout, "rounds: 1\n") {
 		t.Errorf("sync stdout = %q, want the partial report before the error", stdout)
 	}
-	if refs := mustGit(t, bare, "for-each-ref", "refs/cc-notes/"); refs != "" {
+	if refs := gittest.Git(t, bare, "for-each-ref", "refs/cc-notes/"); refs != "" {
 		t.Errorf("remote refs = %q, want none: a failed upload must block the push", refs)
 	}
 }

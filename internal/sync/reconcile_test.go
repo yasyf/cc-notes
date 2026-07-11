@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
@@ -16,9 +17,9 @@ import (
 // commit, ready for branch and merge operations.
 func reconcileClone(t *testing.T) *store.Store {
 	t.Helper()
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	s := clone(t, bare, "Alice", "alice@example.com")
-	mustGit(t, s.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+	gittest.Git(t, s.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
 	return s
 }
 
@@ -26,16 +27,16 @@ func reconcileClone(t *testing.T) *store.Store {
 // commit, and leaves HEAD on name.
 func branchFrom(t *testing.T, dir, name string) {
 	t.Helper()
-	mustGit(t, dir, "checkout", "-q", "-b", name)
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", name+" work")
+	gittest.Git(t, dir, "checkout", "-q", "-b", name)
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", name+" work")
 }
 
 // mergeInto checks out target and merges source with a merge commit, so
 // source's tip becomes an ancestor of target.
 func mergeInto(t *testing.T, dir, target, source string) {
 	t.Helper()
-	mustGit(t, dir, "checkout", "-q", target)
-	mustGit(t, dir, "merge", "-q", "--no-ff", "-m", "merge "+source, source)
+	gittest.Git(t, dir, "checkout", "-q", target)
+	gittest.Git(t, dir, "merge", "-q", "--no-ff", "-m", "merge "+source, source)
 }
 
 func setStatus(t *testing.T, s *store.Store, _ model.Branch, id model.EntityID, status model.Status) {
@@ -110,7 +111,7 @@ func TestReconcileNotMergedUntouched(t *testing.T) {
 	dir := s.Git.Dir
 	branchFrom(t, dir, "feature/y")
 	task := createTask(t, s, "stays put", "feature/y")
-	mustGit(t, dir, "checkout", "-q", "main")
+	gittest.Git(t, dir, "checkout", "-q", "main")
 
 	report := reconcile(t, s, "main", nil, false, false)
 
@@ -213,8 +214,8 @@ func TestReconcileExplicitFrom(t *testing.T) {
 func TestReconcileIntoNamespace(t *testing.T) {
 	s := reconcileClone(t)
 	dir := s.Git.Dir
-	mustGit(t, dir, "checkout", "-q", "-b", "release")
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "release base")
+	gittest.Git(t, dir, "checkout", "-q", "-b", "release")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "release base")
 	branchFrom(t, dir, "feature/r")
 	task := createTask(t, s, "for release", "feature/r")
 	mergeInto(t, dir, "release", "feature/r")
@@ -239,9 +240,9 @@ func TestReconcileForceSquash(t *testing.T) {
 	task := createTask(t, s, "squash merged", "feature/z")
 	// Squash merge: main gains the content but not feature/z's tip as a parent,
 	// so ancestry can never see it as merged.
-	mustGit(t, dir, "checkout", "-q", "main")
-	mustGit(t, dir, "merge", "-q", "--squash", "feature/z")
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "squash z")
+	gittest.Git(t, dir, "checkout", "-q", "main")
+	gittest.Git(t, dir, "merge", "-q", "--squash", "feature/z")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "squash z")
 
 	if br := findBranch(t, reconcile(t, s, "main", nil, false, false), "feature/z"); br.Merged {
 		t.Fatalf("squash-merged feature/z reported merged %+v, want skipped", br)
@@ -268,7 +269,7 @@ func TestReconcileDeletedSourceBranch(t *testing.T) {
 	branchFrom(t, dir, "feature/x")
 	task := createTask(t, s, "orphaned ref", "feature/x")
 	mergeInto(t, dir, "main", "feature/x")
-	mustGit(t, dir, "branch", "-q", "-D", "feature/x")
+	gittest.Git(t, dir, "branch", "-q", "-D", "feature/x")
 
 	report := reconcile(t, s, "main", nil, false, false)
 	br := findBranch(t, report, "feature/x")
@@ -353,7 +354,7 @@ func TestReconcileMissingTarget(t *testing.T) {
 // branch's work; without the fold it would read stale canonical state and miss
 // the task entirely.
 func TestReconcileFoldsPlainFetchedTracking(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	for _, s := range []*store.Store{a, b} {
@@ -361,18 +362,18 @@ func TestReconcileFoldsPlainFetchedTracking(t *testing.T) {
 			t.Fatalf("Install: %v", err)
 		}
 	}
-	mustGit(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+	gittest.Git(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
 
 	task := createTask(t, b, "from feature", "feature/x")
 	taskRef := refs.Task(task.ID)
 	sync(t, b)
 
-	mustGit(t, a.Git.Dir, "-c", "fetch.prune=true", "fetch", "-q", "origin")
+	gittest.Git(t, a.Git.Dir, "-c", "fetch.prune=true", "fetch", "-q", "origin")
 	if _, err := a.Repo.Tip(t.Context(), taskRef); !errors.Is(err, gitobj.ErrRefNotFound) {
 		t.Fatalf("before reconcile, canonical %s should be absent (plain fetch stages tracking only), got err %v", taskRef, err)
 	}
 	trackingRef := "refs/cc-notes-sync/origin/tasks/" + string(task.ID)
-	if got := mustGit(t, a.Git.Dir, "rev-parse", trackingRef); got != string(task.Head) {
+	if got := gittest.Git(t, a.Git.Dir, "rev-parse", trackingRef); got != string(task.Head) {
 		t.Fatalf("plain fetch should stage %s at %s, got %s", trackingRef, task.Head, got)
 	}
 

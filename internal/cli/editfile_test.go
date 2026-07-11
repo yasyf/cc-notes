@@ -12,6 +12,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/fusefs"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
 )
 
@@ -67,7 +68,7 @@ func TestDocEditCheckoutApply(t *testing.T) {
 	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff",
 		"--when", "later", "--body", "orig body", "--label", "design", "--json"))
 	ref := "refs/cc-notes/docs/" + added.ID
-	before := mustGit(t, dir, "rev-list", "--count", ref)
+	before := gittest.Git(t, dir, "rev-list", "--count", ref)
 
 	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
 	if !strings.Contains(path, ".git") || !strings.HasSuffix(path, added.ID+".md") {
@@ -93,7 +94,7 @@ func TestDocEditCheckoutApply(t *testing.T) {
 	if bufExists(path) {
 		t.Fatalf("buffer %s still present after apply, want removed", path)
 	}
-	if after := mustGit(t, dir, "rev-list", "--count", ref); after == before {
+	if after := gittest.Git(t, dir, "rev-list", "--count", ref); after == before {
 		t.Fatalf("chain still %s commits after apply, want one more", after)
 	}
 }
@@ -327,7 +328,7 @@ func TestEditEmptyDiffCommitsNothing(t *testing.T) {
 	dir := initRepo(t)
 	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
 	ref := "refs/cc-notes/docs/" + added.ID
-	before := mustGit(t, dir, "rev-list", "--count", ref)
+	before := gittest.Git(t, dir, "rev-list", "--count", ref)
 	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
 	_, stderr, err := runCLI(t, dir, "doc", "edit", added.ID, "--apply")
 	if err != nil {
@@ -336,7 +337,7 @@ func TestEditEmptyDiffCommitsNothing(t *testing.T) {
 	if !strings.Contains(stderr, "no changes") {
 		t.Fatalf("stderr = %q, want a no-changes note", stderr)
 	}
-	if after := mustGit(t, dir, "rev-list", "--count", ref); after != before {
+	if after := gittest.Git(t, dir, "rev-list", "--count", ref); after != before {
 		t.Fatalf("chain = %s commits, want unchanged %s (an empty diff commits nothing)", after, before)
 	}
 	if bufExists(path) {
@@ -591,7 +592,7 @@ func TestEditApplyShortenedCommitAnchorSurvives(t *testing.T) {
 	head := commitFile(t, dir, "seed.go", "package main")
 	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Anchored", "--body", "b", "--commit", "HEAD", "--json"))
 	ref := "refs/cc-notes/docs/" + added.ID
-	before := mustGit(t, dir, "rev-list", "--count", ref)
+	before := gittest.Git(t, dir, "rev-list", "--count", ref)
 
 	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
 	replaceInBuf(t, path, "commits: ["+head+"]", "commits: ["+head[:7]+"]")
@@ -603,7 +604,7 @@ func TestEditApplyShortenedCommitAnchorSurvives(t *testing.T) {
 	if !strings.Contains(stderr, "no changes") {
 		t.Fatalf("stderr = %q, want a no-changes note (re-spelling a sha is not an edit)", stderr)
 	}
-	if after := mustGit(t, dir, "rev-list", "--count", ref); after != before {
+	if after := gittest.Git(t, dir, "rev-list", "--count", ref); after != before {
 		t.Fatalf("chain = %s commits, want unchanged %s (a spelling-only diff commits nothing)", after, before)
 	}
 	shown := mustJSON[docJSON](t, mustRun(t, dir, "doc", "show", added.ID, "--json"))

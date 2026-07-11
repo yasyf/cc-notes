@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -53,7 +54,7 @@ func TestAttachFile(t *testing.T) {
 		t.Errorf("first AttachFile guarded = false, want true (installs %s)", strings.Join(PruneGuardConfigs[:], ", "))
 	}
 	for _, key := range []string{"lfs.pruneverifyremotealways", "lfs.pruneverifyunreachablealways"} {
-		if got := mustGit(t, s.Git.Dir, "config", "--get", key); got != "true" {
+		if got := gittest.Git(t, s.Git.Dir, "config", "--get", key); got != "true" {
 			t.Errorf("%s = %q, want %q", key, got, "true")
 		}
 	}
@@ -175,9 +176,9 @@ func TestPruneGuardRetainsUnsyncedObject(t *testing.T) {
 	defer srv.Close()
 
 	s := initStore(t)
-	mustGit(t, s.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
-	mustGit(t, s.Git.Dir, "remote", "add", "origin", "https://example.invalid/scratch.git")
-	mustGit(t, s.Git.Dir, "config", "lfs.url", srv.URL)
+	gittest.Git(t, s.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+	gittest.Git(t, s.Git.Dir, "remote", "add", "origin", "https://example.invalid/scratch.git")
+	gittest.Git(t, s.Git.Dir, "config", "lfs.url", srv.URL)
 
 	att, guarded, err := s.AttachFile(t.Context(), writeTempFile(t, "unsynced.bin", []byte("un-pushed evidence")))
 	if err != nil {

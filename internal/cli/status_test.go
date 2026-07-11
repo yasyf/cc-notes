@@ -3,6 +3,8 @@ package cli_test
 import (
 	"strings"
 	"testing"
+
+	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
 // statusJSONShape mirrors the status --json DTO for round-trip assertions.
@@ -151,8 +153,8 @@ func TestStatusDocs(t *testing.T) {
 func TestStatusDetachedHead(t *testing.T) {
 	dir := initRepo(t)
 	addTask(t, dir, "On main")
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "c")
-	mustGit(t, dir, "checkout", "-q", "--detach")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c")
+	gittest.Git(t, dir, "checkout", "-q", "--detach")
 
 	out, _, err := runCLI(t, dir, "status")
 	if err != nil {

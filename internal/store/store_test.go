@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -19,6 +18,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -29,48 +29,11 @@ const (
 	testActor = model.Actor("Test User <test@example.com>")
 )
 
-// scrubGitEnv clears every git environment knob that could leak host state
-// into a test and pins global/system config to /dev/null. t.Setenv with the
-// original value registers the restore before os.Unsetenv removes the key.
-func scrubGitEnv(t *testing.T) {
-	t.Helper()
-	for _, key := range []string{
-		"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-		"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
-		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
-		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-		"GIT_EDITOR", "EMAIL", actorEnv,
-	} {
-		if value, ok := os.LookupEnv(key); ok {
-			t.Setenv(key, value)
-			_ = os.Unsetenv(key)
-		}
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-}
-
-func mustGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
 func initStore(t *testing.T) *Store {
 	t.Helper()
-	scrubGitEnv(t)
-	dir := t.TempDir()
-	mustGit(t, dir, "init", "-q", "-b", "main")
-	mustGit(t, dir, "config", "user.name", testName)
-	mustGit(t, dir, "config", "user.email", testEmail)
-	s, err := Open(dir)
+	s, err := Open(gittest.InitRepo(t))
 	if err != nil {
-		t.Fatalf("Open(%s): %v", dir, err)
+		t.Fatalf("Open: %v", err)
 	}
 	return s
 }
@@ -173,7 +136,7 @@ func TestCreateNoteRoundTrip(t *testing.T) {
 		t.Errorf("Load = %+v, want Create snapshot %+v", loaded, snapshot)
 	}
 
-	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: note create" {
+	if msg := gittest.Git(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: note create" {
 		t.Errorf("commit message = %q, want %q", msg, "cc-notes: note create")
 	}
 
@@ -207,7 +170,7 @@ func TestCreateTaskRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(loaded, snapshot) {
 		t.Errorf("Load = %+v, want Create snapshot %+v", loaded, snapshot)
 	}
-	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: task create" {
+	if msg := gittest.Git(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: task create" {
 		t.Errorf("commit message = %q, want %q", msg, "cc-notes: task create")
 	}
 
@@ -310,7 +273,7 @@ func TestAppendRoundTrip(t *testing.T) {
 		t.Errorf("Load = %+v, want Append snapshot %+v", loaded, snapshot)
 	}
 
-	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: set_title add_tag" {
+	if msg := gittest.Git(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: set_title add_tag" {
 		t.Errorf("commit message = %q, want %q", msg, "cc-notes: set_title add_tag")
 	}
 	chain, err := s.Repo.ReadChain(t.Context(), updated.Head)
@@ -324,7 +287,7 @@ func TestAppendRoundTrip(t *testing.T) {
 
 func TestAppendConcurrent(t *testing.T) {
 	s := initStore(t)
-	mustGit(t, s.Git.Dir, "config", "core.filesRefLockTimeout", "3000")
+	gittest.Git(t, s.Git.Dir, "config", "core.filesRefLockTimeout", "3000")
 	note := create(t, s, noteOps("contended")).(model.Note)
 	ref := refs.Note(note.ID)
 
@@ -402,14 +365,14 @@ func TestAppendContended(t *testing.T) {
 	ref := refs.Note(note.ID)
 
 	blocked := t.TempDir()
-	mustGit(t, blocked, "init", "-q", "-b", "main")
-	mustGit(t, blocked, "config", "user.name", testName)
-	mustGit(t, blocked, "config", "user.email", testEmail)
+	gittest.Git(t, blocked, "init", "-q", "-b", "main")
+	gittest.Git(t, blocked, "config", "user.name", testName)
+	gittest.Git(t, blocked, "config", "user.email", testEmail)
 	alternates := filepath.Join(blocked, ".git", "objects", "info", "alternates")
 	if err := os.WriteFile(alternates, []byte(filepath.Join(s.Git.Dir, ".git", "objects")+"\n"), 0o600); err != nil {
 		t.Fatalf("write alternates: %v", err)
 	}
-	mustGit(t, blocked, "update-ref", ref, string(decoy.ID))
+	gittest.Git(t, blocked, "update-ref", ref, string(decoy.ID))
 
 	doctored := &Store{Repo: s.Repo, Git: gitcmd.Git{Dir: blocked}, now: time.Now}
 	_, err := doctored.Append(t.Context(), ref, []model.Op{model.AddTag{Tag: "x"}})
@@ -682,7 +645,7 @@ func TestCreateDocRoundTrip(t *testing.T) {
 		t.Errorf("Load = %+v, want Create snapshot %+v", loaded, snapshot)
 	}
 
-	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: doc create" {
+	if msg := gittest.Git(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: doc create" {
 		t.Errorf("commit message = %q, want %q", msg, "cc-notes: doc create")
 	}
 
@@ -889,7 +852,7 @@ func TestCreateLogRoundTrip(t *testing.T) {
 	}
 
 	ref := refs.Log(log.ID)
-	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: log create" {
+	if msg := gittest.Git(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: log create" {
 		t.Errorf("commit message = %q, want %q", msg, "cc-notes: log create")
 	}
 
@@ -1132,7 +1095,7 @@ func TestCreateSprintRoundTrip(t *testing.T) {
 	}
 
 	ref := refs.Sprint(sprint.ID)
-	if got := mustGit(t, s.Git.Dir, "rev-parse", ref); got != string(sprint.ID) {
+	if got := gittest.Git(t, s.Git.Dir, "rev-parse", ref); got != string(sprint.ID) {
 		t.Errorf("ref %s -> %s, want %s", ref, got, sprint.ID)
 	}
 	loaded, err := s.Load(t.Context(), ref)
@@ -1142,7 +1105,7 @@ func TestCreateSprintRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(loaded, snapshot) {
 		t.Errorf("Load = %+v, want Create snapshot %+v", loaded, snapshot)
 	}
-	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: sprint create" {
+	if msg := gittest.Git(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: sprint create" {
 		t.Errorf("commit message = %q, want %q", msg, "cc-notes: sprint create")
 	}
 
@@ -1184,7 +1147,7 @@ func TestCreateProjectRoundTrip(t *testing.T) {
 	}
 
 	ref := refs.Project(project.ID)
-	if got := mustGit(t, s.Git.Dir, "rev-parse", ref); got != string(project.ID) {
+	if got := gittest.Git(t, s.Git.Dir, "rev-parse", ref); got != string(project.ID) {
 		t.Errorf("ref %s -> %s, want %s", ref, got, project.ID)
 	}
 	loaded, err := s.Load(t.Context(), ref)
@@ -1194,7 +1157,7 @@ func TestCreateProjectRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(loaded, snapshot) {
 		t.Errorf("Load = %+v, want Create snapshot %+v", loaded, snapshot)
 	}
-	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: project create" {
+	if msg := gittest.Git(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: project create" {
 		t.Errorf("commit message = %q, want %q", msg, "cc-notes: project create")
 	}
 

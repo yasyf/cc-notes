@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
@@ -34,53 +35,15 @@ const (
 	defaultFetch      = "+refs/heads/*:refs/remotes/origin/*"
 )
 
-// scrubGitEnv clears every git environment knob that could leak host state
-// into a test and pins global/system config to /dev/null. t.Setenv with the
-// original value registers the restore before os.Unsetenv removes the key.
-func scrubGitEnv(t *testing.T) {
-	t.Helper()
-	for _, key := range []string{
-		"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-		"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
-		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
-		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-		"GIT_EDITOR", "EMAIL", "CC_NOTES_ACTOR",
-	} {
-		if value, ok := os.LookupEnv(key); ok {
-			t.Setenv(key, value)
-			_ = os.Unsetenv(key)
-		}
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-}
-
-func mustGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-func initBare(t *testing.T) string {
-	t.Helper()
-	scrubGitEnv(t)
-	dir := t.TempDir()
-	mustGit(t, dir, "init", "-q", "--bare")
-	return dir
-}
-
+// clone creates a fresh repo wired to bare as origin under a local identity,
+// on top of the scrubbed environment gittest.InitBare already established.
 func clone(t *testing.T, bare, name, email string) *store.Store {
 	t.Helper()
 	dir := t.TempDir()
-	mustGit(t, dir, "init", "-q", "-b", "main")
-	mustGit(t, dir, "remote", "add", "origin", bare)
-	mustGit(t, dir, "config", "user.name", name)
-	mustGit(t, dir, "config", "user.email", email)
+	gittest.Git(t, dir, "init", "-q", "-b", "main")
+	gittest.Git(t, dir, "remote", "add", "origin", bare)
+	gittest.Git(t, dir, "config", "user.name", name)
+	gittest.Git(t, dir, "config", "user.email", email)
 	s, err := store.Open(dir)
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)
@@ -148,7 +111,7 @@ func configAll(t *testing.T, s *store.Store, key string) []string {
 func ccRefs(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	tips := map[string]string{}
-	out := mustGit(t, dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/cc-notes/")
+	out := gittest.Git(t, dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/cc-notes/")
 	for line := range strings.Lines(out) {
 		if name, sha, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
 			tips[name] = sha
@@ -182,7 +145,7 @@ func listTasks(t *testing.T, s *store.Store, branch model.Branch) []model.Task {
 }
 
 func TestInstallIdempotent(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	s := clone(t, bare, "Alice", "alice@example.com")
 	wantAdded := []string{
 		"remote.origin.fetch=" + ccFetchRefspec,
@@ -214,10 +177,10 @@ func TestInstallIdempotent(t *testing.T) {
 }
 
 func TestInstallPreservesExistingPushRefspec(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	s := clone(t, bare, "Alice", "alice@example.com")
 	existing := "refs/heads/main:refs/heads/main"
-	mustGit(t, s.Git.Dir, "config", "remote.origin.push", existing)
+	gittest.Git(t, s.Git.Dir, "config", "remote.origin.push", existing)
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")
 		if err != nil {
@@ -233,7 +196,7 @@ func TestInstallPreservesExistingPushRefspec(t *testing.T) {
 }
 
 func TestInstallUnknownRemote(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	s := clone(t, bare, "Alice", "alice@example.com")
 	_, err := ccsync.Install(t.Context(), s.Git, "upstream")
 	if !errors.Is(err, ccsync.ErrRemoteNotFound) {
@@ -249,12 +212,12 @@ func TestInstallUnknownRemote(t *testing.T) {
 // is a no-op. Push, HEAD, and the reflog are pre-wired so the only change the
 // upgrade run makes is the fetch rewrite.
 func TestInstallUpgradesOldFetchRefspec(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	s := clone(t, bare, "Alice", "alice@example.com")
-	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
-	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
-	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
-	mustGit(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
+	gittest.Git(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
 
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")
@@ -288,12 +251,12 @@ func TestInstallUpgradesOldFetchRefspec(t *testing.T) {
 // The upgrade is idempotent and reported in write order: the wired remote fully
 // first, then the swept remote's fetch rewrite.
 func TestInstallSweepsEveryRemoteOldFetchRefspec(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	s := clone(t, bare, "Alice", "alice@example.com")
-	upstreamBare := initBare(t)
-	mustGit(t, s.Git.Dir, "remote", "add", "upstream", upstreamBare)
-	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
-	mustGit(t, s.Git.Dir, "config", "--add", "remote.upstream.fetch", oldCCFetchRefspec)
+	upstreamBare := gittest.InitBare(t)
+	gittest.Git(t, s.Git.Dir, "remote", "add", "upstream", upstreamBare)
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.upstream.fetch", oldCCFetchRefspec)
 
 	const (
 		upstreamDefaultFetch = "+refs/heads/*:refs/remotes/upstream/*"
@@ -334,8 +297,8 @@ func TestInstallSweepsEveryRemoteOldFetchRefspec(t *testing.T) {
 
 	task := createTask(t, s, "unsynced", "main")
 	taskRef := refs.Task(task.ID)
-	mustGit(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "--all", "-q")
-	if got := mustGit(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
+	gittest.Git(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "--all", "-q")
+	if got := gittest.Git(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
 		t.Fatalf("after git fetch --all --prune across both upgraded remotes, %s = %s, want the unsynced task to survive at %s", taskRef, got, task.Head)
 	}
 }
@@ -346,9 +309,9 @@ func TestInstallSweepsEveryRemoteOldFetchRefspec(t *testing.T) {
 // git fetch --prune that used to delete an unsynced canonical ref leaves it
 // intact — proving the rewrite, not just the config line, closes the data loss.
 func TestUpgradedFetchPruneKeepsUnsyncedTask(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	s := clone(t, bare, "Alice", "alice@example.com")
-	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
 	if _, err := ccsync.Install(t.Context(), s.Git, "origin"); err != nil {
 		t.Fatalf("Install upgrade: %v", err)
 	}
@@ -357,8 +320,8 @@ func TestUpgradedFetchPruneKeepsUnsyncedTask(t *testing.T) {
 	}
 	task := createTask(t, s, "unsynced", "main")
 	taskRef := refs.Task(task.ID)
-	mustGit(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "-q", "origin")
-	if got := mustGit(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
+	gittest.Git(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "-q", "origin")
+	if got := gittest.Git(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
 		t.Fatalf("after upgrade then plain fetch --prune, %s = %s, want the unsynced task to survive at %s", taskRef, got, task.Head)
 	}
 }
@@ -371,13 +334,13 @@ func TestUpgradedFetchPruneKeepsUnsyncedTask(t *testing.T) {
 // afterward. Push and the reflog are pre-wired so the only config change is the
 // drop, reported under Removed; a rerun is a clean no-op.
 func TestInstallDropsRedundantOldFetchRefspec(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	s := clone(t, bare, "Alice", "alice@example.com")
-	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
-	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", ccFetchRefspec)
-	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
-	mustGit(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
-	mustGit(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", oldCCFetchRefspec)
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.fetch", ccFetchRefspec)
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
+	gittest.Git(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
 
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")
@@ -408,8 +371,8 @@ func TestInstallDropsRedundantOldFetchRefspec(t *testing.T) {
 	// survives now that only the tracking-namespace refspec remains.
 	task := createTask(t, s, "unsynced", "main")
 	taskRef := refs.Task(task.ID)
-	mustGit(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "-q", "origin")
-	if got := mustGit(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
+	gittest.Git(t, s.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "-q", "origin")
+	if got := gittest.Git(t, s.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
 		t.Fatalf("after dropping the redundant old refspec, %s = %s, want the unsynced task to survive at %s", taskRef, got, task.Head)
 	}
 }
@@ -421,10 +384,10 @@ func TestInstallDropsRedundantOldFetchRefspec(t *testing.T) {
 // canonical one — so a fresh clone's plain fetch pre-populates exactly the
 // tracking refs Sync folds; a following sync surfaces them as canonical.
 func TestPlainGitCarry(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
-	mustGit(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
-	head := mustGit(t, a.Git.Dir, "rev-parse", "HEAD")
+	gittest.Git(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+	head := gittest.Git(t, a.Git.Dir, "rev-parse", "HEAD")
 	if _, err := ccsync.Install(t.Context(), a.Git, "origin"); err != nil {
 		t.Fatalf("Install A: %v", err)
 	}
@@ -432,15 +395,15 @@ func TestPlainGitCarry(t *testing.T) {
 	task := createTask(t, a, "carried task", "main")
 	noteRef, taskRef := refs.Note(note.ID), refs.Task(task.ID)
 
-	mustGit(t, a.Git.Dir, "push", "-q", "origin")
+	gittest.Git(t, a.Git.Dir, "push", "-q", "origin")
 
-	if got := mustGit(t, bare, "rev-parse", "refs/heads/main"); got != head {
+	if got := gittest.Git(t, bare, "rev-parse", "refs/heads/main"); got != head {
 		t.Errorf("plain push: remote main at %s, want %s", got, head)
 	}
-	if got := mustGit(t, bare, "rev-parse", noteRef); got != string(note.Head) {
+	if got := gittest.Git(t, bare, "rev-parse", noteRef); got != string(note.Head) {
 		t.Errorf("plain push: remote %s at %s, want %s", noteRef, got, note.Head)
 	}
-	if got := mustGit(t, bare, "rev-parse", taskRef); got != string(task.Head) {
+	if got := gittest.Git(t, bare, "rev-parse", taskRef); got != string(task.Head) {
 		t.Errorf("plain push: remote %s at %s, want %s", taskRef, got, task.Head)
 	}
 
@@ -448,14 +411,14 @@ func TestPlainGitCarry(t *testing.T) {
 	if _, err := ccsync.Install(t.Context(), b.Git, "origin"); err != nil {
 		t.Fatalf("Install B: %v", err)
 	}
-	mustGit(t, b.Git.Dir, "fetch", "-q", "origin")
+	gittest.Git(t, b.Git.Dir, "fetch", "-q", "origin")
 
 	// Plain fetch lands the remote tips in the tracking namespace, not canonical.
 	trackNote := "refs/cc-notes-sync/origin/notes/" + string(note.ID)
-	if got := mustGit(t, b.Git.Dir, "rev-parse", trackNote); got != string(note.Head) {
+	if got := gittest.Git(t, b.Git.Dir, "rev-parse", trackNote); got != string(note.Head) {
 		t.Errorf("plain fetch: tracking %s at %s, want %s", trackNote, got, note.Head)
 	}
-	if refs := mustGit(t, b.Git.Dir, "for-each-ref", "refs/cc-notes/"); refs != "" {
+	if refs := gittest.Git(t, b.Git.Dir, "for-each-ref", "refs/cc-notes/"); refs != "" {
 		t.Errorf("plain fetch populated canonical refs %q, want tracking only", refs)
 	}
 
@@ -463,7 +426,7 @@ func TestPlainGitCarry(t *testing.T) {
 	if _, err := ccsync.Sync(t.Context(), b.Git.Dir, "origin", false); err != nil {
 		t.Fatalf("Sync B: %v", err)
 	}
-	if got := mustGit(t, b.Git.Dir, "rev-parse", noteRef); got != string(note.Head) {
+	if got := gittest.Git(t, b.Git.Dir, "rev-parse", noteRef); got != string(note.Head) {
 		t.Errorf("after sync: local %s at %s, want %s", noteRef, got, note.Head)
 	}
 	loaded, err := b.Load(t.Context(), taskRef)
@@ -508,7 +471,7 @@ exec %q "$@"
 }
 
 func TestTwoCloneConvergence(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	note := createNote(t, a, "shared note")
@@ -539,8 +502,8 @@ func TestTwoCloneConvergence(t *testing.T) {
 	appendOps(t, a, taskRef, model.AddLabel{Label: "urgent"})
 
 	sync(t, b)
-	bTip := mustGit(t, b.Git.Dir, "rev-parse", taskRef)
-	mustGit(t, bare, "update-ref", taskRef, string(task.Head))
+	bTip := gittest.Git(t, b.Git.Dir, "rev-parse", taskRef)
+	gittest.Git(t, bare, "update-ref", taskRef, string(task.Head))
 	marker := writeGitStub(t, bare, taskRef, bTip)
 
 	if got, want := sync(t, a), (ccsync.Report{Merged: 1, Pushed: 1, Reconciled: 3, Rounds: 2}); got != want {
@@ -578,14 +541,14 @@ func TestTwoCloneConvergence(t *testing.T) {
 		t.Errorf("merged Labels = %v, want %v", merged.Labels, want)
 	}
 	for _, dir := range []string{a.Git.Dir, b.Git.Dir} {
-		if got := mustGit(t, dir, "rev-list", "--merges", "--count", taskRef); got != "1" {
+		if got := gittest.Git(t, dir, "rev-list", "--merges", "--count", taskRef); got != "1" {
 			t.Errorf("merge commits in %s chain = %s, want 1", dir, got)
 		}
 	}
 }
 
 func TestConcurrentSameFieldLWW(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "contested", "main")
@@ -666,7 +629,7 @@ func syncUntilQuiescent(t *testing.T, stores ...*store.Store) {
 // merges. What is pinned is fold equality and quiescence, never byte tips
 // mid-flight.
 func TestSymmetricMergeRace(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "mirrored", "main")
@@ -679,8 +642,8 @@ func TestSymmetricMergeRace(t *testing.T) {
 
 	// Exchange objects clone-to-clone without moving refs, then mirror-merge
 	// the same divergence on both sides before either clone pushes.
-	mustGit(t, a.Git.Dir, "fetch", "-q", b.Git.Dir, taskRef)
-	mustGit(t, b.Git.Dir, "fetch", "-q", a.Git.Dir, taskRef)
+	gittest.Git(t, a.Git.Dir, "fetch", "-q", b.Git.Dir, taskRef)
+	gittest.Git(t, b.Git.Dir, "fetch", "-q", a.Git.Dir, taskRef)
 	if _, err := a.Merge(t.Context(), taskRef, tipA, tipB); err != nil {
 		t.Fatalf("A Merge: %v", err)
 	}
@@ -707,7 +670,7 @@ func TestSymmetricMergeRace(t *testing.T) {
 // entity tip is never clobbered. Sync's union merge is the only path that
 // resolves the entity ref.
 func TestPlainPushDivergedEntityRef(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	for _, s := range []*store.Store{a, b} {
@@ -715,22 +678,22 @@ func TestPlainPushDivergedEntityRef(t *testing.T) {
 			t.Fatalf("Install: %v", err)
 		}
 	}
-	mustGit(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+	gittest.Git(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
 	task := createTask(t, a, "diverged", "main")
 	taskRef := refs.Task(task.ID)
-	mustGit(t, a.Git.Dir, "push", "-q", "origin")
-	mustGit(t, b.Git.Dir, "fetch", "-q", "origin")
-	mustGit(t, b.Git.Dir, "reset", "-q", "--hard", "origin/main")
+	gittest.Git(t, a.Git.Dir, "push", "-q", "origin")
+	gittest.Git(t, b.Git.Dir, "fetch", "-q", "origin")
+	gittest.Git(t, b.Git.Dir, "reset", "-q", "--hard", "origin/main")
 	// A plain fetch now only mirrors into the tracking namespace, so B converges
 	// the canonical entity ref via sync before diverging it.
 	sync(t, b)
 
 	appendOps(t, a, taskRef, model.AddLabel{Label: "from-a"})
-	mustGit(t, a.Git.Dir, "push", "-q", "origin")
-	remoteEntity := mustGit(t, bare, "rev-parse", taskRef)
+	gittest.Git(t, a.Git.Dir, "push", "-q", "origin")
+	remoteEntity := gittest.Git(t, bare, "rev-parse", taskRef)
 	appendOps(t, b, taskRef, model.AddComment{Body: "from b"})
-	mustGit(t, b.Git.Dir, "commit", "-q", "--allow-empty", "-m", "b work")
-	bHead := mustGit(t, b.Git.Dir, "rev-parse", "HEAD")
+	gittest.Git(t, b.Git.Dir, "commit", "-q", "--allow-empty", "-m", "b work")
+	bHead := gittest.Git(t, b.Git.Dir, "rev-parse", "HEAD")
 
 	//nolint:gosec // G204: test shells out to git with fixed argv[0] and literal push args.
 	out, err := exec.Command("git", "-C", b.Git.Dir, "push", "origin").CombinedOutput()
@@ -738,10 +701,10 @@ func TestPlainPushDivergedEntityRef(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
 		t.Fatalf("plain push with diverged entity ref: err = %v, want exit 1; output:\n%s", err, out)
 	}
-	if got := mustGit(t, bare, "rev-parse", "refs/heads/main"); got != bHead {
+	if got := gittest.Git(t, bare, "rev-parse", "refs/heads/main"); got != bHead {
 		t.Errorf("remote main = %s, want B's commit %s: the branch must land despite the rejected entity ref", got, bHead)
 	}
-	if got := mustGit(t, bare, "rev-parse", taskRef); got != remoteEntity {
+	if got := gittest.Git(t, bare, "rev-parse", taskRef); got != remoteEntity {
 		t.Errorf("remote %s = %s, want %s: a diverged entity ref must never clobber", taskRef, got, remoteEntity)
 	}
 }
@@ -753,23 +716,23 @@ func TestPlainPushDivergedEntityRef(t *testing.T) {
 // is no longer a fetch destination, so prune can never touch it: the unsynced
 // task survives the exact fetch --prune that used to erase it.
 func TestPlainFetchPruneKeepsUnsyncedTask(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	if _, err := ccsync.Install(t.Context(), a.Git, "origin"); err != nil {
 		t.Fatalf("Install A: %v", err)
 	}
 	task := createTask(t, a, "unsynced", "main")
 	taskRef := refs.Task(task.ID)
-	if got := mustGit(t, a.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
+	if got := gittest.Git(t, a.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
 		t.Fatalf("before fetch, %s = %s, want %s", taskRef, got, task.Head)
 	}
 
-	mustGit(t, a.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "-q", "origin")
+	gittest.Git(t, a.Git.Dir, "-c", "fetch.prune=true", "-c", "fetch.pruneTags=true", "fetch", "-q", "origin")
 
-	if got := mustGit(t, a.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
+	if got := gittest.Git(t, a.Git.Dir, "rev-parse", taskRef); got != string(task.Head) {
 		t.Fatalf("after plain fetch --prune, %s = %s, want the unsynced task to survive at %s", taskRef, got, task.Head)
 	}
-	if tracking := mustGit(t, a.Git.Dir, "for-each-ref", "refs/cc-notes-sync/"); tracking != "" {
+	if tracking := gittest.Git(t, a.Git.Dir, "for-each-ref", "refs/cc-notes-sync/"); tracking != "" {
 		t.Errorf("tracking namespace = %q, want empty (remote has no entity refs)", tracking)
 	}
 }
@@ -781,7 +744,7 @@ func TestPlainFetchPruneKeepsUnsyncedTask(t *testing.T) {
 // the remote tip into the tracking namespace; Sync's union merge remains the one
 // path that folds the two sides, losing neither.
 func TestPlainFetchNeverClobbersDivergedRef(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	for _, s := range []*store.Store{a, b} {
@@ -797,15 +760,15 @@ func TestPlainFetchNeverClobbersDivergedRef(t *testing.T) {
 	local := appendOps(t, b, taskRef, model.AddComment{Body: "unsynced local"}).(model.Task).Head
 	appendOps(t, a, taskRef, model.AddLabel{Label: "remote-wins"})
 	sync(t, a)
-	remoteTip := mustGit(t, bare, "rev-parse", taskRef)
+	remoteTip := gittest.Git(t, bare, "rev-parse", taskRef)
 	trackingRef := "refs/cc-notes-sync/origin/tasks/" + string(task.ID)
 
-	mustGit(t, b.Git.Dir, "-c", "fetch.prune=true", "fetch", "-q", "origin")
+	gittest.Git(t, b.Git.Dir, "-c", "fetch.prune=true", "fetch", "-q", "origin")
 
-	if got := mustGit(t, b.Git.Dir, "rev-parse", taskRef); got != string(local) {
+	if got := gittest.Git(t, b.Git.Dir, "rev-parse", taskRef); got != string(local) {
 		t.Fatalf("after plain fetch --prune, %s = %s, want the diverged local tip %s untouched", taskRef, got, local)
 	}
-	if got := mustGit(t, b.Git.Dir, "rev-parse", trackingRef); got != remoteTip {
+	if got := gittest.Git(t, b.Git.Dir, "rev-parse", trackingRef); got != remoteTip {
 		t.Errorf("tracking %s = %s, want remote tip %s", trackingRef, got, remoteTip)
 	}
 
@@ -829,7 +792,7 @@ func TestPlainFetchNeverClobbersDivergedRef(t *testing.T) {
 // opportunistically, which would clobber a diverged local entity tip before
 // reconcile could union-merge it, stranding the local ops in the reflog.
 func TestSyncPreservesDivergedOpsAfterInstall(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	for _, s := range []*store.Store{a, b} {
@@ -873,7 +836,7 @@ func TestSyncPreservesDivergedOpsAfterInstall(t *testing.T) {
 // never clobbered: the plain pull leaves A's canonical ref untouched, and Sync's
 // union merge folds both sides.
 func TestPlainPullThenSyncPropagatesDone(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	for _, s := range []*store.Store{a, b} {
@@ -892,8 +855,8 @@ func TestPlainPullThenSyncPropagatesDone(t *testing.T) {
 	sync(t, b)
 
 	// A's plain pull (fetch half, prune on) must not clobber A's local tip.
-	mustGit(t, a.Git.Dir, "-c", "fetch.prune=true", "fetch", "-q", "origin")
-	if got := mustGit(t, a.Git.Dir, "rev-parse", taskRef); got != string(aLocal) {
+	gittest.Git(t, a.Git.Dir, "-c", "fetch.prune=true", "fetch", "-q", "origin")
+	if got := gittest.Git(t, a.Git.Dir, "rev-parse", taskRef); got != string(aLocal) {
 		t.Fatalf("after plain pull, %s = %s, want A's unsynced local tip %s untouched", taskRef, got, aLocal)
 	}
 
@@ -918,7 +881,7 @@ func TestPlainPullThenSyncPropagatesDone(t *testing.T) {
 // reconciles nothing — before and after the fetch are identical, so the scope
 // is empty.
 func TestSyncUnchangedReconcilesNothing(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	createNote(t, a, "shared note")
@@ -934,7 +897,7 @@ func TestSyncUnchangedReconcilesNothing(t *testing.T) {
 // that the next sync reconciles only that ref, leaving the unchanged ref out
 // of scope.
 func TestSyncScopedReconcilesOnlyChanged(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	createNote(t, a, "shared note")
@@ -962,7 +925,7 @@ func TestSyncScopedReconcilesOnlyChanged(t *testing.T) {
 // leaves: tracking==remote, local stale.
 func advanceTracking(t *testing.T, s *store.Store) {
 	t.Helper()
-	mustGit(t, s.Git.Dir, "fetch", "-q", "origin", "+refs/cc-notes/*:refs/cc-notes-sync/origin/*")
+	gittest.Git(t, s.Git.Dir, "fetch", "-q", "origin", "+refs/cc-notes/*:refs/cc-notes-sync/origin/*")
 }
 
 // TestSyncScopedHealsBehindAfterInterruptedSync pins recovery from an
@@ -972,7 +935,7 @@ func advanceTracking(t *testing.T, s *store.Store) {
 // local-containment check pulls the ref back into scope so the next scoped sync
 // fast-forwards it with no --full.
 func TestSyncScopedHealsBehindAfterInterruptedSync(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "shared task", "main")
@@ -1002,7 +965,7 @@ func TestSyncScopedHealsBehindAfterInterruptedSync(t *testing.T) {
 // unpushed ops. Skipping it would strand those ops and loop ErrSyncContended;
 // the containment check union-merges instead, preserving both sides.
 func TestSyncScopedHealsDivergedAfterInterruptedSync(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "shared task", "main")
@@ -1039,7 +1002,7 @@ func TestSyncScopedHealsDivergedAfterInterruptedSync(t *testing.T) {
 // TestSyncFullForcesFullReconcile pins the --full escape hatch: even on an
 // unchanged remote, full reconciles every ref the remote knows.
 func TestSyncFullForcesFullReconcile(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	createNote(t, a, "shared note")
@@ -1054,9 +1017,9 @@ func TestSyncFullForcesFullReconcile(t *testing.T) {
 }
 
 func TestSyncNoRemote(t *testing.T) {
-	scrubGitEnv(t)
+	gittest.ScrubEnv(t)
 	dir := t.TempDir()
-	mustGit(t, dir, "init", "-q", "-b", "main")
+	gittest.Git(t, dir, "init", "-q", "-b", "main")
 	_, err := ccsync.Sync(t.Context(), dir, "origin", false)
 	if !errors.Is(err, ccsync.ErrRemoteNotFound) {
 		t.Fatalf("Sync without remote: got %v, want ErrRemoteNotFound", err)
@@ -1070,7 +1033,7 @@ func TestSyncNoRemote(t *testing.T) {
 // clones: two clones each move the same task to a different branch, and after
 // sync both fold to the same branch — the linearization winner.
 func TestSetBranchConvergesAcrossClones(t *testing.T) {
-	bare := initBare(t)
+	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
 	task := createTask(t, a, "contested branch", "main")

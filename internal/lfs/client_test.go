@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/lfs"
 )
 
@@ -265,7 +266,7 @@ func TestCredentialAuthFlow(t *testing.T) {
 	f.requireAuth = basicAuth("alice", "s3cret")
 	g := initRepo(t)
 	logPath := filepath.Join(t.TempDir(), "verbs.log")
-	mustGit(t, g.Dir, "config", "credential.helper",
+	gittest.Git(t, g.Dir, "config", "credential.helper",
 		fmt.Sprintf(`!f() { echo "$1" >>"%s"; if [ "$1" = get ]; then echo username=alice; echo password=s3cret; fi; }; f`, logPath))
 	ctx := t.Context()
 
@@ -309,7 +310,7 @@ func TestCredentialAuthRejected(t *testing.T) {
 	f.requireAuth = basicAuth("alice", "s3cret")
 	g := initRepo(t)
 	logPath := filepath.Join(t.TempDir(), "verbs.log")
-	mustGit(t, g.Dir, "config", "credential.helper",
+	gittest.Git(t, g.Dir, "config", "credential.helper",
 		fmt.Sprintf(`!f() { echo "$1" >>"%s"; if [ "$1" = get ]; then echo username=alice; echo password=wrong; fi; }; f`, logPath))
 	ctx := t.Context()
 
@@ -339,7 +340,7 @@ func TestCredentialAuthRejected(t *testing.T) {
 func TestCredentialForbidden(t *testing.T) {
 	g := initRepo(t)
 	logPath := filepath.Join(t.TempDir(), "verbs.log")
-	mustGit(t, g.Dir, "config", "credential.helper",
+	gittest.Git(t, g.Dir, "config", "credential.helper",
 		fmt.Sprintf(`!f() { echo "$1" >>"%s"; if [ "$1" = get ]; then echo username=alice; echo password=s3cret; fi; }; f`, logPath))
 	ctx := t.Context()
 
@@ -383,7 +384,7 @@ func TestExtraHeaderAuth(t *testing.T) {
 	authValue := "basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
 	f.requireAuth = authValue
 	g := initRepo(t)
-	mustGit(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: "+authValue)
+	gittest.Git(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: "+authValue)
 	ctx := t.Context()
 
 	store := lfs.Store{Dir: filepath.Join(t.TempDir(), "lfs")}
@@ -454,7 +455,7 @@ func TestExtraHeaderUnscopedEntry(t *testing.T) {
 	authValue := "basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
 	f.requireAuth = authValue
 	g := initRepo(t)
-	mustGit(t, g.Dir, "config", "http.extraheader", "AUTHORIZATION: "+authValue)
+	gittest.Git(t, g.Dir, "config", "http.extraheader", "AUTHORIZATION: "+authValue)
 
 	if _, uploaded := uploadOneObject(t, g, srv.URL+"/lfs", "upload"); uploaded != 1 {
 		t.Fatalf("uploaded = %d, want 1 (unscoped extraheader must authenticate)", uploaded)
@@ -469,8 +470,8 @@ func TestExtraHeaderIgnoresNonMatchingScope(t *testing.T) {
 	authValue := "basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
 	f.requireAuth = authValue
 	g := initRepo(t)
-	mustGit(t, g.Dir, "config", "--add", "http.https://unrelated.example/.extraheader", "AUTHORIZATION: basic WRONG")
-	mustGit(t, g.Dir, "config", "--add", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: "+authValue)
+	gittest.Git(t, g.Dir, "config", "--add", "http.https://unrelated.example/.extraheader", "AUTHORIZATION: basic WRONG")
+	gittest.Git(t, g.Dir, "config", "--add", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: "+authValue)
 
 	if _, uploaded := uploadOneObject(t, g, srv.URL+"/lfs", "upload"); uploaded != 1 {
 		t.Fatalf("uploaded = %d, want 1 (non-matching scope must be ignored)", uploaded)
@@ -485,8 +486,8 @@ func TestExtraHeaderMultipleMatchesError(t *testing.T) {
 		_, srv := newFakeLFS(t)
 		g := initRepo(t)
 		scopedKey := "http." + srv.URL + "/.extraheader"
-		mustGit(t, g.Dir, "config", "--add", "http.extraheader", "AUTHORIZATION: basic UNSCOPEDSECRET")
-		mustGit(t, g.Dir, "config", "--add", scopedKey, "AUTHORIZATION: basic SCOPEDSECRET")
+		gittest.Git(t, g.Dir, "config", "--add", "http.extraheader", "AUTHORIZATION: basic UNSCOPEDSECRET")
+		gittest.Git(t, g.Dir, "config", "--add", scopedKey, "AUTHORIZATION: basic SCOPEDSECRET")
 		_, err := lfs.NewClient(t.Context(), g, lfs.Endpoint{Href: srv.URL + "/lfs"}, "upload")
 		if err == nil {
 			t.Fatal("NewClient succeeded, want multi-match error")
@@ -506,8 +507,8 @@ func TestExtraHeaderMultipleMatchesError(t *testing.T) {
 	t.Run("two adds under one pattern", func(t *testing.T) {
 		_, srv := newFakeLFS(t)
 		g := initRepo(t)
-		mustGit(t, g.Dir, "config", "--add", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: basic ONESECRET")
-		mustGit(t, g.Dir, "config", "--add", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: basic TWOSECRET")
+		gittest.Git(t, g.Dir, "config", "--add", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: basic ONESECRET")
+		gittest.Git(t, g.Dir, "config", "--add", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: basic TWOSECRET")
 		_, err := lfs.NewClient(t.Context(), g, lfs.Endpoint{Href: srv.URL + "/lfs"}, "upload")
 		if err == nil || !strings.Contains(err.Error(), "2 entries match") {
 			t.Fatalf("err = %v, want 2-entries-match error", err)
@@ -535,7 +536,7 @@ func TestExtraHeaderMalformedValue(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, srv := newFakeLFS(t)
 			g := initRepo(t)
-			mustGit(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", tc.configVal)
+			gittest.Git(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", tc.configVal)
 			_, err := lfs.NewClient(t.Context(), g, lfs.Endpoint{Href: srv.URL + "/lfs"}, "upload")
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("err = %v, want %q", err, tc.wantErr)
@@ -554,7 +555,7 @@ func TestExtraHeaderTrimsHeaderName(t *testing.T) {
 	authValue := "basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
 	f.requireAuth = authValue
 	g := initRepo(t)
-	mustGit(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", "AUTHORIZATION : "+authValue)
+	gittest.Git(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", "AUTHORIZATION : "+authValue)
 
 	if _, uploaded := uploadOneObject(t, g, srv.URL+"/lfs", "upload"); uploaded != 1 {
 		t.Fatalf("uploaded = %d, want 1 (untrimmed header name would be dropped)", uploaded)
@@ -594,9 +595,9 @@ func TestExtraHeaderStale401FallsBackToCredentialFill(t *testing.T) {
 	f, srv := newFakeLFS(t)
 	f.requireAuth = basicAuth("alice", "s3cret")
 	g := initRepo(t)
-	mustGit(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: basic WRONG")
+	gittest.Git(t, g.Dir, "config", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: basic WRONG")
 	logPath := filepath.Join(t.TempDir(), "verbs.log")
-	mustGit(t, g.Dir, "config", "credential.helper",
+	gittest.Git(t, g.Dir, "config", "credential.helper",
 		fmt.Sprintf(`!f() { echo "$1" >>"%s"; if [ "$1" = get ]; then echo username=alice; echo password=s3cret; fi; }; f`, logPath))
 	ctx := t.Context()
 

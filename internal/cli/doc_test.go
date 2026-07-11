@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
 )
 
@@ -75,7 +76,7 @@ func TestDocAddRoundTrip(t *testing.T) {
 		t.Errorf("verified_by = %v, want %q", added.VerifiedBy, actorA)
 	}
 	ref := "refs/cc-notes/docs/" + added.ID
-	if got := mustGit(t, dir, "rev-list", "--count", ref); got != "2" {
+	if got := gittest.Git(t, dir, "rev-list", "--count", ref); got != "2" {
 		t.Errorf("doc chain has %s commits, want 2 (create + born-verified)", got)
 	}
 

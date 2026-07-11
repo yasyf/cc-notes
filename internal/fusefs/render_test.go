@@ -7,14 +7,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"os"
-	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/fusefs"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -1562,24 +1561,12 @@ func TestNewProject(t *testing.T) {
 	})
 }
 
-// gitEnv pins git to a hermetic config so host state cannot leak in.
-func gitEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("CC_NOTES_ACTOR", "Agent A <a@example.com>")
-}
-
+// initRepo inits a repo on main with a local identity and freezes the
+// cc-notes actor.
 func initRepo(t *testing.T) string {
 	t.Helper()
-	gitEnv(t)
-	dir := t.TempDir()
-	//nolint:gosec // G204: test shells out to git with fixed argv[0] and literal init args.
-	out, err := exec.Command("git", "-C", dir, "init", "-q", "-b", "main").CombinedOutput()
-	if err != nil {
-		t.Fatalf("git init: %v: %s", err, out)
-	}
+	dir := gittest.InitRepo(t)
+	t.Setenv("CC_NOTES_ACTOR", "Agent A <a@example.com>")
 	return dir
 }
 

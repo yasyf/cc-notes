@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/fusekit/mountd"
 )
@@ -192,7 +193,7 @@ func TestMountBusyExits4(t *testing.T) {
 // any repo without risk of disturbing a running holder.
 func TestMountAutoQuietNoOpWithoutFuse(t *testing.T) {
 	dir := initRepo(t)
-	mustGit(t, dir, "config", "cc-notes.autoMount", "true")
+	gittest.Git(t, dir, "config", "cc-notes.autoMount", "true")
 
 	stdout, stderr, err := runCLI(t, dir, "mount", "--auto")
 	if err != nil {
@@ -335,7 +336,7 @@ func TestMountShutdown(t *testing.T) {
 // with the .notes path — not the opaque managed path — printed to stdout.
 func TestMountDetachedDefaultLinksNotes(t *testing.T) {
 	repo := initRepo(t)
-	repoRoot := mustGit(t, repo, "rev-parse", "--show-toplevel")
+	repoRoot := gittest.Git(t, repo, "rev-parse", "--show-toplevel")
 	sock, requests := fakeHolder(t, okHolder)
 
 	stdout, _, err := runCLI(t, repo, "mount", "--socket", sock)
@@ -382,7 +383,7 @@ func TestMountDetachedDefaultLinksNotes(t *testing.T) {
 // so teardown short-circuits locally without contacting the holder.
 func TestMountStopRemovesNotesSymlink(t *testing.T) {
 	repo := initRepo(t)
-	repoRoot := mustGit(t, repo, "rev-parse", "--show-toplevel")
+	repoRoot := gittest.Git(t, repo, "rev-parse", "--show-toplevel")
 	sock, requests := fakeHolder(t, okHolder)
 
 	mp := filepath.Join(t.TempDir(), "mnt")

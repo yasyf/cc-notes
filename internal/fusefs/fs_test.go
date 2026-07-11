@@ -8,8 +8,6 @@ package fusefs
 import (
 	"bytes"
 	"context"
-	"os"
-	"os/exec"
 	"path"
 	"slices"
 	"strings"
@@ -17,6 +15,7 @@ import (
 
 	"github.com/winfsp/cgofuse/fuse"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -58,43 +57,9 @@ func getattrDefeated(f *FS, p string, stat *fuse.Stat_t, fh uint64) int {
 	return rc
 }
 
-// scrubGitEnv clears every git environment knob that could leak host state
-// into a test and pins global/system config to /dev/null.
-func scrubGitEnv(t *testing.T) {
-	t.Helper()
-	for _, key := range []string{
-		"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-		"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
-		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
-		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-		"GIT_EDITOR", "EMAIL", "CC_NOTES_ACTOR",
-	} {
-		if value, ok := os.LookupEnv(key); ok {
-			t.Setenv(key, value)
-			os.Unsetenv(key)
-		}
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-}
-
-func mustGit(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-	}
-}
-
 func newTestFS(t *testing.T) (*FS, *store.Store) {
 	t.Helper()
-	scrubGitEnv(t)
-	dir := t.TempDir()
-	mustGit(t, dir, "init", "-q", "-b", "main")
-	mustGit(t, dir, "config", "user.name", "Test User")
-	mustGit(t, dir, "config", "user.email", "test@example.com")
-	s, err := store.Open(dir)
+	s, err := store.Open(gittest.InitRepo(t))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

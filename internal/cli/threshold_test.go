@@ -2,35 +2,18 @@ package cli
 
 import (
 	"os"
-	"os/exec"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/model"
 )
 
-// initGitRepo creates a git repository in a temp dir with global/system config
-// pinned to /dev/null so only local config affects lookups.
+// initGitRepo creates a git repository in a temp dir with a local identity.
 func initGitRepo(t *testing.T) gitcmd.Git {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	dir := t.TempDir()
-	for _, args := range [][]string{
-		{"init", "-q", "-b", "main"},
-		{"config", "user.name", "Test User"},
-		{"config", "user.email", "test@example.com"},
-	} {
-		//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
-		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-		}
-	}
-	return gitcmd.Git{Dir: dir}
+	return gitcmd.Git{Dir: gittest.InitRepo(t)}
 }
 
 func TestLeaseTTL(t *testing.T) {

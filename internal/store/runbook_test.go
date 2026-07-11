@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -63,7 +64,7 @@ func TestCreateRunbookRoundTrip(t *testing.T) {
 	}
 
 	ref := refs.Runbook(rb.ID)
-	if got := mustGit(t, s.Git.Dir, "rev-parse", ref); got != string(rb.ID) {
+	if got := gittest.Git(t, s.Git.Dir, "rev-parse", ref); got != string(rb.ID) {
 		t.Errorf("ref %s -> %s, want %s", ref, got, rb.ID)
 	}
 	loaded, err := s.Load(t.Context(), ref)
@@ -73,7 +74,7 @@ func TestCreateRunbookRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(loaded, snapshot) {
 		t.Errorf("Load = %+v, want Create snapshot %+v", loaded, snapshot)
 	}
-	if msg := mustGit(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: runbook create" {
+	if msg := gittest.Git(t, s.Git.Dir, "log", "-1", "--format=%s", ref); msg != "cc-notes: runbook create" {
 		t.Errorf("commit message = %q, want %q", msg, "cc-notes: runbook create")
 	}
 

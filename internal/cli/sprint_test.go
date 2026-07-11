@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -18,37 +17,11 @@ import (
 // under, so author and comment assertions are deterministic.
 const spActor = "Agent A <a@example.com>"
 
-// spInitRepo scrubs every host git env knob, inits a repo on main with a local
-// identity, freezes the cc-notes actor to spActor, and returns the repo dir.
+// spInitRepo inits a repo on main with a local identity, freezes the
+// cc-notes actor to spActor, and returns the repo dir.
 func spInitRepo(t *testing.T) string {
 	t.Helper()
-	for _, key := range []string{
-		"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-		"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
-		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
-		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-		"GIT_EDITOR", "EMAIL", "CC_NOTES_ACTOR",
-	} {
-		if value, ok := os.LookupEnv(key); ok {
-			t.Setenv(key, value)
-			_ = os.Unsetenv(key)
-		}
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	dir := t.TempDir()
-	for _, args := range [][]string{
-		{"init", "-q", "-b", "main"},
-		{"config", "user.name", "Test User"},
-		{"config", "user.email", "test@example.com"},
-	} {
-		//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
-		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-		}
-	}
+	dir := gittest.InitRepo(t)
 	t.Setenv("CC_NOTES_ACTOR", spActor)
 	return dir
 }

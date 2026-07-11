@@ -17,45 +17,21 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/yasyf/cc-notes/internal/cli"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/mcpserver"
 )
-
-func runGit(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	//nolint:gosec // G204: test helper shells out to git with a fixed argv[0] and test-controlled args.
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-	}
-}
 
 // initRepo creates a repository on main with one seed commit and chdirs into it,
 // with the git environment scrubbed and the actor frozen.
 func initRepo(t *testing.T) string {
 	t.Helper()
-	for _, k := range []string{
-		"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
-		"CC_NOTES_ACTOR",
-	} {
-		if v, ok := os.LookupEnv(k); ok {
-			t.Setenv(k, v)
-			_ = os.Unsetenv(k)
-		}
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := gittest.InitRepo(t)
 	t.Setenv("HOME", t.TempDir())
-	dir := t.TempDir()
-	runGit(t, dir, "init", "-q", "-b", "main")
-	runGit(t, dir, "config", "user.name", "Test User")
-	runGit(t, dir, "config", "user.email", "test@example.com")
 	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed\n"), 0o600); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
-	runGit(t, dir, "add", "seed.txt")
-	runGit(t, dir, "commit", "-q", "-m", "seed")
+	gittest.Git(t, dir, "add", "seed.txt")
+	gittest.Git(t, dir, "commit", "-q", "-m", "seed")
 	t.Setenv("CC_NOTES_ACTOR", "Agent A <a@example.com>")
 	t.Chdir(dir)
 	return dir

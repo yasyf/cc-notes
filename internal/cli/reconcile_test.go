@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
+	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
 // reconcileJSON mirrors the reconcile output DTO for round-trip assertions.
@@ -27,12 +28,12 @@ type reconcileJSON struct {
 func mergedFeature(t *testing.T) (dir, taskID string) {
 	t.Helper()
 	dir = initRepo(t)
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
-	mustGit(t, dir, "checkout", "-q", "-b", "feature/x")
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "work")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	gittest.Git(t, dir, "checkout", "-q", "-b", "feature/x")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "work")
 	task := addTask(t, dir, "open task", "--branch", "feature/x")
-	mustGit(t, dir, "checkout", "-q", "main")
-	mustGit(t, dir, "merge", "-q", "--no-ff", "-m", "merge", "feature/x")
+	gittest.Git(t, dir, "checkout", "-q", "main")
+	gittest.Git(t, dir, "merge", "-q", "--no-ff", "-m", "merge", "feature/x")
 	return dir, task.ID
 }
 
@@ -86,7 +87,7 @@ func TestReconcileDryRunWritesNothing(t *testing.T) {
 
 func TestReconcileForceRequiresFrom(t *testing.T) {
 	dir := initRepo(t)
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
 	_, _, err := runCLI(t, dir, "reconcile", "--force")
 	if cli.ExitCode(err) != 2 {
 		t.Fatalf("reconcile --force err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
@@ -98,7 +99,7 @@ func TestReconcileForceRequiresFrom(t *testing.T) {
 
 func TestReconcileFromEqualsInto(t *testing.T) {
 	dir := initRepo(t)
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
 	_, _, err := runCLI(t, dir, "reconcile", "--into", "main", "--from", "main")
 	if cli.ExitCode(err) != 2 {
 		t.Fatalf("reconcile --from main --into main err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
@@ -110,8 +111,8 @@ func TestReconcileFromEqualsInto(t *testing.T) {
 
 func TestReconcileDetachedHead(t *testing.T) {
 	dir := initRepo(t)
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
-	mustGit(t, dir, "checkout", "-q", "--detach")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	gittest.Git(t, dir, "checkout", "-q", "--detach")
 	_, _, err := runCLI(t, dir, "reconcile")
 	if err == nil {
 		t.Fatal("reconcile on detached HEAD: want error")
@@ -123,7 +124,7 @@ func TestReconcileDetachedHead(t *testing.T) {
 
 func TestReconcileMissingIntoBranch(t *testing.T) {
 	dir := initRepo(t)
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
 	_, _, err := runCLI(t, dir, "reconcile", "--into", "ghost")
 	if cli.ExitCode(err) != 3 {
 		t.Fatalf("reconcile --into ghost err = %v (exit %d), want ErrRefNotFound exit 3", err, cli.ExitCode(err))

@@ -16,6 +16,7 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -47,21 +48,6 @@ var (
 // fail here.
 const createPackJSON = `{"v":1,"lamport":1,"ops":[{"kind":"create_note","nonce":"0123456789abcdef0123456789abcdef","title":"hello","body":"world","tags":["a","b"],"anchors":null}]}`
 
-func gitEnv() []string {
-	return []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + os.Getenv("HOME"),
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_AUTHOR_NAME=" + testName,
-		"GIT_AUTHOR_EMAIL=" + testEmail,
-		"GIT_AUTHOR_DATE=2026-01-02T03:04:05Z",
-		"GIT_COMMITTER_NAME=" + testName,
-		"GIT_COMMITTER_EMAIL=" + testEmail,
-		"GIT_COMMITTER_DATE=2026-01-02T03:04:05Z",
-	}
-}
-
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	return gitStdin(t, dir, "", args...)
@@ -72,7 +58,6 @@ func gitStdin(t *testing.T, dir, stdin string, args ...string) string {
 	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = gitEnv()
 	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -86,7 +71,6 @@ func gitRaw(t *testing.T, dir string, args ...string) []byte {
 	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = gitEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
@@ -96,11 +80,7 @@ func gitRaw(t *testing.T, dir string, args ...string) []byte {
 
 func initRepo(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	git(t, dir, "init", "-q", "-b", "main")
-	git(t, dir, "config", "user.name", testName)
-	git(t, dir, "config", "user.email", testEmail)
-	return dir
+	return gittest.InitRepo(t)
 }
 
 func open(t *testing.T, dir string) *gitobj.Repo {
@@ -557,7 +537,6 @@ func TestListPrefixDuringRefWrites(t *testing.T) {
 			//nolint:gosec // G204: fixed argv[0], test-controlled args.
 			cmd := exec.Command("git", "update-ref", ref, string(shas[i%2]))
 			cmd.Dir = dir
-			cmd.Env = gitEnv()
 			if out, err := cmd.CombinedOutput(); err != nil {
 				writerErr <- fmt.Errorf("update-ref %d: %w\n%s", i, err, out)
 				return

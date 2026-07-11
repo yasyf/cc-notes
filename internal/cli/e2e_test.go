@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
 const matrixActor = "Matrix Worker <worker@example.com>"
@@ -314,7 +316,7 @@ func TestExitCodeMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var dir string
 			if tc.noRepo {
-				scrubGitEnv(t)
+				gittest.ScrubEnv(t)
 				dir = t.TempDir()
 			} else {
 				dir = initRepo(t)
@@ -456,13 +458,13 @@ func TestBranchScopingAndEdit(t *testing.T) {
 // invalid branch is a usage error (exit 2) raised before any write, so the task
 // is untouched and sync still converges.
 func TestEditBranchInvalidDestUsage(t *testing.T) {
-	scrubGitEnv(t)
+	gittest.ScrubEnv(t)
 	root := t.TempDir()
 	bare := filepath.Join(root, "remote.git")
-	mustGit(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
+	gittest.Git(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
 	dir := filepath.Join(root, "work")
-	mustGit(t, root, "clone", "-q", bare, "work")
-	mustGit(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
+	gittest.Git(t, root, "clone", "-q", bare, "work")
+	gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 	mustBin(t, dir, actorA, "init")
 	task := addTaskBin(t, dir, "Survivor")
 	line := task.ID[:7] + "\topen\tP2\t-\tSurvivor\n"
@@ -491,8 +493,8 @@ func TestEditBranchInvalidDestUsage(t *testing.T) {
 func TestClaimDetachedHead(t *testing.T) {
 	dir := initRepo(t)
 	task := addTaskBin(t, dir, "On main")
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "c")
-	mustGit(t, dir, "checkout", "-q", "--detach")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c")
+	gittest.Git(t, dir, "checkout", "-q", "--detach")
 
 	out := mustBin(t, dir, matrixActor, "task", "claim", task.ID)
 	if want := task.ID[:7] + "\tin_progress\tP2\t" + matrixActor + "\tOn main\n"; out != want {
@@ -714,13 +716,13 @@ func TestTaskJSONContract(t *testing.T) {
 // auto-install added — including the push.default override note — and every
 // later command stays silent.
 func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
-	scrubGitEnv(t)
+	gittest.ScrubEnv(t)
 	root := t.TempDir()
 	bare := filepath.Join(root, "remote.git")
-	mustGit(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
+	gittest.Git(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
 	dir := filepath.Join(root, "work")
-	mustGit(t, root, "clone", "-q", bare, "work")
-	mustGit(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
+	gittest.Git(t, root, "clone", "-q", bare, "work")
+	gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 
 	res, err := execBin(dir, actorA, "task", "add", "First write", "--no-validation-criteria")
 	if err != nil {
@@ -748,18 +750,18 @@ func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
 // not a silent cosmetic tidy. Push and the reflog are pre-wired so the drop is
 // the only change autoInstall makes, and the next command is a silent no-op.
 func TestAutoInstallAnnouncesDroppedRefspec(t *testing.T) {
-	scrubGitEnv(t)
+	gittest.ScrubEnv(t)
 	root := t.TempDir()
 	bare := filepath.Join(root, "remote.git")
-	mustGit(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
+	gittest.Git(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
 	dir := filepath.Join(root, "work")
-	mustGit(t, root, "clone", "-q", bare, "work")
-	mustGit(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
-	mustGit(t, dir, "config", "--add", "remote.origin.fetch", "+refs/cc-notes/*:refs/cc-notes/*")
-	mustGit(t, dir, "config", "--add", "remote.origin.fetch", "+refs/cc-notes/*:refs/cc-notes-sync/origin/*")
-	mustGit(t, dir, "config", "--add", "remote.origin.push", "HEAD")
-	mustGit(t, dir, "config", "--add", "remote.origin.push", "refs/cc-notes/*:refs/cc-notes/*")
-	mustGit(t, dir, "config", "core.logAllRefUpdates", "always")
+	gittest.Git(t, root, "clone", "-q", bare, "work")
+	gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
+	gittest.Git(t, dir, "config", "--add", "remote.origin.fetch", "+refs/cc-notes/*:refs/cc-notes/*")
+	gittest.Git(t, dir, "config", "--add", "remote.origin.fetch", "+refs/cc-notes/*:refs/cc-notes-sync/origin/*")
+	gittest.Git(t, dir, "config", "--add", "remote.origin.push", "HEAD")
+	gittest.Git(t, dir, "config", "--add", "remote.origin.push", "refs/cc-notes/*:refs/cc-notes/*")
+	gittest.Git(t, dir, "config", "core.logAllRefUpdates", "always")
 
 	res, err := execBin(dir, actorA, "task", "add", "First write", "--no-validation-criteria")
 	if err != nil {
@@ -784,15 +786,15 @@ func TestAutoInstallAnnouncesDroppedRefspec(t *testing.T) {
 // TestTwoCloneSyncRoundTrip round-trips a task through a bare remote: clone A
 // adds and syncs, clone B syncs and sees a byte-identical task list.
 func TestTwoCloneSyncRoundTrip(t *testing.T) {
-	scrubGitEnv(t)
+	gittest.ScrubEnv(t)
 	root := t.TempDir()
 	bare := filepath.Join(root, "remote.git")
-	mustGit(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
+	gittest.Git(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
 
 	clone := func(name string) string {
 		dir := filepath.Join(root, name)
-		mustGit(t, root, "clone", "-q", bare, name)
-		mustGit(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
+		gittest.Git(t, root, "clone", "-q", bare, name)
+		gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 		return dir
 	}
 

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -120,10 +121,10 @@ func TestCompactFreshCloneFoldsIdentically(t *testing.T) {
 	}
 
 	clone := t.TempDir()
-	mustGit(t, clone, "init", "-q", "-b", "main")
-	mustGit(t, clone, "config", "user.name", testName)
-	mustGit(t, clone, "config", "user.email", testEmail)
-	mustGit(t, clone, "fetch", s.Git.Dir, ref+":"+ref)
+	gittest.Git(t, clone, "init", "-q", "-b", "main")
+	gittest.Git(t, clone, "config", "user.name", testName)
+	gittest.Git(t, clone, "config", "user.email", testEmail)
+	gittest.Git(t, clone, "fetch", s.Git.Dir, ref+":"+ref)
 
 	cs, err := Open(clone)
 	if err != nil {
@@ -162,7 +163,7 @@ func TestCompactIdempotent(t *testing.T) {
 
 func TestCompactConcurrentCAS(t *testing.T) {
 	s := initStore(t)
-	mustGit(t, s.Git.Dir, "config", "core.filesRefLockTimeout", "3000")
+	gittest.Git(t, s.Git.Dir, "config", "core.filesRefLockTimeout", "3000")
 	ctx := t.Context()
 	note := create(t, s, noteOps("v1")).(model.Note)
 	ref := refs.Note(note.ID)

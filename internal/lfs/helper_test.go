@@ -5,56 +5,18 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/lfs"
 )
 
-// scrubGitEnv clears every git environment knob that could leak host state
-// into a test and pins global/system config to /dev/null, so full-scope
-// config reads and credential fills see only what the test wrote.
-func scrubGitEnv(t *testing.T) {
-	t.Helper()
-	for _, key := range []string{
-		"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-		"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
-		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
-		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-		"GIT_EDITOR", "EMAIL", "GIT_ASKPASS", "SSH_ASKPASS",
-	} {
-		if value, ok := os.LookupEnv(key); ok {
-			t.Setenv(key, value)
-			_ = os.Unsetenv(key)
-		}
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-}
-
-func mustGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
 func initRepo(t *testing.T) gitcmd.Git {
 	t.Helper()
-	scrubGitEnv(t)
-	g := gitcmd.Git{Dir: t.TempDir()}
-	mustGit(t, g.Dir, "init", "-q", "-b", "main")
-	mustGit(t, g.Dir, "config", "user.name", "Test User")
-	mustGit(t, g.Dir, "config", "user.email", "test@example.com")
-	return g
+	return gitcmd.Git{Dir: gittest.InitRepo(t)}
 }
 
 // mintedToken is the per-action header value the fake server demands on

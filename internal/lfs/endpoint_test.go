@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/lfs"
 )
 
@@ -56,7 +57,7 @@ func TestDiscoverDerivation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			g := initRepo(t)
-			mustGit(t, g.Dir, "remote", "add", "origin", tc.remote)
+			gittest.Git(t, g.Dir, "remote", "add", "origin", tc.remote)
 			got, err := lfs.Discover(t.Context(), g, "origin")
 			if err != nil {
 				t.Fatalf("Discover(%q): %v", tc.remote, err)
@@ -74,9 +75,9 @@ func TestDiscoverDerivation(t *testing.T) {
 func TestDiscoverConfigPrecedence(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()
-	mustGit(t, g.Dir, "remote", "add", "origin", "https://git-server.com/foo/bar.git")
+	gittest.Git(t, g.Dir, "remote", "add", "origin", "https://git-server.com/foo/bar.git")
 
-	mustGit(t, g.Dir, "config", "remote.origin.lfsurl", "https://lfsurl.example/lfs/")
+	gittest.Git(t, g.Dir, "config", "remote.origin.lfsurl", "https://lfsurl.example/lfs/")
 	got, err := lfs.Discover(ctx, g, "origin")
 	if err != nil {
 		t.Fatalf("Discover with remote lfsurl: %v", err)
@@ -87,7 +88,7 @@ func TestDiscoverConfigPrecedence(t *testing.T) {
 		t.Fatalf("remote.origin.lfsurl override = %+v, want %+v", got, want)
 	}
 
-	mustGit(t, g.Dir, "config", "lfs.url", "https://lfsurl-global.example/lfs")
+	gittest.Git(t, g.Dir, "config", "lfs.url", "https://lfsurl-global.example/lfs")
 	got, err = lfs.Discover(ctx, g, "origin")
 	if err != nil {
 		t.Fatalf("Discover with both keys: %v", err)
@@ -107,7 +108,7 @@ func TestDiscoverUnsupportedRemotes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := initRepo(t)
-			mustGit(t, g.Dir, "remote", "add", "origin", tc.remote)
+			gittest.Git(t, g.Dir, "remote", "add", "origin", tc.remote)
 			if _, err := lfs.Discover(t.Context(), g, "origin"); !errors.Is(err, lfs.ErrUnsupported) {
 				t.Fatalf("Discover(%q) = %v, want ErrUnsupported", tc.remote, err)
 			}

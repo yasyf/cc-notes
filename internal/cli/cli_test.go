@@ -9,13 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/cli"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
 )
 
@@ -101,8 +101,8 @@ type taskJSON struct {
 }
 
 // gitEnvKeys are the environment knobs that could leak host git state into a
-// test; scrubGitEnv clears them in-process and binEnv strips them from
-// subprocess environments.
+// subprocess; binEnv strips them from the environment it builds for the
+// built cc-notes binary.
 var gitEnvKeys = []string{
 	"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
 	"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
@@ -111,43 +111,14 @@ var gitEnvKeys = []string{
 	"GIT_EDITOR", "EMAIL", "CC_NOTES_ACTOR",
 }
 
-// scrubGitEnv clears every git environment knob that could leak host state
-// into a test and pins global/system config to /dev/null.
-func scrubGitEnv(t *testing.T) {
-	t.Helper()
-	for _, key := range gitEnvKeys {
-		if value, ok := os.LookupEnv(key); ok {
-			t.Setenv(key, value)
-			_ = os.Unsetenv(key)
-		}
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-}
-
-func mustGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
 // initRepo creates a repository on branch main with a local identity and
 // freezes the cc-notes actor to actorA.
 func initRepo(t *testing.T) string {
 	t.Helper()
-	scrubGitEnv(t)
+	dir := gittest.InitRepo(t)
 	// Isolate HOME so a test that spawns or drives a mount holder writes its
 	// state under ~/.cc-notes in a temp dir, never the real home.
 	t.Setenv("HOME", t.TempDir())
-	dir := t.TempDir()
-	mustGit(t, dir, "init", "-q", "-b", "main")
-	mustGit(t, dir, "config", "user.name", "Test User")
-	mustGit(t, dir, "config", "user.email", "test@example.com")
 	t.Setenv("CC_NOTES_ACTOR", actorA)
 	return dir
 }
@@ -163,9 +134,9 @@ func commitFile(t *testing.T, dir, path, content string) string {
 	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
-	mustGit(t, dir, "add", path)
-	mustGit(t, dir, "commit", "-q", "-m", "commit "+path)
-	return mustGit(t, dir, "rev-parse", "HEAD")
+	gittest.Git(t, dir, "add", path)
+	gittest.Git(t, dir, "commit", "-q", "-m", "commit "+path)
+	return gittest.Git(t, dir, "rev-parse", "HEAD")
 }
 
 func runCLI(t *testing.T, dir string, args ...string) (string, string, error) {
@@ -301,7 +272,7 @@ func TestNoteJSONRoundTrip(t *testing.T) {
 		t.Error("deleted = true, want false")
 	}
 	ref := "refs/cc-notes/notes/" + added.ID
-	if got := mustGit(t, dir, "rev-list", "--count", ref); got != "2" {
+	if got := gittest.Git(t, dir, "rev-list", "--count", ref); got != "2" {
 		t.Errorf("note chain has %s commits, want 2 (create + born-verified)", got)
 	}
 }
@@ -531,8 +502,8 @@ func TestTaskDepCycle(t *testing.T) {
 func TestDetachedHead(t *testing.T) {
 	dir := initRepo(t)
 	task := addTask(t, dir, "On main")
-	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "c")
-	mustGit(t, dir, "checkout", "-q", "--detach")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c")
+	gittest.Git(t, dir, "checkout", "-q", "--detach")
 
 	_, _, err := runCLI(t, dir, "task", "list")
 	if err == nil || err.Error() != "detached HEAD; pass --branch" || cli.ExitCode(err) != 1 {
@@ -717,7 +688,7 @@ func TestNoteVerify(t *testing.T) {
 	commitFile(t, dir, "f.go", "v1\n")
 	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Note", "--path", "f.go", "--json"))
 	ref := "refs/cc-notes/notes/" + added.ID
-	if got := mustGit(t, dir, "rev-list", "--count", ref); got != "2" {
+	if got := gittest.Git(t, dir, "rev-list", "--count", ref); got != "2" {
 		t.Fatalf("after add: %s commits, want 2 (create + born-verified)", got)
 	}
 	verified := mustJSON[noteJSON](t, mustRun(t, dir, "note", "verify", added.ID, "--json"))
@@ -727,7 +698,7 @@ func TestNoteVerify(t *testing.T) {
 	if verified.VerifiedAt == nil || verified.VerifiedBy == nil || *verified.VerifiedBy != actorA {
 		t.Fatalf("verify fields = %v/%v, want set and %q", verified.VerifiedAt, verified.VerifiedBy, actorA)
 	}
-	if got := mustGit(t, dir, "rev-list", "--count", ref); got != "3" {
+	if got := gittest.Git(t, dir, "rev-list", "--count", ref); got != "3" {
 		t.Fatalf("after verify: %s commits, want 3", got)
 	}
 }
@@ -779,9 +750,9 @@ func TestNoteReviewStale(t *testing.T) {
 func TestNoteCommitAnchorDrift(t *testing.T) {
 	dir := initRepo(t)
 	base := commitFile(t, dir, "main.go", "base\n")
-	mustGit(t, dir, "checkout", "-q", "-b", "side")
+	gittest.Git(t, dir, "checkout", "-q", "-b", "side")
 	side := commitFile(t, dir, "side.go", "side\n")
-	mustGit(t, dir, "checkout", "-q", "main")
+	gittest.Git(t, dir, "checkout", "-q", "main")
 
 	drifted := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Side note", "--commit", side, "--json"))
 	mustRun(t, dir, "note", "add", "Base note", "--commit", base)

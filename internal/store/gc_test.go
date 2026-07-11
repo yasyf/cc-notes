@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -14,9 +15,8 @@ import (
 // initBareRemote creates a bare repository and wires it as origin on s.
 func initBareRemote(t *testing.T, s *Store) string {
 	t.Helper()
-	bare := t.TempDir()
-	mustGit(t, bare, "init", "-q", "--bare")
-	mustGit(t, s.Git.Dir, "remote", "add", "origin", bare)
+	bare := gittest.InitBare(t)
+	gittest.Git(t, s.Git.Dir, "remote", "add", "origin", bare)
 	return bare
 }
 
@@ -30,14 +30,14 @@ func TestPruneTombstonesDeletesNoteRefLocalAndRemote(t *testing.T) {
 	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
 		t.Fatalf("DeleteNote: %v", err)
 	}
-	mustGit(t, s.Git.Dir, "push", "origin", ref+":"+ref)
+	gittest.Git(t, s.Git.Dir, "push", "origin", ref+":"+ref)
 
 	// A stale clone fetches the tombstoned ref before the prune, so it can later
 	// re-advertise what the prune removed.
 	stale := t.TempDir()
-	mustGit(t, stale, "init", "-q", "-b", "main")
-	mustGit(t, stale, "remote", "add", "origin", bare)
-	mustGit(t, stale, "fetch", "origin", ref+":"+ref)
+	gittest.Git(t, stale, "init", "-q", "-b", "main")
+	gittest.Git(t, stale, "remote", "add", "origin", bare)
+	gittest.Git(t, stale, "fetch", "origin", ref+":"+ref)
 
 	pruned, failed, err := s.PruneTombstones(ctx, "origin")
 	if err != nil {
@@ -49,14 +49,14 @@ func TestPruneTombstonesDeletesNoteRefLocalAndRemote(t *testing.T) {
 	if _, err := s.Repo.Tip(ctx, ref); !errors.Is(err, gitobj.ErrRefNotFound) {
 		t.Fatalf("local ref still present: %v", err)
 	}
-	if got := mustGit(t, bare, "for-each-ref", "--format=%(refname)", ref); got != "" {
+	if got := gittest.Git(t, bare, "for-each-ref", "--format=%(refname)", ref); got != "" {
 		t.Fatalf("remote ref still present after prune: %q", got)
 	}
 
 	// Pin the documented non-convergence: the stale clone re-advertises the ref
 	// and resurrects it on the remote.
-	mustGit(t, stale, "push", "origin", ref+":"+ref)
-	if got := mustGit(t, bare, "for-each-ref", "--format=%(refname)", ref); got != ref {
+	gittest.Git(t, stale, "push", "origin", ref+":"+ref)
+	if got := gittest.Git(t, bare, "for-each-ref", "--format=%(refname)", ref); got != ref {
 		t.Fatalf("stale clone did not resurrect ref: for-each-ref = %q, want %q", got, ref)
 	}
 }
@@ -104,7 +104,7 @@ func TestPruneTombstonesDeletesDocRefLocalAndRemote(t *testing.T) {
 	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
 		t.Fatalf("DeleteNote: %v", err)
 	}
-	mustGit(t, s.Git.Dir, "push", "origin", ref+":"+ref)
+	gittest.Git(t, s.Git.Dir, "push", "origin", ref+":"+ref)
 
 	pruned, failed, err := s.PruneTombstones(ctx, "origin")
 	if err != nil {
@@ -116,7 +116,7 @@ func TestPruneTombstonesDeletesDocRefLocalAndRemote(t *testing.T) {
 	if _, err := s.Repo.Tip(ctx, ref); !errors.Is(err, gitobj.ErrRefNotFound) {
 		t.Fatalf("local doc ref still present: %v", err)
 	}
-	if got := mustGit(t, bare, "for-each-ref", "--format=%(refname)", ref); got != "" {
+	if got := gittest.Git(t, bare, "for-each-ref", "--format=%(refname)", ref); got != "" {
 		t.Fatalf("remote doc ref still present after prune: %q", got)
 	}
 }
@@ -131,7 +131,7 @@ func TestPruneTombstonesDeletesLogRefLocalAndRemote(t *testing.T) {
 	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
 		t.Fatalf("DeleteNote: %v", err)
 	}
-	mustGit(t, s.Git.Dir, "push", "origin", ref+":"+ref)
+	gittest.Git(t, s.Git.Dir, "push", "origin", ref+":"+ref)
 
 	pruned, failed, err := s.PruneTombstones(ctx, "origin")
 	if err != nil {
@@ -143,7 +143,7 @@ func TestPruneTombstonesDeletesLogRefLocalAndRemote(t *testing.T) {
 	if _, err := s.Repo.Tip(ctx, ref); !errors.Is(err, gitobj.ErrRefNotFound) {
 		t.Fatalf("local log ref still present: %v", err)
 	}
-	if got := mustGit(t, bare, "for-each-ref", "--format=%(refname)", ref); got != "" {
+	if got := gittest.Git(t, bare, "for-each-ref", "--format=%(refname)", ref); got != "" {
 		t.Fatalf("remote log ref still present after prune: %q", got)
 	}
 }

@@ -4,59 +4,23 @@ package notes_test
 
 import (
 	"errors"
-	"os"
-	"os/exec"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
 
 const testActor = "Test User <test@example.com>"
 
-// scrubGitEnv clears every git environment knob that could leak host state
-// into a test and pins global/system config to /dev/null.
-func scrubGitEnv(t *testing.T) {
-	t.Helper()
-	for _, key := range []string{
-		"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-		"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
-		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
-		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-		"GIT_EDITOR", "EMAIL", "CC_NOTES_ACTOR",
-	} {
-		if value, ok := os.LookupEnv(key); ok {
-			t.Setenv(key, value)
-			_ = os.Unsetenv(key)
-		}
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-}
-
-func mustGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
 // newRepo initializes a fresh git repo on main with a cc-notes actor identity
 // and returns its directory.
 func newRepo(t *testing.T) string {
 	t.Helper()
-	scrubGitEnv(t)
+	dir := gittest.InitRepo(t)
 	t.Setenv("CC_NOTES_ACTOR", testActor)
-	dir := t.TempDir()
-	mustGit(t, dir, "init", "-q", "-b", "main")
-	mustGit(t, dir, "config", "user.name", "Test User")
-	mustGit(t, dir, "config", "user.email", "test@example.com")
 	return dir
 }
 
@@ -212,7 +176,7 @@ func TestCreateTask(t *testing.T) {
 func TestCreateTaskBranchFromHead(t *testing.T) {
 	c, dir := newClient(t)
 	ctx := t.Context()
-	mustGit(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
 
 	task, err := c.CreateTask(ctx, notes.TaskSpec{Title: "on head", BranchFromHead: true})
 	if err != nil {
@@ -222,7 +186,7 @@ func TestCreateTaskBranchFromHead(t *testing.T) {
 		t.Errorf("Branch = %q, want main", task.Branch)
 	}
 
-	mustGit(t, dir, "checkout", "-q", "--detach", "HEAD")
+	gittest.Git(t, dir, "checkout", "-q", "--detach", "HEAD")
 	if _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "detached", BranchFromHead: true}); !errors.Is(err, notes.ErrDetachedHead) {
 		t.Fatalf("CreateTask on detached HEAD = %v, want ErrDetachedHead", err)
 	}
@@ -287,8 +251,8 @@ func TestResolve(t *testing.T) {
 func TestTaskLifecycle(t *testing.T) {
 	c, dir := newClient(t)
 	ctx := t.Context()
-	head := mustGit(t, dir, "commit", "--allow-empty", "-q", "-m", "root") // ensure HEAD resolves
-	headSHA := model.SHA(mustGit(t, dir, "rev-parse", "HEAD"))
+	head := gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root") // ensure HEAD resolves
+	headSHA := model.SHA(gittest.Git(t, dir, "rev-parse", "HEAD"))
 	_ = head
 
 	task, err := c.CreateTask(ctx, notes.TaskSpec{Title: "work", Branch: "feature/x"})
@@ -333,7 +297,7 @@ func TestTaskLifecycle(t *testing.T) {
 func TestStartTask(t *testing.T) {
 	c, dir := newClient(t)
 	ctx := t.Context()
-	mustGit(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
 
 	task, err := c.CreateTask(ctx, notes.TaskSpec{Title: "work", Branch: "backlog-ish"})
 	if err != nil {
@@ -411,7 +375,7 @@ func TestProjectTransitions(t *testing.T) {
 }
 
 func TestOpenNonGit(t *testing.T) {
-	scrubGitEnv(t)
+	gittest.ScrubEnv(t)
 	if _, err := notes.Open(t.TempDir()); err == nil {
 		t.Fatal("Open on a non-git dir succeeded, want error")
 	}
