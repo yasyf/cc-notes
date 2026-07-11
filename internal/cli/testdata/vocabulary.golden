@@ -1,0 +1,1560 @@
+command: cc-notes
+  use: cc-notes
+  aliases: -
+  short: Git-native notes and tasks for agents
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes attachment
+  use: attachment
+  aliases: -
+  short: Read attachment content from the local git-lfs store
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes attachment get
+  use: get ID NAME
+  aliases: -
+  short: Stream an attachment's content to stdout (or -o PATH)
+  hidden: false
+  flags:
+    --output shorthand=-o type=string default="" usage="write to PATH instead of stdout"
+  inherited:
+    (none)
+
+command: cc-notes attachment path
+  use: path ID NAME
+  aliases: -
+  short: Print an attachment's absolute object path for zero-copy reads
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes blame
+  use: blame SHA
+  aliases: -
+  short: List the task(s) a commit implemented
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes compact
+  use: compact ID
+  aliases: -
+  short: Collapse an entity's op-log into a checkpoint
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes doc
+  use: doc
+  aliases: -
+  short: Long-form agent docs with a free-text when trigger and the full note freshness lifecycle
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes doc add
+  use: add TITLE
+  aliases: -
+  short: Create a doc
+  hidden: false
+  flags:
+    --abort shorthand=none type=bool default="false" usage="discard the checked-out file (add --abort PATH)"
+    --apply shorthand=none type=bool default="false" usage="create the doc from the checked-out file (add --apply PATH); may carry --attach"
+    --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
+    --body shorthand=none type=string default="" usage="doc body; - reads stdin"
+    --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
+    --checkout shorthand=none type=bool default="false" usage="write a doc template (prefilled from TITLE and anchor/label flags) to an editable file and print its path"
+    --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
+    --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+    --when shorthand=none type=string default="" usage="free-text read-this-when trigger"
+  inherited:
+    (none)
+
+command: cc-notes doc edit
+  use: edit ID
+  aliases: -
+  short: Edit a doc
+  hidden: false
+  flags:
+    --abort shorthand=none type=bool default="false" usage="discard the checked-out file"
+    --add-branch shorthand=none type=stringArray default="[]" usage="add branch anchor (repeatable)"
+    --add-commit shorthand=none type=stringArray default="[]" usage="add commit anchor (repeatable)"
+    --add-dir shorthand=none type=stringArray default="[]" usage="add directory anchor (repeatable)"
+    --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
+    --apply shorthand=none type=bool default="false" usage="apply edits from the checked-out file"
+    --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
+    --body shorthand=none type=string default="" usage="new body; - reads stdin"
+    --checkout shorthand=none type=bool default="false" usage="write the doc to an editable file and print its path"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --replace shorthand=none type=bool default="false" usage="allow --attach to overwrite a live attachment with the same name"
+    --rm-attachment shorthand=none type=stringArray default="[]" usage="remove attachment by name (repeatable)"
+    --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
+    --rm-commit shorthand=none type=stringArray default="[]" usage="remove commit anchor (repeatable)"
+    --rm-dir shorthand=none type=stringArray default="[]" usage="remove directory anchor (repeatable)"
+    --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
+    --title shorthand=none type=string default="" usage="new title"
+    --when shorthand=none type=string default="" usage="new read-this-when trigger"
+  inherited:
+    (none)
+
+command: cc-notes doc expire
+  use: expire ID
+  aliases: -
+  short: Flag a doc as out-of-date (agent-asserted), or --clear to remove the flag
+  hidden: false
+  flags:
+    --clear shorthand=none type=bool default="false" usage="remove the out-of-date flag"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --reason shorthand=none type=string default="" usage="why the doc is out-of-date"
+  inherited:
+    (none)
+
+command: cc-notes doc history
+  use: history ID
+  aliases: -
+  short: Show this doc's edit history
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    (none)
+
+command: cc-notes doc list
+  use: list
+  aliases: -
+  short: List docs
+  hidden: false
+  flags:
+    --all shorthand=none type=bool default="false" usage="include tombstoned docs"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --include-superseded shorthand=none type=bool default="false" usage="include superseded docs"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    (none)
+
+command: cc-notes doc review
+  use: review
+  aliases: -
+  short: Surface docs needing attention, each with a verdict
+  hidden: false
+  flags:
+    --drift shorthand=none type=bool default="false" usage="limit to drifted docs"
+    --expired shorthand=none type=bool default="false" usage="limit to expired docs"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --stale-after shorthand=none type=string default="" usage="staleness threshold (Go duration)"
+    --unverified shorthand=none type=bool default="false" usage="limit to never-verified docs"
+  inherited:
+    (none)
+
+command: cc-notes doc rm
+  use: rm ID
+  aliases: -
+  short: Tombstone a doc
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes doc search
+  use: search QUERY
+  aliases: -
+  short: Ranked search across doc titles, labels, and bodies
+  hidden: false
+  flags:
+    --author shorthand=none type=string default="" usage="require author"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="20" usage="maximum results"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    (none)
+
+command: cc-notes doc show
+  use: show ID
+  aliases: -
+  short: Show one doc
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes doc supersede
+  use: supersede OLD --by NEW
+  aliases: -
+  short: Record that NEW replaces OLD (--clear undoes the edge)
+  hidden: false
+  flags:
+    --by shorthand=none type=string default="" usage="the replacement doc (required)"
+    --clear shorthand=none type=bool default="false" usage="remove the supersede edge"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes doc verify
+  use: verify ID
+  aliases: -
+  short: Re-verify a doc, refreshing its witness against current HEAD
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes gc
+  use: gc
+  aliases: -
+  short: Tidy local state; --prune-remote physically deletes tombstoned refs
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --prune-remote shorthand=none type=bool default="false" usage="physically delete tombstoned refs on the remote (best-effort, non-convergent)"
+  inherited:
+    (none)
+
+command: cc-notes history
+  use: history ID
+  aliases: -
+  short: Show the edit history of any note, doc, log, task, sprint, project, or runbook
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    (none)
+
+command: cc-notes hooks
+  use: hooks
+  aliases: -
+  short: Manage the cc-notes capt-hook enforcement hooks
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes hooks install
+  use: install
+  aliases: -
+  short: Enable the cc-notes capt-hook pack via `capt-hook pack add`
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes init
+  use: init
+  aliases: -
+  short: Set up cc-notes in this repository
+  hidden: false
+  flags:
+    --ci shorthand=none type=bool default="false" usage="force-install the reconcile GitHub Actions workflow even without a .github/ directory"
+    --hook shorthand=none type=bool default="false" usage="also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj/rebase/server-side squash)"
+    --no-ci shorthand=none type=bool default="false" usage="skip the reconcile GitHub Actions workflow even when a .github/ directory exists"
+    --no-mount shorthand=none type=bool default="false" usage="skip auto-mounting the `.notes` filesystem and disable the session-start ensure-mount"
+    --remote shorthand=none type=string default="origin" usage="remote to wire"
+  inherited:
+    (none)
+
+command: cc-notes log
+  use: log
+  aliases: -
+  short: Append-only journals — an incident timeline, a rollout log, a debugging-session record
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes log add
+  use: add TITLE
+  aliases: -
+  short: Create a log
+  hidden: false
+  flags:
+    --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
+    --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
+    --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
+    --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
+    --entry shorthand=none type=string default="" usage="optional first entry; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+  inherited:
+    (none)
+
+command: cc-notes log append
+  use: append ID [TEXT]
+  aliases: -
+  short: Append one entry to a log; entries are append-only
+  hidden: false
+  flags:
+    --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
+    --entry shorthand=none type=string default="" usage="entry text"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --replace shorthand=none type=bool default="false" usage="allow --attach to overwrite a live attachment with the same name"
+  inherited:
+    (none)
+
+command: cc-notes log edit
+  use: edit ID
+  aliases: -
+  short: Edit a log's title, tags, and anchors (entries are append-only)
+  hidden: false
+  flags:
+    --add-branch shorthand=none type=stringArray default="[]" usage="add branch anchor (repeatable)"
+    --add-commit shorthand=none type=stringArray default="[]" usage="add commit anchor (repeatable)"
+    --add-dir shorthand=none type=stringArray default="[]" usage="add directory anchor (repeatable)"
+    --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --rm-attachment shorthand=none type=stringArray default="[]" usage="remove attachment by name (repeatable)"
+    --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
+    --rm-commit shorthand=none type=stringArray default="[]" usage="remove commit anchor (repeatable)"
+    --rm-dir shorthand=none type=stringArray default="[]" usage="remove directory anchor (repeatable)"
+    --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
+    --title shorthand=none type=string default="" usage="new title"
+  inherited:
+    (none)
+
+command: cc-notes log history
+  use: history ID
+  aliases: -
+  short: Show this log's edit history
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    (none)
+
+command: cc-notes log list
+  use: list
+  aliases: -
+  short: List logs
+  hidden: false
+  flags:
+    --all shorthand=none type=bool default="false" usage="include tombstoned logs"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    (none)
+
+command: cc-notes log rm
+  use: rm ID
+  aliases: -
+  short: Tombstone a log
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes log search
+  use: search QUERY
+  aliases: -
+  short: Ranked search across log titles, labels, and entry text
+  hidden: false
+  flags:
+    --author shorthand=none type=string default="" usage="require author"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="20" usage="maximum results"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    (none)
+
+command: cc-notes log show
+  use: show ID
+  aliases: -
+  short: Show one log with its entries in chronological order
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes mcp
+  use: mcp
+  aliases: -
+  short: Run the cc-notes MCP server over stdio
+  hidden: false
+  flags:
+    --dir shorthand=none type=string default="" usage="project directory (default: $CLAUDE_PROJECT_DIR or cwd)"
+  inherited:
+    (none)
+
+command: cc-notes mount
+  use: mount [MOUNTPOINT]
+  aliases: -
+  short: Mount notes, docs, and tasks as a filesystem (detaches; a mount holder serves it)
+  hidden: false
+  flags:
+    --auto shorthand=none type=bool default="false" usage="session-start ensure-mount: mount only if this repo opted in (cc-notes.autoMount) and the binary can host fuse; self-gating, best-effort, quiet"
+    --foreground shorthand=-f type=bool default="false" usage="serve in the foreground and unmount on Ctrl-C (bypasses the mount holder)"
+    --list shorthand=none type=bool default="false" usage="list the mounts the holder serves, then exit"
+    --shutdown shorthand=none type=bool default="false" usage="unmount everything and stop the mount holder, then exit"
+    --socket shorthand=none type=string default="/Users/yasyf/.cc-notes/mounts.sock" usage="mount-holder unix socket path"
+    --stop shorthand=none type=string default="" usage="unmount the mount at DIR, then exit"
+  inherited:
+    (none)
+
+command: cc-notes mount-holder
+  use: mount-holder
+  aliases: -
+  short: Run the detached fuse mount holder
+  hidden: true
+  flags:
+    --socket shorthand=none type=string default="/Users/yasyf/.cc-notes/mounts.sock" usage="unix socket path to serve"
+  inherited:
+    (none)
+
+command: cc-notes note
+  use: note
+  aliases: -
+  short: Repo-global notes with optional commit, path, and branch anchors
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes note add
+  use: add TITLE
+  aliases: -
+  short: Create a note
+  hidden: false
+  flags:
+    --abort shorthand=none type=bool default="false" usage="discard the checked-out file (add --abort PATH)"
+    --apply shorthand=none type=bool default="false" usage="create the note from the checked-out file (add --apply PATH); may carry --attach"
+    --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
+    --body shorthand=none type=string default="" usage="note body; - reads stdin"
+    --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
+    --checkout shorthand=none type=bool default="false" usage="write a note template (prefilled from TITLE and anchor/label flags) to an editable file and print its path"
+    --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
+    --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+  inherited:
+    (none)
+
+command: cc-notes note edit
+  use: edit ID
+  aliases: -
+  short: Edit a note
+  hidden: false
+  flags:
+    --abort shorthand=none type=bool default="false" usage="discard the checked-out file"
+    --add-branch shorthand=none type=stringArray default="[]" usage="add branch anchor (repeatable)"
+    --add-commit shorthand=none type=stringArray default="[]" usage="add commit anchor (repeatable)"
+    --add-dir shorthand=none type=stringArray default="[]" usage="add directory anchor (repeatable)"
+    --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
+    --apply shorthand=none type=bool default="false" usage="apply edits from the checked-out file"
+    --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
+    --body shorthand=none type=string default="" usage="new body; - reads stdin"
+    --checkout shorthand=none type=bool default="false" usage="write the note to an editable file and print its path"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --replace shorthand=none type=bool default="false" usage="allow --attach to overwrite a live attachment with the same name"
+    --rm-attachment shorthand=none type=stringArray default="[]" usage="remove attachment by name (repeatable)"
+    --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
+    --rm-commit shorthand=none type=stringArray default="[]" usage="remove commit anchor (repeatable)"
+    --rm-dir shorthand=none type=stringArray default="[]" usage="remove directory anchor (repeatable)"
+    --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
+    --title shorthand=none type=string default="" usage="new title"
+  inherited:
+    (none)
+
+command: cc-notes note expire
+  use: expire ID
+  aliases: -
+  short: Flag a note as out-of-date (agent-asserted), or --clear to remove the flag
+  hidden: false
+  flags:
+    --clear shorthand=none type=bool default="false" usage="remove the out-of-date flag"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --reason shorthand=none type=string default="" usage="why the note is out-of-date"
+  inherited:
+    (none)
+
+command: cc-notes note history
+  use: history ID
+  aliases: -
+  short: Show this note's edit history
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    (none)
+
+command: cc-notes note list
+  use: list
+  aliases: -
+  short: List notes
+  hidden: false
+  flags:
+    --all shorthand=none type=bool default="false" usage="include tombstoned notes"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --include-superseded shorthand=none type=bool default="false" usage="include superseded notes"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    (none)
+
+command: cc-notes note review
+  use: review
+  aliases: -
+  short: Surface notes needing attention, each with a verdict
+  hidden: false
+  flags:
+    --drift shorthand=none type=bool default="false" usage="limit to drifted notes"
+    --expired shorthand=none type=bool default="false" usage="limit to expired notes"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --stale-after shorthand=none type=string default="" usage="staleness threshold (Go duration)"
+    --unverified shorthand=none type=bool default="false" usage="limit to never-verified notes"
+  inherited:
+    (none)
+
+command: cc-notes note rm
+  use: rm ID
+  aliases: -
+  short: Tombstone a note
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes note search
+  use: search QUERY
+  aliases: -
+  short: Ranked search across note titles, labels, and bodies
+  hidden: false
+  flags:
+    --author shorthand=none type=string default="" usage="require author"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="20" usage="maximum results"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    (none)
+
+command: cc-notes note show
+  use: show ID
+  aliases: -
+  short: Show one note
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes note supersede
+  use: supersede OLD --by NEW
+  aliases: -
+  short: Record that NEW replaces OLD (--clear undoes the edge)
+  hidden: false
+  flags:
+    --by shorthand=none type=string default="" usage="the replacement note (required)"
+    --clear shorthand=none type=bool default="false" usage="remove the supersede edge"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes note verify
+  use: verify ID
+  aliases: -
+  short: Re-verify a note, refreshing its witness against current HEAD
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes project
+  use: project
+  aliases: -
+  short: Projects: long-lived groupings of sprints and tasks
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes project add
+  use: add TITLE
+  aliases: -
+  short: Create a project
+  hidden: false
+  flags:
+    --body shorthand=none type=string default="" usage="project description; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+  inherited:
+    (none)
+
+command: cc-notes project archive
+  use: archive ID
+  aliases: -
+  short: Mark a project archived
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes project cancel
+  use: cancel ID
+  aliases: -
+  short: Mark a project cancelled
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes project comment
+  use: comment ID BODY
+  aliases: -
+  short: Append a comment; BODY - reads stdin
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes project complete
+  use: complete ID
+  aliases: -
+  short: Mark a project completed
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes project edit
+  use: edit ID
+  aliases: -
+  short: Edit a project without transition checks
+  hidden: false
+  flags:
+    --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --body shorthand=none type=string default="" usage="new description; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --title shorthand=none type=string default="" usage="new title"
+  inherited:
+    (none)
+
+command: cc-notes project history
+  use: history ID
+  aliases: -
+  short: Show this project's edit history
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    (none)
+
+command: cc-notes project list
+  use: list
+  aliases: -
+  short: List projects
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --status shorthand=none type=string default="" usage="status filter, comma-separated (default all)"
+  inherited:
+    (none)
+
+command: cc-notes project show
+  use: show ID
+  aliases: -
+  short: Show one project
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes reconcile
+  use: reconcile
+  aliases: -
+  short: Carry a merged branch's open tasks onto the target branch
+  hidden: false
+  flags:
+    --dry-run shorthand=none type=bool default="false" usage="Report what would change without writing. Reads canonical refs only: data staged by a plain fetch is folded only by a real run."
+    --force shorthand=none type=bool default="false" usage="skip the merge-ancestry test (requires --from)"
+    --from shorthand=none type=stringArray default="[]" usage="source branch to reconcile (repeatable; default: auto-discover)"
+    --into shorthand=none type=string default="" usage="target branch (default: current branch)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes relevant
+  use: relevant PATH
+  aliases: -
+  short: Surface the notes, docs, and logs most relevant to a path, ranked with reasons
+  hidden: false
+  flags:
+    --attached shorthand=none type=bool default="false" usage="keep only entities anchored to the path or a parent directory"
+    --base shorthand=none type=string default="" usage="merge-base reference for cross-author signals (default: remote default branch)"
+    --branch shorthand=none type=string default="" usage="branch to weigh against (default: current HEAD branch)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="10" usage="maximum results (negative: unlimited)"
+    --worktree shorthand=none type=bool default="false" usage="drift-check path anchors against uncommitted working-tree edits"
+  inherited:
+    (none)
+
+command: cc-notes runbook
+  use: runbook
+  aliases: -
+  short: Runbooks: repeatable operational procedures whose runs are tracked per-execution
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes runbook activate
+  use: activate ID
+  aliases: -
+  short: Mark a runbook active
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes runbook add
+  use: add TITLE
+  aliases: -
+  short: Create a runbook, optionally with its first steps
+  hidden: false
+  flags:
+    --body shorthand=none type=string default="" usage="runbook description; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --step shorthand=none type=stringArray default="[]" usage="initial step text, in order (repeatable)"
+  inherited:
+    (none)
+
+command: cc-notes runbook archive
+  use: archive ID
+  aliases: -
+  short: Mark a runbook archived
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes runbook comment
+  use: comment ID BODY
+  aliases: -
+  short: Append a comment; BODY - reads stdin
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes runbook edit
+  use: edit ID
+  aliases: -
+  short: Edit a runbook's title, description, or labels
+  hidden: false
+  flags:
+    --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --body shorthand=none type=string default="" usage="new description; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --title shorthand=none type=string default="" usage="new title"
+  inherited:
+    (none)
+
+command: cc-notes runbook history
+  use: history ID
+  aliases: -
+  short: Show this runbook's edit history
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    (none)
+
+command: cc-notes runbook list
+  use: list
+  aliases: -
+  short: List runbooks (active only unless --all)
+  hidden: false
+  flags:
+    --all shorthand=none type=bool default="false" usage="include archived runbooks"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes runbook run
+  use: run
+  aliases: -
+  short: Start and record tracked executions of a runbook
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes runbook run done
+  use: done RUNBOOK STEP
+  aliases: -
+  short: Record a step done in a run
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --note shorthand=none type=string default="" usage="context note (error output, skip reason)"
+    --run shorthand=none type=string default="" usage="run id prefix (default: the sole running run)"
+  inherited:
+    (none)
+
+command: cc-notes runbook run fail
+  use: fail RUNBOOK STEP
+  aliases: -
+  short: Record a step failed in a run
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --note shorthand=none type=string default="" usage="context note (error output, skip reason)"
+    --run shorthand=none type=string default="" usage="run id prefix (default: the sole running run)"
+  inherited:
+    (none)
+
+command: cc-notes runbook run finish
+  use: finish RUNBOOK
+  aliases: -
+  short: Finish a run (default: succeeded, or failed if any step failed)
+  hidden: false
+  flags:
+    --abandoned shorthand=none type=bool default="false" usage="finish as abandoned"
+    --failed shorthand=none type=bool default="false" usage="finish as failed"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --run shorthand=none type=string default="" usage="run id prefix (default: the sole running run)"
+  inherited:
+    (none)
+
+command: cc-notes runbook run list
+  use: list RUNBOOK
+  aliases: -
+  short: List a runbook's runs
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes runbook run show
+  use: show RUNBOOK RUN
+  aliases: -
+  short: Show one run's per-step results
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes runbook run skip
+  use: skip RUNBOOK STEP
+  aliases: -
+  short: Record a step skipped in a run
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --note shorthand=none type=string default="" usage="context note (error output, skip reason)"
+    --run shorthand=none type=string default="" usage="run id prefix (default: the sole running run)"
+  inherited:
+    (none)
+
+command: cc-notes runbook run start
+  use: start RUNBOOK
+  aliases: -
+  short: Start a tracked run of a runbook
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --task shorthand=none type=string default="" usage="task id prefix this run serves"
+  inherited:
+    (none)
+
+command: cc-notes runbook show
+  use: show ID
+  aliases: -
+  short: Show one runbook with its steps and runs
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes runbook step
+  use: step
+  aliases: -
+  short: Author the ordered steps of a runbook
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes runbook step add
+  use: add RUNBOOK TEXT
+  aliases: -
+  short: Add a step to a runbook (default --last)
+  hidden: false
+  flags:
+    --after shorthand=none type=string default="" usage="place after this step (id prefix)"
+    --before shorthand=none type=string default="" usage="place before this step (id prefix)"
+    --command shorthand=none type=string default="" usage="shell command for the step"
+    --first shorthand=none type=bool default="false" usage="place before all steps"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --last shorthand=none type=bool default="false" usage="place after all steps (default)"
+  inherited:
+    (none)
+
+command: cc-notes runbook step edit
+  use: edit RUNBOOK STEP
+  aliases: -
+  short: Edit a step's text or command
+  hidden: false
+  flags:
+    --command shorthand=none type=string default="" usage="new step command"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --no-command shorthand=none type=bool default="false" usage="clear the step command"
+    --text shorthand=none type=string default="" usage="new step text"
+  inherited:
+    (none)
+
+command: cc-notes runbook step list
+  use: list RUNBOOK
+  aliases: -
+  short: List a runbook's steps
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes runbook step move
+  use: move RUNBOOK STEP
+  aliases: -
+  short: Reorder a step within a runbook
+  hidden: false
+  flags:
+    --after shorthand=none type=string default="" usage="place after this step (id prefix)"
+    --before shorthand=none type=string default="" usage="place before this step (id prefix)"
+    --first shorthand=none type=bool default="false" usage="place before all steps"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --last shorthand=none type=bool default="false" usage="place after all steps (default)"
+  inherited:
+    (none)
+
+command: cc-notes runbook step rm
+  use: rm RUNBOOK STEP
+  aliases: -
+  short: Remove a step from a runbook
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes show
+  use: show ID
+  aliases: -
+  short: Show any note, doc, log, task, sprint, project, or runbook by id
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes skills
+  use: skills
+  aliases: -
+  short: Manage the cc-notes Claude Code skill
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes skills install
+  use: install
+  aliases: -
+  short: Register the cc-notes plugin in .claude/settings.json
+  hidden: false
+  flags:
+    --global shorthand=none type=bool default="false" usage="enable the plugin in the user-global ~/.claude/settings.json instead of the repo"
+  inherited:
+    (none)
+
+command: cc-notes sprint
+  use: sprint
+  aliases: -
+  short: Sprints: time-boxed groupings of tasks, optionally within a project
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes sprint activate
+  use: activate ID
+  aliases: -
+  short: Mark a sprint active
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes sprint add
+  use: add TITLE
+  aliases: -
+  short: Create a sprint
+  hidden: false
+  flags:
+    --body shorthand=none type=string default="" usage="sprint description; - reads stdin"
+    --end shorthand=none type=string default="" usage="end date YYYY-MM-DD"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --project shorthand=none type=string default="" usage="project id prefix"
+    --start shorthand=none type=string default="" usage="start date YYYY-MM-DD"
+  inherited:
+    (none)
+
+command: cc-notes sprint cancel
+  use: cancel ID
+  aliases: -
+  short: Mark a sprint cancelled
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes sprint comment
+  use: comment ID BODY
+  aliases: -
+  short: Append a comment; BODY - reads stdin
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes sprint complete
+  use: complete ID
+  aliases: -
+  short: Mark a sprint completed
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes sprint edit
+  use: edit ID
+  aliases: -
+  short: Edit a sprint without transition checks
+  hidden: false
+  flags:
+    --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --body shorthand=none type=string default="" usage="new description; - reads stdin"
+    --end shorthand=none type=string default="" usage="new end date YYYY-MM-DD"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --no-end shorthand=none type=bool default="false" usage="clear the end date"
+    --no-project shorthand=none type=bool default="false" usage="clear the project"
+    --no-start shorthand=none type=bool default="false" usage="clear the start date"
+    --project shorthand=none type=string default="" usage="new project id prefix"
+    --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --start shorthand=none type=string default="" usage="new start date YYYY-MM-DD"
+    --title shorthand=none type=string default="" usage="new title"
+  inherited:
+    (none)
+
+command: cc-notes sprint history
+  use: history ID
+  aliases: -
+  short: Show this sprint's edit history
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    (none)
+
+command: cc-notes sprint list
+  use: list
+  aliases: -
+  short: List sprints
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --project shorthand=none type=string default="" usage="filter to project id prefix"
+    --status shorthand=none type=string default="" usage="status filter, comma-separated (default all)"
+  inherited:
+    (none)
+
+command: cc-notes sprint show
+  use: show ID
+  aliases: -
+  short: Show one sprint
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes status
+  use: status
+  aliases: board
+  short: Orient: the backlog, your branch, in-progress across branches, and notes
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes sync
+  use: sync
+  aliases: -
+  short: Converge refs/cc-notes/* with a remote and push
+  hidden: false
+  flags:
+    --full shorthand=none type=bool default="false" usage="force a whole-namespace reconcile scan"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --remote shorthand=none type=string default="origin" usage="remote to sync with"
+  inherited:
+    (none)
+
+command: cc-notes task
+  use: task
+  aliases: -
+  short: Tasks with claiming, deps, lifecycle, and a branch attribute
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes task add
+  use: add TITLE
+  aliases: -
+  short: Create a task
+  hidden: false
+  flags:
+    --backlog shorthand=none type=bool default="false" usage="create on the backlog (no branch)"
+    --blocked-by shorthand=none type=stringArray default="[]" usage="blocker task id prefix (repeatable, resolved globally)"
+    --body shorthand=none type=string default="" usage="task description; - reads stdin"
+    --branch shorthand=none type=string default="" usage="task branch (default: current branch)"
+    --criterion shorthand=none type=stringArray default="[]" usage="acceptance criterion text (repeatable, required unless --no-validation-criteria)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --no-validation-criteria shorthand=none type=bool default="false" usage="create with no acceptance criteria"
+    --parent shorthand=none type=string default="" usage="parent task id prefix"
+    --priority shorthand=none type=int default="2" usage="priority 0-3 (0 most urgent)"
+    --project shorthand=none type=string default="" usage="project id prefix"
+    --sprint shorthand=none type=string default="" usage="sprint id prefix"
+    --type shorthand=none type=string default="task" usage="task type (task|bug|epic|question)"
+  inherited:
+    (none)
+
+command: cc-notes task archived
+  use: archived
+  aliases: -
+  short: List done and cancelled tasks closed before the threshold
+  hidden: false
+  flags:
+    --closed-before shorthand=none type=string default="" usage="archive cutoff (Go duration relative, or RFC3339 absolute; default 720h)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task backlog
+  use: backlog
+  aliases: -
+  short: List the open, branch-less backlog
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task cancel
+  use: cancel ID
+  aliases: -
+  short: Mark a task cancelled
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task claim
+  use: claim ID
+  aliases: -
+  short: Claim an open, unassigned task
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --steal shorthand=none type=bool default="false" usage="reclaim an in-progress task whose lease has expired"
+    --sync shorthand=none type=bool default="false" usage="claim, then sync and re-check, yielding if another agent won"
+  inherited:
+    (none)
+
+command: cc-notes task comment
+  use: comment ID BODY
+  aliases: -
+  short: Append a comment; BODY - reads stdin
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task criterion
+  use: criterion
+  aliases: -
+  short: Structured acceptance criteria on a task
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes task criterion add
+  use: add TASK TEXT
+  aliases: -
+  short: Add an acceptance criterion to a task
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --script shorthand=none type=string default="" usage="validation script file; its contents become the criterion's check command"
+  inherited:
+    (none)
+
+command: cc-notes task criterion failed
+  use: failed TASK CRIT
+  aliases: -
+  short: Mark a criterion failed
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task criterion list
+  use: list TASK
+  aliases: -
+  short: List a task's acceptance criteria
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task criterion met
+  use: met TASK CRIT
+  aliases: -
+  short: Mark a criterion met
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task criterion pending
+  use: pending TASK CRIT
+  aliases: -
+  short: Mark a criterion pending
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task criterion rm
+  use: rm TASK CRIT
+  aliases: -
+  short: Remove an acceptance criterion from a task
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task criterion script
+  use: script TASK CRIT FILE
+  aliases: -
+  short: Set or clear a criterion's validation script
+  hidden: false
+  flags:
+    --clear shorthand=none type=bool default="false" usage="clear the criterion's validation script"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task dep
+  use: dep ID BLOCKER
+  aliases: -
+  short: Mark ID blocked by BLOCKER
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task done
+  use: done ID
+  aliases: -
+  short: Mark a task done and anchor your HEAD commit onto it
+  hidden: false
+  flags:
+    --force shorthand=none type=bool default="false" usage="close even with unmet criteria"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task edit
+  use: edit ID
+  aliases: -
+  short: Edit a task without transition checks
+  hidden: false
+  flags:
+    --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --assignee shorthand=none type=string default="" usage="new assignee"
+    --backlog shorthand=none type=bool default="false" usage="put on the shared backlog (no branch)"
+    --body shorthand=none type=string default="" usage="new description; - reads stdin"
+    --branch shorthand=none type=string default="" usage="task branch (default: current branch)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --no-assignee shorthand=none type=bool default="false" usage="clear the assignee"
+    --no-parent shorthand=none type=bool default="false" usage="clear the parent"
+    --no-project shorthand=none type=bool default="false" usage="clear the project"
+    --no-sprint shorthand=none type=bool default="false" usage="clear the sprint"
+    --parent shorthand=none type=string default="" usage="new parent task id prefix"
+    --priority shorthand=none type=int default="0" usage="new priority 0-3"
+    --project shorthand=none type=string default="" usage="new project id prefix"
+    --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --sprint shorthand=none type=string default="" usage="new sprint id prefix"
+    --status shorthand=none type=string default="" usage="new status (open|in_progress|done|cancelled)"
+    --title shorthand=none type=string default="" usage="new title"
+    --type shorthand=none type=string default="" usage="new type (task|bug|epic|question)"
+  inherited:
+    (none)
+
+command: cc-notes task history
+  use: history ID
+  aliases: -
+  short: Show this task's edit history
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    (none)
+
+command: cc-notes task list
+  use: list
+  aliases: -
+  short: List tasks, scoped to the current branch by default
+  hidden: false
+  flags:
+    --all shorthand=none type=bool default="false" usage="every status"
+    --all-branches shorthand=none type=bool default="false" usage="every branch"
+    --assignee shorthand=none type=string default="" usage="require assignee"
+    --backlog shorthand=none type=bool default="false" usage="only backlog tasks (no branch)"
+    --branch shorthand=none type=string default="" usage="filter to branch (default: current branch)"
+    --include-archived shorthand=none type=bool default="false" usage="include archived (old done/cancelled) tasks"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --status shorthand=none type=string default="" usage="status filter, comma-separated (default open,in_progress)"
+    --type shorthand=none type=string default="" usage="require type"
+  inherited:
+    (none)
+
+command: cc-notes task ready
+  use: ready
+  aliases: -
+  short: List unblocked, unassigned open tasks
+  hidden: false
+  flags:
+    --all-branches shorthand=none type=bool default="false" usage="every branch"
+    --backlog shorthand=none type=bool default="false" usage="only backlog tasks (no branch)"
+    --branch shorthand=none type=string default="" usage="filter to branch (default: current branch)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task renew
+  use: renew ID
+  aliases: -
+  short: Refresh the lease heartbeat on a task you hold
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task show
+  use: show ID
+  aliases: -
+  short: Show one task
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task stale
+  use: stale
+  aliases: -
+  short: List in-progress tasks idle past the lease threshold
+  hidden: false
+  flags:
+    --idle-after shorthand=none type=string default="" usage="idle threshold (default cc-notes.leaseTTL / CC_NOTES_LEASE_TTL or 1h)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task start
+  use: start ID
+  aliases: -
+  short: Claim a task and move it onto your current branch
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task undep
+  use: undep ID BLOCKER
+  aliases: -
+  short: Remove a blocked-by dependency
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes task validate
+  use: validate TASK
+  aliases: -
+  short: Run a task's validation scripts (explicit, confirmation-gated)
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --timeout shorthand=none type=duration default="5m0s" usage="per-script timeout"
+    --yes shorthand=none type=bool default="false" usage="run the scripts without the interactive confirmation prompt"
+  inherited:
+    (none)
+
+command: cc-notes version
+  use: version
+  aliases: -
+  short: Print the cc-notes version
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes viz
+  use: viz
+  aliases: -
+  short: Serve the branch-and-task visualization in a browser
+  hidden: false
+  flags:
+    --no-open shorthand=none type=bool default="false" usage="do not open a browser"
+    --poll shorthand=none type=duration default="2s" usage="liveness poll interval"
+    --port shorthand=none type=int default="0" usage="TCP port to listen on (0 = ephemeral)"
+  inherited:
+    (none)
+
+command: cc-notes workflows
+  use: workflows
+  aliases: -
+  short: Manage the cc-notes CI workflow
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes workflows install
+  use: install
+  aliases: -
+  short: Install the cc-notes CI workflow into the repository
+  hidden: false
+  flags:
+    --dir shorthand=none type=string default=".github/workflows" usage="destination directory, relative to the repo root"
+  inherited:
+    (none)
+

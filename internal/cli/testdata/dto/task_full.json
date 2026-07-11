@@ -1,0 +1,64 @@
+{
+  "id": "task-full-000000000000000000000000000000",
+  "branch": "feature/x",
+  "title": "implement the thing",
+  "description": "do the thing",
+  "type": "bug",
+  "status": "done",
+  "priority": 2,
+  "assignee": "alice \u003calice@example.com\u003e",
+  "labels": [
+    "backend",
+    "urgent"
+  ],
+  "blocked_by": [
+    "task-block-0001",
+    "task-block-0002"
+  ],
+  "blocks": [
+    "task-blocks-001",
+    "task-blocks-002"
+  ],
+  "parent": "task-parent-001",
+  "comments": [
+    {
+      "author": "alice \u003calice@example.com\u003e",
+      "ts": "2023-11-14T22:13:20Z",
+      "body": "starting"
+    },
+    {
+      "author": "bob \u003cbob@example.com\u003e",
+      "ts": "2023-11-14T23:13:20Z",
+      "body": "done"
+    }
+  ],
+  "commits": [
+    "c0ffee0000000000000000000000000000000000",
+    "d00d000000000000000000000000000000000000"
+  ],
+  "lease": {
+    "holder": "alice \u003calice@example.com\u003e",
+    "heartbeat": "2023-11-15T04:13:20Z"
+  },
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "started_at": "2023-11-15T02:13:20Z",
+  "closed_at": "2023-11-15T03:13:20Z",
+  "sprint": "sprint-0000001",
+  "project": "project-000001",
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "tests pass",
+      "script": "go test ./...",
+      "status": "met"
+    },
+    {
+      "id": "c2",
+      "text": "reviewed",
+      "script": "",
+      "status": "pending"
+    }
+  ],
+  "closed_forced": true
+}

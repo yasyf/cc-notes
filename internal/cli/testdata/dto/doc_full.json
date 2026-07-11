@@ -1,0 +1,40 @@
+{
+  "id": "doc-full-0000000000000000000000000000000",
+  "title": "auth migration handoff",
+  "body": "the doc body",
+  "when": "resuming the auth cutover",
+  "tags": [
+    "auth"
+  ],
+  "anchors": [
+    {
+      "kind": "dir",
+      "value": "internal/api",
+      "witness": "f00ba12"
+    },
+    {
+      "kind": "path",
+      "value": "internal/cli/output.go",
+      "witness": null
+    }
+  ],
+  "author": "ada \u003cada@example.com\u003e",
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "verified_at": "2023-11-15T00:13:20Z",
+  "verified_by": "ada \u003cada@example.com\u003e",
+  "superseded_by": "doc-newer-0001",
+  "drift": "DRIFTED",
+  "deleted": true,
+  "stale_at": "2023-11-15T01:13:20Z",
+  "stale_by": "bob \u003cbob@example.com\u003e",
+  "stale_reason": "rewritten",
+  "attachments": [
+    {
+      "name": "dump.log",
+      "oid": "abc123",
+      "size": 42,
+      "present": true
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "sprint-min-000000000000000000000000000000",
+  "project": null,
+  "title": "bare",
+  "description": "",
+  "status": "",
+  "start_date": null,
+  "end_date": null,
+  "labels": [],
+  "commits": [],
+  "comments": [],
+  "author": "ada \u003cada@example.com\u003e",
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "started_at": null,
+  "closed_at": null,
+  "tasks": []
+}

@@ -1,0 +1,55 @@
+{
+  "id": "runbook-full-0000000000000000000000000000",
+  "title": "deploy",
+  "description": "deploy runbook",
+  "status": "active",
+  "steps": [
+    {
+      "id": "step0001",
+      "text": "build image",
+      "command": "make build",
+      "position": "a"
+    },
+    {
+      "id": "step0002",
+      "text": "roll out",
+      "command": "",
+      "position": "b"
+    }
+  ],
+  "runs": [
+    {
+      "id": "run00001",
+      "task": "task-of-run0001",
+      "runner": "ci \u003cci@example.com\u003e",
+      "status": "succeeded",
+      "started_at": "2023-11-15T02:13:20Z",
+      "finished_at": "2023-11-15T03:13:20Z",
+      "steps": [
+        {
+          "step": "step0001",
+          "status": "done",
+          "note": "ok"
+        },
+        {
+          "step": "step0002",
+          "status": "pending"
+        }
+      ]
+    }
+  ],
+  "labels": [
+    "deploy"
+  ],
+  "comments": [
+    {
+      "author": "ada \u003cada@example.com\u003e",
+      "ts": "2023-11-14T22:13:20Z",
+      "body": "comment"
+    }
+  ],
+  "author": "ada \u003cada@example.com\u003e",
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "archived_at": "2023-11-15T03:13:20Z"
+}

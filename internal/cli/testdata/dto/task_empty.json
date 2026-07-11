@@ -1,0 +1,28 @@
+{
+  "id": "task-min-0000000000000000000000000000000",
+  "branch": "",
+  "title": "bare",
+  "description": "",
+  "type": "",
+  "status": "",
+  "priority": 0,
+  "assignee": null,
+  "labels": [],
+  "blocked_by": [],
+  "blocks": [],
+  "parent": null,
+  "comments": [],
+  "commits": [],
+  "lease": {
+    "holder": null,
+    "heartbeat": null
+  },
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "started_at": null,
+  "closed_at": null,
+  "sprint": null,
+  "project": null,
+  "criteria": [],
+  "closed_forced": false
+}

@@ -1,0 +1,30 @@
+{
+  "id": "project-full-0000000000000000000000000000",
+  "title": "platform",
+  "description": "the platform project",
+  "status": "archived",
+  "labels": [
+    "infra"
+  ],
+  "commits": [
+    "c0ffee0000000000000000000000000000000000"
+  ],
+  "comments": [
+    {
+      "author": "ada \u003cada@example.com\u003e",
+      "ts": "2023-11-14T22:13:20Z",
+      "body": "note"
+    }
+  ],
+  "author": "ada \u003cada@example.com\u003e",
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "closed_at": "2023-11-15T03:13:20Z",
+  "sprints": [
+    "sprint-000000001"
+  ],
+  "tasks": [
+    "task-in-proj001",
+    "task-in-proj002"
+  ]
+}

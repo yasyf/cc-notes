@@ -1,0 +1,38 @@
+{
+  "id": "log-full-0000000000000000000000000000000",
+  "title": "rollout log",
+  "entries": [
+    {
+      "author": "ada \u003cada@example.com\u003e",
+      "ts": "2023-11-14T22:13:20Z",
+      "text": "flipped to 5%"
+    },
+    {
+      "author": "bob \u003cbob@example.com\u003e",
+      "ts": "2023-11-14T23:13:20Z",
+      "text": "flipped to 100%"
+    }
+  ],
+  "tags": [
+    "rollout"
+  ],
+  "anchors": [
+    {
+      "kind": "dir",
+      "value": "internal/api",
+      "witness": null
+    }
+  ],
+  "author": "ada \u003cada@example.com\u003e",
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "deleted": false,
+  "attachments": [
+    {
+      "name": "run.log",
+      "oid": "deadbeef",
+      "size": 1024,
+      "present": false
+    }
+  ]
+}

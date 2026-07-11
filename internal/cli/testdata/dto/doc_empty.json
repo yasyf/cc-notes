@@ -1,0 +1,20 @@
+{
+  "id": "doc-min-00000000000000000000000000000000",
+  "title": "bare",
+  "body": "",
+  "when": "",
+  "tags": [],
+  "anchors": [],
+  "author": "ada \u003cada@example.com\u003e",
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "verified_at": null,
+  "verified_by": null,
+  "superseded_by": null,
+  "drift": null,
+  "deleted": false,
+  "stale_at": null,
+  "stale_by": null,
+  "stale_reason": null,
+  "attachments": []
+}

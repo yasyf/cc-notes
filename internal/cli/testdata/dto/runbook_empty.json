@@ -1,0 +1,14 @@
+{
+  "id": "runbook-min-00000000000000000000000000000",
+  "title": "bare",
+  "description": "",
+  "status": "active",
+  "steps": [],
+  "runs": [],
+  "labels": [],
+  "comments": [],
+  "author": "ada \u003cada@example.com\u003e",
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "archived_at": null
+}
