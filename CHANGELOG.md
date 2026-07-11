@@ -6,6 +6,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-11
+
+### Changed
+- **Whole-codebase consolidation, no format changes.** Every layer that
+  repeated per-kind wiring now derives it from one kind registry: a canonical
+  `model.Kind` with `Meta()` snapshot headers and kind-tagged create ops, a
+  splicing op codec, a table-driven ref scheme, one generic fold engine with
+  per-kind folders, a generic store list core, CLI verb/document builders over
+  per-kind specs, and a fusefs codec + layout + diff-combinator engine. Net
+  effect: about 1,600 fewer production lines and a new entity kind now costs
+  registry rows plus its genuinely kind-specific logic instead of ~30 hand
+  -written seams. The storage format, CLI vocabulary, JSON output, mount file
+  format, and viz wire format are unchanged — pinned by new golden batteries
+  (wire-byte, vocabulary, DTO-shape, and a 33-fixture mount corpus) and proven
+  by an end-to-end diff: the v0.23.0 and v0.24.0 binaries produce byte
+  -identical output for every read command and every help screen over the same
+  repo, and old on-disk histories fold identically.
+- `note add` validates its title and body before touching the repository,
+  matching `doc add` — a usage error no longer installs cc-notes refspecs
+  into `.git/config` as a side effect.
+
+### Added
+- The release workflow smoke-tests the pure (non-FUSE) darwin binary on a
+  macOS runner before publishing assets: version stamp, `init`, and a note
+  round-trip in a fresh repo.
+
+### Removed
+- The standalone reconcile CI workflow — a byte-duplicate of the dogfooded
+  template's job that raced it on every push to main.
+- web: the unused `d3-array` dependency, orphaned CSS, and duplicated
+  clipboard/format helpers; the TypeScript config now enables
+  `noUncheckedIndexedAccess`.
+
 ## [0.23.0] - 2026-07-10
 
 ### Added
