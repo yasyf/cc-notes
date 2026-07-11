@@ -6,8 +6,9 @@
 import { relativeTime } from "../dag/badges";
 import { nowSec, shortId } from "../detail/format";
 import { StatusBadge } from "../detail/parts";
+import { DISPLAY_KINDS } from "../kinds";
 import type { Selection } from "../store";
-import { compareDefault, statusRank, KINDS, type Row } from "./index";
+import { compareDefault, statusRank, type Row } from "./index";
 import { Highlight, KindBadge, PriorityBadge } from "./parts";
 import type { Span } from "./search";
 
@@ -62,7 +63,7 @@ function colCompare(col: ColKey, a: Row, b: Row, titles: Map<string, string>): n
     case "title":
       return a.titleLower.localeCompare(b.titleLower);
     case "kind":
-      return KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind);
+      return DISPLAY_KINDS.indexOf(a.kind) - DISPLAY_KINDS.indexOf(b.kind);
     case "status":
       return statusRank(a.status) - statusRank(b.status) || a.status.localeCompare(b.status);
     case "priority":

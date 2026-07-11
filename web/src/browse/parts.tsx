@@ -2,11 +2,12 @@
 // priority badge, and a title highlighter that marks a scorer's match spans.
 
 import type { ReactNode } from "react";
-import { priorityLabel, type EntityKind } from "./index";
+import { kindBadgeClass, type EntityKind } from "../kinds";
+import { priorityLabel } from "./index";
 import type { Span } from "./search";
 
 export function KindBadge({ kind }: { kind: EntityKind }) {
-  return <span className={`kind-badge kind-${kind}`}>{kind}</span>;
+  return <span className={kindBadgeClass(kind)}>{kind}</span>;
 }
 
 export function PriorityBadge({ priority }: { priority: number }) {

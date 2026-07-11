@@ -5,7 +5,8 @@
 // pure predicate live here and are consumed by Browse.
 
 import { shortId } from "../detail/format";
-import { KINDS, statusRank, type Row } from "./index";
+import { DISPLAY_KINDS } from "../kinds";
+import { statusRank, type Row } from "./index";
 
 export type FlagKey = "stale" | "superseded" | "never-verified";
 export type FacetKey =
@@ -110,7 +111,7 @@ export function FilterBar({ rows, filters, titles, onToggle, onClear }: Props) {
     return t !== undefined && t !== "" ? t : shortId(id);
   };
 
-  const kindOpts: Option[] = KINDS.map((k) => ({
+  const kindOpts: Option[] = DISPLAY_KINDS.map((k) => ({
     value: k,
     label: k,
     count: rows.reduce((n, r) => n + (r.kind === k ? 1 : 0), 0),

@@ -5,11 +5,11 @@
 // never colour-alone — every chip pairs a mark or badge with its label.
 
 import { Glyph } from "./Glyph";
+import { DISPLAY_KINDS, kindBadgeClass } from "../kinds";
 import type { TimelineFilters } from "./filters";
 import type { LayoutResult } from "./layout";
 import { EVENT_SPECS, eventSpec, statusSpec } from "./marks";
 
-const KIND_ORDER = ["task", "note", "doc", "log", "runbook", "sprint", "project"];
 const STATUS_ORDER = ["in_progress", "done", "cancelled", "open"];
 
 interface Props {
@@ -29,7 +29,7 @@ export function Legend({
   onToggleKind,
   onToggleType,
 }: Props) {
-  const kinds = KIND_ORDER.filter((k) => presentKinds.has(k));
+  const kinds = DISPLAY_KINDS.filter((k) => presentKinds.has(k));
   const types = Object.keys(EVENT_SPECS).filter((t) => presentTypes.has(t));
 
   const statuses = new Set<string>();
@@ -52,7 +52,7 @@ export function Legend({
                 aria-pressed={!off}
                 onClick={() => onToggleKind(k)}
               >
-                <span className={`kind-badge kind-${k}`}>{k}</span>
+                <span className={kindBadgeClass(k)}>{k}</span>
               </button>
             );
           })}

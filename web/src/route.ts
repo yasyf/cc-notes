@@ -3,6 +3,7 @@
 // shareable and the back button navigates tabs. Malformed fragments fall back to
 // the timeline tab and drop an unparseable selection rather than throwing.
 
+import { isEntityKind } from "./kinds";
 import type { Selection, Tab } from "./store";
 
 export interface Route {
@@ -11,7 +12,6 @@ export interface Route {
 }
 
 const TABS: readonly Tab[] = ["timeline", "commits", "browse"];
-const KINDS: readonly string[] = ["note", "doc", "log", "task", "sprint", "project", "runbook"];
 
 function toTab(path: string): Tab {
   const name = path.replace(/^\//, "");
@@ -29,7 +29,7 @@ function parseSelection(query: string): Selection | null {
     try {
       const kind = decodeURIComponent(val.slice(0, colon));
       const id = decodeURIComponent(val.slice(colon + 1));
-      if (!KINDS.includes(kind) || id === "") return null;
+      if (!isEntityKind(kind) || id === "") return null;
       return { kind, id, title: "" };
     } catch {
       return null;

@@ -13,20 +13,8 @@ import type {
   StateResponse,
   TaskSnapshot,
 } from "../api";
+import type { EntityKind } from "../kinds";
 import type { SearchTarget } from "./search";
-
-export type EntityKind = "note" | "doc" | "log" | "task" | "sprint" | "project" | "runbook";
-
-// KINDS is the fixed display order of the kind facet and kind badges.
-export const KINDS: readonly EntityKind[] = [
-  "task",
-  "note",
-  "doc",
-  "log",
-  "runbook",
-  "sprint",
-  "project",
-];
 
 // TASK_STATUSES is the kanban column order and the task status lifecycle.
 export const TASK_STATUSES = ["open", "in_progress", "done", "cancelled"] as const;

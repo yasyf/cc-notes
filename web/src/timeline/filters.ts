@@ -5,10 +5,7 @@
 // structure reads even when all its items are filtered out.
 
 import type { Graph } from "../api";
-
-// MARKER_KINDS mirrors layout.ts: the entity kinds that render as point markers,
-// so only their event types populate the event-type legend.
-const MARKER_KINDS = new Set(["note", "doc", "log", "sprint", "runbook"]);
+import { MARKER_KINDS } from "../kinds";
 
 // TimelineFilters records what the viewer has hidden: entity kinds and event
 // types toggled off in the legend, plus an optional single-lane focus. Empty
