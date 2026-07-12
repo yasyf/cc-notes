@@ -113,6 +113,7 @@ Each hit comes back with a verdict:
 | `cc-notes note review` | Flag notes as `DRIFTED`, `STALE`, or `UNVERIFIED` |
 | `cc-notes doc add` | Store a long-form handoff with a `--when` trigger, surfaced to the next agent by `cc-notes relevant` |
 | `cc-notes log add` | Start an append-only journal, surfaced by `cc-notes relevant`; logs skip the review lifecycle since they never drift |
+| `cc-notes papercut` | File a one-paragraph friction complaint to the repo-wide papercuts journal (`papercut list` reads it back) |
 | `cc-notes relevant` | Rank the notes, docs, and logs most relevant to a path, with the reasons each matched |
 | `cc-notes reconcile` | Carry merged branches' open tasks onto a target branch |
 | `cc-notes blame` | Name the task(s) a commit implemented |

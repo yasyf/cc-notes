@@ -1,12 +1,12 @@
-# Choosing native todos, cc-notes tasks, notes, docs, and logs
+# Choosing native todos, cc-notes tasks, notes, docs, logs, and papercuts
 
-Five tools record "things to remember," and picking the wrong one is the most common mistake. The native todo tool, `cc-notes task`, `cc-notes note`, `cc-notes doc`, and `cc-notes log` differ along two axes — how long the record lives, and who can see it — plus, for the three durable knowledge records, the *form* the knowledge takes. Get those right and the choice is mechanical.
+Six tools record "things to remember," and picking the wrong one is the most common mistake. The native todo tool, `cc-notes task`, `cc-notes note`, `cc-notes doc`, `cc-notes log`, and `cc-notes papercut` differ along two axes — how long the record lives, and who can see it — plus, for the four durable knowledge records, the *form* the knowledge takes. Get those right and the choice is mechanical.
 
 ## The two axes
 
-**Lifetime.** Native todos are ephemeral — they live for one session and vanish when it ends. cc-notes tasks, notes, docs, and logs are durable git objects on `refs/cc-notes/*`, so they persist across sessions, machines, and agents; `git push` carries them out, and `cc-notes sync` folds in what other agents pushed.
+**Lifetime.** Native todos are ephemeral — they live for one session and vanish when it ends. cc-notes tasks, notes, docs, logs, and papercuts are durable git objects on `refs/cc-notes/*`, so they persist across sessions, machines, and agents; `git push` carries them out, and `cc-notes sync` folds in what other agents pushed.
 
-**Scope.** Native todos are private to the current agent. A `cc-notes task` is global: it lives at a single flat ref, and any agent who syncs the repo sees it. Its branch is a mutable attribute, not its identity — `task list` and `task ready` default to tasks on your current branch, but the shared backlog (tasks with no branch) is visible to every agent on every branch. cc-notes notes, docs, and logs are repo-global, shared the same way.
+**Scope.** Native todos are private to the current agent. A `cc-notes task` is global: it lives at a single flat ref, and any agent who syncs the repo sees it. Its branch is a mutable attribute, not its identity — `task list` and `task ready` default to tasks on your current branch, but the shared backlog (tasks with no branch) is visible to every agent on every branch. cc-notes notes, docs, and logs are repo-global, shared the same way; papercuts share one repo-wide journal.
 
 | Tool | Lifetime | Scope | Records |
 |------|----------|-------|---------|
@@ -15,13 +15,14 @@ Five tools record "things to remember," and picking the wrong one is the most co
 | `cc-notes note` | Durable, synced | Repo-global, shared | A one-line decision or fact worth remembering |
 | `cc-notes doc` | Durable, synced | Repo-global, shared | Long-form guidance written for the next agent, with a when-to-read trigger |
 | `cc-notes log` | Durable, synced | Repo-global, shared | An append-only chronology — each entry an immutable timestamped fact, never edited, optionally carrying attached evidence files |
+| `cc-notes papercut` | Durable, synced | Repo-wide, shared — one journal for the whole repo | A one-paragraph friction complaint — a dead-end tool call, a broken link, a misleading doc — filed instead of silently pushed through |
 
 ## The decision
 
 Ask, in order:
 
 1. **Will this matter after the session ends?** No: native todo. Yes: cc-notes.
-2. **Is it work to do, or knowledge to remember?** Work is a `cc-notes task`; knowledge — a fact, a guide, or a running record — is a note, a doc, or a log (next question).
+2. **Is it work to do, knowledge to remember, or friction you observed?** Work is a `cc-notes task`; knowledge — a fact, a guide, or a running record — is a note, a doc, or a log (next question). Friction is neither: something slowed you down, you are not fixing it, and it is not a fact worth keeping — file it as a `cc-notes papercut "<complaint>"`, one paragraph, fire and forget, and move on.
 3. **A standing fact, living guidance, or a growing chronology?** A single verified fact or decision is a `cc-notes note`. Multi-paragraph guidance written *for the next agent* — a handoff, a current-state brief, a *read this before you touch X* — is a `cc-notes doc`, carrying a free-text `--when` trigger that says when the next agent should read it. A chronology you keep adding to over time — an incident timeline, a rollout log, a debugging session — is a `cc-notes log`: each `log append` is an immutable timestamped entry, and the log never drifts because it never claims to be current truth. Machine-generated evidence from a run — logs, panic dumps, repro archives — rides the entry as `--attach` files; only a human-facing, publishable report belongs in the repo tree.
 4. **If it is work, who picks it up?** Anyone — drop it in the shared backlog with `cc-notes task add --backlog`. Only this line of work — file it on your current branch with a plain `cc-notes task add`.
 
@@ -73,6 +74,15 @@ $ cc-notes log append 9f2c0e1 "16:31 — rolled back the deploy; error rate back
 ```
 
 Each entry carries the author and timestamp of the commit that wrote it, and `log show 9f2c0e1` replays them in order. There is no `verify`, `supersede`, or `expire` — the record is the history, and history does not drift.
+
+**A dead-end you hit mid-task and worked around.** `cc-notes papercut`. A misleading doc sent you down the wrong path for ten minutes, but you found the real answer and moved on. Nobody is committing to fix it (no task), and a note would saddle a passing observation with a verification lifecycle it never earns. One command files the friction into the repo-wide journal and you carry on:
+
+```console
+$ cc-notes papercut "README points at scripts/setup.sh, which was replaced by task bootstrap two releases ago"
+7c31b2e	2026-06-23	papercut	papercuts
+```
+
+If the same friction bites again and deserves a fix, promote it: file a `cc-notes task --backlog` and cite the papercut.
 
 **Decomposing that bug fix once you pick it up.** Both. The bug is a durable task in the backlog. `task start` atomically claims it (deterministic first-wins), moves it onto your current branch, and opens a lease:
 

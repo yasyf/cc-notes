@@ -236,6 +236,19 @@ func logCorpus() []corpusEntry {
 			CreatedAt: cCreated,
 			UpdatedAt: cCreated,
 		}},
+		{"log_model", model.Log{
+			ID:    "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9",
+			Title: "papercuts",
+			Tags:  []string{"papercut"},
+			Entries: []model.LogEntry{
+				{Author: "Agent A <a@example.com>", TS: cCreated, Text: "unquoted globs broke rg\n", Model: "claude-fable-5"},
+				{Author: "Agent B <b@example.com>", TS: cUpdated, Text: "no model on this one\n"},
+			},
+			Author:    "Agent A <a@example.com>",
+			CreatedAt: cCreated,
+			UpdatedAt: cUpdated,
+			Head:      "ffff0000ffff0000ffff0000ffff0000ffff0000",
+		}},
 	}
 }
 
@@ -787,6 +800,13 @@ var goldenEdits = map[string][]goldenEdit{
 			"append entry", "still entry two\n",
 			"still entry two\n<!-- cc-notes:entry author=\"ci\" ts=\"2025-01-01T00:00:00Z\" -->\nnew rollout note\n",
 			[]model.Op{model.AppendEntry{Text: "new rollout note\n"}},
+		},
+	},
+	"log_model": {
+		{
+			"append entry with model", "no model on this one\n",
+			"no model on this one\n<!-- cc-notes:entry author=\"ci\" ts=\"2025-01-01T00:00:00Z\" model=\"claude-fable-5\" -->\nanother complaint\n",
+			[]model.Op{model.AppendEntry{Text: "another complaint\n", Model: "claude-fable-5"}},
 		},
 	},
 	"task_rich": {

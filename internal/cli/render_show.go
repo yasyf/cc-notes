@@ -106,8 +106,9 @@ func renderDocShow(d model.Doc, drift string, supersedes []model.EntityID, atts 
 // renderLogShow renders the lean show view of a log: the fixed-order header
 // block — dropping all verify/stale/supersede/drift, which a log never carries
 // — with one attachment line per attachment, then each entry as a
-// "-- <author> <RFC3339>" block, the same block style task comments render in.
-// The deleted header appears only on a tombstoned log.
+// "-- <author> <RFC3339>" block (prefixed "<model> — " when the entry carries a
+// model identity), the same block style task comments render in. The deleted
+// header appears only on a tombstoned log.
 func renderLogShow(l model.Log, atts []attachmentDTO) string {
 	var b strings.Builder
 	header(&b, "id", string(l.ID))
@@ -125,7 +126,11 @@ func renderLogShow(l model.Log, atts []attachmentDTO) string {
 		header(&b, "deleted", "true")
 	}
 	for _, e := range l.Entries {
-		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", e.Author, render.RFC3339(e.TS), e.Text)
+		if e.Model != "" {
+			fmt.Fprintf(&b, "\n-- %s — %s %s\n%s\n", e.Model, e.Author, render.RFC3339(e.TS), e.Text)
+		} else {
+			fmt.Fprintf(&b, "\n-- %s %s\n%s\n", e.Author, render.RFC3339(e.TS), e.Text)
+		}
 	}
 	return b.String()
 }

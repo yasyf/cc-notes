@@ -93,11 +93,17 @@ EVIDENCE_TRIPWIRE_BYTES = 1 << 20
 # landing tree, inverted here — pointing a durable record at one is the smell.
 EPHEMERAL_MARKERS = (*(p + "/" for p in RUN_OUTPUT_PREFIXES), "scratchpad")
 RECORD_SUBCOMMANDS = frozenset((noun, verb) for noun in ("note", "doc", "log") for verb in ("add", "edit", "append"))
+# Noun-only record writes: a top-level noun that takes its prose as a bare positional, no verb
+# (`cc-notes papercut "TEXT"`), mapped to its READ verbs — a first operand in that set (`papercut
+# list`) is a read, not a record write. Consulted by the same record-command scanner as
+# RECORD_SUBCOMMANDS, but the command prefix is one token, not a (noun, verb) pair.
+RECORD_BARE_NOUNS: dict[str, frozenset[str]] = {"papercut": frozenset({"list"})}
 # Flags whose value carries the record's own prose — the title/body surfaces a purge-bound
 # path would betray, so their values are the only flag values worth scanning.
 CONTENT_FLAGS = frozenset({"--title", "--body", "--when", "--entry"})
-# Value-taking flags whose value is a label, anchor, or attachment path — never record prose,
-# so their value is skipped (`--label scratchpad`, `--branch eng/var/x` must not false-fire).
+# Value-taking flags whose value is a label, anchor, attachment path, or model id — never record
+# prose, so their value is skipped (`--label scratchpad`, `--branch eng/var/x`, `--model
+# /tmp/local.gguf` must not false-fire).
 SKIPPED_VALUE_FLAGS = frozenset({
     "--label", "--add-label", "--rm-label",
     "--branch", "--add-branch", "--rm-branch",
@@ -105,16 +111,18 @@ SKIPPED_VALUE_FLAGS = frozenset({
     "--dir", "--add-dir", "--rm-dir",
     "--commit", "--add-commit", "--rm-commit",
     "--attach", "--rm-attachment",
+    "--model",
 })
 
 # The MCP analog of the Bash ephemeral vocabulary: the record-write tools whose args carry
 # prose, and the tool_input fields that prose flows through. The Bash-only condition above
 # can't see MCP writes, so a sibling condition scans these fields instead.
-MCP_RECORD_WRITE_TOOLS = ("note_add", "doc_add", "log_add", "log_append", "note_edit", "doc_edit")
+MCP_RECORD_WRITE_TOOLS = ("note_add", "doc_add", "log_add", "log_append", "note_edit", "doc_edit", "papercut")
 MCP_RECORD_WRITE_NAMES = tuple(MCP_TOOL_PREFIX + t for t in MCP_RECORD_WRITE_TOOLS)
 # The prose-bearing input fields across those tools, per internal/mcpserver/tools_*.go: note/doc
-# carry `body`, log_add and log_append both carry `entry`. No write tool has a `message` field.
-MCP_CONTENT_FIELDS = ("title", "body", "entry")
+# carry `body`, log_add and log_append both carry `entry`, papercut carries `text`. No write tool
+# has a `message` field.
+MCP_CONTENT_FIELDS = ("title", "body", "entry", "text")
 
 
 @on(
@@ -191,6 +199,9 @@ RECORD_ROUTER_SYSTEM = (
     "`--attach <file>` attachments, never as files in the tree. Its value is the running record "
     "itself; entries are never edited and it has no freshness lifecycle.\n"
     "- task: actionable work still to be done — a TODO or checklist of follow-ups.\n"
+    "- papercut: a one-paragraph complaint about friction hit during the work itself — a dead-end "
+    "tool call, a broken link, a misleading doc — filed to the repo-wide papercuts journal. Not a "
+    "task (there is nothing to do) and not knowledge worth curating; just a logged gripe.\n"
     "- runbook: a repeatable step-by-step operational procedure meant to be re-executed — deploy "
     "steps, a release checklist, an incident-response procedure. cc-notes has a first-class "
     "runbook primitive that tracks each execution's per-step status.\n"
@@ -231,7 +242,7 @@ def nudge_record_durable(evt: PostToolUseEvent) -> HookResult | None:
         .system(RECORD_ROUTER_SYSTEM)
         .context("path", str(evt.file))
         .context("content", (evt.content or "")[:LLM_INPUT_CAP])
-        .ask("Does this belong in cc-notes, and if so as which record (note/doc/log/task/runbook)?")
+        .ask("Does this belong in cc-notes, and if so as which record (note/doc/log/task/papercut/runbook)?")
     )
     try:
         verdict = evt.ctx.call_llm(prompt, response_model=RecordVerdict, model="small", agent=False, transcript=False)
@@ -444,45 +455,82 @@ def nudge_record_evidence(evt: PostToolUseEvent) -> HookResult | None:
     )
 
 
-def ephemeral_record_refs(line: CommandLine) -> list[str]:
-    """Content-bearing tokens of a cc-notes note/doc/log record command that name a purge-bound path.
+def record_operands(args: tuple[str, ...]) -> tuple[str, ...] | None:
+    """The operands after a cc-notes record-command prefix, or None if the leg isn't a record write.
+
+    A bare-write noun (:data:`RECORD_BARE_NOUNS`, e.g. ``papercut "TEXT"``) strips one leading
+    token, unless that noun's first operand is one of its READ verbs (``papercut list`` reads the
+    journal, it is not a record write); a ``(noun, verb)`` pair (:data:`RECORD_SUBCOMMANDS`) strips
+    two.
+    """
+    if args[:1] and (reads := RECORD_BARE_NOUNS.get(args[0])) is not None:
+        return None if args[1:2] and args[1] in reads else args[1:]
+    if args[:2] in RECORD_SUBCOMMANDS:
+        return args[2:]
+    return None
+
+
+def _operand_refs(operands: tuple[str, ...]) -> list[str]:
+    """Purge-bound tokens among a record command's content-bearing operands.
 
     Inspects only the surfaces a title or body flows through — the positional words
-    after the ``(noun, verb)`` pair (the title, and log-append's ID+TEXT), and the
-    values of the content flags in :data:`CONTENT_FLAGS` (both ``--flag value`` and
-    ``--flag=value``). The value of every other value-taking flag
-    (:data:`SKIPPED_VALUE_FLAGS` — labels, anchors, ``--attach``) is skipped, so
-    ``--label scratchpad`` or ``--branch eng/var/x`` never false-fires; an unknown flag
-    is treated as valueless.
+    (the title, log-append's ID+TEXT, or a bare ``papercut`` complaint) and the values of
+    :data:`CONTENT_FLAGS` (both ``--flag value`` and ``--flag=value``). Every other
+    value-taking flag (:data:`SKIPPED_VALUE_FLAGS` — labels, anchors, ``--attach``,
+    ``--model``) has its value skipped, so ``--label scratchpad`` or ``--model /tmp/x``
+    never false-fires; an unknown flag is treated as valueless.
     """
     refs: list[str] = []
-    for cmd in line.commands:
-        if cmd.program != "cc-notes" or cmd.args[:2] not in RECORD_SUBCOMMANDS:
-            continue
-        operands = cmd.args[2:]
-        i = 0
-        while i < len(operands):
-            arg = operands[i]
-            token: str | None = None
-            if not arg.startswith("-"):
-                token, i = arg, i + 1
-            elif "=" in arg:
-                flag, _, value = arg.partition("=")
-                token, i = (value if flag in CONTENT_FLAGS else None), i + 1
-            elif arg in CONTENT_FLAGS:
-                token = operands[i + 1] if i + 1 < len(operands) else None
-                i += 2
-            elif arg in SKIPPED_VALUE_FLAGS:
-                i += 2
-            else:
-                i += 1
-            if token is not None and any(marker in token for marker in EPHEMERAL_MARKERS):
-                refs.append(token)
+    i = 0
+    while i < len(operands):
+        arg = operands[i]
+        token: str | None = None
+        if not arg.startswith("-"):
+            token, i = arg, i + 1
+        elif "=" in arg:
+            flag, _, value = arg.partition("=")
+            token, i = (value if flag in CONTENT_FLAGS else None), i + 1
+        elif arg in CONTENT_FLAGS:
+            token = operands[i + 1] if i + 1 < len(operands) else None
+            i += 2
+        elif arg in SKIPPED_VALUE_FLAGS:
+            i += 2
+        else:
+            i += 1
+        if token is not None and any(marker in token for marker in EPHEMERAL_MARKERS):
+            refs.append(token)
     return refs
 
 
+def ephemeral_record_refs(line: CommandLine) -> list[str]:
+    """Content-bearing tokens of a cc-notes record command that name a purge-bound path.
+
+    Walks each ``cc-notes`` leg that is a record write (:func:`record_operands`) and collects
+    the purge-bound tokens among its content-bearing operands (:func:`_operand_refs`).
+    """
+    refs: list[str] = []
+    for cmd in line.commands:
+        if cmd.program != "cc-notes":
+            continue
+        operands = record_operands(cmd.args)
+        if operands is not None:
+            refs.extend(_operand_refs(operands))
+    return refs
+
+
+def ephemeral_papercut(line: CommandLine) -> bool:
+    """True when a firing cc-notes record leg is a ``papercut`` — its fix lines differ (text-only)."""
+    return any(
+        cmd.program == "cc-notes"
+        and cmd.args[:1] == ("papercut",)
+        and (operands := record_operands(cmd.args)) is not None
+        and bool(_operand_refs(operands))
+        for cmd in line.commands
+    )
+
+
 class EphemeralRecordReference(CustomCondition):
-    """Matches a cc-notes note/doc/log record whose title or body text points at a purge-bound path (/tmp, /var, a session scratchpad)."""
+    """Matches a cc-notes note/doc/log/papercut record whose title or body text points at a purge-bound path (/tmp, /var, a session scratchpad)."""
 
     def check(self, evt: BaseHookEvent) -> bool:
         line = evt.command_line
@@ -496,10 +544,18 @@ class EphemeralRecordReference(CustomCondition):
     tests={
         Input(command='cc-notes doc add "Handoff — full detail in session scratchpad steering-handoff.md" --when w'): Warn(pattern="--attach"),
         Input(command='cc-notes note add "Fact" --body "see /private/tmp/c-1/scratch.md"'): Warn(),
+        # A verb-less `papercut TEXT` whose complaint leans on a purge-bound path fires with
+        # papercut-appropriate fix lines (the journal, not --checkout/--body which papercut lacks).
+        Input(command='cc-notes papercut "full repro saved at /tmp/repro.md"'): Warn(pattern="papercuts journal"),
         # Benign neighbors that must stay silent.
         Input(command='cc-notes doc add "Handoff" --when w --body -'): Allow(),  # content already in the record
         Input(command="cc-notes log append abc123 --attach /tmp/out.log"): Allow(),  # attaching the file IS the fix
         Input(command='cc-notes note add "Fact" --body "content inline" --label scratchpad'): Allow(),  # --label value is not content
+        Input(command='cc-notes papercut "the search tool kept returning stale results"'): Allow(),  # clean papercut prose
+        Input(command="cc-notes papercut list"): Allow(),  # reading the journal is not a record write
+        Input(command="cc-notes papercut list /tmp/repro.md"): Allow(),  # a read leg is never scanned, even with a purge path arg
+        Input(command='cc-notes papercut --model /tmp/local.gguf "clean text"'): Allow(),  # --model value is a model id, not content
+        Input(command='cc-notes papercut --model=/tmp/local.gguf "clean text"'): Allow(),  # equals form skipped the same way
         Input(command="cc-notes task list"): Allow(),  # not a record write
         Input(command="cat /tmp/scratch.md"): Allow(),  # not a cc-notes command
     },
@@ -509,7 +565,9 @@ def nudge_ephemeral_record_reference(evt: PostToolUseEvent) -> HookResult | None
     if fired_this_turn(evt):
         return None
     record_fire(evt)
-    return evt.warn(EPHEMERAL_REFERENCE_LEDE, *_carry_content_fixes(mcp_active(evt)))
+    line = evt.command_line
+    papercut = line is not None and ephemeral_papercut(line)
+    return evt.warn(EPHEMERAL_REFERENCE_LEDE, *_carry_content_fixes(mcp_active(evt), papercut=papercut))
 
 
 EPHEMERAL_REFERENCE_LEDE = (
@@ -519,7 +577,14 @@ EPHEMERAL_REFERENCE_LEDE = (
 )
 
 
-def _carry_content_fixes(mcp: bool) -> list[str]:
+def _carry_content_fixes(mcp: bool, papercut: bool = False) -> list[str]:
+    if papercut:
+        # papercut is text-only (positional TEXT / MCP `text`) — it has no --checkout/--body/--attach
+        # of its own, so route a durable artifact to the papercuts journal, which is an ordinary log.
+        inline = "inline the load-bearing detail directly in the complaint text, not a path to it — a papercut is text-only."
+        if mcp:
+            return [inline, "to keep an artifact, attach it to the papercuts journal (an ordinary log) with log_append's attach param."]
+        return [inline, "to keep an artifact, attach it durably to the papercuts journal (an ordinary log): `cc-notes log append <papercuts-journal-id> --attach <file>`."]
     if mcp:
         return [
             "the body param (note_add/doc_add) or entry param (log_append) carries the content — pass the full text there, not a path.",
@@ -548,7 +613,7 @@ def mcp_ephemeral_refs(evt: PostToolUseEvent) -> list[str]:
 
 
 class McpEphemeralReference(CustomCondition):
-    """Matches an MCP note/doc/log record write whose title or body text points at a purge-bound path."""
+    """Matches an MCP note/doc/log/papercut record write whose title or body text points at a purge-bound path."""
 
     def check(self, evt: BaseHookEvent) -> bool:
         return bool(mcp_ephemeral_refs(evt))
@@ -563,10 +628,20 @@ class McpEphemeralReference(CustomCondition):
             tool="mcp__plugin_cc-notes_cc-notes__doc_add",
             tool_input={"title": "Handoff", "when": "w", "body": "full detail in session scratchpad steering-handoff.md"},
         ): Warn(pattern="attach"),
+        # The papercut tool carries its complaint in the `text` field; a purge-bound path there fires
+        # with papercut-appropriate fix lines (route the artifact to the journal, no CLI body/attach).
+        Input(
+            tool="mcp__plugin_cc-notes_cc-notes__papercut",
+            tool_input={"text": "full repro saved at /tmp/repro.md"},
+        ): Warn(pattern="papercuts journal"),
         # Inline content with no purge-bound path stays silent.
         Input(
             tool="mcp__plugin_cc-notes_cc-notes__note_add",
             tool_input={"title": "Fact", "body": "the backoff caps at 30s"},
+        ): Allow(),
+        Input(
+            tool="mcp__plugin_cc-notes_cc-notes__papercut",
+            tool_input={"text": "the search tool kept returning stale results"},
         ): Allow(),
     },
 )
@@ -575,7 +650,8 @@ def nudge_mcp_ephemeral_reference(evt: PostToolUseEvent) -> HookResult | None:
     if fired_this_turn(evt):
         return None
     record_fire(evt)
-    return evt.warn(EPHEMERAL_REFERENCE_LEDE, *_carry_content_fixes(mcp=True))
+    papercut = (evt.tool_name or "").endswith("papercut")
+    return evt.warn(EPHEMERAL_REFERENCE_LEDE, *_carry_content_fixes(mcp=True, papercut=papercut))
 
 
 PLAN_TASKS_SYSTEM = (
@@ -600,7 +676,9 @@ PLAN_TEACH = (
     "(A decision or durable fact is a `cc-notes note add`; living guidance for the next agent, with a "
     "`--when` read-trigger, is a `cc-notes doc add` — short title, and for a long body `--checkout` "
     "prints a prefilled buffer you write the guidance into and `--apply`, or `--body -` reads a short "
-    "one from stdin; an append-only chronology whose entries are never edited is a `cc-notes log add`.)"
+    "one from stdin; an append-only chronology whose entries are never edited is a `cc-notes log add`; "
+    "and friction you hit along the way — a dead-end tool call, a broken link, a misleading doc — is a "
+    "one-paragraph `cc-notes papercut`.)"
 )
 
 # The one-line MCP variant: routing lives in the MCP tools' own descriptions, so the teach only
@@ -608,7 +686,8 @@ PLAN_TEACH = (
 PLAN_TEACH_MCP = (
     "Plan approved. Native TaskCreate/TaskUpdate is your private in-session scratchpad; durable work "
     "that outlives the session or coordinates agents goes to the task_add tool with acceptance criteria "
-    "(backlog=true for shared work any agent can claim)."
+    "(backlog=true for shared work any agent can claim). Friction you hit along the way — a dead-end "
+    "tool call, a broken link, a misleading doc — is a one-paragraph complaint to the papercut tool."
 )
 
 

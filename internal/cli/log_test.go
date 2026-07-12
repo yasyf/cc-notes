@@ -13,9 +13,10 @@ import (
 
 // logEntryJSON mirrors one log entry in the output DTO.
 type logEntryJSON struct {
-	Author string `json:"author"`
-	TS     string `json:"ts"`
-	Text   string `json:"text"`
+	Author string  `json:"author"`
+	TS     string  `json:"ts"`
+	Text   string  `json:"text"`
+	Model  *string `json:"model"`
 }
 
 // logJSON mirrors the log output DTO for round-trip assertions: a lean

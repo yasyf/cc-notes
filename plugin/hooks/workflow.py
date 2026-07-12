@@ -106,6 +106,15 @@ CC_NOTES_WRITE_SUBGROUP_READS: dict[tuple[str, str], frozenset[str]] = {
     ("runbook", "run"): frozenset({"list", "show"}),
 }
 
+# Bare-noun writes: a top-level noun that mutates without a (noun, verb) pair. The value is the noun's
+# READ verbs — every other verb writes, including the empty verb and a bare positional like `papercut`'s
+# complaint text. `reconcile` takes no verb and always writes (empty read set); `papercut TEXT` writes
+# unless the verb is the `list` reader. Data-driven so the `reconcile` special case isn't a lone if.
+CC_NOTES_BARE_NOUN_READS: dict[str, frozenset[str]] = {
+    "reconcile": frozenset(),
+    "papercut": frozenset({"list"}),
+}
+
 # cc-notes MCP write surface (internal/mcpserver/tools_*.go): a deny-list of the READ tool suffixes, so
 # the matcher fails OPEN — a future tool triggers one harmless idempotent sync until it is listed here.
 MCP_READ_TOOLS = frozenset(
@@ -117,22 +126,38 @@ MCP_READ_TOOLS = frozenset(
         "project_list", "project_show",
         "sprint_list", "sprint_show",
         "runbook_list", "runbook_show",
+        "papercut_list",
         "status", "blame", "history", "relevant", "attachment_get", "attachment_path", "sync",
     }
 )
 
 
+def _first_non_flag(tokens: tuple[str, ...]) -> str:
+    # The first real (non-flag) token: `--` terminates the search with no token (everything after it is
+    # positional text, so `papercut -- list` is a write), and `-`-prefixed flags are skipped. A flag
+    # VALUE (`--model foo list` reads "foo") can be misread as the verb — accepted, the matcher fails
+    # open to one idempotent sync.
+    for tok in tokens:
+        if tok == "--":
+            return ""
+        if not tok.startswith("-"):
+            return tok
+    return ""
+
+
 def is_cc_notes_write(cmd: Command) -> bool:
-    # A parsed cc-notes / `ccn` leg that mutates state: a (noun, verb) in the write table, a bare
-    # `reconcile`, or a subgroup sub that isn't a read. A help or dry-run leg writes nothing.
+    # A parsed cc-notes / `ccn` leg that mutates state: a bare-noun write (`reconcile`, `papercut TEXT`),
+    # a (noun, verb) in the write table, or a subgroup sub that isn't a read. A help or dry-run leg
+    # writes nothing.
     if cmd.program not in ("cc-notes", "ccn") or not cmd.args:
         return False
     if not _NULLIFYING_FLAGS.isdisjoint(cmd.args):
         return False
     noun = cmd.args[0]
-    if noun == "reconcile":
-        return True
     verb = cmd.args[1] if len(cmd.args) > 1 else ""
+    if (bare_reads := CC_NOTES_BARE_NOUN_READS.get(noun)) is not None:
+        # Resolve the verb flags-first (cobra allows `papercut --json list`), not positionally.
+        return _first_non_flag(cmd.args[1:]) not in bare_reads
     if (reads := CC_NOTES_WRITE_SUBGROUP_READS.get((noun, verb))) is not None:
         sub = cmd.args[2] if len(cmd.args) > 2 else ""
         return bool(sub) and sub not in reads
@@ -357,9 +382,12 @@ def sync_after_push(evt: PostToolUseEvent) -> HookResult | None:
         Input(command="echo 'cc-notes note add'"): Allow(),
         Input(command="cc-notes note add x --help"): Allow(),
         Input(command="cc-notes reconcile --dry-run"): Allow(),
+        Input(command="cc-notes papercut list"): Allow(),
+        Input(command="cc-notes papercut --json list"): Allow(),
         Input(tool="mcp__plugin_cc-notes_cc-notes__task_list"): Allow(),
         Input(tool="mcp__plugin_cc-notes_cc-notes__sync"): Allow(),
         Input(tool="mcp__plugin_cc-notes_cc-notes__runbook_list"): Allow(),
+        Input(tool="mcp__plugin_cc-notes_cc-notes__papercut_list"): Allow(),
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )

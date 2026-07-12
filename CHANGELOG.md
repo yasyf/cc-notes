@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`cc-notes papercut` — a repo-wide friction-complaint journal.**
+  `cc-notes papercut "<complaint>"` files a one-paragraph complaint — a
+  dead-end tool call, a broken link, a misleading doc — as an entry in a
+  shared log titled `papercuts` (tagged `papercut`, auto-created on first
+  use), and `cc-notes papercut list` reads the chronology back; `--model`
+  (or `CC_NOTES_MODEL`, with the flag winning) records the model identity
+  on the entry. Mirrored as the `papercut` and `papercut_list` MCP tools.
+  To carry the identity, log entries gain an optional `model` field —
+  additive and lenient-decode compatible: an old binary ignores the field,
+  and an old binary compacting a journal drops stored model values
+  (accepted).
 - **Auto-sync now covers the whole publish surface, with a SessionEnd
   backstop.** The capt-hook pack syncs after jj commits (`jj commit`,
   `jj describe`, `ccx vcs ship`), pushes (`git push`/`jj git push` — jj's git

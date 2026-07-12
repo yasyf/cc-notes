@@ -735,25 +735,34 @@ func NewDoc(p ParsedDoc) ([]model.Op, error) {
 // so a collision would be ambiguous.
 const logEntryFencePrefix = "<!-- cc-notes:entry "
 
-// logEntryFenceRe matches a full fence line, capturing the author and the
-// RFC3339 timestamp. It is anchored and matched per whole line so entry text
-// containing markdown headings, lists, or code fences can never be mistaken for
-// a delimiter.
-var logEntryFenceRe = regexp.MustCompile(`^<!-- cc-notes:entry author="(.*)" ts="([^"]*)" -->$`)
+// logEntryFenceRe matches a full fence line, capturing the author, the RFC3339
+// timestamp, and an optional model identity. It is anchored and matched per
+// whole line so entry text can never be mistaken for a delimiter. Author and
+// model are captured greedily (raw); the quote-free ts group between them anchors
+// both captures, so a model like `vendor/model"preview` round-trips.
+var logEntryFenceRe = regexp.MustCompile(`^<!-- cc-notes:entry author="(.*)" ts="([^"]*)"(?: model="(.*)")? -->$`)
 
-// logEntryFence renders the fence line for one entry: author rendered with %q
-// (escaped, double-quoted) and the timestamp as the canonical RFC3339 stamp.
-func logEntryFence(author, ts string) string {
-	return fmt.Sprintf(`<!-- cc-notes:entry author=%q ts=%q -->`, author, ts)
+// logEntryFence renders the fence line for one entry. The model attribute is
+// emitted only when non-empty and its value is written raw inside quotes (no %q
+// escaping), matching the greedy capture in logEntryFenceRe so a quote-bearing
+// model round-trips.
+func logEntryFence(author, ts, entryModel string) string {
+	attr := ""
+	if entryModel != "" {
+		attr = ` model="` + entryModel + `"`
+	}
+	return fmt.Sprintf(`<!-- cc-notes:entry author=%q ts=%q%s -->`, author, ts, attr)
 }
 
-// ParsedLogEntry is one entry recovered from a log file body: the author and
-// timestamp captured from its fence line plus the verbatim text below it (which
-// keeps its own trailing newline). On a new trailing entry the fence fields are
-// ignored — author and ts come from the carrying commit.
+// ParsedLogEntry is one entry recovered from a log file body: the author,
+// timestamp, and optional model captured from its fence line plus the verbatim
+// text below it (which keeps its own trailing newline). On a new trailing entry
+// author and ts are ignored — they come from the carrying commit — but Model is
+// op-carried, so a hand-written model attribute is honored.
 type ParsedLogEntry struct {
 	Author string
 	TS     string
+	Model  string
 	Text   string
 }
 
@@ -807,15 +816,15 @@ var logKeys = slices.Concat(
 )
 
 // RenderLog renders l as markdown: the logKeys frontmatter, then one block per
-// entry — a viewer-invisible fence line carrying the entry's author and
-// timestamp, then the entry text. Each non-empty entry is terminated with a
-// newline if it lacks one, so the following fence or EOF always lands at a line
-// start; DiffLog compares stored entries against this same canonicalized form.
-// The output is deterministic byte for byte.
+// entry — a viewer-invisible fence line carrying the entry's author, timestamp,
+// and optional model, then the entry text. Each non-empty entry is terminated
+// with a newline if it lacks one, so the following fence or EOF always lands at a
+// line start; DiffLog compares stored entries against this same canonicalized
+// form. The output is deterministic byte for byte.
 func RenderLog(l model.Log) []byte {
 	buf := renderFrontmatter(l, logKeys)
 	for _, e := range l.Entries {
-		buf.WriteString(logEntryFence(string(e.Author), render.RFC3339(e.TS)))
+		buf.WriteString(logEntryFence(string(e.Author), render.RFC3339(e.TS), e.Model))
 		buf.WriteString("\n")
 		buf.WriteString(ensureTrailingNewline(e.Text))
 	}
@@ -876,7 +885,7 @@ func splitLogEntries(body string) ([]ParsedLogEntry, error) {
 			if open {
 				entries[len(entries)-1].Text = text.String()
 			}
-			entries = append(entries, ParsedLogEntry{Author: m[1], TS: m[2]})
+			entries = append(entries, ParsedLogEntry{Author: m[1], TS: m[2], Model: m[3]})
 			text.Reset()
 			open = true
 			continue
@@ -901,10 +910,11 @@ func splitLogEntries(body string) ([]ParsedLogEntry, error) {
 // DiffLog compares an edited log document against the snapshot it was rendered
 // from and returns the ops that reproduce the edit. Entries are append-only: the
 // first len(base.Entries) parsed entries must reproduce the stored entries
-// byte-for-byte (author, ts, text), and any modification, reorder, removal, or a
-// count below the stored count fails with ErrImmutableField; only genuinely-new
-// trailing entries become AppendEntry ops, with their fence author/ts ignored
-// (those come from the carrying commit). Title, tags, and anchors diff exactly
+// byte-for-byte (author, ts, model, text), and any modification, reorder,
+// removal, or a count below the stored count fails with ErrImmutableField; only
+// genuinely-new trailing entries become AppendEntry ops, with their fence
+// author/ts ignored (those come from the carrying commit) but their model
+// carried into the op. Title, tags, and anchors diff exactly
 // like DiffDoc; id, author, and created are immutable; the updated stamp is
 // informational. Ops come out in a fixed order — set_title, tag adds then
 // removes, anchor adds then removes per kind, then the new entries in order.
@@ -926,9 +936,9 @@ func DiffLog(base model.Log, p ParsedLog) ([]model.Op, error) {
 }
 
 // logAppendOnly guards the stored entries: the first len(base.Entries) parsed
-// entries must reproduce the stored author, ts, and text, and the count may not
-// drop. It emits no ops, running before the frontmatter fields so a tampered
-// entry fails before any op is produced.
+// entries must reproduce the stored author, ts, model, and text, and the count
+// may not drop. It emits no ops, running before the frontmatter fields so a
+// tampered entry fails before any op is produced.
 func logAppendOnly(base model.Log, p ParsedLog) fieldDiff {
 	return func() ([]model.Op, error) {
 		if len(p.Entries) < len(base.Entries) {
@@ -936,7 +946,7 @@ func logAppendOnly(base model.Log, p ParsedLog) fieldDiff {
 		}
 		for i, be := range base.Entries {
 			pe := p.Entries[i]
-			if pe.Author != string(be.Author) || pe.TS != render.RFC3339(be.TS) || pe.Text != ensureTrailingNewline(be.Text) {
+			if pe.Author != string(be.Author) || pe.TS != render.RFC3339(be.TS) || pe.Model != be.Model || pe.Text != ensureTrailingNewline(be.Text) {
 				return nil, fmt.Errorf("%w: log entry %d is append-only", ErrImmutableField, i)
 			}
 		}
@@ -953,7 +963,7 @@ func logNewEntries(base model.Log, p ParsedLog) fieldDiff {
 			if pe.Text == "" {
 				return nil, fmt.Errorf("%w: new log entry is empty", ErrParse)
 			}
-			ops = append(ops, model.AppendEntry{Text: pe.Text})
+			ops = append(ops, model.AppendEntry{Text: pe.Text, Model: pe.Model})
 		}
 		return ops, nil
 	}
@@ -992,7 +1002,7 @@ func NewLog(p ParsedLog) ([]model.Op, error) {
 		if pe.Text == "" {
 			return nil, fmt.Errorf("%w: new log entry is empty", ErrParse)
 		}
-		ops = append(ops, model.AppendEntry{Text: pe.Text})
+		ops = append(ops, model.AppendEntry{Text: pe.Text, Model: pe.Model})
 	}
 	return ops, nil
 }

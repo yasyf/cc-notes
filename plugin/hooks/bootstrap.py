@@ -9,9 +9,10 @@ from captain_hook import Event, SessionStartEvent, on
 
 from .common import run_cc_notes
 
-# The v0.22.0 flag cutover renamed the pack's CLI flags (--label/--body/--entry), so a cc-notes binary
-# older than this rejects the shell-outs the nudges make — reinstall it.
-MIN_VERSION = (0, 22, 0)
+# papercut ships in v0.26.0, and the nudges now suggest `cc-notes papercut` — a command older binaries
+# lack — so a cc-notes older than this is reinstalled. (Supersedes the v0.22.0 --label/--body/--entry
+# flag-cutover floor.)
+MIN_VERSION = (0, 26, 0)
 INSTALL_URL = "https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh"
 _VERSION_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
 

@@ -50,7 +50,7 @@ def announce_cc_notes_available(evt: UserPromptSubmitEvent) -> HookResult | None
     version = (run_cc_notes(evt, "version") or "").strip()
     if not version or not evt.ctx.s.once("announce", scope="availability"):
         return None
-    return evt.warn(f"cc-notes {version} is installed; its durable task, note, doc, and log tooling is available.")
+    return evt.warn(f"cc-notes {version} is installed; its durable task, note, doc, log, and papercut tooling is available.")
 
 
 @on(

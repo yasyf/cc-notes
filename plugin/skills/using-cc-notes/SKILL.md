@@ -31,11 +31,12 @@ Reach for cc-notes when work or knowledge must survive the current session or re
 agent. Track moment-to-moment steps for what you are doing right now in the harness's own
 todo tool.
 
-## Five tools, five jobs
+## Six tools, six jobs
 
 Get this distinction right first. Native todos, cc-notes tasks, cc-notes notes, cc-notes docs,
-and cc-notes logs differ along two axes — how long the record lives and who can see it — and the
-three durable knowledge records, a note, a doc, and a log, split once more by form.
+cc-notes logs, and cc-notes papercuts differ along two axes — how long the record lives and who
+can see it — and the four durable knowledge records, a note, a doc, a log, and a papercut, split
+once more by form.
 
 | Tool | Lifetime | Scope | Use for |
 |------|----------|-------|---------|
@@ -44,6 +45,7 @@ three durable knowledge records, a note, a doc, and a log, split once more by fo
 | `cc-notes note` | Durable — git ODB, synced | Repo-global, optionally anchored to a commit, path, or branch | Design decisions and durable facts, verified and searchable |
 | `cc-notes doc` | Durable — git ODB, synced | Repo-global, anchored like a note, plus a `--when` read-trigger | Multi-paragraph guidance written *for the next agent*, verified and floated on read |
 | `cc-notes log` | Durable — git ODB, synced | Repo-global, anchored like a doc | An append-only chronological journal — an incident timeline, a rollout log, a debugging session — whose entries are never edited or reordered, with no verify/drift/supersede lifecycle |
+| `cc-notes papercut` | Durable — git ODB, synced | Repo-wide: one shared journal, auto-created on first use | One-paragraph friction complaints — a dead-end tool call, a broken link, a misleading doc — filed instead of silently pushed through |
 
 Tasks are **global**. Each task is a single flat ref at `refs/cc-notes/tasks/<id>`, exactly
 like a note. Its branch is a *mutable attribute*, not part of its identity: `task list` and
@@ -77,10 +79,18 @@ because an append-only journal never claims to be current truth. Reach for a log
 the chronology itself — an incident timeline, a rollout log, a debugging session — rather than a
 single fact (a note) or a guide you keep current (a doc).
 
+A **papercut** is the fire-and-forget corner of the log: `cc-notes papercut "<complaint>"` files a
+one-paragraph friction complaint — a dead-end tool call, a broken link, a misleading doc — instead
+of silently pushing through. Every complaint appends one entry to a single repo-wide journal (a log
+titled `papercuts`, tagged `papercut`, auto-created on first use), so there is nothing to set up
+and no review lifecycle to run: entries are never edited, `cc-notes papercut list` reads the
+chronology back, and `--model` (or `CC_NOTES_MODEL`, with the flag winning) records which model hit
+the friction.
+
 The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, else your git
 `user.name`/`user.email`. Claims and leases key on that actor.
 
-See `references/tasks-vs-notes.md` for worked examples of choosing among the five.
+See `references/tasks-vs-notes.md` for worked examples of choosing among the six.
 
 ## Mount the notes tree (optional)
 
@@ -252,6 +262,8 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes log add "<title>"` | Start an append-only chronological journal |
 | `cc-notes log append <id> "<text>"` | Append one timestamped, authored entry to a log |
 | `cc-notes log show <id>` | Read a log's entries in chronological order |
+| `cc-notes papercut "<complaint>"` | File a one-paragraph friction complaint to the repo-wide papercut journal |
+| `cc-notes papercut list` | Read every papercut complaint back in timestamp order |
 | `cc-notes attachment get <id> <name>` | Retrieve an attachment's bytes (stdout, or `-o <path>`) |
 | `cc-notes runbook add "<title>" --step "<text>"` | Store a repeatable procedure as ordered steps (`--step` repeats) |
 | `cc-notes runbook step add <id> "<text>"` | Append a step; `--command` attaches a shell command, `--after <step>` places it |
@@ -259,7 +271,7 @@ The verbs reached for most. The full surface — every flag, default, and output
 | `cc-notes runbook run done <id> <step>` | Record a step outcome (`skip`/`fail` are siblings; `--note` adds context) |
 | `cc-notes runbook run finish <id>` | Close the run — succeeded by default, `--failed`/`--abandoned` otherwise |
 
-Append `--json` to any note, doc, log, task, sync, reconcile, or status command for a
+Append `--json` to any note, doc, log, papercut, task, sync, reconcile, or status command for a
 machine-readable record instead of the lean line.
 
 ## Artifacts & evidence
@@ -380,8 +392,9 @@ finish <id>`. Steps insert and reorder without renumbering (`step add --after <s
 - `references/coordination.md` — how agents coordinate over time: the backlog and the branch
   attribute, claims and leases, stale-claim recovery, deps and blocking, reconcile-on-merge,
   and union-merge sync across a shared remote.
-- `references/tasks-vs-notes.md` — the five-way distinction with worked examples of choosing
-  native todo vs cc-notes task vs cc-notes note vs cc-notes doc vs cc-notes log.
+- `references/tasks-vs-notes.md` — the six-way distinction with worked examples of choosing
+  native todo vs cc-notes task vs cc-notes note vs cc-notes doc vs cc-notes log vs cc-notes
+  papercut.
 - `references/lifecycle-and-hygiene.md` — keeping the record honest: task leases and
   staleness, note verification, drift, and supersession, and the maintenance verbs.
 - `references/sprints-and-projects.md` — the optional planning layer: tasks rolling up into

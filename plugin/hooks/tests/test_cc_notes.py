@@ -67,6 +67,7 @@ from hooks.memory import (
 from hooks.record import (
     durable_dest,
     DurableInternalWrite,
+    ephemeral_papercut,
     ephemeral_record_refs,
     EphemeralRecordReference,
     EvidenceArchive,
@@ -112,6 +113,7 @@ from hooks.workflow import (
     commit_decision,
     do_sync,
     FETCH_MERGE_COMMANDS,
+    is_cc_notes_write,
     nudge_claim,
     nudge_commit_record,
     PUSH_COMMANDS,
@@ -618,7 +620,7 @@ def test_evidence_bulk_not_standalone_trigger(tmp_path) -> None:
 def test_ephemeral_record_reference_condition() -> None:
     """EphemeralRecordReference fires on a record command that leans on a purge-bound path, silent elsewhere.
 
-    The smell is a note/doc/log record whose title or body text points at a /tmp, /var, or
+    The smell is a note/doc/log/papercut record whose title or body text points at a /tmp, /var, or
     session-scratchpad path; an ``--attach`` value (both forms) is the durable fix, not the smell,
     and a non-record subcommand or a non-cc-notes command stays silent.
     """
@@ -667,6 +669,24 @@ def test_ephemeral_record_refs_parsing() -> None:
     check("refs: --branch eng/var/cleanup value is skipped", branch_skip == [], repr(branch_skip))
     body_eq = ephemeral_record_refs(CommandLine.parse("cc-notes note add Fact --body=/private/tmp/c-1/scratch.md"))
     check("refs: collects an ephemeral --body=equals value", body_eq == ["/private/tmp/c-1/scratch.md"], repr(body_eq))
+    # The verb-less `papercut TEXT` shape: the bare complaint is one leading token in, so its lone
+    # positional is the operand scanned for markers — not a (noun, verb) pair.
+    paper = ephemeral_record_refs(CommandLine.parse('cc-notes papercut "full repro at /tmp/repro.md"'))
+    check("refs: papercut's bare complaint token is scanned", paper == ["full repro at /tmp/repro.md"], repr(paper))
+    paper_clean = ephemeral_record_refs(CommandLine.parse('cc-notes papercut "the docs were misleading"'))
+    check("refs: a clean papercut complaint yields nothing", paper_clean == [], repr(paper_clean))
+    paper_list = ephemeral_record_refs(CommandLine.parse("cc-notes papercut list"))
+    check("refs: `papercut list` operand carries no purge marker", paper_list == [], repr(paper_list))
+    # F1: `papercut list` is a READ, so even a purge-bound arg on it is never scanned.
+    paper_list_arg = ephemeral_record_refs(CommandLine.parse("cc-notes papercut list /tmp/repro.md"))
+    check("refs: `papercut list <purge>` is a read, not scanned", paper_list_arg == [], repr(paper_list_arg))
+    # F2: `--model`'s value is a model id (even a path), never complaint prose — both flag forms skip it.
+    model_val = ephemeral_record_refs(CommandLine.parse('cc-notes papercut --model /tmp/local.gguf "clean text"'))
+    check("refs: `--model` two-token value is skipped", model_val == [], repr(model_val))
+    model_eq = ephemeral_record_refs(CommandLine.parse('cc-notes papercut --model=/tmp/local.gguf "clean text"'))
+    check("refs: `--model=` equals value is skipped", model_eq == [], repr(model_eq))
+    model_dirty = ephemeral_record_refs(CommandLine.parse('cc-notes papercut --model gpt "repro at /tmp/repro.md"'))
+    check("refs: real complaint prose still fires past a clean --model", model_dirty == ["repro at /tmp/repro.md"], repr(model_dirty))
 
 
 def test_ephemeral_record_reference_fires(monkeypatch, tmp_path) -> None:
@@ -685,6 +705,42 @@ def test_ephemeral_record_reference_fires(monkeypatch, tmp_path) -> None:
         check("ephemeral nudge: teaches --attach", "--attach" in result.message, result.message)
         check("ephemeral nudge: teaches --body", "--body" in result.message, result.message)
         check("ephemeral nudge: names a purge-bound path", "purge-bound" in result.message, result.message)
+
+
+def test_ephemeral_papercut_fix_lines(monkeypatch, tmp_path) -> None:
+    """A papercut record that leans on a purge-bound path gets papercut-shaped fixes: inline the detail or
+    route the artifact to the papercuts journal — never the --checkout/--body flags papercut lacks."""
+    from cc_transcript.command import CommandLine
+
+    check("papercut detection: a firing papercut leg is flagged", ephemeral_papercut(CommandLine.parse('cc-notes papercut "repro at /tmp/repro.md"')))
+    check("papercut detection: a doc leg is not a papercut", not ephemeral_papercut(CommandLine.parse('cc-notes doc add "see /tmp/x.md" --when w')))
+    check("papercut detection: a clean papercut does not flag", not ephemeral_papercut(CommandLine.parse('cc-notes papercut "the docs were misleading"')))
+
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Bash", command='cc-notes papercut "full repro saved at /tmp/repro.md"', session_dir=tmp_path)
+    result = nudge_ephemeral_record_reference(evt)
+    check("papercut nudge: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("papercut nudge: routes the artifact to the papercuts journal", "papercuts journal" in result.message, result.message)
+        check("papercut nudge: names a purge-bound path", "purge-bound" in result.message, result.message)
+        check("papercut nudge: no --checkout (papercut has no prefilled buffer)", "--checkout" not in result.message, result.message)
+        check("papercut nudge: no --body (papercut has no body flag)", "--body" not in result.message, result.message)
+
+
+def test_is_cc_notes_write_papercut_verb_resolution() -> None:
+    """The bare-noun verb resolves flags-first: `papercut --json list` is a read, `papercut -- list` a write."""
+    from cc_transcript.command import CommandLine
+
+    def wr(command: str) -> bool:
+        return any(is_cc_notes_write(cmd) for cmd in CommandLine.parse(command).commands)
+
+    check("write: papercut list is a read", not wr("cc-notes papercut list"))
+    check("write: papercut --json list resolves the verb past the flag (read)", not wr("cc-notes papercut --json list"))
+    check("write: papercut -- list — the -- ends the search, list is positional text (write)", wr("cc-notes papercut -- list"))
+    check("write: papercut positional complaint is a write", wr('cc-notes papercut "the tool broke"'))
+    check("write: reconcile always writes", wr("cc-notes reconcile"))
+    check("write: papercut --help writes nothing", not wr("cc-notes papercut --help"))
+    check("write: ccn papercut --json list is a read on the shorthand too", not wr("ccn papercut --json list"))
 
 
 def test_in_cc_pool_memory() -> None:
@@ -710,6 +766,8 @@ def test_record_command_per_kind() -> None:
     check("log: no --when", all("--when" not in ln for ln in log_lines))
     task_line = record_command("task", "Do it", "", ".")[0]
     check("task: task add carries a --criterion (task add is rejected without one)", task_line.startswith('cc-notes task add "Do it"') and "--criterion" in task_line, repr(task_line))
+    paper = record_command("papercut", "ignored title", "", "internal/api")
+    check("papercut: a single bare `cc-notes papercut` line with a complaint placeholder, no title or --dir", paper == ['cc-notes papercut "<one-paragraph complaint>"'], repr(paper))
 
 
 def stub_cli(mapping: dict[tuple[str, ...], str]):
@@ -971,7 +1029,7 @@ def test_announce_available_fires_once(monkeypatch, tmp_path) -> None:
     check("announce fires: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("announce fires: names the installed version", "cc-notes 0.22.0 (abc123) is installed" in result.message, result.message)
-        check("announce fires: names the durable tooling", "durable task, note, doc, and log tooling is available" in result.message, result.message)
+        check("announce fires: names the durable tooling", "durable task, note, doc, log, and papercut tooling is available" in result.message, result.message)
 
     second = mock_event("UserPromptSubmit", prompt="again", session_dir=tmp_path)
     monkeypatch.setattr(second.ctx, "call_cli", stub_cli(mapping))
@@ -1226,6 +1284,20 @@ def test_record_router_routes_log(monkeypatch, tmp_path) -> None:
     if result and result.message:
         check("router log: add + append", "cc-notes log add" in result.message and "cc-notes log append" in result.message, result.message)
         check("router log: no --when on a log", "--when" not in result.message, result.message)
+
+
+def test_record_router_routes_papercut(monkeypatch, tmp_path) -> None:
+    """kind=papercut routes to the bare `cc-notes papercut` command — never `note add`, never a --when."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Write", file="friction.md", content="the doc link 404s and the search tool returns nothing\n", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="papercut", title="broken doc link", reasoning="a one-off friction gripe")))
+    result = nudge_record_durable(evt)
+    check("router papercut: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("router papercut: names cc-notes papercut", "cc-notes papercut" in result.message, result.message)
+        check("router papercut: not routed to note add", "note add" not in result.message, result.message)
+        check("router papercut: no --when (a papercut never drifts)", "--when" not in result.message, result.message)
+        check("router papercut: cites reasoning", "a one-off friction gripe" in result.message, result.message)
 
 
 def test_record_router_routes_runbook(monkeypatch, tmp_path) -> None:
@@ -2080,6 +2152,8 @@ def test_record_command_mcp_branch() -> None:
     check("mcp log: log_add + log_append tools", "log_add tool" in log[0] and "log_append tool" in log[0], repr(log))
     task = record_command("task", "Do it", "", ".", mcp=True)
     check("mcp task: task_add tool + criteria + backlog=true", "task_add tool" in task[0] and "criteria=" in task[0] and "backlog=true" in task[0], repr(task))
+    paper = record_command("papercut", "ignored title", "", ".", mcp=True)
+    check("mcp papercut: names the papercut tool with a text param, no CLI spelling", len(paper) == 1 and "papercut tool" in paper[0] and "text=" in paper[0] and "cc-notes" not in paper[0], repr(paper))
 
 
 def _write_mcp_marker(common_dir: Path, pid: int) -> None:
@@ -2209,6 +2283,25 @@ def test_mcp_ephemeral_reference_fires(monkeypatch, tmp_path) -> None:
         check("mcp ephemeral: teaches the attach param", "attach param" in result.message, result.message)
         check("mcp ephemeral: names a purge-bound path", "purge-bound" in result.message, result.message)
         check("mcp ephemeral: no CLI flags", all(flag not in result.message for flag in ("--body", "--attach", "--checkout")), result.message)
+
+
+def test_mcp_ephemeral_papercut_fix_lines(monkeypatch, tmp_path) -> None:
+    """An MCP papercut write leaning on a purge-bound `text` gets papercut fixes: inline it or route the
+    artifact to the papercuts journal via log_append — never CLI flags, never the generic doc body/attach."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__papercut",
+        event=Event.PostToolUse,
+        tool_input={"text": "full repro saved at /tmp/repro.md"},
+        session_dir=tmp_path,
+    )
+    result = nudge_mcp_ephemeral_reference(evt)
+    check("mcp papercut: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("mcp papercut: routes to the papercuts journal", "papercuts journal" in result.message, result.message)
+        check("mcp papercut: teaches log_append's attach param", "log_append" in result.message, result.message)
+        check("mcp papercut: names a purge-bound path", "purge-bound" in result.message, result.message)
+        check("mcp papercut: no CLI flags", all(flag not in result.message for flag in ("--body", "--attach", "--checkout")), result.message)
 
 
 def test_ephemeral_reference_mcp_wording(monkeypatch, tmp_path) -> None:
@@ -2381,12 +2474,15 @@ def test_claim_commands_match_structurally(monkeypatch) -> None:
 
 
 def test_cli_write_matcher(monkeypatch) -> None:
-    """CcNotesCliWrite fires on cc-notes state changes (incl. reconcile, criterion writes, compound) but never on reads."""
+    """CcNotesCliWrite fires on cc-notes state changes (incl. reconcile, papercut, criterion writes, compound) but never on reads."""
     truth = {
         'cc-notes note add "x" --body -': True,
         "cc-notes task done abc": True,
         "cc-notes task criterion add abc c": True,
         "cc-notes reconcile --into main": True,
+        # papercut is a bare-noun write: filing a complaint mutates, `papercut list` only reads it back.
+        'cc-notes papercut "the search tool returned nothing"': True,
+        "cc-notes papercut list": False,
         "cc-notes project complete abc": True,
         "cc-notes sprint activate abc": True,
         "cd sub && cc-notes note edit abc": True,
@@ -2445,6 +2541,8 @@ def test_mcp_write_matcher(monkeypatch) -> None:
         P + "runbook_run_start": True,
         P + "runbook_run_done": True,
         P + "runbook_run_finish": True,
+        P + "papercut": True,
+        P + "papercut_list": False,
         P + "note_list": False,
         P + "task_criterion_list": False,
         P + "task_show": False,
@@ -2677,7 +2775,7 @@ def test_bootstrap_noop_when_current(monkeypatch, tmp_path) -> None:
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
         calls.append(tuple(args))
-        return "0.22.0 (cur)" if args == ["cc-notes", "version"] else ""
+        return "0.26.0 (cur)" if args == ["cc-notes", "version"] else ""
 
     evt = mock_event("SessionStart", source="startup", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", cli)

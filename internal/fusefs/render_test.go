@@ -1745,6 +1745,24 @@ func richLog() model.Log {
 	}
 }
 
+// modelLog carries a model-bearing entry alongside a model-less one, exercising
+// the optional model fence attribute in a mixed log with quote-free authors that
+// round-trip.
+func modelLog() model.Log {
+	return model.Log{
+		ID:     "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9",
+		Title:  "papercuts",
+		Author: "A <a@x>",
+		Tags:   []string{"papercut"},
+		Entries: []model.LogEntry{
+			{Author: "A <a@x>", TS: 100, Text: "unquoted globs broke rg\n", Model: "claude-fable-5"},
+			{Author: "B <b@x>", TS: 200, Text: "no model on this one\n"},
+		},
+		CreatedAt: 100,
+		UpdatedAt: 200,
+	}
+}
+
 func mustParseLog(t *testing.T, data []byte) fusefs.ParsedLog {
 	t.Helper()
 	p, err := fusefs.ParseLog(data)
@@ -1839,6 +1857,9 @@ func TestLogRoundTrip(t *testing.T) {
 				{Kind: model.AnchorBranch, Value: "main"},
 			},
 		},
+		// A model-bearing entry mixed with a model-less one: the fence carries
+		// model= only on the first, and both diff back to no ops.
+		"entries with a model attribute": modelLog(),
 	}
 	for name, l := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1865,6 +1886,158 @@ func TestDiffLogAppendEntry(t *testing.T) {
 	want := []model.Op{model.AppendEntry{Text: "rolled back to 0%\nincident closed.\n"}}
 	if !reflect.DeepEqual(ops, want) {
 		t.Errorf("ops %#v, want %#v", ops, want)
+	}
+}
+
+// TestRenderParseLogModel proves the model fence attribute renders, parses, and
+// round-trips: the fence carries model= only where a model is set, ParseLog
+// recovers it, and DiffLog against the source produces no ops.
+func TestRenderParseLogModel(t *testing.T) {
+	base := modelLog()
+	rendered := string(fusefs.RenderLog(base))
+	if !strings.Contains(rendered, ` model="claude-fable-5" -->`) {
+		t.Errorf("model attribute missing from fence:\n%s", rendered)
+	}
+	if strings.Contains(rendered, `no model on this one`) && strings.Count(rendered, "model=") != 1 {
+		t.Errorf("model-less entry emitted a model attribute:\n%s", rendered)
+	}
+	p := mustParseLog(t, []byte(rendered))
+	if len(p.Entries) != 2 {
+		t.Fatalf("parsed %d entries, want 2", len(p.Entries))
+	}
+	if got, want := p.Entries[0].Model, "claude-fable-5"; got != want {
+		t.Errorf("entry 0 model %q, want %q", got, want)
+	}
+	if got := p.Entries[1].Model; got != "" {
+		t.Errorf("entry 1 model %q, want empty", got)
+	}
+	ops, err := fusefs.DiffLog(base, p)
+	if err != nil {
+		t.Fatalf("DiffLog: %v", err)
+	}
+	if len(ops) != 0 {
+		t.Errorf("round trip produced ops %#v, want none", ops)
+	}
+}
+
+// TestRenderParseLogModelQuoted proves a model carrying an embedded double quote
+// or a trailing backslash renders raw (no %q escaping), parses back to the exact
+// stored bytes, and diffs to no ops — the regression the old %q render plus
+// [^"]* capture failed with ErrParse.
+func TestRenderParseLogModelQuoted(t *testing.T) {
+	base := model.Log{
+		ID:     "c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2",
+		Title:  "quirky models",
+		Author: "A <a@x>",
+		Entries: []model.LogEntry{
+			{Author: "A <a@x>", TS: 100, Text: "quote in model\n", Model: `vendor/model"preview`},
+			{Author: "B <b@x>", TS: 200, Text: "backslash in model\n", Model: `vendor\`},
+		},
+		CreatedAt: 100,
+		UpdatedAt: 200,
+	}
+	rendered := string(fusefs.RenderLog(base))
+	if !strings.Contains(rendered, ` model="vendor/model"preview" -->`) {
+		t.Errorf("embedded quote not rendered raw:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, ` model="vendor\" -->`) {
+		t.Errorf("trailing backslash not rendered raw:\n%s", rendered)
+	}
+	p := mustParseLog(t, []byte(rendered))
+	if len(p.Entries) != 2 {
+		t.Fatalf("parsed %d entries, want 2", len(p.Entries))
+	}
+	if got, want := p.Entries[0].Model, `vendor/model"preview`; got != want {
+		t.Errorf("entry 0 model %q, want %q", got, want)
+	}
+	if got, want := p.Entries[1].Model, `vendor\`; got != want {
+		t.Errorf("entry 1 model %q, want %q", got, want)
+	}
+	ops, err := fusefs.DiffLog(base, p)
+	if err != nil {
+		t.Fatalf("DiffLog: %v", err)
+	}
+	if len(ops) != 0 {
+		t.Errorf("round trip produced ops %#v, want none", ops)
+	}
+}
+
+// TestParseLogQuoteAuthorModel is the regex regression: the greedy author
+// capture must backtrack to the ts boundary and leave the optional model group
+// its attribute, even when the author itself carries an escaped quote.
+func TestParseLogQuoteAuthorModel(t *testing.T) {
+	body := "---\ntitle: T\nauthor: A <a@x>\n---\n" +
+		`<!-- cc-notes:entry author="Bot \"v2\" <b@x>" ts="2025-01-01T00:00:00Z" model="claude-fable-5" -->` + "\n" +
+		"a complaint\n"
+	p := mustParseLog(t, []byte(body))
+	if len(p.Entries) != 1 {
+		t.Fatalf("parsed %d entries, want 1", len(p.Entries))
+	}
+	e := p.Entries[0]
+	if got, want := e.Author, `Bot \"v2\" <b@x>`; got != want {
+		t.Errorf("author %q, want %q", got, want)
+	}
+	if got, want := e.TS, "2025-01-01T00:00:00Z"; got != want {
+		t.Errorf("ts %q, want %q", got, want)
+	}
+	if got, want := e.Model, "claude-fable-5"; got != want {
+		t.Errorf("model %q, want %q", got, want)
+	}
+}
+
+// TestParseLogModelless proves a fence written before the model attribute
+// existed — no model= segment — parses with an empty Model.
+func TestParseLogModelless(t *testing.T) {
+	body := "---\ntitle: Old\nauthor: A <a@x>\n---\n" +
+		"<!-- cc-notes:entry author=\"A <a@x>\" ts=\"2025-12-12T02:54:56Z\" -->\n" +
+		"old entry\n"
+	p := mustParseLog(t, []byte(body))
+	if len(p.Entries) != 1 {
+		t.Fatalf("parsed %d entries, want 1", len(p.Entries))
+	}
+	if got := p.Entries[0].Model; got != "" {
+		t.Errorf("model %q, want empty for a model-less fence", got)
+	}
+}
+
+// TestDiffLogAppendEntryModel proves a new trailing entry whose fence carries a
+// model attribute produces an AppendEntry op carrying that model — unlike the
+// commit-derived author/ts, the model is op-carried and honored.
+func TestDiffLogAppendEntryModel(t *testing.T) {
+	base := richLog()
+	text := string(fusefs.RenderLog(base))
+	text += "<!-- cc-notes:entry author=\"ignored\" ts=\"1999-01-01T00:00:00Z\" model=\"claude-fable-5\" -->\n"
+	text += "unquoted globs broke rg\n"
+	ops, err := fusefs.DiffLog(base, mustParseLog(t, []byte(text)))
+	if err != nil {
+		t.Fatalf("DiffLog: %v", err)
+	}
+	want := []model.Op{model.AppendEntry{Text: "unquoted globs broke rg\n", Model: "claude-fable-5"}}
+	if !reflect.DeepEqual(ops, want) {
+		t.Errorf("ops %#v, want %#v", ops, want)
+	}
+}
+
+// TestDiffLogModelImmutable proves the model of a stored entry is append-only:
+// changing or clearing it on an existing entry fails with ErrImmutableField.
+func TestDiffLogModelImmutable(t *testing.T) {
+	base := modelLog()
+	cases := []struct {
+		name   string
+		mutate func(p *fusefs.ParsedLog)
+	}{
+		{"changed model", func(p *fusefs.ParsedLog) { p.Entries[0].Model = "claude-opus-4-8" }},
+		{"removed model", func(p *fusefs.ParsedLog) { p.Entries[0].Model = "" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseLog(t, fusefs.RenderLog(base))
+			tc.mutate(&p)
+			_, err := fusefs.DiffLog(base, p)
+			if !errors.Is(err, fusefs.ErrImmutableField) {
+				t.Fatalf("err %v, want ErrImmutableField", err)
+			}
+		})
 	}
 }
 
@@ -1920,6 +2093,7 @@ func TestDiffLogAppendOnly(t *testing.T) {
 		{"modified entry text", func(p *fusefs.ParsedLog) { p.Entries[0].Text = "rewritten\n" }},
 		{"modified entry author", func(p *fusefs.ParsedLog) { p.Entries[0].Author = "Mallory <m@x>" }},
 		{"modified entry ts", func(p *fusefs.ParsedLog) { p.Entries[0].TS = "2000-01-01T00:00:00Z" }},
+		{"added model to existing entry", func(p *fusefs.ParsedLog) { p.Entries[0].Model = "claude-opus-4-8" }},
 		{"reordered entries", func(p *fusefs.ParsedLog) { p.Entries[0], p.Entries[1] = p.Entries[1], p.Entries[0] }},
 		{"removed entry", func(p *fusefs.ParsedLog) { p.Entries = p.Entries[:1] }},
 	}

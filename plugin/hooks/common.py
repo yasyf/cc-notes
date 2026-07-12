@@ -20,7 +20,7 @@ NUDGE_MAX_FIRES = 3
 # Cap on body/diff/plan text handed to a small-model classifier.
 LLM_INPUT_CAP = 6000
 
-RECORD_KINDS = ("note", "doc", "log", "task")
+RECORD_KINDS = ("note", "doc", "log", "task", "papercut")
 
 # The Claude Code plugin surfaces the cc-notes MCP server's tools under this name prefix.
 MCP_TOOL_PREFIX = "mcp__plugin_cc-notes_cc-notes__"
@@ -190,6 +190,8 @@ def record_command(kind: str, title: str, when: str, area: str, *, mcp: bool = F
             return [
                 f'call the task_add tool: title="{title}", criteria=["<how to verify it is done>"] (backlog=true if any agent should be able to claim it; no_validation_criteria=true only when acceptance genuinely cannot be stated).'
             ]
+        if kind == "papercut":
+            return ['call the papercut tool: text="<one-paragraph complaint>".']
         return [f'call the note_add tool: title="{title}"{dir_arg}, with the fact as the body param.']
     dir_flag = f" --dir {area}" if area and area != "." else ""
     if kind == "doc":
@@ -207,6 +209,8 @@ def record_command(kind: str, title: str, when: str, area: str, *, mcp: bool = F
         return [
             f'cc-notes task add "{title}" --criterion "<how to verify it is done>"   # --backlog if shared; --no-validation-criteria only when acceptance cannot be stated'
         ]
+    if kind == "papercut":
+        return ['cc-notes papercut "<one-paragraph complaint>"']
     return [f'cc-notes note add "{title}"{dir_flag} --body -']
 
 

@@ -200,6 +200,44 @@ func TestFoldLogCompactedEqualsFull(t *testing.T) {
 	}
 }
 
+// TestFoldLogModelSurvivesCompaction seeds a log fold from a checkpoint whose
+// State carries model-bearing entries, proving seed() preserves LogEntry.Model
+// across compaction. The compacted and full folds must be byte-identical.
+func TestFoldLogModelSurvivesCompaction(t *testing.T) {
+	c0 := mk("c0", nil, "alice", 100, 1, model.CreateLog{Nonce: "n", Title: "papercuts", Tags: []string{"papercut"}})
+	c1 := mk("c1", []string{"c0"}, "bob", 200, 2, model.AppendEntry{Text: "first", Model: "claude-opus-4-8"})
+	c2 := mk("c2", []string{"c1"}, "carol", 300, 3, model.AppendEntry{Text: "second", Model: "claude-fable-5"})
+	state, err := fold.Log([]model.PackCommit{c0, c1, c2})
+	if err != nil {
+		t.Fatalf("fold prefix: %v", err)
+	}
+	cK := cp("cK", "c2", "compactor", 350, 4, state, 3, "c0", "c1", "c2")
+	cKempty := mk("cK", []string{"c2"}, "compactor", 350, 4)
+	c3 := mk("c3", []string{"cK"}, "dave", 400, 5, model.AppendEntry{Text: "third", Model: "claude-sonnet-5"})
+	compacted := []model.PackCommit{c0, c1, c2, cK, c3}
+	full := []model.PackCommit{c0, c1, c2, cKempty, c3}
+
+	gotFull, err := fold.Log(full)
+	if err != nil {
+		t.Fatalf("fold full: %v", err)
+	}
+	gotCompact, err := fold.Log(compacted)
+	if err != nil {
+		t.Fatalf("fold compacted: %v", err)
+	}
+	if !reflect.DeepEqual(gotCompact, gotFull) {
+		t.Fatalf("compacted = %+v\nfull = %+v", gotCompact, gotFull)
+	}
+	wantEntries := []model.LogEntry{
+		{Author: "bob", TS: 200, Text: "first", Model: "claude-opus-4-8"},
+		{Author: "carol", TS: 300, Text: "second", Model: "claude-fable-5"},
+		{Author: "dave", TS: 400, Text: "third", Model: "claude-sonnet-5"},
+	}
+	if !reflect.DeepEqual(gotCompact.Entries, wantEntries) {
+		t.Fatalf("Entries = %+v, want %+v", gotCompact.Entries, wantEntries)
+	}
+}
+
 // TestFoldLogCheckpointOverNonLogMismatch confirms that seeding a log fold from a
 // checkpoint whose State is a non-log snapshot fails with ErrKindMismatch.
 func TestFoldLogCheckpointOverNonLogMismatch(t *testing.T) {

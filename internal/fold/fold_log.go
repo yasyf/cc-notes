@@ -74,7 +74,7 @@ func (f *logFolder) apply(op model.Op, c model.PackCommit) error {
 	case model.SetTitle:
 		f.log.Title = o.Title
 	case model.AppendEntry:
-		f.entries = append(f.entries, model.LogEntry{Author: c.Author, TS: c.AuthorTime, Text: o.Text})
+		f.entries = append(f.entries, model.LogEntry{Author: c.Author, TS: c.AuthorTime, Text: o.Text, Model: o.Model})
 	case model.DeleteNote:
 		f.log.Deleted = true
 	default:

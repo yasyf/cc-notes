@@ -281,11 +281,12 @@ func (o CreateLog) validate() error {
 	return nil
 }
 
-// AppendEntry appends one entry to a log; entries are append-only. It carries
-// only the entry text — author and timestamp come from the carrying commit's
-// identity at fold time, exactly like add_comment.
+// AppendEntry appends one entry to a log; entries are append-only. The entry
+// text and an optional model identity travel in the op; author and timestamp
+// still come from the carrying commit's identity at fold time, like add_comment.
 type AppendEntry struct {
-	Text string `json:"text"`
+	Text  string `json:"text"`
+	Model string `json:"model,omitempty"`
 }
 
 // OpKind returns "append_entry".

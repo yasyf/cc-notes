@@ -623,6 +623,27 @@ command: cc-notes note verify
   inherited:
     (none)
 
+command: cc-notes papercut
+  use: papercut TEXT
+  aliases: -
+  short: File a friction complaint to the repo-wide papercut journal
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --model shorthand=none type=string default="" usage="model identity to record on the entry (default: CC_NOTES_MODEL)"
+  inherited:
+    (none)
+
+command: cc-notes papercut list
+  use: list
+  aliases: -
+  short: List every papercut complaint in timestamp order
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
 command: cc-notes project
   use: project
   aliases: -

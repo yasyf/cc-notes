@@ -220,6 +220,29 @@ func TestFoldLog(t *testing.T) {
 	}
 }
 
+// TestFoldLogEntryModel confirms AppendEntry.Model threads into the folded
+// LogEntry.Model, and a model-less AppendEntry yields an empty Model.
+func TestFoldLogEntryModel(t *testing.T) {
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateLog{Nonce: "n", Title: "papercuts", Tags: []string{"papercut"}}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AppendEntry{Text: "rg globbed wrong", Model: "claude-opus-4-8"}),
+		mk("ccc", []string{"bbb"}, "carol", 300, 3, model.AppendEntry{Text: "broken link", Model: "claude-fable-5"}),
+		mk("ddd", []string{"ccc"}, "dave", 400, 4, model.AppendEntry{Text: "no model here"}),
+	}
+	want := []model.LogEntry{
+		{Author: "bob", TS: 200, Text: "rg globbed wrong", Model: "claude-opus-4-8"},
+		{Author: "carol", TS: 300, Text: "broken link", Model: "claude-fable-5"},
+		{Author: "dave", TS: 400, Text: "no model here"},
+	}
+	got, err := fold.Log(chain)
+	if err != nil {
+		t.Fatalf("Log() error = %v", err)
+	}
+	if !reflect.DeepEqual(got.Entries, want) {
+		t.Fatalf("Entries = %+v, want %+v", got.Entries, want)
+	}
+}
+
 // TestFoldLogEmptyEntries confirms a log with no AppendEntry folds to a non-nil
 // empty entry slice, never nil.
 func TestFoldLogEmptyEntries(t *testing.T) {

@@ -304,13 +304,14 @@ func TestListToolsInventory(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	const wantCount = 84
+	const wantCount = 86
 	if len(names) != wantCount {
 		t.Errorf("tool count = %d, want %d; got %v", len(names), wantCount, sortedKeys(names))
 	}
 	for _, want := range []string{
 		"status", "relevant", "sync", "reconcile", "history", "blame",
 		"note_add", "note_review", "doc_add", "doc_supersede", "log_append",
+		"papercut", "papercut_list",
 		"task_add", "task_claim", "task_done", "task_criterion_met", "task_criterion_pending", "task_criterion_script", "task_validate",
 		"sprint_add", "sprint_activate", "project_add", "project_archive",
 		"runbook_add", "runbook_list", "runbook_show", "runbook_step_add",

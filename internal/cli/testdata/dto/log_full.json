@@ -5,12 +5,14 @@
     {
       "author": "ada \u003cada@example.com\u003e",
       "ts": "2023-11-14T22:13:20Z",
-      "text": "flipped to 5%"
+      "text": "flipped to 5%",
+      "model": null
     },
     {
       "author": "bob \u003cbob@example.com\u003e",
       "ts": "2023-11-14T23:13:20Z",
-      "text": "flipped to 100%"
+      "text": "flipped to 100%",
+      "model": null
     }
   ],
   "tags": [

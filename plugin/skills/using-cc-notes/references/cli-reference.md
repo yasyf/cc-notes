@@ -1,9 +1,9 @@
 # cc-notes CLI reference
 
-The command surface, grouped by noun: repo, task, sprint, project, runbook, note, doc, log. Every
-command takes `-h`/`--help`. Every note, doc, log, task, sprint, project, runbook, sync, and
-reconcile command takes `--json` for a machine-readable record; without it, mutations echo a lean
-tab-separated line and listings print one lean line per entity.
+The command surface, grouped by noun: repo, task, sprint, project, runbook, note, doc, log,
+papercut. Every command takes `-h`/`--help`. Every note, doc, log, papercut, task, sprint, project,
+runbook, sync, and reconcile command takes `--json` for a machine-readable record; without it,
+mutations echo a lean tab-separated line and listings print one lean line per entity.
 
 Sprints and projects are an optional planning layer over tasks — group work into a time-boxed
 sprint or a long-lived project without touching the canonical task and note flow. A task that
@@ -72,8 +72,9 @@ the first 7 hex chars of its 32-hex nonce; `task criterion list` and the validat
 form: `runbook step list` prints `<short7-step-id>` `<n>` `<text>` `<command|->` (n is the
 1-based position), and `runbook run list` prints `<short7-run-id>` `<status>` `<runner>`
 `<YYYY-MM-DD started>` `<done+skipped>/<total>` (steps progressed over the step count). `task stale` appends a trailing idle marker to the task
-line; `note review` and `doc review` append a verdict to the note or doc line. JSON output uses full 40-hex ids,
-RFC3339 UTC timestamps, `null` for unset optionals, and sorted set slices.
+line; `note review` and `doc review` append a verdict to the note or doc line. `cc-notes papercut` echoes
+the Log line of the journal it appended to — a papercut is a log entry, not its own entity. JSON
+output uses full 40-hex ids, RFC3339 UTC timestamps, `null` for unset optionals, and sorted set slices.
 
 ## Repo commands
 
@@ -1725,7 +1726,9 @@ $ cc-notes log search "rollout" --label ops
 ### `cc-notes log show ID`
 
 Show one log: a fixed-order header block (id, title, tags, anchors, author, created, updated) then
-each entry as a `-- <author> <rfc3339>` block in chronological order, after a blank line.
+each entry as a `-- <author> <rfc3339>` block in chronological order, after a blank line. An entry
+that carries a model identity (recorded by `cc-notes papercut --model`) renders as
+`-- <model> — <author> <rfc3339>`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -1761,7 +1764,55 @@ Tombstone a log. It drops out of listings; history survives.
 
 ### JSON log shape
 
-`{"id":string,"title":string,"entries":[{"author":string,"ts":rfc3339,"text":string}],"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string|null}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"deleted":bool}`.
+`{"id":string,"title":string,"entries":[{"author":string,"ts":rfc3339,"text":string,"model":string|null}],"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string|null}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"deleted":bool,"attachments":[…]}`.
 `entries` is the append-only list in chronological order, each carrying the author and timestamp of
-the commit that appended it. A log has none of the doc's freshness fields — no `when`, `verified_at`,
+the commit that appended it plus an optional `model` identity (recorded by `cc-notes papercut`,
+explicit `null` otherwise). A log has none of the doc's freshness fields — no `when`, `verified_at`,
 `superseded_by`, `drift`, or expiry — because it never drifts.
+
+## Papercut commands
+
+A papercut is a friction complaint stored as a log entry: every complaint appends one entry to the
+repo-wide `papercuts` journal — an ordinary log titled `papercuts`, tagged `papercut`, auto-created
+on the first `cc-notes papercut`. The tag is the journal's identity (retitling never forks it), and
+because the journal is a log, `show`, `log show`, `history`, and `relevant` all take its id with no
+papercut-specific verbs — the `relevant`/`show` kind stays `log`.
+
+### `cc-notes papercut TEXT`
+
+File one complaint. `TEXT` is the one-paragraph complaint; `-` reads it from stdin.
+Whitespace-only text exits 2. On success the command echoes the journal's Log lean line.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--model <id>` | `CC_NOTES_MODEL` | Model identity recorded on the entry; the flag wins over the environment variable |
+| `--json` | off | Emit the journal's JSON log record |
+
+```console
+$ cc-notes papercut "log search --json drops entry text, so I re-ran log show per hit" --model claude-fable-5
+9b40c7d	2026-06-23	papercut	papercuts
+```
+
+Because `list` is a subcommand, a complaint whose text is literally `list` needs an escape:
+`cc-notes papercut -- list`, or stdin (`echo list | cc-notes papercut -`).
+
+### `cc-notes papercut list`
+
+List every complaint across all live papercut-tagged journals as one chronology, ordered by entry
+timestamp (ties broken by journal creation time, journal id, then entry index). Each complaint
+prints as a `-- <model> — <author> <rfc3339>` block — the `<model> — ` segment drops when no model
+was recorded — with a blank line between blocks; an empty journal prints nothing.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes papercut list
+-- claude-fable-5 — ada <ada@example.com> 2026-06-23T16:02:00Z
+log search --json drops entry text, so I re-ran log show per hit
+```
+
+`--json` emits the complaints as an array —
+`[{"log_id":string,"model":string|null,"author":string,"ts":rfc3339,"text":string}]` — and `[]`
+when there are none.

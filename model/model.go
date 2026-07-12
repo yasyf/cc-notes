@@ -272,6 +272,7 @@ type LogEntry struct {
 	Author Actor  `json:"author"`
 	TS     int64  `json:"ts"`
 	Text   string `json:"text"`
+	Model  string `json:"model,omitempty"`
 }
 
 // Criterion is one structured acceptance criterion on a task. ID is a nonce

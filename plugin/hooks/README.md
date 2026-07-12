@@ -20,6 +20,7 @@ native task tracking versus durable, git-synced cc-notes entities.
 | `cc-notes note add` | Durable, git-synced | Repo-global | Design decisions and durable facts |
 | `cc-notes doc add` | Durable, git-synced | Repo-global, anchored like a note, plus a `--when` read-trigger | Long-form guidance written for the next agent, verified and floated on read |
 | `cc-notes log add` | Durable, git-synced | Repo-global, anchored like a doc | An append-only chronological journal — entries are immutable, never edited or reordered |
+| `cc-notes papercut` | Durable, git-synced | Repo-global, the shared `papercuts` journal | A one-paragraph complaint about friction hit during work — a dead-end tool call, a broken link, a misleading doc |
 
 Tasks are global. The id addresses a task no matter which branch it lives on, and
 its branch is a mutable attribute. `cc-notes task add --backlog` parks work in the
@@ -36,7 +37,7 @@ model call errors, every recalled record is shown rather than hide context by br
 
 **Record (push)** takes a write, a copy, a commit, or an approved plan, recalls a candidate
 over a cheap glob or diff, and a small LLM confirms the content is durable and routes it to
-exactly one primitive — note, doc, log, or task — or to nothing. It fails *closed* to
+exactly one primitive — note, doc, log, task, or papercut — or to nothing. It fails *closed* to
 silence.
 
 The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
@@ -62,9 +63,9 @@ later. The session-start float is deterministic orientation, not a filtered surf
 
 | Trigger | Candidate | The LLM picks |
 |---------|-----------|---------------|
-| `Write` / `Edit` / `MultiEdit` of an internal-looking file (PostToolUse) | a status/handoff/notes/runbook/`memory/` file the static `DurableInternalWrite` gate flags | note / doc / log / task / runbook — or none; the subtle calls are doc (living guidance) vs log (append-only chronology) and doc (describes) vs runbook (a procedure you re-execute, tracked per run) |
+| `Write` / `Edit` / `MultiEdit` of an internal-looking file (PostToolUse) | a status/handoff/notes/runbook/`memory/` file the static `DurableInternalWrite` gate flags | note / doc / log / task / papercut / runbook — or none; the subtle calls are doc (living guidance) vs log (append-only chronology) and doc (describes) vs runbook (a procedure you re-execute, tracked per run), while papercut is a one-off friction gripe with nothing to curate or do |
 | Bash `cp`/`mv`/`rsync` landing run output in a durable tree, or a `Write`/`Edit` of an evidence-suffixed file (`.log`, `.panic`, `.dump`, …) anywhere in it, `docs/**` included (PostToolUse) | the transfer the static `EvidenceArchive` gate flags — temp/scratchpad, `testdata/` fixtures, `.git` internals, and relative in-repo bulk copies stay exempt | (static, no model) a log entry carrying the artifacts as `--attach` git-lfs attachments; only `cc-notes sync` uploads their content (plain `git push` moves refs without it), and a >1MB payload strengthens the wording |
-| Bash `cc-notes note`/`doc`/`log` `add`/`edit`/`append` whose title or body text names a purge-bound path (`/tmp`, `/var`, a session scratchpad) the static `EphemeralRecordReference` gate flags — an `--attach` value is exempt (PostToolUse) | the record command the gate flags | (static, no model) carry the content in the record itself — `--body -` (or `--checkout` file mode) for text, `--attach <file>` for artifacts, whose bytes land in the ODB and sync with the repo |
+| Bash `cc-notes note`/`doc`/`log` `add`/`edit`/`append` (or `cc-notes papercut`) whose title or body text names a purge-bound path (`/tmp`, `/var`, a session scratchpad) the static `EphemeralRecordReference` gate flags — an `--attach` value is exempt (PostToolUse) | the record command the gate flags | (static, no model) carry the content in the record itself — `--body -` (or `--checkout` file mode) for text, `--attach <file>` for artifacts, whose bytes land in the ODB and sync with the repo |
 | `git commit` / `jj commit` / `jj describe` / `ccx vcs ship` (PostToolUse) | the HEAD commit — message, diffstat, bounded patch | whether the change encodes a durable decision worth a note or doc; the `cc-task:` link reminder always fires regardless, and the sync is an automatic side-effect (see below) |
 | `ExitPlanMode` (PostToolUse) | the approved plan's text (`planFilePath`, else inline) | which few plan items are durable work → `cc-notes task add` (`--backlog` if shared); the native-vs-durable teach always fires regardless |
 | Many open native tasks after `TaskCreate` | the growing native list | (static, no model) mirror the durable or cross-agent items into `cc-notes task add` |
@@ -244,7 +245,7 @@ subprocess) cannot assert it deterministically.
 The Record routers are LLM-gated, so their inline `tests={...}` cover only the cheap
 static gate: the inline harness stubs `call_llm` to its default verdict, which records
 nothing, so a positive can never fire there. What the gate lets through, what the model
-routes to (note vs doc vs log vs task), the always-on commit and plan teaches, and the
+routes to (note vs doc vs log vs task vs papercut), the always-on commit and plan teaches, and the
 per-key dedup are proven in `tests/test_cc_notes.py`, which stubs `evt.ctx.call_llm`
 (and `evt.ctx.git`) directly.
 

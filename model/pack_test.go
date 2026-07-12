@@ -121,7 +121,7 @@ var everyOpSample = []opSample{
 			{Kind: AnchorBranch, Value: "main"},
 		},
 	}},
-	{"append_entry", AppendEntry{Text: "flipped to 5%"}},
+	{"append_entry", AppendEntry{Text: "flipped to 5%", Model: "claude-opus-4-8"}},
 	{"set_sprint", SetSprint{Sprint: testID}},
 	{"set_project", SetProject{Project: testParent}},
 	{"set_sprint_status", SetSprintStatus{Status: SprintActive}},

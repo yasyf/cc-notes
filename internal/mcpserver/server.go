@@ -31,6 +31,7 @@ func New(cfg Config) *mcp.Server {
 	registerNote(srv, b)
 	registerDoc(srv, b)
 	registerLog(srv, b)
+	registerPapercut(srv, b)
 	registerTask(srv, b)
 	registerPlanning(srv, b)
 	registerRunbook(srv, b)

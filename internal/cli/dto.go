@@ -80,11 +80,12 @@ type docDTO struct {
 }
 
 // logEntryDTO is one append-only log entry with its timestamp rendered RFC3339
-// UTC.
+// UTC and the optional model identity (null when unset).
 type logEntryDTO struct {
-	Author string `json:"author"`
-	TS     string `json:"ts"`
-	Text   string `json:"text"`
+	Author string  `json:"author"`
+	TS     string  `json:"ts"`
+	Text   string  `json:"text"`
+	Model  *string `json:"model"`
 }
 
 // logDTO fixes the JSON field order and formats for log output: full hex id,
@@ -354,7 +355,7 @@ func newLogDTO(l model.Log, atts []attachmentDTO) logDTO {
 func logEntryDTOs(entries []model.LogEntry) []logEntryDTO {
 	out := make([]logEntryDTO, len(entries))
 	for i, e := range entries {
-		out[i] = logEntryDTO{Author: string(e.Author), TS: render.RFC3339(e.TS), Text: e.Text}
+		out[i] = logEntryDTO{Author: string(e.Author), TS: render.RFC3339(e.TS), Text: e.Text, Model: render.OptString(e.Model)}
 	}
 	return out
 }
