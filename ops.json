@@ -1,1 +1,1 @@
-{"v":1,"lamport":2,"ops":[{"kind":"add_comment","body":"Fixed in 6391afd0 (v0.26.0): pack + Go derive cc-notes-wired remotes; bare sync fans out over every wired remote; SessionEnd backstop checks each wired remote's tracking refs. E2E: upstream-only repo syncs to upstream."}]}
+{"v":1,"lamport":3,"ops":[{"kind":"set_criterion_status","id":"7ff4a744538caa4b57dbb6f2b71598e6","status":"met"}]}
