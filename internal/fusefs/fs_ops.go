@@ -3,6 +3,7 @@
 package fusefs
 
 import (
+	"log"
 	"path"
 	"slices"
 	"time"
@@ -16,19 +17,62 @@ func (f *FS) Getattr(p string, stat *fuse.Stat_t, fh uint64) int {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.getattrLocked(p, stat, fh)
+}
+
+// getattrLocked is Getattr's body with f.mu already held, sharing the handle-
+// and path-stat resolution with statSeed.
+func (f *FS) getattrLocked(p string, stat *fuse.Stat_t, fh uint64) int {
 	if h := f.handleFor(p, fh, true); h != nil {
-		if h.file != nil {
-			f.fillStat(stat, fuse.S_IFREG|0o444, h.ino, h.size, fuse.Timespec{Sec: h.mtime}, h.birth)
-			return 0
-		}
-		if underRunbooks(h.path) {
-			f.fillStat(stat, fuse.S_IFREG|0o444, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime}, h.birth)
-			return 0
-		}
-		f.fillStat(stat, fuse.S_IFREG|0o644, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime}, h.birth)
+		f.fillHandleStat(stat, h)
 		return 0
 	}
-	return f.statPath(p, stat)
+	_, errc := f.statPath(p, stat)
+	return errc
+}
+
+// fillHandleStat fills stat from an open handle's in-memory buffer (or an
+// attachment's content file).
+func (f *FS) fillHandleStat(stat *fuse.Stat_t, h *handle) {
+	switch {
+	case h.file != nil:
+		f.fillStat(stat, fuse.S_IFREG|0o444, h.ino, h.size, fuse.Timespec{Sec: h.mtime}, h.birth)
+	case underRunbooks(h.path):
+		f.fillStat(stat, fuse.S_IFREG|0o444, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime}, h.birth)
+	default:
+		f.fillStat(stat, fuse.S_IFREG|0o644, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime}, h.birth)
+	}
+}
+
+// handleSeed is a handle's per-version cache-defeat seed: its open-time snapshot
+// head, atomic with the buffer fillHandleStat sizes. A scratch, pending, or
+// attachment handle has no version and returns "".
+func handleSeed(h *handle) string {
+	if h.base != nil {
+		return string(headOf(h.base))
+	}
+	return ""
+}
+
+// statSeed returns p's stat and its per-version cache-defeat seed from ONE node
+// resolution, so contentd's Entry folds a coherent snapshot. Resolving size and
+// version separately (Getattr then notesSeed — each re-reads the ref) lets an
+// external commit land between and pair a stale size/mtime with the new version
+// SHA, defeating the holder's cache-defeat. fh is the open handle (invalidFh for
+// a path-wise stat).
+func (f *FS) statSeed(p string, fh uint64) (fuse.Stat_t, string, int) {
+	var st fuse.Stat_t
+	if JunkName(path.Base(p)) {
+		return st, "", -fuse.ENOENT
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if h := f.handleFor(p, fh, true); h != nil {
+		f.fillHandleStat(&st, h)
+		return st, handleSeed(h), 0
+	}
+	seed, rc := f.statPath(p, &st)
+	return st, seed, rc
 }
 
 func (f *FS) Open(p string, flags int) (int, uint64) {
@@ -65,6 +109,7 @@ func truncateOnOpen(h *handle, flags int) {
 	if flags&fuse.O_TRUNC != 0 && len(h.buf) > 0 {
 		h.buf = nil
 		h.dirty = true
+		h.gen++
 	}
 }
 
@@ -127,6 +172,7 @@ func (f *FS) Write(p string, buff []byte, ofst int64, fh uint64) int {
 	copy(h.buf[ofst:], buff)
 	h.dirty = true
 	h.flushed = false
+	h.gen++
 	h.mtime = time.Now().Unix()
 	return len(buff)
 }
@@ -145,6 +191,7 @@ func (f *FS) Truncate(p string, size int64, fh uint64) int {
 			h.buf = resize(h.buf, size)
 			h.dirty = true
 			h.flushed = false
+			h.gen++
 			h.mtime = time.Now().Unix()
 		}
 		return 0
@@ -160,7 +207,8 @@ func (f *FS) Truncate(p string, size int64, fh uint64) int {
 	// chmod): editors that pre-truncate before opening must not fail, and
 	// the open-write-flush cycle that follows carries the real edit.
 	var st fuse.Stat_t
-	return f.statPath(p, &st)
+	_, errc := f.statPath(p, &st)
+	return errc
 }
 
 // Flush marks the handle flushed so the Release backstop won't double-commit;
@@ -179,24 +227,61 @@ func (f *FS) Flush(p string, fh uint64) int {
 }
 
 // Release drops the handle, closing an attachment's content file and
-// committing as a backstop only when no flush ever ran for this fh; its
-// status is kernel-discarded either way.
+// committing as a backstop only when no flush ever ran for this fh. It returns
+// the backstop commit's errno: the in-process kernel path discards it, but
+// contentd's ReleaseHandle surfaces it over the wire. ANY backstop failure —
+// transient (EIO) OR a deterministic rejection (EINVAL parse, EPERM immutable) —
+// KEEPS the handle and its buffer (the edit's only copy) and returns the errno,
+// so a re-issued close retries and no dirty document is ever silently dropped
+// while reporting success. Only a clean commit (or a non-dirty handle) drops it.
 func (f *FS) Release(p string, fh uint64) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	h := f.handles[fh]
-	delete(f.handles, fh)
 	if h == nil {
 		return 0
 	}
 	if h.file != nil {
 		_ = h.file.Close()
+		delete(f.handles, fh)
 		return 0
 	}
 	if h.dirty && !h.flushed {
-		_ = f.commitHandle(h)
+		// Re-commit until the buffer commits clean, draining writes that raced
+		// commitHandle's unlocked append (each leaves the handle dirty via a bumped
+		// gen). Terminates because RELEASE follows the kernel's last accepted write,
+		// so the racing set is the finite in-flight batch and gen stabilizes within
+		// that many iterations. Any non-zero errno keeps the handle+buffer.
+		for h.dirty {
+			if rc := f.commitHandle(h); rc != 0 {
+				return rc
+			}
+		}
 	}
+	delete(f.handles, fh)
 	return 0
+}
+
+// discardHandle drops the handle WITHOUT committing its buffer, logging a
+// discarded dirty edit. It is the holder-generation-change release path
+// (contentd's ReleaseAllHandles): a mid-rewrite buffer at a generation change
+// is a partial multi-chunk edit, and committing even a parse-valid prefix would
+// make a torn write canonical. Durability lives in the store; the editor
+// re-opens against the new generation.
+func (f *FS) discardHandle(p string, fh uint64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	h := f.handles[fh]
+	if h == nil {
+		return
+	}
+	if h.file != nil {
+		_ = h.file.Close()
+	}
+	if h.dirty && !h.flushed {
+		log.Printf("cc-notes contentd: discarding uncommitted edit on generation change: %s (%d bytes)", p, len(h.buf))
+	}
+	delete(f.handles, fh)
 }
 
 // Fsync is a no-op handler: the commit it used to drive is now the cache-defeat
@@ -238,7 +323,7 @@ func (f *FS) Rename(oldpath string, newpath string) int {
 	sc, ok := f.scratch[oldpath]
 	if !ok {
 		var st fuse.Stat_t
-		if errc := f.statPath(oldpath, &st); errc != 0 {
+		if _, errc := f.statPath(oldpath, &st); errc != 0 {
 			return errc
 		}
 		return -fuse.EPERM // entities and directories never move
@@ -275,7 +360,7 @@ func (f *FS) Unlink(p string) int {
 		return 0
 	}
 	var st fuse.Stat_t
-	if errc := f.statPath(p, &st); errc != 0 {
+	if _, errc := f.statPath(p, &st); errc != 0 {
 		return errc
 	}
 	return -fuse.EPERM // entities tombstone via the CLI, never via unlink

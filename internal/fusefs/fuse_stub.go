@@ -25,3 +25,12 @@ const Hostable = false
 func Mount(_ context.Context, _, _ string) error {
 	return fmt.Errorf("%w: this binary was built without FUSE support; rebuild with -tags fuse, or download the _fuse release binary (macOS: brew install fuse-t; Linux: apt install fuse3)", mountd.ErrCannotHost)
 }
+
+// ServeContent always fails in this build variant: the content server renders
+// the store through the same fuse-tagged renderer the mount uses, so a pure
+// binary has nothing to serve. It wraps mountd.ErrCannotHost — the pure-build
+// refusal — so the contentd subcommand exits cleanly on a non-fuse binary. See
+// contentd.go for the fuse build's implementation.
+func ServeContent(_ context.Context, _ string) error {
+	return fmt.Errorf("%w: this binary was built without FUSE support; the content server needs the fuse renderer (rebuild with -tags fuse, or download the _fuse release binary)", mountd.ErrCannotHost)
+}

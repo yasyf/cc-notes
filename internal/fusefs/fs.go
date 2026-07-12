@@ -50,6 +50,10 @@ type handle struct {
 	birth   int64
 	dirty   bool
 	flushed bool
+	// gen counts buffer mutations; commitHandle clears dirty only if gen is
+	// unchanged across its unlocked store append, so a write racing that window
+	// keeps the handle dirty instead of being silently cleared (lost).
+	gen uint64
 }
 
 // scratchFile is an in-memory non-entity file (editor tmp and atomic-save

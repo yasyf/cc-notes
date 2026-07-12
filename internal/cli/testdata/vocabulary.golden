@@ -58,6 +58,16 @@ command: cc-notes compact
   inherited:
     (none)
 
+command: cc-notes contentd
+  use: contentd
+  aliases: -
+  short: Run cc-notes' content server for the shared fusekit holder
+  hidden: true
+  flags:
+    (none)
+  inherited:
+    (none)
+
 command: cc-notes doc
   use: doc
   aliases: -
@@ -429,25 +439,15 @@ command: cc-notes mcp
 command: cc-notes mount
   use: mount [MOUNTPOINT]
   aliases: -
-  short: Mount notes, docs, and tasks as a filesystem (detaches; a mount holder serves it)
+  short: Mount notes, docs, and tasks as a filesystem (detaches; the shared fusekit holder serves it)
   hidden: false
   flags:
     --auto shorthand=none type=bool default="false" usage="session-start ensure-mount: mount only if this repo opted in (cc-notes.autoMount) and the binary can host fuse; self-gating, best-effort, quiet"
-    --foreground shorthand=-f type=bool default="false" usage="serve in the foreground and unmount on Ctrl-C (bypasses the mount holder)"
-    --list shorthand=none type=bool default="false" usage="list the mounts the holder serves, then exit"
-    --shutdown shorthand=none type=bool default="false" usage="unmount everything and stop the mount holder, then exit"
-    --socket shorthand=none type=string default="~/.cc-notes/mounts.sock" usage="mount-holder unix socket path"
+    --foreground shorthand=-f type=bool default="false" usage="serve in the foreground and unmount on Ctrl-C (bypasses the shared holder)"
+    --list shorthand=none type=bool default="false" usage="list cc-notes' mounts on the shared holder, then exit"
+    --shutdown shorthand=none type=bool default="false" usage="unmount cc-notes' own mounts (the shared holder keeps running for other tenants), then exit"
+    --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)"
     --stop shorthand=none type=string default="" usage="unmount the mount at DIR, then exit"
-  inherited:
-    (none)
-
-command: cc-notes mount-holder
-  use: mount-holder
-  aliases: -
-  short: Run the detached fuse mount holder
-  hidden: true
-  flags:
-    --socket shorthand=none type=string default="~/.cc-notes/mounts.sock" usage="unix socket path to serve"
   inherited:
     (none)
 

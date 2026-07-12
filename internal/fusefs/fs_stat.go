@@ -3,89 +3,103 @@
 package fusefs
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/winfsp/cgofuse/fuse"
 
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/model"
 )
 
-// statPath fills stat for a path with no open handle.
-func (f *FS) statPath(p string, stat *fuse.Stat_t) int {
+// statPath fills stat for a path with no open handle and returns the path's
+// per-version cache-defeat seed, both from ONE node resolution: size and version
+// must describe the same snapshot, so an external commit cannot pair a stale size
+// with a new version SHA (statSeed's atomicity contract). A versionless node
+// (dir, scratch) returns "".
+func (f *FS) statPath(p string, stat *fuse.Stat_t) (string, int) {
 	if sc, ok := f.scratch[p]; ok {
 		f.fillStat(stat, fuse.S_IFREG|0o644, pathIno(p), int64(len(sc.data)), fuse.Timespec{Sec: sc.mtime.Unix(), Nsec: int64(sc.mtime.Nanosecond())}, sc.mtime.Unix())
-		return 0
+		return "", 0
 	}
 	if ref, ok := f.aliases[p]; ok {
 		tip, err := f.store.Repo.Tip(f.ctx, ref)
 		if err != nil {
-			delete(f.aliases, p)
-			return -fuse.ENOENT
+			// Only a genuine missing ref evicts the alias and maps to ENOENT (the
+			// one errno List's sweep is allowed to skip). A corrupt or unreadable
+			// ref keeps the alias and surfaces its real errno (EIO), so List can't
+			// silently drop a live aliased entry on a transient store failure.
+			if errors.Is(err, gitobj.ErrRefNotFound) {
+				delete(f.aliases, p)
+				return "", -fuse.ENOENT
+			}
+			return "", errno(err)
 		}
 		r, err := f.renderTip(tip)
 		if err != nil {
-			return errno(err)
+			return "", errno(err)
 		}
 		f.fillEntityStat(stat, r)
-		return 0
+		return string(headOf(r.snapshot)), 0
 	}
 	node, err := ParsePath(p)
 	if err != nil {
-		return -fuse.ENOENT
+		return "", -fuse.ENOENT
 	}
 	switch n := node.(type) {
 	case Root, KindDir:
 		f.fillDirStat(stat, p)
-		return 0
+		return "", 0
 	case EntityFile:
 		return f.statEntity(stat, n.Kind, n.ShortID)
 	case ProjectBrowseDir, ProjectSprintsDir, ProjectSprintDir, ProjectSprintTasksDir, ProjectTasksDir, SprintBrowseDir, SprintTasksDir:
 		if errc := f.validateBrowseDir(node); errc != 0 {
-			return errc
+			return "", errc
 		}
 		f.fillDirStat(stat, p)
-		return 0
+		return "", 0
 	case ProjectSprintTaskLink, ProjectTaskLink, SprintTaskLink:
 		task, target, errc := f.resolveLink(p, node)
 		if errc != 0 {
-			return errc
+			return "", errc
 		}
 		f.fillSymlinkStat(stat, task, len(target))
-		return 0
+		return string(task.Head), 0
 	case AttachmentsDir:
 		f.fillDirStat(stat, p)
-		return 0
+		return "", 0
 	case AttachmentEntityDir:
 		if _, errc := f.lookupAttachable(n.EntityShort); errc != 0 {
-			return errc
+			return "", errc
 		}
 		f.fillDirStat(stat, p)
-		return 0
+		return "", 0
 	case AttachmentFile:
 		ent, att, errc := f.findAttachment(n)
 		if errc != 0 {
-			return errc
+			return "", errc
 		}
 		f.fillAttachmentStat(stat, ent, att)
-		return 0
+		return att.OID, 0
 	default:
 		panic(fmt.Sprintf("fusefs: unknown node %T", node))
 	}
 }
 
-// statEntity resolves a flat entity file and fills stat, using the read-only
-// mode for read-only kinds (runbooks).
-func (f *FS) statEntity(stat *fuse.Stat_t, kind model.Kind, shortID string) int {
+// statEntity resolves a flat entity file, fills stat (read-only mode for
+// read-only kinds like runbooks), and returns the entity's chain-tip seed — the
+// stat and seed from ONE resolution so they never straddle an external commit.
+func (f *FS) statEntity(stat *fuse.Stat_t, kind model.Kind, shortID string) (string, int) {
 	_, r, err := f.resolveEntity(kind, shortID)
 	if err != nil {
-		return errno(err)
+		return "", errno(err)
 	}
 	if codecOf(kind).ReadOnly() {
 		f.fillReadonlyEntityStat(stat, r)
 	} else {
 		f.fillEntityStat(stat, r)
 	}
-	return 0
+	return string(headOf(r.snapshot)), 0
 }
 
 func (f *FS) fillEntityStat(stat *fuse.Stat_t, r rendered) {

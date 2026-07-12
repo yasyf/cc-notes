@@ -51,6 +51,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   falls back to the session repo; record writes only, and an MCP write
   always targets the session repo.
 
+## [0.27.0] - 2026-07-12
+
+Holder v2: cc-notes becomes a plain tenant of the shared `fusekit-holder`.
+
+### Changed
+- **The private mount holder is gone.** Mounts are served by the shared
+  multi-tenant `fusekit-holder` cask (wire proto 2, `Owner="cc-notes"`,
+  feature-negotiated via `hello`), and the store→tree renderer now runs
+  behind **contentd** — a KeepAlive LaunchAgent serving the content tree on
+  `~/.fusekit/spool/cc-notes/c.sock` with commit-on-Flush semantics and
+  per-node versions driving the holder's NFS cache defeat. The holder alone
+  mounts, unmounts, and clears carcasses; cc-notes retains no force
+  primitive of any kind.
+- **`mount --shutdown` reclaims only cc-notes' own mounts** (owner-scoped,
+  lease-gated holder-side) and can no longer stop any holder process;
+  `mount --stop` refuses a foreign tenant's mount and, while the legacy
+  private holder still serves the target, prints the graceful displacement
+  recipe instead of tearing down beneath it.
+- First mounts await contentd's socket readiness; a brew upgrade recycles a
+  stale contentd via a boot stamp; detached mounting is macOS-only
+  (`mount --foreground` remains the portable path).
+
+### Removed
+- The `mount-holder` subcommand, the in-process holder host, and the private
+  holder state (`~/.cc-notes/mounts.sock`, `~/.cc-notes/bin`,
+  `mount-holder.log`).
+
 ## [0.25.0] - 2026-07-11
 
 ### Added

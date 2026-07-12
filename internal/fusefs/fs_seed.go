@@ -37,6 +37,12 @@ func (f *FS) notesSeed(p string, _ *fuse.Stat_t) string {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.seedLocked(p)
+}
+
+// seedLocked is notesSeed's resolution with f.mu already held, so statSeed can
+// pair it with getattrLocked in one atomic snapshot.
+func (f *FS) seedLocked(p string) string {
 	if _, ok := f.scratch[p]; ok {
 		return ""
 	}

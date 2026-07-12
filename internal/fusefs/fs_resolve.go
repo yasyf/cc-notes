@@ -3,6 +3,7 @@
 package fusefs
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/winfsp/cgofuse/fuse"
 
 	"github.com/yasyf/cc-notes/internal/fold"
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -70,8 +72,14 @@ func (f *FS) openEntity(p string) (string, rendered, int) {
 	if ref, ok := f.aliases[p]; ok {
 		tip, err := f.store.Repo.Tip(f.ctx, ref)
 		if err != nil {
-			delete(f.aliases, p)
-			return "", rendered{}, -fuse.ENOENT
+			// Only a genuinely missing ref evicts the alias and reads ENOENT; any
+			// other Tip failure (a corrupt or cyclic ref) surfaces its real errno and
+			// keeps the alias, so a transient fault never reads as a missing file.
+			if errors.Is(err, gitobj.ErrRefNotFound) {
+				delete(f.aliases, p)
+				return "", rendered{}, -fuse.ENOENT
+			}
+			return "", rendered{}, errno(err)
 		}
 		r, err := f.renderTip(tip)
 		if err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/winfsp/cgofuse/fuse"
 
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -22,6 +23,7 @@ func (f *FS) commitHandle(h *handle) int {
 	if !h.dirty {
 		return 0
 	}
+	gen := h.gen
 	data := slices.Clone(h.buf)
 	if h.ref != "" {
 		base, ref := h.base, h.ref
@@ -34,10 +36,15 @@ func (f *FS) commitHandle(h *handle) int {
 			// Release backstop retries the commit.
 			return errc
 		case errc != 0:
-			// Deterministic content failure (parse error, immutable
-			// edit): revert to the last good render so the broken bytes
-			// don't shadow the entity for path-based readers — the editor
-			// holds its own copy of the rejected buffer.
+			// Deterministic content failure (parse error, immutable edit). A
+			// write that raced the unlocked append supersedes the rejected
+			// snapshot: leave its bytes dirty for the next flush rather than
+			// reverting over them. Absent one, revert to the last good render
+			// so the broken bytes don't shadow the entity for path-based
+			// readers — the editor holds its own copy of the rejected buffer.
+			if h.gen != gen {
+				return errc
+			}
 			h.buf = renderDocument(base)
 			h.dirty = false
 			return errc
@@ -48,26 +55,33 @@ func (f *FS) commitHandle(h *handle) int {
 			created, updated := snapshotTimes(snap)
 			h.birth, h.mtime = created, updated
 		}
-		h.dirty = false
+		f.clearDirtyLocked(h, gen)
 		return 0
 	}
 	if _, ok := entityTarget(h.path); ok {
 		ref, snap, errc := f.commitDocument(h.path, data)
 		if errc != 0 {
 			// Preserve the draft: the scratch entry is the only copy of a
-			// pending document, so a failed create must not drop it. The
-			// next write re-dirties the handle and retries the create.
+			// pending document, so a failed create must not drop it. Keep the
+			// current bytes — a racing write's if one landed, else the rejected
+			// snapshot — and stay dirty when a write raced so the next flush
+			// retries the create with the newer content.
 			if sc := f.scratch[h.path]; sc != nil {
-				sc.data, sc.mtime = data, time.Now()
+				if h.gen != gen {
+					sc.data = slices.Clone(h.buf)
+				} else {
+					sc.data = data
+				}
+				sc.mtime = time.Now()
 			}
-			h.dirty = false
+			f.clearDirtyLocked(h, gen)
 			return errc
 		}
 		delete(f.scratch, h.path)
 		f.aliases[h.path] = ref
 		h.ref, h.base = ref, snap
 		h.ino = idIno(snap.EntityID())
-		h.dirty = false
+		f.clearDirtyLocked(h, gen)
 		return 0
 	}
 	sc := f.scratch[h.path]
@@ -80,6 +94,16 @@ func (f *FS) commitHandle(h *handle) int {
 	sc.data, sc.mtime = data, time.Now()
 	h.dirty = false
 	return 0
+}
+
+// clearDirtyLocked clears h.dirty only when no buffer mutation raced the
+// unlocked store append (h.gen unchanged since the commit snapshot). A bumped
+// gen means a concurrent write added bytes this commit did not carry, so the
+// handle stays dirty for the next flush. Caller holds f.mu.
+func (f *FS) clearDirtyLocked(h *handle, gen uint64) {
+	if h.gen == gen {
+		h.dirty = false
+	}
 }
 
 // appendDiff parses data against base's kind, diffs, and appends. A nil
@@ -151,8 +175,15 @@ func (f *FS) resolveTarget(p string, kind model.Kind) (string, rendered, int) {
 	if ref, ok := f.aliases[p]; ok {
 		tip, err := f.store.Repo.Tip(f.ctx, ref)
 		if err != nil {
-			delete(f.aliases, p)
-			return "", rendered{}, -fuse.ENOENT
+			// Only ErrRefNotFound means "no such entity yet" (evict + ENOENT so the
+			// caller creates); any other Tip failure (a corrupt or cyclic ref)
+			// surfaces its real errno and keeps the alias, so the commit fails loudly
+			// instead of minting a DUPLICATE entity over a transient store fault.
+			if errors.Is(err, gitobj.ErrRefNotFound) {
+				delete(f.aliases, p)
+				return "", rendered{}, -fuse.ENOENT
+			}
+			return "", rendered{}, errno(err)
 		}
 		r, err := f.renderTip(tip)
 		if err != nil {

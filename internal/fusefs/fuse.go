@@ -16,10 +16,15 @@ package fusefs
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/yasyf/fusekit"
+
+	"github.com/yasyf/cc-notes/internal/store"
 )
 
 // Hostable reports whether this binary can host fuse mounts in-process. It is
@@ -48,11 +53,64 @@ func init() {
 // Mount serves repoRoot's notes and tasks at mountpoint in the foreground,
 // blocking until ctx is canceled or the mount is removed externally with
 // umount(8), then tearing it down — the `mount --foreground` path. The detached
-// default goes through the mount holder instead (see internal/cli/mount.go).
-// fusekit.Serve owns the whole lifecycle; see mount.go for the cross-build
-// contract.
+// default serves the same tree through the shared fusekit holder in
+// ContentModeTree, fed by the contentd content server (see internal/cli/mount.go
+// and contentd.go). fusekit.Serve owns the whole lifecycle; see mount.go for the
+// cross-build contract.
 func Mount(ctx context.Context, repoRoot string, mountpoint string) error {
 	return fusekit.Serve(ctx, buildConfig(repoRoot, mountpoint))
+}
+
+// mountWait bounds the wait for a freshly issued foreground mount to come live,
+// handed to fusekit via Config.Wait. A mount stuck on the one-time macOS
+// "Network Volumes" TCC grant must not hang; fusekit owns the proven/unproven
+// deduction that decides whether a timeout reads as the TCC condition
+// (ErrMountNotLive) or transient slowness (ErrMountTimeout).
+const mountWait = 8 * time.Second
+
+// buildConfig constructs the fusekit Config for the in-process foreground mount
+// of base's notes and tasks at dir. base is the repo ROOT — the caller resolves
+// it through the store first, so store.Open(base) opens an already-validated
+// repository and a failure here is an unreachable invariant violation, loud by
+// design. The cache-defeat callbacks route cc-notes' NFS data-cache defeats
+// through fusekit: notesSeed feeds the per-version mtime nanosecond on Getattr,
+// notesCommit commits on both Flush and Fsync.
+func buildConfig(base, dir string) fusekit.Config {
+	s, err := store.Open(base)
+	if err != nil {
+		panic(fmt.Sprintf("fusefs: open store at repo root %s: %v", base, err))
+	}
+	fs := newFS(context.Background(), s)
+
+	// The darwin-only fuse-t `-o` flags: volname names the volume, noattrcache
+	// is the NFS backend's only coherence lever (the store is written by the CLI
+	// while editors read through the mount, so attribute caching would serve
+	// stale sizes), and nobrowse keeps the mount out of Finder sidebars.
+	// cc-notes' fuse build is cross-platform; on Linux libfuse3 understands none
+	// of these, so emit no options there.
+	var opts []string
+	if runtime.GOOS == "darwin" {
+		opts = fusekit.MountOptions{
+			Volname:  "cc-notes-" + filepath.Base(base),
+			NoBrowse: true,
+		}.Build()
+	}
+
+	return fusekit.Config{
+		Base:    base,
+		Dir:     dir,
+		FS:      fs,
+		Options: opts,
+		// Liveness is the synthesized tree showing through, NOT base's contents
+		// (the default MountAlive) — cc-notes renders a synthetic tree, so the
+		// repo root never appears under the mount.
+		Ready: func() bool { return hasMountRoot(dir) },
+		Wait:  mountWait,
+		CacheDefeat: &fusekit.CacheDefeat{
+			VersionSeed: fs.notesSeed,
+			Commit:      fs.notesCommit,
+		},
+	}
 }
 
 // hasMountRoot reports whether mountpoint serves the synthesized notes/tasks

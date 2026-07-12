@@ -121,6 +121,52 @@ func mustTip(t *testing.T, s *store.Store, ref string) model.SHA {
 	return tip
 }
 
+// TestStatPathAliasPreservesTipErrno pins O6: the alias stat path maps only a
+// genuine missing ref to ENOENT (which List may skip) and surfaces every other
+// Tip failure as its real errno (EIO), keeping the alias — so List's ENOENT-only
+// skip discipline can't silently drop a live aliased entry on a corrupt/transient
+// store failure.
+func TestStatPathAliasPreservesTipErrno(t *testing.T) {
+	repo := gittest.InitRepo(t)
+	s, err := store.Open(repo)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+
+	t.Run("corrupt ref surfaces EIO and keeps the alias", func(t *testing.T) {
+		// A symbolic-ref cycle makes Tip fail with a non-ErrRefNotFound error
+		// (max-recursion resolving the ref) — a corrupt ref, distinct from a
+		// genuinely missing one.
+		gittest.Git(t, repo, "symbolic-ref", "refs/cc-notes/loop-a", "refs/cc-notes/loop-b")
+		gittest.Git(t, repo, "symbolic-ref", "refs/cc-notes/loop-b", "refs/cc-notes/loop-a")
+		f := newFS(context.Background(), s)
+		const aliasPath = "/notes/aliased.md"
+		f.aliases[aliasPath] = "refs/cc-notes/loop-a"
+
+		var st fuse.Stat_t
+		if _, rc := f.statPath(aliasPath, &st); rc != -fuse.EIO {
+			t.Fatalf("statPath alias with a corrupt (non-not-found) Tip = rc %d, want -EIO (never a silent ENOENT List skips)", rc)
+		}
+		if _, ok := f.aliases[aliasPath]; !ok {
+			t.Error("alias evicted on a corrupt (non-not-found) Tip failure; only a genuine missing ref should evict")
+		}
+	})
+
+	t.Run("genuine missing ref maps to ENOENT and evicts the alias", func(t *testing.T) {
+		f := newFS(context.Background(), s)
+		const aliasPath = "/notes/gone.md"
+		f.aliases[aliasPath] = refs.For(model.KindNote, model.EntityID("0123456789abcdef"))
+
+		var st fuse.Stat_t
+		if _, rc := f.statPath(aliasPath, &st); rc != -fuse.ENOENT {
+			t.Fatalf("statPath alias with a genuine missing ref = rc %d, want -ENOENT", rc)
+		}
+		if _, ok := f.aliases[aliasPath]; ok {
+			t.Error("alias not evicted on a genuine missing ref")
+		}
+	})
+}
+
 func readNames(t *testing.T, f *FS, dir string) []string {
 	t.Helper()
 	var names []string
