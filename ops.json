@@ -1,1 +1,1 @@
-{"v":1,"lamport":2,"ops":[{"kind":"add_comment","body":"Fixed in 6391afd0 (v0.26.0): record writes walk the parsed command legs, track literal cds, and run cc-notes sync in the written repo (once per target per turn, 'Synced cc-notes refs in \u003cdir\u003e.'); unresolvable cds fall back to the session repo; MCP writes stay session-scoped."}]}
+{"v":1,"lamport":3,"ops":[{"kind":"set_criterion_status","id":"f2e6facf4e6c0251c0d64f472f1b52f9","status":"met"}]}
