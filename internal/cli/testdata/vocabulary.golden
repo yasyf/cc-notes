@@ -1211,7 +1211,7 @@ command: cc-notes sync
   flags:
     --full shorthand=none type=bool default="false" usage="force a whole-namespace reconcile scan"
     --json shorthand=none type=bool default="false" usage="emit JSON"
-    --remote shorthand=none type=string default="origin" usage="remote to sync with"
+    --remote shorthand=none type=string default="" usage="remote to sync with (default: every cc-notes-wired remote, else origin)"
   inherited:
     (none)
 

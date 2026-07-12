@@ -231,6 +231,78 @@ func TestSyncLeanAndJSON(t *testing.T) {
 	}
 }
 
+// TestSyncCmdDerivesWiredRemote proves `cc-notes sync` with no --remote targets
+// the sole cc-notes-wired remote (here a non-origin "upstream") rather than the
+// hard-coded origin: reverting the wired-remote fan-out in newSyncCmd makes this
+// fail, since origin is never configured.
+func TestSyncCmdDerivesWiredRemote(t *testing.T) {
+	dir := initRepo(t)
+	bare := t.TempDir()
+	gittest.Git(t, bare, "init", "-q", "--bare")
+	gittest.Git(t, dir, "remote", "add", "upstream", bare)
+	gittest.Git(t, dir, "config", "--add", "remote.upstream.fetch", "+refs/cc-notes/*:refs/cc-notes-sync/upstream/*")
+
+	mustRun(t, dir, "note", "add", "Derived")
+	mustRun(t, dir, "sync")
+
+	if refs := gittest.Git(t, bare, "for-each-ref", "refs/cc-notes/"); !strings.Contains(refs, "refs/cc-notes/notes/") {
+		t.Fatalf("sync did not push to the sole wired remote upstream: %q", refs)
+	}
+}
+
+// TestSyncCmdExplicitRemoteWins proves an explicit --remote overrides derivation:
+// upstream is the sole cc-notes-wired remote, but `sync --remote origin` pushes
+// to origin and never to the derived upstream.
+func TestSyncCmdExplicitRemoteWins(t *testing.T) {
+	dir := initRepo(t)
+	upstreamBare := t.TempDir()
+	gittest.Git(t, upstreamBare, "init", "-q", "--bare")
+	originBare := t.TempDir()
+	gittest.Git(t, originBare, "init", "-q", "--bare")
+	gittest.Git(t, dir, "remote", "add", "upstream", upstreamBare)
+	gittest.Git(t, dir, "remote", "add", "origin", originBare)
+	gittest.Git(t, dir, "config", "--add", "remote.upstream.fetch", "+refs/cc-notes/*:refs/cc-notes-sync/upstream/*")
+
+	mustRun(t, dir, "note", "add", "Explicit")
+	mustRun(t, dir, "sync", "--remote", "origin")
+
+	if refs := gittest.Git(t, originBare, "for-each-ref", "refs/cc-notes/"); !strings.Contains(refs, "refs/cc-notes/notes/") {
+		t.Fatalf("explicit --remote origin did not push to origin: %q", refs)
+	}
+	if refs := gittest.Git(t, upstreamBare, "for-each-ref", "refs/cc-notes/"); strings.Contains(refs, "refs/cc-notes/notes/") {
+		t.Fatalf("explicit --remote origin leaked to the derived upstream remote: %q", refs)
+	}
+}
+
+// TestSyncCmdBareFansToAllWiredRemotes proves `cc-notes sync` with no --remote
+// pushes to EVERY cc-notes-wired remote, not just one: a repo wired to two
+// non-origin remotes gets its note ref pushed to both bares. This is the fix for
+// a multi-wired repo where the old single-derive fell back to the nonexistent
+// origin and synced to nothing.
+func TestSyncCmdBareFansToAllWiredRemotes(t *testing.T) {
+	dir := initRepo(t)
+	upBare := t.TempDir()
+	gittest.Git(t, upBare, "init", "-q", "--bare")
+	downBare := t.TempDir()
+	gittest.Git(t, downBare, "init", "-q", "--bare")
+	gittest.Git(t, dir, "remote", "add", "up", upBare)
+	gittest.Git(t, dir, "remote", "add", "down", downBare)
+	gittest.Git(t, dir, "config", "--add", "remote.up.fetch", "+refs/cc-notes/*:refs/cc-notes-sync/up/*")
+	gittest.Git(t, dir, "config", "--add", "remote.down.fetch", "+refs/cc-notes/*:refs/cc-notes-sync/down/*")
+
+	mustRun(t, dir, "note", "add", "FanOut")
+	mustRun(t, dir, "sync")
+
+	for _, bare := range []struct {
+		name string
+		dir  string
+	}{{"up", upBare}, {"down", downBare}} {
+		if refs := gittest.Git(t, bare.dir, "for-each-ref", "refs/cc-notes/"); !strings.Contains(refs, "refs/cc-notes/notes/") {
+			t.Fatalf("bare sync did not push to wired remote %s: %q", bare.name, refs)
+		}
+	}
+}
+
 func TestTaskEditBranch(t *testing.T) {
 	dir := initRepo(t)
 	task := addTask(t, dir, "Ship it")

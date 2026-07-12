@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+from pathlib import Path
 
 from captain_hook import (
     Allow,
@@ -20,7 +22,8 @@ from captain_hook import (
     nudge,
     on,
 )
-from cc_transcript.command import Command
+from captain_hook.util.paths import resolve_project_dir
+from cc_transcript.command import Command, CommandLine
 
 from .common import (
     CcNotesAvailable,
@@ -191,26 +194,128 @@ class CcNotesMcpWrite(CustomCondition):
         return True
 
 
-def should_autosync(evt: PostToolUseEvent) -> bool:
-    # At most one sync per turn even when commit+claim co-occur. A scoped once-key,
-    # isolated from the record router's shared fired_this_turn slot and the per-sha/per-plan once scopes.
-    return evt.ctx.s.once(str(len(evt.ctx.t) - len(evt.ctx.turn)), scope="autosync")
+_LOCAL_REF_PREFIX = "refs/cc-notes/"
+_TRACKING_NS = "refs/cc-notes-sync/"
+_OLD_FETCH_REFSPEC = "+refs/cc-notes/*:refs/cc-notes/*"
+
+
+def _fetch_refspec(name: str) -> str:
+    return f"+refs/cc-notes/*:refs/cc-notes-sync/{name}/*"
+
+
+def wired_remotes(evt: BaseHookEvent) -> list[str]:
+    # Remotes wired for cc-notes by `sync/install.go`: their `remote.<name>.fetch` equals the tracking
+    # refspec `+refs/cc-notes/*:refs/cc-notes-sync/<name>/*` or the pre-fix same-namespace form. One
+    # `git config` read; config order, deduped (a name may carry dots). A git failure reads as zero
+    # wired, so every caller falls back to a bare `cc-notes sync` (the autoInstall-origin bootstrap).
+    try:
+        out = evt.ctx.git("config", "--get-regexp", r"^remote\..*\.fetch$")
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if not out:
+        return []
+    remotes: list[str] = []
+    seen: set[str] = set()
+    for row in out.splitlines():
+        key, _, value = row.partition(" ")
+        if not key.startswith("remote.") or not key.endswith(".fetch"):
+            continue
+        name = key[len("remote.") : -len(".fetch")]
+        if name not in seen and value in (_fetch_refspec(name), _OLD_FETCH_REFSPEC):
+            seen.add(name)
+            remotes.append(name)
+    return remotes
+
+
+def should_autosync(evt: PostToolUseEvent, target: str = "") -> bool:
+    # At most one sync per turn per target even when commit+claim co-occur. A scoped once-key, isolated
+    # from the record router's shared fired_this_turn slot and the per-sha/per-plan once scopes. target=""
+    # is the session repo and keeps the byte-identical key; each distinct cross-repo target gets its own
+    # slot so a session sync never starves a foreign repo's sync.
+    key = str(len(evt.ctx.t) - len(evt.ctx.turn))
+    return evt.ctx.s.once(f"{key}:{target}" if target else key, scope="autosync")
+
+
+def run_sync(evt: BaseHookEvent, *, remote: str | None = None, cwd: str | None = None) -> bool | None:
+    # One `cc-notes sync` invocation: True synced, False genuine failure, None benign-silent (no remote /
+    # timeout / missing binary). cwd=None runs the session repo via call_cli (which surfaces stderr under
+    # throw); a set cwd runs a foreign repo directly — the exact subprocess.run combination reproduces
+    # call_cli's exception surface (CalledProcessError.stderr, TimeoutExpired ⊂ SubprocessError,
+    # FileNotFoundError ⊂ OSError).
+    args = ["cc-notes", "sync", *(("--remote", remote) if remote is not None else ())]
+    try:
+        if cwd is None:
+            evt.ctx.call_cli(args, timeout=15)
+        else:
+            subprocess.run(args, cwd=cwd, env=os.environ, check=True, capture_output=True, text=True, timeout=15)
+    except subprocess.CalledProcessError as e:
+        return None if "remote not configured" in (e.stderr or "") else False
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return True
 
 
 def do_sync(evt: BaseHookEvent) -> str | None:
-    # call_cli(throw=False) discards stderr, so throw and inspect it: a no-remote/offline repo is
-    # benign (silent); a real push rejection must surface or the agent believes its refs shipped.
-    try:
-        evt.ctx.call_cli(["cc-notes", "sync"], timeout=15)
-    except subprocess.CalledProcessError as e:
-        return None if "remote not configured" in (e.stderr or "") else "cc-notes sync failed — run `cc-notes sync` to retry."
-    except (OSError, subprocess.SubprocessError):
-        return None  # timeout / missing-or-unexecutable binary: silent (FileNotFoundError is an OSError, not SubprocessError)
-    return "Synced cc-notes refs."
+    # Sync the session repo to every cc-notes-wired remote (bare when none is wired). Success confirms
+    # with the byte-identical `Synced cc-notes refs.`; a genuine failure surfaces so the agent retries,
+    # naming the failed remote(s) under a multi-remote fan-out (a partial failure prefers the warn).
+    remotes = wired_remotes(evt)
+    if not remotes:
+        ok = run_sync(evt)
+        if ok is True:
+            return "Synced cc-notes refs."
+        return "cc-notes sync failed — run `cc-notes sync` to retry." if ok is False else None
+    results = {r: run_sync(evt, remote=r) for r in remotes}
+    if failed := [r for r, ok in results.items() if ok is False]:
+        # Name the exact per-remote retry: a bare `cc-notes sync` on an older binary derives origin and
+        # may never re-attempt the failed remote, so each failed remote gets its own `--remote <name>`.
+        retries = ", ".join(f"`cc-notes sync --remote {r}`" for r in failed)
+        return f"cc-notes sync failed for {', '.join(failed)} — run {retries} to retry."
+    return "Synced cc-notes refs." if any(ok is True for ok in results.values()) else None
+
+
+def cross_sync(evt: BaseHookEvent, cwd: str) -> str | None:
+    # A cc-notes write in a foreign repo (a resolved `cd` target) syncs THAT repo, bare — its own remote
+    # derivation applies, never the session repo's wired remotes. Confirms/fails naming the directory.
+    ok = run_sync(evt, cwd=cwd)
+    if ok is True:
+        return f"Synced cc-notes refs in {cwd}."
+    return f"cc-notes sync failed in {cwd} — run `cc-notes sync` there to retry." if ok is False else None
 
 
 def auto_sync(evt: PostToolUseEvent) -> str | None:
     return do_sync(evt) if should_autosync(evt) else None
+
+
+def _apply_cd(cwd: str | None, cmd: Command) -> str | None:
+    # A literal `cd` leg's new working directory. A leading `--` (end-of-options) is dropped first, so
+    # `cd -- /x` resolves to /x and a lone `cd --` stays unresolvable. Only an exactly-one-arg literal
+    # path resolves: `cd -`, a `$var`, a `~` expansion, or a backtick substitution is unresolvable
+    # (None); an absolute path replaces the walk (recovering a previously-lost one); a relative path
+    # joins the running cwd, or is unresolvable when there is no base to join onto.
+    args = cmd.args[1:] if cmd.args and cmd.args[0] == "--" else cmd.args
+    if len(args) != 1:
+        return None
+    arg = args[0]
+    if arg == "-" or arg.startswith("~") or "$" in arg or "`" in arg:
+        return None
+    if os.path.isabs(arg):
+        return os.path.normpath(arg)
+    return os.path.normpath(os.path.join(cwd, arg)) if cwd is not None else None
+
+
+def write_targets(line: CommandLine, base: str | None) -> list[str | None]:
+    # One entry per cc-notes write leg: the directory that leg runs in (None when unresolvable). A single
+    # pass tracks a running cwd from `base`, advanced by each literal `cd`. pushd, subshells, and pipeline
+    # grouping are ignored — a documented structural approximation, never regex.
+    cwd = base
+    targets: list[str | None] = []
+    for cmd in line.commands:
+        if cmd.executable == "cd":
+            cwd = _apply_cd(cwd, cmd)
+        elif is_cc_notes_write(cmd):
+            targets.append(cwd)
+    return targets
 
 
 def auto_reconcile(evt: PostToolUseEvent) -> str | None:
@@ -388,35 +493,78 @@ def sync_after_push(evt: PostToolUseEvent) -> HookResult | None:
         Input(tool="mcp__plugin_cc-notes_cc-notes__sync"): Allow(),
         Input(tool="mcp__plugin_cc-notes_cc-notes__runbook_list"): Allow(),
         Input(tool="mcp__plugin_cc-notes_cc-notes__papercut_list"): Allow(),
+        Input(command="cd /other && cc-notes note list"): Allow(),
+        Input(command="cd /other && cc-notes papercut list"): Allow(),
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
 def sync_after_record_write(evt: PostToolUseEvent) -> HookResult | None:
-    """After a cc-notes write (CLI subcommand or MCP tool), sync so the new refs reach the remote."""
-    return evt.warn(line) if (line := auto_sync(evt)) else None
+    """After a cc-notes write (CLI subcommand or MCP tool), sync so the new refs reach the remote.
 
-
-_LOCAL_REF_PREFIX = "refs/cc-notes/"
-_TRACKING_REF_PREFIX = "refs/cc-notes-sync/origin/"
+    An MCP write always targets the session repo. A Bash write leg runs wherever its ``cd`` prefix
+    lands: a target inside the session repo (the repo itself, or an unresolvable one) syncs the session
+    repo; a foreign target syncs THAT repo directly, named in the confirmation.
+    """
+    line = evt.command_line
+    if line is None:
+        return evt.warn(msg) if (msg := auto_sync(evt)) else None
+    base = resolve_project_dir()
+    base_real = os.path.realpath(base) if base is not None else None
+    lines: list[str] = []
+    seen: set[str] = set()
+    for target in write_targets(line, base):
+        real = os.path.realpath(target) if target is not None else None
+        # An unresolvable target syncs the session repo; a target inside a known session base does too.
+        # Otherwise the write landed elsewhere (base unknown, or resolved outside the session repo) — a
+        # cross sync, but only when the resolved path is a real directory. A resolved-but-missing dir
+        # (a failed `cd /missing`, whose write actually ran in the session repo) falls back to session.
+        if real is None:
+            session = True
+        elif base_real is not None and (real == base_real or Path(real).is_relative_to(base_real)):
+            session = True
+        else:
+            session = not os.path.isdir(real)
+        key = "" if session else real
+        if key in seen:
+            continue
+        seen.add(key)
+        if session:
+            if msg := auto_sync(evt):
+                lines.append(msg)
+        elif should_autosync(evt, target=key) and (msg := cross_sync(evt, target)):
+            lines.append(msg)
+    return evt.warn(*lines) if lines else None
 
 
 def cc_notes_refs_dirty(evt: BaseHookEvent) -> bool:
-    # Zero-network dirty check: local refs/cc-notes/* vs their fetched tracking copies under
-    # refs/cc-notes-sync/origin/* (the fetchspec maps them byte-for-byte by suffix). Dirty when a local
-    # ref is missing from tracking or its sha differs; a tracking-only ref (remote ahead) is no push
-    # moment, so it doesn't count. No local refs or a git failure reads clean, staying silent.
-    out = evt.ctx.git("for-each-ref", "--format=%(refname) %(objectname)", _LOCAL_REF_PREFIX, _TRACKING_REF_PREFIX)
+    # Zero-network dirty check across every wired remote: local refs/cc-notes/* vs their fetched tracking
+    # copies under refs/cc-notes-sync/<remote>/* (the fetchspec maps them by suffix). Dirty when any wired
+    # remote is missing a local suffix or holds a differing sha. No local refs (or a git failure) reads
+    # clean; local refs with zero wired remotes read dirty (nothing tracks them). A remote-ahead
+    # tracking-only ref is no push moment, so it never forces dirty.
+    out = evt.ctx.git("for-each-ref", "--format=%(refname) %(objectname)", _LOCAL_REF_PREFIX, _TRACKING_NS)
     if not out:
         return False
     local: dict[str, str] = {}
-    tracking: dict[str, str] = {}
+    tracking: list[tuple[str, str]] = []
     for row in out.splitlines():
         refname, _, oid = row.partition(" ")
         if refname.startswith(_LOCAL_REF_PREFIX):
             local[refname[len(_LOCAL_REF_PREFIX) :]] = oid
-        elif refname.startswith(_TRACKING_REF_PREFIX):
-            tracking[refname[len(_TRACKING_REF_PREFIX) :]] = oid
-    return any(tracking.get(suffix) != oid for suffix, oid in local.items())
+        elif refname.startswith(_TRACKING_NS):
+            tracking.append((refname[len(_TRACKING_NS) :], oid))
+    if not local:
+        return False
+    remotes = wired_remotes(evt)
+    if not remotes:
+        return True
+    per_remote: dict[str, dict[str, str]] = {r: {} for r in remotes}
+    for path, oid in tracking:
+        for r in sorted(remotes, key=len, reverse=True):
+            if path.startswith(f"{r}/"):
+                per_remote[r][path[len(r) + 1 :]] = oid
+                break
+    return any(per_remote[r].get(suffix) != oid for r in remotes for suffix, oid in local.items())
 
 
 @on(Event.SessionEnd, only_if=[CcNotesAvailable()], async_=True)

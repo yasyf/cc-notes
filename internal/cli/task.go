@@ -433,7 +433,11 @@ func claimSyncYield(cmd *cobra.Command, s *store.Store, task model.Task, me mode
 	if err != nil {
 		return fmt.Errorf("working directory: %w", err)
 	}
-	if _, err := ccsync.Sync(ctx, dir, defaultRemote, false); err != nil {
+	remote, err := deriveRemote(ctx, s.Git)
+	if err != nil {
+		return err
+	}
+	if _, err := ccsync.Sync(ctx, dir, remote, false); err != nil {
 		return err
 	}
 	if _, task, err = taskSpec.load(ctx, s, string(task.ID)); err != nil {

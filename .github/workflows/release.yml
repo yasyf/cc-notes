@@ -328,18 +328,3 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           dir: tap-staging
           message: "cc-notes ${{ github.ref_name }}"
-      - name: Bump the capt-hook manifest in cc-notes main
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          M=.claude/capt-hook.toml
-          sed -i -E "s|^version = \"[^\"]+\"|version = \"${VERSION}\"|" "$M"
-          grep -q "version = \"${VERSION}\"" "$M"
-          if git diff --quiet "$M"; then
-            echo "capt-hook manifest already at ${VERSION}; nothing to push"
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add "$M"
-            git commit -m "capt-hook: bump to ${VERSION}"
-            git push origin main
-          fi

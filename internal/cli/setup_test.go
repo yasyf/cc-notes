@@ -54,11 +54,13 @@ func TestHooksInstallEnablesPackAndDispatcher(t *testing.T) {
 			}
 			//nolint:gosec // G304: reads the fake uvx log under the test's own temp dir.
 			calls, _ := os.ReadFile(log)
-			if !strings.Contains(string(calls), "skills install") {
-				t.Fatalf("hooks install never ran `skills install` (dispatcher left off):\n%s", calls)
+			// --isolated must prefix both invocations so a machine-wide
+			// `uv tool install capt-hook` never short-circuits uvx to a stale env.
+			if !strings.Contains(string(calls), "--isolated capt-hook skills install") {
+				t.Fatalf("hooks install never ran `--isolated capt-hook skills install` (dispatcher left off or not isolated):\n%s", calls)
 			}
-			if !strings.Contains(string(calls), "pack add") {
-				t.Fatalf("hooks install never ran `pack add` (a prior failure short-circuited it):\n%s", calls)
+			if !strings.Contains(string(calls), "--isolated capt-hook pack add") {
+				t.Fatalf("hooks install never ran `--isolated capt-hook pack add` (a prior failure short-circuited it or not isolated):\n%s", calls)
 			}
 		})
 	}

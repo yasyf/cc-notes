@@ -135,10 +135,13 @@ func skillsInstallArgs() []string {
 	return []string{"capt-hook", "skills", "install"}
 }
 
-// runCaptHook shells out to `uvx <captHookArgs...>` from the repo root, streaming
-// the subcommand's stdio. Both `pack add` and `skills install` route through here.
+// runCaptHook shells out to `uvx --isolated <captHookArgs...>` from the repo
+// root, streaming the subcommand's stdio. Both `pack add` and `skills install`
+// route through here. `--isolated` ignores any machine-wide `uv tool install
+// capt-hook`, which would otherwise silently short-circuit `uvx` to a stale
+// pinned env.
 func runCaptHook(cmd *cobra.Command, root string, captHookArgs []string) error {
-	args := append([]string{"uvx"}, captHookArgs...)
+	args := append([]string{"uvx", "--isolated"}, captHookArgs...)
 	//nolint:gosec // G204: args[0] is the literal "uvx"; the rest is this command's own fixed capt-hook invocation, by design.
 	c := exec.CommandContext(cmd.Context(), args[0], args[1:]...)
 	c.Dir = root

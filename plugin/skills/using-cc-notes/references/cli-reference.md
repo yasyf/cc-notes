@@ -121,7 +121,7 @@ followed by the round count.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--remote <name>` | `origin` | Remote to sync with |
+| `--remote <name>` | every cc-notes-wired remote, else `origin` | Remote to sync with |
 | `--full` | off | Force a whole-namespace reconcile scan instead of the changed-refs-only pass |
 | `--json` | off | Emit JSON |
 

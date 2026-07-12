@@ -47,14 +47,32 @@ func resolveBranch(ctx context.Context, s *store.Store, flag, value string) (mod
 	return branch, err
 }
 
-// autoInstall best-effort wires the default remote's refspecs before a
+// deriveRemote resolves the remote a best-effort sync or install targets when
+// none is named: the sole cc-notes-wired remote when exactly one is wired, else
+// the default remote. WiredRemotes failures propagate.
+func deriveRemote(ctx context.Context, g gitcmd.Git) (string, error) {
+	wired, err := ccsync.WiredRemotes(ctx, g)
+	if err != nil {
+		return "", err
+	}
+	if len(wired) == 1 {
+		return wired[0], nil
+	}
+	return defaultRemote, nil
+}
+
+// autoInstall best-effort wires the derived remote's refspecs before a
 // write: a repository without the remote is left alone, any other failure
 // is loud. Config lines it actually added are announced once on stderr —
 // including the push.default override when the HEAD push refspec is new —
 // so the silent first mutating command never changes git push behavior
 // invisibly.
 func autoInstall(ctx context.Context, cmd *cobra.Command, g gitcmd.Git) error {
-	report, err := ccsync.Install(ctx, g, defaultRemote)
+	remote, err := deriveRemote(ctx, g)
+	if err != nil {
+		return err
+	}
+	report, err := ccsync.Install(ctx, g, remote)
 	switch {
 	case errors.Is(err, ccsync.ErrRemoteNotFound):
 		return nil
@@ -66,7 +84,7 @@ func autoInstall(ctx context.Context, cmd *cobra.Command, g gitcmd.Git) error {
 	stderr := cmd.ErrOrStderr()
 	if len(report.Added) > 0 {
 		if _, err := fmt.Fprintf(stderr, "cc-notes: installed refspecs in .git/config for %q: %s\n",
-			defaultRemote, strings.Join(report.Added, "; ")); err != nil {
+			remote, strings.Join(report.Added, "; ")); err != nil {
 			return err
 		}
 	}
@@ -78,7 +96,7 @@ func autoInstall(ctx context.Context, cmd *cobra.Command, g gitcmd.Git) error {
 	}
 	if report.HeadPushAdded {
 		if _, err := fmt.Fprintf(stderr, "cc-notes: note: \"git push\" now pushes the current branch to its same-named remote branch (remote.%s.push overrides push.default)\n",
-			defaultRemote); err != nil {
+			remote); err != nil {
 			return err
 		}
 	}

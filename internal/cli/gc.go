@@ -39,7 +39,11 @@ func newGCCmd() *cobra.Command {
 			}
 			var pruned, failed int
 			if pruneRemote {
-				if pruned, failed, err = s.PruneTombstones(ctx, defaultRemote); err != nil {
+				var remote string
+				if remote, err = deriveRemote(ctx, s.Git); err != nil {
+					return err
+				}
+				if pruned, failed, err = s.PruneTombstones(ctx, remote); err != nil {
 					return err
 				}
 			}

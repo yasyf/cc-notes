@@ -18,6 +18,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   additive and lenient-decode compatible: an old binary ignores the field,
   and an old binary compacting a journal drops stored model values
   (accepted).
+
+### Changed
+- `cc-notes init` and `cc-notes hooks install` wire capt-hook through `uvx
+  --isolated capt-hook`, keeping a machine-wide `uv tool install capt-hook`
+  from silently pinning bare `uvx` to a stale environment.
+- The release workflow no longer bumps `.claude/capt-hook.toml` on `main`
+  after tagging — that ordering left every tagged commit self-labeled one
+  pack version behind. The manifest's `version` is frozen at the inert
+  `0.0.0` (capt-hook ≥ 9.7.0 shows the resolved release tag for moving
+  packs instead of reading it).
+
+### Fixed
+- **Auto-sync no longer hard-codes `origin`.** The capt-hook pack derives
+  the cc-notes-wired remotes from git config and syncs each via `cc-notes
+  sync --remote <name>` (one bare sync when none is wired), and the
+  SessionEnd dirty backstop checks every wired remote's tracking refs
+  instead of only `refs/cc-notes-sync/origin/*`. The Go side follows: a
+  bare `cc-notes sync` (no `--remote`) fans out over every cc-notes-wired
+  remote in config order (else `origin`), matching the pack, while `gc`'s
+  tombstone prune, `task claim`'s post-claim sync, and the refspec
+  auto-install (its announcements included) derive a single remote — the
+  sole wired remote wins, else `origin`. Either way a repo wired via
+  `cc-notes init --remote upstream` syncs where it was wired.
+- **A cross-repo cc-notes write syncs the repo it wrote.** `cd /other/repo
+  && cc-notes note add …` synced the session repo and confirmed as if the
+  foreign write had shipped. The pack now walks the parsed command legs,
+  tracking every literal `cd` to resolve the directory each write leg runs
+  in, and runs `cc-notes sync` in the written repo, confirming "Synced
+  cc-notes refs in <dir>." — once per target repo per turn. A `cd` it can't
+  resolve structurally (`cd -`, a `$var`, a `~`, a backtick substitution)
+  falls back to the session repo; record writes only, and an MCP write
+  always targets the session repo.
+
+## [0.25.0] - 2026-07-11
+
+### Added
 - **Auto-sync now covers the whole publish surface, with a SessionEnd
   backstop.** The capt-hook pack syncs after jj commits (`jj commit`,
   `jj describe`, `ccx vcs ship`), pushes (`git push`/`jj git push` — jj's git
@@ -736,7 +772,10 @@ Releases.
 - The Python-era documentation site (GitHub Pages) and the repo homepage link
   that pointed at it.
 
-[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/yasyf/cc-notes/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/yasyf/cc-notes/compare/v0.24.0...v0.25.0
+[0.24.0]: https://github.com/yasyf/cc-notes/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/yasyf/cc-notes/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/yasyf/cc-notes/compare/v0.21.2...v0.22.0
 [0.21.2]: https://github.com/yasyf/cc-notes/compare/v0.21.1...v0.21.2
 [0.21.1]: https://github.com/yasyf/cc-notes/compare/v0.21.0...v0.21.1

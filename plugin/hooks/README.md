@@ -93,11 +93,12 @@ One cap by class. Every Record router and teach-carrying Workflow reminder is ca
 key — the turn, the HEAD sha, or the plan path — so it speaks once per real event rather
 than on every fire. The pure sync actions (after a merge/pull/fetch, a push, or a cc-notes
 write) carry no session cap: their only output is the sync confirm, and the per-turn dedup
-already bounds them. The auto-sync action deduplicates per turn across all of its triggers — a commit
-(`git commit` / `jj commit` / `jj describe` / `ccx vcs ship`), a claim/start, a
-merge/pull/fetch, a push (`git push` / `jj git push`), and every cc-notes write (CLI or
-MCP) — so the several events of one turn drive a single sync. The Surface floaters carry no
-cap: their per-record session dedup already bounds them. The two once-per-session
+already bounds them. The auto-sync action deduplicates per target repo per turn across all of
+its triggers — a commit (`git commit` / `jj commit` / `jj describe` / `ccx vcs ship`), a
+claim/start, a merge/pull/fetch, a push (`git push` / `jj git push`), and every cc-notes
+write (CLI or MCP) — so the several events of one turn drive a single sync per repo they
+touched: the session repo, plus any foreign repo a `cd`-prefixed write landed in. The
+Surface floaters carry no cap: their per-record session dedup already bounds them. The two once-per-session
 orientations (the session-start task float and the install hint) fire exactly once.
 
 Command triggers match on structured argv-prefix conditions, not regexes: any leg of a
@@ -110,12 +111,16 @@ dropped, since it publishes or runs nothing.
 ### The action hooks — side-effecting handlers
 
 A handful of handlers *do* something rather than nudge, all deterministic, idempotent, and
-fail-closed. The auto-sync triggers dedup to **at most one sync per turn** — a commit and a
-claim in the same turn sync once. The failure policy is uniform: a repo with no remote or an
-offline box is a legitimate state, so the handler is silent (no nag); a genuine sync failure
-— a non-fast-forward push rejection, say — surfaces a short "cc-notes sync failed — run
-`cc-notes sync` to retry."; and a detached HEAD or a reconcile error downgrades to a plain
-sync rather than going silent, since the refs can still ship even when reconcile can't run.
+fail-closed. The auto-sync triggers dedup to **at most one sync per target repo per turn** —
+a commit and a claim in the same turn sync once. The failure policy is uniform: a repo with
+no remote or an offline box is a legitimate state, so the handler is silent (no nag); a
+genuine sync failure — a non-fast-forward push rejection, say — surfaces a short "cc-notes
+sync failed for <remotes> — run `cc-notes sync --remote <name>` to retry.", naming each failed
+wired remote and its own `--remote` retry, or naming the
+directory ("cc-notes sync failed in <dir> — run `cc-notes sync` there to retry.") when the
+write landed in another repo; and a detached HEAD or a reconcile
+error downgrades to a plain sync rather than going silent, since the refs can still ship
+even when reconcile can't run.
 
 **Auto-sync.** After a commit (`git commit`, `jj commit`, `jj describe`, `ccx vcs ship`), a
 `cc-notes task claim` / `task start`, a `git merge` / `git pull` / `jj git fetch`, a push
@@ -125,8 +130,21 @@ refs), or any cc-notes write — a mutating CLI subcommand (every noun's write v
 or an MCP tool that isn't a known reader (a deny-list of the read tools, so the matcher
 fails open: an unlisted future tool costs one harmless idempotent sync) — the pack runs
 `cc-notes sync` itself and confirms with
-"Synced cc-notes refs." — once per turn across every trigger. Reads never sync. This
-replaces the old "run cc-notes sync" nudge.
+"Synced cc-notes refs." — once per turn across every trigger. The sync covers every
+cc-notes-wired remote — each remote whose fetch refspec in git config tracks
+`refs/cc-notes/*` — via `cc-notes sync --remote <name>`, falling back to one bare
+`cc-notes sync` when none is wired. Reads never sync. This replaces the old
+"run cc-notes sync" nudge.
+
+A CLI write can land outside the session repo — `cd /other/repo && cc-notes note add …`
+writes the *other* repo's refs. The handler walks the parsed command legs, tracking every
+literal `cd` to resolve the directory each write leg runs in, and syncs the written repo,
+confirming "Synced cc-notes refs in <dir>." — once per target repo per turn, targets deduped
+by realpath. A `cd` it can't resolve structurally — `cd -`, a `$var`, a `~`, a backtick
+substitution — falls back to the session repo, and pushd, subshells, and pipeline grouping
+are ignored the same way. The cross-repo path covers record writes only: a push, merge, or
+claim in another repo keeps session semantics, and an MCP write always targets the session
+repo.
 
 **Auto-reconcile.** After a `git merge` / `git pull` / `jj git fetch`, the pack runs
 `cc-notes reconcile --into <current branch>` — carrying the merged branch's still-open tasks
@@ -141,17 +159,16 @@ nudge. jj merges and rebases match no trigger, so after one of those you still r
 **The SessionEnd backstop.** A write-only session can end without ever hitting a sync
 trigger (the memory mirror is the canonical case). At session end an async handler runs a
 zero-network dirty check — local `refs/cc-notes/*` tips against their fetched copies under
-`refs/cc-notes-sync/origin/*` — and runs `cc-notes sync` only when a local ref is missing
-from tracking or points elsewhere; a tracking-only ref (remote ahead) is no push moment. It
-is silent best-effort end to end — no remote, offline, and timeout all stay quiet, and async
-dispatch drops its output anyway. Needs capt-hook >= 9.2, whose captain-hook plugin
-dispatches `run SessionEnd --async`.
+`refs/cc-notes-sync/<remote>/*`, for every wired remote — and runs `cc-notes sync` only when
+some wired remote is missing a local ref or holds a differing tip; a tracking-only ref
+(remote ahead) is no push moment. It is silent best-effort end to end — no remote, offline,
+and timeout all stay quiet, and async dispatch drops its output anyway. Needs capt-hook >=
+9.2, whose captain-hook plugin dispatches `run SessionEnd --async`.
 
-Known limitations of this dirty check: it compares only against the `origin` tracking refs,
-so a repo whose cc-notes remote is not `origin` reads clean; ref-tip equality can't tell
-that a plain `git push` already shipped an attachment's git-lfs content, so matching tips
-read clean even when that payload never synced; and a remote-ahead ref (tracking newer than
-local) counts as clean, since the backstop is a push-moment check, not a pull.
+Known limitations of this dirty check: ref-tip equality can't tell that a plain `git push`
+already shipped an attachment's git-lfs content, so matching tips read clean even when that
+payload never synced; and a remote-ahead ref (tracking newer than local) counts as clean,
+since the backstop is a push-moment check, not a pull.
 
 **The memory mirror.** The harness records durable agent memories as
 `<slug>.md` files under a `memory/` dir inside a `.cc-pool` tree, and this handler mirrors
@@ -212,13 +229,15 @@ since no matched command marks one.
 $ cc-notes hooks install
 ```
 
-This runs `uvx capt-hook pack add github:yasyf/cc-notes@latest`, which resolves
+This runs `uvx --isolated capt-hook pack add github:yasyf/cc-notes@latest`, which resolves
 `@latest` to the newest release, caches the pack tarball, and records
 `[packs.cc-notes]` in `.claude/hooks/packs.toml` — that file is all it writes.
 The event wiring ships in the captain-hook plugin's own `hooks.json`; enable that
-plugin (the dispatcher) with `uvx capt-hook skills install`, which `cc-notes init`
-runs before the pack add — without it the pack is installed but dormant. The
-source is unpinned on purpose: the pack tracks `@latest`, and capt-hook
+plugin (the dispatcher) with `uvx --isolated capt-hook skills install`, which `cc-notes init`
+runs before the pack add — without it the pack is installed but dormant.
+(`--isolated` keeps a machine-wide `uv tool install capt-hook` from silently
+pinning `uvx` to a stale environment.) The source is unpinned on purpose:
+the pack tracks `@latest`, and capt-hook
 re-resolves it at most once a day and auto-fetches new releases, so the nudges
 stay current on their own.
 
