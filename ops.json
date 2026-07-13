@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"add_comment","body":"Landed cc-skills commit b3d51ae34907 (claude-rules.md Durable Records section); Guides lint + Guides CI both green. Fleet dispatch pending the cc-notes release tag."}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"72eee4e5f01a0c96e7f8ab7aa4adfa14","status":"met"}]}
