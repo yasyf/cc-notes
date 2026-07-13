@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/gittest"
@@ -96,7 +97,16 @@ func shortHome(t *testing.T) {
 	t.Setenv("HOME", home)
 }
 
+// mountDarwin pins hostGOOS to "darwin" for a detached-mount test, so the
+// darwin-only serveDetached path runs on any CI platform; Linux CI would
+// otherwise hit the !darwin fail-fast before the fake holder engages.
+func mountDarwin(t *testing.T) {
+	t.Helper()
+	t.Cleanup(cli.SetHostGOOSForTest("darwin"))
+}
+
 func TestMountDetachedSucceeds(t *testing.T) {
+	mountDarwin(t)
 	repo := initRepo(t)
 	sock, requests := fakeHolder(t, okHolder)
 	mp := filepath.Join(t.TempDir(), "mnt")
@@ -147,6 +157,7 @@ func TestMountDetachedSucceeds(t *testing.T) {
 // holder missing a required capability with a crisp cask-upgrade message rather
 // than mounting into a holder that cannot serve tree mode.
 func TestMountDetachedNegotiatesFeatures(t *testing.T) {
+	mountDarwin(t)
 	repo := initRepo(t)
 	sock, requests := fakeHolder(t, func(req mountd.Request) mountd.Response {
 		if req.Op == mountd.OpHello {
@@ -172,6 +183,7 @@ func TestMountDetachedNegotiatesFeatures(t *testing.T) {
 }
 
 func TestMountDetachedIdempotentRemount(t *testing.T) {
+	mountDarwin(t)
 	repo := initRepo(t)
 	sock, _ := fakeHolder(t, okHolder)
 	mp := filepath.Join(t.TempDir(), "mnt")
@@ -184,6 +196,7 @@ func TestMountDetachedIdempotentRemount(t *testing.T) {
 }
 
 func TestMountBusyExits4(t *testing.T) {
+	mountDarwin(t)
 	repo := initRepo(t)
 	sock, _ := fakeHolder(t, func(req mountd.Request) mountd.Response {
 		if req.Op == mountd.OpMount {
@@ -231,6 +244,7 @@ func TestMountAutoRejectsMountpoint(t *testing.T) {
 }
 
 func TestMountHolderDownExits1(t *testing.T) {
+	mountDarwin(t)
 	repo := initRepo(t)
 	sock := filepath.Join(t.TempDir(), "never-bound.sock")
 	mp := filepath.Join(t.TempDir(), "mnt")
@@ -252,6 +266,7 @@ func TestMountHolderDownExits1(t *testing.T) {
 // still answering its own socket — the two would fight over the same
 // mountpoints. It prints the graceful displacement recipe and never mounts.
 func TestMountRefusesLegacyIncumbent(t *testing.T) {
+	mountDarwin(t)
 	repo := initRepo(t)
 	shortHome(t) // override initRepo's long HOME so the legacy socket path fits sun_path
 	sock, requests := fakeHolder(t, okHolder)
@@ -366,6 +381,7 @@ func TestMountShutdown(t *testing.T) {
 // into it, kept out of git via .git/info/exclude (never a tracked .gitignore),
 // with the .notes path — not the opaque managed path — printed to stdout.
 func TestMountDetachedDefaultLinksNotes(t *testing.T) {
+	mountDarwin(t)
 	repo := initRepo(t)
 	repoRoot := gittest.Git(t, repo, "rev-parse", "--show-toplevel")
 	sock, requests := fakeHolder(t, okHolder)
@@ -542,6 +558,7 @@ func TestMountStopRefusesLegacyIncumbent(t *testing.T) {
 // needs the cross-tenant ListAll view for its foreign-owner refusal, so the mount
 // path negotiates it now rather than failing a teardown later.
 func TestMountDetachedRequiresListAll(t *testing.T) {
+	mountDarwin(t)
 	repo := initRepo(t)
 	sock, requests := fakeHolder(t, func(req mountd.Request) mountd.Response {
 		if req.Op == mountd.OpHello {
@@ -579,6 +596,7 @@ func TestMountDetachedRequiresListAll(t *testing.T) {
 // ExecPath (see mount_seams_test.go) makes canHost refuse instead — a clean
 // ErrCannotHost (exit 1), the same on every machine regardless of cask state.
 func TestMountDetachedNoSpawnAfterHolderDiesPostHello(t *testing.T) {
+	mountDarwin(t)
 	repo := initRepo(t)
 	dir, err := os.MkdirTemp("/tmp", "ccn-die")
 	if err != nil {
@@ -628,7 +646,14 @@ func TestMountDetachedNoSpawnAfterHolderDiesPostHello(t *testing.T) {
 	if !strings.Contains(err.Error(), "cannot host") {
 		t.Errorf("err = %v, want the no-ExecPath cannot-host refusal — AddMount must not spawn the real holder", err)
 	}
-	<-helloSeen // the holder did answer Hello and retire before AddMount ran
+	// The holder must have answered Hello and retired before AddMount ran. A
+	// timeout here means the detached path never dialed (a regression that would
+	// otherwise hang the receive until the test binary's 10m limit).
+	select {
+	case <-helloSeen:
+	case <-time.After(30 * time.Second):
+		t.Fatal("holder never answered Hello within 30s; serveDetached did not dial as expected")
+	}
 }
 
 func TestMountFlagConflictsExit2(t *testing.T) {

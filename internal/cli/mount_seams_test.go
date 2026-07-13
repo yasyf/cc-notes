@@ -91,6 +91,9 @@ func TestInstallContentdAgentUnsupportedOffDarwin(t *testing.T) {
 // effect, so a developer running `go test -tags fuse ./internal/cli/...` cannot
 // install the test binary as a KeepAlive agent (fork storm).
 func TestInstallContentdAgentRefusesTestBinary(t *testing.T) {
+	old := hostGOOS
+	hostGOOS = "darwin"
+	defer func() { hostGOOS = old }()
 	// Belt-and-suspenders: were the guard to regress, the installer would
 	// MkdirAll under $HOME — keep that off the real home.
 	t.Setenv("HOME", t.TempDir())
