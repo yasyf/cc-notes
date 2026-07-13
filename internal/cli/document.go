@@ -134,7 +134,7 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 			if reused {
 				warnDuplicate(cmd, spec.noun, ent.EntityID())
 			}
-			return spec.kind.print(cmd, s, ent, jsonOut)
+			return spec.kind.print(cmd, c, ent, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -224,7 +224,7 @@ func (spec documentSpec[T]) editVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return spec.kind.print(cmd, s, ent, jsonOut)
+			return spec.kind.print(cmd, c, ent, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -269,7 +269,7 @@ func (spec documentSpec[T]) verifyVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return spec.kind.print(cmd, s, ent, jsonOut)
+			return spec.kind.print(cmd, c, ent, jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)
@@ -309,7 +309,7 @@ func (spec documentSpec[T]) supersedeVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return spec.kind.print(cmd, s, ent, jsonOut)
+			return spec.kind.print(cmd, c, ent, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -347,7 +347,7 @@ func (spec documentSpec[T]) expireVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return spec.kind.print(cmd, s, ent, jsonOut)
+			return spec.kind.print(cmd, c, ent, jsonOut)
 		},
 	}
 	flags := cmd.Flags()

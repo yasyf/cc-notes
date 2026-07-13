@@ -64,7 +64,7 @@ func newProjectAddCmd() *cobra.Command {
 			if reused {
 				warnDuplicate(cmd, "project", project.ID)
 			}
-			return printProject(cmd, s, project, jsonOut)
+			return printProject(cmd, c, project, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -145,7 +145,7 @@ func newProjectStatusCmd(use string, status model.ProjectStatus) *cobra.Command 
 			if err != nil {
 				return planningErr(err)
 			}
-			return printProject(cmd, s, project, jsonOut)
+			return printProject(cmd, c, project, jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)
@@ -196,7 +196,7 @@ func newProjectEditCmd() *cobra.Command {
 			if err != nil {
 				return planningErr(err)
 			}
-			return printProject(cmd, s, project, jsonOut)
+			return printProject(cmd, c, project, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -235,7 +235,7 @@ func newProjectCommentCmd() *cobra.Command {
 			if err != nil {
 				return planningErr(err)
 			}
-			return printProject(cmd, s, project, jsonOut)
+			return printProject(cmd, c, project, jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)

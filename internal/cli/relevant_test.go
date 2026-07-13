@@ -13,6 +13,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 const (
@@ -165,267 +166,58 @@ func verifyNote(t *testing.T, dir string, id model.EntityID) {
 	}
 }
 
-// runRelevant scores notes and docs for target through the engine, failing on
+// runRelevant scores notes and docs for target through the client, failing on
 // error.
-func runRelevant(t *testing.T, dir, target string) []scoredEntity {
+func runRelevant(t *testing.T, dir, target string) []notes.RelevantEntry {
 	t.Helper()
-	scored, _, err := relevantForTest(t, dir, target, "", "", false, false)
+	scored, err := relevantForTest(t, dir, target, "", "", false, false)
 	if err != nil {
-		t.Fatalf("relevantNotes %q: %v", target, err)
+		t.Fatalf("Relevant %q: %v", target, err)
 	}
 	return scored
 }
 
-// relevantForTest opens the store in dir and runs the relevance engine.
-func relevantForTest(t *testing.T, dir, target, branchFlag, baseFlag string, attached, worktree bool) ([]scoredEntity, map[model.EntityID]string, error) {
+// relevantForTest opens the client in dir and runs the relevance scan.
+func relevantForTest(t *testing.T, dir, target, branchFlag, baseFlag string, attached, worktree bool) ([]notes.RelevantEntry, error) {
 	t.Helper()
-	s, err := store.Open(dir)
+	c, err := notes.Open(dir)
 	if err != nil {
-		t.Fatalf("store.Open: %v", err)
+		t.Fatalf("notes.Open: %v", err)
 	}
-	return relevantNotes(t.Context(), s, target, branchFlag, baseFlag, attached, worktree)
+	return c.Relevant(t.Context(), target, notes.RelevantFilter{Branch: branchFlag, Base: baseFlag, Attached: attached, Worktree: worktree})
+}
+
+// entryID returns a scored entry's entity id, regardless of kind.
+func entryID(e notes.RelevantEntry) model.EntityID {
+	switch e.Kind {
+	case model.KindDoc:
+		return e.Doc.ID
+	case model.KindLog:
+		return e.Log.ID
+	default:
+		return e.Note.ID
+	}
 }
 
 // scoredIDs returns the ordered entity ids of a scored slice.
-func scoredIDs(scored []scoredEntity) []model.EntityID {
+func scoredIDs(scored []notes.RelevantEntry) []model.EntityID {
 	out := make([]model.EntityID, len(scored))
-	for i, m := range scored {
-		out[i] = m.id()
+	for i, e := range scored {
+		out[i] = entryID(e)
 	}
 	return out
 }
 
 // findScored returns the scored entry for id, failing if absent.
-func findScored(t *testing.T, scored []scoredEntity, id model.EntityID) scoredEntity {
+func findScored(t *testing.T, scored []notes.RelevantEntry, id model.EntityID) notes.RelevantEntry {
 	t.Helper()
-	for _, m := range scored {
-		if m.id() == id {
-			return m
+	for _, e := range scored {
+		if entryID(e) == id {
+			return e
 		}
 	}
 	t.Fatalf("entity %s not in results %v", id, scoredIDs(scored))
-	return scoredEntity{}
-}
-
-func TestRelevantOrdering(t *testing.T) {
-	dir := relevantRepo(t)
-	commitFileAs(t, dir, relevantMe, "internal/auth/login.go", "v1\n")
-
-	pathNote := makeNote(t, dir, "exact path", model.Anchor{Kind: model.AnchorPath, Value: "internal/auth/login.go"})
-	dirNote := makeNote(t, dir, "dir", model.Anchor{Kind: model.AnchorDir, Value: "internal/auth"})
-	sibNote := makeNote(t, dir, "sibling", model.Anchor{Kind: model.AnchorPath, Value: "internal/auth/logout.go"})
-	branchNote := makeNote(t, dir, "branch only", model.Anchor{Kind: model.AnchorBranch, Value: "main"})
-
-	scored := runRelevant(t, dir, "internal/auth/login.go")
-	gotIDs := scoredIDs(scored)
-	wantIDs := []model.EntityID{pathNote, dirNote, branchNote, sibNote}
-	if len(gotIDs) != len(wantIDs) {
-		t.Fatalf("ids = %v, want %v", gotIDs, wantIDs)
-	}
-	for i := range wantIDs {
-		if gotIDs[i] != wantIDs[i] {
-			t.Fatalf("order = %v, want %v", gotIDs, wantIDs)
-		}
-	}
-
-	wantScore := map[model.EntityID]int{
-		pathNote:   scorePath,
-		dirNote:    scoreDir,
-		branchNote: scoreBranch,
-		sibNote:    scoreSibling,
-	}
-	wantReason := map[model.EntityID]string{
-		pathNote:   reasonPath,
-		dirNote:    reasonDir,
-		branchNote: reasonBranch,
-		sibNote:    reasonSibling,
-	}
-	for _, m := range scored {
-		if m.score != wantScore[m.note.ID] {
-			t.Errorf("note %s score = %d, want %d", m.note.ID, m.score, wantScore[m.note.ID])
-		}
-		if len(m.reasons) != 1 || m.reasons[0] != wantReason[m.note.ID] {
-			t.Errorf("note %s reasons = %v, want [%s]", m.note.ID, m.reasons, wantReason[m.note.ID])
-		}
-	}
-}
-
-func TestRelevantDirAncestorMatch(t *testing.T) {
-	dir := relevantRepo(t)
-	commitFileAs(t, dir, relevantMe, "internal/auth/oauth/token.go", "v1\n")
-
-	// A dir anchor two levels up still matches a nested path.
-	ancestor := makeNote(t, dir, "ancestor dir", model.Anchor{Kind: model.AnchorDir, Value: "internal"})
-	// Overlapping dir anchors do not stack: the deepest wins, scored once.
-	stacked := makeNote(
-		t, dir, "stacked dirs",
-		model.Anchor{Kind: model.AnchorDir, Value: "internal"},
-		model.Anchor{Kind: model.AnchorDir, Value: "internal/auth"},
-	)
-
-	scored := runRelevant(t, dir, "internal/auth/oauth/token.go")
-	a := findScored(t, scored, ancestor)
-	if a.score != scoreDir || len(a.reasons) != 1 || a.reasons[0] != reasonDir {
-		t.Fatalf("ancestor dir = score %d reasons %v, want %d [dir]", a.score, a.reasons, scoreDir)
-	}
-	st := findScored(t, scored, stacked)
-	if st.score != scoreDir || len(st.reasons) != 1 || st.reasons[0] != reasonDir {
-		t.Fatalf("stacked dirs = score %d reasons %v, want %d [dir] (no stacking)", st.score, st.reasons, scoreDir)
-	}
-}
-
-func TestRelevantSiblingSurfaces(t *testing.T) {
-	dir := relevantRepo(t)
-	commitFileAs(t, dir, relevantMe, "pkg/a.go", "v1\n")
-
-	sib := makeNote(t, dir, "sibling note", model.Anchor{Kind: model.AnchorPath, Value: "pkg/b.go"})
-	// A path anchor in a different directory is not a sibling.
-	unrelated := makeNote(t, dir, "unrelated", model.Anchor{Kind: model.AnchorPath, Value: "other/c.go"})
-
-	scored := runRelevant(t, dir, "pkg/a.go")
-	s := findScored(t, scored, sib)
-	if s.score != scoreSibling || len(s.reasons) != 1 || s.reasons[0] != reasonSibling {
-		t.Fatalf("sibling = score %d reasons %v, want %d [sibling]", s.score, s.reasons, scoreSibling)
-	}
-	for _, m := range scored {
-		if m.note.ID == unrelated {
-			t.Fatalf("unrelated note %s should not surface, got %v", unrelated, m.reasons)
-		}
-	}
-}
-
-func TestRelevantMergedCommitAndBranch(t *testing.T) {
-	dir := relevantRepo(t)
-	first := commitFileAs(t, dir, relevantMe, "core/x.go", "v1\n")
-
-	// A feature branch whose tip later merges into main.
-	relevantGit(t, dir, relevantMe, "branch", "feature")
-	relevantGit(t, dir, relevantMe, "checkout", "-q", "feature")
-	featTip := commitFileAs(t, dir, relevantMe, "core/y.go", "v1\n")
-	relevantGit(t, dir, relevantMe, "checkout", "-q", "main")
-	relevantGit(t, dir, relevantMe, "merge", "-q", "--no-ff", "-m", "merge feature", "feature")
-
-	mergedCommit := makeNote(t, dir, "merged commit", model.Anchor{Kind: model.AnchorCommit, Value: string(first)})
-	mergedBranch := makeNote(t, dir, "merged branch", model.Anchor{Kind: model.AnchorBranch, Value: "feature"})
-	_ = featTip
-
-	scored := runRelevant(t, dir, "unrelated/path.go")
-	mc := findScored(t, scored, mergedCommit)
-	if mc.score != scoreMergedCommit || len(mc.reasons) != 1 || mc.reasons[0] != reasonMergedCommit {
-		t.Fatalf("merged commit = score %d reasons %v, want %d [merged-commit]", mc.score, mc.reasons, scoreMergedCommit)
-	}
-	mb := findScored(t, scored, mergedBranch)
-	if mb.score != scoreMergedBranch || len(mb.reasons) != 1 || mb.reasons[0] != reasonMergedBranch {
-		t.Fatalf("merged branch = score %d reasons %v, want %d [merged-branch]", mb.score, mb.reasons, scoreMergedBranch)
-	}
-}
-
-func TestRelevantCrossAuthorBoost(t *testing.T) {
-	dir := relevantRepo(t)
-	// Base commit on main; HEAD diverges with a teammate-authored file and a
-	// self-authored file, both siblings of the target.
-	commitFileAs(t, dir, relevantMe, "base.go", "v1\n")
-	relevantGit(t, dir, relevantMe, "branch", "feat-base") // mark the merge-base ref
-	commitFileAs(t, dir, relevantOther, "pkg/teammate.go", "theirs\n")
-	commitFileAs(t, dir, relevantMe, "pkg/mine.go", "mine\n")
-
-	target := "pkg/target.go"
-	otherSib := makeNote(t, dir, "sibling on teammate file", model.Anchor{Kind: model.AnchorPath, Value: "pkg/teammate.go"})
-	selfSib := makeNote(t, dir, "sibling on self file", model.Anchor{Kind: model.AnchorPath, Value: "pkg/mine.go"})
-
-	scored, _, err := relevantForTest(t, dir, target, "", "feat-base", false, false)
-	if err != nil {
-		t.Fatalf("relevantNotes: %v", err)
-	}
-	other := findScored(t, scored, otherSib)
-	self := findScored(t, scored, selfSib)
-	if other.score != scoreSibling+scoreCrossAuthor {
-		t.Fatalf("teammate sibling score = %d, want %d", other.score, scoreSibling+scoreCrossAuthor)
-	}
-	wantReasons := []string{reasonSibling, reasonCrossAuthor}
-	if len(other.reasons) != 2 || other.reasons[0] != wantReasons[0] || other.reasons[1] != wantReasons[1] {
-		t.Fatalf("teammate sibling reasons = %v, want %v", other.reasons, wantReasons)
-	}
-	if self.score != scoreSibling {
-		t.Fatalf("self sibling score = %d, want %d (no cross-author boost)", self.score, scoreSibling)
-	}
-	if scored[0].note.ID != otherSib {
-		t.Fatalf("teammate-file sibling should outrank self-file sibling, order = %v", scoredIDs(scored))
-	}
-}
-
-func TestRelevantCrossAuthorNeverMatchesAlone(t *testing.T) {
-	dir := relevantRepo(t)
-	commitFileAs(t, dir, relevantMe, "base.go", "v1\n")
-	relevantGit(t, dir, relevantMe, "branch", "feat-base")
-	commitFileAs(t, dir, relevantOther, "far/teammate.go", "theirs\n")
-
-	// A note anchored only to the teammate file, far from the target, has no
-	// path/dir/sibling match — cross-author cannot surface it alone.
-	makeNote(t, dir, "far teammate note", model.Anchor{Kind: model.AnchorPath, Value: "far/teammate.go"})
-
-	scored, _, err := relevantForTest(t, dir, "pkg/target.go", "", "feat-base", false, false)
-	if err != nil {
-		t.Fatalf("relevantNotes: %v", err)
-	}
-	if len(scored) != 0 {
-		t.Fatalf("cross-author surfaced a note alone: %v", scoredIDs(scored))
-	}
-}
-
-func TestRelevantAttachedDropsLooseSignals(t *testing.T) {
-	dir := relevantRepo(t)
-	commitFileAs(t, dir, relevantMe, "internal/auth/login.go", "v1\n")
-
-	pathNote := makeNote(t, dir, "exact path", model.Anchor{Kind: model.AnchorPath, Value: "internal/auth/login.go"})
-	dirNote := makeNote(t, dir, "dir", model.Anchor{Kind: model.AnchorDir, Value: "internal/auth"})
-	makeNote(t, dir, "sibling", model.Anchor{Kind: model.AnchorPath, Value: "internal/auth/logout.go"})
-	makeNote(t, dir, "branch only", model.Anchor{Kind: model.AnchorBranch, Value: "main"})
-
-	scored, _, err := relevantForTest(t, dir, "internal/auth/login.go", "", "", true, false)
-	if err != nil {
-		t.Fatalf("relevantNotes: %v", err)
-	}
-	got := scoredIDs(scored)
-	want := []model.EntityID{pathNote, dirNote}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("--attached ids = %v, want %v", got, want)
-	}
-}
-
-func TestRelevantWorktreeDrift(t *testing.T) {
-	dir := relevantRepo(t)
-	commitFileAs(t, dir, relevantMe, "svc/handler.go", "v1\n")
-
-	id := makeNote(t, dir, "path note", model.Anchor{Kind: model.AnchorPath, Value: "svc/handler.go"})
-	verifyNote(t, dir, id)
-
-	// Edit the working tree without committing.
-	if err := os.WriteFile(filepath.Join(dir, "svc", "handler.go"), []byte("dirty\n"), 0o600); err != nil {
-		t.Fatalf("write dirty: %v", err)
-	}
-
-	plain, plainV, err := relevantForTest(t, dir, "svc/handler.go", "", "", false, false)
-	if err != nil {
-		t.Fatalf("relevantNotes plain: %v", err)
-	}
-	if len(plain) != 1 {
-		t.Fatalf("plain results = %d, want 1", len(plain))
-	}
-	if v := plainV[id]; v != "" {
-		t.Fatalf("plain verdict = %q, want fresh (committed blob unchanged)", v)
-	}
-
-	wt, wtV, err := relevantForTest(t, dir, "svc/handler.go", "", "", false, true)
-	if err != nil {
-		t.Fatalf("relevantNotes worktree: %v", err)
-	}
-	if len(wt) != 1 {
-		t.Fatalf("worktree results = %d, want 1", len(wt))
-	}
-	if v := wtV[id]; v != verdictDrifted {
-		t.Fatalf("worktree verdict = %q, want %q", v, verdictDrifted)
-	}
+	return notes.RelevantEntry{}
 }
 
 func TestRelevantLimitTruncates(t *testing.T) {
@@ -464,11 +256,11 @@ func TestRelevantJSON(t *testing.T) {
 	if d.Note.ID != string(id) {
 		t.Errorf("json id = %q, want %q", d.Note.ID, id)
 	}
-	if d.Score != scorePath {
-		t.Errorf("json score = %d, want %d", d.Score, scorePath)
+	if d.Score != 100 {
+		t.Errorf("json score = %d, want %d", d.Score, 100)
 	}
-	if len(d.Reasons) != 1 || d.Reasons[0] != reasonPath {
-		t.Errorf("json reasons = %v, want [%s]", d.Reasons, reasonPath)
+	if len(d.Reasons) != 1 || d.Reasons[0] != "path" {
+		t.Errorf("json reasons = %v, want [path]", d.Reasons)
 	}
 	if d.Note.Drift == nil || *d.Note.Drift != verdictDrifted {
 		t.Errorf("json drift = %v, want %q", d.Note.Drift, verdictDrifted)
@@ -501,70 +293,6 @@ func nonEmptyLines(s string) []string {
 	return out
 }
 
-// scoredFixture builds a note-kind scoredEntity with a synthetic id and
-// UpdatedAt for sort tests, where committing entities a second apart cannot
-// reliably distinguish UpdatedAt at the engine's second granularity.
-func scoredFixture(id string, score int, updatedAt int64) scoredEntity {
-	return scoredEntity{
-		kind:  model.KindNote,
-		note:  model.Note{ID: model.EntityID(id), UpdatedAt: updatedAt},
-		score: score,
-	}
-}
-
-func TestCompareScoredTotalOrder(t *testing.T) {
-	tests := []struct {
-		name string
-		in   []scoredEntity
-		want []model.EntityID
-	}{
-		{
-			name: "score descending dominates",
-			in: []scoredEntity{
-				scoredFixture("a", 15, 100),
-				scoredFixture("b", 100, 50),
-				scoredFixture("c", 60, 100),
-			},
-			want: []model.EntityID{"b", "c", "a"},
-		},
-		{
-			name: "equal score breaks on UpdatedAt descending",
-			in: []scoredEntity{
-				scoredFixture("a", 60, 100),
-				scoredFixture("b", 60, 300),
-				scoredFixture("c", 60, 200),
-			},
-			want: []model.EntityID{"b", "c", "a"},
-		},
-		{
-			name: "equal score and UpdatedAt breaks on id ascending",
-			in: []scoredEntity{
-				scoredFixture("c", 60, 100),
-				scoredFixture("a", 60, 100),
-				scoredFixture("b", 60, 100),
-			},
-			want: []model.EntityID{"a", "b", "c"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := slices.Clone(tt.in)
-			slices.SortFunc(got, compareScored)
-			ids := scoredIDs(got)
-			if !slices.Equal(ids, tt.want) {
-				t.Fatalf("order = %v, want %v", ids, tt.want)
-			}
-			// The order is a total order, so a second sort of the already-sorted
-			// slice is a no-op — pinning determinism regardless of sort stability.
-			again := slices.Clone(got)
-			slices.SortFunc(again, compareScored)
-			if !slices.Equal(scoredIDs(again), ids) {
-				t.Fatalf("re-sort changed order: %v -> %v", ids, scoredIDs(again))
-			}
-		})
-	}
-}
-
 func TestRelevantDetachedHead(t *testing.T) {
 	dir := relevantRepo(t)
 	commitFileAs(t, dir, relevantMe, "x.go", "v1\n")
@@ -577,7 +305,7 @@ func TestRelevantDetachedHead(t *testing.T) {
 	// "merged-branch" (branchAnchorMerged skips an anchor equal to the branch).
 	branchNote := makeNote(t, dir, "branch only", model.Anchor{Kind: model.AnchorBranch, Value: "main"})
 
-	scored, _, err := relevantForTest(t, dir, "x.go", "", "", false, false)
+	scored, err := relevantForTest(t, dir, "x.go", "", "", false, false)
 	if err != nil {
 		t.Fatalf("detached HEAD must not error: %v", err)
 	}
@@ -586,12 +314,12 @@ func TestRelevantDetachedHead(t *testing.T) {
 		t.Fatalf("detached HEAD ids = %v, want %v", scoredIDs(scored), wantIDs)
 	}
 	pm := findScored(t, scored, pathNote)
-	if pm.score != scorePath || len(pm.reasons) != 1 || pm.reasons[0] != reasonPath {
-		t.Fatalf("detached path note = score %d reasons %v, want %d [path]", pm.score, pm.reasons, scorePath)
+	if pm.Score != 100 || len(pm.Reasons) != 1 || pm.Reasons[0] != "path" {
+		t.Fatalf("detached path note = score %d reasons %v, want 100 [path]", pm.Score, pm.Reasons)
 	}
 	bm := findScored(t, scored, branchNote)
-	if bm.score != scoreBranch || len(bm.reasons) != 1 || bm.reasons[0] != reasonBranch {
-		t.Fatalf("detached branch note = score %d reasons %v, want %d [branch] (main resolves on a detached-at-tip HEAD)", bm.score, bm.reasons, scoreBranch)
+	if bm.Score != 40 || len(bm.Reasons) != 1 || bm.Reasons[0] != "branch" {
+		t.Fatalf("detached branch note = score %d reasons %v, want 40 [branch] (main resolves on a detached-at-tip HEAD)", bm.Score, bm.Reasons)
 	}
 }
 
@@ -614,7 +342,7 @@ func TestRelevantAmbiguousHead(t *testing.T) {
 	// --base=wip: with no trunk the default cross-author base ("main") does not
 	// resolve; name an existing base so the run exercises the branch degrade, not
 	// that orthogonal path.
-	scored, _, err := relevantForTest(t, dir, "x.go", "", "wip", false, false)
+	scored, err := relevantForTest(t, dir, "x.go", "", "wip", false, false)
 	if err != nil {
 		t.Fatalf("ambiguous HEAD must not error: %v", err)
 	}
@@ -623,12 +351,12 @@ func TestRelevantAmbiguousHead(t *testing.T) {
 		t.Fatalf("ambiguous HEAD ids = %v, want %v", scoredIDs(scored), wantIDs)
 	}
 	pm := findScored(t, scored, pathNote)
-	if pm.score != scorePath || len(pm.reasons) != 1 || pm.reasons[0] != reasonPath {
-		t.Fatalf("ambiguous path note = score %d reasons %v, want %d [path]", pm.score, pm.reasons, scorePath)
+	if pm.Score != 100 || len(pm.Reasons) != 1 || pm.Reasons[0] != "path" {
+		t.Fatalf("ambiguous path note = score %d reasons %v, want 100 [path]", pm.Score, pm.Reasons)
 	}
 	bm := findScored(t, scored, branchNote)
-	if bm.score != scoreMergedBranch || len(bm.reasons) != 1 || bm.reasons[0] != reasonMergedBranch {
-		t.Fatalf("ambiguous branch note = score %d reasons %v, want %d [merged-branch] (no plain branch on an unresolvable HEAD)", bm.score, bm.reasons, scoreMergedBranch)
+	if bm.Score != 20 || len(bm.Reasons) != 1 || bm.Reasons[0] != "merged-branch" {
+		t.Fatalf("ambiguous branch note = score %d reasons %v, want 20 [merged-branch] (no plain branch on an unresolvable HEAD)", bm.Score, bm.Reasons)
 	}
 }
 
@@ -641,7 +369,7 @@ func TestRelevantUnbornHead(t *testing.T) {
 	pathNote := makeNote(t, dir, "path", model.Anchor{Kind: model.AnchorPath, Value: "x.go"})
 	branchNote := makeNote(t, dir, "branch", model.Anchor{Kind: model.AnchorBranch, Value: "main"})
 
-	scored, _, err := relevantForTest(t, dir, "x.go", "", "", false, false)
+	scored, err := relevantForTest(t, dir, "x.go", "", "", false, false)
 	if err != nil {
 		t.Fatalf("unborn HEAD must not error: %v", err)
 	}
@@ -650,12 +378,12 @@ func TestRelevantUnbornHead(t *testing.T) {
 		t.Fatalf("unborn HEAD ids = %v, want %v", scoredIDs(scored), wantIDs)
 	}
 	pm := findScored(t, scored, pathNote)
-	if pm.score != scorePath || len(pm.reasons) != 1 || pm.reasons[0] != reasonPath {
-		t.Fatalf("unborn path note = score %d reasons %v, want %d [path]", pm.score, pm.reasons, scorePath)
+	if pm.Score != 100 || len(pm.Reasons) != 1 || pm.Reasons[0] != "path" {
+		t.Fatalf("unborn path note = score %d reasons %v, want 100 [path]", pm.Score, pm.Reasons)
 	}
 	bm := findScored(t, scored, branchNote)
-	if bm.score != scoreBranch || len(bm.reasons) != 1 || bm.reasons[0] != reasonBranch {
-		t.Fatalf("unborn branch note = score %d reasons %v, want %d [branch]", bm.score, bm.reasons, scoreBranch)
+	if bm.Score != 40 || len(bm.Reasons) != 1 || bm.Reasons[0] != "branch" {
+		t.Fatalf("unborn branch note = score %d reasons %v, want 40 [branch]", bm.Score, bm.Reasons)
 	}
 }
 
@@ -671,7 +399,7 @@ func TestRelevantMergedBranchRefDeleted(t *testing.T) {
 	relevantGit(t, dir, relevantMe, "branch", "-D", "feature")
 
 	makeNote(t, dir, "merged branch gone", model.Anchor{Kind: model.AnchorBranch, Value: "feature"})
-	scored, _, err := relevantForTest(t, dir, "unrelated.go", "", "", false, false)
+	scored, err := relevantForTest(t, dir, "unrelated.go", "", "", false, false)
 	if err != nil {
 		t.Fatalf("deleted branch ref must skip, not error: %v", err)
 	}
@@ -690,16 +418,16 @@ func TestRelevantCrossAuthorExcludesSharedPath(t *testing.T) {
 	commitFileAs(t, dir, relevantMe, "pkg/shared.go", "mine too\n")
 
 	sharedSib := makeNote(t, dir, "shared sibling", model.Anchor{Kind: model.AnchorPath, Value: "pkg/shared.go"})
-	scored, _, err := relevantForTest(t, dir, "pkg/target.go", "", "feat-base", false, false)
+	scored, err := relevantForTest(t, dir, "pkg/target.go", "", "feat-base", false, false)
 	if err != nil {
-		t.Fatalf("relevantNotes: %v", err)
+		t.Fatalf("Relevant: %v", err)
 	}
 	m := findScored(t, scored, sharedSib)
-	if m.score != scoreSibling {
-		t.Fatalf("shared-path sibling score = %d, want %d (no cross-author boost)", m.score, scoreSibling)
+	if m.Score != 15 {
+		t.Fatalf("shared-path sibling score = %d, want 15 (no cross-author boost)", m.Score)
 	}
-	if len(m.reasons) != 1 || m.reasons[0] != reasonSibling {
-		t.Fatalf("shared-path sibling reasons = %v, want [%s]", m.reasons, reasonSibling)
+	if len(m.Reasons) != 1 || m.Reasons[0] != "sibling" {
+		t.Fatalf("shared-path sibling reasons = %v, want [sibling]", m.Reasons)
 	}
 }
 
@@ -745,19 +473,19 @@ func TestRelevantRanksDocs(t *testing.T) {
 	}
 
 	note := findScored(t, scored, pathNote)
-	if note.kind != model.KindNote {
-		t.Fatalf("note entry kind = %q, want %q", note.kind, model.KindNote)
+	if note.Kind != model.KindNote {
+		t.Fatalf("note entry kind = %q, want %q", note.Kind, model.KindNote)
 	}
 
 	doc := findScored(t, scored, dirDoc)
-	if doc.kind != model.KindDoc {
-		t.Fatalf("doc entry kind = %q, want %q", doc.kind, model.KindDoc)
+	if doc.Kind != model.KindDoc {
+		t.Fatalf("doc entry kind = %q, want %q", doc.Kind, model.KindDoc)
 	}
-	if doc.doc.When != "resuming the auth cutover" {
-		t.Fatalf("doc when = %q, want the verbatim trigger", doc.doc.When)
+	if doc.Doc.When != "resuming the auth cutover" {
+		t.Fatalf("doc when = %q, want the verbatim trigger", doc.Doc.When)
 	}
-	if doc.score != scoreDir || len(doc.reasons) != 1 || doc.reasons[0] != reasonDir {
-		t.Fatalf("doc = score %d reasons %v, want %d [dir]", doc.score, doc.reasons, scoreDir)
+	if doc.Score != 60 || len(doc.Reasons) != 1 || doc.Reasons[0] != "dir" {
+		t.Fatalf("doc = score %d reasons %v, want 60 [dir]", doc.Score, doc.Reasons)
 	}
 }
 
@@ -798,11 +526,11 @@ func TestRelevantDocJSON(t *testing.T) {
 	if docEntry.Doc.When != "resuming the api cutover" {
 		t.Errorf("doc when = %q, want the verbatim trigger", docEntry.Doc.When)
 	}
-	if docEntry.Score != scoreDir {
-		t.Errorf("doc score = %d, want %d", docEntry.Score, scoreDir)
+	if docEntry.Score != 60 {
+		t.Errorf("doc score = %d, want %d", docEntry.Score, 60)
 	}
-	if len(docEntry.Reasons) != 1 || docEntry.Reasons[0] != reasonDir {
-		t.Errorf("doc reasons = %v, want [%s]", docEntry.Reasons, reasonDir)
+	if len(docEntry.Reasons) != 1 || docEntry.Reasons[0] != "dir" {
+		t.Errorf("doc reasons = %v, want [dir]", docEntry.Reasons)
 	}
 	// A freshly created (unverified) doc carries its verdict in the doc DTO.
 	if docEntry.Doc.Drift == nil || *docEntry.Doc.Drift != verdictUnverified {
@@ -820,9 +548,9 @@ func TestRelevantRanksLogs(t *testing.T) {
 	dirDoc := makeDoc(t, dir, "auth handoff", "resuming the auth cutover", model.Anchor{Kind: model.AnchorDir, Value: "internal/auth"})
 	dirLog := makeLog(t, dir, "auth rollout", "flipped to 5%", model.Anchor{Kind: model.AnchorDir, Value: "internal/auth"})
 
-	scored, verdicts, err := relevantForTest(t, dir, "internal/auth/login.go", "", "", false, false)
+	scored, err := relevantForTest(t, dir, "internal/auth/login.go", "", "", false, false)
 	if err != nil {
-		t.Fatalf("relevantNotes: %v", err)
+		t.Fatalf("Relevant: %v", err)
 	}
 
 	// All three surface; the path note (100) ranks first, the doc and log (both
@@ -832,21 +560,21 @@ func TestRelevantRanksLogs(t *testing.T) {
 	}
 
 	log := findScored(t, scored, dirLog)
-	if log.kind != model.KindLog {
-		t.Fatalf("log entry kind = %q, want %q", log.kind, model.KindLog)
+	if log.Kind != model.KindLog {
+		t.Fatalf("log entry kind = %q, want %q", log.Kind, model.KindLog)
 	}
-	if log.score != scoreDir || len(log.reasons) != 1 || log.reasons[0] != reasonDir {
-		t.Fatalf("log = score %d reasons %v, want %d [dir]", log.score, log.reasons, scoreDir)
+	if log.Score != 60 || len(log.Reasons) != 1 || log.Reasons[0] != "dir" {
+		t.Fatalf("log = score %d reasons %v, want 60 [dir]", log.Score, log.Reasons)
 	}
 	// A log never drifts: its verdict is always empty, no matter the anchored
 	// content's state.
-	if v := verdicts[dirLog]; v != "" {
+	if v := findScored(t, scored, dirLog).Verdict; v != "" {
 		t.Fatalf("log verdict = %q, want empty (logs never drift)", v)
 	}
 	// The doc still carries its own verdict, proving the empty log verdict is not
 	// a blanket suppression.
-	if v := verdicts[dirDoc]; v != verdictUnverified {
-		t.Fatalf("doc verdict = %q, want %q", v, verdictUnverified)
+	if v := findScored(t, scored, dirDoc).Verdict; v != notes.VerdictUnverified {
+		t.Fatalf("doc verdict = %q, want %q", v, notes.VerdictUnverified)
 	}
 }
 
@@ -873,8 +601,8 @@ func TestRelevantLogJSONAndLeanLine(t *testing.T) {
 	if len(entry.Log.Entries) != 1 || entry.Log.Entries[0].Text != "first entry" {
 		t.Errorf("log entries = %+v, want the one appended entry", entry.Log.Entries)
 	}
-	if entry.Score != scoreDir {
-		t.Errorf("log score = %d, want %d", entry.Score, scoreDir)
+	if entry.Score != 60 {
+		t.Errorf("log score = %d, want %d", entry.Score, 60)
 	}
 
 	lean := runRelevantCmd(t, dir, "internal/api/client.go")
@@ -885,7 +613,7 @@ func TestRelevantLogJSONAndLeanLine(t *testing.T) {
 	line := lines[0]
 	// The log line carries the dir reason and a log-show hint, and never a
 	// verdict flag — logs never drift.
-	for _, want := range []string{reasonDir, "log show " + logID.Short()} {
+	for _, want := range []string{"dir", "log show " + logID.Short()} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("log lean line %q missing %q", line, want)
 		}
@@ -908,7 +636,7 @@ func TestRelevantDocLeanLine(t *testing.T) {
 	line := lines[0]
 	// The doc line carries the verbatim trigger, the dir reason, the verdict flag
 	// (unverified here), and a doc-show hint — never the long body.
-	for _, want := range []string{"resuming the api cutover", reasonDir, "[unverified]", "doc show " + docID.Short()} {
+	for _, want := range []string{"resuming the api cutover", "dir", "[unverified]", "doc show " + docID.Short()} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("doc lean line %q missing %q", line, want)
 		}

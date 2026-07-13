@@ -30,6 +30,16 @@ func openStore() (*store.Store, error) {
 	return store.Open(dir)
 }
 
+// openClient opens the notes.Client for the repository containing the working
+// directory — the client-only opener for commands that need no *store.Store.
+func openClient() (*notes.Client, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("working directory: %w", err)
+	}
+	return notes.Open(dir)
+}
+
 // openStoreClient opens both the store — the surface the print/DTO layer and
 // autoInstall still drive — and the notes.Client that owns the task domain
 // logic, over the working directory's repository.

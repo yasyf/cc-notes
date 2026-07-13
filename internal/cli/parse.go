@@ -70,20 +70,6 @@ func sortByUpdated[T model.Snapshot](items []T) {
 	})
 }
 
-// sortTasks orders tasks by priority ascending, then created_at ascending,
-// then id ascending.
-func sortTasks(tasks []model.Task) {
-	slices.SortFunc(tasks, func(a, b model.Task) int {
-		if c := cmp.Compare(a.Priority, b.Priority); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-}
-
 // hasAll reports whether have contains every element of want.
 func hasAll(have, want []string) bool {
 	for _, w := range want {

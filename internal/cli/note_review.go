@@ -210,43 +210,9 @@ func liveAnchorOID(ctx context.Context, s *store.Store, head model.SHA, a model.
 	return s.Git.PathOID(ctx, string(head), a.Value)
 }
 
-// reviewNotes folds the review set (non-deleted, including superseded for
-// dangling detection) and returns each flagged note with its verdict. A
-// non-superseded note carries its content verdict (UNVERIFIED/DRIFTED/STALE);
-// a superseded note is surfaced only when its edge dangles — it points at a
-// note that has been tombstoned. Fresh notes are dropped. Order follows
-// ListNotes: creation time then id.
-func reviewNotes(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) ([]reviewed[model.Note], error) {
-	all, err := s.ListNotes(ctx, false, true)
-	if err != nil {
-		return nil, err
-	}
-	exists := make(map[model.EntityID]bool, len(all))
-	for _, n := range all {
-		exists[n.ID] = true
-	}
-	var out []reviewed[model.Note]
-	for _, n := range all {
-		if len(n.SupersededBy) > 0 {
-			if supersedeDangling(freshFromNote(n), exists) {
-				out = append(out, reviewed[model.Note]{entity: n, verdict: verdictDangling})
-			}
-			continue
-		}
-		verdict, err := noteVerdict(ctx, s, head, n, now, staleAfter, false)
-		if err != nil {
-			return nil, err
-		}
-		if verdict != "" {
-			out = append(out, reviewed[model.Note]{entity: n, verdict: verdict})
-		}
-	}
-	return out, nil
-}
-
 // reviewDocs folds the doc review set (non-deleted, including superseded for
-// dangling detection) and returns each flagged doc with its verdict, mirroring
-// reviewNotes: a non-superseded doc carries its content verdict
+// dangling detection) and returns each flagged doc with its verdict: a
+// non-superseded doc carries its content verdict
 // (UNVERIFIED/DRIFTED/STALE/EXPIRED); a superseded doc is surfaced only when its
 // edge dangles. Fresh docs are dropped. Order follows ListDocs: creation time
 // then id.
@@ -305,15 +271,6 @@ func reverseSupersedes(ctx context.Context, s *store.Store, id model.EntityID) (
 	}
 	slices.Sort(out)
 	return out, nil
-}
-
-// noteReviewCount counts the notes needing review against live content.
-func noteReviewCount(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) (int, error) {
-	reviewed, err := reviewNotes(ctx, s, head, now, staleAfter)
-	if err != nil {
-		return 0, err
-	}
-	return len(reviewed), nil
 }
 
 // docReviewCount counts the docs needing review against live content.

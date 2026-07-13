@@ -84,7 +84,7 @@ func newSprintAddCmd() *cobra.Command {
 			if reused {
 				warnDuplicate(cmd, "sprint", sprint.ID)
 			}
-			return printSprint(cmd, s, sprint, jsonOut)
+			return printSprint(cmd, c, sprint, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -176,7 +176,7 @@ func newSprintStatusCmd(use string, status model.SprintStatus) *cobra.Command {
 			if err != nil {
 				return planningErr(err)
 			}
-			return printSprint(cmd, s, sprint, jsonOut)
+			return printSprint(cmd, c, sprint, jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)
@@ -270,7 +270,7 @@ func newSprintEditCmd() *cobra.Command {
 			if err != nil {
 				return planningErr(err)
 			}
-			return printSprint(cmd, s, sprint, jsonOut)
+			return printSprint(cmd, c, sprint, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -315,7 +315,7 @@ func newSprintCommentCmd() *cobra.Command {
 			if err != nil {
 				return planningErr(err)
 			}
-			return printSprint(cmd, s, sprint, jsonOut)
+			return printSprint(cmd, c, sprint, jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)

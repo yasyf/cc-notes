@@ -76,7 +76,7 @@ func newLogAddCmd() *cobra.Command {
 			if reused {
 				warnDuplicate(cmd, "log", log.ID)
 			}
-			return printLog(cmd, s, log, jsonOut)
+			return printLog(cmd, c, log, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -141,7 +141,7 @@ func newLogAppendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printLog(cmd, s, log, jsonOut)
+			return printLog(cmd, c, log, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -263,7 +263,7 @@ func newLogEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printLog(cmd, s, log, jsonOut)
+			return printLog(cmd, c, log, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -308,7 +308,7 @@ func newLogRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printLog(cmd, s, log, jsonOut)
+			return printLog(cmd, c, log, jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)

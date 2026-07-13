@@ -221,7 +221,7 @@ func newTaskAddCmd() *cobra.Command {
 			if created.Degraded {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "cc-notes: detached HEAD with no resolvable branch; created on the backlog — pass --branch to set one")
 			}
-			return printTask(cmd, s, created.Task, jsonOut)
+			return printTask(cmd, c, created.Task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -296,7 +296,7 @@ func newTaskListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTaskList(cmd, s, tasks, jsonOut)
+			return printTaskList(cmd, c, tasks, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -334,7 +334,7 @@ func newTaskReadyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTaskList(cmd, s, tasks, jsonOut)
+			return printTaskList(cmd, c, tasks, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -382,7 +382,7 @@ func newTaskStartCmd() *cobra.Command {
 			if !result.BranchSet {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: detached HEAD with no resolvable branch; claimed %s without setting a branch — pass --branch to set one\n", result.Task.ID.Short())
 			}
-			return printTask(cmd, s, result.Task, jsonOut)
+			return printTask(cmd, c, result.Task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -435,19 +435,19 @@ func newTaskClaimCmd() *cobra.Command {
 				if err != nil {
 					return taskErr(err)
 				}
-				return printTask(cmd, s, stolen, jsonOut)
+				return printTask(cmd, c, stolen, jsonOut)
 			case syncRemote:
 				claimed, err := c.ClaimTaskSync(ctx, id)
 				if err != nil {
 					return taskErr(err)
 				}
-				return printTask(cmd, s, claimed, jsonOut)
+				return printTask(cmd, c, claimed, jsonOut)
 			default:
 				claimed, err := c.ClaimTask(ctx, id)
 				if err != nil {
 					return taskErr(err)
 				}
-				return printTask(cmd, s, claimed, jsonOut)
+				return printTask(cmd, c, claimed, jsonOut)
 			}
 		},
 	}
@@ -481,7 +481,7 @@ func newTaskRenewCmd() *cobra.Command {
 			if err != nil {
 				return taskErr(err)
 			}
-			return printTask(cmd, s, task, jsonOut)
+			return printTask(cmd, c, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -511,7 +511,7 @@ func newTaskDoneCmd() *cobra.Command {
 			if err != nil {
 				return taskErr(err)
 			}
-			return printTask(cmd, s, task, jsonOut)
+			return printTask(cmd, c, task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -543,7 +543,7 @@ func newTaskCancelCmd() *cobra.Command {
 			if err != nil {
 				return taskErr(err)
 			}
-			return printTask(cmd, s, task, jsonOut)
+			return printTask(cmd, c, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -688,7 +688,7 @@ func newTaskEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, task, jsonOut)
+			return printTask(cmd, c, task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -739,7 +739,7 @@ func newTaskCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, task, jsonOut)
+			return printTask(cmd, c, task, jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)
@@ -773,7 +773,7 @@ func newTaskDepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, task, jsonOut)
+			return printTask(cmd, c, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -807,7 +807,7 @@ func newTaskUndepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, task, jsonOut)
+			return printTask(cmd, c, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -822,7 +822,7 @@ func newTaskBacklogCmd() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			_, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -830,7 +830,7 @@ func newTaskBacklogCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTaskList(cmd, s, tasks, jsonOut)
+			return printTaskList(cmd, c, tasks, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -863,7 +863,7 @@ func newTaskStaleCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printStaleTaskList(cmd, s, tasks, now, jsonOut)
+			return printStaleTaskList(cmd, c, tasks, now, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -882,7 +882,7 @@ func newTaskArchivedCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			now := time.Now()
-			s, c, err := openStoreClient()
+			_, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -896,7 +896,7 @@ func newTaskArchivedCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTaskList(cmd, s, tasks, jsonOut)
+			return printTaskList(cmd, c, tasks, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -954,7 +954,7 @@ func newCriterionAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, task, jsonOut)
+			return printTask(cmd, c, task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -986,7 +986,7 @@ func newCriterionRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, task, jsonOut)
+			return printTask(cmd, c, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -1016,7 +1016,7 @@ func newCriterionStatusCmd(use string, status model.CriterionStatus) *cobra.Comm
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, task, jsonOut)
+			return printTask(cmd, c, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -1058,7 +1058,7 @@ func newCriterionScriptCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, task, jsonOut)
+			return printTask(cmd, c, task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -1103,18 +1103,14 @@ func newCriterionListCmd() *cobra.Command {
 	return cmd
 }
 
-func printTaskList(cmd *cobra.Command, s *store.Store, tasks []model.Task, jsonOut bool) error {
+func printTaskList(cmd *cobra.Command, c *notes.Client, tasks []model.Task, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
-		live, err := allTasks(cmd.Context(), s)
+		blocking, err := c.TasksBlockingIndex(cmd.Context())
 		if err != nil {
 			return err
 		}
-		dtos := make([]taskDTO, len(tasks))
-		for i, t := range tasks {
-			dtos[i] = newTaskDTO(t, blocksFor(live, t.ID))
-		}
-		return printJSON(out, dtos)
+		return printJSON(out, taskDTOs(tasks, blocking))
 	}
 	for _, t := range tasks {
 		if _, err := fmt.Fprintln(out, leanTaskLine(t)); err != nil {
@@ -1127,17 +1123,17 @@ func printTaskList(cmd *cobra.Command, s *store.Store, tasks []model.Task, jsonO
 // printStaleTaskList writes stale tasks as their JSON DTOs — each carrying the
 // idle duration in seconds — or one lean line per task with a trailing idle
 // marker.
-func printStaleTaskList(cmd *cobra.Command, s *store.Store, tasks []model.Task, now time.Time, jsonOut bool) error {
+func printStaleTaskList(cmd *cobra.Command, c *notes.Client, tasks []model.Task, now time.Time, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
-		live, err := allTasks(cmd.Context(), s)
+		blocking, err := c.TasksBlockingIndex(cmd.Context())
 		if err != nil {
 			return err
 		}
 		dtos := make([]staleTaskDTO, len(tasks))
 		for i, t := range tasks {
 			idle := now.Sub(time.Unix(taskHeartbeat(t), 0))
-			dtos[i] = staleTaskDTO{taskDTO: newTaskDTO(t, blocksFor(live, t.ID)), IdleSeconds: int64(idle.Seconds())}
+			dtos[i] = staleTaskDTO{taskDTO: newTaskDTO(t, blocking[t.ID]), IdleSeconds: int64(idle.Seconds())}
 		}
 		return printJSON(out, dtos)
 	}

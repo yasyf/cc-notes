@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`notes.Client` now owns the repo-utility surface — status, relevance,
+  history, blame, sync, reconcile, and gc — as a library.** The in-process
+  `notes` client gains `Status`, `Relevant`, `History`, `Blame`, `Sync`,
+  `Reconcile`, and `GC`, each returning a folded `model.*` snapshot or a small
+  public report, so an embedding consumer drives them without shelling out or
+  importing `internal/*`. The matching CLI commands and the shared print layer
+  are rewired onto the client, so the domain logic for these commands lives in
+  one place; CLI text and JSON output are byte-identical. `History`
+  re-expresses each commit's change trail as a `notes.HistoryEntry` /
+  `FieldChange` of formatted strings, keeping `internal/fold` and
+  `internal/trail` off the public surface. Reverse-index reads move onto the
+  client too — `TasksBlocking`, `SprintTasks`, `ProjectSprints`, `ProjectTasks`,
+  and a single-fold `TasksBlockingIndex` — so the print DTOs no longer reach
+  into the store, and the client-only repo-utility commands drop their duplicate
+  store open.
 - **A verbose comment's rationale routes to cc-notes.** The capt-hook pack
   gains `comments.py`: a declarative advisory that rides along with the general
   pack's verbose-comment deny (an `Edit`/`Write`/`MultiEdit` leaving a non-doc

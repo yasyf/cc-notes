@@ -18,6 +18,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // prefill carries the flag values `add --checkout` seeds a new-entity buffer
@@ -45,7 +46,7 @@ type editAdapter struct {
 	diffOps    func(base model.Snapshot, data []byte) ([]model.Op, error)
 	createOps  func(data []byte) ([]model.Op, error)
 	bornVerify func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error)
-	print      func(cmd *cobra.Command, s *store.Store, snap model.Snapshot, jsonOut bool) error
+	print      func(cmd *cobra.Command, c *notes.Client, snap model.Snapshot, jsonOut bool) error
 }
 
 // noun is the entity word used in messages; for the cc-notes kinds it equals
@@ -105,8 +106,8 @@ func docAdapter() editAdapter {
 		bornVerify: func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error) {
 			return bornVerify(ctx, s, refs.For(model.KindDoc, snap.EntityID()), snap.(model.Doc).Anchors)
 		},
-		print: func(cmd *cobra.Command, s *store.Store, snap model.Snapshot, jsonOut bool) error {
-			return printDoc(cmd, s, snap.(model.Doc), "", jsonOut)
+		print: func(cmd *cobra.Command, c *notes.Client, snap model.Snapshot, jsonOut bool) error {
+			return printDoc(cmd, c, snap.(model.Doc), "", jsonOut)
 		},
 	}
 }
@@ -156,8 +157,8 @@ func noteAdapter() editAdapter {
 		bornVerify: func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error) {
 			return bornVerify(ctx, s, refs.For(model.KindNote, snap.EntityID()), snap.(model.Note).Anchors)
 		},
-		print: func(cmd *cobra.Command, s *store.Store, snap model.Snapshot, jsonOut bool) error {
-			return printNote(cmd, s, snap.(model.Note), jsonOut)
+		print: func(cmd *cobra.Command, c *notes.Client, snap model.Snapshot, jsonOut bool) error {
+			return printNote(cmd, c, snap.(model.Note), jsonOut)
 		},
 	}
 }
@@ -314,7 +315,7 @@ func runFileMode(cmd *cobra.Command, a editAdapter, isAdd bool, args []string, o
 		return &UsageError{Err: fmt.Errorf("--%s cannot be combined with content flags: --%s", mode, strings.Join(changed, ", --"))}
 	}
 	ctx := cmd.Context()
-	s, err := openStore()
+	s, c, err := openStoreClient()
 	if err != nil {
 		return err
 	}
@@ -322,13 +323,13 @@ func runFileMode(cmd *cobra.Command, a editAdapter, isAdd bool, args []string, o
 	case isAdd && opts.checkout:
 		return addCheckout(ctx, cmd, s, a, opts.prefill)
 	case isAdd && opts.apply:
-		return addApply(ctx, cmd, s, a, args[0], opts.attach, opts.jsonOut)
+		return addApply(ctx, cmd, s, c, a, args[0], opts.attach, opts.jsonOut)
 	case isAdd:
 		return abortFiles(cmd, filesForPath(args[0]))
 	case opts.checkout:
 		return editCheckout(ctx, cmd, s, a, args[0])
 	case opts.apply:
-		return editApply(ctx, cmd, s, a, args[0], opts.jsonOut)
+		return editApply(ctx, cmd, s, c, a, args[0], opts.jsonOut)
 	default:
 		return editAbort(ctx, cmd, s, a, args[0])
 	}
@@ -431,7 +432,7 @@ func editCheckout(ctx context.Context, cmd *cobra.Command, s *store.Store, a edi
 	return announceCheckout(cmd, files.buffer, fmt.Sprintf("cc-notes %s edit %s --apply", a.noun(), prefix))
 }
 
-func editApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAdapter, prefix string, jsonOut bool) error {
+func editApply(ctx context.Context, cmd *cobra.Command, s *store.Store, c *notes.Client, a editAdapter, prefix string, jsonOut bool) error {
 	ref, err := s.Resolve(ctx, a.kind, prefix)
 	if err != nil {
 		return err
@@ -473,7 +474,7 @@ func editApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAd
 		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "no changes to apply"); err != nil {
 			return err
 		}
-		return a.print(cmd, s, snap, jsonOut)
+		return a.print(cmd, c, snap, jsonOut)
 	}
 	if err := autoInstall(ctx, cmd, s.Git); err != nil {
 		return err
@@ -483,7 +484,7 @@ func editApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAd
 		return err
 	}
 	removeBuffer(files)
-	return a.print(cmd, s, snap, jsonOut)
+	return a.print(cmd, c, snap, jsonOut)
 }
 
 func editAbort(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAdapter, prefix string) error {
@@ -523,7 +524,7 @@ func addCheckout(ctx context.Context, cmd *cobra.Command, s *store.Store, a edit
 	return announceCheckout(cmd, files.buffer, fmt.Sprintf("cc-notes %s add --apply %s", a.noun(), files.buffer))
 }
 
-func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAdapter, path string, attach []string, jsonOut bool) error {
+func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, c *notes.Client, a editAdapter, path string, attach []string, jsonOut bool) error {
 	files := filesForPath(path)
 	meta, data, err := readBuffer(files)
 	if err != nil {
@@ -561,7 +562,7 @@ func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAda
 		return err
 	}
 	removeBuffer(files)
-	return a.print(cmd, s, snap, jsonOut)
+	return a.print(cmd, c, snap, jsonOut)
 }
 
 // resolveOpCommitAnchors rewrites every commit-anchor value in ops to its full

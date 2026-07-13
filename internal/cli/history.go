@@ -2,22 +2,18 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"slices"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/internal/store"
-	"github.com/yasyf/cc-notes/internal/trail"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // newHistoryCmd builds the top-level "cc-notes history ID": the edit trail of
@@ -25,7 +21,10 @@ import (
 // linearization order with the fields it changed; it is read-only and never
 // touches the remote.
 func newHistoryCmd() *cobra.Command {
-	return historyCmd("history ID", "Show the edit history of any note, doc, log, task, sprint, project, or runbook", resolveAnyEntity)
+	resolve := func(ctx context.Context, c *notes.Client, prefix string) (model.Kind, model.EntityID, error) {
+		return c.ResolveEntity(ctx, prefix)
+	}
+	return historyCmd("history ID", "Show the edit history of any note, doc, log, task, sprint, project, or runbook", resolve)
 }
 
 func newNoteHistoryCmd() *cobra.Command    { return kindHistoryCmd(model.KindNote, "note") }
@@ -39,10 +38,35 @@ func newProjectHistoryCmd() *cobra.Command { return kindHistoryCmd(model.KindPro
 // id within a single kind, so a wrong-kind id fails cleanly rather than
 // resolving to a sibling entity that happens to share the prefix.
 func kindHistoryCmd(kind model.Kind, noun string) *cobra.Command {
-	resolve := func(ctx context.Context, s *store.Store, prefix string) (string, error) {
-		return s.Resolve(ctx, kind, prefix)
+	resolve := func(ctx context.Context, c *notes.Client, prefix string) (model.Kind, model.EntityID, error) {
+		id, err := resolveInKind(ctx, c, kind, prefix)
+		return kind, id, err
 	}
 	return historyCmd("history ID", "Show this "+noun+"'s edit history", resolve)
+}
+
+// resolveInKind expands an id prefix within a single kind, so a prefix that
+// names an entity of another kind fails with ErrNotFound rather than resolving
+// to it.
+func resolveInKind(ctx context.Context, c *notes.Client, kind model.Kind, prefix string) (model.EntityID, error) {
+	switch kind {
+	case model.KindNote:
+		return c.ResolveNote(ctx, prefix)
+	case model.KindDoc:
+		return c.ResolveDoc(ctx, prefix)
+	case model.KindLog:
+		return c.ResolveLog(ctx, prefix)
+	case model.KindTask:
+		return c.ResolveTask(ctx, prefix)
+	case model.KindSprint:
+		return c.ResolveSprint(ctx, prefix)
+	case model.KindProject:
+		return c.ResolveProject(ctx, prefix)
+	case model.KindRunbook:
+		return c.ResolveRunbook(ctx, prefix)
+	default:
+		panic(fmt.Sprintf("history: unknown kind %q", kind))
+	}
 }
 
 // historyOpts carries the history command's output flags.
@@ -52,7 +76,7 @@ type historyOpts struct {
 	limit   int
 }
 
-func historyCmd(use, short string, resolve func(context.Context, *store.Store, string) (string, error)) *cobra.Command {
+func historyCmd(use, short string, resolve func(context.Context, *notes.Client, string) (model.Kind, model.EntityID, error)) *cobra.Command {
 	var opts historyOpts
 	cmd := &cobra.Command{
 		Use:   use,
@@ -60,19 +84,19 @@ func historyCmd(use, short string, resolve func(context.Context, *store.Store, s
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			c, err := openClient()
 			if err != nil {
 				return err
 			}
-			ref, err := resolve(ctx, s, args[0])
+			kind, id, err := resolve(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
-			steps, err := s.History(ctx, ref)
+			entries, err := c.History(ctx, id)
 			if err != nil {
 				return err
 			}
-			return printHistory(cmd, steps, opts)
+			return printHistory(cmd, kind, entries, opts)
 		},
 	}
 	flags := cmd.Flags()
@@ -111,11 +135,7 @@ func resolveAnyEntity(ctx context.Context, s *store.Store, prefix string) (strin
 	}
 }
 
-func printHistory(cmd *cobra.Command, steps []fold.Step, opts historyOpts) error {
-	entries, err := trail.Entries(steps)
-	if err != nil {
-		return err
-	}
+func printHistory(cmd *cobra.Command, kind model.Kind, entries []notes.HistoryEntry, opts historyOpts) error {
 	if opts.limit > 0 && opts.limit < len(entries) {
 		entries = entries[len(entries)-opts.limit:]
 	}
@@ -126,22 +146,34 @@ func printHistory(cmd *cobra.Command, steps []fold.Step, opts historyOpts) error
 	if opts.jsonOut {
 		dtos := make([]historyEntryDTO, len(entries))
 		for i, e := range entries {
-			dtos[i] = newHistoryEntryDTO(e)
+			changes := make([]historyChangeDTO, len(e.Changes))
+			for j, ch := range e.Changes {
+				changes[j] = historyChangeDTO{Field: ch.Field, From: ch.From, To: ch.To, Added: ch.Added, Removed: ch.Removed}
+			}
+			dtos[i] = historyEntryDTO{
+				SHA:     string(e.SHA),
+				Author:  string(e.Author),
+				Time:    render.RFC3339(e.Time),
+				Lamport: uint64(e.Lamport),
+				Kind:    e.Kind,
+				Covers:  e.Covers,
+				Changes: changes,
+			}
 		}
 		return printJSON(out, dtos)
 	}
-	return renderHistoryText(out, entries)
+	return renderHistoryText(out, kind, entries)
 }
 
-// historyVerb renders the human header verb for one trail entry: a compaction
+// historyVerb renders the human header verb for one history entry: a compaction
 // marker for checkpoints, "created <kind>" for the create, and nothing for a
 // plain edit.
-func historyVerb(e trail.Entry) string {
+func historyVerb(e notes.HistoryEntry, kind model.Kind) string {
 	switch e.Kind {
 	case "checkpoint":
 		return fmt.Sprintf("compacted (covers %d %s)", e.Covers, plural(e.Covers, "commit", "commits"))
 	case "create":
-		return "created " + trail.EntityKind(e.Snapshot)
+		return "created " + string(kind)
 	default:
 		return ""
 	}
@@ -157,10 +189,10 @@ var simpleSetFields = map[string]bool{
 	"superseded_by": true,
 }
 
-func renderHistoryText(w io.Writer, entries []trail.Entry) error {
+func renderHistoryText(w io.Writer, kind model.Kind, entries []notes.HistoryEntry) error {
 	for _, e := range entries {
-		header := fmt.Sprintf("%s  %s  %s", shortSHA(e.Commit.SHA), e.Commit.Author, render.RFC3339(e.Commit.AuthorTime))
-		if verb := historyVerb(e); verb != "" {
+		header := fmt.Sprintf("%s  %s  %s", shortSHA(e.SHA), e.Author, render.RFC3339(e.Time))
+		if verb := historyVerb(e, kind); verb != "" {
 			header += "  " + verb
 		}
 		if _, err := fmt.Fprintln(w, header); err != nil {
@@ -177,10 +209,10 @@ func renderHistoryText(w io.Writer, entries []trail.Entry) error {
 	return nil
 }
 
-func renderChangeLines(ch trail.Change) []string {
-	if ch.Scalar {
-		from := formatTrailScalar(ch.Field, ch.From)
-		to := formatTrailScalar(ch.Field, ch.To)
+func renderChangeLines(ch notes.FieldChange) []string {
+	if ch.Added == nil && ch.Removed == nil {
+		from := derefString(ch.From)
+		to := derefString(ch.To)
 		switch {
 		case from == "":
 			return []string{fmt.Sprintf("%s: %s", ch.Field, to)}
@@ -190,113 +222,31 @@ func renderChangeLines(ch trail.Change) []string {
 			return []string{fmt.Sprintf("%s: %s → %s", ch.Field, from, to)}
 		}
 	}
-	added := formatTrailSet(ch.Field, ch.Added)
-	removed := formatTrailSet(ch.Field, ch.Removed)
 	if simpleSetFields[ch.Field] {
-		tokens := make([]string, 0, len(added)+len(removed))
-		for _, a := range added {
+		tokens := make([]string, 0, len(ch.Added)+len(ch.Removed))
+		for _, a := range ch.Added {
 			tokens = append(tokens, "+"+a)
 		}
-		for _, r := range removed {
+		for _, r := range ch.Removed {
 			tokens = append(tokens, "-"+r)
 		}
 		return []string{ch.Field + ": " + strings.Join(tokens, " ")}
 	}
-	lines := make([]string, 0, len(added)+len(removed))
-	for _, a := range added {
+	lines := make([]string, 0, len(ch.Added)+len(ch.Removed))
+	for _, a := range ch.Added {
 		lines = append(lines, fmt.Sprintf("%s: +%s", ch.Field, a))
 	}
-	for _, r := range removed {
+	for _, r := range ch.Removed {
 		lines = append(lines, fmt.Sprintf("%s: -%s", ch.Field, r))
 	}
 	return lines
 }
 
-// timeFields are unix-seconds scalars rendered as RFC3339 UTC in the trail.
-var timeFields = map[string]bool{
-	"verified_at": true,
-	"started_at":  true,
-	"closed_at":   true,
-	"stale_at":    true,
-	"start_date":  true,
-	"end_date":    true,
-}
-
-// formatTrailScalar renders a scalar trail value to its history string: "" for a
-// nil (unset) field, RFC3339 UTC for a time field, else the plain value.
-func formatTrailScalar(field string, v any) string {
-	if v == nil {
+func derefString(p *string) string {
+	if p == nil {
 		return ""
 	}
-	if timeFields[field] {
-		if n, ok := v.(float64); ok {
-			if n == 0 {
-				return ""
-			}
-			return render.RFC3339(int64(n))
-		}
-	}
-	return scalarString(v)
-}
-
-// formatTrailElement renders one set element to a stable, human string: a string
-// element verbatim, a known object element (anchor, comment, log entry,
-// criterion) summarized, any other object as compact JSON.
-func formatTrailElement(field string, v any) string {
-	m, ok := v.(map[string]any)
-	if !ok {
-		return scalarString(v)
-	}
-	switch field {
-	case "anchors":
-		return fmt.Sprintf("%s:%s", scalarString(m["kind"]), scalarString(m["value"]))
-	case "comments":
-		return fmt.Sprintf("comment by %s: %q", scalarString(m["author"]), scalarString(m["body"]))
-	case "entries":
-		return fmt.Sprintf("entry by %s: %q", scalarString(m["author"]), scalarString(m["text"]))
-	case "criteria":
-		return fmt.Sprintf("%q [%s]", scalarString(m["text"]), scalarString(m["status"]))
-	case "steps":
-		return fmt.Sprintf("%q", scalarString(m["text"]))
-	case "runs":
-		return fmt.Sprintf("run by %s [%s]", scalarString(m["runner"]), scalarString(m["status"]))
-	}
-	b, _ := json.Marshal(m)
-	return string(b)
-}
-
-// formatTrailSet renders a set field's elements to sorted history strings,
-// preserving the trail's former formatted-string ordering; it returns nil for an
-// empty set so the JSON DTO omits it.
-func formatTrailSet(field string, elems []any) []string {
-	if len(elems) == 0 {
-		return nil
-	}
-	out := make([]string, len(elems))
-	for i, e := range elems {
-		out[i] = formatTrailElement(field, e)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func scalarString(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return x
-	case bool:
-		return strconv.FormatBool(x)
-	case float64:
-		if x == float64(int64(x)) {
-			return strconv.FormatInt(int64(x), 10)
-		}
-		return strconv.FormatFloat(x, 'g', -1, 64)
-	default:
-		b, _ := json.Marshal(x)
-		return string(b)
-	}
+	return *p
 }
 
 // historyChangeDTO is one field delta in JSON: a scalar carries from/to (null
@@ -321,26 +271,6 @@ type historyEntryDTO struct {
 	Kind    string             `json:"kind"`
 	Covers  int                `json:"covers,omitempty"`
 	Changes []historyChangeDTO `json:"changes"`
-}
-
-func newHistoryEntryDTO(e trail.Entry) historyEntryDTO {
-	changes := make([]historyChangeDTO, len(e.Changes))
-	for i, ch := range e.Changes {
-		if ch.Scalar {
-			changes[i] = historyChangeDTO{Field: ch.Field, From: render.OptString(formatTrailScalar(ch.Field, ch.From)), To: render.OptString(formatTrailScalar(ch.Field, ch.To))}
-		} else {
-			changes[i] = historyChangeDTO{Field: ch.Field, Added: formatTrailSet(ch.Field, ch.Added), Removed: formatTrailSet(ch.Field, ch.Removed)}
-		}
-	}
-	return historyEntryDTO{
-		SHA:     string(e.Commit.SHA),
-		Author:  string(e.Commit.Author),
-		Time:    render.RFC3339(e.Commit.AuthorTime),
-		Lamport: uint64(e.Commit.Pack.Lamport),
-		Kind:    e.Kind,
-		Covers:  e.Covers,
-		Changes: changes,
-	}
 }
 
 func shortSHA(sha model.SHA) string { return model.EntityID(sha).Short() }

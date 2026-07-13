@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 func newReconcileCmd() *cobra.Command {
@@ -25,7 +25,7 @@ func newReconcileCmd() *cobra.Command {
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -52,7 +52,7 @@ func newReconcileCmd() *cobra.Command {
 					return err
 				}
 			}
-			report, err := ccsync.Reconcile(ctx, s, intoBranch, fromBranches, force, dryRun)
+			report, err := c.Reconcile(ctx, notes.ReconcileOptions{Into: intoBranch, From: fromBranches, Force: force, DryRun: dryRun})
 			if err != nil {
 				return err
 			}
@@ -71,7 +71,7 @@ func newReconcileCmd() *cobra.Command {
 // printReconcile writes report as its JSON DTO or its lean view: the
 // verb:count tally skipping zeros, the target branch, then for each carried
 // branch a header and one lean task line per carried task.
-func printReconcile(cmd *cobra.Command, report ccsync.ReconcileReport, jsonOut bool) error {
+func printReconcile(cmd *cobra.Command, report notes.ReconcileReport, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		return printJSON(out, newReconcileDTO(report))
@@ -131,7 +131,7 @@ type reconcileBranchDTO struct {
 	Tasks  []string `json:"tasks"`
 }
 
-func newReconcileDTO(r ccsync.ReconcileReport) reconcileDTO {
+func newReconcileDTO(r notes.ReconcileReport) reconcileDTO {
 	branches := make([]reconcileBranchDTO, len(r.Branches))
 	for i, b := range r.Branches {
 		ids := make([]string, len(b.Tasks))

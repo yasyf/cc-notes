@@ -78,7 +78,7 @@ func newTaskValidateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, validated, jsonOut)
+			return printTask(cmd, c, validated, jsonOut)
 		},
 	}
 	flags := cmd.Flags()

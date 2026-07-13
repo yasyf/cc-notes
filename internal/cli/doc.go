@@ -68,7 +68,7 @@ func newDocRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printDoc(cmd, s, doc, "", jsonOut)
+			return printDoc(cmd, c, doc, "", jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)

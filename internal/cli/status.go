@@ -1,17 +1,13 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
-	"slices"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/gitcmd"
-	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 func newStatusCmd() *cobra.Command {
@@ -23,157 +19,83 @@ func newStatusCmd() *cobra.Command {
 		Args:    exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			now := time.Now()
-			s, err := openStore()
+			c, err := openClient()
 			if err != nil {
 				return err
 			}
-			ttl, err := leaseTTL(ctx, s.Git)
+			report, err := c.Status(ctx)
 			if err != nil {
 				return err
 			}
-			branch, err := s.Git.CurrentBranch(ctx)
-			switch {
-			case errors.Is(err, gitcmd.ErrDetachedHead):
-				branch = ""
-			case err != nil:
-				return err
-			}
-			tasks, err := s.ListTasks(ctx)
-			if err != nil {
-				return err
-			}
-			notes, err := s.ListNotes(ctx, false, false)
-			if err != nil {
-				return err
-			}
-			docs, err := s.ListDocs(ctx, false, false)
-			if err != nil {
-				return err
-			}
-			logs, err := s.ListLogs(ctx, false)
-			if err != nil {
-				return err
-			}
-			head, err := resolveHead(ctx, s)
-			if err != nil {
-				return err
-			}
-			staleAfter, err := noteStaleAfter(ctx, s.Git)
-			if err != nil {
-				return err
-			}
-			reviewCount, err := noteReviewCount(ctx, s, head, now, staleAfter)
-			if err != nil {
-				return err
-			}
-			docReviewCount, err := docReviewCount(ctx, s, head, now, staleAfter)
-			if err != nil {
-				return err
-			}
-
-			var backlog, yourBranch, inProgress []model.Task
-			for _, t := range tasks {
-				if t.Branch == "" && openOrInProgress(t.Status) {
-					backlog = append(backlog, t)
-				}
-				if branch != "" && t.Branch == branch && openOrInProgress(t.Status) {
-					yourBranch = append(yourBranch, t)
-				}
-				if t.Status == model.StatusInProgress {
-					inProgress = append(inProgress, t)
-				}
-			}
-			sortTasks(backlog)
-			sortTasks(yourBranch)
-
-			groups := map[model.Actor][]model.Task{}
-			for _, t := range inProgress {
-				groups[t.Assignee] = append(groups[t.Assignee], t)
-			}
-			assignees := make([]model.Actor, 0, len(groups))
-			for a := range groups {
-				assignees = append(assignees, a)
-			}
-			slices.Sort(assignees)
-			for _, a := range assignees {
-				sortTasks(groups[a])
-			}
-
 			if jsonOut {
-				return printStatusJSON(cmd, s, branch, backlog, yourBranch, assignees, groups, notes, reviewCount, docs, docReviewCount, logs, now, ttl)
+				return printStatusJSON(cmd, c, report)
 			}
-			return printStatusText(cmd, branch, backlog, yourBranch, assignees, groups, notes, reviewCount, docs, docReviewCount, logs, now, ttl)
+			return printStatusText(cmd, report)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
-func openOrInProgress(s model.Status) bool {
-	return s == model.StatusOpen || s == model.StatusInProgress
-}
-
-func printStatusText(cmd *cobra.Command, branch model.Branch, backlog, yourBranch []model.Task, assignees []model.Actor, groups map[model.Actor][]model.Task, notes []model.Note, reviewCount int, docs []model.Doc, docReviewCount int, logs []model.Log, now time.Time, ttl time.Duration) error {
+func printStatusText(cmd *cobra.Command, report notes.StatusReport) error {
 	var b strings.Builder
 	b.WriteString("backlog\n")
-	for _, t := range backlog {
+	for _, t := range report.Backlog {
 		fmt.Fprintf(&b, "  %s\n", leanTaskLine(t))
 	}
-	if branch != "" {
-		fmt.Fprintf(&b, "your branch (%s)\n", branch)
-		for _, t := range yourBranch {
+	if report.Branch != "" {
+		fmt.Fprintf(&b, "your branch (%s)\n", report.Branch)
+		for _, t := range report.YourBranch {
 			fmt.Fprintf(&b, "  %s\n", leanTaskLine(t))
 		}
 	}
 	b.WriteString("in progress across branches\n")
-	for _, a := range assignees {
-		for _, t := range groups[a] {
+	for _, grp := range report.InProgress {
+		for _, st := range grp.Tasks {
 			flag := "fresh"
-			if isStale(t, now, ttl) {
+			if st.Stale {
 				flag = "STALE"
 			}
-			fmt.Fprintf(&b, "  %s\t%s\t%s\n", a, t.ID.Short(), flag)
+			fmt.Fprintf(&b, "  %s\t%s\t%s\n", grp.Assignee, st.Task.ID.Short(), flag)
 		}
 	}
-	fmt.Fprintf(&b, "notes: %d total, %d need review\n", len(notes), reviewCount)
-	fmt.Fprintf(&b, "docs: %d total, %d need review\n", len(docs), docReviewCount)
-	fmt.Fprintf(&b, "logs: %d total\n", len(logs))
+	fmt.Fprintf(&b, "notes: %d total, %d need review\n", report.Notes.Total, report.Notes.NeedsReview)
+	fmt.Fprintf(&b, "docs: %d total, %d need review\n", report.Docs.Total, report.Docs.NeedsReview)
+	fmt.Fprintf(&b, "logs: %d total\n", report.Logs)
 	_, err := fmt.Fprint(cmd.OutOrStdout(), b.String())
 	return err
 }
 
-func printStatusJSON(cmd *cobra.Command, s *store.Store, branch model.Branch, backlog, yourBranch []model.Task, assignees []model.Actor, groups map[model.Actor][]model.Task, notes []model.Note, reviewCount int, docs []model.Doc, docReviewCount int, logs []model.Log, now time.Time, ttl time.Duration) error {
-	live, err := allTasks(cmd.Context(), s)
+func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusReport) error {
+	blocking, err := c.TasksBlockingIndex(cmd.Context())
 	if err != nil {
 		return err
 	}
 	dto := statusDTO{
-		Branch:     string(branch),
-		Backlog:    taskDTOs(backlog, live),
-		YourBranch: taskDTOs(yourBranch, live),
-		InProgress: make([]statusAssigneeDTO, 0, len(assignees)),
-		Notes:      statusNotesDTO{Total: len(notes), NeedsReview: reviewCount},
-		Docs:       statusNotesDTO{Total: len(docs), NeedsReview: docReviewCount},
-		Logs:       statusLogsDTO{Total: len(logs)},
+		Branch:     string(report.Branch),
+		Backlog:    taskDTOs(report.Backlog, blocking),
+		YourBranch: taskDTOs(report.YourBranch, blocking),
+		InProgress: make([]statusAssigneeDTO, 0, len(report.InProgress)),
+		Notes:      statusNotesDTO{Total: report.Notes.Total, NeedsReview: report.Notes.NeedsReview},
+		Docs:       statusNotesDTO{Total: report.Docs.Total, NeedsReview: report.Docs.NeedsReview},
+		Logs:       statusLogsDTO{Total: report.Logs},
 	}
-	for _, a := range assignees {
-		grp := groups[a]
-		staleDTOs := make([]statusStaleDTO, len(grp))
-		for i, t := range grp {
-			staleDTOs[i] = statusStaleDTO{taskDTO: newTaskDTO(t, blocksFor(live, t.ID)), Stale: isStale(t, now, ttl)}
+	for _, grp := range report.InProgress {
+		staleDTOs := make([]statusStaleDTO, len(grp.Tasks))
+		for i, st := range grp.Tasks {
+			staleDTOs[i] = statusStaleDTO{taskDTO: newTaskDTO(st.Task, blocking[st.Task.ID]), Stale: st.Stale}
 		}
-		dto.InProgress = append(dto.InProgress, statusAssigneeDTO{Assignee: string(a), Tasks: staleDTOs})
+		dto.InProgress = append(dto.InProgress, statusAssigneeDTO{Assignee: string(grp.Assignee), Tasks: staleDTOs})
 	}
 	return printJSON(cmd.OutOrStdout(), dto)
 }
 
-// taskDTOs maps tasks to their JSON DTOs, resolving the derived blocks index
-// against live.
-func taskDTOs(tasks []model.Task, live map[model.EntityID]model.Task) []taskDTO {
+// taskDTOs maps tasks to their JSON DTOs, indexing each task's derived blocks
+// from the reverse dependency index.
+func taskDTOs(tasks []model.Task, blocking map[model.EntityID][]model.EntityID) []taskDTO {
 	dtos := make([]taskDTO, len(tasks))
 	for i, t := range tasks {
-		dtos[i] = newTaskDTO(t, blocksFor(live, t.ID))
+		dtos[i] = newTaskDTO(t, blocking[t.ID])
 	}
 	return dtos
 }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // newGCCmd builds "cc-notes gc": local maintenance. By default it tidies local
@@ -29,36 +31,26 @@ func newGCCmd() *cobra.Command {
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			c, err := openClient()
 			if err != nil {
 				return err
 			}
-			tidied, err := s.GCLocal(ctx)
+			report, err := c.GC(ctx, notes.GCOptions{PruneRemote: pruneRemote})
 			if err != nil {
 				return err
-			}
-			var pruned, failed int
-			if pruneRemote {
-				var remote string
-				if remote, err = deriveRemote(ctx, s.Git); err != nil {
-					return err
-				}
-				if pruned, failed, err = s.PruneTombstones(ctx, remote); err != nil {
-					return err
-				}
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSON(out, gcDTO{Tidied: tidied, Pruned: pruned, Failed: failed})
+				return printJSON(out, gcDTO{Tidied: report.Tidied, Pruned: report.Pruned, Failed: report.Failed})
 			}
 			for _, line := range []struct {
 				verb   string
 				count  int
 				always bool
 			}{
-				{"pruned", pruned, false},
-				{"failed", failed, false},
-				{"tidied", tidied, true},
+				{"pruned", report.Pruned, false},
+				{"failed", report.Failed, false},
+				{"tidied", report.Tidied, true},
 			} {
 				if !line.always && line.count == 0 {
 					continue

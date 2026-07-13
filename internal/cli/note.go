@@ -70,7 +70,7 @@ func newNoteRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printNote(cmd, s, note, jsonOut)
+			return printNote(cmd, c, note, jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)

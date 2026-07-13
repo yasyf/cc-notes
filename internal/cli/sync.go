@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/internal/version"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // postMergeHook is the body cc-notes init --hook writes to the repository's
@@ -157,39 +157,11 @@ func newSyncCmd() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			dir, err := os.Getwd()
+			c, err := openClient()
 			if err != nil {
-				return fmt.Errorf("working directory: %w", err)
+				return err
 			}
-			remotes := []string{remote}
-			if remote == "" {
-				s, err := openStore()
-				if err != nil {
-					return err
-				}
-				if remotes, err = syncTargets(ctx, s.Git); err != nil {
-					return err
-				}
-			}
-			// A bare sync fans out over every cc-notes-wired remote in config
-			// order (else origin), mirroring the capt-hook pack's do_sync loop.
-			// Every remote is attempted even after an earlier one fails; the
-			// tallies fold into one report and the first error propagates.
-			var report ccsync.Report
-			var syncErr error
-			for _, r := range remotes {
-				rep, err := ccsync.Sync(ctx, dir, r, full)
-				report.Created += rep.Created
-				report.FastForwarded += rep.FastForwarded
-				report.Merged += rep.Merged
-				report.Pushed += rep.Pushed
-				report.Uploaded += rep.Uploaded
-				report.Downloaded += rep.Downloaded
-				report.Rounds += rep.Rounds
-				if err != nil && syncErr == nil {
-					syncErr = err
-				}
-			}
+			report, syncErr := c.Sync(ctx, notes.SyncOptions{Remote: remote, Full: full})
 			// A failed sync can still have done real work — e.g. a download
 			// failure after the push loop converged — so the report prints
 			// before the error propagates to a non-zero exit. A run that
@@ -241,21 +213,6 @@ func newSyncCmd() *cobra.Command {
 	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	flags.BoolVar(&full, "full", false, "force a whole-namespace reconcile scan")
 	return cmd
-}
-
-// syncTargets is the remote set a bare `cc-notes sync` converges: every
-// cc-notes-wired remote in git-config order, or the default remote when none is
-// wired. It mirrors the capt-hook pack's do_sync fan-out; deriveRemote's
-// single-remote narrowing stays for the autoInstall/gc/claim callers.
-func syncTargets(ctx context.Context, g gitcmd.Git) ([]string, error) {
-	wired, err := ccsync.WiredRemotes(ctx, g)
-	if err != nil {
-		return nil, err
-	}
-	if len(wired) == 0 {
-		return []string{defaultRemote}, nil
-	}
-	return wired, nil
 }
 
 func newVersionCmd() *cobra.Command {

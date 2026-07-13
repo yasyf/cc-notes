@@ -23,7 +23,7 @@ func newCompactCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -37,17 +37,17 @@ func newCompactCmd() *cobra.Command {
 			}
 			switch v := snap.(type) {
 			case model.Note:
-				return printNote(cmd, s, v, jsonOut)
+				return printNote(cmd, c, v, jsonOut)
 			case model.Doc:
-				return printDoc(cmd, s, v, "", jsonOut)
+				return printDoc(cmd, c, v, "", jsonOut)
 			case model.Log:
-				return printLog(cmd, s, v, jsonOut)
+				return printLog(cmd, c, v, jsonOut)
 			case model.Task:
-				return printTask(cmd, s, v, jsonOut)
+				return printTask(cmd, c, v, jsonOut)
 			case model.Sprint:
-				return printSprint(cmd, s, v, jsonOut)
+				return printSprint(cmd, c, v, jsonOut)
 			case model.Project:
-				return printProject(cmd, s, v, jsonOut)
+				return printProject(cmd, c, v, jsonOut)
 			case model.Runbook:
 				return printRunbook(cmd, v, jsonOut)
 			default:

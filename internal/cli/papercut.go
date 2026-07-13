@@ -67,7 +67,7 @@ stdin ("... | cc-notes papercut -").`,
 			if err != nil {
 				return err
 			}
-			return printLog(cmd, s, log, jsonOut)
+			return printLog(cmd, c, log, jsonOut)
 		},
 	}
 	flags := cmd.Flags()

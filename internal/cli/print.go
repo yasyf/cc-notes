@@ -9,6 +9,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // warnDuplicate reports on stderr that Create's best-effort duplicate guard
@@ -34,90 +35,101 @@ func createEntity(ctx context.Context, cmd *cobra.Command, s *store.Store, ops [
 
 // printNote writes n as its JSON DTO or its lean line. A mutation echo carries
 // no drift verdict.
-func printNote(cmd *cobra.Command, s *store.Store, n model.Note, jsonOut bool) error {
+func printNote(cmd *cobra.Command, c *notes.Client, n model.Note, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanNoteLine(n))
 		return err
 	}
-	atts, err := entityAttachments(cmd.Context(), s, n.Attachments)
+	infos, err := c.AttachmentInfos(cmd.Context(), n.Attachments)
 	if err != nil {
 		return err
 	}
-	return printJSON(cmd.OutOrStdout(), newNoteDTO(n, "", atts))
+	return printJSON(cmd.OutOrStdout(), newNoteDTO(n, "", attachmentInfoDTOs(infos)))
 }
 
 // printDoc writes d as its JSON DTO carrying the drift verdict, or its lean
 // line. A mutation echo passes an empty drift.
-func printDoc(cmd *cobra.Command, s *store.Store, d model.Doc, drift string, jsonOut bool) error {
+func printDoc(cmd *cobra.Command, c *notes.Client, d model.Doc, drift string, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanDocLine(d))
 		return err
 	}
-	atts, err := entityAttachments(cmd.Context(), s, d.Attachments)
+	infos, err := c.AttachmentInfos(cmd.Context(), d.Attachments)
 	if err != nil {
 		return err
 	}
-	return printJSON(cmd.OutOrStdout(), newDocDTO(d, drift, atts))
+	return printJSON(cmd.OutOrStdout(), newDocDTO(d, drift, attachmentInfoDTOs(infos)))
 }
 
 // printLog writes l as its JSON DTO or its lean line.
-func printLog(cmd *cobra.Command, s *store.Store, l model.Log, jsonOut bool) error {
+func printLog(cmd *cobra.Command, c *notes.Client, l model.Log, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanLogLine(l))
 		return err
 	}
-	atts, err := entityAttachments(cmd.Context(), s, l.Attachments)
+	infos, err := c.AttachmentInfos(cmd.Context(), l.Attachments)
 	if err != nil {
 		return err
 	}
-	return printJSON(cmd.OutOrStdout(), newLogDTO(l, atts))
+	return printJSON(cmd.OutOrStdout(), newLogDTO(l, attachmentInfoDTOs(infos)))
 }
 
 // printTask writes t as its JSON DTO — with the derived blocks index — or
 // its lean line.
-func printTask(cmd *cobra.Command, s *store.Store, t model.Task, jsonOut bool) error {
+func printTask(cmd *cobra.Command, c *notes.Client, t model.Task, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanTaskLine(t))
 		return err
 	}
-	live, err := allTasks(cmd.Context(), s)
+	blocks, err := c.TasksBlocking(cmd.Context(), t.ID)
 	if err != nil {
 		return err
 	}
-	return printJSON(cmd.OutOrStdout(), newTaskDTO(t, blocksFor(live, t.ID)))
+	return printJSON(cmd.OutOrStdout(), newTaskDTO(t, blocks))
 }
 
 // printSprint writes sprint as its JSON DTO — carrying the reverse-index ids of
 // its tasks — or its lean line.
-func printSprint(cmd *cobra.Command, s *store.Store, sprint model.Sprint, jsonOut bool) error {
+func printSprint(cmd *cobra.Command, c *notes.Client, sprint model.Sprint, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanSprintLine(sprint))
 		return err
 	}
-	tasks, err := s.ListTasks(cmd.Context())
+	tasks, err := c.SprintTasks(cmd.Context(), sprint.ID)
 	if err != nil {
 		return err
 	}
-	return printJSON(cmd.OutOrStdout(), newSprintDTO(sprint, tasksInSprint(tasks, sprint.ID)))
+	return printJSON(cmd.OutOrStdout(), newSprintDTO(sprint, tasks))
 }
 
 // printProject writes project as its JSON DTO — carrying the reverse-index ids
 // of its sprints and tasks — or its lean line.
-func printProject(cmd *cobra.Command, s *store.Store, project model.Project, jsonOut bool) error {
+func printProject(cmd *cobra.Command, c *notes.Client, project model.Project, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanProjectLine(project))
 		return err
 	}
 	ctx := cmd.Context()
-	sprints, err := s.ListSprints(ctx)
+	sprints, err := c.ProjectSprints(ctx, project.ID)
 	if err != nil {
 		return err
 	}
-	tasks, err := s.ListTasks(ctx)
+	tasks, err := c.ProjectTasks(ctx, project.ID)
 	if err != nil {
 		return err
 	}
-	return printJSON(cmd.OutOrStdout(), newProjectDTO(project, sprintsInProject(sprints, project.ID), tasksInProject(tasks, sprints, project.ID)))
+	return printJSON(cmd.OutOrStdout(), newProjectDTO(project, sprints, tasks))
+}
+
+// attachmentInfoDTOs maps client attachment-presence infos to the CLI's
+// fixed-shape attachment DTOs, always non-nil so JSON serializes an empty list
+// rather than null.
+func attachmentInfoDTOs(infos []notes.AttachmentInfo) []attachmentDTO {
+	out := make([]attachmentDTO, len(infos))
+	for i, a := range infos {
+		out[i] = attachmentDTO{Name: a.Name, OID: a.OID, Size: a.Size, Present: a.Present}
+	}
+	return out
 }
 
 // printRunbook writes runbook as its JSON DTO or its lean line.
