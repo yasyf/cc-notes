@@ -9,6 +9,7 @@ from .common import (
     CcNotesAvailable,
     CcNotesMissing,
     cap_and_render_tasks,
+    dedup_tasks,
     parse_tasks,
     run_cc_notes,
 )
@@ -21,11 +22,12 @@ from .common import (
 )
 def float_session_tasks(evt: UserPromptSubmitEvent) -> HookResult | None:
     """Float this session's durable tasks once, at the first prompt."""
-    branch_tasks = parse_tasks(run_cc_notes(evt, "task", "list", "--json"))
-    tasks = list(branch_tasks)
+    tasks = parse_tasks(run_cc_notes(evt, "task", "list", "--json"))
     if len(tasks) < SESSION_TASK_CAP:
-        tasks.extend(parse_tasks(run_cc_notes(evt, "task", "list", "--backlog", "--json")))
-    lines = cap_and_render_tasks(tasks, SESSION_TASK_CAP)
+        tasks += parse_tasks(run_cc_notes(evt, "task", "list", "--backlog", "--json"))
+    # On an unresolvable detached HEAD the branch read degrades to the backlog set, so the
+    # two reads overlap — dedup by id (branch first, first occurrence wins) before capping.
+    lines = cap_and_render_tasks(dedup_tasks(tasks), SESSION_TASK_CAP)
     if not lines:
         return None
     return evt.warn(

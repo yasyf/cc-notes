@@ -336,8 +336,10 @@ func TestTopologyTrunkResolution(t *testing.T) {
 		if g.Repo.Trunk != "main" {
 			t.Errorf("trunk = %q, want main", g.Repo.Trunk)
 		}
-		if g.Repo.Head != "" {
-			t.Errorf("head = %q, want empty on detached HEAD", g.Repo.Head)
+		// Detached at main's tip — the jj colocation norm. CurrentBranch resolves
+		// main, so head reports it rather than degrading to empty.
+		if g.Repo.Head != "main" {
+			t.Errorf("head = %q, want main on a detached-at-tip HEAD", g.Repo.Head)
 		}
 	})
 

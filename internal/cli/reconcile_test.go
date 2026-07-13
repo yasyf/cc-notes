@@ -113,12 +113,38 @@ func TestReconcileDetachedHead(t *testing.T) {
 	dir := initRepo(t)
 	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
 	gittest.Git(t, dir, "checkout", "-q", "--detach")
+
+	// Detached at main's tip — the jj colocation norm. reconcile resolves main
+	// and runs; it needs a real target, so it does not degrade.
+	out, stderr, err := runCLI(t, dir, "reconcile")
+	if err != nil {
+		t.Fatalf("reconcile on detached-at-main HEAD err = %v (stderr %q), want nil", err, stderr)
+	}
+	if !strings.Contains(out, "into: main\n") {
+		t.Fatalf("reconcile output = %q, want into: main", out)
+	}
+	if _, _, err := runCLI(t, dir, "reconcile", "--into", "main"); err != nil {
+		t.Fatalf("reconcile --into main err = %v, want nil", err)
+	}
+}
+
+// TestReconcileAmbiguousHead pins that reconcile does NOT degrade: a genuinely
+// unresolvable HEAD (no trunk, advanced past the sole bookmark) still errors,
+// naming --into.
+func TestReconcileAmbiguousHead(t *testing.T) {
+	dir := initRepo(t)
+	// No trunk: rename the unborn main to wip so main never exists.
+	gittest.Git(t, dir, "checkout", "-q", "-b", "wip")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c1")
+	gittest.Git(t, dir, "checkout", "-q", "--detach")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c2")
+
 	_, _, err := runCLI(t, dir, "reconcile")
 	if err == nil {
-		t.Fatal("reconcile on detached HEAD: want error")
+		t.Fatal("reconcile on ambiguous detached HEAD: want error")
 	}
 	if !strings.Contains(err.Error(), "--into") {
-		t.Errorf("detached-HEAD error %q does not name --into", err)
+		t.Errorf("ambiguous-HEAD error %q does not name --into", err)
 	}
 }
 
@@ -128,5 +154,20 @@ func TestReconcileMissingIntoBranch(t *testing.T) {
 	_, _, err := runCLI(t, dir, "reconcile", "--into", "ghost")
 	if cli.ExitCode(err) != 3 {
 		t.Fatalf("reconcile --into ghost err = %v (exit %d), want ErrRefNotFound exit 3", err, cli.ExitCode(err))
+	}
+}
+
+// TestReconcileEmptyInto pins that an explicitly empty --into is a UsageError,
+// not a fall-through to the current branch: validation runs at the resolveBranch
+// gate before autoInstall or any reconcile write, so nothing is carried.
+func TestReconcileEmptyInto(t *testing.T) {
+	dir := initRepo(t)
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	_, _, err := runCLI(t, dir, "reconcile", "--into", "")
+	if cli.ExitCode(err) != 2 {
+		t.Fatalf("reconcile --into= err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
+	}
+	if !strings.Contains(err.Error(), "invalid branch") {
+		t.Errorf("error %q does not name the invalid branch", err)
 	}
 }

@@ -572,10 +572,9 @@ func TestRelevantDetachedHead(t *testing.T) {
 	relevantGit(t, dir, relevantMe, "checkout", "-q", "--detach", "HEAD")
 
 	pathNote := makeNote(t, dir, "path", model.Anchor{Kind: model.AnchorPath, Value: "x.go"})
-	// On a detached HEAD the branch resolves to "", so the direct "branch"
-	// signal is skipped — but main's tip is an ancestor of the detached HEAD, so
-	// the same note still surfaces via "merged-branch" (head != "" runs that
-	// check with branch == ""). Degradation stays sensible, not an error.
+	// Detached at main's tip — the jj colocation norm. CurrentBranch resolves
+	// main, so the branch anchor now scores via the plain "branch" signal, not
+	// "merged-branch" (branchAnchorMerged skips an anchor equal to the branch).
 	branchNote := makeNote(t, dir, "branch only", model.Anchor{Kind: model.AnchorBranch, Value: "main"})
 
 	scored, _, err := relevantForTest(t, dir, "x.go", "", "", false, false)
@@ -591,8 +590,45 @@ func TestRelevantDetachedHead(t *testing.T) {
 		t.Fatalf("detached path note = score %d reasons %v, want %d [path]", pm.score, pm.reasons, scorePath)
 	}
 	bm := findScored(t, scored, branchNote)
+	if bm.score != scoreBranch || len(bm.reasons) != 1 || bm.reasons[0] != reasonBranch {
+		t.Fatalf("detached branch note = score %d reasons %v, want %d [branch] (main resolves on a detached-at-tip HEAD)", bm.score, bm.reasons, scoreBranch)
+	}
+}
+
+// TestRelevantAmbiguousHead pins the empty-branch degrade: on a genuinely
+// unresolvable HEAD (no trunk, advanced past the sole bookmark) the branch
+// resolves to "" and the plain "branch" signal is skipped, while a merged branch
+// anchor still surfaces via "merged-branch".
+func TestRelevantAmbiguousHead(t *testing.T) {
+	dir := relevantRepo(t)
+	// No trunk: rename the unborn main to wip so main never exists, then detach
+	// and advance past wip's tip. CurrentBranch cannot resolve a branch.
+	relevantGit(t, dir, relevantMe, "checkout", "-q", "-b", "wip")
+	commitFileAs(t, dir, relevantMe, "x.go", "v1\n")
+	relevantGit(t, dir, relevantMe, "checkout", "-q", "--detach", "HEAD")
+	commitFileAs(t, dir, relevantMe, "y.go", "v2\n")
+
+	pathNote := makeNote(t, dir, "path", model.Anchor{Kind: model.AnchorPath, Value: "x.go"})
+	branchNote := makeNote(t, dir, "branch only", model.Anchor{Kind: model.AnchorBranch, Value: "wip"})
+
+	// --base=wip: with no trunk the default cross-author base ("main") does not
+	// resolve; name an existing base so the run exercises the branch degrade, not
+	// that orthogonal path.
+	scored, _, err := relevantForTest(t, dir, "x.go", "", "wip", false, false)
+	if err != nil {
+		t.Fatalf("ambiguous HEAD must not error: %v", err)
+	}
+	wantIDs := []model.EntityID{pathNote, branchNote}
+	if !slices.Equal(scoredIDs(scored), wantIDs) {
+		t.Fatalf("ambiguous HEAD ids = %v, want %v", scoredIDs(scored), wantIDs)
+	}
+	pm := findScored(t, scored, pathNote)
+	if pm.score != scorePath || len(pm.reasons) != 1 || pm.reasons[0] != reasonPath {
+		t.Fatalf("ambiguous path note = score %d reasons %v, want %d [path]", pm.score, pm.reasons, scorePath)
+	}
+	bm := findScored(t, scored, branchNote)
 	if bm.score != scoreMergedBranch || len(bm.reasons) != 1 || bm.reasons[0] != reasonMergedBranch {
-		t.Fatalf("detached branch note = score %d reasons %v, want %d [merged-branch] (no plain branch on detached HEAD)", bm.score, bm.reasons, scoreMergedBranch)
+		t.Fatalf("ambiguous branch note = score %d reasons %v, want %d [merged-branch] (no plain branch on an unresolvable HEAD)", bm.score, bm.reasons, scoreMergedBranch)
 	}
 }
 

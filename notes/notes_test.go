@@ -60,7 +60,7 @@ func TestHasNotes(t *testing.T) {
 		t.Fatal("fresh repo HasNotes = true, want false")
 	}
 
-	if _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "p"}); err != nil {
+	if _, _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "p"}); err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
@@ -73,76 +73,29 @@ func TestHasNotes(t *testing.T) {
 	}
 }
 
-func TestCreateProject(t *testing.T) {
-	c, _ := newClient(t)
-	p, err := c.CreateProject(t.Context(), notes.ProjectSpec{Title: "Platform", Description: "infra", Labels: []string{"b", "a"}})
-	if err != nil {
-		t.Fatalf("CreateProject: %v", err)
-	}
-	if p.Title != "Platform" || p.Description != "infra" {
-		t.Errorf("project = %q/%q, want Platform/infra", p.Title, p.Description)
-	}
-	if p.Status != model.ProjectActive {
-		t.Errorf("Status = %q, want %q", p.Status, model.ProjectActive)
-	}
-	if want := []string{"a", "b"}; !slices.Equal(p.Labels, want) {
-		t.Errorf("Labels = %v, want %v", p.Labels, want)
-	}
-	if p.Author != model.Actor(testActor) {
-		t.Errorf("Author = %q, want %q", p.Author, testActor)
-	}
-	if !isHexID(p.ID) {
-		t.Errorf("ID = %q, want a hex entity id", p.ID)
-	}
-}
-
-func TestCreateSprint(t *testing.T) {
-	c, _ := newClient(t)
-	ctx := t.Context()
-	p, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "P"})
-	if err != nil {
-		t.Fatalf("CreateProject: %v", err)
-	}
-	s, err := c.CreateSprint(ctx, notes.SprintSpec{Title: "Sprint 1", Project: p.ID, StartDate: 1000, EndDate: 2000})
-	if err != nil {
-		t.Fatalf("CreateSprint: %v", err)
-	}
-	if s.Title != "Sprint 1" {
-		t.Errorf("Title = %q, want Sprint 1", s.Title)
-	}
-	if s.Status != model.SprintPlanned {
-		t.Errorf("Status = %q, want %q", s.Status, model.SprintPlanned)
-	}
-	if s.Project != p.ID {
-		t.Errorf("Project = %q, want %q", s.Project, p.ID)
-	}
-	if s.StartDate != 1000 || s.EndDate != 2000 {
-		t.Errorf("dates = %d/%d, want 1000/2000", s.StartDate, s.EndDate)
-	}
-}
-
 func TestCreateTask(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
-	p, _ := c.CreateProject(ctx, notes.ProjectSpec{Title: "P"})
-	s, _ := c.CreateSprint(ctx, notes.SprintSpec{Title: "S", Project: p.ID})
+	p, _, _ := c.CreateProject(ctx, notes.ProjectSpec{Title: "P"})
+	s, _, _ := c.CreateSprint(ctx, notes.SprintSpec{Title: "S", Project: p.ID})
 	blocker, err := c.CreateTask(ctx, notes.TaskSpec{Title: "blocker", Branch: "main"})
 	if err != nil {
 		t.Fatalf("CreateTask blocker: %v", err)
 	}
 
-	task, err := c.CreateTask(ctx, notes.TaskSpec{
+	created, err := c.CreateTask(ctx, notes.TaskSpec{
 		Title:     "ship it",
 		Branch:    "feature/x",
 		Sprint:    s.ID,
 		Project:   p.ID,
 		Priority:  1,
 		Criteria:  []string{"tests pass", "docs updated"},
-		BlockedBy: []model.EntityID{blocker.ID},
+		BlockedBy: []model.EntityID{blocker.Task.ID},
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	task := created.Task
 	if task.Title != "ship it" || task.Branch != "feature/x" {
 		t.Errorf("task = %q/%q, want ship it/feature/x", task.Title, task.Branch)
 	}
@@ -158,7 +111,7 @@ func TestCreateTask(t *testing.T) {
 	if task.Criteria[0].Text != "tests pass" || task.Criteria[0].Status != model.CriterionPending {
 		t.Errorf("criterion[0] = %+v, want text 'tests pass' status pending", task.Criteria[0])
 	}
-	if want := []model.EntityID{blocker.ID}; !slices.Equal(task.BlockedBy, want) {
+	if want := []model.EntityID{blocker.Task.ID}; !slices.Equal(task.BlockedBy, want) {
 		t.Errorf("BlockedBy = %v, want %v", task.BlockedBy, want)
 	}
 
@@ -168,27 +121,57 @@ func TestCreateTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask bare: %v", err)
 	}
-	if len(bare.Criteria) != 0 {
-		t.Errorf("bare Criteria = %d, want 0", len(bare.Criteria))
+	if len(bare.Task.Criteria) != 0 {
+		t.Errorf("bare Criteria = %d, want 0", len(bare.Task.Criteria))
 	}
 }
 
-func TestCreateTaskBranchFromHead(t *testing.T) {
+// TestCreateTaskBranchDegrade proves an empty-branch, non-backlog spec resolves
+// the current branch on an attached HEAD and degrades onto the backlog (empty
+// branch, Degraded=true) on a genuinely unresolvable HEAD — the replacement for
+// the old BranchFromHead hard error.
+func TestCreateTaskBranchDegrade(t *testing.T) {
 	c, dir := newClient(t)
 	ctx := t.Context()
 	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
 
-	task, err := c.CreateTask(ctx, notes.TaskSpec{Title: "on head", BranchFromHead: true})
+	onHead, err := c.CreateTask(ctx, notes.TaskSpec{Title: "on head"})
 	if err != nil {
-		t.Fatalf("CreateTask BranchFromHead: %v", err)
+		t.Fatalf("CreateTask on attached HEAD: %v", err)
 	}
-	if task.Branch != "main" {
-		t.Errorf("Branch = %q, want main", task.Branch)
+	if onHead.Task.Branch != "main" {
+		t.Errorf("Branch = %q, want main", onHead.Task.Branch)
+	}
+	if onHead.Degraded {
+		t.Error("Degraded = true on attached HEAD, want false")
 	}
 
-	gittest.Git(t, dir, "checkout", "-q", "--detach", "HEAD")
-	if _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "detached", BranchFromHead: true}); !errors.Is(err, notes.ErrDetachedHead) {
-		t.Fatalf("CreateTask on detached HEAD = %v, want ErrDetachedHead", err)
+	// An explicit Backlog spec lands on the backlog without degrading.
+	backlog, err := c.CreateTask(ctx, notes.TaskSpec{Title: "explicit backlog", Backlog: true})
+	if err != nil {
+		t.Fatalf("CreateTask Backlog: %v", err)
+	}
+	if backlog.Degraded || backlog.Task.Branch != "" {
+		t.Errorf("Backlog spec = Degraded %v branch %q, want false/empty", backlog.Degraded, backlog.Task.Branch)
+	}
+
+	// A genuinely unresolvable HEAD degrades onto the backlog: no trunk (main
+	// never exists) and HEAD advanced past the sole bookmark.
+	dc, ddir := newClient(t)
+	gittest.Git(t, ddir, "checkout", "-q", "-b", "wip")
+	gittest.Git(t, ddir, "commit", "-q", "--allow-empty", "-m", "c1")
+	gittest.Git(t, ddir, "checkout", "-q", "--detach")
+	gittest.Git(t, ddir, "commit", "-q", "--allow-empty", "-m", "c2")
+
+	degraded, err := dc.CreateTask(ctx, notes.TaskSpec{Title: "detached"})
+	if err != nil {
+		t.Fatalf("CreateTask on unresolvable HEAD: %v", err)
+	}
+	if !degraded.Degraded {
+		t.Error("Degraded = false on unresolvable HEAD, want true")
+	}
+	if degraded.Task.Branch != "" {
+		t.Errorf("Branch = %q, want empty (degraded to backlog)", degraded.Task.Branch)
 	}
 }
 
@@ -203,15 +186,15 @@ func TestReadAndList(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	loaded, err := c.Task(ctx, created.ID)
+	loaded, err := c.Task(ctx, created.Task.ID)
 	if err != nil {
 		t.Fatalf("Task: %v", err)
 	}
-	if loaded.ID != created.ID || loaded.Title != "t1" {
-		t.Errorf("Task = %q/%q, want %q/t1", loaded.ID, loaded.Title, created.ID)
+	if loaded.ID != created.Task.ID || loaded.Title != "t1" {
+		t.Errorf("Task = %q/%q, want %q/t1", loaded.ID, loaded.Title, created.Task.ID)
 	}
 
-	tasks, err := c.Tasks(ctx)
+	tasks, err := c.Tasks(ctx, notes.TaskFilter{})
 	if err != nil {
 		t.Fatalf("Tasks: %v", err)
 	}
@@ -227,8 +210,8 @@ func TestReadAndList(t *testing.T) {
 func TestResolve(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
-	p1, _ := c.CreateProject(ctx, notes.ProjectSpec{Title: "p1"})
-	if _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "p2"}); err != nil {
+	p1, _, _ := c.CreateProject(ctx, notes.ProjectSpec{Title: "p1"})
+	if _, _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "p2"}); err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
@@ -255,10 +238,11 @@ func TestTaskLifecycle(t *testing.T) {
 	headSHA := model.SHA(gittest.Git(t, dir, "rev-parse", "HEAD"))
 	_ = head
 
-	task, err := c.CreateTask(ctx, notes.TaskSpec{Title: "work", Branch: "feature/x"})
+	created, err := c.CreateTask(ctx, notes.TaskSpec{Title: "work", Branch: "feature/x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	task := created.Task
 
 	// Renew before claiming is refused.
 	if _, err := c.RenewTask(ctx, task.ID); !isConflict(err) {
@@ -277,7 +261,7 @@ func TestTaskLifecycle(t *testing.T) {
 		t.Errorf("RenewTask after claim: %v", err)
 	}
 
-	done, err := c.DoneTask(ctx, task.ID)
+	done, err := c.DoneTask(ctx, task.ID, false)
 	if err != nil {
 		t.Fatalf("DoneTask: %v", err)
 	}
@@ -299,29 +283,33 @@ func TestStartTask(t *testing.T) {
 	ctx := t.Context()
 	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
 
-	task, err := c.CreateTask(ctx, notes.TaskSpec{Title: "work", Branch: "backlog-ish"})
+	created, err := c.CreateTask(ctx, notes.TaskSpec{Title: "work", Branch: "backlog-ish"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	started, err := c.StartTask(ctx, task.ID)
+	started, err := c.StartTask(ctx, created.Task.ID, "")
 	if err != nil {
 		t.Fatalf("StartTask: %v", err)
 	}
-	if started.Assignee != model.Actor(testActor) {
-		t.Errorf("Assignee = %q, want %q", started.Assignee, testActor)
+	if !started.BranchSet {
+		t.Error("BranchSet = false, want true (attached HEAD resolves a branch)")
 	}
-	if started.Branch != "main" {
-		t.Errorf("Branch = %q, want main (current branch)", started.Branch)
+	if started.Task.Assignee != model.Actor(testActor) {
+		t.Errorf("Assignee = %q, want %q", started.Task.Assignee, testActor)
+	}
+	if started.Branch != "main" || started.Task.Branch != "main" {
+		t.Errorf("Branch = %q/%q, want main (current branch)", started.Branch, started.Task.Branch)
 	}
 }
 
 func TestClaimConflict(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
-	task, err := c.CreateTask(ctx, notes.TaskSpec{Title: "contested", Branch: "main"})
+	created, err := c.CreateTask(ctx, notes.TaskSpec{Title: "contested", Branch: "main"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	task := created.Task
 	if _, err := c.ClaimTask(ctx, task.ID); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
@@ -337,40 +325,6 @@ func TestClaimConflict(t *testing.T) {
 	}
 	if reloaded.Assignee != model.Actor(testActor) {
 		t.Errorf("Assignee = %q, want original %q", reloaded.Assignee, testActor)
-	}
-}
-
-func TestSprintTransitions(t *testing.T) {
-	c, _ := newClient(t)
-	ctx := t.Context()
-	s, err := c.CreateSprint(ctx, notes.SprintSpec{Title: "S"})
-	if err != nil {
-		t.Fatalf("CreateSprint: %v", err)
-	}
-	if got, err := c.StartSprint(ctx, s.ID); err != nil || got.Status != model.SprintActive {
-		t.Fatalf("StartSprint = %q/%v, want active/nil", got.Status, err)
-	}
-	if got, err := c.CompleteSprint(ctx, s.ID); err != nil || got.Status != model.SprintCompleted {
-		t.Fatalf("CompleteSprint = %q/%v, want completed/nil", got.Status, err)
-	}
-	// A completed sprint refuses further transitions.
-	if _, err := c.CancelSprint(ctx, s.ID); !isConflict(err) {
-		t.Errorf("CancelSprint on completed = %v, want *ConflictError", err)
-	}
-}
-
-func TestProjectTransitions(t *testing.T) {
-	c, _ := newClient(t)
-	ctx := t.Context()
-	p, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "P"})
-	if err != nil {
-		t.Fatalf("CreateProject: %v", err)
-	}
-	if got, err := c.CompleteProject(ctx, p.ID); err != nil || got.Status != model.ProjectCompleted {
-		t.Fatalf("CompleteProject = %q/%v, want completed/nil", got.Status, err)
-	}
-	if _, err := c.ArchiveProject(ctx, p.ID); !isConflict(err) {
-		t.Errorf("ArchiveProject on completed = %v, want *ConflictError", err)
 	}
 }
 
@@ -407,11 +361,11 @@ func TestCreateDedupe(t *testing.T) {
 	c, _ := newClient(t)
 	ctx := t.Context()
 
-	first, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "dup", Description: "d"})
+	first, _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "dup", Description: "d"})
 	if err != nil {
 		t.Fatalf("first CreateProject: %v", err)
 	}
-	again, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "dup", Description: "d"})
+	again, _, err := c.CreateProject(ctx, notes.ProjectSpec{Title: "dup", Description: "d"})
 	if err != nil {
 		t.Fatalf("second CreateProject: %v", err)
 	}
@@ -427,8 +381,11 @@ func TestCreateDedupe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second CreateTask: %v", err)
 	}
-	if againTask.ID != firstTask.ID {
-		t.Errorf("second CreateTask id = %s, want existing %s (idempotent)", againTask.ID, firstTask.ID)
+	if againTask.Task.ID != firstTask.Task.ID {
+		t.Errorf("second CreateTask id = %s, want existing %s (idempotent)", againTask.Task.ID, firstTask.Task.ID)
+	}
+	if !againTask.Reused {
+		t.Error("second CreateTask Reused = false, want true (idempotent)")
 	}
 }
 

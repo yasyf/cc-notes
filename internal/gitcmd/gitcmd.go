@@ -507,7 +507,7 @@ func (g Git) ConfigUnsetValue(ctx context.Context, key, value string) error {
 // in a freshly initialized repository. A detached HEAD wraps
 // ErrDetachedHead.
 func (g Git) HeadBranch(ctx context.Context) (model.Branch, error) {
-	out, err := g.run(ctx, "", "symbolic-ref", "--short", "HEAD")
+	out, err := g.run(ctx, "", "symbolic-ref", "HEAD")
 	var cmdErr *commandError
 	if errors.As(err, &cmdErr) && strings.Contains(cmdErr.stderr, "not a symbolic ref") {
 		return "", fmt.Errorf("head branch: %w", ErrDetachedHead)
@@ -515,7 +515,7 @@ func (g Git) HeadBranch(ctx context.Context) (model.Branch, error) {
 	if err != nil {
 		return "", fmt.Errorf("head branch: %w", err)
 	}
-	return model.Branch(strings.TrimSpace(out)), nil
+	return model.Branch(strings.TrimPrefix(strings.TrimSpace(out), "refs/heads/")), nil
 }
 
 // DefaultBranch returns the remote default branch — the branch origin/HEAD

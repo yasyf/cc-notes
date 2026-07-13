@@ -18,6 +18,9 @@ type Config struct {
 	Version string
 	NewRoot func() *cobra.Command
 	Label   func(error) string
+	// Message renders an error's body as the CLI does, trimming the notes-layer
+	// "cc-notes: " prefix so it is not doubled under the Label.
+	Message func(error) string
 }
 
 // New builds the MCP server with every tool table registered.
@@ -26,7 +29,7 @@ func New(cfg Config) *mcp.Server {
 		&mcp.Implementation{Name: "cc-notes", Version: cfg.Version},
 		&mcp.ServerOptions{Instructions: instructions},
 	)
-	b := &bridge{newRoot: cfg.NewRoot, label: cfg.Label}
+	b := &bridge{newRoot: cfg.NewRoot, label: cfg.Label, message: cfg.Message}
 	registerRepo(srv, b)
 	registerNote(srv, b)
 	registerDoc(srv, b)

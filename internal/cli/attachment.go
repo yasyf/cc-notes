@@ -1,17 +1,11 @@
 package cli
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/spf13/cobra"
-
-	"github.com/yasyf/cc-notes/internal/lfs"
-	"github.com/yasyf/cc-notes/internal/store"
-	"github.com/yasyf/cc-notes/model"
 )
 
 func newAttachmentCmd() *cobra.Command {
@@ -36,19 +30,19 @@ func newAttachmentGetCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			ctx := cmd.Context()
-			s, err := openStore()
+			_, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			att, content, err := lookupAttachment(ctx, s, args[0], args[1])
+			kind, id, err := c.ResolveAttachable(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			f, err := openAttachmentContent(content, att)
+			att, content, err := c.OpenAttachment(ctx, kind, id, args[1])
 			if err != nil {
 				return err
 			}
-			defer func() { _ = f.Close() }()
+			defer func() { _ = content.Close() }()
 			dest := cmd.OutOrStdout()
 			if output != "" {
 				//nolint:gosec // G304: output is the CLI's own -o output target for attachment get, taken by design.
@@ -66,7 +60,7 @@ func newAttachmentGetCmd() *cobra.Command {
 				}()
 				dest = out
 			}
-			if _, err = io.Copy(dest, f); err != nil {
+			if _, err = io.Copy(dest, content); err != nil {
 				return fmt.Errorf("read attachment %s: %w", att.Name, err)
 			}
 			return nil
@@ -83,94 +77,20 @@ func newAttachmentPathCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			_, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			att, content, err := lookupAttachment(ctx, s, args[0], args[1])
+			kind, id, err := c.ResolveAttachable(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if !content.Has(att.OID) {
-				return missingContentError(att)
+			_, path, err := c.AttachmentPath(ctx, kind, id, args[1])
+			if err != nil {
+				return err
 			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), content.Path(att.OID))
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), path)
 			return err
 		},
 	}
-}
-
-// lookupAttachment resolves an id prefix across the note, doc, and log
-// namespaces, folds the entity, and returns the named attachment plus the
-// repository's local LFS store. A prefix matching more than one kind is
-// ambiguous; an unknown name is not-found and lists what the entity carries.
-func lookupAttachment(ctx context.Context, s *store.Store, prefix, name string) (model.Attachment, lfs.Store, error) {
-	ref, err := resolveAttachable(ctx, s, prefix)
-	if err != nil {
-		return model.Attachment{}, lfs.Store{}, err
-	}
-	snapshot, err := s.Load(ctx, ref)
-	if err != nil {
-		return model.Attachment{}, lfs.Store{}, err
-	}
-	atts := snapshot.Meta().Attachments
-	for _, a := range atts {
-		if a.Name == name {
-			content, err := s.LFS(ctx)
-			if err != nil {
-				return model.Attachment{}, lfs.Store{}, err
-			}
-			return a, content, nil
-		}
-	}
-	names := make([]string, len(atts))
-	for i, a := range atts {
-		names[i] = a.Name
-	}
-	return model.Attachment{}, lfs.Store{}, fmt.Errorf("%w: no attachment %q on %s (has: %s)",
-		store.ErrNotFound, name, snapshot.EntityID().Short(), csvOrDash(names))
-}
-
-// resolveAttachable expands an id prefix against the three attachment-bearing
-// namespaces: note, doc, and log. Ids are globally unique, so more than one
-// kind matching is ambiguous.
-func resolveAttachable(ctx context.Context, s *store.Store, prefix string) (string, error) {
-	matched := make([]string, 0, 3)
-	for _, kind := range []model.Kind{model.KindNote, model.KindDoc, model.KindLog} {
-		ref, err := s.Resolve(ctx, kind, prefix)
-		if errors.Is(err, store.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		matched = append(matched, ref)
-	}
-	switch len(matched) {
-	case 0:
-		return "", fmt.Errorf("%w: no note, doc, or log matches %q", store.ErrNotFound, prefix)
-	case 1:
-		return matched[0], nil
-	default:
-		return "", ambiguousAcrossKinds(ctx, s, prefix, matched)
-	}
-}
-
-// openAttachmentContent opens att's bytes in the local LFS store, mapping a
-// missing object to the sync remediation.
-func openAttachmentContent(content lfs.Store, att model.Attachment) (*os.File, error) {
-	f, err := content.Open(att.OID)
-	if errors.Is(err, lfs.ErrObjectMissing) {
-		return nil, missingContentError(att)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("open attachment %s: %w", att.Name, err)
-	}
-	return f, nil
-}
-
-// missingContentError names a referenced-but-absent attachment and the
-// command that fetches it.
-func missingContentError(att model.Attachment) error {
-	return fmt.Errorf("attachment %q (oid %s) is not present locally; run `cc-notes sync` to download it", att.Name, att.OID)
 }

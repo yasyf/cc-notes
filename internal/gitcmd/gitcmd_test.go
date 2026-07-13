@@ -476,6 +476,22 @@ func TestHeadBranch(t *testing.T) {
 	}
 }
 
+func TestHeadBranchTagCollision(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	commitEmpty(t, g, "c1")
+	gittest.Git(t, g.Dir, "checkout", "-q", "-b", "feat")
+	gittest.Git(t, g.Dir, "tag", "feat")
+
+	got, err := g.HeadBranch(ctx)
+	if err != nil {
+		t.Fatalf("HeadBranch: %v", err)
+	}
+	if got != "feat" {
+		t.Fatalf("HeadBranch = %q, want feat (never heads/feat)", got)
+	}
+}
+
 func TestAuthorIdent(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()

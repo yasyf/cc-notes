@@ -1,16 +1,15 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 func newProjectCmd() *cobra.Command {
@@ -38,18 +37,36 @@ func newProjectAddCmd() *cobra.Command {
 	var body string
 	var labels []string
 	var jsonOut bool
-	cmd := projectSpec.createVerb("Create a project", &jsonOut, func(_ context.Context, cmd *cobra.Command, _ *store.Store, title string) ([]model.Op, error) {
-		text, err := bodyArg(cmd, body)
-		if err != nil {
-			return nil, err
-		}
-		return []model.Op{model.CreateProject{
-			Nonce:       model.NewNonce(),
-			Title:       title,
-			Description: text,
-			Labels:      labels,
-		}}, nil
-	})
+	cmd := &cobra.Command{
+		Use:   "add TITLE",
+		Short: "Create a project",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateTitle(args[0], titleHintDesc); err != nil {
+				return err
+			}
+			text, err := bodyArg(cmd, body)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			project, reused, err := c.CreateProject(ctx, notes.ProjectSpec{Title: args[0], Description: text, Labels: labels})
+			if err != nil {
+				return err
+			}
+			if reused {
+				warnDuplicate(cmd, "project", project.ID)
+			}
+			return printProject(cmd, s, project, jsonOut)
+		},
+	}
 	flags := cmd.Flags()
 	bindBody(flags, &body, "project description; - reads stdin")
 	flags.StringArrayVar(&labels, "label", nil, "label (repeatable)")
@@ -66,7 +83,7 @@ func newProjectListCmd() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -80,14 +97,9 @@ func newProjectListCmd() *cobra.Command {
 					statuses = append(statuses, status)
 				}
 			}
-			projects, err := s.ListProjects(ctx)
+			projects, err := c.Projects(ctx, notes.ProjectFilter{Statuses: statuses})
 			if err != nil {
 				return err
-			}
-			if len(statuses) > 0 {
-				projects = slices.DeleteFunc(projects, func(p model.Project) bool {
-					return !slices.Contains(statuses, p.Status)
-				})
 			}
 			return printProjectList(cmd, s, projects, jsonOut)
 		},
@@ -103,16 +115,41 @@ func newProjectShowCmd() *cobra.Command {
 }
 
 func newProjectStatusCmd(use string, status model.ProjectStatus) *cobra.Command {
-	return projectSpec.statusVerb(use, string(status), guardProjectTransition, model.SetProjectStatus{Status: status})
-}
-
-// guardProjectTransition allows a status change only from active; a project
-// already closed refuses further transitions.
-func guardProjectTransition(project model.Project) error {
-	if project.Status != model.ProjectActive {
-		return &ConflictError{Msg: fmt.Sprintf("%s already %s", project.ID.Short(), project.Status)}
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   use + " ID",
+		Short: "Mark a project " + string(status),
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveProject(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			var project model.Project
+			switch status {
+			case model.ProjectCompleted:
+				project, err = c.CompleteProject(ctx, id)
+			case model.ProjectArchived:
+				project, err = c.ArchiveProject(ctx, id)
+			case model.ProjectCancelled:
+				project, err = c.CancelProject(ctx, id)
+			}
+			if err != nil {
+				return planningErr(err)
+			}
+			return printProject(cmd, s, project, jsonOut)
+		},
 	}
-	return nil
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
 }
 
 func newProjectEditCmd() *cobra.Command {
@@ -126,14 +163,14 @@ func newProjectEditCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			flags := cmd.Flags()
-			var ops []model.Op
+			var edit notes.ProjectEdit
 			if flags.Changed("title") {
 				if err := validateTitle(title, titleHintDesc); err != nil {
 					return err
 				}
-				ops = append(ops, model.SetTitle{Title: title})
+				edit.Title = &title
 			}
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -142,29 +179,24 @@ func newProjectEditCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetDescription{Description: text})
+				edit.Description = &text
 			}
-			for _, label := range addLabels {
-				ops = append(ops, model.AddLabel{Label: label})
-			}
-			for _, label := range rmLabels {
-				ops = append(ops, model.RemoveLabel{Label: label})
-			}
-			if len(ops) == 0 {
+			edit.AddLabels, edit.RemoveLabels = addLabels, rmLabels
+			if projectEditEmpty(edit) {
 				return &UsageError{Err: errors.New("project edit requires at least one flag")}
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := projectSpec.load(ctx, s, args[0])
+			id, err := c.ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, ops)
+			project, err := c.EditProject(ctx, id, edit)
 			if err != nil {
-				return err
+				return planningErr(err)
 			}
-			return printProject(cmd, s, snapshot.(model.Project), jsonOut)
+			return printProject(cmd, s, project, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -177,7 +209,43 @@ func newProjectEditCmd() *cobra.Command {
 }
 
 func newProjectCommentCmd() *cobra.Command {
-	return projectSpec.commentVerb(nil)
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "comment ID BODY",
+		Short: "Append a comment; BODY - reads stdin",
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			body, err := bodyArg(cmd, args[1])
+			if err != nil {
+				return err
+			}
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveProject(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			project, err := c.CommentProject(ctx, id, body)
+			if err != nil {
+				return planningErr(err)
+			}
+			return printProject(cmd, s, project, jsonOut)
+		},
+	}
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
+}
+
+// projectEditEmpty reports whether a project edit mask sets nothing, the CLI's
+// own arity guard mapping an empty edit to a usage error before the notes layer.
+func projectEditEmpty(e notes.ProjectEdit) bool {
+	return e.Title == nil && e.Description == nil && len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0
 }
 
 // printProjectList writes projects as a JSON array of their DTOs — each carrying

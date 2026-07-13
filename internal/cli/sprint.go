@@ -1,16 +1,15 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 func newSprintCmd() *cobra.Command {
@@ -38,42 +37,56 @@ func newSprintAddCmd() *cobra.Command {
 	var body, project, start, end string
 	var labels []string
 	var jsonOut bool
-	cmd := sprintSpec.createVerb("Create a sprint", &jsonOut, func(ctx context.Context, cmd *cobra.Command, s *store.Store, title string) ([]model.Op, error) {
-		text, err := bodyArg(cmd, body)
-		if err != nil {
-			return nil, err
-		}
-		var projectID model.EntityID
-		if project != "" {
-			_, proj, err := projectSpec.load(ctx, s, project)
-			if err != nil {
-				return nil, err
+	cmd := &cobra.Command{
+		Use:   "add TITLE",
+		Short: "Create a sprint",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateTitle(args[0], titleHintDesc); err != nil {
+				return err
 			}
-			projectID = proj.ID
-		}
-		ops := []model.Op{model.CreateSprint{
-			Nonce:       model.NewNonce(),
-			Title:       title,
-			Description: text,
-			Project:     projectID,
-			Labels:      labels,
-		}}
-		if cmd.Flags().Changed("start") {
-			date, err := parseDate(start)
+			text, err := bodyArg(cmd, body)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			ops = append(ops, model.SetStartDate{Date: date})
-		}
-		if cmd.Flags().Changed("end") {
-			date, err := parseDate(end)
+			ctx := cmd.Context()
+			s, c, err := openStoreClient()
 			if err != nil {
-				return nil, err
+				return err
 			}
-			ops = append(ops, model.SetEndDate{Date: date})
-		}
-		return ops, nil
-	})
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			var projectID model.EntityID
+			if project != "" {
+				projectID, err = c.ResolveProject(ctx, project)
+				if err != nil {
+					return err
+				}
+			}
+			spec := notes.SprintSpec{Title: args[0], Description: text, Project: projectID, Labels: labels}
+			if cmd.Flags().Changed("start") {
+				spec.StartDate, err = parseDate(start)
+				if err != nil {
+					return err
+				}
+			}
+			if cmd.Flags().Changed("end") {
+				spec.EndDate, err = parseDate(end)
+				if err != nil {
+					return err
+				}
+			}
+			sprint, reused, err := c.CreateSprint(ctx, spec)
+			if err != nil {
+				return err
+			}
+			if reused {
+				warnDuplicate(cmd, "sprint", sprint.ID)
+			}
+			return printSprint(cmd, s, sprint, jsonOut)
+		},
+	}
 	flags := cmd.Flags()
 	bindBody(flags, &body, "sprint description; - reads stdin")
 	flags.StringVar(&project, "project", "", "project id prefix")
@@ -93,7 +106,7 @@ func newSprintListCmd() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -109,20 +122,15 @@ func newSprintListCmd() *cobra.Command {
 			}
 			var projectID model.EntityID
 			if project != "" {
-				_, proj, err := projectSpec.load(ctx, s, project)
+				projectID, err = c.ResolveProject(ctx, project)
 				if err != nil {
 					return err
 				}
-				projectID = proj.ID
 			}
-			sprints, err := s.ListSprints(ctx)
+			sprints, err := c.Sprints(ctx, notes.SprintFilter{Project: projectID, Statuses: statuses})
 			if err != nil {
 				return err
 			}
-			sprints = slices.DeleteFunc(sprints, func(sp model.Sprint) bool {
-				return (projectID != "" && sp.Project != projectID) ||
-					(len(statuses) > 0 && !slices.Contains(statuses, sp.Status))
-			})
 			return printSprintList(cmd, s, sprints, jsonOut)
 		},
 	}
@@ -138,18 +146,41 @@ func newSprintShowCmd() *cobra.Command {
 }
 
 func newSprintStatusCmd(use string, status model.SprintStatus) *cobra.Command {
-	return sprintSpec.statusVerb(use, string(status), guardSprintTransition, model.SetSprintStatus{Status: status})
-}
-
-// guardSprintTransition allows a status change only from planned or active, so
-// activate on an active sprint stays idempotent while a closed sprint refuses.
-func guardSprintTransition(sprint model.Sprint) error {
-	switch sprint.Status {
-	case model.SprintPlanned, model.SprintActive:
-		return nil
-	default:
-		return &ConflictError{Msg: fmt.Sprintf("%s already %s", sprint.ID.Short(), sprint.Status)}
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   use + " ID",
+		Short: "Mark a sprint " + string(status),
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveSprint(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			var sprint model.Sprint
+			switch status {
+			case model.SprintActive:
+				sprint, err = c.ActivateSprint(ctx, id)
+			case model.SprintCompleted:
+				sprint, err = c.CompleteSprint(ctx, id)
+			case model.SprintCancelled:
+				sprint, err = c.CancelSprint(ctx, id)
+			}
+			if err != nil {
+				return planningErr(err)
+			}
+			return printSprint(cmd, s, sprint, jsonOut)
+		},
 	}
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
 }
 
 func newSprintEditCmd() *cobra.Command {
@@ -173,14 +204,14 @@ func newSprintEditCmd() *cobra.Command {
 			if flags.Changed("end") && noEnd {
 				return &UsageError{Err: errors.New("--end and --no-end are mutually exclusive")}
 			}
-			var ops []model.Op
+			var edit notes.SprintEdit
 			if flags.Changed("title") {
 				if err := validateTitle(title, titleHintDesc); err != nil {
 					return err
 				}
-				ops = append(ops, model.SetTitle{Title: title})
+				edit.Title = &title
 			}
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -189,59 +220,57 @@ func newSprintEditCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetDescription{Description: text})
+				edit.Description = &text
 			}
 			if flags.Changed("project") {
-				_, proj, err := projectSpec.load(ctx, s, project)
+				id, err := c.ResolveProject(ctx, project)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetProject{Project: proj.ID})
+				edit.Project = &id
 			}
 			if noProject {
-				ops = append(ops, model.SetProject{})
+				empty := model.EntityID("")
+				edit.Project = &empty
 			}
 			if flags.Changed("start") {
 				date, err := parseDate(start)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetStartDate{Date: date})
+				edit.StartDate = &date
 			}
 			if noStart {
-				ops = append(ops, model.SetStartDate{})
+				zero := int64(0)
+				edit.StartDate = &zero
 			}
 			if flags.Changed("end") {
 				date, err := parseDate(end)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetEndDate{Date: date})
+				edit.EndDate = &date
 			}
 			if noEnd {
-				ops = append(ops, model.SetEndDate{})
+				zero := int64(0)
+				edit.EndDate = &zero
 			}
-			for _, label := range addLabels {
-				ops = append(ops, model.AddLabel{Label: label})
-			}
-			for _, label := range rmLabels {
-				ops = append(ops, model.RemoveLabel{Label: label})
-			}
-			if len(ops) == 0 {
+			edit.AddLabels, edit.RemoveLabels = addLabels, rmLabels
+			if sprintEditEmpty(edit) {
 				return &UsageError{Err: errors.New("sprint edit requires at least one flag")}
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := sprintSpec.load(ctx, s, args[0])
+			id, err := c.ResolveSprint(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, ops)
+			sprint, err := c.EditSprint(ctx, id, edit)
 			if err != nil {
-				return err
+				return planningErr(err)
 			}
-			return printSprint(cmd, s, snapshot.(model.Sprint), jsonOut)
+			return printSprint(cmd, s, sprint, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -260,7 +289,56 @@ func newSprintEditCmd() *cobra.Command {
 }
 
 func newSprintCommentCmd() *cobra.Command {
-	return sprintSpec.commentVerb(nil)
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "comment ID BODY",
+		Short: "Append a comment; BODY - reads stdin",
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			body, err := bodyArg(cmd, args[1])
+			if err != nil {
+				return err
+			}
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveSprint(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			sprint, err := c.CommentSprint(ctx, id, body)
+			if err != nil {
+				return planningErr(err)
+			}
+			return printSprint(cmd, s, sprint, jsonOut)
+		},
+	}
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
+}
+
+// sprintEditEmpty reports whether a sprint edit mask sets nothing, the CLI's own
+// arity guard mapping an empty edit to a usage error before the notes layer.
+func sprintEditEmpty(e notes.SprintEdit) bool {
+	return e.Title == nil && e.Description == nil && e.Project == nil &&
+		e.StartDate == nil && e.EndDate == nil &&
+		len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0
+}
+
+// planningErr maps a *notes.ConflictError from a sprint or project transition to
+// the CLI's own *ConflictError, so its stderr bytes match the pre-migration CLI;
+// every other error passes through untouched.
+func planningErr(err error) error {
+	var conflict *notes.ConflictError
+	if errors.As(err, &conflict) {
+		return &ConflictError{Msg: strings.TrimPrefix(conflict.Error(), "cc-notes: ")}
+	}
+	return err
 }
 
 // printSprintList writes sprints as a JSON array of their DTOs — each carrying

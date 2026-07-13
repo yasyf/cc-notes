@@ -186,6 +186,26 @@ def render_task_line(task: dict[str, Any]) -> str:
     return line
 
 
+def dedup_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop tasks whose id already appeared, keeping the first occurrence in order.
+
+    The session floater concatenates the current-branch list with the shared backlog;
+    on an unresolvable detached HEAD the branch read itself degrades to the backlog set,
+    so the two `task list` reads can return the same task. Tasks carrying no id are never
+    collapsed.
+    """
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for task in tasks:
+        tid = task.get("id")
+        if tid:
+            if tid in seen:
+                continue
+            seen.add(tid)
+        out.append(task)
+    return out
+
+
 def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int) -> list[str]:
     if not tasks:
         return []

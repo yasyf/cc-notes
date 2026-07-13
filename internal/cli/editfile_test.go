@@ -533,8 +533,8 @@ func TestDocEditAttach(t *testing.T) {
 	// Re-attach the same name without --replace → collision error naming the file.
 	second, secondOID := writeAttachable(t, "report.txt", []byte("second longer"))
 	_, _, err := runCLI(t, dir, "doc", "edit", doc.ID, "--attach", second)
-	if cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "report.txt") || !strings.Contains(err.Error(), "--replace") {
-		t.Fatalf("colliding edit = %v (exit %d), want usage error naming report.txt and --replace", err, cli.ExitCode(err))
+	if cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "report.txt") || !strings.Contains(cli.Hint(err), "--replace") {
+		t.Fatalf("colliding edit = %v (exit %d, hint %q), want an exit-2 error naming report.txt with a --replace hint", err, cli.ExitCode(err), cli.Hint(err))
 	}
 	shown := mustJSON[docJSON](t, mustRun(t, dir, "doc", "show", doc.ID, "--json"))
 	if len(shown.Attachments) != 1 || shown.Attachments[0].OID != firstOID {
@@ -566,8 +566,8 @@ func TestNoteEditAttach(t *testing.T) {
 
 	second, secondOID := writeAttachable(t, "report.txt", []byte("second longer"))
 	_, _, err := runCLI(t, dir, "note", "edit", note.ID, "--attach", second)
-	if cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "report.txt") || !strings.Contains(err.Error(), "--replace") {
-		t.Fatalf("colliding edit = %v (exit %d), want usage error naming report.txt and --replace", err, cli.ExitCode(err))
+	if cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "report.txt") || !strings.Contains(cli.Hint(err), "--replace") {
+		t.Fatalf("colliding edit = %v (exit %d, hint %q), want an exit-2 error naming report.txt with a --replace hint", err, cli.ExitCode(err), cli.Hint(err))
 	}
 
 	replaced := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", note.ID, "--attach", second, "--replace", "--json"))

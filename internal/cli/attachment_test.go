@@ -87,11 +87,11 @@ func TestAttachmentMissingLocally(t *testing.T) {
 		t.Fatalf("note show = %q, want missing marker %q", lean, want)
 	}
 
-	if _, _, err := runCLI(t, dir, "attachment", "get", added.ID, "gone.bin"); err == nil || !strings.Contains(err.Error(), "cc-notes sync") {
-		t.Fatalf("attachment get on missing content = %v, want the sync remediation", err)
+	if _, _, err := runCLI(t, dir, "attachment", "get", added.ID, "gone.bin"); err == nil || !strings.Contains(cli.Hint(err), "cc-notes sync") {
+		t.Fatalf("attachment get on missing content = %v (hint %q), want the sync remediation", err, cli.Hint(err))
 	}
-	if _, _, err := runCLI(t, dir, "attachment", "path", added.ID, "gone.bin"); err == nil || !strings.Contains(err.Error(), "cc-notes sync") {
-		t.Fatalf("attachment path on missing content = %v, want the sync remediation", err)
+	if _, _, err := runCLI(t, dir, "attachment", "path", added.ID, "gone.bin"); err == nil || !strings.Contains(cli.Hint(err), "cc-notes sync") {
+		t.Fatalf("attachment path on missing content = %v (hint %q), want the sync remediation", err, cli.Hint(err))
 	}
 }
 
@@ -239,6 +239,64 @@ func TestAttachInstallsPruneGuardOnce(t *testing.T) {
 		if strings.Contains(stderr, line) {
 			t.Fatalf("second attach stderr = %q, want no repeat announcement", stderr)
 		}
+	}
+}
+
+// TestNoteEditMissingIDBeatsAttachIngest pins that edit resolves the entity id
+// before ingesting --attach: a missing note fails not-found (exit 3) without the
+// bad-attachment usage error (exit 2) the pre-migration order raised first.
+func TestNoteEditMissingIDBeatsAttachIngest(t *testing.T) {
+	dir := initRepo(t)
+	missingFile := filepath.Join(dir, "no-such-attach.txt")
+
+	_, _, err := runCLI(t, dir, "note", "edit", "deadbeef", "--attach", missingFile)
+	if cli.ExitCode(err) != 3 {
+		t.Fatalf("edit missing note w/ missing attach = %v (exit %d), want not-found exit 3", err, cli.ExitCode(err))
+	}
+	if strings.Contains(err.Error(), "no-such-attach") {
+		t.Fatalf("err = %q leaked the attachment failure; note resolution must win", err.Error())
+	}
+}
+
+// TestLogAddBadCommitBeatsAttachIngest pins that add validates commit anchors
+// before ingesting --attach: a bad --commit fails not-found (exit 3) and leaves
+// the LFS store untouched, rather than writing the object before failing.
+func TestLogAddBadCommitBeatsAttachIngest(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "f.txt", "hi") // give the repo a HEAD
+	path, oid := writeAttachable(t, "real.log", []byte("payload"))
+
+	_, _, err := runCLI(t, dir, "log", "add", "Rollout", "--commit", "does-not-exist", "--attach", path)
+	if cli.ExitCode(err) != 3 {
+		t.Fatalf("log add bad commit w/ attach = %v (exit %d), want not-found exit 3", err, cli.ExitCode(err))
+	}
+	obj := filepath.Join(dir, ".git", "lfs", "objects", oid[:2], oid[2:4], oid)
+	if _, statErr := os.Stat(obj); !os.IsNotExist(statErr) {
+		t.Fatalf("lfs object %s exists (stat err %v); a doomed log add must ingest nothing", obj, statErr)
+	}
+}
+
+// TestNoteAddBadCommitInstallsNoPruneGuard pins that add validates commit
+// anchors before ingesting --attach: a bad --commit fails not-found (exit 3)
+// without installing the LFS prune guard or creating the note.
+func TestNoteAddBadCommitInstallsNoPruneGuard(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "f.txt", "hi")
+	path, _ := writeAttachable(t, "real.txt", []byte("payload"))
+
+	_, _, err := runCLI(t, dir, "note", "add", "Doomed", "--commit", "does-not-exist", "--attach", path)
+	if cli.ExitCode(err) != 3 {
+		t.Fatalf("note add bad commit w/ attach = %v (exit %d), want not-found exit 3", err, cli.ExitCode(err))
+	}
+	cfg, readErr := os.ReadFile(filepath.Join(dir, ".git", "config"))
+	if readErr != nil {
+		t.Fatalf("read .git/config: %v", readErr)
+	}
+	if strings.Contains(string(cfg), "pruneverify") {
+		t.Fatalf(".git/config installed the prune guard for a doomed note add:\n%s", cfg)
+	}
+	if notes := mustRun(t, dir, "note", "list"); strings.Contains(notes, "Doomed") {
+		t.Fatalf("note list = %q: a doomed note add must create nothing", notes)
 	}
 }
 

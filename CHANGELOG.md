@@ -38,6 +38,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (accepted).
 
 ### Changed
+- **A detached HEAD is first-class: branch-scoped commands resolve the
+  branch jj-aware.** In a colocated jj repo git HEAD sits detached at the
+  working-copy parent as the normal state, and `task start`, `task add`,
+  `task list`, `task ready`, and `reconcile` hard-errored there
+  ("detached HEAD; …"). A jj-aware resolver now finds the current branch
+  even when detached: the branch HEAD points at when attached, else the
+  nearest local branch on `trunk..HEAD` not yet merged into the trunk
+  (the exported jj bookmark you advanced past), else the trunk itself
+  (`origin/HEAD`, else a local `main`, else `master`). When even that
+  fails, each command degrades instead of erroring: `task start` — which
+  gains a `--branch` flag — claims the task without setting a branch and
+  warns on stderr; `task add` lands the task on the backlog with a stderr
+  note (`--branch` overrides, `--backlog` stays explicit); `task list`
+  and `task ready` fall back to the backlog view. `reconcile` still
+  requires a real target: it resolves the same way when detached and
+  errors asking for `--into` only when nothing resolves. An explicit
+  empty `--branch=` / `--into=` is a usage error, rejected before any
+  mutation.
+- **The `notes` package is the domain core.** The importable
+  `notes.Client` (`github.com/yasyf/cc-notes/notes`) is now the single
+  implementation of every entity operation — task, note, doc, log,
+  runbook, sprint, and project create/read/edit/transition/lifecycle,
+  plus attachments — and the `cc-notes` CLI and the MCP server both
+  drive it; it was previously a thin, partial facade nothing used.
+  Repo-utility commands (`status`, `relevant`, `history`, `blame`,
+  `sync`, `reconcile`, `gc`, `mount`, `viz`) still operate on the store
+  directly.
 - `cc-notes init` and `cc-notes hooks install` wire capt-hook through `uvx
   --isolated capt-hook`, keeping a machine-wide `uv tool install capt-hook`
   from silently pinning bare `uvx` to a stale environment.

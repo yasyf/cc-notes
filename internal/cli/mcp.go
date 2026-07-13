@@ -21,6 +21,7 @@ func newMCPCmd() *cobra.Command {
 				Version: version.String(),
 				NewRoot: NewRootCmd,
 				Label:   Label,
+				Message: Message,
 			})
 		},
 	}

@@ -44,6 +44,7 @@ import hooks.common as common
 from hooks.common import (
     cap_and_render_tasks,
     CcNotesMcpToolCall,
+    dedup_tasks,
     entry_payload,
     filter_drifted,
     in_cc_pool_memory,
@@ -347,6 +348,22 @@ def test_cap_and_render_tasks() -> None:
     )
     under = cap_and_render_tasks(tasks[:3], 7)
     check("cap_and_render_tasks: under cap -> no tail", len(under) == 3 and not under[-1].startswith("+"))
+
+
+def test_dedup_tasks() -> None:
+    check("dedup_tasks: empty -> []", dedup_tasks([]) == [])
+    a = {"id": "aaa0001", "status": "open", "title": "a"}
+    b = {"id": "bbb0002", "status": "open", "title": "b"}
+    a_again = {"id": "aaa0001", "status": "in_progress", "title": "a (later read)"}
+    deduped = dedup_tasks([a, b, a_again])
+    check("dedup_tasks: collapses repeated id to one row", [t["id"] for t in deduped] == ["aaa0001", "bbb0002"], repr(deduped))
+    check("dedup_tasks: keeps the FIRST occurrence's fields", deduped[0] is a, repr(deduped[0]))
+    # Distinct tasks that merely share a 7-char id prefix are NOT the same task -> both kept.
+    p, q = {"id": "prefix00A", "title": "p"}, {"id": "prefix00B", "title": "q"}
+    check("dedup_tasks: distinct full ids survive a shared short-id prefix", dedup_tasks([p, q]) == [p, q], repr(dedup_tasks([p, q])))
+    # An id-less task can't be identified, so it is never collapsed against another.
+    idless = [{"status": "open", "title": "x"}, {"status": "open", "title": "y"}]
+    check("dedup_tasks: id-less tasks are never collapsed", dedup_tasks(idless) == idless, repr(dedup_tasks(idless)))
 
 
 def test_approval_server_pin() -> None:
@@ -1184,6 +1201,40 @@ def test_float_session_tasks_silent_no_tasks(monkeypatch, tmp_path) -> None:
     evt = mock_event("UserPromptSubmit", prompt="hi", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
     check("float silent: no tasks -> None", float_session_tasks(evt) is None)
+
+
+def test_float_session_tasks_dedup_detached_head(monkeypatch, tmp_path) -> None:
+    """Under an unresolvable detached HEAD the no-flag `task list --json` no longer errors — it
+    degrades (exit 0) to the shared backlog set. The floater then reads the same set twice (once
+    as the branch list, once via --backlog), so the two lists overlap. It must surface each task
+    exactly once, never a duplicate row.
+
+    Reproduces the post-Phase-1 overlap byte-for-byte by returning the SAME backlog payload for
+    both reads — the input the floater sees on a truly-unresolvable detached HEAD. Revert the
+    dedup in float_session_tasks and every task renders twice, failing this test.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    # Distinct 7-char id prefixes so each renders as its own short-id line (no prefix collision).
+    backlog = [
+        {"id": "aaa0001dead", "status": "open", "title": "wire the thing"},
+        {"id": "bbb0002dead", "status": "open", "title": "sweep the dust"},
+        {"id": "ccc0003dead", "status": "open", "title": "ship the fix"},
+    ]
+    degraded = json.dumps(backlog)
+    mapping = {
+        ("task", "list", "--json"): degraded,
+        ("task", "list", "--backlog", "--json"): degraded,
+    }
+    evt = mock_event("UserPromptSubmit", prompt="let's start", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
+
+    result = float_session_tasks(evt)
+    check("float dedup: fires (warn) under detached HEAD, no error", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        for task in backlog:
+            line = render_task_line(task)
+            check(f"float dedup: '{line}' rendered exactly once", result.message.count(line) == 1, result.message)
+        check("float dedup: 3 unique tasks fit under cap -> no '+K more' tail", "more — run `cc-notes status`" not in result.message, result.message)
 
 
 def test_install_nudge_gate(monkeypatch, tmp_path) -> None:

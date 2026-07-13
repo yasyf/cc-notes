@@ -68,16 +68,158 @@ func TestTaskStartDetachedHead(t *testing.T) {
 	task := addTaskBin(t, dir, "Detached", "--backlog")
 	gittest.Git(t, dir, "checkout", "-q", "--detach")
 
+	// Detached at main's tip — the jj colocation norm. CurrentBranch resolves
+	// main, so start claims the task and moves it onto main.
+	out := mustBin(t, dir, actorA, "task", "start", task.ID)
+	if want := task.ID[:7] + "\tin_progress\tP2\t" + actorA + "\tDetached\n"; out != want {
+		t.Fatalf("detached-at-tip start lean line = %q, want %q", out, want)
+	}
+	shown := showTaskBin(t, dir, actorA, task.ID)
+	if shown.Branch != "main" || shown.Status != "in_progress" {
+		t.Fatalf("detached-at-tip start branch/status = %q/%q, want main/in_progress", shown.Branch, shown.Status)
+	}
+	if shown.Assignee == nil || *shown.Assignee != actorA {
+		t.Fatalf("detached-at-tip start assignee = %v, want %q", shown.Assignee, actorA)
+	}
+}
+
+// TestTaskStartAmbiguousHead pins the graceful-degrade path: on a genuinely
+// unresolvable HEAD (no trunk, advanced past the sole bookmark) start claims the
+// task without a branch and warns, while --branch still overrides.
+func TestTaskStartAmbiguousHead(t *testing.T) {
+	dir := initRepo(t)
+	task := addTaskBin(t, dir, "Ambiguous", "--backlog")
+	// No trunk: rename the unborn main to wip so main never exists, then detach
+	// and advance past wip's tip. CurrentBranch cannot resolve a branch.
+	gittest.Git(t, dir, "checkout", "-q", "-b", "wip")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c1")
+	gittest.Git(t, dir, "checkout", "-q", "--detach")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c2")
+
 	res, err := execBin(dir, actorA, "task", "start", task.ID)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if res.Code != 1 || !strings.Contains(res.Stderr, "detached HEAD") {
-		t.Fatalf("detached start = exit %d stderr %q, want exit 1 with detached-HEAD message", res.Code, res.Stderr)
+	if res.Code != 0 {
+		t.Fatalf("ambiguous start exit = %d, stderr %q", res.Code, res.Stderr)
+	}
+	if want := task.ID[:7] + "\tin_progress\tP2\t" + actorA + "\tAmbiguous\n"; res.Stdout != want {
+		t.Fatalf("ambiguous start stdout = %q, want %q", res.Stdout, want)
+	}
+	if !strings.Contains(res.Stderr, "detached HEAD with no resolvable branch") ||
+		!strings.Contains(res.Stderr, "claimed "+task.ID[:7]) {
+		t.Fatalf("ambiguous start stderr = %q, want detached-HEAD warning naming the task", res.Stderr)
 	}
 	shown := showTaskBin(t, dir, actorA, task.ID)
-	if shown.Status != "open" || shown.Assignee != nil {
-		t.Fatalf("detached start mutated task: status %q assignee %v, want open/null", shown.Status, shown.Assignee)
+	if shown.Branch != "" || shown.Status != "in_progress" {
+		t.Fatalf("ambiguous start branch/status = %q/%q, want empty/in_progress", shown.Branch, shown.Status)
+	}
+	if shown.Assignee == nil || *shown.Assignee != actorA {
+		t.Fatalf("ambiguous start assignee = %v, want %q", shown.Assignee, actorA)
+	}
+
+	other := addTaskBin(t, dir, "With flag", "--backlog")
+	out := mustBin(t, dir, actorA, "task", "start", other.ID, "--branch", "feat")
+	if want := other.ID[:7] + "\tin_progress\tP2\t" + actorA + "\tWith flag\n"; out != want {
+		t.Fatalf("--branch start lean line = %q, want %q", out, want)
+	}
+	if shown := showTaskBin(t, dir, actorA, other.ID); shown.Branch != "feat" {
+		t.Fatalf("--branch start branch = %q, want feat", shown.Branch)
+	}
+}
+
+// TestTaskStartRejectsBadBranch pins that a bad --branch is a UsageError raised
+// at the resolve gate before the Claim append. The empty case is the regression:
+// an explicitly-passed --branch= must NOT fall through to the current branch the
+// way an omitted flag does. Both an empty value and an invalid ref format exit 2
+// and leave the task open and unassigned on an attached-main repo, proving
+// validation precedes any mutation.
+func TestTaskStartRejectsBadBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"empty", ""},
+		{"invalid-format", "bad..name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			task := addTaskBin(t, dir, "Guarded", "--backlog")
+
+			res, err := execBin(dir, actorA, "task", "start", task.ID, "--branch="+tc.value)
+			if err != nil {
+				t.Fatalf("start: %v", err)
+			}
+			if res.Code != 2 {
+				t.Fatalf("start --branch=%q exit = %d, want UsageError exit 2 (stderr %q)", tc.value, res.Code, res.Stderr)
+			}
+			if !strings.Contains(res.Stderr, "invalid branch") {
+				t.Errorf("start --branch=%q stderr = %q, want it to name the invalid branch", tc.value, res.Stderr)
+			}
+			shown := showTaskBin(t, dir, actorA, task.ID)
+			if shown.Status != "open" {
+				t.Errorf("after rejected start status = %q, want open (Claim must not fire)", shown.Status)
+			}
+			if shown.Assignee != nil {
+				t.Errorf("after rejected start assignee = %q, want nil (Claim must not fire)", *shown.Assignee)
+			}
+			if shown.Branch != "" {
+				t.Errorf("after rejected start branch = %q, want empty", shown.Branch)
+			}
+		})
+	}
+}
+
+// TestTaskAddEmptyBranch pins that an explicitly empty --branch= on add is a
+// UsageError, not a fall-through to the current branch, and creates no task.
+func TestTaskAddEmptyBranch(t *testing.T) {
+	dir := initRepo(t)
+	res, err := execBin(dir, actorA, "task", "add", "Ghost", "--no-validation-criteria", "--branch=")
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if res.Code != 2 {
+		t.Fatalf("task add --branch= exit = %d, want UsageError exit 2 (stderr %q)", res.Code, res.Stderr)
+	}
+	if !strings.Contains(res.Stderr, "invalid branch") {
+		t.Errorf("task add --branch= stderr = %q, want it to name the invalid branch", res.Stderr)
+	}
+	listed := mustJSON[[]taskJSON](t, mustBin(t, dir, actorA, "task", "list", "--all-branches", "--json"))
+	if len(listed) != 0 {
+		t.Fatalf("after rejected add, task list --all-branches = %d tasks, want 0", len(listed))
+	}
+}
+
+// TestTaskAddAmbiguousHead pins add's graceful-degrade path: on a genuinely
+// unresolvable HEAD (no trunk, advanced past the sole bookmark) an omitted
+// --branch creates the task on the backlog and warns, and task ready lists it
+// via the same backlog degrade.
+func TestTaskAddAmbiguousHead(t *testing.T) {
+	dir := initRepo(t)
+	// No trunk: rename the unborn main to wip so main never exists, then detach
+	// and advance past wip's tip. CurrentBranch cannot resolve a branch.
+	gittest.Git(t, dir, "checkout", "-q", "-b", "wip")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c1")
+	gittest.Git(t, dir, "checkout", "-q", "--detach")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c2")
+
+	res, err := execBin(dir, actorA, "task", "add", "Homeless", "--no-validation-criteria", "--json")
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if res.Code != 0 {
+		t.Fatalf("ambiguous add exit = %d, stderr %q", res.Code, res.Stderr)
+	}
+	if !strings.Contains(res.Stderr, "created on the backlog") {
+		t.Fatalf("ambiguous add stderr = %q, want the backlog-degrade warning", res.Stderr)
+	}
+	task := mustJSON[taskJSON](t, res.Stdout)
+	if task.Branch != "" {
+		t.Fatalf("ambiguous add branch = %q, want empty (backlog)", task.Branch)
+	}
+	ready := mustBin(t, dir, actorA, "task", "ready")
+	if !strings.Contains(ready, task.ID[:7]) {
+		t.Fatalf("task ready = %q, want the backlog task %s via backlog degrade", ready, task.ID[:7])
 	}
 }
 

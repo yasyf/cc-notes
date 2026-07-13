@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 func newLogCmd() *cobra.Command {
@@ -43,43 +43,38 @@ func newLogAddCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			commits, err := resolveCommits(ctx, s.Git, anchors.commits)
-			if err != nil {
-				return err
-			}
-			create := model.CreateLog{
-				Nonce:   model.NewNonce(),
-				Title:   args[0],
-				Tags:    labels,
-				Anchors: buildAnchors(commits, anchors.paths, anchors.dirs, anchors.branches),
-			}
-			ops := []model.Op{create}
-			attOps, err := attachOps(ctx, cmd, s, attach)
-			if err != nil {
-				return err
-			}
-			snapshot, err := createEntity(ctx, cmd, s, append(ops, attOps...))
-			if err != nil {
-				return err
-			}
-			log := snapshot.(model.Log)
+			var first string
 			if cmd.Flags().Changed("entry") {
-				text, err := bodyArg(cmd, entry)
-				if err != nil {
+				if first, err = bodyArg(cmd, entry); err != nil {
 					return err
 				}
-				appended, err := s.Append(ctx, refs.For(model.KindLog, log.ID), []model.Op{model.AppendEntry{Text: text}})
-				if err != nil {
-					return err
-				}
-				log = appended.(model.Log)
+			}
+			if anchors.commits, err = resolveCommits(ctx, s.Git, anchors.commits); err != nil {
+				return err
+			}
+			atts, err := attachFiles(ctx, cmd, s, attach)
+			if err != nil {
+				return err
+			}
+			log, reused, err := c.CreateLog(ctx, notes.LogSpec{
+				Title:       args[0],
+				Entry:       first,
+				Tags:        labels,
+				Anchors:     anchorSetsSpec(anchors),
+				Attachments: atts,
+			})
+			if err != nil {
+				return err
+			}
+			if reused {
+				warnDuplicate(cmd, "log", log.ID)
 			}
 			return printLog(cmd, s, log, jsonOut)
 		},
@@ -105,43 +100,48 @@ func newLogAppendCmd() *cobra.Command {
 			if len(args) == 0 {
 				return &UsageError{Err: errors.New("log append requires a log ID")}
 			}
-			var ops []model.Op
+			var text string
+			var hasEntry bool
 			if len(args) > 1 || cmd.Flags().Changed("entry") {
-				text, err := entryText(cmd, args, entry)
+				t, err := entryText(cmd, args, entry)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.AppendEntry{Text: text})
+				text, hasEntry = t, true
 			}
-			if len(ops) == 0 && len(attach) == 0 {
+			if !hasEntry && len(attach) == 0 {
 				return &UsageError{Err: errors.New("log append requires entry text (a positional TEXT, --entry, or - for stdin) or --attach")}
 			}
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, log, err := logSpec.load(ctx, s, args[0])
+			id, err := c.ResolveLog(ctx, args[0])
 			if err != nil {
 				return err
 			}
 			if !replace {
+				log, err := c.Log(ctx, id)
+				if err != nil {
+					return err
+				}
 				if err := checkAttachCollisions(log.Attachments, attach); err != nil {
 					return err
 				}
 			}
-			attOps, err := attachOps(ctx, cmd, s, attach)
+			atts, err := attachFiles(ctx, cmd, s, attach)
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, append(ops, attOps...))
+			log, err := c.AppendLog(ctx, id, notes.LogAppend{Text: text, Attachments: atts, ReplaceAttachments: replace})
 			if err != nil {
 				return err
 			}
-			return printLog(cmd, s, snapshot.(model.Log), jsonOut)
+			return printLog(cmd, s, log, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -187,7 +187,35 @@ func entryText(cmd *cobra.Command, args []string, entry string) (string, error) 
 }
 
 func newLogListCmd() *cobra.Command {
-	return logList.listVerb()
+	var labels []string
+	var filters anchorFilters
+	var all, jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List logs",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			logs, err := c.Logs(cmd.Context(), notes.LogFilter{
+				IncludeDeleted: all,
+				Labels:         labels,
+				Anchors:        anchorFiltersToNotes(filters),
+			})
+			if err != nil {
+				return err
+			}
+			return printEntityList(cmd, s, logs, jsonOut, logListDTO, leanLogLine)
+		},
+	}
+	flags := cmd.Flags()
+	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
+	filters.bind(flags)
+	flags.BoolVar(&all, "all", false, "include tombstoned logs")
+	bindJSON(flags, &jsonOut)
+	return cmd
 }
 
 func newLogShowCmd() *cobra.Command {
@@ -206,51 +234,36 @@ func newLogEditCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			var ops []model.Op
+			var in notes.LogEdit
 			if cmd.Flags().Changed("title") {
 				if err := validateTitle(title, titleHintLog); err != nil {
 					return err
 				}
-				ops = append(ops, model.SetTitle{Title: title})
+				in.Title = &title
 			}
-			for _, l := range labels.add {
-				ops = append(ops, model.AddTag{Tag: l})
-			}
-			for _, l := range labels.rm {
-				ops = append(ops, model.RemoveTag{Tag: l})
-			}
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			addCommits, err := resolveCommits(ctx, s.Git, anchors.addCommits)
-			if err != nil {
-				return err
-			}
-			for _, a := range buildAnchors(addCommits, anchors.addPaths, anchors.addDirs, anchors.addBranches) {
-				ops = append(ops, model.AddAnchor{Anchor: a})
-			}
-			for _, a := range buildAnchors(anchors.rmCommits, anchors.rmPaths, anchors.rmDirs, anchors.rmBranches) {
-				ops = append(ops, model.RemoveAnchor{Anchor: a})
-			}
-			for _, name := range rmAttachments {
-				ops = append(ops, model.RemoveAttachment{Name: name})
-			}
-			if len(ops) == 0 {
+			in.AddTags, in.RemoveTags = labels.add, labels.rm
+			in.AddAnchors = notes.AnchorSpec{Commits: anchors.addCommits, Paths: anchors.addPaths, Dirs: anchors.addDirs, Branches: anchors.addBranches}
+			in.RemoveAnchors = notes.AnchorSpec{Commits: anchors.rmCommits, Paths: anchors.rmPaths, Dirs: anchors.rmDirs, Branches: anchors.rmBranches}
+			in.RemoveAttachments = rmAttachments
+			if logEditEmpty(in) {
 				return &UsageError{Err: errors.New("log edit requires at least one flag")}
+			}
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := logSpec.load(ctx, s, args[0])
+			id, err := c.ResolveLog(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, ops)
+			log, err := c.EditLog(ctx, id, in)
 			if err != nil {
 				return err
 			}
-			return printLog(cmd, s, snapshot.(model.Log), jsonOut)
+			return printLog(cmd, s, log, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -262,15 +275,82 @@ func newLogEditCmd() *cobra.Command {
 	return cmd
 }
 
+// logEditEmpty reports whether a log edit mask sets nothing — the CLI's "at
+// least one flag" guard, which raises a UsageError a pinned test asserts, so it
+// stays CLI-side rather than deferring to EditLog's ErrEmptyEdit.
+func logEditEmpty(in notes.LogEdit) bool {
+	return in.Title == nil &&
+		len(in.AddTags) == 0 && len(in.RemoveTags) == 0 &&
+		anchorSpecEmpty(in.AddAnchors) && anchorSpecEmpty(in.RemoveAnchors) &&
+		len(in.RemoveAttachments) == 0
+}
+
 func newLogRmCmd() *cobra.Command {
-	return logSpec.rmVerb()
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "rm ID",
+		Short: "Tombstone a log",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveLog(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			log, err := c.RemoveLog(ctx, id)
+			if err != nil {
+				return err
+			}
+			return printLog(cmd, s, log, jsonOut)
+		},
+	}
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
 }
 
 func newLogSearchCmd() *cobra.Command {
-	return logList.searchVerb()
+	var labels []string
+	var author string
+	var filters anchorFilters
+	var limit int
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "search QUERY",
+		Short: "Ranked search across log titles, labels, and entry text",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			logs, err := c.SearchLogs(cmd.Context(), args[0], notes.SearchFilter{
+				Labels:  labels,
+				Author:  author,
+				Anchors: anchorFiltersToNotes(filters),
+				Limit:   limit,
+			})
+			if err != nil {
+				return err
+			}
+			return printEntityList(cmd, s, logs, jsonOut, logListDTO, leanLogLine)
+		},
+	}
+	flags := cmd.Flags()
+	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
+	flags.IntVar(&limit, "limit", 20, "maximum results")
+	flags.StringVar(&author, "author", "", "require author")
+	filters.bind(flags)
+	bindJSON(flags, &jsonOut)
+	return cmd
 }
 
-// rankLogs filters logs by tag, author, and anchors, keeps those matching
-// query in their title, a tag, or any entry text, then orders by match tier
-// (title > tag > entry), UpdatedAt descending, id ascending, truncated to
-// limit.
+// logListDTO is the list/search projection for a log: its lean JSON DTO with
+// attachment presence.
+func logListDTO(l model.Log, atts []attachmentDTO) any { return newLogDTO(l, atts) }

@@ -505,9 +505,17 @@ func TestDetachedHead(t *testing.T) {
 	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c")
 	gittest.Git(t, dir, "checkout", "-q", "--detach")
 
-	_, _, err := runCLI(t, dir, "task", "list")
-	if err == nil || err.Error() != "detached HEAD; pass --branch" || cli.ExitCode(err) != 1 {
-		t.Fatalf("detached task list err = %v, want detached HEAD; pass --branch (exit 1)", err)
+	// Detached at main's tip — the jj colocation norm. CurrentBranch resolves
+	// main, so an unflagged list scopes to main and finds the task, silently.
+	out, stderr, err := runCLI(t, dir, "task", "list")
+	if err != nil {
+		t.Fatalf("detached task list err = %v (stderr %q), want nil", err, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("read command must degrade silently; stderr = %q", stderr)
+	}
+	if !strings.Contains(out, task.ID[:7]) {
+		t.Fatalf("detached task list = %q, want %s (scoped to main)", out, task.ID[:7])
 	}
 	if out := mustRun(t, dir, "task", "list", "--branch", "main"); !strings.Contains(out, task.ID[:7]) {
 		t.Fatalf("task list --branch main = %q, want %s", out, task.ID[:7])
@@ -524,6 +532,100 @@ func TestDetachedHead(t *testing.T) {
 		t.Fatalf("task comment = %q, want the lean line", out)
 	}
 	mustRun(t, dir, "note", "list")
+}
+
+// TestTaskListAmbiguousHead pins the read-command degrade: on a genuinely
+// unresolvable HEAD (no trunk, advanced past the sole bookmark) an unflagged
+// list silently falls back to the backlog view.
+func TestTaskListAmbiguousHead(t *testing.T) {
+	dir := initRepo(t)
+	backlogTask := addTask(t, dir, "Backlog task", "--backlog")
+	// No trunk: rename the unborn main to wip so main never exists.
+	gittest.Git(t, dir, "checkout", "-q", "-b", "wip")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c1")
+	branchTask := addTask(t, dir, "On wip")
+	gittest.Git(t, dir, "checkout", "-q", "--detach")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c2")
+
+	out, stderr, err := runCLI(t, dir, "task", "list")
+	if err != nil {
+		t.Fatalf("ambiguous task list err = %v, want nil", err)
+	}
+	if stderr != "" {
+		t.Fatalf("read command must degrade silently; stderr = %q", stderr)
+	}
+	if !strings.Contains(out, backlogTask.ID[:7]) {
+		t.Fatalf("ambiguous list = %q, want backlog task %s", out, backlogTask.ID[:7])
+	}
+	if strings.Contains(out, branchTask.ID[:7]) {
+		t.Fatalf("ambiguous list = %q, want the wip task %s excluded (backlog view)", out, branchTask.ID[:7])
+	}
+}
+
+// TestClaimStealBogusTTLExit2 pins that a malformed CC_NOTES_LEASE_TTL on a
+// --steal claim is a usage error (exit 2) carrying the invalid-duration text,
+// not the exit 1 a plain error would map to.
+func TestClaimStealBogusTTLExit2(t *testing.T) {
+	dir := initRepo(t)
+	task := addTask(t, dir, "Work")
+	mustRun(t, dir, "task", "claim", task.ID)
+	t.Setenv("CC_NOTES_LEASE_TTL", "bogus")
+	_, _, err := runCLI(t, dir, "task", "claim", task.ID, "--steal")
+	if cli.ExitCode(err) != 2 || cli.Label(err) != "usage" {
+		t.Fatalf("steal with bogus TTL = exit %d label %q (err %v), want 2/usage", cli.ExitCode(err), cli.Label(err), err)
+	}
+	if err.Error() != `invalid duration "bogus"` {
+		t.Fatalf("err = %q, want `invalid duration \"bogus\"`", err.Error())
+	}
+}
+
+// TestClaimStealMalformedActorExit1 pins that --steal resolves the actor before
+// the in-progress guard: a malformed CC_NOTES_ACTOR errors (exit 1) ahead of
+// the exit-2 usage guard, matching the pre-migration order.
+func TestClaimStealMalformedActorExit1(t *testing.T) {
+	dir := initRepo(t)
+	task := addTask(t, dir, "Work")
+	t.Setenv("CC_NOTES_ACTOR", "malformed")
+	_, _, err := runCLI(t, dir, "task", "claim", task.ID, "--steal")
+	if cli.ExitCode(err) != 1 {
+		t.Fatalf("steal with malformed actor = exit %d (err %v), want 1", cli.ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "CC_NOTES_ACTOR") {
+		t.Fatalf("err = %q, want a CC_NOTES_ACTOR malformed error", err.Error())
+	}
+}
+
+// TestStartCancelledMalformedActorExit4 pins that start guards the task's
+// claimability before resolving the actor: starting a cancelled task reports
+// the conflict (exit 4), not the malformed-actor error the old order surfaced.
+func TestStartCancelledMalformedActorExit4(t *testing.T) {
+	dir := initRepo(t)
+	task := addTask(t, dir, "Work")
+	mustRun(t, dir, "task", "cancel", task.ID)
+	t.Setenv("CC_NOTES_ACTOR", "malformed")
+	_, _, err := runCLI(t, dir, "task", "start", task.ID)
+	if cli.ExitCode(err) != 4 {
+		t.Fatalf("start cancelled with malformed actor = exit %d (err %v), want 4 conflict", cli.ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "not open (cancelled)") {
+		t.Fatalf("err = %q, want 'not open (cancelled)'", err.Error())
+	}
+}
+
+// TestEditEmptyTitleOutsideRepoExit2 pins that task edit validates --title
+// before opening the store: an empty title outside a repository is the title
+// usage error (exit 2), not the store-open error (exit 1).
+func TestEditEmptyTitleOutsideRepoExit2(t *testing.T) {
+	gittest.ScrubEnv(t)
+	dir := t.TempDir()
+	t.Setenv("CC_NOTES_ACTOR", actorA)
+	_, _, err := runCLI(t, dir, "task", "edit", "deadbeef", "--title", "")
+	if cli.ExitCode(err) != 2 || cli.Label(err) != "usage" {
+		t.Fatalf("edit --title='' outside repo = exit %d label %q (err %v), want 2/usage", cli.ExitCode(err), cli.Label(err), err)
+	}
+	if !strings.Contains(err.Error(), "title is empty") {
+		t.Fatalf("err = %q, want a title-empty usage error", err.Error())
+	}
 }
 
 func TestStdinBody(t *testing.T) {

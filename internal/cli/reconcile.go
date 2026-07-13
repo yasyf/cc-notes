@@ -29,7 +29,7 @@ func newReconcileCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			intoBranch, err := resolveBranch(ctx, s, "into", into)
+			intoBranch, err := resolveBranch(ctx, s, "into", into, cmd.Flags().Changed("into"))
 			if err != nil {
 				return err
 			}

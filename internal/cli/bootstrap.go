@@ -13,6 +13,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // defaultRemote is the remote every mutating command best-effort wires
@@ -29,22 +30,65 @@ func openStore() (*store.Store, error) {
 	return store.Open(dir)
 }
 
-// resolveBranch returns value verbatim when set — a name git's
-// check-ref-format refuses is a UsageError before anything is written —
-// otherwise the branch HEAD points at. A detached HEAD is an error telling
-// the caller to pass the named flag (e.g. "branch" or "into").
-func resolveBranch(ctx context.Context, s *store.Store, flag, value string) (model.Branch, error) {
-	if value != "" {
+// openStoreClient opens both the store — the surface the print/DTO layer and
+// autoInstall still drive — and the notes.Client that owns the task domain
+// logic, over the working directory's repository.
+func openStoreClient() (*store.Store, *notes.Client, error) {
+	s, err := openStore()
+	if err != nil {
+		return nil, nil, err
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, nil, fmt.Errorf("working directory: %w", err)
+	}
+	c, err := notes.Open(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, c, nil
+}
+
+// resolveBranch returns value verbatim when provided — the flag was explicitly
+// passed, so a name git's check-ref-format refuses, empty included, is a
+// UsageError before anything is written — otherwise the branch the working copy
+// is on, resolved jj-colocation aware. A detached HEAD with no resolvable branch
+// is an error telling the caller to pass the named flag (e.g. "branch" or "into").
+func resolveBranch(ctx context.Context, s *store.Store, flag, value string, provided bool) (model.Branch, error) {
+	if provided {
 		if err := s.Git.CheckRefFormat(ctx, value); err != nil {
 			return "", &UsageError{Err: err}
 		}
 		return model.Branch(value), nil
 	}
-	branch, err := s.Git.HeadBranch(ctx)
+	branch, err := s.Git.CurrentBranch(ctx)
 	if errors.Is(err, gitcmd.ErrDetachedHead) {
 		return "", fmt.Errorf("detached HEAD; pass --%s", flag)
 	}
 	return branch, err
+}
+
+// resolveBranchOrBacklog resolves the branch a command scopes to when it degrades
+// gracefully instead of erroring on an unresolvable HEAD: a provided value — the
+// flag was explicitly passed, empty included — is validated and returned;
+// otherwise the current branch is resolved, and a detached HEAD with no
+// resolvable branch reports backlog=true — the empty-branch view — rather than
+// an error.
+func resolveBranchOrBacklog(ctx context.Context, s *store.Store, value string, provided bool) (branch model.Branch, backlog bool, err error) {
+	if provided {
+		if err := s.Git.CheckRefFormat(ctx, value); err != nil {
+			return "", false, &UsageError{Err: err}
+		}
+		return model.Branch(value), false, nil
+	}
+	branch, err = s.Git.CurrentBranch(ctx)
+	if errors.Is(err, gitcmd.ErrDetachedHead) {
+		return "", true, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return branch, false, nil
 }
 
 // deriveRemote resolves the remote a best-effort sync or install targets when

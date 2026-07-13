@@ -18,17 +18,20 @@ import (
 )
 
 // bridge runs argv against a fresh cobra root and maps stdout/stderr/error into
-// an MCP tool result. The CLI seam is injected so this package never imports
+// an MCP tool result. The CLI seams are injected so this package never imports
 // internal/cli (which imports this one to register the mcp command).
 type bridge struct {
 	newRoot func() *cobra.Command
 	label   func(error) string
+	message func(error) string
 }
 
 // run executes argv in-process and returns the tool result: stdout (the JSON
-// DTO) with any stderr notices appended, or a label-tagged error the SDK renders
-// as an error result. It never touches os.Stdout — the stdio protocol owns it —
-// and pins stdin to empty so no command blocks on the protocol's own stdin.
+// DTO) with any stderr notices appended, or a `<label>: <message>` error the SDK
+// renders as an error result, matching the CLI's stderr line (message trims the
+// notes-layer program prefix so it is not doubled under the label). It never
+// touches os.Stdout — the stdio protocol owns it — and pins stdin to empty so no
+// command blocks on the protocol's own stdin.
 func (b *bridge) run(ctx context.Context, argv ...string) (*mcp.CallToolResult, any, error) {
 	root := b.newRoot()
 	var out, errBuf bytes.Buffer
@@ -37,7 +40,7 @@ func (b *bridge) run(ctx context.Context, argv ...string) (*mcp.CallToolResult, 
 	root.SetIn(bytes.NewReader(nil))
 	root.SetArgs(argv)
 	if err := root.ExecuteContext(ctx); err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", b.label(err), err)
+		return nil, nil, fmt.Errorf("%s: %s", b.label(err), b.message(err))
 	}
 	// The JSON DTO is the primary block so it stays parseable; stderr notices
 	// (one-time git config installs, sync reports) ride as a separate block.

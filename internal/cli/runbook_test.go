@@ -414,3 +414,62 @@ func TestResolveTargetRun(t *testing.T) {
 		t.Fatalf("two running runs err = %v, want ErrAmbiguous", err)
 	}
 }
+
+// TestRunbookFinishArchivedBeatsAmbiguousRuns pins the archived-first precedence
+// of `run finish`: an archived runbook with several running runs reports the
+// archived conflict (exit 4), never the ambiguous-run error (exit 5) that the
+// pre-migration CLI's own target resolution would otherwise raise first.
+func TestRunbookFinishArchivedBeatsAmbiguousRuns(t *testing.T) {
+	dir := spInitRepo(t)
+	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--step", "a", "--json"))
+	spMust(t, dir, "runbook", "run", "start", rb.ID)
+	spMust(t, dir, "runbook", "run", "start", rb.ID) // two concurrent running runs
+	spMust(t, dir, "runbook", "archive", rb.ID)
+
+	_, _, err := spRun(t, dir, "", "runbook", "run", "finish", rb.ID)
+	var conflict *ConflictError
+	if !errors.As(err, &conflict) || ExitCode(err) != 4 {
+		t.Fatalf("finish archived w/ two running runs err = %v (exit %d), want archived conflict exit 4", err, ExitCode(err))
+	}
+	if !strings.Contains(conflict.Msg, "archived") {
+		t.Fatalf("conflict msg = %q, want the archived message", conflict.Msg)
+	}
+}
+
+// TestRunbookStartArchivedBeatsTaskResolution pins the archived-first precedence
+// of `run start --task`: an archived runbook reports the archived conflict
+// (exit 4) before the --task prefix is resolved, so a missing task never wins
+// the not-found (exit 3) the pre-migration CLI would raise first.
+func TestRunbookStartArchivedBeatsTaskResolution(t *testing.T) {
+	dir := spInitRepo(t)
+	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--json"))
+	spMust(t, dir, "runbook", "archive", rb.ID)
+
+	_, _, err := spRun(t, dir, "", "runbook", "run", "start", rb.ID, "--task", "deadbeef")
+	var conflict *ConflictError
+	if !errors.As(err, &conflict) || ExitCode(err) != 4 {
+		t.Fatalf("start archived w/ missing --task err = %v (exit %d), want archived conflict exit 4", err, ExitCode(err))
+	}
+	if !strings.Contains(conflict.Msg, "archived") {
+		t.Fatalf("conflict msg = %q, want the archived message", conflict.Msg)
+	}
+}
+
+// TestRunbookStepMoveSelfRelative pins the exit code of a self-relative step
+// move: placing a step before or after itself is a usage error (exit 2), not
+// the plain notes error (exit 1) the raw ErrSelfRelative would map to.
+func TestRunbookStepMoveSelfRelative(t *testing.T) {
+	dir := spInitRepo(t)
+	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--step", "a", "--step", "b", "--json"))
+	aID := rbStepID(t, rb, "a")
+
+	for _, flag := range []string{"--before", "--after"} {
+		_, _, err := spRun(t, dir, "", "runbook", "step", "move", rb.ID, aID[:8], flag, aID[:8])
+		if !isUsage(err) {
+			t.Fatalf("step move %s self err = %v (exit %d), want usage exit 2", flag, err, ExitCode(err))
+		}
+		if !strings.Contains(err.Error(), "relative to itself") {
+			t.Fatalf("step move %s self msg = %q, want 'relative to itself'", flag, err.Error())
+		}
+	}
+}

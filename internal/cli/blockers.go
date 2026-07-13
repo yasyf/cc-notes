@@ -66,23 +66,3 @@ func blocksFor(live map[model.EntityID]model.Task, id model.EntityID) []model.En
 	slices.Sort(blocks)
 	return blocks
 }
-
-// hasPath reports whether target is reachable from start (inclusive)
-// through the blocked_by closure over live tasks.
-func hasPath(live map[model.EntityID]model.Task, start, target model.EntityID) bool {
-	seen := map[model.EntityID]bool{}
-	stack := []model.EntityID{start}
-	for len(stack) > 0 {
-		id := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if id == target {
-			return true
-		}
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		stack = append(stack, live[id].BlockedBy...)
-	}
-	return false
-}

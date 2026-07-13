@@ -1,18 +1,16 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"github.com/yasyf/cc-notes/internal/render"
-	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 func newRunbookCmd() *cobra.Command {
@@ -41,25 +39,41 @@ func newRunbookAddCmd() *cobra.Command {
 	var body string
 	var labels, steps []string
 	var jsonOut bool
-	cmd := runbookSpec.createVerb("Create a runbook, optionally with its first steps", &jsonOut, func(_ context.Context, cmd *cobra.Command, _ *store.Store, title string) ([]model.Op, error) {
-		text, err := bodyArg(cmd, body)
-		if err != nil {
-			return nil, err
-		}
-		ops := []model.Op{model.CreateRunbook{
-			Nonce:       model.NewNonce(),
-			Title:       title,
-			Description: text,
-			Labels:      labels,
-		}}
-		last := ""
-		for _, stepText := range steps {
-			pos := model.PositionBetween(last, "")
-			ops = append(ops, model.AddStep{ID: model.NewNonce(), Text: stepText, Position: pos})
-			last = pos
-		}
-		return ops, nil
-	})
+	cmd := &cobra.Command{
+		Use:   "add TITLE",
+		Short: "Create a runbook, optionally with its first steps",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateTitle(args[0], titleHintDesc); err != nil {
+				return err
+			}
+			text, err := bodyArg(cmd, body)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			rb, reused, err := c.CreateRunbook(ctx, notes.RunbookSpec{
+				Title:       args[0],
+				Description: text,
+				Labels:      labels,
+				Steps:       steps,
+			})
+			if err != nil {
+				return err
+			}
+			if reused {
+				warnDuplicate(cmd, "runbook", rb.ID)
+			}
+			return printRunbook(cmd, rb, jsonOut)
+		},
+	}
 	flags := cmd.Flags()
 	bindBody(flags, &body, "runbook description; - reads stdin")
 	bindLabels(flags, &labels, "label (repeatable)")
@@ -75,19 +89,13 @@ func newRunbookListCmd() *cobra.Command {
 		Short: "List runbooks (active only unless --all)",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			ctx := cmd.Context()
-			s, err := openStore()
+			_, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			runbooks, err := s.ListRunbooks(ctx)
+			runbooks, err := c.Runbooks(cmd.Context(), all)
 			if err != nil {
 				return err
-			}
-			if !all {
-				runbooks = slices.DeleteFunc(runbooks, func(rb model.Runbook) bool {
-					return rb.Status != model.RunbookActive
-				})
 			}
 			return printRunbookList(cmd, runbooks, jsonOut)
 		},
@@ -103,15 +111,39 @@ func newRunbookShowCmd() *cobra.Command {
 }
 
 func newRunbookStatusCmd(use string, status model.RunbookStatus) *cobra.Command {
-	// A runbook transition refuses only a no-op to the same status, so
-	// reactivating an archived runbook is allowed.
-	guard := func(rb model.Runbook) error {
-		if rb.Status == status {
-			return &ConflictError{Msg: fmt.Sprintf("%s already %s", rb.ID.Short(), rb.Status)}
-		}
-		return nil
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   use + " ID",
+		Short: "Mark a runbook " + string(status),
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveRunbook(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			var rb model.Runbook
+			switch status {
+			case model.RunbookActive:
+				rb, err = c.ActivateRunbook(ctx, id)
+			case model.RunbookArchived:
+				rb, err = c.ArchiveRunbook(ctx, id)
+			}
+			if err != nil {
+				return runbookErr(err)
+			}
+			return printRunbook(cmd, rb, jsonOut)
+		},
 	}
-	return runbookSpec.statusVerb(use, string(status), guard, model.SetRunbookStatus{Status: status})
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
 }
 
 func newRunbookEditCmd() *cobra.Command {
@@ -125,48 +157,40 @@ func newRunbookEditCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			flags := cmd.Flags()
-			var ops []model.Op
+			var edit notes.RunbookEdit
 			if flags.Changed("title") {
 				if err := validateTitle(title, titleHintDesc); err != nil {
 					return err
 				}
-				ops = append(ops, model.SetTitle{Title: title})
-			}
-			s, err := openStore()
-			if err != nil {
-				return err
+				edit.Title = &title
 			}
 			if flags.Changed("body") {
 				text, err := bodyArg(cmd, body)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetDescription{Description: text})
+				edit.Description = &text
 			}
-			for _, label := range labels.add {
-				ops = append(ops, model.AddLabel{Label: label})
-			}
-			for _, label := range labels.rm {
-				ops = append(ops, model.RemoveLabel{Label: label})
-			}
-			if len(ops) == 0 {
+			edit.AddLabels, edit.RemoveLabels = labels.add, labels.rm
+			if runbookEditEmpty(edit) {
 				return &UsageError{Err: errors.New("runbook edit requires at least one flag")}
+			}
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := runbookSpec.load(ctx, s, args[0])
+			id, err := c.ResolveRunbook(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if err := ensureRunbookActive(rb); err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, ops)
+			rb, err := c.EditRunbook(ctx, id, edit)
 			if err != nil {
-				return err
+				return runbookErr(err)
 			}
-			return printRunbook(cmd, snapshot.(model.Runbook), jsonOut)
+			return printRunbook(cmd, rb, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -178,7 +202,37 @@ func newRunbookEditCmd() *cobra.Command {
 }
 
 func newRunbookCommentCmd() *cobra.Command {
-	return runbookSpec.commentVerb(ensureRunbookActive)
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "comment ID BODY",
+		Short: "Append a comment; BODY - reads stdin",
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			body, err := bodyArg(cmd, args[1])
+			if err != nil {
+				return err
+			}
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveRunbook(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			rb, err := c.CommentRunbook(ctx, id, body)
+			if err != nil {
+				return runbookErr(err)
+			}
+			return printRunbook(cmd, rb, jsonOut)
+		},
+	}
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
 }
 
 func newRunbookHistoryCmd() *cobra.Command { return kindHistoryCmd(model.KindRunbook, "runbook") }
@@ -209,35 +263,26 @@ func newStepAddCmd() *cobra.Command {
 		Short: "Add a step to a runbook (default --last)",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			flags := cmd.Flags()
-			if err := place.validate(flags, false); err != nil {
+			if err := place.validate(cmd.Flags(), false); err != nil {
 				return err
 			}
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := runbookSpec.load(ctx, s, args[0])
+			id, err := c.ResolveRunbook(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if err := ensureRunbookActive(rb); err != nil {
-				return err
-			}
-			pos, err := place.position(rb, "")
+			rb, err := c.AddStep(ctx, id, args[1], command, place.toPlacement())
 			if err != nil {
-				return err
+				return runbookErr(err)
 			}
-			op := model.AddStep{ID: model.NewNonce(), Text: args[1], Command: command, Position: pos}
-			snapshot, err := s.Append(ctx, ref, []model.Op{op})
-			if err != nil {
-				return err
-			}
-			return printRunbook(cmd, snapshot.(model.Runbook), jsonOut)
+			return printRunbook(cmd, rb, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -255,29 +300,22 @@ func newStepRemoveCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := runbookSpec.load(ctx, s, args[0])
+			id, err := c.ResolveRunbook(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if err := ensureRunbookActive(rb); err != nil {
-				return err
-			}
-			step, err := resolveStep(rb, args[1])
+			rb, err := c.RemoveStep(ctx, id, args[1])
 			if err != nil {
-				return err
+				return runbookErr(err)
 			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.RemoveStep{ID: step.ID}})
-			if err != nil {
-				return err
-			}
-			return printRunbook(cmd, snapshot.(model.Runbook), jsonOut)
+			return printRunbook(cmd, rb, jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)
@@ -292,7 +330,6 @@ func newStepEditCmd() *cobra.Command {
 		Short: "Edit a step's text or command",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
 			flags := cmd.Flags()
 			if flags.Changed("command") && noCommand {
 				return &UsageError{Err: errors.New("--command and --no-command are mutually exclusive")}
@@ -300,39 +337,34 @@ func newStepEditCmd() *cobra.Command {
 			if !flags.Changed("text") && !flags.Changed("command") && !noCommand {
 				return &UsageError{Err: errors.New("step edit requires --text, --command, or --no-command")}
 			}
-			s, err := openStore()
+			var edit notes.StepEdit
+			if flags.Changed("text") {
+				edit.Text = &text
+			}
+			switch {
+			case flags.Changed("command"):
+				edit.Command = &command
+			case noCommand:
+				empty := ""
+				edit.Command = &empty
+			}
+			ctx := cmd.Context()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := runbookSpec.load(ctx, s, args[0])
+			id, err := c.ResolveRunbook(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if err := ensureRunbookActive(rb); err != nil {
-				return err
-			}
-			step, err := resolveStep(rb, args[1])
+			rb, err := c.EditStep(ctx, id, args[1], edit)
 			if err != nil {
-				return err
+				return runbookErr(err)
 			}
-			var ops []model.Op
-			if flags.Changed("text") {
-				ops = append(ops, model.SetStepText{ID: step.ID, Text: text})
-			}
-			if flags.Changed("command") {
-				ops = append(ops, model.SetStepCommand{ID: step.ID, Command: command})
-			}
-			if noCommand {
-				ops = append(ops, model.SetStepCommand{ID: step.ID})
-			}
-			snapshot, err := s.Append(ctx, ref, ops)
-			if err != nil {
-				return err
-			}
-			return printRunbook(cmd, snapshot.(model.Runbook), jsonOut)
+			return printRunbook(cmd, rb, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -351,38 +383,29 @@ func newStepMoveCmd() *cobra.Command {
 		Short: "Reorder a step within a runbook",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			flags := cmd.Flags()
-			if err := place.validate(flags, true); err != nil {
+			if err := place.validate(cmd.Flags(), true); err != nil {
 				return err
 			}
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := runbookSpec.load(ctx, s, args[0])
+			id, err := c.ResolveRunbook(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if err := ensureRunbookActive(rb); err != nil {
-				return err
-			}
-			step, err := resolveStep(rb, args[1])
+			rb, err := c.MoveStep(ctx, id, args[1], place.toPlacement())
 			if err != nil {
-				return err
+				if errors.Is(err, notes.ErrSelfRelative) {
+					return &UsageError{Err: err}
+				}
+				return runbookErr(err)
 			}
-			pos, err := place.position(rb, step.ID)
-			if err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.SetStepPosition{ID: step.ID, Position: pos}})
-			if err != nil {
-				return err
-			}
-			return printRunbook(cmd, snapshot.(model.Runbook), jsonOut)
+			return printRunbook(cmd, rb, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -399,11 +422,15 @@ func newStepListCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			_, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			_, rb, err := runbookSpec.load(ctx, s, args[0])
+			id, err := c.ResolveRunbook(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			rb, err := c.Runbook(ctx, id)
 			if err != nil {
 				return err
 			}
@@ -451,33 +478,35 @@ func newRunStartCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := runbookSpec.load(ctx, s, args[0])
+			id, err := c.ResolveRunbook(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if err := ensureRunbookActive(rb); err != nil {
+			rb, err := c.Runbook(ctx, id)
+			if err != nil {
 				return err
+			}
+			if err := notes.EnsureRunbookActive(rb); err != nil {
+				return runbookErr(err)
 			}
 			var taskID model.EntityID
 			if task != "" {
-				_, t, err := taskSpec.load(ctx, s, task)
-				if err != nil {
+				if taskID, err = c.ResolveTask(ctx, task); err != nil {
 					return err
 				}
-				taskID = t.ID
 			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.StartRun{ID: model.NewNonce(), Task: taskID}})
+			rb, err = c.StartRun(ctx, id, taskID)
 			if err != nil {
-				return err
+				return runbookErr(err)
 			}
-			return printRunbook(cmd, snapshot.(model.Runbook), jsonOut)
+			return printRunbook(cmd, rb, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -494,11 +523,15 @@ func newRunListCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			_, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			_, rb, err := runbookSpec.load(ctx, s, args[0])
+			id, err := c.ResolveRunbook(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			rb, err := c.Runbook(ctx, id)
 			if err != nil {
 				return err
 			}
@@ -530,11 +563,15 @@ func newRunShowCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			_, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			_, rb, err := runbookSpec.load(ctx, s, args[0])
+			id, err := c.ResolveRunbook(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			rb, err := c.Runbook(ctx, id)
 			if err != nil {
 				return err
 			}
@@ -563,34 +600,22 @@ func newRunStepStatusCmd(use string, status model.StepResultStatus) *cobra.Comma
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := runbookSpec.load(ctx, s, args[0])
+			id, err := c.ResolveRunbook(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if err := ensureRunbookActive(rb); err != nil {
-				return err
-			}
-			step, err := resolveStep(rb, args[1])
+			rb, err := c.SetRunStep(ctx, id, run, args[1], status, note)
 			if err != nil {
-				return err
+				return runbookErr(err)
 			}
-			target, err := resolveTargetRun(rb, run)
-			if err != nil {
-				return err
-			}
-			op := model.SetRunStepStatus{RunID: target.ID, StepID: step.ID, Status: status, Note: note}
-			snapshot, err := s.Append(ctx, ref, []model.Op{op})
-			if err != nil {
-				return err
-			}
-			return printRunbook(cmd, snapshot.(model.Runbook), jsonOut)
+			return printRunbook(cmd, rb, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -612,32 +637,34 @@ func newRunFinishCmd() *cobra.Command {
 				return &UsageError{Err: errors.New("--failed and --abandoned are mutually exclusive")}
 			}
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, rb, err := runbookSpec.load(ctx, s, args[0])
+			id, err := c.ResolveRunbook(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if err := ensureRunbookActive(rb); err != nil {
+			rb, err := c.Runbook(ctx, id)
+			if err != nil {
 				return err
+			}
+			if err := notes.EnsureRunbookActive(rb); err != nil {
+				return runbookErr(err)
 			}
 			target, err := resolveTargetRun(rb, run)
 			if err != nil {
 				return err
 			}
-			if target.Status != model.RunRunning {
-				return &ConflictError{Msg: fmt.Sprintf("run %s already %s", render.ShortWireID(target.ID), target.Status)}
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.FinishRun{ID: target.ID, Status: finishStatus(target, failed, abandoned)}})
+			status := finishStatus(target, failed, abandoned)
+			rb, err = c.FinishRun(ctx, id, target.ID, status)
 			if err != nil {
-				return err
+				return runbookErr(err)
 			}
-			return printRunbook(cmd, snapshot.(model.Runbook), jsonOut)
+			return printRunbook(cmd, rb, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -648,18 +675,26 @@ func newRunFinishCmd() *cobra.Command {
 	return cmd
 }
 
-// ensureRunbookActive rejects a write to an archived runbook with a
-// ConflictError; activate the runbook first to resume editing or running it.
-func ensureRunbookActive(rb model.Runbook) error {
-	if rb.Status == model.RunbookArchived {
-		return &ConflictError{Msg: fmt.Sprintf("runbook %s is archived", rb.ID.Short())}
+// runbookErr maps a notes-layer *ConflictError to the CLI's *ConflictError (its
+// Error() drops the "cc-notes: " layer prefix) so runbook conflict exit codes and
+// stderr bytes match the pre-migration CLI; every other error passes through.
+func runbookErr(err error) error {
+	var conflict *notes.ConflictError
+	if errors.As(err, &conflict) {
+		return &ConflictError{Msg: strings.TrimPrefix(conflict.Error(), "cc-notes: ")}
 	}
-	return nil
+	return err
+}
+
+// runbookEditEmpty reports whether a runbook edit mask sets nothing, the CLI's
+// "at least one flag" guard raised as a UsageError a pinned test asserts.
+func runbookEditEmpty(e notes.RunbookEdit) bool {
+	return e.Title == nil && e.Description == nil && len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0
 }
 
 // finishStatus resolves a finishing run's terminal status: the explicit
-// --failed/--abandoned flag, else failed when any step result failed, else
-// succeeded.
+// --failed/--abandoned flag, else the run's derived default (failed when any step
+// failed, else succeeded).
 func finishStatus(run model.RunbookRun, failed, abandoned bool) model.RunStatus {
 	switch {
 	case failed:
@@ -667,20 +702,14 @@ func finishStatus(run model.RunbookRun, failed, abandoned bool) model.RunStatus 
 	case abandoned:
 		return model.RunAbandoned
 	}
-	for _, r := range run.Results {
-		if r.Status == model.StepFailed {
-			return model.RunFailed
-		}
-	}
-	return model.RunSucceeded
+	return notes.DerivedRunStatus(run)
 }
 
 // placementFlags are the four mutually exclusive step-placement flags.
 var placementFlags = []string{"first", "last", "before", "after"}
 
 // stepPlacement binds the --first/--last/--before/--after flags that place a
-// step within a runbook's ordered steps and resolves them to a fractional-index
-// position via model.PositionBetween.
+// step within a runbook's ordered steps and projects them onto a notes.Placement.
 type stepPlacement struct {
 	first, last   bool
 	before, after string
@@ -712,77 +741,19 @@ func (p *stepPlacement) validate(f *pflag.FlagSet, requireOne bool) error {
 	return nil
 }
 
-// position resolves the placement to a step position within rb, excluding the
-// step being moved (movingID, empty for an add) from the neighbor computation.
-func (p *stepPlacement) position(rb model.Runbook, movingID string) (string, error) {
-	steps := stepsExcluding(rb.Steps, movingID)
+// toPlacement projects the placement flags onto a notes.Placement; no flag
+// defaults to placing the step last.
+func (p *stepPlacement) toPlacement() notes.Placement {
 	switch {
 	case p.first:
-		next := ""
-		if len(steps) > 0 {
-			next = steps[0].Position
-		}
-		return model.PositionBetween("", next), nil
+		return notes.Placement{Anchor: notes.PlaceFirst}
 	case p.before != "":
-		target, err := resolveStep(rb, p.before)
-		if err != nil {
-			return "", err
-		}
-		if target.ID == movingID {
-			return "", &UsageError{Err: errors.New("cannot place a step relative to itself")}
-		}
-		idx := stepIndex(steps, target.ID)
-		prev := ""
-		if idx > 0 {
-			prev = steps[idx-1].Position
-		}
-		return model.PositionBetween(prev, target.Position), nil
+		return notes.Placement{Anchor: notes.PlaceBefore, Step: p.before}
 	case p.after != "":
-		target, err := resolveStep(rb, p.after)
-		if err != nil {
-			return "", err
-		}
-		if target.ID == movingID {
-			return "", &UsageError{Err: errors.New("cannot place a step relative to itself")}
-		}
-		idx := stepIndex(steps, target.ID)
-		next := ""
-		if idx < len(steps)-1 {
-			next = steps[idx+1].Position
-		}
-		return model.PositionBetween(target.Position, next), nil
+		return notes.Placement{Anchor: notes.PlaceAfter, Step: p.after}
 	default:
-		prev := ""
-		if len(steps) > 0 {
-			prev = steps[len(steps)-1].Position
-		}
-		return model.PositionBetween(prev, ""), nil
+		return notes.Placement{Anchor: notes.PlaceLast}
 	}
-}
-
-// stepsExcluding returns rb's steps with excludeID dropped, preserving the
-// folded (Position, ID) order; an empty excludeID returns the steps unchanged.
-func stepsExcluding(steps []model.RunbookStep, excludeID string) []model.RunbookStep {
-	if excludeID == "" {
-		return steps
-	}
-	out := make([]model.RunbookStep, 0, len(steps))
-	for _, st := range steps {
-		if st.ID != excludeID {
-			out = append(out, st)
-		}
-	}
-	return out
-}
-
-// stepIndex returns the position of the step with id in steps, or -1.
-func stepIndex(steps []model.RunbookStep, id string) int {
-	for i, st := range steps {
-		if st.ID == id {
-			return i
-		}
-	}
-	return -1
 }
 
 // printRunbookList writes runbooks as a JSON array of their DTOs or one lean
@@ -804,89 +775,21 @@ func printRunbookList(cmd *cobra.Command, runbooks []model.Runbook, jsonOut bool
 	return nil
 }
 
-// resolveStep expands a step id prefix — matched case-insensitively — against a
-// runbook's steps. No match fails with ErrNotFound; several matches fail with
-// an error listing each candidate's short id and text; one match returns it.
+// resolveStep resolves a step id prefix against rb, delegating to the notes-layer
+// resolver so CLI candidate rendering matches the domain resolution.
 func resolveStep(rb model.Runbook, prefix string) (model.RunbookStep, error) {
-	lowered := strings.ToLower(prefix)
-	var matches []model.RunbookStep
-	for _, st := range rb.Steps {
-		if strings.HasPrefix(strings.ToLower(st.ID), lowered) {
-			matches = append(matches, st)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return model.RunbookStep{}, fmt.Errorf("%w: no step matches %q", store.ErrNotFound, prefix)
-	case 1:
-		return matches[0], nil
-	default:
-		var b strings.Builder
-		for i, st := range matches {
-			if i > 0 {
-				b.WriteString("; ")
-			}
-			fmt.Fprintf(&b, "%s %s", render.ShortWireID(st.ID), st.Text)
-		}
-		return model.RunbookStep{}, fmt.Errorf("%w: step prefix %q matches %d: %s", store.ErrAmbiguous, prefix, len(matches), b.String())
-	}
+	return notes.ResolveStep(rb, prefix)
 }
 
-// resolveRun expands a run id prefix — matched case-insensitively — against a
-// runbook's runs. No match fails with ErrNotFound; several matches fail with an
-// error listing each candidate's short id, status, and start date; one match
-// returns it.
+// resolveRun resolves a run id prefix against rb via the notes-layer resolver.
 func resolveRun(rb model.Runbook, prefix string) (model.RunbookRun, error) {
-	lowered := strings.ToLower(prefix)
-	var matches []model.RunbookRun
-	for _, r := range rb.Runs {
-		if strings.HasPrefix(strings.ToLower(r.ID), lowered) {
-			matches = append(matches, r)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return model.RunbookRun{}, fmt.Errorf("%w: no run matches %q", store.ErrNotFound, prefix)
-	case 1:
-		return matches[0], nil
-	default:
-		return model.RunbookRun{}, fmt.Errorf("%w: run prefix %q matches %d: %s", store.ErrAmbiguous, prefix, len(matches), runCandidates(matches))
-	}
+	return notes.ResolveRun(rb, prefix)
 }
 
-// resolveTargetRun picks the run a step-status or finish verb operates on: the
-// --run prefix when set (may target a finished run — the core upserts results
-// after finish), else the runbook's sole running run. Zero running runs is a
-// ConflictError; several is an ErrAmbiguous listing them.
+// resolveTargetRun picks the run a step-status or finish verb targets via the
+// notes-layer resolver, mapping its *ConflictError to the CLI's so the no-running
+// exit code and stderr match.
 func resolveTargetRun(rb model.Runbook, runPrefix string) (model.RunbookRun, error) {
-	if runPrefix != "" {
-		return resolveRun(rb, runPrefix)
-	}
-	var running []model.RunbookRun
-	for _, r := range rb.Runs {
-		if r.Status == model.RunRunning {
-			running = append(running, r)
-		}
-	}
-	switch len(running) {
-	case 1:
-		return running[0], nil
-	case 0:
-		return model.RunbookRun{}, &ConflictError{Msg: fmt.Sprintf("no running run for %s; start one with `runbook run start` or pass --run", rb.ID.Short())}
-	default:
-		return model.RunbookRun{}, fmt.Errorf("%w: %s has %d running runs; pass --run: %s", store.ErrAmbiguous, rb.ID.Short(), len(running), runCandidates(running))
-	}
-}
-
-// runCandidates renders an ambiguity list of runs as "<id7> <status> <date>"
-// joined by "; ".
-func runCandidates(runs []model.RunbookRun) string {
-	var b strings.Builder
-	for i, r := range runs {
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		fmt.Fprintf(&b, "%s %s %s", render.ShortWireID(r.ID), r.Status, dateUTC(r.StartedAt))
-	}
-	return b.String()
+	run, err := notes.ResolveTargetRun(rb, runPrefix)
+	return run, runbookErr(err)
 }

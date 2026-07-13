@@ -276,8 +276,8 @@ func compareScored(a, b scoredEntity) int {
 }
 
 // resolveRelevantBranch returns the branch to weigh against: the flag verbatim
-// when set, otherwise the branch HEAD points at, or "" on a detached HEAD
-// (branch signals are then skipped rather than an error).
+// when set, otherwise the current branch, or "" on a detached HEAD with no
+// resolvable branch (branch signals are then skipped rather than an error).
 func resolveRelevantBranch(ctx context.Context, s *store.Store, flag string) (model.Branch, error) {
 	if flag != "" {
 		if err := s.Git.CheckRefFormat(ctx, flag); err != nil {
@@ -285,7 +285,7 @@ func resolveRelevantBranch(ctx context.Context, s *store.Store, flag string) (mo
 		}
 		return model.Branch(flag), nil
 	}
-	branch, err := s.Git.HeadBranch(ctx)
+	branch, err := s.Git.CurrentBranch(ctx)
 	if errors.Is(err, gitcmd.ErrDetachedHead) {
 		return "", nil
 	}

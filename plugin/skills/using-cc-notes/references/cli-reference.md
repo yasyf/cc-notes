@@ -17,6 +17,13 @@ repeatable procedure of ordered steps whose every execution is a tracked run.
   of its identity.
 - **Your branch's tasks** are the ones whose `Branch` equals your current `HEAD`. `task list`
   and `task ready` default to that scope.
+- **The current branch resolves jj-aware.** An attached HEAD uses the branch it points at. A
+  detached HEAD — the colocated-jj norm, parked at the working-copy parent — resolves to the
+  nearest local branch on `trunk..HEAD` not yet merged into the trunk (the exported jj bookmark
+  you advanced past), else the trunk itself (`origin/HEAD`, else a local `main`, else `master`;
+  with no trunk, a sole branch pointing at HEAD still resolves). When even that fails,
+  branch-scoped commands degrade instead of erroring — each command's entry says how — and an
+  explicit empty `--branch=` / `--into=` is a usage error, rejected before any mutation.
 - **The backlog** is the shared queue of work pinned to no branch (`Branch == ""`), visible to
   every agent on every branch. Create one with `task add --backlog`; pull from it with
   `task backlog`.
@@ -172,9 +179,14 @@ ancestor of the target tip. `--from` narrows to named branches for a determinist
 branches still carry over. It is idempotent — safe to re-run and to run in CI — and works under
 both git and jj; jj never fires git hooks, which is why this is an explicit command.
 
+`--into` defaults to the current branch, resolved jj-aware even on a detached HEAD (the nearest
+unmerged bookmark, else the trunk). Reconcile needs a real target, so it errors — pass `--into` —
+only when nothing resolves; an explicit empty `--into=` is a usage error, rejected before any
+write.
+
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--into <branch>` | current branch | Target branch to carry tasks onto |
+| `--into <branch>` | current branch, resolved jj-aware | Target branch to carry tasks onto |
 | `--from <branch>` | (auto-discover) | Restrict to named source branches; repeatable. Deterministic — use in CI |
 | `--force` | off | Skip the ancestry test; only valid with `--from`. For squash-merges and deleted branches |
 | `--dry-run` | off | Report what would change without writing. The preview reads canonical state only — data staged by a plain fetch is folded only by a real run |
@@ -228,7 +240,7 @@ one.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--branch <branch>` | current HEAD branch | Branch to weigh against; a detached HEAD skips branch signals |
+| `--branch <branch>` | current branch, resolved jj-aware | Branch to weigh against; a detached HEAD with no resolvable branch skips branch signals |
 | `--base <ref>` | remote default branch, else `main` | Merge-base reference for the cross-author range |
 | `--limit <N>` | `10` | Maximum results; negative is unlimited |
 | `--attached` | off | Keep only notes anchored to `PATH` or a parent directory (a `path` or `dir` reason) |
@@ -425,14 +437,17 @@ Requires cc-notes >= 0.3.0.
 
 ## Task commands
 
-Tasks are global, addressed by id. Id-addressed commands take no `--branch`. `--branch`,
-`--backlog`, and `--all-branches` are reader filters on `list`/`ready` and setters on
-`add`/`move`/`edit`.
+Tasks are global, addressed by id. Id-addressed commands take no `--branch` qualifier.
+`--branch`, `--backlog`, and `--all-branches` are reader filters on `list`/`ready` and setters
+on `add`/`move`/`edit` — and on `start`, where `--branch` names the branch the claimed task
+lands on.
 
 ### `cc-notes task add TITLE`
 
 Create a task. `Branch` defaults to your current branch; `--backlog` sets it to `""`; `--branch`
-sets it explicitly.
+sets it explicitly. The default resolves jj-aware on a detached HEAD; when no branch resolves,
+the task lands on the backlog and a stderr note says so — pass `--branch` to place it. An
+explicit empty `--branch=` is a usage error, rejected before anything is written.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -473,7 +488,8 @@ $ cc-notes task add "Rotate signing keys quarterly" --backlog --no-validation-cr
 ### `cc-notes task list`
 
 List tasks. Defaults to open and in-progress on your current branch. `--all-branches` and
-`--backlog` group output by branch.
+`--backlog` group output by branch. The current-branch default resolves jj-aware on a detached
+HEAD; when no branch resolves, the listing degrades to the backlog view instead of erroring.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -495,7 +511,9 @@ d82c087	in_progress	P1	ada <ada@example.com>	Add retry backoff to the API client
 
 ### `cc-notes task ready`
 
-List open, unassigned, unblocked tasks — the pickup queue.
+List open, unassigned, unblocked tasks — the pickup queue. The current-branch default resolves
+and degrades exactly like `task list`: jj-aware on a detached HEAD, falling back to the backlog
+view when no branch resolves.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -534,8 +552,13 @@ Claim the task (deterministic first-wins) and, once the claim is won, set its `B
 current branch, opening a lease. The one-step "I'm taking this and pulling it onto my branch" — a
 lost claim leaves the task on its original branch.
 
+The branch resolves jj-aware on a detached HEAD; `--branch` sets one explicitly. When no branch
+resolves and no `--branch` is given, start still claims the task — without setting a branch — and
+warns on stderr. An explicit empty `--branch=` is a usage error, rejected before any mutation.
+
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--branch <branch>` | current branch, resolved jj-aware | Branch to set on the claimed task; with no resolvable branch, the claim proceeds branch-less with a stderr warning |
 | `--json` | off | Emit JSON |
 
 ```console

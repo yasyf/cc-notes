@@ -38,7 +38,7 @@ func newNoteCmd() *cobra.Command {
 func newNoteAddCmd() *cobra.Command { return noteDocument.addVerb() }
 
 func newNoteListCmd() *cobra.Command {
-	return noteList.listVerb()
+	return noteDocument.listVerb()
 }
 
 func newNoteShowCmd() *cobra.Command {
@@ -48,11 +48,37 @@ func newNoteShowCmd() *cobra.Command {
 func newNoteEditCmd() *cobra.Command { return noteDocument.editVerb() }
 
 func newNoteRmCmd() *cobra.Command {
-	return noteSpec.rmVerb()
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "rm ID",
+		Short: "Tombstone a note",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveNote(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			note, err := c.RemoveNote(ctx, id)
+			if err != nil {
+				return err
+			}
+			return printNote(cmd, s, note, jsonOut)
+		},
+	}
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
 }
 
 func newNoteSearchCmd() *cobra.Command {
-	return noteList.searchVerb()
+	return noteDocument.searchVerb()
 }
 
 func newNoteVerifyCmd() *cobra.Command { return noteDocument.verifyVerb() }

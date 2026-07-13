@@ -2,11 +2,9 @@ package cli
 
 import (
 	"bufio"
-	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -36,18 +34,22 @@ func newTaskValidateCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			ref, task, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			task, err := c.Task(ctx, id)
 			if err != nil {
 				return err
 			}
 			var scripted []model.Criterion
-			for _, c := range task.Criteria {
-				if c.Script != "" {
-					scripted = append(scripted, c)
+			for _, crit := range task.Criteria {
+				if crit.Script != "" {
+					scripted = append(scripted, crit)
 				}
 			}
 			out := cmd.OutOrStdout()
@@ -56,8 +58,8 @@ func newTaskValidateCmd() *cobra.Command {
 				_, err := fmt.Fprintln(out, "no criteria have validation scripts")
 				return err
 			}
-			for _, c := range scripted {
-				if _, err := fmt.Fprintf(stderr, "criterion %s %s:\n%s\n", c.ID[:7], sanitizeDisplay(c.Text, false), sanitizeDisplay(c.Script, true)); err != nil {
+			for _, crit := range scripted {
+				if _, err := fmt.Fprintf(stderr, "criterion %s %s:\n%s\n", crit.ID[:7], sanitizeDisplay(crit.Text, false), sanitizeDisplay(crit.Script, true)); err != nil {
 					return err
 				}
 			}
@@ -69,19 +71,14 @@ func newTaskValidateCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ops := make([]model.Op, len(scripted))
-			for i, c := range scripted {
-				status := runScript(ctx, s.Git.Dir, c.Script, timeout)
-				if _, err := fmt.Fprintf(stderr, "%s %s %s\n", c.ID[:7], status, sanitizeDisplay(c.Text, false)); err != nil {
-					return err
-				}
-				ops[i] = model.SetCriterionStatus{ID: c.ID, Status: status}
-			}
-			snapshot, err := s.Append(ctx, ref, ops)
+			validated, err := c.ValidateTask(ctx, id, scripted, timeout, func(crit model.Criterion, status model.CriterionStatus) error {
+				_, err := fmt.Fprintf(stderr, "%s %s %s\n", crit.ID[:7], status, sanitizeDisplay(crit.Text, false))
+				return err
+			})
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, validated, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -113,25 +110,6 @@ func confirmScripts(cmd *cobra.Command, n int) error {
 	default:
 		return errors.New("aborted: validation not confirmed")
 	}
-}
-
-// runScript executes one criterion's check command under sh in dir, bounded by
-// timeout and ctx cancellation. Exit 0 is met; a non-zero exit or a timeout is
-// failed.
-func runScript(ctx context.Context, dir, script string, timeout time.Duration) model.CriterionStatus {
-	tctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	//nolint:gosec // G204: running the operator-defined criterion check command under sh is this feature's whole purpose.
-	cmd := exec.CommandContext(tctx, "sh", "-c", script)
-	cmd.Dir = dir
-	// WaitDelay force-closes the script's inherited pipes shortly after the
-	// timeout fires, so a child that outlives sh (holding stdout open) cannot
-	// hang CombinedOutput past the bound.
-	cmd.WaitDelay = 5 * time.Second
-	if _, err := cmd.CombinedOutput(); err != nil {
-		return model.CriterionFailed
-	}
-	return model.CriterionMet
 }
 
 // sanitizeDisplay neutralizes control bytes in untrusted criterion content

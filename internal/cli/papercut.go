@@ -11,10 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/render"
-	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // papercut identity: the tag is identity (a retitle never forks the journal),
@@ -53,22 +52,22 @@ stdin ("... | cc-notes papercut -").`,
 			}
 			entryModel := resolvePapercutModel(cmd, modelID)
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			journal, err := findOrCreatePapercutLog(ctx, cmd, s)
+			journal, err := findOrCreatePapercutLog(ctx, cmd, c)
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, refs.For(model.KindLog, journal.ID), []model.Op{model.AppendEntry{Text: text, Model: entryModel}})
+			log, err := c.AppendLog(ctx, journal.ID, notes.LogAppend{Text: text, Model: entryModel})
 			if err != nil {
 				return err
 			}
-			return printLog(cmd, s, snapshot.(model.Log), jsonOut)
+			return printLog(cmd, s, log, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -85,11 +84,11 @@ func newPapercutListCmd() *cobra.Command {
 		Short: "List every papercut complaint in timestamp order",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore()
+			_, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			logs, err := s.ListLogs(cmd.Context(), false)
+			logs, err := c.Logs(cmd.Context(), notes.LogFilter{})
 			if err != nil {
 				return err
 			}
@@ -114,27 +113,34 @@ func resolvePapercutModel(cmd *cobra.Command, flag string) string {
 }
 
 // findOrCreatePapercutLog returns the canonical papercut journal, creating it
-// when absent. The canonical pick is the first papercut-tagged log in ListLogs
-// order (CreatedAt then id ascending) — the create-dedupe survivor order — so
-// future appends deterministically converge onto the oldest twin. The
-// AppendEntry is never bundled into the create pack: dedupeCovered excludes
-// append_entry, so bundling would disable the same-clone convergence backstop.
-func findOrCreatePapercutLog(ctx context.Context, cmd *cobra.Command, s *store.Store) (model.Log, error) {
-	logs, err := s.ListLogs(ctx, false)
+// when absent. The canonical pick is the papercut-tagged log with the lowest
+// (created_at, id) — the create-dedupe survivor order, the oldest twin — so
+// future appends deterministically converge onto it even when a cross-clone twin
+// journal exists. CreateLog never bundles the first entry into the create pack:
+// dedupeCovered excludes append_entry, so bundling would disable the same-clone
+// convergence backstop.
+func findOrCreatePapercutLog(ctx context.Context, cmd *cobra.Command, c *notes.Client) (model.Log, error) {
+	logs, err := c.Logs(ctx, notes.LogFilter{Labels: []string{papercutTag}})
 	if err != nil {
 		return model.Log{}, err
 	}
-	for _, l := range logs {
-		if slices.Contains(l.Tags, papercutTag) {
-			return l, nil
+	if len(logs) > 0 {
+		canonical := logs[0]
+		for _, l := range logs[1:] {
+			if l.CreatedAt < canonical.CreatedAt || (l.CreatedAt == canonical.CreatedAt && l.ID < canonical.ID) {
+				canonical = l
+			}
 		}
+		return canonical, nil
 	}
-	create := model.CreateLog{Nonce: model.NewNonce(), Title: papercutTitle, Tags: []string{papercutTag}}
-	snapshot, err := createEntity(ctx, cmd, s, []model.Op{create})
+	log, reused, err := c.CreateLog(ctx, notes.LogSpec{Title: papercutTitle, Tags: []string{papercutTag}})
 	if err != nil {
 		return model.Log{}, err
 	}
-	return snapshot.(model.Log), nil
+	if reused {
+		warnDuplicate(cmd, "log", log.ID)
+	}
+	return log, nil
 }
 
 // papercutRow pairs one folded log entry with its journal and its index within

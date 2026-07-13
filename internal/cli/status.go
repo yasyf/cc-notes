@@ -32,7 +32,7 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			branch, err := s.Git.HeadBranch(ctx)
+			branch, err := s.Git.CurrentBranch(ctx)
 			switch {
 			case errors.Is(err, gitcmd.ErrDetachedHead):
 				branch = ""

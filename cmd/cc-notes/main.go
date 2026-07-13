@@ -27,7 +27,10 @@ func main() {
 	}
 
 	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %s\n", cli.Label(err), err)
+		fmt.Fprintf(os.Stderr, "%s: %s\n", cli.Label(err), cli.Message(err))
+		if hint := cli.Hint(err); hint != "" {
+			fmt.Fprintln(os.Stderr, hint)
+		}
 		if hint := upgradeHint(err); hint != "" {
 			fmt.Fprintln(os.Stderr, hint)
 		}

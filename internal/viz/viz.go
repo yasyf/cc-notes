@@ -226,9 +226,10 @@ func (b *Builder) putGraph(digest string, g *Graph) {
 	b.graphCache[digest] = g
 }
 
-// head returns the branch HEAD points at, or "" when HEAD is detached.
+// head returns the current branch, or "" when HEAD is detached with no
+// resolvable branch.
 func (b *Builder) head(ctx context.Context) (string, error) {
-	branch, err := b.store.Git.HeadBranch(ctx)
+	branch, err := b.store.Git.CurrentBranch(ctx)
 	if err != nil {
 		if errors.Is(err, gitcmd.ErrDetachedHead) {
 			return "", nil

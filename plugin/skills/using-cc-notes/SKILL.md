@@ -53,7 +53,10 @@ like a note. Its branch is a *mutable attribute*, not part of its identity: `tas
 branch (`task add --backlog`, visible to every agent on every branch), and `task edit <id>
 --branch <branch>` (or `task start`, automatically) re-homes a task by setting that attribute.
 Because the id is global, ids resolve with no branch qualifier — `--branch` filters what
-`list`/`ready` read and sets a task's placement on `add`/`edit`.
+`list`/`ready` read and sets a task's placement on `add`/`edit`. In a colocated jj repo — git
+HEAD detached at the working-copy parent — the current branch still resolves: the nearest
+unmerged bookmark, else the trunk. When nothing resolves, branch-scoped task commands degrade
+to the backlog instead of failing; `task start --branch <branch>` sets an explicit branch.
 
 A note records when it was last **verified** true; superseding a note points it at its
 replacement and drops it from default listings.

@@ -152,22 +152,52 @@ func TestStatusDocs(t *testing.T) {
 
 func TestStatusDetachedHead(t *testing.T) {
 	dir := initRepo(t)
-	addTask(t, dir, "On main")
+	task := addTask(t, dir, "On main")
 	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c")
 	gittest.Git(t, dir, "checkout", "-q", "--detach")
 
+	// Detached at main's tip — the jj colocation norm. CurrentBranch resolves
+	// main, so status shows the your-branch section for main.
 	out, _, err := runCLI(t, dir, "status")
 	if err != nil {
 		t.Fatalf("status on detached HEAD err = %v, want nil", err)
 	}
+	if !strings.Contains(out, "your branch (main)") {
+		t.Fatalf("status text %q must show the your-branch section for main", out)
+	}
+	st := mustJSON[statusJSONShape](t, mustRun(t, dir, "status", "--json"))
+	if st.Branch != "main" {
+		t.Fatalf("branch = %q, want main on detached-at-tip HEAD", st.Branch)
+	}
+	if !hasTaskID(st.YourBranch, task.ID) {
+		t.Fatalf("your_branch = %+v, want the main task %s", st.YourBranch, task.ID[:7])
+	}
+}
+
+// TestStatusAmbiguousHead pins the your-branch degrade: on a genuinely
+// unresolvable HEAD (no trunk, advanced past the sole bookmark) status resolves
+// the empty branch and omits the your-branch section.
+func TestStatusAmbiguousHead(t *testing.T) {
+	dir := initRepo(t)
+	// No trunk: rename the unborn main to wip so main never exists.
+	gittest.Git(t, dir, "checkout", "-q", "-b", "wip")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c1")
+	addTask(t, dir, "On wip")
+	gittest.Git(t, dir, "checkout", "-q", "--detach")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c2")
+
+	out, _, err := runCLI(t, dir, "status")
+	if err != nil {
+		t.Fatalf("status on ambiguous HEAD err = %v, want nil", err)
+	}
 	if strings.Contains(out, "your branch") {
-		t.Fatalf("status text %q must omit the your-branch section on detached HEAD", out)
+		t.Fatalf("status text %q must omit the your-branch section on an unresolvable HEAD", out)
 	}
 	st := mustJSON[statusJSONShape](t, mustRun(t, dir, "status", "--json"))
 	if st.Branch != "" {
-		t.Fatalf("branch = %q, want empty on detached HEAD", st.Branch)
+		t.Fatalf("branch = %q, want empty on an unresolvable HEAD", st.Branch)
 	}
 	if len(st.YourBranch) != 0 {
-		t.Fatalf("your_branch = %+v, want empty on detached HEAD", st.YourBranch)
+		t.Fatalf("your_branch = %+v, want empty on an unresolvable HEAD", st.YourBranch)
 	}
 }

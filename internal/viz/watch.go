@@ -156,10 +156,11 @@ func (w *Watcher) snapshot(ctx context.Context) (map[string]model.SHA, string, e
 	return tips, head, nil
 }
 
-// headBranch returns the branch HEAD points at, mapping a detached HEAD to the
-// empty string — the same source and convention as the Builder's head().
+// headBranch returns the current branch, mapping a detached HEAD with no
+// resolvable branch to the empty string — the same source and convention as the
+// Builder's head().
 func (w *Watcher) headBranch(ctx context.Context) (string, error) {
-	branch, err := w.git.HeadBranch(ctx)
+	branch, err := w.git.CurrentBranch(ctx)
 	if errors.Is(err, gitcmd.ErrDetachedHead) {
 		return "", nil
 	}

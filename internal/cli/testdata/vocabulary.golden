@@ -1511,6 +1511,7 @@ command: cc-notes task start
   short: Claim a task and move it onto your current branch
   hidden: false
   flags:
+    --branch shorthand=none type=string default="" usage="branch to set (default: current branch)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     (none)

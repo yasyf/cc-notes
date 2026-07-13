@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -58,35 +57,6 @@ func parseDate(value string) (int64, error) {
 		return 0, fmt.Errorf("invalid date %q (want YYYY-MM-DD): %w", value, err)
 	}
 	return t.UTC().Unix(), nil
-}
-
-// resolveCriterion expands a criterion id prefix — matched case-insensitively —
-// against a task's criteria. No match fails with ErrNotFound; several matches
-// fail with an error listing each candidate's short id and text; one match
-// returns the criterion.
-func resolveCriterion(task model.Task, prefix string) (model.Criterion, error) {
-	lowered := strings.ToLower(prefix)
-	var matches []model.Criterion
-	for _, c := range task.Criteria {
-		if strings.HasPrefix(strings.ToLower(c.ID), lowered) {
-			matches = append(matches, c)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return model.Criterion{}, fmt.Errorf("%w: no criterion matches %q", store.ErrNotFound, prefix)
-	case 1:
-		return matches[0], nil
-	default:
-		var b strings.Builder
-		for i, c := range matches {
-			if i > 0 {
-				b.WriteString("; ")
-			}
-			fmt.Fprintf(&b, "%s %s", c.ID[:7], c.Text)
-		}
-		return model.Criterion{}, fmt.Errorf("%w: criterion prefix %q matches %d: %s", store.ErrAmbiguous, prefix, len(matches), b.String())
-	}
 }
 
 // sortByUpdated orders any snapshot slice by updated_at descending, then id

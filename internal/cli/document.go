@@ -11,35 +11,71 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
-// documentSpec is the vocabulary the note and doc noun groups share for the
-// freshness lifecycle: the load/print binding, the display noun, the anchor
-// projection a verify witnesses, the review folder, and the DTO/lean
-// projections a review prints. Note and doc reuse the note-named storage ops
-// (VerifyNote, MarkStale), so the lifecycle verbs carry no per-kind op hook.
+// documentSpec is the presentation vocabulary the note and doc noun groups share
+// for the freshness lifecycle. It binds the load/print kind, the display noun,
+// the file-mode adapter, the review DTO/lean projections, and the notes.Client
+// methods that own the domain logic — the verb methods parse flags, validate,
+// call the bound notes method, and render; they hold no store writes of their
+// own.
 type documentSpec[T model.Snapshot] struct {
 	kind         kindSpec[T]
 	noun         string
 	hasWhen      bool
 	bodyRequired bool
+	searchShort  string
 	addLong      string
 	editLong     string
 	adapter      func() editAdapter
-	createOp     func(title, body, when string, tags []string, anchors []model.Anchor) model.Op
-	anchors      func(T) []model.Anchor
-	reviewSet    func(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) ([]reviewed[T], error)
 	newDTO       func(T, string, []attachmentDTO) any
 	lean         func(T) string
+
+	resolve   func(ctx context.Context, c *notes.Client, prefix string) (model.EntityID, error)
+	create    func(ctx context.Context, c *notes.Client, title, body, when string, tags []string, anchors notes.AnchorSpec, atts []model.Attachment) (T, bool, error)
+	edit      func(ctx context.Context, c *notes.Client, id model.EntityID, in documentEdit) (T, error)
+	verify    func(ctx context.Context, c *notes.Client, id model.EntityID) (T, error)
+	supersede func(ctx context.Context, c *notes.Client, id, by model.EntityID, clearFlag bool) (T, error)
+	expire    func(ctx context.Context, c *notes.Client, id model.EntityID, reason string, clearFlag bool) (T, error)
+	review    func(ctx context.Context, c *notes.Client, staleAfter time.Duration) ([]reviewed[T], error)
+	list      func(ctx context.Context, c *notes.Client, f notes.DocumentFilter) ([]T, error)
+	search    func(ctx context.Context, c *notes.Client, query string, f notes.SearchFilter) ([]T, error)
 }
 
-// addVerb builds "add TITLE": create the entity from flags, or as a checked-out
-// file via --checkout/--apply/--abort. The body is read and (for body-required
-// kinds) validated before the store opens, so a bad title or empty body never
-// runs auto-install. A fresh entity is born verified against current HEAD.
+// documentEdit is the parsed note or doc edit, projected onto notes.NoteEdit or
+// notes.DocEdit by the per-kind binding. A nil title/body/when pointer leaves the
+// field untouched; attachments and replaceAttachments split by the --replace flag.
+type documentEdit struct {
+	title, body, when               *string
+	addTags, rmTags                 []string
+	addAnchors, rmAnchors           notes.AnchorSpec
+	attachments, replaceAttachments []model.Attachment
+	rmAttachments                   []string
+}
+
+// isEmpty reports whether the edit sets nothing beyond the --attach files (which
+// the caller counts separately), matching the pre-migration "at least one flag"
+// guard.
+func (e documentEdit) isEmpty() bool {
+	return e.title == nil && e.body == nil && e.when == nil &&
+		len(e.addTags) == 0 && len(e.rmTags) == 0 &&
+		anchorSpecEmpty(e.addAnchors) && anchorSpecEmpty(e.rmAnchors) &&
+		len(e.rmAttachments) == 0
+}
+
+// anchorSpecEmpty reports whether the spec names no anchor.
+func anchorSpecEmpty(s notes.AnchorSpec) bool {
+	return len(s.Commits) == 0 && len(s.Paths) == 0 && len(s.Dirs) == 0 && len(s.Branches) == 0
+}
+
+// addVerb builds "add TITLE": create the entity from flags via notes.Client, or
+// as a checked-out file via --checkout/--apply/--abort. The body is read and (for
+// body-required kinds) validated before the store opens, so a bad title or empty
+// body never runs auto-install. A fresh entity is born verified against HEAD, and
+// a dedupe hit re-verifies the reused survivor.
 func (spec documentSpec[T]) addVerb() *cobra.Command {
 	var body, when string
 	var labels, attach []string
@@ -77,45 +113,28 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 				return errEmptyDocBody(docBodyHintAdd)
 			}
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			commits, err := resolveCommits(ctx, s.Git, anchors.commits)
+			if anchors.commits, err = resolveCommits(ctx, s.Git, anchors.commits); err != nil {
+				return err
+			}
+			atts, err := attachFiles(ctx, cmd, s, attach)
 			if err != nil {
 				return err
 			}
-			ops := []model.Op{spec.createOp(args[0], text, when, labels, buildAnchors(commits, anchors.paths, anchors.dirs, anchors.branches))}
-			attOps, err := attachOps(ctx, cmd, s, attach)
+			ent, reused, err := spec.create(ctx, c, args[0], text, when, labels, anchorSetsSpec(anchors), atts)
 			if err != nil {
 				return err
 			}
-			snapshot, err := createEntity(ctx, cmd, s, append(ops, attOps...))
-			if err != nil {
-				return err
+			if reused {
+				warnDuplicate(cmd, spec.noun, ent.EntityID())
 			}
-			ent := snapshot.(T)
-			head, err := resolveHead(ctx, s)
-			if err != nil {
-				return err
-			}
-			witness, err := buildWitness(ctx, s, head, spec.anchors(ent))
-			if err != nil {
-				return err
-			}
-			// An add re-asserts the fact now, so a dedupe hit re-verifies the reused
-			// entity rather than skipping it: VerifyNote refreshes the survivor's
-			// witness, verified_at/by, and verified_commit and clears any stale flag,
-			// exactly as a fresh add is born verified. The dedupe scan excludes stale
-			// twins, so this survivor is live.
-			verified, err := s.Append(ctx, refs.For(spec.kind.kind, ent.EntityID()), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}})
-			if err != nil {
-				return err
-			}
-			return spec.kind.print(cmd, s, verified.(T), jsonOut)
+			return spec.kind.print(cmd, s, ent, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -133,8 +152,8 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 	return cmd
 }
 
-// editVerb builds "edit ID": mutate the entity by flags, or as a checked-out
-// file. At least one mutation is required.
+// editVerb builds "edit ID": mutate the entity by flags via notes.Client, or as a
+// checked-out file. At least one mutation is required.
 func (spec documentSpec[T]) editVerb() *cobra.Command {
 	var title, body, when string
 	var rmAttachments, attach []string
@@ -154,12 +173,12 @@ func (spec documentSpec[T]) editVerb() *cobra.Command {
 			if replace && len(attach) == 0 {
 				return &UsageError{Err: errors.New("--replace requires --attach")}
 			}
-			var ops []model.Op
+			var in documentEdit
 			if cmd.Flags().Changed("title") {
 				if err := validateTitle(title, titleHintBody); err != nil {
 					return err
 				}
-				ops = append(ops, model.SetTitle{Title: title})
+				in.title = &title
 			}
 			if cmd.Flags().Changed("body") {
 				text, err := bodyArg(cmd, body)
@@ -169,59 +188,43 @@ func (spec documentSpec[T]) editVerb() *cobra.Command {
 				if spec.bodyRequired && text == "" && len(attach) == 0 {
 					return errEmptyDocBody(docBodyHintAdd)
 				}
-				ops = append(ops, model.SetBody{Body: text})
+				in.body = &text
 			}
 			if spec.hasWhen && cmd.Flags().Changed("when") {
-				ops = append(ops, model.SetWhen{When: when})
+				in.when = &when
 			}
-			for _, l := range labels.add {
-				ops = append(ops, model.AddTag{Tag: l})
-			}
-			for _, l := range labels.rm {
-				ops = append(ops, model.RemoveTag{Tag: l})
-			}
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			addCommits, err := resolveCommits(ctx, s.Git, anchors.addCommits)
-			if err != nil {
-				return err
-			}
-			for _, a := range buildAnchors(addCommits, anchors.addPaths, anchors.addDirs, anchors.addBranches) {
-				ops = append(ops, model.AddAnchor{Anchor: a})
-			}
-			for _, a := range buildAnchors(anchors.rmCommits, anchors.rmPaths, anchors.rmDirs, anchors.rmBranches) {
-				ops = append(ops, model.RemoveAnchor{Anchor: a})
-			}
-			for _, name := range rmAttachments {
-				ops = append(ops, model.RemoveAttachment{Name: name})
-			}
-			if len(ops) == 0 && len(attach) == 0 {
+			in.addTags, in.rmTags = labels.add, labels.rm
+			in.addAnchors = notes.AnchorSpec{Commits: anchors.addCommits, Paths: anchors.addPaths, Dirs: anchors.addDirs, Branches: anchors.addBranches}
+			in.rmAnchors = notes.AnchorSpec{Commits: anchors.rmCommits, Paths: anchors.rmPaths, Dirs: anchors.rmDirs, Branches: anchors.rmBranches}
+			in.rmAttachments = rmAttachments
+			if in.isEmpty() && len(attach) == 0 {
 				return &UsageError{Err: errors.New(spec.noun + " edit requires at least one flag")}
+			}
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, ent, err := spec.kind.load(ctx, s, args[0])
+			id, err := spec.resolve(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
-			if !replace {
-				if err := checkAttachCollisions(ent.Meta().Attachments, attach); err != nil {
-					return err
-				}
-			}
-			attOps, err := attachOps(ctx, cmd, s, attach)
+			atts, err := attachFiles(ctx, cmd, s, attach)
 			if err != nil {
 				return err
 			}
-			ops = append(ops, attOps...)
-			snapshot, err := s.Append(ctx, ref, ops)
+			if replace {
+				in.replaceAttachments = atts
+			} else {
+				in.attachments = atts
+			}
+			ent, err := spec.edit(ctx, c, id, in)
 			if err != nil {
 				return err
 			}
-			return spec.kind.print(cmd, s, snapshot.(T), jsonOut)
+			return spec.kind.print(cmd, s, ent, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -251,30 +254,22 @@ func (spec documentSpec[T]) verifyVerb() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, ent, err := spec.kind.load(ctx, s, args[0])
+			id, err := spec.resolve(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
-			head, err := resolveHead(ctx, s)
+			ent, err := spec.verify(ctx, c, id)
 			if err != nil {
 				return err
 			}
-			witness, err := buildWitness(ctx, s, head, spec.anchors(ent))
-			if err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}})
-			if err != nil {
-				return err
-			}
-			return spec.kind.print(cmd, s, snapshot.(T), jsonOut)
+			return spec.kind.print(cmd, s, ent, jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)
@@ -295,30 +290,26 @@ func (spec documentSpec[T]) supersedeVerb() *cobra.Command {
 			if by == "" {
 				return &UsageError{Err: errors.New(spec.noun + " supersede requires --by NEW")}
 			}
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			oldRef, _, err := spec.kind.load(ctx, s, args[0])
+			id, err := spec.resolve(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
-			_, newEnt, err := spec.kind.load(ctx, s, by)
+			byID, err := spec.resolve(ctx, c, by)
 			if err != nil {
 				return err
 			}
-			var op model.Op = model.AddSupersededBy{ID: newEnt.EntityID()}
-			if clearFlag {
-				op = model.RemoveSupersededBy{ID: newEnt.EntityID()}
-			}
-			snapshot, err := s.Append(ctx, oldRef, []model.Op{op})
+			ent, err := spec.supersede(ctx, c, id, byID, clearFlag)
 			if err != nil {
 				return err
 			}
-			return spec.kind.print(cmd, s, snapshot.(T), jsonOut)
+			return spec.kind.print(cmd, s, ent, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -341,28 +332,22 @@ func (spec documentSpec[T]) expireVerb() *cobra.Command {
 			if clearFlag && reason != "" {
 				return &UsageError{Err: errors.New(spec.noun + " expire --clear takes no --reason")}
 			}
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := spec.kind.load(ctx, s, args[0])
+			id, err := spec.resolve(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
-			var ops []model.Op
-			if clearFlag {
-				ops = []model.Op{model.ClearStale{}}
-			} else {
-				ops = []model.Op{model.MarkStale{Reason: reason}}
-			}
-			snapshot, err := s.Append(ctx, ref, ops)
+			ent, err := spec.expire(ctx, c, id, reason, clearFlag)
 			if err != nil {
 				return err
 			}
-			return spec.kind.print(cmd, s, snapshot.(T), jsonOut)
+			return spec.kind.print(cmd, s, ent, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -383,8 +368,7 @@ func (spec documentSpec[T]) reviewVerb() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			now := time.Now()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -392,11 +376,7 @@ func (spec documentSpec[T]) reviewVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			head, err := resolveHead(ctx, s)
-			if err != nil {
-				return err
-			}
-			flagged, err := spec.reviewSet(ctx, s, head, now, staleAfter)
+			flagged, err := spec.review(ctx, c, staleAfter)
 			if err != nil {
 				return err
 			}
@@ -412,10 +392,116 @@ func (spec documentSpec[T]) reviewVerb() *cobra.Command {
 	return cmd
 }
 
+// listVerb builds "list": filter by labels and anchors, order by UpdatedAt, and
+// print. Note and doc are supersedable, so --include-superseded is always bound.
+func (spec documentSpec[T]) listVerb() *cobra.Command {
+	var labels []string
+	var filters anchorFilters
+	var all, includeSuperseded, jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List " + spec.noun + "s",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			items, err := spec.list(cmd.Context(), c, notes.DocumentFilter{
+				Labels:            labels,
+				Anchor:            anchorFiltersToNotes(filters),
+				IncludeTombstoned: all,
+				IncludeSuperseded: includeSuperseded,
+			})
+			if err != nil {
+				return err
+			}
+			return printEntityList(cmd, s, items, jsonOut, spec.listDTO, spec.lean)
+		},
+	}
+	flags := cmd.Flags()
+	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
+	filters.bind(flags)
+	flags.BoolVar(&all, "all", false, "include tombstoned "+spec.noun+"s")
+	flags.BoolVar(&includeSuperseded, "include-superseded", false, "include superseded "+spec.noun+"s")
+	bindJSON(flags, &jsonOut)
+	return cmd
+}
+
+// searchVerb builds "search QUERY": a ranked, tag/author/anchor filtered lookup
+// over the live set.
+func (spec documentSpec[T]) searchVerb() *cobra.Command {
+	var labels []string
+	var author string
+	var filters anchorFilters
+	var limit int
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "search QUERY",
+		Short: spec.searchShort,
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			items, err := spec.search(cmd.Context(), c, args[0], notes.SearchFilter{
+				Labels:  labels,
+				Author:  author,
+				Anchors: anchorFiltersToNotes(filters),
+				Limit:   limit,
+			})
+			if err != nil {
+				return err
+			}
+			return printEntityList(cmd, s, items, jsonOut, spec.listDTO, spec.lean)
+		},
+	}
+	flags := cmd.Flags()
+	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
+	flags.IntVar(&limit, "limit", 20, "maximum results")
+	flags.StringVar(&author, "author", "", "require author")
+	filters.bind(flags)
+	bindJSON(flags, &jsonOut)
+	return cmd
+}
+
+// listDTO adapts the spec's review DTO (which carries a drift verdict) to the
+// list projection by passing an empty verdict.
+func (spec documentSpec[T]) listDTO(v T, atts []attachmentDTO) any {
+	return spec.newDTO(v, "", atts)
+}
+
+// anchorSetsSpec projects the add-anchor flag set onto a notes.AnchorSpec.
+func anchorSetsSpec(a anchorSets) notes.AnchorSpec {
+	return notes.AnchorSpec{Commits: a.commits, Paths: a.paths, Dirs: a.dirs, Branches: a.branches}
+}
+
+// anchorFiltersToNotes projects the anchor filter flags onto a notes.AnchorFilter.
+func anchorFiltersToNotes(f anchorFilters) notes.AnchorFilter {
+	return notes.AnchorFilter{Commit: f.commit, Path: f.path, Dir: f.dir, Branch: f.branch}
+}
+
+// attachFiles ingests every --attach file into the local LFS store and returns
+// the resulting attachments, reusing attachOps for the ingestion, prune-guard
+// announcement, and duplicate-name/missing-file guards.
+func attachFiles(ctx context.Context, cmd *cobra.Command, s *store.Store, paths []string) ([]model.Attachment, error) {
+	ops, err := attachOps(ctx, cmd, s, paths)
+	if err != nil {
+		return nil, err
+	}
+	atts := make([]model.Attachment, len(ops))
+	for i, op := range ops {
+		atts[i] = model.Attachment(op.(model.AddAttachment))
+	}
+	return atts, nil
+}
+
 var noteDocument = documentSpec[model.Note]{
-	kind:    noteSpec,
-	noun:    "note",
-	adapter: noteAdapter,
+	kind:        noteSpec,
+	noun:        "note",
+	searchShort: "Ranked search across note titles, labels, and bodies",
+	adapter:     noteAdapter,
 	addLong: "Create a note from flags, or as a file: --checkout writes a template —\n" +
 		"prefilled from any TITLE and anchor/label flags — to an editable file and\n" +
 		"prints its path; fill it in, then --apply <path> to create the note\n" +
@@ -423,13 +509,54 @@ var noteDocument = documentSpec[model.Note]{
 	editLong: "Edit a note by flags, or as a file: --checkout writes the note to an editable\n" +
 		"Markdown file and prints its path; edit that file with your normal tools, then\n" +
 		"--apply to commit the change (or --abort to discard).",
-	createOp: func(title, body, _ string, tags []string, anchors []model.Anchor) model.Op {
-		return model.CreateNote{Nonce: model.NewNonce(), Title: title, Body: body, Tags: tags, Anchors: anchors}
+	newDTO: func(n model.Note, drift string, atts []attachmentDTO) any { return newNoteDTO(n, drift, atts) },
+	lean:   leanNoteLine,
+	resolve: func(ctx context.Context, c *notes.Client, prefix string) (model.EntityID, error) {
+		return c.ResolveNote(ctx, prefix)
 	},
-	anchors:   noteRank.anchors,
-	reviewSet: reviewNotes,
-	newDTO:    func(n model.Note, drift string, atts []attachmentDTO) any { return newNoteDTO(n, drift, atts) },
-	lean:      leanNoteLine,
+	create: func(ctx context.Context, c *notes.Client, title, body, _ string, tags []string, anchors notes.AnchorSpec, atts []model.Attachment) (model.Note, bool, error) {
+		return c.CreateNote(ctx, notes.NoteSpec{Title: title, Body: body, Tags: tags, Anchors: anchors, Attachments: atts})
+	},
+	edit: func(ctx context.Context, c *notes.Client, id model.EntityID, in documentEdit) (model.Note, error) {
+		return c.EditNote(ctx, id, notes.NoteEdit{
+			Title: in.title, Body: in.body,
+			AddTags: in.addTags, RemoveTags: in.rmTags,
+			AddAnchors: in.addAnchors, RemoveAnchors: in.rmAnchors,
+			Attachments: in.attachments, ReplaceAttachments: in.replaceAttachments, RemoveAttachments: in.rmAttachments,
+		})
+	},
+	verify: func(ctx context.Context, c *notes.Client, id model.EntityID) (model.Note, error) {
+		return c.VerifyNote(ctx, id)
+	},
+	supersede: func(ctx context.Context, c *notes.Client, id, by model.EntityID, clearFlag bool) (model.Note, error) {
+		if clearFlag {
+			return c.UnsupersedeNote(ctx, id, by)
+		}
+		return c.SupersedeNote(ctx, id, by)
+	},
+	expire: func(ctx context.Context, c *notes.Client, id model.EntityID, reason string, clearFlag bool) (model.Note, error) {
+		if clearFlag {
+			return c.UnexpireNote(ctx, id)
+		}
+		return c.ExpireNote(ctx, id, reason)
+	},
+	review: func(ctx context.Context, c *notes.Client, staleAfter time.Duration) ([]reviewed[model.Note], error) {
+		rs, err := c.ReviewNotes(ctx, staleAfter)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]reviewed[model.Note], len(rs))
+		for i, r := range rs {
+			out[i] = reviewed[model.Note]{entity: r.Note, verdict: string(r.Verdict)}
+		}
+		return out, nil
+	},
+	list: func(ctx context.Context, c *notes.Client, f notes.DocumentFilter) ([]model.Note, error) {
+		return c.Notes(ctx, f)
+	},
+	search: func(ctx context.Context, c *notes.Client, query string, f notes.SearchFilter) ([]model.Note, error) {
+		return c.SearchNotes(ctx, query, f)
+	},
 }
 
 var docDocument = documentSpec[model.Doc]{
@@ -437,6 +564,7 @@ var docDocument = documentSpec[model.Doc]{
 	noun:         "doc",
 	hasWhen:      true,
 	bodyRequired: true,
+	searchShort:  "Ranked search across doc titles, labels, and bodies",
 	adapter:      docAdapter,
 	addLong: "Create a doc from flags, or as a file: --checkout writes a template —\n" +
 		"prefilled from any TITLE and anchor/label flags — to an editable file and\n" +
@@ -446,13 +574,54 @@ var docDocument = documentSpec[model.Doc]{
 	editLong: "Edit a doc by flags, or as a file: --checkout writes the doc to an editable\n" +
 		"Markdown file and prints its path; edit that file with your normal tools, then\n" +
 		"--apply to commit the change (or --abort to discard).",
-	createOp: func(title, body, when string, tags []string, anchors []model.Anchor) model.Op {
-		return model.CreateDoc{Nonce: model.NewNonce(), Title: title, Body: body, When: when, Tags: tags, Anchors: anchors}
+	newDTO: func(d model.Doc, drift string, atts []attachmentDTO) any { return newDocDTO(d, drift, atts) },
+	lean:   leanDocLine,
+	resolve: func(ctx context.Context, c *notes.Client, prefix string) (model.EntityID, error) {
+		return c.ResolveDoc(ctx, prefix)
 	},
-	anchors:   docRank.anchors,
-	reviewSet: reviewDocs,
-	newDTO:    func(d model.Doc, drift string, atts []attachmentDTO) any { return newDocDTO(d, drift, atts) },
-	lean:      leanDocLine,
+	create: func(ctx context.Context, c *notes.Client, title, body, when string, tags []string, anchors notes.AnchorSpec, atts []model.Attachment) (model.Doc, bool, error) {
+		return c.CreateDoc(ctx, notes.DocSpec{Title: title, Body: body, When: when, Tags: tags, Anchors: anchors, Attachments: atts})
+	},
+	edit: func(ctx context.Context, c *notes.Client, id model.EntityID, in documentEdit) (model.Doc, error) {
+		return c.EditDoc(ctx, id, notes.DocEdit{
+			Title: in.title, Body: in.body, When: in.when,
+			AddTags: in.addTags, RemoveTags: in.rmTags,
+			AddAnchors: in.addAnchors, RemoveAnchors: in.rmAnchors,
+			Attachments: in.attachments, ReplaceAttachments: in.replaceAttachments, RemoveAttachments: in.rmAttachments,
+		})
+	},
+	verify: func(ctx context.Context, c *notes.Client, id model.EntityID) (model.Doc, error) {
+		return c.VerifyDoc(ctx, id)
+	},
+	supersede: func(ctx context.Context, c *notes.Client, id, by model.EntityID, clearFlag bool) (model.Doc, error) {
+		if clearFlag {
+			return c.UnsupersedeDoc(ctx, id, by)
+		}
+		return c.SupersedeDoc(ctx, id, by)
+	},
+	expire: func(ctx context.Context, c *notes.Client, id model.EntityID, reason string, clearFlag bool) (model.Doc, error) {
+		if clearFlag {
+			return c.UnexpireDoc(ctx, id)
+		}
+		return c.ExpireDoc(ctx, id, reason)
+	},
+	review: func(ctx context.Context, c *notes.Client, staleAfter time.Duration) ([]reviewed[model.Doc], error) {
+		rs, err := c.ReviewDocs(ctx, staleAfter)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]reviewed[model.Doc], len(rs))
+		for i, r := range rs {
+			out[i] = reviewed[model.Doc]{entity: r.Doc, verdict: string(r.Verdict)}
+		}
+		return out, nil
+	},
+	list: func(ctx context.Context, c *notes.Client, f notes.DocumentFilter) ([]model.Doc, error) {
+		return c.Docs(ctx, f)
+	},
+	search: func(ctx context.Context, c *notes.Client, query string, f notes.SearchFilter) ([]model.Doc, error) {
+		return c.SearchDocs(ctx, query, f)
+	},
 }
 
 // rankAccessors projects the fields a ranked search reads out of an entity that
@@ -531,96 +700,6 @@ func textTier(title string, tags []string, bodies []string, q string) int {
 	return 0
 }
 
-// listSpec is the vocabulary the list and search verbs share across note, doc,
-// and log: the display noun, whether the kind carries a supersede edge (which
-// adds --include-superseded), the search help line, the store list source, the
-// rank accessors, and the DTO/lean projections used to print a result set.
-type listSpec[T model.Snapshot] struct {
-	noun         string
-	supersedable bool
-	searchShort  string
-	list         func(ctx context.Context, s *store.Store, all, includeSuperseded bool) ([]T, error)
-	rank         rankAccessors[T]
-	newDTO       func(T, []attachmentDTO) any
-	lean         func(T) string
-}
-
-// listVerb builds the "list" command: filter by labels and anchors, order by
-// UpdatedAt, and print. --include-superseded is bound only for supersedable
-// kinds; a non-supersedable kind always lists with includeSuperseded false.
-func (spec listSpec[T]) listVerb() *cobra.Command {
-	var labels []string
-	var filters anchorFilters
-	var all, includeSuperseded, jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List " + spec.noun + "s",
-		Args:  exactArgs(0),
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			items, err := spec.list(cmd.Context(), s, all, includeSuperseded)
-			if err != nil {
-				return err
-			}
-			items = slices.DeleteFunc(items, func(it T) bool {
-				return !hasAll(spec.rank.tags(it), labels) ||
-					(filters.commit != "" && !hasAnchorIn(spec.rank.anchors(it), model.AnchorCommit, filters.commit)) ||
-					(filters.path != "" && !hasAnchorIn(spec.rank.anchors(it), model.AnchorPath, filters.path)) ||
-					(filters.dir != "" && !hasAnchorIn(spec.rank.anchors(it), model.AnchorDir, filters.dir)) ||
-					(filters.branch != "" && !hasAnchorIn(spec.rank.anchors(it), model.AnchorBranch, filters.branch))
-			})
-			sortByUpdated(items)
-			return printEntityList(cmd, s, items, jsonOut, spec.newDTO, spec.lean)
-		},
-	}
-	flags := cmd.Flags()
-	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
-	filters.bind(flags)
-	flags.BoolVar(&all, "all", false, "include tombstoned "+spec.noun+"s")
-	if spec.supersedable {
-		flags.BoolVar(&includeSuperseded, "include-superseded", false, "include superseded "+spec.noun+"s")
-	}
-	bindJSON(flags, &jsonOut)
-	return cmd
-}
-
-// searchVerb builds the "search QUERY" command: a ranked, tag/author/anchor
-// filtered lookup over the live set.
-func (spec listSpec[T]) searchVerb() *cobra.Command {
-	var labels []string
-	var author string
-	var filters anchorFilters
-	var limit int
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "search QUERY",
-		Short: spec.searchShort,
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore()
-			if err != nil {
-				return err
-			}
-			items, err := spec.list(cmd.Context(), s, false, false)
-			if err != nil {
-				return err
-			}
-			items = rankEntities(items, args[0], labels, author, filters.path, filters.dir, filters.branch, filters.commit, limit, spec.rank)
-			return printEntityList(cmd, s, items, jsonOut, spec.newDTO, spec.lean)
-		},
-	}
-	flags := cmd.Flags()
-	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
-	flags.IntVar(&limit, "limit", 20, "maximum results")
-	flags.StringVar(&author, "author", "", "require author")
-	filters.bind(flags)
-	bindJSON(flags, &jsonOut)
-	return cmd
-}
-
 // printEntityList writes items as a JSON array of their list DTOs or one lean
 // line each.
 func printEntityList[T model.Snapshot](cmd *cobra.Command, s *store.Store, items []T, jsonOut bool, newDTO func(T, []attachmentDTO) any, lean func(T) string) error {
@@ -644,70 +723,11 @@ func printEntityList[T model.Snapshot](cmd *cobra.Command, s *store.Store, items
 	return nil
 }
 
-var noteList = listSpec[model.Note]{
-	noun:         "note",
-	supersedable: true,
-	searchShort:  "Ranked search across note titles, labels, and bodies",
-	list: func(ctx context.Context, s *store.Store, all, includeSuperseded bool) ([]model.Note, error) {
-		return s.ListNotes(ctx, all, includeSuperseded)
-	},
-	rank:   noteRank,
-	newDTO: func(n model.Note, atts []attachmentDTO) any { return newNoteDTO(n, "", atts) },
-	lean:   leanNoteLine,
-}
-
-var docList = listSpec[model.Doc]{
-	noun:         "doc",
-	supersedable: true,
-	searchShort:  "Ranked search across doc titles, labels, and bodies",
-	list: func(ctx context.Context, s *store.Store, all, includeSuperseded bool) ([]model.Doc, error) {
-		return s.ListDocs(ctx, all, includeSuperseded)
-	},
-	rank:   docRank,
-	newDTO: func(d model.Doc, atts []attachmentDTO) any { return newDocDTO(d, "", atts) },
-	lean:   leanDocLine,
-}
-
-var logList = listSpec[model.Log]{
-	noun:         "log",
-	supersedable: false,
-	searchShort:  "Ranked search across log titles, labels, and entry text",
-	list: func(ctx context.Context, s *store.Store, all, _ bool) ([]model.Log, error) {
-		return s.ListLogs(ctx, all)
-	},
-	rank:   logRank,
-	newDTO: func(l model.Log, atts []attachmentDTO) any { return newLogDTO(l, atts) },
-	lean:   leanLogLine,
-}
-
 var noteRank = rankAccessors[model.Note]{
 	tags:    func(n model.Note) []string { return n.Tags },
 	author:  func(n model.Note) string { return string(n.Author) },
 	anchors: func(n model.Note) []model.Anchor { return n.Anchors },
 	tier:    func(n model.Note, q string) int { return textTier(n.Title, n.Tags, []string{n.Body}, q) },
-}
-
-var docRank = rankAccessors[model.Doc]{
-	tags:    func(d model.Doc) []string { return d.Tags },
-	author:  func(d model.Doc) string { return string(d.Author) },
-	anchors: func(d model.Doc) []model.Anchor { return d.Anchors },
-	tier:    func(d model.Doc, q string) int { return textTier(d.Title, d.Tags, []string{d.Body}, q) },
-}
-
-var logRank = rankAccessors[model.Log]{
-	tags:    func(l model.Log) []string { return l.Tags },
-	author:  func(l model.Log) string { return string(l.Author) },
-	anchors: func(l model.Log) []model.Anchor { return l.Anchors },
-	tier:    func(l model.Log, q string) int { return textTier(l.Title, l.Tags, logEntryTexts(l), q) },
-}
-
-// logEntryTexts is a log's searchable body: the text of each entry, in order.
-func logEntryTexts(l model.Log) []string {
-	texts := make([]string, len(l.Entries))
-	for i, e := range l.Entries {
-		texts[i] = e.Text
-	}
-	return texts
 }
 
 // reviewed pairs an entity with its computed review verdict.

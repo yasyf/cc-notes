@@ -10,17 +10,19 @@ import (
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // Note review verdicts. A note carries at most one: precedence is
 // EXPIRED > UNVERIFIED > DRIFTED > STALE (DANGLING reported separately for
-// broken supersede edges).
+// broken supersede edges). The CLI verdict strings alias the notes.Verdict
+// constants that own the vocabulary.
 const (
-	verdictExpired    = "EXPIRED"
-	verdictUnverified = "UNVERIFIED"
-	verdictDrifted    = "DRIFTED"
-	verdictStale      = "STALE"
-	verdictDangling   = "DANGLING"
+	verdictExpired    = string(notes.VerdictExpired)
+	verdictUnverified = string(notes.VerdictUnverified)
+	verdictDrifted    = string(notes.VerdictDrifted)
+	verdictStale      = string(notes.VerdictStale)
+	verdictDangling   = string(notes.VerdictDangling)
 )
 
 // freshEntity carries the freshness-relevant fields a Note and a Doc share —

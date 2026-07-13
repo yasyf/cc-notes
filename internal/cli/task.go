@@ -4,20 +4,88 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/store"
-	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 var allStatuses = []model.Status{model.StatusOpen, model.StatusInProgress, model.StatusDone, model.StatusCancelled}
+
+// taskErr maps notes-layer task errors to the CLI's presentation so exit codes
+// and stderr bytes stay identical: a *notes.ConflictError becomes the CLI's
+// *ConflictError (its Error() drops the "cc-notes: " layer prefix), and a
+// *notes.UnmetCriteriaError becomes the done gate's UsageError with the full
+// criterion detail and --force hint. Every other error passes through.
+func taskErr(err error) error {
+	var conflict *notes.ConflictError
+	var unmet *notes.UnmetCriteriaError
+	switch {
+	case errors.As(err, &unmet):
+		return unmetCriteriaUsage(unmet.ID, unmet.Unmet)
+	case errors.As(err, &conflict):
+		return &ConflictError{Msg: strings.TrimPrefix(conflict.Error(), "cc-notes: ")}
+	default:
+		return err
+	}
+}
+
+// unmetCriteriaUsage renders the done-gate UsageError: every criterion not yet
+// met, with the --force remediation.
+func unmetCriteriaUsage(id model.EntityID, unmet []model.Criterion) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s has %d unmet criterion/criteria (pass --force to close anyway):", id.Short(), len(unmet))
+	for _, c := range unmet {
+		fmt.Fprintf(&b, "\n  %s [%s] %s", c.ID[:7], c.Status, sanitizeDisplay(c.Text, false))
+	}
+	return &UsageError{Err: errors.New(b.String())}
+}
+
+// editEmpty reports whether a task edit mask sets nothing, the CLI's guard for
+// the "at least one flag" usage error before any refspec install.
+func editEmpty(e notes.TaskEdit) bool {
+	return e.Title == nil && e.Description == nil && e.Type == nil && e.Priority == nil &&
+		e.Status == nil && e.Assignee == nil && e.Parent == nil && e.Sprint == nil &&
+		e.Project == nil && e.Branch == nil && len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0
+}
+
+// branchScopeFromFlags resolves the mutually-exclusive branch-scoping flags into
+// a notes.BranchScope and branch name. No flag scopes to the current branch;
+// --all-branches, --backlog, and --branch=X select the other scopes. The three
+// are mutually exclusive, and an explicit --branch is validated against git's
+// check-ref-format so a malformed name is a usage error before any read.
+func branchScopeFromFlags(ctx context.Context, s *store.Store, cmd *cobra.Command, branch string, allBranches, backlog bool) (notes.BranchScope, model.Branch, error) {
+	set := 0
+	if cmd.Flags().Changed("branch") {
+		set++
+	}
+	if allBranches {
+		set++
+	}
+	if backlog {
+		set++
+	}
+	if set > 1 {
+		return 0, "", &UsageError{Err: errors.New("--branch, --all-branches, and --backlog are mutually exclusive")}
+	}
+	switch {
+	case allBranches:
+		return notes.ScopeAllBranches, "", nil
+	case backlog:
+		return notes.ScopeBacklog, "", nil
+	case cmd.Flags().Changed("branch"):
+		if err := s.Git.CheckRefFormat(ctx, branch); err != nil {
+			return 0, "", &UsageError{Err: err}
+		}
+		return notes.ScopeNamed, model.Branch(branch), nil
+	default:
+		return notes.ScopeCurrentBranch, "", nil
+	}
+}
 
 func newTaskCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -36,7 +104,7 @@ func newTaskCmd() *cobra.Command {
 		newTaskClaimCmd(),
 		newTaskRenewCmd(),
 		newTaskDoneCmd(),
-		newTaskStatusCmd("cancel", model.StatusCancelled),
+		newTaskCancelCmd(),
 		newTaskEditCmd(),
 		newTaskCommentCmd(),
 		newTaskDepCmd(),
@@ -73,13 +141,13 @@ func newTaskAddCmd() *cobra.Command {
 			if !noValidation && len(criteria) == 0 {
 				return &UsageError{Err: errors.New("at least one --criterion is required (or pass --no-validation-criteria)")}
 			}
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			var b model.Branch
-			if !backlog {
-				if b, err = resolveBranch(ctx, s, "branch", branch); err != nil {
+			if !backlog && cmd.Flags().Changed("branch") {
+				if b, _, err = resolveBranchOrBacklog(ctx, s, branch, true); err != nil {
 					return err
 				}
 			}
@@ -122,37 +190,38 @@ func newTaskAddCmd() *cobra.Command {
 				}
 				projectID = proj.ID
 			}
-			ops := []model.Op{model.CreateTask{
-				Nonce:       model.NewNonce(),
-				Title:       args[0],
-				Description: text,
-				Type:        tt,
-				Priority:    p,
-				Branch:      b,
-				Parent:      parentID,
-				Labels:      labels,
-			}}
-			if sprintID != "" {
-				ops = append(ops, model.SetSprint{Sprint: sprintID})
-			}
-			if projectID != "" {
-				ops = append(ops, model.SetProject{Project: projectID})
-			}
-			for _, c := range criteria {
-				ops = append(ops, model.AddCriterion{ID: model.NewNonce(), Text: c})
-			}
+			var blockers []model.EntityID
 			for _, prefix := range blockedBy {
 				blocker, _, err := resolveBlocker(ctx, s, prefix)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.AddDep{ID: blocker})
+				blockers = append(blockers, blocker)
 			}
-			snapshot, err := createEntity(ctx, cmd, s, ops)
+			created, err := c.CreateTask(ctx, notes.TaskSpec{
+				Title:       args[0],
+				Description: text,
+				Type:        tt,
+				Priority:    p,
+				Branch:      b,
+				Backlog:     backlog,
+				Parent:      parentID,
+				Sprint:      sprintID,
+				Project:     projectID,
+				Labels:      labels,
+				Criteria:    criteria,
+				BlockedBy:   blockers,
+			})
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			if created.Reused {
+				warnDuplicate(cmd, "task", created.Task.ID)
+			}
+			if created.Degraded {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "cc-notes: detached HEAD with no resolvable branch; created on the backlog — pass --branch to set one")
+			}
+			return printTask(cmd, s, created.Task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -183,11 +252,11 @@ func newTaskListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			now := time.Now()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			inBranch, err := branchFilter(ctx, s, cmd, branch, allBranches, backlog)
+			scope, scopeBranch, err := branchScopeFromFlags(ctx, s, cmd, branch, allBranches, backlog)
 			if err != nil {
 				return err
 			}
@@ -211,25 +280,22 @@ func newTaskListCmd() *cobra.Command {
 					return err
 				}
 			}
-			tasks, err := s.ListTasks(ctx)
+			filter := notes.TaskFilter{
+				Scope:       scope,
+				Branch:      scopeBranch,
+				Statuses:    statuses,
+				Labels:      labels,
+				Type:        tt,
+				Assignee:    assignee,
+				AssigneeSet: cmd.Flags().Changed("assignee"),
+			}
+			if !includeArchived {
+				filter.ArchiveCutoff = now.Add(-notes.DefaultArchiveAge)
+			}
+			tasks, err := c.Tasks(ctx, filter)
 			if err != nil {
 				return err
 			}
-			assigneeSet := cmd.Flags().Changed("assignee")
-			tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
-				return !inBranch(t) ||
-					!slices.Contains(statuses, t.Status) ||
-					!hasAll(t.Labels, labels) ||
-					(assigneeSet && string(t.Assignee) != assignee) ||
-					(taskType != "" && t.Type != tt)
-			})
-			if !includeArchived {
-				cutoff := now.Add(-defaultArchiveAge)
-				tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
-					return isArchived(t, cutoff)
-				})
-			}
-			sortTasks(tasks)
 			return printTaskList(cmd, s, tasks, jsonOut)
 		},
 	}
@@ -256,26 +322,18 @@ func newTaskReadyCmd() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			inBranch, err := branchFilter(ctx, s, cmd, branch, allBranches, backlog)
+			scope, scopeBranch, err := branchScopeFromFlags(ctx, s, cmd, branch, allBranches, backlog)
 			if err != nil {
 				return err
 			}
-			tasks, err := s.ListTasks(ctx)
+			tasks, err := c.ReadyTasks(ctx, scope, scopeBranch)
 			if err != nil {
 				return err
 			}
-			live, err := allTasks(ctx, s)
-			if err != nil {
-				return err
-			}
-			tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
-				return !inBranch(t) || t.Status != model.StatusOpen || t.Assignee != "" || !unblocked(live, t)
-			})
-			sortTasks(tasks)
 			return printTaskList(cmd, s, tasks, jsonOut)
 		},
 	}
@@ -292,6 +350,7 @@ func newTaskShowCmd() *cobra.Command {
 }
 
 func newTaskStartCmd() *cobra.Command {
+	var branch string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "start ID",
@@ -299,47 +358,36 @@ func newTaskStartCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			headBranch, err := s.Git.HeadBranch(ctx)
-			if errors.Is(err, gitcmd.ErrDetachedHead) {
-				return errors.New("detached HEAD; cannot start a task here")
-			}
-			if err != nil {
-				return err
+			var branchArg model.Branch
+			if cmd.Flags().Changed("branch") {
+				if branchArg, _, err = resolveBranchOrBacklog(ctx, s, branch, true); err != nil {
+					return err
+				}
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if err := claimable(task); err != nil {
-				return err
-			}
-			me, err := s.Actor(ctx)
+			result, err := c.StartTask(ctx, id, branchArg)
 			if err != nil {
-				return err
+				return taskErr(err)
 			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.Claim{Assignee: me}})
-			if err != nil {
-				return err
+			if !result.BranchSet {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: detached HEAD with no resolvable branch; claimed %s without setting a branch — pass --branch to set one\n", result.Task.ID.Short())
 			}
-			task = snapshot.(model.Task)
-			if task.Assignee != me {
-				return &ConflictError{Msg: fmt.Sprintf("%s already claimed by %s (%s)", task.ID.Short(), task.Assignee, task.Status)}
-			}
-			snapshot, err = s.Append(ctx, ref, []model.Op{model.SetBranch{Branch: headBranch}})
-			if err != nil {
-				return err
-			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, result.Task, jsonOut)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	flags := cmd.Flags()
+	flags.StringVar(&branch, "branch", "", "branch to set (default: current branch)")
+	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
@@ -354,42 +402,53 @@ func newTaskClaimCmd() *cobra.Command {
 			if steal && syncRemote {
 				return &UsageError{Err: errors.New("--steal and --sync are mutually exclusive")}
 			}
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			me, err := s.Actor(ctx)
-			if err != nil {
-				return err
+			switch {
+			case steal:
+				task, err := c.Task(ctx, id)
+				if err != nil {
+					return err
+				}
+				// Resolve the actor before the --steal status check so a malformed
+				// CC_NOTES_ACTOR errors (exit 1) ahead of the usage guard.
+				if _, err := c.Actor(ctx); err != nil {
+					return err
+				}
+				if task.Status != model.StatusInProgress {
+					return &UsageError{Err: errors.New("--steal requires an in-progress task")}
+				}
+				ttl, err := leaseTTL(ctx, s.Git)
+				if err != nil {
+					return err
+				}
+				stolen, err := c.StealTask(ctx, id, ttl)
+				if err != nil {
+					return taskErr(err)
+				}
+				return printTask(cmd, s, stolen, jsonOut)
+			case syncRemote:
+				claimed, err := c.ClaimTaskSync(ctx, id)
+				if err != nil {
+					return taskErr(err)
+				}
+				return printTask(cmd, s, claimed, jsonOut)
+			default:
+				claimed, err := c.ClaimTask(ctx, id)
+				if err != nil {
+					return taskErr(err)
+				}
+				return printTask(cmd, s, claimed, jsonOut)
 			}
-			if steal && task.Status != model.StatusInProgress {
-				return &UsageError{Err: errors.New("--steal requires an in-progress task")}
-			}
-			if steal && task.Status == model.StatusInProgress {
-				return claimSteal(cmd, s, ref, task, me, jsonOut)
-			}
-			if err := claimable(task); err != nil {
-				return err
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.Claim{Assignee: me}})
-			if err != nil {
-				return err
-			}
-			task = snapshot.(model.Task)
-			if task.Assignee != me {
-				return &ConflictError{Msg: fmt.Sprintf("%s already claimed by %s (%s)", task.ID.Short(), task.Assignee, task.Status)}
-			}
-			if syncRemote {
-				return claimSyncYield(cmd, s, task, me, jsonOut)
-			}
-			return printTask(cmd, s, task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -397,56 +456,6 @@ func newTaskClaimCmd() *cobra.Command {
 	flags.BoolVar(&steal, "steal", false, "reclaim an in-progress task whose lease has expired")
 	flags.BoolVar(&syncRemote, "sync", false, "claim, then sync and re-check, yielding if another agent won")
 	return cmd
-}
-
-// claimSteal reclaims an in-progress task whose lease is stale. A fresh lease
-// is refused with the remaining time; a holder who renewed past the observed
-// heartbeat (or a stealer who lost the race) makes the Reclaim a fold no-op,
-// surfaced as a conflict after the reload.
-func claimSteal(cmd *cobra.Command, s *store.Store, ref string, task model.Task, me model.Actor, jsonOut bool) error {
-	ctx := cmd.Context()
-	now := time.Now()
-	ttl, err := leaseTTL(ctx, s.Git)
-	if err != nil {
-		return err
-	}
-	if !isStale(task, now, ttl) {
-		remaining := ttl - now.Sub(time.Unix(taskHeartbeat(task), 0))
-		return &ConflictError{Msg: fmt.Sprintf("%s lease held by %s, %s remaining", task.ID.Short(), task.Assignee, remaining.Round(time.Second))}
-	}
-	snapshot, err := s.Append(ctx, ref, []model.Op{model.Reclaim{Assignee: me, From: task.Assignee, AfterLamport: task.HeartbeatLamport}})
-	if err != nil {
-		return err
-	}
-	task = snapshot.(model.Task)
-	if task.Assignee != me {
-		return &ConflictError{Msg: fmt.Sprintf("%s held by %s (renewed in time or lost steal race)", task.ID.Short(), task.Assignee)}
-	}
-	return printTask(cmd, s, task, jsonOut)
-}
-
-// claimSyncYield syncs the default remote after a local claim, then reloads and
-// yields to the remote winner if another agent's claim linearized first.
-func claimSyncYield(cmd *cobra.Command, s *store.Store, task model.Task, me model.Actor, jsonOut bool) error {
-	ctx := cmd.Context()
-	dir, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("working directory: %w", err)
-	}
-	remote, err := deriveRemote(ctx, s.Git)
-	if err != nil {
-		return err
-	}
-	if _, err := ccsync.Sync(ctx, dir, remote, false); err != nil {
-		return err
-	}
-	if _, task, err = taskSpec.load(ctx, s, string(task.ID)); err != nil {
-		return err
-	}
-	if task.Assignee != me {
-		return &ConflictError{Msg: fmt.Sprintf("%s claimed by %s", task.ID.Short(), task.Assignee)}
-	}
-	return printTask(cmd, s, task, jsonOut)
 }
 
 func newTaskRenewCmd() *cobra.Command {
@@ -457,29 +466,22 @@ func newTaskRenewCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			me, err := s.Actor(ctx)
+			task, err := c.RenewTask(ctx, id)
 			if err != nil {
-				return err
+				return taskErr(err)
 			}
-			if task.Assignee != me {
-				return &ConflictError{Msg: fmt.Sprintf("%s held by %s, not you", task.ID.Short(), orDash(string(task.Assignee)))}
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.Renew{}})
-			if err != nil {
-				return err
-			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -494,40 +496,22 @@ func newTaskDoneCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			switch task.Status {
-			case model.StatusOpen, model.StatusInProgress:
-			default:
-				return &ConflictError{Msg: fmt.Sprintf("%s already %s", task.ID.Short(), task.Status)}
-			}
-			if !force {
-				if err := unmetCriteriaErr(task); err != nil {
-					return err
-				}
-			}
-			head, err := resolveHead(ctx, s)
+			task, err := c.DoneTask(ctx, id, force)
 			if err != nil {
-				return err
+				return taskErr(err)
 			}
-			ops := []model.Op{model.SetStatus{Status: model.StatusDone}}
-			if head != "" {
-				ops = append(ops, model.LinkCommit{SHA: head})
-			}
-			snapshot, err := s.Append(ctx, ref, ops)
-			if err != nil {
-				return err
-			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -536,56 +520,30 @@ func newTaskDoneCmd() *cobra.Command {
 	return cmd
 }
 
-// unmetCriteriaErr returns a UsageError listing every criterion not yet met,
-// instructing --force, or nil when every criterion is met. The done gate uses
-// it to refuse closing a task whose acceptance criteria have not all passed.
-func unmetCriteriaErr(task model.Task) error {
-	var unmet []model.Criterion
-	for _, c := range task.Criteria {
-		if c.Status != model.CriterionMet {
-			unmet = append(unmet, c)
-		}
-	}
-	if len(unmet) == 0 {
-		return nil
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s has %d unmet criterion/criteria (pass --force to close anyway):", task.ID.Short(), len(unmet))
-	for _, c := range unmet {
-		fmt.Fprintf(&b, "\n  %s [%s] %s", c.ID[:7], c.Status, sanitizeDisplay(c.Text, false))
-	}
-	return &UsageError{Err: errors.New(b.String())}
-}
-
-func newTaskStatusCmd(use string, status model.Status) *cobra.Command {
+func newTaskCancelCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
-		Use:   use + " ID",
-		Short: "Mark a task " + string(status),
+		Use:   "cancel ID",
+		Short: "Mark a task " + string(model.StatusCancelled),
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			switch task.Status {
-			case model.StatusOpen, model.StatusInProgress:
-			default:
-				return &ConflictError{Msg: fmt.Sprintf("%s already %s", task.ID.Short(), task.Status)}
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.SetStatus{Status: status}})
+			task, err := c.CancelTask(ctx, id)
 			if err != nil {
-				return err
+				return taskErr(err)
 			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -621,111 +579,116 @@ func newTaskEditCmd() *cobra.Command {
 			if err := target.validate(flags.Changed("branch")); err != nil {
 				return err
 			}
-			var ops []model.Op
 			if flags.Changed("title") {
 				if err := validateTitle(title, titleHintDesc); err != nil {
 					return err
 				}
-				ops = append(ops, model.SetTitle{Title: title})
 			}
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
+			}
+			var edit notes.TaskEdit
+			if flags.Changed("title") {
+				edit.Title = &title
 			}
 			if flags.Changed("body") {
 				text, err := bodyArg(cmd, body)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetDescription{Description: text})
+				edit.Description = &text
 			}
 			if flags.Changed("type") {
 				tt, err := parseTaskType(taskType)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetType{Type: tt})
+				edit.Type = &tt
 			}
 			if flags.Changed("priority") {
 				p, err := validatePriority(priority)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetPriority{Priority: p})
+				edit.Priority = &p
 			}
 			if flags.Changed("status") {
 				st, err := parseStatus(status)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetStatus{Status: st})
+				edit.Status = &st
 			}
 			if flags.Changed("assignee") {
-				ops = append(ops, model.SetAssignee{Assignee: model.Actor(assignee)})
+				a := model.Actor(assignee)
+				edit.Assignee = &a
 			}
 			if noAssignee {
-				ops = append(ops, model.SetAssignee{})
+				var a model.Actor
+				edit.Assignee = &a
 			}
-			for _, label := range addLabels {
-				ops = append(ops, model.AddLabel{Label: label})
-			}
-			for _, label := range rmLabels {
-				ops = append(ops, model.RemoveLabel{Label: label})
-			}
+			edit.AddLabels = addLabels
+			edit.RemoveLabels = rmLabels
 			if flags.Changed("parent") {
 				_, parentTask, err := taskSpec.load(ctx, s, parent)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetParent{Parent: parentTask.ID})
+				edit.Parent = &parentTask.ID
 			}
 			if noParent {
-				ops = append(ops, model.SetParent{})
+				var p model.EntityID
+				edit.Parent = &p
 			}
 			if flags.Changed("sprint") {
 				_, sp, err := sprintSpec.load(ctx, s, sprint)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetSprint{Sprint: sp.ID})
+				edit.Sprint = &sp.ID
 			}
 			if noSprint {
-				ops = append(ops, model.SetSprint{})
+				var sp model.EntityID
+				edit.Sprint = &sp
 			}
 			if flags.Changed("project") {
 				_, proj, err := projectSpec.load(ctx, s, project)
 				if err != nil {
 					return err
 				}
-				ops = append(ops, model.SetProject{Project: proj.ID})
+				edit.Project = &proj.ID
 			}
 			if noProject {
-				ops = append(ops, model.SetProject{})
+				var pr model.EntityID
+				edit.Project = &pr
 			}
 			if flags.Changed("branch") {
 				if err := s.Git.CheckRefFormat(ctx, target.branch); err != nil {
 					return &UsageError{Err: err}
 				}
-				ops = append(ops, model.SetBranch{Branch: model.Branch(target.branch)})
+				b := model.Branch(target.branch)
+				edit.Branch = &b
 			}
 			if target.backlog {
-				ops = append(ops, model.SetBranch{})
+				var b model.Branch
+				edit.Branch = &b
 			}
-			if len(ops) == 0 {
+			if editEmpty(edit) {
 				return &UsageError{Err: errors.New("task edit requires at least one flag")}
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, ops)
+			task, err := c.EditTask(ctx, id, edit)
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -750,7 +713,37 @@ func newTaskEditCmd() *cobra.Command {
 }
 
 func newTaskCommentCmd() *cobra.Command {
-	return taskSpec.commentVerb(nil)
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "comment ID BODY",
+		Short: "Append a comment; BODY - reads stdin",
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			body, err := bodyArg(cmd, args[1])
+			if err != nil {
+				return err
+			}
+			id, err := c.ResolveTask(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			task, err := c.CommentTask(ctx, id, body)
+			if err != nil {
+				return err
+			}
+			return printTask(cmd, s, task, jsonOut)
+		},
+	}
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
 }
 
 func newTaskDepCmd() *cobra.Command {
@@ -761,29 +754,26 @@ func newTaskDepCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			blocker, live, err := resolveBlocker(ctx, s, args[1])
+			blocker, _, err := resolveBlocker(ctx, s, args[1])
 			if err != nil {
 				return err
 			}
-			if hasPath(live, blocker, task.ID) {
-				return fmt.Errorf("dependency cycle: %s already blocks %s", task.ID.Short(), blocker.Short())
-			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.AddDep{ID: blocker}})
+			task, err := c.AddDep(ctx, id, blocker)
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -798,14 +788,14 @@ func newTaskUndepCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
@@ -813,11 +803,11 @@ func newTaskUndepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.RemoveDep{ID: blocker}})
+			task, err := c.RemoveDep(ctx, id, blocker)
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -832,18 +822,14 @@ func newTaskBacklogCmd() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			tasks, err := s.ListTasks(ctx)
+			tasks, err := c.Tasks(ctx, notes.TaskFilter{Scope: notes.ScopeBacklog, Statuses: []model.Status{model.StatusOpen}})
 			if err != nil {
 				return err
 			}
-			tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
-				return t.Branch != "" || t.Status != model.StatusOpen
-			})
-			sortTasks(tasks)
 			return printTaskList(cmd, s, tasks, jsonOut)
 		},
 	}
@@ -861,7 +847,7 @@ func newTaskStaleCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			now := time.Now()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -873,14 +859,10 @@ func newTaskStaleCmd() *cobra.Command {
 			} else if ttl, err = leaseTTL(ctx, s.Git); err != nil {
 				return err
 			}
-			tasks, err := s.ListTasks(ctx)
+			tasks, err := c.StaleTasks(ctx, ttl)
 			if err != nil {
 				return err
 			}
-			tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
-				return !isStale(t, now, ttl)
-			})
-			sortTasks(tasks)
 			return printStaleTaskList(cmd, s, tasks, now, jsonOut)
 		},
 	}
@@ -900,7 +882,7 @@ func newTaskArchivedCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			now := time.Now()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -910,14 +892,10 @@ func newTaskArchivedCmd() *cobra.Command {
 					return err
 				}
 			}
-			tasks, err := s.ListTasks(ctx)
+			tasks, err := c.ArchivedTasks(ctx, cutoff)
 			if err != nil {
 				return err
 			}
-			tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
-				return !isArchived(t, cutoff)
-			})
-			sortTasks(tasks)
 			return printTaskList(cmd, s, tasks, jsonOut)
 		},
 	}
@@ -955,7 +933,7 @@ func newCriterionAddCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -968,15 +946,15 @@ func newCriterionAddCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, _, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.AddCriterion{ID: model.NewNonce(), Text: args[1], Script: scriptText}})
+			task, err := c.AddCriterion(ctx, id, args[1], scriptText)
 			if err != nil {
 				return err
 			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -993,26 +971,22 @@ func newCriterionRemoveCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			crit, err := resolveCriterion(task, args[1])
+			task, err := c.RemoveCriterion(ctx, id, args[1])
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.RemoveCriterion{ID: crit.ID}})
-			if err != nil {
-				return err
-			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -1027,26 +1001,22 @@ func newCriterionStatusCmd(use string, status model.CriterionStatus) *cobra.Comm
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			crit, err := resolveCriterion(task, args[1])
+			task, err := c.SetCriterionStatus(ctx, id, args[1], status)
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.SetCriterionStatus{ID: crit.ID, Status: status}})
-			if err != nil {
-				return err
-			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, task, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
@@ -1067,7 +1037,7 @@ func newCriterionScriptCmd() *cobra.Command {
 			case !clearFlag && len(args) != 3:
 				return &UsageError{Err: errors.New("script requires TASK CRIT FILE (or --clear)")}
 			}
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
@@ -1080,19 +1050,15 @@ func newCriterionScriptCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
-			ref, task, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			crit, err := resolveCriterion(task, args[1])
+			task, err := c.SetCriterionScript(ctx, id, args[1], scriptText)
 			if err != nil {
 				return err
 			}
-			snapshot, err := s.Append(ctx, ref, []model.Op{model.SetCriterionScript{ID: crit.ID, Script: scriptText}})
-			if err != nil {
-				return err
-			}
-			return printTask(cmd, s, snapshot.(model.Task), jsonOut)
+			return printTask(cmd, s, task, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -1109,11 +1075,15 @@ func newCriterionListCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			_, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			_, task, err := taskSpec.load(ctx, s, args[0])
+			id, err := c.ResolveTask(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			task, err := c.Task(ctx, id)
 			if err != nil {
 				return err
 			}
@@ -1121,8 +1091,8 @@ func newCriterionListCmd() *cobra.Command {
 			if jsonOut {
 				return printJSON(out, criterionDTOs(task.Criteria))
 			}
-			for _, c := range task.Criteria {
-				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\n", c.ID[:7], c.Status, c.Text); err != nil {
+			for _, crit := range task.Criteria {
+				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\n", crit.ID[:7], crit.Status, crit.Text); err != nil {
 					return err
 				}
 			}
@@ -1131,38 +1101,6 @@ func newCriterionListCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
-}
-
-// branchFilter resolves the branch-scoping flags into a predicate over a
-// task's folded branch. With no flag it scopes to HEAD; --all-branches
-// matches every task, --backlog the empty branch, and --branch=X branch X.
-// The three flags are mutually exclusive.
-func branchFilter(ctx context.Context, s *store.Store, cmd *cobra.Command, branch string, allBranches, backlog bool) (func(model.Task) bool, error) {
-	set := 0
-	if cmd.Flags().Changed("branch") {
-		set++
-	}
-	if allBranches {
-		set++
-	}
-	if backlog {
-		set++
-	}
-	if set > 1 {
-		return nil, &UsageError{Err: errors.New("--branch, --all-branches, and --backlog are mutually exclusive")}
-	}
-	switch {
-	case allBranches:
-		return func(model.Task) bool { return true }, nil
-	case backlog:
-		return func(t model.Task) bool { return t.Branch == "" }, nil
-	default:
-		b, err := resolveBranch(ctx, s, "branch", branch)
-		if err != nil {
-			return nil, err
-		}
-		return func(t model.Task) bool { return t.Branch == b }, nil
-	}
 }
 
 func printTaskList(cmd *cobra.Command, s *store.Store, tasks []model.Task, jsonOut bool) error {
@@ -1210,34 +1148,6 @@ func printStaleTaskList(cmd *cobra.Command, s *store.Store, tasks []model.Task, 
 		}
 	}
 	return nil
-}
-
-// unblocked reports whether every blocker of t resolves to a live task that
-// is done or cancelled. A blocker id matching no live task does not count
-// as resolved.
-func unblocked(live map[model.EntityID]model.Task, t model.Task) bool {
-	for _, dep := range t.BlockedBy {
-		blocker, ok := live[dep]
-		if !ok {
-			return false
-		}
-		if blocker.Status != model.StatusDone && blocker.Status != model.StatusCancelled {
-			return false
-		}
-	}
-	return true
-}
-
-// claimable rejects a claim on a task that is assigned or not open.
-func claimable(t model.Task) error {
-	switch {
-	case t.Assignee != "":
-		return &ConflictError{Msg: fmt.Sprintf("%s already claimed by %s (%s)", t.ID.Short(), t.Assignee, t.Status)}
-	case t.Status != model.StatusOpen:
-		return &ConflictError{Msg: fmt.Sprintf("%s not open (%s)", t.ID.Short(), t.Status)}
-	default:
-		return nil
-	}
 }
 
 // staleTaskDTO embeds a taskDTO, inlining its fields, plus the idle duration in

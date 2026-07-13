@@ -36,7 +36,7 @@ func newDocCmd() *cobra.Command {
 func newDocAddCmd() *cobra.Command { return docDocument.addVerb() }
 
 func newDocListCmd() *cobra.Command {
-	return docList.listVerb()
+	return docDocument.listVerb()
 }
 
 func newDocShowCmd() *cobra.Command {
@@ -46,11 +46,37 @@ func newDocShowCmd() *cobra.Command {
 func newDocEditCmd() *cobra.Command { return docDocument.editVerb() }
 
 func newDocRmCmd() *cobra.Command {
-	return docSpec.rmVerb()
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "rm ID",
+		Short: "Tombstone a doc",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveDoc(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			doc, err := c.RemoveDoc(ctx, id)
+			if err != nil {
+				return err
+			}
+			return printDoc(cmd, s, doc, "", jsonOut)
+		},
+	}
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
 }
 
 func newDocSearchCmd() *cobra.Command {
-	return docList.searchVerb()
+	return docDocument.searchVerb()
 }
 
 func newDocVerifyCmd() *cobra.Command { return docDocument.verifyVerb() }
