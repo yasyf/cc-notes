@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -264,22 +265,16 @@ def record_command(kind: str, title: str, when: str, area: str, *, mcp: bool = F
     return [f'cc-notes note add "{title}"{dir_flag} --body -']
 
 
-_mcp_active_cache: bool | None = None
-
-
 def mcp_active(evt: BaseHookEvent) -> bool:
     """Whether the cc-notes MCP server is serving this repo — for nudge WORDING only.
 
-    Best-effort and cached per hook process. A wrong answer only mis-words a teaching
-    hint and never changes whether a handler fires, so this is called inside handler
-    bodies, never in a condition. True when a cc-notes MCP tool call flipped the session
-    flag this session, or when a live liveness marker sits under the repo's git common
-    dir; outside a git repo, False.
+    Best-effort and a pure function of the event's real session/marker state. A wrong
+    answer only mis-words a teaching hint and never changes whether a handler fires, so
+    this is called inside handler bodies, never in a condition. True when a cc-notes MCP
+    tool call flipped the session flag this session, or when a live liveness marker sits
+    under the repo's git common dir; outside a git repo, False.
     """
-    global _mcp_active_cache
-    if _mcp_active_cache is None:
-        _mcp_active_cache = _mcp_session_flag(evt) or _mcp_marker_live(evt)
-    return _mcp_active_cache
+    return _mcp_session_flag(evt) or _mcp_marker_live(evt)
 
 
 def _mcp_session_flag(evt: BaseHookEvent) -> bool:
@@ -290,7 +285,10 @@ def _mcp_session_flag(evt: BaseHookEvent) -> bool:
 
 
 def _mcp_marker_live(evt: BaseHookEvent) -> bool:
-    common_dir = evt.ctx.git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    try:
+        common_dir = evt.ctx.git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    except (subprocess.SubprocessError, OSError):
+        return False  # git hung or errored — the best-effort probe degrades to inactive
     if not common_dir or not common_dir.strip():
         return False
     mcp_dir = Path(common_dir.strip()) / "cc-notes" / "mcp"
@@ -304,10 +302,8 @@ def _mcp_marker_live(evt: BaseHookEvent) -> bool:
 def _marker_pid_alive(marker: Path) -> bool:
     try:
         pid = json.loads(marker.read_text(encoding="utf-8")).get("pid")
-    except (OSError, ValueError, AttributeError):
-        # AttributeError: a foreign/truncated marker whose JSON is not an object (`[]`, `null`)
-        # has no .get — must not crash mcp_active's best-effort, never-raise contract.
-        return False
+    except (OSError, ValueError, AttributeError, RecursionError):
+        return False  # a foreign/corrupt marker skips this one, never aborting the sibling scan
     if not isinstance(pid, int) or pid <= 0:
         return False
     try:
@@ -316,8 +312,8 @@ def _marker_pid_alive(marker: Path) -> bool:
         return False
     except PermissionError:
         return True  # a live process we do not own (EPERM)
-    except OSError:
-        return False
+    except (OSError, OverflowError):
+        return False  # OverflowError: a foreign marker's out-of-range pid — never crash the probe
     return True
 
 

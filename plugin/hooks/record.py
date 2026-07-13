@@ -411,10 +411,10 @@ def evidence_payload_bytes(evt: PostToolUseEvent) -> int:
         Input(
             command="mkdir -p docs/reports/assets/vm-repro && "
             "cp -R /tmp/fusekit-vm/results/run-42 docs/reports/assets/vm-repro/phase2-forced-unmount"
-        ): Warn(pattern="--attach"),
-        Input(command="mv crash-4821.panic docs/reports/crash-4821.panic"): Warn(pattern="cc-notes log add"),
+        ): Warn(pattern="Record a cc-notes log entry"),
+        Input(command="mv crash-4821.panic docs/reports/crash-4821.panic"): Warn(pattern="Record a cc-notes log entry"),
         Input(command="rsync -av /var/log/fusekit/ evidence/latest/"): Warn(pattern="cc-notes sync"),
-        Input(tool="Write", file="docs/reports/soak-test.log", content="I0621 vm boot ok\n"): Warn(pattern="--attach"),
+        Input(tool="Write", file="docs/reports/soak-test.log", content="I0621 vm boot ok\n"): Warn(pattern="Record a cc-notes log entry"),
         # Benign neighbors that must stay silent.
         Input(command="cp /tmp/run/out.log /tmp/keep/out.log"): Allow(),  # entirely inside /tmp
         Input(command="cp fixtures/batch.json internal/lfs/testdata/batch.json"): Allow(),  # fixture into testdata/
@@ -544,7 +544,7 @@ class EphemeralRecordReference(CustomCondition):
     only_if=[Tool("Bash"), EphemeralRecordReference(), CcNotesAvailable()],
     max_fires=NUDGE_MAX_FIRES,
     tests={
-        Input(command='cc-notes doc add "Handoff — full detail in session scratchpad steering-handoff.md" --when w'): Warn(pattern="--attach"),
+        Input(command='cc-notes doc add "Handoff — full detail in session scratchpad steering-handoff.md" --when w'): Warn(pattern="purge-bound path"),
         Input(command='cc-notes note add "Fact" --body "see /private/tmp/c-1/scratch.md"'): Warn(),
         # A verb-less `papercut TEXT` whose complaint leans on a purge-bound path fires with
         # papercut-appropriate fix lines (the journal, not --checkout/--body which papercut lacks).
@@ -754,7 +754,7 @@ def plan_task_commands(evt: PostToolUseEvent, text: str | None, *, mcp: bool = F
     only_if=[Tool("ExitPlanMode"), CcNotesAvailable()],
     max_fires=NUDGE_MAX_FIRES,
     tests={
-        Input(tool="ExitPlanMode"): Warn(pattern="cc-notes task add"),
+        Input(tool="ExitPlanMode"): Warn(pattern="Native TaskCreate/TaskUpdate is your private"),
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )

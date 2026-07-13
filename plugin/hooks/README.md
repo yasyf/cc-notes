@@ -307,10 +307,11 @@ per-key dedup are proven in `tests/test_cc_notes.py`, which stubs `evt.ctx.call_
 Two handlers carry no inline tests at all: `sync_at_session_end` and
 `announce_cc_notes_available`. This repo self-adopts the pack, so their firing paths run
 real side-effects — a real sync, a real `cc-notes version` shell-out — the inline harness
-can't contain; their coverage lives in `tests/test_cc_notes.py`. Relatedly, the `record.py`
-inline tests read red when run *inside* a session with a live cc-notes MCP marker:
-`mcp_active` flips the suggested commands to MCP-tool wording and the inline `Warn`
-patterns stop matching. Run them from a plain shell.
+can't contain; their coverage lives in `tests/test_cc_notes.py`. The `record.py` inline
+tests assert each nudge's branch-invariant core, so they pass with or without a live
+cc-notes MCP marker present. `mcp_active` swaps the suggested commands between MCP-tool and
+CLI wording, but both branches share that core. The exact per-branch wording is proven in
+`tests/test_cc_notes.py`, which sets a real session flag to drive the MCP branch.
 
 The Surface floaters split into thin event wiring over pure helpers for parsing,
 rendering, dedup, drift filtering, the precision filter, and task capping. Those
