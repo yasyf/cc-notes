@@ -40,7 +40,7 @@ from .common import (
 # alone; WEAK names only qualify when the body carries an internal signal. PUBLISHED/
 # SOURCE/SECRET are the hard exclusions — never durable-internal knowledge.
 STRONG_INTERNAL_GLOBS = ("*_VERIFICATION.md", "*HANDOFF*.md", "*STATUS*.md", "*-handoff.md", "HANDOFF.md", "STATUS.md", "NOTES.md")
-WEAK_INTERNAL_GLOBS = ("TODO.md", "*-notes.md", "runbook*.md", "runbook*", "scratch*.md")
+WEAK_INTERNAL_GLOBS = ("TODO.md", "*-notes.md", "runbook*.md", "runbook*", "scratch*.md", "*memo*.md", "*decision*.md")
 PUBLISHED_GLOBS = ("README*", "CHANGELOG*", "LICENSE*", "CONTRIBUTING*", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg")
 PUBLISHED_DIRS = ("docs/",)
 SECRET_GLOBS = (".env", ".env.*", "*.env", "*secret*", "*credential*", "*.key", "*.pem")
@@ -230,6 +230,8 @@ RECORD_ROUTER_SYSTEM = (
         Input(tool="Write", file="src/foo.ts", content="export const x = 1\n"): Allow(),
         Input(tool="Write", file=".env", content="API_KEY=secret\n"): Allow(),
         Input(tool="Write", file="/n/.cc-pool/p/memory/x.md", content="---\ntype: feedback\n---\nbody\n"): Allow(),
+        Input(tool="Write", file="experiments/e0-gate-memo.md", content="a plan sketch, nothing durable\n"): Allow(),
+        Input(tool="Write", file="docs/design-memo.md", content="## Decision\n- [ ] x\n"): Allow(),
         Input(tool="Read", file="HANDOFF.md"): Allow(),
     },
 )

@@ -370,8 +370,12 @@ def test_durable_internal_write_condition() -> None:
     fires("WEAK *-notes.md + keyword body fires", file="deploy-notes.md", content="This is a handoff for the next agent.\n", expected=True)
     fires("WEAK runbook* fires with signal", file="runbook-deploy.md", content="## Status\nremaining work\n", expected=True)
     fires("WEAK TODO.md + checklist fires", file="TODO.md", content="- [ ] ship it\n", expected=True)
+    fires("WEAK *memo*.md + decision body fires", file="experiments/e0-gate-memo.md", content="## Decision\n- [ ] x\n", expected=True)
+    fires("WEAK *decision*.md dir-shaped path + signal fires", file="decisions/gate.md", content="## Status\nremaining\n", expected=True)
 
     # Negatives ----------------------------------------------------------------
+    fires("WEAK *memo*.md name, no body signal stays silent", file="design-memo.md", content="just a heading\n", expected=False)
+    fires("published docs/ memo silent (dir excluded before WEAK)", file="docs/design-memo.md", content="## Decision\n- [ ] x\n", expected=False)
     fires("WEAK name, no body signal stays silent", file="auth-notes.md", content="just a heading\n", expected=False)
     fires("WEAK name, empty body stays silent", file="auth-notes.md", content="", expected=False)
     fires("published README.md silent", file="README.md", content="# Readme\n", expected=False)
@@ -935,6 +939,20 @@ HANDOFF_BODY = (
 )
 
 
+# A gate-decision memo distilled from the real experiments/e0-gate-memo.md miss: a WEAK
+# *memo*.md name with a "Status"/"Decision" body INTERNAL_BODY_RE keys on. Golden regression.
+GATE_MEMO_BODY = (
+    "# E0 Gate Decision Memo — Phases D/E/F\n\n"
+    "**Status:** binding\n\n"
+    "Phase B made the E0 readout a hard gate. This memo records those decisions "
+    "and the conditions they impose.\n\n"
+    "## Decision\n\n"
+    "Gates D, E, and F are OPEN, subject to the binding conditions below. Two "
+    "assumptions did not survive measurement, so the conditions replace the "
+    "plan's defaults.\n"
+)
+
+
 # gated_handlers maps each gated read-time handler to a tool its own Tool
 # condition matches (UserPromptSubmit carries no tool). Picking the right tool
 # isolates the gate: when which() opens the gate, matches_conditions can only
@@ -1400,6 +1418,28 @@ def test_record_router_fails_closed_on_llm_error(monkeypatch, tmp_path) -> None:
     evt = mock_event("PostToolUse", tool="Write", file="HANDOFF.md", content=HANDOFF_BODY, session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
     check("router: fails closed on LLM error", nudge_record_durable(evt) is None)
+
+
+def test_record_router_routes_decision_memo(monkeypatch, tmp_path) -> None:
+    """Golden regression: a gate-decision memo fires DurableInternalWrite and routes as a doc.
+
+    The historic miss — an agent wrote experiments/e0-gate-memo.md and no nudge fired,
+    because the path vocabulary carried no memo/decision names. The distilled body trips
+    INTERNAL_BODY_RE on "Status"/"Decision", so the WEAK *memo*.md name now qualifies.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Write", file="experiments/e0-gate-memo.md", content=GATE_MEMO_BODY, session_dir=tmp_path)
+    check("decision memo: DurableInternalWrite fires", DurableInternalWrite().check(evt), repr(evt.file))
+    verdict = RecordVerdict(record=True, kind="doc", title="E0 gate decision", when="building the D/E/F arms", area="experiments", reasoning="a binding gate decision")
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
+    result = nudge_record_durable(evt)
+    check("decision memo: warns", result is not None and result.action is Action.warn, repr(result))
+    message = result.message if result and result.message else ""
+    check("decision memo: has message", bool(message), repr(result))
+    check("decision memo: names cc-notes doc add", "cc-notes doc add" in message, message)
+    check("decision memo: carries --when", '--when "building the D/E/F arms"' in message, message)
+    check("decision memo: uses title", '"E0 gate decision"' in message, message)
+    check("decision memo: uses dir", "--dir experiments" in message, message)
 
 
 def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
