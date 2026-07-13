@@ -458,4 +458,7 @@ func assertCCNotesRegistered(t *testing.T, path string) {
 	if src["source"] != "github" || src["repo"] != "yasyf/cc-notes" {
 		t.Fatalf("extraKnownMarketplaces[cc-notes] = %v, want source github yasyf/cc-notes", mk["cc-notes"])
 	}
+	if cc["autoUpdate"] != true {
+		t.Fatalf("extraKnownMarketplaces[cc-notes] autoUpdate = %v, want true", cc)
+	}
 }

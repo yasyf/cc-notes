@@ -11,7 +11,7 @@ import (
 
 // ccNotesMarketplaceJSON is the extraKnownMarketplaces entry pointing Claude
 // Code at the cc-notes plugin marketplace on GitHub.
-var ccNotesMarketplaceJSON = json.RawMessage(`{"source":{"source":"github","repo":"yasyf/cc-notes"}}`)
+var ccNotesMarketplaceJSON = json.RawMessage(`{"source":{"source":"github","repo":"yasyf/cc-notes"},"autoUpdate":true}`)
 
 // repoSettingsPath is the project-scoped Claude Code settings file under root.
 func repoSettingsPath(root string) string {

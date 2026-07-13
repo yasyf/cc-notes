@@ -50,6 +50,12 @@ func TestRegisterPluginPreservesOrderAndMerges(t *testing.T) {
         "source": "github",
         "repo": "yasyf/cc-skills"
       }
+    },
+    "cc-notes": {
+      "source": {
+        "source": "github",
+        "repo": "yasyf/cc-notes"
+      }
     }
   },
   "enabledPlugins": {
@@ -126,6 +132,11 @@ func TestRegisterPluginPreservesOrderAndMerges(t *testing.T) {
 	src := mk["cc-notes"].(map[string]any)["source"].(map[string]any)
 	if src["source"] != "github" || src["repo"] != "yasyf/cc-notes" {
 		t.Fatalf("cc-notes marketplace source = %v, want github yasyf/cc-notes", src)
+	}
+	// Re-running init replaces the stale entry (seeded above without autoUpdate)
+	// with the current definition, upgrading it to autoUpdate: true.
+	if mk["cc-notes"].(map[string]any)["autoUpdate"] != true {
+		t.Fatalf("cc-notes marketplace autoUpdate = %v, want true", mk["cc-notes"])
 	}
 }
 
@@ -212,5 +223,8 @@ func TestRegisterPluginWritesGlobalSettings(t *testing.T) {
 	src, _ := cc["source"].(map[string]any)
 	if src["source"] != "github" || src["repo"] != "yasyf/cc-notes" {
 		t.Fatalf("global extraKnownMarketplaces[cc-notes] = %v, want source github yasyf/cc-notes", mk["cc-notes"])
+	}
+	if cc["autoUpdate"] != true {
+		t.Fatalf("global extraKnownMarketplaces[cc-notes] autoUpdate = %v, want true", cc)
 	}
 }

@@ -7,16 +7,5 @@
       "Bash(uv run:*)",
       "Bash(uv sync:*)"
     ]
-  },
-  "extraKnownMarketplaces": {
-    "captain-hook": {
-      "autoUpdate": true
-    },
-    "cc-notes": {
-      "autoUpdate": true
-    },
-    "cc-context": {
-      "autoUpdate": true
-    }
   }
 }
