@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A verbose comment's rationale routes to cc-notes.** The capt-hook pack
+  gains `comments.py`: a declarative advisory that rides along with the general
+  pack's verbose-comment deny (an `Edit`/`Write`/`MultiEdit` leaving a non-doc
+  comment run over 3 lines / 200 chars is blocked). When an edit introduces or
+  grows a too-long comment block — inline or doc-shaped, since a
+  rationale-stuffed doc comment is equally durable — it points that rationale
+  at `cc-notes note add` (a decision or fact) or `cc-notes doc add --when …`
+  (living guidance) and asks for the comment to shrink to one terse pointer.
+  Declarative (not a handler-backed nudge) so it survives the deny a nudge
+  would be skipped behind, surfacing exactly when the block fires.
 - **cc-notes usage never permission-prompts.** The capt-hook pack gains
   `approval.py`: two allow-only `PermissionRequest` approvers that answer
   a would-be dialog with *allow* for any MCP tool on the exact servers
