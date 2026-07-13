@@ -32,12 +32,14 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 # The pack is the relative-import package ``hooks`` (this file's grandparent dir is
 # ``plugin/``, which must be on sys.path so ``from .common import ...`` resolves when
 # the modules import each other). parents[2] is ``plugin/``; parents[1] is ``hooks/``.
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
+from hooks.approval import CcNotesCli, CcNotesMcp, cc_notes_mcp_tool
 import hooks.common as common
 from hooks.common import (
     cap_and_render_tasks,
@@ -128,6 +130,7 @@ import hooks.workflow as workflow
 from cc_transcript.command import parse_command_line
 import hooks.bootstrap as bootstrap
 from hooks.bootstrap import ensure_cc_notes_binary, ensure_mount
+from captain_hook import CommandLine
 from captain_hook.conditions import check_condition
 from captain_hook.testing.helpers import mock_event, mock_tool_event
 from captain_hook.types import Action, Event
@@ -344,6 +347,139 @@ def test_cap_and_render_tasks() -> None:
     )
     under = cap_and_render_tasks(tasks[:3], 7)
     check("cap_and_render_tasks: under cap -> no tail", len(under) == 3 and not under[-1].startswith("+"))
+
+
+def test_approval_server_pin() -> None:
+    """``cc_notes_mcp_tool`` pins the server segment of an MCP tool name.
+
+    The two names cc-notes registers under yield the tool suffix; every foreign,
+    extended, or prefixed server, every non-``mcp__`` name, a server pinned but with
+    no tool segment, and the degenerate empty/None inputs all yield ``None``.
+    """
+    cases: list[tuple[str | None, str | None]] = [
+        # positives — direct MCP config vs the plugin-installed prefix
+        ("mcp__cc-notes__note_add", "note_add"),
+        ("mcp__plugin_cc-notes_cc-notes__status", "status"),
+        # foreign / extended / prefixed server names — the pin rejects each
+        ("mcp__evil__note_add", None),
+        ("mcp__cc-notes-evil__status", None),
+        ("mcp__xcc-notes__status", None),
+        ("mcp__plugin_cc-notes_cc-notes_evil__status", None),
+        # not an mcp tool name at all
+        ("xmcp__cc-notes__status", None),
+        ("note_add", None),
+        # server pinned but no tool segment (only two parts after split)
+        ("mcp__cc-notes", None),
+        # degenerate inputs — falsy short-circuit
+        ("", None),
+        (None, None),
+    ]
+    for tool_name, expected in cases:
+        got = cc_notes_mcp_tool(tool_name)
+        check(f"server-pin: {tool_name!r} -> {expected!r}", got == expected, repr(got))
+    # An extra `__` stays inside the tool suffix (split("__", 2) caps at the server),
+    # and because the cc-notes scope is everything, CcNotesMcp-style approval still
+    # holds — unlike ccx, where the malformed suffix would fall off the allowlist.
+    got = cc_notes_mcp_tool("mcp__cc-notes__note__add")
+    check("server-pin: extra `__` keeps suffix 'note__add', still cc-notes-pinned", got == "note__add", repr(got))
+
+
+def test_approval_cli_condition() -> None:
+    """``CcNotesCli.check_command_line``: a lone plain cc-notes/ccn command approves;
+    every shell trick, wrapper, path-qualified or near-name binary, and degenerate line
+    rejects. The empty/whitespace lines must reject via the single-command gate WITHOUT
+    raising (``primary`` is never dereferenced) — a raise here is a core bug, not a test.
+    """
+    cond = CcNotesCli()
+    cases: list[tuple[str, bool]] = [
+        # happy paths — both installed names, plus quoted-but-unexpanded args
+        ("cc-notes status", True),
+        ("ccn status", True),
+        ('cc-notes task add "fix the flaky test" --criterion "suite green"', True),
+        ("cc-notes note list --json", True),
+        # quoted command substitution survives is_single_command + is_plain_argv (shlex
+        # and the parser both dequote); only the raw UNSAFE_EXPANSION scan rejects it
+        ('cc-notes note add "$(whoami)"', False),
+        # heredoc-fed `--body -` is a multi-part / redirecting line
+        ("cc-notes note add t --body - <<'EOF'\nbody\nEOF", False),
+        # a bare `--` smuggles a flag past cobra into the git shell-outs
+        ("cc-notes note list -- --output=/tmp/pwned", False),
+        # env-assignment prefix — what runs is not the parsed word
+        ("CC_NOTES_DEBUG=1 cc-notes status", False),
+        # wrappers are not transparent
+        ("sudo cc-notes status", False),
+        ("env cc-notes status", False),
+        ("exec cc-notes status", False),
+        # path-qualified binaries fall through
+        ("/tmp/evil/cc-notes status", False),
+        ("./cc-notes status", False),
+        # near-name executable
+        ("cc-notesx status", False),
+        # pipelines / chains / background / newline
+        ("cc-notes note list | tee /tmp/out", False),
+        ("cc-notes status && rm -rf x", False),
+        ("cc-notes status ; rm -rf x", False),
+        ("cc-notes status || rm -rf x", False),
+        ("cc-notes status & rm -rf /", False),
+        ("cc-notes status\nrm -rf /", False),
+        # redirect
+        ("cc-notes note list > /tmp/out", False),
+        # degenerate lines: the single-command gate rejects before primary is
+        # dereferenced, so these reject WITHOUT raising (band-aiding a raise here would
+        # mask a core bug in the gate ordering)
+        ("", False),
+        ("   ", False),
+        # carve-out — reads/writes an arbitrary path, or executes a stored script
+        ("cc-notes attachment get a1b2 secret -o /Users/v/.ssh/authorized_keys", False),  # -o glue-free write
+        ("cc-notes attachment get a1b2 secret --output=/etc/x", False),  # --output= write
+        ("cc-notes note add pwn --attach /etc/passwd", False),  # --attach read
+        ("cc-notes note apply t --apply /tmp/x", False),  # --apply read
+        ("cc-notes doc add d --abort /tmp/x", False),  # --abort remove
+        ("cc-notes task validate a1b2 --yes", False),  # runs stored scripts
+        ("cc-notes task validate a1b2", False),  # exec verb prompts even without --yes
+        ("cc-notes task criterion script a1b2 /tmp/payload.sh", False),  # verb ingests a script path
+        ("cc-notes task criterion add a1b2 check --script /tmp/payload.sh", False),  # --script ingest
+        ("cc-notes workflows install --dir ../../../tmp/evil", False),  # out-of-tree write
+        ("cc-notes mount --socket /tmp/s", False),  # socket redirection
+        # safe neighbors — the carve-out is by dangerous flag/verb, not by noun
+        ("cc-notes attachment get a1b2 secret", True),  # stdout read of stored bytes
+        ("cc-notes task criterion met a1b2 check", True),  # sibling criterion verb, no script
+        ("cc-notes mount --auto", True),  # mount without --socket
+    ]
+    for command, expected in cases:
+        got = cond.check_command_line(SimpleNamespace(), CommandLine.parse(command))
+        check(f"cli-condition: {command!r} -> {expected}", got == expected, repr(got))
+
+
+def test_approval_mcp_danger() -> None:
+    """``CcNotesMcp.check`` approves the pinned server, minus the carve-out: a tool that
+    executes stored content (``task_validate``) or carries a filesystem path
+    (``attach``/``output``/``script``/``file``) falls through to the dialog.
+    """
+    cond = CcNotesMcp()
+    cases: list[tuple[str, dict[str, object], bool]] = [
+        # approved: pinned server, no path param, no exec tool
+        ("mcp__cc-notes__status", {}, True),
+        ("mcp__plugin_cc-notes_cc-notes__task_list", {}, True),
+        ("mcp__cc-notes__note_add", {"title": "t", "body": "b"}, True),
+        ("mcp__cc-notes__note_add", {"title": "t", "attach": []}, True),  # empty attach is safe
+        ("mcp__cc-notes__attachment_path", {"id": "a1b2", "name": "x"}, True),
+        # carve-out: exec tool
+        ("mcp__cc-notes__task_validate", {"id": "a1b2", "yes": True}, False),
+        ("mcp__plugin_cc-notes_cc-notes__task_validate", {"id": "a1b2"}, False),
+        # carve-out: path-bearing params
+        ("mcp__cc-notes__attachment_get", {"id": "a1b2", "name": "x", "output": "/tmp/x"}, False),
+        ("mcp__cc-notes__note_add", {"title": "t", "attach": ["/etc/passwd"]}, False),
+        ("mcp__cc-notes__log_append", {"id": "a1b2", "attach": ["/etc/passwd"]}, False),
+        ("mcp__cc-notes__task_criterion_script", {"id": "a1b2", "file": "/tmp/x.sh"}, False),
+        ("mcp__cc-notes__task_criterion_add", {"id": "a1b2", "text": "t", "script": "/x.sh"}, False),
+        # a path param on a foreign server is still rejected by the server pin
+        ("mcp__evil__note_add", {"attach": ["/etc/passwd"]}, False),
+    ]
+    for tool, tool_input, expected in cases:
+        evt = mock_tool_event(tool=tool, event=Event.PreToolUse, tool_input=tool_input)
+        got = cond.check(evt)
+        check(f"mcp-danger: {tool!r} {sorted(tool_input)} -> {expected}", got == expected, repr(got))
 
 
 def test_durable_internal_write_condition() -> None:

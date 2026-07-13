@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **cc-notes usage never permission-prompts.** The capt-hook pack gains
+  `approval.py`: two allow-only `PermissionRequest` approvers that answer
+  a would-be dialog with *allow* for any MCP tool on the exact servers
+  `cc-notes` / `plugin_cc-notes_cc-notes` and for one plain single-command
+  `cc-notes`/`ccn` Bash invocation (any subcommand). A carve-out keeps the
+  dialog for the calls that reach outside the git ODB — reading or writing an
+  arbitrary path, or running a stored script: `attachment get -o`, `--attach`,
+  `--apply`, `--abort`, `--script`, `workflows install --dir`,
+  `mount --socket`, `task validate`, `task criterion script`, and the matching
+  MCP tools (`task_validate`, plus any call carrying an `attach`/`output`/
+  `script`/`file` path). Everything else fails closed to the normal dialog —
+  shell expansion in the raw text, pipelines, chains, redirects/heredocs,
+  env-assignment prefixes, wrappers, path-qualified binaries, and a bare `--`.
+  The Claude Code plugin now session-attaches the whole pack via
+  `plugin/hooks/hooks.json` (manifest at `plugin/hooks/capt-hook.toml`, plus
+  an async binary-install backstop), applying it wherever the plugin is
+  enabled; a repo's same-named `packs.toml` pin keeps precedence, so the two
+  delivery paths never double-load.
 - **`cc-notes papercut` — a repo-wide friction-complaint journal.**
   `cc-notes papercut "<complaint>"` files a one-paragraph complaint — a
   dead-end tool call, a broken link, a misleading doc — as an entry in a

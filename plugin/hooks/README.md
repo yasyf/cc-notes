@@ -2,10 +2,15 @@
 
 This directory is a [capt-hook](https://pypi.org/project/capt-hook/) pack whose
 hooks nudge agents to keep cc-notes in step with the git work they do. It is
-enabled in a repo by `cc-notes hooks install`.
+enabled in a repo by `cc-notes hooks install`, and the Claude Code plugin's own
+`hooks.json` session-attaches it wherever the cc-notes plugin is enabled. A
+same-named `packs.toml` pin takes precedence over the attached copy, so a repo
+carrying both never double-loads the pack.
 
-These are **nudges, never gates**. cc-notes complements Claude's native task
-tracking, so every hook only ever warns, and none can block a tool call.
+These are **nudges plus allow-only approvers** — no hook ever blocks or
+rewrites a tool call. The nudges only warn; the approvers in `approval.py`
+answer a would-be permission dialog with *allow* for cc-notes' own surface and
+stay silent on everything else.
 
 ## What the hooks teach
 
@@ -85,6 +90,37 @@ empty), and only ever suggests — it never blocks.
 | a cc-notes write — any mutating CLI subcommand or MCP tool (PostToolUse) | the pack syncs the fresh refs to the remote; reads (`list`, `show`, `search`, `status`, …) never trigger |
 | `cc-notes task claim` / `task start` (PostToolUse) | you hold a lease — `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold (sync is automatic now) |
 | `cc-notes` binary missing, first `UserPromptSubmit` (once) | the pack is enabled but the binary is off `PATH` — name the two install paths (`brew install yasyf/tap/cc-notes` or `curl -fsSL …/install.sh \| sh`) so an opt-in repo isn't left silent |
+
+### Approvals — cc-notes usage never prompts
+
+Two `approval.py` hooks answer the permission dialog with *allow* whenever a
+tool call is unambiguously cc-notes' own:
+
+| Approver | Allows |
+|----------|--------|
+| MCP | any tool on the exact servers `cc-notes` or `plugin_cc-notes_cc-notes`, minus the carve-out below |
+| CLI | one plain single-command `cc-notes`/`ccn` Bash invocation, minus the carve-out below |
+
+The **carve-out** keeps the dialog for the calls that reach outside the git
+ODB — the ones that read or write an arbitrary filesystem path, or run a stored
+script. Auto-approving those would let a prompt-injected agent write any path,
+read any secret into its context, or execute code with no human in the loop, so
+they always prompt: `attachment get -o/--output`, `--attach`, `--apply`,
+`--abort`, `--script`, `workflows install --dir`, `mount --socket`,
+`task validate`, and `task criterion script` — and the matching MCP tools
+(`task_validate`, plus any tool call carrying an `attach`, `output`, `script`,
+or `file` path). Plain `note`/`task`/`doc`/`log` records, `status`, `list`,
+`show`, and `sync` stay prompt-free.
+
+Everything else also falls through to the normal dialog: shell expansion
+anywhere in the raw text (`$`, backticks, braces, process substitution),
+pipelines, chains, redirects and heredocs — so a `--body -` fed by a heredoc
+prompts; carry the text in the MCP `body` parameter instead — env-assignment
+prefixes, wrappers (`sudo`, `env`, `exec`), a path-qualified binary, and a bare
+`--` in the args. Explicit user deny rules always win, since `PermissionRequest`
+only answers a dialog that would otherwise appear. Like the rest of the pack, the
+approvers are dormant without the captain-hook dispatcher plugin, and
+`PermissionRequest` dispatch needs capt-hook >= 9.8.0.
 
 ### Firing policy
 

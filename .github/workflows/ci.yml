@@ -79,6 +79,28 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: capt-hook pack manifests agree and stay frozen
+        run: |
+          python3 - <<'PY'
+          import sys, tomllib
+
+          root = tomllib.load(open(".claude/capt-hook.toml", "rb"))
+          plugin = tomllib.load(open("plugin/hooks/capt-hook.toml", "rb"))
+          for key in ("name", "version", "description"):
+              if root.get(key) != plugin.get(key):
+                  sys.exit(
+                      f"capt-hook manifest {key} skew: .claude/capt-hook.toml={root.get(key)!r} "
+                      f"!= plugin/hooks/capt-hook.toml={plugin.get(key)!r}"
+                  )
+          if root["version"] != "0.0.0":
+              sys.exit(f"capt-hook manifest version must stay frozen at 0.0.0, got {root['version']!r}")
+          print(f"ok: both capt-hook manifests agree (name={root['name']!r}, version={root['version']!r})")
+          PY
+
   hook-tests:
     runs-on: ubuntu-latest
     steps:
@@ -111,6 +133,9 @@ jobs:
 
       - name: capt-hook test
         run: uvx capt-hook --hooks plugin/hooks test
+
+      - name: pack unit tests
+        run: uv run plugin/hooks/tests/test_cc_notes.py
 
   web:
     runs-on: ubuntu-latest

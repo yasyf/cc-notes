@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 from pathlib import Path
 from typing import Any
 
-from captain_hook import BaseHookEvent, CustomCondition
+from captain_hook import BaseHookEvent, CommandLine, CustomCondition
 from pydantic import BaseModel
 
 NATIVE_TASK_MIRROR_THRESHOLD = 5
@@ -24,6 +25,11 @@ RECORD_KINDS = ("note", "doc", "log", "task", "papercut")
 
 # The Claude Code plugin surfaces the cc-notes MCP server's tools under this name prefix.
 MCP_TOOL_PREFIX = "mcp__plugin_cc-notes_cc-notes__"
+
+# Shell words the parser accepts as an executable but that bash treats as a keyword
+# or builtin (`time`, `exec`, `eval`, …). A line headed by one is not a plain argv:
+# what runs is not the word the parser reports, so the approval bails.
+SHELL_WORD_EXECUTABLES = frozenset({"time", "command", "builtin", "exec", "eval", "source", "."})
 
 
 class RecordVerdict(BaseModel):
@@ -52,6 +58,30 @@ class McpActive(BaseModel):
     """
 
     active: bool = False
+
+
+def is_single_command(cl: CommandLine) -> bool:
+    """Report whether the line is one command — no pipe, redirect, or ``&&``/``;`` chain."""
+    return len(cl.parts) == 1 and not cl.q.uses_redirect()
+
+
+def is_plain_argv(cl: CommandLine) -> bool:
+    """Report whether the raw line is exactly the primary command's argv.
+
+    The cc-notes approval trusts the parsed executable only when the raw text *is*
+    that argv: no env-assignment prefix (what runs is not the parsed word), no
+    shell-keyword head (:data:`SHELL_WORD_EXECUTABLES`), and the raw text
+    word-splits to exactly the parsed executable + args. Structure the parser
+    folded out of the argv (a bare command substitution, a redirect) fails that
+    comparison and bails to the dialog.
+    """
+    if cl.primary.env or cl.primary.executable in SHELL_WORD_EXECUTABLES:
+        return False
+    try:
+        words = shlex.split(cl.raw)
+    except ValueError:
+        return False
+    return words == [cl.primary.executable, *cl.primary.args]
 
 
 def run_cc_notes(evt: BaseHookEvent, *args: str) -> str | None:

@@ -128,7 +128,7 @@ Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and t
 
 `cc-notes mcp` runs a stdio [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that mirrors the CLI surface: one `noun_verb` tool per command for the record nouns — `doc_add`, `note_edit`, `task_claim`, `task_criterion_met`, `attachment_path`, and the rest — and a curated set for the planning nouns (`sprint_add`, `runbook_run_done`, …). Each tool drives the real CLI in-process, so it validates and returns exactly what the command does — a tool result is the command's `--json`. A long doc or note body rides the `body` parameter, so an agent records a handoff in one call, no scratch file and no stdin.
 
-The Claude Code plugin wires the server for you: it ships a bundled `.mcp.json` pointed at the `cc-notes` on your `PATH`, and the tools surface as `mcp__plugin_cc-notes_cc-notes__<tool>`. Nothing to install or configure. Recording a handoff is one tool call:
+The Claude Code plugin wires the server for you: it ships a bundled `.mcp.json` pointed at the `cc-notes` on your `PATH`, and the tools surface as `mcp__plugin_cc-notes_cc-notes__<tool>`. Nothing to install or configure. The plugin also auto-approves cc-notes CLI and MCP calls, so agents are never permission-prompted for them. Recording a handoff is one tool call:
 
 ```json
 {
