@@ -153,7 +153,7 @@ func writeContentdStamp() error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(contentdStampPath(), []byte(stamp), 0o644); err != nil {
+	if err := os.WriteFile(contentdStampPath(), []byte(stamp), 0o600); err != nil {
 		return fmt.Errorf("write contentd stamp: %w", err)
 	}
 	return nil
@@ -201,6 +201,7 @@ func installContentdAgent() error {
 	if isTestBinary(exe) {
 		return fmt.Errorf("refusing to install the contentd LaunchAgent from a test binary (%s): a KeepAlive agent re-execing a `go test` binary re-runs the suite (fork storm)", exe)
 	}
+	//nolint:gosec // G301: ~/Library/LaunchAgents keeps the platform-default 0755.
 	if err := os.MkdirAll(filepath.Dir(contentdPlistPath()), 0o755); err != nil {
 		return fmt.Errorf("create LaunchAgents dir: %w", err)
 	}
@@ -280,6 +281,7 @@ func writeContentdPlist(exe string) error {
 </dict>
 </plist>
 `
+	//nolint:gosec // G306: LaunchAgent plists are conventionally world-readable 0644.
 	if err := os.WriteFile(contentdPlistPath(), []byte(plist), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", contentdPlistPath(), err)
 	}
@@ -290,6 +292,8 @@ func writeContentdPlist(exe string) error {
 // domain, picking up a changed plist. It is a seam so tests never shell out to
 // launchctl. Booting out a not-loaded agent is a benign error (ignored); a
 // bootstrap failure is surfaced.
+//
+//nolint:gosec // G204: fixed launchctl binary; args are the uid-derived domain and our own plist path.
 var launchctlLoad = func(plistPath, label string) error {
 	domain := "gui/" + strconv.Itoa(os.Getuid())
 	_ = exec.Command("launchctl", "bootout", domain+"/"+label).Run()
