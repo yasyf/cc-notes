@@ -554,6 +554,38 @@ func TestCommitSHA(t *testing.T) {
 	}
 }
 
+func TestResolveCommit(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	full := commitEmpty(t, g, "c1")
+
+	for _, tc := range []struct {
+		name string
+		rev  string
+		want model.SHA
+	}{
+		{"full hash returns unchanged", string(full), full},
+		{"short prefix expands to full", string(full)[:8], full},
+		// A full-length hash is trusted verbatim, never verified — the read-path
+		// semantics that keep write paths on CommitSHA.
+		{"absent full hash trusted verbatim", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := g.ResolveCommit(ctx, tc.rev)
+			if err != nil {
+				t.Fatalf("ResolveCommit(%q): %v", tc.rev, err)
+			}
+			if got != tc.want {
+				t.Fatalf("ResolveCommit(%q) = %q, want %q", tc.rev, got, tc.want)
+			}
+		})
+	}
+
+	if _, err := g.ResolveCommit(ctx, "21aab439"); !errors.Is(err, gitcmd.ErrRevNotFound) {
+		t.Fatalf("garbage prefix: got %v, want ErrRevNotFound", err)
+	}
+}
+
 func TestTaskTrailers(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()

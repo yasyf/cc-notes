@@ -20,6 +20,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/go-git/go-git/v5/plumbing"
+
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -211,6 +213,18 @@ func (g Git) CommitSHA(ctx context.Context, rev string) (model.SHA, error) {
 		return "", fmt.Errorf("commit sha %s: %w", rev, err)
 	}
 	return model.SHA(strings.TrimSpace(out)), nil
+}
+
+// ResolveCommit canonicalizes a revision or abbreviated sha to a full commit
+// sha. A value already in full-hash form returns unchanged with no subprocess
+// (and so is trusted, not verified to exist — a read-path resolver only);
+// anything else is expanded via CommitSHA, wrapping ErrRevNotFound when it names
+// no commit.
+func (g Git) ResolveCommit(ctx context.Context, rev string) (model.SHA, error) {
+	if plumbing.IsHash(rev) {
+		return model.SHA(rev), nil
+	}
+	return g.CommitSHA(ctx, rev)
 }
 
 // MergeBase returns the best common ancestor of a and b (git merge-base) as a

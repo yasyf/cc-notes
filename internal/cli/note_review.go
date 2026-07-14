@@ -169,7 +169,14 @@ func driftedOf(ctx context.Context, s *store.Store, head model.SHA, fe freshEnti
 				return true, nil
 			}
 		case model.AnchorCommit:
-			reachable, err := s.Repo.IsAncestor(ctx, model.SHA(a.Value), head)
+			sha, err := s.Git.ResolveCommit(ctx, a.Value)
+			if errors.Is(err, gitcmd.ErrRevNotFound) {
+				return true, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			reachable, err := s.Repo.IsAncestor(ctx, sha, head)
 			if errors.Is(err, gitobj.ErrCommitNotFound) {
 				return true, nil
 			}

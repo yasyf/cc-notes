@@ -449,7 +449,14 @@ func (c *Client) commitAnchorMerged(ctx context.Context, anchors []model.Anchor,
 		if a.Kind != model.AnchorCommit {
 			continue
 		}
-		reachable, err := c.s.Repo.IsAncestor(ctx, model.SHA(a.Value), head)
+		sha, err := c.s.Git.ResolveCommit(ctx, a.Value)
+		if errors.Is(err, gitcmd.ErrRevNotFound) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		reachable, err := c.s.Repo.IsAncestor(ctx, sha, head)
 		if errors.Is(err, gitobj.ErrCommitNotFound) {
 			continue
 		}

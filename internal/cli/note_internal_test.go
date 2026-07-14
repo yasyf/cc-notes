@@ -122,6 +122,56 @@ func TestNoteDirAnchorDrift(t *testing.T) {
 	}
 }
 
+// TestCommitAnchorShortShaResolves is the litmus for driftedOf's read-path
+// commit resolver: a witnessed commit anchor stored as a short (un-canonicalized)
+// sha must be resolved via git, never explode on "invalid sha". A resolvable
+// prefix reachable from HEAD reads fresh (not drifted); an unresolvable one
+// degrades to drifted (best-effort). Reverting the ResolveCommit call in
+// driftedOf makes both cases fail with "invalid sha".
+func TestCommitAnchorShortShaResolves(t *testing.T) {
+	dir := t.TempDir()
+	driftRepoInit(t, dir)
+	commitDirFile(t, dir, "pkg/a.go", "v1\n")
+
+	t.Chdir(dir)
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	ctx := t.Context()
+	head, err := resolveHead(ctx, s)
+	if err != nil {
+		t.Fatalf("resolveHead: %v", err)
+	}
+	if head == "" {
+		t.Fatal("HEAD is unborn after a commit")
+	}
+
+	for _, tc := range []struct {
+		name    string
+		value   string
+		drifted bool
+	}{
+		{"resolvable prefix reachable from head is fresh", string(head)[:8], false},
+		{"unresolvable prefix drifts", "21aab439", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			anchor := model.Anchor{Kind: model.AnchorCommit, Value: tc.value}
+			fe := freshEntity{
+				Anchors: []model.Anchor{anchor},
+				Witness: []model.AnchorWitness{{Anchor: anchor, OID: model.SHA(tc.value)}},
+			}
+			drifted, err := driftedOf(ctx, s, head, fe, false)
+			if err != nil {
+				t.Fatalf("driftedOf: %v", err)
+			}
+			if drifted != tc.drifted {
+				t.Fatalf("drifted = %v, want %v", drifted, tc.drifted)
+			}
+		})
+	}
+}
+
 func TestNoteVerdict(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	t.Run("never verified is UNVERIFIED before any git read", func(t *testing.T) {
