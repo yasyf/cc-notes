@@ -689,6 +689,7 @@ func TestDecodePackFailures(t *testing.T) {
 		{"bad task type", `{"v":1,"lamport":1,"ops":[{"kind":"set_type","type":"chore"}]}`, ErrInvalidValue},
 		{"bad anchor kind", `{"v":1,"lamport":1,"ops":[{"kind":"add_anchor","anchor":{"kind":"url","value":"https://x"}}]}`, ErrInvalidValue},
 		{"bad anchor kind in create_note", `{"v":1,"lamport":1,"ops":[{"kind":"create_note","nonce":"00","title":"t","body":"","tags":[],"anchors":[{"kind":"tag","value":"v"}]}]}`, ErrInvalidValue},
+		{"bad anchor kind in create_runbook", `{"v":1,"lamport":1,"ops":[{"kind":"create_runbook","nonce":"00","title":"t","description":"","labels":[],"anchors":[{"kind":"url","value":"https://x"}]}]}`, ErrInvalidValue},
 		{"bad witness anchor kind in verify_note", `{"v":1,"lamport":1,"ops":[{"kind":"verify_note","witness":[{"anchor":{"kind":"url","value":"https://x"},"oid":"abc"}],"verified_commit":"def"}]}`, ErrInvalidValue},
 		{"bad priority in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"task","priority":7,"branch":"main","parent":"","labels":[]}]}`, ErrInvalidValue},
 		{"bad type in create_task", `{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"00","title":"t","description":"","type":"story","priority":0,"branch":"main","parent":"","labels":[]}]}`, ErrInvalidValue},

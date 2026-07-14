@@ -12,20 +12,22 @@ import (
 )
 
 // relevantDTO is one ranked entity in the JSON output of relevant: a kind
-// discriminator ("note"|"doc"|"log"), the matching entity DTO (the note DTO on
-// a note entry, the doc DTO — carrying the free-text trigger — on a doc entry,
-// the log DTO on a log entry; notes and docs carry the drift verdict, logs
-// never drift), the summed relevance score, and the matched reasons in fixed
-// priority order. Note, Doc, and Log are mutually exclusive; the unused ones
-// are omitted so the float hook can index entry["note"]/entry["doc"]/
-// entry["log"] by kind.
+// discriminator ("note"|"doc"|"log"|"runbook"), the matching entity DTO (the
+// note DTO on a note entry, the doc DTO — carrying the free-text trigger — on a
+// doc entry, the log DTO on a log entry, the runbook DTO on a runbook entry;
+// notes and docs carry the drift verdict, logs and runbooks never drift), the
+// summed relevance score, and the matched reasons in fixed priority order. The
+// entity fields are mutually exclusive; the unused ones are omitted so the
+// float hook can index entry["note"]/entry["doc"]/entry["log"]/
+// entry["runbook"] by kind.
 type relevantDTO struct {
-	Kind    string   `json:"kind"`
-	Note    *noteDTO `json:"note,omitempty"`
-	Doc     *docDTO  `json:"doc,omitempty"`
-	Log     *logDTO  `json:"log,omitempty"`
-	Score   int      `json:"score"`
-	Reasons []string `json:"reasons"`
+	Kind    string      `json:"kind"`
+	Note    *noteDTO    `json:"note,omitempty"`
+	Doc     *docDTO     `json:"doc,omitempty"`
+	Log     *logDTO     `json:"log,omitempty"`
+	Runbook *runbookDTO `json:"runbook,omitempty"`
+	Score   int         `json:"score"`
+	Reasons []string    `json:"reasons"`
 }
 
 func newRelevantCmd() *cobra.Command {
@@ -93,6 +95,9 @@ func printRelevant(cmd *cobra.Command, c *notes.Client, entries []notes.Relevant
 				}
 				l := newLogDTO(e.Log, attachmentInfoDTOs(infos))
 				dto.Log = &l
+			case model.KindRunbook:
+				rb := newRunbookDTO(e.Runbook)
+				dto.Runbook = &rb
 			default:
 				infos, err := c.AttachmentInfos(cmd.Context(), e.Note.Attachments)
 				if err != nil {
@@ -116,6 +121,8 @@ func printRelevant(cmd *cobra.Command, c *notes.Client, entries []notes.Relevant
 			line += "\tdoc show " + e.Doc.ID.Short()
 		case model.KindLog:
 			line = leanLogLine(e.Log) + "\t" + csvOrDash(e.Reasons) + "\tlog show " + e.Log.ID.Short()
+		case model.KindRunbook:
+			line = leanRunbookLine(e.Runbook) + "\t" + csvOrDash(e.Reasons) + "\trunbook show " + e.Runbook.ID.Short()
 		default:
 			line = leanNoteLine(e.Note) + "\t" + csvOrDash(e.Reasons)
 			if e.Verdict != "" {

@@ -153,13 +153,15 @@ type ParsedComment struct {
 	Body   string `json:"body"`
 }
 
-// ParsedCriterion is one acceptance criterion in a task document, mirroring the
-// CLI's criterionDTO key for key.
+// ParsedCriterion is one acceptance criterion in a task document. It mirrors the
+// CLI's criterionDTO and adds the stored evidence note, which marshals omitempty
+// so a note-less criterion keeps its CLI-compatible bytes.
 type ParsedCriterion struct {
 	ID     string `json:"id"`
 	Text   string `json:"text"`
 	Script string `json:"script"`
 	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
 }
 
 // ParsedTask is the decoded form of a task file, mirroring the CLI's --json
@@ -1050,7 +1052,7 @@ func RenderTask(t model.Task) []byte {
 func renderCriteria(criteria []model.Criterion) []ParsedCriterion {
 	out := make([]ParsedCriterion, len(criteria))
 	for i, c := range criteria {
-		out[i] = ParsedCriterion{ID: c.ID, Text: c.Text, Script: c.Script, Status: string(c.Status)}
+		out[i] = ParsedCriterion{ID: c.ID, Text: c.Text, Script: c.Script, Status: string(c.Status), Note: c.Note}
 	}
 	return out
 }
@@ -1133,7 +1135,10 @@ func DiffTask(base model.Task, p ParsedTask) ([]model.Op, error) {
 
 // diffCriteria diffs an edited criteria array against the base, matching by id.
 // A parsed entry whose id matches a base criterion emits set_criterion_text /
-// set_criterion_status / set_criterion_script for each changed field; an entry
+// set_criterion_status / set_criterion_script for each changed field —
+// set_criterion_status also fires on a note-only change and always carries the
+// file's note, so a status edit that leaves the note key untouched preserves the
+// stored note instead of clearing it; an entry
 // with an empty id is a new criterion (add_criterion under a fresh nonce, plus
 // set_criterion_status when it starts non-pending); an entry with a non-empty
 // id absent from the base is rejected with ErrParse — ids are server-assigned,
@@ -1182,12 +1187,12 @@ func diffCriteria(base []model.Criterion, f Field[[]ParsedCriterion]) ([]model.O
 		if pc.Text != bc.Text {
 			ops = append(ops, model.SetCriterionText{ID: id, Text: pc.Text})
 		}
-		if pc.Status != string(bc.Status) {
+		if pc.Status != string(bc.Status) || pc.Note != bc.Note {
 			status, err := parseCriterionStatus(pc.Status)
 			if err != nil {
 				return nil, err
 			}
-			ops = append(ops, model.SetCriterionStatus{ID: id, Status: status})
+			ops = append(ops, model.SetCriterionStatus{ID: id, Status: status, Note: pc.Note})
 		}
 		if pc.Script != bc.Script {
 			ops = append(ops, model.SetCriterionScript{ID: id, Script: pc.Script})
@@ -1574,16 +1579,21 @@ func runbookStepFence(id string) string {
 	return runbookStepFencePrefix + render.ShortWireID(id) + " -->"
 }
 
-// runbookKeys is the runbook frontmatter contract, all keys always present:
-// id, title, status, labels, created, updated.
-var runbookKeys = []fmKey[model.Runbook]{
-	{key: "id", node: func(r model.Runbook) *yaml.Node { return scalarNode(string(r.ID)) }},
-	{key: "title", node: func(r model.Runbook) *yaml.Node { return scalarNode(r.Title) }},
-	{key: "status", node: func(r model.Runbook) *yaml.Node { return scalarNode(string(r.Status)) }},
-	{key: "labels", node: func(r model.Runbook) *yaml.Node { return flowNode(r.Labels) }},
-	{key: "created", node: func(r model.Runbook) *yaml.Node { return scalarNode(render.RFC3339(r.CreatedAt)) }},
-	{key: "updated", node: func(r model.Runbook) *yaml.Node { return scalarNode(render.RFC3339(r.UpdatedAt)) }},
-}
+// runbookKeys is the runbook frontmatter contract: id, title, status, labels,
+// the non-empty anchor kinds, created, updated.
+var runbookKeys = slices.Concat(
+	[]fmKey[model.Runbook]{
+		{key: "id", node: func(r model.Runbook) *yaml.Node { return scalarNode(string(r.ID)) }},
+		{key: "title", node: func(r model.Runbook) *yaml.Node { return scalarNode(r.Title) }},
+		{key: "status", node: func(r model.Runbook) *yaml.Node { return scalarNode(string(r.Status)) }},
+		{key: "labels", node: func(r model.Runbook) *yaml.Node { return flowNode(r.Labels) }},
+	},
+	anchorKeys(func(r model.Runbook) []model.Anchor { return r.Anchors }),
+	[]fmKey[model.Runbook]{
+		{key: "created", node: func(r model.Runbook) *yaml.Node { return scalarNode(render.RFC3339(r.CreatedAt)) }},
+		{key: "updated", node: func(r model.Runbook) *yaml.Node { return scalarNode(render.RFC3339(r.UpdatedAt)) }},
+	},
+)
 
 // RenderRunbook renders rb as read-only markdown: the runbookKeys frontmatter,
 // the description, a numbered "## Steps" section whose items each carry a

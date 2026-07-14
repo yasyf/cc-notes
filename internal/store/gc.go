@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 
+	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -28,8 +29,9 @@ func (s *Store) GCLocal(ctx context.Context) (int, error) {
 	return tidied, nil
 }
 
-// PruneTombstones physically deletes tombstoned note, doc, and log refs — those
-// folded to Deleted — locally and on remote via git push --delete, then drops
+// PruneTombstones physically deletes tombstoned note, doc, log, and runbook
+// refs — those folded to Deleted — locally and on remote via git push --delete,
+// then drops
 // their now-orphaned cache entries. Superseded notes and docs and all tasks are
 // never pruned: a superseded entity keeps its supersede pointer and history, and
 // there is no task tombstone. Pruning is best-effort and non-convergent — a
@@ -91,6 +93,26 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 			continue
 		}
 		s.cache.delete(l.Head)
+		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+			failed++
+			continue
+		}
+		pruned++
+	}
+	runbooks, err := listOf(ctx, s, model.KindRunbook, fold.Runbook, ListOpts{IncludeDeleted: true})
+	if err != nil {
+		return pruned, failed, err
+	}
+	for _, rb := range runbooks {
+		if !rb.Deleted {
+			continue
+		}
+		ref := refs.For(model.KindRunbook, rb.ID)
+		if err := s.Git.DeleteRef(ctx, ref, rb.Head); err != nil {
+			failed++
+			continue
+		}
+		s.cache.delete(rb.Head)
 		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
 			failed++
 			continue

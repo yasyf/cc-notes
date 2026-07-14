@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -144,6 +145,18 @@ func TestDedupeRunbook(t *testing.T) {
 			},
 			wantDedupe: false,
 		},
+		{
+			name: "diff anchors",
+			ops: []model.Op{
+				model.CreateRunbook{
+					Nonce: model.NewNonce(), Title: "Deploy", Description: "D", Labels: []string{"a"},
+					Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "scripts/deploy.sh"}},
+				},
+				model.AddStep{ID: "u1", Text: "build", Command: "make", Position: "a"},
+				model.AddStep{ID: "u2", Text: "test", Command: "", Position: "i"},
+			},
+			wantDedupe: false,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := initStore(t)
@@ -160,6 +173,93 @@ func TestDedupeRunbook(t *testing.T) {
 				t.Errorf("distinct content reused id %s", got.EntityID())
 			}
 		})
+	}
+}
+
+func TestDedupeRunbookAnchored(t *testing.T) {
+	anchored := func(path, id1, id2 string) []model.Op {
+		return []model.Op{
+			model.CreateRunbook{
+				Nonce: model.NewNonce(), Title: "Deploy",
+				Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: path}},
+			},
+			model.AddStep{ID: id1, Text: "build", Command: "make", Position: "a"},
+			model.AddStep{ID: id2, Text: "test", Command: "", Position: "i"},
+		}
+	}
+
+	t.Run("identical anchors dedupe", func(t *testing.T) {
+		s := initStore(t)
+		first := create(t, s, anchored("scripts/deploy.sh", "s1", "s2"))
+		got := mustDedupe(t, s, anchored("scripts/deploy.sh", "x1", "x2"))
+		if got.EntityID() != first.EntityID() {
+			t.Errorf("identical-anchor twin not deduped: %s, want %s", got.EntityID(), first.EntityID())
+		}
+	})
+
+	t.Run("differing anchors do not dedupe", func(t *testing.T) {
+		s := initStore(t)
+		first := create(t, s, anchored("scripts/deploy.sh", "s1", "s2"))
+		got := create(t, s, anchored("scripts/release.sh", "x1", "x2"))
+		if got.EntityID() == first.EntityID() {
+			t.Errorf("twins differing only in anchors deduped into %s", got.EntityID())
+		}
+	})
+}
+
+func TestDedupeRunbookSkipsDeleted(t *testing.T) {
+	s := initStore(t)
+	first := create(t, s, runbookOps("Deploy")).(model.Runbook)
+	if _, err := s.Append(t.Context(), refs.For(model.KindRunbook, first.ID), []model.Op{model.DeleteNote{}}); err != nil {
+		t.Fatalf("tombstone: %v", err)
+	}
+	got := create(t, s, runbookOps("Deploy"))
+	if got.EntityID() == first.ID {
+		t.Errorf("deleted twin suppressed re-create: reused id %s", got.EntityID())
+	}
+}
+
+// TestDedupeRunbookLiveSkipsDeleted drives scanDup with a list that surfaces a
+// content-matching tombstoned runbook, which ListRunbooks would normally hide.
+// Only the liveRunbook predicate stands between the candidate and a false match,
+// so a create whose content equals a deleted runbook must proceed as new.
+func TestDedupeRunbookLiveSkipsDeleted(t *testing.T) {
+	candidate := []model.PackCommit{{SHA: "candidate", Pack: model.Pack{Ops: []model.Op{
+		model.CreateRunbook{Nonce: model.NewNonce(), Title: "Deploy"},
+	}}}}
+	deleted := model.Runbook{ID: "rbdead", Title: "Deploy", Deleted: true}
+	got, err := scanDup(candidate, fold.Runbook,
+		func() ([]model.Runbook, error) { return []model.Runbook{deleted}, nil },
+		liveRunbook, sameRunbookContent)
+	if err != nil {
+		t.Fatalf("scanDup: %v", err)
+	}
+	if got != nil {
+		t.Errorf("scanDup matched a deleted runbook %#v; a create must proceed as new", got)
+	}
+}
+
+func TestListRunbooksSkipsDeleted(t *testing.T) {
+	s := initStore(t)
+	keep := create(t, s, runbookOps("Keep")).(model.Runbook)
+	drop := create(t, s, runbookOps("Drop")).(model.Runbook)
+	if _, err := s.Append(t.Context(), refs.For(model.KindRunbook, drop.ID), []model.Op{model.DeleteNote{}}); err != nil {
+		t.Fatalf("tombstone: %v", err)
+	}
+	list, err := s.ListRunbooks(t.Context())
+	if err != nil {
+		t.Fatalf("ListRunbooks: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != keep.ID {
+		t.Fatalf("ListRunbooks = %+v, want only %s", list, keep.ID)
+	}
+	// The tombstoned chain still loads by ref.
+	loaded, err := s.Load(t.Context(), refs.For(model.KindRunbook, drop.ID))
+	if err != nil {
+		t.Fatalf("Load tombstoned: %v", err)
+	}
+	if !loaded.(model.Runbook).Deleted {
+		t.Error("loaded.Deleted = false, want true")
 	}
 }
 

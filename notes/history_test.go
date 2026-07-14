@@ -157,6 +157,37 @@ func TestHistoryNoteLifecycle(t *testing.T) {
 	}
 }
 
+// TestHistoryCriterionNoteSurfaced pins that a criterion's evidence note reaches
+// the projected History delta: without it a note-only verdict renders identical
+// to the prior state and the change vanishes.
+func TestHistoryCriterionNoteSurfaced(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+	task := mustTask(t, c, notes.TaskSpec{Title: "crit", Branch: "main"})
+	added, err := c.AddCriterion(ctx, task.ID, "tests pass", "")
+	if err != nil {
+		t.Fatalf("AddCriterion: %v", err)
+	}
+	crit := added.Criteria[0].ID
+	if _, err := c.SetCriterionStatus(ctx, task.ID, crit, model.CriterionMet, "go test: 12 passed"); err != nil {
+		t.Fatalf("SetCriterionStatus: %v", err)
+	}
+
+	entries, err := c.History(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	last := entries[len(entries)-1]
+	ch, ok := findChange(last, "criteria")
+	if !ok {
+		t.Fatalf("last entry has no criteria change: %+v", last)
+	}
+	want := `"tests pass" [met] note "go test: 12 passed"`
+	if !slices.Contains(ch.Added, want) {
+		t.Fatalf("criteria Added = %v, want an element %q", ch.Added, want)
+	}
+}
+
 // TestHistoryNotFound checks that an unknown id fails with ErrNotFound rather
 // than returning an empty trail.
 func TestHistoryNotFound(t *testing.T) {

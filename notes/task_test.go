@@ -79,7 +79,7 @@ func TestDoneGate(t *testing.T) {
 
 	// Meeting the criterion lets the gate pass.
 	crit := task.Criteria[0]
-	if _, err := c.SetCriterionStatus(ctx, task.ID, crit.ID[:7], model.CriterionMet); err != nil {
+	if _, err := c.SetCriterionStatus(ctx, task.ID, crit.ID[:7], model.CriterionMet, ""); err != nil {
 		t.Fatalf("SetCriterionStatus: %v", err)
 	}
 	if done, err := c.DoneTask(ctx, task.ID, false); err != nil || done.Status != model.StatusDone {
@@ -330,9 +330,23 @@ func TestCriteriaLifecycle(t *testing.T) {
 	if _, err := c.SetCriterionScript(ctx, task.ID, crit.ID[:7], ""); err != nil {
 		t.Fatalf("SetCriterionScript clear: %v", err)
 	}
-	if _, err := c.SetCriterionStatus(ctx, task.ID, crit.ID[:7], model.CriterionMet); err != nil {
+	met, err := c.SetCriterionStatus(ctx, task.ID, crit.ID[:7], model.CriterionMet, "verified by hand")
+	if err != nil {
 		t.Fatalf("SetCriterionStatus: %v", err)
 	}
+	if got := met.Criteria[0]; got.Status != model.CriterionMet || got.Note != "verified by hand" {
+		t.Fatalf("met criterion = %q/%q, want met/\"verified by hand\"", got.Status, got.Note)
+	}
+
+	// A later note-less verdict clears the note: Note is LWW with the status.
+	cleared, err := c.SetCriterionStatus(ctx, task.ID, crit.ID[:7], model.CriterionFailed, "")
+	if err != nil {
+		t.Fatalf("SetCriterionStatus clear note: %v", err)
+	}
+	if got := cleared.Criteria[0]; got.Status != model.CriterionFailed || got.Note != "" {
+		t.Fatalf("cleared criterion = %q/%q, want failed/empty note", got.Status, got.Note)
+	}
+
 	removed, err := c.RemoveCriterion(ctx, task.ID, crit.ID[:7])
 	if err != nil {
 		t.Fatalf("RemoveCriterion: %v", err)

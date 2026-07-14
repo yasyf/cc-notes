@@ -314,12 +314,7 @@ func appendEditOps(ops []model.Op, addTags, removeTags []string, addAnchors []mo
 	for _, t := range removeTags {
 		ops = append(ops, model.RemoveTag{Tag: t})
 	}
-	for _, a := range addAnchors {
-		ops = append(ops, model.AddAnchor{Anchor: a})
-	}
-	for _, a := range buildAnchors(removeAnchors) {
-		ops = append(ops, model.RemoveAnchor{Anchor: a})
-	}
+	ops = anchorEditOps(ops, addAnchors, removeAnchors)
 	for _, name := range removeAttachments {
 		ops = append(ops, model.RemoveAttachment{Name: name})
 	}

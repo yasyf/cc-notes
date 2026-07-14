@@ -69,6 +69,18 @@ func buildAnchors(spec AnchorSpec) []model.Anchor {
 	return anchors
 }
 
+// anchorEditOps appends the anchor ops every edit shares: one AddAnchor per
+// resolved add, then one RemoveAnchor per flattened remove (matched verbatim).
+func anchorEditOps(ops []model.Op, addAnchors []model.Anchor, removeAnchors AnchorSpec) []model.Op {
+	for _, a := range addAnchors {
+		ops = append(ops, model.AddAnchor{Anchor: a})
+	}
+	for _, a := range buildAnchors(removeAnchors) {
+		ops = append(ops, model.RemoveAnchor{Anchor: a})
+	}
+	return ops
+}
+
 // buildWitness computes the per-anchor content witness against head: a path
 // anchor's content oid and a directory anchor's tree oid (both skipped when
 // HEAD is unborn or the path is absent), and a commit anchor's own oid. Branch

@@ -541,10 +541,12 @@ type SetCriterionText struct {
 func (SetCriterionText) OpKind() string { return "set_criterion_text" }
 
 // SetCriterionStatus replaces the validation status of the criterion with the
-// given id.
+// given id. Note carries optional free-form evidence for the verdict; it
+// marshals omitempty so note-less ops keep their pre-note wire bytes.
 type SetCriterionStatus struct {
 	ID     string          `json:"id"`
 	Status CriterionStatus `json:"status"`
+	Note   string          `json:"note,omitempty"`
 }
 
 // OpKind returns "set_criterion_status".
@@ -597,6 +599,7 @@ type CreateRunbook struct {
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
 	Labels      []string `json:"labels"`
+	Anchors     []Anchor `json:"anchors"`
 }
 
 // OpKind returns "create_runbook".
@@ -604,6 +607,15 @@ func (CreateRunbook) OpKind() string { return "create_runbook" }
 
 // CreateKind returns KindRunbook.
 func (CreateRunbook) CreateKind() Kind { return KindRunbook }
+
+func (o CreateRunbook) validate() error {
+	for _, a := range o.Anchors {
+		if err := a.Kind.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // AddStep adds one step to a runbook. The id is a client-generated nonce that
 // makes the add idempotent; Position places the step (see PositionBetween).

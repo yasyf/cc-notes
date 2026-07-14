@@ -1012,7 +1012,7 @@ func newCriterionStatusCmd(use string, status model.CriterionStatus) *cobra.Comm
 			if err != nil {
 				return err
 			}
-			task, err := c.SetCriterionStatus(ctx, id, args[1], status)
+			task, err := c.SetCriterionStatus(ctx, id, args[1], status, "")
 			if err != nil {
 				return err
 			}

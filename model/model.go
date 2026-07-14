@@ -278,11 +278,15 @@ type LogEntry struct {
 // Criterion is one structured acceptance criterion on a task. ID is a nonce
 // stable within the task; Script is an optional check command ("" means none);
 // Status is the latest validation verdict.
+//
+// Note is the free-form evidence recorded with the latest verdict; it marshals
+// omitempty so note-less criteria keep their pre-note snapshot bytes.
 type Criterion struct {
 	ID     string          `json:"id"`
 	Text   string          `json:"text"`
 	Script string          `json:"script"`
 	Status CriterionStatus `json:"status"`
+	Note   string          `json:"note,omitempty"`
 }
 
 // maxAttachmentNameBytes bounds an attachment name to a single filesystem
@@ -581,6 +585,11 @@ type RunbookRun struct {
 // plus the append-only record of its runs. Timestamps are unix seconds; zero
 // means unset for ArchivedAt. Labels are a folded collection; Head is the chain
 // tip the snapshot was folded from.
+//
+// Anchors is the folded anchor set, sorted by (kind, value) and nil when
+// empty — the field marshals omitempty so anchor-less snapshots keep their
+// pre-anchor bytes. Deleted is the tombstone flag and marshals omitempty for
+// the same reason: an undeleted snapshot keeps its pre-tombstone bytes.
 type Runbook struct {
 	ID          EntityID      `json:"id"`
 	Title       string        `json:"title"`
@@ -595,6 +604,8 @@ type Runbook struct {
 	UpdatedAt   int64         `json:"updated_at"`
 	ArchivedAt  int64         `json:"archived_at"`
 	Head        SHA           `json:"head"`
+	Anchors     []Anchor      `json:"anchors,omitempty"`
+	Deleted     bool          `json:"deleted,omitempty"`
 }
 
 // NewNonce returns 16 crypto/rand bytes hex-encoded (32 characters). Create

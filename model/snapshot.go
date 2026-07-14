@@ -131,5 +131,6 @@ func (r Runbook) Meta() Meta {
 		Head:      r.Head,
 		CreatedAt: metaTime(r.CreatedAt),
 		UpdatedAt: metaTime(r.UpdatedAt),
+		Deleted:   r.Deleted,
 	}
 }

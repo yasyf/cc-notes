@@ -1,8 +1,11 @@
 package fold_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/fold"
@@ -298,5 +301,235 @@ func TestFoldRunbookStatusTimestamps(t *testing.T) {
 				t.Fatalf("ArchivedAt = %d, want %d", got.ArchivedAt, tc.wantArchivedAt)
 			}
 		})
+	}
+}
+
+func TestFoldRunbookAnchorsAndDelete(t *testing.T) {
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateRunbook{
+			Nonce: "n", Title: "Deploy",
+			Anchors: []model.Anchor{
+				{Kind: model.AnchorPath, Value: "scripts/deploy.sh"},
+				{Kind: model.AnchorDir, Value: "scripts"},
+			},
+		}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2,
+			model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorBranch, Value: "main"}},
+			model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorDir, Value: "scripts"}},
+		),
+		mk("ccc", []string{"bbb"}, "carol", 300, 3, model.DeleteNote{}),
+	}
+	want := model.Runbook{
+		ID: "aaa", Title: "Deploy", Status: model.RunbookActive,
+		Steps: []model.RunbookStep{}, Runs: []model.RunbookRun{},
+		Labels: []string{}, Comments: []model.Comment{},
+		Author: "alice", CreatedAt: 100, UpdatedAt: 300, Head: "ccc",
+		Anchors: []model.Anchor{
+			{Kind: model.AnchorBranch, Value: "main"},
+			{Kind: model.AnchorPath, Value: "scripts/deploy.sh"},
+		},
+		Deleted: true,
+	}
+	got, err := fold.Runbook(chain)
+	if err != nil {
+		t.Fatalf("Runbook() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Runbook() = %+v, want %+v", got, want)
+	}
+}
+
+// codecCheckpoint builds a checkpoint commit whose Checkpoint op round-trips
+// through the real pack codec (marshal then DecodePack), so the seeded State —
+// its anchors and tombstone included — must survive encoding, not just an
+// in-memory struct copy.
+func codecCheckpoint(t *testing.T, sha, parent, author string, at int64, lamport uint64, state model.Snapshot, coversLamport uint64, covers ...string) model.PackCommit {
+	t.Helper()
+	shas := make([]model.SHA, len(covers))
+	for i, c := range covers {
+		shas[i] = model.SHA(c)
+	}
+	wire, err := json.Marshal(model.Pack{Lamport: model.Lamport(lamport), Ops: []model.Op{model.Checkpoint{
+		EntityID: state.EntityID(), State: state, CoversLamport: model.Lamport(coversLamport), CoversShas: shas,
+	}}})
+	if err != nil {
+		t.Fatalf("marshal checkpoint pack: %v", err)
+	}
+	pack, err := model.DecodePack(wire)
+	if err != nil {
+		t.Fatalf("decode checkpoint pack: %v", err)
+	}
+	return model.PackCommit{SHA: model.SHA(sha), Parents: []model.SHA{model.SHA(parent)}, Author: model.Actor(author), AuthorTime: at, Pack: pack}
+}
+
+// TestFoldRunbookCompactedEqualsFullWithAnchors folds runbook chains against the
+// identical chain with an empty commit in the checkpoint slot, with the
+// checkpoint round-tripped through the real codec. In "delete after checkpoint"
+// the suffix removes an anchor and tombstones a live checkpoint State; in
+// "delete before checkpoint" the tombstone is baked into the checkpoint State
+// itself, so seeding alone must restore Deleted.
+func TestFoldRunbookCompactedEqualsFullWithAnchors(t *testing.T) {
+	wantAnchors := []model.Anchor{{Kind: model.AnchorBranch, Value: "main"}}
+
+	t.Run("delete after checkpoint", func(t *testing.T) {
+		c0 := mk("c0", nil, "alice", 100, 1, model.CreateRunbook{
+			Nonce: "n", Title: "R",
+			Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "a.go"}},
+		})
+		c1 := mk("c1", []string{"c0"}, "bob", 200, 2,
+			model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorBranch, Value: "main"}},
+		)
+		state, err := fold.Runbook([]model.PackCommit{c0, c1})
+		if err != nil {
+			t.Fatalf("fold prefix: %v", err)
+		}
+		if state.Deleted {
+			t.Fatal("prefix state already deleted, want a live checkpoint")
+		}
+		cK := codecCheckpoint(t, "cK", "c1", "compactor", 250, 3, state, 2, "c0", "c1")
+		cKempty := mk("cK", []string{"c1"}, "compactor", 250, 3)
+		c2 := mk("c2", []string{"cK"}, "carol", 300, 4,
+			model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "a.go"}},
+			model.DeleteNote{},
+		)
+
+		gotFull, err := fold.Runbook([]model.PackCommit{c0, c1, cKempty, c2})
+		if err != nil {
+			t.Fatalf("fold full: %v", err)
+		}
+		gotCompact, err := fold.Runbook([]model.PackCommit{c0, c1, cK, c2})
+		if err != nil {
+			t.Fatalf("fold compacted: %v", err)
+		}
+		if !reflect.DeepEqual(gotCompact, gotFull) {
+			t.Fatalf("compacted = %+v\nfull = %+v", gotCompact, gotFull)
+		}
+		if !reflect.DeepEqual(gotCompact.Anchors, wantAnchors) {
+			t.Errorf("Anchors = %+v, want %+v", gotCompact.Anchors, wantAnchors)
+		}
+		if !gotCompact.Deleted {
+			t.Error("Deleted = false, want true")
+		}
+	})
+
+	t.Run("delete before checkpoint", func(t *testing.T) {
+		c0 := mk("c0", nil, "alice", 100, 1, model.CreateRunbook{
+			Nonce: "n", Title: "R",
+			Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "a.go"}},
+		})
+		c1 := mk("c1", []string{"c0"}, "bob", 200, 2,
+			model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorBranch, Value: "main"}},
+			model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "a.go"}},
+			model.DeleteNote{},
+		)
+		state, err := fold.Runbook([]model.PackCommit{c0, c1})
+		if err != nil {
+			t.Fatalf("fold prefix: %v", err)
+		}
+		if !state.Deleted {
+			t.Fatal("prefix state not deleted, want a tombstoned checkpoint")
+		}
+		cK := codecCheckpoint(t, "cK", "c1", "compactor", 250, 3, state, 2, "c0", "c1")
+		cKempty := mk("cK", []string{"c1"}, "compactor", 250, 3)
+		c2 := mk("c2", []string{"cK"}, "carol", 300, 4, model.AddComment{Body: "post"})
+
+		gotFull, err := fold.Runbook([]model.PackCommit{c0, c1, cKempty, c2})
+		if err != nil {
+			t.Fatalf("fold full: %v", err)
+		}
+		gotCompact, err := fold.Runbook([]model.PackCommit{c0, c1, cK, c2})
+		if err != nil {
+			t.Fatalf("fold compacted: %v", err)
+		}
+		if !reflect.DeepEqual(gotCompact, gotFull) {
+			t.Fatalf("compacted = %+v\nfull = %+v", gotCompact, gotFull)
+		}
+		if !reflect.DeepEqual(gotCompact.Anchors, wantAnchors) {
+			t.Errorf("Anchors = %+v, want %+v", gotCompact.Anchors, wantAnchors)
+		}
+		if !gotCompact.Deleted {
+			t.Error("seeded Deleted = false, want true (restored from the checkpoint State)")
+		}
+	})
+}
+
+// TestFoldRunbookPreAnchorWireIdentity replays a fixture chain of pre-anchor
+// runbook wire bytes (no anchors key anywhere) through the real codec and
+// asserts the fold equals the pre-change snapshot exactly — Anchors nil,
+// Deleted false, marshaled bytes free of both keys — including a checkpoint
+// round-trip through the codec that must seed to the identical fold.
+func TestFoldRunbookPreAnchorWireIdentity(t *testing.T) {
+	wires := []struct {
+		sha, parent, author string
+		at                  int64
+		pack                string
+	}{
+		{"c0", "", "alice", 100, `{"v":1,"lamport":1,"ops":[{"kind":"create_runbook","nonce":"n1","title":"Deploy","description":"ship","labels":["ops"]}]}`},
+		{"c1", "c0", "bob", 200, `{"v":1,"lamport":2,"ops":[{"kind":"add_step","id":"s1","text":"build","command":"make","position":"i"}]}`},
+		{"c2", "c1", "carol", 300, `{"v":1,"lamport":3,"ops":[{"kind":"start_run","id":"r1","task":""}]}`},
+	}
+	chain := make([]model.PackCommit, len(wires))
+	for i, w := range wires {
+		pack, err := model.DecodePack([]byte(w.pack))
+		if err != nil {
+			t.Fatalf("decode wire %s: %v", w.sha, err)
+		}
+		var parents []model.SHA
+		if w.parent != "" {
+			parents = []model.SHA{model.SHA(w.parent)}
+		}
+		chain[i] = model.PackCommit{SHA: model.SHA(w.sha), Parents: parents, Author: model.Actor(w.author), AuthorTime: w.at, Pack: pack}
+	}
+	want := model.Runbook{
+		ID: "c0", Title: "Deploy", Description: "ship", Status: model.RunbookActive,
+		Steps: []model.RunbookStep{{ID: "s1", Text: "build", Command: "make", Position: "i"}},
+		Runs: []model.RunbookRun{{
+			ID: "r1", Status: model.RunRunning, Runner: "carol", StartedAt: 300,
+			Results: []model.RunbookStepResult{},
+		}},
+		Labels: []string{"ops"}, Comments: []model.Comment{},
+		Author: "alice", CreatedAt: 100, UpdatedAt: 300, Head: "c2",
+	}
+	got, err := fold.Runbook(chain)
+	if err != nil {
+		t.Fatalf("fold pre-anchor chain: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("fold = %+v, want %+v", got, want)
+	}
+
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	for _, key := range []string{`"anchors"`, `"deleted"`} {
+		if strings.Contains(string(raw), key) {
+			t.Errorf("pre-anchor snapshot bytes contain %s", key)
+		}
+	}
+
+	cpWire, err := json.Marshal(model.Pack{Lamport: 4, Ops: []model.Op{model.Checkpoint{
+		EntityID: got.EntityID(), State: got, CoversLamport: 3, CoversShas: []model.SHA{"c0", "c1", "c2"},
+	}}})
+	if err != nil {
+		t.Fatalf("marshal checkpoint pack: %v", err)
+	}
+	cpPack, err := model.DecodePack(cpWire)
+	if err != nil {
+		t.Fatalf("decode checkpoint pack: %v", err)
+	}
+	cK := model.PackCommit{SHA: "cK", Parents: []model.SHA{"c2"}, Author: "compactor", AuthorTime: 350, Pack: cpPack}
+	c3 := mk("c3", []string{"cK"}, "dave", 400, 5, model.AddComment{Body: "post-compaction"})
+
+	seeded, err := fold.Runbook(append(slices.Clone(chain), cK, c3))
+	if err != nil {
+		t.Fatalf("fold seeded: %v", err)
+	}
+	full, err := fold.Runbook(append(slices.Clone(chain), mk("cK", []string{"c2"}, "compactor", 350, 4), c3))
+	if err != nil {
+		t.Fatalf("fold full: %v", err)
+	}
+	if !reflect.DeepEqual(seeded, full) {
+		t.Fatalf("seeded = %+v\nfull = %+v", seeded, full)
 	}
 }

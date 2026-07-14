@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -27,6 +28,11 @@ func TestUpgradeHint(t *testing.T) {
 			name: "bare ErrUnknownKind carries no kind",
 			err:  fmt.Errorf("marshal: %w", model.ErrUnknownKind),
 			want: "",
+		},
+		{
+			name: "fold kind mismatch from a newer binary",
+			err:  fmt.Errorf("load refs/cc-notes/runbooks/x: %w: add_anchor on a runbook", fold.ErrKindMismatch),
+			want: "this entity carries history this cc-notes cannot fold; if it was written by a newer cc-notes, run `brew upgrade yasyf/tap/cc-notes` and retry",
 		},
 		{
 			name: "unrelated error",

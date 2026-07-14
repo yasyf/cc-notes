@@ -170,7 +170,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.Project, error) {
 }
 
 // ListRunbooks folds every runbook in the repository, ordered by creation time
-// then id.
+// then id. Tombstoned runbooks are skipped.
 func (s *Store) ListRunbooks(ctx context.Context) ([]model.Runbook, error) {
 	return listOf(ctx, s, model.KindRunbook, fold.Runbook, ListOpts{})
 }

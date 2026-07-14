@@ -9,14 +9,15 @@ import (
 )
 
 type runbookFolder struct {
-	rb     model.Runbook
-	labels map[string]bool
-	steps  []model.RunbookStep
-	runs   []model.RunbookRun
+	rb      model.Runbook
+	labels  map[string]bool
+	anchors map[model.Anchor]bool
+	steps   []model.RunbookStep
+	runs    []model.RunbookRun
 }
 
 func newRunbookFolder() *runbookFolder {
-	return &runbookFolder{labels: map[string]bool{}}
+	return &runbookFolder{labels: map[string]bool{}, anchors: map[model.Anchor]bool{}}
 }
 
 func foldRunbook(ordered []model.PackCommit) (model.Runbook, error) {
@@ -41,6 +42,9 @@ func (f *runbookFolder) seed(state model.Snapshot) error {
 	for _, l := range seed.Labels {
 		f.labels[l] = true
 	}
+	for _, a := range seed.Anchors {
+		f.anchors[a] = true
+	}
 	return nil
 }
 
@@ -55,11 +59,14 @@ func (f *runbookFolder) create(op model.CreateOp, author model.Actor) error {
 	for _, l := range o.Labels {
 		f.labels[l] = true
 	}
+	for _, a := range o.Anchors {
+		f.anchors[a] = true
+	}
 	return nil
 }
 
 func (f *runbookFolder) apply(op model.Op, c model.PackCommit) error {
-	if applyLabel(f.labels, op) || applyComment(&f.rb.Comments, op, c) {
+	if applyLabel(f.labels, op) || applyAnchor(f.anchors, op) || applyComment(&f.rb.Comments, op, c) {
 		return nil
 	}
 	switch o := op.(type) {
@@ -114,6 +121,8 @@ func (f *runbookFolder) apply(op model.Op, c model.PackCommit) error {
 			f.runs[i].Status = o.Status
 			f.runs[i].FinishedAt = c.AuthorTime
 		}
+	case model.DeleteNote:
+		f.rb.Deleted = true
 	default:
 		return fmt.Errorf("%w: %s on a runbook", ErrKindMismatch, op.OpKind())
 	}
@@ -126,6 +135,7 @@ func (f *runbookFolder) touch(c model.PackCommit) {
 
 func (f *runbookFolder) finalize(head model.SHA) model.Runbook {
 	f.rb.Labels = sortedKeys(f.labels)
+	f.rb.Anchors = sortedAnchorsNil(f.anchors)
 	slices.SortFunc(f.steps, func(a, b model.RunbookStep) int {
 		if c := cmp.Compare(a.Position, b.Position); c != 0 {
 			return c

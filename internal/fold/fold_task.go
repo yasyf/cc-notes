@@ -127,6 +127,7 @@ func (f *taskFolder) apply(op model.Op, c model.PackCommit) error {
 	case model.SetCriterionStatus:
 		if i := criterionIndex(f.criteria, o.ID); i >= 0 {
 			f.criteria[i].Status = o.Status
+			f.criteria[i].Note = o.Note
 		}
 	case model.SetCriterionScript:
 		if i := criterionIndex(f.criteria, o.ID); i >= 0 {

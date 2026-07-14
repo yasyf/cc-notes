@@ -2,6 +2,7 @@ package notes_test
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/yasyf/cc-notes/model"
@@ -375,3 +376,151 @@ func TestRunbookEditMaskAndEmpty(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestRunbookAnchors(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+
+	rb, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{
+		Title:   "Deploy",
+		Anchors: notes.AnchorSpec{Paths: []string{"scripts/deploy.sh"}, Branches: []string{"main"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateRunbook: %v", err)
+	}
+	want := []model.Anchor{
+		{Kind: model.AnchorBranch, Value: "main"},
+		{Kind: model.AnchorPath, Value: "scripts/deploy.sh"},
+	}
+	if !reflect.DeepEqual(rb.Anchors, want) {
+		t.Fatalf("Anchors = %+v, want %+v", rb.Anchors, want)
+	}
+
+	edited, err := c.EditRunbook(ctx, rb.ID, notes.RunbookEdit{
+		AddAnchors:    notes.AnchorSpec{Dirs: []string{"internal/auth"}},
+		RemoveAnchors: notes.AnchorSpec{Branches: []string{"main"}},
+	})
+	if err != nil {
+		t.Fatalf("EditRunbook anchors: %v", err)
+	}
+	want = []model.Anchor{
+		{Kind: model.AnchorDir, Value: "internal/auth"},
+		{Kind: model.AnchorPath, Value: "scripts/deploy.sh"},
+	}
+	if !reflect.DeepEqual(edited.Anchors, want) {
+		t.Fatalf("edited Anchors = %+v, want %+v", edited.Anchors, want)
+	}
+
+	// A bad commit revision refuses before any write.
+	if _, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{
+		Title:   "Bad",
+		Anchors: notes.AnchorSpec{Commits: []string{"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}},
+	}); !errors.Is(err, notes.ErrNotFound) {
+		t.Errorf("CreateRunbook(bad commit) = %v, want ErrNotFound", err)
+	}
+	if _, err := c.EditRunbook(ctx, rb.ID, notes.RunbookEdit{
+		AddAnchors: notes.AnchorSpec{Commits: []string{"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}},
+	}); !errors.Is(err, notes.ErrNotFound) {
+		t.Errorf("EditRunbook(bad commit) = %v, want ErrNotFound", err)
+	}
+
+	// An anchor-less runbook folds nil Anchors.
+	plain, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "Plain"})
+	if err != nil {
+		t.Fatalf("CreateRunbook plain: %v", err)
+	}
+	if plain.Anchors != nil {
+		t.Errorf("anchor-less Anchors = %+v, want nil", plain.Anchors)
+	}
+}
+
+func TestRemoveRunbook(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+
+	keep, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "Keep"})
+	if err != nil {
+		t.Fatalf("CreateRunbook keep: %v", err)
+	}
+	drop, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "Drop"})
+	if err != nil {
+		t.Fatalf("CreateRunbook drop: %v", err)
+	}
+
+	removed, err := c.RemoveRunbook(ctx, drop.ID)
+	if err != nil {
+		t.Fatalf("RemoveRunbook: %v", err)
+	}
+	if !removed.Deleted {
+		t.Fatal("removed.Deleted = false, want true")
+	}
+
+	list, err := c.Runbooks(ctx, true)
+	if err != nil {
+		t.Fatalf("Runbooks: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != keep.ID {
+		t.Fatalf("Runbooks after remove = %+v, want only %s", list, keep.ID)
+	}
+
+	// The tombstoned runbook still resolves by id.
+	shown, err := c.Runbook(ctx, drop.ID)
+	if err != nil {
+		t.Fatalf("Runbook(removed): %v", err)
+	}
+	if !shown.Deleted {
+		t.Error("shown.Deleted = false, want true")
+	}
+}
+
+func TestSearchRunbooks(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+
+	byTitle, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "Deploy service"})
+	if err != nil {
+		t.Fatalf("CreateRunbook byTitle: %v", err)
+	}
+	byLabel, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "Rollback", Labels: []string{"deploy"}})
+	if err != nil {
+		t.Fatalf("CreateRunbook byLabel: %v", err)
+	}
+	byStep, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "Incident", Steps: []string{"deploy the fix"}})
+	if err != nil {
+		t.Fatalf("CreateRunbook byStep: %v", err)
+	}
+	if _, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "Unrelated"}); err != nil {
+		t.Fatalf("CreateRunbook unrelated: %v", err)
+	}
+	archived, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "Deploy archived"})
+	if err != nil {
+		t.Fatalf("CreateRunbook archived: %v", err)
+	}
+	if _, err := c.ArchiveRunbook(ctx, archived.ID); err != nil {
+		t.Fatalf("ArchiveRunbook: %v", err)
+	}
+	deleted, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "Deploy deleted"})
+	if err != nil {
+		t.Fatalf("CreateRunbook deleted: %v", err)
+	}
+	if _, err := c.RemoveRunbook(ctx, deleted.ID); err != nil {
+		t.Fatalf("RemoveRunbook: %v", err)
+	}
+
+	got, err := c.SearchRunbooks(ctx, "deploy", notes.SearchFilter{Limit: -1})
+	if err != nil {
+		t.Fatalf("SearchRunbooks: %v", err)
+	}
+	wantIDs := []model.EntityID{byTitle.ID, byLabel.ID, byStep.ID}
+	gotIDs := make([]model.EntityID, len(got))
+	for i, rb := range got {
+		gotIDs[i] = rb.ID
+	}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("SearchRunbooks ids = %v, want %v (title tier over label over step)", gotIDs, wantIDs)
+	}
+
+	if none, err := c.SearchRunbooks(ctx, "nomatch", notes.SearchFilter{Limit: -1}); err != nil || len(none) != 0 {
+		t.Fatalf("SearchRunbooks(nomatch) = %v/%v, want empty/nil", none, err)
+	}
+}

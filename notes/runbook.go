@@ -16,27 +16,35 @@ import (
 
 // RunbookSpec is the input to CreateRunbook. Title is required; the rest are
 // optional. Steps are the initial step texts, in order — CreateRunbook positions
-// them sequentially via model.PositionBetween.
+// them sequentially via model.PositionBetween. Anchors are attached in commit,
+// path, dir, then branch order; commit values are resolved to full shas at
+// write time.
 type RunbookSpec struct {
 	Title       string
 	Description string
 	Labels      []string
 	Steps       []string
+	Anchors     AnchorSpec
 }
 
 // RunbookEdit is the field mask for EditRunbook: a nil Title or Description
-// leaves the field untouched, a non-nil pointer sets it; label slices apply in
-// order. An all-empty mask is ErrEmptyEdit.
+// leaves the field untouched, a non-nil pointer sets it; the label and anchor
+// slices apply in order. AddAnchors' commit values are resolved to full shas;
+// RemoveAnchors is matched verbatim. An all-empty mask is ErrEmptyEdit.
 type RunbookEdit struct {
-	Title        *string
-	Description  *string
-	AddLabels    []string
-	RemoveLabels []string
+	Title         *string
+	Description   *string
+	AddLabels     []string
+	RemoveLabels  []string
+	AddAnchors    AnchorSpec
+	RemoveAnchors AnchorSpec
 }
 
 // empty reports whether the mask sets nothing.
 func (e RunbookEdit) empty() bool {
-	return e.Title == nil && e.Description == nil && len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0
+	return e.Title == nil && e.Description == nil &&
+		len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0 &&
+		e.AddAnchors.isEmpty() && e.RemoveAnchors.isEmpty()
 }
 
 // StepEdit is the field mask for EditStep. A nil field leaves it untouched; a
@@ -82,12 +90,17 @@ var ErrSelfRelative = errors.New("cannot place a step relative to itself")
 // returned bool reports that Create's best-effort duplicate guard converged on
 // an existing runbook.
 func (c *Client) CreateRunbook(ctx context.Context, spec RunbookSpec) (model.Runbook, bool, error) {
+	anchors, err := c.resolveAnchors(ctx, spec.Anchors)
+	if err != nil {
+		return model.Runbook{}, false, err
+	}
 	ops := make([]model.Op, 0, 1+len(spec.Steps))
 	ops = append(ops, model.CreateRunbook{
 		Nonce:       model.NewNonce(),
 		Title:       spec.Title,
 		Description: spec.Description,
 		Labels:      spec.Labels,
+		Anchors:     anchors,
 	})
 	last := ""
 	for _, text := range spec.Steps {
@@ -107,7 +120,8 @@ func (c *Client) CreateRunbook(ctx context.Context, spec RunbookSpec) (model.Run
 }
 
 // Runbooks folds every runbook in the repository in store order (creation time
-// then id). Archived runbooks are dropped unless includeArchived is set.
+// then id). Tombstoned runbooks are always dropped; archived runbooks are
+// dropped unless includeArchived is set.
 func (c *Client) Runbooks(ctx context.Context, includeArchived bool) ([]model.Runbook, error) {
 	runbooks, err := c.s.ListRunbooks(ctx)
 	if err != nil {
@@ -152,11 +166,16 @@ func (c *Client) setRunbookStatus(ctx context.Context, id model.EntityID, status
 }
 
 // EditRunbook applies the mask to the runbook. An all-empty mask is ErrEmptyEdit;
-// the runbook must be active. Ops apply in title, description, add-label,
-// remove-label order.
+// the runbook must be active. AddAnchors' commits are resolved first, so a bad
+// revision mutates nothing. Ops apply in title, description, add-label,
+// remove-label, add-anchor, remove-anchor order.
 func (c *Client) EditRunbook(ctx context.Context, id model.EntityID, edit RunbookEdit) (model.Runbook, error) {
 	if edit.empty() {
 		return model.Runbook{}, ErrEmptyEdit
+	}
+	addAnchors, err := c.resolveAnchors(ctx, edit.AddAnchors)
+	if err != nil {
+		return model.Runbook{}, err
 	}
 	rb, err := c.Runbook(ctx, id)
 	if err != nil {
@@ -178,7 +197,45 @@ func (c *Client) EditRunbook(ctx context.Context, id model.EntityID, edit Runboo
 	for _, l := range edit.RemoveLabels {
 		ops = append(ops, model.RemoveLabel{Label: l})
 	}
+	ops = anchorEditOps(ops, addAnchors, edit.RemoveAnchors)
 	return c.appendRunbook(ctx, id, ops)
+}
+
+// RemoveRunbook tombstones the runbook, returning the folded snapshot.
+// DeleteNote is a soft tombstone — the ref survives, so the runbook still
+// resolves for show.
+func (c *Client) RemoveRunbook(ctx context.Context, id model.EntityID) (model.Runbook, error) {
+	return c.appendRunbook(ctx, id, []model.Op{model.DeleteNote{}})
+}
+
+// SearchRunbooks ranks the active runbook set against query, filtered by the
+// SearchFilter, and returns the top results by tier, then UpdatedAt descending,
+// then id ascending. A runbook matches when its title, a label, its
+// description, or any step text contains query.
+func (c *Client) SearchRunbooks(ctx context.Context, query string, f SearchFilter) ([]model.Runbook, error) {
+	runbooks, err := c.Runbooks(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	return rankDocuments(runbooks, query, f, runbookRanker), nil
+}
+
+var runbookRanker = documentRanker[model.Runbook]{
+	tags:    func(rb model.Runbook) []string { return rb.Labels },
+	author:  func(rb model.Runbook) string { return string(rb.Author) },
+	anchors: func(rb model.Runbook) []model.Anchor { return rb.Anchors },
+	tier:    func(rb model.Runbook, q string) int { return textTier(rb.Title, rb.Labels, runbookBodies(rb), q) },
+}
+
+// runbookBodies is a runbook's searchable body: the description, then each
+// step's text in folded order.
+func runbookBodies(rb model.Runbook) []string {
+	texts := make([]string, 0, 1+len(rb.Steps))
+	texts = append(texts, rb.Description)
+	for _, s := range rb.Steps {
+		texts = append(texts, s.Text)
+	}
+	return texts
 }
 
 // CommentRunbook appends an operational comment; the runbook must be active.

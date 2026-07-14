@@ -999,6 +999,58 @@ func TestDiffTaskCriteriaAdd(t *testing.T) {
 	})
 }
 
+func TestDiffTaskCriteriaNote(t *testing.T) {
+	base := richTask()
+	base.Criteria[1].Note = "log: 12 passed"
+	cases := []struct {
+		name   string
+		mutate func(*fusefs.ParsedTask)
+		want   []model.Op
+	}{
+		{
+			"status change preserves the untouched note",
+			func(p *fusefs.ParsedTask) { p.Criteria.Value[1].Status = "met" },
+			[]model.Op{model.SetCriterionStatus{ID: critB, Status: model.CriterionMet, Note: "log: 12 passed"}},
+		},
+		{
+			"note edit emits a status op carrying the new note",
+			func(p *fusefs.ParsedTask) { p.Criteria.Value[1].Note = "log: 15 passed" },
+			[]model.Op{model.SetCriterionStatus{ID: critB, Status: model.CriterionPending, Note: "log: 15 passed"}},
+		},
+		{
+			"clearing the note emits an empty-note status op",
+			func(p *fusefs.ParsedTask) { p.Criteria.Value[1].Note = "" },
+			[]model.Op{model.SetCriterionStatus{ID: critB, Status: model.CriterionPending}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseTask(t, fusefs.RenderTask(base))
+			tc.mutate(&p)
+			ops, err := fusefs.DiffTask(base, p)
+			if err != nil {
+				t.Fatalf("DiffTask: %v", err)
+			}
+			if !reflect.DeepEqual(ops, tc.want) {
+				t.Errorf("ops %#v, want %#v", ops, tc.want)
+			}
+		})
+	}
+}
+
+func TestRenderTaskRendersCriterionNote(t *testing.T) {
+	base := richTask()
+	base.Criteria[1].Note = "log: 12 passed"
+	out := fusefs.RenderTask(base)
+	if !bytes.Contains(out, []byte(`"note": "log: 12 passed"`)) {
+		t.Errorf("RenderTask output missing criterion note:\n%s", out)
+	}
+	// The note-less criterion omits the key (omitempty), so exactly one renders.
+	if n := bytes.Count(out, []byte(`"note"`)); n != 1 {
+		t.Errorf("note key count = %d, want 1:\n%s", n, out)
+	}
+}
+
 func TestDiffTaskCriteriaErrors(t *testing.T) {
 	base := richTask()
 	cases := []struct {
@@ -2313,6 +2365,18 @@ func TestRenderRunbookGolden(t *testing.T) {
 	}
 	if got := string(fusefs.RenderRunbook(minimal)); got != goldenMinimalRunbook {
 		t.Errorf("minimal runbook render:\n got %q\nwant %q", got, goldenMinimalRunbook)
+	}
+
+	anchored := minimal
+	anchored.Anchors = []model.Anchor{
+		{Kind: model.AnchorPath, Value: "scripts/deploy.sh"},
+		{Kind: model.AnchorBranch, Value: "main"},
+	}
+	wantAnchored := strings.Replace(goldenMinimalRunbook,
+		"labels: []\n",
+		"labels: []\npaths: [scripts/deploy.sh]\nbranches: [main]\n", 1)
+	if got := string(fusefs.RenderRunbook(anchored)); got != wantAnchored {
+		t.Errorf("anchored runbook render:\n got %q\nwant %q", got, wantAnchored)
 	}
 }
 

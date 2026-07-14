@@ -131,7 +131,11 @@ func formatTrailElement(field string, v any) string {
 	case "entries":
 		return fmt.Sprintf("entry by %s: %q", scalarString(m["author"]), scalarString(m["text"]))
 	case "criteria":
-		return fmt.Sprintf("%q [%s]", scalarString(m["text"]), scalarString(m["status"]))
+		s := fmt.Sprintf("%q [%s]", scalarString(m["text"]), scalarString(m["status"]))
+		if note := scalarString(m["note"]); note != "" {
+			s += fmt.Sprintf(" note %q", note)
+		}
+		return s
 	case "steps":
 		return fmt.Sprintf("%q", scalarString(m["text"]))
 	case "runs":

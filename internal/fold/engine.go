@@ -185,6 +185,17 @@ func sortedAttachments(set map[string]model.Attachment) []model.Attachment {
 	return attachments
 }
 
+// sortedAnchorsNil returns the folded anchor set ordered by (kind, value), or
+// nil when empty: Runbook.Anchors marshals omitempty, so a nil result keeps
+// anchor-less runbook snapshot bytes identical to their pre-anchor form and
+// keeps a fresh fold DeepEqual to its own cache and checkpoint round-trips.
+func sortedAnchorsNil(set map[model.Anchor]bool) []model.Anchor {
+	if len(set) == 0 {
+		return nil
+	}
+	return sortedAnchors(set)
+}
+
 func sortedAnchors(set map[model.Anchor]bool) []model.Anchor {
 	anchors := make([]model.Anchor, 0, len(set))
 	for a := range set {

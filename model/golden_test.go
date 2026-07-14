@@ -410,9 +410,26 @@ func TestPackGoldenBytesRunbookOps(t *testing.T) {
 		want string
 	}{
 		{
+			// The anchored form this binary writes; the pre-anchor wire form is
+			// pinned decode-side in TestPackGoldenBytesPreAnchorRunbookDecodes.
 			"create_runbook",
-			CreateRunbook{Nonce: testNonce, Title: "Deploy", Description: "ship", Labels: []string{"deploy", "ops"}},
-			`{"v":1,"lamport":42,"ops":[{"kind":"create_runbook","nonce":"0123456789abcdef0123456789abcdef","title":"Deploy","description":"ship","labels":["deploy","ops"]}]}`,
+			CreateRunbook{
+				Nonce: testNonce, Title: "Deploy", Description: "ship", Labels: []string{"deploy", "ops"},
+				Anchors: []Anchor{
+					{Kind: AnchorPath, Value: "scripts/deploy.sh"},
+					{Kind: AnchorBranch, Value: "main"},
+				},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"create_runbook","nonce":"0123456789abcdef0123456789abcdef","title":"Deploy","description":"ship","labels":["deploy","ops"],"anchors":[{"kind":"path","value":"scripts/deploy.sh"},{"kind":"branch","value":"main"}]}]}`,
+		},
+		{
+			// Anchor-less write form: the key stays present as [] (no omitempty).
+			"create_runbook_anchorless",
+			CreateRunbook{
+				Nonce: testNonce, Title: "Deploy", Description: "ship", Labels: []string{"deploy", "ops"},
+				Anchors: []Anchor{},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"create_runbook","nonce":"0123456789abcdef0123456789abcdef","title":"Deploy","description":"ship","labels":["deploy","ops"],"anchors":[]}]}`,
 		},
 		{
 			"add_step",
@@ -498,6 +515,81 @@ func TestPackGoldenBytesRunbookOps(t *testing.T) {
 				t.Fatalf("decode = %#v, want %#v", back, pack)
 			}
 		})
+	}
+}
+
+// TestPackGoldenBytesPreAnchorRunbookDecodes pins the pre-anchor create_runbook
+// wire bytes — the form every runbook chain written before anchors carries —
+// decode-side only: the bytes must decode to the anchor-less op unchanged.
+// The anchored marshal form is pinned in TestPackGoldenBytesRunbookOps; these
+// bytes are never edited, only preserved.
+func TestPackGoldenBytesPreAnchorRunbookDecodes(t *testing.T) {
+	wire := `{"v":1,"lamport":42,"ops":[{"kind":"create_runbook","nonce":"0123456789abcdef0123456789abcdef","title":"Deploy","description":"ship","labels":["deploy","ops"]}]}`
+	want := Pack{Lamport: 42, Ops: []Op{
+		CreateRunbook{Nonce: testNonce, Title: "Deploy", Description: "ship", Labels: []string{"deploy", "ops"}},
+	}}
+	back, err := DecodePack([]byte(wire))
+	if err != nil {
+		t.Fatalf("decode pre-anchor golden: %v", err)
+	}
+	if !reflect.DeepEqual(back, want) {
+		t.Fatalf("decode = %#v, want %#v", back, want)
+	}
+}
+
+// TestPackGoldenBytesCriterionNote pins the exact v1 wire bytes of
+// set_criterion_status carrying a note, both directions. The note-less form
+// stays pinned unchanged in the pre-attachment golden table: Note marshals
+// omitempty, so its bytes never gained a note key.
+func TestPackGoldenBytesCriterionNote(t *testing.T) {
+	pack := Pack{Lamport: 42, Ops: []Op{
+		SetCriterionStatus{ID: "crit-1", Status: CriterionFailed, Note: "go test failed on TestSync"},
+	}}
+	want := `{"v":1,"lamport":42,"ops":[{"kind":"set_criterion_status","id":"crit-1","status":"failed","note":"go test failed on TestSync"}]}`
+	got, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("marshal =\n%s\nwant\n%s", got, want)
+	}
+	back, err := DecodePack([]byte(want))
+	if err != nil {
+		t.Fatalf("decode golden: %v", err)
+	}
+	if !reflect.DeepEqual(back, pack) {
+		t.Fatalf("decode = %#v, want %#v", back, pack)
+	}
+}
+
+// TestSnapshotGoldenBytesAnchorlessRunbook pins the exact json.Marshal bytes of
+// an anchor-less, undeleted runbook snapshot: Anchors and Deleted marshal
+// omitempty, so the bytes — which checkpoint State embeds verbatim — must stay
+// byte-identical to the pre-anchor form and carry no anchors or deleted key.
+func TestSnapshotGoldenBytesAnchorlessRunbook(t *testing.T) {
+	snap := Runbook{
+		ID: testID, Title: "Deploy", Description: "ship", Status: RunbookActive,
+		Steps: []RunbookStep{{ID: "s1", Text: "test", Command: "go test", Position: "i"}},
+		Runs: []RunbookRun{{
+			ID: "r1", Task: testParent, Status: RunSucceeded,
+			Runner: "ada", StartedAt: 200, FinishedAt: 300,
+			Results: []RunbookStepResult{{StepID: "s1", Status: StepDone, Note: "ok", Actor: "ada", TS: 250}},
+		}},
+		Labels: []string{"ops"}, Comments: []Comment{{Author: "ada", TS: 100, Body: "init"}},
+		Author: "ada", CreatedAt: 100, UpdatedAt: 300, ArchivedAt: 0, Head: testParent,
+	}
+	want := `{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Deploy","description":"ship","status":"active","steps":[{"id":"s1","text":"test","command":"go test","position":"i"}],"runs":[{"id":"r1","task":"00112233445566778899aabbccddeeff00112233","status":"succeeded","runner":"ada","started_at":200,"finished_at":300,"results":[{"step_id":"s1","status":"done","note":"ok","actor":"ada","ts":250}]}],"labels":["ops"],"comments":[{"author":"ada","ts":100,"body":"init"}],"author":"ada","created_at":100,"updated_at":300,"archived_at":0,"head":"00112233445566778899aabbccddeeff00112233"}`
+	got, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("marshal =\n%s\nwant\n%s", got, want)
+	}
+	for _, key := range []string{`"anchors"`, `"deleted"`} {
+		if strings.Contains(string(got), key) {
+			t.Errorf("anchor-less runbook snapshot bytes contain %s", key)
+		}
 	}
 }
 

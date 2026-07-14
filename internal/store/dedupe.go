@@ -48,8 +48,15 @@ var dupCheckers = map[model.Kind]dupChecker{
 	model.KindRunbook: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Runbook,
 			func() ([]model.Runbook, error) { return s.ListRunbooks(ctx) },
-			func(rb model.Runbook) bool { return rb.ArchivedAt == 0 }, sameRunbookContent)
+			liveRunbook, sameRunbookContent)
 	},
+}
+
+// liveRunbook reports whether rb is a valid dedupe target: active and not
+// tombstoned. ListRunbooks already hides tombstones, so the !Deleted guard only
+// bites when a deleted runbook reaches the scan directly.
+func liveRunbook(rb model.Runbook) bool {
+	return rb.ArchivedAt == 0 && !rb.Deleted
 }
 
 func (s *Store) findDuplicate(ctx context.Context, kind model.Kind, pack model.Pack) (model.Snapshot, error) {
@@ -167,6 +174,7 @@ func sameRunbookContent(a, b model.Runbook) bool {
 	return a.Title == b.Title &&
 		a.Description == b.Description &&
 		slices.Equal(a.Labels, b.Labels) &&
+		slices.Equal(a.Anchors, b.Anchors) &&
 		sameSteps(a.Steps, b.Steps)
 }
 

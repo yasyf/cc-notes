@@ -566,14 +566,15 @@ func (c *Client) RemoveCriterion(ctx context.Context, id model.EntityID, crit st
 }
 
 // SetCriterionStatus sets the status of the criterion whose id crit uniquely
-// prefixes on the task. An unknown or ambiguous prefix fails with ErrNotFound or
+// prefixes on the task; note carries optional free-form evidence for the
+// verdict. An unknown or ambiguous prefix fails with ErrNotFound or
 // ErrAmbiguous.
-func (c *Client) SetCriterionStatus(ctx context.Context, id model.EntityID, crit string, status model.CriterionStatus) (model.Task, error) {
+func (c *Client) SetCriterionStatus(ctx context.Context, id model.EntityID, crit string, status model.CriterionStatus, note string) (model.Task, error) {
 	resolved, err := c.resolveCriterion(ctx, id, crit)
 	if err != nil {
 		return model.Task{}, err
 	}
-	snapshot, err := c.s.Append(ctx, refs.For(model.KindTask, id), []model.Op{model.SetCriterionStatus{ID: resolved.ID, Status: status}})
+	snapshot, err := c.s.Append(ctx, refs.For(model.KindTask, id), []model.Op{model.SetCriterionStatus{ID: resolved.ID, Status: status, Note: note}})
 	if err != nil {
 		return model.Task{}, err
 	}

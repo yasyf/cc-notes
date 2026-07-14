@@ -54,6 +54,8 @@ func entryID(e notes.RelevantEntry) model.EntityID {
 		return e.Doc.ID
 	case model.KindLog:
 		return e.Log.ID
+	case model.KindRunbook:
+		return e.Runbook.ID
 	default:
 		return e.Note.ID
 	}
@@ -66,6 +68,8 @@ func entryUpdatedAt(e notes.RelevantEntry) int64 {
 		return e.Doc.UpdatedAt
 	case model.KindLog:
 		return e.Log.UpdatedAt
+	case model.KindRunbook:
+		return e.Runbook.UpdatedAt
 	default:
 		return e.Note.UpdatedAt
 	}
@@ -329,5 +333,43 @@ func TestRelevantSortTotalOrder(t *testing.T) {
 		if entryID(a) >= entryID(b) {
 			t.Fatalf("id order violated at %d: %s before %s (equal score+updatedAt)", i, entryID(a), entryID(b))
 		}
+	}
+}
+
+func TestRelevantSurfacesRunbooks(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "scripts/deploy.sh", "#!/bin/sh\n")
+
+	rb, _, err := c.CreateRunbook(t.Context(), notes.RunbookSpec{
+		Title:   "Deploy",
+		Anchors: notes.AnchorSpec{Paths: []string{"scripts/deploy.sh"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateRunbook: %v", err)
+	}
+	archived, _, err := c.CreateRunbook(t.Context(), notes.RunbookSpec{
+		Title:   "Old deploy",
+		Anchors: notes.AnchorSpec{Paths: []string{"scripts/deploy.sh"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateRunbook archived: %v", err)
+	}
+	if _, err := c.ArchiveRunbook(t.Context(), archived.ID); err != nil {
+		t.Fatalf("ArchiveRunbook: %v", err)
+	}
+
+	scored := mustRelevant(t, c, dir, "scripts/deploy.sh", notes.RelevantFilter{})
+	if got, want := scoredIDs(scored), []model.EntityID{rb.ID}; !slices.Equal(got, want) {
+		t.Fatalf("scored = %v, want %v (archived runbook excluded)", got, want)
+	}
+	e := scored[0]
+	if e.Kind != model.KindRunbook || e.Runbook.Title != "Deploy" {
+		t.Fatalf("entry = kind %q title %q, want runbook/Deploy", e.Kind, e.Runbook.Title)
+	}
+	if e.Score != 100 || !slices.Equal(e.Reasons, []string{"path"}) {
+		t.Errorf("score/reasons = %d/%v, want 100/[path]", e.Score, e.Reasons)
+	}
+	if e.Verdict != "" {
+		t.Errorf("runbook verdict = %q, want empty (no freshness lifecycle)", e.Verdict)
 	}
 }
