@@ -515,9 +515,9 @@ func newRunbookDTO(rb model.Runbook) runbookDTO {
 	for i, r := range rb.Runs {
 		runs[i] = newRunbookRunDTO(rb, r)
 	}
-	var anchors []anchorDTO
-	for _, a := range rb.Anchors {
-		anchors = append(anchors, anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: nil})
+	anchors := make([]anchorDTO, len(rb.Anchors))
+	for i, a := range rb.Anchors {
+		anchors[i] = anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: nil}
 	}
 	return runbookDTO{
 		ID:          string(rb.ID),

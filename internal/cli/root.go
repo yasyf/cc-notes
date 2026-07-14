@@ -78,7 +78,7 @@ func flagGroupConstraints(cmd *cobra.Command) []string {
 		{annRequiredTogether, func(f string) string { return f + " must be used together" }},
 		{annOneRequired, func(f string) string { return "one of " + f + " is required" }},
 	}
-	var lines []string
+	lines := make([]string, 0, len(kinds))
 	for _, k := range kinds {
 		groups := map[string]bool{}
 		cmd.Flags().VisitAll(func(f *pflag.Flag) {
