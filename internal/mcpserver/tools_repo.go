@@ -36,6 +36,16 @@ type historyArgs struct {
 	Limit   *int   `json:"limit,omitempty" jsonschema:"show at most N most recent entries (0 = all)"`
 }
 
+type searchArgs struct {
+	Query  string   `json:"query" jsonschema:"search query (matches titles, labels, bodies, log entries, and runbook steps)"`
+	Labels []string `json:"labels,omitempty" jsonschema:"require every label (ANDed; echoed as 'tags' in entity DTOs)"`
+	Limit  *int     `json:"limit,omitempty" jsonschema:"maximum results (0 = all; default 20)"`
+	Path   string   `json:"path,omitempty" jsonschema:"require path anchor"`
+	Commit string   `json:"commit,omitempty" jsonschema:"require commit anchor"`
+	Dir    string   `json:"dir,omitempty" jsonschema:"require directory anchor"`
+	Branch string   `json:"branch,omitempty" jsonschema:"require branch anchor"`
+}
+
 type blameArgs struct {
 	SHA string `json:"sha" jsonschema:"commit sha (or prefix) to find the tasks that produced it"`
 }
@@ -93,6 +103,20 @@ func registerRepo(srv *mcp.Server, b *bridge) {
 			flags = optInt(flags, "--limit", in.Limit)
 			return b.run(ctx, argvFor([]string{"history"}, flags, in.ID)...)
 		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "search", Description: "Ranked search across every note, doc, log, and runbook."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in searchArgs) (*mcp.CallToolResult, any, error) {
+			flags := []string{"--json"}
+			flags = optRepeated(flags, "--label", in.Labels)
+			flags = optInt(flags, "--limit", in.Limit)
+			flags = optStr(flags, "--path", in.Path)
+			flags = optStr(flags, "--commit", in.Commit)
+			flags = optStr(flags, "--dir", in.Dir)
+			flags = optStr(flags, "--branch", in.Branch)
+			return b.run(ctx, argvFor([]string{"search"}, flags, in.Query)...)
+		})
+
+	idTool(srv, b, "show", "Show any note, doc, log, task, sprint, project, or runbook by id prefix.", "show")
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "blame", Description: "Find the tasks that produced a commit, via its recorded commit links and task trailers."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in blameArgs) (*mcp.CallToolResult, any, error) {

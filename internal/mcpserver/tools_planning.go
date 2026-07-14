@@ -55,8 +55,10 @@ type projectListArgs struct {
 func registerPlanning(srv *mcp.Server, b *bridge) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "sprint_add", Description: "Create a sprint (a time-boxed grouping of tasks)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in sprintAddArgs) (*mcp.CallToolResult, any, error) {
-			flags := []string{"--json"}
-			flags = optStr(flags, "--body", in.Body)
+			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
+			if err != nil {
+				return nil, nil, err
+			}
 			flags = optStr(flags, "--project", in.Project)
 			flags = optRepeated(flags, "--label", in.Labels)
 			flags = optStr(flags, "--start", in.Start)
@@ -68,7 +70,10 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in sprintEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
-			flags = optStr(flags, "--body", in.Body)
+			flags, err := freeTextFlag(flags, "--body", in.Body)
+			if err != nil {
+				return nil, nil, err
+			}
 			flags = optStr(flags, "--project", in.Project)
 			flags = optBool(flags, "--no-project", in.NoProject)
 			flags = optStr(flags, "--start", in.Start)
@@ -96,8 +101,10 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "project_add", Description: "Create a project (a long-lived grouping of sprints and tasks)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectAddArgs) (*mcp.CallToolResult, any, error) {
-			flags := []string{"--json"}
-			flags = optStr(flags, "--body", in.Body)
+			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
+			if err != nil {
+				return nil, nil, err
+			}
 			flags = optRepeated(flags, "--label", in.Labels)
 			return b.run(ctx, argvFor([]string{"project", "add"}, flags, in.Title)...)
 		})
@@ -106,7 +113,10 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
-			flags = optStr(flags, "--body", in.Body)
+			flags, err := freeTextFlag(flags, "--body", in.Body)
+			if err != nil {
+				return nil, nil, err
+			}
 			flags = optRepeated(flags, "--add-label", in.AddLabels)
 			flags = optRepeated(flags, "--rm-label", in.RmLabels)
 			return b.run(ctx, argvFor([]string{"project", "edit"}, flags, in.ID)...)
@@ -123,5 +133,5 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 
 	commentTool(srv, b, "project")
 
-	statusTools(srv, b, "project", "complete", "archive", "cancel")
+	statusTools(srv, b, "project", "activate", "complete", "archive", "cancel")
 }

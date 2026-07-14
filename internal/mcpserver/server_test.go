@@ -304,18 +304,19 @@ func TestListToolsInventory(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	const wantCount = 86
+	const wantCount = 101
 	if len(names) != wantCount {
 		t.Errorf("tool count = %d, want %d; got %v", len(names), wantCount, sortedKeys(names))
 	}
 	for _, want := range []string{
-		"status", "relevant", "sync", "reconcile", "history", "blame",
+		"status", "relevant", "sync", "reconcile", "history", "search", "show", "blame",
 		"note_add", "note_review", "doc_add", "doc_supersede", "log_append",
 		"papercut", "papercut_list",
 		"task_add", "task_claim", "task_done", "task_criterion_met", "task_criterion_pending", "task_criterion_script", "task_validate",
-		"sprint_add", "sprint_activate", "project_add", "project_archive",
-		"runbook_add", "runbook_list", "runbook_show", "runbook_step_add",
-		"runbook_run_start", "runbook_run_done", "runbook_run_skip", "runbook_run_fail", "runbook_run_finish",
+		"sprint_add", "sprint_activate", "project_add", "project_activate", "project_archive",
+		"runbook_add", "runbook_list", "runbook_show", "runbook_activate", "runbook_archive", "runbook_edit", "runbook_rm", "runbook_search", "runbook_comment",
+		"runbook_step_add", "runbook_step_edit", "runbook_step_rm", "runbook_step_move", "runbook_step_list",
+		"runbook_run_start", "runbook_run_list", "runbook_run_show", "runbook_run_done", "runbook_run_skip", "runbook_run_fail", "runbook_run_finish",
 		"attachment_path", "attachment_get",
 	} {
 		if !names[want] {

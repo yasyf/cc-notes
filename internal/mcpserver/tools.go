@@ -19,7 +19,11 @@ func idTool(srv *mcp.Server, b *bridge, name, desc string, sub ...string) {
 func commentTool(srv *mcp.Server, b *bridge, noun string) {
 	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_comment", Description: "Add a comment to a " + noun + "."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in commentArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{noun, "comment"}, []string{"--json"}, in.ID, in.Body)...)
+			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
+			if err != nil {
+				return nil, nil, err
+			}
+			return b.run(ctx, argvFor([]string{noun, "comment"}, flags, in.ID)...)
 		})
 }
 

@@ -46,6 +46,11 @@ type taskClaimArgs struct {
 	Sync  bool   `json:"sync,omitempty" jsonschema:"claim, then sync and re-check, yielding if another agent won"`
 }
 
+type taskStartArgs struct {
+	ID     string `json:"id" jsonschema:"task id prefix"`
+	Branch string `json:"branch,omitempty" jsonschema:"branch to set (default: current branch)"`
+}
+
 type taskDoneArgs struct {
 	ID    string `json:"id" jsonschema:"task id prefix"`
 	Force bool   `json:"force,omitempty" jsonschema:"close even with unmet criteria"`
@@ -102,6 +107,12 @@ type criterionRefArgs struct {
 	Crit string `json:"crit" jsonschema:"criterion id prefix"`
 }
 
+type criterionResultArgs struct {
+	Task string `json:"task" jsonschema:"task id prefix"`
+	Crit string `json:"crit" jsonschema:"criterion id prefix"`
+	Note string `json:"note,omitempty" jsonschema:"evidence recorded with the verdict (a later status change clears it)"`
+}
+
 type criterionScriptArgs struct {
 	Task  string `json:"task" jsonschema:"task id prefix"`
 	Crit  string `json:"crit" jsonschema:"criterion id prefix"`
@@ -116,8 +127,10 @@ type criterionListArgs struct {
 func registerTask(srv *mcp.Server, b *bridge) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "task_add", Description: "Create a task (durable, cross-agent). Provide acceptance criteria or set no_validation_criteria."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskAddArgs) (*mcp.CallToolResult, any, error) {
-			flags := []string{"--json"}
-			flags = optStr(flags, "--body", in.Body)
+			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
+			if err != nil {
+				return nil, nil, err
+			}
 			flags = optStr(flags, "--type", in.Type)
 			flags = optInt(flags, "--priority", in.Priority)
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -163,7 +176,11 @@ func registerTask(srv *mcp.Server, b *bridge) {
 
 	idTool(srv, b, "task_show", "Show one task with its full detail and derived blocks index.", "task", "show")
 
-	idTool(srv, b, "task_start", "Claim a task and set its branch to the current HEAD branch.", "task", "start")
+	mcp.AddTool(srv, &mcp.Tool{Name: "task_start", Description: "Claim a task and set its branch to the current HEAD branch or an explicit branch."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in taskStartArgs) (*mcp.CallToolResult, any, error) {
+			flags := optStr([]string{"--json"}, "--branch", in.Branch)
+			return b.run(ctx, argvFor([]string{"task", "start"}, flags, in.ID)...)
+		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "task_claim", Description: "Claim a task (lease it). Use steal for an expired lease, sync to yield if another agent won."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskClaimArgs) (*mcp.CallToolResult, any, error) {
@@ -188,7 +205,10 @@ func registerTask(srv *mcp.Server, b *bridge) {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
-			flags = optStr(flags, "--body", in.Body)
+			flags, err := freeTextFlag(flags, "--body", in.Body)
+			if err != nil {
+				return nil, nil, err
+			}
 			flags = optStr(flags, "--type", in.Type)
 			flags = optInt(flags, "--priority", in.Priority)
 			flags = optStr(flags, "--status", in.Status)
@@ -247,14 +267,29 @@ func registerTask(srv *mcp.Server, b *bridge) {
 func registerCriterion(srv *mcp.Server, b *bridge) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "task_criterion_add", Description: "Add an acceptance criterion to a task, optionally with a validation script file."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in criterionAddArgs) (*mcp.CallToolResult, any, error) {
-			flags := optStr([]string{"--json"}, "--script", in.Script)
-			return b.run(ctx, argvFor([]string{"task", "criterion", "add"}, flags, in.Task, in.Text)...)
+			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Text)
+			if err != nil {
+				return nil, nil, err
+			}
+			flags = optStr(flags, "--script", in.Script)
+			return b.run(ctx, argvFor([]string{"task", "criterion", "add"}, flags, in.Task)...)
 		})
 
-	for _, verb := range []string{"rm", "met", "failed", "pending"} {
+	for _, verb := range []string{"rm", "pending"} {
 		mcp.AddTool(srv, &mcp.Tool{Name: "task_criterion_" + verb, Description: criterionVerbDescription(verb)},
 			func(ctx context.Context, _ *mcp.CallToolRequest, in criterionRefArgs) (*mcp.CallToolResult, any, error) {
 				return b.run(ctx, argvFor([]string{"task", "criterion", verb}, []string{"--json"}, in.Task, in.Crit)...)
+			})
+	}
+
+	for _, verb := range []string{"met", "failed"} {
+		mcp.AddTool(srv, &mcp.Tool{Name: "task_criterion_" + verb, Description: criterionVerbDescription(verb)},
+			func(ctx context.Context, _ *mcp.CallToolRequest, in criterionResultArgs) (*mcp.CallToolResult, any, error) {
+				flags, err := freeTextFlag([]string{"--json"}, "--note", in.Note)
+				if err != nil {
+					return nil, nil, err
+				}
+				return b.run(ctx, argvFor([]string{"task", "criterion", verb}, flags, in.Task, in.Crit)...)
 			})
 	}
 

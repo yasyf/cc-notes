@@ -7,14 +7,11 @@ import (
 )
 
 type logAddArgs struct {
-	Title    string   `json:"title" jsonschema:"short handle for the log"`
-	Entry    string   `json:"entry,omitempty" jsonschema:"optional first entry text"`
-	Labels   []string `json:"labels,omitempty" jsonschema:"labels (echoed as 'tags' in the log DTO)"`
-	Commits  []string `json:"commits,omitempty" jsonschema:"commit anchors"`
-	Paths    []string `json:"paths,omitempty" jsonschema:"path anchors"`
-	Dirs     []string `json:"dirs,omitempty" jsonschema:"directory anchors"`
-	Branches []string `json:"branches,omitempty" jsonschema:"branch anchors"`
-	Attach   []string `json:"attach,omitempty" jsonschema:"file paths to attach via git-lfs"`
+	Title  string   `json:"title" jsonschema:"short handle for the log"`
+	Entry  string   `json:"entry,omitempty" jsonschema:"optional first entry text"`
+	Labels []string `json:"labels,omitempty" jsonschema:"labels (echoed as 'tags' in the log DTO)"`
+	anchorSetArgs
+	Attach []string `json:"attach,omitempty" jsonschema:"file paths to attach via git-lfs"`
 }
 
 type logAppendArgs struct {
@@ -25,18 +22,11 @@ type logAppendArgs struct {
 }
 
 type logEditArgs struct {
-	ID            string   `json:"id" jsonschema:"log id prefix"`
-	Title         string   `json:"title,omitempty" jsonschema:"new title"`
-	AddLabels     []string `json:"add_labels,omitempty" jsonschema:"labels to add"`
-	RmLabels      []string `json:"rm_labels,omitempty" jsonschema:"labels to remove"`
-	AddPaths      []string `json:"add_paths,omitempty" jsonschema:"path anchors to add"`
-	RmPaths       []string `json:"rm_paths,omitempty" jsonschema:"path anchors to remove"`
-	AddDirs       []string `json:"add_dirs,omitempty" jsonschema:"directory anchors to add"`
-	RmDirs        []string `json:"rm_dirs,omitempty" jsonschema:"directory anchors to remove"`
-	AddCommits    []string `json:"add_commits,omitempty" jsonschema:"commit anchors to add"`
-	RmCommits     []string `json:"rm_commits,omitempty" jsonschema:"commit anchors to remove"`
-	AddBranches   []string `json:"add_branches,omitempty" jsonschema:"branch anchors to add"`
-	RmBranches    []string `json:"rm_branches,omitempty" jsonschema:"branch anchors to remove"`
+	ID        string   `json:"id" jsonschema:"log id prefix"`
+	Title     string   `json:"title,omitempty" jsonschema:"new title"`
+	AddLabels []string `json:"add_labels,omitempty" jsonschema:"labels to add"`
+	RmLabels  []string `json:"rm_labels,omitempty" jsonschema:"labels to remove"`
+	anchorEditArgs
 	RmAttachments []string `json:"rm_attachments,omitempty" jsonschema:"attachment names to remove"`
 }
 
@@ -52,21 +42,22 @@ type logListArgs struct {
 func registerLog(srv *mcp.Server, b *bridge) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "log_add", Description: "Create an append-only log (incident timeline, rollout log, debugging record)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logAddArgs) (*mcp.CallToolResult, any, error) {
-			flags := []string{"--json"}
-			flags = optStr(flags, "--entry", in.Entry)
+			flags, err := freeTextFlag([]string{"--json"}, "--entry", in.Entry)
+			if err != nil {
+				return nil, nil, err
+			}
 			flags = optRepeated(flags, "--label", in.Labels)
-			flags = optRepeated(flags, "--commit", in.Commits)
-			flags = optRepeated(flags, "--path", in.Paths)
-			flags = optRepeated(flags, "--dir", in.Dirs)
-			flags = optRepeated(flags, "--branch", in.Branches)
+			flags = anchorSetFlags(flags, in.anchorSetArgs)
 			flags = optRepeated(flags, "--attach", in.Attach)
 			return b.run(ctx, argvFor([]string{"log", "add"}, flags, in.Title)...)
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "log_append", Description: "Append one entry to a log, and/or attach files. Entries are append-only."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logAppendArgs) (*mcp.CallToolResult, any, error) {
-			flags := []string{"--json"}
-			flags = optStr(flags, "--entry", in.Entry)
+			flags, err := freeTextFlag([]string{"--json"}, "--entry", in.Entry)
+			if err != nil {
+				return nil, nil, err
+			}
 			flags = optRepeated(flags, "--attach", in.Attach)
 			flags = optBool(flags, "--replace", in.Replace)
 			return b.run(ctx, argvFor([]string{"log", "append"}, flags, in.ID)...)
@@ -78,14 +69,7 @@ func registerLog(srv *mcp.Server, b *bridge) {
 			flags = optStr(flags, "--title", in.Title)
 			flags = optRepeated(flags, "--add-label", in.AddLabels)
 			flags = optRepeated(flags, "--rm-label", in.RmLabels)
-			flags = optRepeated(flags, "--add-path", in.AddPaths)
-			flags = optRepeated(flags, "--rm-path", in.RmPaths)
-			flags = optRepeated(flags, "--add-dir", in.AddDirs)
-			flags = optRepeated(flags, "--rm-dir", in.RmDirs)
-			flags = optRepeated(flags, "--add-commit", in.AddCommits)
-			flags = optRepeated(flags, "--rm-commit", in.RmCommits)
-			flags = optRepeated(flags, "--add-branch", in.AddBranches)
-			flags = optRepeated(flags, "--rm-branch", in.RmBranches)
+			flags = anchorEditFlags(flags, in.anchorEditArgs)
 			flags = optRepeated(flags, "--rm-attachment", in.RmAttachments)
 			return b.run(ctx, argvFor([]string{"log", "edit"}, flags, in.ID)...)
 		})

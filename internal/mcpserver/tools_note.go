@@ -7,30 +7,20 @@ import (
 )
 
 type noteAddArgs struct {
-	Title    string   `json:"title" jsonschema:"short handle for the note"`
-	Body     string   `json:"body,omitempty" jsonschema:"note body (markdown)"`
-	Labels   []string `json:"labels,omitempty" jsonschema:"labels (echoed as 'tags' in the note DTO)"`
-	Commits  []string `json:"commits,omitempty" jsonschema:"commit anchors (sha or revision; resolved to full sha)"`
-	Paths    []string `json:"paths,omitempty" jsonschema:"path anchors"`
-	Dirs     []string `json:"dirs,omitempty" jsonschema:"directory anchors"`
-	Branches []string `json:"branches,omitempty" jsonschema:"branch anchors"`
-	Attach   []string `json:"attach,omitempty" jsonschema:"file paths to attach via git-lfs (uploaded on sync)"`
+	Title  string   `json:"title" jsonschema:"short handle for the note"`
+	Body   string   `json:"body,omitempty" jsonschema:"note body (markdown)"`
+	Labels []string `json:"labels,omitempty" jsonschema:"labels (echoed as 'tags' in the note DTO)"`
+	anchorSetArgs
+	Attach []string `json:"attach,omitempty" jsonschema:"file paths to attach via git-lfs (uploaded on sync)"`
 }
 
 type noteEditArgs struct {
-	ID            string   `json:"id" jsonschema:"note id prefix"`
-	Title         string   `json:"title,omitempty" jsonschema:"new title"`
-	Body          string   `json:"body,omitempty" jsonschema:"new body"`
-	AddLabels     []string `json:"add_labels,omitempty" jsonschema:"labels to add"`
-	RmLabels      []string `json:"rm_labels,omitempty" jsonschema:"labels to remove"`
-	AddPaths      []string `json:"add_paths,omitempty" jsonschema:"path anchors to add"`
-	RmPaths       []string `json:"rm_paths,omitempty" jsonschema:"path anchors to remove"`
-	AddDirs       []string `json:"add_dirs,omitempty" jsonschema:"directory anchors to add"`
-	RmDirs        []string `json:"rm_dirs,omitempty" jsonschema:"directory anchors to remove"`
-	AddCommits    []string `json:"add_commits,omitempty" jsonschema:"commit anchors to add"`
-	RmCommits     []string `json:"rm_commits,omitempty" jsonschema:"commit anchors to remove"`
-	AddBranches   []string `json:"add_branches,omitempty" jsonschema:"branch anchors to add"`
-	RmBranches    []string `json:"rm_branches,omitempty" jsonschema:"branch anchors to remove"`
+	ID        string   `json:"id" jsonschema:"note id prefix"`
+	Title     string   `json:"title,omitempty" jsonschema:"new title"`
+	Body      string   `json:"body,omitempty" jsonschema:"new body"`
+	AddLabels []string `json:"add_labels,omitempty" jsonschema:"labels to add"`
+	RmLabels  []string `json:"rm_labels,omitempty" jsonschema:"labels to remove"`
+	anchorEditArgs
 	Attach        []string `json:"attach,omitempty" jsonschema:"file paths to attach via git-lfs"`
 	Replace       bool     `json:"replace,omitempty" jsonschema:"allow attach to overwrite a live attachment with the same name"`
 	RmAttachments []string `json:"rm_attachments,omitempty" jsonschema:"attachment names to remove"`
@@ -39,20 +29,23 @@ type noteEditArgs struct {
 func registerNote(srv *mcp.Server, b *bridge) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "note_add", Description: "Record a durable fact or decision as a note (git-synced, optionally anchored to commits/paths/dirs/branches)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in noteAddArgs) (*mcp.CallToolResult, any, error) {
-			flags := []string{"--json"}
-			flags = optStr(flags, "--body", in.Body)
+			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
+			if err != nil {
+				return nil, nil, err
+			}
 			flags = optRepeated(flags, "--label", in.Labels)
-			flags = optRepeated(flags, "--commit", in.Commits)
-			flags = optRepeated(flags, "--path", in.Paths)
-			flags = optRepeated(flags, "--dir", in.Dirs)
-			flags = optRepeated(flags, "--branch", in.Branches)
+			flags = anchorSetFlags(flags, in.anchorSetArgs)
 			flags = optRepeated(flags, "--attach", in.Attach)
 			return b.run(ctx, argvFor([]string{"note", "add"}, flags, in.Title)...)
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "note_edit", Description: "Edit a note: title, body, labels, anchors, and attachments."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in noteEditArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"note", "edit"}, noteDocEditFlags(in), in.ID)...)
+			flags, err := noteDocEditFlags(in)
+			if err != nil {
+				return nil, nil, err
+			}
+			return b.run(ctx, argvFor([]string{"note", "edit"}, flags, in.ID)...)
 		})
 
 	registerNoteDocShared(srv, b, "note")
@@ -61,24 +54,20 @@ func registerNote(srv *mcp.Server, b *bridge) {
 // noteDocEditFlags builds the shared edit flags (including --json) for a note;
 // doc edit reuses this then appends --when. The id positional is added by the
 // caller via argvFor.
-func noteDocEditFlags(in noteEditArgs) []string {
+func noteDocEditFlags(in noteEditArgs) ([]string, error) {
 	flags := []string{"--json"}
 	flags = optStr(flags, "--title", in.Title)
-	flags = optStr(flags, "--body", in.Body)
+	flags, err := freeTextFlag(flags, "--body", in.Body)
+	if err != nil {
+		return nil, err
+	}
 	flags = optRepeated(flags, "--add-label", in.AddLabels)
 	flags = optRepeated(flags, "--rm-label", in.RmLabels)
-	flags = optRepeated(flags, "--add-path", in.AddPaths)
-	flags = optRepeated(flags, "--rm-path", in.RmPaths)
-	flags = optRepeated(flags, "--add-dir", in.AddDirs)
-	flags = optRepeated(flags, "--rm-dir", in.RmDirs)
-	flags = optRepeated(flags, "--add-commit", in.AddCommits)
-	flags = optRepeated(flags, "--rm-commit", in.RmCommits)
-	flags = optRepeated(flags, "--add-branch", in.AddBranches)
-	flags = optRepeated(flags, "--rm-branch", in.RmBranches)
+	flags = anchorEditFlags(flags, in.anchorEditArgs)
 	flags = optRepeated(flags, "--attach", in.Attach)
 	flags = optBool(flags, "--replace", in.Replace)
 	flags = optRepeated(flags, "--rm-attachment", in.RmAttachments)
-	return flags
+	return flags, nil
 }
 
 type entityIDArgs struct {
@@ -103,7 +92,7 @@ type entityListArgs struct {
 type entitySearchArgs struct {
 	Query  string   `json:"query" jsonschema:"search query (matches title, labels, body)"`
 	Labels []string `json:"labels,omitempty" jsonschema:"require every label (ANDed; echoed as 'tags' in the DTO)"`
-	Limit  *int     `json:"limit,omitempty" jsonschema:"maximum results (default 20)"`
+	Limit  *int     `json:"limit,omitempty" jsonschema:"maximum results (0 = all; default 20)"`
 	Author string   `json:"author,omitempty" jsonschema:"require author"`
 	Path   string   `json:"path,omitempty" jsonschema:"require path anchor"`
 	Dir    string   `json:"dir,omitempty" jsonschema:"require directory anchor"`
