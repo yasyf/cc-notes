@@ -90,34 +90,66 @@ func errEmptyDocBody(hint string) error {
 }
 
 // exactArgs is cobra.ExactArgs returning a UsageError, so arity mistakes
-// exit 2.
+// exit 2. The message shows the positional shape parsed from cmd.Use.
 func exactArgs(n int) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if len(args) == n {
 			return nil
 		}
-		return &UsageError{Err: fmt.Errorf("%s accepts %d arg(s), received %d", cmd.CommandPath(), n, len(args))}
+		return &UsageError{Err: fmt.Errorf("%s accepts %d arg(s)%s, received %d", cmd.CommandPath(), n, argShape(cmd, n), len(args))}
 	}
 }
 
 // maxArgs is cobra.MaximumNArgs returning a UsageError, so arity mistakes
-// exit 2 (cobra.MaximumNArgs would regress them to exit 1).
+// exit 2 (cobra.MaximumNArgs would regress them to exit 1). The message shows
+// the positional shape parsed from cmd.Use.
 func maxArgs(n int) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if len(args) <= n {
 			return nil
 		}
-		return &UsageError{Err: fmt.Errorf("%s accepts at most %d arg(s), received %d", cmd.CommandPath(), n, len(args))}
+		return &UsageError{Err: fmt.Errorf("%s accepts at most %d arg(s)%s, received %d", cmd.CommandPath(), n, argShape(cmd, n), len(args))}
 	}
 }
 
+// argShape renders the n leading positional tokens of cmd.Use as " (TASK CRIT)":
+// the fields after the verb, stopping at the first flag token, capped at n with
+// brackets kept. It returns "" when Use names no positionals or yields fewer than
+// n, so the caller's message falls back to the plain count form.
+func argShape(cmd *cobra.Command, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	fields := strings.Fields(cmd.Use)
+	if len(fields) <= 1 {
+		return ""
+	}
+	var pos []string
+	for _, f := range fields[1:] {
+		if strings.HasPrefix(f, "-") {
+			break
+		}
+		pos = append(pos, f)
+	}
+	if len(pos) < n {
+		return ""
+	}
+	return " (" + strings.Join(pos[:n], " ") + ")"
+}
+
 // noUnknownSubcommand rejects positional arguments on a command group with
-// a UsageError, so unknown subcommands exit 2.
+// a UsageError, so unknown subcommands exit 2. A root-level unknown that
+// matched no suggestion carries the version-aware upgrade hint.
 func noUnknownSubcommand(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	return unknownSubcommandErr(cmd, args[0], subcommandHint(cmd, args[0]))
+	arg := args[0]
+	hint := subcommandHint(cmd, arg)
+	if hint == "" && cmd == cmd.Root() {
+		hint = versionUnknownHint(arg)
+	}
+	return unknownSubcommandErr(cmd, arg, hint)
 }
 
 // runHelp makes a command group runnable so cobra validates its args —

@@ -146,7 +146,10 @@ func TestExitCodeMatrix(t *testing.T) {
 		setup      func(t *testing.T, dir string) (args []string, want string)
 		wantCode   int
 		wantPrefix string
-		after      func(t *testing.T, dir string)
+		// multiline exempts a case from the single-line stderr invariant: the
+		// self-healing usage errors span an accepted-flags block.
+		multiline bool
+		after     func(t *testing.T, dir string)
 	}{
 		{
 			name: "claim on open task exits 0 with lean line",
@@ -282,18 +285,60 @@ func TestExitCodeMatrix(t *testing.T) {
 			wantCode: 5,
 		},
 		{
-			name: "unknown flag exits 2",
+			name: "unknown flag exits 2 with an accepted-flags block",
 			setup: func(_ *testing.T, _ string) ([]string, string) {
-				return []string{"task", "list", "--bogus"}, "usage: unknown flag: --bogus\n"
+				return []string{"task", "list", "--bogus"}, ""
+			},
+			wantCode:   2,
+			wantPrefix: "usage: unknown flag: --bogus\ntask list takes: ",
+			multiline:  true,
+		},
+		{
+			name: "unknown command exits 2 with the version hint",
+			setup: func(_ *testing.T, _ string) ([]string, string) {
+				return []string{"frobnicate"}, ""
+			},
+			wantCode:   2,
+			wantPrefix: "usage: unknown command \"frobnicate\" for \"cc-notes\"; this binary is cc-notes ",
+		},
+		{
+			name: "arity shape stops at the --by flag token",
+			setup: func(_ *testing.T, _ string) ([]string, string) {
+				return []string{"doc", "supersede"}, "usage: cc-notes doc supersede accepts 1 arg(s) (OLD), received 0\n"
 			},
 			wantCode: 2,
 		},
 		{
-			name: "unknown command exits 2",
+			name: "arity shape caps to the arity the mode allows",
 			setup: func(_ *testing.T, _ string) ([]string, string) {
-				return []string{"frobnicate"}, "usage: unknown command \"frobnicate\" for \"cc-notes\"\n"
+				return []string{"doc", "add", "one", "two", "three", "--checkout"}, "usage: cc-notes doc add accepts at most 1 arg(s) (TITLE), received 3\n"
 			},
 			wantCode: 2,
+		},
+		{
+			name: "root unknown flag before a mistyped command surfaces the typo suggestion",
+			setup: func(_ *testing.T, _ string) ([]string, string) {
+				return []string{"--bogus", "task_list"}, "usage: unknown flag: --bogus\ncc-notes takes no flags\ndid you mean \"task list\"?\n"
+			},
+			wantCode:  2,
+			multiline: true,
+		},
+		{
+			name: "root unknown flag after a bad command token surfaces the version hint",
+			setup: func(_ *testing.T, _ string) ([]string, string) {
+				return []string{"frobnicate", "--bogus"}, ""
+			},
+			wantCode:   2,
+			wantPrefix: "usage: unknown flag: --bogus\ncc-notes takes no flags\nthis binary is cc-notes ",
+			multiline:  true,
+		},
+		{
+			name: "root unknown flag alone stays quiet — no command or version hint",
+			setup: func(_ *testing.T, _ string) ([]string, string) {
+				return []string{"--bogus"}, "usage: unknown flag: --bogus\ncc-notes takes no flags\n"
+			},
+			wantCode:  2,
+			multiline: true,
 		},
 		{
 			name: "invalid --branch exits 2",
@@ -347,7 +392,11 @@ func TestExitCodeMatrix(t *testing.T) {
 				if tc.wantPrefix != "" && !strings.HasPrefix(res.Stderr, tc.wantPrefix) {
 					t.Errorf("stderr = %q, want prefix %q", res.Stderr, tc.wantPrefix)
 				}
-				if strings.Count(res.Stderr, "\n") != 1 || !strings.HasSuffix(res.Stderr, "\n") {
+				if tc.multiline {
+					if !strings.HasSuffix(res.Stderr, "\n") {
+						t.Errorf("stderr = %q, want a trailing newline", res.Stderr)
+					}
+				} else if strings.Count(res.Stderr, "\n") != 1 || !strings.HasSuffix(res.Stderr, "\n") {
 					t.Errorf("stderr = %q, want exactly one line", res.Stderr)
 				}
 			}

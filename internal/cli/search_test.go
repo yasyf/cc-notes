@@ -160,7 +160,7 @@ func TestGlobalSearchArity(t *testing.T) {
 	if strings.Contains(err.Error(), "noun-scoped") {
 		t.Fatalf("err = %q, want the search arity error, not the removed rootNounVerbs hint", err.Error())
 	}
-	if !strings.Contains(err.Error(), "accepts 1 arg(s), received 0") {
-		t.Fatalf("err = %q, want the exactArgs arity message", err.Error())
+	if !strings.Contains(err.Error(), "accepts 1 arg(s) (QUERY), received 0") {
+		t.Fatalf("err = %q, want the exactArgs arity message with the positional shape", err.Error())
 	}
 }

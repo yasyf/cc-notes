@@ -68,3 +68,33 @@ func TestFreeText(t *testing.T) {
 		})
 	}
 }
+
+// TestArgShape derives the positional grammar from cmd.Use bounded by the arity
+// n, mirroring the live tree: flag-bearing Use stops at the first flag token
+// (supersede is exactArgs 1), mode-dependent arity caps the tokens (doc add
+// --checkout is maxArgs 1, runbook add is maxArgs 2), and fewer positionals than
+// n omits the shape entirely.
+func TestArgShape(t *testing.T) {
+	tests := []struct {
+		name string
+		use  string
+		n    int
+		want string
+	}{
+		{"exactArgs 1 stops at the first flag token", "supersede OLD --by NEW", 1, " (OLD)"},
+		{"maxArgs 1 caps to the first positional", "add TITLE [BODY]", 1, " (TITLE)"},
+		{"maxArgs 2 keeps the bracketed optional", "add TITLE [BODY]", 2, " (TITLE [BODY])"},
+		{"exactArgs 2 renders both positionals", "met TASK CRIT", 2, " (TASK CRIT)"},
+		{"single positional", "search QUERY", 1, " (QUERY)"},
+		{"fewer positionals than arity omits the shape", "supersede OLD --by NEW", 2, ""},
+		{"zero arity", "status", 0, ""},
+		{"empty use", "", 1, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := argShape(&cobra.Command{Use: tt.use}, tt.n); got != tt.want {
+				t.Fatalf("argShape(%q, %d) = %q, want %q", tt.use, tt.n, got, tt.want)
+			}
+		})
+	}
+}
