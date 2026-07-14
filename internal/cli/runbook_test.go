@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -128,12 +129,14 @@ func TestRunbookStepPlacementAndMove(t *testing.T) {
 		t.Fatalf("after move --last = %v, want [zero second pre third first]", got)
 	}
 
-	// move requires exactly one placement flag; add rejects two.
-	if _, _, err := spRun(t, dir, "", "runbook", "step", "move", rb.ID, firstID[:8]); !isUsage(err) {
-		t.Errorf("move with no placement flag err = %v, want usage", err)
+	// move requires exactly one placement flag (cobra one-required); add rejects
+	// two (cobra mutually-exclusive). Both surface as exit 2, though the cobra
+	// flag-group error is not a *UsageError.
+	if _, _, err := spRun(t, dir, "", "runbook", "step", "move", rb.ID, firstID[:8]); ExitCode(err) != 2 {
+		t.Errorf("move with no placement flag err = %v (exit %d), want exit 2", err, ExitCode(err))
 	}
-	if _, _, err := spRun(t, dir, "", "runbook", "step", "add", rb.ID, "x", "--first", "--last"); !isUsage(err) {
-		t.Errorf("add --first --last err = %v, want usage", err)
+	if _, _, err := spRun(t, dir, "", "runbook", "step", "add", rb.ID, "x", "--first", "--last"); ExitCode(err) != 2 {
+		t.Errorf("add --first --last err = %v (exit %d), want exit 2", err, ExitCode(err))
 	}
 }
 
@@ -151,12 +154,14 @@ func TestRunbookStepEditRemove(t *testing.T) {
 		t.Fatalf("command = %q after --no-command, want empty", cleared.Steps[0].Command)
 	}
 
+	// A no-flag edit is a CLI usage guard; --command with --no-command is a cobra
+	// mutually-exclusive violation — both exit 2.
 	for _, args := range [][]string{
 		{"runbook", "step", "edit", rb.ID, id[:8]},
 		{"runbook", "step", "edit", rb.ID, id[:8], "--command", "x", "--no-command"},
 	} {
-		if _, _, err := spRun(t, dir, "", args...); !isUsage(err) {
-			t.Errorf("%v err = %v, want usage", args, err)
+		if _, _, err := spRun(t, dir, "", args...); ExitCode(err) != 2 {
+			t.Errorf("%v err = %v (exit %d), want exit 2", args, err, ExitCode(err))
 		}
 	}
 
@@ -240,10 +245,10 @@ func TestRunbookFinishStatusAndFlags(t *testing.T) {
 		t.Fatalf("finish --abandoned = %q, want abandoned", ab.Runs[len(ab.Runs)-1].Status)
 	}
 
-	// mutually exclusive flags.
+	// mutually exclusive flags (cobra flag group → exit 2).
 	spMust(t, dir, "runbook", "run", "start", rb.ID)
-	if _, _, err := spRun(t, dir, "", "runbook", "run", "finish", rb.ID, "--failed", "--abandoned"); !isUsage(err) {
-		t.Fatalf("finish --failed --abandoned err = %v, want usage", err)
+	if _, _, err := spRun(t, dir, "", "runbook", "run", "finish", rb.ID, "--failed", "--abandoned"); ExitCode(err) != 2 {
+		t.Fatalf("finish --failed --abandoned err = %v (exit %d), want exit 2", err, ExitCode(err))
 	}
 	// finishing an already-finished run conflicts.
 	if _, _, err := spRun(t, dir, "", "runbook", "run", "finish", rb.ID, "--run", failed.Runs[0].ID[:8]); ExitCode(err) != 4 {
@@ -471,5 +476,269 @@ func TestRunbookStepMoveSelfRelative(t *testing.T) {
 		if !strings.Contains(err.Error(), "relative to itself") {
 			t.Fatalf("step move %s self msg = %q, want 'relative to itself'", flag, err.Error())
 		}
+	}
+}
+
+// runbookIDs returns the ids of a runbook DTO slice.
+func runbookIDs(rbs []runbookDTO) []string {
+	out := make([]string, len(rbs))
+	for i, rb := range rbs {
+		out[i] = rb.ID
+	}
+	return out
+}
+
+// TestRunbookAddAnchorsRoundTrip pins that every anchor kind attached at add
+// round-trips: the list filter matches only on the stored value, and a commit
+// revision is resolved to its full sha (so --commit HEAD no longer matches).
+func TestRunbookAddAnchorsRoundTrip(t *testing.T) {
+	dir := spInitRepo(t)
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	sha := gittest.Git(t, dir, "rev-parse", "HEAD")
+
+	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "Deploy",
+		"--commit", "HEAD", "--path", "scripts/deploy.sh", "--dir", "internal/auth", "--branch", "main", "--json"))
+	// A second, anchorless runbook must never match an anchor filter.
+	spMust(t, dir, "runbook", "add", "Bare", "--json")
+
+	tests := []struct {
+		name  string
+		args  []string
+		match bool
+	}{
+		{"commit resolved to sha", []string{"--commit", sha}, true},
+		{"commit literal HEAD not stored", []string{"--commit", "HEAD"}, false},
+		{"commit wrong sha", []string{"--commit", strings.Repeat("0", 40)}, false},
+		{"path", []string{"--path", "scripts/deploy.sh"}, true},
+		{"path wrong", []string{"--path", "other.sh"}, false},
+		{"dir", []string{"--dir", "internal/auth"}, true},
+		{"branch", []string{"--branch", "main"}, true},
+		{"branch wrong", []string{"--branch", "dev"}, false},
+		{"path AND dir both match", []string{"--path", "scripts/deploy.sh", "--dir", "internal/auth"}, true},
+		{"path AND dir one wrong", []string{"--path", "scripts/deploy.sh", "--dir", "internal/other"}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"runbook", "list", "--json"}, tc.args...)
+			got := spJSON[[]runbookDTO](t, spMust(t, dir, args...))
+			matched := len(got) == 1 && got[0].ID == rb.ID
+			if matched != tc.match {
+				t.Fatalf("list %v = %v, want match=%v", tc.args, runbookIDs(got), tc.match)
+			}
+		})
+	}
+}
+
+// TestRunbookListLabelFilter pins runbook list's label/anchor filter, mirroring
+// log list: multiple --label are ANDed (every one required), and --label
+// composes conjunctively with an anchor filter (both must match). An OR label
+// rule or a dropped anchor conjunction changes these counts.
+func TestRunbookListLabelFilter(t *testing.T) {
+	dir := spInitRepo(t)
+	both := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "Both",
+		"--label", "ops", "--label", "db", "--path", "deploy.sh", "--json"))
+	spMust(t, dir, "runbook", "add", "OpsOnly", "--label", "ops", "--json")
+	spMust(t, dir, "runbook", "add", "DbOnly", "--label", "db", "--json")
+
+	// A single label matches every runbook carrying it.
+	ops := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--json"))
+	if len(ops) != 2 {
+		t.Fatalf("list --label ops = %v, want 2 (Both, OpsOnly)", runbookIDs(ops))
+	}
+
+	// Two labels are ANDed: only the runbook carrying both survives.
+	and := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--label", "db", "--json"))
+	if len(and) != 1 || and[0].ID != both.ID {
+		t.Fatalf("list --label ops --label db = %v, want only Both %s", runbookIDs(and), both.ID)
+	}
+
+	// --label composes with an anchor: both the label and the path must match.
+	composed := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--path", "deploy.sh", "--json"))
+	if len(composed) != 1 || composed[0].ID != both.ID {
+		t.Fatalf("list --label ops --path deploy.sh = %v, want only Both %s", runbookIDs(composed), both.ID)
+	}
+
+	// Label matches but anchor does not: the conjunction rejects it.
+	if got := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--path", "other.sh", "--json")); len(got) != 0 {
+		t.Fatalf("list --label ops --path other.sh = %v, want empty (anchor unmatched)", runbookIDs(got))
+	}
+
+	// Anchor matches but label does not: still rejected.
+	if got := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--label", "absent", "--path", "deploy.sh", "--json")); len(got) != 0 {
+		t.Fatalf("list --label absent --path deploy.sh = %v, want empty (label unmatched)", runbookIDs(got))
+	}
+}
+
+// TestRunbookEditAnchors pins that --add-*/--rm-* anchor edits round-trip through
+// the list filter and that an anchor-only edit is not an empty edit.
+func TestRunbookEditAnchors(t *testing.T) {
+	dir := spInitRepo(t)
+	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--path", "a.go", "--json"))
+
+	byPath := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--path", "a.go", "--json"))
+	if len(byPath) != 1 || byPath[0].ID != rb.ID {
+		t.Fatalf("pre-edit list --path a.go = %v, want [%s]", runbookIDs(byPath), rb.ID)
+	}
+
+	// an anchor-only edit is accepted (not an empty-edit usage error).
+	spMust(t, dir, "runbook", "edit", rb.ID, "--add-dir", "internal/x", "--rm-path", "a.go")
+
+	if got := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--dir", "internal/x", "--json")); len(got) != 1 || got[0].ID != rb.ID {
+		t.Fatalf("post-edit list --dir internal/x = %v, want [%s]", runbookIDs(got), rb.ID)
+	}
+	if got := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--path", "a.go", "--json")); len(got) != 0 {
+		t.Fatalf("post-edit list --path a.go = %v, want empty (path removed)", runbookIDs(got))
+	}
+
+	if _, _, err := spRun(t, dir, "", "runbook", "edit", rb.ID); !isUsage(err) {
+		t.Fatalf("empty edit err = %v, want usage", err)
+	}
+}
+
+// TestRunbookRm pins that rm tombstones a runbook: it vanishes from both the
+// default and --all listings, and the tombstone is not a live dedupe target, so
+// re-adding identical content roots a fresh runbook.
+func TestRunbookRm(t *testing.T) {
+	dir := spInitRepo(t)
+	gone := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "Gone", "--json"))
+	keep := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "Keep", "--json"))
+
+	removed := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "rm", gone.ID[:8], "--json"))
+	if removed.ID != gone.ID {
+		t.Fatalf("rm returned %s, want tombstoned %s", removed.ID, gone.ID)
+	}
+
+	for _, listArgs := range [][]string{{"runbook", "list", "--json"}, {"runbook", "list", "--all", "--json"}} {
+		got := spJSON[[]runbookDTO](t, spMust(t, dir, listArgs...))
+		if len(got) != 1 || got[0].ID != keep.ID {
+			t.Fatalf("%v after rm = %v, want only %s (tombstone hidden)", listArgs, runbookIDs(got), keep.ID)
+		}
+	}
+
+	// dedupe-safe: the tombstone is not live, so identical content roots anew.
+	re := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "Gone", "--json"))
+	if re.ID == gone.ID {
+		t.Fatalf("re-add converged on tombstoned runbook %s", gone.ID)
+	}
+}
+
+// TestRunbookSearch pins the CLI search wiring: results rank title over label
+// over step text, --limit caps (0 = all per bindLimit), and archived runbooks
+// are excluded.
+func TestRunbookSearch(t *testing.T) {
+	dir := spInitRepo(t)
+	byTitle := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "deploy service", "--json"))
+	byLabel := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "rollout", "--label", "deploy", "--json"))
+	byStep := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "release", "--step", "deploy the binary", "--json"))
+	spMust(t, dir, "runbook", "add", "unrelated", "--json")
+
+	ranked := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--json"))
+	if want := []string{byTitle.ID, byLabel.ID, byStep.ID}; strings.Join(runbookIDs(ranked), ",") != strings.Join(want, ",") {
+		t.Fatalf("search deploy = %v, want %v (title > label > step)", runbookIDs(ranked), want)
+	}
+
+	one := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--limit", "1", "--json"))
+	if len(one) != 1 || one[0].ID != byTitle.ID {
+		t.Fatalf("search --limit 1 = %v, want [%s]", runbookIDs(one), byTitle.ID)
+	}
+	all := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--limit", "0", "--json"))
+	if len(all) != 3 {
+		t.Fatalf("search --limit 0 = %v, want all 3 (0 = all)", runbookIDs(all))
+	}
+	if none := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "search", "nomatch", "--json")); len(none) != 0 {
+		t.Fatalf("search nomatch = %v, want empty", runbookIDs(none))
+	}
+
+	spMust(t, dir, "runbook", "archive", byTitle.ID)
+	afterArchive := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--json"))
+	if want := []string{byLabel.ID, byStep.ID}; strings.Join(runbookIDs(afterArchive), ",") != strings.Join(want, ",") {
+		t.Fatalf("search after archive = %v, want %v (archived excluded)", runbookIDs(afterArchive), want)
+	}
+}
+
+// TestRunbookFreeText pins the one-of positional/flag/stdin resolution freeText
+// gives runbook add, comment, and step add, plus stdin on step edit --text.
+func TestRunbookFreeText(t *testing.T) {
+	dir := spInitRepo(t)
+
+	// add: positional BODY.
+	pos := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "P", "positional desc", "--json"))
+	if pos.Description != "positional desc" {
+		t.Fatalf("add positional desc = %q, want 'positional desc'", pos.Description)
+	}
+	// add: stdin via "-".
+	out, stderr, err := spRun(t, dir, "piped desc\n", "runbook", "add", "S", "-", "--json")
+	if err != nil {
+		t.Fatalf("add stdin: %v (%s)", err, stderr)
+	}
+	if desc := spJSON[runbookDTO](t, out).Description; desc != "piped desc" {
+		t.Fatalf("add stdin desc = %q, want 'piped desc'", desc)
+	}
+	// add: positional and --body together conflict.
+	if _, _, err := spRun(t, dir, "", "runbook", "add", "C", "x", "--body", "y"); !isUsage(err) {
+		t.Fatalf("add positional+--body err = %v, want usage", err)
+	}
+
+	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--json"))
+
+	// comment: --body flag, then stdin, then the required-absence and conflict errors.
+	commented := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "comment", rb.ID, "--body", "flag comment", "--json"))
+	if len(commented.Comments) != 1 || commented.Comments[0].Body != "flag comment" {
+		t.Fatalf("comment --body = %+v, want one 'flag comment'", commented.Comments)
+	}
+	out, stderr, err = spRun(t, dir, "stdin comment", "runbook", "comment", rb.ID, "-", "--json")
+	if err != nil {
+		t.Fatalf("comment stdin: %v (%s)", err, stderr)
+	}
+	if last := spJSON[runbookDTO](t, out).Comments; len(last) != 2 || last[1].Body != "stdin comment" {
+		t.Fatalf("comment stdin = %+v, want 'stdin comment' second", last)
+	}
+	if _, _, err := spRun(t, dir, "", "runbook", "comment", rb.ID); !isUsage(err) {
+		t.Fatalf("comment with no body err = %v, want usage", err)
+	}
+	if _, _, err := spRun(t, dir, "", "runbook", "comment", rb.ID, "x", "--body", "y"); !isUsage(err) {
+		t.Fatalf("comment positional+--body err = %v, want usage", err)
+	}
+
+	// step add: --text flag, then the required-absence and conflict errors.
+	viaText := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "step", "add", rb.ID, "--text", "flag step", "--json"))
+	if len(viaText.Steps) != 1 || viaText.Steps[0].Text != "flag step" {
+		t.Fatalf("step add --text = %+v, want one 'flag step'", viaText.Steps)
+	}
+	if _, _, err := spRun(t, dir, "", "runbook", "step", "add", rb.ID); !isUsage(err) {
+		t.Fatalf("step add with no text err = %v, want usage", err)
+	}
+	if _, _, err := spRun(t, dir, "", "runbook", "step", "add", rb.ID, "x", "--text", "y"); !isUsage(err) {
+		t.Fatalf("step add positional+--text err = %v, want usage", err)
+	}
+
+	// step edit: --text - reads stdin.
+	sid := rbStepID(t, viaText, "flag step")
+	out, stderr, err = spRun(t, dir, "edited via stdin", "runbook", "step", "edit", rb.ID, sid[:8], "--text", "-", "--json")
+	if err != nil {
+		t.Fatalf("step edit stdin: %v (%s)", err, stderr)
+	}
+	if edited := spJSON[runbookDTO](t, out); edited.Steps[0].Text != "edited via stdin" {
+		t.Fatalf("step edit --text - = %q, want 'edited via stdin'", edited.Steps[0].Text)
+	}
+}
+
+// TestRunbookConstraintsInHelp pins that the MarkFlags* groups surface in --help
+// via the shared Constraints template extension.
+func TestRunbookConstraintsInHelp(t *testing.T) {
+	dir := spInitRepo(t)
+	moveHelp := spMust(t, dir, "runbook", "step", "move", "--help")
+	for _, want := range []string{
+		"Constraints:",
+		"--first, --last, --before, --after are mutually exclusive",
+		"one of --first, --last, --before, --after is required",
+	} {
+		if !strings.Contains(moveHelp, want) {
+			t.Fatalf("step move --help missing %q:\n%s", want, moveHelp)
+		}
+	}
+	finishHelp := spMust(t, dir, "runbook", "run", "finish", "--help")
+	if !strings.Contains(finishHelp, "--failed, --abandoned are mutually exclusive") {
+		t.Fatalf("run finish --help missing constraint:\n%s", finishHelp)
 	}
 }

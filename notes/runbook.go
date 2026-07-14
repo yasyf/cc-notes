@@ -119,19 +119,29 @@ func (c *Client) CreateRunbook(ctx context.Context, spec RunbookSpec) (model.Run
 	return snap.(model.Runbook), reused, nil
 }
 
-// Runbooks folds every runbook in the repository in store order (creation time
-// then id). Tombstoned runbooks are always dropped; archived runbooks are
-// dropped unless includeArchived is set.
-func (c *Client) Runbooks(ctx context.Context, includeArchived bool) ([]model.Runbook, error) {
+// RunbookFilter narrows a runbook listing. The zero value matches every active
+// runbook. Labels are ANDed; Anchors constrains to runbooks carrying the given
+// anchor; IncludeArchived widens the set to archived runbooks.
+type RunbookFilter struct {
+	IncludeArchived bool
+	Labels          []string
+	Anchors         AnchorFilter
+}
+
+// Runbooks folds the runbook set the filter selects, in store order (creation
+// time then id). Tombstoned runbooks are always dropped; archived runbooks are
+// dropped unless IncludeArchived is set.
+func (c *Client) Runbooks(ctx context.Context, f RunbookFilter) ([]model.Runbook, error) {
 	runbooks, err := c.s.ListRunbooks(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !includeArchived {
-		runbooks = slices.DeleteFunc(runbooks, func(rb model.Runbook) bool {
-			return rb.Status != model.RunbookActive
-		})
-	}
+	runbooks = slices.DeleteFunc(runbooks, func(rb model.Runbook) bool {
+		if !f.IncludeArchived && rb.Status != model.RunbookActive {
+			return true
+		}
+		return !hasAll(rb.Labels, f.Labels) || !matchesAnchorFilter(rb.Anchors, f.Anchors)
+	})
 	return runbooks, nil
 }
 
@@ -213,7 +223,7 @@ func (c *Client) RemoveRunbook(ctx context.Context, id model.EntityID) (model.Ru
 // then id ascending. A runbook matches when its title, a label, its
 // description, or any step text contains query.
 func (c *Client) SearchRunbooks(ctx context.Context, query string, f SearchFilter) ([]model.Runbook, error) {
-	runbooks, err := c.Runbooks(ctx, false)
+	runbooks, err := c.Runbooks(ctx, RunbookFilter{})
 	if err != nil {
 		return nil, err
 	}

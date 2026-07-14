@@ -38,6 +38,37 @@ func bodyArg(cmd *cobra.Command, value string) (string, error) {
 	return strings.TrimRight(string(data), "\n"), nil
 }
 
+// freeText resolves free-form content from exactly one of: the positional pos
+// (present iff posGiven), the flag flagName (value flagVal), or stdin (either
+// source given as "-"). More than one is a UsageError; zero is too when
+// required. Both errors name all three forms. The chosen value flows through
+// bodyArg, so "-" reads stdin with trailing newlines trimmed.
+func freeText(cmd *cobra.Command, flagName, flagVal, pos string, posGiven, required bool) (string, error) {
+	flagged := cmd.Flags().Changed(flagName)
+	sources := 0
+	if posGiven {
+		sources++
+	}
+	if flagged {
+		sources++
+	}
+	switch sources {
+	case 0:
+		if required {
+			return "", &UsageError{Err: fmt.Errorf("%s requires text: a positional argument, --%s, or - for stdin", cmd.CommandPath(), flagName)}
+		}
+		return "", nil
+	case 1:
+		value := pos
+		if flagged {
+			value = flagVal
+		}
+		return bodyArg(cmd, value)
+	default:
+		return "", &UsageError{Err: fmt.Errorf("%s takes text from exactly one of a positional argument, --%s, or - for stdin", cmd.CommandPath(), flagName)}
+	}
+}
+
 // validateTitle rejects an empty or over-long title as a UsageError, run before
 // openStore/autoInstall so a rejected create or rename mutates nothing. hint names
 // the flags on the calling command that hold the long content a title should not.

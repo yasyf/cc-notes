@@ -174,6 +174,13 @@ func (c *Client) CancelSprint(ctx context.Context, id model.EntityID) (model.Spr
 	return c.setSprintStatus(ctx, id, model.SprintCancelled)
 }
 
+// ActivateProject marks the project active, un-archiving an archived project. A
+// project already active is refused with a *ConflictError; completed and
+// cancelled projects are terminal and refuse too.
+func (c *Client) ActivateProject(ctx context.Context, id model.EntityID) (model.Project, error) {
+	return c.setProjectStatus(ctx, id, model.ProjectActive)
+}
+
 // CompleteProject marks the project completed.
 func (c *Client) CompleteProject(ctx context.Context, id model.EntityID) (model.Project, error) {
 	return c.setProjectStatus(ctx, id, model.ProjectCompleted)
@@ -205,14 +212,19 @@ func (c *Client) setSprintStatus(ctx context.Context, id model.EntityID, status 
 	return c.appendSprint(ctx, id, []model.Op{model.SetSprintStatus{Status: status}})
 }
 
-// setProjectStatus transitions the project to status, allowing the change only
-// from active — a closed project refuses with a *ConflictError.
+// setProjectStatus transitions the project to status. Every transition requires
+// the project be active, except activate, which un-archives an archived project;
+// any other source status refuses with a *ConflictError.
 func (c *Client) setProjectStatus(ctx context.Context, id model.EntityID, status model.ProjectStatus) (model.Project, error) {
 	project, err := c.Project(ctx, id)
 	if err != nil {
 		return model.Project{}, err
 	}
-	if project.Status != model.ProjectActive {
+	allowed := project.Status == model.ProjectActive
+	if status == model.ProjectActive {
+		allowed = project.Status == model.ProjectArchived
+	}
+	if !allowed {
 		return model.Project{}, &ConflictError{ID: id, Msg: "already " + string(project.Status)}
 	}
 	return c.appendProject(ctx, id, []model.Op{model.SetProjectStatus{Status: status}})

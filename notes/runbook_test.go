@@ -327,19 +327,88 @@ func TestRunbooksIncludeArchived(t *testing.T) {
 		t.Fatalf("ArchiveRunbook: %v", err)
 	}
 
-	active, err := c.Runbooks(ctx, false)
+	active, err := c.Runbooks(ctx, notes.RunbookFilter{})
 	if err != nil {
 		t.Fatalf("Runbooks: %v", err)
 	}
 	if len(active) != 1 || active[0].ID != a.ID {
-		t.Fatalf("Runbooks(false) = %d, want only active A", len(active))
+		t.Fatalf("Runbooks(active-only) = %d, want only active A", len(active))
 	}
-	all, err := c.Runbooks(ctx, true)
+	all, err := c.Runbooks(ctx, notes.RunbookFilter{IncludeArchived: true})
 	if err != nil {
-		t.Fatalf("Runbooks(true): %v", err)
+		t.Fatalf("Runbooks(IncludeArchived): %v", err)
 	}
 	if len(all) != 2 {
-		t.Fatalf("Runbooks(true) = %d, want 2", len(all))
+		t.Fatalf("Runbooks(IncludeArchived) = %d, want 2", len(all))
+	}
+}
+
+// TestRunbooksLabelAndAnchorFilter pins RunbookFilter's label/anchor composition,
+// mirroring Logs: Labels are ANDed (every one required) and compose conjunctively
+// with Anchors (both the label and the anchor must match).
+func TestRunbooksLabelAndAnchorFilter(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+
+	both, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{
+		Title:   "Both",
+		Labels:  []string{"ops", "db"},
+		Anchors: notes.AnchorSpec{Paths: []string{"deploy.sh"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateRunbook both: %v", err)
+	}
+	if _, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "OpsOnly", Labels: []string{"ops"}}); err != nil {
+		t.Fatalf("CreateRunbook opsOnly: %v", err)
+	}
+	if _, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "DbOnly", Labels: []string{"db"}}); err != nil {
+		t.Fatalf("CreateRunbook dbOnly: %v", err)
+	}
+
+	// A single label matches every runbook carrying it.
+	ops, err := c.Runbooks(ctx, notes.RunbookFilter{Labels: []string{"ops"}})
+	if err != nil {
+		t.Fatalf("Runbooks(Labels: ops): %v", err)
+	}
+	if len(ops) != 2 {
+		t.Fatalf("Runbooks(Labels: ops) = %d, want 2 (Both, OpsOnly)", len(ops))
+	}
+
+	// Two labels are ANDed: only the runbook carrying both survives.
+	and, err := c.Runbooks(ctx, notes.RunbookFilter{Labels: []string{"ops", "db"}})
+	if err != nil {
+		t.Fatalf("Runbooks(Labels: ops,db): %v", err)
+	}
+	if len(and) != 1 || and[0].ID != both.ID {
+		t.Fatalf("Runbooks(Labels: ops,db) = %d hits, want only Both %s", len(and), both.ID)
+	}
+
+	// Label composes conjunctively with an anchor: both must match.
+	composed, err := c.Runbooks(ctx, notes.RunbookFilter{
+		Labels:  []string{"ops"},
+		Anchors: notes.AnchorFilter{Path: "deploy.sh"},
+	})
+	if err != nil {
+		t.Fatalf("Runbooks(Labels: ops, Path: deploy.sh): %v", err)
+	}
+	if len(composed) != 1 || composed[0].ID != both.ID {
+		t.Fatalf("Runbooks(Labels: ops, Path: deploy.sh) = %d hits, want only Both %s", len(composed), both.ID)
+	}
+
+	// Label matches but anchor does not → rejected.
+	if miss, err := c.Runbooks(ctx, notes.RunbookFilter{
+		Labels:  []string{"ops"},
+		Anchors: notes.AnchorFilter{Path: "other.sh"},
+	}); err != nil || len(miss) != 0 {
+		t.Fatalf("Runbooks(Labels: ops, Path: other.sh) = %d/%v, want 0/nil (anchor unmatched)", len(miss), err)
+	}
+
+	// Anchor matches but label does not → rejected.
+	if miss, err := c.Runbooks(ctx, notes.RunbookFilter{
+		Labels:  []string{"absent"},
+		Anchors: notes.AnchorFilter{Path: "deploy.sh"},
+	}); err != nil || len(miss) != 0 {
+		t.Fatalf("Runbooks(Labels: absent, Path: deploy.sh) = %d/%v, want 0/nil (label unmatched)", len(miss), err)
 	}
 }
 
@@ -455,7 +524,7 @@ func TestRemoveRunbook(t *testing.T) {
 		t.Fatal("removed.Deleted = false, want true")
 	}
 
-	list, err := c.Runbooks(ctx, true)
+	list, err := c.Runbooks(ctx, notes.RunbookFilter{IncludeArchived: true})
 	if err != nil {
 		t.Fatalf("Runbooks: %v", err)
 	}

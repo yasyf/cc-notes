@@ -108,7 +108,7 @@ func TestRenderRunbookShow(t *testing.T) {
 	rb := sampleRunbook()
 	got := renderRunbookShow(rb)
 
-	wantHeader := "id: deadbeefcafe1234\ntitle: Deploy\nstatus: active\nlabels: ops\ncreated: 2025-01-01T00:00:00Z\nupdated: 2025-01-01T00:00:00Z\narchived: -\n"
+	wantHeader := "id: deadbeefcafe1234\ntitle: Deploy\nstatus: active\nlabels: ops\ncommits: -\npaths: -\ndirs: -\nbranches: -\ncreated: 2025-01-01T00:00:00Z\nupdated: 2025-01-01T00:00:00Z\narchived: -\n"
 	if !strings.HasPrefix(got, wantHeader) {
 		t.Fatalf("header block wrong:\n%s", got)
 	}

@@ -115,7 +115,7 @@ func newInitCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&remote, "remote", defaultRemote, "remote to wire")
+	bindRemote(flags, &remote, defaultRemote, "wire")
 	flags.BoolVar(&ci, "ci", false, "force-install the reconcile GitHub Actions workflow even without a .github/ directory")
 	flags.BoolVar(&noCI, "no-ci", false, "skip the reconcile GitHub Actions workflow even when a .github/ directory exists")
 	flags.BoolVar(&hook, "hook", false, "also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj/rebase/server-side squash)")
@@ -209,8 +209,8 @@ func newSyncCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&remote, "remote", "", "remote to sync with (default: every cc-notes-wired remote, else origin)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindRemote(flags, &remote, "", "sync with")
+	bindJSON(flags, &jsonOut)
 	flags.BoolVar(&full, "full", false, "force a whole-namespace reconcile scan")
 	return cmd
 }

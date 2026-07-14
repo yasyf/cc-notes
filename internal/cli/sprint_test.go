@@ -257,14 +257,72 @@ func TestSprintEdit(t *testing.T) {
 	if _, _, err := spRun(t, dir, "", "sprint", "edit", sp.ID); !isUsage(err) {
 		t.Errorf("edit with no flags err = %v, want UsageError exit 2", err)
 	}
+	// The --x/--no-x pairs are cobra mutually-exclusive groups now: their error is
+	// a flag-group error mapped to exit 2 by classify, not the concrete UsageError.
 	for _, args := range [][]string{
 		{"sprint", "edit", sp.ID, "--project", p1, "--no-project"},
 		{"sprint", "edit", sp.ID, "--start", "2026-01-01", "--no-start"},
 		{"sprint", "edit", sp.ID, "--end", "2026-01-01", "--no-end"},
 	} {
-		if _, _, err := spRun(t, dir, "", args...); !isUsage(err) {
-			t.Errorf("%v err = %v, want UsageError exit 2", args, err)
+		if _, _, err := spRun(t, dir, "", args...); ExitCode(err) != 2 || !isFlagGroupError(err) {
+			t.Errorf("%v err = %v (exit %d), want flag-group usage error exit 2", args, err, ExitCode(err))
 		}
+	}
+}
+
+// TestSprintAddBodyForms proves "sprint add" resolves the description from a
+// positional BODY, --body, or - (stdin), and rejects two sources.
+func TestSprintAddBodyForms(t *testing.T) {
+	dir := spInitRepo(t)
+
+	pos := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "S1", "positional desc", "--json"))
+	if pos.Description != "positional desc" {
+		t.Errorf("positional desc = %q, want %q", pos.Description, "positional desc")
+	}
+	flag := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "S2", "--body", "flag desc", "--json"))
+	if flag.Description != "flag desc" {
+		t.Errorf("--body desc = %q, want %q", flag.Description, "flag desc")
+	}
+	out, _, err := spRun(t, dir, "stdin desc\n", "sprint", "add", "S3", "-", "--json")
+	if err != nil {
+		t.Fatalf("sprint add - : %v", err)
+	}
+	if got := spJSON[sprintDTO](t, out).Description; got != "stdin desc" {
+		t.Errorf("stdin desc = %q, want %q", got, "stdin desc")
+	}
+	if _, _, err := spRun(t, dir, "", "sprint", "add", "S4", "pos", "--body", "flag"); !isUsage(err) {
+		t.Errorf("positional+--body err = %v (exit %d), want UsageError exit 2", err, ExitCode(err))
+	}
+}
+
+// TestSprintCommentBodyForms proves "sprint comment" resolves the comment text
+// from a positional BODY, --body, or - (stdin), requires exactly one source, and
+// persists it.
+func TestSprintCommentBodyForms(t *testing.T) {
+	dir := spInitRepo(t)
+	sp := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "S", "--json"))
+
+	spMust(t, dir, "sprint", "comment", sp.ID, "positional comment")
+	spMust(t, dir, "sprint", "comment", sp.ID, "--body", "flag comment")
+	if _, _, err := spRun(t, dir, "stdin comment\n", "sprint", "comment", sp.ID, "-"); err != nil {
+		t.Fatalf("sprint comment - : %v", err)
+	}
+
+	if _, _, err := spRun(t, dir, "", "sprint", "comment", sp.ID); !isUsage(err) {
+		t.Errorf("comment with no text err = %v (exit %d), want UsageError exit 2", err, ExitCode(err))
+	}
+	if _, _, err := spRun(t, dir, "", "sprint", "comment", sp.ID, "pos", "--body", "flag"); !isUsage(err) {
+		t.Errorf("comment positional+--body err = %v (exit %d), want UsageError exit 2", err, ExitCode(err))
+	}
+
+	shown := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "show", sp.ID, "--json"))
+	got := make([]string, len(shown.Comments))
+	for i, c := range shown.Comments {
+		got[i] = c.Body
+	}
+	want := []string{"positional comment", "flag comment", "stdin comment"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("comments = %v, want %v", got, want)
 	}
 }
 

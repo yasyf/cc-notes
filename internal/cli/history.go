@@ -100,9 +100,9 @@ func historyCmd(use, short string, resolve func(context.Context, *notes.Client, 
 		},
 	}
 	flags := cmd.Flags()
-	flags.BoolVar(&opts.jsonOut, "json", false, "emit JSON")
+	bindJSON(flags, &opts.jsonOut)
 	flags.BoolVar(&opts.reverse, "reverse", false, "oldest first (chronological); default is newest first")
-	flags.IntVar(&opts.limit, "limit", 0, "show at most N most recent entries (0 = all)")
+	bindLimit(flags, &opts.limit, 0)
 	return cmd
 }
 

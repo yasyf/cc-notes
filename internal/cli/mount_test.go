@@ -309,7 +309,7 @@ func TestMountList(t *testing.T) {
 		return okHolder(req)
 	})
 
-	stdout, _, err := runCLI(t, repo, "mount", "--socket", sock, "--list")
+	stdout, _, err := runCLI(t, repo, "mount", "--socket", sock, "list")
 	if err != nil {
 		t.Fatalf("mount --list: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestMountListHolderDownExits1(t *testing.T) {
 	repo := initRepo(t)
 	sock := filepath.Join(t.TempDir(), "never-bound.sock")
 
-	_, _, err := runCLI(t, repo, "mount", "--socket", sock, "--list")
+	_, _, err := runCLI(t, repo, "mount", "--socket", sock, "list")
 	if err == nil {
 		t.Fatal("--list succeeded with no holder, want a failure")
 	}
@@ -343,8 +343,8 @@ func TestMountStopNotMountedNoOp(t *testing.T) {
 
 	// Nothing is mounted at stopDir, so Teardown short-circuits to a no-op
 	// without ever contacting the holder.
-	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, "--stop", stopDir); err != nil {
-		t.Fatalf("mount --stop: %v", err)
+	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, "stop", stopDir); err != nil {
+		t.Fatalf("mount stop: %v", err)
 	}
 	if got := requests(); len(got) != 0 {
 		t.Errorf("--stop contacted the holder for an unmounted dir: %v", got)
@@ -359,8 +359,8 @@ func TestMountShutdown(t *testing.T) {
 	repo := initRepo(t)
 	sock, requests := fakeHolder(t, okHolder)
 
-	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, "--shutdown"); err != nil {
-		t.Fatalf("mount --shutdown: %v", err)
+	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, "shutdown"); err != nil {
+		t.Fatalf("mount shutdown: %v", err)
 	}
 	var sawReclaim bool
 	for _, r := range requests() {
@@ -442,8 +442,8 @@ func TestMountStopRemovesNotesSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, "--stop", ".notes"); err != nil {
-		t.Fatalf("mount --stop .notes: %v", err)
+	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, "stop", ".notes"); err != nil {
+		t.Fatalf("mount stop .notes: %v", err)
 	}
 	if _, err := os.Lstat(link); !os.IsNotExist(err) {
 		t.Errorf(".notes symlink not removed: err=%v", err)
@@ -468,7 +468,7 @@ func TestMountStopLiveUsesOwnedCrossTenantList(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, "--stop", mp); err != nil {
+	if _, _, err := runCLI(t, repo, "mount", "--socket", sock, "stop", mp); err != nil {
 		t.Fatalf("mount --stop: %v", err)
 	}
 	var sawList bool
@@ -507,7 +507,7 @@ func TestMountStopRefusesForeignTenant(t *testing.T) {
 		return okHolder(req)
 	})
 
-	_, _, err := runCLI(t, repo, "mount", "--socket", sock, "--stop", mp)
+	_, _, err := runCLI(t, repo, "mount", "--socket", sock, "stop", mp)
 	if err == nil {
 		t.Fatal("--stop of a dir registered to another tenant succeeded, want a refusal")
 	}
@@ -539,7 +539,7 @@ func TestMountStopRefusesLegacyIncumbent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = runCLI(t, repo, "mount", "--socket", sock, "--stop", mp)
+	_, _, err = runCLI(t, repo, "mount", "--socket", sock, "stop", mp)
 	if err == nil {
 		t.Fatal("--stop succeeded while a legacy incumbent was serving, want a refusal")
 	}
@@ -656,14 +656,18 @@ func TestMountDetachedNoSpawnAfterHolderDiesPostHello(t *testing.T) {
 	}
 }
 
-func TestMountFlagConflictsExit2(t *testing.T) {
+// TestMountSubcommandArgsExit2 pins the parse-level arg wiring of the mount
+// subcommands: a missing or extra positional is a usage error (exit 2), and the
+// hidden --auto session-start mode still refuses --foreground. No holder is
+// contacted — these fail during arg validation.
+func TestMountSubcommandArgsExit2(t *testing.T) {
 	repo := initRepo(t)
 	for _, args := range [][]string{
-		{"mount", "--list", "--shutdown"},
-		{"mount", "--list", "somewhere"},
-		{"mount", "--shutdown", "--foreground"},
-		{"mount", "--stop", "/x", "--list"},
-		{"mount", "--stop", "/x", "somewhere"},
+		{"mount", "stop"},                   // stop needs a DIR
+		{"mount", "stop", "/x", "/y"},       // stop takes exactly one DIR
+		{"mount", "list", "somewhere"},      // list takes no args
+		{"mount", "shutdown", "extra"},      // shutdown takes no args
+		{"mount", "--foreground", "--auto"}, // --auto cannot combine with --foreground
 	} {
 		_, _, err := runCLI(t, repo, args...)
 		if err == nil {

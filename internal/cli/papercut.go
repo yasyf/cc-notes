@@ -25,25 +25,31 @@ const (
 )
 
 func newPapercutCmd() *cobra.Command {
-	var modelID string
+	var modelID, body string
 	var jsonOut bool
 	cmd := &cobra.Command{
-		Use:   "papercut TEXT",
+		Use:   "papercut [TEXT]",
 		Short: "File a friction complaint to the repo-wide papercut journal",
 		Long: `Record a one-paragraph complaint about friction hit during work — a dead-end
 tool call, a broken link, a misleading doc — instead of silently pushing through.
 Each complaint appends one entry to the repo-wide papercut journal: a log titled
 "papercuts", tagged "papercut", auto-created on first use.
 
-TEXT is the complaint; - reads it from stdin. --model (or CC_NOTES_MODEL, with
-the flag winning) records the model identity on the entry.
+The complaint text comes from the TEXT positional, --body, or - for stdin (exactly
+one). --model (or CC_NOTES_MODEL, with the flag winning) records the model
+identity on the entry.
 
 Because "papercut list" reads the journal back, filing a complaint whose text is
 literally "list" needs an escape: "cc-notes papercut -- list", or pipe it via
 stdin ("... | cc-notes papercut -").`,
-		Args: exactArgs(1),
+		Args: maxArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			text, err := bodyArg(cmd, args[0])
+			posGiven := len(args) > 0
+			var pos string
+			if posGiven {
+				pos = args[0]
+			}
+			text, err := freeText(cmd, "body", body, pos, posGiven, true)
 			if err != nil {
 				return err
 			}
@@ -72,6 +78,7 @@ stdin ("... | cc-notes papercut -").`,
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&modelID, "model", "", "model identity to record on the entry (default: CC_NOTES_MODEL)")
+	bindBody(flags, &body, "the complaint; - reads stdin")
 	bindJSON(flags, &jsonOut)
 	cmd.AddCommand(newPapercutListCmd())
 	return cmd

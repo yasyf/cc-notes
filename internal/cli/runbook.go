@@ -27,6 +27,8 @@ func newRunbookCmd() *cobra.Command {
 		newRunbookStatusCmd("activate", model.RunbookActive),
 		newRunbookStatusCmd("archive", model.RunbookArchived),
 		newRunbookEditCmd(),
+		newRunbookRmCmd(),
+		newRunbookSearchCmd(),
 		newRunbookCommentCmd(),
 		newRunbookHistoryCmd(),
 		newRunbookStepCmd(),
@@ -38,16 +40,24 @@ func newRunbookCmd() *cobra.Command {
 func newRunbookAddCmd() *cobra.Command {
 	var body string
 	var labels, steps []string
+	var anchors anchorSets
 	var jsonOut bool
 	cmd := &cobra.Command{
-		Use:   "add TITLE",
+		Use:   "add TITLE [BODY]",
 		Short: "Create a runbook, optionally with its first steps",
-		Args:  exactArgs(1),
+		Args:  maxArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return &UsageError{Err: errors.New("runbook add requires a title")}
+			}
 			if err := validateTitle(args[0], titleHintDesc); err != nil {
 				return err
 			}
-			text, err := bodyArg(cmd, body)
+			var pos string
+			if len(args) > 1 {
+				pos = args[1]
+			}
+			text, err := freeText(cmd, "body", body, pos, len(args) > 1, false)
 			if err != nil {
 				return err
 			}
@@ -59,11 +69,15 @@ func newRunbookAddCmd() *cobra.Command {
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
 			}
+			if anchors.commits, err = resolveCommits(ctx, s.Git, anchors.commits); err != nil {
+				return err
+			}
 			rb, reused, err := c.CreateRunbook(ctx, notes.RunbookSpec{
 				Title:       args[0],
 				Description: text,
 				Labels:      labels,
 				Steps:       steps,
+				Anchors:     anchorSetsSpec(anchors),
 			})
 			if err != nil {
 				return err
@@ -78,11 +92,14 @@ func newRunbookAddCmd() *cobra.Command {
 	bindBody(flags, &body, "runbook description; - reads stdin")
 	bindLabels(flags, &labels, "label (repeatable)")
 	flags.StringArrayVar(&steps, "step", nil, "initial step text, in order (repeatable)")
+	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
 func newRunbookListCmd() *cobra.Command {
+	var labels []string
+	var filters anchorFilters
 	var all, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -93,7 +110,11 @@ func newRunbookListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			runbooks, err := c.Runbooks(cmd.Context(), all)
+			runbooks, err := c.Runbooks(cmd.Context(), notes.RunbookFilter{
+				IncludeArchived: all,
+				Labels:          labels,
+				Anchors:         anchorFiltersToNotes(filters),
+			})
 			if err != nil {
 				return err
 			}
@@ -101,7 +122,9 @@ func newRunbookListCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
+	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
 	flags.BoolVar(&all, "all", false, "include archived runbooks")
+	filters.bind(flags)
 	bindJSON(flags, &jsonOut)
 	return cmd
 }
@@ -149,10 +172,11 @@ func newRunbookStatusCmd(use string, status model.RunbookStatus) *cobra.Command 
 func newRunbookEditCmd() *cobra.Command {
 	var title, body string
 	var labels labelEdits
+	var anchors anchorEdits
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
-		Short: "Edit a runbook's title, description, or labels",
+		Short: "Edit a runbook's title, description, labels, or anchors",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -172,6 +196,8 @@ func newRunbookEditCmd() *cobra.Command {
 				edit.Description = &text
 			}
 			edit.AddLabels, edit.RemoveLabels = labels.add, labels.rm
+			edit.AddAnchors = notes.AnchorSpec{Commits: anchors.addCommits, Paths: anchors.addPaths, Dirs: anchors.addDirs, Branches: anchors.addBranches}
+			edit.RemoveAnchors = notes.AnchorSpec{Commits: anchors.rmCommits, Paths: anchors.rmPaths, Dirs: anchors.rmDirs, Branches: anchors.rmBranches}
 			if runbookEditEmpty(edit) {
 				return &UsageError{Err: errors.New("runbook edit requires at least one flag")}
 			}
@@ -197,19 +223,73 @@ func newRunbookEditCmd() *cobra.Command {
 	flags.StringVar(&title, "title", "", "new title")
 	bindBody(flags, &body, "new description; - reads stdin")
 	labels.bind(flags)
+	anchors.bind(flags)
+	bindJSON(flags, &jsonOut)
+	return cmd
+}
+
+func newRunbookRmCmd() *cobra.Command {
+	return runbookSpec.rmCmd("Tombstone a runbook", (*notes.Client).ResolveRunbook, (*notes.Client).RemoveRunbook)
+}
+
+func newRunbookSearchCmd() *cobra.Command {
+	var labels []string
+	var author string
+	var filters anchorFilters
+	var limit int
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "search QUERY",
+		Short: "Ranked search across runbook titles, labels, descriptions, and step text",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, c, err := openStoreClient()
+			if err != nil {
+				return err
+			}
+			// bindLimit's "0 = all" maps to SearchFilter's negative "no cap".
+			limitAll := limit
+			if limitAll == 0 {
+				limitAll = -1
+			}
+			runbooks, err := c.SearchRunbooks(cmd.Context(), args[0], notes.SearchFilter{
+				Labels:  labels,
+				Author:  author,
+				Anchors: anchorFiltersToNotes(filters),
+				Limit:   limitAll,
+			})
+			if err != nil {
+				return err
+			}
+			return printRunbookList(cmd, runbooks, jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
+	bindLimit(flags, &limit, 20)
+	flags.StringVar(&author, "author", "", "require author")
+	filters.bind(flags)
 	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
 func newRunbookCommentCmd() *cobra.Command {
+	var body string
 	var jsonOut bool
 	cmd := &cobra.Command{
-		Use:   "comment ID BODY",
-		Short: "Append a comment; BODY - reads stdin",
-		Args:  exactArgs(2),
+		Use:   "comment ID [BODY]",
+		Short: "Append a comment (positional BODY, --body, or - for stdin)",
+		Args:  maxArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return &UsageError{Err: errors.New("runbook comment requires a runbook ID")}
+			}
 			ctx := cmd.Context()
-			body, err := bodyArg(cmd, args[1])
+			var pos string
+			if len(args) > 1 {
+				pos = args[1]
+			}
+			text, err := freeText(cmd, "body", body, pos, len(args) > 1, true)
 			if err != nil {
 				return err
 			}
@@ -224,14 +304,16 @@ func newRunbookCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rb, err := c.CommentRunbook(ctx, id, body)
+			rb, err := c.CommentRunbook(ctx, id, text)
 			if err != nil {
 				return runbookErr(err)
 			}
 			return printRunbook(cmd, rb, jsonOut)
 		},
 	}
-	bindJSON(cmd.Flags(), &jsonOut)
+	flags := cmd.Flags()
+	bindBody(flags, &body, "comment body; - reads stdin")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
@@ -255,15 +337,23 @@ func newRunbookStepCmd() *cobra.Command {
 }
 
 func newStepAddCmd() *cobra.Command {
-	var command string
+	var command, text string
 	var place stepPlacement
 	var jsonOut bool
 	cmd := &cobra.Command{
-		Use:   "add RUNBOOK TEXT",
+		Use:   "add RUNBOOK [TEXT]",
 		Short: "Add a step to a runbook (default --last)",
-		Args:  exactArgs(2),
+		Args:  maxArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := place.validate(cmd.Flags(), false); err != nil {
+			if len(args) == 0 {
+				return &UsageError{Err: errors.New("runbook step add requires a runbook ID")}
+			}
+			var pos string
+			if len(args) > 1 {
+				pos = args[1]
+			}
+			stepText, err := freeText(cmd, "text", text, pos, len(args) > 1, true)
+			if err != nil {
 				return err
 			}
 			ctx := cmd.Context()
@@ -278,7 +368,7 @@ func newStepAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rb, err := c.AddStep(ctx, id, args[1], command, place.toPlacement())
+			rb, err := c.AddStep(ctx, id, stepText, command, place.toPlacement())
 			if err != nil {
 				return runbookErr(err)
 			}
@@ -287,8 +377,10 @@ func newStepAddCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&command, "command", "", "shell command for the step")
+	flags.StringVar(&text, "text", "", "step text; - reads stdin")
 	place.bind(flags)
 	bindJSON(flags, &jsonOut)
+	cmd.MarkFlagsMutuallyExclusive(placementFlags...)
 	return cmd
 }
 
@@ -331,15 +423,16 @@ func newStepEditCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			flags := cmd.Flags()
-			if flags.Changed("command") && noCommand {
-				return &UsageError{Err: errors.New("--command and --no-command are mutually exclusive")}
-			}
 			if !flags.Changed("text") && !flags.Changed("command") && !noCommand {
 				return &UsageError{Err: errors.New("step edit requires --text, --command, or --no-command")}
 			}
 			var edit notes.StepEdit
 			if flags.Changed("text") {
-				edit.Text = &text
+				t, err := freeText(cmd, "text", text, "", false, false)
+				if err != nil {
+					return err
+				}
+				edit.Text = &t
 			}
 			switch {
 			case flags.Changed("command"):
@@ -368,10 +461,11 @@ func newStepEditCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&text, "text", "", "new step text")
+	flags.StringVar(&text, "text", "", "new step text; - reads stdin")
 	flags.StringVar(&command, "command", "", "new step command")
 	flags.BoolVar(&noCommand, "no-command", false, "clear the step command")
 	bindJSON(flags, &jsonOut)
+	cmd.MarkFlagsMutuallyExclusive("command", "no-command")
 	return cmd
 }
 
@@ -383,9 +477,6 @@ func newStepMoveCmd() *cobra.Command {
 		Short: "Reorder a step within a runbook",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := place.validate(cmd.Flags(), true); err != nil {
-				return err
-			}
 			ctx := cmd.Context()
 			s, c, err := openStoreClient()
 			if err != nil {
@@ -411,6 +502,8 @@ func newStepMoveCmd() *cobra.Command {
 	flags := cmd.Flags()
 	place.bind(flags)
 	bindJSON(flags, &jsonOut)
+	cmd.MarkFlagsMutuallyExclusive(placementFlags...)
+	cmd.MarkFlagsOneRequired(placementFlags...)
 	return cmd
 }
 
@@ -633,9 +726,6 @@ func newRunFinishCmd() *cobra.Command {
 		Short: "Finish a run (default: succeeded, or failed if any step failed)",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if failed && abandoned {
-				return &UsageError{Err: errors.New("--failed and --abandoned are mutually exclusive")}
-			}
 			ctx := cmd.Context()
 			s, c, err := openStoreClient()
 			if err != nil {
@@ -672,6 +762,7 @@ func newRunFinishCmd() *cobra.Command {
 	flags.BoolVar(&failed, "failed", false, "finish as failed")
 	flags.BoolVar(&abandoned, "abandoned", false, "finish as abandoned")
 	bindJSON(flags, &jsonOut)
+	cmd.MarkFlagsMutuallyExclusive("failed", "abandoned")
 	return cmd
 }
 
@@ -689,7 +780,9 @@ func runbookErr(err error) error {
 // runbookEditEmpty reports whether a runbook edit mask sets nothing, the CLI's
 // "at least one flag" guard raised as a UsageError a pinned test asserts.
 func runbookEditEmpty(e notes.RunbookEdit) bool {
-	return e.Title == nil && e.Description == nil && len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0
+	return e.Title == nil && e.Description == nil &&
+		len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0 &&
+		anchorSpecEmpty(e.AddAnchors) && anchorSpecEmpty(e.RemoveAnchors)
 }
 
 // finishStatus resolves a finishing run's terminal status: the explicit
@@ -705,7 +798,8 @@ func finishStatus(run model.RunbookRun, failed, abandoned bool) model.RunStatus 
 	return notes.DerivedRunStatus(run)
 }
 
-// placementFlags are the four mutually exclusive step-placement flags.
+// placementFlags are the four step-placement flags: cobra marks them mutually
+// exclusive on step add, and mutually exclusive plus one-required on step move.
 var placementFlags = []string{"first", "last", "before", "after"}
 
 // stepPlacement binds the --first/--last/--before/--after flags that place a
@@ -720,25 +814,6 @@ func (p *stepPlacement) bind(f *pflag.FlagSet) {
 	f.BoolVar(&p.last, "last", false, "place after all steps (default)")
 	f.StringVar(&p.before, "before", "", "place before this step (id prefix)")
 	f.StringVar(&p.after, "after", "", "place after this step (id prefix)")
-}
-
-// validate enforces the placement flags' mutual exclusion; requireOne demands
-// exactly one (step move), otherwise none is allowed and defaults to --last
-// (step add).
-func (p *stepPlacement) validate(f *pflag.FlagSet, requireOne bool) error {
-	n := 0
-	for _, name := range placementFlags {
-		if f.Changed(name) {
-			n++
-		}
-	}
-	if n > 1 {
-		return &UsageError{Err: errors.New("--first, --last, --before, and --after are mutually exclusive")}
-	}
-	if requireOne && n == 0 {
-		return &UsageError{Err: errors.New("step move requires one of --first, --last, --before, --after")}
-	}
-	return nil
 }
 
 // toPlacement projects the placement flags onto a notes.Placement; no flag

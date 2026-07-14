@@ -332,11 +332,10 @@ func TestTaskEditBranch(t *testing.T) {
 	if _, _, err := runCLI(t, dir, "task", "edit", task.ID, "--branch", "x", "--backlog"); cli.ExitCode(err) != 2 {
 		t.Fatalf("edit --branch --backlog err = %v, want exit 2 (mutually exclusive)", err)
 	}
-	// An explicit empty --branch still conflicts with --backlog: validate() keys
-	// off Changed("branch"), not branch != "", so this is the mutual-exclusion
-	// usage error, not a later invalid-empty-branch error.
-	if _, _, err := runCLI(t, dir, "task", "edit", task.ID, "--branch", "", "--backlog"); err == nil || cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Fatalf(`edit --branch "" --backlog err = %v, want exit 2 with "mutually exclusive"`, err)
+	// Explicit empty --branch still conflicts with --backlog: cobra keys off
+	// Changed("branch"), not branch != "".
+	if _, _, err := runCLI(t, dir, "task", "edit", task.ID, "--branch", "", "--backlog"); err == nil || cli.ExitCode(err) != 2 || !strings.Contains(err.Error(), "none of the others can be") {
+		t.Fatalf(`edit --branch "" --backlog err = %v, want exit 2 flag-group error`, err)
 	}
 	if _, _, err := runCLI(t, dir, "task", "edit", "feedfacefeedface", "--branch", "release/2.0"); !errors.Is(err, store.ErrNotFound) || cli.ExitCode(err) != 3 {
 		t.Fatalf("edit unknown id err = %v (exit %d), want not-found exit 3", err, cli.ExitCode(err))

@@ -23,6 +23,7 @@ func newProjectCmd() *cobra.Command {
 		newProjectAddCmd(),
 		newProjectListCmd(),
 		newProjectShowCmd(),
+		newProjectStatusCmd("activate", model.ProjectActive),
 		newProjectStatusCmd("complete", model.ProjectCompleted),
 		newProjectStatusCmd("archive", model.ProjectArchived),
 		newProjectStatusCmd("cancel", model.ProjectCancelled),
@@ -38,14 +39,24 @@ func newProjectAddCmd() *cobra.Command {
 	var labels []string
 	var jsonOut bool
 	cmd := &cobra.Command{
-		Use:   "add TITLE",
+		Use:   "add TITLE [BODY]",
 		Short: "Create a project",
-		Args:  exactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 || len(args) > 2 {
+				return &UsageError{Err: fmt.Errorf("%s accepts TITLE and an optional BODY, received %d", cmd.CommandPath(), len(args))}
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateTitle(args[0], titleHintDesc); err != nil {
 				return err
 			}
-			text, err := bodyArg(cmd, body)
+			posGiven := len(args) > 1
+			var pos string
+			if posGiven {
+				pos = args[1]
+			}
+			text, err := freeText(cmd, "body", body, pos, posGiven, false)
 			if err != nil {
 				return err
 			}
@@ -69,8 +80,8 @@ func newProjectAddCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	bindBody(flags, &body, "project description; - reads stdin")
-	flags.StringArrayVar(&labels, "label", nil, "label (repeatable)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindLabels(flags, &labels, "label (repeatable)")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
@@ -106,7 +117,7 @@ func newProjectListCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&statusCSV, "status", "", "status filter, comma-separated (default all)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
@@ -135,6 +146,8 @@ func newProjectStatusCmd(use string, status model.ProjectStatus) *cobra.Command 
 			}
 			var project model.Project
 			switch status {
+			case model.ProjectActive:
+				project, err = c.ActivateProject(ctx, id)
 			case model.ProjectCompleted:
 				project, err = c.CompleteProject(ctx, id)
 			case model.ProjectArchived:
@@ -154,7 +167,7 @@ func newProjectStatusCmd(use string, status model.ProjectStatus) *cobra.Command 
 
 func newProjectEditCmd() *cobra.Command {
 	var title, body string
-	var addLabels, rmLabels []string
+	var labels labelEdits
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
@@ -181,7 +194,7 @@ func newProjectEditCmd() *cobra.Command {
 				}
 				edit.Description = &text
 			}
-			edit.AddLabels, edit.RemoveLabels = addLabels, rmLabels
+			edit.AddLabels, edit.RemoveLabels = labels.add, labels.rm
 			if projectEditEmpty(edit) {
 				return &UsageError{Err: errors.New("project edit requires at least one flag")}
 			}
@@ -202,21 +215,31 @@ func newProjectEditCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&title, "title", "", "new title")
 	bindBody(flags, &body, "new description; - reads stdin")
-	flags.StringArrayVar(&addLabels, "add-label", nil, "add label (repeatable)")
-	flags.StringArrayVar(&rmLabels, "rm-label", nil, "remove label (repeatable)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	labels.bind(flags)
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
 func newProjectCommentCmd() *cobra.Command {
+	var body string
 	var jsonOut bool
 	cmd := &cobra.Command{
-		Use:   "comment ID BODY",
-		Short: "Append a comment; BODY - reads stdin",
-		Args:  exactArgs(2),
+		Use:   "comment ID [BODY]",
+		Short: "Append a comment; text from BODY, --body, or - for stdin",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 || len(args) > 2 {
+				return &UsageError{Err: fmt.Errorf("%s accepts ID and an optional BODY, received %d", cmd.CommandPath(), len(args))}
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			body, err := bodyArg(cmd, args[1])
+			posGiven := len(args) > 1
+			var pos string
+			if posGiven {
+				pos = args[1]
+			}
+			text, err := freeText(cmd, "body", body, pos, posGiven, true)
 			if err != nil {
 				return err
 			}
@@ -231,14 +254,16 @@ func newProjectCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project, err := c.CommentProject(ctx, id, body)
+			project, err := c.CommentProject(ctx, id, text)
 			if err != nil {
 				return planningErr(err)
 			}
 			return printProject(cmd, c, project, jsonOut)
 		},
 	}
-	bindJSON(cmd.Flags(), &jsonOut)
+	flags := cmd.Flags()
+	bindBody(flags, &body, "comment text; - reads stdin")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 

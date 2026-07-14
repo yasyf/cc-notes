@@ -87,7 +87,7 @@ var subcommandHints = map[string]map[string]string{
 // rootNounVerbs are the bare verbs an agent guesses at the top level; every
 // write verb is noun-scoped (only kind-inferable reads go global).
 var rootNounVerbs = map[string]bool{
-	"list": true, "add": true, "edit": true, "rm": true, "search": true, "comment": true,
+	"list": true, "add": true, "edit": true, "rm": true, "comment": true,
 }
 
 const rootNounVerbHint = `commands are noun-scoped: try "task list", "note list", … ("status" shows the board)`

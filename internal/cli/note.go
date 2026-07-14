@@ -10,6 +10,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 func newNoteCmd() *cobra.Command {
@@ -48,33 +49,7 @@ func newNoteShowCmd() *cobra.Command {
 func newNoteEditCmd() *cobra.Command { return noteDocument.editVerb() }
 
 func newNoteRmCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "rm ID",
-		Short: "Tombstone a note",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, c, err := openStoreClient()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			id, err := c.ResolveNote(ctx, args[0])
-			if err != nil {
-				return err
-			}
-			note, err := c.RemoveNote(ctx, id)
-			if err != nil {
-				return err
-			}
-			return printNote(cmd, c, note, jsonOut)
-		},
-	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return noteSpec.rmCmd("Tombstone a note", (*notes.Client).ResolveNote, (*notes.Client).RemoveNote)
 }
 
 func newNoteSearchCmd() *cobra.Command {

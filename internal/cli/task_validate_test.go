@@ -241,12 +241,13 @@ func TestTaskEditSprintProject(t *testing.T) {
 		t.Errorf("project = %v after --no-project, want null", *cleared.Project)
 	}
 
+	// Cobra flag-group exclusions: exit 2, not the *UsageError type.
 	for _, args := range [][]string{
 		{"task", "edit", task.ID, "--sprint", sp, "--no-sprint"},
 		{"task", "edit", task.ID, "--project", proj, "--no-project"},
 	} {
-		if _, _, err := spRun(t, dir, "", args...); !isUsage(err) {
-			t.Errorf("%v err = %v, want UsageError exit 2", args, err)
+		if _, _, err := spRun(t, dir, "", args...); ExitCode(err) != 2 {
+			t.Errorf("%v err = %v, want exit 2", args, err)
 		}
 	}
 }

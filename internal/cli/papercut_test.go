@@ -221,6 +221,20 @@ func TestPapercutStdin(t *testing.T) {
 	}
 }
 
+func TestPapercutBodyFlagAndConflict(t *testing.T) {
+	dir := initRepo(t)
+
+	flagged := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "--body", "flag friction", "--json"))
+	if len(flagged.Entries) != 1 || flagged.Entries[0].Text != "flag friction" {
+		t.Fatalf("entries = %+v, want the single --body complaint", flagged.Entries)
+	}
+
+	var usage *cli.UsageError
+	if _, _, err := runCLI(t, dir, "papercut", "positional", "--body", "flag"); !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
+		t.Fatalf("papercut positional+--body err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
+	}
+}
+
 func TestPapercutBareUsageError(t *testing.T) {
 	dir := initRepo(t)
 	var usage *cli.UsageError

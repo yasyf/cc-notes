@@ -8,6 +8,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 func newDocCmd() *cobra.Command {
@@ -46,33 +47,7 @@ func newDocShowCmd() *cobra.Command {
 func newDocEditCmd() *cobra.Command { return docDocument.editVerb() }
 
 func newDocRmCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "rm ID",
-		Short: "Tombstone a doc",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, c, err := openStoreClient()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			id, err := c.ResolveDoc(ctx, args[0])
-			if err != nil {
-				return err
-			}
-			doc, err := c.RemoveDoc(ctx, id)
-			if err != nil {
-				return err
-			}
-			return printDoc(cmd, c, doc, "", jsonOut)
-		},
-	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return docSpec.rmCmd("Tombstone a doc", (*notes.Client).ResolveDoc, (*notes.Client).RemoveDoc)
 }
 
 func newDocSearchCmd() *cobra.Command {

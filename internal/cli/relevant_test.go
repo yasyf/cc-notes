@@ -431,15 +431,18 @@ func TestRelevantCrossAuthorExcludesSharedPath(t *testing.T) {
 	}
 }
 
-func TestRelevantLimitZeroEmitsNothing(t *testing.T) {
+// TestRelevantLimitZeroUnlimited pins the harmonized bindLimit contract: --limit
+// 0 means "all", so a zero cap surfaces every relevant entry rather than
+// truncating to nothing.
+func TestRelevantLimitZeroUnlimited(t *testing.T) {
 	dir := relevantRepo(t)
 	commitFileAs(t, dir, relevantMe, "pkg/a.go", "v1\n")
 	makeNote(t, dir, "p", model.Anchor{Kind: model.AnchorPath, Value: "pkg/a.go"})
 	makeNote(t, dir, "s", model.Anchor{Kind: model.AnchorPath, Value: "pkg/b.go"})
 
 	stdout := runRelevantCmd(t, dir, "--limit", "0", "pkg/a.go")
-	if lines := nonEmptyLines(stdout); len(lines) != 0 {
-		t.Fatalf("--limit 0 emitted %d lines:\n%s", len(lines), stdout)
+	if lines := nonEmptyLines(stdout); len(lines) != 2 {
+		t.Fatalf("--limit 0 (all) emitted %d lines, want 2:\n%s", len(lines), stdout)
 	}
 }
 

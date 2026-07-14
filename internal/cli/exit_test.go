@@ -3,7 +3,10 @@ package cli_test
 import (
 	"errors"
 	"fmt"
+	"io"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/gitobj"
@@ -74,6 +77,44 @@ func TestExitCodeAndLabel(t *testing.T) {
 			}
 			if got := cli.Label(tc.err); got != tc.label {
 				t.Errorf("Label(%v) = %q, want %q", tc.err, got, tc.label)
+			}
+		})
+	}
+}
+
+// TestClassifyFlagGroupErrors is the tripwire pinning cobra's three flag-group
+// runtime errors to exit 2. Cobra returns them from Execute (bypassing the
+// flagError hook), so a real command is built and the violation triggered at
+// execute; a cobra wording change breaks this rather than silently regressing
+// MarkFlags* constraint violations to exit 1.
+func TestClassifyFlagGroupErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		mark func(*cobra.Command)
+		args []string
+	}{
+		{"mutually exclusive", func(c *cobra.Command) { c.MarkFlagsMutuallyExclusive("a", "b") }, []string{"--a", "--b"}},
+		{"required together", func(c *cobra.Command) { c.MarkFlagsRequiredTogether("a", "b") }, []string{"--a"}},
+		{"one required", func(c *cobra.Command) { c.MarkFlagsOneRequired("a", "b") }, []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := &cobra.Command{Use: "x", RunE: func(*cobra.Command, []string) error { return nil }, SilenceErrors: true, SilenceUsage: true}
+			cmd.Flags().Bool("a", false, "")
+			cmd.Flags().Bool("b", false, "")
+			tc.mark(cmd)
+			cmd.SetArgs(tc.args)
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected a flag-group error from cobra")
+			}
+			if got := cli.ExitCode(err); got != 2 {
+				t.Errorf("ExitCode(%q) = %d, want 2", err, got)
+			}
+			if got := cli.Label(err); got != "usage" {
+				t.Errorf("Label(%q) = %q, want usage", err, got)
 			}
 		})
 	}

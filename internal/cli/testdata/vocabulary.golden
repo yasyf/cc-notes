@@ -79,7 +79,7 @@ command: cc-notes doc
     (none)
 
 command: cc-notes doc add
-  use: add TITLE
+  use: add TITLE [BODY]
   aliases: -
   short: Create a doc
   hidden: false
@@ -147,7 +147,7 @@ command: cc-notes doc history
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
-    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
     (none)
@@ -205,7 +205,7 @@ command: cc-notes doc search
     --dir shorthand=none type=string default="" usage="require directory anchor"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
-    --limit shorthand=none type=int default="20" usage="maximum results"
+    --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
     (none)
@@ -260,7 +260,7 @@ command: cc-notes history
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
-    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
     (none)
@@ -310,7 +310,7 @@ command: cc-notes log
     (none)
 
 command: cc-notes log add
-  use: add TITLE
+  use: add TITLE [BODY]
   aliases: -
   short: Create a log
   hidden: false
@@ -368,7 +368,7 @@ command: cc-notes log history
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
-    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
     (none)
@@ -411,7 +411,7 @@ command: cc-notes log search
     --dir shorthand=none type=string default="" usage="require directory anchor"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
-    --limit shorthand=none type=int default="20" usage="maximum results"
+    --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
     (none)
@@ -444,12 +444,39 @@ command: cc-notes mount
   flags:
     --auto shorthand=none type=bool default="false" usage="session-start ensure-mount: mount only if this repo opted in (cc-notes.autoMount) and the binary can host fuse; self-gating, best-effort, quiet"
     --foreground shorthand=-f type=bool default="false" usage="serve in the foreground and unmount on Ctrl-C (bypasses the shared holder)"
-    --list shorthand=none type=bool default="false" usage="list cc-notes' mounts on the shared holder, then exit"
-    --shutdown shorthand=none type=bool default="false" usage="unmount cc-notes' own mounts (the shared holder keeps running for other tenants), then exit"
-    --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)"
-    --stop shorthand=none type=string default="" usage="unmount the mount at DIR, then exit"
+    --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)" persistent
   inherited:
     (none)
+
+command: cc-notes mount list
+  use: list
+  aliases: -
+  short: List cc-notes' mounts on the shared holder
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)"
+
+command: cc-notes mount shutdown
+  use: shutdown
+  aliases: -
+  short: Unmount cc-notes' own mounts (the shared holder keeps running for other tenants)
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)"
+
+command: cc-notes mount stop
+  use: stop DIR
+  aliases: -
+  short: Unmount the mount at DIR (DIR may be .notes); the shared holder reconciles it
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)"
 
 command: cc-notes note
   use: note
@@ -462,7 +489,7 @@ command: cc-notes note
     (none)
 
 command: cc-notes note add
-  use: add TITLE
+  use: add TITLE [BODY]
   aliases: -
   short: Create a note
   hidden: false
@@ -528,7 +555,7 @@ command: cc-notes note history
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
-    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
     (none)
@@ -586,7 +613,7 @@ command: cc-notes note search
     --dir shorthand=none type=string default="" usage="require directory anchor"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
-    --limit shorthand=none type=int default="20" usage="maximum results"
+    --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
     (none)
@@ -624,11 +651,12 @@ command: cc-notes note verify
     (none)
 
 command: cc-notes papercut
-  use: papercut TEXT
+  use: papercut [TEXT]
   aliases: -
   short: File a friction complaint to the repo-wide papercut journal
   hidden: false
   flags:
+    --body shorthand=none type=string default="" usage="the complaint; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --model shorthand=none type=string default="" usage="model identity to record on the entry (default: CC_NOTES_MODEL)"
   inherited:
@@ -654,8 +682,18 @@ command: cc-notes project
   inherited:
     (none)
 
+command: cc-notes project activate
+  use: activate ID
+  aliases: -
+  short: Mark a project active
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
 command: cc-notes project add
-  use: add TITLE
+  use: add TITLE [BODY]
   aliases: -
   short: Create a project
   hidden: false
@@ -687,11 +725,12 @@ command: cc-notes project cancel
     (none)
 
 command: cc-notes project comment
-  use: comment ID BODY
+  use: comment ID [BODY]
   aliases: -
-  short: Append a comment; BODY - reads stdin
+  short: Append a comment; text from BODY, --body, or - for stdin
   hidden: false
   flags:
+    --body shorthand=none type=string default="" usage="comment text; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     (none)
@@ -727,7 +766,7 @@ command: cc-notes project history
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
-    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
     (none)
@@ -770,14 +809,14 @@ command: cc-notes reconcile
 command: cc-notes relevant
   use: relevant PATH
   aliases: -
-  short: Surface the notes, docs, and logs most relevant to a path, ranked with reasons
+  short: Surface the notes, docs, logs, and runbooks most relevant to a path, ranked with reasons
   hidden: false
   flags:
     --attached shorthand=none type=bool default="false" usage="keep only entities anchored to the path or a parent directory"
     --base shorthand=none type=string default="" usage="merge-base reference for cross-author signals (default: remote default branch)"
     --branch shorthand=none type=string default="" usage="branch to weigh against (default: current HEAD branch)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
-    --limit shorthand=none type=int default="10" usage="maximum results (negative: unlimited)"
+    --limit shorthand=none type=int default="10" usage="maximum results (0 = all)"
     --worktree shorthand=none type=bool default="false" usage="drift-check path anchors against uncommitted working-tree edits"
   inherited:
     (none)
@@ -803,14 +842,18 @@ command: cc-notes runbook activate
     (none)
 
 command: cc-notes runbook add
-  use: add TITLE
+  use: add TITLE [BODY]
   aliases: -
   short: Create a runbook, optionally with its first steps
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="runbook description; - reads stdin"
+    --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
+    --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
+    --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --step shorthand=none type=stringArray default="[]" usage="initial step text, in order (repeatable)"
   inherited:
     (none)
@@ -826,11 +869,12 @@ command: cc-notes runbook archive
     (none)
 
 command: cc-notes runbook comment
-  use: comment ID BODY
+  use: comment ID [BODY]
   aliases: -
-  short: Append a comment; BODY - reads stdin
+  short: Append a comment (positional BODY, --body, or - for stdin)
   hidden: false
   flags:
+    --body shorthand=none type=string default="" usage="comment body; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     (none)
@@ -838,13 +882,21 @@ command: cc-notes runbook comment
 command: cc-notes runbook edit
   use: edit ID
   aliases: -
-  short: Edit a runbook's title, description, or labels
+  short: Edit a runbook's title, description, labels, or anchors
   hidden: false
   flags:
+    --add-branch shorthand=none type=stringArray default="[]" usage="add branch anchor (repeatable)"
+    --add-commit shorthand=none type=stringArray default="[]" usage="add commit anchor (repeatable)"
+    --add-dir shorthand=none type=stringArray default="[]" usage="add directory anchor (repeatable)"
     --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
     --body shorthand=none type=string default="" usage="new description; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
+    --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
+    --rm-commit shorthand=none type=stringArray default="[]" usage="remove commit anchor (repeatable)"
+    --rm-dir shorthand=none type=stringArray default="[]" usage="remove directory anchor (repeatable)"
     --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
     --title shorthand=none type=string default="" usage="new title"
   inherited:
     (none)
@@ -856,7 +908,7 @@ command: cc-notes runbook history
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
-    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
     (none)
@@ -868,6 +920,21 @@ command: cc-notes runbook list
   hidden: false
   flags:
     --all shorthand=none type=bool default="false" usage="include archived runbooks"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    (none)
+
+command: cc-notes runbook rm
+  use: rm ID
+  aliases: -
+  short: Tombstone a runbook
+  hidden: false
+  flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     (none)
@@ -962,6 +1029,23 @@ command: cc-notes runbook run start
   inherited:
     (none)
 
+command: cc-notes runbook search
+  use: search QUERY
+  aliases: -
+  short: Ranked search across runbook titles, labels, descriptions, and step text
+  hidden: false
+  flags:
+    --author shorthand=none type=string default="" usage="require author"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    (none)
+
 command: cc-notes runbook show
   use: show ID
   aliases: -
@@ -983,7 +1067,7 @@ command: cc-notes runbook step
     (none)
 
 command: cc-notes runbook step add
-  use: add RUNBOOK TEXT
+  use: add RUNBOOK [TEXT]
   aliases: -
   short: Add a step to a runbook (default --last)
   hidden: false
@@ -994,6 +1078,7 @@ command: cc-notes runbook step add
     --first shorthand=none type=bool default="false" usage="place before all steps"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --last shorthand=none type=bool default="false" usage="place after all steps (default)"
+    --text shorthand=none type=string default="" usage="step text; - reads stdin"
   inherited:
     (none)
 
@@ -1006,7 +1091,7 @@ command: cc-notes runbook step edit
     --command shorthand=none type=string default="" usage="new step command"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --no-command shorthand=none type=bool default="false" usage="clear the step command"
-    --text shorthand=none type=string default="" usage="new step text"
+    --text shorthand=none type=string default="" usage="new step text; - reads stdin"
   inherited:
     (none)
 
@@ -1041,6 +1126,22 @@ command: cc-notes runbook step rm
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes search
+  use: search QUERY
+  aliases: -
+  short: Ranked search across every note, doc, log, and runbook
+  hidden: false
+  flags:
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
+    --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
     (none)
 
@@ -1095,7 +1196,7 @@ command: cc-notes sprint activate
     (none)
 
 command: cc-notes sprint add
-  use: add TITLE
+  use: add TITLE [BODY]
   aliases: -
   short: Create a sprint
   hidden: false
@@ -1120,11 +1221,12 @@ command: cc-notes sprint cancel
     (none)
 
 command: cc-notes sprint comment
-  use: comment ID BODY
+  use: comment ID [BODY]
   aliases: -
-  short: Append a comment; BODY - reads stdin
+  short: Append a comment; text from BODY, --body, or - for stdin
   hidden: false
   flags:
+    --body shorthand=none type=string default="" usage="comment text; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     (none)
@@ -1166,7 +1268,7 @@ command: cc-notes sprint history
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
-    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
     (none)
@@ -1226,7 +1328,7 @@ command: cc-notes task
     (none)
 
 command: cc-notes task add
-  use: add TITLE
+  use: add TITLE [BODY]
   aliases: -
   short: Create a task
   hidden: false
@@ -1291,11 +1393,12 @@ command: cc-notes task claim
     (none)
 
 command: cc-notes task comment
-  use: comment ID BODY
+  use: comment ID [BODY]
   aliases: -
-  short: Append a comment; BODY - reads stdin
+  short: Append a comment to a task
   hidden: false
   flags:
+    --body shorthand=none type=string default="" usage="comment body; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     (none)
@@ -1311,11 +1414,12 @@ command: cc-notes task criterion
     (none)
 
 command: cc-notes task criterion add
-  use: add TASK TEXT
+  use: add TASK [TEXT]
   aliases: -
   short: Add an acceptance criterion to a task
   hidden: false
   flags:
+    --body shorthand=none type=string default="" usage="criterion text; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --script shorthand=none type=string default="" usage="validation script file; its contents become the criterion's check command"
   inherited:
@@ -1328,6 +1432,7 @@ command: cc-notes task criterion failed
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
+    --note shorthand=none type=string default="" usage="evidence recorded with the verdict (a later status change clears it)"
   inherited:
     (none)
 
@@ -1348,6 +1453,7 @@ command: cc-notes task criterion met
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
+    --note shorthand=none type=string default="" usage="evidence recorded with the verdict (a later status change clears it)"
   inherited:
     (none)
 
@@ -1437,7 +1543,7 @@ command: cc-notes task history
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
-    --limit shorthand=none type=int default="0" usage="show at most N most recent entries (0 = all)"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
     (none)
@@ -1576,7 +1682,7 @@ command: cc-notes workflows install
   short: Install the cc-notes CI workflow into the repository
   hidden: false
   flags:
-    --dir shorthand=none type=string default=".github/workflows" usage="destination directory, relative to the repo root"
+    --dest shorthand=none type=string default=".github/workflows" usage="destination directory, relative to the repo root"
   inherited:
     (none)
 

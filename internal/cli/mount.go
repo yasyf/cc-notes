@@ -60,12 +60,11 @@ const treeProbePath = "/notes"
 // deliberately absent.
 var requiredHolderFeatures = []string{mountd.FeatureTree, mountd.FeatureLeaseGate, mountd.FeatureWarning, mountd.FeatureContentDeferred, mountd.FeatureListAll}
 
-// mountOpts collects the mount command's flags.
+// mountOpts collects the base mount command's flags. The holder-management
+// operations are their own subcommands (mount list|stop|shutdown), so no mode
+// flags live here — only the serve knobs and the hidden session-start --auto.
 type mountOpts struct {
 	foreground bool
-	list       bool
-	shutdown   bool
-	stop       string
 	socket     string
 	auto       bool
 }
@@ -83,8 +82,10 @@ func newMountCmd() *cobra.Command {
 			"and presented in the repo as a `.notes` symlink into it (kept out of git via\n" +
 			".git/info/exclude); `cd .notes` to browse. Pass an explicit MOUNTPOINT to serve\n" +
 			"there instead — it is created if missing and no symlink is made. Unmount with\n" +
-			"`mount --stop DIR` (DIR may be `.notes`) or plain `umount DIR` (the holder\n" +
-			"reconciles either); --stop and --shutdown remove the .notes symlink they created.\n\n" +
+			"`mount stop DIR` (DIR may be `.notes`) or plain `umount DIR` (the holder\n" +
+			"reconciles either); `mount stop` and `mount shutdown` remove the .notes symlink\n" +
+			"they created. `mount list` shows cc-notes' mounts on the shared holder, and\n" +
+			"`mount shutdown` unmounts every cc-notes mount while leaving the holder running.\n\n" +
 			"--foreground keeps the in-process lifecycle: the command blocks serving the mount\n" +
 			"and Ctrl-C unmounts it (bypassing the shared holder and contentd). It no longer\n" +
 			"force-clears a leftover mount carcass (Holder v2 deleted every consumer force\n" +
@@ -97,53 +98,70 @@ func newMountCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVarP(&opts.foreground, "foreground", "f", false, "serve in the foreground and unmount on Ctrl-C (bypasses the shared holder)")
-	f.BoolVar(&opts.list, "list", false, "list cc-notes' mounts on the shared holder, then exit")
-	f.BoolVar(&opts.shutdown, "shutdown", false, "unmount cc-notes' own mounts (the shared holder keeps running for other tenants), then exit")
-	f.StringVar(&opts.stop, "stop", "", "unmount the mount at DIR, then exit")
-	f.StringVar(&opts.socket, "socket", "", "mount-holder unix socket path (default: the shared fusekit-holder cask socket)")
-	_ = f.MarkHidden("socket")
 	f.BoolVar(&opts.auto, "auto", false, "session-start ensure-mount: mount only if this repo opted in (cc-notes.autoMount) and the binary can host fuse; self-gating, best-effort, quiet")
 	_ = f.MarkHidden("auto")
+	// --socket is a hidden PERSISTENT flag so the list/stop/shutdown subcommands
+	// share the base command's holder-socket override.
+	pf := cmd.PersistentFlags()
+	pf.StringVar(&opts.socket, "socket", "", "mount-holder unix socket path (default: the shared fusekit-holder cask socket)")
+	_ = pf.MarkHidden("socket")
+	socket := func() string { return holderSocket(opts.socket) }
+	cmd.AddCommand(newMountListCmd(socket), newMountStopCmd(socket), newMountShutdownCmd(socket))
 	return cmd
 }
 
-// runMount dispatches the mount command: the holder-management modes
-// (--list/--shutdown/--stop) are mutually exclusive with each other, with a
-// MOUNTPOINT, and with --foreground; otherwise the command mounts, detaching by
-// default or blocking under --foreground.
+// newMountListCmd builds `mount list`: print cc-notes' mounts on the shared
+// holder and exit.
+func newMountListCmd(socket func() string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List cc-notes' mounts on the shared holder",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runMountList(cmd, socket())
+		},
+	}
+}
+
+// newMountStopCmd builds `mount stop DIR`: unmount the mount at DIR (DIR may be
+// the in-repo `.notes` symlink) through the shared holder and exit.
+func newMountStopCmd(socket func() string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop DIR",
+		Short: "Unmount the mount at DIR (DIR may be .notes); the shared holder reconciles it",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runMountStop(cmd, socket(), args[0])
+		},
+	}
+}
+
+// newMountShutdownCmd builds `mount shutdown`: reclaim cc-notes' own mounts on
+// the shared holder (which keeps running for other tenants) and exit.
+func newMountShutdownCmd(socket func() string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "shutdown",
+		Short: "Unmount cc-notes' own mounts (the shared holder keeps running for other tenants)",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runMountShutdown(cmd, socket())
+		},
+	}
+}
+
+// runMount serves the base mount command, detaching by default or blocking under
+// --foreground. The hidden session-start --auto mode takes no MOUNTPOINT and
+// cannot combine with --foreground; the list/stop/shutdown subcommands own their
+// own dispatch.
 func runMount(cmd *cobra.Command, args []string, opts mountOpts) error {
-	modes := 0
-	if opts.list {
-		modes++
-	}
-	if opts.shutdown {
-		modes++
-	}
-	if opts.stop != "" {
-		modes++
-	}
-	if modes > 1 {
-		return &UsageError{Err: errors.New("--list, --shutdown, and --stop are mutually exclusive")}
-	}
-	if modes == 1 && (opts.foreground || len(args) > 0) {
-		return &UsageError{Err: errors.New("--list, --shutdown, and --stop take no MOUNTPOINT and cannot be combined with --foreground")}
-	}
-	if opts.auto && (modes > 0 || opts.foreground || len(args) > 0) {
-		return &UsageError{Err: errors.New("--auto takes no MOUNTPOINT and cannot be combined with --foreground, --list, --shutdown, or --stop")}
+	if opts.auto {
+		if opts.foreground || len(args) > 0 {
+			return &UsageError{Err: errors.New("--auto takes no MOUNTPOINT and cannot be combined with --foreground")}
+		}
+		return runMountAuto(cmd)
 	}
 
 	socket := holderSocket(opts.socket)
-
-	switch {
-	case opts.auto:
-		return runMountAuto(cmd)
-	case opts.list:
-		return runMountList(cmd, socket)
-	case opts.shutdown:
-		return runMountShutdown(cmd, socket)
-	case opts.stop != "":
-		return runMountStop(cmd, socket, opts.stop)
-	}
 
 	cwd, err := os.Getwd()
 	if err != nil {

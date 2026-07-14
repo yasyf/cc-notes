@@ -117,7 +117,7 @@ func TestDTOGoldens(t *testing.T) {
 		Sprint:    "sprint-0000001",
 		Project:   "project-000001",
 		Criteria: []model.Criterion{
-			{ID: "c1", Text: "tests pass", Script: "go test ./...", Status: model.CriterionMet},
+			{ID: "c1", Text: "tests pass", Script: "go test ./...", Status: model.CriterionMet, Note: "go test: 12 passed"},
 			{ID: "c2", Text: "reviewed", Script: "", Status: model.CriterionPending},
 		},
 	}
@@ -180,11 +180,13 @@ func TestDTOGoldens(t *testing.T) {
 			Results:    []model.RunbookStepResult{{StepID: "step0001", Status: model.StepDone, Note: "ok", Actor: "ci <ci@example.com>", TS: dtoStarted}},
 		}},
 		Labels:     []string{"deploy"},
+		Anchors:    []model.Anchor{fullAnchor, bareAnchor},
 		Comments:   []model.Comment{{Author: ada, TS: dtoCreated, Body: "comment"}},
 		Author:     ada,
 		CreatedAt:  dtoCreated,
 		UpdatedAt:  dtoUpdated,
 		ArchivedAt: dtoClosed,
+		Deleted:    true,
 	}
 	runbookMin := model.Runbook{ID: "runbook-min-00000000000000000000000000000", Title: "bare", Status: model.RunbookActive, Author: ada, CreatedAt: dtoCreated, UpdatedAt: dtoUpdated}
 

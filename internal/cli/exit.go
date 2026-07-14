@@ -55,7 +55,7 @@ func classify(err error) (int, string) {
 	// ErrEmptyEdit (a no-op edit mask) and an attachment-name collision are
 	// likewise malformed invocations the caller fixes and retries — usage, like
 	// the CLI's own arity and mutual-exclusion guards.
-	case errors.As(err, &usage), errors.As(err, &unmet), errors.Is(err, notes.ErrEmptyEdit), errors.As(err, &attachExists):
+	case errors.As(err, &usage), errors.As(err, &unmet), errors.Is(err, notes.ErrEmptyEdit), errors.As(err, &attachExists), isFlagGroupError(err):
 		return 2, "usage"
 	// A cross-kind prefix collision (*AmbiguousKindsError) already satisfies
 	// Is(ErrAmbiguous); the explicit type match holds the mapping under a future
@@ -78,6 +78,29 @@ func classify(err error) (int, string) {
 		// here as a plain exit 1; Hint carries its `cc-notes sync` remediation.
 		return 1, "error"
 	}
+}
+
+// flagGroupErrorMarkers pins the distinctive substrings of the three errors
+// cobra's ValidateFlagGroups returns for MarkFlagsMutuallyExclusive,
+// MarkFlagsRequiredTogether, and MarkFlagsOneRequired (flag_groups.go). Cobra
+// returns these from Execute as plain errors, bypassing the flagError hook, so
+// classify maps them to exit 2 here. A cobra wording change trips the tripwire
+// test rather than silently regressing the constraint violations to exit 1.
+var flagGroupErrorMarkers = []string{
+	"are set none of the others can be",      // MarkFlagsMutuallyExclusive
+	"they must all be set; missing",          // MarkFlagsRequiredTogether
+	"at least one of the flags in the group", // MarkFlagsOneRequired
+}
+
+// isFlagGroupError reports whether err is one of cobra's flag-group violations.
+func isFlagGroupError(err error) bool {
+	msg := err.Error()
+	for _, marker := range flagGroupErrorMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // Message returns the stderr body for err with the notes-layer "cc-notes: "

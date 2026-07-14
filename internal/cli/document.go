@@ -82,14 +82,21 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 	var anchors anchorSets
 	var jsonOut, checkout, apply, abort bool
 	cmd := &cobra.Command{
-		Use:   "add TITLE",
+		Use:   "add TITLE [BODY]",
 		Short: "Create a " + spec.noun,
 		Long:  spec.addLong,
 		Args: func(cmd *cobra.Command, args []string) error {
-			if checkout {
+			switch {
+			case checkout:
 				return maxArgs(1)(cmd, args)
+			case apply || abort:
+				return exactArgs(1)(cmd, args)
+			default:
+				if len(args) == 0 || len(args) > 2 {
+					return &UsageError{Err: fmt.Errorf("%s accepts TITLE and an optional BODY, received %d", cmd.CommandPath(), len(args))}
+				}
+				return nil
 			}
-			return exactArgs(1)(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if checkout || apply || abort {
@@ -105,7 +112,12 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 			if err := validateTitle(args[0], titleHintBody); err != nil {
 				return err
 			}
-			text, err := bodyArg(cmd, body)
+			posGiven := len(args) > 1
+			var pos string
+			if posGiven {
+				pos = args[1]
+			}
+			text, err := freeText(cmd, "body", body, pos, posGiven, false)
 			if err != nil {
 				return err
 			}
@@ -329,9 +341,6 @@ func (spec documentSpec[T]) expireVerb() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if clearFlag && reason != "" {
-				return &UsageError{Err: errors.New(spec.noun + " expire --clear takes no --reason")}
-			}
 			s, c, err := openStoreClient()
 			if err != nil {
 				return err
@@ -354,6 +363,7 @@ func (spec documentSpec[T]) expireVerb() *cobra.Command {
 	flags.StringVar(&reason, "reason", "", "why the "+spec.noun+" is out-of-date")
 	flags.BoolVar(&clearFlag, "clear", false, "remove the out-of-date flag")
 	bindJSON(flags, &jsonOut)
+	cmd.MarkFlagsMutuallyExclusive("reason", "clear")
 	return cmd
 }
 
@@ -445,11 +455,16 @@ func (spec documentSpec[T]) searchVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// bindLimit's "0 = all" maps to SearchFilter's negative "no cap".
+			kindLimit := limit
+			if kindLimit == 0 {
+				kindLimit = -1
+			}
 			items, err := spec.search(cmd.Context(), c, args[0], notes.SearchFilter{
 				Labels:  labels,
 				Author:  author,
 				Anchors: anchorFiltersToNotes(filters),
-				Limit:   limit,
+				Limit:   kindLimit,
 			})
 			if err != nil {
 				return err
@@ -459,7 +474,7 @@ func (spec documentSpec[T]) searchVerb() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
-	flags.IntVar(&limit, "limit", 20, "maximum results")
+	bindLimit(flags, &limit, 20)
 	flags.StringVar(&author, "author", "", "require author")
 	filters.bind(flags)
 	bindJSON(flags, &jsonOut)

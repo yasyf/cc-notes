@@ -35,11 +35,23 @@ func newLogAddCmd() *cobra.Command {
 	var anchors anchorSets
 	var jsonOut bool
 	cmd := &cobra.Command{
-		Use:   "add TITLE",
+		Use:   "add TITLE [BODY]",
 		Short: "Create a log",
-		Args:  exactArgs(1),
+		Args:  maxArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return &UsageError{Err: errors.New("log add requires a title")}
+			}
 			if err := validateTitle(args[0], titleHintLog); err != nil {
+				return err
+			}
+			posGiven := len(args) > 1
+			var pos string
+			if posGiven {
+				pos = args[1]
+			}
+			first, err := freeText(cmd, "entry", entry, pos, posGiven, false)
+			if err != nil {
 				return err
 			}
 			ctx := cmd.Context()
@@ -49,12 +61,6 @@ func newLogAddCmd() *cobra.Command {
 			}
 			if err := autoInstall(ctx, cmd, s.Git); err != nil {
 				return err
-			}
-			var first string
-			if cmd.Flags().Changed("entry") {
-				if first, err = bodyArg(cmd, entry); err != nil {
-					return err
-				}
 			}
 			if anchors.commits, err = resolveCommits(ctx, s.Git, anchors.commits); err != nil {
 				return err
@@ -100,14 +106,15 @@ func newLogAppendCmd() *cobra.Command {
 			if len(args) == 0 {
 				return &UsageError{Err: errors.New("log append requires a log ID")}
 			}
-			var text string
-			var hasEntry bool
-			if len(args) > 1 || cmd.Flags().Changed("entry") {
-				t, err := entryText(cmd, args, entry)
-				if err != nil {
-					return err
-				}
-				text, hasEntry = t, true
+			posGiven := len(args) > 1
+			var pos string
+			if posGiven {
+				pos = args[1]
+			}
+			hasEntry := posGiven || cmd.Flags().Changed("entry")
+			text, err := freeText(cmd, "entry", entry, pos, posGiven, false)
+			if err != nil {
+				return err
 			}
 			if !hasEntry && len(attach) == 0 {
 				return &UsageError{Err: errors.New("log append requires entry text (a positional TEXT, --entry, or - for stdin) or --attach")}
@@ -150,40 +157,6 @@ func newLogAppendCmd() *cobra.Command {
 	flags.BoolVar(&replace, "replace", false, "allow --attach to overwrite a live attachment with the same name")
 	bindJSON(flags, &jsonOut)
 	return cmd
-}
-
-// entryText resolves the entry text for log append from exactly one of: the
-// positional TEXT (args[1]), the --entry flag, or - read from stdin.
-// Zero or more than one source is a UsageError.
-func entryText(cmd *cobra.Command, args []string, entry string) (string, error) {
-	positional := len(args) > 1
-	flagged := cmd.Flags().Changed("entry")
-	stdin := positional && args[1] == "-"
-	sources := 0
-	if positional && !stdin {
-		sources++
-	}
-	if flagged {
-		sources++
-	}
-	if stdin {
-		sources++
-	}
-	switch sources {
-	case 0:
-		return "", &UsageError{Err: errors.New("log append requires entry text: a positional TEXT, --entry, or - for stdin")}
-	case 1:
-		switch {
-		case stdin:
-			return bodyArg(cmd, "-")
-		case positional:
-			return args[1], nil
-		default:
-			return entry, nil
-		}
-	default:
-		return "", &UsageError{Err: errors.New("log append takes entry text from exactly one of a positional TEXT, --entry, or - for stdin")}
-	}
 }
 
 func newLogListCmd() *cobra.Command {
@@ -286,33 +259,7 @@ func logEditEmpty(in notes.LogEdit) bool {
 }
 
 func newLogRmCmd() *cobra.Command {
-	var jsonOut bool
-	cmd := &cobra.Command{
-		Use:   "rm ID",
-		Short: "Tombstone a log",
-		Args:  exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			s, c, err := openStoreClient()
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			id, err := c.ResolveLog(ctx, args[0])
-			if err != nil {
-				return err
-			}
-			log, err := c.RemoveLog(ctx, id)
-			if err != nil {
-				return err
-			}
-			return printLog(cmd, c, log, jsonOut)
-		},
-	}
-	bindJSON(cmd.Flags(), &jsonOut)
-	return cmd
+	return logSpec.rmCmd("Tombstone a log", (*notes.Client).ResolveLog, (*notes.Client).RemoveLog)
 }
 
 func newLogSearchCmd() *cobra.Command {
@@ -330,11 +277,16 @@ func newLogSearchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// bindLimit's "0 = all" maps to SearchFilter's negative "no cap".
+			kindLimit := limit
+			if kindLimit == 0 {
+				kindLimit = -1
+			}
 			logs, err := c.SearchLogs(cmd.Context(), args[0], notes.SearchFilter{
 				Labels:  labels,
 				Author:  author,
 				Anchors: anchorFiltersToNotes(filters),
-				Limit:   limit,
+				Limit:   kindLimit,
 			})
 			if err != nil {
 				return err
@@ -344,7 +296,7 @@ func newLogSearchCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
-	flags.IntVar(&limit, "limit", 20, "maximum results")
+	bindLimit(flags, &limit, 20)
 	flags.StringVar(&author, "author", "", "require author")
 	filters.bind(flags)
 	bindJSON(flags, &jsonOut)

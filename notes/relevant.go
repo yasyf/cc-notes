@@ -197,7 +197,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		scored = append(scored, RelevantEntry{Kind: model.KindLog, Log: l, Score: score, Reasons: reasons})
 	}
 
-	runbooks, err := c.Runbooks(ctx, false)
+	runbooks, err := c.Runbooks(ctx, RunbookFilter{})
 	if err != nil {
 		return nil, err
 	}

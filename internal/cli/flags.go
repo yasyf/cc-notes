@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"errors"
-
 	"github.com/spf13/pflag"
 )
 
@@ -26,6 +24,21 @@ func bindBody(f *pflag.FlagSet, p *string, usage string) {
 
 func bindLabels(f *pflag.FlagSet, p *[]string, usage string) {
 	f.StringArrayVar(p, "label", nil, usage)
+}
+
+// bindLimit binds --limit with the one canonical "0 = all" result-cap wording.
+func bindLimit(f *pflag.FlagSet, p *int, def int) {
+	f.IntVar(p, "limit", def, "maximum results (0 = all)")
+}
+
+// bindRemote binds --remote; verb names the action ("wire", "sync with") and an
+// empty def carries the derive-from-wiring fallback note (as `sync` does).
+func bindRemote(f *pflag.FlagSet, p *string, def, verb string) {
+	usage := "remote to " + verb
+	if def == "" {
+		usage += " (default: every cc-notes-wired remote, else origin)"
+	}
+	f.StringVar(p, "remote", def, usage)
 }
 
 type labelEdits struct {
@@ -96,15 +109,4 @@ type branchTarget struct {
 func (b *branchTarget) bind(f *pflag.FlagSet) {
 	f.StringVar(&b.branch, "branch", "", "task branch (default: current branch)")
 	f.BoolVar(&b.backlog, "backlog", false, "put on the shared backlog (no branch)")
-}
-
-// validate rejects --branch together with --backlog as a UsageError. It keys off
-// branchChanged (cmd.Flags().Changed("branch")), not b.branch != "", so it
-// matches the op-emission guard: an explicit --branch "" still conflicts with
-// --backlog rather than slipping through to an invalid-empty-branch error later.
-func (b *branchTarget) validate(branchChanged bool) error {
-	if branchChanged && b.backlog {
-		return &UsageError{Err: errors.New("--branch and --backlog are mutually exclusive")}
-	}
-	return nil
 }

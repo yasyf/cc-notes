@@ -9,6 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/plugin"
 )
 
@@ -127,6 +128,26 @@ func TestWorkflowsInstallWritesTree(t *testing.T) {
 	suffix := filepath.Join(".github", "workflows", "cc-notes.yml")
 	if !strings.Contains(out, "wrote ") || !strings.Contains(out, suffix) {
 		t.Fatalf("install output %q missing a wrote line for %q", out, suffix)
+	}
+}
+
+// TestWorkflowsInstallDest pins the --dest destination override (repo-root
+// relative) and that the pre-rename --dir spelling is gone.
+func TestWorkflowsInstallDest(t *testing.T) {
+	dir := initRepo(t)
+	mustRun(t, dir, "workflows", "install", "--dest", filepath.Join("ci", "flows"))
+
+	installed := filepath.Join(dir, "ci", "flows", "cc-notes.yml")
+	if _, err := os.Stat(installed); err != nil {
+		t.Fatalf("workflow not written under --dest: %v", err)
+	}
+
+	_, _, err := runCLI(t, dir, "workflows", "install", "--dir", "elsewhere")
+	if err == nil {
+		t.Fatal("--dir succeeded, want an unknown-flag usage error after the --dest rename")
+	}
+	if got := cli.ExitCode(err); got != 2 {
+		t.Fatalf("--dir exit = %d, want 2 (usage); err = %v", got, err)
 	}
 }
 

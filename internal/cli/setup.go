@@ -75,7 +75,7 @@ func newWorkflowsCmd() *cobra.Command {
 }
 
 func newWorkflowsInstallCmd() *cobra.Command {
-	var dir string
+	var dest string
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install the cc-notes CI workflow into the repository",
@@ -85,10 +85,10 @@ func newWorkflowsInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return installWorkflows(cmd, filepath.Join(root, dir))
+			return installWorkflows(cmd, filepath.Join(root, dest))
 		},
 	}
-	cmd.Flags().StringVar(&dir, "dir", filepath.Join(".github", "workflows"), "destination directory, relative to the repo root")
+	cmd.Flags().StringVar(&dest, "dest", filepath.Join(".github", "workflows"), "destination directory, relative to the repo root")
 	return cmd
 }
 

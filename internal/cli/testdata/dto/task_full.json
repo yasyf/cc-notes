@@ -51,7 +51,8 @@
       "id": "c1",
       "text": "tests pass",
       "script": "go test ./...",
-      "status": "met"
+      "status": "met",
+      "note": "go test: 12 passed"
     },
     {
       "id": "c2",

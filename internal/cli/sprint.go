@@ -38,14 +38,24 @@ func newSprintAddCmd() *cobra.Command {
 	var labels []string
 	var jsonOut bool
 	cmd := &cobra.Command{
-		Use:   "add TITLE",
+		Use:   "add TITLE [BODY]",
 		Short: "Create a sprint",
-		Args:  exactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 || len(args) > 2 {
+				return &UsageError{Err: fmt.Errorf("%s accepts TITLE and an optional BODY, received %d", cmd.CommandPath(), len(args))}
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateTitle(args[0], titleHintDesc); err != nil {
 				return err
 			}
-			text, err := bodyArg(cmd, body)
+			posGiven := len(args) > 1
+			var pos string
+			if posGiven {
+				pos = args[1]
+			}
+			text, err := freeText(cmd, "body", body, pos, posGiven, false)
 			if err != nil {
 				return err
 			}
@@ -90,10 +100,10 @@ func newSprintAddCmd() *cobra.Command {
 	flags := cmd.Flags()
 	bindBody(flags, &body, "sprint description; - reads stdin")
 	flags.StringVar(&project, "project", "", "project id prefix")
-	flags.StringArrayVar(&labels, "label", nil, "label (repeatable)")
+	bindLabels(flags, &labels, "label (repeatable)")
 	flags.StringVar(&start, "start", "", "start date YYYY-MM-DD")
 	flags.StringVar(&end, "end", "", "end date YYYY-MM-DD")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
@@ -137,7 +147,7 @@ func newSprintListCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&project, "project", "", "filter to project id prefix")
 	flags.StringVar(&statusCSV, "status", "", "status filter, comma-separated (default all)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
@@ -186,7 +196,7 @@ func newSprintStatusCmd(use string, status model.SprintStatus) *cobra.Command {
 func newSprintEditCmd() *cobra.Command {
 	var title, body, project, start, end string
 	var noProject, noStart, noEnd bool
-	var addLabels, rmLabels []string
+	var labels labelEdits
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
@@ -195,15 +205,6 @@ func newSprintEditCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			flags := cmd.Flags()
-			if flags.Changed("project") && noProject {
-				return &UsageError{Err: errors.New("--project and --no-project are mutually exclusive")}
-			}
-			if flags.Changed("start") && noStart {
-				return &UsageError{Err: errors.New("--start and --no-start are mutually exclusive")}
-			}
-			if flags.Changed("end") && noEnd {
-				return &UsageError{Err: errors.New("--end and --no-end are mutually exclusive")}
-			}
 			var edit notes.SprintEdit
 			if flags.Changed("title") {
 				if err := validateTitle(title, titleHintDesc); err != nil {
@@ -255,7 +256,7 @@ func newSprintEditCmd() *cobra.Command {
 				zero := int64(0)
 				edit.EndDate = &zero
 			}
-			edit.AddLabels, edit.RemoveLabels = addLabels, rmLabels
+			edit.AddLabels, edit.RemoveLabels = labels.add, labels.rm
 			if sprintEditEmpty(edit) {
 				return &UsageError{Err: errors.New("sprint edit requires at least one flag")}
 			}
@@ -282,21 +283,34 @@ func newSprintEditCmd() *cobra.Command {
 	flags.BoolVar(&noStart, "no-start", false, "clear the start date")
 	flags.StringVar(&end, "end", "", "new end date YYYY-MM-DD")
 	flags.BoolVar(&noEnd, "no-end", false, "clear the end date")
-	flags.StringArrayVar(&addLabels, "add-label", nil, "add label (repeatable)")
-	flags.StringArrayVar(&rmLabels, "rm-label", nil, "remove label (repeatable)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	labels.bind(flags)
+	bindJSON(flags, &jsonOut)
+	cmd.MarkFlagsMutuallyExclusive("project", "no-project")
+	cmd.MarkFlagsMutuallyExclusive("start", "no-start")
+	cmd.MarkFlagsMutuallyExclusive("end", "no-end")
 	return cmd
 }
 
 func newSprintCommentCmd() *cobra.Command {
+	var body string
 	var jsonOut bool
 	cmd := &cobra.Command{
-		Use:   "comment ID BODY",
-		Short: "Append a comment; BODY - reads stdin",
-		Args:  exactArgs(2),
+		Use:   "comment ID [BODY]",
+		Short: "Append a comment; text from BODY, --body, or - for stdin",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 || len(args) > 2 {
+				return &UsageError{Err: fmt.Errorf("%s accepts ID and an optional BODY, received %d", cmd.CommandPath(), len(args))}
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			body, err := bodyArg(cmd, args[1])
+			posGiven := len(args) > 1
+			var pos string
+			if posGiven {
+				pos = args[1]
+			}
+			text, err := freeText(cmd, "body", body, pos, posGiven, true)
 			if err != nil {
 				return err
 			}
@@ -311,14 +325,16 @@ func newSprintCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sprint, err := c.CommentSprint(ctx, id, body)
+			sprint, err := c.CommentSprint(ctx, id, text)
 			if err != nil {
 				return planningErr(err)
 			}
 			return printSprint(cmd, c, sprint, jsonOut)
 		},
 	}
-	bindJSON(cmd.Flags(), &jsonOut)
+	flags := cmd.Flags()
+	bindBody(flags, &body, "comment text; - reads stdin")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 

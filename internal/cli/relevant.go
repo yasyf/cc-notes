@@ -36,8 +36,11 @@ func newRelevantCmd() *cobra.Command {
 	var jsonOut, attached, worktree bool
 	cmd := &cobra.Command{
 		Use:   "relevant PATH",
-		Short: "Surface the notes, docs, and logs most relevant to a path, ranked with reasons",
-		Args:  exactArgs(1),
+		Short: "Surface the notes, docs, logs, and runbooks most relevant to a path, ranked with reasons",
+		Long: "Surface the notes, docs, logs, and runbooks most relevant to PATH, ranked by\n" +
+			"accumulated signal with the matched reasons shown. Notes and docs carry a\n" +
+			"drift verdict against HEAD; logs and runbooks never drift.",
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			s, c, err := openStoreClient()
@@ -53,7 +56,7 @@ func newRelevantCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if limit >= 0 && len(entries) > limit {
+			if limit > 0 && len(entries) > limit {
 				entries = entries[:limit]
 			}
 			return printRelevant(cmd, c, entries, jsonOut)
@@ -62,8 +65,8 @@ func newRelevantCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&branchFlag, "branch", "", "branch to weigh against (default: current HEAD branch)")
 	flags.StringVar(&baseFlag, "base", "", "merge-base reference for cross-author signals (default: remote default branch)")
-	flags.IntVar(&limit, "limit", 10, "maximum results (negative: unlimited)")
-	flags.BoolVar(&jsonOut, "json", false, "emit JSON")
+	bindLimit(flags, &limit, 10)
+	bindJSON(flags, &jsonOut)
 	flags.BoolVar(&attached, "attached", false, "keep only entities anchored to the path or a parent directory")
 	flags.BoolVar(&worktree, "worktree", false, "drift-check path anchors against uncommitted working-tree edits")
 	return cmd

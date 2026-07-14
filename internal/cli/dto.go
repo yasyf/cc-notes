@@ -151,13 +151,15 @@ type taskDTO struct {
 }
 
 // criterionDTO is one structured acceptance criterion: the full nonce id, its
-// text, the optional check script (empty when none), and the latest validation
-// status.
+// text, the optional check script (empty when none), the latest validation
+// status, and the optional evidence note recorded with that verdict (omitted
+// when none).
 type criterionDTO struct {
 	ID     string `json:"id"`
 	Text   string `json:"text"`
 	Script string `json:"script"`
 	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
 }
 
 // sprintDTO fixes the JSON field order and formats for sprint output: full hex
@@ -247,11 +249,13 @@ type runbookDTO struct {
 	Steps       []runbookStepDTO `json:"steps"`
 	Runs        []runbookRunDTO  `json:"runs"`
 	Labels      []string         `json:"labels"`
+	Anchors     []anchorDTO      `json:"anchors,omitempty"`
 	Comments    []commentDTO     `json:"comments"`
 	Author      string           `json:"author"`
 	CreatedAt   string           `json:"created_at"`
 	UpdatedAt   string           `json:"updated_at"`
 	ArchivedAt  *string          `json:"archived_at"`
+	Deleted     bool             `json:"deleted,omitempty"`
 }
 
 func newNoteDTO(n model.Note, drift string, atts []attachmentDTO) noteDTO {
@@ -393,7 +397,7 @@ func newTaskDTO(t model.Task, blocks []model.EntityID) taskDTO {
 func criterionDTOs(criteria []model.Criterion) []criterionDTO {
 	out := make([]criterionDTO, len(criteria))
 	for i, c := range criteria {
-		out[i] = criterionDTO{ID: c.ID, Text: c.Text, Script: c.Script, Status: string(c.Status)}
+		out[i] = criterionDTO{ID: c.ID, Text: c.Text, Script: c.Script, Status: string(c.Status), Note: c.Note}
 	}
 	return out
 }
@@ -503,11 +507,17 @@ func newRunbookRunDTO(rb model.Runbook, run model.RunbookRun) runbookRunDTO {
 	}
 }
 
-// newRunbookDTO renders a runbook snapshot into its fixed-order DTO.
+// newRunbookDTO renders a runbook snapshot into its fixed-order DTO. Like a log,
+// a runbook anchor carries no witness, so every anchor's witness is null;
+// anchors and deleted are omitted when empty, mirroring the model's omitempty.
 func newRunbookDTO(rb model.Runbook) runbookDTO {
 	runs := make([]runbookRunDTO, len(rb.Runs))
 	for i, r := range rb.Runs {
 		runs[i] = newRunbookRunDTO(rb, r)
+	}
+	var anchors []anchorDTO
+	for _, a := range rb.Anchors {
+		anchors = append(anchors, anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: nil})
 	}
 	return runbookDTO{
 		ID:          string(rb.ID),
@@ -517,11 +527,13 @@ func newRunbookDTO(rb model.Runbook) runbookDTO {
 		Steps:       runbookStepDTOs(rb.Steps),
 		Runs:        runs,
 		Labels:      render.EmptyNotNil(rb.Labels),
+		Anchors:     anchors,
 		Comments:    commentDTOs(rb.Comments),
 		Author:      string(rb.Author),
 		CreatedAt:   render.RFC3339(rb.CreatedAt),
 		UpdatedAt:   render.RFC3339(rb.UpdatedAt),
 		ArchivedAt:  render.OptTime(rb.ArchivedAt),
+		Deleted:     rb.Deleted,
 	}
 }
 

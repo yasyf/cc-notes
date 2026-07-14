@@ -41,6 +41,18 @@
   "labels": [
     "deploy"
   ],
+  "anchors": [
+    {
+      "kind": "dir",
+      "value": "internal/api",
+      "witness": null
+    },
+    {
+      "kind": "path",
+      "value": "internal/cli/output.go",
+      "witness": null
+    }
+  ],
   "comments": [
     {
       "author": "ada \u003cada@example.com\u003e",
@@ -51,5 +63,6 @@
   "author": "ada \u003cada@example.com\u003e",
   "created_at": "2023-11-14T22:13:20Z",
   "updated_at": "2023-11-14T23:13:20Z",
-  "archived_at": "2023-11-15T03:13:20Z"
+  "archived_at": "2023-11-15T03:13:20Z",
+  "deleted": true
 }

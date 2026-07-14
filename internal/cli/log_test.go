@@ -104,6 +104,40 @@ func TestLogAddWithFirstEntry(t *testing.T) {
 	}
 }
 
+// TestLogAddBodyForms proves "log add" resolves the first entry from a
+// positional BODY, --entry, or - (stdin), leaves the log entry-less when none is
+// given, and rejects two sources.
+func TestLogAddBodyForms(t *testing.T) {
+	dir := initRepo(t)
+
+	pos := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Positional", "first via positional", "--json"))
+	if len(pos.Entries) != 1 || pos.Entries[0].Text != "first via positional" {
+		t.Fatalf("positional entries = %+v, want one 'first via positional'", pos.Entries)
+	}
+
+	flag := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Flagged", "--entry", "first via flag", "--json"))
+	if len(flag.Entries) != 1 || flag.Entries[0].Text != "first via flag" {
+		t.Fatalf("--entry entries = %+v, want one 'first via flag'", flag.Entries)
+	}
+
+	stdout, stderr, err := runCLIIn(t, dir, "first via stdin\n", "log", "add", "Stdin", "-", "--json")
+	if err != nil {
+		t.Fatalf("log add - : %v (stderr %q)", err, stderr)
+	}
+	if got := mustJSON[logJSON](t, stdout).Entries; len(got) != 1 || got[0].Text != "first via stdin" {
+		t.Fatalf("stdin entries = %+v, want one 'first via stdin'", got)
+	}
+
+	bare := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Bare", "--json"))
+	if len(bare.Entries) != 0 {
+		t.Fatalf("bare add entries = %+v, want none", bare.Entries)
+	}
+
+	if _, _, err := runCLI(t, dir, "log", "add", "Conflict", "pos", "--entry", "flag"); err == nil || cli.ExitCode(err) != 2 {
+		t.Fatalf("positional+--entry err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
+	}
+}
+
 func TestLogAppendSources(t *testing.T) {
 	dir := initRepo(t)
 	added := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Incident", "--json"))
