@@ -19,7 +19,6 @@ from captain_hook import (
     SessionEndEvent,
     Tool,
     Warn,
-    nudge,
     on,
 )
 from captain_hook.util.paths import resolve_project_dir
@@ -574,19 +573,15 @@ def sync_at_session_end(evt: SessionEndEvent) -> None:
         do_sync(evt)  # output ignored by the harness; do_sync's silent-vs-warn taxonomy is already correct
 
 
-nudge(
-    "Your native task list is getting large. Native tasks vanish at session end "
-    "and are private to this agent — mirror any that are durable or cross-agent "
-    "into `cc-notes task add` with a `--criterion` (`--backlog` if it's shared work "
-    "anyone can claim). Keep the purely in-session steps as native todos.",
+@on(
+    Event.PostToolUse,
     only_if=[Tool("TaskCreate"), ManyNativeTasks(), CcNotesAvailable()],
-    events=Event.PostToolUse,
     max_fires=NUDGE_MAX_FIRES,
     tests={
         Input(
             tool="TaskCreate",
             tasks=[{"id": str(i), "subject": f"t{i}", "status": "pending"} for i in range(NATIVE_TASK_MIRROR_THRESHOLD)],
-        ): Warn(pattern="cc-notes task add"),
+        ): Warn(pattern="Native tasks vanish at session end"),
         Input(
             tool="TaskCreate",
             tasks=[{"id": "1", "subject": "t1", "status": "in_progress"}],
@@ -594,3 +589,17 @@ nudge(
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
+def nudge_mirror_native_tasks(evt: PostToolUseEvent) -> HookResult | None:
+    """When the native task list grows, mirror its durable/cross-agent items into cc-notes — MCP tools when active."""
+    if mcp_active(evt):
+        return evt.warn(
+            "Your native task list is getting large. Native tasks vanish at session end and are private "
+            "to this agent — mirror any that are durable or cross-agent into the task_add tool with criteria "
+            "(backlog=true if it's shared work anyone can claim). Keep the purely in-session steps as native todos."
+        )
+    return evt.warn(
+        "Your native task list is getting large. Native tasks vanish at session end "
+        "and are private to this agent — mirror any that are durable or cross-agent "
+        "into `cc-notes task add` with a `--criterion` (`--backlog` if it's shared work "
+        "anyone can claim). Keep the purely in-session steps as native todos."
+    )

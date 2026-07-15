@@ -1,7 +1,7 @@
-"""Redirect a verbose comment's rationale to cc-notes.
+"""Redirect a verbose comment's rationale to a cc-notes record.
 
-Rides along with the general pack's verbose-comment deny (declarative warn, so it survives the
-block that a nudge would be skipped behind), pointing durable rationale at a cc-notes record.
+Fires alongside the general pack's verbose-comment deny, pointing durable rationale at a
+cc-notes record — the MCP tools when the server is active, the CLI otherwise.
 """
 
 from __future__ import annotations
@@ -14,23 +14,31 @@ from captain_hook import (
     CustomCondition,
     Event,
     FileFixture,
+    HookResult,
     Input,
+    PreToolUseEvent,
     Tool,
     Warn,
-    hook,
+    on,
 )
 from captain_hook.ast_grep import lang_for_path, touched_comment_blocks
 
-from .common import CcNotesAvailable
+from .common import CcNotesAvailable, mcp_active
 
 if TYPE_CHECKING:
     from captain_hook.ast_grep import CommentBlock
 
 REDIRECT_MESSAGE = (
     "That verbose comment reads like durable rationale. Record it where it outlives the "
-    "file — `cc-notes note add` for a decision or fact, `cc-notes doc add --when "
-    "'<read this when…>'` for living guidance — then keep the comment to one terse pointer "
-    "at most. (No secrets: cc-notes refs sync to the remote.)"
+    "file — `cc-notes note add` for a decision or fact, `cc-notes doc add --when '<read this "
+    "when…>'` for living guidance — then keep the comment to one terse pointer at most. "
+    "(No secrets: cc-notes refs sync to the remote.)"
+)
+REDIRECT_MESSAGE_MCP = (
+    "That verbose comment reads like durable rationale. Record it where it outlives the "
+    "file — the note_add tool for a decision or fact, the doc_add tool with a `when` trigger "
+    "for living guidance — then keep the comment to one terse pointer at most. (No secrets: "
+    "cc-notes refs sync to the remote.)"
 )
 
 # Fixtures for the inline tests — module constants so each physical line stays short.
@@ -67,9 +75,8 @@ class VerboseCommentIntroduced(CustomCondition):
         return any(block.too_long for block in touched(evt))
 
 
-hook(
+@on(
     Event.PreToolUse,
-    REDIRECT_MESSAGE,
     only_if=[Tool("Edit", "Write", "MultiEdit"), VerboseCommentIntroduced(), CcNotesAvailable()],
     tests={
         # A too-long run an edit creates or grows draws the redirect — inline or doc-shaped alike.
@@ -83,3 +90,6 @@ hook(
         Input(file=FileFixture(name="vc_near.py", content=PY_NEAR_FILE), old="x = 1", content="x = 2"): Allow(),
     },
 )
+def nudge_comment_to_cc_notes(evt: PreToolUseEvent) -> HookResult | None:
+    """Point a too-long comment's durable rationale at a cc-notes record — MCP tools when active, else CLI."""
+    return evt.warn(REDIRECT_MESSAGE_MCP if mcp_active(evt) else REDIRECT_MESSAGE)

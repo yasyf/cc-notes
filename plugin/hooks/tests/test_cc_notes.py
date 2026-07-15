@@ -119,6 +119,7 @@ from hooks.workflow import (
     is_cc_notes_write,
     nudge_claim,
     nudge_commit_record,
+    nudge_mirror_native_tasks,
     PUSH_COMMANDS,
     reconcile_after_merge,
     sync_after_push,
@@ -128,6 +129,13 @@ from hooks.workflow import (
     write_targets,
 )
 import hooks.workflow as workflow
+from hooks.redirect import (
+    CC_NOTES_TOOLS,
+    mapped_tool,
+    param_hint,
+    redirect_failed_cc_notes,
+    redirect_target,
+)
 from cc_transcript.command import parse_command_line
 import hooks.bootstrap as bootstrap
 from hooks.bootstrap import ensure_cc_notes_binary, ensure_mount
@@ -332,21 +340,26 @@ def test_render_task_line() -> None:
 
 
 def test_cap_and_render_tasks() -> None:
-    check("cap_and_render_tasks: empty -> []", cap_and_render_tasks([], 7) == [])
+    cli_tail = "run `cc-notes status`"
+    mcp_tail = "orient with the status tool"
+    check("cap_and_render_tasks: empty -> []", cap_and_render_tasks([], 7, cli_tail) == [])
     tasks = [{"id": f"{i:07d}xyz", "status": "open", "title": f"t{i}"} for i in range(10)]
-    capped = cap_and_render_tasks(tasks, 7)
-    check("cap_and_render_tasks: caps to 7 + tail", len(capped) == 8 and capped[-1] == "+3 more — run `cc-notes status`", repr(capped[-1]))
+    capped = cap_and_render_tasks(tasks, 7, cli_tail)
+    check("cap_and_render_tasks: caps to 7 + CLI tail", len(capped) == 8 and capped[-1] == "+3 more — run `cc-notes status`", repr(capped[-1]))
     check("cap_and_render_tasks: renders first 7", capped[0] == "0000000 open t0", repr(capped[0]))
-    exact = cap_and_render_tasks(tasks[:7], 7)
+    # The overflow tail follows the caller's branch: MCP wording when passed.
+    mcp_capped = cap_and_render_tasks(tasks, 7, mcp_tail)
+    check("cap_and_render_tasks: tail is parameterized (MCP wording)", mcp_capped[-1] == "+3 more — orient with the status tool", repr(mcp_capped[-1]))
+    exact = cap_and_render_tasks(tasks[:7], 7, cli_tail)
     check("cap_and_render_tasks: exactly cap -> no tail", len(exact) == 7 and not exact[-1].startswith("+"), repr(exact))
     # cap+1 is the off-by-one boundary: 7 rendered + a "+1 more" tail (8 lines total).
-    over_by_one = cap_and_render_tasks(tasks[:8], 7)
+    over_by_one = cap_and_render_tasks(tasks[:8], 7, cli_tail)
     check(
         "cap_and_render_tasks: cap+1 -> 7 lines + '+1 more' tail",
         len(over_by_one) == 8 and over_by_one[-1] == "+1 more — run `cc-notes status`",
         repr(over_by_one),
     )
-    under = cap_and_render_tasks(tasks[:3], 7)
+    under = cap_and_render_tasks(tasks[:3], 7, cli_tail)
     check("cap_and_render_tasks: under cap -> no tail", len(under) == 3 and not under[-1].startswith("+"))
 
 
@@ -450,17 +463,26 @@ def test_approval_cli_condition() -> None:
         ("cc-notes attachment get a1b2 secret -o /Users/v/.ssh/authorized_keys", False),  # -o glue-free write
         ("cc-notes attachment get a1b2 secret --output=/etc/x", False),  # --output= write
         ("cc-notes note add pwn --attach /etc/passwd", False),  # --attach read
-        ("cc-notes note apply t --apply /tmp/x", False),  # --apply read
+        ("cc-notes note add t --apply /tmp/x", False),  # --apply read
         ("cc-notes doc add d --abort /tmp/x", False),  # --abort remove
         ("cc-notes task validate a1b2 --yes", False),  # runs stored scripts
         ("cc-notes task validate a1b2", False),  # exec verb prompts even without --yes
         ("cc-notes task criterion script a1b2 /tmp/payload.sh", False),  # verb ingests a script path
         ("cc-notes task criterion add a1b2 check --script /tmp/payload.sh", False),  # --script ingest
-        ("cc-notes workflows install --dir ../../../tmp/evil", False),  # out-of-tree write
+        ("cc-notes workflows install --dest ../../../tmp/evil", False),  # out-of-tree write
         ("cc-notes mount --socket /tmp/s", False),  # socket redirection
+        ("cc-notes mount stop", False),  # destructive: unmounts + removes the .notes symlink
+        ("cc-notes mount stop .notes", False),  # same, with an explicit mountpoint
+        ("cc-notes mount shutdown", False),  # destructive: unmounts every cc-notes mount
+        ("cc-notes mcp --dir /some/repo", False),  # mcp --dir selects an arbitrary repo to serve
+        ("cc-notes mcp --dir=/some/repo", False),  # same, glued form
         # safe neighbors — the carve-out is by dangerous flag/verb, not by noun
         ("cc-notes attachment get a1b2 secret", True),  # stdout read of stored bytes
         ("cc-notes task criterion met a1b2 check", True),  # sibling criterion verb, no script
+        ("cc-notes note add x --dir internal/auth", True),  # record-anchor --dir, not a write path
+        ("cc-notes doc add d --body b --dir internal/api", True),  # record-anchor --dir on doc add
+        ("cc-notes log list --dir internal/sync", True),  # record-anchor --dir on log list
+        ("cc-notes mount list", True),  # mount subcommand, no dangerous flag
         ("cc-notes mount --auto", True),  # mount without --socket
     ]
     for command, expected in cases:
@@ -1181,6 +1203,7 @@ def test_float_session_tasks_fires(monkeypatch, tmp_path) -> None:
     }
     evt = mock_event("UserPromptSubmit", prompt="let's start", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no MCP marker -> CLI wording is deterministic
 
     result = float_session_tasks(evt)
     check("float fires: warns", result is not None and result.action is Action.warn, repr(result))
@@ -1227,6 +1250,7 @@ def test_float_session_tasks_dedup_detached_head(monkeypatch, tmp_path) -> None:
     }
     evt = mock_event("UserPromptSubmit", prompt="let's start", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no MCP marker -> deterministic branch
 
     result = float_session_tasks(evt)
     check("float dedup: fires (warn) under detached HEAD, no error", result is not None and result.action is Action.warn, repr(result))
@@ -1281,6 +1305,7 @@ def test_announce_available_fires_once(monkeypatch, tmp_path) -> None:
 
     first = mock_event("UserPromptSubmit", prompt="hello", session_dir=tmp_path)
     monkeypatch.setattr(first.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(first.ctx, "git", lambda *a: None)  # no MCP marker -> CLI wording is deterministic
     result = announce_cc_notes_available(first)
     check("announce fires: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
@@ -2412,11 +2437,12 @@ def test_pack_loads_under_discover_pack() -> None:
         "sync_after_record_write",
         "sync_at_session_end",
         "ensure_cc_notes_binary",
+        "nudge_comment_to_cc_notes",
     }
     missing = expected - names
     check("discover_pack: every cc-notes handler registered", not missing, f"missing handlers: {sorted(missing)}; got={sorted(names)}")
     check(
-        "discover_pack: it registered the full pack (19 named @on handlers + the bare many-native-tasks nudge)",
+        "discover_pack: it registered the full pack (20 named @on handlers + the bare many-native-tasks nudge)",
         len(registered) >= len(expected) + 1,
         f"registered {len(registered)} hooks this pass: {sorted(h.name for h in registered)}",
     )
@@ -2659,6 +2685,211 @@ def test_commit_mcp_wording(monkeypatch, tmp_path) -> None:
     check("commit mcp: keeps the cc-task trailer", result is not None and "cc-task:" in result.message, result.message if result else "")
     check("commit mcp: names the blame and history tools", result is not None and "the blame tool" in result.message and "the history tool" in result.message, result.message if result else "")
     check("commit mcp: routes via the note_add tool, not the CLI", result is not None and "note_add tool" in result.message and "cc-notes note add" not in result.message, result.message if result else "")
+
+
+def test_float_session_tasks_mcp_wording(monkeypatch, tmp_path) -> None:
+    """With the MCP server active, the session floater names the status and task_claim tools, not the CLI.
+
+    Nine branch tasks (> SESSION_TASK_CAP) exercise the "+N more" overflow tail too, which must
+    follow the MCP branch — the status-tool wording, never the CLI `cc-notes status`.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    branch = [{"id": f"branch{i:05d}", "status": "in_progress", "title": f"b{i}", "assignee": "me"} for i in range(9)]
+    mapping = {
+        ("task", "list", "--json"): json.dumps(branch),
+        ("task", "list", "--backlog", "--json"): "[]",
+    }
+    evt = mock_event("UserPromptSubmit", prompt="let's start", session_dir=tmp_path)
+    evt.ctx.s[McpActive].set(McpActive(active=True))
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
+    result = float_session_tasks(evt)
+    check("float mcp: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("float mcp: orients with the status tool", "status tool" in result.message, result.message)
+        check("float mcp: claims with the task_claim tool", "task_claim tool" in result.message, result.message)
+        check("float mcp: '+N more' overflow tail uses the MCP status-tool wording", "+2 more — orient with the status tool" in result.message, result.message)
+        check("float mcp: neither lede nor tail falls back to the CLI `cc-notes status`", "`cc-notes status`" not in result.message, result.message)
+
+
+def test_announce_available_mcp_wording(monkeypatch, tmp_path) -> None:
+    """With the MCP server active, the availability line points at the cc-notes MCP tools, not the CLI tooling line."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = mock_event("UserPromptSubmit", prompt="hi", session_dir=tmp_path)
+    evt.ctx.s[McpActive].set(McpActive(active=True))
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli({("version",): "0.26.0 (x)"}))
+    result = announce_cc_notes_available(evt)
+    check("announce mcp: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("announce mcp: names the active MCP server + task_add tool", "MCP server is active" in result.message and "task_add" in result.message, result.message)
+        check("announce mcp: drops the CLI-only durable-tooling line", "tooling is available" not in result.message, result.message)
+
+
+def test_mirror_native_tasks_mcp_wording(monkeypatch, tmp_path) -> None:
+    """The native-task mirror nudge names the task_add tool under MCP, and the CLI form otherwise.
+
+    The two events take distinct session dirs so the MCP flag set on one never bleeds into the other.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    mcp_evt = mock_tool_event(tool="TaskCreate", event=Event.PostToolUse, session_dir=tmp_path / "mcp")
+    mcp_evt.ctx.s[McpActive].set(McpActive(active=True))
+    result = nudge_mirror_native_tasks(mcp_evt)
+    check("mirror mcp: names the task_add tool with criteria + backlog=true", result is not None and "task_add tool" in result.message and "backlog=true" in result.message, result.message if result else "")
+    check("mirror mcp: drops the CLI `cc-notes task add`", result is not None and "cc-notes task add" not in result.message, result.message if result else "")
+    cli_evt = mock_tool_event(tool="TaskCreate", event=Event.PostToolUse, session_dir=tmp_path / "cli")
+    monkeypatch.setattr(cli_evt.ctx, "git", lambda *a: None)
+    cli = nudge_mirror_native_tasks(cli_evt)
+    check("mirror cli: names `cc-notes task add --criterion` when MCP is off", cli is not None and "cc-notes task add" in cli.message and "--criterion" in cli.message, cli.message if cli else "")
+
+
+def redirect_event(tmp_path, command: str, error: str, *, mcp: bool):
+    """A Bash PostToolUseFailure event carrying a cc-notes failure envelope, MCP session flag optionally set."""
+    evt = mock_tool_event(tool="Bash", event=Event.PostToolUseFailure, command=command, error=error, session_dir=tmp_path)
+    if mcp:
+        evt.ctx.s[McpActive].set(McpActive(active=True))
+    return evt
+
+
+def test_redirect_mapped_tool() -> None:
+    """mapped_tool resolves each command shape to its MCP tool by longest-prefix match; operator/unknown -> None."""
+    check("map: inventory is the full 101-tool set", len(CC_NOTES_TOOLS) == 101, str(len(CC_NOTES_TOOLS)))
+    check("map: runbook add drops the title positional -> runbook_add", mapped_tool(["runbook", "add", "Deploy", "--branch", "main"]) == "runbook_add", repr(mapped_tool(["runbook", "add", "Deploy", "--branch", "main"])))
+    check("map: task criterion met arity -> task_criterion_met", mapped_tool(["task", "criterion", "met", "abc"]) == "task_criterion_met")
+    check("map: runbook run start -> runbook_run_start", mapped_tool(["runbook", "run", "start", "abc"]) == "runbook_run_start")
+    check("map: runbook step add -> runbook_step_add", mapped_tool(["runbook", "step", "add", "abc", "do it"]) == "runbook_step_add")
+    check("map: bare papercut TEXT -> papercut", mapped_tool(["papercut", "the tool broke"]) == "papercut")
+    check("map: papercut list -> papercut_list", mapped_tool(["papercut", "list"]) == "papercut_list")
+    check("map: bare search -> search", mapped_tool(["search", "deploy"]) == "search")
+    check("map: operator gc -> None", mapped_tool(["gc"]) is None)
+    check("map: operator workflows install -> None", mapped_tool(["workflows", "install", "--dest", "x"]) is None)
+    check("map: unknown verb note badverb -> None", mapped_tool(["note", "badverb", "x"]) is None)
+
+
+def test_redirect_param_hints_by_family() -> None:
+    """param_hint keys on the full tool-family prefix, not the trailing verb; each params clause is verified against tools_*.go."""
+    check("hint: task_criterion_met -> task/crit/text/script", param_hint("task_criterion_met") == "key params: task, crit/text, script", param_hint("task_criterion_met"))
+    check("hint: task_criterion_add shares the family clause", param_hint("task_criterion_add") == param_hint("task_criterion_met"))
+    check("hint: runbook_step_add -> id/text/command/placement", "placement (first/last/before/after)" in param_hint("runbook_step_add"), param_hint("runbook_step_add"))
+    check("hint: runbook_run_done -> id/step/note", param_hint("runbook_run_done") == "key params: id, step, note", param_hint("runbook_run_done"))
+    check("hint: task_comment -> id/body", param_hint("task_comment") == "key params: id, body", param_hint("task_comment"))
+    check("hint: runbook_comment -> id/body, not the runbook_run prefix", param_hint("runbook_comment") == "key params: id, body", param_hint("runbook_comment"))
+    check("hint: note_add -> title/body/anchors/labels", "anchors (commits/paths/dirs/branches)" in param_hint("note_add") and "body" in param_hint("note_add"), param_hint("note_add"))
+    check("hint: note_edit -> id plus fields", param_hint("note_edit").startswith("key params: id plus"), param_hint("note_edit"))
+    check("hint: status (no family) -> default", param_hint("status") == "named params in place of the CLI flags", param_hint("status"))
+
+
+def test_redirect_target_basename_and_wrappers(tmp_path) -> None:
+    """redirect_target matches the executable by basename, strips env/command wrappers, and refuses non-plain shells."""
+    err = "Exit code 2\nunknown flag: --branch"
+
+    def tgt(cmd: str):
+        return redirect_target(redirect_event(tmp_path, cmd, err, mcp=True))
+
+    check("target: absolute-path head matches by basename", tgt("/opt/homebrew/bin/cc-notes runbook add x --attach y") == "runbook_add", repr(tgt("/opt/homebrew/bin/cc-notes runbook add x --attach y")))
+    check("target: ./cc-notes matches by basename", tgt("./cc-notes runbook add x --attach y") == "runbook_add")
+    check("target: ccn shorthand maps", tgt("ccn task criterion met abc def") == "task_criterion_met")
+    check("target: env wrapper is stripped", tgt("env cc-notes runbook add x --attach y") == "runbook_add")
+    check("target: env VAR=val assignments are stripped", tgt("env FOO=bar cc-notes runbook add x") == "runbook_add")
+    check("target: $(which ...) head stays unmapped", tgt("$(which cc-notes) runbook add x") is None)
+    check("target: an unterminated quote (malformed shell) stays unmapped", tgt('cc-notes note add "oops') is None)
+    check("target: a non-cc-notes binary stays unmapped", tgt("git push origin main") is None)
+
+
+def test_redirect_fires_on_runbook_add_usage_error(monkeypatch, tmp_path) -> None:
+    """The original failure shape: `runbook add` exits 2 on an unknown flag; under MCP it names runbook_add."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    err = "Exit code 2\nError: unknown flag: --branch\nUsage:\n  cc-notes runbook add [flags]"
+    result = redirect_failed_cc_notes(redirect_event(tmp_path, 'cc-notes runbook add "Deploy" --attach x', err, mcp=True))
+    check("redirect: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("redirect: names the runbook_add tool", "runbook_add" in result.message, result.message)
+        check("redirect: params hint mentions anchors + body", "anchors" in result.message and "body" in result.message, result.message)
+        check("redirect: drops the causal 'no flag or arity to get wrong' claim", "arity to get wrong" not in result.message, result.message)
+
+
+def test_redirect_fires_on_criterion_arity_error(monkeypatch, tmp_path) -> None:
+    """A `task criterion met` arity error (exit 2) under MCP redirects to task_criterion_met with the family param hint."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    err = "Exit code 2\nError: accepts 2 arg(s), received 1 (TASK CRIT)"
+    result = redirect_failed_cc_notes(redirect_event(tmp_path, "cc-notes task criterion met abc1234", err, mcp=True))
+    check("redirect arity: names task_criterion_met", result is not None and "task_criterion_met" in result.message, result.message if result else "")
+    check("redirect arity: param hint is the criterion family clause", result is not None and "task, crit/text, script" in result.message, result.message if result else "")
+
+
+def test_redirect_silent_when_mcp_inactive(monkeypatch, tmp_path) -> None:
+    """The same exit-2 shape stays silent when the MCP server is not active — there is no tool to steer to."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    err = "Exit code 2\nError: unknown flag: --branch"
+    evt = redirect_event(tmp_path, 'cc-notes runbook add "Deploy" --attach x', err, mcp=False)
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no live marker either
+    check("redirect: silent when mcp inactive", redirect_failed_cc_notes(evt) is None)
+
+
+def test_redirect_silent_on_operator_and_no_exit_header(monkeypatch, tmp_path) -> None:
+    """An operator command's exit-2 failure and a failure with no `Exit code` header never redirect, even under MCP."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    gc = redirect_event(tmp_path, "cc-notes gc", "Exit code 2\nunknown flag: --oops", mcp=True)
+    check("redirect: operator gc exit-2 stays silent (maps to no tool)", redirect_failed_cc_notes(gc) is None)
+    blocked = redirect_event(tmp_path, "cc-notes runbook add x --attach y", "BLOCKED: a guard tripped", mcp=True)
+    check("redirect: a failure with no `Exit code` header stays silent", redirect_failed_cc_notes(blocked) is None)
+
+
+def test_redirect_dedup_per_shape(monkeypatch, tmp_path) -> None:
+    """The redirect fires once per tool shape per session; a second failure of the same shape is silent."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    err = "Exit code 2\nunknown flag: --branch"
+    first = redirect_failed_cc_notes(redirect_event(tmp_path, 'cc-notes runbook add "Deploy" --attach x', err, mcp=True))
+    check("redirect dedup: first fire warns", first is not None and first.action is Action.warn, repr(first))
+    again = redirect_failed_cc_notes(redirect_event(tmp_path, 'cc-notes runbook add "Other" --attach y', err, mcp=True))
+    check("redirect dedup: second same-shape fire is silent", again is None, repr(again))
+
+
+def test_redirect_target_reads_bash_command(tmp_path) -> None:
+    """redirect_target parses the exit code from evt.error and the tool from the Bash command."""
+    err = "Exit code 2\nunknown flag: --branch"
+    hit = redirect_event(tmp_path, "cc-notes runbook edit abc --add-branch main", err, mcp=True)
+    check("target: runbook edit exit-2 -> runbook_edit", redirect_target(hit) == "runbook_edit", repr(redirect_target(hit)))
+    exit1 = redirect_event(tmp_path, "cc-notes note show abc", "Exit code 1\nnote not found", mcp=True)
+    check("target: a runtime exit-1 is not a usage error -> None", redirect_target(exit1) is None)
+
+
+def test_redirect_fires_through_capt_hook_dispatch(monkeypatch, tmp_path) -> None:
+    """DISPATCH-LEVEL proof (finding 11): the original failure shape as a real PostToolUseFailure envelope,
+    routed through capt-hook's own dispatch (not a direct handler call), fires the redirect nudge. Reverting
+    the PostToolUseFailure registration makes dispatch skip the hook entirely, turning this red."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    from captain_hook.dispatch import dispatch
+
+    err = "Exit code 2\nError: unknown flag: --branch\nUsage:\n  cc-notes runbook add [flags]"
+    evt = mock_tool_event(
+        tool="Bash",
+        event=Event.PostToolUseFailure,
+        command='cc-notes runbook add "T" --attach x',
+        error=err,
+        session_dir=tmp_path,
+    )
+    evt.ctx.s[McpActive].set(McpActive(active=True))
+    out = dispatch(Event.PostToolUseFailure, evt, tmp_path)
+    text = json.dumps(out) if out is not None else ""
+    check("dispatch: PostToolUseFailure routes to redirect and fires with runbook_add", "runbook_add" in text, text)
+
+
+def test_comment_redirect_branches_on_mcp(monkeypatch, tmp_path) -> None:
+    """The comment-redirect nudge (now an @on handler) names the MCP tools when the server is active, the CLI otherwise."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    from hooks.comments import nudge_comment_to_cc_notes
+
+    mcp_evt = mock_tool_event(tool="Write", event=Event.PreToolUse, file="x.py", content="# c\n", session_dir=tmp_path)
+    mcp_evt.ctx.s[McpActive].set(McpActive(active=True))
+    mcp_result = nudge_comment_to_cc_notes(mcp_evt)
+    check("comment mcp: warns", mcp_result is not None and mcp_result.action is Action.warn, repr(mcp_result))
+    check("comment mcp: names the note_add and doc_add tools", mcp_result is not None and "note_add tool" in mcp_result.message and "doc_add tool" in mcp_result.message, mcp_result.message if mcp_result else "")
+    check("comment mcp: drops the CLI `cc-notes note add`", mcp_result is not None and "cc-notes note add" not in mcp_result.message, mcp_result.message if mcp_result else "")
+
+    cli_evt = mock_tool_event(tool="Write", event=Event.PreToolUse, file="x.py", content="# c\n", session_dir=tmp_path / "cli")
+    monkeypatch.setattr(cli_evt.ctx, "git", lambda *a: None)  # no live marker -> CLI wording is deterministic
+    cli_result = nudge_comment_to_cc_notes(cli_evt)
+    check("comment cli: names `cc-notes note add` and `cc-notes doc add --when`", cli_result is not None and "cc-notes note add" in cli_result.message and "cc-notes doc add --when" in cli_result.message, cli_result.message if cli_result else "")
+    check("comment cli: does not name the MCP note_add tool", cli_result is not None and "note_add tool" not in cli_result.message, cli_result.message if cli_result else "")
 
 
 def test_evidence_router_mcp_wording(monkeypatch, tmp_path) -> None:

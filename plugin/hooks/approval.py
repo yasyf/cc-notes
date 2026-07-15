@@ -54,10 +54,19 @@ UNSAFE_EXPANSION = re.compile(r"[`${]|<\(|>\(")
 
 # CLI long flags carrying a path; `--output` also lands as the `-o` shorthand (below).
 DANGEROUS_CLI_FLAGS = frozenset(
-    {"--output", "--attach", "--script", "--apply", "--abort", "--dir", "--socket"}
+    {"--output", "--attach", "--script", "--apply", "--abort", "--dest", "--socket"}
 )
-# Subcommands taking the script/path as a positional — no flag token to key on.
-DANGEROUS_CLI_VERBS = (("task", "validate"), ("task", "criterion", "script"))
+# Subcommands that take a script/path positional or are themselves destructive (a mount
+# `stop`/`shutdown` unmounts and removes the `.notes` symlink) — no flag token to key on.
+DANGEROUS_CLI_VERBS = (
+    ("task", "validate"),
+    ("task", "criterion", "script"),
+    ("mount", "stop"),
+    ("mount", "shutdown"),
+)
+# `--dir` is a repo-relative record anchor (safe) on note/doc/log/runbook, but the `mcp`
+# command's `--dir` selects an arbitrary repo to serve — so its danger is command-scoped.
+DANGEROUS_CLI_FLAGS_BY_VERB = {("mcp",): frozenset({"--dir"})}
 
 # `task_validate` executes stored content and has no path param, so it is named; every
 # other risk (incl. the required `output` of `attachment_get`) is a path-bearing param.
@@ -93,9 +102,12 @@ class CcNotesMcp(CustomCondition):
 
 
 def has_dangerous_cli(args: list[str]) -> bool:
-    """Report whether a cc-notes argv reads/writes an arbitrary path or runs a script."""
+    """Report whether a cc-notes argv reads/writes an arbitrary path, runs a script, or unmounts."""
     for verb in DANGEROUS_CLI_VERBS:
         if tuple(args[: len(verb)]) == verb:
+            return True
+    for verb, flags in DANGEROUS_CLI_FLAGS_BY_VERB.items():
+        if tuple(args[: len(verb)]) == verb and any(arg.split("=", 1)[0] in flags for arg in args):
             return True
     for arg in args:
         if arg.startswith("-o") and not arg.startswith("--"):  # -o / -o=P / -oP glue
@@ -210,15 +222,24 @@ approve(
         Input(command="cc-notes attachment get a1b2 secret --output=/etc/x"): Ask(),  # --output write
         Input(command="cc-notes note add pwn --attach /etc/passwd"): Ask(),  # --attach read
         Input(command="cc-notes log append a1b2 --attach /Users/v/.ssh/id_rsa"): Ask(),  # --attach read
-        Input(command="cc-notes note apply t --apply /tmp/x"): Ask(),  # --apply read
+        Input(command="cc-notes note add t --apply /tmp/x"): Ask(),  # --apply read
         Input(command="cc-notes doc add d --abort /tmp/x"): Ask(),  # --abort remove
         Input(command="cc-notes task validate a1b2 --yes"): Ask(),  # runs stored scripts
         Input(command="cc-notes task criterion script a1b2 /tmp/payload.sh"): Ask(),  # ingests a script path
         Input(command="cc-notes task criterion add a1b2 check --script /tmp/payload.sh"): Ask(),  # --script ingest
-        Input(command="cc-notes workflows install --dir ../../../tmp/evil"): Ask(),  # out-of-tree write
+        Input(command="cc-notes workflows install --dest ../../../tmp/evil"): Ask(),  # out-of-tree write
         Input(command="cc-notes mount --socket /tmp/s"): Ask(),  # socket redirection
+        Input(command="cc-notes mount stop"): Ask(),  # destructive: unmounts + removes the .notes symlink
+        Input(command="cc-notes mount stop .notes"): Ask(),  # same, with an explicit mountpoint
+        Input(command="cc-notes mount shutdown"): Ask(),  # destructive: unmounts every cc-notes mount
+        Input(command="cc-notes mcp --dir /some/repo"): Ask(),  # mcp --dir selects an arbitrary repo to serve
+        Input(command="cc-notes mcp --dir=/some/repo"): Ask(),  # same, glued form
         Input(command="cc-notes attachment get a1b2 secret"): Allow(explicit=True),  # stdout read of stored bytes is safe
         Input(command="cc-notes task validate a1b2"): Ask(),  # exec verb prompts with or without --yes
+        Input(command='cc-notes note add x --dir internal/auth'): Allow(explicit=True),  # record-anchor --dir, not a write
+        Input(command='cc-notes doc add d --body b --dir internal/api'): Allow(explicit=True),  # record-anchor --dir on doc
+        Input(command='cc-notes log list --dir internal/sync'): Allow(explicit=True),  # record-anchor --dir on log list
+        Input(command="cc-notes mount list"): Allow(explicit=True),  # mount subcommand, no dangerous flag
         Input(tool="mcp__srv__Bash", tool_input={"command": "cc-notes status"}): Ask(),  # MCP Bash veto
     },
 )

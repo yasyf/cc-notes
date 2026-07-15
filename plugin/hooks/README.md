@@ -106,7 +106,7 @@ ODB — the ones that read or write an arbitrary filesystem path, or run a store
 script. Auto-approving those would let a prompt-injected agent write any path,
 read any secret into its context, or execute code with no human in the loop, so
 they always prompt: `attachment get -o/--output`, `--attach`, `--apply`,
-`--abort`, `--script`, `workflows install --dir`, `mount --socket`,
+`--abort`, `--script`, `workflows install --dest`, `mount --socket`,
 `task validate`, and `task criterion script` — and the matching MCP tools
 (`task_validate`, plus any tool call carrying an `attach`, `output`, `script`,
 or `file` path). Plain `note`/`task`/`doc`/`log` records, `status`, `list`,

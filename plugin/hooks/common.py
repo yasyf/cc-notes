@@ -207,12 +207,14 @@ def dedup_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int) -> list[str]:
+def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int, more_tail: str) -> list[str]:
+    # more_tail follows the caller's branch (MCP tool vs CLI wording) so the "+N more"
+    # overflow line steers to the same surface as the lede, not always `cc-notes status`.
     if not tasks:
         return []
     lines = [render_task_line(t) for t in tasks[:cap]]
     if (extra := len(tasks) - cap) > 0:
-        lines.append(f"+{extra} more — run `cc-notes status`")
+        lines.append(f"+{extra} more — {more_tail}")
     return lines
 
 

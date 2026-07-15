@@ -5,6 +5,12 @@ papercut. Every command takes `-h`/`--help`. Every note, doc, log, papercut, tas
 runbook, sync, and reconcile command takes `--json` for a machine-readable record; without it,
 mutations echo a lean tab-separated line and listings print one lean line per entity.
 
+Each command block opens with a machine-readable `MCP:` line — the MCP tool that carries the
+command, with the tool's property names in parentheses, or `MCP: —` plus the reason a command is
+CLI-only. Where the cc-notes MCP server is live (the Claude Code plugin launches it), call the
+tool instead of shelling out: a tool result is the command's `--json`, and the properties map
+one-to-one onto the flags documented below.
+
 Sprints and projects are an optional planning layer over tasks — group work into a time-boxed
 sprint or a long-lived project without touching the canonical task and note flow. A task that
 joins neither behaves exactly as a task does today. Runbooks are the layer's third noun: a
@@ -87,6 +93,8 @@ output uses full 40-hex ids, RFC3339 UTC timestamps, `null` for unset optionals,
 
 ### `cc-notes init`
 
+MCP: — (CLI-only: one-time repo adoption, a human-operator step)
+
 Set up cc-notes in a repository — run once per repo. Installs the cc-notes fetch and push
 refspecs, then does everything the repo is ready for. After init, plain `git push`
 publishes the cc-notes refs alongside your branches; a plain `git fetch`/`git pull` stages
@@ -122,6 +130,8 @@ registered: cc-notes plugin in .claude/settings.json
 
 ### `cc-notes sync`
 
+MCP: sync (remote, full)
+
 Converge `refs/cc-notes/*` with a remote and push. Fetches, union-merges divergent event logs
 (never clobbers), and pushes, looping until stable. The lean report prints only nonzero verbs
 followed by the round count.
@@ -141,6 +151,8 @@ rounds: 1
 JSON shape: `{"created":int,"fast_forwarded":int,"merged":int,"pushed":int,"rounds":int}`.
 
 ### `cc-notes status` (alias `cc-notes board`)
+
+MCP: status
 
 A sectioned, read-only view to orient before picking up work:
 
@@ -168,6 +180,8 @@ notes: 14 total, 3 need review
 ```
 
 ### `cc-notes reconcile`
+
+MCP: reconcile (into, from, force, dry_run)
 
 Carry merged branches' open and in-progress tasks onto a target branch by setting their
 `Branch` to the target. After a git or jj merge, a branch's still-open tasks keep their old
@@ -209,6 +223,8 @@ JSON shape:
 
 ### `cc-notes relevant PATH`
 
+MCP: relevant (path, branch, base, limit, attached, worktree)
+
 Surface the notes most relevant to a file an agent is about to edit, ranked by a summed score with
 the matched reasons attached. It reads the live note set, scores every note against `PATH`, the
 current branch, and `HEAD`, drops zero-score notes, and orders by score descending, then `updated`
@@ -216,13 +232,14 @@ descending, then id ascending. The lean line is the note line followed by a tab,
 reasons as a comma-separated list, and — when the note has a verdict — a final tab and the drift
 verdict.
 
-Docs and logs rank in the same pass: `relevant` scores every doc and log against `PATH` by the
+Docs, logs, and runbooks rank in the same pass: `relevant` scores each against `PATH` by the
 same path, directory, and branch anchor signals as a note and floats the matches inline. A doc line
 carries its free-text `when` trigger as the final lean field, then a bracketed drift verdict (e.g.
 `[drifted]`) when the doc is not fresh, and a trailing `doc show <short-id>` hint in place of the
-long body. A log line carries no `when` and no drift verdict — a log never drifts — and ends with a
-`log show <short-id>` hint in place of its entries. The `--json` form tags each entry with a `kind`
-discriminator (`note`, `doc`, or `log`) and nests the matching entity under that key.
+long body. A log or runbook line carries no `when` and no drift verdict — neither ever drifts — and
+ends with a `log show <short-id>` or `runbook show <short-id>` hint in place of its content. The
+`--json` form tags each entry with a `kind` discriminator (`note`, `doc`, `log`, or `runbook`) and
+nests the matching entity under that key.
 
 | Signal | Reason | Fires when |
 |--------|--------|------------|
@@ -242,7 +259,7 @@ one.
 |------|---------|---------|
 | `--branch <branch>` | current branch, resolved jj-aware | Branch to weigh against; a detached HEAD with no resolvable branch skips branch signals |
 | `--base <ref>` | remote default branch, else `main` | Merge-base reference for the cross-author range |
-| `--limit <N>` | `10` | Maximum results; negative is unlimited |
+| `--limit <N>` | `10` | Maximum results; 0 = all |
 | `--attached` | off | Keep only notes anchored to `PATH` or a parent directory (a `path` or `dir` reason) |
 | `--worktree` | off | Drift-check path anchors against the on-disk working-tree blob, surfacing uncommitted edits |
 | `--json` | off | Emit JSON |
@@ -253,13 +270,15 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes	path,branch	DRIFTE
 ```
 
 JSON shape:
-`[{"kind":string,"note":{<note shape>},"doc":{<doc shape>},"log":{<log shape>},"score":int,"reasons":[string,…]}]`.
-`kind` is `note`, `doc`, or `log` and selects which of `note`/`doc`/`log` is present (the others are
+`[{"kind":string,"note":{<note shape>},"doc":{<doc shape>},"log":{<log shape>},"runbook":{<runbook shape>},"score":int,"reasons":[string,…]}]`.
+`kind` is `note`, `doc`, `log`, or `runbook` and selects which entity key is present (the others are
 omitted); the present value is the full entity, carrying its `drift` verdict for a note or doc, and,
-for a doc, its `when` trigger (a log carries neither — it never drifts). `score` is the summed signal
-weight; `reasons` are the matched reason labels in fixed priority order.
+for a doc, its `when` trigger (a log or runbook carries neither — they never drift). `score` is the
+summed signal weight; `reasons` are the matched reason labels in fixed priority order.
 
 ### `cc-notes blame <sha>`
+
+MCP: blame (sha)
 
 List the task(s) a commit implemented, resolved from the commit's `cc-task:` trailer and from
 task commit-anchors. This is the reverse of the commit list `task show` prints.
@@ -275,6 +294,8 @@ d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 
 ### `cc-notes show <id>`
 
+MCP: show (id)
+
 Show any entity by id — note, doc, log, task, sprint, project, or runbook. The id resolves across every
 kind, and the output is exactly what the entity's noun-scoped `show` prints. The id-addressed
 read verbs are kind-agnostic: `show`, `history`, and `compact` take any entity id with no noun
@@ -285,6 +306,8 @@ read verbs are kind-agnostic: `show`, `history`, and `compact` take any entity i
 | `--json` | off | Emit JSON |
 
 ### `cc-notes history <id>`
+
+MCP: history (id, reverse, limit)
 
 Show an entity's edit trail: one entry per commit in the chain, with the fields that commit
 changed. The id resolves across every kind. Each entry computes its delta by folding the chain
@@ -311,7 +334,57 @@ $ cc-notes history 0914cfb
     title: ship the thing
 ```
 
+### `cc-notes search QUERY`
+
+MCP: search (query, labels, limit, path, commit, dir, branch)
+
+One ranked search fanned out across every note, doc, log, and runbook, merged kind-tagged — the
+kind-agnostic sibling of the per-noun `search` commands, which remain for a single-kind search
+with that kind's full filter set (e.g. `--author`). Each lean line is the entity's own lean line
+prefixed with a kind tag column.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--label <label>` | none | Require label; repeatable, ANDed |
+| `--limit <N>` | `20` | Maximum results; 0 = all |
+| `--path <path>` | none | Require path anchor |
+| `--commit <sha>` | none | Require commit anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes search "deploy"
+runbook	2b808c6	active	Deploy hotfix
+```
+
+JSON shape:
+`[{"kind":string,"note":{<note shape>},"doc":{<doc shape>},"log":{<log shape>},"runbook":{<runbook shape>}}]`.
+`kind` selects which entity key is present per hit; the others are omitted.
+
+### `cc-notes attachment get ID NAME`
+
+MCP: attachment_get (id, name, output)
+
+Stream an attachment's bytes from the local git-lfs store to stdout, or write them to a file with
+`-o PATH`. `ID` is the owning note, doc, or log; `NAME` is the attachment's per-entity name, as
+listed by `show`. Content not yet downloaded arrives with the next `cc-notes sync`. Over MCP the
+`output` path is required — binary never flows through the tool result.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--output <path>` / `-o` | stdout | Write to `PATH` instead of stdout |
+
+### `cc-notes attachment path ID NAME`
+
+MCP: attachment_path (id, name)
+
+Print the attachment's absolute object path in the local store, for a zero-copy read with your
+file tools. Takes no flags.
+
 ### `cc-notes compact <id>`
+
+MCP: — (CLI-only: op-log checkpoint maintenance, an operator task)
 
 Collapse any entity's op-log — note, doc, log, task, sprint, project, or runbook — into a
 checkpoint so future folds are cheap; the id and the full folded state are preserved and objects
@@ -322,6 +395,8 @@ stay in the ODB.
 | `--json` | off | Emit JSON |
 
 ### `cc-notes gc`
+
+MCP: — (CLI-only: destructive object-store maintenance)
 
 Local maintenance. By default it tidies local state; with `--prune-remote` it physically deletes
 tombstoned entity refs on the remote via `git push --delete`. Pruning is best-effort and
@@ -334,6 +409,8 @@ normal sync.
 | `--json` | off | Emit JSON |
 
 ### `cc-notes mount [MOUNTPOINT]`
+
+MCP: — (CLI-only: local FUSE mount lifecycle, not a durable-record op)
 
 Mount the repository's notes and tasks as an editable filesystem. Notes render as Markdown under
 `/notes`; tasks, sprints, and projects render as JSON under `/tasks`, `/sprints`, and
@@ -348,35 +425,44 @@ is served at a managed per-repo default under `~/.cc-notes/mnt` and presented in
 `.notes` symlink into it (`cd .notes` to browse); the symlink is kept out of git via
 `.git/info/exclude`, never the tracked `.gitignore`, so the live mount stays out of the working
 tree. Pass an explicit `MOUNTPOINT` to serve there instead — it is created if missing and no
-symlink is made. Tear down with `mount --stop .notes` (or `--stop DIR`) or plain `umount`; `--stop`
-and `--shutdown` remove the `.notes` symlink they created. The holder-management modes (`--list`,
-`--shutdown`, `--stop`) are mutually exclusive with each other, with a `MOUNTPOINT`, and with
-`--foreground`.
+symlink is made. Tear down with `mount stop .notes` (or `mount stop DIR`) or plain `umount`;
+`stop` and `shutdown` remove the `.notes` symlink they created. Holder management is three
+subcommands, each of which acts and exits:
+
+| Subcommand | Meaning |
+|------------|---------|
+| `mount list` | List the mounts the holder serves |
+| `mount stop DIR` | Unmount the mount at `DIR` (or the `.notes` symlink) |
+| `mount shutdown` | Unmount everything and stop the mount holder |
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--foreground` / `-f` | off | Serve in the foreground and unmount on Ctrl-C (bypasses the holder) |
-| `--stop <DIR>` | none | Unmount the mount at `DIR` (or the `.notes` symlink), then exit |
-| `--shutdown` | off | Unmount everything and stop the mount holder, then exit |
-| `--list` | off | List the mounts the holder serves, then exit |
+| `--auto` | off | Session-start ensure-mount: mount only if the repo opted in (`cc-notes.autoMount`) and the binary can host FUSE — self-gating, best-effort, quiet |
+| `--socket <path>` | the shared fusekit-holder cask socket | Mount-holder unix socket path; persistent, so the subcommands take it too |
 
 ```console
 $ cc-notes mount
 /abs/path/to/repo/.notes
-$ cc-notes mount --stop .notes
+$ cc-notes mount stop .notes
 cc-notes: unmounted /Users/me/.cc-notes/mnt/repo-1a2b3c4d
 ```
 
 ### `cc-notes viz`
 
+MCP: — (CLI-only: launches a local visualization web server)
+
 Serve a live localhost web view of branch flow and note/task/doc lifecycles (`--port`, `--no-open`, `--poll`); it is a human-facing visualization, so tell the user about it or open it for them rather than running it headless in a session.
 
 ### `cc-notes mcp [--dir <path>]`
 
+MCP: — (CLI-only: the MCP server's own launch command)
+
 Run the stdio [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the
-command surface as 76 tools — one `noun_verb` tool per command (`doc_add`, `note_edit`,
-`task_claim`, the sprint and project lifecycle verbs, and a single top-level `history` that
-resolves across kinds). Each tool drives the CLI in-process, so a call validates and behaves
+agent-facing command surface as MCP tools — one `noun_verb` tool per command (`doc_add`,
+`note_edit`, `task_claim`, `runbook_run_done`, …), with the kind-agnostic `show`, `history`, and
+`search` standing in for per-kind wrappers. Every command block in this reference names its tool
+on the `MCP:` line. Each tool drives the CLI in-process, so a call validates and behaves
 exactly like the command; the result carries the command's `--json` as its primary content block,
 with any stderr notices as a separate block. The Claude Code plugin launches this for you (see the
 README's MCP-server section); run it by hand only to drive cc-notes from another MCP client.
@@ -387,12 +473,15 @@ README's MCP-server section); run it by hand only to drive cc-notes from another
 
 Two tools depart from their lean CLI shape: `attachment_get` requires an `output` file path and
 writes the bytes there (never inline), and `task_validate` takes a `yes` boolean in place of the
-interactive confirmation. Excluded from the tool surface are the host- and setup-facing commands —
-`init`, `mount`, `gc`/`compact`, `viz`, `version`, the skills/hooks/workflows installers, and the
-`--checkout`/`--apply` file mode, since an agent passes a long body through the `body` tool
-parameter instead.
+interactive confirmation. Free text is passed directly — the literal `-` (the CLI's stdin form) is
+rejected over MCP. Excluded from the tool surface are the operator-only commands — `init`, `mcp`
+itself, `mount`, `gc`/`compact`, `viz`, `version`, and the skills/hooks/workflows installers — and
+the CLI-only `--checkout`/`--apply`/`--abort` file mode, since an agent passes a long body through
+the `body` tool parameter instead.
 
 ### `cc-notes version`
+
+MCP: — (CLI-only: prints the binary version)
 
 Print the cc-notes version.
 
@@ -408,6 +497,8 @@ Wire the Claude Code integration into a repository. Most repos get all of this f
 
 ### `cc-notes skills install`
 
+MCP: — (CLI-only: installs the plugin skill into the checkout)
+
 Register the cc-notes plugin in `.claude/settings.json` — shallow-merge the cc-notes marketplace
 (`yasyf/cc-notes`) and the `cc-notes@cc-notes` plugin into the committed settings, preserving
 every other key. The `using-cc-notes` skill then loads from the plugin (tracking the repository)
@@ -415,6 +506,8 @@ on folder-trust instead of being copied into `.claude/skills/`. Pass `--global` 
 plugin in the user-global `~/.claude/settings.json` instead of the repo.
 
 ### `cc-notes hooks install`
+
+MCP: — (CLI-only: installs Claude Code hooks into the checkout)
 
 Enable the cc-notes capt-hook pack. Runs `uvx capt-hook pack add
 github:yasyf/cc-notes@latest`, which caches the pack tarball and records `[packs.cc-notes]` in
@@ -426,6 +519,8 @@ carries pack fixes without re-running install. The pack manifest lives at
 
 ### `cc-notes workflows install`
 
+MCP: — (CLI-only: installs workflow templates into the checkout)
+
 Install the cc-notes CI workflow — a GitHub Actions job that runs `cc-notes reconcile` against
 the default branch on every push to it, using the release binary. This is what `cc-notes init`
 writes when `.github/` exists (or `cc-notes init --ci` forces); install it standalone here.
@@ -433,7 +528,7 @@ Requires cc-notes >= 0.3.0.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--dir <path>` | `.github/workflows` | Destination directory, relative to the repo root |
+| `--dest <path>` | `.github/workflows` | Destination directory, relative to the repo root |
 
 ## Task commands
 
@@ -442,7 +537,9 @@ Tasks are global, addressed by id. Id-addressed commands take no `--branch` qual
 on `add`/`move`/`edit` — and on `start`, where `--branch` names the branch the claimed task
 lands on.
 
-### `cc-notes task add TITLE`
+### `cc-notes task add TITLE [BODY]`
+
+MCP: task_add (title, body, type, priority, labels, criteria, no_validation_criteria, parent, sprint, project, blocked_by, branch, backlog)
 
 Create a task. `Branch` defaults to your current branch; `--backlog` sets it to `""`; `--branch`
 sets it explicitly. The default resolves jj-aware on a detached HEAD; when no branch resolves,
@@ -454,7 +551,7 @@ explicit empty `--branch=` is a usage error, rejected before anything is written
 | `--priority <0-3>` | `2` | Priority; 0 is most urgent |
 | `--type <type>` | `task` | One of `task`, `bug`, `epic`, `question` |
 | `--label <label>` | none | Label; repeatable |
-| `--body <text>` | empty | Description; `-` reads stdin |
+| `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
 | `--criterion <text>` | none | Acceptance criterion; repeatable, required by default (see below) |
 | `--no-validation-criteria` | off | Create with no criteria; mutually exclusive with `--criterion` |
 | `--parent <id>` | none | Parent task id |
@@ -487,6 +584,8 @@ $ cc-notes task add "Rotate signing keys quarterly" --backlog --no-validation-cr
 
 ### `cc-notes task list`
 
+MCP: task_list (status, all, labels, assignee, type, branch, all_branches, backlog, include_archived)
+
 List tasks. Defaults to open and in-progress on your current branch. `--all-branches` and
 `--backlog` group output by branch. The current-branch default resolves jj-aware on a detached
 HEAD; when no branch resolves, the listing degrades to the backlog view instead of erroring.
@@ -511,6 +610,8 @@ d82c087	in_progress	P1	ada <ada@example.com>	Add retry backoff to the API client
 
 ### `cc-notes task ready`
 
+MCP: task_ready (branch, all_branches, backlog)
+
 List open, unassigned, unblocked tasks — the pickup queue. The current-branch default resolves
 and degrades exactly like `task list`: jj-aware on a detached HEAD, falling back to the backlog
 view when no branch resolves.
@@ -523,6 +624,8 @@ view when no branch resolves.
 | `--json` | off | Emit JSON |
 
 ### `cc-notes task backlog`
+
+MCP: task_backlog
 
 Shorthand for `task list --backlog --status open` — the open, branch-less queue.
 
@@ -537,6 +640,8 @@ $ cc-notes task backlog
 
 ### `cc-notes task show ID`
 
+MCP: task_show (id)
+
 Show one task: a fixed-order header block (id, branch, title, type, status, priority, assignee,
 labels, blocked_by, blocks, parent, created, updated, started, closed), the description after a
 blank line, each comment as a `-- <author> <rfc3339>` block, then the list of commits that
@@ -547,6 +652,8 @@ implemented it.
 | `--json` | off | Emit JSON |
 
 ### `cc-notes task start ID`
+
+MCP: task_start (id, branch)
 
 Claim the task (deterministic first-wins) and, once the claim is won, set its `Branch` to your
 current branch, opening a lease. The one-step "I'm taking this and pulling it onto my branch" — a
@@ -568,6 +675,8 @@ $ cc-notes task start 5d3e9c1
 
 ### `cc-notes task claim ID`
 
+MCP: task_claim (id, steal, sync)
+
 Claim an open, unassigned task and move it to in-progress, opening a lease. The fold's claim rule
 resolves a race deterministically: first-writer wins on every replica.
 
@@ -584,6 +693,8 @@ d82c087	in_progress	P1	ada <ada@example.com>	Add retry backoff to the API client
 
 ### `cc-notes task renew ID`
 
+MCP: task_renew (id)
+
 Refresh the lease heartbeat on a task you hold. Use it during long silent stretches so the claim
 does not look stale.
 
@@ -592,6 +703,8 @@ does not look stale.
 | `--json` | off | Emit JSON |
 
 ### `cc-notes task done ID`
+
+MCP: task_done (id, force)
 
 Close a task as done and anchor your `HEAD` commit onto it, so `task show` can list the commits
 that implemented it.
@@ -619,21 +732,29 @@ $ cc-notes task done 286d87c --force
 
 ### `cc-notes task cancel ID`
 
+MCP: task_cancel (id)
+
 Close a task as cancelled.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--json` | off | Emit JSON |
 
-### `cc-notes task comment ID BODY`
+### `cc-notes task comment ID [BODY]`
 
-Append a comment; `BODY` of `-` reads stdin. Any comment refreshes the task's lease.
+MCP: task_comment (id, body)
+
+Append a comment from the positional `BODY`, `--body`, or `-` (stdin) — exactly one source. Any
+comment refreshes the task's lease.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--body <text>` | none | Comment text; positional `BODY` and `-` (stdin) are equivalent |
 | `--json` | off | Emit JSON |
 
 ### `cc-notes task dep ID BLOCKER`
+
+MCP: task_dep (id, blocker)
 
 Mark `ID` blocked by `BLOCKER`; blocker ids resolve globally. A task with any open blocker drops
 out of `ready`.
@@ -644,6 +765,8 @@ out of `ready`.
 
 ### `cc-notes task undep ID BLOCKER`
 
+MCP: task_undep (id, blocker)
+
 Remove a blocked-by edge.
 
 | Flag | Default | Meaning |
@@ -651,6 +774,8 @@ Remove a blocked-by edge.
 | `--json` | off | Emit JSON |
 
 ### `cc-notes task edit ID`
+
+MCP: task_edit (id, title, body, type, priority, status, assignee, no_assignee, add_labels, rm_labels, parent, no_parent, sprint, no_sprint, project, no_project, branch, backlog)
 
 Edit a task without lifecycle transition checks — the escape hatch when the guided verbs do not
 fit. It also re-homes a task: setting `--branch` is a plain attribute write on the `Branch`
@@ -685,6 +810,20 @@ $ cc-notes task edit 5d3e9c1 --branch main
 
 ### `cc-notes task criterion`
 
+MCP: task_criterion_add (task, text, script)
+
+MCP: task_criterion_rm (task, crit)
+
+MCP: task_criterion_met (task, crit, note)
+
+MCP: task_criterion_failed (task, crit, note)
+
+MCP: task_criterion_pending (task, crit)
+
+MCP: task_criterion_script (task, crit, file, clear)
+
+MCP: task_criterion_list (task)
+
 The criterion subgroup manages a task's structured acceptance criteria — the `pending` / `met` /
 `failed` checks that gate `task done`. Every verb addresses a criterion by an id prefix (`CRIT`,
 case-insensitive): no match exits 3, an ambiguous prefix exits 5. Criteria are also editable by
@@ -693,11 +832,11 @@ id through the task's FUSE JSON file. Every verb takes `--json`; the lean `list`
 
 | Verb | Args | Meaning |
 |------|------|---------|
-| `add` | `TASK "TEXT" [--script FILE]` | Add a criterion (`pending`); `--script` stores a file's contents as its check command |
+| `add` | `TASK [TEXT]` | Add a criterion (`pending`); text via positional, `--body`, or stdin `-`; `--script FILE` stores a file's contents as its check command |
 | `rm` | `TASK CRIT` | Remove a criterion |
-| `met` | `TASK CRIT` | Mark a criterion `met` |
-| `failed` | `TASK CRIT` | Mark a criterion `failed` |
-| `pending` | `TASK CRIT` | Return a criterion to `pending` |
+| `met` | `TASK CRIT [--note TEXT]` | Mark a criterion `met`; `--note` records evidence with the verdict |
+| `failed` | `TASK CRIT [--note TEXT]` | Mark a criterion `failed`; `--note` records evidence with the verdict |
+| `pending` | `TASK CRIT` | Return a criterion to `pending` (a status change clears any recorded note) |
 | `script` | `TASK CRIT FILE` \| `TASK CRIT --clear` | Set or clear a criterion's validation script |
 | `list` | `TASK [--json]` | List a task's criteria |
 
@@ -711,6 +850,8 @@ f06100e	pending	p99 latency under 200ms
 ```
 
 ### `cc-notes task validate ID`
+
+MCP: task_validate (task, yes, timeout)
 
 Run a task's criterion validation scripts locally and record each verdict. This is the only
 command that executes stored criterion scripts, and it is explicit and confirmation-gated on
@@ -745,6 +886,8 @@ The `criterion …` preview and the per-script verdict lines go to stderr; the f
 
 ### `cc-notes task stale`
 
+MCP: task_stale (idle_after)
+
 List in-progress tasks whose lease has exceeded the threshold — a crashed agent's abandoned
 claim. The lean line gains a trailing idle marker. Reclaim one with `task claim <id> --steal`.
 
@@ -759,6 +902,8 @@ b932fd9	in_progress	P2	ben <ben@example.com>	test the widget	idle 2h13m
 ```
 
 ### `cc-notes task archived`
+
+MCP: task_archived (closed_before)
 
 List done and cancelled tasks older than the threshold. Archived tasks stay out of default and
 `--all` views unless `--include-archived` is passed there.
@@ -789,16 +934,19 @@ criterion's `status` is `pending`, `met`, or `failed`, and `script` is `""` when
 Projects are long-lived, repo-wide, branch-less groupings of sprints and tasks. A task joins a
 project directly with `--project`, or inherits one through its sprint; a project never points
 down — `project show` derives both reverse indexes. Status advances from `active` to one of
-`completed`, `archived`, or `cancelled`, and the lifecycle verbs fire only from `active`.
-Projects resolve by id prefix like tasks. Every command takes `--json`.
+`completed`, `archived`, or `cancelled`, and the lifecycle verbs fire only from `active`;
+`archived` alone reverses, via `activate`. Projects resolve by id prefix like tasks. Every
+command takes `--json`.
 
-### `cc-notes project add TITLE`
+### `cc-notes project add TITLE [BODY]`
+
+MCP: project_add (title, body, labels)
 
 Create a project. It is born `active`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--body <text>` | empty | Description; `-` reads stdin |
+| `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
 | `--label <label>` | none | Label; repeatable |
 | `--json` | off | Emit JSON |
 
@@ -808,6 +956,8 @@ $ cc-notes project add "Billing platform" --body "Revenue and invoicing" --label
 ```
 
 ### `cc-notes project list`
+
+MCP: project_list (status)
 
 List projects, each as its current folded state. Default lists every status.
 
@@ -822,6 +972,8 @@ $ cc-notes project list
 ```
 
 ### `cc-notes project show ID`
+
+MCP: project_show (id)
 
 Show one project: a fixed-order header block (id, title, status, labels, created, updated,
 closed, commits), the description after a blank line, each comment as a `-- <author> <rfc3339>`
@@ -849,10 +1001,30 @@ sprints: afd8362
 tasks: 286d87c,94c0917
 ```
 
+### `cc-notes project activate ID`
+
+MCP: project_activate (id)
+
+Un-archive a project: an `archived` project returns to `active` and rejoins the default planning
+views. Only an archived project reactivates — `activate` on an already-active project, or on a
+terminal (`completed` or `cancelled`) one, is a conflict (exit 4) naming the actual status.
+
+```console
+$ cc-notes project activate 07daf88
+07daf88	active	Billing platform
+```
+
 ### `cc-notes project complete ID` · `archive ID` · `cancel ID`
 
-Move a project to a terminal status. Each fires only from `active`; a project already
-`completed`, `archived`, or `cancelled` is a conflict (exit 4).
+MCP: project_complete (id)
+
+MCP: project_archive (id)
+
+MCP: project_cancel (id)
+
+Move a project out of `active`. Each fires only from `active`; a project already `completed`,
+`archived`, or `cancelled` is a conflict (exit 4). `archive` is the reversible one — `activate`
+restores it.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -865,6 +1037,8 @@ $ cc-notes project complete 07daf88
 
 ### `cc-notes project edit ID`
 
+MCP: project_edit (id, title, body, add_labels, rm_labels)
+
 Edit a project without transition checks — at least one flag is required.
 
 | Flag | Meaning |
@@ -874,12 +1048,15 @@ Edit a project without transition checks — at least one flag is required.
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--json` | Emit JSON |
 
-### `cc-notes project comment ID BODY`
+### `cc-notes project comment ID [BODY]`
 
-Append a comment; `BODY` of `-` reads stdin.
+MCP: project_comment (id, body)
+
+Append a comment from the positional `BODY`, `--body`, or `-` (stdin) — exactly one source.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--body <text>` | none | Comment text; positional `BODY` and `-` (stdin) are equivalent |
 | `--json` | off | Emit JSON |
 
 ### JSON project shape
@@ -896,13 +1073,15 @@ derives the task reverse index. Status advances from `planned` to `active` to `c
 `cancelled` from either open state; `activate`, `complete`, and `cancel` fire only from `planned`
 or `active`. Sprints resolve by id prefix like tasks. Every command takes `--json`.
 
-### `cc-notes sprint add TITLE`
+### `cc-notes sprint add TITLE [BODY]`
+
+MCP: sprint_add (title, body, project, labels, start, end)
 
 Create a sprint. It is born `planned`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--body <text>` | empty | Description; `-` reads stdin |
+| `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
 | `--project <id>` | none | Owning project (id prefix) |
 | `--label <label>` | none | Label; repeatable |
 | `--start <YYYY-MM-DD>` | none | Start date |
@@ -915,6 +1094,8 @@ afd8362	planned	Sprint 7
 ```
 
 ### `cc-notes sprint list`
+
+MCP: sprint_list (project, status)
 
 List sprints, each as its current folded state. Default lists every status.
 
@@ -930,6 +1111,8 @@ afd8362	planned	Sprint 7
 ```
 
 ### `cc-notes sprint show ID`
+
+MCP: sprint_show (id)
 
 Show one sprint: a fixed-order header block (id, project short id, title, status, start_date,
 end_date, labels, created, updated, started, closed, commits), the description after a blank
@@ -961,6 +1144,12 @@ tasks: 286d87c
 
 ### `cc-notes sprint activate ID` · `complete ID` · `cancel ID`
 
+MCP: sprint_activate (id)
+
+MCP: sprint_complete (id)
+
+MCP: sprint_cancel (id)
+
 Advance a sprint's status: `activate` sets it `active`, `complete` sets it `completed`, `cancel`
 sets it `cancelled`. Each fires only from `planned` or `active`; a sprint already `completed` or
 `cancelled` is a conflict (exit 4).
@@ -975,6 +1164,8 @@ afd8362	active	Sprint 7
 ```
 
 ### `cc-notes sprint edit ID`
+
+MCP: sprint_edit (id, title, body, project, no_project, start, no_start, end, no_end, add_labels, rm_labels)
 
 Edit a sprint without transition checks — at least one flag is required. The `--project`,
 `--start`, and `--end` setters each pair with a `--no-*` clearer, and the two are mutually
@@ -993,12 +1184,15 @@ exclusive.
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--json` | Emit JSON |
 
-### `cc-notes sprint comment ID BODY`
+### `cc-notes sprint comment ID [BODY]`
 
-Append a comment; `BODY` of `-` reads stdin.
+MCP: sprint_comment (id, body)
+
+Append a comment from the positional `BODY`, `--body`, or `-` (stdin) — exactly one source.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--body <text>` | none | Comment text; positional `BODY` and `-` (stdin) are equivalent |
 | `--json` | off | Emit JSON |
 
 ### JSON sprint shape
@@ -1011,39 +1205,59 @@ user-set dates (`null` when unset); `tasks` is the derived reverse index as full
 
 A runbook is a repeatable procedure: ordered steps (instruction text plus an optional shell
 command) and the tracked record of its runs. Runbooks are repo-wide and resolve by id prefix like
-sprints; step and run ids are nonces that resolve by prefix within their runbook. A runbook is
-born `active`; `archive` retires it, and every mutating verb on an archived runbook is a conflict
-(exit 4) until `activate` restores it. Every command takes `--json`.
+sprints; step and run ids are nonces that resolve by prefix within their runbook. A runbook
+carries the same optional commit, path, directory, and branch anchors as a note — `relevant`
+surfaces it near the code it operates on — but no witness and no freshness lifecycle, so its
+anchors never drift. A runbook is born `active`; `archive` retires it, and every mutating verb on
+an archived runbook is a conflict (exit 4) until `activate` restores it. Every command takes
+`--json`.
 
-### `cc-notes runbook add TITLE`
+### `cc-notes runbook add TITLE [BODY]`
 
-Create a runbook. `--step` repeats, in order.
+MCP: runbook_add (title, body, labels, commits, paths, dirs, branches, steps)
+
+Create a runbook. `--step` repeats, in order; the anchor flags point it at the code it operates
+on, exactly as on `note add`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--body <text>` | empty | Description; `-` reads stdin |
+| `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
 | `--label <label>` | none | Label; repeatable |
 | `--step <text>` | none | Initial step; repeatable, kept in flag order |
+| `--commit <sha>` | none | Commit anchor; repeatable |
+| `--path <path>` | none | Path anchor; repeatable |
+| `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
+| `--branch <branch>` | none | Branch anchor; repeatable |
 | `--json` | off | Emit JSON |
 
 ```console
-$ cc-notes runbook add "Deploy hotfix" --step "drain traffic" --step "deploy" --step "verify health"
+$ cc-notes runbook add "Deploy hotfix" --path scripts/deploy.sh --step "drain traffic" --step "deploy" --step "verify health"
 2b808c6	active	Deploy hotfix
 ```
 
 ### `cc-notes runbook list`
 
+MCP: runbook_list (labels, path, commit, dir, branch, all)
+
 List runbooks, one lean line each. Default hides archived.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--label <label>` | none | Require label; repeatable, ANDed |
+| `--commit <sha>` | none | Require commit anchor |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
 | `--all` | off | Include archived runbooks |
 | `--json` | off | Emit JSON |
 
 ### `cc-notes runbook show ID`
 
-Show one runbook: a fixed-order header block (id, title, status, labels, created, updated,
-archived), the description after a blank line, each comment as a `-- <author> <rfc3339>` block,
+MCP: runbook_show (id)
+
+Show one runbook: a fixed-order header block (id, title, status, labels, commits, paths, dirs,
+branches, created, updated, archived), the description after a blank line, each comment as a
+`-- <author> <rfc3339>` block,
 the numbered steps in position order (each step's short id in brackets, its command on an
 indented `$` line), then the five most recent runs, newest first, with a `(+N older — use run
 list)` tail when truncated.
@@ -1054,6 +1268,10 @@ id: 2b808c69e1f0a4d2c8b7365e9a01f4b2d6c81e57
 title: Deploy hotfix
 status: active
 labels: -
+commits: -
+paths: scripts/deploy.sh
+dirs: -
+branches: -
 created: 2026-07-10T16:02:11Z
 updated: 2026-07-10T16:40:09Z
 archived: -
@@ -1070,6 +1288,10 @@ runs:
 
 ### `cc-notes runbook activate ID` · `archive ID`
 
+MCP: runbook_activate (id)
+
+MCP: runbook_archive (id)
+
 Move a runbook between `active` and `archived`. Archiving an archived runbook (or activating an
 active one) is a conflict (exit 4).
 
@@ -1080,31 +1302,78 @@ $ cc-notes runbook archive 2b808c6
 
 ### `cc-notes runbook edit ID`
 
-Edit title, description, or labels — at least one flag is required.
+MCP: runbook_edit (id, title, body, add_labels, rm_labels, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches)
+
+Edit title, description, labels, or anchors — at least one flag is required.
 
 | Flag | Meaning |
 |------|---------|
 | `--title <text>` | New title |
 | `--body <text>` | New description; `-` reads stdin |
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
+| `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
+| `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
+| `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
+| `--add-branch` / `--rm-branch <branch>` | Add or remove a branch anchor; repeatable |
 | `--json` | Emit JSON |
 
-### `cc-notes runbook comment ID BODY`
+### `cc-notes runbook rm ID`
 
-Append a comment; `BODY` of `-` reads stdin.
+MCP: runbook_rm (id)
+
+Tombstone a runbook. It drops out of listings; history survives.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+### `cc-notes runbook search QUERY`
+
+MCP: runbook_search (query, labels, limit, author, path, commit, dir, branch)
+
+Ranked search across runbook titles, labels, descriptions, and step text, bounded and scopable
+like `note search`. The kind-agnostic `cc-notes search` ranks runbooks in the same pass as every
+other kind.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--label <label>` | none | Require label; repeatable, ANDed |
+| `--limit <N>` | `20` | Maximum results; 0 = all |
+| `--author <user>` | none | Require author |
+| `--path <path>` | none | Require path anchor |
+| `--commit <sha>` | none | Require commit anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes runbook search "deploy"
+2b808c6	active	Deploy hotfix
+```
+
+### `cc-notes runbook comment ID [BODY]`
+
+MCP: runbook_comment (id, body)
+
+Append a comment from the positional `BODY`, `--body`, or `-` (stdin) — exactly one source.
 
 ### `cc-notes runbook history ID`
+
+MCP: — (CLI-only: covered by the kind-agnostic history tool)
 
 The runbook's edit trail — who changed which fields, when. Takes `--reverse`, `--limit`, and
 `--json` like `cc-notes history`.
 
-### `cc-notes runbook step add RUNBOOK TEXT`
+### `cc-notes runbook step add RUNBOOK [TEXT]`
+
+MCP: runbook_step_add (id, text, command, first, last, before, after)
 
 Append or insert a step. Placement flags are mutually exclusive; the default is `--last`. Steps
 carry positions, so an insert never renumbers its neighbors.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--text <text>` | none | Step text; positional `TEXT` and `-` (stdin) are equivalent |
 | `--command <cmd>` | none | Shell command the step canonically runs |
 | `--first` / `--last` | `--last` | Place at the start or end |
 | `--before <step>` / `--after <step>` | none | Place next to a step (id prefix) |
@@ -1117,12 +1386,22 @@ $ cc-notes runbook step add 2b808c6 "warm caches" --after 6af6dff
 
 ### `cc-notes runbook step rm RUNBOOK STEP` · `edit` · `move` · `list`
 
+MCP: runbook_step_rm (id, step)
+
+MCP: runbook_step_edit (id, step, text, command, no_command)
+
+MCP: runbook_step_move (id, step, first, last, before, after)
+
+MCP: runbook_step_list (id)
+
 `step rm` deletes a step — recorded run results that reference it survive as history. `step edit`
 takes `--text`, `--command`, or `--no-command` (at least one; the last two are mutually
 exclusive). `step move` takes exactly one placement flag (`--first`/`--last`/`--before`/`--after`).
 `step list` prints `<short7-step-id>` `<n>` `<text>` `<command|->` per step in position order.
 
 ### `cc-notes runbook run start RUNBOOK`
+
+MCP: runbook_run_start (id, task)
 
 Begin a tracked run. The run stamps your actor identity and start time; concurrent runs by
 different agents are allowed and merge cleanly.
@@ -1133,6 +1412,12 @@ different agents are allowed and merge cleanly.
 | `--json` | off | Emit JSON |
 
 ### `cc-notes runbook run done RUNBOOK STEP` · `skip` · `fail`
+
+MCP: runbook_run_done (id, step, note, run)
+
+MCP: runbook_run_skip (id, step, note, run)
+
+MCP: runbook_run_fail (id, step, note, run)
 
 Record one step's outcome in a run. With `--run` omitted, the sole running run is used — zero
 running runs is a conflict (exit 4), several is ambiguous (exit 5). `--run` accepts a run id
@@ -1152,6 +1437,8 @@ $ cc-notes runbook run done 2b808c6 6ec7607 --note "connections drained in 40s"
 
 ### `cc-notes runbook run finish RUNBOOK`
 
+MCP: runbook_run_finish (id, run, failed, abandoned)
+
 Close a run. With no flag the status is `succeeded`, or `failed` when any step recorded `failed`;
 `--failed` and `--abandoned` (mutually exclusive) force a terminal status.
 
@@ -1164,6 +1451,10 @@ Close a run. With no flag the status is `succeeded`, or `failed` when any step r
 
 ### `cc-notes runbook run list RUNBOOK` · `run show RUNBOOK RUN`
 
+MCP: runbook_run_list (id)
+
+MCP: runbook_run_show (id, run)
+
 `run list` prints `<short7-run-id>` `<status>` `<runner>` `<YYYY-MM-DD started>`
 `<done+skipped>/<total>` per run. `run show` prints the run header, then one line per step in
 runbook order — `<short7-step-id>` `<status>` `<text>`, with an indented `note:` line where one
@@ -1171,11 +1462,13 @@ was recorded.
 
 ### JSON runbook shape
 
-`{"id":string,"title":string,"description":string,"status":string,"steps":[{"id":string,"text":string,"command":string,"position":string}],"runs":[{"id":string,"task":id|null,"runner":string,"status":string,"started_at":rfc3339,"finished_at":rfc3339|null,"steps":[{"step":string,"status":string,"note":string?}]}],"labels":[…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"archived_at":rfc3339|null}`.
+`{"id":string,"title":string,"description":string,"status":string,"steps":[{"id":string,"text":string,"command":string,"position":string}],"runs":[{"id":string,"task":id|null,"runner":string,"status":string,"started_at":rfc3339,"finished_at":rfc3339|null,"steps":[{"step":string,"status":string,"note":string?}]}],"labels":[…],"anchors":[{"kind":string,"value":string,"witness":null}],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"archived_at":rfc3339|null}`.
 `status` is `active` or `archived`; a run's `status` is `running`, `succeeded`, `failed`, or
 `abandoned`. A run's `steps` lists every current step in position order with a `status` of
 `done`, `failed`, `skipped`, or `pending` (no outcome recorded); results for since-removed steps
 are historical and not shown. `position` is an opaque ordering key — compare, never parse.
+`anchors` is omitted when empty, and a runbook anchor's `witness` is always `null` — runbooks
+have no freshness lifecycle to witness.
 
 ## Note commands
 
@@ -1188,7 +1481,9 @@ A directory anchor covers a subtree: it matches `PATH` in `relevant` for the dir
 any file under it, and its witness is the directory's git tree oid, so it drifts when anything in
 the subtree changes — a file added, removed, or edited anywhere beneath it.
 
-### `cc-notes note add TITLE`
+### `cc-notes note add TITLE [BODY]`
+
+MCP: note_add (title, body, labels, commits, paths, dirs, branches, attach)
 
 Create a note. A note is born verified against `HEAD`: its anchors get a content witness at
 creation. `TITLE` is capped at 256 bytes — the title is the one-line fact; anything longer
@@ -1196,7 +1491,7 @@ belongs in `--body`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--body <text>` | empty | Note body; `-` reads stdin |
+| `--body <text>` | empty | Note body; positional `BODY` and `-` (stdin) are equivalent |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
 | `--path <path>` | none | Path anchor; repeatable |
@@ -1221,6 +1516,8 @@ field or a leading `# ` heading supplies it. `--body` and `--attach` are rejecte
 create transaction. The created note is born verified, the same as a flag-driven `note add`.
 
 ### `cc-notes note edit ID`
+
+MCP: note_edit (id, title, body, add_labels, rm_labels, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches, attach, replace, rm_attachments)
 
 Edit a note. Title and body replace; anchors, labels, and attachments add or remove individually.
 
@@ -1256,6 +1553,8 @@ $ cc-notes note edit ebba9fb --apply
 
 ### `cc-notes note verify ID`
 
+MCP: note_verify (id)
+
 Record that the note is still true as of now, refreshing the witness against the current content
 of its anchors. This is how a note re-earns "fresh" after `note review` flags it.
 
@@ -1269,6 +1568,8 @@ ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
 ```
 
 ### `cc-notes note supersede OLD --by NEW`
+
+MCP: note_supersede (id, by, clear)
 
 Record that `NEW` replaces `OLD`. `OLD` drops from default listings and points at `NEW`; history
 is preserved. `--clear` undoes the edge.
@@ -1285,6 +1586,8 @@ ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
 ```
 
 ### `cc-notes note expire ID`
+
+MCP: note_expire (id, reason, clear)
 
 Flag a note out-of-date by hand — an agent-asserted verdict for a note you know is no longer
 accurate but have no replacement for yet. The note surfaces in `note review` as `EXPIRED`, which
@@ -1303,6 +1606,8 @@ ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
 ```
 
 ### `cc-notes note review`
+
+MCP: note_review (stale_after, drift, unverified, expired)
 
 Surface notes needing attention, each with a verdict appended to the lean line: `EXPIRED` (an
 agent flagged it out-of-date with `note expire`; top precedence), `DRIFTED` (an anchored path or
@@ -1324,6 +1629,8 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes	DRIFTED
 
 ### `cc-notes note list`
 
+MCP: note_list (labels, path, commit, dir, branch, all, include_superseded)
+
 List notes. Default drops superseded and tombstoned notes.
 
 | Flag | Default | Meaning |
@@ -1339,12 +1646,14 @@ List notes. Default drops superseded and tombstoned notes.
 
 ### `cc-notes note search QUERY`
 
+MCP: note_search (query, labels, limit, author, path, dir, branch, commit)
+
 Ranked full-text search (title > labels > body, with a recency boost), bounded and scopable.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--label <label>` | none | Require label; repeatable, ANDed |
-| `--limit <N>` | (default cap) | Maximum results |
+| `--limit <N>` | `20` | Maximum results; 0 = all |
 | `--author <user>` | none | Require author |
 | `--path <path>` | none | Require path anchor |
 | `--dir <dir>` | none | Require directory anchor |
@@ -1359,6 +1668,8 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes
 
 ### `cc-notes note show ID`
 
+MCP: note_show (id)
+
 Show one note: a fixed-order header block (id, title, tags, anchors, author, created, updated,
 verified_at/by, superseded_by, supersedes, drift verdict) then the body after a blank line.
 `supersedes` is a text-only field — the computed reverse index of `superseded_by` — with no JSON
@@ -1369,6 +1680,8 @@ counterpart, so don't parse it from `--json`.
 | `--json` | off | Emit JSON |
 
 ### `cc-notes note rm ID`
+
+MCP: note_rm (id)
 
 Tombstone a note. It drops out of listings; history survives.
 
@@ -1396,7 +1709,9 @@ for the directory or any file under it, and its witness is the directory's git t
 drifts when anything beneath it changes. The `when` trigger is surfaced verbatim — on the lean
 line, in `relevant`, and in `--json` — so an agent can scan it without opening the body.
 
-### `cc-notes doc add TITLE`
+### `cc-notes doc add TITLE [BODY]`
+
+MCP: doc_add (title, body, when, labels, commits, paths, dirs, branches, attach)
 
 Create a doc. Like a note, a doc is born verified against `HEAD`: its anchors get a content
 witness at creation. `TITLE` is a short handle, capped at 256 bytes (the same cap applies to every
@@ -1414,7 +1729,7 @@ the same create transaction.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--body <text>` | required unless `--attach` is given | Doc body; `-` reads stdin |
+| `--body <text>` | required unless `--attach` is given | Doc body; positional `BODY` and `-` (stdin) are equivalent |
 | `--when <text>` | empty | Free-text "read this when…" trigger, surfaced verbatim |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
@@ -1447,6 +1762,8 @@ $ cc-notes doc add "How auth token refresh works" --dir internal/auth --label de
 ```
 
 ### `cc-notes doc edit ID`
+
+MCP: doc_edit (id, title, body, when, add_labels, rm_labels, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches, attach, replace, rm_attachments)
 
 Edit a doc — at least one flag is required. Title, body, and the `when` trigger replace; anchors,
 labels, and attachments add or remove individually. The 256-byte title cap applies to `--title`. A
@@ -1487,6 +1804,8 @@ $ cc-notes doc edit 62208d7 --apply
 
 ### `cc-notes doc verify ID`
 
+MCP: doc_verify (id)
+
 Record that the doc is still true as of now, refreshing the witness against the current content of
 its anchors at `HEAD`. This is how a doc re-earns "fresh" after `doc review` flags it.
 
@@ -1500,6 +1819,8 @@ $ cc-notes doc verify 62208d7
 ```
 
 ### `cc-notes doc supersede OLD --by NEW`
+
+MCP: doc_supersede (id, by, clear)
 
 Record that `NEW` replaces `OLD`. `OLD` drops from default listings and points at `NEW`; history
 is preserved. `--clear` undoes the edge.
@@ -1516,6 +1837,8 @@ $ cc-notes doc supersede 62208d7 --by 7a3f10c
 ```
 
 ### `cc-notes doc expire ID`
+
+MCP: doc_expire (id, reason, clear)
 
 Flag a doc out-of-date by hand — an agent-asserted verdict for a doc you know is no longer accurate
 but have no replacement for yet. The doc surfaces in `doc review` as `EXPIRED`, which takes
@@ -1534,6 +1857,8 @@ $ cc-notes doc expire 62208d7 --reason "tokens now live 30 minutes"
 ```
 
 ### `cc-notes doc review`
+
+MCP: doc_review (stale_after, drift, unverified, expired)
 
 Surface docs needing attention, each with a verdict appended to the lean line: `EXPIRED` (an agent
 flagged it out-of-date with `doc expire`; top precedence), `DRIFTED` (an anchored path, directory,
@@ -1555,6 +1880,8 @@ $ cc-notes doc review
 
 ### `cc-notes doc list`
 
+MCP: doc_list (labels, path, commit, dir, branch, all, include_superseded)
+
 List docs. Default drops superseded and tombstoned docs.
 
 | Flag | Default | Meaning |
@@ -1570,13 +1897,15 @@ List docs. Default drops superseded and tombstoned docs.
 
 ### `cc-notes doc search QUERY`
 
+MCP: doc_search (query, labels, limit, author, path, dir, branch, commit)
+
 Ranked search across doc titles, labels, and bodies (title > labels > body, ties broken by
 recency), bounded and scopable.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--label <label>` | none | Require label; repeatable, ANDed |
-| `--limit <N>` | `20` | Maximum results; negative is unlimited |
+| `--limit <N>` | `20` | Maximum results; 0 = all |
 | `--author <user>` | none | Require author |
 | `--path <path>` | none | Require path anchor |
 | `--dir <dir>` | none | Require directory anchor |
@@ -1590,6 +1919,8 @@ $ cc-notes doc search "token refresh" --label design
 ```
 
 ### `cc-notes doc show ID`
+
+MCP: doc_show (id)
 
 Show one doc: a fixed-order header block (id, title, when, tags, anchors, author, created, updated,
 verified_at/by, superseded_by, supersedes, drift verdict) then the body after a blank line. The
@@ -1625,6 +1956,8 @@ Refresh client-side before expiry; the API returns 401 with no Retry-After heade
 
 ### `cc-notes doc rm ID`
 
+MCP: doc_rm (id)
+
 Tombstone a doc. It drops out of listings; history survives.
 
 | Flag | Default | Meaning |
@@ -1653,15 +1986,17 @@ reorders it. The `--label` and anchor flags are repeatable arrays.
 A directory anchor covers a subtree exactly as it does for a note or doc: it matches `PATH` in
 `relevant` for the directory or any file under it.
 
-### `cc-notes log add TITLE`
+### `cc-notes log add TITLE [BODY]`
+
+MCP: log_add (title, entry, labels, commits, paths, dirs, branches, attach)
 
 Create a log. A log has no witness and no drift to track, so it is not born verified the way a note
-or doc is. Seed an optional first entry with `--entry` (`-` reads it from stdin); the entry is
-recorded as a separate append so its author and timestamp are honest.
+or doc is. Seed an optional first entry from the positional `BODY`, `--entry`, or `-` (stdin);
+the entry is recorded as a separate append so its author and timestamp are honest.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--entry <text>` | none | Record a first entry; `-` reads stdin |
+| `--entry <text>` | none | Record a first entry; positional `BODY` and `-` (stdin) are equivalent |
 | `--attach <file>` | none | Attach a file (git-lfs); repeatable |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
@@ -1676,6 +2011,8 @@ $ cc-notes log add "Auth rollout" --dir internal/auth --label ops --entry "flipp
 ```
 
 ### `cc-notes log append ID [TEXT]`
+
+MCP: log_append (id, entry, attach, replace)
 
 Append one entry to a log. The text comes from the positional `TEXT`, `--entry`, or `-` (stdin) —
 exactly one source, matching `log add --entry`. The author and timestamp are taken from the
@@ -1697,6 +2034,8 @@ $ echo "ramped to 100%" | cc-notes log append 3d91f0a -
 
 ### `cc-notes log edit ID`
 
+MCP: log_edit (id, title, add_labels, rm_labels, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches, rm_attachments)
+
 Edit a log's title, labels, anchors, and attachments — at least one flag is required. Entries are
 never editable here; append a new entry with `log append` instead.
 
@@ -1713,6 +2052,8 @@ never editable here; append a new entry with `log append` instead.
 
 ### `cc-notes log list`
 
+MCP: log_list (labels, path, commit, dir, branch, all)
+
 List logs. Default drops tombstoned logs.
 
 | Flag | Default | Meaning |
@@ -1727,13 +2068,15 @@ List logs. Default drops tombstoned logs.
 
 ### `cc-notes log search QUERY`
 
+MCP: log_search (query, labels, limit, author, path, dir, branch, commit)
+
 Ranked search across log titles, labels, and entry text (title > labels > entries, ties broken by
 recency), bounded and scopable.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--label <label>` | none | Require label; repeatable, ANDed |
-| `--limit <N>` | `20` | Maximum results; negative is unlimited |
+| `--limit <N>` | `20` | Maximum results; 0 = all |
 | `--author <user>` | none | Require author |
 | `--path <path>` | none | Require path anchor |
 | `--dir <dir>` | none | Require directory anchor |
@@ -1747,6 +2090,8 @@ $ cc-notes log search "rollout" --label ops
 ```
 
 ### `cc-notes log show ID`
+
+MCP: log_show (id)
 
 Show one log: a fixed-order header block (id, title, tags, anchors, author, created, updated) then
 each entry as a `-- <author> <rfc3339>` block in chronological order, after a blank line. An entry
@@ -1779,6 +2124,8 @@ ramped to 50%
 
 ### `cc-notes log rm ID`
 
+MCP: log_rm (id)
+
 Tombstone a log. It drops out of listings; history survives.
 
 | Flag | Default | Meaning |
@@ -1801,13 +2148,17 @@ on the first `cc-notes papercut`. The tag is the journal's identity (retitling n
 because the journal is a log, `show`, `log show`, `history`, and `relevant` all take its id with no
 papercut-specific verbs — the `relevant`/`show` kind stays `log`.
 
-### `cc-notes papercut TEXT`
+### `cc-notes papercut [TEXT]`
 
-File one complaint. `TEXT` is the one-paragraph complaint; `-` reads it from stdin.
-Whitespace-only text exits 2. On success the command echoes the journal's Log lean line.
+MCP: papercut (text, model)
+
+File one complaint — the one-paragraph text comes from the positional `TEXT`, `--body`, or `-`
+(stdin), exactly one source. Whitespace-only text exits 2. On success the command echoes the
+journal's Log lean line.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--body <text>` | none | Complaint text; positional `TEXT` and `-` (stdin) are equivalent |
 | `--model <id>` | `CC_NOTES_MODEL` | Model identity recorded on the entry; the flag wins over the environment variable |
 | `--json` | off | Emit the journal's JSON log record |
 
@@ -1817,9 +2168,12 @@ $ cc-notes papercut "log search --json drops entry text, so I re-ran log show pe
 ```
 
 Because `list` is a subcommand, a complaint whose text is literally `list` needs an escape:
-`cc-notes papercut -- list`, or stdin (`echo list | cc-notes papercut -`).
+`cc-notes papercut --body list`, `cc-notes papercut -- list`, or stdin
+(`echo list | cc-notes papercut -`).
 
 ### `cc-notes papercut list`
+
+MCP: papercut_list
 
 List every complaint across all live papercut-tagged journals as one chronology, ordered by entry
 timestamp (ties broken by journal creation time, journal id, then entry index). Each complaint

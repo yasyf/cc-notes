@@ -31,6 +31,70 @@ Reach for cc-notes when work or knowledge must survive the current session or re
 agent. Track moment-to-moment steps for what you are doing right now in the harness's own
 todo tool.
 
+## MCP tools — the primary interface
+
+Where the Claude Code plugin is enabled (or any MCP client points at `cc-notes mcp`), the
+agent-facing command surface is MCP tools — one `noun_verb` tool per command (`note_add`,
+`task_start`, `runbook_run_done`, …), surfaced as `mcp__plugin_cc-notes_cc-notes__<tool>`.
+**Call the tool; shell out only when no server is live.** The schemas structurally prevent
+the flag-spelling errors that dog the CLI path — repeatable flags are arrays, toggles are
+booleans, and the properties are named in the schema instead of remembered — and each tool
+drives the CLI in-process, so validation, semantics, and output are identical: a tool
+result is the command's `--json`.
+
+Property names mirror the flags. The four anchored kinds — note, doc, log, runbook — take
+anchor arrays (commits, paths, dirs, branches) on their add tools and the add_*/rm_* octet
+on their edit tools; task, sprint, project, and the criterion/step tools do not carry anchors
+(tasks scope to a branch). `--label` becomes `labels`. Long text rides the `body` property
+directly — no `--checkout` buffer round-trip, no stdin; the literal `"-"` is rejected over
+MCP, so pass the text itself.
+
+Three calls carry most days. Record a durable fact with `note_add` — body and path anchor
+inline:
+
+```json
+{
+  "title": "Auth tokens expire after 15 minutes",
+  "body": "Refresh client-side before expiry; the API returns 401 with no Retry-After header.",
+  "paths": ["services/auth/login.go"],
+  "labels": ["design"]
+}
+```
+
+Capture shared work onto the backlog with `task_add` — acceptance criteria gate
+`task_done`. task_add accepts criteria (list) or no_validation_criteria (bool); the schema
+marks both optional, and the server enforces at dispatch that you pass exactly one of them —
+omitting both fails at call time, not schema time:
+
+```json
+{
+  "title": "Add retry backoff to the API client",
+  "criteria": ["backoff caps at 30s", "go test ./... passes"],
+  "backlog": true,
+  "priority": 1
+}
+```
+
+Store a repeatable procedure with `runbook_add` — steps in order, anchored to the code it
+operates on exactly like a note:
+
+```json
+{
+  "title": "Deploy hotfix",
+  "steps": ["drain traffic", "deploy", "verify health"],
+  "paths": ["scripts/deploy.sh"],
+  "branches": ["main"]
+}
+```
+
+The same shape covers the rest: `doc_add` takes a `when` read-trigger and the full
+markdown in `body`; `log_append` takes `entry` plus `attach` paths; `search` ranks across
+every kind. `references/cli-reference.md` documents both surfaces — every command block
+opens with an `MCP:` line naming the tool and its properties. Operator commands (`init`,
+`mount`, `gc`, `compact`, `viz`, `version`, the installers) are CLI-only on purpose. Where
+the server is active, cc-notes' own capt-hook nudges name the tools; the CLI forms below
+are the fallback for sessions without it.
+
 ## Six tools, six jobs
 
 Get this distinction right first. Native todos, cc-notes tasks, cc-notes notes, cc-notes docs,
@@ -41,54 +105,56 @@ once more by form.
 | Tool | Lifetime | Scope | Use for |
 |------|----------|-------|---------|
 | Native todos (`TaskCreate`/`TaskUpdate`) | Ephemeral — this session, gone at session end | This agent's private scratchpad | Decomposing the *current* task into in-session steps |
-| `cc-notes task` | Durable — git ODB, synced across machines and agents | Global: one flat ref per task, with a mutable `branch` attribute and a shared backlog every agent sees | Work that outlives the session or coordinates agents: claim, lease, deps, comments, priority, lifecycle |
-| `cc-notes note` | Durable — git ODB, synced | Repo-global, optionally anchored to a commit, path, or branch | Design decisions and durable facts, verified and searchable |
-| `cc-notes doc` | Durable — git ODB, synced | Repo-global, anchored like a note, plus a `--when` read-trigger | Multi-paragraph guidance written *for the next agent*, verified and floated on read |
-| `cc-notes log` | Durable — git ODB, synced | Repo-global, anchored like a doc | An append-only chronological journal — an incident timeline, a rollout log, a debugging session — whose entries are never edited or reordered, with no verify/drift/supersede lifecycle |
-| `cc-notes papercut` | Durable — git ODB, synced | Repo-wide: one shared journal, auto-created on first use | One-paragraph friction complaints — a dead-end tool call, a broken link, a misleading doc — filed instead of silently pushed through |
+| `task_*` / `cc-notes task` | Durable — git ODB, synced across machines and agents | Global: one flat ref per task, with a mutable `branch` attribute and a shared backlog every agent sees | Work that outlives the session or coordinates agents: claim, lease, deps, comments, priority, lifecycle |
+| `note_*` / `cc-notes note` | Durable — git ODB, synced | Repo-global, optionally anchored to a commit, path, or branch | Design decisions and durable facts, verified and searchable |
+| `doc_*` / `cc-notes doc` | Durable — git ODB, synced | Repo-global, anchored like a note, plus a `when` read-trigger | Multi-paragraph guidance written *for the next agent*, verified and floated on read |
+| `log_*` / `cc-notes log` | Durable — git ODB, synced | Repo-global, anchored like a doc | An append-only chronological journal — an incident timeline, a rollout log, a debugging session — whose entries are never edited or reordered, with no verify/drift/supersede lifecycle |
+| `papercut` / `cc-notes papercut` | Durable — git ODB, synced | Repo-wide: one shared journal, auto-created on first use | One-paragraph friction complaints — a dead-end tool call, a broken link, a misleading doc — filed instead of silently pushed through |
 
 Tasks are **global**. Each task is a single flat ref at `refs/cc-notes/tasks/<id>`, exactly
-like a note. Its branch is a *mutable attribute*, not part of its identity: `task list` and
-`task ready` default to your current branch, the shared **backlog** is every task with no
-branch (`task add --backlog`, visible to every agent on every branch), and `task edit <id>
---branch <branch>` (or `task start`, automatically) re-homes a task by setting that attribute.
-Because the id is global, ids resolve with no branch qualifier — `--branch` filters what
-`list`/`ready` read and sets a task's placement on `add`/`edit`. In a colocated jj repo — git
-HEAD detached at the working-copy parent — the current branch still resolves: the nearest
+like a note. Its branch is a *mutable attribute*, not part of its identity: `task_list` and
+`task_ready` default to your current branch, the shared **backlog** is every task with no
+branch (`task_add` with `backlog: true`, visible to every agent on every branch), and
+`task_edit` with a `branch` (or `task_start`, automatically) re-homes a task by setting that
+attribute. Because the id is global, ids resolve with no branch qualifier — `branch` filters
+what `list`/`ready` read and sets a task's placement on `add`/`edit`. In a colocated jj repo —
+git HEAD detached at the working-copy parent — the current branch still resolves: the nearest
 unmerged bookmark, else the trunk. When nothing resolves, branch-scoped task commands degrade
-to the backlog instead of failing; `task start --branch <branch>` sets an explicit branch.
+to the backlog instead of failing; an explicit `branch` on `task_start` sets one.
 
 A note records when it was last **verified** true; superseding a note points it at its
 replacement and drops it from default listings.
 
 A **doc** is the long-form sibling of a note — the same durable, repo-global, born-verified
-lifecycle (`doc verify`/`doc expire`/`doc supersede`), but it holds multi-paragraph guidance
+lifecycle (`doc_verify`/`doc_expire`/`doc_supersede`), but it holds multi-paragraph guidance
 written *for the next agent* where a note holds a one-line fact, and it carries a free-text
-`--when` read-trigger that names when that agent should open it. Like a note it anchors to the
+`when` read-trigger that names when that agent should open it. Like a note it anchors to the
 code it describes, drifts when that code changes, and floats into a relevant agent's context —
-but only its title, `--when` text, and a `doc show` pointer surface, never the body. The title is
-a short handle — capped at 256 bytes, like every title — so the guidance lives in the body. For a
-long body, check out a prefilled buffer with `cc-notes doc add --checkout`, write the guidance into
-it with your file tools, then `cc-notes doc add --apply`; `--body -` reads a short body straight
-from stdin. Never cram the guidance into the title, and never point the doc at a `/tmp` or
-scratchpad file purged before the next agent reads it — `--attach` an artifact that must ride along.
+but only its title, `when` text, and a `doc_show` pointer surface, never the body. The title is
+a short handle — capped at 256 bytes, like every title — so the guidance lives in the body:
+pass the full markdown through `doc_add`'s `body` parameter. On the bare CLI, check out a
+prefilled buffer with `cc-notes doc add --checkout`, write the guidance into it with your file
+tools, then `cc-notes doc add --apply`; a positional `BODY`, `--body`, or stdin (`-`) carries a
+short body inline. Never cram the guidance into the title, and never point the doc at a `/tmp`
+or scratchpad file purged before the next agent reads it — `attach` an artifact that must ride
+along.
 
 A **log** looks like a doc — durable, repo-global, anchored, floated on read — but it is the
 opposite kind of record. A doc is *living guidance* kept fresh: you replace its body and re-verify
 it, and it drifts when the code moves out from under it. A log is an *immutable running record*:
-`log append` adds a timestamped, authored entry and that entry never moves or changes, so a log
+`log_append` adds a timestamped, authored entry and that entry never moves or changes, so a log
 has no freshness lifecycle at all — no verify, no expire, no supersede, and it never drifts,
 because an append-only journal never claims to be current truth. Reach for a log when the value is
 the chronology itself — an incident timeline, a rollout log, a debugging session — rather than a
 single fact (a note) or a guide you keep current (a doc).
 
-A **papercut** is the fire-and-forget corner of the log: `cc-notes papercut "<complaint>"` files a
-one-paragraph friction complaint — a dead-end tool call, a broken link, a misleading doc — instead
-of silently pushing through. Every complaint appends one entry to a single repo-wide journal (a log
-titled `papercuts`, tagged `papercut`, auto-created on first use), so there is nothing to set up
-and no review lifecycle to run: entries are never edited, `cc-notes papercut list` reads the
-chronology back, and `--model` (or `CC_NOTES_MODEL`, with the flag winning) records which model hit
-the friction.
+A **papercut** is the fire-and-forget corner of the log: `papercut` with the complaint as `text`
+(CLI: `cc-notes papercut "<complaint>"`) files a one-paragraph friction complaint — a dead-end
+tool call, a broken link, a misleading doc — instead of silently pushing through. Every complaint
+appends one entry to a single repo-wide journal (a log titled `papercuts`, tagged `papercut`,
+auto-created on first use), so there is nothing to set up and no review lifecycle to run: entries
+are never edited, `papercut_list` reads the chronology back, and `model` (or `CC_NOTES_MODEL`,
+with the parameter winning) records which model hit the friction.
 
 The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, else your git
 `user.name`/`user.email`. Claims and leases key on that actor.
@@ -100,42 +166,30 @@ See `references/tasks-vs-notes.md` for worked examples of choosing among the six
 The `.notes` mount surfaces every note, doc, and task as editable files at the repo root — read-write Markdown and JSON you browse and edit instead of shelling out. On a `_fuse` binary, `cc-notes init` mounts it by default and records the preference, so each new session re-mounts it automatically and the mount survives reboots with no steady-state cost. A pure (non-fuse) binary records the preference but mounts nothing until a fuse-capable session takes over. Opt out at init time, or manage a live mount:
 
 ```console
-$ cc-notes init --no-mount   # skip the mount and disable auto-mount
-$ cc-notes mount               # mount on demand (needs a _fuse binary)
-$ cc-notes mount --stop .notes # unmount this repo's .notes
+$ cc-notes init --no-mount    # skip the mount and disable auto-mount
+$ cc-notes mount              # mount on demand (needs a _fuse binary)
+$ cc-notes mount stop .notes  # unmount this repo's .notes
 ```
 
 The mount mechanics — holder model, teardown, the macOS Network Volumes grant — live in `references/cli-reference.md`.
 
-## MCP tools (optional)
-
-Where the Claude Code plugin is enabled, cc-notes also exposes its command surface as MCP tools — one
-`noun_verb` tool per command (`doc_add`, `note_edit`, `task_start`, …), surfaced as
-`mcp__plugin_cc-notes_cc-notes__<tool>`. They mirror the CLI and drive it in-process — the record
-nouns tool-for-command, the planning nouns (sprint, project, runbook) as a curated subset — so
-validation, output, and semantics are identical, and a tool result is the command's `--json`. When these
-tools are available, prefer them over shelling out to `cc-notes` — especially `doc_add` and `note_add`,
-where a long body rides the `body` parameter and skips the `--checkout` buffer round-trip entirely. This
-skill and `references/cli-reference.md` still govern every flag and behavior: the tools take the same
-arguments the CLI documents. When the server is active, cc-notes' own capt-hook nudges point at these
-tools rather than the CLI, so the hints you see match the surface you are driving.
-
 ## Canonical agent flow
 
 The spine of day-to-day use. Run `init` once per repo; everything else recurs as you work.
+Each step names the MCP tool first; the CLI form is the fallback when no server is live.
 
-**1. Initialize (once per repo).** `cc-notes init` installs the refspecs: plain `git push`
-publishes the cc-notes refs alongside your branches, and a plain `git fetch`/`git pull`
-stages incoming refs in a tracking namespace that `cc-notes sync` (or the capt-hook pack,
-automatically) folds into your view. init then wires whatever the repo is already set up
-for: when a `.claude/` directory exists it registers the cc-notes plugin in
+**1. Initialize (once per repo — CLI only).** `cc-notes init` installs the refspecs: plain
+`git push` publishes the cc-notes refs alongside your branches, and a plain `git
+fetch`/`git pull` stages incoming refs in a tracking namespace that `sync` (or the
+capt-hook pack, automatically) folds into your view. init then wires whatever the repo is
+already set up for: when a `.claude/` directory exists it registers the cc-notes plugin in
 `.claude/settings.json` and enables the cc-notes capt-hook pack (manifest at
 `.claude/capt-hook.toml`); when a `.github/` directory exists it installs the reconcile CI
 workflow (`--no-ci` to skip, `--ci` to force without `.github/`). init never creates
 `.claude/` — it wires Claude Code only when the repo already uses it. Under jj the plain-git
 path doesn't hold (`jj git push`/`jj git fetch` bridge only `refs/heads/*`, leaving
-`refs/cc-notes/*` behind), so run `cc-notes sync`, which drives git directly and carries the
-refs both ways regardless of front-end.
+`refs/cc-notes/*` behind), so run `sync`, which drives git directly and carries the refs
+both ways regardless of front-end.
 
 ```console
 $ cc-notes init
@@ -143,10 +197,10 @@ initialized: refs/cc-notes/* refspecs installed for origin
 registered: cc-notes plugin in .claude/settings.json
 ```
 
-**2. Orient.** `cc-notes status` (alias `board`) is a read-only, sectioned view: the shared
-backlog, your current branch's open and in-progress tasks, every in-progress task across all
-branches grouped by assignee with a fresh/STALE lease flag, and how many notes need review.
-Run it before picking up work.
+**2. Orient.** `status` (CLI: `cc-notes status`, alias `board`) is a read-only, sectioned
+view: the shared backlog, your current branch's open and in-progress tasks, every
+in-progress task across all branches grouped by assignee with a fresh/STALE lease flag, and
+how many notes need review. Run it before picking up work.
 
 ```console
 $ cc-notes status
@@ -162,37 +216,23 @@ notes: 14 total, 3 need review
 ```
 
 **3. Plan.** Capture shared work onto the backlog; capture branch-specific work plainly.
+The backlog `task_add` is the second worked example above; a branch-scoped one drops
+`backlog` and keeps `criteria`. CLI: `cc-notes task add "<title>" --priority 1 --label api
+--criterion "backoff caps at 30s"` (`--backlog` for shared work).
 
-```console
-$ cc-notes task add "build the widget" --backlog --priority 1 --no-validation-criteria
-08118da	open	P1	-	build the widget
-$ cc-notes task add "Add retry backoff to the API client" --priority 1 --label api --criterion "backoff caps at 30s"
-d82c087	open	P1	-	Add retry backoff to the API client
-```
-
-**4. Grab.** `task start` atomically claims the task (deterministic first-wins) and moves it
-onto your current branch, opening a lease.
-
-```console
-$ cc-notes task start d82c087
-d82c087	in_progress	P1	ada <ada@example.com>	Add retry backoff to the API client
-```
+**4. Grab.** `task_start` — `{"id": "d82c087"}` — atomically claims the task
+(deterministic first-wins) and moves it onto your current branch, opening a lease. CLI:
+`cc-notes task start d82c087`.
 
 **5. Stay alive.** Any change you make to a task refreshes its lease; for long silent
-stretches, `task renew <id>`. `task stale` surfaces in-progress tasks whose lease has expired
-— a crashed agent's abandoned claim — and `task claim <id> --steal` reclaims one.
-
-```console
-$ cc-notes task stale
-7c1e3f0	in_progress	P2	ben <ben@example.com>	Wire the gateway client	idle 2h14m
-$ cc-notes task claim 7c1e3f0 --steal
-7c1e3f0	in_progress	P2	ada <ada@example.com>	Wire the gateway client
-```
+stretches, `task_renew`. `task_stale` surfaces in-progress tasks whose lease has expired —
+a crashed agent's abandoned claim — and `task_claim` with `{"id": "7c1e3f0", "steal": true}`
+reclaims one. CLI: `cc-notes task stale`, `cc-notes task claim 7c1e3f0 --steal`.
 
 **6. Work and link.** Commit code with plain git, adding a `cc-task: <id>` trailer so the
-commit links to the task (queryable with `git log --grep` and `cc-notes blame <sha>`).
-`task done` closes the task and anchors your HEAD commit onto it; `task show` then lists the
-commits that implemented it.
+commit links to the task (queryable with `git log --grep` and `blame`). `task_done` closes
+the task and anchors your HEAD commit onto it; `task_show` then lists the commits that
+implemented it.
 
 ```console
 $ git commit -m "Clamp API retry backoff at 30s
@@ -202,17 +242,14 @@ $ cc-notes task done d82c087
 d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 ```
 
-**7. Record facts.** A note is born verified against the current HEAD. Re-confirm it later
-with `note verify`, flag one that has gone out of date with `note expire`, and replace a changed
-decision with `note supersede`.
-
-```console
-$ cc-notes note add "Retry backoff caps at 30s" --path internal/api/client.go --label design --body "The server drops connections past 30s, so exponential backoff is clamped."
-b71e0d4	2026-06-16	design	Retry backoff caps at 30s
-```
+**7. Record facts.** A note is born verified against the current HEAD — the first worked
+example above. Re-confirm it later with `note_verify`, flag one that has gone out of date
+with `note_expire`, and replace a changed decision with `note_supersede` (`{"id": "<old>",
+"by": "<new>"}`).
 
 **8. Merge and reconcile.** Merge code with git or jj, then carry the merged branches'
-still-open tasks onto the target and converge with the remote. Both steps are idempotent.
+still-open tasks onto the target and converge with the remote: `reconcile` with
+`{"into": "main"}`, then `sync`. Both steps are idempotent.
 
 ```console
 $ cc-notes reconcile --into main
@@ -228,54 +265,56 @@ pushed: 2
 rounds: 1
 ```
 
-**9. Maintain.** `note review` surfaces drifted, stale, and unverified facts; `task archived`
-hides long-closed work; `gc --prune-remote` (opt-in, best-effort) physically reclaims
-tombstoned refs.
+**9. Maintain.** `note_review` surfaces drifted, stale, and unverified facts; `task_archived`
+hides long-closed work; `cc-notes gc --prune-remote` (CLI-only, opt-in, best-effort)
+physically reclaims tombstoned refs.
 
 ## Command cheat-sheet
 
-The verbs reached for most. The full surface — every flag, default, and output shape — is in
+The verbs reached for most: the MCP tool with its key properties, then the CLI fallback.
+The full surface — every flag, property, default, and output shape — is in
 `references/cli-reference.md`.
 
-| Command | Purpose |
-|---------|---------|
-| `cc-notes init` | Install the `refs/cc-notes/*` refspecs, plus the plugin and CI the repo is ready for (once per repo) |
-| `cc-notes status` | Orient: backlog, your branch's tasks, who holds what, notes needing review |
-| `cc-notes sync` | Union-merge the cc-notes refs with the remote and push, looping until stable |
-| `cc-notes reconcile --into <branch>` | Carry merged branches' open tasks onto the target |
-| `cc-notes blame <sha>` | List the task(s) a commit implemented |
-| `cc-notes show <id>` | Show any entity by id — note, doc, log, task, sprint, project, or runbook |
-| `cc-notes history <id>` | Show an entity's edit history — who changed which fields, when (`--reverse`, `--limit`, `--json`) |
-| `cc-notes task add "<title>"` | Capture branch work; add `--backlog` for shared work |
-| `cc-notes task ready` | List open, unassigned, unblocked tasks — the pickup queue |
-| `cc-notes task start <id>` | Claim a task and move it onto your current branch |
-| `cc-notes task claim <id> --steal` | Reclaim an in-progress task whose lease expired |
-| `cc-notes task renew <id>` | Refresh the lease heartbeat on a task you hold |
-| `cc-notes task done <id>` | Close a task and anchor HEAD onto it |
-| `cc-notes task edit <id> --branch <branch>` | Re-home a task by setting its branch (`--backlog` sends it back to the queue) |
-| `cc-notes note add "<title>"` | Record a durable fact, born verified against HEAD |
-| `cc-notes note verify <id>` | Record that a note is still true as of now |
-| `cc-notes note expire <id>` | Flag a note as out-of-date; clear it with `note verify` |
-| `cc-notes note review` | Surface expired, drifted, stale, and unverified notes |
-| `cc-notes note search "<query>"` | Ranked search over titles, labels, and bodies |
-| `cc-notes doc add "<title>" --checkout --when "<trigger>"` | Check out a prefilled buffer for a long body; write it in, then `cc-notes doc add --apply <path>` |
-| `cc-notes doc add "<title>" --when "<trigger>" --body -` | Short body only: store agent guidance from stdin, born verified, with a when-to-read trigger |
-| `cc-notes doc edit <id> --checkout` | Render a doc (or note) to an editable file; edit it, then `--apply` (or `--abort`) |
-| `cc-notes doc search "<query>"` | Ranked search over doc titles, labels, and bodies |
-| `cc-notes log add "<title>"` | Start an append-only chronological journal |
-| `cc-notes log append <id> "<text>"` | Append one timestamped, authored entry to a log |
-| `cc-notes log show <id>` | Read a log's entries in chronological order |
-| `cc-notes papercut "<complaint>"` | File a one-paragraph friction complaint to the repo-wide papercut journal |
-| `cc-notes papercut list` | Read every papercut complaint back in timestamp order |
-| `cc-notes attachment get <id> <name>` | Retrieve an attachment's bytes (stdout, or `-o <path>`) |
-| `cc-notes runbook add "<title>" --step "<text>"` | Store a repeatable procedure as ordered steps (`--step` repeats) |
-| `cc-notes runbook step add <id> "<text>"` | Append a step; `--command` attaches a shell command, `--after <step>` places it |
-| `cc-notes runbook run start <id>` | Begin a tracked run (`--task <id>` cites the task it serves) |
-| `cc-notes runbook run done <id> <step>` | Record a step outcome (`skip`/`fail` are siblings; `--note` adds context) |
-| `cc-notes runbook run finish <id>` | Close the run — succeeded by default, `--failed`/`--abandoned` otherwise |
+| Purpose | MCP tool (key properties) | CLI fallback |
+|---------|---------------------------|--------------|
+| Set up a repo (once) | — (CLI-only) | `cc-notes init` |
+| Orient: backlog, tasks, leases, review count | `status` | `cc-notes status` |
+| Union-merge refs + attachments with the remote | `sync` | `cc-notes sync` |
+| Carry merged branches' open tasks | `reconcile` (`into`) | `cc-notes reconcile --into <branch>` |
+| Surface records anchored near a path | `relevant` (`path`) | `cc-notes relevant <path>` |
+| Ranked search across every kind | `search` (`query`, `labels`, `limit`) | `cc-notes search "<query>"` |
+| List the task(s) a commit implemented | `blame` (`sha`) | `cc-notes blame <sha>` |
+| Show any entity by id | `show` (`id`) | `cc-notes show <id>` |
+| An entity's edit history | `history` (`id`, `reverse`, `limit`) | `cc-notes history <id>` |
+| Capture work | `task_add` (`title`, `criteria`, `backlog`) | `cc-notes task add "<title>" --criterion <text>` |
+| The pickup queue | `task_ready` | `cc-notes task ready` |
+| Claim + move onto your branch | `task_start` (`id`) | `cc-notes task start <id>` |
+| Reclaim an expired lease | `task_claim` (`id`, `steal`) | `cc-notes task claim <id> --steal` |
+| Refresh a lease you hold | `task_renew` (`id`) | `cc-notes task renew <id>` |
+| Close and link HEAD | `task_done` (`id`) | `cc-notes task done <id>` |
+| Re-home a task | `task_edit` (`id`, `branch` or `backlog`) | `cc-notes task edit <id> --branch <branch>` |
+| Record a durable fact | `note_add` (`title`, `body`, `paths`) | `cc-notes note add "<title>" --path <path>` |
+| Re-confirm a fact | `note_verify` (`id`) | `cc-notes note verify <id>` |
+| Flag a fact out-of-date | `note_expire` (`id`, `reason`) | `cc-notes note expire <id>` |
+| Review drifted/stale/unverified | `note_review` / `doc_review` | `cc-notes note review` |
+| Search one kind | `note_search` (`query`) | `cc-notes note search "<query>"` |
+| Guidance for the next agent | `doc_add` (`title`, `when`, `body`) | `cc-notes doc add "<title>" --when "<trigger>" --body -` |
+| Revise a doc's body | `doc_edit` (`id`, `body`) | `cc-notes doc edit <id> --checkout` … `--apply` |
+| Start an append-only journal | `log_add` (`title`, `entry`) | `cc-notes log add "<title>"` |
+| Append an entry / artifacts | `log_append` (`id`, `entry`, `attach`) | `cc-notes log append <id> "<text>"` |
+| Read a journal back | `log_show` (`id`) | `cc-notes log show <id>` |
+| File a friction complaint | `papercut` (`text`) | `cc-notes papercut "<complaint>"` |
+| Read every complaint | `papercut_list` | `cc-notes papercut list` |
+| Retrieve an attachment | `attachment_get` (`id`, `name`, `output`) | `cc-notes attachment get <id> <name> -o <path>` |
+| Store a procedure | `runbook_add` (`title`, `steps`, `paths`) | `cc-notes runbook add "<title>" --step "<text>"` |
+| Add a positioned step | `runbook_step_add` (`id`, `text`, `command`, `after`) | `cc-notes runbook step add <id> "<text>"` |
+| Begin a tracked run | `runbook_run_start` (`id`, `task`) | `cc-notes runbook run start <id>` |
+| Record a step outcome | `runbook_run_done`/`_skip`/`_fail` (`id`, `step`, `note`) | `cc-notes runbook run done <id> <step>` |
+| Close the run | `runbook_run_finish` (`id`, `failed`, `abandoned`) | `cc-notes runbook run finish <id>` |
 
-Append `--json` to any note, doc, log, papercut, task, sync, reconcile, or status command for a
-machine-readable record instead of the lean line.
+A tool result is the command's `--json`; on the CLI, append `--json` to any note, doc, log,
+papercut, task, sync, reconcile, or status command for the same machine-readable record
+instead of the lean line.
 
 ## Artifacts & evidence
 
@@ -286,41 +325,45 @@ one-shot evidence into git history that every future clone pays for. Attachments
 bytes in git-lfs, content-addressed and outside the commit graph, and hang them off the
 entity by name; only the human-facing, publishable report belongs in the tree.
 
-Create one log per investigation, then append one entry per run — verdict in the entry text,
-evidence attached to the entity:
+Create one log per investigation with `log_add`, then `log_append` one entry per run —
+verdict in the entry text, evidence attached to the entity:
 
-```console
-$ cc-notes log add "fusekit VM repro: forced unmount" --dir internal/fusefs --label evidence
-4a81c9e	2026-07-02	evidence	fusekit VM repro: forced unmount
-$ cc-notes log append 4a81c9e --entry "phase 2: forced unmount wedges the holder; panic captured" \
-    --attach results/scenario.log --attach results/panics/boot.panic
-4a81c9e	2026-07-02	evidence	fusekit VM repro: forced unmount
+```json
+{
+  "id": "4a81c9e",
+  "entry": "phase 2: forced unmount wedges the holder; panic captured",
+  "attach": ["results/scenario.log", "results/panics/boot.panic"]
+}
 ```
 
-`--attach` is repeatable and works the same on `note add`, `doc add`, and `log add`. On `add`, a
-`--checkout` buffer carries attachments through at apply time — `cc-notes doc add --apply <path>
---attach <file>` ingests them in the same create transaction — while `--attach` on `note edit` or
-`doc edit` attaches to an entity that already exists (a log grows the same way through `log append
---attach`). It is fully offline: the file is hashed into the local LFS store at write time, no
-network. Names are unique per entity — an attach that reuses a live name fails unless you pass
-`--replace` (a re-run superseding the last run's `scenario.log`), and `--rm-attachment <name>` on
-`note`/`doc`/`log edit` drops one by name.
+CLI: `cc-notes log add "<title>" --dir <dir> --label evidence`, then
+`cc-notes log append <id> --entry "<verdict>" --attach results/scenario.log`.
+
+The `attach` array (CLI `--attach`, repeatable) works the same on `note_add`, `doc_add`, and
+`log_add`; on `note_edit`/`doc_edit` it attaches to an entity that already exists, and a log
+grows the same way through `log_append`. (The CLI's `--checkout` buffer carries attachments
+through at apply time — `cc-notes doc add --apply <path> --attach <file>` ingests them in the
+same create transaction.) It is fully offline: the file is hashed into the local LFS store at
+write time, no network. Names are unique per entity — an attach that reuses a live name fails
+unless you pass `replace: true` (a re-run superseding the last run's `scenario.log`), and
+`rm_attachments` on `note_edit`/`doc_edit`/`log_edit` drops names from the live set.
 
 The sharp edges:
 
-- **Only `cc-notes sync` moves the bytes.** Attachment content transfers over git-lfs
-  during `sync` — uploads before the refs push, downloads after. A plain `git push` (the
-  installed refspecs) publishes the refs *without* the content, so replicas see the entry
-  but not the files until someone who has them runs `cc-notes sync`.
+- **Only `sync` moves the bytes.** Attachment content transfers over git-lfs during `sync`
+  — uploads before the refs push, downloads after. A plain `git push` (the installed
+  refspecs) publishes the refs *without* the content, so replicas see the entry but not the
+  files until someone who has them runs `sync`.
 - **The remote's LFS quota is real.** On GitHub, attachments draw down the repo's LFS
   storage and bandwidth quota — modest on the free tier and separate from ordinary repo
   storage. Attach evidence that earns its bytes; when it stops earning them,
-  `--rm-attachment` drops it from the live set and future syncs stop carrying it.
+  `rm_attachments` drops it from the live set and future syncs stop carrying it.
 
-Read evidence back with `cc-notes attachment get <id> <name>` (stdout, or `-o <path>`) or
-`cc-notes attachment path <id> <name>`, which prints the local store path. `show` on the
-entity lists its attachments and flags any not yet downloaded with a `cc-notes sync` hint.
-On a mounted `.notes` tree, attachments also browse read-only at
+Read evidence back with `attachment_get` — it requires an `output` file path and writes the
+bytes there, never inline (CLI: `cc-notes attachment get <id> <name> -o <path>`, or stdout
+with no `-o`) — or `attachment_path`, which prints the local store path for a zero-copy
+read. `show` on the entity lists its attachments and flags any not yet downloaded with a
+sync hint. On a mounted `.notes` tree, attachments also browse read-only at
 `.notes/attachments/<short-id>/<name>`.
 
 ## Memory mirror (automatic)
@@ -333,9 +376,9 @@ label. The first write to a memory creates the note; a later edit rewrites that 
 memory and its note stay one-to-one. The note takes the memory's one-line description as its title
 and the memory body verbatim, labeled `memory`, `memory:<slug>`, and `memory-type:<type>`.
 
-List what has been mirrored with `cc-notes note list --label memory`, then `cc-notes sync` to share
-it. The memory write itself always lands first and untouched; a mirror that cannot write stays
-silent, so it never disturbs the write it shadows.
+List what has been mirrored with `note_list` and `{"labels": ["memory"]}` (CLI: `cc-notes note
+list --label memory`), then `sync` to share it. The memory write itself always lands first and
+untouched; a mirror that cannot write stays silent, so it never disturbs the write it shadows.
 
 ## Auto-sync / auto-reconcile (automatic)
 
@@ -370,12 +413,13 @@ An optional planning layer sits on top of tasks — skip it for the canonical fl
 task can carry an independent **sprint** pointer (a time-boxed grouping) and **project**
 pointer (a long-lived one), and a sprint can point at a project; all three are optional and
 **repo-wide**, not branch-scoped like a task's `branch`. Membership is an upward pointer the
-reader inverts, so `cc-notes sprint show` and `cc-notes project show` derive the tasks (and a
-project's sprints) that roll up into them. Independently, a task can carry **validation
-criteria** (`cc-notes task add --criterion`, or the `cc-notes task criterion` subgroup):
-`cc-notes task done` refuses to close while any criterion is unmet unless you pass `--force`,
-and `cc-notes task validate` runs each criterion's check script behind an explicit
-confirmation. See `references/sprints-and-projects.md` and `references/validation-criteria.md`.
+reader inverts, so `sprint_show` and `project_show` derive the tasks (and a project's
+sprints) that roll up into them. Independently, a task can carry **validation criteria**
+(`criteria` on `task_add`, or the `task_criterion_*` tools): `task_done` refuses to close
+while any criterion is unmet unless you pass `force`, `task_criterion_met`/`_failed` record
+a verdict with an evidence `note`, and `task_validate` runs each criterion's check script
+behind an explicit confirmation. See `references/sprints-and-projects.md` and
+`references/validation-criteria.md`.
 
 ## Runbooks (optional)
 
@@ -385,18 +429,21 @@ The split from a doc is execution: a doc *describes* and is kept fresh; a runboo
 *executed*, and every execution is a first-class **run** recording who ran it, when, and a
 per-step outcome (`done`, `failed`, or `skipped` — a step with no recorded outcome is
 pending). Runbooks are repo-wide like sprints and projects, with no freshness lifecycle;
-retire one with `runbook archive`.
+they anchor to commits, paths, dirs, and branches exactly like a note (so `relevant`
+surfaces them), rank in `runbook_search` and the kind-agnostic `search`, and retire with
+`runbook_archive` (`runbook_rm` tombstones one outright).
 
-The execution loop: `runbook run start <id>` (add `--task <task-id>` to cite the task the
-run serves), `runbook run done|skip|fail <id> <step>` per step as you go, then `runbook run
-finish <id>`. Steps insert and reorder without renumbering (`step add --after <step>`,
-`step move --first`), and concurrent runs by different agents merge cleanly. See
-`references/runbooks.md`.
+The execution loop: `runbook_run_start` (a `task` id cites the task the run serves),
+`runbook_run_done`/`_skip`/`_fail` per step as you go, then `runbook_run_finish`. Steps
+insert and reorder without renumbering (`runbook_step_add` with `after`,
+`runbook_step_move` with `first`), and concurrent runs by different agents merge cleanly.
+See `references/runbooks.md`.
 
 ## References
 
-- `references/cli-reference.md` — the complete command surface: every flag, default, and the
-  lean-line and `--json` output shape for each command.
+- `references/cli-reference.md` — the complete command surface: every MCP tool and its
+  properties, every flag and default, and the lean-line and `--json` output shape for each
+  command.
 - `references/coordination.md` — how agents coordinate over time: the backlog and the branch
   attribute, claims and leases, stale-claim recovery, deps and blocking, reconcile-on-merge,
   and union-merge sync across a shared remote.
