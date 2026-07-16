@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Writes stamp the Claude session id into their op pack.** Every entity
+  mutation — note add, doc edit, log append, task ops, compaction, sync
+  merges — records the writing Claude session in a new pack-level `session`
+  field, read from `CC_NOTES_SESSION_ID` when set (set-but-empty suppresses
+  the stamp), else `CLAUDE_CODE_SESSION_ID`, else omitted entirely: a
+  session-less pack is byte-identical to the old wire format, so existing
+  entity ids and stored chains are untouched, and old binaries ignore the new
+  key. `history` shows the stamp as a `session:<first 8 chars>` suffix in text
+  and the full id under `session` in `--json`, and the viz entity-trail panel
+  shows it beside the author.
 - **`notes.Client` now owns the repo-utility surface — status, relevance,
   history, blame, sync, reconcile, and gc — as a library.** The in-process
   `notes` client gains `Status`, `Relevant`, `History`, `Blame`, `Sync`,

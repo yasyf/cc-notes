@@ -20,6 +20,7 @@ func ScrubEnv(t *testing.T) {
 		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
 		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
 		"GIT_EDITOR", "EMAIL", "GIT_ASKPASS", "SSH_ASKPASS", "CC_NOTES_ACTOR",
+		"CC_NOTES_SESSION_ID", "CLAUDE_CODE_SESSION_ID",
 	} {
 		if value, ok := os.LookupEnv(key); ok {
 			t.Setenv(key, value)

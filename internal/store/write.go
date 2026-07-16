@@ -26,7 +26,7 @@ func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, err
 		return nil, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, create_project, create_doc, create_log, or create_runbook", ops[0].OpKind())
 	}
 	kind := create.CreateKind()
-	pack, err := roundTrip(model.Pack{Lamport: 1, Ops: ops})
+	pack, err := roundTrip(model.Pack{Lamport: 1, Session: session(), Ops: ops})
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
@@ -93,7 +93,7 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
-		pack := model.Pack{Lamport: nextLamport(chain), Ops: validated.Ops}
+		pack := model.Pack{Lamport: nextLamport(chain), Session: session(), Ops: validated.Ops}
 		sig := gitobj.Signature{Name: name, Email: email, When: s.now()}
 		sha, err := s.Repo.WriteOpsCommit(ctx, []model.SHA{tip}, sig, message, pack)
 		if err != nil {
@@ -155,7 +155,7 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 			CoversLamport: nextLamport(chain) - 1,
 			CoversShas:    coversShas,
 		}
-		pack, err := roundTrip(model.Pack{Lamport: nextLamport(chain), Ops: []model.Op{checkpoint}})
+		pack, err := roundTrip(model.Pack{Lamport: nextLamport(chain), Session: session(), Ops: []model.Op{checkpoint}})
 		if err != nil {
 			return nil, fmt.Errorf("compact %s: %w", ref, err)
 		}
@@ -204,7 +204,7 @@ func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (
 			}
 		}
 	}
-	pack := model.Pack{Lamport: nextLamport(combined)}
+	pack := model.Pack{Lamport: nextLamport(combined), Session: session()}
 	sig, actor, err := s.signature(ctx)
 	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)

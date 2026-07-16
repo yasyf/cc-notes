@@ -990,6 +990,59 @@ func TestActorOverride(t *testing.T) {
 	}
 }
 
+func TestSessionStamp(t *testing.T) {
+	const (
+		ccSession     = "cc-session"
+		claudeSession = "claude-session"
+	)
+	tests := []struct {
+		name       string
+		setCCNotes bool
+		ccNotes    string
+		setClaude  bool
+		claude     string
+		want       string
+	}{
+		{name: "cc-notes session", setCCNotes: true, ccNotes: ccSession, want: ccSession},
+		{name: "Claude session", setClaude: true, claude: claudeSession, want: claudeSession},
+		{name: "cc-notes wins", setCCNotes: true, ccNotes: ccSession, setClaude: true, claude: claudeSession, want: ccSession},
+		{name: "neither", want: ""},
+		{name: "empty cc-notes suppresses Claude", setCCNotes: true, setClaude: true, claude: claudeSession, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := initStore(t)
+			if tt.setCCNotes {
+				t.Setenv(sessionEnv, tt.ccNotes)
+			}
+			if tt.setClaude {
+				t.Setenv(claudeSessionEnv, tt.claude)
+			}
+
+			note := create(t, s, noteOps("session stamp")).(model.Note)
+			ref := refs.For(model.KindNote, note.ID)
+			snapshot, err := s.Append(t.Context(), ref, []model.Op{model.SetTitle{Title: "updated"}})
+			if err != nil {
+				t.Fatalf("Append: %v", err)
+			}
+			tip := snapshot.(model.Note).Head
+			chain, err := s.Repo.ReadChain(t.Context(), tip)
+			if err != nil {
+				t.Fatalf("ReadChain: %v", err)
+			}
+			if len(chain) != 2 {
+				t.Fatalf("chain length = %d, want 2", len(chain))
+			}
+			for i, commit := range chain {
+				if commit.Pack.Session != tt.want {
+					t.Errorf("chain[%d] Session = %q, want %q", i, commit.Pack.Session, tt.want)
+				}
+			}
+		})
+	}
+}
+
 func TestActorMalformed(t *testing.T) {
 	for _, value := range []string{"", "garbage", "<robo@example.com>", "Robo <>", "Robo <robo@example.com> tail"} {
 		t.Run(fmt.Sprintf("%q", value), func(t *testing.T) {
@@ -1005,6 +1058,7 @@ func TestActorMalformed(t *testing.T) {
 
 func TestMerge(t *testing.T) {
 	s := initStore(t)
+	t.Setenv(sessionEnv, "merge-session")
 	ctx := t.Context()
 	note := create(t, s, noteOps("base")).(model.Note)
 	ref := refs.For(model.KindNote, note.ID)
@@ -1059,6 +1113,9 @@ func TestMerge(t *testing.T) {
 	}
 	if head.Pack.Lamport != 3 || len(head.Pack.Ops) != 0 {
 		t.Errorf("merge pack = lamport %d with %d ops, want lamport 3 with 0 ops", head.Pack.Lamport, len(head.Pack.Ops))
+	}
+	if want := "merge-session"; head.Pack.Session != want {
+		t.Errorf("merge Session = %q, want %q", head.Pack.Session, want)
 	}
 
 	if _, err := s.Merge(ctx, ref, ours, theirs); !errors.Is(err, gitcmd.ErrCASMismatch) {

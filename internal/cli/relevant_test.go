@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -21,11 +22,13 @@ const (
 	relevantOther = "other@example.com"
 )
 
-// relevantRepo initializes a repo on main with a deterministic local identity
-// (me@example.com) so AuthorIdent resolves the same regardless of the test
-// process environment, and chdirs into it.
+// relevantRepo scrubs the ambient git/cc-notes environment, initializes a repo
+// on main with a deterministic local identity (me@example.com) so AuthorIdent
+// resolves the same regardless of the test process environment, and chdirs
+// into it.
 func relevantRepo(t *testing.T) string {
 	t.Helper()
+	gittest.ScrubEnv(t)
 	dir := t.TempDir()
 	relevantGit(t, dir, relevantMe, "init", "-q", "-b", "main")
 	relevantGit(t, dir, relevantMe, "config", "user.name", "Me")

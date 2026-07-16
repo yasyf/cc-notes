@@ -153,6 +153,7 @@ func printHistory(cmd *cobra.Command, kind model.Kind, entries []notes.HistoryEn
 			dtos[i] = historyEntryDTO{
 				SHA:     string(e.SHA),
 				Author:  string(e.Author),
+				Session: e.Session,
 				Time:    render.RFC3339(e.Time),
 				Lamport: uint64(e.Lamport),
 				Kind:    e.Kind,
@@ -194,6 +195,9 @@ func renderHistoryText(w io.Writer, kind model.Kind, entries []notes.HistoryEntr
 		header := fmt.Sprintf("%s  %s  %s", shortSHA(e.SHA), e.Author, render.RFC3339(e.Time))
 		if verb := historyVerb(e, kind); verb != "" {
 			header += "  " + verb
+		}
+		if e.Session != "" {
+			header += "  session:" + shortSession(e.Session)
 		}
 		if _, err := fmt.Fprintln(w, header); err != nil {
 			return err
@@ -260,12 +264,13 @@ type historyChangeDTO struct {
 }
 
 // historyEntryDTO fixes the JSON field order for one history entry: the commit
-// sha, author, RFC3339 UTC time, lamport, the entry kind
+// sha, author, Claude session, RFC3339 UTC time, lamport, the entry kind
 // (create|edit|checkpoint), the covered-commit count for checkpoints, and the
 // field changes.
 type historyEntryDTO struct {
 	SHA     string             `json:"sha"`
 	Author  string             `json:"author"`
+	Session string             `json:"session,omitempty"`
 	Time    string             `json:"time"`
 	Lamport uint64             `json:"lamport"`
 	Kind    string             `json:"kind"`
@@ -274,6 +279,13 @@ type historyEntryDTO struct {
 }
 
 func shortSHA(sha model.SHA) string { return model.EntityID(sha).Short() }
+
+func shortSession(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
+}
 
 func plural(n int, one, many string) string {
 	if n == 1 {

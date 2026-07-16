@@ -33,9 +33,11 @@ func (e *UnknownKindError) Error() string { return fmt.Sprintf("%s: %q", ErrUnkn
 func (e *UnknownKindError) Is(target error) bool { return target == ErrUnknownKind }
 
 // Pack is one operation pack: the ops carried by a single entity commit,
-// stamped with the entity's lamport clock.
+// stamped with the entity's lamport clock and, when known, the Claude session
+// that wrote it.
 type Pack struct {
 	Lamport Lamport
+	Session string
 	Ops     []Op
 }
 
@@ -50,15 +52,18 @@ type PackCommit struct {
 }
 
 // packWire mirrors the v1 wire layout. Field order is part of the storage
-// format: changing it changes commit hashes and therefore entity ids.
+// format: changing it changes commit hashes and therefore entity ids; session
+// carries omitempty so a session-less pack stays byte-identical to the
+// pre-session format.
 type packWire struct {
 	V       int               `json:"v"`
 	Lamport Lamport           `json:"lamport"`
+	Session string            `json:"session,omitempty"`
 	Ops     []json.RawMessage `json:"ops"`
 }
 
-// MarshalJSON emits the v1 wire format, {"v":1,"lamport":N,"ops":[...]},
-// byte-stable for a given Pack: fixed struct field order, no map iteration.
+// MarshalJSON emits the v1 wire format with an optional session, byte-stable
+// for a given Pack: fixed struct field order, no map iteration.
 func (p Pack) MarshalJSON() ([]byte, error) {
 	ops := make([]json.RawMessage, len(p.Ops))
 	for i, op := range p.Ops {
@@ -68,7 +73,7 @@ func (p Pack) MarshalJSON() ([]byte, error) {
 		}
 		ops[i] = raw
 	}
-	return json.Marshal(packWire{V: packVersion, Lamport: p.Lamport, Ops: ops})
+	return json.Marshal(packWire{V: packVersion, Lamport: p.Lamport, Session: p.Session, Ops: ops})
 }
 
 // DecodePack parses and validates a v1 wire pack. It fails with
@@ -91,7 +96,7 @@ func DecodePack(data []byte) (Pack, error) {
 		}
 		ops[i] = op
 	}
-	return Pack{Lamport: wire.Lamport, Ops: ops}, nil
+	return Pack{Lamport: wire.Lamport, Session: wire.Session, Ops: ops}, nil
 }
 
 // marshalOp encodes op as {"kind":"<k>",<op fields>} — the discriminator first,

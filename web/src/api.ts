@@ -133,6 +133,7 @@ export interface TrailChange {
 export interface TrailEntry {
   sha: string;
   author: string;
+  session?: string;
   time: number;
   lamport: number;
   kind: string;

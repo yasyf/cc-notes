@@ -48,6 +48,8 @@ type Client struct {
 // repository to hold any cc-notes entity yet. The author identity for writes
 // resolves lazily on each write: the CC_NOTES_ACTOR environment variable
 // ("Name <email>") when set, otherwise git's configured author identity.
+// Each write also stamps the Claude session id from CC_NOTES_SESSION_ID,
+// falling back to CLAUDE_CODE_SESSION_ID, omitted when neither is set.
 func Open(dir string) (*Client, error) {
 	s, err := store.Open(dir)
 	if err != nil {

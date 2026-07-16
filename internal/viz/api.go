@@ -77,11 +77,13 @@ type entityResponse struct {
 }
 
 // trailEntry is one change-trail commit in the entity wire format: the commit
-// identity, its lamport clock, the entry kind (create|edit|checkpoint), the
-// commits a checkpoint covers, and the field deltas.
+// identity, its writing session, its lamport clock, the entry kind
+// (create|edit|checkpoint), the commits a checkpoint covers, and the field
+// deltas.
 type trailEntry struct {
 	SHA     string        `json:"sha"`
 	Author  string        `json:"author"`
+	Session string        `json:"session,omitempty"`
 	Time    int64         `json:"time"`
 	Lamport uint64        `json:"lamport"`
 	Kind    string        `json:"kind"`
@@ -221,6 +223,7 @@ func trailEntryOf(e trail.Entry) trailEntry {
 	return trailEntry{
 		SHA:     string(e.Commit.SHA),
 		Author:  string(e.Commit.Author),
+		Session: e.Commit.Pack.Session,
 		Time:    e.Commit.AuthorTime,
 		Lamport: uint64(e.Commit.Pack.Lamport),
 		Kind:    e.Kind,

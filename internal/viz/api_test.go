@@ -280,6 +280,44 @@ func TestAPIEntityTaskWithCheckpoint(t *testing.T) {
 	}
 }
 
+// TestAPIEntityTrailSession checks that every persisted write exposes its full
+// Claude session id through the entity trail endpoint.
+func TestAPIEntityTrailSession(t *testing.T) {
+	const sessionID = "0b5c9b3a-7e2f-4c1d-9a8b-2f3e4d5c6b7a"
+
+	r := newGitRepo(t)
+	r.commit("c1")
+	t.Setenv("CC_NOTES_SESSION_ID", sessionID)
+	ctx := t.Context()
+	s := r.openStore()
+	snap, err := s.Create(ctx, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: "session trail", Type: model.TypeTask, Branch: "main"}})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	task := snap.(model.Task)
+	if _, err := s.Append(ctx, refs.For(model.KindTask, task.ID), []model.Op{model.SetStatus{Status: model.StatusInProgress}}); err != nil {
+		t.Fatalf("set in_progress: %v", err)
+	}
+
+	ts, _, _ := newVizServer(t, r)
+	code, body := getBody(t, ts.URL+"/api/entity/task/"+string(task.ID))
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", code, body)
+	}
+	var resp entityResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode %s: %v", body, err)
+	}
+	if len(resp.Trail) != 2 {
+		t.Fatalf("trail entries = %d, want 2", len(resp.Trail))
+	}
+	for i, entry := range resp.Trail {
+		if entry.Session != sessionID {
+			t.Errorf("trail entry %d session = %q, want %q", i, entry.Session, sessionID)
+		}
+	}
+}
+
 // TestAPIEntitySnapshotMatchesTip covers that the entity endpoint carries the
 // full folded tip snapshot, byte-equal to the store's folded state and decoding
 // back to the concrete task.

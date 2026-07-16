@@ -157,6 +157,11 @@ function TrailRow({ entry }: { entry: TrailEntry }) {
           {formatDateTime(entry.time)}
         </span>
         {entry.author !== "" && <span className="trail-author">{entry.author}</span>}
+        {entry.session !== undefined && entry.session !== "" && (
+          <span className="trail-session" title={entry.session}>
+            {entry.session.slice(0, 8)}
+          </span>
+        )}
         {entry.kind === "checkpoint" && entry.covers > 0 && (
           <span className="trail-covers">covers {entry.covers}</span>
         )}

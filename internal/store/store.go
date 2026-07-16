@@ -27,6 +27,14 @@ import (
 // "Name <email>".
 const actorEnv = "CC_NOTES_ACTOR"
 
+// sessionEnv overrides the Claude session id stamped on each write; when
+// unset, claudeSessionEnv (set by Claude Code itself) is the fallback.
+// sessionEnv set but empty suppresses stamping.
+const (
+	sessionEnv       = "CC_NOTES_SESSION_ID"
+	claudeSessionEnv = "CLAUDE_CODE_SESSION_ID"
+)
+
 const (
 	// maxAttempts bounds the Append compare-and-swap retry loop.
 	maxAttempts = 16
@@ -120,7 +128,9 @@ type Store struct {
 // subdirectory indirection. The author identity is resolved lazily, on each
 // write: the CC_NOTES_ACTOR environment variable ("Name <email>") when set —
 // a malformed value is an error, never a fallback — otherwise git's author
-// identity for the repository.
+// identity for the repository. Each write also stamps the Claude session id
+// from CC_NOTES_SESSION_ID, falling back to CLAUDE_CODE_SESSION_ID, omitted
+// when neither is set.
 func Open(dir string) (*Store, error) {
 	return OpenContext(context.Background(), dir)
 }
@@ -175,6 +185,13 @@ func (s *Store) actor(ctx context.Context) (name, email string, err error) {
 		return parseActor(value)
 	}
 	return s.Git.AuthorIdent(ctx)
+}
+
+func session() string {
+	if value, ok := os.LookupEnv(sessionEnv); ok {
+		return value
+	}
+	return os.Getenv(claudeSessionEnv)
 }
 
 func parseActor(value string) (name, email string, err error) {

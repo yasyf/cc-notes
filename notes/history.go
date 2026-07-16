@@ -18,10 +18,12 @@ import (
 // ("create"|"edit"|"checkpoint"); Covers is the number of commits a checkpoint
 // compacted (zero otherwise); Time is the author's unix seconds; Changes carries
 // each field's delta already rendered to display strings. Entries are returned
-// oldest-first; a caller applies reverse and limit.
+// oldest-first; a caller applies reverse and limit. Session is the Claude session
+// id the writing process carried, empty when unknown.
 type HistoryEntry struct {
 	SHA     model.SHA
 	Author  model.Actor
+	Session string
 	Time    int64
 	Lamport model.Lamport
 	Kind    string
@@ -80,6 +82,7 @@ func newHistoryEntry(e trail.Entry) HistoryEntry {
 	return HistoryEntry{
 		SHA:     e.Commit.SHA,
 		Author:  e.Commit.Author,
+		Session: e.Commit.Pack.Session,
 		Time:    e.Commit.AuthorTime,
 		Lamport: e.Commit.Pack.Lamport,
 		Kind:    e.Kind,

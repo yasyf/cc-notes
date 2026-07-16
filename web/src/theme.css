@@ -1433,6 +1433,11 @@ button.chip {
   color: var(--fg-muted);
 }
 
+.trail-session {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .trail-set {
   display: flex;
   flex-wrap: wrap;

@@ -19,6 +19,7 @@ type histChangeJSON struct {
 type histEntryJSON struct {
 	SHA     string           `json:"sha"`
 	Author  string           `json:"author"`
+	Session string           `json:"session"`
 	Kind    string           `json:"kind"`
 	Covers  int              `json:"covers"`
 	Changes []histChangeJSON `json:"changes"`
@@ -135,6 +136,50 @@ func TestHistoryTaskJSON(t *testing.T) {
 	if c, ok := changeByField(create, "priority"); !ok || c.From != nil || c.To == nil || *c.To != "2" {
 		t.Errorf("create priority change = %+v, want from nil to \"2\"", c)
 	}
+}
+
+// TestHistorySession checks that history renders the short writing session in
+// text, preserves the full id in JSON, and omits both surfaces when unknown.
+func TestHistorySession(t *testing.T) {
+	const sessionID = "0b5c9b3a-7e2f-4c1d-9a8b-2f3e4d5c6b7a"
+
+	t.Run("stamped", func(t *testing.T) {
+		dir := initRepo(t)
+		t.Setenv("CC_NOTES_SESSION_ID", sessionID)
+		id := histID(t, mustRun(t, dir, "note", "add", "session note", "--json"))
+		mustRun(t, dir, "note", "edit", id, "--title", "session note edited")
+
+		out := mustRun(t, dir, "history", id)
+		if !strings.Contains(out, "session:0b5c9b3a") {
+			t.Errorf("history text missing short session %q:\n%s", "session:0b5c9b3a", out)
+		}
+
+		raw := mustRun(t, dir, "history", id, "--json")
+		entries := unmarshalHistory(t, raw)
+		if len(entries) < 2 {
+			t.Fatalf("history entries = %d, want at least 2 (add + edit)", len(entries))
+		}
+		for i, entry := range entries {
+			if entry.Session != sessionID {
+				t.Errorf("history entry %d session = %q, want %q", i, entry.Session, sessionID)
+			}
+		}
+	})
+
+	t.Run("unknown", func(t *testing.T) {
+		dir := initRepo(t)
+		id := histID(t, mustRun(t, dir, "note", "add", "no session note", "--json"))
+		mustRun(t, dir, "note", "edit", id, "--title", "no session note edited")
+
+		out := mustRun(t, dir, "history", id)
+		if strings.Contains(out, "session:") {
+			t.Errorf("history text contains session marker with no session env:\n%s", out)
+		}
+		raw := mustRun(t, dir, "history", id, "--json")
+		if strings.Contains(raw, `"session"`) {
+			t.Errorf("history JSON contains session key with no session env:\n%s", raw)
+		}
+	})
 }
 
 // TestHistoryKindScoping checks that the top-level history resolves any kind,

@@ -507,6 +507,15 @@ func TestPackGoldenBytes(t *testing.T) {
 			want: `{"v":1,"lamport":5,"ops":[{"kind":"claim","assignee":"agent-2"},{"kind":"renew"},{"kind":"reclaim","assignee":"agent-2","from":"agent-1","after_lamport":5},{"kind":"link_commit","sha":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"}]}`,
 		},
 		{
+			name: "session pack",
+			pack: Pack{
+				Lamport: 7,
+				Session: "0b5c9b3a-7e2f-4c1d-9a8b-2f3e4d5c6b7a",
+				Ops:     []Op{AddTag{Tag: "audit"}},
+			},
+			want: `{"v":1,"lamport":7,"session":"0b5c9b3a-7e2f-4c1d-9a8b-2f3e4d5c6b7a","ops":[{"kind":"add_tag","tag":"audit"}]}`,
+		},
+		{
 			name: "note pack with anchors",
 			pack: Pack{
 				Lamport: 1,
@@ -667,6 +676,43 @@ func TestPackGoldenBytes(t *testing.T) {
 				t.Fatalf("marshal =\n%s\nwant\n%s", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPackSessionRoundTrip(t *testing.T) {
+	const session = "0b5c9b3a-7e2f-4c1d-9a8b-2f3e4d5c6b7a"
+	pack := Pack{
+		Lamport: 7,
+		Session: session,
+		Ops:     []Op{AddTag{Tag: "audit"}},
+	}
+	data, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatalf("marshal session pack: %v", err)
+	}
+	got, err := DecodePack(data)
+	if err != nil {
+		t.Fatalf("decode session pack: %v", err)
+	}
+	if got.Session != session {
+		t.Fatalf("Session = %q, want %q", got.Session, session)
+	}
+
+	emptySession := Pack{Lamport: 3, Session: "", Ops: []Op{Renew{}}}
+	emptyData, err := json.Marshal(emptySession)
+	if err != nil {
+		t.Fatalf("marshal empty session pack: %v", err)
+	}
+	if strings.Contains(string(emptyData), `"session"`) {
+		t.Fatalf("marshal empty session pack = %s, want no session key", emptyData)
+	}
+	withoutSession := Pack{Lamport: 3, Ops: []Op{Renew{}}}
+	withoutData, err := json.Marshal(withoutSession)
+	if err != nil {
+		t.Fatalf("marshal session-less pack: %v", err)
+	}
+	if string(emptyData) != string(withoutData) {
+		t.Fatalf("marshal empty session pack = %s, want %s", emptyData, withoutData)
 	}
 }
 

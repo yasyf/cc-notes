@@ -7,20 +7,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
-// driftRepoInit creates a git repository on branch main in dir with a local
-// identity, so the store's own commits — which inherit the test process env,
-// not driftRepoGit's per-invocation GIT_AUTHOR_* — have an author on a runner
-// with no global git config. Global/system config is pinned to /dev/null so
-// only this repo's local identity is consulted.
+// driftRepoInit scrubs the ambient git/cc-notes environment and creates a git
+// repository on branch main in dir with a local identity, so the store's own
+// commits — which inherit the test process env, not driftRepoGit's
+// per-invocation GIT_AUTHOR_* — have a deterministic author.
 func driftRepoInit(t *testing.T, dir string) {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	gittest.ScrubEnv(t)
 	driftRepoGit(t, dir, "init", "-q", "-b", "main")
 	driftRepoGit(t, dir, "config", "user.name", "Test User")
 	driftRepoGit(t, dir, "config", "user.email", "test@example.com")

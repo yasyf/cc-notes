@@ -34,6 +34,7 @@ func sameExceptHead(t *testing.T, got, want model.Snapshot) {
 
 func TestCompactAdvancesRef(t *testing.T) {
 	s := initStore(t)
+	t.Setenv(sessionEnv, "compact-session")
 	ctx := t.Context()
 	note := create(t, s, noteOps("v1")).(model.Note)
 	ref := refs.For(model.KindNote, note.ID)
@@ -83,6 +84,9 @@ func TestCompactAdvancesRef(t *testing.T) {
 	}
 	if len(tip.Pack.Ops) != 1 {
 		t.Fatalf("checkpoint carries %d ops, want 1", len(tip.Pack.Ops))
+	}
+	if want := "compact-session"; tip.Pack.Session != want {
+		t.Fatalf("checkpoint Session = %q, want %q", tip.Pack.Session, want)
 	}
 	checkpoint, ok := tip.Pack.Ops[0].(model.Checkpoint)
 	if !ok {
