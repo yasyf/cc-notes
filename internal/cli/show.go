@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -24,20 +23,16 @@ func newShowCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, err := openStore()
+			s, c, err := openStoreClient()
 			if err != nil {
 				return err
 			}
-			ref, err := resolveAnyEntity(ctx, s, args[0])
+			kind, entityID, err := c.ResolveEntity(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			parsed, err := refs.Parse(ref)
-			if err != nil {
-				return err
-			}
-			id := string(parsed.ID)
-			switch parsed.Kind {
+			id := string(entityID)
+			switch kind {
 			case model.KindNote:
 				return showNote(cmd, s, id, jsonOut)
 			case model.KindDoc:
@@ -53,7 +48,7 @@ func newShowCmd() *cobra.Command {
 			case model.KindRunbook:
 				return showRunbook(cmd, s, id, jsonOut)
 			default:
-				panic(fmt.Sprintf("resolveAnyEntity returned unknown kind %q", parsed.Kind))
+				panic(fmt.Sprintf("ResolveEntity returned unknown kind %q", kind))
 			}
 		},
 	}

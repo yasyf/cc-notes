@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -11,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/render"
-	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
@@ -104,35 +102,6 @@ func historyCmd(use, short string, resolve func(context.Context, *notes.Client, 
 	flags.BoolVar(&opts.reverse, "reverse", false, "oldest first (chronological); default is newest first")
 	bindLimit(flags, &opts.limit, 0)
 	return cmd
-}
-
-// resolveAnyEntity expands a kind-agnostic id prefix into a ref by resolving it
-// against every kind. Ids are globally unique, so at most one kind matches a
-// full id; a prefix that matches entities in more than one kind is ambiguous
-// and fails with an *AmbiguousError listing each match. A prefix that is
-// ambiguous within a single kind surfaces that kind's *AmbiguousError directly.
-func resolveAnyEntity(ctx context.Context, s *store.Store, prefix string) (string, error) {
-	kinds := model.Kinds()
-	matched := make([]string, 0, len(kinds))
-	for _, kind := range kinds {
-		ref, err := s.Resolve(ctx, kind, prefix)
-		switch {
-		case err == nil:
-			matched = append(matched, ref)
-		case errors.Is(err, store.ErrNotFound):
-			continue
-		default:
-			return "", err
-		}
-	}
-	switch len(matched) {
-	case 0:
-		return "", fmt.Errorf("%w: no entity matches %q", store.ErrNotFound, prefix)
-	case 1:
-		return matched[0], nil
-	default:
-		return "", ambiguousAcrossKinds(ctx, s, prefix, matched)
-	}
 }
 
 func printHistory(cmd *cobra.Command, kind model.Kind, entries []notes.HistoryEntry, opts historyOpts) error {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 
 	"github.com/spf13/cobra"
 
@@ -23,6 +24,9 @@ func (k kindSpec[T]) load(ctx context.Context, s *store.Store, prefix string) (s
 	var zero T
 	ref, err := s.Resolve(ctx, k.kind, prefix)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return "", zero, crossKindHint(ctx, s, k.kind, prefix, err)
+		}
 		return "", zero, err
 	}
 	snap, err := s.Load(ctx, ref)

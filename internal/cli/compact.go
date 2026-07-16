@@ -1,12 +1,11 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/store"
+	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -27,11 +26,11 @@ func newCompactCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ref, err := resolveAnyEntity(ctx, s, args[0])
+			kind, id, err := c.ResolveEntity(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			snap, err := s.Compact(ctx, ref)
+			snap, err := s.Compact(ctx, refs.For(kind, id))
 			if err != nil {
 				return err
 			}
@@ -57,33 +56,4 @@ func newCompactCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
-}
-
-func ambiguousAcrossKinds(ctx context.Context, s *store.Store, prefix string, matched []string) error {
-	candidates := make([]store.Candidate, 0, len(matched))
-	for _, ref := range matched {
-		snap, err := s.Load(ctx, ref)
-		if err != nil {
-			return err
-		}
-		title := ""
-		switch v := snap.(type) {
-		case model.Note:
-			title = v.Title
-		case model.Doc:
-			title = v.Title
-		case model.Log:
-			title = v.Title
-		case model.Task:
-			title = v.Title
-		case model.Sprint:
-			title = v.Title
-		case model.Project:
-			title = v.Title
-		case model.Runbook:
-			title = v.Title
-		}
-		candidates = append(candidates, store.Candidate{ID: snap.EntityID(), Title: title})
-	}
-	return &store.AmbiguousError{Kind: model.KindNote, Prefix: prefix, Candidates: candidates}
 }

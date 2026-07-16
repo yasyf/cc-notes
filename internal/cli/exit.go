@@ -115,8 +115,9 @@ func Message(err error) string {
 // when it carries none. A *notes.MissingContentError points at `cc-notes sync`
 // to fetch the referenced-but-absent attachment bytes named in the message; a
 // *notes.AttachmentExistsError points at --replace to overwrite the name-colliding
-// attachment. Both split the pre-migration one-line remediation onto its own line
-// under the classify label.
+// attachment. A *notFoundHintError names the other kinds the missed id resolves to
+// and the kind-agnostic `cc-notes show`. Each renders on its own line under the
+// classify label.
 func Hint(err error) string {
 	var missing *notes.MissingContentError
 	if errors.As(err, &missing) {
@@ -125,6 +126,10 @@ func Hint(err error) string {
 	var exists *notes.AttachmentExistsError
 	if errors.As(err, &exists) {
 		return "pass --replace to overwrite it"
+	}
+	var crossKind *notFoundHintError
+	if errors.As(err, &crossKind) {
+		return crossKind.hintLine()
 	}
 	return ""
 }
