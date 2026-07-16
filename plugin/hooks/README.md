@@ -117,10 +117,12 @@ anywhere in the raw text (`$`, backticks, braces, process substitution),
 pipelines, chains, redirects and heredocs — so a `--body -` fed by a heredoc
 prompts; carry the text in the MCP `body` parameter instead — env-assignment
 prefixes, wrappers (`sudo`, `env`, `exec`), a path-qualified binary, and a bare
-`--` in the args. Explicit user deny rules always win, since `PermissionRequest`
-only answers a dialog that would otherwise appear. Like the rest of the pack, the
-approvers are dormant without the captain-hook dispatcher plugin, and
-`PermissionRequest` dispatch needs capt-hook >= 9.8.0.
+`--` in the args. Explicit user deny and ask rules always win — Claude Code
+evaluates them regardless of a hook allow. On capt-hook >= 9.24.0 the approvers
+ride the default `PreToolUse | PermissionRequest` registration, so teammate and
+subagent dialogs forwarded to the lead session — which run no `PermissionRequest`
+hooks at all — are covered too. Like the rest of the pack, the approvers are
+dormant without the captain-hook dispatcher plugin.
 
 ### Firing policy
 

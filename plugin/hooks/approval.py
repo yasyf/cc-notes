@@ -3,8 +3,11 @@
 cc-notes is the durable-records layer agents reach for constantly; a permission
 dialog on every ``cc-notes …`` call or MCP tool defeats it. Two approvers answer
 those dialogs with *allow*: any tool on the cc-notes MCP servers, and any plain
-``cc-notes``/``ccn`` invocation via Bash. They only answer dialogs that would
-otherwise appear — explicit user deny rules still win — and never block anything.
+``cc-notes``/``ccn`` invocation via Bash. On capt-hook >= 9.24.0 they ride the
+default ``PreToolUse | PermissionRequest`` registration, so the allow also lands
+on the forwarded-teammate path, where dialog hooks never run. Explicit settings
+deny/ask rules still win — Claude Code evaluates them regardless of a hook
+allow — and the approvers never block anything.
 
 Everything fails closed. The MCP approver pins the server name — bare ``Tool()``
 suffix-matching would approve a tool a foreign server hides behind a cc-notes
