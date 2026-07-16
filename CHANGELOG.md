@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Kind-scoped misses now name the entity's actual kind.** When a noun-scoped
+  command (`doc show`, `note edit`, `task done`, …) misses, cc-notes scans the
+  other kinds for the id and, on a clean match, appends a hint to the exit-3
+  not-found error: `"e39ee86" is a note — "cc-notes show e39ee86" resolves it
+  (or use a note-scoped command)`. A prefix matching several other kinds lists
+  them; a miss everywhere stays a plain not-found. The MCP `*_show`/`*_edit`
+  tools inherit the hint through the CLI bridge.
+- **MCP tool calls with wrong argument names now name the accepted ones.**
+  A pre-validating middleware checks argument keys against each tool's schema
+  before the SDK rejects them, replacing the opaque `unexpected additional
+  properties` failure with one line naming the tool's accepted properties
+  (required starred) and a did-you-mean for common wrong names (`text`/
+  `comment`→`body`, `complaint`→`body`, `evidence`→`note`, `tags`→`labels`).
+  Wrong names still fail — arguments are never rewritten.
+
+### Changed
+- **BREAKING (MCP): the `papercut` tool's `text` argument is renamed `body`**,
+  matching every other free-text tool argument. Schema-driven callers pick the
+  new name up automatically; anything hardcoding `text` now gets the middleware
+  hint naming `body`.
+
+### Fixed
+- Cross-kind ambiguity reports from top-level `show`/`compact` no longer
+  mislabel every match as a note: both commands now resolve through
+  `notes.Client.ResolveEntity`, whose `AmbiguousKindsError` carries the real
+  per-kind labels (the CLI-internal duplicate resolver is gone).
+
+### Added
 - **Writes stamp the Claude session id into their op pack.** Every entity
   mutation — note add, doc edit, log append, task ops, compaction, sync
   merges — records the writing Claude session in a new pack-level `session`

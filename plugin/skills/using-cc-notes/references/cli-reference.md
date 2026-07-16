@@ -2150,7 +2150,7 @@ papercut-specific verbs — the `relevant`/`show` kind stays `log`.
 
 ### `cc-notes papercut [TEXT]`
 
-MCP: papercut (text, model)
+MCP: papercut (body, model)
 
 File one complaint — the one-paragraph text comes from the positional `TEXT`, `--body`, or `-`
 (stdin), exactly one source. Whitespace-only text exits 2. On success the command echoes the

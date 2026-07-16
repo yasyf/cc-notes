@@ -52,8 +52,8 @@ type projectListArgs struct {
 	Status string `json:"status,omitempty" jsonschema:"status filter, comma-separated (default all)"`
 }
 
-func registerPlanning(srv *mcp.Server, b *bridge) {
-	mcp.AddTool(srv, &mcp.Tool{Name: "sprint_add", Description: "Create a sprint (a time-boxed grouping of tasks)."},
+func registerPlanning(ts *toolset, b *bridge) {
+	addTool(ts, &mcp.Tool{Name: "sprint_add", Description: "Create a sprint (a time-boxed grouping of tasks)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in sprintAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
 			if err != nil {
@@ -66,7 +66,7 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"sprint", "add"}, flags, in.Title)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "sprint_edit", Description: "Edit a sprint's title, description, project, dates, and labels."},
+	addTool(ts, &mcp.Tool{Name: "sprint_edit", Description: "Edit a sprint's title, description, project, dates, and labels."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in sprintEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
@@ -85,7 +85,7 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"sprint", "edit"}, flags, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "sprint_list", Description: "List sprints, filtered by project and status."},
+	addTool(ts, &mcp.Tool{Name: "sprint_list", Description: "List sprints, filtered by project and status."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in sprintListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--project", in.Project)
@@ -93,13 +93,13 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"sprint", "list"}, flags)...)
 		})
 
-	idTool(srv, b, "sprint_show", "Show one sprint with its tasks.", "sprint", "show")
+	idTool(ts, b, "sprint_show", "Show one sprint with its tasks.", "sprint", "show")
 
-	commentTool(srv, b, "sprint")
+	commentTool(ts, b, "sprint")
 
-	statusTools(srv, b, "sprint", "activate", "complete", "cancel")
+	statusTools(ts, b, "sprint", "activate", "complete", "cancel")
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "project_add", Description: "Create a project (a long-lived grouping of sprints and tasks)."},
+	addTool(ts, &mcp.Tool{Name: "project_add", Description: "Create a project (a long-lived grouping of sprints and tasks)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
 			if err != nil {
@@ -109,7 +109,7 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"project", "add"}, flags, in.Title)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "project_edit", Description: "Edit a project's title, description, and labels."},
+	addTool(ts, &mcp.Tool{Name: "project_edit", Description: "Edit a project's title, description, and labels."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
@@ -122,16 +122,16 @@ func registerPlanning(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"project", "edit"}, flags, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "project_list", Description: "List projects, filtered by status."},
+	addTool(ts, &mcp.Tool{Name: "project_list", Description: "List projects, filtered by status."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--status", in.Status)
 			return b.run(ctx, argvFor([]string{"project", "list"}, flags)...)
 		})
 
-	idTool(srv, b, "project_show", "Show one project with its sprints and tasks.", "project", "show")
+	idTool(ts, b, "project_show", "Show one project with its sprints and tasks.", "project", "show")
 
-	commentTool(srv, b, "project")
+	commentTool(ts, b, "project")
 
-	statusTools(srv, b, "project", "activate", "complete", "archive", "cancel")
+	statusTools(ts, b, "project", "activate", "complete", "archive", "cancel")
 }

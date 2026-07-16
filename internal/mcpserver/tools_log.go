@@ -39,8 +39,8 @@ type logListArgs struct {
 	All    bool     `json:"all,omitempty" jsonschema:"include tombstoned logs"`
 }
 
-func registerLog(srv *mcp.Server, b *bridge) {
-	mcp.AddTool(srv, &mcp.Tool{Name: "log_add", Description: "Create an append-only log (incident timeline, rollout log, debugging record)."},
+func registerLog(ts *toolset, b *bridge) {
+	addTool(ts, &mcp.Tool{Name: "log_add", Description: "Create an append-only log (incident timeline, rollout log, debugging record)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--entry", in.Entry)
 			if err != nil {
@@ -52,7 +52,7 @@ func registerLog(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"log", "add"}, flags, in.Title)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "log_append", Description: "Append one entry to a log, and/or attach files. Entries are append-only."},
+	addTool(ts, &mcp.Tool{Name: "log_append", Description: "Append one entry to a log, and/or attach files. Entries are append-only."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logAppendArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--entry", in.Entry)
 			if err != nil {
@@ -63,7 +63,7 @@ func registerLog(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"log", "append"}, flags, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "log_edit", Description: "Edit a log's title, labels, and anchors (entries are append-only)."},
+	addTool(ts, &mcp.Tool{Name: "log_edit", Description: "Edit a log's title, labels, and anchors (entries are append-only)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
@@ -74,9 +74,9 @@ func registerLog(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"log", "edit"}, flags, in.ID)...)
 		})
 
-	idTool(srv, b, "log_rm", "Tombstone a log.", "log", "rm")
+	idTool(ts, b, "log_rm", "Tombstone a log.", "log", "rm")
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "log_list", Description: "List logs, optionally filtered by label and anchors."},
+	addTool(ts, &mcp.Tool{Name: "log_list", Description: "List logs, optionally filtered by label and anchors."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -88,9 +88,9 @@ func registerLog(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"log", "list"}, flags)...)
 		})
 
-	idTool(srv, b, "log_show", "Show one log with its entries in chronological order.", "log", "show")
+	idTool(ts, b, "log_show", "Show one log with its entries in chronological order.", "log", "show")
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "log_search", Description: "Ranked search across log titles, labels, and entry text."},
+	addTool(ts, &mcp.Tool{Name: "log_search", Description: "Ranked search across log titles, labels, and entry text."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entitySearchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)

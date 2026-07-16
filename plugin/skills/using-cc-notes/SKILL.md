@@ -148,7 +148,7 @@ because an append-only journal never claims to be current truth. Reach for a log
 the chronology itself — an incident timeline, a rollout log, a debugging session — rather than a
 single fact (a note) or a guide you keep current (a doc).
 
-A **papercut** is the fire-and-forget corner of the log: `papercut` with the complaint as `text`
+A **papercut** is the fire-and-forget corner of the log: `papercut` with the complaint as `body`
 (CLI: `cc-notes papercut "<complaint>"`) files a one-paragraph friction complaint — a dead-end
 tool call, a broken link, a misleading doc — instead of silently pushing through. Every complaint
 appends one entry to a single repo-wide journal (a log titled `papercuts`, tagged `papercut`,
@@ -303,7 +303,7 @@ The full surface — every flag, property, default, and output shape — is in
 | Start an append-only journal | `log_add` (`title`, `entry`) | `cc-notes log add "<title>"` |
 | Append an entry / artifacts | `log_append` (`id`, `entry`, `attach`) | `cc-notes log append <id> "<text>"` |
 | Read a journal back | `log_show` (`id`) | `cc-notes log show <id>` |
-| File a friction complaint | `papercut` (`text`) | `cc-notes papercut "<complaint>"` |
+| File a friction complaint | `papercut` (`body`) | `cc-notes papercut "<complaint>"` |
 | Read every complaint | `papercut_list` | `cc-notes papercut list` |
 | Retrieve an attachment | `attachment_get` (`id`, `name`, `output`) | `cc-notes attachment get <id> <name> -o <path>` |
 | Store a procedure | `runbook_add` (`title`, `steps`, `paths`) | `cc-notes runbook add "<title>" --step "<text>"` |

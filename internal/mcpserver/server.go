@@ -30,15 +30,23 @@ func New(cfg Config) *mcp.Server {
 		&mcp.ServerOptions{Instructions: instructions},
 	)
 	b := &bridge{newRoot: cfg.NewRoot, label: cfg.Label, message: cfg.Message}
-	registerRepo(srv, b)
-	registerNote(srv, b)
-	registerDoc(srv, b)
-	registerLog(srv, b)
-	registerPapercut(srv, b)
-	registerTask(srv, b)
-	registerPlanning(srv, b)
-	registerRunbook(srv, b)
+	ts := &toolset{srv: srv, props: map[string]toolProps{}}
+	registerAll(ts, b)
+	srv.AddReceivingMiddleware(didYouMeanMiddleware(ts.props))
 	return srv
+}
+
+// registerAll installs every tool table onto ts, recording each tool's accepted
+// properties for the did-you-mean middleware.
+func registerAll(ts *toolset, b *bridge) {
+	registerRepo(ts, b)
+	registerNote(ts, b)
+	registerDoc(ts, b)
+	registerLog(ts, b)
+	registerPapercut(ts, b)
+	registerTask(ts, b)
+	registerPlanning(ts, b)
+	registerRunbook(ts, b)
 }
 
 // Serve resolves the project directory, chdirs once (per-call chdir would race

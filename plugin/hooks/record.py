@@ -120,9 +120,9 @@ SKIPPED_VALUE_FLAGS = frozenset({
 MCP_RECORD_WRITE_TOOLS = ("note_add", "doc_add", "log_add", "log_append", "note_edit", "doc_edit", "papercut")
 MCP_RECORD_WRITE_NAMES = tuple(MCP_TOOL_PREFIX + t for t in MCP_RECORD_WRITE_TOOLS)
 # The prose-bearing input fields across those tools, per internal/mcpserver/tools_*.go: note/doc
-# carry `body`, log_add and log_append both carry `entry`, papercut carries `text`. No write tool
+# carry `body`, while log_add and log_append both carry `entry`. No write tool
 # has a `message` field.
-MCP_CONTENT_FIELDS = ("title", "body", "entry", "text")
+MCP_CONTENT_FIELDS = ("title", "body", "entry")
 
 
 @on(
@@ -581,7 +581,7 @@ EPHEMERAL_REFERENCE_LEDE = (
 
 def _carry_content_fixes(mcp: bool, papercut: bool = False) -> list[str]:
     if papercut:
-        # papercut is text-only (positional TEXT / MCP `text`) — it has no --checkout/--body/--attach
+        # papercut is text-only (positional TEXT / MCP `body`) — it has no --checkout/--body/--attach
         # of its own, so route a durable artifact to the papercuts journal, which is an ordinary log.
         inline = "inline the load-bearing detail directly in the complaint text, not a path to it — a papercut is text-only."
         if mcp:
@@ -630,11 +630,11 @@ class McpEphemeralReference(CustomCondition):
             tool="mcp__plugin_cc-notes_cc-notes__doc_add",
             tool_input={"title": "Handoff", "when": "w", "body": "full detail in session scratchpad steering-handoff.md"},
         ): Warn(pattern="attach"),
-        # The papercut tool carries its complaint in the `text` field; a purge-bound path there fires
+        # The papercut tool carries its complaint in the `body` field; a purge-bound path there fires
         # with papercut-appropriate fix lines (route the artifact to the journal, no CLI body/attach).
         Input(
             tool="mcp__plugin_cc-notes_cc-notes__papercut",
-            tool_input={"text": "full repro saved at /tmp/repro.md"},
+            tool_input={"body": "full repro saved at /tmp/repro.md"},
         ): Warn(pattern="papercuts journal"),
         # Inline content with no purge-bound path stays silent.
         Input(
@@ -643,7 +643,7 @@ class McpEphemeralReference(CustomCondition):
         ): Allow(),
         Input(
             tool="mcp__plugin_cc-notes_cc-notes__papercut",
-            tool_input={"text": "the search tool kept returning stale results"},
+            tool_input={"body": "the search tool kept returning stale results"},
         ): Allow(),
     },
 )

@@ -26,8 +26,8 @@ type noteEditArgs struct {
 	RmAttachments []string `json:"rm_attachments,omitempty" jsonschema:"attachment names to remove"`
 }
 
-func registerNote(srv *mcp.Server, b *bridge) {
-	mcp.AddTool(srv, &mcp.Tool{Name: "note_add", Description: "Record a durable fact or decision as a note (git-synced, optionally anchored to commits/paths/dirs/branches)."},
+func registerNote(ts *toolset, b *bridge) {
+	addTool(ts, &mcp.Tool{Name: "note_add", Description: "Record a durable fact or decision as a note (git-synced, optionally anchored to commits/paths/dirs/branches)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in noteAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
 			if err != nil {
@@ -39,7 +39,7 @@ func registerNote(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"note", "add"}, flags, in.Title)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "note_edit", Description: "Edit a note: title, body, labels, anchors, and attachments."},
+	addTool(ts, &mcp.Tool{Name: "note_edit", Description: "Edit a note: title, body, labels, anchors, and attachments."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in noteEditArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := noteDocEditFlags(in)
 			if err != nil {
@@ -48,7 +48,7 @@ func registerNote(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"note", "edit"}, flags, in.ID)...)
 		})
 
-	registerNoteDocShared(srv, b, "note")
+	registerNoteDocShared(ts, b, "note")
 }
 
 // noteDocEditFlags builds the shared edit flags (including --json) for a note;
@@ -121,10 +121,10 @@ type reviewArgs struct {
 
 // registerNoteDocShared registers the rm/list/show/search/verify/supersede/
 // expire/review tools common to note and doc under the given noun.
-func registerNoteDocShared(srv *mcp.Server, b *bridge, noun string) {
-	idTool(srv, b, noun+"_rm", "Tombstone a "+noun+".", noun, "rm")
+func registerNoteDocShared(ts *toolset, b *bridge, noun string) {
+	idTool(ts, b, noun+"_rm", "Tombstone a "+noun+".", noun, "rm")
 
-	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_list", Description: "List " + noun + "s, optionally filtered by label and anchors."},
+	addTool(ts, &mcp.Tool{Name: noun + "_list", Description: "List " + noun + "s, optionally filtered by label and anchors."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entityListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -137,9 +137,9 @@ func registerNoteDocShared(srv *mcp.Server, b *bridge, noun string) {
 			return b.run(ctx, argvFor([]string{noun, "list"}, flags)...)
 		})
 
-	idTool(srv, b, noun+"_show", "Show one "+noun+" with its verdict and attachments.", noun, "show")
+	idTool(ts, b, noun+"_show", "Show one "+noun+" with its verdict and attachments.", noun, "show")
 
-	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_search", Description: "Ranked search across " + noun + " titles, labels, and bodies."},
+	addTool(ts, &mcp.Tool{Name: noun + "_search", Description: "Ranked search across " + noun + " titles, labels, and bodies."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entitySearchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -152,16 +152,16 @@ func registerNoteDocShared(srv *mcp.Server, b *bridge, noun string) {
 			return b.run(ctx, argvFor([]string{noun, "search"}, flags, in.Query)...)
 		})
 
-	idTool(srv, b, noun+"_verify", "Re-verify a "+noun+", refreshing its witness against current HEAD.", noun, "verify")
+	idTool(ts, b, noun+"_verify", "Re-verify a "+noun+", refreshing its witness against current HEAD.", noun, "verify")
 
-	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_supersede", Description: "Record that a NEW " + noun + " replaces an OLD one (or remove the edge)."},
+	addTool(ts, &mcp.Tool{Name: noun + "_supersede", Description: "Record that a NEW " + noun + " replaces an OLD one (or remove the edge)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in supersedeArgs) (*mcp.CallToolResult, any, error) {
 			flags := optStr([]string{"--json"}, "--by", in.By)
 			flags = optBool(flags, "--clear", in.Clear)
 			return b.run(ctx, argvFor([]string{noun, "supersede"}, flags, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_expire", Description: "Flag a " + noun + " as out of date (or clear the flag)."},
+	addTool(ts, &mcp.Tool{Name: noun + "_expire", Description: "Flag a " + noun + " as out of date (or clear the flag)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in expireArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--reason", in.Reason)
@@ -169,7 +169,7 @@ func registerNoteDocShared(srv *mcp.Server, b *bridge, noun string) {
 			return b.run(ctx, argvFor([]string{noun, "expire"}, flags, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: noun + "_review", Description: "Surface " + noun + "s needing attention (drifted, never-verified, or expired), each with a verdict."},
+	addTool(ts, &mcp.Tool{Name: noun + "_review", Description: "Surface " + noun + "s needing attention (drifted, never-verified, or expired), each with a verdict."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in reviewArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--stale-after", in.StaleAfter)

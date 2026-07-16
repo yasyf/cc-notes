@@ -61,13 +61,13 @@ type attachmentGetArgs struct {
 	Output string `json:"output" jsonschema:"file path to write the attachment bytes to (required; binary never flows through the result)"`
 }
 
-func registerRepo(srv *mcp.Server, b *bridge) {
-	mcp.AddTool(srv, &mcp.Tool{Name: "status", Description: "Orient on the backlog: tasks in flight, who holds what, and notes and docs needing attention."},
+func registerRepo(ts *toolset, b *bridge) {
+	addTool(ts, &mcp.Tool{Name: "status", Description: "Orient on the backlog: tasks in flight, who holds what, and notes and docs needing attention."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ statusArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, "status", "--json")
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "relevant", Description: "Surface the notes, docs, and tasks anchored to a repository path — run before editing unfamiliar code."},
+	addTool(ts, &mcp.Tool{Name: "relevant", Description: "Surface the notes, docs, and tasks anchored to a repository path — run before editing unfamiliar code."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in relevantArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--branch", in.Branch)
@@ -78,7 +78,7 @@ func registerRepo(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"relevant"}, flags, in.Path)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "sync", Description: "Sync notes, tasks, and attachment content with the remote (moves refs AND lfs bytes)."},
+	addTool(ts, &mcp.Tool{Name: "sync", Description: "Sync notes, tasks, and attachment content with the remote (moves refs AND lfs bytes)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in syncArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--remote", in.Remote)
@@ -86,7 +86,7 @@ func registerRepo(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"sync"}, flags)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "reconcile", Description: "Relocate tasks onto the target branch after merging a source branch."},
+	addTool(ts, &mcp.Tool{Name: "reconcile", Description: "Relocate tasks onto the target branch after merging a source branch."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in reconcileArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--into", in.Into)
@@ -96,7 +96,7 @@ func registerRepo(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"reconcile"}, flags)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "history", Description: "Show the append-only op history of any entity by id prefix."},
+	addTool(ts, &mcp.Tool{Name: "history", Description: "Show the append-only op history of any entity by id prefix."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in historyArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optBool(flags, "--reverse", in.Reverse)
@@ -104,7 +104,7 @@ func registerRepo(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"history"}, flags, in.ID)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "search", Description: "Ranked search across every note, doc, log, and runbook."},
+	addTool(ts, &mcp.Tool{Name: "search", Description: "Ranked search across every note, doc, log, and runbook."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in searchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -116,19 +116,19 @@ func registerRepo(srv *mcp.Server, b *bridge) {
 			return b.run(ctx, argvFor([]string{"search"}, flags, in.Query)...)
 		})
 
-	idTool(srv, b, "show", "Show any note, doc, log, task, sprint, project, or runbook by id prefix.", "show")
+	idTool(ts, b, "show", "Show any note, doc, log, task, sprint, project, or runbook by id prefix.", "show")
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "blame", Description: "Find the tasks that produced a commit, via its recorded commit links and task trailers."},
+	addTool(ts, &mcp.Tool{Name: "blame", Description: "Find the tasks that produced a commit, via its recorded commit links and task trailers."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in blameArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"blame"}, []string{"--json"}, in.SHA)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "attachment_path", Description: "Print the local filesystem path of an entity's attachment object."},
+	addTool(ts, &mcp.Tool{Name: "attachment_path", Description: "Print the local filesystem path of an entity's attachment object."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in attachmentPathArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"attachment", "path"}, nil, in.ID, in.Name)...)
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "attachment_get", Description: "Write an entity's attachment bytes to a file path (binary is never returned inline)."},
+	addTool(ts, &mcp.Tool{Name: "attachment_get", Description: "Write an entity's attachment bytes to a file path (binary is never returned inline)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in attachmentGetArgs) (*mcp.CallToolResult, any, error) {
 			flags := optStr(nil, "--output", in.Output)
 			res, _, err := b.run(ctx, argvFor([]string{"attachment", "get"}, flags, in.ID, in.Name)...)

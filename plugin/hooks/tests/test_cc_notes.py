@@ -2461,7 +2461,7 @@ def test_record_command_mcp_branch() -> None:
     task = record_command("task", "Do it", "", ".", mcp=True)
     check("mcp task: task_add tool + criteria + backlog=true", "task_add tool" in task[0] and "criteria=" in task[0] and "backlog=true" in task[0], repr(task))
     paper = record_command("papercut", "ignored title", "", ".", mcp=True)
-    check("mcp papercut: names the papercut tool with a text param, no CLI spelling", len(paper) == 1 and "papercut tool" in paper[0] and "text=" in paper[0] and "cc-notes" not in paper[0], repr(paper))
+    check("mcp papercut: names the papercut tool with a body param, no CLI spelling", len(paper) == 1 and "papercut tool" in paper[0] and "body=" in paper[0] and "cc-notes" not in paper[0], repr(paper))
 
 
 def _write_mcp_marker(common_dir: Path, pid: int) -> None:
@@ -2597,13 +2597,13 @@ def test_mcp_ephemeral_reference_fires(monkeypatch, tmp_path) -> None:
 
 
 def test_mcp_ephemeral_papercut_fix_lines(monkeypatch, tmp_path) -> None:
-    """An MCP papercut write leaning on a purge-bound `text` gets papercut fixes: inline it or route the
+    """An MCP papercut write leaning on a purge-bound `body` gets papercut fixes: inline it or route the
     artifact to the papercuts journal via log_append — never CLI flags, never the generic doc body/attach."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = mock_tool_event(
         tool="mcp__plugin_cc-notes_cc-notes__papercut",
         event=Event.PostToolUse,
-        tool_input={"text": "full repro saved at /tmp/repro.md"},
+        tool_input={"body": "full repro saved at /tmp/repro.md"},
         session_dir=tmp_path,
     )
     result = nudge_mcp_ephemeral_reference(evt)

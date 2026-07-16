@@ -244,7 +244,7 @@ def record_command(kind: str, title: str, when: str, area: str, *, mcp: bool = F
                 f'call the task_add tool: title="{title}", criteria=["<how to verify it is done>"] (backlog=true if any agent should be able to claim it; no_validation_criteria=true only when acceptance genuinely cannot be stated).'
             ]
         if kind == "papercut":
-            return ['call the papercut tool: text="<one-paragraph complaint>".']
+            return ['call the papercut tool: body="<one-paragraph complaint>".']
         return [f'call the note_add tool: title="{title}"{dir_arg}, with the fact as the body param.']
     dir_flag = f" --dir {area}" if area and area != "." else ""
     if kind == "doc":
