@@ -1685,4 +1685,3 @@ command: cc-notes workflows install
     --dest shorthand=none type=string default=".github/workflows" usage="destination directory, relative to the repo root"
   inherited:
     (none)
-
