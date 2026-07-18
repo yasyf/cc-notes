@@ -1,1 +1,1 @@
-{"v":1,"lamport":8,"session":"c447a015-35aa-4f83-abbb-0b84ed7542b9","ops":[{"kind":"set_criterion_status","id":"cf90f7e93ee05d2c511e198b76ea31ae","status":"met","note":"v0.35.1 tagged on a539d3ba; release run 29654416752 green incl. bump-formula tap publish"}]}
+{"v":1,"lamport":9,"session":"c447a015-35aa-4f83-abbb-0b84ed7542b9","ops":[{"kind":"set_status","status":"done"},{"kind":"link_commit","sha":"a539d3ba2b3b117838d3a651d814f6c535d8e380"}]}
