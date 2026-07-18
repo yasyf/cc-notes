@@ -22,6 +22,7 @@ NUDGE_MAX_FIRES = 3
 # Cap on body/diff/plan text handed to a small-model classifier.
 LLM_INPUT_CAP = 6000
 
+# The generic record_command() path only — record.py special-cases runbook/investigation; sprint/project never route here.
 RECORD_KINDS = ("note", "doc", "log", "task", "papercut")
 
 # The Claude Code plugin surfaces the cc-notes MCP server's tools under this name prefix.
@@ -105,7 +106,7 @@ def parse_relevant(out: str | None) -> list[dict[str, Any]]:
 
 def entry_kind(entry: dict[str, Any]) -> str:
     kind = entry.get("kind")
-    return kind if kind in ("doc", "log") else "note"
+    return kind if kind in ("doc", "log", "runbook", "investigation") else "note"
 
 
 def entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
@@ -137,7 +138,12 @@ def short_id(full: str) -> str:
 
 
 def render_note_lines(entries: list[dict[str, Any]]) -> list[str]:
-    dispatch = {"doc": render_doc_line, "log": render_log_line}
+    dispatch = {
+        "doc": render_doc_line,
+        "log": render_log_line,
+        "runbook": render_runbook_line,
+        "investigation": render_investigation_line,
+    }
     return [dispatch.get(entry_kind(e), render_note_line)(e) for e in entries]
 
 
@@ -173,6 +179,28 @@ def render_log_line(entry: dict[str, Any]) -> str:
     if reasons := ", ".join(entry.get("reasons", [])):
         line += f" ({reasons})"
     line += f" — cc-notes log show {short}"
+    return line
+
+
+def render_runbook_line(entry: dict[str, Any]) -> str:
+    runbook = entry.get("runbook", {})
+    short = short_id(runbook.get("id", ""))
+    line = f"{short} {runbook.get('title', '')}"
+    if reasons := ", ".join(entry.get("reasons", [])):
+        line += f" ({reasons})"
+    line += f" — cc-notes runbook show {short}"
+    return line
+
+
+def render_investigation_line(entry: dict[str, Any]) -> str:
+    investigation = entry.get("investigation", {})
+    short = short_id(investigation.get("id", ""))
+    line = f"{short} {investigation.get('title', '')}"
+    if status := investigation.get("status"):
+        line += f" [{status}]"
+    if reasons := ", ".join(entry.get("reasons", [])):
+        line += f" ({reasons})"
+    line += f" — cc-notes investigation show {short}"
     return line
 
 

@@ -26,6 +26,8 @@ native task tracking versus durable, git-synced cc-notes entities.
 | `cc-notes doc add` | Durable, git-synced | Repo-global, anchored like a note, plus a `--when` read-trigger | Long-form guidance written for the next agent, verified and floated on read |
 | `cc-notes log add` | Durable, git-synced | Repo-global, anchored like a doc | An append-only chronological journal — entries are immutable, never edited or reordered |
 | `cc-notes papercut` | Durable, git-synced | Repo-global, the shared `papercuts` journal | A one-paragraph complaint about friction hit during work — a dead-end tool call, a broken link, a misleading doc |
+| `cc-notes runbook add` | Durable, git-synced | Repo-global, anchored like a note | A repeatable procedure as ordered steps, each optionally carrying a command; every execution is a tracked run with per-step outcomes |
+| `cc-notes investigation open` | Durable, git-synced | Repo-global, anchored like a note | One debugging arc: an immutable premise, findings with dispositions, an append-only evidence timeline, and a status that holds the verdict |
 
 Tasks are global. The id addresses a task no matter which branch it lives on, and
 its branch is a mutable attribute. `cc-notes task add --backlog` parks work in the
@@ -42,7 +44,7 @@ model call errors, every recalled record is shown rather than hide context by br
 
 **Record (push)** takes a write, a copy, a commit, or an approved plan, recalls a candidate
 over a cheap glob or diff, and a small LLM confirms the content is durable and routes it to
-exactly one primitive — note, doc, log, task, or papercut — or to nothing. It fails *closed* to
+exactly one primitive — note, doc, log, task, papercut, runbook, or investigation — or to nothing. It fails *closed* to
 silence.
 
 The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
@@ -55,7 +57,7 @@ and the pure workflow reminders, where the action is fixed.
 
 | Trigger | Recall | The LLM picks |
 |---------|--------|---------------|
-| `Read` a file (PostToolUse) | notes, docs, and logs `cc-notes relevant <path>` ranks | which are worth surfacing now — a lone candidate surfaces directly, two or more are filtered |
+| `Read` a file (PostToolUse) | the notes, docs, logs, runbooks, and investigations `cc-notes relevant <path>` ranks | which are worth surfacing now — a lone candidate surfaces directly, two or more are filtered |
 | `Edit` / `Write` / `MultiEdit` a file (PostToolUse) | anchored records with a non-null drift verdict (`relevant --attached --worktree`) | which drift actually warrants a `verify` / `edit` / `supersede` / `expire`, named per kind |
 | Session start, first `UserPromptSubmit` (once) | your branch's open/in-progress tasks topped up from the backlog | nothing — rendered straight as orientation, capped at seven with a `+K more` → `cc-notes status` |
 
@@ -68,7 +70,7 @@ later. The session-start float is deterministic orientation, not a filtered surf
 
 | Trigger | Candidate | The LLM picks |
 |---------|-----------|---------------|
-| `Write` / `Edit` / `MultiEdit` of an internal-looking file (PostToolUse) | a status/handoff/notes/runbook/`memory/` file the static `DurableInternalWrite` gate flags | note / doc / log / task / papercut / runbook — or none; the subtle calls are doc (living guidance) vs log (append-only chronology) and doc (describes) vs runbook (a procedure you re-execute, tracked per run), while papercut is a one-off friction gripe with nothing to curate or do |
+| `Write` / `Edit` / `MultiEdit` of an internal-looking file (PostToolUse) | a status/handoff/notes/runbook/`memory/` file the static `DurableInternalWrite` gate flags | note / doc / log / task / papercut / runbook / investigation — or none; the subtle calls are doc (living guidance) vs log (append-only chronology), doc (describes) vs runbook (a procedure you re-execute, tracked per run), and log (a finished chronology) vs investigation (a debugging arc still moving toward a verdict), while papercut is a one-off friction gripe with nothing to curate or do |
 | Bash `cp`/`mv`/`rsync` landing run output in a durable tree, or a `Write`/`Edit` of an evidence-suffixed file (`.log`, `.panic`, `.dump`, …) anywhere in it, `docs/**` included (PostToolUse) | the transfer the static `EvidenceArchive` gate flags — temp/scratchpad, `testdata/` fixtures, `.git` internals, and relative in-repo bulk copies stay exempt | (static, no model) a log entry carrying the artifacts as `--attach` git-lfs attachments; only `cc-notes sync` uploads their content (plain `git push` moves refs without it), and a >1MB payload strengthens the wording |
 | Bash `cc-notes note`/`doc`/`log` `add`/`edit`/`append` (or `cc-notes papercut`) whose title or body text names a purge-bound path (`/tmp`, `/var`, a session scratchpad) the static `EphemeralRecordReference` gate flags — an `--attach` value is exempt (PostToolUse) | the record command the gate flags | (static, no model) carry the content in the record itself — `--body -` (or `--checkout` file mode) for text, `--attach <file>` for artifacts, whose bytes land in the ODB and sync with the repo |
 | `git commit` / `jj commit` / `jj describe` / `ccx vcs ship` (PostToolUse) | the HEAD commit — message, diffstat, bounded patch | whether the change encodes a durable decision worth a note or doc; the `cc-task:` link reminder always fires regardless, and the sync is an automatic side-effect (see below) |
@@ -302,7 +304,7 @@ subprocess) cannot assert it deterministically.
 The Record routers are LLM-gated, so their inline `tests={...}` cover only the cheap
 static gate: the inline harness stubs `call_llm` to its default verdict, which records
 nothing, so a positive can never fire there. What the gate lets through, what the model
-routes to (note vs doc vs log vs task vs papercut), the always-on commit and plan teaches, and the
+routes to (note vs doc vs log vs task vs papercut vs runbook vs investigation), the always-on commit and plan teaches, and the
 per-key dedup are proven in `tests/test_cc_notes.py`, which stubs `evt.ctx.call_llm`
 (and `evt.ctx.git`) directly.
 

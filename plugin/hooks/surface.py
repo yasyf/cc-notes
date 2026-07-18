@@ -28,7 +28,7 @@ from .common import (
 
 SURFACE_FILTER_SYSTEM = (
     "You are a precision filter on the recall side. A cheap ranker has surfaced durable cc-notes "
-    "records (notes, docs, logs) anchored to a file the agent just touched. The ranker over-selects "
+    "records (notes, docs, logs, runbooks, investigations) anchored to a file the agent just touched. The ranker over-selects "
     "on purpose; your job is to keep the ones worth putting in front of the agent right now and drop "
     "only the clearly irrelevant.\n"
     "\n"
@@ -83,7 +83,7 @@ def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touche
     },
 )
 def float_note_context(evt: PostToolUseEvent) -> HookResult | None:
-    """Surface the notes, docs, and logs relevant to a freshly read file, once per id per session."""
+    """Surface the durable records relevant to a freshly read file, once per id per session."""
     if not evt.file:
         return None
     entries = parse_relevant(run_cc_notes(evt, "relevant", str(evt.file), "--json"))

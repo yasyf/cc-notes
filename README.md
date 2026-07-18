@@ -99,6 +99,20 @@ Each hit comes back with a verdict:
 
 `note verify` re-attests a fact that still holds; `note supersede` replaces one that doesn't, keeping the lineage. Docs share the same lifecycle (`doc verify`, `doc supersede`, `doc expire`, `doc review`), so a handoff drifts loudly instead of silently.
 
+### Land a verdict on a debugging hunch, not just a fix
+
+A hunch chased across three sessions ends as a vague "fixed it" commit message, and the next regression starts the whole hunt over. An investigation holds the arc structurally: the premise is immutable, evidence appends to a timeline, and the status — never the title — carries the verdict:
+
+```bash
+cc-notes investigation open "TestPool deadlock on CI" "Hangs began after 3d55ae2e landed; suspect the pool rewrite."
+cc-notes investigation append a1b2 "Bisect: hang reproduces at 3d55ae2e~4 too."
+cc-notes investigation root-cause a1b2 "Unbuffered results chan leaks a blocked send on ctx cancel."
+cc-notes investigation fix a1b2 --commit 5e3c9ce4
+cc-notes investigation confirm a1b2 "20 green CI runs since the fix; no recurrence."
+```
+
+Status moves `open → root_caused → fixed → confirmed`; `exonerate` closes an arc whose premise turned out wrong — that is a verdict too — and `reopen` returns any closed one when it regresses. Findings (`investigation finding add`, then `clear` or `confirm --why`) hold each suspect hypothesis with its disposition, so a cleared suspect stays cleared.
+
 ---
 
 ## Commands
@@ -109,12 +123,16 @@ Each hit comes back with a verdict:
 | `cc-notes status` | Read-only board: backlog, your branch's tasks, in-progress claims, notes needing review |
 | `cc-notes task add` | Create a task (`--backlog` for the shared queue, `--criterion` for a validation gate) |
 | `cc-notes task start` / `done` | Claim a task onto your branch; close it and anchor your HEAD commit |
+| `cc-notes task validate` | Run a task's stored criterion scripts and record each as met or failed; `task done` gates on the criteria |
 | `cc-notes note add` | Add a note, optionally anchored to a path, directory, commit, or branch |
 | `cc-notes note review` | Flag notes as `DRIFTED`, `STALE`, or `UNVERIFIED` |
 | `cc-notes doc add` | Store a long-form handoff with a `--when` trigger, surfaced to the next agent by `cc-notes relevant` |
 | `cc-notes log add` | Start an append-only journal, surfaced by `cc-notes relevant`; logs skip the review lifecycle since they never drift |
 | `cc-notes papercut` | File a one-paragraph friction complaint to the repo-wide papercuts journal (`papercut list` reads it back) |
-| `cc-notes relevant` | Rank the notes, docs, and logs most relevant to a path, with the reasons each matched |
+| `cc-notes investigation open` | Open a debugging arc on a falsifiable premise; findings, an evidence timeline, and status verbs carry it to a verdict |
+| `cc-notes runbook add` | Store a repeatable procedure as ordered steps; `runbook run start` tracks each execution with per-step outcomes |
+| `cc-notes sprint` / `project` | Roll tasks up into the optional planning layer: time-boxed sprints, long-lived projects |
+| `cc-notes relevant` | Rank the anchored records — notes, docs, logs, runbooks, investigations — most relevant to a path, with the reasons each matched |
 | `cc-notes reconcile` | Carry merged branches' open tasks onto a target branch |
 | `cc-notes blame` | Name the task(s) a commit implemented |
 | `cc-notes attachment get` | Stream an attachment's content from the local LFS store (`path` prints its object path) |
@@ -122,11 +140,11 @@ Each hit comes back with a verdict:
 | `cc-notes mount` | Expose notes and tasks as an editable `.notes` filesystem (needs a `_fuse` binary; auto-mounted by `init`) |
 | `cc-notes viz` | Watch branch flow and note/task/doc lifecycles live in a browser |
 
-Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) covers every flag. Docs and notes also edit as plain files without a mount: `doc edit <id> --checkout` (or `note edit`) renders the entity to Markdown and prints its path, and `--apply` commits your edits back. An optional planning layer rolls tasks up into sprints and projects via `cc-notes sprint` and `cc-notes project`, and `cc-notes runbook` stores repeatable procedures — ordered steps, each with an optional command, where every execution is a tracked run with per-step outcomes. Every mutation echoes the entity's new state as a tab-separated line, and every command takes `--json`.
+Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) covers every flag. Docs and notes also edit as plain files without a mount: `doc edit <id> --checkout` (or `note edit`) renders the entity to Markdown and prints its path, and `--apply` commits your edits back. Tasks, sprints, projects, and runbooks carry threaded discussion via `<noun> comment`. Every mutation echoes the entity's new state as a tab-separated line, and every command takes `--json`. A global `--repo PATH` (`-R`) points any command at another repository's store from any cwd — pass any path inside it, while file-path arguments still resolve against the invocation cwd.
 
 ## MCP server
 
-`cc-notes mcp` runs a stdio [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that mirrors the CLI surface: one `noun_verb` tool per command for the record nouns — `doc_add`, `note_edit`, `task_claim`, `task_criterion_met`, `attachment_path`, and the rest — and a curated set for the planning nouns (`sprint_add`, `runbook_run_done`, …). Each tool drives the real CLI in-process, so it validates and returns exactly what the command does — a tool result is the command's `--json`. A long doc or note body rides the `body` parameter, so an agent records a handoff in one call, no scratch file and no stdin.
+`cc-notes mcp` runs a stdio [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that mirrors the CLI surface: one `noun_verb` tool per agent-facing command across all eight entity kinds — `doc_add`, `note_edit`, `task_claim`, `task_criterion_met`, `investigation_open`, `runbook_run_done`, `sprint_add`, and the rest — with parity tests guarding both directions. Each tool drives the real CLI in-process, so it validates and returns exactly what the command does — a tool result is the command's `--json`. A long doc or note body rides the `body` parameter, so an agent records a handoff in one call, no scratch file and no stdin.
 
 The Claude Code plugin wires the server for you: it ships a bundled `.mcp.json` pointed at the `cc-notes` on your `PATH`, and the tools surface as `mcp__plugin_cc-notes_cc-notes__<tool>`. Nothing to install or configure. The plugin also auto-approves cc-notes CLI and MCP calls, so agents are never permission-prompted for them. Recording a handoff is one tool call:
 
@@ -166,7 +184,7 @@ Attachment content lives on your git host's LFS endpoint and counts against its 
 
 ## Visualize
 
-`cc-notes viz` opens a live web view of the current repo. Every branch draws as a swimlane with its fork and merge points, and every note, task, and doc lifecycle event pins to the commit that produced it. Three tabs: the swimlane timeline, a commit DAG, and Browse — a faceted entity table with a task kanban, global search, and a markdown detail sidebar. All of them stream updates over SSE, so the view moves as agents claim, edit, and close work.
+`cc-notes viz` opens a live web view of the current repo. Every branch draws as a swimlane with its fork and merge points, and every entity's lifecycle events — across all eight kinds, investigations and runbooks included — pin to the commits that produced them. Three tabs: the swimlane timeline, a commit DAG, and Browse — a faceted entity table with a task kanban, global search, and a markdown detail sidebar. All of them stream updates over SSE, so the view moves as agents claim, edit, and close work.
 
 ```bash
 cc-notes viz

@@ -172,7 +172,7 @@ with the parameter winning) records which model hit the friction.
 The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, else your git
 `user.name`/`user.email`. Claims and leases key on that actor.
 
-See `references/tasks-vs-notes.md` for worked examples of choosing among the six.
+See `references/tasks-vs-notes.md` for worked examples of choosing among the seven.
 
 ## Mount the notes tree (optional)
 
@@ -255,12 +255,20 @@ $ cc-notes task done d82c087
 d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 ```
 
-**7. Record facts.** A note is born verified against the current HEAD — the first worked
+**7. Chase a suspicion.** The moment work turns into debugging with a falsifiable premise —
+a red CI run, a bug hunt, an anomaly — `investigation_open` records that premise immutably.
+`investigation_append` logs evidence per triage step, `investigation_finding_add` then
+`_clear`/`_confirm` (with `why`) gives each suspect an explicit disposition, and the arc
+closes through the transition verbs — `investigation_root_cause`, `investigation_fix`,
+`investigation_confirm`, or `investigation_exonerate` when the premise falls. CLI:
+`cc-notes investigation open "<title>" "<premise>"`.
+
+**8. Record facts.** A note is born verified against the current HEAD — the first worked
 example above. Re-confirm it later with `note_verify`, flag one that has gone out of date
 with `note_expire`, and replace a changed decision with `note_supersede` (`{"id": "<old>",
 "by": "<new>"}`).
 
-**8. Merge and reconcile.** Merge code with git or jj, then carry the merged branches'
+**9. Merge and reconcile.** Merge code with git or jj, then carry the merged branches'
 still-open tasks onto the target and converge with the remote: `reconcile` with
 `{"into": "main"}`, then `sync`. Both steps are idempotent.
 
@@ -278,7 +286,7 @@ pushed: 2
 rounds: 1
 ```
 
-**9. Maintain.** `note_review` surfaces drifted, stale, and unverified facts; `task_archived`
+**10. Maintain.** `note_review` surfaces drifted, stale, and unverified facts; `task_archived`
 hides long-closed work; `cc-notes gc --prune-remote` (CLI-only, opt-in, best-effort)
 physically reclaims tombstoned refs.
 
@@ -306,6 +314,7 @@ The full surface — every flag, property, default, and output shape — is in
 | Refresh a lease you hold | `task_renew` (`id`) | `cc-notes task renew <id>` |
 | Close and link HEAD | `task_done` (`id`) | `cc-notes task done <id>` |
 | Re-home a task | `task_edit` (`id`, `branch` or `backlog`) | `cc-notes task edit <id> --branch <branch>` |
+| Thread discussion on a task, sprint, project, or runbook | `task_comment` / `sprint_comment` / `project_comment` / `runbook_comment` (`id`, `body`) | `cc-notes task comment <id> "<text>"` |
 | Record a durable fact | `note_add` (`title`, `body`, `paths`) | `cc-notes note add "<title>" --path <path>` |
 | Re-confirm a fact | `note_verify` (`id`) | `cc-notes note verify <id>` |
 | Flag a fact out-of-date | `note_expire` (`id`, `reason`) | `cc-notes note expire <id>` |
@@ -334,6 +343,9 @@ The full surface — every flag, property, default, and output shape — is in
 A tool result is the command's `--json`; on the CLI, append `--json` to any note, doc, log,
 investigation, papercut, task, sync, reconcile, or status command for the same machine-readable
 record instead of the lean line.
+
+`--repo PATH` (`-R`) targets another repository's store from any cwd — pass any path inside it;
+file-path arguments (e.g. `--attach`) still resolve against the invocation cwd.
 
 ## Artifacts & evidence
 

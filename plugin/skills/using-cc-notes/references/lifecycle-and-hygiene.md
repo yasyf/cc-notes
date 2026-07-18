@@ -2,6 +2,8 @@
 
 cc-notes keeps its own logs honest. A note records when it was last confirmed true, so a fact that no longer matches the code surfaces instead of rotting unseen. A task carries a lease, so a crashed agent's claim becomes reclaimable instead of a permanent lock. No verdict is stored — the reader computes each one against a threshold at read time, so they stay deterministic across replicas. Three mechanisms keep the logs lean and trustworthy: note hygiene, task lifecycle, and the scale machinery under both.
 
+Everything in the note-hygiene section applies verbatim to docs — a doc shares the note's verify/drift/supersede/expire lifecycle (`doc_verify`, `doc_supersede`, `doc_expire`, `doc_review`) on top of its `when` read-trigger. The append-only kinds have no freshness lifecycle by design: a log, an investigation, and the papercuts journal never verify, drift, or supersede, because a chronology never claims current truth — an investigation's honesty lives in its typed status instead, and a runbook tracks fidelity per execution through its runs, not through verification.
+
 ## Note hygiene
 
 A note is a claim about the code, and a claim decays. The verify/drift/supersede triad tracks that decay as first-class state, not convention.

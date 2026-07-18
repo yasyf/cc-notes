@@ -55,8 +55,10 @@ from hooks.common import (
     parse_tasks,
     record_command,
     RecordVerdict,
+    render_investigation_line,
     render_log_line,
     render_note_lines,
+    render_runbook_line,
     render_task_line,
     run_cc_notes,
 )
@@ -211,6 +213,32 @@ def log_entry(
     }
 
 
+def runbook_entry(runbook_id: str, *, title: str = "r", reasons: list[str] | None = None) -> dict:
+    """A `kind == "runbook"` relevance entry: the runbook DTO under "runbook", no "note" key.
+
+    Carries steps the render path must never surface — only the pointer floats.
+    """
+    return {
+        "kind": "runbook",
+        "runbook": {"id": runbook_id, "title": title, "status": "active", "steps": [{"text": "RUNBOOK_STEP_TEXT"}]},
+        "score": 1,
+        "reasons": ["dir"] if reasons is None else reasons,
+    }
+
+
+def investigation_entry(investigation_id: str, *, title: str = "i", status: str = "open", reasons: list[str] | None = None) -> dict:
+    """A `kind == "investigation"` relevance entry: the DTO under "investigation", no "note" key.
+
+    Carries a premise the render path must never surface — the status is the signal.
+    """
+    return {
+        "kind": "investigation",
+        "investigation": {"id": investigation_id, "title": title, "status": status, "premise": "INVESTIGATION_PREMISE"},
+        "score": 1,
+        "reasons": ["dir"] if reasons is None else reasons,
+    }
+
+
 def test_parse_relevant() -> None:
     check("parse_relevant: empty string -> []", parse_relevant("") == [])
     check("parse_relevant: None -> []", parse_relevant(None) == [])
@@ -317,6 +345,31 @@ def test_render_log_lines() -> None:
             "11bb22c Log (branch) — cc-notes log show 11bb22c",
         ],
         repr(mixed),
+    )
+
+
+def test_render_runbook_investigation_lines() -> None:
+    """Runbook and investigation entries survive parsing and render their own pointer lines, never the note path."""
+    kept = parse_relevant(json.dumps([runbook_entry("abc1234def0"), investigation_entry("def5678aaa0")]))
+    check("parse_relevant: keeps runbook + investigation entries", [entry_payload(e)["id"] for e in kept] == ["abc1234def0", "def5678aaa0"], repr(kept))
+
+    rb = render_runbook_line(runbook_entry("abc1234def0", title="Release dance", reasons=["dir"]))
+    check("render_runbook_line: id + title + reasons + runbook show", rb == "abc1234 Release dance (dir) — cc-notes runbook show abc1234", repr(rb))
+    check("render_runbook_line: never leaks step text", "RUNBOOK_STEP_TEXT" not in rb, repr(rb))
+
+    inv = render_investigation_line(investigation_entry("def5678aaa0", title="CI deadlock", status="root_caused", reasons=["path"]))
+    check(
+        "render_investigation_line: id + title + status + investigation show",
+        inv == "def5678 CI deadlock [root_caused] (path) — cc-notes investigation show def5678",
+        repr(inv),
+    )
+    check("render_investigation_line: never leaks the premise", "INVESTIGATION_PREMISE" not in inv, repr(inv))
+
+    routed = render_note_lines([runbook_entry("abc1234def0", title="R", reasons=[]), investigation_entry("def5678aaa0", title="I", status="open", reasons=[])])
+    check(
+        "render_note_lines: dispatches runbook + investigation by kind",
+        routed == ["abc1234 R — cc-notes runbook show abc1234", "def5678 I [open] — cc-notes investigation show def5678"],
+        repr(routed),
     )
 
 
@@ -1320,7 +1373,7 @@ def test_announce_available_fires_once(monkeypatch, tmp_path) -> None:
     check("announce fires: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("announce fires: names the installed version", "cc-notes 0.22.0 (abc123) is installed" in result.message, result.message)
-        check("announce fires: names the durable tooling", "durable task, note, doc, log, and papercut tooling is available" in result.message, result.message)
+        check("announce fires: names the durable tooling", "durable task, note, doc, log, papercut, runbook, and investigation tooling is available" in result.message, result.message)
 
     second = mock_event("UserPromptSubmit", prompt="again", session_dir=tmp_path)
     monkeypatch.setattr(second.ctx, "call_cli", stub_cli(mapping))
