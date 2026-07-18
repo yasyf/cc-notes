@@ -1,1 +1,1 @@
-{"v":1,"lamport":2,"ops":[{"kind":"verify_note","witness":[{"anchor":{"kind":"dir","value":"internal/cli"},"oid":"07b478760d6c63d3d443f768590d1f8fe9c80d80"}],"verified_commit":"12f5c213af7ebf03b0ff9f7bee81e11a723543e7"}]}
+{"v":1,"lamport":3,"session":"c447a015-35aa-4f83-abbb-0b84ed7542b9","ops":[{"kind":"verify_note","witness":[{"anchor":{"kind":"dir","value":"internal/cli"},"oid":"21016afcf72131370861c7bdb4ddec1b46ad5add"}],"verified_commit":"992d2de801105ea7ab2b3a32a26685db779ee2d5"}]}
