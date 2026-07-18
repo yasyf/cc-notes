@@ -1,6 +1,6 @@
-# Choosing native todos, cc-notes tasks, notes, docs, logs, and papercuts
+# Choosing native todos, cc-notes tasks, notes, docs, logs, investigations, and papercuts
 
-Six tools record "things to remember," and picking the wrong one is the most common mistake. The native todo tool, `cc-notes task`, `cc-notes note`, `cc-notes doc`, `cc-notes log`, and `cc-notes papercut` differ along two axes — how long the record lives, and who can see it — plus, for the four durable knowledge records, the *form* the knowledge takes. Get those right and the choice is mechanical.
+Seven tools record "things to remember," and picking the wrong one is the most common mistake. The native todo tool, `cc-notes task`, `cc-notes note`, `cc-notes doc`, `cc-notes log`, `cc-notes investigation`, and `cc-notes papercut` differ along two axes — how long the record lives, and who can see it — plus, for the five durable knowledge records, the *form* the knowledge takes. Get those right and the choice is mechanical.
 
 ## The two axes
 
@@ -14,7 +14,8 @@ Six tools record "things to remember," and picking the wrong one is the most com
 | `cc-notes task` | Durable, synced | Global; a branch attribute plus a shared backlog | A unit of work that outlives the session or coordinates agents |
 | `cc-notes note` | Durable, synced | Repo-global, shared | A one-line decision or fact worth remembering |
 | `cc-notes doc` | Durable, synced | Repo-global, shared | Long-form guidance written for the next agent, with a when-to-read trigger |
-| `cc-notes log` | Durable, synced | Repo-global, shared | An append-only chronology — each entry an immutable timestamped fact, never edited, optionally carrying attached evidence files |
+| `cc-notes log` | Durable, synced | Repo-global, shared | An append-only chronology with no verdict coming — each entry an immutable timestamped fact, never edited, optionally carrying attached evidence files |
+| `cc-notes investigation` | Durable, synced | Repo-global, shared | A debugging arc: an immutable premise, an append-only evidence timeline, findings with dispositions, and a typed status that closes on a verdict |
 | `cc-notes papercut` | Durable, synced | Repo-wide, shared — one journal for the whole repo | A one-paragraph friction complaint — a dead-end tool call, a broken link, a misleading doc — filed instead of silently pushed through |
 
 ## The decision
@@ -23,7 +24,7 @@ Ask, in order:
 
 1. **Will this matter after the session ends?** No: native todo. Yes: cc-notes.
 2. **Is it work to do, knowledge to remember, or friction you observed?** Work is a `cc-notes task`; knowledge — a fact, a guide, or a running record — is a note, a doc, or a log (next question). Friction is neither: something slowed you down, you are not fixing it, and it is not a fact worth keeping — file it as a `cc-notes papercut "<complaint>"`, one paragraph, fire and forget, and move on.
-3. **A standing fact, living guidance, or a growing chronology?** A single verified fact or decision is a `cc-notes note`. Multi-paragraph guidance written *for the next agent* — a handoff, a current-state brief, a *read this before you touch X* — is a `cc-notes doc`, carrying a free-text `--when` trigger that says when the next agent should read it. A chronology you keep adding to over time — an incident timeline, a rollout log, a debugging session — is a `cc-notes log`: each `log append` is an immutable timestamped entry, and the log never drifts because it never claims to be current truth. Machine-generated evidence from a run — logs, panic dumps, repro archives — rides the entry as `--attach` files; only a human-facing, publishable report belongs in the repo tree.
+3. **A standing fact, living guidance, a growing chronology, or an arc heading for a verdict?** A single verified fact or decision is a `cc-notes note`. Multi-paragraph guidance written *for the next agent* — a handoff, a current-state brief, a *read this before you touch X* — is a `cc-notes doc`, carrying a free-text `--when` trigger that says when the next agent should read it. A chronology you keep adding to with no verdict coming — a rollout log, a migration diary — is a `cc-notes log`: each `log append` is an immutable timestamped entry, and the log never drifts because it never claims to be current truth. A chronology that *opens on a suspicion and closes on a verdict* — a bug hunt, a CI-failure triage, an incident — is a `cc-notes investigation`: the same append-only timeline, plus an immutable premise, findings with evidence-backed dispositions, and a status that records how the arc ended. Machine-generated evidence from a run — logs, panic dumps, repro archives — rides log entries and investigation entries alike as `--attach` files; only a human-facing, publishable report belongs in the repo tree.
 4. **If it is work, who picks it up?** Anyone — drop it in the shared backlog with `cc-notes task add --backlog`. Only this line of work — file it on your current branch with a plain `cc-notes task add`.
 
 Native todos and cc-notes tasks are not exclusive. Decompose a durable task into in-session native todos while you execute it: the cc-notes task is the durable unit of work, the native todos are your private scratchpad for finishing it.
@@ -62,18 +63,22 @@ caps it at 256 bytes and rejects a body-less doc — and `/tmp` and session scra
 before the next agent ever reads the doc. Carry the content in the record: the `--checkout`/`--apply`
 buffer above for a long body, `--body -` for a short one, and `--attach <file>` for artifacts.
 
-**Recording a production incident as it unfolds.** `cc-notes log`. The value is the chronology, not a single fact: a timeline of timestamped, authored entries that you keep appending as the incident develops, and that nobody ever rewrites afterward. A note would flatten the sequence into one line; a doc would invite editing the body as the situation changed, but an incident record must stay exactly as it was written. Create the log, anchor it to the affected code, then append each entry as you learn more.
+**Recording a production incident as it unfolds.** `cc-notes investigation`. The value is the chronology *and* the verdict: timestamped entries appended as the incident develops, candidate causes ruled in or out with evidence, and a status that records how it ended. A note would flatten the sequence into one line; a log would keep the timeline but never say whether the cause was found. Open it on the incident statement, anchor it to the affected code, append as you learn, and close it through the transition verbs.
 
 ```console
-$ cc-notes log add "Checkout 500s incident 2026-06-23" --dir internal/checkout --label incident
-9f2c0e1	2026-06-23	incident	Checkout 500s incident 2026-06-23
-$ cc-notes log append 9f2c0e1 "16:02 — error rate spiked to 12% after the pricing deploy"
-9f2c0e1	2026-06-23	incident	Checkout 500s incident 2026-06-23
-$ cc-notes log append 9f2c0e1 "16:31 — rolled back the deploy; error rate back to baseline"
-9f2c0e1	2026-06-23	incident	Checkout 500s incident 2026-06-23
+$ cc-notes investigation open "Checkout 500s spike 2026-06-23" "Error rate hit 12% at 16:02, right after the pricing deploy — suspect the deploy." --dir internal/checkout --label incident
+9f2c0e1	open	Checkout 500s spike 2026-06-23
+$ cc-notes investigation append 9f2c0e1 "16:31 — rolled back the deploy; error rate back to baseline"
+9f2c0e1	open	Checkout 500s spike 2026-06-23
+$ cc-notes investigation root-cause 9f2c0e1 "Pricing deploy dropped the fallback for a null discount tier."
+9f2c0e1	root_caused	Checkout 500s spike 2026-06-23
+$ cc-notes investigation fix 9f2c0e1 --commit 8d1f4a2
+9f2c0e1	fixed	Checkout 500s spike 2026-06-23
+$ cc-notes investigation confirm 9f2c0e1 "48h at baseline error rate since the fix deployed."
+9f2c0e1	confirmed	Checkout 500s spike 2026-06-23
 ```
 
-Each entry carries the author and timestamp of the commit that wrote it, and `log show 9f2c0e1` replays them in order. There is no `verify`, `supersede`, or `expire` — the record is the history, and history does not drift.
+Each entry carries the author and timestamp of the commit that wrote it, the premise stays exactly as written even when the first theory is wrong, and the status column — not the title — says how it ended. A chronology with no verdict coming (a rollout log, a migration diary) stays a `cc-notes log`.
 
 **A dead-end you hit mid-task and worked around.** `cc-notes papercut`. A misleading doc sent you down the wrong path for ten minutes, but you found the real answer and moved on. Nobody is committing to fix it (no task), and a note would saddle a passing observation with a verification lifecycle it never earns. One command files the friction into the repo-wide journal and you carry on:
 
@@ -113,5 +118,6 @@ e0b8f73	open	P2	-	Read sessions from the new schema
 - **A cc-notes task for in-session steps.** A durable, synced task for "edit this file next" clutters the shared view with one agent's transient scaffolding. Keep those in native todos.
 - **Shared work filed on your branch instead of the backlog.** A plain `task add` lands the task on your current branch, where it stays out of other agents' default view until you re-home it (`task edit --branch`) or merge. If anyone could pick it up, use `--backlog` so it is visible to every agent from the start.
 - **A cc-notes note no one can place.** An unanchored note about a specific file rots silently. Anchor decisions to a `--path` or `--commit` so the note is born verified and drift is computed against the real code.
+- **A note wholesale-edited into a verdict.** Recording "suspected X" as a note and later rewriting the body to "RESOLVED: actually Y" destroys the arc — the wrong first theory, the evidence, and the reversal all vanish from the live record. That arc is a `cc-notes investigation`: the premise is immutable, evidence appends, and the verdict lands in the status through `root-cause`/`fix`/`confirm` — never in a rewritten body or a shouting title.
 - **Run evidence committed to the repo tree.** Copying VM or CI run output — scenario logs, panic dumps, repro archives — under `docs/` or an `assets/` directory bakes megabytes of one-shot evidence into git history that every clone downloads forever. The chronology is a `cc-notes log`; each run's files ride `log append --attach`, stored in git-lfs and carried by `cc-notes sync`. Repo files are for the human-facing report, not the evidence behind it.
 - **A loose `HANDOFF.md` for the next agent.** Nothing surfaces a loose markdown file — the next agent never opens it, it drifts unchecked, and it clutters the human-facing tree. Store the same guidance as a `cc-notes doc` with a `--when` trigger: born verified, drift-checked, and floated into the next agent's context the moment the trigger matches.

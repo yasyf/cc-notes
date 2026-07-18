@@ -2406,3 +2406,83 @@ func TestRenderRunbookForeignShortIDs(t *testing.T) {
 		t.Fatalf("run line lost short id:\n%s", got)
 	}
 }
+
+const goldenInvestigation = "---\n" +
+	"id: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0\n" +
+	"status: confirmed\n" +
+	"labels: [ci, concurrency]\n" +
+	"commits: [deadbeef]\n" +
+	"paths: [internal/pool/worker.go]\n" +
+	"findings:\n" +
+	"  - id: aaaa1111aaaa1111aaaa1111aaaa1111\n" +
+	"    text: The pool rewrite introduced the hang\n" +
+	"    status: cleared\n" +
+	"    why: The hang reproduces before the rewrite\n" +
+	"  - id: bbbb2222bbbb2222bbbb2222bbbb2222\n" +
+	"    text: A blocked sender survives cancellation\n" +
+	"    status: confirmed\n" +
+	"    why: The goroutine dump shows the blocked send\n" +
+	"---\n" +
+	"# CI worker deadlock\n" +
+	"\n" +
+	"Workers hang after cancellation.\n" +
+	"\n" +
+	"## Timeline\n" +
+	"\n" +
+	"### 2025-12-12T02:54:56Z — Agent A <a@example.com>\n" +
+	"\n" +
+	"Captured a blocked worker stack.\n" +
+	"\n" +
+	"### 2025-12-13T02:54:56Z — Agent B <b@example.com>\n" +
+	"\n" +
+	"The sender outlives the collector return.\n" +
+	"\n" +
+	"- [goroutine stacks.txt](../attachments/a1b2c3d/goroutine%20stacks.txt)\n" +
+	"\n" +
+	"## Verdict\n" +
+	"\n" +
+	"### Root cause\n" +
+	"\n" +
+	"An unbuffered result send survives the canceled collector.\n" +
+	"\n" +
+	"### Resolution\n" +
+	"\n" +
+	"Buffer the result channel before returning.\n" +
+	"\n" +
+	"### Fix commits\n" +
+	"\n" +
+	"- 1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa\n"
+
+func richInvestigation() model.Investigation {
+	return model.Investigation{
+		ID:        "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+		Title:     "CI worker deadlock",
+		Premise:   "Workers hang after cancellation.",
+		Body:      "Buffer the result channel before returning.",
+		Status:    model.InvestigationConfirmed,
+		RootCause: "An unbuffered result send survives the canceled collector.",
+		Findings: []model.Finding{
+			{ID: "aaaa1111aaaa1111aaaa1111aaaa1111", Text: "The pool rewrite introduced the hang", Status: model.FindingCleared, Note: "The hang reproduces before the rewrite"},
+			{ID: "bbbb2222bbbb2222bbbb2222bbbb2222", Text: "A blocked sender survives cancellation", Status: model.FindingConfirmed, Note: "The goroutine dump shows the blocked send"},
+		},
+		Entries: []model.LogEntry{
+			{Author: "Agent A <a@example.com>", TS: 1765508096, Text: "Captured a blocked worker stack."},
+			{Author: "Agent B <b@example.com>", TS: 1765594496, Text: "The sender outlives the collector return."},
+		},
+		FixCommits: []model.SHA{"1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa"},
+		Tags:       []string{"ci", "concurrency"},
+		Anchors: []model.Anchor{
+			{Kind: model.AnchorCommit, Value: "deadbeef"},
+			{Kind: model.AnchorPath, Value: "internal/pool/worker.go"},
+		},
+		Attachments: []model.Attachment{
+			{Name: "goroutine stacks.txt", OID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Size: 4096},
+		},
+	}
+}
+
+func TestRenderInvestigationGolden(t *testing.T) {
+	if got := string(fusefs.RenderInvestigation(richInvestigation())); got != goldenInvestigation {
+		t.Errorf("investigation render:\n got %q\nwant %q", got, goldenInvestigation)
+	}
+}

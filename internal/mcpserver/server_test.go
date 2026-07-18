@@ -148,6 +148,22 @@ type runbookOut struct {
 	} `json:"runs"`
 }
 
+type investigationOut struct {
+	ID         string   `json:"id"`
+	Premise    string   `json:"premise"`
+	Status     string   `json:"status"`
+	RootCause  string   `json:"root_cause"`
+	FixCommits []string `json:"fix_commits"`
+	Findings   []struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+		Note   string `json:"note"`
+	} `json:"findings"`
+	Entries []struct {
+		Text string `json:"text"`
+	} `json:"entries"`
+}
+
 func TestDocAddShowRoundTrip(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
@@ -275,6 +291,63 @@ func TestRunbookRunLoop(t *testing.T) {
 	}
 }
 
+func TestInvestigationLifecycle(t *testing.T) {
+	dir := initRepo(t)
+	fixCommit := gittest.Git(t, dir, "rev-parse", "HEAD")
+	cs := connect(t)
+
+	opened := decode[investigationOut](t, call(t, cs, "investigation_open", map[string]any{
+		"title":    "Suspect the parser",
+		"premise":  "the parser drops quoted fields",
+		"findings": []string{"quoted fields disappear"},
+	}))
+	if opened.Status != "open" || opened.Premise != "the parser drops quoted fields" || len(opened.Findings) != 1 {
+		t.Fatalf("opened = %+v, want an open investigation with its premise and finding", opened)
+	}
+
+	appended := decode[investigationOut](t, call(t, cs, "investigation_append", map[string]any{
+		"id":   opened.ID,
+		"text": "reproduced with a quoted fixture",
+	}))
+	if len(appended.Entries) != 1 || appended.Entries[0].Text != "reproduced with a quoted fixture" {
+		t.Fatalf("entries = %+v, want the appended evidence", appended.Entries)
+	}
+
+	cleared := decode[investigationOut](t, call(t, cs, "investigation_finding_clear", map[string]any{
+		"id":      opened.ID,
+		"finding": opened.Findings[0].ID,
+		"why":     "the fixture was malformed",
+	}))
+	if cleared.Findings[0].Status != "cleared" || cleared.Findings[0].Note != "the fixture was malformed" {
+		t.Fatalf("finding = %+v, want cleared with its evidence", cleared.Findings[0])
+	}
+
+	rooted := decode[investigationOut](t, call(t, cs, "investigation_root_cause", map[string]any{
+		"id":   opened.ID,
+		"text": "the fixture escaped the delimiter twice",
+	}))
+	if rooted.Status != "root_caused" || rooted.RootCause != "the fixture escaped the delimiter twice" {
+		t.Fatalf("root-caused = %+v, want the structural root-cause verdict", rooted)
+	}
+
+	fixed := decode[investigationOut](t, call(t, cs, "investigation_fix", map[string]any{
+		"id":      opened.ID,
+		"text":    "corrected fixture escaping",
+		"commits": []string{fixCommit},
+	}))
+	if fixed.Status != "fixed" || len(fixed.FixCommits) != 1 || fixed.FixCommits[0] != fixCommit {
+		t.Fatalf("fixed = %+v, want fixed with the seed commit", fixed)
+	}
+
+	confirmed := decode[investigationOut](t, call(t, cs, "investigation_confirm", map[string]any{
+		"id":   opened.ID,
+		"text": "the quoted fixture now passes",
+	}))
+	if confirmed.Status != "confirmed" || confirmed.Entries[len(confirmed.Entries)-1].Text != "the quoted fixture now passes" {
+		t.Fatalf("confirmed = %+v, want confirmed with proof", confirmed)
+	}
+}
+
 func TestErrorMappingCarriesLabel(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
@@ -304,7 +377,7 @@ func TestListToolsInventory(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	const wantCount = 101
+	const wantCount = 120
 	if len(names) != wantCount {
 		t.Errorf("tool count = %d, want %d; got %v", len(names), wantCount, sortedKeys(names))
 	}
@@ -317,6 +390,9 @@ func TestListToolsInventory(t *testing.T) {
 		"runbook_add", "runbook_list", "runbook_show", "runbook_activate", "runbook_archive", "runbook_edit", "runbook_rm", "runbook_search", "runbook_comment",
 		"runbook_step_add", "runbook_step_edit", "runbook_step_rm", "runbook_step_move", "runbook_step_list",
 		"runbook_run_start", "runbook_run_list", "runbook_run_show", "runbook_run_done", "runbook_run_skip", "runbook_run_fail", "runbook_run_finish",
+		"investigation_open", "investigation_list", "investigation_show", "investigation_append",
+		"investigation_finding_add", "investigation_finding_edit", "investigation_finding_clear", "investigation_finding_confirm", "investigation_finding_rm", "investigation_finding_list",
+		"investigation_root_cause", "investigation_fix", "investigation_confirm", "investigation_exonerate", "investigation_reopen", "investigation_abandon", "investigation_edit", "investigation_search", "investigation_rm",
 		"attachment_path", "attachment_get",
 	} {
 		if !names[want] {

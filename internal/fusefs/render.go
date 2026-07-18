@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -1663,6 +1664,88 @@ func runbookRunLine(r model.RunbookRun) string {
 		line += fmt.Sprintf(" (task %s)", r.Task.Short())
 	}
 	return line
+}
+
+// investigationKeys is the investigation frontmatter contract: id, status,
+// labels, the non-empty anchor kinds, then the ordered findings and their
+// current dispositions.
+var investigationKeys = slices.Concat(
+	[]fmKey[model.Investigation]{
+		{key: "id", node: func(i model.Investigation) *yaml.Node { return scalarNode(string(i.ID)) }},
+		{key: "status", node: func(i model.Investigation) *yaml.Node { return scalarNode(string(i.Status)) }},
+		{key: "labels", node: func(i model.Investigation) *yaml.Node { return flowNode(i.Tags) }},
+	},
+	anchorKeys(func(i model.Investigation) []model.Anchor { return i.Anchors }),
+	[]fmKey[model.Investigation]{
+		{key: "findings", node: func(i model.Investigation) *yaml.Node { return investigationFindingsNode(i.Findings) }},
+		{key: "follow_ups", keep: func(i model.Investigation) bool { return len(i.FollowUps) > 0 }, node: func(i model.Investigation) *yaml.Node { return flowNode(render.IDStrings(i.FollowUps)) }},
+	},
+)
+
+func investigationFindingsNode(findings []model.Finding) *yaml.Node {
+	n := &yaml.Node{Kind: yaml.SequenceNode}
+	for _, finding := range findings {
+		m := &yaml.Node{Kind: yaml.MappingNode}
+		m.Content = append(
+			m.Content,
+			scalarNode("id"), scalarNode(finding.ID),
+			scalarNode("text"), scalarNode(finding.Text),
+			scalarNode("status"), scalarNode(string(finding.Status)),
+		)
+		if finding.Note != "" {
+			m.Content = append(m.Content, scalarNode("why"), scalarNode(finding.Note))
+		}
+		n.Content = append(n.Content, m)
+	}
+	return n
+}
+
+// RenderInvestigation renders inv as read-only markdown: structured
+// frontmatter, the immutable premise, the chronological evidence timeline,
+// attachment links, and the current verdict. The file is read-only — no
+// ParseInvestigation or DiffInvestigation — so it carries no round-trip
+// obligation. Output is deterministic byte for byte.
+func RenderInvestigation(inv model.Investigation) []byte {
+	buf := renderFrontmatter(inv, investigationKeys)
+	fmt.Fprintf(buf, "# %s\n\n", inv.Title)
+	buf.WriteString(ensureTrailingNewline(inv.Premise))
+	buf.WriteString("\n## Timeline\n\n")
+	if len(inv.Entries) == 0 && len(inv.Attachments) == 0 {
+		buf.WriteString("_No entries._\n")
+	}
+	for _, entry := range inv.Entries {
+		fmt.Fprintf(buf, "### %s — %s\n\n", render.RFC3339(entry.TS), entry.Author)
+		buf.WriteString(ensureTrailingNewline(entry.Text))
+		buf.WriteString("\n")
+	}
+	for _, attachment := range inv.Attachments {
+		label := strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`).Replace(attachment.Name)
+		fmt.Fprintf(buf, "- [%s](../attachments/%s/%s)\n", label, inv.ID.Short(), url.PathEscape(attachment.Name))
+	}
+
+	if !bytes.HasSuffix(buf.Bytes(), []byte("\n\n")) {
+		buf.WriteString("\n")
+	}
+	buf.WriteString("## Verdict\n\n### Root cause\n\n")
+	if inv.RootCause == "" {
+		buf.WriteString("_Not established._\n")
+	} else {
+		buf.WriteString(ensureTrailingNewline(inv.RootCause))
+	}
+	buf.WriteString("\n### Resolution\n\n")
+	if inv.Body == "" {
+		buf.WriteString("_Not recorded._\n")
+	} else {
+		buf.WriteString(ensureTrailingNewline(inv.Body))
+	}
+	buf.WriteString("\n### Fix commits\n\n")
+	if len(inv.FixCommits) == 0 {
+		buf.WriteString("_None._\n")
+	}
+	for _, sha := range inv.FixCommits {
+		fmt.Fprintf(buf, "- %s\n", sha)
+	}
+	return buf.Bytes()
 }
 
 func cliOnly(kind, field string, set bool) error {

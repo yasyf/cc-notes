@@ -37,13 +37,14 @@ var excludedCommands = map[string]bool{
 // path. The history tool resolves any entity by id prefix, so per-kind history
 // wrappers would be redundant tool surface for an agent to search through.
 var excludedCommandPaths = map[string]bool{
-	"cc-notes note history":    true,
-	"cc-notes doc history":     true,
-	"cc-notes log history":     true,
-	"cc-notes task history":    true,
-	"cc-notes sprint history":  true,
-	"cc-notes project history": true,
-	"cc-notes runbook history": true,
+	"cc-notes note history":          true,
+	"cc-notes doc history":           true,
+	"cc-notes log history":           true,
+	"cc-notes task history":          true,
+	"cc-notes sprint history":        true,
+	"cc-notes project history":       true,
+	"cc-notes runbook history":       true,
+	"cc-notes investigation history": true,
 }
 
 // excludedFlags are CLI-only flags with no agent-facing MCP surface, keyed by

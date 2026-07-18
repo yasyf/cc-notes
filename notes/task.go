@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
@@ -622,9 +623,13 @@ func (c *Client) ValidateTask(ctx context.Context, id model.EntityID, criteria [
 }
 
 // ResolveCriterion expands a criterion id prefix — matched case-insensitively —
-// against a task's criteria. No match fails with ErrNotFound; several matches
-// fail with ErrAmbiguous listing each candidate's short id and text.
+// against a task's criteria. An empty prefix is refused with ErrNotFound rather
+// than silently matching a sole criterion. No match fails with ErrNotFound;
+// several matches fail with ErrAmbiguous listing each candidate's short id and text.
 func ResolveCriterion(t model.Task, prefix string) (model.Criterion, error) {
+	if prefix == "" {
+		return model.Criterion{}, fmt.Errorf("%w: a criterion id is required", ErrNotFound)
+	}
 	lowered := strings.ToLower(prefix)
 	var matches []model.Criterion
 	for _, crit := range t.Criteria {
@@ -643,7 +648,7 @@ func ResolveCriterion(t model.Task, prefix string) (model.Criterion, error) {
 			if i > 0 {
 				b.WriteString("; ")
 			}
-			fmt.Fprintf(&b, "%s %s", crit.ID[:7], crit.Text)
+			fmt.Fprintf(&b, "%s %s", render.ShortWireID(crit.ID), crit.Text)
 		}
 		return model.Criterion{}, fmt.Errorf("%w: criterion prefix %q matches %d: %s", ErrAmbiguous, prefix, len(matches), b.String())
 	}

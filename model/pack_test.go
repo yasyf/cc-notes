@@ -150,6 +150,26 @@ var everyOpSample = []opSample{
 	{"set_run_step_status", SetRunStepStatus{RunID: "run-1", StepID: "step-1", Status: StepDone, Note: "green"}},
 	{"finish_run", FinishRun{ID: "run-1", Status: RunSucceeded}},
 	{"set_runbook_status", SetRunbookStatus{Status: RunbookArchived}},
+	{"create_investigation", CreateInvestigation{
+		Nonce:   testNonce,
+		Title:   "TestPool deadlock on CI",
+		Premise: "Hangs began after 3d55ae2e; suspect the pool rewrite.",
+		Tags:    []string{"ci", "deadlock"},
+		Anchors: []Anchor{
+			{Kind: AnchorCommit, Value: testID},
+			{Kind: AnchorDir, Value: "internal/pool"},
+		},
+	}},
+	{"set_investigation_status", SetInvestigationStatus{Status: InvestigationRootCaused}},
+	{"set_root_cause", SetRootCause{Text: "Unbuffered results chan leaks a blocked send."}},
+	{"add_finding", AddFinding{ID: "find-1", Text: "commit 3d55ae2e (pool rewrite)"}},
+	{"remove_finding", RemoveFinding{ID: "find-1"}},
+	{"set_finding_text", SetFindingText{ID: "find-1", Text: "commit 3d55ae2e~4 (earlier)"}},
+	{"set_finding_status", SetFindingStatus{ID: "find-1", Status: FindingCleared, Note: "bisect reproduces earlier"}},
+	{"add_fix_commit", AddFixCommit{SHA: testID}},
+	{"remove_fix_commit", RemoveFixCommit{SHA: testParent}},
+	{"add_follow_up", AddFollowUp{ID: testID}},
+	{"remove_follow_up", RemoveFollowUp{ID: testParent}},
 	{"checkpoint", Checkpoint{
 		EntityID: testID,
 		State: Note{
@@ -948,7 +968,7 @@ func TestOpKindCharset(t *testing.T) {
 // TestNoOpOrSnapshotHasCustomJSON reflects over; the same test asserts every
 // entry is a checkpoint state the codec recognizes, catching a stale entry.
 // Add a new Snapshot type here when you define one.
-var everySnapshot = []Snapshot{Note{}, Doc{}, Log{}, Task{}, Sprint{}, Project{}, Runbook{}}
+var everySnapshot = []Snapshot{Note{}, Doc{}, Log{}, Task{}, Sprint{}, Project{}, Runbook{}, Investigation{}}
 
 // TestNoOpOrSnapshotHasCustomJSON asserts no op type and no snapshot type
 // implements json.Marshaler or json.Unmarshaler. The byte-splicing codec that

@@ -1,7 +1,15 @@
-// Single source of truth for the seven entity kinds: wire order, display
+// Single source of truth for the eight entity kinds: wire order, display
 // order, marker kinds, and the shared kind-badge CSS class.
 
-export type EntityKind = "note" | "doc" | "log" | "task" | "sprint" | "project" | "runbook";
+export type EntityKind =
+  | "note"
+  | "doc"
+  | "log"
+  | "task"
+  | "sprint"
+  | "project"
+  | "runbook"
+  | "investigation";
 
 // WIRE_KINDS is the codec order entity kinds arrive in on the wire.
 export const WIRE_KINDS: readonly EntityKind[] = [
@@ -12,6 +20,7 @@ export const WIRE_KINDS: readonly EntityKind[] = [
   "sprint",
   "project",
   "runbook",
+  "investigation",
 ];
 
 // DISPLAY_KINDS is the fixed order the kind facet, badges, and legend use.
@@ -20,6 +29,7 @@ export const DISPLAY_KINDS: readonly EntityKind[] = [
   "note",
   "doc",
   "log",
+  "investigation",
   "runbook",
   "sprint",
   "project",
@@ -33,6 +43,7 @@ export const MARKER_KINDS: ReadonlySet<string> = new Set([
   "log",
   "sprint",
   "runbook",
+  "investigation",
 ]);
 
 // isEntityKind narrows a raw string (e.g. a decoded route fragment) to EntityKind.

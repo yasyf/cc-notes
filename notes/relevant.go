@@ -15,28 +15,33 @@ import (
 
 // Relevance reason labels, in the fixed priority order they are rendered.
 const (
-	reasonPath         = "path"
-	reasonDir          = "dir"
-	reasonBranch       = "branch"
-	reasonMergedCommit = "merged-commit"
-	reasonMergedBranch = "merged-branch"
-	reasonSibling      = "sibling"
-	reasonCrossAuthor  = "cross-author"
+	reasonInvestigationOpen = "investigation-open"
+	reasonPath              = "path"
+	reasonDir               = "dir"
+	reasonBranch            = "branch"
+	reasonMergedCommit      = "merged-commit"
+	reasonMergedBranch      = "merged-branch"
+	reasonSibling           = "sibling"
+	reasonCrossAuthor       = "cross-author"
 )
 
-// Relevance signal weights summed into an entity's score.
+// Relevance signal weights summed into an entity's score. scoreInvestigationOpen
+// is the boost a non-terminal investigation anchored near the target earns, so
+// "you are editing code under active investigation" outranks a plain path match.
 const (
-	scorePath         = 100
-	scoreDir          = 60
-	scoreBranch       = 40
-	scoreMergedCommit = 25
-	scoreMergedBranch = 20
-	scoreSibling      = 15
-	scoreCrossAuthor  = 30
+	scoreInvestigationOpen = 50
+	scorePath              = 100
+	scoreDir               = 60
+	scoreBranch            = 40
+	scoreMergedCommit      = 25
+	scoreMergedBranch      = 20
+	scoreSibling           = 15
+	scoreCrossAuthor       = 30
 )
 
 // reasonOrder is the fixed render order for an entity's matched reasons.
 var reasonOrder = []string{
+	reasonInvestigationOpen,
 	reasonPath, reasonDir, reasonBranch, reasonMergedCommit, reasonMergedBranch, reasonSibling, reasonCrossAuthor,
 }
 
@@ -56,21 +61,22 @@ type RelevantFilter struct {
 }
 
 // RelevantEntry is one ranked entity surfaced by Relevant: a kind discriminator
-// and exactly one of the note, doc, log, or runbook it carries (the field
-// matching Kind is set, the others zero), the summed relevance Score, the
-// matched Reasons in fixed priority order, and the drift Verdict. Notes and
-// docs carry their content verdict; a log or runbook never drifts, so its
-// Verdict is empty. The full entity is carried so a caller can build its own
-// DTOs and lean lines.
+// and exactly one of the note, doc, log, runbook, or investigation it carries
+// (the field matching Kind is set, the others zero), the summed relevance Score,
+// the matched Reasons in fixed priority order, and the drift Verdict. Notes and
+// docs carry their content verdict; a log, runbook, or investigation never
+// drifts, so its Verdict is empty. The full entity is carried so a caller can
+// build its own DTOs and lean lines.
 type RelevantEntry struct {
-	Kind    model.Kind
-	Note    model.Note
-	Doc     model.Doc
-	Log     model.Log
-	Runbook model.Runbook
-	Score   int
-	Reasons []string
-	Verdict Verdict
+	Kind          model.Kind
+	Note          model.Note
+	Doc           model.Doc
+	Log           model.Log
+	Runbook       model.Runbook
+	Investigation model.Investigation
+	Score         int
+	Reasons       []string
+	Verdict       Verdict
 }
 
 // id returns the entry's entity id, regardless of kind.
@@ -82,6 +88,8 @@ func (e RelevantEntry) id() model.EntityID {
 		return e.Log.ID
 	case model.KindRunbook:
 		return e.Runbook.ID
+	case model.KindInvestigation:
+		return e.Investigation.ID
 	default:
 		return e.Note.ID
 	}
@@ -96,6 +104,8 @@ func (e RelevantEntry) updatedAt() int64 {
 		return e.Log.UpdatedAt
 	case model.KindRunbook:
 		return e.Runbook.UpdatedAt
+	case model.KindInvestigation:
+		return e.Investigation.UpdatedAt
 	default:
 		return e.Note.UpdatedAt
 	}
@@ -215,6 +225,29 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		scored = append(scored, RelevantEntry{Kind: model.KindRunbook, Runbook: rb, Score: score, Reasons: reasons})
 	}
 
+	investigations, err := c.s.ListInvestigations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, inv := range investigations {
+		score, reasons, err := c.scoreAnchors(ctx, inv.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, err
+		}
+		if score == 0 {
+			continue
+		}
+		if filter.Attached && !anchoredNear(reasons) {
+			continue
+		}
+		if nonTerminalInvestigation(inv.Status) && anchoredNear(reasons) {
+			score += scoreInvestigationOpen
+			reasons = append(reasons, reasonInvestigationOpen)
+			sortReasons(reasons)
+		}
+		scored = append(scored, RelevantEntry{Kind: model.KindInvestigation, Investigation: inv, Score: score, Reasons: reasons})
+	}
+
 	for i := range scored {
 		verdict, err := c.entryVerdict(ctx, scored[i], head, now, staleAfter, filter.Worktree)
 		if err != nil {
@@ -236,13 +269,13 @@ func anchoredNear(reasons []string) bool {
 
 // entryVerdict computes the drift verdict for a kept entity against a single
 // head/now snapshot shared across the whole ranked batch, dispatching to the
-// note/doc verdict core by kind. A log or runbook never drifts — neither has a
-// freshness lifecycle — so both short-circuit to an empty verdict.
+// note/doc verdict core by kind. A log, runbook, or investigation never drifts —
+// none has a freshness lifecycle — so each short-circuits to an empty verdict.
 func (c *Client) entryVerdict(ctx context.Context, e RelevantEntry, head model.SHA, now time.Time, staleAfter time.Duration, worktree bool) (Verdict, error) {
 	switch e.Kind {
 	case model.KindDoc:
 		return c.verdictOf(ctx, head, freshFromDoc(e.Doc), now, staleAfter, worktree)
-	case model.KindLog, model.KindRunbook:
+	case model.KindLog, model.KindRunbook, model.KindInvestigation:
 		return "", nil
 	default:
 		return c.verdictOf(ctx, head, freshFromNote(e.Note), now, staleAfter, worktree)

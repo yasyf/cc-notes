@@ -76,7 +76,7 @@ func TestGraphGolden(t *testing.T) {
 // via a merge commit then branch -D deleted, so only the git DAG names it;
 // feature/squash squash-inferred from a cc-task trailer; nested feature/parent
 // and feature/child; a deleted feature/gone reconstructed from a task trail; and
-// one entity of every kind exercising the lifecycle, freshness, log-entry,
+// one entity of every kind exercising the lifecycle, freshness, evidence,
 // checkpoint, and sprint/project-membership paths.
 func buildGoldenRepo(t *testing.T) *gitRepo {
 	t.Helper()
@@ -127,8 +127,9 @@ func buildGoldenRepo(t *testing.T) *gitRepo {
 // then superseded note, a compacted note, a doc marked stale, a log with two
 // entries, an archived project, an active sprint carrying literal dates, a task in
 // both, a full-lifecycle task linking a real commit, a task stranded on the
-// deleted feature/gone branch, and a runbook run through start, a step mark, and
-// finish.
+// deleted feature/gone branch, a runbook run through start, a step mark, and
+// finish, and an investigation carried from evidence gathering through a
+// confirmed fix.
 func buildGoldenEntities(t *testing.T, s *store.Store, c1, c2, c4 commitInfo) {
 	t.Helper()
 	ctx := t.Context()
@@ -178,6 +179,19 @@ func buildGoldenEntities(t *testing.T, s *store.Store, c1, c2, c4 commitInfo) {
 	appendOps(t, s, rbRef, model.StartRun{ID: runID})
 	appendOps(t, s, rbRef, model.SetRunStepStatus{RunID: runID, StepID: rb.Steps[0].ID, Status: model.StepDone})
 	appendOps(t, s, rbRef, model.FinishRun{ID: runID, Status: model.RunSucceeded})
+
+	clearedID := model.NewNonce()
+	confirmedID := model.NewNonce()
+	inv := createInvestigation(t, s, "pool deadlock investigation", "the pool rewrite introduced a deadlock",
+		model.AddFinding{ID: clearedID, Text: "the regression starts at the pool rewrite"},
+		model.AddFinding{ID: confirmedID, Text: "an unbuffered send blocks cancellation"})
+	invRef := refs.For(model.KindInvestigation, inv.ID)
+	appendOps(t, s, invRef, model.AppendEntry{Text: "bisect reproduces before the rewrite"})
+	appendOps(t, s, invRef, model.SetFindingStatus{ID: clearedID, Status: model.FindingCleared})
+	appendOps(t, s, invRef, model.SetFindingStatus{ID: confirmedID, Status: model.FindingConfirmed})
+	appendOps(t, s, invRef, model.SetInvestigationStatus{Status: model.InvestigationRootCaused})
+	appendOps(t, s, invRef, model.SetInvestigationStatus{Status: model.InvestigationFixed})
+	appendOps(t, s, invRef, model.SetInvestigationStatus{Status: model.InvestigationConfirmed})
 }
 
 // createDocWhen creates a doc carrying a --when qualifier, returning its id.

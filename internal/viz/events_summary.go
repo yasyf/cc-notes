@@ -9,14 +9,14 @@ import (
 )
 
 // summaryRow pairs an entity's legend summary with the creation time it sorts
-// by, so the six kinds interleave into one created_at-then-id order.
+// by, so all kinds interleave into one created_at-then-id order.
 type summaryRow struct {
 	createdAt int64
 	summary   EntitySummary
 }
 
-// entities builds the legend: one EntitySummary per entity across all six
-// kinds, sorted by creation time then id. Superseded notes and docs stay in —
+// entities builds the legend: one EntitySummary per entity across all kinds,
+// sorted by creation time then id. Superseded notes and docs stay in —
 // the summary flags them — but tombstoned entities drop out.
 func (b *Builder) entities(ctx context.Context) ([]EntitySummary, error) {
 	var rows []summaryRow

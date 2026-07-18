@@ -51,6 +51,12 @@ func leanRunbookLine(rb model.Runbook) string {
 	return fmt.Sprintf("%s\t%s\t%s", rb.ID.Short(), rb.Status, rb.Title)
 }
 
+// leanInvestigationLine renders the tab-separated investigation line:
+// <short7>\t<status>\t<title>.
+func leanInvestigationLine(inv model.Investigation) string {
+	return fmt.Sprintf("%s\t%s\t%s", inv.ID.Short(), inv.Status, inv.Title)
+}
+
 // leanRunLine renders the tab-separated run line:
 // <short7>\t<status>\t<runner>\t<YYYY-MM-DD started>\t<done+skipped>/<total steps>.
 func leanRunLine(rb model.Runbook, run model.RunbookRun) string {

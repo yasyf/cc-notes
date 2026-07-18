@@ -326,6 +326,10 @@ func TestCriteriaLifecycle(t *testing.T) {
 	if _, err := notes.ResolveCriterion(added, "zzzzzzz"); !errors.Is(err, notes.ErrNotFound) {
 		t.Errorf("ResolveCriterion(unknown) = %v, want ErrNotFound", err)
 	}
+	// An empty prefix is refused, never silently resolving the sole criterion.
+	if _, err := notes.ResolveCriterion(added, ""); !errors.Is(err, notes.ErrNotFound) {
+		t.Errorf("ResolveCriterion(\"\") = %v, want ErrNotFound", err)
+	}
 
 	if _, err := c.SetCriterionScript(ctx, task.ID, crit.ID[:7], ""); err != nil {
 		t.Fatalf("SetCriterionScript clear: %v", err)
@@ -353,6 +357,22 @@ func TestCriteriaLifecycle(t *testing.T) {
 	}
 	if len(removed.Criteria) != 0 {
 		t.Errorf("after remove, criteria = %d, want 0", len(removed.Criteria))
+	}
+}
+
+// TestResolveCriterionShortIDs proves the ambiguous-candidate rendering is
+// length-safe: criteria imported with sub-7-char ids must not panic on slicing.
+func TestResolveCriterionShortIDs(t *testing.T) {
+	task := model.Task{Criteria: []model.Criterion{
+		{ID: "ab", Text: "one"},
+		{ID: "ac", Text: "two"},
+	}}
+	_, err := notes.ResolveCriterion(task, "a")
+	if !errors.Is(err, notes.ErrAmbiguous) {
+		t.Fatalf("ResolveCriterion(2-char ids, %q) = %v, want ErrAmbiguous", "a", err)
+	}
+	if !strings.Contains(err.Error(), "ab") || !strings.Contains(err.Error(), "ac") {
+		t.Errorf("ambiguous error %q must list both short ids", err)
 	}
 }
 

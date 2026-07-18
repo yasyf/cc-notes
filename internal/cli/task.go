@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
@@ -40,7 +41,7 @@ func unmetCriteriaUsage(id model.EntityID, unmet []model.Criterion) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s has %d unmet criterion/criteria (pass --force to close anyway):", id.Short(), len(unmet))
 	for _, c := range unmet {
-		fmt.Fprintf(&b, "\n  %s [%s] %s", c.ID[:7], c.Status, sanitizeDisplay(c.Text, false))
+		fmt.Fprintf(&b, "\n  %s [%s] %s", render.ShortWireID(c.ID), c.Status, sanitizeDisplay(c.Text, false))
 	}
 	return &UsageError{Err: errors.New(b.String())}
 }
@@ -1111,7 +1112,7 @@ func newCriterionListCmd() *cobra.Command {
 				return printJSON(out, criterionDTOs(task.Criteria))
 			}
 			for _, crit := range task.Criteria {
-				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\n", crit.ID[:7], crit.Status, crit.Text); err != nil {
+				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\n", render.ShortWireID(crit.ID), crit.Status, crit.Text); err != nil {
 					return err
 				}
 				if crit.Note != "" {

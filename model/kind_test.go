@@ -9,7 +9,7 @@ import (
 )
 
 func TestKindsCanonicalOrder(t *testing.T) {
-	want := []Kind{KindNote, KindDoc, KindLog, KindTask, KindSprint, KindProject, KindRunbook}
+	want := []Kind{KindNote, KindDoc, KindLog, KindTask, KindSprint, KindProject, KindRunbook, KindInvestigation}
 	if got := Kinds(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Kinds() = %v, want %v", got, want)
 	}
@@ -164,6 +164,20 @@ var metaCases = []struct {
 			CreatedAt: time.Unix(1300, 0).UTC(), UpdatedAt: time.Unix(1400, 0).UTC(),
 		},
 	},
+	{
+		snap: Investigation{
+			ID: testID, Title: "TestPool deadlock", Premise: "hangs after 3d55ae2e",
+			Status: InvestigationRootCaused, Author: "ada", CreatedAt: 1500, UpdatedAt: 1600,
+			Deleted: true, SupersededBy: []EntityID{testParent}, Head: testParent,
+			Attachments: []Attachment{{Name: "stacks.txt", OID: testOID, Size: 4096}},
+		},
+		want: Meta{
+			Kind: KindInvestigation, Title: "TestPool deadlock", Head: testParent,
+			CreatedAt: time.Unix(1500, 0).UTC(), UpdatedAt: time.Unix(1600, 0).UTC(),
+			Deleted: true, Superseded: true,
+			Attachments: []Attachment{{Name: "stacks.txt", OID: testOID, Size: 4096}},
+		},
+	},
 }
 
 func TestSnapshotMeta(t *testing.T) {
@@ -186,13 +200,14 @@ func TestSnapshotMeta(t *testing.T) {
 
 func TestCreateOpExhaustive(t *testing.T) {
 	want := map[string]Kind{
-		"create_note":    KindNote,
-		"create_doc":     KindDoc,
-		"create_log":     KindLog,
-		"create_task":    KindTask,
-		"create_sprint":  KindSprint,
-		"create_project": KindProject,
-		"create_runbook": KindRunbook,
+		"create_note":          KindNote,
+		"create_doc":           KindDoc,
+		"create_log":           KindLog,
+		"create_task":          KindTask,
+		"create_sprint":        KindSprint,
+		"create_project":       KindProject,
+		"create_runbook":       KindRunbook,
+		"create_investigation": KindInvestigation,
 	}
 	got := map[string]Kind{}
 	for _, s := range everyOpSample {

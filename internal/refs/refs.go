@@ -2,9 +2,10 @@
 // functions with no git access. Notes live at refs/cc-notes/notes/<id>, tasks
 // at refs/cc-notes/tasks/<id>, sprints at refs/cc-notes/sprints/<id>, projects
 // at refs/cc-notes/projects/<id>, docs at refs/cc-notes/docs/<id>, logs at
-// refs/cc-notes/logs/<id>, and runbooks at refs/cc-notes/runbooks/<id>, all
-// flat — the entity id is the only component after the namespace, and a task's
-// branch is a folded attribute, not part of its ref name. Sync-tracking refs
+// refs/cc-notes/logs/<id>, runbooks at refs/cc-notes/runbooks/<id>, and
+// investigations at refs/cc-notes/investigations/<id>, all flat — the entity id
+// is the only component after the namespace, and a task's branch is a folded
+// attribute, not part of its ref name. Sync-tracking refs
 // shadow the namespace under
 // refs/cc-notes-sync/<remote>/, outside refs/cc-notes/ so the wildcard push
 // refspec never republishes them.
@@ -24,9 +25,9 @@ const (
 )
 
 // Namespace is the ref prefix holding every cc-notes entity — notes, tasks,
-// sprints, projects, docs, logs, and runbooks — including the trailing slash.
-// Listing it enumerates the whole entity set; it never matches the
-// refs/cc-notes-sync/ tracking refs.
+// sprints, projects, docs, logs, runbooks, and investigations — including the
+// trailing slash. Listing it enumerates the whole entity set; it never matches
+// the refs/cc-notes-sync/ tracking refs.
 const Namespace = namespace
 
 var (
@@ -44,13 +45,14 @@ var (
 // single source of the kind-to-namespace binding. It must cover exactly
 // model.Kinds(), asserted by TestRootsCoverKinds.
 var roots = map[model.Kind]string{
-	model.KindNote:    namespace + "notes/",
-	model.KindTask:    namespace + "tasks/",
-	model.KindSprint:  namespace + "sprints/",
-	model.KindProject: namespace + "projects/",
-	model.KindDoc:     namespace + "docs/",
-	model.KindLog:     namespace + "logs/",
-	model.KindRunbook: namespace + "runbooks/",
+	model.KindNote:          namespace + "notes/",
+	model.KindTask:          namespace + "tasks/",
+	model.KindSprint:        namespace + "sprints/",
+	model.KindProject:       namespace + "projects/",
+	model.KindDoc:           namespace + "docs/",
+	model.KindLog:           namespace + "logs/",
+	model.KindRunbook:       namespace + "runbooks/",
+	model.KindInvestigation: namespace + "investigations/",
 }
 
 // kindBySegment reverses roots by ref path segment (the plural namespace token,
@@ -87,11 +89,10 @@ func For(kind model.Kind, id model.EntityID) string {
 }
 
 // Parse decodes a cc-notes ref name. The id is the only component after the
-// notes/, tasks/, sprints/, projects/, docs/, logs/, or runbooks/ namespace. It
-// returns ErrNotCCNotes for refs outside refs/cc-notes/ and ErrMalformed for
-// anything
-// that does not match the scheme, including ids that are not 40 or 64 lowercase
-// hex characters.
+// notes/, tasks/, sprints/, projects/, docs/, logs/, runbooks/, or
+// investigations/ namespace. It returns ErrNotCCNotes for refs outside
+// refs/cc-notes/ and ErrMalformed for anything that does not match the scheme,
+// including ids that are not 40 or 64 lowercase hex characters.
 func Parse(ref string) (Ref, error) {
 	rest, ok := strings.CutPrefix(ref, namespace)
 	if !ok {

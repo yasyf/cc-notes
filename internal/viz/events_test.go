@@ -118,6 +118,20 @@ func createRunbook(t *testing.T, s *store.Store, title string, steps ...string) 
 	return snap.(model.Runbook)
 }
 
+func createInvestigation(t *testing.T, s *store.Store, title, premise string, findings ...model.AddFinding) model.Investigation {
+	t.Helper()
+	ops := make([]model.Op, 0, 1+len(findings))
+	ops = append(ops, model.CreateInvestigation{Nonce: model.NewNonce(), Title: title, Premise: premise})
+	for _, finding := range findings {
+		ops = append(ops, finding)
+	}
+	snap, err := s.Create(t.Context(), ops)
+	if err != nil {
+		t.Fatalf("create investigation: %v", err)
+	}
+	return snap.(model.Investigation)
+}
+
 func appendOps(t *testing.T, s *store.Store, ref string, ops ...model.Op) {
 	t.Helper()
 	if _, err := s.Append(t.Context(), ref, ops); err != nil {
@@ -342,6 +356,96 @@ func TestEventsRunbookStatusAndRunInOnePack(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+func TestEventsInvestigationLifecycle(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	s := r.openStore()
+	clearedID := model.NewNonce()
+	inv := createInvestigation(t, s, "pool deadlock", "the pool rewrite introduced a deadlock",
+		model.AddFinding{ID: clearedID, Text: "the regression starts at the pool rewrite"})
+	ref := refs.For(model.KindInvestigation, inv.ID)
+	appendOps(t, s, ref,
+		model.AppendEntry{Text: "bisect reproduces before the pool rewrite"},
+		model.AppendEntry{Text: "the blocked goroutine is sending the result"})
+	appendOps(t, s, ref, model.SetFindingStatus{ID: clearedID, Status: model.FindingCleared, Note: "bisect cleared it"})
+	appendOps(t, s, ref, model.SetInvestigationStatus{Status: model.InvestigationRootCaused})
+	appendOps(t, s, ref, model.SetInvestigationStatus{Status: model.InvestigationFixed})
+	appendOps(t, s, ref, model.SetInvestigationStatus{Status: model.InvestigationConfirmed})
+
+	g := buildGraph(t, r)
+	got := shapesFor(g, inv.ID)
+	want := []evShape{
+		{typ: evCreated},
+		{typ: evEntry, detail: map[string]string{"text": "bisect reproduces before the pool rewrite"}},
+		{typ: evEntry, detail: map[string]string{"text": "the blocked goroutine is sending the result"}},
+		{typ: evFindingCleared, detail: map[string]string{"finding": clearedID[:7]}},
+		{typ: evStatus, detail: map[string]string{"status": string(model.InvestigationRootCaused)}},
+		{typ: evStatus, detail: map[string]string{"status": string(model.InvestigationFixed)}},
+		{typ: evStatus, detail: map[string]string{"status": string(model.InvestigationConfirmed)}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
+	}
+
+	summary := summaryByID(t, g, inv.ID)
+	if summary.Kind != entityInvestigation || summary.Status != string(model.InvestigationConfirmed) || summary.ClosedAt == 0 {
+		t.Errorf("investigation summary kind/status/closed = %q/%q/%d", summary.Kind, summary.Status, summary.ClosedAt)
+	}
+}
+
+func TestEventsInvestigationFindingConfirmed(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	s := r.openStore()
+	findingID := model.NewNonce()
+	inv := createInvestigation(t, s, "confirmed finding", "exercise the confirmed disposition",
+		model.AddFinding{ID: findingID, Text: "the blocked send causes the deadlock"})
+	appendOps(t, s, refs.For(model.KindInvestigation, inv.ID),
+		model.SetFindingStatus{ID: findingID, Status: model.FindingConfirmed, Note: "stack trace confirms it"})
+
+	got := shapesFor(buildGraph(t, r), inv.ID)
+	want := []evShape{
+		{typ: evCreated},
+		{typ: evFindingConfirmed, detail: map[string]string{"finding": findingID[:7]}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+func TestEventsInvestigationTerminalAndReopenedStatusDetail(t *testing.T) {
+	tests := []struct {
+		name   string
+		before []model.InvestigationStatus
+		target model.InvestigationStatus
+		want   string
+	}{
+		{name: "exonerated", target: model.InvestigationExonerated, want: "exonerated"},
+		{name: "abandoned", target: model.InvestigationAbandoned, want: "abandoned"},
+		{name: "reopened", before: []model.InvestigationStatus{model.InvestigationRootCaused}, target: model.InvestigationOpen, want: "reopened"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newGitRepo(t)
+			r.commit("c1")
+			s := r.openStore()
+			inv := createInvestigation(t, s, "status detail", "exercise status details")
+			ref := refs.For(model.KindInvestigation, inv.ID)
+			for _, status := range tt.before {
+				appendOps(t, s, ref, model.SetInvestigationStatus{Status: status})
+			}
+			appendOps(t, s, ref, model.SetInvestigationStatus{Status: tt.target})
+
+			got := shapesFor(buildGraph(t, r), inv.ID)
+			last := got[len(got)-1]
+			want := evShape{typ: evStatus, detail: map[string]string{"status": tt.want}}
+			if !reflect.DeepEqual(last, want) {
+				t.Errorf("last event = %+v, want %+v", last, want)
+			}
+		})
 	}
 }
 

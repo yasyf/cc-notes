@@ -310,6 +310,17 @@ func init() {
 	registerOp[SetRunStepStatus]()
 	registerOp[FinishRun]()
 	registerOp[SetRunbookStatus]()
+	registerOp[CreateInvestigation]()
+	registerOp[SetInvestigationStatus]()
+	registerOp[SetRootCause]()
+	registerOp[AddFinding]()
+	registerOp[RemoveFinding]()
+	registerOp[SetFindingText]()
+	registerOp[SetFindingStatus]()
+	registerOp[AddFixCommit]()
+	registerOp[RemoveFixCommit]()
+	registerOp[AddFollowUp]()
+	registerOp[RemoveFollowUp]()
 	opDecoders[Checkpoint{}.OpKind()] = decodeCheckpoint
 }
 

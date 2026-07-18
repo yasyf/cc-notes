@@ -171,6 +171,15 @@ func TestExitCodeMatrix(t *testing.T) {
 			wantCode: 4,
 		},
 		{
+			name: "illegal investigation transition exits 4",
+			setup: func(t *testing.T, dir string) ([]string, string) {
+				inv := mustJSON[commonJSON](t, mustBin(t, dir, actorA, "investigation", "open", "Still open", "no fix yet", "--json"))
+				return []string{"investigation", "confirm", inv.ID, "not fixed"}, ""
+			},
+			wantCode:   4,
+			wantPrefix: "conflict: illegal investigation transition",
+		},
+		{
 			name: "claim on done task exits 4",
 			setup: func(t *testing.T, dir string) ([]string, string) {
 				task := addTaskBin(t, dir, "Work")

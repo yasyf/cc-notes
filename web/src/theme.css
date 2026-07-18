@@ -1230,6 +1230,10 @@ button.chip {
   word-break: break-word;
 }
 
+.finding-note {
+  color: var(--fg-muted);
+}
+
 /* Runbook steps and runs */
 .runbook-steps {
   margin: 0;
@@ -1936,6 +1940,9 @@ button.chip {
 }
 .kind-runbook {
   background: color-mix(in srgb, var(--viz-s4) 20%, var(--bg));
+}
+.kind-investigation {
+  background: color-mix(in srgb, var(--viz-warning) 22%, var(--bg));
 }
 .kind-sprint {
   background: color-mix(in srgb, var(--viz-s5) 20%, var(--bg));

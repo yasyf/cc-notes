@@ -56,10 +56,15 @@ func entityTarget(p string) (kind model.Kind, ok bool) {
 	return "", false
 }
 
-// underRunbooks reports whether p lies in the read-only /runbooks subtree,
-// where every create, write, truncate, and write-intent open is rejected.
-func underRunbooks(p string) bool {
-	return p == "/runbooks" || strings.HasPrefix(p, "/runbooks/")
+// underReadOnly reports whether p lies in a read-only entity subtree, where
+// every create, write, truncate, and write-intent open is rejected.
+func underReadOnly(p string) bool {
+	for kind, layout := range layouts {
+		if codecOf(kind).ReadOnly() && (p == layout.dir || strings.HasPrefix(p, layout.dir+"/")) {
+			return true
+		}
+	}
+	return false
 }
 
 func refFor(snap model.Snapshot) string {

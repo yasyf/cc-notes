@@ -41,6 +41,17 @@ func parseProjectStatus(value string) (model.ProjectStatus, error) {
 	return parseEnum(value, "project status", []model.ProjectStatus{model.ProjectActive, model.ProjectCompleted, model.ProjectArchived, model.ProjectCancelled})
 }
 
+func parseInvestigationStatus(value string) (model.InvestigationStatus, error) {
+	return parseEnum(value, "investigation status", []model.InvestigationStatus{
+		model.InvestigationOpen,
+		model.InvestigationRootCaused,
+		model.InvestigationFixed,
+		model.InvestigationConfirmed,
+		model.InvestigationExonerated,
+		model.InvestigationAbandoned,
+	})
+}
+
 func validatePriority(p int) (model.Priority, error) {
 	if p < 0 || p > 3 {
 		return 0, fmt.Errorf("invalid priority %d (0-3)", p)

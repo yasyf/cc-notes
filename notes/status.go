@@ -15,13 +15,23 @@ import (
 // then creation time then id; InProgress is ordered by assignee then the same
 // task order.
 type StatusReport struct {
-	Branch     model.Branch
-	Backlog    []model.Task
-	YourBranch []model.Task
-	InProgress []StatusAssignee
-	Notes      SummaryCount
-	Docs       SummaryCount
-	Logs       int
+	Branch         model.Branch
+	Backlog        []model.Task
+	YourBranch     []model.Task
+	InProgress     []StatusAssignee
+	Notes          SummaryCount
+	Docs           SummaryCount
+	Logs           int
+	Investigations InvestigationSummary
+}
+
+// InvestigationSummary is the orientation count of open investigations: Open
+// tallies the still-triaging records (open + root_caused) and AwaitingConfirm the
+// fixed-but-unconfirmed ones. Terminal records — confirmed, exonerated,
+// abandoned — are excluded; only non-terminal investigations need attention.
+type InvestigationSummary struct {
+	Open            int
+	AwaitingConfirm int
 }
 
 // StatusAssignee groups one assignee's in-progress tasks, each paired with its
@@ -75,6 +85,10 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	if err != nil {
 		return StatusReport{}, err
 	}
+	invList, err := c.s.ListInvestigations(ctx)
+	if err != nil {
+		return StatusReport{}, err
+	}
 	staleAfter, err := c.NoteStaleAfter(ctx)
 	if err != nil {
 		return StatusReport{}, err
@@ -116,14 +130,25 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		sortTasks(groups[a])
 	}
 
+	var invSummary InvestigationSummary
+	for _, inv := range invList {
+		switch inv.Status {
+		case model.InvestigationOpen, model.InvestigationRootCaused:
+			invSummary.Open++
+		case model.InvestigationFixed:
+			invSummary.AwaitingConfirm++
+		}
+	}
+
 	report := StatusReport{
-		Branch:     branch,
-		Backlog:    backlog,
-		YourBranch: yourBranch,
-		InProgress: make([]StatusAssignee, 0, len(assignees)),
-		Notes:      SummaryCount{Total: len(noteList), NeedsReview: len(noteReviews)},
-		Docs:       SummaryCount{Total: len(docList), NeedsReview: len(docReviews)},
-		Logs:       len(logList),
+		Branch:         branch,
+		Backlog:        backlog,
+		YourBranch:     yourBranch,
+		InProgress:     make([]StatusAssignee, 0, len(assignees)),
+		Notes:          SummaryCount{Total: len(noteList), NeedsReview: len(noteReviews)},
+		Docs:           SummaryCount{Total: len(docList), NeedsReview: len(docReviews)},
+		Logs:           len(logList),
+		Investigations: invSummary,
 	}
 	for _, a := range assignees {
 		grp := groups[a]

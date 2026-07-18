@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -59,7 +60,7 @@ func newTaskValidateCmd() *cobra.Command {
 				return err
 			}
 			for _, crit := range scripted {
-				if _, err := fmt.Fprintf(stderr, "criterion %s %s:\n%s\n", crit.ID[:7], sanitizeDisplay(crit.Text, false), sanitizeDisplay(crit.Script, true)); err != nil {
+				if _, err := fmt.Fprintf(stderr, "criterion %s %s:\n%s\n", render.ShortWireID(crit.ID), sanitizeDisplay(crit.Text, false), sanitizeDisplay(crit.Script, true)); err != nil {
 					return err
 				}
 			}
@@ -72,7 +73,7 @@ func newTaskValidateCmd() *cobra.Command {
 				return err
 			}
 			validated, err := c.ValidateTask(ctx, id, scripted, timeout, func(crit model.Criterion, status model.CriterionStatus) error {
-				_, err := fmt.Fprintf(stderr, "%s %s %s\n", crit.ID[:7], status, sanitizeDisplay(crit.Text, false))
+				_, err := fmt.Fprintf(stderr, "%s %s %s\n", render.ShortWireID(crit.ID), status, sanitizeDisplay(crit.Text, false))
 				return err
 			})
 			if err != nil {

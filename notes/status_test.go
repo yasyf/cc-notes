@@ -62,6 +62,27 @@ func TestStatusBuckets(t *testing.T) {
 	if rep.Notes != (notes.SummaryCount{}) || rep.Docs != (notes.SummaryCount{}) || rep.Logs != 0 {
 		t.Errorf("summaries = notes %+v docs %+v logs %d, want all zero", rep.Notes, rep.Docs, rep.Logs)
 	}
+	if rep.Investigations != (notes.InvestigationSummary{}) {
+		t.Errorf("Investigations = %+v, want zero", rep.Investigations)
+	}
+}
+
+func TestStatusInvestigationCounts(t *testing.T) {
+	c, _ := newClient(t)
+
+	// Open counts open + root_caused; AwaitingConfirm counts fixed; the three
+	// terminal statuses are excluded entirely.
+	driveTo(t, c, model.InvestigationOpen)
+	driveTo(t, c, model.InvestigationRootCaused)
+	driveTo(t, c, model.InvestigationFixed)
+	driveTo(t, c, model.InvestigationConfirmed)
+	driveTo(t, c, model.InvestigationExonerated)
+	driveTo(t, c, model.InvestigationAbandoned)
+
+	rep := mustStatus(t, c)
+	if want := (notes.InvestigationSummary{Open: 2, AwaitingConfirm: 1}); rep.Investigations != want {
+		t.Errorf("Investigations = %+v, want %+v", rep.Investigations, want)
+	}
 }
 
 func TestStatusInProgress(t *testing.T) {

@@ -30,6 +30,19 @@ type statusJSONShape struct {
 	Logs struct {
 		Total int `json:"total"`
 	} `json:"logs"`
+	Investigations struct {
+		Open            int `json:"open"`
+		AwaitingConfirm int `json:"awaiting_confirm"`
+	} `json:"investigations"`
+}
+
+// addInvestigation opens an investigation through the CLI and returns its id.
+func addInvestigation(t *testing.T, dir, title string) string {
+	t.Helper()
+	inv := mustJSON[struct {
+		ID string `json:"id"`
+	}](t, mustRun(t, dir, "investigation", "open", title, "premise for "+title, "--json"))
+	return inv.ID
 }
 
 func hasTaskID(tasks []taskJSON, id string) bool {
@@ -147,6 +160,39 @@ func TestStatusDocs(t *testing.T) {
 	st := mustJSON[statusJSONShape](t, mustRun(t, dir, "status", "--json"))
 	if st.Docs.Total != 1 || st.Docs.NeedsReview != 0 {
 		t.Fatalf("docs = %+v, want total 1 needs_review 0", st.Docs)
+	}
+}
+
+// TestStatusInvestigations proves the investigation summary counts the
+// still-triaging records (open + root_caused) as open and the fixed-but-unconfirmed
+// as awaiting confirmation, in both JSON and text, with terminals excluded.
+func TestStatusInvestigations(t *testing.T) {
+	dir := initRepo(t)
+	head := commitFile(t, dir, "seed.go", "package main")
+
+	addInvestigation(t, dir, "still open") // open
+
+	rc := addInvestigation(t, dir, "will be root-caused")
+	mustRun(t, dir, "investigation", "root-cause", rc, "found the cause") // root_caused → open count
+
+	fx := addInvestigation(t, dir, "will be fixed")
+	mustRun(t, dir, "investigation", "root-cause", fx, "cause")
+	mustRun(t, dir, "investigation", "fix", fx, "the fix", "--commit", head) // fixed → awaiting confirm
+
+	cf := addInvestigation(t, dir, "will be confirmed")
+	mustRun(t, dir, "investigation", "root-cause", cf, "cause")
+	mustRun(t, dir, "investigation", "fix", cf, "the fix", "--commit", head)
+	mustRun(t, dir, "investigation", "confirm", cf, "20 green runs") // confirmed → excluded
+
+	t.Setenv("CC_NOTES_LEASE_TTL", "8760h")
+	st := mustJSON[statusJSONShape](t, mustRun(t, dir, "status", "--json"))
+	if st.Investigations.Open != 2 || st.Investigations.AwaitingConfirm != 1 {
+		t.Fatalf("investigations = %+v, want open 2 awaiting_confirm 1", st.Investigations)
+	}
+
+	out := mustRun(t, dir, "status")
+	if !strings.Contains(out, "investigations: 2 open, 1 awaiting confirmation\n") {
+		t.Fatalf("status text %q missing investigation summary line", out)
 	}
 }
 

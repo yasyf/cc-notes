@@ -37,7 +37,7 @@ func (f *FS) fillHandleStat(stat *fuse.Stat_t, h *handle) {
 	switch {
 	case h.file != nil:
 		f.fillStat(stat, fuse.S_IFREG|0o444, h.ino, h.size, fuse.Timespec{Sec: h.mtime}, h.birth)
-	case underRunbooks(h.path):
+	case underReadOnly(h.path):
 		f.fillStat(stat, fuse.S_IFREG|0o444, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime}, h.birth)
 	default:
 		f.fillStat(stat, fuse.S_IFREG|0o644, h.ino, int64(len(h.buf)), fuse.Timespec{Sec: h.mtime}, h.birth)
@@ -89,7 +89,7 @@ func (f *FS) Open(p string, flags int) (int, uint64) {
 		truncateOnOpen(h, flags)
 		return 0, f.newHandle(h)
 	}
-	if underRunbooks(p) && flags&(fuse.O_WRONLY|fuse.O_RDWR|fuse.O_TRUNC|fuse.O_APPEND) != 0 {
+	if underReadOnly(p) && flags&(fuse.O_WRONLY|fuse.O_RDWR|fuse.O_TRUNC|fuse.O_APPEND) != 0 {
 		return -fuse.EACCES, invalidFh
 	}
 	ref, r, errc := f.openEntity(p)
@@ -117,7 +117,7 @@ func (f *FS) Create(p string, flags int, mode uint32) (int, uint64) {
 	if JunkName(path.Base(p)) {
 		return -fuse.EPERM, invalidFh
 	}
-	if underAttachments(p) || underRunbooks(p) {
+	if underAttachments(p) || underReadOnly(p) {
 		return -fuse.EPERM, invalidFh
 	}
 	f.mu.Lock()
@@ -163,7 +163,7 @@ func (f *FS) Write(p string, buff []byte, ofst int64, fh uint64) int {
 	if h == nil {
 		return -fuse.EBADF
 	}
-	if h.file != nil || underRunbooks(h.path) {
+	if h.file != nil || underReadOnly(h.path) {
 		return -fuse.EACCES
 	}
 	if end := ofst + int64(len(buff)); end > int64(len(h.buf)) {
@@ -181,7 +181,7 @@ func (f *FS) Truncate(p string, size int64, fh uint64) int {
 	if JunkName(path.Base(p)) {
 		return -fuse.ENOENT
 	}
-	if underAttachments(p) || underRunbooks(p) {
+	if underAttachments(p) || underReadOnly(p) {
 		return -fuse.EACCES
 	}
 	f.mu.Lock()
@@ -315,7 +315,7 @@ func (f *FS) Rename(oldpath string, newpath string) int {
 	if JunkName(path.Base(oldpath)) {
 		return -fuse.ENOENT
 	}
-	if JunkName(path.Base(newpath)) || underAttachments(newpath) || underRunbooks(newpath) {
+	if JunkName(path.Base(newpath)) || underAttachments(newpath) || underReadOnly(newpath) {
 		return -fuse.EPERM
 	}
 	f.mu.Lock()

@@ -107,16 +107,20 @@ function statusTone(s: string): string {
     case "done":
     case "closed":
     case "completed":
+    case "confirmed":
+    case "exonerated":
       return "good";
     case "failed":
       return "bad";
     case "blocked":
     case "stale":
+    case "root_caused":
       return "warn";
     case "in_progress":
     case "active":
     case "started":
     case "open":
+    case "fixed":
       return "accent";
     default:
       return "muted";

@@ -140,3 +140,16 @@ func printRunbook(cmd *cobra.Command, rb model.Runbook, jsonOut bool) error {
 	}
 	return printJSON(cmd.OutOrStdout(), newRunbookDTO(rb))
 }
+
+// printInvestigation writes inv as its JSON DTO or its structural-status lean line.
+func printInvestigation(cmd *cobra.Command, c *notes.Client, inv model.Investigation, jsonOut bool) error {
+	if !jsonOut {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanInvestigationLine(inv))
+		return err
+	}
+	infos, err := c.AttachmentInfos(cmd.Context(), inv.Attachments)
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), newInvestigationDTO(inv, attachmentInfoDTOs(infos)))
+}

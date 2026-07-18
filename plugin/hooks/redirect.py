@@ -77,11 +77,35 @@ CC_NOTES_TOOLS = frozenset(
         # runbook run
         "runbook_run_start", "runbook_run_list", "runbook_run_show", "runbook_run_done",
         "runbook_run_skip", "runbook_run_fail", "runbook_run_finish",
+        # investigation
+        "investigation_open", "investigation_list", "investigation_show", "investigation_append",
+        "investigation_finding_add", "investigation_finding_edit", "investigation_finding_clear",
+        "investigation_finding_confirm", "investigation_finding_rm", "investigation_finding_list",
+        "investigation_root_cause", "investigation_fix", "investigation_confirm",
+        "investigation_exonerate", "investigation_abandon", "investigation_reopen",
+        "investigation_edit", "investigation_search", "investigation_rm",
     }
 )
 
 # The deepest CLI command path is three tokens (e.g. task criterion met, runbook run start).
 _MAX_DEPTH = 3
+
+# CLI paths whose MCP tool name is not the underscore-join of the argv: an alias verb, or a
+# noun-scoped verb mapping to a global tool. Applied after hyphen canonicalization.
+_TOOL_PATH_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
+    ("investigation", "add"): ("investigation", "open"),
+    ("investigation", "history"): ("history",),
+}
+
+
+def _canonical_tokens(tokens: list[str]) -> list[str]:
+    """Rewrite an argv token path to its MCP command path: hyphens to underscores (`root-cause` ->
+    `root_cause`), then an alias/global substitution on the leading tokens."""
+    canon = [tok.replace("-", "_") for tok in tokens]
+    for src, dst in _TOOL_PATH_ALIASES.items():
+        if tuple(canon[: len(src)]) == src:
+            return [*dst, *canon[len(src) :]]
+    return canon
 
 
 def param_hint(name: str) -> str:
@@ -94,6 +118,10 @@ def param_hint(name: str) -> str:
         return "key params: id, step, note"
     if name.endswith("_comment"):
         return "key params: id, body"
+    if name == "investigation_finding_add":
+        return "key params: id, text"
+    if name == "investigation_finding_edit":
+        return "key params: id, finding, text"
     if name.endswith("_add"):
         return "key params: title, body, anchors (commits/paths/dirs/branches), labels"
     if name.endswith("_edit"):
@@ -124,6 +152,7 @@ def mapped_tool(args: list[str]) -> str | None:
         if arg.startswith("-"):
             break
         tokens.append(arg)
+    tokens = _canonical_tokens(tokens)
     for depth in range(min(len(tokens), _MAX_DEPTH), 0, -1):
         name = "_".join(tokens[:depth])
         if name in CC_NOTES_TOOLS:

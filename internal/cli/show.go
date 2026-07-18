@@ -19,7 +19,7 @@ func newShowCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "show ID",
-		Short: "Show any note, doc, log, task, sprint, project, or runbook by id",
+		Short: "Show any note, doc, log, task, sprint, project, runbook, or investigation by id",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -47,6 +47,8 @@ func newShowCmd() *cobra.Command {
 				return showProject(cmd, s, id, jsonOut)
 			case model.KindRunbook:
 				return showRunbook(cmd, s, id, jsonOut)
+			case model.KindInvestigation:
+				return showInvestigation(cmd, s, id, jsonOut)
 			default:
 				panic(fmt.Sprintf("ResolveEntity returned unknown kind %q", kind))
 			}
@@ -136,6 +138,27 @@ func showLog(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) er
 		return printJSON(cmd.OutOrStdout(), newLogDTO(log, atts))
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), renderLogShow(log, atts))
+	return err
+}
+
+func showInvestigation(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
+	ctx := cmd.Context()
+	ref, inv, err := investigationSpec.load(ctx, s, prefix)
+	if err != nil {
+		return err
+	}
+	atts, err := entityAttachments(ctx, s, inv.Attachments)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), newInvestigationDTO(inv, atts))
+	}
+	steps, err := s.History(ctx, ref)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprint(cmd.OutOrStdout(), renderInvestigationShow(inv, atts, steps))
 	return err
 }
 

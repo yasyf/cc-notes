@@ -187,7 +187,7 @@ describe("normalizeEntities", () => {
     // An empty repo: the Go side marshals each nil kind slice as null.
     const state = normalizeEntities(
       JSON.parse(
-        `{"notes":null,"docs":null,"logs":null,"tasks":null,"sprints":null,"projects":null,"runbooks":null}`,
+        `{"notes":null,"docs":null,"logs":null,"tasks":null,"sprints":null,"projects":null,"runbooks":null,"investigations":null}`,
       ),
     );
     expect(state.notes).toEqual([]);
@@ -197,6 +197,7 @@ describe("normalizeEntities", () => {
     expect(state.sprints).toEqual([]);
     expect(state.projects).toEqual([]);
     expect(state.runbooks).toEqual([]);
+    expect(state.investigations).toEqual([]);
   });
 
   it("keeps present buckets and passes their snapshots through verbatim", () => {
@@ -209,7 +210,9 @@ describe("normalizeEntities", () => {
           "runbooks":[{"id":"rb1","title":"deploy","status":"active",
             "steps":[{"id":"s1","text":"build","command":"make","position":"a0"}],
             "runs":[{"id":"r1","task":"","status":"running","runner":"ann","started_at":5,"finished_at":0,
-              "results":[{"step_id":"s1","status":"done","note":"","actor":"ann","ts":6}]}]}]}`,
+              "results":[{"step_id":"s1","status":"done","note":"","actor":"ann","ts":6}]}]}],
+          "investigations":[{"id":"i1","title":"deadlock","status":"root_caused",
+            "findings":[{"id":"f1","text":"pool rewrite","status":"cleared","note":"predates rewrite"}]}]}`,
       ),
     );
     expect(state.docs).toEqual([]);
@@ -222,6 +225,9 @@ describe("normalizeEntities", () => {
     ]);
     expect(state.runbooks[0]?.runs[0]?.results).toEqual([
       { step_id: "s1", status: "done", note: "", actor: "ann", ts: 6 },
+    ]);
+    expect(state.investigations[0]?.findings).toEqual([
+      { id: "f1", text: "pool rewrite", status: "cleared", note: "predates rewrite" },
     ]);
   });
 });

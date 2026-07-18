@@ -23,7 +23,7 @@ func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, err
 	}
 	create, ok := ops[0].(model.CreateOp)
 	if !ok {
-		return nil, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, create_project, create_doc, create_log, or create_runbook", ops[0].OpKind())
+		return nil, fmt.Errorf("create: first op is %s, want create_note, create_task, create_sprint, create_project, create_doc, create_log, create_runbook, or create_investigation", ops[0].OpKind())
 	}
 	kind := create.CreateKind()
 	pack, err := roundTrip(model.Pack{Lamport: 1, Session: session(), Ops: ops})

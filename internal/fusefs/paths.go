@@ -39,20 +39,21 @@ type flatLayout struct {
 }
 
 var layouts = map[model.Kind]flatLayout{
-	model.KindNote:    {dir: "/notes", ext: ".md", slugged: true},
-	model.KindDoc:     {dir: "/docs", ext: ".md", slugged: true},
-	model.KindLog:     {dir: "/logs", ext: ".md", slugged: true},
-	model.KindRunbook: {dir: "/runbooks", ext: ".md", slugged: true},
-	model.KindTask:    {dir: "/tasks", ext: ".json"},
-	model.KindSprint:  {dir: "/sprints", ext: ".json"},
-	model.KindProject: {dir: "/projects", ext: ".json"},
+	model.KindNote:          {dir: "/notes", ext: ".md", slugged: true},
+	model.KindDoc:           {dir: "/docs", ext: ".md", slugged: true},
+	model.KindLog:           {dir: "/logs", ext: ".md", slugged: true},
+	model.KindRunbook:       {dir: "/runbooks", ext: ".md", slugged: true},
+	model.KindInvestigation: {dir: "/investigations", ext: ".md", slugged: true},
+	model.KindTask:          {dir: "/tasks", ext: ".json"},
+	model.KindSprint:        {dir: "/sprints", ext: ".json"},
+	model.KindProject:       {dir: "/projects", ext: ".json"},
 }
 
 // Node is one parsed mount path: the mount root (Root), the flat per-kind
 // directories (KindDir) and the editable entity files under them (EntityFile,
-// read-only for runbooks), the read-only nested browse tree of sprints and
-// projects whose task leaves are symlinks to the flat files, and the attachment
-// tree.
+// read-only for runbooks and investigations), the read-only nested browse tree
+// of sprints and projects whose task leaves are symlinks to the flat files, and
+// the attachment tree.
 type Node interface {
 	node()
 }

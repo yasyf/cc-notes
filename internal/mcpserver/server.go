@@ -47,6 +47,7 @@ func registerAll(ts *toolset, b *bridge) {
 	registerTask(ts, b)
 	registerPlanning(ts, b)
 	registerRunbook(ts, b)
+	registerInvestigation(ts, b)
 }
 
 // Serve resolves the project directory, chdirs once (per-call chdir would race

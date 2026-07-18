@@ -40,6 +40,7 @@ func TestExitCodeAndLabel(t *testing.T) {
 		{"not found store", fmt.Errorf("resolve: %w", store.ErrNotFound), 3, "not-found"},
 		{"not found ref", fmt.Errorf("load: %w", gitobj.ErrRefNotFound), 3, "not-found"},
 		{"conflict", &cli.ConflictError{Msg: "already done"}, 4, "conflict"},
+		{"illegal investigation transition", fmt.Errorf("confirm: %w", notes.ErrIllegalTransition), 4, "conflict"},
 		{"contended", fmt.Errorf("append: %w", store.ErrContended), 4, "conflict"},
 		{"sync contended", fmt.Errorf("sync: %w", ccsync.ErrSyncContended), 4, "conflict"},
 		{"ambiguous", fmt.Errorf("resolve: %w", ambiguous), 5, "ambiguous"},

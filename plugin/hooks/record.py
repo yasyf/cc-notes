@@ -13,14 +13,16 @@ from captain_hook import (
     HookResult,
     Input,
     PostToolUseEvent,
+    PostToolUseFailureEvent,
     Prompt,
+    StopEvent,
     Tool,
     Warn,
     on,
 )
 from cc_transcript.command import Command, CommandLine
 from captain_hook.state import fired_this_turn, record_fire
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .common import (
     CcNotesAvailable,
@@ -40,7 +42,10 @@ from .common import (
 # alone; WEAK names only qualify when the body carries an internal signal. PUBLISHED/
 # SOURCE/SECRET are the hard exclusions — never durable-internal knowledge.
 STRONG_INTERNAL_GLOBS = ("*_VERIFICATION.md", "*HANDOFF*.md", "*STATUS*.md", "*-handoff.md", "HANDOFF.md", "STATUS.md", "NOTES.md")
-WEAK_INTERNAL_GLOBS = ("TODO.md", "*-notes.md", "runbook*.md", "runbook*", "scratch*.md", "*memo*.md", "*decision*.md")
+WEAK_INTERNAL_GLOBS = (
+    "TODO.md", "*-notes.md", "runbook*.md", "runbook*", "scratch*.md", "*memo*.md", "*decision*.md",
+    "*investigation*.md", "*postmortem*.md", "*rca*.md", "*root-cause*.md", "*incident*.md",
+)
 PUBLISHED_GLOBS = ("README*", "CHANGELOG*", "LICENSE*", "CONTRIBUTING*", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg")
 PUBLISHED_DIRS = ("docs/",)
 SECRET_GLOBS = (".env", ".env.*", "*.env", "*secret*", "*credential*", "*.key", "*.pem")
@@ -50,8 +55,13 @@ SOURCE_GLOBS = (
     "*.json", "*.toml", "*.yaml", "*.yml",
 )
 
-# The leading `(?im)` makes the pattern case-insensitive and multiline.
-INTERNAL_BODY_RE = r"(?im)^\s*- \[ \]|\b(handoff|hand-off|remaining|next steps|runbook|verification|status|decisions?)\b"
+# `(?im)`: case-insensitive, multiline. The investigation stems carry a trailing `\w*` so
+# suffixes ("suspected", "exonerated", "postmortems") match too.
+INTERNAL_BODY_RE = (
+    r"(?im)^\s*- \[ \]"
+    r"|\b(handoff|hand-off|remaining|next steps|runbook|verification|status|decisions?)\b"
+    r"|\b(?:root cause|bisect|suspect|exonerat|falsified|postmortem)\w*"
+)
 
 # EvidenceArchive vocabulary: machine-generated artifacts belong on a cc-notes log entry as
 # `--attach` (git-lfs) attachments, never as bytes in git history. TRANSFER programs move
@@ -205,16 +215,60 @@ RECORD_ROUTER_SYSTEM = (
     "- runbook: a repeatable step-by-step operational procedure meant to be re-executed — deploy "
     "steps, a release checklist, an incident-response procedure. cc-notes has a first-class "
     "runbook primitive that tracks each execution's per-step status.\n"
+    "- investigation: a debugging or root-cause arc that reaches a VERDICT — a falsifiable premise "
+    "(the suspected cause or symptom), a bisect/triage timeline, suspects that get cleared or "
+    "confirmed, a true root cause, a fix, and its confirmation (or a falsified premise / an "
+    "abandoned hunt). cc-notes has a first-class investigation primitive: an immutable premise, an "
+    "append-only evidence timeline, per-suspect findings, and verdict transitions (root_caused → "
+    "fixed → confirmed, or exonerated / abandoned).\n"
     "\n"
     "doc vs log is the subtle call: choose doc when the content is guidance you would keep current, "
     "log when it is a dated record of what happened that you would only ever append to. doc vs "
     "runbook splits on execution: a doc describes and explains; a runbook is an ordered procedure "
-    "an agent re-executes step by step.\n"
+    "an agent re-executes step by step. log vs investigation splits on the verdict: a log is a "
+    "verdict-less chronicle you only append to; an investigation reaches a conclusion (this was the "
+    "root cause; that suspect was cleared) through its findings and status.\n"
     "\n"
     "When record=true also return: title — a short title; when — for a doc, the free-text 'read "
     "this when…' trigger (leave empty for other kinds); area — the repo directory the record is "
     "about (e.g. internal/api), or '.' if unclear; reasoning — one line explaining the call."
 )
+
+# investigation is not a RECORD_KIND (immutable premise, no --when, verdict transitions), so it
+# routes through these authoring lines rather than record_command, mirroring the runbook branch.
+SECRET_WARNING = "(Don't put secrets in cc-notes — the refs sync to the remote.)"
+
+
+def investigation_arc_lines(mcp: bool, title: str, premise: str, *, first_evidence: str | None = None) -> list[str]:
+    """The open→append→verdict authoring lines for the investigation primitive (MCP tools or CLI)."""
+    ev = first_evidence or "<evidence step>"
+    if mcp:
+        return [
+            f'investigation_open — {{"title": "{title}", "premise": "{premise}"}}',
+            f'investigation_append — {{"id": "<id>", "text": "{ev}"}}   # one call per evidence step or finding',
+            "verdict via investigation_root_cause / investigation_confirm (or investigation_exonerate / "
+            "investigation_abandon) — never edit the title to say RESOLVED/FIXED.",
+        ]
+    return [
+        f'cc-notes investigation open "{title}" "{premise}"',
+        f'cc-notes investigation append <id> "{ev}"   # one per evidence step or finding',
+        "verdict via `cc-notes investigation root-cause` / `confirm` (or `exonerate` / `abandon`) — never the title.",
+    ]
+
+
+def investigation_resolve_lines(mcp: bool) -> list[str]:
+    """The verdict-transition lines for an investigation already open this session (MCP tools or CLI)."""
+    if mcp:
+        return [
+            "investigation_root_cause — record the true cause (the arc moves to root_caused).",
+            "investigation_fix — link the fixing commit; investigation_confirm — record the proof it holds.",
+            "or investigation_exonerate / investigation_abandon if the premise was falsified or dropped.",
+        ]
+    return [
+        'cc-notes investigation root-cause <id> "<the true cause>"',
+        'cc-notes investigation fix <id> --commit <sha>   ·   cc-notes investigation confirm <id> "<proof it holds>"',
+        "or `cc-notes investigation exonerate` / `abandon` if the premise was falsified or dropped.",
+    ]
 
 
 @on(
@@ -244,7 +298,7 @@ def nudge_record_durable(evt: PostToolUseEvent) -> HookResult | None:
         .system(RECORD_ROUTER_SYSTEM)
         .context("path", str(evt.file))
         .context("content", (evt.content or "")[:LLM_INPUT_CAP])
-        .ask("Does this belong in cc-notes, and if so as which record (note/doc/log/task/papercut/runbook)?")
+        .ask("Does this belong in cc-notes, and if so as which record (note/doc/log/task/papercut/runbook/investigation)?")
     )
     try:
         verdict = evt.ctx.call_llm(prompt, response_model=RecordVerdict, model="small", agent=False, transcript=False)
@@ -272,6 +326,16 @@ def nudge_record_durable(evt: PostToolUseEvent) -> HookResult | None:
             "the loose file:",
             *lines,
             "(Don't put secrets in cc-notes — the refs sync to the remote.)",
+        )
+    if verdict.record and verdict.kind == "investigation":
+        record_fire(evt)
+        title = verdict.title or (evt.file.stem if evt.file else "untitled")
+        return evt.warn(
+            f"{evt.file} reads like a debugging investigation — cc-notes has a first-class "
+            f"investigation primitive with an immutable premise, an append-only evidence timeline, "
+            f"and verdict transitions ({verdict.reasoning}). Record it, then delete the loose file:",
+            *investigation_arc_lines(mcp_active(evt), title, "<the falsifiable suspicion or symptom>"),
+            SECRET_WARNING,
         )
     if not verdict.record or verdict.kind not in RECORD_KINDS:
         return None
@@ -770,3 +834,356 @@ def nudge_plan_tasks(evt: PostToolUseEvent) -> HookResult | None:
         lines.append("These items from your plan look like durable work — capture them:")
         lines.extend(commands)
     return evt.warn(*lines)
+
+
+INVESTIGATION_MCP_PREFIX = MCP_TOOL_PREFIX + "investigation_"
+# Investigation verbs (MCP underscore / CLI hyphen), canonicalized to underscore before classifying.
+INVESTIGATION_READ_VERBS = frozenset({"list", "show", "search", "history", "finding_list"})
+INVESTIGATION_OPEN_VERBS = frozenset({"open", "add"})
+INVESTIGATION_TERMINAL_VERBS = frozenset({"confirm", "exonerate", "abandon"})
+INVESTIGATION_UNRESOLVED_VERBS = INVESTIGATION_OPEN_VERBS | frozenset({"append", "root_cause", "fix", "reopen"})
+
+# --log-failed prints only failures; a gh run watch / ccx vcs ship is red on a failed exit or conclusion.
+GH_RUN_RE = re.compile(r"\bgh\s+run\b")
+GH_LOG_FAILED_RE = re.compile(r"--log-failed\b")
+GH_WATCH_RE = re.compile(r"\bgh\s+run\s+watch\b")
+SHIP_RE = re.compile(r"\bccx\s+vcs\s+ship\b")
+# A real failed conclusion (status glyph or "completed with 'failure'"), never the bare word "failure".
+GH_FAILED_CONCLUSION_RE = re.compile(
+    r"(?im)^\s*[X✗✘](?:\s|$)"
+    r"|completed with ['\"]?(?:failure|timed_out|cancelled|startup_failure|action_required)"
+    r"|conclusion['\"]?\s*[:=]\s*['\"]?(?:failure|timed_out|cancelled|startup_failure)"
+)
+RUN_URL_RE = re.compile(r"https?://github\.com/\S+?/actions/runs/\d+")
+
+# Debugging/forensics subagent shapes, verdict language in a synthesis result, and close-out language.
+CI_TRIAGE_AGENT_MARKERS = ("ci-triage",)
+SUBAGENT_INVESTIGATION_MARKERS = ("ci-triage", "debug", "forensic", "bug")
+SUBAGENT_INVESTIGATION_RE = re.compile(
+    r"(?i)\b(?:investigat|root[\s-]?cause|bisect|debug|forensic|triage|repro|suspect|regression)\w*"
+)
+VERDICT_LANGUAGE_RE = re.compile(r"(?i)\b(?:root[\s-]?cause|confirmed|falsified|exonerat)\w*")
+# Affirmative close-out verdicts only, excluding negated ("not resolved") and unknown ("still unknown").
+CLOSE_LANGUAGE_RE = re.compile(
+    r"(?im)(?<!not\s)\bRESOLVED\b"
+    r"|\broot[\s-]?cause[\s-]?(?:was|is)\s+(?!still\b|unknown\b|unclear\b|not\b|yet\b|tbd\b|undetermined\b)"
+    r"|(?<!not\s)\bfixed[\s-]?by\b"
+)
+
+
+class InvestigationActivity(BaseModel):
+    """Session-durable trace of investigation activity behind the four surfacing nudges.
+
+    ``written`` flips on any investigation WRITE verb (reads stay state-neutral). ``unresolved`` holds
+    the ids opened/grown but not terminally resolved — terminal verdicts remove an id, reopen restores
+    it, and root-cause/fix leave it unresolved. ``subagents`` counts debugging lanes only within the
+    turn named by ``subagents_turn``, so lanes from distant turns never accumulate into one arc.
+
+    Fields default to the pre-activity state, so a fresh session (or a null session slot in inline
+    tests) reads as "nothing opened yet".
+    """
+
+    written: bool = False
+    unresolved: list[str] = Field(default_factory=list)
+    subagents: int = 0
+    subagents_turn: str = ""
+
+
+def _cli_investigation_verb(cmd: Command) -> str | None:
+    if cmd.program not in ("cc-notes", "ccn") or not cmd.args or cmd.args[0] != "investigation":
+        return None
+    verb = cmd.args[1] if len(cmd.args) > 1 else ""
+    if verb == "finding":
+        # `finding` is a subgroup: fold its subcommand into the MCP suffix form (finding_add, finding_list)
+        # so both surfaces share one read/write vocabulary.
+        sub = cmd.args[2] if len(cmd.args) > 2 else ""
+        return f"finding_{sub}" if sub else "finding"
+    return verb
+
+
+def _investigation_verb(evt: BaseHookEvent) -> str | None:
+    """The verb an investigation call performs — an MCP suffix (open, finding_clear, root_cause) or a CLI verb (open, root-cause)."""
+    name = evt.tool_name or ""
+    if name.startswith(INVESTIGATION_MCP_PREFIX):
+        return name[len(INVESTIGATION_MCP_PREFIX) :]
+    line = evt.command_line
+    if line is not None:
+        for cmd in line.commands:
+            if (verb := _cli_investigation_verb(cmd)) is not None:
+                return verb
+    return None
+
+
+def _tool_output(evt: BaseHookEvent) -> str:
+    return getattr(evt, "tool_response", None) or ""
+
+
+def _event_error(evt: BaseHookEvent) -> str:
+    return getattr(evt, "error", None) or ""
+
+
+def _output_investigation_id(evt: BaseHookEvent) -> str | None:
+    # An `open` mints an id in its output: MCP/--json leads with {"id":"..."}, the CLI lean line with
+    # the short id as its first token.
+    text = _tool_output(evt) or _event_error(evt)
+    if not text:
+        return None
+    if m := re.search(r'"id"\s*:\s*"([^"]+)"', text):
+        return m.group(1)
+    stripped = text.strip()
+    return stripped.split()[0] if stripped else None
+
+
+def _cli_positional_id(evt: BaseHookEvent) -> str | None:
+    line = evt.command_line
+    if line is None:
+        return None
+    for cmd in line.commands:
+        if _cli_investigation_verb(cmd) is not None and len(cmd.args) > 2:
+            return cmd.args[2]
+    return None
+
+
+def _investigation_id(evt: BaseHookEvent, verb: str) -> str | None:
+    """The investigation id a verb acts on: minted from output for a create, else the id positional (CLI)
+    or the ``id`` input field (MCP)."""
+    if verb in INVESTIGATION_OPEN_VERBS:
+        return _output_investigation_id(evt)
+    name = evt.tool_name or ""
+    if name.startswith(INVESTIGATION_MCP_PREFIX):
+        raw = evt.input.raw
+        return raw["id"] if isinstance(raw.get("id"), str) and raw["id"] else None
+    return _cli_positional_id(evt)
+
+
+def _ids_match(a: str, b: str) -> bool:
+    # cc-notes ids resolve by unique prefix, so a stored full id and a short prefix (or the reverse)
+    # name the same investigation.
+    return a == b or a.startswith(b) or b.startswith(a)
+
+
+def _arm_id(unresolved: list[str], inv_id: str | None) -> None:
+    if inv_id and not any(_ids_match(existing, inv_id) for existing in unresolved):
+        unresolved.append(inv_id)
+
+
+def _resolve_id(unresolved: list[str], inv_id: str | None) -> None:
+    if inv_id:
+        unresolved[:] = [existing for existing in unresolved if not _ids_match(existing, inv_id)]
+
+
+def _load_activity(evt: BaseHookEvent) -> InvestigationActivity:
+    try:
+        return evt.ctx.s.load(InvestigationActivity)
+    except Exception:
+        return InvestigationActivity()
+
+
+def investigation_touched(evt: BaseHookEvent) -> bool:
+    return _load_activity(evt).written
+
+
+def _turn_key(evt: BaseHookEvent) -> str:
+    return str(len(evt.ctx.t) - len(evt.ctx.turn))
+
+
+def _bump_subagents(evt: BaseHookEvent) -> int:
+    turn = _turn_key(evt)
+    try:
+        with evt.ctx.s[InvestigationActivity].mutate() as act:
+            if act.subagents_turn != turn:
+                act.subagents_turn = turn
+                act.subagents = 0
+            act.subagents += 1
+            return act.subagents
+    except Exception:
+        return 1
+
+
+def _run_url(evt: BaseHookEvent) -> str | None:
+    for text in (evt.command or "", _tool_output(evt), _event_error(evt)):
+        if m := RUN_URL_RE.search(text):
+            return m.group(0)
+    return None
+
+
+class InvestigationCall(CustomCondition):
+    """Matches an investigation call — an MCP investigation_* tool or a `cc-notes/ccn investigation <verb>` CLI leg."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        return _investigation_verb(evt) is not None
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[InvestigationCall()],
+    tests={
+        Input(tool="mcp__plugin_cc-notes_cc-notes__investigation_open", tool_input={"title": "x", "premise": "y"}): Allow(),
+        Input(command="cc-notes investigation append abc 'bisect reproduces earlier'"): Allow(),
+        Input(tool="Edit", file="m.py"): Allow(),  # not an investigation call — the condition misses
+    },
+)
+def record_investigation_activity(evt: PostToolUseEvent) -> HookResult | None:
+    """Trace investigation calls into session state for the CI-triage / synthesis / close nudges."""
+    verb = _investigation_verb(evt)
+    if verb is None:
+        return None
+    canon = verb.replace("-", "_")
+    if canon in INVESTIGATION_READ_VERBS:
+        return None
+    try:
+        with evt.ctx.s[InvestigationActivity].mutate() as act:
+            act.written = True
+            if canon in INVESTIGATION_TERMINAL_VERBS:
+                _resolve_id(act.unresolved, _investigation_id(evt, canon))
+            elif canon in INVESTIGATION_UNRESOLVED_VERBS:
+                _arm_id(act.unresolved, _investigation_id(evt, canon))
+    except Exception:
+        pass
+    return None
+
+
+def _ci_run_failed(evt: BaseHookEvent) -> bool:
+    # A watch/ship is red when its exit failed (the PostToolUseFailure envelope) or its output reports a
+    # failed conclusion — never on a job merely NAMED with "failure".
+    if isinstance(evt, PostToolUseFailureEvent):
+        return True
+    return bool(GH_FAILED_CONCLUSION_RE.search(_tool_output(evt)))
+
+
+class CiTriageMoment(CustomCondition):
+    """Matches a red-CI triage moment: a `gh run … --log-failed`, a failed `gh run watch` / `ccx vcs ship`, or a ci-triage subagent spawn."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        if any(m in (evt.agent_type or "") for m in CI_TRIAGE_AGENT_MARKERS):
+            return True
+        cmd = evt.command or ""
+        if GH_RUN_RE.search(cmd) and GH_LOG_FAILED_RE.search(cmd):
+            return True
+        if GH_WATCH_RE.search(cmd) or SHIP_RE.search(cmd):
+            return _ci_run_failed(evt)
+        return False
+
+
+@on(
+    Event.PostToolUse | Event.PostToolUseFailure,
+    only_if=[Tool("Bash|Task|Agent"), CiTriageMoment(), CcNotesAvailable()],
+    max_fires=NUDGE_MAX_FIRES,
+    tests={
+        Input(command="gh run view 12 --log-failed", output="FAIL build\nstep failed"): Warn(pattern="investigation"),
+        Input(tool="Task", agent_type="cc-context:ci-triage", prompt="triage the red CI run"): Warn(pattern="investigation"),
+        # A green watch whose output merely NAMES a failure-handling job stays silent (no failed conclusion).
+        Input(command="gh run watch 12", output="✓ CI · main completed with 'success'\n✓ failure-handling-tests"): Allow(),
+        # Benign neighbors stay silent.
+        Input(command="gh run list", output="completed success"): Allow(),
+        Input(command="gh run watch 12", output="✓ CI · main completed"): Allow(),
+        Input(tool="Task", agent_type="general-purpose", prompt="write the docs"): Allow(),
+    },
+)
+def nudge_ci_triage_investigation(evt: PostToolUseEvent) -> HookResult | None:
+    """A red CI run with no open investigation → open one with the failing run as the first evidence."""
+    if investigation_touched(evt) or fired_this_turn(evt):
+        return None
+    record_fire(evt)
+    url = _run_url(evt)
+    first = f"first evidence: {url}" if url else "first evidence: <the failing run URL>"
+    return evt.warn(
+        "This red CI run has no cc-notes investigation yet. Triaging a failure is exactly the arc the "
+        "investigation kind records (an immutable premise, an append-only evidence timeline, a "
+        "verdict), so the root cause outlives this session. Open one, citing the run as first evidence:",
+        *investigation_arc_lines(mcp_active(evt), "CI: <what failed>", "<the failing job/step and why it went red>", first_evidence=first),
+    )
+
+
+class InvestigationSubagent(CustomCondition):
+    """Matches a Task/Agent spawn that looks like a debugging/forensics lane, by agent type or prompt."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        if any(m in (evt.agent_type or "") for m in SUBAGENT_INVESTIGATION_MARKERS):
+            return True
+        ti = evt._tool_input
+        text = " ".join(str(ti.get(k, "")) for k in ("prompt", "description"))
+        return bool(SUBAGENT_INVESTIGATION_RE.search(text))
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[Tool("Task|Agent"), InvestigationSubagent(), CcNotesAvailable()],
+    max_fires=NUDGE_MAX_FIRES,
+    tests={
+        # Firing needs >=2 investigation subagents persisted in session state — the FIRE proof lives
+        # in tests/test_cc_notes.py; inline proves the single-lane / non-investigation silence.
+        Input(tool="Task", agent_type="general-purpose", prompt="bisect the deadlock", output="root cause: unbuffered chan"): Allow(),
+        Input(tool="Task", agent_type="general-purpose", prompt="write the release notes"): Allow(),
+    },
+)
+def nudge_multiagent_synthesis(evt: PostToolUseEvent) -> HookResult | None:
+    """Several debugging subagents + a verdict-bearing result + no open investigation → capture it as one."""
+    n = _bump_subagents(evt)
+    if investigation_touched(evt) or n < 2:
+        return None
+    if not VERDICT_LANGUAGE_RE.search(_tool_output(evt)) or fired_this_turn(evt):
+        return None
+    record_fire(evt)
+    return evt.warn(
+        "Multiple debugging subagents have run and this result carries a verdict, but no cc-notes "
+        "investigation holds it — the forensic arc lives only in chat and dies at session end. Capture "
+        "it as one investigation: open it, append each lane's finding, then record the verdict:",
+        *investigation_arc_lines(mcp_active(evt), "<what you were debugging>", "<the suspicion the lanes tested>", first_evidence="<lane 1's finding>"),
+    )
+
+
+class InvestigationCloseLanguage(CustomCondition):
+    """Matches a write carrying investigation close-out language (RESOLVED / root-cause-was / fixed-by)."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        content = evt.content
+        return bool(content) and bool(CLOSE_LANGUAGE_RE.search(content))
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[Tool("Write|Edit|MultiEdit"), InvestigationCloseLanguage(), CcNotesAvailable()],
+    max_fires=NUDGE_MAX_FIRES,
+    tests={
+        # Firing needs an unresolved investigation id in session state — the FIRE proof lives in
+        # tests/test_cc_notes.py; both stay silent here (nothing unresolved).
+        Input(tool="Write", file="notes.md", content="RESOLVED: the deadlock was the pool rewrite\n"): Allow(),
+        Input(tool="Write", file="notes.md", content="just some ordinary notes\n"): Allow(),
+    },
+)
+def nudge_investigation_close(evt: PostToolUseEvent) -> HookResult | None:
+    """A verdict written into a loose file while an investigation sits open → record it via the transition verbs."""
+    activity = _load_activity(evt)
+    if not activity.unresolved or fired_this_turn(evt):
+        return None
+    record_fire(evt)
+    return evt.warn(
+        "You're writing a verdict into a loose file, but an investigation you opened this session is "
+        "still open. Record the verdict on it — the timeline keeps the wrong first suspicion visible "
+        "and the title stays clean — instead of a loose file:",
+        *investigation_resolve_lines(mcp_active(evt)),
+    )
+
+
+@on(
+    Event.Stop,
+    only_if=[CcNotesAvailable()],
+    max_fires=1,
+    tests={
+        # Fires only when an investigation id is still unresolved this session (persisted state) —
+        # proven in tests/test_cc_notes.py. With default state the sweep is silent.
+        Input(): Allow(),
+    },
+)
+def nudge_investigation_stop_sweep(evt: StopEvent) -> HookResult | None:
+    """At Stop, one gentle nudge to close an investigation left unresolved this session."""
+    activity = _load_activity(evt)
+    if not activity.unresolved:
+        return None
+    return evt.warn(
+        "Before you stop: an investigation you appended to this session hasn't reached a verdict. Close "
+        "the arc so the record stands on its own — record the root cause and confirm the fix, or "
+        "exonerate/abandon it:",
+        *investigation_resolve_lines(mcp_active(evt)),
+    )

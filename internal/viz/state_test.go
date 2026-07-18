@@ -12,7 +12,8 @@ import (
 // TestAPIEntitiesAllKinds drives /api/entities over a repo holding every kind,
 // asserting per-kind counts and that superseded entities stay in (flagged)
 // while tombstoned ones drop out, plus that full-snapshot fields — a log's
-// entries and a task's criteria — round-trip into the JSON.
+// entries, a task's criteria, and investigation evidence — round-trip into the
+// JSON.
 func TestAPIEntitiesAllKinds(t *testing.T) {
 	r := newGitRepo(t)
 	r.commit("c1")
@@ -91,6 +92,19 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 		t.Fatalf("start run: %v", err)
 	}
 
+	const premise = "the scheduler can deadlock"
+	const findingText = "the results channel is unbuffered"
+	const investigationEntry = "the blocked goroutine is sending a result"
+	invSnap, err := s.Create(ctx, []model.Op{
+		model.CreateInvestigation{Nonce: model.NewNonce(), Title: "an investigation", Premise: premise},
+		model.AddFinding{ID: model.NewNonce(), Text: findingText},
+		model.AppendEntry{Text: investigationEntry},
+	})
+	if err != nil {
+		t.Fatalf("create investigation: %v", err)
+	}
+	inv := invSnap.(model.Investigation)
+
 	ts, _, _ := newVizServer(t, r)
 	code, body := getBody(t, ts.URL+"/api/entities")
 	if code != http.StatusOK {
@@ -122,6 +136,9 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 	if len(resp.Runbooks) != 1 {
 		t.Errorf("runbooks = %d, want 1", len(resp.Runbooks))
 	}
+	if len(resp.Investigations) != 1 {
+		t.Errorf("investigations = %d, want 1", len(resp.Investigations))
+	}
 
 	byID := make(map[model.EntityID]model.Note, len(resp.Notes))
 	for _, n := range resp.Notes {
@@ -149,5 +166,17 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 	}
 	if got := resp.Runbooks[0].Runs; len(got) != 1 || len(got[0].Results) != 1 || got[0].Results[0].Status != model.StepDone {
 		t.Errorf("runbook runs = %+v, want one run with a done step result", got)
+	}
+	if len(resp.Investigations) == 1 {
+		got := resp.Investigations[0]
+		if got.ID != inv.ID || got.Premise != premise {
+			t.Errorf("investigation id/premise = %s/%q, want %s/%q", got.ID, got.Premise, inv.ID, premise)
+		}
+		if len(got.Findings) != 1 || got.Findings[0].Text != findingText {
+			t.Errorf("investigation findings = %+v, want one finding %q", got.Findings, findingText)
+		}
+		if len(got.Entries) != 1 || got.Entries[0].Text != investigationEntry {
+			t.Errorf("investigation entries = %+v, want one entry %q", got.Entries, investigationEntry)
+		}
 	}
 }

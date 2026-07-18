@@ -48,4 +48,5 @@ var (
 	runbookSpec = kindSpec[model.Runbook]{kind: model.KindRunbook, print: func(cmd *cobra.Command, _ *notes.Client, rb model.Runbook, jsonOut bool) error {
 		return printRunbook(cmd, rb, jsonOut)
 	}}
+	investigationSpec = kindSpec[model.Investigation]{kind: model.KindInvestigation, print: printInvestigation}
 )

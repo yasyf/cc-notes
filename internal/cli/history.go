@@ -22,7 +22,7 @@ func newHistoryCmd() *cobra.Command {
 	resolve := func(ctx context.Context, c *notes.Client, prefix string) (model.Kind, model.EntityID, error) {
 		return c.ResolveEntity(ctx, prefix)
 	}
-	return historyCmd("history ID", "Show the edit history of any note, doc, log, task, sprint, project, or runbook", resolve)
+	return historyCmd("history ID", "Show the edit history of any note, doc, log, task, sprint, project, runbook, or investigation", resolve)
 }
 
 func newNoteHistoryCmd() *cobra.Command    { return kindHistoryCmd(model.KindNote, "note") }
@@ -62,6 +62,8 @@ func resolveInKind(ctx context.Context, c *notes.Client, kind model.Kind, prefix
 		return c.ResolveProject(ctx, prefix)
 	case model.KindRunbook:
 		return c.ResolveRunbook(ctx, prefix)
+	case model.KindInvestigation:
+		return c.ResolveInvestigation(ctx, prefix)
 	default:
 		panic(fmt.Sprintf("history: unknown kind %q", kind))
 	}

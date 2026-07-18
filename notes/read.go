@@ -79,6 +79,16 @@ func (c *Client) Task(ctx context.Context, id model.EntityID) (model.Task, error
 	return snapshot.(model.Task), nil
 }
 
+// Investigation loads the investigation with the given id and folds it. A missing
+// entity fails with ErrRefNotFound.
+func (c *Client) Investigation(ctx context.Context, id model.EntityID) (model.Investigation, error) {
+	snapshot, err := c.s.Load(ctx, refs.For(model.KindInvestigation, id))
+	if err != nil {
+		return model.Investigation{}, err
+	}
+	return snapshot.(model.Investigation), nil
+}
+
 // ResolveProject expands a project id prefix to its full EntityID. No match
 // fails with ErrNotFound; an ambiguous prefix fails with ErrAmbiguous.
 func (c *Client) ResolveProject(ctx context.Context, prefix string) (model.EntityID, error) {
@@ -119,6 +129,12 @@ func (c *Client) ResolveLog(ctx context.Context, prefix string) (model.EntityID,
 // fails with ErrNotFound; an ambiguous prefix fails with ErrAmbiguous.
 func (c *Client) ResolveRunbook(ctx context.Context, prefix string) (model.EntityID, error) {
 	return c.resolve(ctx, model.KindRunbook, prefix)
+}
+
+// ResolveInvestigation expands an investigation id prefix to its full EntityID.
+// No match fails with ErrNotFound; an ambiguous prefix fails with ErrAmbiguous.
+func (c *Client) ResolveInvestigation(ctx context.Context, prefix string) (model.EntityID, error) {
+	return c.resolve(ctx, model.KindInvestigation, prefix)
 }
 
 // ResolveEntity expands a kind-agnostic id prefix by resolving it against every

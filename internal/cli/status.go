@@ -15,7 +15,7 @@ func newStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "status",
 		Aliases: []string{"board"},
-		Short:   "Orient: the backlog, your branch, in-progress across branches, and notes",
+		Short:   "Orient: the backlog, your branch, in-progress across branches, notes, and investigations",
 		Args:    exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -62,6 +62,7 @@ func printStatusText(cmd *cobra.Command, report notes.StatusReport) error {
 	fmt.Fprintf(&b, "notes: %d total, %d need review\n", report.Notes.Total, report.Notes.NeedsReview)
 	fmt.Fprintf(&b, "docs: %d total, %d need review\n", report.Docs.Total, report.Docs.NeedsReview)
 	fmt.Fprintf(&b, "logs: %d total\n", report.Logs)
+	fmt.Fprintf(&b, "investigations: %d open, %d awaiting confirmation\n", report.Investigations.Open, report.Investigations.AwaitingConfirm)
 	_, err := fmt.Fprint(cmd.OutOrStdout(), b.String())
 	return err
 }
@@ -79,6 +80,10 @@ func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusRep
 		Notes:      statusNotesDTO{Total: report.Notes.Total, NeedsReview: report.Notes.NeedsReview},
 		Docs:       statusNotesDTO{Total: report.Docs.Total, NeedsReview: report.Docs.NeedsReview},
 		Logs:       statusLogsDTO{Total: report.Logs},
+		Investigations: statusInvestigationsDTO{
+			Open:            report.Investigations.Open,
+			AwaitingConfirm: report.Investigations.AwaitingConfirm,
+		},
 	}
 	for _, grp := range report.InProgress {
 		staleDTOs := make([]statusStaleDTO, len(grp.Tasks))
@@ -102,15 +107,16 @@ func taskDTOs(tasks []model.Task, blocking map[model.EntityID][]model.EntityID) 
 
 // statusDTO fixes the JSON field order for a status report: the current
 // branch, the backlog and your-branch task slices, the in-progress tasks
-// grouped by assignee, and the note, doc, and log summaries.
+// grouped by assignee, and the note, doc, log, and investigation summaries.
 type statusDTO struct {
-	Branch     string              `json:"branch"`
-	Backlog    []taskDTO           `json:"backlog"`
-	YourBranch []taskDTO           `json:"your_branch"`
-	InProgress []statusAssigneeDTO `json:"in_progress"`
-	Notes      statusNotesDTO      `json:"notes"`
-	Docs       statusNotesDTO      `json:"docs"`
-	Logs       statusLogsDTO       `json:"logs"`
+	Branch         string                  `json:"branch"`
+	Backlog        []taskDTO               `json:"backlog"`
+	YourBranch     []taskDTO               `json:"your_branch"`
+	InProgress     []statusAssigneeDTO     `json:"in_progress"`
+	Notes          statusNotesDTO          `json:"notes"`
+	Docs           statusNotesDTO          `json:"docs"`
+	Logs           statusLogsDTO           `json:"logs"`
+	Investigations statusInvestigationsDTO `json:"investigations"`
 }
 
 // statusAssigneeDTO groups one assignee's in-progress tasks.
@@ -136,4 +142,10 @@ type statusNotesDTO struct {
 // lifecycle, so there is no needs_review count.
 type statusLogsDTO struct {
 	Total int `json:"total"`
+}
+
+// statusInvestigationsDTO is the active-investigation summary.
+type statusInvestigationsDTO struct {
+	Open            int `json:"open"`
+	AwaitingConfirm int `json:"awaiting_confirm"`
 }

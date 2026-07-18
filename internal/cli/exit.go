@@ -64,7 +64,7 @@ func classify(err error) (int, string) {
 		return 5, "ambiguous"
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, gitobj.ErrRefNotFound):
 		return 3, "not-found"
-	case errors.As(err, &conflict), errors.As(err, &notesConflict), errors.Is(err, store.ErrContended), errors.Is(err, ccsync.ErrSyncContended),
+	case errors.As(err, &conflict), errors.As(err, &notesConflict), errors.Is(err, notes.ErrIllegalTransition), errors.Is(err, store.ErrContended), errors.Is(err, ccsync.ErrSyncContended),
 		errors.Is(err, mountd.ErrBusy), errors.Is(err, mountd.ErrForeignMount), errors.Is(err, mountd.ErrBaseMismatch):
 		// Mount-holder conflicts (a dir busy with another op, a foreign mount in
 		// the way, a base mismatch) are transient/holder-state conditions the

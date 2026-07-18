@@ -136,4 +136,15 @@ describe("present sets", () => {
     expect([...presentKinds(g)]).toEqual(["runbook"]);
     expect([...presentTypes(g)].sort()).toEqual(["run_finished", "run_started"]);
   });
+
+  it("counts investigation finding verdicts as present marker events", () => {
+    const g = graph({
+      events: [
+        ev("investigation", "finding_cleared", ""),
+        ev("investigation", "finding_confirmed", ""),
+      ],
+    });
+    expect([...presentKinds(g)]).toEqual(["investigation"]);
+    expect([...presentTypes(g)].sort()).toEqual(["finding_cleared", "finding_confirmed"]);
+  });
 });

@@ -185,6 +185,15 @@ export interface Criterion {
   status: string;
 }
 
+// Finding is one suspect hypothesis or review finding under test within an
+// investigation. Mirrors model.Finding.
+export interface Finding {
+  id: string;
+  text: string;
+  status: string;
+  note?: string;
+}
+
 // Attachment is one named large-content reference; size is bytes. Fetch its
 // bytes via blobURL(oid, name). Mirrors model.Attachment.
 export interface Attachment {
@@ -366,6 +375,33 @@ export interface RunbookSnapshot {
   head: string;
 }
 
+// InvestigationSnapshot is the folded snapshot of an investigation. Mirrors
+// model.Investigation.
+export interface InvestigationSnapshot {
+  id: string;
+  title: string;
+  premise: string;
+  body: string;
+  status: string;
+  root_cause: string;
+  findings: Finding[];
+  entries: LogEntry[];
+  follow_ups: string[];
+  fix_commits: string[];
+  commits: string[];
+  tags: string[];
+  anchors: Anchor[];
+  superseded_by: string[];
+  author: string;
+  created_at: number;
+  updated_at: number;
+  closed_at: number;
+  closed_by: string;
+  deleted: boolean;
+  head: string;
+  attachments?: Attachment[];
+}
+
 // ProjectedRunStep is one current step with the run's recorded status/note, or
 // "pending" when the run has no result for it.
 export interface ProjectedRunStep {
@@ -400,7 +436,7 @@ export function projectRunSteps(
 
 // Snapshot is the full folded entity carried on an EntityDetail and in the
 // /api/entities buckets. Discriminate it by the summary.kind the caller already
-// holds (note | doc | log | task | sprint | project | runbook) — the snapshots
+// holds (note | doc | log | task | sprint | project | runbook | investigation) — the snapshots
 // carry no intrinsic tag. Mirrors model.Snapshot.
 export type Snapshot =
   | NoteSnapshot
@@ -409,7 +445,8 @@ export type Snapshot =
   | TaskSnapshot
   | SprintSnapshot
   | ProjectSnapshot
-  | RunbookSnapshot;
+  | RunbookSnapshot
+  | InvestigationSnapshot;
 
 // EntityDetail is the /api/entity/{kind}/{id} payload: the legend summary, the
 // full folded snapshot, and the change trail, oldest first. Mirrors
@@ -432,6 +469,7 @@ export interface StateResponse {
   sprints: SprintSnapshot[];
   projects: ProjectSnapshot[];
   runbooks: RunbookSnapshot[];
+  investigations: InvestigationSnapshot[];
 }
 
 // RawEvent is Event as it arrives on the wire: detail is a Go map that marshals
@@ -499,6 +537,7 @@ interface RawStateResponse {
   sprints: SprintSnapshot[] | null;
   projects: ProjectSnapshot[] | null;
   runbooks: RunbookSnapshot[] | null;
+  investigations: InvestigationSnapshot[] | null;
 }
 
 // normalizeGraph fills every nil slice with [] and every nil detail map with {},
@@ -557,6 +596,7 @@ export function normalizeEntities(raw: RawStateResponse): StateResponse {
     sprints: raw.sprints ?? [],
     projects: raw.projects ?? [],
     runbooks: raw.runbooks ?? [],
+    investigations: raw.investigations ?? [],
   };
 }
 

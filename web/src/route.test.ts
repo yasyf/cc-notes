@@ -20,6 +20,14 @@ describe("parseRoute", () => {
       want: { tab: "timeline", selection: { kind: "note", id: "deadbeef", title: "" } },
     },
     {
+      name: "investigation selection",
+      hash: "#/timeline?e=investigation:abc1234",
+      want: {
+        tab: "timeline",
+        selection: { kind: "investigation", id: "abc1234", title: "" },
+      },
+    },
+    {
       name: "percent-encoded id round-trips",
       hash: "#/browse?e=task:a%2Fb",
       want: { tab: "browse", selection: { kind: "task", id: "a/b", title: "" } },
@@ -59,6 +67,7 @@ describe("round-trip formatRoute(parseRoute(x))", () => {
     "#/browse",
     "#/browse?e=task:ab12cd",
     "#/timeline?e=note:deadbeef",
+    "#/timeline?e=investigation:abc1234",
   ];
   for (const hash of canonical) {
     it(hash, () => {

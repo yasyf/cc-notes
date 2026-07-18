@@ -31,6 +31,9 @@ func TestFreeText(t *testing.T) {
 		{name: "flag stdin", flagName: "text", flagSet: true, flagVal: "-", required: true, stdin: "flag stdin\n", want: "flag stdin"},
 		{name: "optional absent yields empty", flagName: "body", required: false, want: ""},
 		{name: "required absent errors", flagName: "body", required: true, wantErr: true, errContains: "requires text: a positional argument, --body, or - for stdin"},
+		{name: "required empty positional errors", flagName: "body", posGiven: true, required: true, wantErr: true, errContains: "requires text: a positional argument, --body, or - for stdin"},
+		{name: "required empty flag errors", flagName: "body", flagSet: true, required: true, wantErr: true, errContains: "requires text: a positional argument, --body, or - for stdin"},
+		{name: "required empty stdin errors", flagName: "body", pos: "-", posGiven: true, required: true, wantErr: true, errContains: "requires text: a positional argument, --body, or - for stdin"},
 		{name: "positional and flag conflict", flagName: "entry", flagSet: true, flagVal: "b", pos: "a", posGiven: true, required: true, wantErr: true, errContains: "takes text from exactly one of a positional argument, --entry, or - for stdin"},
 	}
 	for _, tt := range tests {

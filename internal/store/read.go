@@ -175,6 +175,13 @@ func (s *Store) ListRunbooks(ctx context.Context) ([]model.Runbook, error) {
 	return listOf(ctx, s, model.KindRunbook, fold.Runbook, ListOpts{})
 }
 
+// ListInvestigations folds every investigation in the repository, ordered by
+// creation time then id. The default filter hides tombstoned and superseded
+// records, matching the other durable kinds.
+func (s *Store) ListInvestigations(ctx context.Context) ([]model.Investigation, error) {
+	return listOf(ctx, s, model.KindInvestigation, fold.Investigation, ListOpts{})
+}
+
 // children lists the refs that are immediate children of prefix, excluding
 // nested namespaces.
 func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error) {

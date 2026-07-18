@@ -48,6 +48,7 @@ func TestListSnapshotsMatchesTyped(t *testing.T) {
 	create(t, s, sprintOps("sp1"))
 	create(t, s, projectOps("pr1"))
 	create(t, s, runbookOps("rb1"))
+	create(t, s, investigationOps("iv1"))
 
 	cases := []struct {
 		kind  model.Kind
@@ -63,6 +64,7 @@ func TestListSnapshotsMatchesTyped(t *testing.T) {
 		{model.KindSprint, ListOpts{}, func() ([]model.Snapshot, error) { return asSnapshots(s.ListSprints(ctx)) }},
 		{model.KindProject, ListOpts{}, func() ([]model.Snapshot, error) { return asSnapshots(s.ListProjects(ctx)) }},
 		{model.KindRunbook, ListOpts{}, func() ([]model.Snapshot, error) { return asSnapshots(s.ListRunbooks(ctx)) }},
+		{model.KindInvestigation, ListOpts{}, func() ([]model.Snapshot, error) { return asSnapshots(s.ListInvestigations(ctx)) }},
 	}
 	seen := map[model.Kind]bool{}
 	for _, tc := range cases {

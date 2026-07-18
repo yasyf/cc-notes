@@ -49,6 +49,9 @@ func (p Project) EntityID() EntityID { return p.ID }
 // EntityID returns the runbook's entity id.
 func (r Runbook) EntityID() EntityID { return r.ID }
 
+// EntityID returns the investigation's entity id.
+func (i Investigation) EntityID() EntityID { return i.ID }
+
 // Meta returns the note's header.
 func (n Note) Meta() Meta {
 	return Meta{
@@ -132,5 +135,19 @@ func (r Runbook) Meta() Meta {
 		CreatedAt: metaTime(r.CreatedAt),
 		UpdatedAt: metaTime(r.UpdatedAt),
 		Deleted:   r.Deleted,
+	}
+}
+
+// Meta returns the investigation's header.
+func (i Investigation) Meta() Meta {
+	return Meta{
+		Kind:        KindInvestigation,
+		Title:       i.Title,
+		Head:        i.Head,
+		CreatedAt:   metaTime(i.CreatedAt),
+		UpdatedAt:   metaTime(i.UpdatedAt),
+		Deleted:     i.Deleted,
+		Superseded:  len(i.SupersededBy) > 0,
+		Attachments: i.Attachments,
 	}
 }

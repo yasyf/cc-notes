@@ -433,6 +433,37 @@ describe("layout entity items", () => {
       },
     ]);
   });
+
+  it("renders an investigation finding event as a lane marker", () => {
+    const g = graph({
+      lanes: [lane("main")],
+      events: [
+        {
+          entity: { kind: "investigation", id: "i1", short: "i1", title: "deadlock" },
+          type: "finding_cleared",
+          time: 100,
+          branch: "",
+          sha: "sha-i1",
+          detail: { finding: "f1" },
+        },
+      ],
+      entities: [
+        { kind: "investigation", id: "i1", short: "i1", title: "deadlock", status: "open" },
+      ],
+    });
+    const result = layout({ graph: g, now: NOW });
+    expect(result.bands).toEqual([]);
+    expect(result.lanes.find((l) => l.name === "main")?.markers).toEqual([
+      {
+        ref: { kind: "investigation", id: "i1", short: "i1", title: "deadlock" },
+        type: "finding_cleared",
+        time: 100,
+        sha: "sha-i1",
+        detail: { finding: "f1" },
+        subRow: 0,
+      },
+    ]);
+  });
 });
 
 describe("layout window clamping", () => {

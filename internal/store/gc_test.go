@@ -181,6 +181,39 @@ func TestPruneTombstonesDeletesRunbookRefLocalAndRemote(t *testing.T) {
 	}
 }
 
+func TestPruneTombstonesDeletesInvestigationRefLocalAndRemote(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	bare := initBareRemote(t, s)
+
+	keep := create(t, s, investigationOps("keep")).(model.Investigation)
+	keepRef := refs.For(model.KindInvestigation, keep.ID)
+
+	inv := create(t, s, investigationOps("doomed")).(model.Investigation)
+	ref := refs.For(model.KindInvestigation, inv.ID)
+	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+	gittest.Git(t, s.Git.Dir, "push", "origin", ref+":"+ref)
+
+	pruned, failed, err := s.PruneTombstones(ctx, "origin")
+	if err != nil {
+		t.Fatalf("PruneTombstones: %v", err)
+	}
+	if pruned != 1 || failed != 0 {
+		t.Fatalf("pruned/failed = %d/%d, want 1/0", pruned, failed)
+	}
+	if _, err := s.Repo.Tip(ctx, ref); !errors.Is(err, gitobj.ErrRefNotFound) {
+		t.Fatalf("local investigation ref still present: %v", err)
+	}
+	if got := gittest.Git(t, bare, "for-each-ref", "--format=%(refname)", ref); got != "" {
+		t.Fatalf("remote investigation ref still present after prune: %q", got)
+	}
+	if _, err := s.Repo.Tip(ctx, keepRef); err != nil {
+		t.Fatalf("live investigation ref pruned: %v", err)
+	}
+}
+
 func TestPruneTombstonesSkipsSupersededDoc(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()

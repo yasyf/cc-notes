@@ -8,13 +8,14 @@ import (
 // Entity kind tags, matching the lowercase names internal/trail.EntityKind
 // emits; they are the EntityRef.Kind and EntitySummary.Kind wire strings.
 const (
-	entityNote    = "note"
-	entityDoc     = "doc"
-	entityLog     = "log"
-	entityTask    = "task"
-	entitySprint  = "sprint"
-	entityProject = "project"
-	entityRunbook = "runbook"
+	entityNote          = "note"
+	entityDoc           = "doc"
+	entityLog           = "log"
+	entityTask          = "task"
+	entitySprint        = "sprint"
+	entityProject       = "project"
+	entityRunbook       = "runbook"
+	entityInvestigation = "investigation"
 )
 
 // trailCreate is the internal/trail Entry.Kind for a chain's root commit.
@@ -23,20 +24,22 @@ const trailCreate = "create"
 // Event types, the wire strings the timeline keys on. "created", "status", and
 // "edited" are shared across entity kinds; the rest are kind-specific.
 const (
-	evCreated      = "created"
-	evClaimed      = "claimed"
-	evReclaimed    = "reclaimed"
-	evClosed       = "closed"
-	evStatus       = "status"
-	evBranchMoved  = "branch_moved"
-	evCommitLinked = "commit_linked"
-	evEdited       = "edited"
-	evVerified     = "verified"
-	evSuperseded   = "superseded"
-	evStale        = "stale"
-	evEntry        = "entry"
-	evRunStarted   = "run_started"
-	evRunFinished  = "run_finished"
+	evCreated          = "created"
+	evClaimed          = "claimed"
+	evReclaimed        = "reclaimed"
+	evClosed           = "closed"
+	evStatus           = "status"
+	evBranchMoved      = "branch_moved"
+	evCommitLinked     = "commit_linked"
+	evEdited           = "edited"
+	evVerified         = "verified"
+	evSuperseded       = "superseded"
+	evStale            = "stale"
+	evEntry            = "entry"
+	evRunStarted       = "run_started"
+	evRunFinished      = "run_finished"
+	evFindingCleared   = "finding_cleared"
+	evFindingConfirmed = "finding_confirmed"
 )
 
 // statusDeleted is the Lane.Status of a synthesized deleted-branch lane.
@@ -64,6 +67,8 @@ func classify(entry trail.Entry) []eventSpec {
 		return groupEvents(entry)
 	case model.Runbook:
 		return runbookEvents(entry)
+	case model.Investigation:
+		return investigationEvents(entry)
 	default:
 		return nil
 	}
@@ -175,6 +180,85 @@ func runbookEvents(entry trail.Entry) []eventSpec {
 		specs = append(specs, eventSpec{typ: evEdited})
 	}
 	return specs
+}
+
+// investigationEvents classifies an investigation entry: create, appended
+// evidence, lifecycle status changes, and the cleared or confirmed finding
+// dispositions that define the investigation arc. Orthogonal changes in one
+// pack accumulate as separate events.
+func investigationEvents(entry trail.Entry) []eventSpec {
+	if entry.Kind == trailCreate {
+		return []eventSpec{{typ: evCreated}}
+	}
+	var specs []eventSpec
+	if ch, ok := changeFor(entry.Changes, "entries"); ok && len(ch.Added) > 0 {
+		inv := entry.Snapshot.(model.Investigation)
+		added := inv.Entries[len(inv.Entries)-len(ch.Added):]
+		for _, e := range added {
+			specs = append(specs, eventSpec{typ: evEntry, detail: map[string]string{"text": e.Text}})
+		}
+	}
+	if ch, ok := changeFor(entry.Changes, "status"); ok {
+		status := changeStr(ch.To)
+		if status == string(model.InvestigationOpen) {
+			status = "reopened"
+		}
+		specs = append(specs, eventSpec{typ: evStatus, detail: map[string]string{"status": status}})
+	}
+	if ch, ok := changeFor(entry.Changes, "findings"); ok {
+		specs = append(specs, findingEvents(ch)...)
+	}
+	if len(specs) == 0 {
+		specs = append(specs, eventSpec{typ: evEdited})
+	}
+	return specs
+}
+
+// findingEvents reads a findings set-delta into first-class disposition
+// events. A same-status replacement is a text or note edit, not a repeated
+// verdict.
+func findingEvents(ch trail.Change) []eventSpec {
+	prev := make(map[string]string, len(ch.Removed))
+	for _, f := range ch.Removed {
+		prev[findingElemID(f)] = findingElemStatus(f)
+	}
+	var specs []eventSpec
+	for _, f := range ch.Added {
+		id, status := findingElemID(f), findingElemStatus(f)
+		was, paired := prev[id]
+		if paired && was == status {
+			continue
+		}
+		detail := map[string]string{"finding": shortID(id)}
+		switch status {
+		case string(model.FindingCleared):
+			specs = append(specs, eventSpec{typ: evFindingCleared, detail: detail})
+		case string(model.FindingConfirmed):
+			specs = append(specs, eventSpec{typ: evFindingConfirmed, detail: detail})
+		}
+	}
+	return specs
+}
+
+// findingElemID reads the id of a findings set element, canonical-JSON decoded
+// to a map.
+func findingElemID(elem any) string {
+	m, ok := elem.(map[string]any)
+	if !ok {
+		return ""
+	}
+	id, _ := m["id"].(string)
+	return id
+}
+
+// findingElemStatus reads the status of a findings set element.
+func findingElemStatus(elem any) string {
+	m, ok := elem.(map[string]any)
+	if !ok {
+		return ""
+	}
+	status, _ := m["status"].(string)
+	return status
 }
 
 // runEvents reads a runs set-delta into lifecycle events. Runs diff by
@@ -291,8 +375,8 @@ func entityTitle(snap model.Snapshot) string {
 }
 
 // branchOf attributes a snapshot to a branch at its step: a task's branch
-// scalar, or the first branch anchor of a note, doc, or log. Sprints and
-// projects carry no branch. An empty result is kept as-is.
+// scalar, or the first branch anchor of an anchored entity. Sprints, projects,
+// and runbooks carry no branch. An empty result is kept as-is.
 func branchOf(snap model.Snapshot) string {
 	switch s := snap.(type) {
 	case model.Task:
@@ -302,6 +386,8 @@ func branchOf(snap model.Snapshot) string {
 	case model.Doc:
 		return firstBranchAnchor(s.Anchors)
 	case model.Log:
+		return firstBranchAnchor(s.Anchors)
+	case model.Investigation:
 		return firstBranchAnchor(s.Anchors)
 	default:
 		return ""

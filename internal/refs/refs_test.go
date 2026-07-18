@@ -27,12 +27,14 @@ func TestBuildGolden(t *testing.T) {
 		{"project", For(model.KindProject, hex40), "refs/cc-notes/projects/" + hex40},
 		{"doc", For(model.KindDoc, hex40), "refs/cc-notes/docs/" + hex40},
 		{"runbook", For(model.KindRunbook, hex40), "refs/cc-notes/runbooks/" + hex40},
+		{"investigation", For(model.KindInvestigation, hex40), "refs/cc-notes/investigations/" + hex40},
 		{"notes prefix", Root(model.KindNote), "refs/cc-notes/notes/"},
 		{"tasks root", Root(model.KindTask), "refs/cc-notes/tasks/"},
 		{"sprints root", Root(model.KindSprint), "refs/cc-notes/sprints/"},
 		{"projects root", Root(model.KindProject), "refs/cc-notes/projects/"},
 		{"docs root", Root(model.KindDoc), "refs/cc-notes/docs/"},
 		{"runbooks root", Root(model.KindRunbook), "refs/cc-notes/runbooks/"},
+		{"investigations root", Root(model.KindInvestigation), "refs/cc-notes/investigations/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,6 +75,8 @@ func TestParseRoundTrip(t *testing.T) {
 		{"doc sha256 id", For(model.KindDoc, hex64), Ref{Kind: model.KindDoc, ID: hex64}},
 		{"runbook", For(model.KindRunbook, hex40), Ref{Kind: model.KindRunbook, ID: hex40}},
 		{"runbook sha256 id", For(model.KindRunbook, hex64), Ref{Kind: model.KindRunbook, ID: hex64}},
+		{"investigation", For(model.KindInvestigation, hex40), Ref{Kind: model.KindInvestigation, ID: hex40}},
+		{"investigation sha256 id", For(model.KindInvestigation, hex64), Ref{Kind: model.KindInvestigation, ID: hex64}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

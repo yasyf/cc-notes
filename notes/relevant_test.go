@@ -56,6 +56,8 @@ func entryID(e notes.RelevantEntry) model.EntityID {
 		return e.Log.ID
 	case model.KindRunbook:
 		return e.Runbook.ID
+	case model.KindInvestigation:
+		return e.Investigation.ID
 	default:
 		return e.Note.ID
 	}
@@ -70,6 +72,8 @@ func entryUpdatedAt(e notes.RelevantEntry) int64 {
 		return e.Log.UpdatedAt
 	case model.KindRunbook:
 		return e.Runbook.UpdatedAt
+	case model.KindInvestigation:
+		return e.Investigation.UpdatedAt
 	default:
 		return e.Note.UpdatedAt
 	}
@@ -373,3 +377,71 @@ func TestRelevantSurfacesRunbooks(t *testing.T) {
 		t.Errorf("runbook verdict = %q, want empty (no freshness lifecycle)", e.Verdict)
 	}
 }
+
+func TestRelevantSurfacesInvestigations(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	commitFile(t, dir, "internal/pool/pool.go", "package pool\n")
+
+	// A non-terminal investigation anchored to the path being edited: the
+	// highest-value surfacing, so it earns the open-status boost above a plain
+	// path match.
+	openInv, _, err := c.CreateInvestigation(ctx, notes.InvestigationSpec{
+		Title:   "active deadlock",
+		Premise: "pool rewrite",
+		Anchors: notes.AnchorSpec{Paths: []string{"internal/pool/pool.go"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateInvestigation open: %v", err)
+	}
+	// A terminal investigation anchored to the same path still surfaces, but with
+	// no boost.
+	closedInv, _, err := c.CreateInvestigation(ctx, notes.InvestigationSpec{
+		Title:   "old deadlock",
+		Premise: "a different premise",
+		Anchors: notes.AnchorSpec{Paths: []string{"internal/pool/pool.go"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateInvestigation closed: %v", err)
+	}
+	if _, err := c.Exonerate(ctx, closedInv.ID, "false alarm"); err != nil {
+		t.Fatalf("Exonerate: %v", err)
+	}
+
+	scored := mustRelevant(t, c, dir, "internal/pool/pool.go", notes.RelevantFilter{})
+
+	open := findEntry(t, scored, openInv.ID)
+	if open.Kind != model.KindInvestigation || open.Investigation.Title != "active deadlock" {
+		t.Fatalf("open entry = kind %q title %q", open.Kind, open.Investigation.Title)
+	}
+	if open.Score != scorePathTest+scoreOpenBoostTest {
+		t.Errorf("open investigation score = %d, want %d (path + open boost)", open.Score, scorePathTest+scoreOpenBoostTest)
+	}
+	if !slices.Contains(open.Reasons, "investigation-open") || !slices.Contains(open.Reasons, "path") {
+		t.Errorf("open investigation reasons = %v, want investigation-open and path", open.Reasons)
+	}
+	if open.Reasons[0] != "investigation-open" {
+		t.Errorf("reasons[0] = %q, want investigation-open first", open.Reasons[0])
+	}
+	if open.Verdict != "" {
+		t.Errorf("investigation verdict = %q, want empty (never drifts)", open.Verdict)
+	}
+
+	closed := findEntry(t, scored, closedInv.ID)
+	if closed.Score != scorePathTest {
+		t.Errorf("terminal investigation score = %d, want %d (path only, no boost)", closed.Score, scorePathTest)
+	}
+	if slices.Contains(closed.Reasons, "investigation-open") {
+		t.Errorf("terminal investigation reasons = %v, want no open boost", closed.Reasons)
+	}
+	// The active investigation, boosted, outranks the terminal one.
+	if entryID(scored[0]) != openInv.ID {
+		t.Errorf("top result = %s, want the active investigation %s", entryID(scored[0]), openInv.ID)
+	}
+}
+
+// Score weights mirrored from relevant.go for the surfacing assertions.
+const (
+	scorePathTest      = 100
+	scoreOpenBoostTest = 50
+)

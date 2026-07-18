@@ -95,12 +95,12 @@ opens with an `MCP:` line naming the tool and its properties. Operator commands 
 the server is active, cc-notes' own capt-hook nudges name the tools; the CLI forms below
 are the fallback for sessions without it.
 
-## Six tools, six jobs
+## Seven tools, seven jobs
 
 Get this distinction right first. Native todos, cc-notes tasks, cc-notes notes, cc-notes docs,
-cc-notes logs, and cc-notes papercuts differ along two axes — how long the record lives and who
-can see it — and the four durable knowledge records, a note, a doc, a log, and a papercut, split
-once more by form.
+cc-notes logs, cc-notes investigations, and cc-notes papercuts differ along two axes — how long
+the record lives and who can see it — and the five durable knowledge records, a note, a doc, a
+log, an investigation, and a papercut, split once more by form.
 
 | Tool | Lifetime | Scope | Use for |
 |------|----------|-------|---------|
@@ -108,7 +108,8 @@ once more by form.
 | `task_*` / `cc-notes task` | Durable — git ODB, synced across machines and agents | Global: one flat ref per task, with a mutable `branch` attribute and a shared backlog every agent sees | Work that outlives the session or coordinates agents: claim, lease, deps, comments, priority, lifecycle |
 | `note_*` / `cc-notes note` | Durable — git ODB, synced | Repo-global, optionally anchored to a commit, path, or branch | Design decisions and durable facts, verified and searchable |
 | `doc_*` / `cc-notes doc` | Durable — git ODB, synced | Repo-global, anchored like a note, plus a `when` read-trigger | Multi-paragraph guidance written *for the next agent*, verified and floated on read |
-| `log_*` / `cc-notes log` | Durable — git ODB, synced | Repo-global, anchored like a doc | An append-only chronological journal — an incident timeline, a rollout log, a debugging session — whose entries are never edited or reordered, with no verify/drift/supersede lifecycle |
+| `log_*` / `cc-notes log` | Durable — git ODB, synced | Repo-global, anchored like a doc | An append-only chronological journal — a rollout log, a migration diary — whose entries are never edited or reordered, with no verify/drift/supersede lifecycle and no verdict |
+| `investigation_*` / `cc-notes investigation` | Durable — git ODB, synced | Repo-global, anchored like a note | A debugging arc: an immutable premise, an append-only evidence timeline, findings with per-finding dispositions, and a typed status that carries the verdict (`open → root_caused → fixed → confirmed`, plus `exonerated`/`abandoned`) |
 | `papercut` / `cc-notes papercut` | Durable — git ODB, synced | Repo-wide: one shared journal, auto-created on first use | One-paragraph friction complaints — a dead-end tool call, a broken link, a misleading doc — filed instead of silently pushed through |
 
 Tasks are **global**. Each task is a single flat ref at `refs/cc-notes/tasks/<id>`, exactly
@@ -145,8 +146,20 @@ it, and it drifts when the code moves out from under it. A log is an *immutable 
 `log_append` adds a timestamped, authored entry and that entry never moves or changes, so a log
 has no freshness lifecycle at all — no verify, no expire, no supersede, and it never drifts,
 because an append-only journal never claims to be current truth. Reach for a log when the value is
-the chronology itself — an incident timeline, a rollout log, a debugging session — rather than a
-single fact (a note) or a guide you keep current (a doc).
+the chronology itself and no verdict is coming — a rollout log, a migration diary — rather than a
+single fact (a note) or a guide you keep current (a doc). A chronology that opens on a suspicion
+and closes on a verdict is an **investigation**, not a log.
+
+An **investigation** is the log's verdict-bearing sibling: the same append-only timeline (and
+attachment support), plus an immutable premise set at open, a findings list where each suspect
+hypothesis gets an explicit disposition with evidence (`clear` or `confirm`, `--why` required),
+and a typed status that holds the verdict — `open → root_caused → fixed → confirmed`, with
+`exonerated` (premise falsified) and `abandoned` (no verdict) as the other exits. Open one the
+moment you form a falsifiable suspicion — a red CI run you triage, a bug hunt, an anomaly — and
+append evidence per triage step, never retro-written at the end. The verdict goes through the
+transition verbs, never into the title: a wrong first theory stays visible on the record, which
+is the point. Like a log it never drifts; a durable present-tense fact the verdict produces (a
+design invariant, say) graduates into a note or doc and is linked as a follow-up.
 
 A **papercut** is the fire-and-forget corner of the log: `papercut` with the complaint as `body`
 (CLI: `cc-notes papercut "<complaint>"`) files a one-paragraph friction complaint — a dead-end
@@ -303,6 +316,12 @@ The full surface — every flag, property, default, and output shape — is in
 | Start an append-only journal | `log_add` (`title`, `entry`) | `cc-notes log add "<title>"` |
 | Append an entry / artifacts | `log_append` (`id`, `entry`, `attach`) | `cc-notes log append <id> "<text>"` |
 | Read a journal back | `log_show` (`id`) | `cc-notes log show <id>` |
+| Open an investigation on a suspicion | `investigation_open` (`title`, `premise`, `findings`) | `cc-notes investigation open "<title>" "<premise>"` |
+| Append evidence per triage step | `investigation_append` (`id`, `text`, `attach`) | `cc-notes investigation append <id> "<text>"` |
+| Rule a suspect out / in | `investigation_finding_clear` / `_confirm` (`id`, `finding`, `why`) | `cc-notes investigation finding clear <id> <finding> --why "<evidence>"` |
+| Record the root cause | `investigation_root_cause` (`id`, `text`) | `cc-notes investigation root-cause <id> "<cause>"` |
+| Record the fixing commits | `investigation_fix` (`id`, `commits`) | `cc-notes investigation fix <id> --commit <sha>` |
+| Close with proof, or reopen on regression | `investigation_confirm` / `investigation_reopen` (`id`, `text`) | `cc-notes investigation confirm <id> "<proof>"` |
 | File a friction complaint | `papercut` (`body`) | `cc-notes papercut "<complaint>"` |
 | Read every complaint | `papercut_list` | `cc-notes papercut list` |
 | Retrieve an attachment | `attachment_get` (`id`, `name`, `output`) | `cc-notes attachment get <id> <name> -o <path>` |
@@ -313,8 +332,8 @@ The full surface — every flag, property, default, and output shape — is in
 | Close the run | `runbook_run_finish` (`id`, `failed`, `abandoned`) | `cc-notes runbook run finish <id>` |
 
 A tool result is the command's `--json`; on the CLI, append `--json` to any note, doc, log,
-papercut, task, sync, reconcile, or status command for the same machine-readable record
-instead of the lean line.
+investigation, papercut, task, sync, reconcile, or status command for the same machine-readable
+record instead of the lean line.
 
 ## Artifacts & evidence
 
@@ -447,9 +466,11 @@ See `references/runbooks.md`.
 - `references/coordination.md` — how agents coordinate over time: the backlog and the branch
   attribute, claims and leases, stale-claim recovery, deps and blocking, reconcile-on-merge,
   and union-merge sync across a shared remote.
-- `references/tasks-vs-notes.md` — the six-way distinction with worked examples of choosing
+- `references/tasks-vs-notes.md` — the seven-way distinction with worked examples of choosing
   native todo vs cc-notes task vs cc-notes note vs cc-notes doc vs cc-notes log vs cc-notes
-  papercut.
+  investigation vs cc-notes papercut.
+- `references/investigations.md` — the investigation record: premise, timeline, findings, and
+  the status machine; the log-vs-investigation call; and the multi-agent forensics flow.
 - `references/lifecycle-and-hygiene.md` — keeping the record honest: task leases and
   staleness, note verification, drift, and supersession, and the maintenance verbs.
 - `references/sprints-and-projects.md` — the optional planning layer: tasks rolling up into

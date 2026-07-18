@@ -47,14 +47,14 @@ func attachmentNode(p string) (AttachmentFile, bool) {
 }
 
 // lookupAttachable resolves an /attachments short id across the note, doc,
-// and log namespaces. Unknown, deleted, ambiguous, and attachment-less
-// entities all read ENOENT — only entities with live attachments appear in
-// the tree. A genuine not-found (ENOENT) keeps looking across namespaces; a
-// store or git failure surfaces via errno as EIO, never a false ENOENT that
-// would mask an internal error as a missing file.
+// log, and investigation namespaces. Unknown, deleted, ambiguous, and
+// attachment-less entities all read ENOENT — only entities with live
+// attachments appear in the tree. A genuine not-found (ENOENT) keeps looking
+// across namespaces; a store or git failure surfaces via errno as EIO, never a
+// false ENOENT that would mask an internal error as a missing file.
 func (f *FS) lookupAttachable(shortID string) (attachable, int) {
 	var matches []attachable
-	for _, kind := range []model.Kind{model.KindNote, model.KindDoc, model.KindLog} {
+	for _, kind := range []model.Kind{model.KindNote, model.KindDoc, model.KindLog, model.KindInvestigation} {
 		_, r, err := f.resolveEntity(kind, shortID)
 		if err != nil {
 			if ec := errno(err); ec != -fuse.ENOENT {
@@ -76,7 +76,7 @@ func (f *FS) lookupAttachable(shortID string) (attachable, int) {
 	return matches[0], 0
 }
 
-// snapshotAttachments returns the live attachment set of a note, doc, or log
+// snapshotAttachments returns the live attachment set of an attachable
 // snapshot; lookupAttachable only yields those kinds.
 func snapshotAttachments(snap model.Snapshot) []model.Attachment {
 	switch s := snap.(type) {
@@ -85,6 +85,8 @@ func snapshotAttachments(snap model.Snapshot) []model.Attachment {
 	case model.Doc:
 		return s.Attachments
 	case model.Log:
+		return s.Attachments
+	case model.Investigation:
 		return s.Attachments
 	default:
 		return nil
@@ -224,6 +226,15 @@ func (f *FS) listAttachables() (map[string]bool, int) {
 	for _, l := range logs {
 		if len(l.Attachments) > 0 {
 			names[l.ID.Short()] = true
+		}
+	}
+	investigations, err := f.store.ListInvestigations(f.ctx)
+	if err != nil {
+		return nil, errno(err)
+	}
+	for _, investigation := range investigations {
+		if len(investigation.Attachments) > 0 {
+			names[investigation.ID.Short()] = true
 		}
 	}
 	return names, 0

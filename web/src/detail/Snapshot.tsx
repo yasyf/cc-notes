@@ -7,6 +7,7 @@
 import type { ReactNode } from "react";
 import type {
   DocSnapshot,
+  InvestigationSnapshot,
   LogSnapshot,
   NoteSnapshot,
   ProjectSnapshot,
@@ -36,6 +37,8 @@ export function SnapshotView({ kind, snapshot }: { kind: string; snapshot: Snaps
       return <ProjectView snap={snapshot as ProjectSnapshot} />;
     case "runbook":
       return <RunbookView snap={snapshot as RunbookSnapshot} />;
+    case "investigation":
+      return <InvestigationView snap={snapshot as InvestigationSnapshot} />;
     default:
       return null;
   }
@@ -95,10 +98,10 @@ function CommentsSection({ comments }: { comments: { author: string; ts: number;
   );
 }
 
-function CommitsSection({ commits }: { commits: string[] }) {
+function CommitsSection({ commits, title = "Commits" }: { commits: string[]; title?: string }) {
   if (commits.length === 0) return null;
   return (
-    <Section title="Commits">
+    <Section title={title}>
       <ChipRow>
         {commits.map((s) => (
           <CommitChip key={s} sha={s} />
@@ -344,6 +347,99 @@ function RunbookView({ snap }: { snap: RunbookSnapshot }) {
               </Chip>
             ))}
           </ChipRow>
+        </Section>
+      )}
+    </>
+  );
+}
+
+function InvestigationView({ snap }: { snap: InvestigationSnapshot }) {
+  return (
+    <>
+      {snap.premise.trim() !== "" && (
+        <Section title="Premise">
+          <Markdown>{snap.premise}</Markdown>
+        </Section>
+      )}
+      {snap.findings.length > 0 && (
+        <Section title="Findings">
+          <ul className="crit-list">
+            {snap.findings.map((finding) => (
+              <li key={finding.id} className="crit-item">
+                <StatusBadge status={finding.status} />
+                <span className="crit-text">
+                  {finding.text}
+                  {finding.note !== undefined && finding.note !== "" && (
+                    <span className="finding-note"> — {finding.note}</span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+      {snap.entries.length > 0 && (
+        <Section title="Evidence">
+          <div className="authored-list">
+            {snap.entries.map((entry, i) => (
+              <AuthoredBlock key={i} author={entry.author} ts={entry.ts} body={entry.text} />
+            ))}
+          </div>
+        </Section>
+      )}
+      {snap.root_cause.trim() !== "" && (
+        <Section title="Root cause">
+          <Markdown>{snap.root_cause}</Markdown>
+        </Section>
+      )}
+      {snap.body.trim() !== "" && (
+        <Section title="Resolution">
+          <Markdown>{snap.body}</Markdown>
+        </Section>
+      )}
+      {(snap.closed_at > 0 || snap.closed_by !== "") && (
+        <Section title="Details">
+          <dl className="snap-fields">
+            {snap.closed_at > 0 && <Field label="closed" value={<TimeText sec={snap.closed_at} />} />}
+            {snap.closed_by !== "" && <Field label="closed by" value={snap.closed_by} />}
+          </dl>
+        </Section>
+      )}
+      {snap.follow_ups.length > 0 && (
+        <Section title="Follow-ups">
+          <ChipRow>
+            {snap.follow_ups.map((id) => (
+              <IdChip key={id} id={id} />
+            ))}
+          </ChipRow>
+        </Section>
+      )}
+      <CommitsSection commits={snap.fix_commits} title="Fix commits" />
+      <CommitsSection commits={snap.commits} />
+      <TagsSection tags={snap.tags} />
+      {snap.anchors.length > 0 && (
+        <Section title="Anchors">
+          <ChipRow>
+            {snap.anchors.map((anchor, i) => (
+              <span key={i} className="chip chip-anchor">
+                <span className="chip-key">{anchor.kind}</span>
+                {anchor.value}
+              </span>
+            ))}
+          </ChipRow>
+        </Section>
+      )}
+      {snap.superseded_by.length > 0 && (
+        <Banner tone="muted">
+          Superseded by{" "}
+          {snap.superseded_by.map((id) => (
+            <IdChip key={id} id={id} />
+          ))}
+        </Banner>
+      )}
+      {snap.attachments !== undefined && snap.attachments.length > 0 && (
+        <Section title="Attachments">
+          <Attachments items={snap.attachments} />
         </Section>
       )}
     </>

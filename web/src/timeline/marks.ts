@@ -54,6 +54,8 @@ export const EVENT_SPECS: Record<string, MarkSpec> = {
   entry: { shape: "square", color: S2, label: "Log entry", hollow: false },
   run_started: { shape: "triangle-up", color: S4, label: "Run started", hollow: false },
   run_finished: { shape: "square", color: S4, label: "Run finished", hollow: false },
+  finding_cleared: { shape: "slash", color: GOOD, label: "Finding cleared", hollow: false },
+  finding_confirmed: { shape: "check", color: SERIOUS, label: "Finding confirmed", hollow: false },
   comment: { shape: "dot", color: MUTED, label: "Comment", hollow: false },
   edited: { shape: "ring", color: MUTED, label: "Edited", hollow: true },
 };

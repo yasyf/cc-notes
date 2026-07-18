@@ -77,11 +77,20 @@ from hooks.record import (
     evidence_payload_bytes,
     evidence_transfers,
     in_git_worktree,
+    CiTriageMoment,
+    InvestigationActivity,
+    InvestigationCloseLanguage,
+    investigation_arc_lines,
+    investigation_resolve_lines,
     MCP_RECORD_WRITE_NAMES,
     mcp_ephemeral_refs,
     McpEphemeralReference,
+    nudge_ci_triage_investigation,
     nudge_ephemeral_record_reference,
+    nudge_investigation_close,
+    nudge_investigation_stop_sweep,
     nudge_mcp_ephemeral_reference,
+    nudge_multiagent_synthesis,
     nudge_plan_tasks,
     nudge_record_durable,
     nudge_record_evidence,
@@ -90,6 +99,7 @@ from hooks.record import (
     PlanTasks,
     plan_task_commands,
     plan_text,
+    record_investigation_activity,
     record_mcp_active,
     transfer_operands,
     tree_bytes,
@@ -141,7 +151,7 @@ import hooks.bootstrap as bootstrap
 from hooks.bootstrap import ensure_cc_notes_binary, ensure_mount
 from captain_hook import CommandLine
 from captain_hook.conditions import check_condition
-from captain_hook.testing.helpers import mock_event, mock_tool_event
+from captain_hook.testing.helpers import fixture_session, mock_event, mock_tool_event
 from captain_hook.types import Action, Event
 
 FAILURES: list[str] = []
@@ -1651,6 +1661,288 @@ def test_record_router_routes_decision_memo(monkeypatch, tmp_path) -> None:
     check("decision memo: uses dir", "--dir experiments" in message, message)
 
 
+def test_durable_internal_write_investigation_globs() -> None:
+    """The investigation/postmortem/rca/incident WEAK globs fire only with an investigation body signal."""
+    fire = mock_tool_event(tool="Write", event=Event.PostToolUse, file="incident-2026.md", content="Root cause: unbuffered chan\n")
+    check("investigation glob + body fires", DurableInternalWrite().check(fire), repr(fire.file))
+    stem = mock_tool_event(tool="Write", event=Event.PostToolUse, file="deadlock-rca.md", content="we suspected the pool rewrite; later exonerated it\n")
+    check("rca glob + stem body fires (suspected/exonerated)", DurableInternalWrite().check(stem), repr(stem.file))
+    post = mock_tool_event(tool="Write", event=Event.PostToolUse, file="deadlock-postmortem.md", content="bisect narrowed it; falsified the pool theory\n")
+    check("postmortem glob + stem body fires (bisect/falsified)", DurableInternalWrite().check(post), repr(post.file))
+    quiet = mock_tool_event(tool="Write", event=Event.PostToolUse, file="incident-2026.md", content="just a plain sentence about lunch\n")
+    check("investigation glob, no body signal stays silent", not DurableInternalWrite().check(quiet), repr(quiet.file))
+
+
+def test_record_router_routes_investigation(monkeypatch, tmp_path) -> None:
+    """kind=investigation routes to the investigation primitive — open + append + verdict, never doc/log add."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Write", file="deadlock-postmortem.md", content="Bisect: suspect the pool rewrite; root cause TBD\n", session_dir=tmp_path)
+    verdict = RecordVerdict(record=True, kind="investigation", title="TestPool deadlock", reasoning="a root-cause arc")
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
+    result = nudge_record_durable(evt)
+    check("router investigation: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        m = result.message
+        check("router investigation: names investigation open", "cc-notes investigation open" in m, m)
+        check("router investigation: names append", "cc-notes investigation append" in m, m)
+        check("router investigation: names a verdict verb", "root-cause" in m, m)
+        check("router investigation: uses title", '"TestPool deadlock"' in m, m)
+        check("router investigation: cites reasoning", "a root-cause arc" in m, m)
+        check("router investigation: never doc/log add", "doc add" not in m and "log add" not in m, m)
+
+
+def test_record_router_investigation_mcp_wording(monkeypatch, tmp_path) -> None:
+    """With the MCP server active, the investigation route names the tools, not the CLI."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Write", file="deadlock-postmortem.md", content="bisect: suspect the pool rewrite\n", session_dir=tmp_path)
+    evt.ctx.s[McpActive].set(McpActive(active=True))
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="investigation", title="Deadlock", reasoning="an arc")))
+    result = nudge_record_durable(evt)
+    check("investigation mcp: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("investigation mcp: names investigation_open tool", "investigation_open" in result.message, result.message)
+        check("investigation mcp: no CLI spelling", "cc-notes investigation open" not in result.message, result.message)
+
+
+def test_investigation_arc_and_resolve_lines() -> None:
+    """The shared authoring helpers render the open→append→verdict arc and the resolve verbs, CLI and MCP."""
+    cli = investigation_arc_lines(False, "T", "P", first_evidence="run 42")
+    check("arc CLI: open with title+premise", cli[0] == 'cc-notes investigation open "T" "P"', repr(cli))
+    check("arc CLI: append carries first evidence", "run 42" in cli[1], repr(cli))
+    check("arc CLI: verdict line, no title mutation", "root-cause" in cli[2] and "RESOLVED" not in cli[2], repr(cli))
+    mcp = investigation_arc_lines(True, "T", "P")
+    check("arc MCP: investigation_open tool", mcp[0].startswith("investigation_open"), repr(mcp))
+    check("arc MCP: append tool", mcp[1].startswith("investigation_append"), repr(mcp))
+    res_cli = investigation_resolve_lines(False)
+    check("resolve CLI: names root-cause + confirm", any("root-cause" in ln for ln in res_cli) and any("confirm" in ln for ln in res_cli), repr(res_cli))
+    res_mcp = investigation_resolve_lines(True)
+    check("resolve MCP: names the verdict tools", any("investigation_root_cause" in ln for ln in res_mcp), repr(res_mcp))
+
+
+def test_record_investigation_activity_flags(tmp_path) -> None:
+    """The recorder flips `written` on any WRITE verb, arms the id an `open` mints, keeps root-cause unresolved, and leaves reads state-neutral."""
+    ev = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__investigation_open", event=Event.PostToolUse,
+        tool_input={"title": "x", "premise": "y"}, output='{"id":"abc123def","title":"x"}', session_dir=tmp_path,
+    )
+    record_investigation_activity(ev)
+    act = ev.ctx.s.load(InvestigationActivity)
+    check("recorder: open sets written", act.written, repr(act))
+    check("recorder: open arms the minted id", act.unresolved == ["abc123def"], repr(act))
+    ev2 = mock_event("PostToolUse", tool="Bash", command="cc-notes investigation root-cause abc123 'the true cause'", session_dir=tmp_path)
+    record_investigation_activity(ev2)
+    act2 = ev2.ctx.s.load(InvestigationActivity)
+    check("recorder: root-cause is nonterminal, id stays unresolved", act2.unresolved == ["abc123def"], repr(act2))
+    check("recorder: written persists", act2.written, repr(act2))
+    ev_read = mock_event("PostToolUse", tool="Bash", command="cc-notes investigation list", session_dir=tmp_path)
+    record_investigation_activity(ev_read)
+    act3 = ev_read.ctx.s.load(InvestigationActivity)
+    check("recorder: a read verb is state-neutral", act3.unresolved == ["abc123def"], repr(act3))
+    ev4 = mock_event("PostToolUse", tool="Read", file="m.py", session_dir=tmp_path)
+    check("recorder: a non-investigation call is not recorded", record_investigation_activity(ev4) is None)
+
+
+def test_record_investigation_per_id_lifecycle(tmp_path) -> None:
+    """refB#3: open->root-cause->reopen leaves the id unresolved (sweep armed); A/B arcs track independently."""
+    def open_inv(sd, oid) -> None:
+        record_investigation_activity(mock_tool_event(
+            tool="mcp__plugin_cc-notes_cc-notes__investigation_open", event=Event.PostToolUse,
+            tool_input={"title": "t", "premise": "p"}, output='{"id":"%s"}' % oid, session_dir=sd,
+        ))
+
+    def verb(sd, cmd) -> None:
+        record_investigation_activity(mock_event("PostToolUse", tool="Bash", command=cmd, session_dir=sd))
+
+    # open -> root-cause -> reopen: root-cause and fix never resolve, reopen restores; sweep stays armed.
+    a = tmp_path / "a"; a.mkdir()
+    open_inv(a, "aaa111aaa")
+    verb(a, "cc-notes investigation root-cause aaa111 'the cause'")
+    verb(a, "cc-notes investigation reopen aaa111 'needs more'")
+    act = mock_event("Stop", session_dir=a).ctx.s.load(InvestigationActivity)
+    check("per-id: open->root-cause->reopen stays unresolved", act.unresolved == ["aaa111aaa"], repr(act))
+    check("per-id: stop sweep armed after reopen", nudge_investigation_stop_sweep(mock_event("Stop", session_dir=a)) is not None)
+
+    # Two arcs A and B: confirming A leaves B unresolved, so the sweep still fires for B.
+    b = tmp_path / "b"; b.mkdir()
+    open_inv(b, "aaa111aaa")
+    open_inv(b, "bbb222bbb")
+    verb(b, "cc-notes investigation confirm aaa111 'proof it holds'")
+    act_b = mock_event("Stop", session_dir=b).ctx.s.load(InvestigationActivity)
+    check("per-id: confirm A removes only A", act_b.unresolved == ["bbb222bbb"], repr(act_b))
+    check("per-id: B keeps the sweep armed", nudge_investigation_stop_sweep(mock_event("Stop", session_dir=b)) is not None)
+
+
+def test_ci_triage_investigation_stateful(monkeypatch, tmp_path) -> None:
+    """The CI-triage nudge fires on a red run when no investigation is open, cites the run URL, and stays silent once one is touched."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    ev = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse,
+        command="gh run view 42 --log-failed",
+        output="https://github.com/o/r/actions/runs/42 failed\nstep X failed",
+        session_dir=tmp_path,
+    )
+    r = nudge_ci_triage_investigation(ev)
+    check("ci-triage: fires when untouched", r is not None and r.action is Action.warn, repr(r))
+    if r and r.message:
+        check("ci-triage: cites the run URL as first evidence", "https://github.com/o/r/actions/runs/42" in r.message, r.message)
+        check("ci-triage: names investigation open", "cc-notes investigation open" in r.message, r.message)
+    ev2 = mock_tool_event(tool="Bash", event=Event.PostToolUse, command="gh run view 42 --log-failed", output="x failed", session_dir=tmp_path)
+    ev2.ctx.s[InvestigationActivity].set(InvestigationActivity(written=True))
+    check("ci-triage: silent once an investigation write happened", nudge_ci_triage_investigation(ev2) is None)
+
+
+def test_ci_triage_failure_envelope_and_ship(monkeypatch, tmp_path) -> None:
+    """refB#1: a failed `gh run watch --exit-status` (PostToolUseFailure, text in `error`) and a red `ccx vcs ship`
+    are red; a green watch merely NAMING a `failure-handling-tests` job is not."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    # A failed watch dispatches as PostToolUseFailure with its text in `error`, not `tool_response`.
+    failed = mock_tool_event(
+        tool="Bash", event=Event.PostToolUseFailure,
+        command="gh run watch 99 --exit-status",
+        error="Exit code 1\nX CI · main completed with 'failure'\nhttps://github.com/o/r/actions/runs/99",
+        session_dir=tmp_path,
+    )
+    check("ci-triage: failed watch condition matches", check_condition(CiTriageMoment(), failed))
+    r = nudge_ci_triage_investigation(failed)
+    check("ci-triage: failed watch fires", r is not None and r.action is Action.warn, repr(r))
+    if r and r.message:
+        check("ci-triage: cites the failing run URL from error", "actions/runs/99" in r.message, r.message)
+    # DISPATCH-LEVEL proof (fresh session so the direct fire above doesn't throttle it): reverting the
+    # PostToolUseFailure registration makes dispatch skip this hook entirely, turning this red.
+    from captain_hook.dispatch import dispatch
+
+    disp_dir = tmp_path / "dispatch"
+    disp_dir.mkdir()
+    failed2 = mock_tool_event(
+        tool="Bash", event=Event.PostToolUseFailure,
+        command="gh run watch 99 --exit-status",
+        error="Exit code 1\nX CI · main completed with 'failure'",
+        session_dir=disp_dir,
+    )
+    out = dispatch(Event.PostToolUseFailure, failed2, disp_dir)
+    check("ci-triage: dispatch routes a real PostToolUseFailure and fires", "investigation" in (json.dumps(out) if out else ""), repr(out))
+    # A red `ccx vcs ship` output reports a failed conclusion.
+    ship = mock_tool_event(tool="Bash", event=Event.PostToolUse, command="ccx vcs ship -m fix", output="CI · main completed with 'failure'", session_dir=tmp_path / "s")
+    check("ci-triage: red ccx vcs ship condition matches", check_condition(CiTriageMoment(), ship))
+    # A GREEN watch whose output only NAMES a failure-handling job must not false-fire (the old bare-word bug).
+    green = mock_tool_event(tool="Bash", event=Event.PostToolUse, command="gh run watch 99", output="✓ CI · main completed with 'success'\n✓ failure-handling-tests", session_dir=tmp_path / "g")
+    check("ci-triage: green run naming a failure job does NOT match", not check_condition(CiTriageMoment(), green))
+
+
+def test_ci_triage_read_verb_does_not_suppress(monkeypatch, tmp_path) -> None:
+    """refB#2: an investigation READ (`list`) is state-neutral, so a later red CI still nudges."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    record_investigation_activity(mock_event("PostToolUse", tool="Bash", command="cc-notes investigation list", session_dir=tmp_path))
+    act = mock_event("Stop", session_dir=tmp_path).ctx.s.load(InvestigationActivity)
+    check("read-neutral: `investigation list` sets neither written nor unresolved", not act.written and act.unresolved == [], repr(act))
+    red = mock_tool_event(tool="Bash", event=Event.PostToolUse, command="gh run view 7 --log-failed", output="step failed", session_dir=tmp_path)
+    check("read-neutral: red CI still nudges after a list", nudge_ci_triage_investigation(red) is not None)
+
+
+def test_multiagent_synthesis_stateful(monkeypatch, tmp_path) -> None:
+    """The synthesis nudge fires only after >=2 investigation subagents on a verdict-bearing result, and never once an investigation exists."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+
+    def spawn(output: str, sd) -> object:
+        return mock_tool_event(tool="Task", event=Event.PostToolUse, agent_type="general-purpose", prompt="investigate the deadlock", output=output, session_dir=sd)
+
+    check("synthesis: silent after one subagent", nudge_multiagent_synthesis(spawn("still digging", tmp_path)) is None)
+    r2 = nudge_multiagent_synthesis(spawn("root cause: unbuffered results chan", tmp_path))
+    check("synthesis: fires on the verdict-bearing second lane", r2 is not None and r2.action is Action.warn, repr(r2))
+    if r2 and r2.message:
+        check("synthesis: names investigation open", "cc-notes investigation open" in r2.message, r2.message)
+    fresh = tmp_path / "b"
+    fresh.mkdir()
+    nudge_multiagent_synthesis(spawn("digging", fresh))
+    check("synthesis: silent at n>=2 without verdict language", nudge_multiagent_synthesis(spawn("no conclusion yet, still working", fresh)) is None)
+    touched = tmp_path / "c"
+    touched.mkdir()
+    nudge_multiagent_synthesis(spawn("lane one", touched))
+    ev = spawn("root cause confirmed", touched)
+    ev.ctx.s[InvestigationActivity].set(InvestigationActivity(subagents=5, written=True))
+    check("synthesis: silent once an investigation write happened", nudge_multiagent_synthesis(ev) is None)
+
+
+def test_multiagent_synthesis_turn_scoped(monkeypatch, tmp_path) -> None:
+    """refB#4: the subagent counter is turn-scoped, so unrelated debugging agents in DISTANT turns never
+    synthesize into one arc — the count resets when the turn changes."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+
+    def user(text: str) -> dict:
+        return {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
+
+    def assistant(text: str) -> dict:
+        return {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+
+    turn1 = fixture_session([user("debug A"), assistant("ok")])
+    turn2 = fixture_session([user("debug A"), assistant("ok"), user("now debug B"), assistant("ok")])
+
+    def spawn(prompt: str, output: str, transcript) -> object:
+        return mock_tool_event(
+            tool="Task", event=Event.PostToolUse, agent_type="general-purpose",
+            prompt=prompt, output=output, transcript=transcript, session_dir=tmp_path,
+        )
+
+    check("turn-scope: lone issue-A lane in turn 1 is silent", nudge_multiagent_synthesis(spawn("bisect issue A", "still digging", turn1)) is None)
+    r = nudge_multiagent_synthesis(spawn("debug issue B", "root cause: unrelated chan", turn2))
+    check("turn-scope: an unrelated lane a turn later does NOT synthesize", r is None, repr(r))
+
+
+def test_investigation_close_language_condition() -> None:
+    """refB#5: the close-language condition keys on affirmative verdicts, never negated/unknown clauses."""
+    cases = [
+        ("RESOLVED — it was the chan", True),
+        ("the root cause was the pool rewrite", True),
+        ("fixed-by 5e3c9ce", True),
+        ("fixed by commit abc", True),
+        ("just some notes about the design", False),
+        # The reviewer's exact negative sentence: negated + unknown, never a verdict.
+        ("Root cause is still unknown; this is not resolved and not fixed by retries", False),
+        ("the deadlock is unresolved for now", False),
+    ]
+    for text, want in cases:
+        evt = mock_tool_event(tool="Write", event=Event.PostToolUse, file="x.md", content=text)
+        check(f"close-language {text!r} -> {want}", InvestigationCloseLanguage().check(evt) is want, text)
+
+
+def test_investigation_close_stateful(monkeypatch, tmp_path) -> None:
+    """The close nudge fires when a verdict is written elsewhere with an investigation open, and never once it is resolved or absent."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+
+    def w(sd) -> object:
+        return mock_event("PostToolUse", tool="Write", file="scratch.txt", content="RESOLVED: root cause was the pool rewrite; fixed by 5e3c9ce\n", session_dir=sd)
+
+    ev = w(tmp_path)
+    ev.ctx.s[InvestigationActivity].set(InvestigationActivity(unresolved=["abc123"]))
+    r = nudge_investigation_close(ev)
+    check("close: fires while an investigation is unresolved", r is not None and r.action is Action.warn, repr(r))
+    if r and r.message:
+        check("close: names the resolve verbs", "root-cause" in r.message and "confirm" in r.message, r.message)
+        check("close: not an open (the investigation already exists)", "investigation open" not in r.message, r.message)
+    ev2 = w(tmp_path)
+    ev2.ctx.s[InvestigationActivity].set(InvestigationActivity(written=True, unresolved=[]))
+    check("close: silent once every id is resolved", nudge_investigation_close(ev2) is None)
+    ev3 = w(tmp_path)
+    ev3.ctx.s[InvestigationActivity].set(InvestigationActivity())
+    check("close: silent with no investigation open", nudge_investigation_close(ev3) is None)
+
+
+def test_investigation_stop_sweep_stateful(monkeypatch, tmp_path) -> None:
+    """The Stop sweep nudges once when an investigation id is still unresolved, and is silent otherwise."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    ev = mock_event("Stop", session_dir=tmp_path)
+    ev.ctx.s[InvestigationActivity].set(InvestigationActivity(unresolved=["abc123"]))
+    r = nudge_investigation_stop_sweep(ev)
+    check("stop-sweep: fires on an unresolved id", r is not None and r.action is Action.warn, repr(r))
+    if r and r.message:
+        check("stop-sweep: names the resolve verbs", "root-cause" in r.message, r.message)
+    ev2 = mock_event("Stop", session_dir=tmp_path)
+    ev2.ctx.s[InvestigationActivity].set(InvestigationActivity(written=True, unresolved=[]))
+    check("stop-sweep: silent once every id is resolved", nudge_investigation_stop_sweep(ev2) is None)
+    ev3 = mock_event("Stop", session_dir=tmp_path)
+    check("stop-sweep: silent with no investigation", nudge_investigation_stop_sweep(ev3) is None)
+
+
 def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
     """A kind=="doc" entry from `relevant` floats its when/verdict pointer and persists by doc id."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
@@ -2751,8 +3043,14 @@ def redirect_event(tmp_path, command: str, error: str, *, mcp: bool):
 
 def test_redirect_mapped_tool() -> None:
     """mapped_tool resolves each command shape to its MCP tool by longest-prefix match; operator/unknown -> None."""
-    check("map: inventory is the full 101-tool set", len(CC_NOTES_TOOLS) == 101, str(len(CC_NOTES_TOOLS)))
+    check("map: inventory is the full 120-tool set", len(CC_NOTES_TOOLS) == 120, str(len(CC_NOTES_TOOLS)))
     check("map: runbook add drops the title positional -> runbook_add", mapped_tool(["runbook", "add", "Deploy", "--branch", "main"]) == "runbook_add", repr(mapped_tool(["runbook", "add", "Deploy", "--branch", "main"])))
+    check("map: investigation open -> investigation_open", mapped_tool(["investigation", "open", "Deadlock", "premise"]) == "investigation_open")
+    check("map: investigation finding clear -> investigation_finding_clear", mapped_tool(["investigation", "finding", "clear", "abc", "f1"]) == "investigation_finding_clear")
+    # refB#6: hyphenated verb, the `add` alias, and the noun-scoped verb that maps to a global tool.
+    check("map: investigation root-cause -> investigation_root_cause", mapped_tool(["investigation", "root-cause", "abc", "why"]) == "investigation_root_cause", repr(mapped_tool(["investigation", "root-cause", "abc", "why"])))
+    check("map: investigation add (open alias) -> investigation_open", mapped_tool(["investigation", "add", "Deadlock", "premise"]) == "investigation_open", repr(mapped_tool(["investigation", "add", "Deadlock", "premise"])))
+    check("map: investigation history -> global history", mapped_tool(["investigation", "history", "abc"]) == "history", repr(mapped_tool(["investigation", "history", "abc"])))
     check("map: task criterion met arity -> task_criterion_met", mapped_tool(["task", "criterion", "met", "abc"]) == "task_criterion_met")
     check("map: runbook run start -> runbook_run_start", mapped_tool(["runbook", "run", "start", "abc"]) == "runbook_run_start")
     check("map: runbook step add -> runbook_step_add", mapped_tool(["runbook", "step", "add", "abc", "do it"]) == "runbook_step_add")
@@ -2774,6 +3072,9 @@ def test_redirect_param_hints_by_family() -> None:
     check("hint: runbook_comment -> id/body, not the runbook_run prefix", param_hint("runbook_comment") == "key params: id, body", param_hint("runbook_comment"))
     check("hint: note_add -> title/body/anchors/labels", "anchors (commits/paths/dirs/branches)" in param_hint("note_add") and "body" in param_hint("note_add"), param_hint("note_add"))
     check("hint: note_edit -> id plus fields", param_hint("note_edit").startswith("key params: id plus"), param_hint("note_edit"))
+    # refB#7: the finding tools' real schemas, matched before the generic _add/_edit branches.
+    check("hint: investigation_finding_add -> id, text", param_hint("investigation_finding_add") == "key params: id, text", param_hint("investigation_finding_add"))
+    check("hint: investigation_finding_edit -> id, finding, text", param_hint("investigation_finding_edit") == "key params: id, finding, text", param_hint("investigation_finding_edit"))
     check("hint: status (no family) -> default", param_hint("status") == "named params in place of the CLI flags", param_hint("status"))
 
 
@@ -3007,6 +3308,26 @@ def test_cli_write_matcher(monkeypatch) -> None:
         "cc-notes runbook run start abc": True,
         "cc-notes runbook run done abc s1": True,
         "cc-notes runbook run finish abc": True,
+        # investigation: open (and its `add` alias), timeline growth, verdicts, and finding mutations write;
+        # list/show/search/history and `finding list` read.
+        "cc-notes investigation open Deadlock premise": True,
+        "cc-notes investigation add Deadlock premise": True,
+        "cc-notes investigation append abc 'more evidence'": True,
+        "cc-notes investigation root-cause abc 'the cause'": True,
+        "cc-notes investigation fix abc --commit deadbeef": True,
+        "cc-notes investigation confirm abc 'proof'": True,
+        "cc-notes investigation exonerate abc 'falsified'": True,
+        "cc-notes investigation abandon abc": True,
+        "cc-notes investigation reopen abc 'reason'": True,
+        "cc-notes investigation edit abc --title y": True,
+        "cc-notes investigation rm abc": True,
+        "cc-notes investigation finding add abc 'a finding'": True,
+        "cc-notes investigation finding confirm abc f1 --why w": True,
+        "cc-notes investigation list": False,
+        "cc-notes investigation show abc": False,
+        "cc-notes investigation search deadlock": False,
+        "cc-notes investigation history abc": False,
+        "cc-notes investigation finding list abc": False,
         # the `ccn` shorthand is the same binary, so it writes just like cc-notes.
         'ccn note add "x" --body -': True,
         "ccn task done abc": True,
@@ -3053,6 +3374,12 @@ def test_mcp_write_matcher(monkeypatch) -> None:
         P + "runbook_run_start": True,
         P + "runbook_run_done": True,
         P + "runbook_run_finish": True,
+        P + "investigation_open": True,
+        P + "investigation_append": True,
+        P + "investigation_finding_add": True,
+        P + "investigation_confirm": True,
+        P + "investigation_rm": True,
+        P + "investigation_edit": True,
         P + "papercut": True,
         P + "papercut_list": False,
         P + "note_list": False,
@@ -3060,6 +3387,10 @@ def test_mcp_write_matcher(monkeypatch) -> None:
         P + "task_show": False,
         P + "runbook_list": False,
         P + "runbook_show": False,
+        P + "investigation_list": False,
+        P + "investigation_show": False,
+        P + "investigation_search": False,
+        P + "investigation_finding_list": False,
         P + "status": False,
         P + "sync": False,
         P + "blame": False,
@@ -3510,6 +3841,20 @@ def test_cross_repo_write_syncs_target_dir(monkeypatch, tmp_path) -> None:
     )
     check("cross write: env is os.environ", kw["env"] is os.environ, repr(kw["env"]))
     check("cross write: the session repo was not synced", _calls_of(evt._cli_calls, "sync") == [], repr(evt._cli_calls))
+
+
+def test_cross_repo_investigation_write_syncs_target_dir(monkeypatch, tmp_path) -> None:
+    """refA#1: a `cd <other> && cc-notes investigation open` is classified as a write, so the FOREIGN repo
+    is synced in that dir — the case the session-end backstop (session repo only) can't cover."""
+    base, other = tmp_path / "session", tmp_path / "other"
+    base.mkdir(); other.mkdir()
+    evt = _cross_event(tmp_path, monkeypatch, command=f"cd {other} && cc-notes investigation open Deadlock premise", base=base)
+    sync_after_record_write(evt)
+    check("cross investigation: exactly one cross subprocess.run", len(evt._run_calls) == 1, repr(evt._run_calls))
+    argv, kw = evt._run_calls[0]
+    check("cross investigation: bare `cc-notes sync` argv", argv == ("cc-notes", "sync"), repr(argv))
+    check("cross investigation: ran in the target dir", kw["cwd"] == str(other), repr(kw))
+    check("cross investigation: the session repo was not synced", _calls_of(evt._cli_calls, "sync") == [], repr(evt._cli_calls))
 
 
 def test_cross_repo_confirmation_names_dir(monkeypatch, tmp_path) -> None:

@@ -10,13 +10,14 @@ import (
 // live entity, grouped by kind. Superseded notes and docs stay in (the snapshot
 // flags them), matching the legend; tombstoned entities drop out.
 type stateResponse struct {
-	Notes    []model.Note    `json:"notes"`
-	Docs     []model.Doc     `json:"docs"`
-	Logs     []model.Log     `json:"logs"`
-	Tasks    []model.Task    `json:"tasks"`
-	Sprints  []model.Sprint  `json:"sprints"`
-	Projects []model.Project `json:"projects"`
-	Runbooks []model.Runbook `json:"runbooks"`
+	Notes          []model.Note          `json:"notes"`
+	Docs           []model.Doc           `json:"docs"`
+	Logs           []model.Log           `json:"logs"`
+	Tasks          []model.Task          `json:"tasks"`
+	Sprints        []model.Sprint        `json:"sprints"`
+	Projects       []model.Project       `json:"projects"`
+	Runbooks       []model.Runbook       `json:"runbooks"`
+	Investigations []model.Investigation `json:"investigations"`
 }
 
 func (s *Server) handleEntities(w http.ResponseWriter, r *http.Request) {
@@ -56,13 +57,19 @@ func (s *Server) handleEntities(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	investigations, err := s.store.ListInvestigations(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, stateResponse{
-		Notes:    notes,
-		Docs:     docs,
-		Logs:     logs,
-		Tasks:    tasks,
-		Sprints:  sprints,
-		Projects: projects,
-		Runbooks: runbooks,
+		Notes:          notes,
+		Docs:           docs,
+		Logs:           logs,
+		Tasks:          tasks,
+		Sprints:        sprints,
+		Projects:       projects,
+		Runbooks:       runbooks,
+		Investigations: investigations,
 	})
 }

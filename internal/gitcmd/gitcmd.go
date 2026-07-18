@@ -291,9 +291,22 @@ func (g Git) RevRangeFileAuthors(ctx context.Context, base, head string) (map[st
 // rev, in order, for blame. A commit with no such trailer returns an empty
 // slice.
 func (g Git) TaskTrailers(ctx context.Context, rev string) ([]string, error) {
-	out, err := g.run(ctx, "", "show", "-s", "--format=%(trailers:key=cc-task,valueonly)", rev)
+	return g.trailers(ctx, rev, "cc-task", "task")
+}
+
+// InvestigationTrailers returns the values of every cc-investigation: trailer on
+// the commit at rev, in order, for investigation blame. A commit with no such
+// trailer returns an empty slice.
+func (g Git) InvestigationTrailers(ctx context.Context, rev string) ([]string, error) {
+	return g.trailers(ctx, rev, "cc-investigation", "investigation")
+}
+
+// trailers returns the values of every trailer with the given key on the commit
+// at rev, in order; label names the trailer in the error message.
+func (g Git) trailers(ctx context.Context, rev, key, label string) ([]string, error) {
+	out, err := g.run(ctx, "", "show", "-s", "--format=%(trailers:key="+key+",valueonly)", rev)
 	if err != nil {
-		return nil, fmt.Errorf("task trailers %s: %w", rev, err)
+		return nil, fmt.Errorf("%s trailers %s: %w", label, rev, err)
 	}
 	var values []string
 	for line := range strings.SplitSeq(out, "\n") {

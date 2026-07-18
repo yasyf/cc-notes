@@ -194,6 +194,49 @@ func (s CriterionStatus) validate() error {
 	return fmt.Errorf("%w: criterion status %q", ErrInvalidValue, s)
 }
 
+// InvestigationStatus is the lifecycle state of an investigation. open,
+// root_caused, and fixed are non-terminal; confirmed (verified fix), exonerated
+// (premise falsified), and abandoned (walked away, no verdict) are terminal and
+// stamp ClosedAt/ClosedBy from the carrying commit at fold time.
+type InvestigationStatus string
+
+// Investigation lifecycle states.
+const (
+	InvestigationOpen       InvestigationStatus = "open"
+	InvestigationRootCaused InvestigationStatus = "root_caused"
+	InvestigationFixed      InvestigationStatus = "fixed"
+	InvestigationConfirmed  InvestigationStatus = "confirmed"
+	InvestigationExonerated InvestigationStatus = "exonerated"
+	InvestigationAbandoned  InvestigationStatus = "abandoned"
+)
+
+func (s InvestigationStatus) validate() error {
+	switch s {
+	case InvestigationOpen, InvestigationRootCaused, InvestigationFixed,
+		InvestigationConfirmed, InvestigationExonerated, InvestigationAbandoned:
+		return nil
+	}
+	return fmt.Errorf("%w: investigation status %q", ErrInvalidValue, s)
+}
+
+// FindingStatus is the disposition of one investigation finding.
+type FindingStatus string
+
+// Finding dispositions.
+const (
+	FindingOpen      FindingStatus = "open"
+	FindingConfirmed FindingStatus = "confirmed"
+	FindingCleared   FindingStatus = "cleared"
+)
+
+func (s FindingStatus) validate() error {
+	switch s {
+	case FindingOpen, FindingConfirmed, FindingCleared:
+		return nil
+	}
+	return fmt.Errorf("%w: finding status %q", ErrInvalidValue, s)
+}
+
 // TaskType categorizes a task.
 type TaskType string
 
@@ -287,6 +330,19 @@ type Criterion struct {
 	Script string          `json:"script"`
 	Status CriterionStatus `json:"status"`
 	Note   string          `json:"note,omitempty"`
+}
+
+// Finding is one suspect hypothesis or review finding under test within an
+// investigation. ID is a nonce stable within the investigation (criterion
+// pattern); Status is the latest disposition.
+//
+// Note is the evidence cite recorded with the latest disposition; it marshals
+// omitempty so note-less findings keep their pre-note snapshot bytes.
+type Finding struct {
+	ID     string        `json:"id"`
+	Text   string        `json:"text"`
+	Status FindingStatus `json:"status"`
+	Note   string        `json:"note,omitempty"`
 }
 
 // maxAttachmentNameBytes bounds an attachment name to a single filesystem
@@ -606,6 +662,52 @@ type Runbook struct {
 	Head        SHA           `json:"head"`
 	Anchors     []Anchor      `json:"anchors,omitempty"`
 	Deleted     bool          `json:"deleted,omitempty"`
+}
+
+// Investigation is the folded snapshot of an investigation entity: a durable
+// record that opens on a suspicion, accumulates an append-only evidence
+// timeline, and closes with a verdict. Timestamps are unix seconds; zero means
+// unset for ClosedAt. Head is the chain tip the snapshot was folded from.
+//
+// Premise is the immutable suspicion, symptom, or question the record opened
+// on: it is set only by CreateInvestigation and has no Set op, so the original
+// suspicion can never be destroyed. Title stays LWW and free to evolve into a
+// resolution headline; Body is the LWW resolution summary; RootCause is LWW
+// prose, empty until root-caused.
+//
+// Findings is append-ordered by creation (linearization order), criterion-style.
+// Entries is the append-only timeline in linearization order, reusing LogEntry
+// and AppendEntry verbatim. FollowUps, FixCommits, Commits, Tags, Anchors, and
+// SupersededBy are folded sets sorted deterministically. ClosedAt and ClosedBy
+// are fold-stamped from the commit carrying the terminal SetInvestigationStatus
+// and zeroed when the status leaves terminal.
+//
+// Attachments is the folded attachment set, LWW by Name, sorted by Name, and
+// nil when empty — the field marshals omitempty so attachment-less snapshots
+// keep their pre-attachment bytes.
+type Investigation struct {
+	ID           EntityID            `json:"id"`
+	Title        string              `json:"title"`
+	Premise      string              `json:"premise"`
+	Body         string              `json:"body"`
+	Status       InvestigationStatus `json:"status"`
+	RootCause    string              `json:"root_cause"`
+	Findings     []Finding           `json:"findings"`
+	Entries      []LogEntry          `json:"entries"`
+	FollowUps    []EntityID          `json:"follow_ups"`
+	FixCommits   []SHA               `json:"fix_commits"`
+	Commits      []SHA               `json:"commits"`
+	Tags         []string            `json:"tags"`
+	Anchors      []Anchor            `json:"anchors"`
+	SupersededBy []EntityID          `json:"superseded_by"`
+	Author       Actor               `json:"author"`
+	CreatedAt    int64               `json:"created_at"`
+	UpdatedAt    int64               `json:"updated_at"`
+	ClosedAt     int64               `json:"closed_at"`
+	ClosedBy     Actor               `json:"closed_by"`
+	Deleted      bool                `json:"deleted"`
+	Head         SHA                 `json:"head"`
+	Attachments  []Attachment        `json:"attachments,omitempty"`
 }
 
 // NewNonce returns 16 crypto/rand bytes hex-encoded (32 characters). Create

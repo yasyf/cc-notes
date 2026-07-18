@@ -50,6 +50,11 @@ var dupCheckers = map[model.Kind]dupChecker{
 			func() ([]model.Runbook, error) { return s.ListRunbooks(ctx) },
 			liveRunbook, sameRunbookContent)
 	},
+	model.KindInvestigation: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
+		return scanDup(candidate, fold.Investigation,
+			func() ([]model.Investigation, error) { return s.ListInvestigations(ctx) },
+			liveInvestigation, sameInvestigationContent)
+	},
 }
 
 // liveRunbook reports whether rb is a valid dedupe target: active and not
@@ -57,6 +62,20 @@ var dupCheckers = map[model.Kind]dupChecker{
 // bites when a deleted runbook reaches the scan directly.
 func liveRunbook(rb model.Runbook) bool {
 	return rb.ArchivedAt == 0 && !rb.Deleted
+}
+
+// liveInvestigation reports whether inv is a valid dedupe target: not
+// tombstoned and not in a terminal status. A terminal investigation is a closed
+// record; re-opening the same premise mints a fresh chain.
+func liveInvestigation(inv model.Investigation) bool {
+	if inv.Deleted {
+		return false
+	}
+	switch inv.Status {
+	case model.InvestigationConfirmed, model.InvestigationExonerated, model.InvestigationAbandoned:
+		return false
+	}
+	return true
 }
 
 func (s *Store) findDuplicate(ctx context.Context, kind model.Kind, pack model.Pack) (model.Snapshot, error) {
@@ -99,7 +118,7 @@ func dedupeCovered(ops []model.Op) bool {
 		switch op.(type) {
 		case model.CreateNote, model.CreateDoc, model.CreateLog,
 			model.CreateTask, model.CreateSprint, model.CreateProject,
-			model.CreateRunbook, model.AddStep,
+			model.CreateRunbook, model.CreateInvestigation, model.AddStep,
 			model.AddAttachment,
 			model.SetSprint, model.SetProject,
 			model.AddCriterion, model.AddDep,
@@ -184,4 +203,18 @@ func sameSteps(a, b []model.RunbookStep) bool {
 	return slices.EqualFunc(a, b, func(x, y model.RunbookStep) bool {
 		return x.Text == y.Text && x.Command == y.Command
 	})
+}
+
+// sameInvestigationContent compares investigations by the fields a create pack
+// can carry: the immutable premise, the title, and the shared tag, anchor, and
+// attachment bundles — matching sameLogContent's shape so a create bringing new
+// metadata is never swallowed as a duplicate. The evolving timeline, findings,
+// and verdict fields are deliberately excluded — a re-open of the same suspicion
+// with the same metadata is the duplicate a scan-before-create should collapse.
+func sameInvestigationContent(a, b model.Investigation) bool {
+	return a.Title == b.Title &&
+		a.Premise == b.Premise &&
+		slices.Equal(a.Tags, b.Tags) &&
+		slices.Equal(a.Anchors, b.Anchors) &&
+		slices.Equal(a.Attachments, b.Attachments)
 }

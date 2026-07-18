@@ -41,6 +41,7 @@ func TestTypedLoadsAndResolves(t *testing.T) {
 	doc := storeCreate(t, dir, model.CreateDoc{Nonce: model.NewNonce(), Title: "D", When: "always"}).(model.Doc)
 	logE := storeCreate(t, dir, model.CreateLog{Nonce: model.NewNonce(), Title: "L"}).(model.Log)
 	rb := storeCreate(t, dir, model.CreateRunbook{Nonce: model.NewNonce(), Title: "R"}).(model.Runbook)
+	inv := storeCreate(t, dir, model.CreateInvestigation{Nonce: model.NewNonce(), Title: "I", Premise: "p"}).(model.Investigation)
 
 	if got, err := c.Note(ctx, note.ID); err != nil || got.Title != "N" {
 		t.Errorf("Note = %q/%v, want N/nil", got.Title, err)
@@ -67,6 +68,12 @@ func TestTypedLoadsAndResolves(t *testing.T) {
 	if got, err := c.ResolveRunbook(ctx, string(rb.ID)); err != nil || got != rb.ID {
 		t.Errorf("ResolveRunbook = %q/%v, want %q", got, err, rb.ID)
 	}
+	if got, err := c.Investigation(ctx, inv.ID); err != nil || got.Title != "I" {
+		t.Errorf("Investigation = %q/%v, want I/nil", got.Title, err)
+	}
+	if got, err := c.ResolveInvestigation(ctx, string(inv.ID)); err != nil || got != inv.ID {
+		t.Errorf("ResolveInvestigation = %q/%v, want %q", got, err, inv.ID)
+	}
 
 	for _, tc := range []struct {
 		kind model.Kind
@@ -76,6 +83,7 @@ func TestTypedLoadsAndResolves(t *testing.T) {
 		{model.KindDoc, doc.ID},
 		{model.KindLog, logE.ID},
 		{model.KindRunbook, rb.ID},
+		{model.KindInvestigation, inv.ID},
 	} {
 		k, id, err := c.ResolveEntity(ctx, string(tc.id))
 		if err != nil || k != tc.kind || id != tc.id {
@@ -98,9 +106,12 @@ func TestResolveEntityCrossKind(t *testing.T) {
 	if _, err := c.CreateTask(ctx, notes.TaskSpec{Title: "T", Branch: "main"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	if _, _, err := c.CreateInvestigation(ctx, notes.InvestigationSpec{Title: "I", Premise: "p"}); err != nil {
+		t.Fatalf("CreateInvestigation: %v", err)
+	}
 
-	// The empty prefix matches the sole note and the sole task, one per kind, so
-	// resolution is ambiguous across kinds.
+	// The empty prefix matches the sole note, task, and investigation, one per
+	// kind, so resolution is ambiguous across kinds.
 	_, _, err := c.ResolveEntity(ctx, "")
 	if !errors.Is(err, notes.ErrAmbiguous) {
 		t.Fatalf("ResolveEntity(\"\") cross-kind = %v, want ErrAmbiguous", err)
@@ -109,15 +120,15 @@ func TestResolveEntityCrossKind(t *testing.T) {
 	if !errors.As(err, &ake) {
 		t.Fatalf("err = %T, want *AmbiguousKindsError", err)
 	}
-	if len(ake.Matches) != 2 {
-		t.Errorf("Matches = %d, want 2 (note + task): %+v", len(ake.Matches), ake.Matches)
+	if len(ake.Matches) != 3 {
+		t.Errorf("Matches = %d, want 3 (note + task + investigation): %+v", len(ake.Matches), ake.Matches)
 	}
 	kinds := map[model.Kind]bool{}
 	for _, m := range ake.Matches {
 		kinds[m.Kind] = true
 	}
-	if !kinds[model.KindNote] || !kinds[model.KindTask] {
-		t.Errorf("Matches kinds = %v, want note and task", kinds)
+	if !kinds[model.KindNote] || !kinds[model.KindTask] || !kinds[model.KindInvestigation] {
+		t.Errorf("Matches kinds = %v, want note, task, and investigation", kinds)
 	}
 }
 

@@ -94,3 +94,79 @@ func TestBlame(t *testing.T) {
 		t.Errorf("error = %q, want to contain %q", err.Error(), want)
 	}
 }
+
+func TestBlameInvestigations(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+
+	commit := func(messages ...string) model.SHA {
+		t.Helper()
+		args := make([]string, 0, 3+2*len(messages))
+		args = append(args, "commit", "--allow-empty", "-q")
+		for _, m := range messages {
+			args = append(args, "-m", m)
+		}
+		gittest.Git(t, dir, args...)
+		return model.SHA(gittest.Git(t, dir, "rev-parse", "HEAD"))
+	}
+
+	// An investigation whose fix commit is the sha.
+	fixed := mustInvestigation(t, c, notes.InvestigationSpec{Title: "fix-linked", Premise: "p1"})
+	if _, err := c.RootCause(ctx, fixed.ID, "cause"); err != nil {
+		t.Fatalf("RootCause fixed: %v", err)
+	}
+	shaFix := commit("implement fix")
+	if _, err := c.Fix(ctx, fixed.ID, "", []string{string(shaFix)}); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+
+	// An investigation attributed only through a cc-investigation trailer.
+	trailed := mustInvestigation(t, c, notes.InvestigationSpec{Title: "trailed", Premise: "p2"})
+	shaTrailer := commit("work", "cc-investigation: "+trailed.ID.Short())
+
+	// An investigation both fix-linked and trailered on one commit: it must appear
+	// once, not twice.
+	dup := mustInvestigation(t, c, notes.InvestigationSpec{Title: "dup", Premise: "p3"})
+	if _, err := c.RootCause(ctx, dup.ID, "cause"); err != nil {
+		t.Fatalf("RootCause dup: %v", err)
+	}
+	shaDup := commit("dup work", "cc-investigation: "+dup.ID.Short())
+	if _, err := c.Fix(ctx, dup.ID, "", []string{string(shaDup)}); err != nil {
+		t.Fatalf("Fix dup: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		rev     string
+		wantSHA model.SHA
+		wantIDs []model.EntityID
+	}{
+		{"fix commit", string(shaFix), shaFix, []model.EntityID{fixed.ID}},
+		{"trailer", string(shaTrailer), shaTrailer, []model.EntityID{trailed.ID}},
+		{"dedup", string(shaDup), shaDup, []model.EntityID{dup.ID}},
+		{"short rev resolves to full sha", string(shaFix)[:12], shaFix, []model.EntityID{fixed.ID}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotSHA, gotInvs, err := c.BlameInvestigations(ctx, tc.rev)
+			if err != nil {
+				t.Fatalf("BlameInvestigations(%s): %v", tc.rev, err)
+			}
+			if gotSHA != tc.wantSHA {
+				t.Errorf("sha = %q, want %q", gotSHA, tc.wantSHA)
+			}
+			gotIDs := make([]model.EntityID, len(gotInvs))
+			for i, inv := range gotInvs {
+				gotIDs[i] = inv.ID
+			}
+			if !slices.Equal(gotIDs, tc.wantIDs) {
+				t.Errorf("investigation ids = %v, want %v", gotIDs, tc.wantIDs)
+			}
+		})
+	}
+
+	unknown := "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	if _, _, err := c.BlameInvestigations(ctx, unknown); !errors.Is(err, notes.ErrNotFound) {
+		t.Fatalf("BlameInvestigations(unknown) = %v, want ErrNotFound", err)
+	}
+}

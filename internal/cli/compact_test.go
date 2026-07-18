@@ -60,11 +60,27 @@ func TestCompactTaskAndUnknownID(t *testing.T) {
 }
 
 // commonJSON captures the id/title/status subset shared by the sprint, project,
-// and runbook output DTOs — the fields compact's round-trip assertions pin.
+// runbook, and investigation output DTOs — the fields compact's round-trip
+// assertions pin.
 type commonJSON struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
 	Status string `json:"status"`
+}
+
+func TestCompactInvestigationJSONAndHistory(t *testing.T) {
+	dir := initRepo(t)
+	added := mustJSON[commonJSON](t, mustRun(t, dir, "investigation", "open", "Pool deadlock", "workers stall", "--json"))
+
+	got := mustJSON[commonJSON](t, mustRun(t, dir, "compact", added.ID, "--json"))
+	if got != added {
+		t.Fatalf("compact investigation = %+v, want %+v", got, added)
+	}
+
+	history := mustRun(t, dir, "history", added.ID)
+	if !strings.Contains(history, "compacted (covers") {
+		t.Fatalf("investigation history missing checkpoint marker:\n%s", history)
+	}
 }
 
 func TestCompactSprintJSONAndLean(t *testing.T) {

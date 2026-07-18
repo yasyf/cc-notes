@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -54,12 +55,15 @@ func renderNoteShow(n model.Note, drift string, supersedes []model.EntityID, att
 // sync remediation when the content is not in the local LFS store.
 func attachmentHeaders(b *strings.Builder, atts []attachmentDTO) {
 	for _, a := range atts {
-		line := fmt.Sprintf("%s (%d bytes, oid %s)", a.Name, a.Size, a.OID[:7])
-		if !a.Present {
-			line = fmt.Sprintf("%s (%d bytes, oid %s, missing locally — run `cc-notes sync`)", a.Name, a.Size, a.OID[:7])
-		}
-		header(b, "attachment", line)
+		header(b, "attachment", attachmentDisplay(a))
 	}
+}
+
+func attachmentDisplay(a attachmentDTO) string {
+	if !a.Present {
+		return fmt.Sprintf("%s (%d bytes, oid %s, missing locally — run `cc-notes sync`)", a.Name, a.Size, a.OID[:7])
+	}
+	return fmt.Sprintf("%s (%d bytes, oid %s)", a.Name, a.Size, a.OID[:7])
 }
 
 // renderDocShow renders the lean show view of a doc: the fixed-order header
@@ -125,13 +129,165 @@ func renderLogShow(l model.Log, atts []attachmentDTO) string {
 	if l.Deleted {
 		header(&b, "deleted", "true")
 	}
-	for _, e := range l.Entries {
-		if e.Model != "" {
-			fmt.Fprintf(&b, "\n-- %s — %s %s\n%s\n", e.Model, e.Author, render.RFC3339(e.TS), e.Text)
-		} else {
-			fmt.Fprintf(&b, "\n-- %s %s\n%s\n", e.Author, render.RFC3339(e.TS), e.Text)
+	renderLogEntries(&b, l.Entries)
+	return b.String()
+}
+
+func renderLogEntries(b *strings.Builder, entries []model.LogEntry) {
+	for _, e := range entries {
+		renderLogEntry(b, e)
+	}
+}
+
+func renderLogEntry(b *strings.Builder, e model.LogEntry) {
+	if e.Model != "" {
+		fmt.Fprintf(b, "\n-- %s — %s %s\n%s\n", e.Model, e.Author, render.RFC3339(e.TS), e.Text)
+	} else {
+		fmt.Fprintf(b, "\n-- %s %s\n%s\n", e.Author, render.RFC3339(e.TS), e.Text)
+	}
+}
+
+type investigationTimelineEvent struct {
+	entry       model.LogEntry
+	attachments []string
+}
+
+// investigationTimeline replays the ref's commits into ordered timeline events.
+// Each AddAttachment contributes the name its own commit recorded — never a name
+// resolved through the entity's final attachment map, which a later same-name
+// replace would rewrite. Current size/oid details live only in the entity header.
+func investigationTimeline(steps []fold.Step) []investigationTimelineEvent {
+	var events []investigationTimelineEvent
+	for i, step := range steps {
+		entry := -1
+		var unattached []string
+		previousStatus := model.InvestigationOpen
+		if i > 0 {
+			previousStatus = steps[i-1].Snapshot.(model.Investigation).Status
+		}
+		for _, op := range step.Commit.Pack.Ops {
+			switch o := op.(type) {
+			case model.AppendEntry:
+				events = append(events, investigationTimelineEvent{entry: model.LogEntry{
+					Author: step.Commit.Author,
+					TS:     step.Commit.AuthorTime,
+					Text:   o.Text,
+					Model:  o.Model,
+				}})
+				entry = len(events) - 1
+			case model.AddAttachment:
+				if entry >= 0 {
+					events[entry].attachments = append(events[entry].attachments, o.Name)
+				} else {
+					unattached = append(unattached, o.Name)
+				}
+			case model.SetFindingStatus:
+				text := fmt.Sprintf("finding %s → %s: %s", render.ShortWireID(o.ID), o.Status, o.Note)
+				events = append(events, investigationTimelineEvent{entry: model.LogEntry{
+					Author: step.Commit.Author,
+					TS:     step.Commit.AuthorTime,
+					Text:   text,
+				}})
+			case model.SetInvestigationStatus:
+				events = append(events, investigationTimelineEvent{entry: model.LogEntry{
+					Author: step.Commit.Author,
+					TS:     step.Commit.AuthorTime,
+					Text:   fmt.Sprintf("status: %s → %s", previousStatus, o.Status),
+				}})
+				previousStatus = o.Status
+			}
+		}
+		if len(unattached) > 0 {
+			events = append(events, investigationTimelineEvent{
+				entry:       model.LogEntry{Author: step.Commit.Author, TS: step.Commit.AuthorTime, Text: "attachments"},
+				attachments: unattached,
+			})
 		}
 	}
+	return events
+}
+
+func investigationResolution(inv model.Investigation, steps []fold.Step) string {
+	if inv.Body != "" {
+		return inv.Body
+	}
+	found := false
+	resolution := ""
+	for _, step := range steps {
+		entry := ""
+		for _, op := range step.Commit.Pack.Ops {
+			switch o := op.(type) {
+			case model.AppendEntry:
+				entry = o.Text
+			case model.SetInvestigationStatus:
+				switch o.Status {
+				case model.InvestigationConfirmed, model.InvestigationExonerated, model.InvestigationAbandoned:
+					found = true
+					resolution = entry
+				}
+			}
+		}
+	}
+	if found {
+		return resolution
+	}
+	if inv.ClosedAt != 0 && len(inv.Entries) > 0 {
+		return inv.Entries[len(inv.Entries)-1].Text
+	}
+	return ""
+}
+
+// renderInvestigationShow renders the fixed investigation header, immutable
+// premise, findings, chronological timeline, and verdict blocks.
+func renderInvestigationShow(inv model.Investigation, atts []attachmentDTO, steps []fold.Step) string {
+	var b strings.Builder
+	resolution := investigationResolution(inv, steps)
+	header(&b, "id", string(inv.ID))
+	header(&b, "status", string(inv.Status))
+	header(&b, "title", inv.Title)
+	header(&b, "labels", csvOrDash(inv.Tags))
+	header(&b, "commits", csvOrDash(render.AnchorValues(inv.Anchors, model.AnchorCommit)))
+	header(&b, "paths", csvOrDash(render.AnchorValues(inv.Anchors, model.AnchorPath)))
+	header(&b, "dirs", csvOrDash(render.AnchorValues(inv.Anchors, model.AnchorDir)))
+	header(&b, "branches", csvOrDash(render.AnchorValues(inv.Anchors, model.AnchorBranch)))
+	header(&b, "fix_commits", csvOrDash(shortSHAs(inv.FixCommits)))
+	header(&b, "follow_ups", csvOrDash(shortIDs(inv.FollowUps)))
+	header(&b, "author", string(inv.Author))
+	header(&b, "created", render.RFC3339(inv.CreatedAt))
+	header(&b, "updated", render.RFC3339(inv.UpdatedAt))
+	header(&b, "closed", orDash(render.OptTimeString(inv.ClosedAt)))
+	header(&b, "closed_by", orDash(string(inv.ClosedBy)))
+	if inv.ClosedAt != 0 {
+		header(&b, "resolution", orDash(sanitizeDisplay(resolution, false)))
+	}
+	attachmentHeaders(&b, atts)
+	if inv.Deleted {
+		header(&b, "deleted", "true")
+	}
+
+	b.WriteString("\npremise:\n")
+	b.WriteString(inv.Premise)
+	b.WriteByte('\n')
+	b.WriteString("\nfindings:\n")
+	for _, finding := range inv.Findings {
+		fmt.Fprintf(&b, "  %s %s %s\n", render.ShortWireID(finding.ID), finding.Status, sanitizeDisplay(finding.Text, false))
+		if finding.Note != "" {
+			fmt.Fprintf(&b, "     why: %s\n", sanitizeDisplay(finding.Note, false))
+		}
+	}
+	b.WriteString("\ntimeline:\n")
+	for _, event := range investigationTimeline(steps) {
+		renderLogEntry(&b, event.entry)
+		for _, name := range event.attachments {
+			fmt.Fprintf(&b, "  attachment: %s\n", name)
+		}
+	}
+	b.WriteString("\nroot cause:\n")
+	b.WriteString(orDash(inv.RootCause))
+	b.WriteByte('\n')
+	b.WriteString("\nresolution:\n")
+	b.WriteString(orDash(resolution))
+	b.WriteByte('\n')
 	return b.String()
 }
 

@@ -54,17 +54,18 @@ func (c codec[S, P]) New(data []byte) ([]model.Op, error) {
 	return c.create(p)
 }
 
-// codecs maps every entity kind to its codec. The runbook codec wires only
-// render: /runbooks is read-only, so the mount rejects every write before a
-// commit path reaches its parse/diff/create hooks.
+// codecs maps every entity kind to its codec. Read-only codecs wire only
+// render, so the mount rejects every write before a commit path reaches their
+// parse/diff/create hooks.
 var codecs = map[model.Kind]entityCodec{
-	model.KindNote:    codec[model.Note, ParsedDoc]{kind: model.KindNote, render: RenderNote, parse: ParseNote, diff: DiffNote, create: NewNote},
-	model.KindDoc:     codec[model.Doc, ParsedDoc]{kind: model.KindDoc, render: RenderDoc, parse: ParseDoc, diff: DiffDoc, create: NewDoc},
-	model.KindLog:     codec[model.Log, ParsedLog]{kind: model.KindLog, render: RenderLog, parse: ParseLog, diff: DiffLog, create: NewLog},
-	model.KindTask:    codec[model.Task, ParsedTask]{kind: model.KindTask, render: RenderTask, parse: ParseTask, diff: DiffTask, create: newTaskOps},
-	model.KindSprint:  codec[model.Sprint, ParsedSprint]{kind: model.KindSprint, browsable: true, render: RenderSprint, parse: ParseSprint, diff: DiffSprint, create: NewSprint},
-	model.KindProject: codec[model.Project, ParsedProject]{kind: model.KindProject, browsable: true, render: RenderProject, parse: ParseProject, diff: DiffProject, create: NewProject},
-	model.KindRunbook: codec[model.Runbook, struct{}]{kind: model.KindRunbook, readOnly: true, render: RenderRunbook},
+	model.KindNote:          codec[model.Note, ParsedDoc]{kind: model.KindNote, render: RenderNote, parse: ParseNote, diff: DiffNote, create: NewNote},
+	model.KindDoc:           codec[model.Doc, ParsedDoc]{kind: model.KindDoc, render: RenderDoc, parse: ParseDoc, diff: DiffDoc, create: NewDoc},
+	model.KindLog:           codec[model.Log, ParsedLog]{kind: model.KindLog, render: RenderLog, parse: ParseLog, diff: DiffLog, create: NewLog},
+	model.KindTask:          codec[model.Task, ParsedTask]{kind: model.KindTask, render: RenderTask, parse: ParseTask, diff: DiffTask, create: newTaskOps},
+	model.KindSprint:        codec[model.Sprint, ParsedSprint]{kind: model.KindSprint, browsable: true, render: RenderSprint, parse: ParseSprint, diff: DiffSprint, create: NewSprint},
+	model.KindProject:       codec[model.Project, ParsedProject]{kind: model.KindProject, browsable: true, render: RenderProject, parse: ParseProject, diff: DiffProject, create: NewProject},
+	model.KindRunbook:       codec[model.Runbook, struct{}]{kind: model.KindRunbook, readOnly: true, render: RenderRunbook},
+	model.KindInvestigation: codec[model.Investigation, struct{}]{kind: model.KindInvestigation, readOnly: true, render: RenderInvestigation},
 }
 
 // codecOf returns the codec for kind, panicking on an unregistered kind.

@@ -12,22 +12,23 @@ import (
 )
 
 // relevantDTO is one ranked entity in the JSON output of relevant: a kind
-// discriminator ("note"|"doc"|"log"|"runbook"), the matching entity DTO (the
+// discriminator ("note"|"doc"|"log"|"runbook"|"investigation"), the matching entity DTO (the
 // note DTO on a note entry, the doc DTO — carrying the free-text trigger — on a
 // doc entry, the log DTO on a log entry, the runbook DTO on a runbook entry;
 // notes and docs carry the drift verdict, logs and runbooks never drift), the
 // summed relevance score, and the matched reasons in fixed priority order. The
 // entity fields are mutually exclusive; the unused ones are omitted so the
 // float hook can index entry["note"]/entry["doc"]/entry["log"]/
-// entry["runbook"] by kind.
+// entry["runbook"]/entry["investigation"] by kind.
 type relevantDTO struct {
-	Kind    string      `json:"kind"`
-	Note    *noteDTO    `json:"note,omitempty"`
-	Doc     *docDTO     `json:"doc,omitempty"`
-	Log     *logDTO     `json:"log,omitempty"`
-	Runbook *runbookDTO `json:"runbook,omitempty"`
-	Score   int         `json:"score"`
-	Reasons []string    `json:"reasons"`
+	Kind          string            `json:"kind"`
+	Note          *noteDTO          `json:"note,omitempty"`
+	Doc           *docDTO           `json:"doc,omitempty"`
+	Log           *logDTO           `json:"log,omitempty"`
+	Runbook       *runbookDTO       `json:"runbook,omitempty"`
+	Investigation *investigationDTO `json:"investigation,omitempty"`
+	Score         int               `json:"score"`
+	Reasons       []string          `json:"reasons"`
 }
 
 func newRelevantCmd() *cobra.Command {
@@ -36,10 +37,10 @@ func newRelevantCmd() *cobra.Command {
 	var jsonOut, attached, worktree bool
 	cmd := &cobra.Command{
 		Use:   "relevant PATH",
-		Short: "Surface the notes, docs, logs, and runbooks most relevant to a path, ranked with reasons",
-		Long: "Surface the notes, docs, logs, and runbooks most relevant to PATH, ranked by\n" +
+		Short: "Surface the notes, docs, logs, runbooks, and investigations most relevant to a path, ranked with reasons",
+		Long: "Surface the notes, docs, logs, runbooks, and investigations most relevant to PATH, ranked by\n" +
 			"accumulated signal with the matched reasons shown. Notes and docs carry a\n" +
-			"drift verdict against HEAD; logs and runbooks never drift.",
+			"drift verdict against HEAD; logs, runbooks, and investigations never drift.",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -101,6 +102,13 @@ func printRelevant(cmd *cobra.Command, c *notes.Client, entries []notes.Relevant
 			case model.KindRunbook:
 				rb := newRunbookDTO(e.Runbook)
 				dto.Runbook = &rb
+			case model.KindInvestigation:
+				infos, err := c.AttachmentInfos(cmd.Context(), e.Investigation.Attachments)
+				if err != nil {
+					return err
+				}
+				inv := newInvestigationDTO(e.Investigation, attachmentInfoDTOs(infos))
+				dto.Investigation = &inv
 			default:
 				infos, err := c.AttachmentInfos(cmd.Context(), e.Note.Attachments)
 				if err != nil {
@@ -126,6 +134,8 @@ func printRelevant(cmd *cobra.Command, c *notes.Client, entries []notes.Relevant
 			line = leanLogLine(e.Log) + "\t" + csvOrDash(e.Reasons) + "\tlog show " + e.Log.ID.Short()
 		case model.KindRunbook:
 			line = leanRunbookLine(e.Runbook) + "\t" + csvOrDash(e.Reasons) + "\trunbook show " + e.Runbook.ID.Short()
+		case model.KindInvestigation:
+			line = leanInvestigationLine(e.Investigation) + "\t" + csvOrDash(e.Reasons) + "\tinvestigation show " + e.Investigation.ID.Short()
 		default:
 			line = leanNoteLine(e.Note) + "\t" + csvOrDash(e.Reasons)
 			if e.Verdict != "" {

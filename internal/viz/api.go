@@ -120,7 +120,7 @@ func (s *Server) handleEntity(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	kind, ok := entityKind(r.PathValue("kind"))
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown kind %q: want note|doc|log|task|sprint|project|runbook", r.PathValue("kind")))
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown kind %q: want note|doc|log|task|sprint|project|runbook|investigation", r.PathValue("kind")))
 		return
 	}
 	ref, err := s.store.Resolve(ctx, kind, r.PathValue("id"))
@@ -201,6 +201,8 @@ func summaryOf(snap model.Snapshot) EntitySummary {
 		s.Status = string(v.Status)
 	case model.Runbook:
 		s.Status = string(v.Status)
+	case model.Investigation:
+		s.Status, s.ClosedAt = string(v.Status), v.ClosedAt
 	default:
 		panic(fmt.Sprintf("viz: no summary for snapshot %T", snap))
 	}

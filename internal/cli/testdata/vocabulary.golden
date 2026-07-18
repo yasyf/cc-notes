@@ -41,7 +41,7 @@ command: cc-notes attachment path
 command: cc-notes blame
   use: blame SHA
   aliases: -
-  short: List the task(s) a commit implemented
+  short: List the tasks and investigations attributed to a commit
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
@@ -256,7 +256,7 @@ command: cc-notes gc
 command: cc-notes history
   use: history ID
   aliases: -
-  short: Show the edit history of any note, doc, log, task, sprint, project, or runbook
+  short: Show the edit history of any note, doc, log, task, sprint, project, runbook, or investigation
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
@@ -296,6 +296,268 @@ command: cc-notes init
     --no-ci shorthand=none type=bool default="false" usage="skip the reconcile GitHub Actions workflow even when a .github/ directory exists"
     --no-mount shorthand=none type=bool default="false" usage="skip auto-mounting the `.notes` filesystem and disable the session-start ensure-mount"
     --remote shorthand=none type=string default="origin" usage="remote to wire"
+  inherited:
+    (none)
+
+command: cc-notes investigation
+  use: investigation
+  aliases: -
+  short: Investigations: falsifiable premises, evidence timelines, findings, and verdicts
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes investigation abandon
+  use: abandon ID [TEXT]
+  aliases: -
+  short: Abandon an investigation without a verdict
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation append
+  use: append ID [TEXT]
+  aliases: -
+  short: Append evidence to an investigation's timeline
+  hidden: false
+  flags:
+    --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation confirm
+  use: confirm ID TEXT
+  aliases: -
+  short: Confirm the fix with proof
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation edit
+  use: edit ID
+  aliases: -
+  short: Edit an investigation's title, resolution, labels, or anchors
+  hidden: false
+  flags:
+    --add-branch shorthand=none type=stringArray default="[]" usage="add branch anchor (repeatable)"
+    --add-commit shorthand=none type=stringArray default="[]" usage="add commit anchor (repeatable)"
+    --add-dir shorthand=none type=stringArray default="[]" usage="add directory anchor (repeatable)"
+    --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
+    --body shorthand=none type=string default="" usage="new resolution summary; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
+    --rm-commit shorthand=none type=stringArray default="[]" usage="remove commit anchor (repeatable)"
+    --rm-dir shorthand=none type=stringArray default="[]" usage="remove directory anchor (repeatable)"
+    --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
+    --title shorthand=none type=string default="" usage="new title"
+  inherited:
+    (none)
+
+command: cc-notes investigation exonerate
+  use: exonerate ID TEXT
+  aliases: -
+  short: Falsify the investigation premise
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation finding
+  use: finding
+  aliases: -
+  short: Structured hypotheses and review findings under investigation
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    (none)
+
+command: cc-notes investigation finding add
+  use: add INVESTIGATION [TEXT]
+  aliases: -
+  short: Add an open finding to an investigation
+  hidden: false
+  flags:
+    --body shorthand=none type=string default="" usage="finding text; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation finding clear
+  use: clear INVESTIGATION FINDING
+  aliases: -
+  short: Mark a finding cleared
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --why shorthand=none type=string default="" usage="evidence supporting the finding disposition"
+  inherited:
+    (none)
+
+command: cc-notes investigation finding confirm
+  use: confirm INVESTIGATION FINDING
+  aliases: -
+  short: Mark a finding confirmed
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --why shorthand=none type=string default="" usage="evidence supporting the finding disposition"
+  inherited:
+    (none)
+
+command: cc-notes investigation finding edit
+  use: edit INVESTIGATION FINDING [TEXT]
+  aliases: -
+  short: Edit a finding's text
+  hidden: false
+  flags:
+    --body shorthand=none type=string default="" usage="new finding text; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation finding list
+  use: list INVESTIGATION
+  aliases: -
+  short: List an investigation's findings
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation finding rm
+  use: rm INVESTIGATION FINDING
+  aliases: -
+  short: Remove a finding from an investigation
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation fix
+  use: fix ID [TEXT]
+  aliases: -
+  short: Record fixing commits and mark an investigation fixed
+  hidden: false
+  flags:
+    --commit shorthand=none type=stringArray default="[]" usage="fixing commit (repeatable; at least one required)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation history
+  use: history ID
+  aliases: -
+  short: Show this investigation's edit history
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    (none)
+
+command: cc-notes investigation list
+  use: list
+  aliases: -
+  short: List active investigations (open, root-caused, or fixed unless --all)
+  hidden: false
+  flags:
+    --all shorthand=none type=bool default="false" usage="every status"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+    --status shorthand=none type=string default="" usage="status filter, comma-separated (default open,root_caused,fixed)"
+  inherited:
+    (none)
+
+command: cc-notes investigation open
+  use: open TITLE [BODY]
+  aliases: add
+  short: Open an investigation around an immutable premise
+  hidden: false
+  flags:
+    --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
+    --body shorthand=none type=string default="" usage="investigation premise; - reads stdin"
+    --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
+    --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
+    --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
+    --finding shorthand=none type=stringArray default="[]" usage="initial finding text (repeatable)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+  inherited:
+    (none)
+
+command: cc-notes investigation reopen
+  use: reopen ID TEXT
+  aliases: -
+  short: Reopen an investigation with a reason
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation rm
+  use: rm ID
+  aliases: -
+  short: Tombstone an investigation
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation root-cause
+  use: root-cause ID TEXT
+  aliases: -
+  short: Record the root cause
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    (none)
+
+command: cc-notes investigation search
+  use: search QUERY
+  aliases: -
+  short: Ranked search across investigation titles, premises, timelines, findings, and verdicts
+  hidden: false
+  flags:
+    --author shorthand=none type=string default="" usage="require author"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    (none)
+
+command: cc-notes investigation show
+  use: show ID
+  aliases: -
+  short: Show one investigation with its findings and timeline
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     (none)
 
@@ -809,7 +1071,7 @@ command: cc-notes reconcile
 command: cc-notes relevant
   use: relevant PATH
   aliases: -
-  short: Surface the notes, docs, logs, and runbooks most relevant to a path, ranked with reasons
+  short: Surface the notes, docs, logs, runbooks, and investigations most relevant to a path, ranked with reasons
   hidden: false
   flags:
     --attached shorthand=none type=bool default="false" usage="keep only entities anchored to the path or a parent directory"
@@ -1132,7 +1394,7 @@ command: cc-notes runbook step rm
 command: cc-notes search
   use: search QUERY
   aliases: -
-  short: Ranked search across every note, doc, log, and runbook
+  short: Ranked search across every note, doc, log, runbook, and investigation
   hidden: false
   flags:
     --branch shorthand=none type=string default="" usage="require branch anchor"
@@ -1148,7 +1410,7 @@ command: cc-notes search
 command: cc-notes show
   use: show ID
   aliases: -
-  short: Show any note, doc, log, task, sprint, project, or runbook by id
+  short: Show any note, doc, log, task, sprint, project, runbook, or investigation by id
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
@@ -1298,7 +1560,7 @@ command: cc-notes sprint show
 command: cc-notes status
   use: status
   aliases: board
-  short: Orient: the backlog, your branch, in-progress across branches, and notes
+  short: Orient: the backlog, your branch, in-progress across branches, notes, and investigations
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"

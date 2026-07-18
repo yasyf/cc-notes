@@ -139,7 +139,16 @@ function AppShell() {
     for (const e of graph?.entities ?? []) if (e.title !== "") m.set(e.id, e.title);
     const d = entities.data;
     if (d !== null) {
-      for (const bucket of [d.notes, d.docs, d.logs, d.tasks, d.sprints, d.projects, d.runbooks]) {
+      for (const bucket of [
+        d.notes,
+        d.docs,
+        d.logs,
+        d.tasks,
+        d.sprints,
+        d.projects,
+        d.runbooks,
+        d.investigations,
+      ]) {
         for (const s of bucket) if (s.title !== "") m.set(s.id, s.title);
       }
     }

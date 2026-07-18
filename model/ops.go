@@ -776,16 +776,141 @@ func (SetRunbookStatus) OpKind() string { return "set_runbook_status" }
 
 func (o SetRunbookStatus) validate() error { return o.Status.validate() }
 
+// CreateInvestigation is the root operation of an investigation chain. The
+// nonce makes otherwise-identical creates hash to distinct entity ids. Premise
+// is immutable: it is set only here and has no Set op, so the original
+// suspicion can never be destroyed.
+type CreateInvestigation struct {
+	Nonce   string   `json:"nonce"`
+	Title   string   `json:"title"`
+	Premise string   `json:"premise"`
+	Tags    []string `json:"tags"`
+	Anchors []Anchor `json:"anchors"`
+}
+
+// OpKind returns "create_investigation".
+func (CreateInvestigation) OpKind() string { return "create_investigation" }
+
+// CreateKind returns KindInvestigation.
+func (CreateInvestigation) CreateKind() Kind { return KindInvestigation }
+
+func (o CreateInvestigation) validate() error {
+	for _, a := range o.Anchors {
+		if err := a.Kind.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetInvestigationStatus replaces the lifecycle status of an investigation.
+// Legality of the transition is enforced by the client at op-build time; the
+// fold applies it last-write-wins and stays total.
+type SetInvestigationStatus struct {
+	Status InvestigationStatus `json:"status"`
+}
+
+// OpKind returns "set_investigation_status".
+func (SetInvestigationStatus) OpKind() string { return "set_investigation_status" }
+
+func (o SetInvestigationStatus) validate() error { return o.Status.validate() }
+
+// SetRootCause replaces the root-cause prose of an investigation.
+type SetRootCause struct {
+	Text string `json:"text"`
+}
+
+// OpKind returns "set_root_cause".
+func (SetRootCause) OpKind() string { return "set_root_cause" }
+
+// AddFinding appends a finding to an investigation. ID is a nonce stable within
+// the investigation, making the add idempotent under replay and merge; new
+// findings start open.
+type AddFinding struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// OpKind returns "add_finding".
+func (AddFinding) OpKind() string { return "add_finding" }
+
+// RemoveFinding removes the finding with the given id from an investigation.
+type RemoveFinding struct {
+	ID string `json:"id"`
+}
+
+// OpKind returns "remove_finding".
+func (RemoveFinding) OpKind() string { return "remove_finding" }
+
+// SetFindingText replaces the text of the finding with the given id.
+type SetFindingText struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// OpKind returns "set_finding_text".
+func (SetFindingText) OpKind() string { return "set_finding_text" }
+
+// SetFindingStatus replaces the disposition of the finding with the given id.
+// Note carries the evidence cite for the verdict; it marshals omitempty so
+// note-less ops keep their pre-note wire bytes.
+type SetFindingStatus struct {
+	ID     string        `json:"id"`
+	Status FindingStatus `json:"status"`
+	Note   string        `json:"note,omitempty"`
+}
+
+// OpKind returns "set_finding_status".
+func (SetFindingStatus) OpKind() string { return "set_finding_status" }
+
+func (o SetFindingStatus) validate() error { return o.Status.validate() }
+
+// AddFixCommit records that the commit with the given sha fixed an
+// investigation's root cause. Fix commits fold as a set, distinct from the
+// generic LinkCommit blame set.
+type AddFixCommit struct {
+	SHA SHA `json:"sha"`
+}
+
+// OpKind returns "add_fix_commit".
+func (AddFixCommit) OpKind() string { return "add_fix_commit" }
+
+// RemoveFixCommit removes a fix-commit link from an investigation.
+type RemoveFixCommit struct {
+	SHA SHA `json:"sha"`
+}
+
+// OpKind returns "remove_fix_commit".
+func (RemoveFixCommit) OpKind() string { return "remove_fix_commit" }
+
+// AddFollowUp records an outbound follow-up edge from an investigation to
+// another entity: a spawned task, a graduated invariant note, or a follow-up
+// investigation.
+type AddFollowUp struct {
+	ID EntityID `json:"id"`
+}
+
+// OpKind returns "add_follow_up".
+func (AddFollowUp) OpKind() string { return "add_follow_up" }
+
+// RemoveFollowUp removes a follow-up edge from an investigation.
+type RemoveFollowUp struct {
+	ID EntityID `json:"id"`
+}
+
+// OpKind returns "remove_follow_up".
+func (RemoveFollowUp) OpKind() string { return "remove_follow_up" }
+
 // Checkpoint compacts an entity's history into a single seed. State is the
 // full folded snapshot of every commit in CoversShas, CoversLamport is the
 // lamport of the covered tip, and EntityID is the immutable root sha the
 // snapshot belongs to. Checkpoint is always appended, never a root, so it
 // never changes an entity id: a fold uses the newest seed-safe checkpoint as
 // its starting snapshot and treats every other checkpoint as a no-op. The pack
-// codec carries State kind-tagged (note, doc, log, task, sprint, project, or
-// runbook) so it decodes back to the concrete
-// model.Note/Doc/Log/Task/Sprint/Project/Runbook; the snapshot's kind drives
-// fold dispatch.
+// codec carries State kind-tagged (note, doc, log, task, sprint, project,
+// runbook, or investigation) so it decodes back to the concrete
+// model.Note/Doc/Log/Task/Sprint/Project/Runbook/Investigation; the snapshot's
+// kind drives fold dispatch.
 type Checkpoint struct {
 	EntityID      EntityID
 	State         Snapshot

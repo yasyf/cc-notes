@@ -518,6 +518,214 @@ func TestPackGoldenBytesRunbookOps(t *testing.T) {
 	}
 }
 
+// TestPackGoldenBytesInvestigationOps pins the exact v1 wire bytes of every
+// investigation op kind and a checkpoint over an investigation, both
+// directions: marshal to the pinned bytes and decode back to the identical op.
+// These bytes are storage format — entity ids derive from them — so any
+// marshal-layout drift fails here.
+func TestPackGoldenBytesInvestigationOps(t *testing.T) {
+	cases := []struct {
+		kind string
+		op   Op
+		want string
+	}{
+		{
+			"create_investigation",
+			CreateInvestigation{
+				Nonce: testNonce, Title: "TestPool deadlock on CI",
+				Premise: "Hangs began after 3d55ae2e; suspect the pool rewrite.",
+				Tags:    []string{"ci", "deadlock"},
+				Anchors: []Anchor{{Kind: AnchorCommit, Value: testID}, {Kind: AnchorDir, Value: "internal/pool"}},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"create_investigation","nonce":"0123456789abcdef0123456789abcdef","title":"TestPool deadlock on CI","premise":"Hangs began after 3d55ae2e; suspect the pool rewrite.","tags":["ci","deadlock"],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},{"kind":"dir","value":"internal/pool"}]}]}`,
+		},
+		{
+			// Minimal create: nil Tags and Anchors (neither omitempty) pin the null
+			// side of the wire format. Adding omitempty to either — which would drop
+			// the key and change every tag-less or anchor-less investigation's entity
+			// id — fails here.
+			"create_investigation_minimal",
+			CreateInvestigation{
+				Nonce: testNonce, Title: "TestPool deadlock", Premise: "suspect the pool rewrite",
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"create_investigation","nonce":"0123456789abcdef0123456789abcdef","title":"TestPool deadlock","premise":"suspect the pool rewrite","tags":null,"anchors":null}]}`,
+		},
+		{
+			"set_investigation_status",
+			SetInvestigationStatus{Status: InvestigationRootCaused},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_investigation_status","status":"root_caused"}]}`,
+		},
+		{
+			"set_root_cause",
+			SetRootCause{Text: "Unbuffered results chan leaks a blocked send."},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_root_cause","text":"Unbuffered results chan leaks a blocked send."}]}`,
+		},
+		{
+			"add_finding",
+			AddFinding{ID: "find-1", Text: "commit 3d55ae2e (pool rewrite)"},
+			`{"v":1,"lamport":42,"ops":[{"kind":"add_finding","id":"find-1","text":"commit 3d55ae2e (pool rewrite)"}]}`,
+		},
+		{
+			"remove_finding",
+			RemoveFinding{ID: "find-1"},
+			`{"v":1,"lamport":42,"ops":[{"kind":"remove_finding","id":"find-1"}]}`,
+		},
+		{
+			"set_finding_text",
+			SetFindingText{ID: "find-1", Text: "commit 3d55ae2e~4 (earlier)"},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_finding_text","id":"find-1","text":"commit 3d55ae2e~4 (earlier)"}]}`,
+		},
+		{
+			"set_finding_status",
+			SetFindingStatus{ID: "find-1", Status: FindingCleared, Note: "bisect reproduces earlier"},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_finding_status","id":"find-1","status":"cleared","note":"bisect reproduces earlier"}]}`,
+		},
+		{
+			// Note-less form: Note marshals omitempty, so the note key is absent.
+			"set_finding_status_noteless",
+			SetFindingStatus{ID: "find-1", Status: FindingConfirmed},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_finding_status","id":"find-1","status":"confirmed"}]}`,
+		},
+		{
+			"add_fix_commit",
+			AddFixCommit{SHA: testID},
+			`{"v":1,"lamport":42,"ops":[{"kind":"add_fix_commit","sha":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"}]}`,
+		},
+		{
+			"remove_fix_commit",
+			RemoveFixCommit{SHA: testParent},
+			`{"v":1,"lamport":42,"ops":[{"kind":"remove_fix_commit","sha":"00112233445566778899aabbccddeeff00112233"}]}`,
+		},
+		{
+			"add_follow_up",
+			AddFollowUp{ID: testID},
+			`{"v":1,"lamport":42,"ops":[{"kind":"add_follow_up","id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"}]}`,
+		},
+		{
+			"remove_follow_up",
+			RemoveFollowUp{ID: testParent},
+			`{"v":1,"lamport":42,"ops":[{"kind":"remove_follow_up","id":"00112233445566778899aabbccddeeff00112233"}]}`,
+		},
+		{
+			"checkpoint_investigation",
+			Checkpoint{
+				EntityID:      testID,
+				State:         investigationGoldenSnap(),
+				CoversLamport: 6,
+				CoversShas:    []SHA{testParent, testID},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"investigation","state":` + investigationGoldenSnapJSON + `,"covers_lamport":6,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			pack := Pack{Lamport: 42, Ops: []Op{tc.op}}
+			got, err := json.Marshal(pack)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("marshal =\n%s\nwant\n%s", got, tc.want)
+			}
+			back, err := DecodePack([]byte(tc.want))
+			if err != nil {
+				t.Fatalf("decode golden: %v", err)
+			}
+			if !reflect.DeepEqual(back, pack) {
+				t.Fatalf("decode = %#v, want %#v", back, pack)
+			}
+		})
+	}
+}
+
+// investigationGoldenSnap is a fully-populated investigation snapshot: every
+// field non-zero, including findings (both dispositions, one note-bearing),
+// model-bearing timeline entries, the sorted follow-up/fix-commit/commit sets,
+// and an attachment. TestSnapshotGoldenBytesInvestigation pins its bytes and
+// TestPackGoldenBytesInvestigationOps embeds them as a checkpoint state.
+func investigationGoldenSnap() Investigation {
+	return Investigation{
+		ID: testID, Title: "TestPool deadlock on CI", Premise: "Hangs began after 3d55ae2e; suspect the pool rewrite.",
+		Body: "Unbuffered results chan; fixed by buffering.", Status: InvestigationConfirmed,
+		RootCause: "Unbuffered results chan + early return on ctx cancel leaks a blocked send.",
+		Findings: []Finding{
+			{ID: "find-1", Text: "commit 3d55ae2e (pool rewrite)", Status: FindingCleared, Note: "bisect reproduces earlier"},
+			{ID: "find-2", Text: "unbuffered chan", Status: FindingConfirmed},
+		},
+		Entries: []LogEntry{
+			{Author: "ada", TS: 150, Text: "opened after CI hang", Model: "claude-opus-4-8"},
+			{Author: "bob", TS: 250, Text: "bisect reproduces at 3d55ae2e~4"},
+		},
+		FollowUps:    []EntityID{testParent, testID},
+		FixCommits:   []SHA{testID},
+		Commits:      []SHA{testParent},
+		Tags:         []string{"ci", "deadlock"},
+		Anchors:      []Anchor{{Kind: AnchorCommit, Value: testID}, {Kind: AnchorDir, Value: "internal/pool"}},
+		SupersededBy: []EntityID{testParent},
+		Author:       "ada", CreatedAt: 100, UpdatedAt: 300, ClosedAt: 300, ClosedBy: "ada",
+		Head:        testParent,
+		Attachments: []Attachment{{Name: "stacks.txt", OID: testOID, Size: 4096}},
+	}
+}
+
+const investigationGoldenSnapJSON = `{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"TestPool deadlock on CI","premise":"Hangs began after 3d55ae2e; suspect the pool rewrite.","body":"Unbuffered results chan; fixed by buffering.","status":"confirmed","root_cause":"Unbuffered results chan + early return on ctx cancel leaks a blocked send.","findings":[{"id":"find-1","text":"commit 3d55ae2e (pool rewrite)","status":"cleared","note":"bisect reproduces earlier"},{"id":"find-2","text":"unbuffered chan","status":"confirmed"}],"entries":[{"author":"ada","ts":150,"text":"opened after CI hang","model":"claude-opus-4-8"},{"author":"bob","ts":250,"text":"bisect reproduces at 3d55ae2e~4"}],"follow_ups":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"],"fix_commits":["a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"],"commits":["00112233445566778899aabbccddeeff00112233"],"tags":["ci","deadlock"],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},{"kind":"dir","value":"internal/pool"}],"superseded_by":["00112233445566778899aabbccddeeff00112233"],"author":"ada","created_at":100,"updated_at":300,"closed_at":300,"closed_by":"ada","deleted":false,"head":"00112233445566778899aabbccddeeff00112233","attachments":[{"name":"stacks.txt","oid":"e3b1c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":4096}]}`
+
+// TestSnapshotGoldenBytesInvestigation pins the exact json.Marshal bytes of a
+// fully-populated investigation snapshot. Checkpoint State embeds these bytes
+// verbatim, and checkpoint encode determinism across replicas is part of the
+// storage format, so any marshal-layout drift on any field fails here.
+func TestSnapshotGoldenBytesInvestigation(t *testing.T) {
+	got, err := json.Marshal(investigationGoldenSnap())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(got) != investigationGoldenSnapJSON {
+		t.Fatalf("marshal =\n%s\nwant\n%s", got, investigationGoldenSnapJSON)
+	}
+}
+
+// openInvestigationGoldenSnap is a freshly-opened investigation: status open, no
+// findings, no timeline entries, empty sets, no attachments, and zeroed
+// closed_at/closed_by — exactly what a fresh fold produces. The empty (non-nil)
+// slices match sortedKeys/sortedAnchors output, and Attachments stays nil so its
+// omitempty key is absent.
+func openInvestigationGoldenSnap() Investigation {
+	return Investigation{
+		ID: testID, Title: "TestPool deadlock", Premise: "suspect the pool rewrite",
+		Status:       InvestigationOpen,
+		Findings:     []Finding{},
+		Entries:      []LogEntry{},
+		FollowUps:    []EntityID{},
+		FixCommits:   []SHA{},
+		Commits:      []SHA{},
+		Tags:         []string{},
+		Anchors:      []Anchor{},
+		SupersededBy: []EntityID{},
+		Author:       "ada", CreatedAt: 100, UpdatedAt: 100, Head: testParent,
+	}
+}
+
+const openInvestigationGoldenSnapJSON = `{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"TestPool deadlock","premise":"suspect the pool rewrite","body":"","status":"open","root_cause":"","findings":[],"entries":[],"follow_ups":[],"fix_commits":[],"commits":[],"tags":[],"anchors":[],"superseded_by":[],"author":"ada","created_at":100,"updated_at":100,"closed_at":0,"closed_by":"","deleted":false,"head":"00112233445566778899aabbccddeeff00112233"}`
+
+// TestSnapshotGoldenBytesOpenInvestigation pins the exact json.Marshal bytes of a
+// freshly-opened investigation snapshot: the empty side of every omitempty and
+// slice-emission decision. A change to attachment-less or open-status omission —
+// which would alter the checkpoint bytes and therefore entity ids — fails here,
+// and the assertion that no "attachments" key appears keeps that field's
+// omitempty honest.
+func TestSnapshotGoldenBytesOpenInvestigation(t *testing.T) {
+	got, err := json.Marshal(openInvestigationGoldenSnap())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(got) != openInvestigationGoldenSnapJSON {
+		t.Fatalf("marshal =\n%s\nwant\n%s", got, openInvestigationGoldenSnapJSON)
+	}
+	if strings.Contains(string(got), `"attachments"`) {
+		t.Errorf("open investigation snapshot bytes contain \"attachments\" key")
+	}
+}
+
 // TestPackGoldenBytesPreAnchorRunbookDecodes pins the pre-anchor create_runbook
 // wire bytes — the form every runbook chain written before anchors carries —
 // decode-side only: the bytes must decode to the anchor-less op unchanged.

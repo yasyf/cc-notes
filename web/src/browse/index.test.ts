@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RunbookSnapshot, StateResponse } from "../api";
+import type { InvestigationSnapshot, RunbookSnapshot, StateResponse } from "../api";
 import { buildIndex } from "./index";
 
 function emptyState(over: Partial<StateResponse> = {}): StateResponse {
@@ -11,6 +11,36 @@ function emptyState(over: Partial<StateResponse> = {}): StateResponse {
     sprints: [],
     projects: [],
     runbooks: [],
+    investigations: [],
+    ...over,
+  };
+}
+
+function investigation(over: Partial<InvestigationSnapshot> = {}): InvestigationSnapshot {
+  return {
+    id: "i1",
+    title: "Pool deadlock",
+    premise: "the pool rewrite caused the hang",
+    body: "fixed the blocked send",
+    status: "root_caused",
+    root_cause: "an unbuffered result channel leaked a sender",
+    findings: [
+      { id: "f1", text: "the rewrite introduced it", status: "cleared", note: "predates rewrite" },
+    ],
+    entries: [{ author: "ann", ts: 5, text: "bisect reproduces four commits earlier" }],
+    follow_ups: [],
+    fix_commits: [],
+    commits: [],
+    tags: ["ci", "deadlock"],
+    anchors: [{ kind: "path", value: "internal/pool" }],
+    superseded_by: [],
+    author: "ann",
+    created_at: 1,
+    updated_at: 42,
+    closed_at: 0,
+    closed_by: "",
+    deleted: false,
+    head: "",
     ...over,
   };
 }
@@ -106,5 +136,34 @@ describe("runbookRow", () => {
       ],
     });
     expect(buildIndex(state).map((r) => r.kind)).toEqual(["log", "runbook", "sprint"]);
+  });
+});
+
+describe("investigationRow", () => {
+  it("projects an investigation into a searchable status row", () => {
+    const rows = buildIndex(emptyState({ investigations: [investigation()] }));
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("expected a row");
+    expect(row.kind).toBe("investigation");
+    expect(row.status).toBe("root_caused");
+    expect(row.tags).toEqual(["ci", "deadlock"]);
+    expect(row.updated).toBe(42);
+    for (const needle of [
+      "the pool rewrite caused the hang",
+      "bisect reproduces four commits earlier",
+      "an unbuffered result channel leaked a sender",
+      "fixed the blocked send",
+      "the rewrite introduced it",
+      "predates rewrite",
+      "internal/pool",
+    ]) {
+      expect(row.bodyLower).toContain(needle);
+    }
+  });
+
+  it("places investigations after logs and before runbooks in buildIndex order", () => {
+    const state = emptyState({ investigations: [investigation()], runbooks: [runbook()] });
+    expect(buildIndex(state).map((r) => r.kind)).toEqual(["investigation", "runbook"]);
   });
 });

@@ -33,20 +33,22 @@ var (
 // chain into its snapshot. Fold and History dispatch through it on the create
 // op's kind. Its keys are exactly model.Kinds() (see TestFoldersExhaustive).
 var folders = map[model.Kind]func([]model.PackCommit) (model.Snapshot, error){
-	model.KindNote:    func(o []model.PackCommit) (model.Snapshot, error) { return foldNote(o) },
-	model.KindDoc:     func(o []model.PackCommit) (model.Snapshot, error) { return foldDoc(o) },
-	model.KindLog:     func(o []model.PackCommit) (model.Snapshot, error) { return foldLog(o) },
-	model.KindTask:    func(o []model.PackCommit) (model.Snapshot, error) { return foldTask(o) },
-	model.KindSprint:  func(o []model.PackCommit) (model.Snapshot, error) { return foldSprint(o) },
-	model.KindProject: func(o []model.PackCommit) (model.Snapshot, error) { return foldProject(o) },
-	model.KindRunbook: func(o []model.PackCommit) (model.Snapshot, error) { return foldRunbook(o) },
+	model.KindNote:          func(o []model.PackCommit) (model.Snapshot, error) { return foldNote(o) },
+	model.KindDoc:           func(o []model.PackCommit) (model.Snapshot, error) { return foldDoc(o) },
+	model.KindLog:           func(o []model.PackCommit) (model.Snapshot, error) { return foldLog(o) },
+	model.KindTask:          func(o []model.PackCommit) (model.Snapshot, error) { return foldTask(o) },
+	model.KindSprint:        func(o []model.PackCommit) (model.Snapshot, error) { return foldSprint(o) },
+	model.KindProject:       func(o []model.PackCommit) (model.Snapshot, error) { return foldProject(o) },
+	model.KindRunbook:       func(o []model.PackCommit) (model.Snapshot, error) { return foldRunbook(o) },
+	model.KindInvestigation: func(o []model.PackCommit) (model.Snapshot, error) { return foldInvestigation(o) },
 }
 
 // Fold linearizes the chain and replays its operation packs into a snapshot,
 // dispatching on the create op: a create_note chain folds to model.Note, a
 // create_doc chain to model.Doc, a create_log chain to model.Log, a create_task
 // chain to model.Task, a create_sprint chain to model.Sprint, a create_project
-// chain to model.Project, and a create_runbook chain to model.Runbook.
+// chain to model.Project, a create_runbook chain to model.Runbook, and a
+// create_investigation chain to model.Investigation.
 // Set-valued snapshot fields come back as
 // non-nil sorted slices; anchors sort by (kind, value). The one exception is
 // Attachments (LWW by name), which sorts by name and comes back nil when
@@ -139,6 +141,16 @@ func Runbook(commits []model.PackCommit) (model.Runbook, error) {
 		return model.Runbook{}, err
 	}
 	return foldRunbook(ordered)
+}
+
+// Investigation linearizes the chain and folds it as an investigation. It fails
+// with ErrKindMismatch when the chain was created as a different kind.
+func Investigation(commits []model.PackCommit) (model.Investigation, error) {
+	ordered, err := Linearize(commits)
+	if err != nil {
+		return model.Investigation{}, err
+	}
+	return foldInvestigation(ordered)
 }
 
 // dispatch returns the boxing fold for an already-linearized chain whose first

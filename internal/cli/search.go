@@ -17,11 +17,12 @@ import (
 // searchDTO is one merged hit of the top-level search: a kind discriminator
 // plus the matching entity DTO, mutually exclusive like relevantDTO's fields.
 type searchDTO struct {
-	Kind    string      `json:"kind"`
-	Note    *noteDTO    `json:"note,omitempty"`
-	Doc     *docDTO     `json:"doc,omitempty"`
-	Log     *logDTO     `json:"log,omitempty"`
-	Runbook *runbookDTO `json:"runbook,omitempty"`
+	Kind          string            `json:"kind"`
+	Note          *noteDTO          `json:"note,omitempty"`
+	Doc           *docDTO           `json:"doc,omitempty"`
+	Log           *logDTO           `json:"log,omitempty"`
+	Runbook       *runbookDTO       `json:"runbook,omitempty"`
+	Investigation *investigationDTO `json:"investigation,omitempty"`
 }
 
 // searchHit pairs one matched entity with its kind's own rank tier, so the
@@ -43,7 +44,7 @@ func newSearchCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
-		Short: "Ranked search across every note, doc, log, and runbook",
+		Short: "Ranked search across every note, doc, log, runbook, and investigation",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, c, err := openStoreClient()
@@ -127,6 +128,14 @@ func searchAllKinds(ctx context.Context, c *notes.Client, query string, f notes.
 		hits = append(hits, searchHit{snap: rb, tier: textTier(rb.Title, rb.Labels, bodies, q)})
 	}
 
+	invs, err := c.SearchInvestigations(ctx, query, f)
+	if err != nil {
+		return nil, err
+	}
+	for _, inv := range invs {
+		hits = append(hits, searchHit{snap: inv, tier: textTier(inv.Title, inv.Tags, investigationSearchBodies(inv), q)})
+	}
+
 	slices.SortFunc(hits, compareSearchHits)
 	return hits, nil
 }
@@ -174,6 +183,13 @@ func printSearchHits(cmd *cobra.Command, s *store.Store, hits []searchHit, jsonO
 			case model.Runbook:
 				rb := newRunbookDTO(v)
 				dto.Runbook = &rb
+			case model.Investigation:
+				atts, err := entityAttachments(cmd.Context(), s, v.Attachments)
+				if err != nil {
+					return err
+				}
+				inv := newInvestigationDTO(v, atts)
+				dto.Investigation = &inv
 			default:
 				panic(fmt.Sprintf("searchAllKinds returned unknown snapshot %T", h.snap))
 			}
@@ -192,6 +208,8 @@ func printSearchHits(cmd *cobra.Command, s *store.Store, hits []searchHit, jsonO
 			lean = leanLogLine(v)
 		case model.Runbook:
 			lean = leanRunbookLine(v)
+		case model.Investigation:
+			lean = leanInvestigationLine(v)
 		default:
 			panic(fmt.Sprintf("searchAllKinds returned unknown snapshot %T", h.snap))
 		}
@@ -200,4 +218,16 @@ func printSearchHits(cmd *cobra.Command, s *store.Store, hits []searchHit, jsonO
 		}
 	}
 	return nil
+}
+
+func investigationSearchBodies(inv model.Investigation) []string {
+	bodies := make([]string, 0, 3+len(inv.Entries)+len(inv.Findings))
+	bodies = append(bodies, inv.Premise, inv.Body, inv.RootCause)
+	for _, entry := range inv.Entries {
+		bodies = append(bodies, entry.Text)
+	}
+	for _, finding := range inv.Findings {
+		bodies = append(bodies, finding.Text)
+	}
+	return bodies
 }

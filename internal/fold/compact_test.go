@@ -476,6 +476,147 @@ func TestFoldRunbookCompactedEqualsFull(t *testing.T) {
 	}
 }
 
+// TestFoldInvestigationCompactedEqualsFull folds an investigation chain where a
+// terminal status, a finding disposition, and timeline entries all land before a
+// seed-safe checkpoint, then a reopen-after-terminal, more entries, and a
+// re-root-cause land in the suffix. The seeded fold must equal the full replay,
+// including entries spanning the seed, the pre-checkpoint finding disposition,
+// and the ClosedAt/ClosedBy zeroing when the reopen crosses the seed boundary.
+func TestFoldInvestigationCompactedEqualsFull(t *testing.T) {
+	c0 := mk("c0", nil, "alice", 100, 1, model.CreateInvestigation{Nonce: "n", Title: "T0", Premise: "P", Tags: []string{"a"}})
+	c1 := mk("c1", []string{"c0"}, "bob", 200, 2,
+		model.AppendEntry{Text: "first"},
+		model.AddFinding{ID: "f1", Text: "suspect A"},
+		model.SetInvestigationStatus{Status: model.InvestigationConfirmed}, // terminal before the checkpoint
+	)
+	c2 := mk("c2", []string{"c1"}, "carol", 300, 3,
+		model.AppendEntry{Text: "second"},
+		model.SetFindingStatus{ID: "f1", Status: model.FindingCleared, Note: "ruled out"}, // disposition before the checkpoint
+	)
+	state, err := fold.Investigation([]model.PackCommit{c0, c1, c2})
+	if err != nil {
+		t.Fatalf("fold prefix: %v", err)
+	}
+	cK := cp("cK", "c2", "compactor", 350, 4, state, 3, "c0", "c1", "c2")
+	cKempty := mk("cK", []string{"c2"}, "compactor", 350, 4)
+	c3 := mk("c3", []string{"cK"}, "dave", 400, 5,
+		model.AppendEntry{Text: "third"},
+		model.SetInvestigationStatus{Status: model.InvestigationOpen}, // reopen-after-terminal across the seed boundary
+	)
+	c4 := mk("c4", []string{"c3"}, "erin", 500, 6,
+		model.AppendEntry{Text: "fourth"},
+		model.SetRootCause{Text: "unbuffered chan"},
+		model.SetInvestigationStatus{Status: model.InvestigationRootCaused},
+	)
+	compacted := []model.PackCommit{c0, c1, c2, cK, c3, c4}
+	full := []model.PackCommit{c0, c1, c2, cKempty, c3, c4}
+
+	gotFull, err := fold.Investigation(full)
+	if err != nil {
+		t.Fatalf("fold full: %v", err)
+	}
+	gotCompact, err := fold.Investigation(compacted)
+	if err != nil {
+		t.Fatalf("fold compacted: %v", err)
+	}
+	if !reflect.DeepEqual(gotCompact, gotFull) {
+		t.Fatalf("compacted = %+v\nfull = %+v", gotCompact, gotFull)
+	}
+	wantEntries := []model.LogEntry{
+		{Author: "bob", TS: 200, Text: "first"},
+		{Author: "carol", TS: 300, Text: "second"},
+		{Author: "dave", TS: 400, Text: "third"},
+		{Author: "erin", TS: 500, Text: "fourth"},
+	}
+	if !reflect.DeepEqual(gotCompact.Entries, wantEntries) {
+		t.Fatalf("Entries = %+v, want %+v", gotCompact.Entries, wantEntries)
+	}
+	if gotCompact.Status != model.InvestigationRootCaused {
+		t.Fatalf("Status = %q, want root_caused", gotCompact.Status)
+	}
+	if gotCompact.ClosedAt != 0 || gotCompact.ClosedBy != "" {
+		t.Fatalf("closed = (%d,%q), want (0,\"\") after reopen across seed", gotCompact.ClosedAt, gotCompact.ClosedBy)
+	}
+	if len(gotCompact.Findings) != 1 || gotCompact.Findings[0].Status != model.FindingCleared {
+		t.Fatalf("Findings = %+v, want [f1=cleared] surviving the seed", gotCompact.Findings)
+	}
+	if gotCompact.RootCause != "unbuffered chan" || gotCompact.Head != "c4" {
+		t.Fatalf("rootCause/head = (%q,%q), want (unbuffered chan,c4)", gotCompact.RootCause, gotCompact.Head)
+	}
+	//nolint:gosec // G404: deterministic PRNG seeds a reproducible fold fuzz; not security-relevant.
+	r := rand.New(rand.NewPCG(31, 37))
+	for i := range 30 {
+		got, err := fold.Investigation(shuffled(compacted, r))
+		if err != nil {
+			t.Fatalf("shuffle %d: %v", i, err)
+		}
+		if !reflect.DeepEqual(got, gotFull) {
+			t.Fatalf("shuffle %d = %+v, want %+v", i, got, gotFull)
+		}
+	}
+}
+
+// TestFoldInvestigationConcurrentCheckpoints is the investigation convergence
+// trap: two replicas each dispose a distinct finding and compact over their own
+// frontier, then a union merge joins both checkpoints. The newest-coverage
+// checkpoint is not seed-safe, so the fold falls back to the full replay where
+// both dispositions survive.
+func TestFoldInvestigationConcurrentCheckpoints(t *testing.T) {
+	c0 := mk("c0", nil, "root", 100, 1, model.CreateInvestigation{Nonce: "n", Title: "T", Premise: "P"})
+	c1 := mk("c1", []string{"c0"}, "root", 150, 2,
+		model.AddFinding{ID: "f1", Text: "suspect A"},
+		model.AddFinding{ID: "f2", Text: "suspect B"},
+	)
+	a1 := mk("a1", []string{"c1"}, "alice", 200, 3, model.SetFindingStatus{ID: "f1", Status: model.FindingCleared, Note: "a"})
+	b1 := mk("b1", []string{"c1"}, "bob", 210, 3, model.SetFindingStatus{ID: "f2", Status: model.FindingConfirmed, Note: "b"})
+	stateA, err := fold.Investigation([]model.PackCommit{c0, c1, a1})
+	if err != nil {
+		t.Fatalf("fold A: %v", err)
+	}
+	stateB, err := fold.Investigation([]model.PackCommit{c0, c1, b1})
+	if err != nil {
+		t.Fatalf("fold B: %v", err)
+	}
+	ka := cp("ka", "a1", "alice", 250, 4, stateA, 3, "c0", "c1", "a1")
+	kb := cp("kb", "b1", "bob", 260, 4, stateB, 3, "c0", "c1", "b1")
+	merge := mk("mmm", []string{"ka", "kb"}, "alice", 300, 5)
+	combined := []model.PackCommit{c0, c1, a1, ka, b1, kb, merge}
+
+	kaEmpty := mk("ka", []string{"a1"}, "alice", 250, 4)
+	kbEmpty := mk("kb", []string{"b1"}, "bob", 260, 4)
+	plain := []model.PackCommit{c0, c1, a1, kaEmpty, b1, kbEmpty, merge}
+
+	want, err := fold.Investigation(plain)
+	if err != nil {
+		t.Fatalf("fold plain: %v", err)
+	}
+	got, err := fold.Investigation(combined)
+	if err != nil {
+		t.Fatalf("fold combined: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("combined = %+v\nplain = %+v", got, want)
+	}
+	wantFindings := []model.Finding{
+		{ID: "f1", Text: "suspect A", Status: model.FindingCleared, Note: "a"},
+		{ID: "f2", Text: "suspect B", Status: model.FindingConfirmed, Note: "b"},
+	}
+	if !reflect.DeepEqual(got.Findings, wantFindings) {
+		t.Fatalf("Findings = %+v, want both dispositions surviving", got.Findings)
+	}
+	//nolint:gosec // G404: deterministic PRNG seeds a reproducible fold fuzz; not security-relevant.
+	r := rand.New(rand.NewPCG(41, 43))
+	for i := range 50 {
+		s, err := fold.Investigation(shuffled(combined, r))
+		if err != nil {
+			t.Fatalf("shuffle %d: %v", i, err)
+		}
+		if !reflect.DeepEqual(s, want) {
+			t.Fatalf("shuffle %d = %+v, want %+v", i, s, want)
+		}
+	}
+}
+
 // TestFoldRunbookConcurrentCheckpoints is the runbook convergence trap: two
 // replicas each start a distinct run and compact over their own frontier, then
 // a union merge joins both checkpoints. The newest-coverage checkpoint is not

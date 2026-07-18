@@ -19,6 +19,21 @@ var (
 	// ErrCycle reports a dependency edge that would close a cycle in the task
 	// blocked-by graph.
 	ErrCycle = errors.New("dependency cycle")
+	// ErrIllegalTransition reports an investigation status transition the
+	// lifecycle machine forbids from the current status. The wrapping error names
+	// the current and requested status.
+	ErrIllegalTransition = errors.New("illegal investigation transition")
+	// ErrMissingReason reports a verb that requires an evidence reason — a finding
+	// disposition's why, a transition's proof or reopen reason, or a fix carrying
+	// neither a commit nor a text entry — called with an empty one.
+	ErrMissingReason = errors.New("reason required")
+	// ErrEmptyTitle reports a create called with an empty title.
+	ErrEmptyTitle = errors.New("title required")
+	// ErrEmptyPremise reports an investigation opened with an empty premise. A
+	// premise is immutable, so an empty one can never be repaired.
+	ErrEmptyPremise = errors.New("premise required")
+	// ErrEmptyFinding reports a finding added or edited with empty text.
+	ErrEmptyFinding = errors.New("finding text required")
 )
 
 // AmbiguousError is the rich candidate set behind ErrAmbiguous, re-exported so

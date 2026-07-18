@@ -1,10 +1,11 @@
 // Builds the flat entity index that powers the Browse tab and the header's
-// global search: one uniform Row per live entity, folded from the six kind-typed
+// global search: one uniform Row per live entity, folded from the kind-typed
 // snapshots. Every column, facet, and search field is precomputed here so the
 // table, kanban, and scorer stay presentational. Pure — no fetch, no DOM.
 
 import type {
   DocSnapshot,
+  InvestigationSnapshot,
   LogSnapshot,
   NoteSnapshot,
   ProjectSnapshot,
@@ -214,6 +215,40 @@ function runbookRow(s: RunbookSnapshot): Row {
   };
 }
 
+function investigationRow(s: InvestigationSnapshot): Row {
+  return {
+    kind: "investigation",
+    id: s.id,
+    title: s.title,
+    titleLower: s.title.toLowerCase(),
+    bodyLower: haystack([
+      s.premise,
+      ...s.entries.map((entry) => entry.text),
+      s.root_cause,
+      s.body,
+      ...s.findings.flatMap((finding) => [finding.text, finding.note ?? ""]),
+      ...s.tags,
+      ...s.anchors.map((anchor) => anchor.value),
+      s.id,
+    ]),
+    status: s.status,
+    priority: null,
+    assignee: "",
+    branch: "",
+    sprint: "",
+    project: "",
+    tags: s.tags,
+    updated: s.updated_at,
+    verifiedAt: 0,
+    verifiable: false,
+    stale: false,
+    superseded: s.superseded_by.length > 0,
+    neverVerified: false,
+    criteriaMet: 0,
+    criteriaTotal: 0,
+  };
+}
+
 // buildIndex folds a StateResponse into the flat Row index, in kind order.
 export function buildIndex(state: StateResponse): Row[] {
   return [
@@ -221,6 +256,7 @@ export function buildIndex(state: StateResponse): Row[] {
     ...state.notes.map((n) => noteDocRow("note", n)),
     ...state.docs.map((d) => noteDocRow("doc", d)),
     ...state.logs.map(logRow),
+    ...state.investigations.map(investigationRow),
     ...state.runbooks.map(runbookRow),
     ...state.sprints.map(sprintRow),
     ...state.projects.map(projectRow),
@@ -238,10 +274,15 @@ const STATUS_RANK: Record<string, number> = {
   planned: 0,
   in_progress: 1,
   active: 1,
+  root_caused: 1,
+  fixed: 2,
   done: 3,
   completed: 3,
+  confirmed: 3,
+  exonerated: 3,
   archived: 3,
   cancelled: 4,
+  abandoned: 4,
 };
 
 // statusRank orders a status along the lifecycle (actionable first) for the

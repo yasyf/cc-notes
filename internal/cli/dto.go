@@ -105,6 +105,42 @@ type logDTO struct {
 	Attachments []attachmentDTO `json:"attachments"`
 }
 
+// findingDTO is one investigation finding with its structural disposition and
+// the evidence supporting the latest disposition.
+type findingDTO struct {
+	ID     string `json:"id"`
+	Text   string `json:"text"`
+	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
+}
+
+// investigationDTO fixes the JSON field order and formats for investigation
+// output, including the immutable premise, structural lifecycle, ordered
+// findings and timeline entries, verdict fields, and outbound evidence links.
+type investigationDTO struct {
+	ID           string          `json:"id"`
+	Title        string          `json:"title"`
+	Premise      string          `json:"premise"`
+	Body         string          `json:"body"`
+	Status       string          `json:"status"`
+	RootCause    string          `json:"root_cause"`
+	Findings     []findingDTO    `json:"findings"`
+	Entries      []logEntryDTO   `json:"entries"`
+	FollowUps    []string        `json:"follow_ups"`
+	FixCommits   []string        `json:"fix_commits"`
+	Commits      []string        `json:"commits"`
+	Labels       []string        `json:"labels"`
+	Anchors      []anchorDTO     `json:"anchors"`
+	SupersededBy []string        `json:"superseded_by"`
+	Author       string          `json:"author"`
+	CreatedAt    string          `json:"created_at"`
+	UpdatedAt    string          `json:"updated_at"`
+	ClosedAt     *string         `json:"closed_at"`
+	ClosedBy     *string         `json:"closed_by"`
+	Deleted      bool            `json:"deleted"`
+	Attachments  []attachmentDTO `json:"attachments"`
+}
+
 // commentDTO is one task comment with its timestamp rendered RFC3339 UTC.
 type commentDTO struct {
 	Author string `json:"author"`
@@ -362,6 +398,46 @@ func logEntryDTOs(entries []model.LogEntry) []logEntryDTO {
 		out[i] = logEntryDTO{Author: string(e.Author), TS: render.RFC3339(e.TS), Text: e.Text, Model: render.OptString(e.Model)}
 	}
 	return out
+}
+
+// findingDTOs renders findings into their fixed-order DTO form, always non-nil.
+func findingDTOs(findings []model.Finding) []findingDTO {
+	out := make([]findingDTO, len(findings))
+	for i, finding := range findings {
+		out[i] = findingDTO{ID: finding.ID, Text: finding.Text, Status: string(finding.Status), Note: finding.Note}
+	}
+	return out
+}
+
+// newInvestigationDTO renders an investigation snapshot into its fixed-order DTO.
+func newInvestigationDTO(inv model.Investigation, atts []attachmentDTO) investigationDTO {
+	anchors := make([]anchorDTO, len(inv.Anchors))
+	for i, anchor := range inv.Anchors {
+		anchors[i] = anchorDTO{Kind: string(anchor.Kind), Value: anchor.Value, Witness: nil}
+	}
+	return investigationDTO{
+		ID:           string(inv.ID),
+		Title:        inv.Title,
+		Premise:      inv.Premise,
+		Body:         inv.Body,
+		Status:       string(inv.Status),
+		RootCause:    inv.RootCause,
+		Findings:     findingDTOs(inv.Findings),
+		Entries:      logEntryDTOs(inv.Entries),
+		FollowUps:    render.IDStrings(inv.FollowUps),
+		FixCommits:   render.SHAStrings(inv.FixCommits),
+		Commits:      render.SHAStrings(inv.Commits),
+		Labels:       render.EmptyNotNil(inv.Tags),
+		Anchors:      anchors,
+		SupersededBy: render.IDStrings(inv.SupersededBy),
+		Author:       string(inv.Author),
+		CreatedAt:    render.RFC3339(inv.CreatedAt),
+		UpdatedAt:    render.RFC3339(inv.UpdatedAt),
+		ClosedAt:     render.OptTime(inv.ClosedAt),
+		ClosedBy:     render.OptString(string(inv.ClosedBy)),
+		Deleted:      inv.Deleted,
+		Attachments:  atts,
+	}
 }
 
 func newTaskDTO(t model.Task, blocks []model.EntityID) taskDTO {

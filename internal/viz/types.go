@@ -90,7 +90,8 @@ type Event struct {
 // carries plus the per-kind fields the legend surfaces. Tasks fill Status,
 // Branch, Assignee, StartedAt, ClosedAt, Sprint, and Project; notes and docs
 // fill VerifiedAt, Stale, and Superseded; sprints and projects fill Status,
-// StartDate, EndDate, and Project. Absent fields marshal away via omitempty.
+// StartDate, EndDate, and Project; runbooks fill Status; investigations fill
+// Status and ClosedAt. Absent fields marshal away via omitempty.
 type EntitySummary struct {
 	Kind       string         `json:"kind"`
 	ID         model.EntityID `json:"id"`

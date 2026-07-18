@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 )
@@ -41,8 +42,9 @@ func bodyArg(cmd *cobra.Command, value string) (string, error) {
 // freeText resolves free-form content from exactly one of: the positional pos
 // (present iff posGiven), the flag flagName (value flagVal), or stdin (either
 // source given as "-"). More than one is a UsageError; zero is too when
-// required. Both errors name all three forms. The chosen value flows through
-// bodyArg, so "-" reads stdin with trailing newlines trimmed.
+// required, as is a required source that resolves to empty text. Both source
+// errors name all three forms. The chosen value flows through bodyArg, so "-"
+// reads stdin with trailing newlines trimmed.
 func freeText(cmd *cobra.Command, flagName, flagVal, pos string, posGiven, required bool) (string, error) {
 	flagged := cmd.Flags().Changed(flagName)
 	sources := 0
@@ -63,7 +65,14 @@ func freeText(cmd *cobra.Command, flagName, flagVal, pos string, posGiven, requi
 		if flagged {
 			value = flagVal
 		}
-		return bodyArg(cmd, value)
+		text, err := bodyArg(cmd, value)
+		if err != nil {
+			return "", err
+		}
+		if required && text == "" {
+			return "", &UsageError{Err: fmt.Errorf("%s requires text: a positional argument, --%s, or - for stdin", cmd.CommandPath(), flagName)}
+		}
+		return text, nil
 	default:
 		return "", &UsageError{Err: fmt.Errorf("%s takes text from exactly one of a positional argument, --%s, or - for stdin", cmd.CommandPath(), flagName)}
 	}
@@ -81,6 +90,20 @@ func validateTitle(title, hint string) error {
 	default:
 		return nil
 	}
+}
+
+func validateInvestigationTitle(cmd *cobra.Command, title string) error {
+	if err := validateTitle(title, titleHintDesc); err != nil {
+		return err
+	}
+	for _, word := range strings.FieldsFunc(strings.ToUpper(title), func(r rune) bool { return !unicode.IsLetter(r) }) {
+		switch word {
+		case "RESOLVED", "FIXED", "FALSIFIED", "CONFIRMED":
+			_, err := fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: investigation title contains %s; status is structural — use a transition verb instead\n", word)
+			return err
+		}
+	}
+	return nil
 }
 
 // errEmptyDocBody is the shared UsageError for a doc created or edited to carry

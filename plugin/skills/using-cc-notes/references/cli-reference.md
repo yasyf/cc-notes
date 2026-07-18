@@ -59,6 +59,12 @@ repeatable procedure of ordered steps whose every execution is a tracked run.
   pending), and closes `succeeded`, `failed`, or `abandoned`. Step and run ids are nonces that
   resolve by prefix like criterion ids. A runbook is `active` or `archived`; every mutating verb
   conflicts (exit 4) on an archived runbook until `activate` restores it.
+- **Investigations are repo-global.** An investigation records one debugging arc: an immutable
+  premise set at open, an append-only evidence timeline, findings with per-finding dispositions
+  (`open`, `confirmed`, `cleared` — each disposition carries its evidence), and a typed status
+  (`open → root_caused → fixed → confirmed`, with `exonerated` and `abandoned` terminals) that
+  holds the verdict instead of the title. It anchors like a note but never drifts — a chronicle
+  has no freshness lifecycle. Finding ids are nonces that resolve by prefix like criterion ids.
 
 This reference describes cc-notes v0.22.0 and later — one flag vocabulary across every noun:
 `--body` for the long text, `--label` for labels. An unknown or renamed flag exits 2 with a hint
@@ -75,6 +81,7 @@ the `tags` field — in `--json` and in `show` headers alike.
 | Sprint | `<short7-id>` `<status>` `<title>` |
 | Project | `<short7-id>` `<status>` `<title>` |
 | Runbook | `<short7-id>` `<status>` `<title>` |
+| Investigation | `<short7-id>` `<status>` `<title>` |
 | Note | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` |
 | Doc | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` `<when trigger\|->` |
 | Log | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` |
@@ -1469,6 +1476,313 @@ was recorded.
 are historical and not shown. `position` is an opaque ordering key — compare, never parse.
 `anchors` is omitted when empty, and a runbook anchor's `witness` is always `null` — runbooks
 have no freshness lifecycle to witness.
+
+## Investigation commands
+
+An investigation is the durable record of one debugging arc: an immutable **premise** (the
+falsifiable suspicion under test), an append-only evidence **timeline**, structured
+**findings** each carrying its own disposition, and a **status** that holds the verdict
+structurally — never in the title. Investigations are repo-global, resolve by id prefix, and
+carry the same optional commit, path, directory, and branch anchors as a note. Like a log they
+have no freshness lifecycle — no verify, no drift, no supersede-on-review — because a chronicle
+never claims current truth; `relevant` surfaces them by anchor with the status as the signal.
+Status moves `open → root_caused → fixed → confirmed`; `exonerated` (the premise was falsified —
+that is a verdict) and `abandoned` (walked away without one) are the other terminals. `reopen`
+returns any terminal investigation to `open`, and the pre-terminal edges also walk backward
+(`fixed → root_caused`, `fixed → open`, `root_caused → open`) when a verdict unravels
+mid-flight. Every transition verb records its evidence as a timeline entry and flips the status
+in the same commit, so the record self-documents; an illegal transition is a conflict (exit 4)
+naming the current and requested status. Titles stay verdict-free — a title containing
+RESOLVED, FIXED, FALSIFIED, or CONFIRMED draws a warning, since the status column already says
+it. Every command takes `--json`.
+
+### `cc-notes investigation open TITLE [BODY]`
+
+MCP: investigation_open (title, premise, findings, labels, commits, paths, dirs, branches, attach)
+
+Open an investigation (alias: `add`). `BODY` is the premise — positional, `--body`, or `-`
+(stdin) — and it is immutable after create: the wrong initial suspicion stays on the record as
+the arc's starting point. Title and premise are both required and non-empty. An open whose
+title, premise, labels, anchors, and attachments all match a live non-terminal investigation is
+a duplicate — the existing record is returned with a warning — but an open carrying `--finding`
+always roots a fresh investigation.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--body <text>` | none | The premise; positional `BODY` and `-` (stdin) are equivalent |
+| `--finding <text>` | none | Initial finding, born `open`; repeatable, kept in flag order |
+| `--label <label>` | none | Label; repeatable |
+| `--commit <sha>` | none | Commit anchor (the suspect commit, say); repeatable |
+| `--path <path>` | none | Path anchor; repeatable |
+| `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
+| `--branch <branch>` | none | Branch anchor; repeatable |
+| `--attach <file>` | none | Attach a file's content via git-lfs; repeatable, uploads on sync |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes investigation open "TestPool deadlock on CI" "Hangs began after 3d55ae2e landed; suspect the pool rewrite." --finding "commit 3d55ae2e (pool rewrite)" --path internal/pool --label ci
+a1b2c3d	open	TestPool deadlock on CI
+```
+
+### `cc-notes investigation list`
+
+MCP: investigation_list (status, all, labels, path, commit, dir, branch)
+
+List investigations, one lean line each. The default scope is the in-flight set — `open`,
+`root_caused`, and `fixed` — so terminals drop out of view once the arc closes.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--status <csv>` | `open,root_caused,fixed` | Status filter, comma-separated; mutually exclusive with `--all` |
+| `--all` | off | Every status, terminals included |
+| `--label <label>` | none | Require label; repeatable, ANDed |
+| `--commit <sha>` | none | Require commit anchor |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--json` | off | Emit JSON |
+
+### `cc-notes investigation show ID`
+
+MCP: investigation_show (id)
+
+Show one investigation: a fixed-order header block (id, status, title, labels, the four anchor
+kinds, fix_commits, follow_ups, author, created, updated, closed, closed_by, and — once closed —
+a one-line resolution, so the verdict reads without scrolling), the premise, the findings with
+their dispositions, the timeline in strict chronological order (evidence entries interleaved
+with transition events, each entry's attachments named beneath it), then the root cause and
+resolution blocks.
+
+```console
+$ cc-notes investigation show a1b2c3d
+id: a1b2c3d9e1f0a4d2c8b7365e9a01f4b2d6c81e57
+status: confirmed
+title: TestPool deadlock on CI
+labels: ci
+commits: -
+paths: internal/pool
+dirs: -
+branches: -
+fix_commits: 5e3c9ce
+follow_ups: -
+author: ada <ada@example.com>
+created: 2026-07-18T01:39:02Z
+updated: 2026-07-18T09:12:44Z
+closed: 2026-07-18T09:12:44Z
+closed_by: ada <ada@example.com>
+resolution: 20 green CI runs on main since the fix; no recurrence.
+attachment: goroutine-stacks.txt (2841 bytes, oid a7ad957)
+
+premise:
+Hangs began after 3d55ae2e landed; suspect the pool rewrite.
+
+findings:
+  f3a91c2 cleared commit 3d55ae2e (pool rewrite)
+     why: bisect reproduces 4 commits earlier
+
+timeline:
+
+-- ada <ada@example.com> 2026-07-18T02:10:31Z
+Bisect: hang reproduces at 3d55ae2e~4 too.
+  attachment: goroutine-stacks.txt
+
+-- ada <ada@example.com> 2026-07-18T02:41:12Z
+finding f3a91c2 → cleared: bisect reproduces 4 commits earlier
+
+-- ada <ada@example.com> 2026-07-18T05:58:47Z
+Unbuffered results chan + early return on ctx cancel leaks a blocked send.
+
+-- ada <ada@example.com> 2026-07-18T05:58:47Z
+status: open → root_caused
+
+-- ada <ada@example.com> 2026-07-18T08:44:01Z
+status: root_caused → fixed
+
+-- ada <ada@example.com> 2026-07-18T09:12:44Z
+20 green CI runs on main since the fix; no recurrence.
+
+-- ada <ada@example.com> 2026-07-18T09:12:44Z
+status: fixed → confirmed
+
+root cause:
+Unbuffered results chan + early return on ctx cancel leaks a blocked send.
+
+resolution:
+20 green CI runs on main since the fix; no recurrence.
+```
+
+The `resolution` header and block show the resolution summary (`edit --body`) when one was
+written, else the latest closing evidence — above, the confirm proof.
+
+### `cc-notes investigation append ID [TEXT]`
+
+MCP: investigation_append (id, text, attach)
+
+Append one evidence entry to the timeline — timestamped, authored, immutable. Entry text comes
+from the positional `TEXT` or `-` (stdin); text or at least one `--attach` is required. An
+attach that reuses a live attachment name is refused.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--attach <file>` | none | Attach a file's content via git-lfs; repeatable, uploads on sync |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes investigation append a1b2 "Reproduced locally: -race -count=50 hangs 3/50." --attach /tmp/goroutine-stacks.txt
+a1b2c3d	open	TestPool deadlock on CI
+```
+
+### `cc-notes investigation finding add INVESTIGATION [TEXT]`
+
+MCP: investigation_finding_add (id, text)
+
+Add a finding — a suspect hypothesis or review finding under test, born `open`. Text comes from
+the positional `TEXT`, `--body`, or `-` (stdin), and is required non-empty. Finding ids are
+nonces that resolve by prefix within their investigation, like criterion ids.
+
+### `cc-notes investigation finding clear INVESTIGATION FINDING` · `confirm`
+
+MCP: investigation_finding_clear (id, finding, why)
+
+MCP: investigation_finding_confirm (id, finding, why)
+
+Record a finding's disposition: `clear` rules it out (the exoneration move), `confirm` marks it
+as the cause. `--why` is required — the disposition carries its evidence.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--why <text>` | none | Evidence supporting the disposition; required |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes investigation finding clear a1b2 f3a --why "bisect reproduces 4 commits earlier"
+a1b2c3d	open	TestPool deadlock on CI
+```
+
+### `cc-notes investigation finding edit INVESTIGATION FINDING [TEXT]` · `rm` · `list`
+
+MCP: investigation_finding_edit (id, finding, text)
+
+MCP: investigation_finding_rm (id, finding)
+
+MCP: investigation_finding_list (id)
+
+`finding edit` rewrites a finding's text (positional `TEXT`, `--body`, or `-`; required
+non-empty). `finding rm` removes one — an empty finding prefix is refused rather than matching
+a sole finding. `finding list` prints `<short7-finding-id>` `<status>` `<text>` per finding,
+with an indented `why:` line where a disposition recorded evidence.
+
+### `cc-notes investigation root-cause ID TEXT`
+
+MCP: investigation_root_cause (id, text)
+
+Record the root cause and move to `root_caused`. `TEXT` is a required positional (or `-` for
+stdin) — the cause statement lands as both the `root_cause` field and a timeline entry, in one
+commit. Legal from `open` (and backward from `fixed` when the fix theory unravels).
+
+```console
+$ cc-notes investigation root-cause a1b2 "Unbuffered results chan + early return on ctx cancel leaks a blocked send."
+a1b2c3d	root_caused	TestPool deadlock on CI
+```
+
+### `cc-notes investigation fix ID [TEXT]`
+
+MCP: investigation_fix (id, text, commits)
+
+Record the fixing commits and move to `fixed`. At least one `--commit` is required; shas
+resolve strictly against the local object database, so fetch first for a commit that only
+exists on the remote. The optional `TEXT` is a fix summary appended to the timeline.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--commit <sha>` | none | Fixing commit; repeatable, at least one required |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes investigation fix a1b2 --commit 5e3c9ce4
+a1b2c3d	fixed	TestPool deadlock on CI
+```
+
+### `cc-notes investigation confirm ID TEXT` · `exonerate` · `abandon` · `reopen`
+
+MCP: investigation_confirm (id, text)
+
+MCP: investigation_exonerate (id, text)
+
+MCP: investigation_abandon (id, text)
+
+MCP: investigation_reopen (id, text)
+
+The closing and reversal verbs. `confirm` (from `fixed`) records the proof — CI green, no
+recurrence — and closes the arc. `exonerate` falsifies the premise from `open` or
+`root_caused`; its `TEXT` says what actually held. `abandon` closes without a verdict from any
+non-terminal status; its `TEXT` is optional. `reopen` returns any terminal investigation to
+`open`; its `TEXT` (the regression, the new evidence) is required. `confirm`, `exonerate`, and
+`reopen` require `TEXT` as a positional — a bare id is a usage error before the store opens.
+Each verb appends its text to the timeline and flips the status in the same commit; the
+closing verbs stamp `closed`/`closed_by`, and `reopen` clears them.
+
+```console
+$ cc-notes investigation confirm a1b2 "20 green CI runs on main since 5e3c9ce4; no recurrence."
+a1b2c3d	confirmed	TestPool deadlock on CI
+```
+
+### `cc-notes investigation edit ID`
+
+MCP: investigation_edit (id, title, body, add_labels, rm_labels, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches)
+
+Edit the mutable header: title, resolution summary (`--body`), labels, and anchors — at least
+one flag is required. The premise has no edit path, and timeline entries are immutable; the
+evolving story belongs in `append` and the transition verbs.
+
+| Flag | Meaning |
+|------|---------|
+| `--title <text>` | New title (the verdict-free rule still applies) |
+| `--body <text>` | New resolution summary; `-` reads stdin |
+| `--add-label` / `--rm-label` | Label edits; repeatable |
+| `--add-commit` / `--rm-commit` | Commit anchor edits; repeatable |
+| `--add-path` / `--rm-path` | Path anchor edits; repeatable |
+| `--add-dir` / `--rm-dir` | Directory anchor edits; repeatable |
+| `--add-branch` / `--rm-branch` | Branch anchor edits; repeatable |
+| `--json` | Emit JSON |
+
+### `cc-notes investigation search QUERY`
+
+MCP: investigation_search (query, labels, limit, author, path, commit, dir, branch)
+
+Ranked search across titles, premises, timeline entries, finding texts, root causes, and
+resolution summaries. One lean line per hit — the status column travels with every result.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--label <label>` | none | Require label; repeatable, ANDed |
+| `--limit <n>` | 20 | Maximum results; 0 = all |
+| `--author <actor>` | none | Require author |
+| `--commit <sha>` / `--path <path>` / `--dir <dir>` / `--branch <branch>` | none | Require an anchor |
+| `--json` | off | Emit JSON |
+
+### `cc-notes investigation history ID`
+
+MCP: — (CLI-only: covered by the kind-agnostic history tool)
+
+The investigation's edit trail — who changed which fields, when. Takes `--reverse`, `--limit`,
+and `--json` like `cc-notes history`.
+
+### `cc-notes investigation rm ID`
+
+MCP: investigation_rm (id)
+
+Tombstone an investigation. The ref survives until `gc` prunes it.
+
+### JSON investigation shape
+
+`{"id":string,"title":string,"premise":string,"body":string,"status":string,"root_cause":string,"findings":[{"id":string,"text":string,"status":string,"note":string?}],"entries":[{"author":string,"ts":rfc3339,"text":string,"model":string?}],"follow_ups":[id…],"fix_commits":[sha…],"commits":[sha…],"labels":[…],"anchors":[{"kind":string,"value":string,"witness":null}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"closed_at":rfc3339|null,"closed_by":string|null,"attachments":[…]}`.
+`status` is `open`, `root_caused`, `fixed`, `confirmed`, `exonerated`, or `abandoned`; a
+finding's `status` is `open`, `confirmed`, or `cleared`, with `note` carrying the disposition
+evidence. `body` is the resolution summary. `fix_commits` names the commits recorded by `fix`;
+`commits` is the general commit-link set `blame` unions with `cc-investigation:` trailers. An
+investigation anchor's `witness` is always `null` — investigations have no freshness lifecycle
+to witness.
 
 ## Note commands
 

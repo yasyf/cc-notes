@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,6 +120,11 @@ func TestDedupePerKind(t *testing.T) {
 			base: []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: "T", Description: "D", Labels: []string{"a"}}},
 			diff: []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: "T", Description: "D", Labels: []string{"a", "b"}}},
 		},
+		{
+			name: "investigation",
+			base: []model.Op{model.CreateInvestigation{Nonce: model.NewNonce(), Title: "T", Premise: "P"}},
+			diff: []model.Op{model.CreateInvestigation{Nonce: model.NewNonce(), Title: "T", Premise: "different suspicion"}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := initStore(t)
@@ -187,6 +193,9 @@ func TestDedupeSkipsSupersededNote(t *testing.T) {
 // project never block re-adding identical content — the live-set filter drops
 // entities with ClosedAt set.
 func TestDedupeSkipsClosed(t *testing.T) {
+	mkInvestigation := func() []model.Op {
+		return []model.Op{model.CreateInvestigation{Nonce: model.NewNonce(), Title: "T", Premise: "P"}}
+	}
 	for _, tc := range []struct {
 		name  string
 		mk    func() []model.Op
@@ -212,6 +221,24 @@ func TestDedupeSkipsClosed(t *testing.T) {
 			mk:    func() []model.Op { return []model.Op{model.CreateProject{Nonce: model.NewNonce(), Title: "T"}} },
 			close: model.SetProjectStatus{Status: model.ProjectArchived},
 			kind:  model.KindProject,
+		},
+		{
+			name:  "investigation confirmed",
+			mk:    mkInvestigation,
+			close: model.SetInvestigationStatus{Status: model.InvestigationConfirmed},
+			kind:  model.KindInvestigation,
+		},
+		{
+			name:  "investigation exonerated",
+			mk:    mkInvestigation,
+			close: model.SetInvestigationStatus{Status: model.InvestigationExonerated},
+			kind:  model.KindInvestigation,
+		},
+		{
+			name:  "investigation abandoned",
+			mk:    mkInvestigation,
+			close: model.SetInvestigationStatus{Status: model.InvestigationAbandoned},
+			kind:  model.KindInvestigation,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -314,6 +341,14 @@ func TestDedupeSkipsUncoveredPack(t *testing.T) {
 				model.AddComment{Body: "note"},
 			},
 		},
+		{
+			name: "investigation with initial finding",
+			base: []model.Op{model.CreateInvestigation{Nonce: model.NewNonce(), Title: "T", Premise: "P"}},
+			pack: []model.Op{
+				model.CreateInvestigation{Nonce: model.NewNonce(), Title: "T", Premise: "P"},
+				model.AddFinding{ID: model.NewNonce(), Text: "suspect"},
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := initStore(t)
@@ -321,6 +356,63 @@ func TestDedupeSkipsUncoveredPack(t *testing.T) {
 			got := create(t, s, tc.pack)
 			if got.EntityID() == first.EntityID() {
 				t.Errorf("uncovered-pack create reused id %s", got.EntityID())
+			}
+		})
+	}
+}
+
+// TestDedupeInvestigation proves the investigation comparator spans every field
+// a create pack can carry: title, premise, and the shared tag, anchor, and
+// attachment bundles. Only an exact match (tags and anchors permuted) dedupes; a
+// create bringing new metadata roots a fresh entity so its metadata is never
+// silently lost.
+func TestDedupeInvestigation(t *testing.T) {
+	anchors := []model.Anchor{
+		{Kind: model.AnchorPath, Value: "internal/pool/pool.go"},
+		{Kind: model.AnchorDir, Value: "internal/pool"},
+	}
+	revAnchors := []model.Anchor{anchors[1], anchors[0]}
+	att := model.Attachment{Name: "stacks.txt", OID: strings.Repeat("a", 64), Size: 4096}
+	att2 := model.Attachment{Name: "goroutines.txt", OID: strings.Repeat("b", 64), Size: 2048}
+	mk := func(title, premise string, tags []string, anch []model.Anchor, atts ...model.Attachment) []model.Op {
+		ops := make([]model.Op, 0, 1+len(atts))
+		ops = append(ops, model.CreateInvestigation{Nonce: model.NewNonce(), Title: title, Premise: premise, Tags: tags, Anchors: anch})
+		for _, a := range atts {
+			ops = append(ops, model.AddAttachment(a))
+		}
+		return ops
+	}
+	base := mk("T", "P", []string{"a", "b"}, anchors, att)
+
+	for _, tc := range []struct {
+		name       string
+		ops        []model.Op
+		wantDedupe bool
+	}{
+		{"exact", mk("T", "P", []string{"a", "b"}, anchors, att), true},
+		{"permuted tags", mk("T", "P", []string{"b", "a"}, anchors, att), true},
+		{"permuted anchors", mk("T", "P", []string{"a", "b"}, revAnchors, att), true},
+		{"diff title", mk("T2", "P", []string{"a", "b"}, anchors, att), false},
+		{"diff premise", mk("T", "P2", []string{"a", "b"}, anchors, att), false},
+		{"diff tag", mk("T", "P", []string{"a", "c"}, anchors, att), false},
+		{"extra tag", mk("T", "P", []string{"a", "b", "c"}, anchors, att), false},
+		{"diff anchor", mk("T", "P", []string{"a", "b"}, []model.Anchor{{Kind: model.AnchorPath, Value: "internal/other.go"}}, att), false},
+		{"diff attachment", mk("T", "P", []string{"a", "b"}, anchors, att2), false},
+		{"no attachment", mk("T", "P", []string{"a", "b"}, anchors), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := initStore(t)
+			first := create(t, s, base)
+			if tc.wantDedupe {
+				got := mustDedupe(t, s, tc.ops)
+				if got.EntityID() != first.EntityID() {
+					t.Errorf("reused id = %s, want existing %s", got.EntityID(), first.EntityID())
+				}
+				return
+			}
+			got := create(t, s, tc.ops)
+			if got.EntityID() == first.EntityID() {
+				t.Errorf("distinct content reused id %s", got.EntityID())
 			}
 		})
 	}

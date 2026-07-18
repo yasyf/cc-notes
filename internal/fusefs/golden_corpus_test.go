@@ -44,7 +44,7 @@ const (
 
 // corpusEntry names one fixture and the snapshot it renders from. name is the
 // golden file basename; the extension follows the render format (markdown for
-// note/doc/log/runbook, JSON for task/sprint/project).
+// note/doc/log/runbook/investigation, JSON for task/sprint/project).
 type corpusEntry struct {
 	name string
 	snap model.Snapshot
@@ -53,7 +53,7 @@ type corpusEntry struct {
 // corpus returns every fixture in the frozen corpus, rebuilt fresh on each call
 // so no test can mutate another's snapshot.
 func corpus() []corpusEntry {
-	return concat(noteCorpus(), docCorpus(), logCorpus(), taskCorpus(), sprintCorpus(), projectCorpus(), runbookCorpus())
+	return concat(noteCorpus(), docCorpus(), logCorpus(), taskCorpus(), sprintCorpus(), projectCorpus(), runbookCorpus(), investigationCorpus())
 }
 
 func concat(groups ...[]corpusEntry) []corpusEntry {
@@ -136,14 +136,44 @@ func noteCorpus() []corpusEntry {
 			CreatedAt: cCreated,
 			UpdatedAt: cCreated,
 		}},
-		{"note_body_delimiter", model.Note{
-			ID:        "a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6",
-			Title:     "Dangling body",
-			Body:      "---\nfirst\n---\nlast, no trailing newline",
-			Author:    "A <a@x>",
-			CreatedAt: cCreated,
-			UpdatedAt: cCreated,
-		}},
+	}
+}
+
+// TestNoteBodyWithoutTrailingNewline pins the no-trailing-newline body case in
+// code: prek's end-of-file-fixer rewrites any such on-disk golden (see the
+// cc-notes note anchored to this file).
+func TestNoteBodyWithoutTrailingNewline(t *testing.T) {
+	n := model.Note{
+		ID:        "a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6",
+		Title:     "Dangling body",
+		Body:      "---\nfirst\n---\nlast, no trailing newline",
+		Author:    "A <a@x>",
+		CreatedAt: cCreated,
+		UpdatedAt: cCreated,
+	}
+	want := "---\n" +
+		"id: a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6\n" +
+		"title: Dangling body\n" +
+		"tags: []\n" +
+		"author: A <a@x>\n" +
+		"created: \"2025-12-12T02:54:56Z\"\n" +
+		"updated: \"2025-12-12T02:54:56Z\"\n" +
+		"---\n" +
+		"---\nfirst\n---\nlast, no trailing newline"
+	got := fusefs.RenderNote(n)
+	if string(got) != want {
+		t.Errorf("RenderNote:\n got %q\nwant %q", got, want)
+	}
+	p, err := fusefs.ParseNote(got)
+	if err != nil {
+		t.Fatalf("ParseNote: %v", err)
+	}
+	ops, err := fusefs.DiffNote(n, p)
+	if err != nil {
+		t.Fatalf("DiffNote: %v", err)
+	}
+	if len(ops) != 0 {
+		t.Errorf("round trip produced ops %#v, want none", ops)
 	}
 }
 
@@ -597,6 +627,123 @@ func runbookCorpus() []corpusEntry {
 	}
 }
 
+func investigationCorpus() []corpusEntry {
+	return []corpusEntry{
+		{"investigation_open_with_findings", model.Investigation{
+			ID:        "1111111111111111111111111111111111111111",
+			Title:     "CI worker deadlock",
+			Premise:   "Workers hang after the pool rewrite.",
+			Status:    model.InvestigationOpen,
+			FollowUps: []model.EntityID{"9999999999999999999999999999999999999999"},
+			Findings: []model.Finding{
+				{ID: "aaaa1111aaaa1111aaaa1111aaaa1111", Text: "The pool rewrite introduced the hang", Status: model.FindingOpen},
+				{ID: "bbbb2222bbbb2222bbbb2222bbbb2222", Text: "The hang predates the rewrite", Status: model.FindingCleared, Note: "The bisect reproduces four commits earlier"},
+			},
+			Entries: []model.LogEntry{
+				{Author: "Agent A <a@example.com>", TS: cCreated, Text: "Captured the first blocked worker stack."},
+			},
+			Tags: []string{"ci", "concurrency"},
+			Anchors: []model.Anchor{
+				{Kind: model.AnchorPath, Value: "internal/pool"},
+				{Kind: model.AnchorBranch, Value: "main"},
+			},
+			Author:    "Agent A <a@example.com>",
+			CreatedAt: cCreated,
+			UpdatedAt: cUpdated,
+			Head:      "1111000011110000111100001111000011110000",
+			Attachments: []model.Attachment{
+				{Name: "goroutines.txt", OID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Size: 4096},
+			},
+		}},
+		{"investigation_root_caused", model.Investigation{
+			ID:        "2222222222222222222222222222222222222222",
+			Title:     "Canceled collection leaks a sender",
+			Premise:   "Worker shutdown sometimes leaves the suite hung.",
+			Status:    model.InvestigationRootCaused,
+			RootCause: "An unbuffered result send survives the canceled collector.",
+			Findings: []model.Finding{
+				{ID: "cccc3333cccc3333cccc3333cccc3333", Text: "A sender remains blocked after cancellation", Status: model.FindingConfirmed, Note: "The goroutine dump shows the blocked send"},
+			},
+			Entries: []model.LogEntry{
+				{Author: "Agent A <a@example.com>", TS: cCreated, Text: "Reproduced with a canceled context."},
+				{Author: "Agent B <b@example.com>", TS: cUpdated, Text: "The sender outlives the collector return."},
+			},
+			Tags:      []string{"concurrency"},
+			Author:    "Agent A <a@example.com>",
+			CreatedAt: cCreated,
+			UpdatedAt: cUpdated,
+			Head:      "2222000022220000222200002222000022220000",
+		}},
+		{"investigation_confirmed_with_fix_commits", model.Investigation{
+			ID:        "3333333333333333333333333333333333333333",
+			Title:     "Buffered results prevent shutdown deadlock",
+			Premise:   "The collector can return while a worker is sending.",
+			Body:      "Buffer the result channel and wait for workers before returning.",
+			Status:    model.InvestigationConfirmed,
+			RootCause: "The unbuffered result channel leaves a worker blocked on send.",
+			Findings: []model.Finding{
+				{ID: "dddd4444dddd4444dddd4444dddd4444", Text: "The send blocks after collector cancellation", Status: model.FindingConfirmed, Note: "A focused race test reproduces the blocked sender"},
+			},
+			Entries: []model.LogEntry{
+				{Author: "Agent A <a@example.com>", TS: cCreated, Text: "Added a focused reproducer."},
+				{Author: "Agent V <v@example.com>", TS: cVerified, Text: "Twenty race runs completed without recurrence."},
+			},
+			FixCommits: []model.SHA{
+				"3333aaaa3333aaaa3333aaaa3333aaaa3333aaaa",
+				"4444bbbb4444bbbb4444bbbb4444bbbb4444bbbb",
+			},
+			Tags:      []string{"ci"},
+			Author:    "Agent A <a@example.com>",
+			CreatedAt: cCreated,
+			UpdatedAt: cClosed,
+			ClosedAt:  cClosed,
+			ClosedBy:  "Agent V <v@example.com>",
+			Head:      "3333000033330000333300003333000033330000",
+		}},
+		{"investigation_exonerated", model.Investigation{
+			ID:      "4444444444444444444444444444444444444444",
+			Title:   "Pool rewrite did not cause the hang",
+			Premise: "The pool rewrite introduced the worker hang.",
+			Body:    "The premise was falsified by a bisect before the rewrite.",
+			Status:  model.InvestigationExonerated,
+			Findings: []model.Finding{
+				{ID: "eeee5555eeee5555eeee5555eeee5555", Text: "The pool rewrite is the first bad change", Status: model.FindingCleared, Note: "The parent revision also hangs"},
+			},
+			Entries: []model.LogEntry{
+				{Author: "Agent A <a@example.com>", TS: cUpdated, Text: "Bisect reproduced the hang before the rewrite."},
+			},
+			Tags:      []string{"ci"},
+			Author:    "Agent A <a@example.com>",
+			CreatedAt: cCreated,
+			UpdatedAt: cClosed,
+			ClosedAt:  cClosed,
+			ClosedBy:  "Agent A <a@example.com>",
+			Head:      "4444000044440000444400004444000044440000",
+		}},
+		{"investigation_reopened", model.Investigation{
+			ID:        "5555555555555555555555555555555555555555",
+			Title:     "Shutdown hang recurred",
+			Premise:   "The shutdown hang may survive the buffered-channel fix.",
+			Body:      "The first fix removed one blocked-send path.",
+			Status:    model.InvestigationOpen,
+			RootCause: "The original blocked send was confirmed and fixed.",
+			Findings: []model.Finding{
+				{ID: "ffff6666ffff6666ffff6666ffff6666", Text: "The recurrence uses a second shutdown path", Status: model.FindingOpen},
+			},
+			Entries: []model.LogEntry{
+				{Author: "Agent V <v@example.com>", TS: cClosed, Text: "The original fix was confirmed."},
+				{Author: "Agent A <a@example.com>", TS: cEnd, Text: "A new hang reopened the investigation."},
+			},
+			FixCommits: []model.SHA{"5555cccc5555cccc5555cccc5555cccc5555cccc"},
+			Tags:       []string{"recurrence"},
+			Author:     "Agent A <a@example.com>",
+			CreatedAt:  cCreated,
+			UpdatedAt:  cEnd,
+			Head:       "5555000055550000555500005555000055550000",
+		}},
+	}
+}
+
 // renderSnapshot dispatches to the concrete render function for snap's kind.
 func renderSnapshot(snap model.Snapshot) []byte {
 	switch v := snap.(type) {
@@ -614,6 +761,8 @@ func renderSnapshot(snap model.Snapshot) []byte {
 		return fusefs.RenderProject(v)
 	case model.Runbook:
 		return fusefs.RenderRunbook(v)
+	case model.Investigation:
+		return fusefs.RenderInvestigation(v)
 	}
 	panic("golden corpus: unknown snapshot kind")
 }
@@ -699,6 +848,8 @@ func diffSnapshot(t *testing.T, snap model.Snapshot, edited []byte) (ops []model
 		return ops, true
 	case model.Runbook:
 		return nil, false
+	case model.Investigation:
+		return nil, false
 	}
 	panic("golden corpus: unknown snapshot kind")
 }
@@ -731,11 +882,12 @@ func TestGoldenRender(t *testing.T) {
 
 // TestGoldenRoundTrip proves that for every writable kind the committed golden
 // bytes parse and diff back to the source snapshot with no ops — the round-trip
-// property render->parse->diff == identity. The read-only runbook has no parse
-// path and is skipped.
+// property render->parse->diff == identity. Read-only kinds have no parse path
+// and are skipped.
 func TestGoldenRoundTrip(t *testing.T) {
 	for _, e := range corpus() {
-		if _, ok := e.snap.(model.Runbook); ok {
+		switch e.snap.(type) {
+		case model.Runbook, model.Investigation:
 			continue
 		}
 		t.Run(e.name, func(t *testing.T) {

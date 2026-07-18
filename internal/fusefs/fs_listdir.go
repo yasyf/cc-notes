@@ -7,6 +7,7 @@ import (
 	"maps"
 	"path"
 	"slices"
+	"strings"
 
 	"github.com/winfsp/cgofuse/fuse"
 
@@ -24,7 +25,10 @@ func (f *FS) listDir(p string) ([]string, int) {
 	names := map[string]bool{}
 	switch n := node.(type) {
 	case Root:
-		names["notes"], names["docs"], names["logs"], names["runbooks"], names["tasks"], names["sprints"], names["projects"], names["attachments"] = true, true, true, true, true, true, true, true
+		for _, layout := range layouts {
+			names[strings.TrimPrefix(layout.dir, "/")] = true
+		}
+		names["attachments"] = true
 	case KindDir:
 		snaps, err := f.store.ListSnapshots(f.ctx, n.Kind, store.ListOpts{})
 		if err != nil {
