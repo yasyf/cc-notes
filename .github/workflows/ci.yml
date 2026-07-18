@@ -88,8 +88,8 @@ jobs:
           python3 - <<'PY'
           import sys, tomllib
 
-          root = tomllib.load(open(".claude/capt-hook.toml", "rb"))
-          plugin = tomllib.load(open("plugin/hooks/capt-hook.toml", "rb"))
+          root = tomllib.load(open(".claude/capt-hook.toml", "rb"))["pack"]
+          plugin = tomllib.load(open("plugin/hooks/capt-hook.toml", "rb"))["pack"]
           for key in ("name", "version", "description"):
               if root.get(key) != plugin.get(key):
                   sys.exit(

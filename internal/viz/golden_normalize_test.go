@@ -56,7 +56,9 @@ func normalizeGraph(t *testing.T, g *Graph) string {
 	if err != nil {
 		t.Fatalf("marshal graph: %v", err)
 	}
-	return renameTimes(string(data), opTimes(c))
+	// Exactly one trailing newline: end-of-file-fixer rewrites any other EOF
+	// shape in testdata (see the cc-notes note on golden EOF bytes).
+	return renameTimes(string(data), opTimes(c)) + "\n"
 }
 
 // copyGraph returns a deep copy of g, so normalization never mutates a cached

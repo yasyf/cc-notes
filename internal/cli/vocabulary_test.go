@@ -57,7 +57,9 @@ func renderVocabulary(root *cobra.Command) string {
 		}
 	}
 	walk(root)
-	return b.String()
+	// Exactly one trailing newline: end-of-file-fixer rewrites any other EOF
+	// shape in testdata (see the cc-notes note on golden EOF bytes).
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // writeCommandVocabulary renders one command's identity and flag surface.
