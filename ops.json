@@ -1,1 +1,1 @@
-{"v":1,"lamport":2,"ops":[{"kind":"verify_note","witness":[{"anchor":{"kind":"dir","value":"internal"},"oid":"07c1e98695bd7daca3fe767b3962d8ffeeb25493"}],"verified_commit":"788a69c92a772fef1d681a8519a476a2a970d943"}]}
+{"v":1,"lamport":3,"session":"c447a015-35aa-4f83-abbb-0b84ed7542b9","ops":[{"kind":"mark_stale","reason":"Runbook CLI/MCP/viz/FUSE surfaces shipped (v0.32.0+); this phase-2 implementation spec is historical — the living surface is documented in the skill's runbooks reference and cli-reference"}]}
