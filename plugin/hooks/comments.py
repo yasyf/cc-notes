@@ -52,7 +52,7 @@ PY_GROW_OLD_FILE = "# a here\n# b here\n# c here\nx = 1\n"
 PY_GROW_OLD = "# a here\n# b here\n# c here"
 PY_GROW_NEW = "# a here\n# b here\n# c here\n# d here\n# e here\n# f here"
 PY_NEAR_FILE = "# a here\n# b here\n# c here\n# d here\n# e here\n# f here\nx = 1\n"
-YAML_HASH = "# a\n# b\n# c\n# d\n# e\n# f\n# g\n# h\n# i\n# j\n"
+TXT_HASH = "# a\n# b\n# c\n# d\n# e\n# f\n# g\n# h\n# i\n# j\n"
 
 
 def touched(evt: BaseHookEvent) -> list[CommentBlock]:
@@ -86,7 +86,7 @@ class VerboseCommentIntroduced(CustomCondition):
         ),
         # A short run, an unparsable language, and a code-only edit beside an untouched legacy run stay quiet.
         Input(file="vc_short.py", content=PY_TWO_RUN): Allow(),
-        Input(file="vc.yaml", content=YAML_HASH): Allow(),
+        Input(file="vc.txt", content=TXT_HASH): Allow(),
         Input(file=FileFixture(name="vc_near.py", content=PY_NEAR_FILE), old="x = 1", content="x = 2"): Allow(),
     },
 )
