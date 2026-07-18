@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -89,7 +88,7 @@ func runMountAuto(cmd *cobra.Command) error {
 	if !fusefs.Hostable {
 		return nil
 	}
-	cwd, err := os.Getwd()
+	cwd, err := repoDir(cmd)
 	if err != nil {
 		return nil
 	}

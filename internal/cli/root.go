@@ -31,6 +31,7 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
+	root.PersistentFlags().StringP("repo", "R", "", "operate on the repository at this path (any path inside it) instead of the working directory")
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetFlagErrorFunc(flagError)
 	// Cobra renders no help for flag groups; append a Constraints: block that

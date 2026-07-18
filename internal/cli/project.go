@@ -61,7 +61,7 @@ func newProjectAddCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -94,7 +94,7 @@ func newProjectListCmd() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -133,7 +133,7 @@ func newProjectStatusCmd(use string, status model.ProjectStatus) *cobra.Command 
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -183,7 +183,7 @@ func newProjectEditCmd() *cobra.Command {
 				}
 				edit.Title = &title
 			}
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -243,7 +243,7 @@ func newProjectCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}

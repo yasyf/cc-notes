@@ -1,8 +1,10 @@
 # cc-notes CLI reference
 
-The command surface, grouped by noun: repo, task, sprint, project, runbook, note, doc, log,
-papercut. Every command takes `-h`/`--help`. Every note, doc, log, papercut, task, sprint, project,
-runbook, sync, and reconcile command takes `--json` for a machine-readable record; without it,
+The command surface, grouped by noun: repo, task, sprint, project, runbook, investigation, note,
+doc, log, papercut. Every command takes `-h`/`--help` and a global `--repo PATH` (`-R`) that targets another
+repository's store from any cwd — pass any path inside it, while file-path arguments still resolve
+against the invocation cwd. Every note, doc, log, papercut, task, sprint, project,
+runbook, investigation, sync, and reconcile command takes `--json` for a machine-readable record; without it,
 mutations echo a lean tab-separated line and listings print one lean line per entity.
 
 Each command block opens with a machine-readable `MCP:` line — the MCP tool that carries the

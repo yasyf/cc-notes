@@ -163,9 +163,9 @@ func runMount(cmd *cobra.Command, args []string, opts mountOpts) error {
 
 	socket := holderSocket(opts.socket)
 
-	cwd, err := os.Getwd()
+	cwd, err := repoDir(cmd)
 	if err != nil {
-		return fmt.Errorf("working directory: %w", err)
+		return err
 	}
 	repoRoot, mp, usedDefault, err := resolveRepoAndMountpoint(cmd.Context(), cwd, args)
 	if err != nil {

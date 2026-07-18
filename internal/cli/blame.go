@@ -23,7 +23,7 @@ func newBlameCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			c, err := openClient()
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}

@@ -143,14 +143,15 @@ func flagRemedy(cmd *cobra.Command, name string) string {
 
 // acceptedFlagsLine renders the failing command's accepted flags as a compact,
 // sorted, ~100-column-wrapped list ("<path> takes: --a --b …"), so an agent sees
-// the real vocabulary the moment a flag misses. Inherited persistent flags are
-// included; hidden flags and cobra's auto-injected --help/--version are elided. A
-// command with no visible flags renders "<path> takes no flags", so every
+// the real vocabulary the moment a flag misses. Hidden flags, cobra's
+// auto-injected --help/--version, and the global --repo are elided — --repo is
+// infrastructure like help/version, not per-command vocabulary. A command with
+// no visible flags renders "<path> takes no flags", so every
 // unknown-flag error names the failing command.
 func acceptedFlagsLine(cmd *cobra.Command) string {
 	var names []string
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		if f.Hidden || f.Name == "help" || f.Name == "version" {
+		if f.Hidden || f.Name == "help" || f.Name == "version" || f.Name == "repo" {
 			return
 		}
 		names = append(names, "--"+f.Name)

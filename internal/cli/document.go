@@ -125,7 +125,7 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 				return errEmptyDocBody(docBodyHintAdd)
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -212,7 +212,7 @@ func (spec documentSpec[T]) editVerb() *cobra.Command {
 			if in.isEmpty() && len(attach) == 0 {
 				return &UsageError{Err: errors.New(spec.noun + " edit requires at least one flag")}
 			}
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -266,7 +266,7 @@ func (spec documentSpec[T]) verifyVerb() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -302,7 +302,7 @@ func (spec documentSpec[T]) supersedeVerb() *cobra.Command {
 			if by == "" {
 				return &UsageError{Err: errors.New(spec.noun + " supersede requires --by NEW")}
 			}
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -341,7 +341,7 @@ func (spec documentSpec[T]) expireVerb() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -378,7 +378,7 @@ func (spec documentSpec[T]) reviewVerb() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -413,7 +413,7 @@ func (spec documentSpec[T]) listVerb() *cobra.Command {
 		Short: "List " + spec.noun + "s",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -451,7 +451,7 @@ func (spec documentSpec[T]) searchVerb() *cobra.Command {
 		Short: spec.searchShort,
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}

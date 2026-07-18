@@ -49,7 +49,7 @@ func runViz(cmd *cobra.Command, opts vizOptions) error {
 	if opts.poll <= 0 {
 		return &UsageError{Err: fmt.Errorf("--poll must be positive, got %s", opts.poll)}
 	}
-	s, err := openStore()
+	s, err := openStore(cmd)
 	if err != nil {
 		return err
 	}

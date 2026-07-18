@@ -72,7 +72,7 @@ func newInvestigationOpenCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -123,7 +123,7 @@ func newInvestigationListCmd() *cobra.Command {
 		Short: "List active investigations (open, root-caused, or fixed unless --all)",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -189,7 +189,7 @@ func newInvestigationAppendCmd() *cobra.Command {
 				return &UsageError{Err: errors.New("investigation append requires entry text (a positional TEXT or - for stdin) or --attach")}
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -262,7 +262,7 @@ func newFindingAddCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -305,7 +305,7 @@ func newFindingEditCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -340,7 +340,7 @@ func newFindingStatusCmd(use string, status model.FindingStatus) *cobra.Command 
 				return &UsageError{Err: fmt.Errorf("%s requires --why with the evidence for the disposition", cmd.CommandPath())}
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -378,7 +378,7 @@ func newFindingRemoveCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -408,7 +408,7 @@ func newFindingListCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			_, c, err := openStoreClient()
+			_, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -492,7 +492,7 @@ func investigationTextTransitionCmd(use, short string, requireText bool, transit
 				return &UsageError{Err: fmt.Errorf("%s requires text", cmd.CommandPath())}
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -537,7 +537,7 @@ func newInvestigationFixCmd() *cobra.Command {
 				}
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -593,7 +593,7 @@ func newInvestigationEditCmd() *cobra.Command {
 			if investigationEditEmpty(edit) {
 				return &UsageError{Err: errors.New("investigation edit requires at least one flag")}
 			}
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -631,7 +631,7 @@ func newInvestigationSearchCmd() *cobra.Command {
 		Short: "Ranked search across investigation titles, premises, timelines, findings, and verdicts",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}

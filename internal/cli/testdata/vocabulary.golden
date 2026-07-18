@@ -4,7 +4,7 @@ command: cc-notes
   short: Git-native notes and tasks for agents
   hidden: false
   flags:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory" persistent
   inherited:
     (none)
 
@@ -16,7 +16,7 @@ command: cc-notes attachment
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes attachment get
   use: get ID NAME
@@ -26,7 +26,7 @@ command: cc-notes attachment get
   flags:
     --output shorthand=-o type=string default="" usage="write to PATH instead of stdout"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes attachment path
   use: path ID NAME
@@ -36,7 +36,7 @@ command: cc-notes attachment path
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes blame
   use: blame SHA
@@ -46,7 +46,7 @@ command: cc-notes blame
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes compact
   use: compact ID
@@ -56,7 +56,7 @@ command: cc-notes compact
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes contentd
   use: contentd
@@ -66,7 +66,7 @@ command: cc-notes contentd
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc
   use: doc
@@ -76,7 +76,7 @@ command: cc-notes doc
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc add
   use: add TITLE [BODY]
@@ -97,7 +97,7 @@ command: cc-notes doc add
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --when shorthand=none type=string default="" usage="free-text read-this-when trigger"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc edit
   use: edit ID
@@ -126,7 +126,7 @@ command: cc-notes doc edit
     --title shorthand=none type=string default="" usage="new title"
     --when shorthand=none type=string default="" usage="new read-this-when trigger"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc expire
   use: expire ID
@@ -138,7 +138,7 @@ command: cc-notes doc expire
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --reason shorthand=none type=string default="" usage="why the doc is out-of-date"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc history
   use: history ID
@@ -150,7 +150,7 @@ command: cc-notes doc history
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc list
   use: list
@@ -167,7 +167,7 @@ command: cc-notes doc list
     --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc review
   use: review
@@ -181,7 +181,7 @@ command: cc-notes doc review
     --stale-after shorthand=none type=string default="" usage="staleness threshold (Go duration)"
     --unverified shorthand=none type=bool default="false" usage="limit to never-verified docs"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc rm
   use: rm ID
@@ -191,7 +191,7 @@ command: cc-notes doc rm
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc search
   use: search QUERY
@@ -208,7 +208,7 @@ command: cc-notes doc search
     --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc show
   use: show ID
@@ -218,7 +218,7 @@ command: cc-notes doc show
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc supersede
   use: supersede OLD --by NEW
@@ -230,7 +230,7 @@ command: cc-notes doc supersede
     --clear shorthand=none type=bool default="false" usage="remove the supersede edge"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes doc verify
   use: verify ID
@@ -240,7 +240,7 @@ command: cc-notes doc verify
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes gc
   use: gc
@@ -251,7 +251,7 @@ command: cc-notes gc
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --prune-remote shorthand=none type=bool default="false" usage="physically delete tombstoned refs on the remote (best-effort, non-convergent)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes history
   use: history ID
@@ -263,7 +263,7 @@ command: cc-notes history
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes hooks
   use: hooks
@@ -273,7 +273,7 @@ command: cc-notes hooks
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes hooks install
   use: install
@@ -283,7 +283,7 @@ command: cc-notes hooks install
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes init
   use: init
@@ -297,7 +297,7 @@ command: cc-notes init
     --no-mount shorthand=none type=bool default="false" usage="skip auto-mounting the `.notes` filesystem and disable the session-start ensure-mount"
     --remote shorthand=none type=string default="origin" usage="remote to wire"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation
   use: investigation
@@ -307,7 +307,7 @@ command: cc-notes investigation
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation abandon
   use: abandon ID [TEXT]
@@ -317,7 +317,7 @@ command: cc-notes investigation abandon
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation append
   use: append ID [TEXT]
@@ -328,7 +328,7 @@ command: cc-notes investigation append
     --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation confirm
   use: confirm ID TEXT
@@ -338,7 +338,7 @@ command: cc-notes investigation confirm
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation edit
   use: edit ID
@@ -360,7 +360,7 @@ command: cc-notes investigation edit
     --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
     --title shorthand=none type=string default="" usage="new title"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation exonerate
   use: exonerate ID TEXT
@@ -370,7 +370,7 @@ command: cc-notes investigation exonerate
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation finding
   use: finding
@@ -380,7 +380,7 @@ command: cc-notes investigation finding
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation finding add
   use: add INVESTIGATION [TEXT]
@@ -391,7 +391,7 @@ command: cc-notes investigation finding add
     --body shorthand=none type=string default="" usage="finding text; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation finding clear
   use: clear INVESTIGATION FINDING
@@ -402,7 +402,7 @@ command: cc-notes investigation finding clear
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --why shorthand=none type=string default="" usage="evidence supporting the finding disposition"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation finding confirm
   use: confirm INVESTIGATION FINDING
@@ -413,7 +413,7 @@ command: cc-notes investigation finding confirm
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --why shorthand=none type=string default="" usage="evidence supporting the finding disposition"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation finding edit
   use: edit INVESTIGATION FINDING [TEXT]
@@ -424,7 +424,7 @@ command: cc-notes investigation finding edit
     --body shorthand=none type=string default="" usage="new finding text; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation finding list
   use: list INVESTIGATION
@@ -434,7 +434,7 @@ command: cc-notes investigation finding list
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation finding rm
   use: rm INVESTIGATION FINDING
@@ -444,7 +444,7 @@ command: cc-notes investigation finding rm
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation fix
   use: fix ID [TEXT]
@@ -455,7 +455,7 @@ command: cc-notes investigation fix
     --commit shorthand=none type=stringArray default="[]" usage="fixing commit (repeatable; at least one required)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation history
   use: history ID
@@ -467,7 +467,7 @@ command: cc-notes investigation history
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation list
   use: list
@@ -484,7 +484,7 @@ command: cc-notes investigation list
     --path shorthand=none type=string default="" usage="require path anchor"
     --status shorthand=none type=string default="" usage="status filter, comma-separated (default open,root_caused,fixed)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation open
   use: open TITLE [BODY]
@@ -502,7 +502,7 @@ command: cc-notes investigation open
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation reopen
   use: reopen ID TEXT
@@ -512,7 +512,7 @@ command: cc-notes investigation reopen
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation rm
   use: rm ID
@@ -522,7 +522,7 @@ command: cc-notes investigation rm
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation root-cause
   use: root-cause ID TEXT
@@ -532,7 +532,7 @@ command: cc-notes investigation root-cause
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation search
   use: search QUERY
@@ -549,7 +549,7 @@ command: cc-notes investigation search
     --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes investigation show
   use: show ID
@@ -559,7 +559,7 @@ command: cc-notes investigation show
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes log
   use: log
@@ -569,7 +569,7 @@ command: cc-notes log
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes log add
   use: add TITLE [BODY]
@@ -586,7 +586,7 @@ command: cc-notes log add
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes log append
   use: append ID [TEXT]
@@ -599,7 +599,7 @@ command: cc-notes log append
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --replace shorthand=none type=bool default="false" usage="allow --attach to overwrite a live attachment with the same name"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes log edit
   use: edit ID
@@ -621,7 +621,7 @@ command: cc-notes log edit
     --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
     --title shorthand=none type=string default="" usage="new title"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes log history
   use: history ID
@@ -633,7 +633,7 @@ command: cc-notes log history
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes log list
   use: list
@@ -649,7 +649,7 @@ command: cc-notes log list
     --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes log rm
   use: rm ID
@@ -659,7 +659,7 @@ command: cc-notes log rm
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes log search
   use: search QUERY
@@ -676,7 +676,7 @@ command: cc-notes log search
     --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes log show
   use: show ID
@@ -686,7 +686,7 @@ command: cc-notes log show
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes mcp
   use: mcp
@@ -696,7 +696,7 @@ command: cc-notes mcp
   flags:
     --dir shorthand=none type=string default="" usage="project directory (default: $CLAUDE_PROJECT_DIR or cwd)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes mount
   use: mount [MOUNTPOINT]
@@ -708,7 +708,7 @@ command: cc-notes mount
     --foreground shorthand=-f type=bool default="false" usage="serve in the foreground and unmount on Ctrl-C (bypasses the shared holder)"
     --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)" persistent
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes mount list
   use: list
@@ -718,6 +718,7 @@ command: cc-notes mount list
   flags:
     (none)
   inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
     --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)"
 
 command: cc-notes mount shutdown
@@ -728,6 +729,7 @@ command: cc-notes mount shutdown
   flags:
     (none)
   inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
     --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)"
 
 command: cc-notes mount stop
@@ -738,6 +740,7 @@ command: cc-notes mount stop
   flags:
     (none)
   inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
     --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)"
 
 command: cc-notes note
@@ -748,7 +751,7 @@ command: cc-notes note
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes note add
   use: add TITLE [BODY]
@@ -768,7 +771,7 @@ command: cc-notes note add
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes note edit
   use: edit ID
@@ -796,7 +799,7 @@ command: cc-notes note edit
     --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
     --title shorthand=none type=string default="" usage="new title"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes note expire
   use: expire ID
@@ -808,7 +811,7 @@ command: cc-notes note expire
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --reason shorthand=none type=string default="" usage="why the note is out-of-date"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes note history
   use: history ID
@@ -820,7 +823,7 @@ command: cc-notes note history
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes note list
   use: list
@@ -837,7 +840,7 @@ command: cc-notes note list
     --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes note review
   use: review
@@ -851,7 +854,7 @@ command: cc-notes note review
     --stale-after shorthand=none type=string default="" usage="staleness threshold (Go duration)"
     --unverified shorthand=none type=bool default="false" usage="limit to never-verified notes"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes note rm
   use: rm ID
@@ -861,7 +864,7 @@ command: cc-notes note rm
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes note search
   use: search QUERY
@@ -878,7 +881,7 @@ command: cc-notes note search
     --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes note show
   use: show ID
@@ -888,7 +891,7 @@ command: cc-notes note show
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes note supersede
   use: supersede OLD --by NEW
@@ -900,7 +903,7 @@ command: cc-notes note supersede
     --clear shorthand=none type=bool default="false" usage="remove the supersede edge"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes note verify
   use: verify ID
@@ -910,7 +913,7 @@ command: cc-notes note verify
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes papercut
   use: papercut [TEXT]
@@ -922,7 +925,7 @@ command: cc-notes papercut
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --model shorthand=none type=string default="" usage="model identity to record on the entry (default: CC_NOTES_MODEL)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes papercut list
   use: list
@@ -932,7 +935,7 @@ command: cc-notes papercut list
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes project
   use: project
@@ -942,7 +945,7 @@ command: cc-notes project
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes project activate
   use: activate ID
@@ -952,7 +955,7 @@ command: cc-notes project activate
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes project add
   use: add TITLE [BODY]
@@ -964,7 +967,7 @@ command: cc-notes project add
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes project archive
   use: archive ID
@@ -974,7 +977,7 @@ command: cc-notes project archive
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes project cancel
   use: cancel ID
@@ -984,7 +987,7 @@ command: cc-notes project cancel
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes project comment
   use: comment ID [BODY]
@@ -995,7 +998,7 @@ command: cc-notes project comment
     --body shorthand=none type=string default="" usage="comment text; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes project complete
   use: complete ID
@@ -1005,7 +1008,7 @@ command: cc-notes project complete
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes project edit
   use: edit ID
@@ -1019,7 +1022,7 @@ command: cc-notes project edit
     --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
     --title shorthand=none type=string default="" usage="new title"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes project history
   use: history ID
@@ -1031,7 +1034,7 @@ command: cc-notes project history
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes project list
   use: list
@@ -1042,7 +1045,7 @@ command: cc-notes project list
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --status shorthand=none type=string default="" usage="status filter, comma-separated (default all)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes project show
   use: show ID
@@ -1052,7 +1055,7 @@ command: cc-notes project show
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes reconcile
   use: reconcile
@@ -1066,7 +1069,7 @@ command: cc-notes reconcile
     --into shorthand=none type=string default="" usage="target branch (default: current branch)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes relevant
   use: relevant PATH
@@ -1081,7 +1084,7 @@ command: cc-notes relevant
     --limit shorthand=none type=int default="10" usage="maximum results (0 = all)"
     --worktree shorthand=none type=bool default="false" usage="drift-check path anchors against uncommitted working-tree edits"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook
   use: runbook
@@ -1091,7 +1094,7 @@ command: cc-notes runbook
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook activate
   use: activate ID
@@ -1101,7 +1104,7 @@ command: cc-notes runbook activate
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook add
   use: add TITLE [BODY]
@@ -1118,7 +1121,7 @@ command: cc-notes runbook add
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --step shorthand=none type=stringArray default="[]" usage="initial step text, in order (repeatable)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook archive
   use: archive ID
@@ -1128,7 +1131,7 @@ command: cc-notes runbook archive
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook comment
   use: comment ID [BODY]
@@ -1139,7 +1142,7 @@ command: cc-notes runbook comment
     --body shorthand=none type=string default="" usage="comment body; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook edit
   use: edit ID
@@ -1161,7 +1164,7 @@ command: cc-notes runbook edit
     --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
     --title shorthand=none type=string default="" usage="new title"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook history
   use: history ID
@@ -1173,7 +1176,7 @@ command: cc-notes runbook history
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook list
   use: list
@@ -1189,7 +1192,7 @@ command: cc-notes runbook list
     --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook rm
   use: rm ID
@@ -1199,7 +1202,7 @@ command: cc-notes runbook rm
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook run
   use: run
@@ -1209,7 +1212,7 @@ command: cc-notes runbook run
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook run done
   use: done RUNBOOK STEP
@@ -1221,7 +1224,7 @@ command: cc-notes runbook run done
     --note shorthand=none type=string default="" usage="context note (error output, skip reason)"
     --run shorthand=none type=string default="" usage="run id prefix (default: the sole running run)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook run fail
   use: fail RUNBOOK STEP
@@ -1233,7 +1236,7 @@ command: cc-notes runbook run fail
     --note shorthand=none type=string default="" usage="context note (error output, skip reason)"
     --run shorthand=none type=string default="" usage="run id prefix (default: the sole running run)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook run finish
   use: finish RUNBOOK
@@ -1246,7 +1249,7 @@ command: cc-notes runbook run finish
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --run shorthand=none type=string default="" usage="run id prefix (default: the sole running run)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook run list
   use: list RUNBOOK
@@ -1256,7 +1259,7 @@ command: cc-notes runbook run list
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook run show
   use: show RUNBOOK RUN
@@ -1266,7 +1269,7 @@ command: cc-notes runbook run show
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook run skip
   use: skip RUNBOOK STEP
@@ -1278,7 +1281,7 @@ command: cc-notes runbook run skip
     --note shorthand=none type=string default="" usage="context note (error output, skip reason)"
     --run shorthand=none type=string default="" usage="run id prefix (default: the sole running run)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook run start
   use: start RUNBOOK
@@ -1289,7 +1292,7 @@ command: cc-notes runbook run start
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --task shorthand=none type=string default="" usage="task id prefix this run serves"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook search
   use: search QUERY
@@ -1306,7 +1309,7 @@ command: cc-notes runbook search
     --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook show
   use: show ID
@@ -1316,7 +1319,7 @@ command: cc-notes runbook show
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook step
   use: step
@@ -1326,7 +1329,7 @@ command: cc-notes runbook step
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook step add
   use: add RUNBOOK [TEXT]
@@ -1342,7 +1345,7 @@ command: cc-notes runbook step add
     --last shorthand=none type=bool default="false" usage="place after all steps (default)"
     --text shorthand=none type=string default="" usage="step text; - reads stdin"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook step edit
   use: edit RUNBOOK STEP
@@ -1355,7 +1358,7 @@ command: cc-notes runbook step edit
     --no-command shorthand=none type=bool default="false" usage="clear the step command"
     --text shorthand=none type=string default="" usage="new step text; - reads stdin"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook step list
   use: list RUNBOOK
@@ -1365,7 +1368,7 @@ command: cc-notes runbook step list
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook step move
   use: move RUNBOOK STEP
@@ -1379,7 +1382,7 @@ command: cc-notes runbook step move
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --last shorthand=none type=bool default="false" usage="place after all steps (default)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes runbook step rm
   use: rm RUNBOOK STEP
@@ -1389,7 +1392,7 @@ command: cc-notes runbook step rm
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes search
   use: search QUERY
@@ -1405,7 +1408,7 @@ command: cc-notes search
     --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes show
   use: show ID
@@ -1415,7 +1418,7 @@ command: cc-notes show
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes skills
   use: skills
@@ -1425,7 +1428,7 @@ command: cc-notes skills
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes skills install
   use: install
@@ -1435,7 +1438,7 @@ command: cc-notes skills install
   flags:
     --global shorthand=none type=bool default="false" usage="enable the plugin in the user-global ~/.claude/settings.json instead of the repo"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes sprint
   use: sprint
@@ -1445,7 +1448,7 @@ command: cc-notes sprint
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes sprint activate
   use: activate ID
@@ -1455,7 +1458,7 @@ command: cc-notes sprint activate
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes sprint add
   use: add TITLE [BODY]
@@ -1470,7 +1473,7 @@ command: cc-notes sprint add
     --project shorthand=none type=string default="" usage="project id prefix"
     --start shorthand=none type=string default="" usage="start date YYYY-MM-DD"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes sprint cancel
   use: cancel ID
@@ -1480,7 +1483,7 @@ command: cc-notes sprint cancel
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes sprint comment
   use: comment ID [BODY]
@@ -1491,7 +1494,7 @@ command: cc-notes sprint comment
     --body shorthand=none type=string default="" usage="comment text; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes sprint complete
   use: complete ID
@@ -1501,7 +1504,7 @@ command: cc-notes sprint complete
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes sprint edit
   use: edit ID
@@ -1521,7 +1524,7 @@ command: cc-notes sprint edit
     --start shorthand=none type=string default="" usage="new start date YYYY-MM-DD"
     --title shorthand=none type=string default="" usage="new title"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes sprint history
   use: history ID
@@ -1533,7 +1536,7 @@ command: cc-notes sprint history
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes sprint list
   use: list
@@ -1545,7 +1548,7 @@ command: cc-notes sprint list
     --project shorthand=none type=string default="" usage="filter to project id prefix"
     --status shorthand=none type=string default="" usage="status filter, comma-separated (default all)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes sprint show
   use: show ID
@@ -1555,7 +1558,7 @@ command: cc-notes sprint show
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes status
   use: status
@@ -1565,7 +1568,7 @@ command: cc-notes status
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes sync
   use: sync
@@ -1577,7 +1580,7 @@ command: cc-notes sync
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --remote shorthand=none type=string default="" usage="remote to sync with (default: every cc-notes-wired remote, else origin)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task
   use: task
@@ -1587,7 +1590,7 @@ command: cc-notes task
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task add
   use: add TITLE [BODY]
@@ -1609,7 +1612,7 @@ command: cc-notes task add
     --sprint shorthand=none type=string default="" usage="sprint id prefix"
     --type shorthand=none type=string default="task" usage="task type (task|bug|epic|question)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task archived
   use: archived
@@ -1620,7 +1623,7 @@ command: cc-notes task archived
     --closed-before shorthand=none type=string default="" usage="archive cutoff (Go duration relative, or RFC3339 absolute; default 720h)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task backlog
   use: backlog
@@ -1630,7 +1633,7 @@ command: cc-notes task backlog
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task cancel
   use: cancel ID
@@ -1640,7 +1643,7 @@ command: cc-notes task cancel
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task claim
   use: claim ID
@@ -1652,7 +1655,7 @@ command: cc-notes task claim
     --steal shorthand=none type=bool default="false" usage="reclaim an in-progress task whose lease has expired"
     --sync shorthand=none type=bool default="false" usage="claim, then sync and re-check, yielding if another agent won"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task comment
   use: comment ID [BODY]
@@ -1663,7 +1666,7 @@ command: cc-notes task comment
     --body shorthand=none type=string default="" usage="comment body; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task criterion
   use: criterion
@@ -1673,7 +1676,7 @@ command: cc-notes task criterion
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task criterion add
   use: add TASK [TEXT]
@@ -1685,7 +1688,7 @@ command: cc-notes task criterion add
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --script shorthand=none type=string default="" usage="validation script file; its contents become the criterion's check command"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task criterion failed
   use: failed TASK CRIT
@@ -1696,7 +1699,7 @@ command: cc-notes task criterion failed
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --note shorthand=none type=string default="" usage="evidence recorded with the verdict (a later status change clears it)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task criterion list
   use: list TASK
@@ -1706,7 +1709,7 @@ command: cc-notes task criterion list
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task criterion met
   use: met TASK CRIT
@@ -1717,7 +1720,7 @@ command: cc-notes task criterion met
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --note shorthand=none type=string default="" usage="evidence recorded with the verdict (a later status change clears it)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task criterion pending
   use: pending TASK CRIT
@@ -1727,7 +1730,7 @@ command: cc-notes task criterion pending
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task criterion rm
   use: rm TASK CRIT
@@ -1737,7 +1740,7 @@ command: cc-notes task criterion rm
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task criterion script
   use: script TASK CRIT FILE
@@ -1748,7 +1751,7 @@ command: cc-notes task criterion script
     --clear shorthand=none type=bool default="false" usage="clear the criterion's validation script"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task dep
   use: dep ID BLOCKER
@@ -1758,7 +1761,7 @@ command: cc-notes task dep
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task done
   use: done ID
@@ -1769,7 +1772,7 @@ command: cc-notes task done
     --force shorthand=none type=bool default="false" usage="close even with unmet criteria"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task edit
   use: edit ID
@@ -1796,7 +1799,7 @@ command: cc-notes task edit
     --title shorthand=none type=string default="" usage="new title"
     --type shorthand=none type=string default="" usage="new type (task|bug|epic|question)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task history
   use: history ID
@@ -1808,7 +1811,7 @@ command: cc-notes task history
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task list
   use: list
@@ -1827,7 +1830,7 @@ command: cc-notes task list
     --status shorthand=none type=string default="" usage="status filter, comma-separated (default open,in_progress)"
     --type shorthand=none type=string default="" usage="require type"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task ready
   use: ready
@@ -1840,7 +1843,7 @@ command: cc-notes task ready
     --branch shorthand=none type=string default="" usage="filter to branch (default: current branch)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task renew
   use: renew ID
@@ -1850,7 +1853,7 @@ command: cc-notes task renew
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task show
   use: show ID
@@ -1860,7 +1863,7 @@ command: cc-notes task show
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task stale
   use: stale
@@ -1871,7 +1874,7 @@ command: cc-notes task stale
     --idle-after shorthand=none type=string default="" usage="idle threshold (default cc-notes.leaseTTL / CC_NOTES_LEASE_TTL or 1h)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task start
   use: start ID
@@ -1882,7 +1885,7 @@ command: cc-notes task start
     --branch shorthand=none type=string default="" usage="branch to set (default: current branch)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task undep
   use: undep ID BLOCKER
@@ -1892,7 +1895,7 @@ command: cc-notes task undep
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes task validate
   use: validate TASK
@@ -1904,7 +1907,7 @@ command: cc-notes task validate
     --timeout shorthand=none type=duration default="5m0s" usage="per-script timeout"
     --yes shorthand=none type=bool default="false" usage="run the scripts without the interactive confirmation prompt"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes version
   use: version
@@ -1914,7 +1917,7 @@ command: cc-notes version
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes viz
   use: viz
@@ -1926,7 +1929,7 @@ command: cc-notes viz
     --poll shorthand=none type=duration default="2s" usage="liveness poll interval"
     --port shorthand=none type=int default="0" usage="TCP port to listen on (0 = ephemeral)"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes workflows
   use: workflows
@@ -1936,7 +1939,7 @@ command: cc-notes workflows
   flags:
     (none)
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
 command: cc-notes workflows install
   use: install
@@ -1946,4 +1949,4 @@ command: cc-notes workflows install
   flags:
     --dest shorthand=none type=string default=".github/workflows" usage="destination directory, relative to the repo root"
   inherited:
-    (none)
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"

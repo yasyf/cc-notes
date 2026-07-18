@@ -205,6 +205,96 @@ func TestNoteAddLeanLine(t *testing.T) {
 	}
 }
 
+func TestRepoFlag(t *testing.T) {
+	// A note added through --repo lands in the target repo's store and is
+	// listed back through --repo from a cwd that is not itself a repository.
+	t.Run("targets repo from non-repo cwd", func(t *testing.T) {
+		repo := initRepo(t)
+		cwd := t.TempDir()
+		mustRun(t, cwd, "note", "add", "Remote note", "--repo", repo)
+		listed := mustJSON[[]noteJSON](t, mustRun(t, cwd, "note", "list", "--json", "--repo", repo))
+		if len(listed) != 1 || listed[0].Title != "Remote note" {
+			t.Fatalf("note list via --repo = %+v, want one note titled %q", listed, "Remote note")
+		}
+		// The write landed in the target repo, not the cwd: listing from the
+		// repo itself with no flag shows the same note.
+		here := mustJSON[[]noteJSON](t, mustRun(t, repo, "note", "list", "--json"))
+		if len(here) != 1 || here[0].Title != "Remote note" {
+			t.Fatalf("note list from repo cwd = %+v, want one note titled %q", here, "Remote note")
+		}
+	})
+
+	// go-git DetectDotGit walks up, so a path to a subdirectory inside the repo
+	// resolves the same store.
+	t.Run("repo subdirectory resolves", func(t *testing.T) {
+		repo := initRepo(t)
+		sub := filepath.Join(repo, "pkg", "inner")
+		if err := os.MkdirAll(sub, 0o750); err != nil {
+			t.Fatalf("mkdir sub: %v", err)
+		}
+		cwd := t.TempDir()
+		mustRun(t, cwd, "note", "add", "Sub note", "--repo", sub)
+		listed := mustJSON[[]noteJSON](t, mustRun(t, cwd, "note", "list", "--json", "--repo", sub))
+		if len(listed) != 1 || listed[0].Title != "Sub note" {
+			t.Fatalf("note list via --repo subdir = %+v, want one note titled %q", listed, "Sub note")
+		}
+	})
+
+	// The -R shorthand is equivalent to --repo.
+	t.Run("shorthand -R", func(t *testing.T) {
+		repo := initRepo(t)
+		cwd := t.TempDir()
+		mustRun(t, cwd, "note", "add", "Short note", "-R", repo)
+		listed := mustJSON[[]noteJSON](t, mustRun(t, cwd, "note", "list", "--json", "-R", repo))
+		if len(listed) != 1 || listed[0].Title != "Short note" {
+			t.Fatalf("note list via -R = %+v, want one note titled %q", listed, "Short note")
+		}
+	})
+
+	// A task comment written through --repo from a non-repo cwd lands on the
+	// target repo's task — the motivating cross-repo case.
+	t.Run("task comment roundtrip", func(t *testing.T) {
+		repo := initRepo(t)
+		task := addTask(t, repo, "Wire the client")
+		cwd := t.TempDir()
+		mustRun(t, cwd, "task", "comment", task.ID, "looks good", "--repo", repo)
+		shown := mustJSON[taskJSON](t, mustRun(t, repo, "task", "show", task.ID, "--json"))
+		if len(shown.Comments) != 1 || shown.Comments[0].Body != "looks good" {
+			t.Fatalf("task comments = %+v, want one comment %q", shown.Comments, "looks good")
+		}
+	})
+
+	// An existing directory that is not a repository fails loudly. go-git walks
+	// up from it and reaches the filesystem root without a .git.
+	t.Run("non-repo target errors", func(t *testing.T) {
+		cwd := t.TempDir()
+		nonRepo := t.TempDir()
+		_, stderr, err := runCLI(t, cwd, "note", "list", "--repo", nonRepo)
+		if err == nil {
+			t.Fatalf("note list --repo %s = nil error, want failure", nonRepo)
+		}
+		if !strings.Contains(err.Error(), "repository does not exist") && !strings.Contains(stderr, "repository does not exist") {
+			t.Fatalf("error = %v (stderr %q), want \"repository does not exist\"", err, stderr)
+		}
+	})
+
+	// A nonexistent path under a real repo is rejected before go-git can walk up
+	// to the parent repo — the litmus for the set-but-missing --repo guard.
+	t.Run("nonexistent path under repo errors", func(t *testing.T) {
+		repo := initRepo(t)
+		missing := filepath.Join(repo, "nope")
+		cwd := t.TempDir()
+		_, stderr, err := runCLI(t, cwd, "note", "list", "--repo", missing)
+		if err == nil {
+			t.Fatalf("note list --repo %s = nil error, want failure", missing)
+		}
+		msg := err.Error() + stderr
+		if !strings.Contains(msg, "--repo") || !strings.Contains(msg, "not a directory") {
+			t.Fatalf("error = %v (stderr %q), want a --repo not-a-directory usage error", err, stderr)
+		}
+	})
+}
+
 func TestNoteJSONRoundTrip(t *testing.T) {
 	dir := initRepo(t)
 	full := commitFile(t, dir, "seed.go", "package main")

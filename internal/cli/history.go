@@ -84,7 +84,7 @@ func historyCmd(use, short string, resolve func(context.Context, *notes.Client, 
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			c, err := openClient()
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}

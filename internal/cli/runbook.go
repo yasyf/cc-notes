@@ -62,7 +62,7 @@ func newRunbookAddCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -106,7 +106,7 @@ func newRunbookListCmd() *cobra.Command {
 		Short: "List runbooks (active only unless --all)",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, c, err := openStoreClient()
+			_, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -141,7 +141,7 @@ func newRunbookStatusCmd(use string, status model.RunbookStatus) *cobra.Command 
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -201,7 +201,7 @@ func newRunbookEditCmd() *cobra.Command {
 			if runbookEditEmpty(edit) {
 				return &UsageError{Err: errors.New("runbook edit requires at least one flag")}
 			}
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -243,7 +243,7 @@ func newRunbookSearchCmd() *cobra.Command {
 		Short: "Ranked search across runbook titles, labels, descriptions, and step text",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, c, err := openStoreClient()
+			_, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -293,7 +293,7 @@ func newRunbookCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -357,7 +357,7 @@ func newStepAddCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -392,7 +392,7 @@ func newStepRemoveCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -442,7 +442,7 @@ func newStepEditCmd() *cobra.Command {
 				edit.Command = &empty
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -478,7 +478,7 @@ func newStepMoveCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -515,7 +515,7 @@ func newStepListCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			_, c, err := openStoreClient()
+			_, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -571,7 +571,7 @@ func newRunStartCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -616,7 +616,7 @@ func newRunListCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			_, c, err := openStoreClient()
+			_, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -656,7 +656,7 @@ func newRunShowCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			_, c, err := openStoreClient()
+			_, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -693,7 +693,7 @@ func newRunStepStatusCmd(use string, status model.StepResultStatus) *cobra.Comma
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -727,7 +727,7 @@ func newRunFinishCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}

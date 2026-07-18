@@ -19,7 +19,7 @@ func newStatusCmd() *cobra.Command {
 		Args:    exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			c, err := openClient()
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}

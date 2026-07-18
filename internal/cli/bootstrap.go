@@ -20,37 +20,61 @@ import (
 // before writing.
 const defaultRemote = "origin"
 
-// openStore opens the store for the repository containing the working
-// directory.
-func openStore() (*store.Store, error) {
+// repoDir resolves the directory a command operates on: the --repo flag value
+// when set, otherwise the working directory. A set-but-missing --repo is a usage
+// error rather than a silent walk-up — go-git's DetectDotGit ascends from a
+// nonexistent start path, so an unvalidated typo would open the ancestor repo.
+func repoDir(cmd *cobra.Command) (string, error) {
+	repo, err := cmd.Flags().GetString("repo")
+	if err != nil {
+		return "", err
+	}
+	if repo != "" {
+		if !dirExists(repo) {
+			return "", &UsageError{Err: fmt.Errorf("--repo %s: not a directory", repo)}
+		}
+		return repo, nil
+	}
 	dir, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("working directory: %w", err)
+		return "", fmt.Errorf("working directory: %w", err)
 	}
-	return store.Open(dir)
+	return dir, nil
+}
+
+// openStore opens the store for the repository containing the working
+// directory, or the one named by --repo.
+func openStore(cmd *cobra.Command) (*store.Store, error) {
+	dir, err := repoDir(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return store.OpenContext(cmd.Context(), dir)
 }
 
 // openClient opens the notes.Client for the repository containing the working
-// directory — the client-only opener for commands that need no *store.Store.
-func openClient() (*notes.Client, error) {
-	dir, err := os.Getwd()
+// directory, or the one named by --repo — the client-only opener for commands
+// that need no *store.Store.
+func openClient(cmd *cobra.Command) (*notes.Client, error) {
+	dir, err := repoDir(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("working directory: %w", err)
+		return nil, err
 	}
 	return notes.Open(dir)
 }
 
 // openStoreClient opens both the store — the surface the print/DTO layer and
 // autoInstall still drive — and the notes.Client that owns the task domain
-// logic, over the working directory's repository.
-func openStoreClient() (*store.Store, *notes.Client, error) {
-	s, err := openStore()
+// logic, over the repository containing the working directory, or the one named
+// by --repo.
+func openStoreClient(cmd *cobra.Command) (*store.Store, *notes.Client, error) {
+	dir, err := repoDir(cmd)
 	if err != nil {
 		return nil, nil, err
 	}
-	dir, err := os.Getwd()
+	s, err := store.OpenContext(cmd.Context(), dir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("working directory: %w", err)
+		return nil, nil, err
 	}
 	c, err := notes.Open(dir)
 	if err != nil {

@@ -55,7 +55,7 @@ func newLogAddCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -120,7 +120,7 @@ func newLogAppendCmd() *cobra.Command {
 				return &UsageError{Err: errors.New("log append requires entry text (a positional TEXT, --entry, or - for stdin) or --attach")}
 			}
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -168,7 +168,7 @@ func newLogListCmd() *cobra.Command {
 		Short: "List logs",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -221,7 +221,7 @@ func newLogEditCmd() *cobra.Command {
 			if logEditEmpty(in) {
 				return &UsageError{Err: errors.New("log edit requires at least one flag")}
 			}
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -273,7 +273,7 @@ func newLogSearchCmd() *cobra.Command {
 		Short: "Ranked search across log titles, labels, and entry text",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}

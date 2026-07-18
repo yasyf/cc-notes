@@ -58,7 +58,7 @@ stdin ("... | cc-notes papercut -").`,
 			}
 			entryModel := resolvePapercutModel(cmd, modelID)
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -91,7 +91,7 @@ func newPapercutListCmd() *cobra.Command {
 		Short: "List every papercut complaint in timestamp order",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, c, err := openStoreClient()
+			_, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}

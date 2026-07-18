@@ -315,7 +315,7 @@ func runFileMode(cmd *cobra.Command, a editAdapter, isAdd bool, args []string, o
 		return &UsageError{Err: fmt.Errorf("--%s cannot be combined with content flags: --%s", mode, strings.Join(changed, ", --"))}
 	}
 	ctx := cmd.Context()
-	s, c, err := openStoreClient()
+	s, c, err := openStoreClient(cmd)
 	if err != nil {
 		return err
 	}

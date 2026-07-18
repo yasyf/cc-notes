@@ -171,7 +171,7 @@ func enableCaptHook(cmd *cobra.Command, root string) error {
 // repoRoot returns the absolute worktree root of the repository containing the
 // working directory.
 func repoRoot(cmd *cobra.Command) (string, error) {
-	s, err := openStore()
+	s, err := openStore(cmd)
 	if err != nil {
 		return "", err
 	}

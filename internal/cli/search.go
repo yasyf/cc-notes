@@ -47,7 +47,7 @@ func newSearchCmd() *cobra.Command {
 		Short: "Ranked search across every note, doc, log, runbook, and investigation",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}

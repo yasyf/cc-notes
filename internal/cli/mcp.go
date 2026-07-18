@@ -17,6 +17,13 @@ func newMCPCmd() *cobra.Command {
 			"the JSON DTO as the result.",
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if dir == "" {
+				repo, err := cmd.Flags().GetString("repo")
+				if err != nil {
+					return err
+				}
+				dir = repo
+			}
 			return mcpserver.Serve(cmd.Context(), dir, mcpserver.Config{
 				Version: version.String(),
 				NewRoot: NewRootCmd,

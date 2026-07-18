@@ -274,12 +274,12 @@ func TestRelevantJSON(t *testing.T) {
 func runRelevantCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	t.Chdir(dir)
-	cmd := newRelevantCmd()
+	root := NewRootCmd()
 	var stdout bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stdout)
-	cmd.SetArgs(args)
-	if err := cmd.ExecuteContext(t.Context()); err != nil {
+	root.SetOut(&stdout)
+	root.SetErr(&stdout)
+	root.SetArgs(append([]string{"relevant"}, args...))
+	if err := root.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("relevant %v: %v\n%s", args, err, stdout.String())
 	}
 	return stdout.String()

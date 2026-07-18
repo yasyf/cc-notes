@@ -19,7 +19,7 @@ func (k kindSpec[T]) showVerb(short string, show func(cmd *cobra.Command, s *sto
 		Short: short,
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore()
+			s, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
@@ -46,7 +46,7 @@ func (k kindSpec[T]) rmCmd(
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient()
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}

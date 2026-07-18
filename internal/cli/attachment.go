@@ -30,7 +30,7 @@ func newAttachmentGetCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			ctx := cmd.Context()
-			_, c, err := openStoreClient()
+			_, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -77,7 +77,7 @@ func newAttachmentPathCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			_, c, err := openStoreClient()
+			_, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}

@@ -48,7 +48,7 @@ func newInitCmd() *cobra.Command {
 			if ci && noCI {
 				return &UsageError{Err: errors.New("--ci and --no-ci are mutually exclusive")}
 			}
-			s, err := openStore()
+			s, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
@@ -157,7 +157,7 @@ func newSyncCmd() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			c, err := openClient()
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
