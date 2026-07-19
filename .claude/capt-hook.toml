@@ -1,0 +1,16 @@
+[pack]
+name = "cc-notes"
+version = "0.0.0"
+description = "cc-notes adoption nudges — keep git work in step with cc-notes tasks, notes, docs, and logs"
+hooks = "plugin/hooks"
+
+[packs.cc-notes]
+source = "github:yasyf/cc-notes@latest"
+
+[packs.fixes]
+
+[packs.general]
+
+[packs.go]
+
+[packs.steering]
