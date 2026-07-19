@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -110,6 +111,14 @@ func sourceInput(
 	values []authorityObject,
 	deletes []catalogproto.SourceDeleteRecord,
 ) (catalogservice.SourceTenantInput, []io.Closer, error) {
+	objectCount, err := catalogCount("objects", len(values))
+	if err != nil {
+		return catalogservice.SourceTenantInput{}, nil, err
+	}
+	deleteCount, err := catalogCount("deletes", len(deletes))
+	if err != nil {
+		return catalogservice.SourceTenantInput{}, nil, err
+	}
 	objects := make([]catalogservice.SourceObjectInput, 0, len(values))
 	closers := make([]io.Closer, 0)
 	for _, object := range values {
@@ -119,7 +128,8 @@ func sourceInput(
 			MountVisible: true,
 		}
 		var content io.Reader
-		if object.kind == catalogproto.ObjectKindFile {
+		switch object.kind {
+		case catalogproto.ObjectKindFile:
 			record.ContentRevision = revision
 			if object.contentPath == "" {
 				hash := sha256.Sum256(object.content)
@@ -135,7 +145,7 @@ func sourceInput(
 				closers = append(closers, file)
 				record.Size, record.Hash, content = object.size, object.hash, file
 			}
-		} else if object.kind == catalogproto.ObjectKindSymlink {
+		case catalogproto.ObjectKindSymlink:
 			record.ContentRevision = revision
 		}
 		objects = append(objects, catalogservice.SourceObjectInput{Record: record, Content: content})
@@ -143,10 +153,17 @@ func sourceInput(
 	return catalogservice.SourceTenantInput{
 		Record: catalogproto.SourceTenantRecord{
 			TenantID: catalogproto.TenantID(tenant.ID), Generation: uint64(tenant.Generation),
-			ObjectCount: uint32(len(objects)), DeleteCount: uint32(len(deletes)),
+			ObjectCount: objectCount, DeleteCount: deleteCount,
 		},
 		Objects: objects, Deletes: deletes,
 	}, closers, nil
+}
+
+func catalogCount(name string, value int) (uint32, error) {
+	if value > math.MaxUint32 {
+		return 0, fmt.Errorf("cc-notes authority: too many %s", name)
+	}
+	return uint32(value), nil //nolint:gosec // explicit uint32 protocol bound above
 }
 
 func closeAll(closers []io.Closer) {
@@ -471,7 +488,7 @@ func (b *projectionBuilder) buildAttachments() error {
 		b.dir(parent, root, short)
 		for _, attachment := range snapshot.Meta().Attachments {
 			attachmentPath := lfs.Path(attachment.OID)
-			file, err := os.Open(attachmentPath)
+			file, err := lfs.Open(attachment.OID)
 			if err != nil {
 				return fmt.Errorf("cc-notes authority: read attachment %s/%s: %w", snapshot.EntityID(), attachment.Name, err)
 			}
@@ -487,18 +504,29 @@ func (b *projectionBuilder) buildAttachments() error {
 			if size != attachment.Size || hex.EncodeToString(digest.Sum(nil)) != attachment.OID {
 				return fmt.Errorf("cc-notes authority: attachment %s/%s failed size/hash verification", snapshot.EntityID(), attachment.Name)
 			}
+			contentSize, err := nonnegativeSize(size)
+			if err != nil {
+				return fmt.Errorf("cc-notes authority: attachment %s/%s: %w", snapshot.EntityID(), attachment.Name, err)
+			}
 			b.filePath(
 				"attachment:"+string(snapshot.EntityID())+":"+attachment.Name,
 				parent,
 				attachment.Name,
 				0o444,
 				attachmentPath,
-				uint64(size),
+				contentSize,
 				attachment.OID,
 			)
 		}
 	}
 	return nil
+}
+
+func nonnegativeSize(value int64) (uint64, error) {
+	if value < 0 {
+		return 0, errors.New("negative content size")
+	}
+	return uint64(value), nil //nolint:gosec // nonnegative value proved above
 }
 
 func (b *projectionBuilder) dir(key, parent, name string) {
