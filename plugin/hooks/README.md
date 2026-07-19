@@ -60,6 +60,7 @@ and the pure workflow reminders, where the action is fixed.
 | `Read` a file (PostToolUse) | the notes, docs, logs, runbooks, and investigations `cc-notes relevant <path>` ranks | which are worth surfacing now — a lone candidate surfaces directly, two or more are filtered |
 | `Edit` / `Write` / `MultiEdit` a file (PostToolUse) | anchored records with a non-null drift verdict (`relevant --attached --worktree`) | which drift actually warrants a `verify` / `edit` / `supersede` / `expire`, named per kind |
 | Session start, first `UserPromptSubmit` (once) | your branch's open/in-progress tasks topped up from the backlog | nothing — rendered straight as orientation, capped at seven with a `+K more` → `cc-notes status` |
+| Compaction (`SessionStart`, source `compact`) | the cc-notes entities this session created, edited, or explicitly showed — tracked silently at every cc-notes call, MCP or CLI | nothing — deterministic: eight or fewer restore as full `show` output, more become lean pointer lines (kind · short id · title · how touched), newest first, capped at 30 with a `+N more` → `cc-notes status` |
 
 Each record is LLM-judged at most once per session: a Read floats it as context once, an
 edit asks about its staleness once, tracked in two separate per-session sets. The filter
@@ -225,6 +226,17 @@ trigger: the mirror still nudges "Run `cc-notes sync` to share it" rather than s
 you, and the SessionEnd backstop sweeps an unpushed mirror at exit. The cc-pool memory tree
 is the mirror's alone: the internal-write record router hard-excludes it, so a memory write
 is captured once, by the mirror, never also nudged.
+
+**The compact tracker.** Compaction wipes the window; the entities the session touched should
+not vanish with it. Every cc-notes entity call — an MCP tool or a `cc-notes`/`ccn` leg of any
+Bash line — silently records which entity it touched and how (created, edited, or explicitly
+shown; search/list/status results never count) into per-session state: entries dedup by id
+with short and full prefixes merged, a `rm` drops its entry so a deleted entity is never
+restored, and a 100-entry cap evicts the oldest pure-reads first. When a compaction fires
+`SessionStart` with source `compact`, the restorer injects the digest the Surface table
+describes — cumulative across repeated compactions, and since subagent calls land in the same
+session store, their touches restore too. Both halves are fail-silent: a parse or store error
+never disturbs the tool call, and a session that touched nothing injects nothing.
 
 ### The session bootstrap
 

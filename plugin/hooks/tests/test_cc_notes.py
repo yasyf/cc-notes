@@ -148,6 +148,18 @@ from hooks.redirect import (
     redirect_failed_cc_notes,
     redirect_target,
 )
+import hooks.compact as compact
+from hooks.compact import (
+    CompactResume,
+    FULL_SHOW_CAP,
+    MAX_ENTRIES,
+    POINTER_CAP,
+    TouchedEntities,
+    TouchedEntity,
+    _classify,
+    record_touched_entities,
+    restore_after_compact,
+)
 from cc_transcript.command import parse_command_line
 import hooks.bootstrap as bootstrap
 from hooks.bootstrap import ensure_cc_notes_binary
@@ -4107,6 +4119,312 @@ def test_bootstrap_skips_non_startup_source(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     check("bootstrap gate: clear source returns None", ensure_cc_notes_binary(evt) is None)
     check("bootstrap gate: no cli calls", calls == [], repr(calls))
+
+
+def test_compact_tracker_mcp_create(tmp_path) -> None:
+    """An MCP create records one entry: id minted from the {"id":...} response, kind + title from the tool name/input."""
+    evt = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__note_add", event=Event.PostToolUse,
+        tool_input={"title": "Retry ceiling"},
+        output='{"id":"bf40c631d8c16a6351ef71d6b0b7417bfd503c53","title":"Retry ceiling"}', session_dir=tmp_path,
+    )
+    record_touched_entities(evt)
+    state = evt.ctx.s.load(TouchedEntities)
+    check("compact mcp create: one entry", len(state.entries) == 1, repr(state))
+    e = state.entries[0]
+    check("compact mcp create: minted 40-hex id", e.id == "bf40c631d8c16a6351ef71d6b0b7417bfd503c53", e.id)
+    check("compact mcp create: kind from noun prefix", e.kind == "note", e.kind)
+    check("compact mcp create: created verb", e.verbs == ["create"], repr(e.verbs))
+    check("compact mcp create: title from input", e.title == "Retry ceiling", e.title)
+
+
+def test_compact_tracker_mcp_show(tmp_path) -> None:
+    """An MCP show records a read: id from the input, title scraped from the show response header."""
+    body = "id: 8acb2a03a4eae6b4cf0541d76c4678b826ac13ce\ntitle: Header Probe Note\ntags: -\n"
+    evt = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__note_show", event=Event.PostToolUse,
+        tool_input={"id": "8acb2a0"}, output=body, session_dir=tmp_path,
+    )
+    record_touched_entities(evt)
+    e = evt.ctx.s.load(TouchedEntities).entries[0]
+    check("compact mcp show: id from input", e.id == "8acb2a0", e.id)
+    check("compact mcp show: title from response header", e.title == "Header Probe Note", e.title)
+    check("compact mcp show: read verb", e.verbs == ["read"], repr(e.verbs))
+
+
+def test_compact_tracker_cli_create(tmp_path) -> None:
+    """A `cc-notes note add` Bash create records the short id from its lean stdout first token and the positional title."""
+    evt = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse, command='cc-notes note add "Title One"',
+        output="2c93472\t2026-07-19\t-\tTitle One\n", session_dir=tmp_path,
+    )
+    record_touched_entities(evt)
+    e = evt.ctx.s.load(TouchedEntities).entries[0]
+    check("compact cli create: id from lean first token", e.id == "2c93472", e.id)
+    check("compact cli create: title from positional", e.title == "Title One", e.title)
+    check("compact cli create: created verb", e.verbs == ["create"], repr(e.verbs))
+
+
+def test_compact_tracker_merges_short_and_full_id(tmp_path) -> None:
+    """A CLI show (short id) and a later MCP edit (full id) collapse to one entry keeping the longer id."""
+    full = "bf40c631d8c16a6351ef71d6b0b7417bfd503c53"
+    ev1 = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse, command="cc-notes note show bf40c63",
+        output="id: %s\ntitle: Merged Note\n" % full, session_dir=tmp_path,
+    )
+    record_touched_entities(ev1)
+    ev2 = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__note_edit", event=Event.PostToolUse,
+        tool_input={"id": full, "title": "Merged Note v2"}, session_dir=tmp_path,
+    )
+    record_touched_entities(ev2)
+    state = ev2.ctx.s.load(TouchedEntities)
+    check("compact merge: single entry", len(state.entries) == 1, repr(state))
+    e = state.entries[0]
+    check("compact merge: prefers the longer (full) id", e.id == full, e.id)
+    check("compact merge: read then edit verbs", e.verbs == ["read", "edit"], repr(e.verbs))
+    check("compact merge: title updated by the edit", e.title == "Merged Note v2", e.title)
+
+
+def test_compact_tracker_ignores_reads_and_foreign(tmp_path) -> None:
+    """Lists, search, status, MCP list tools, and non-cc-notes edits record nothing."""
+    for tool, kw in [
+        ("Bash", {"command": "cc-notes note list"}),
+        ("Bash", {"command": "cc-notes search foo"}),
+        ("Bash", {"command": "cc-notes status"}),
+        ("Edit", {"file": "m.py", "content": "x"}),
+        ("mcp__plugin_cc-notes_cc-notes__task_list", {"tool_input": {}}),
+    ]:
+        record_touched_entities(mock_tool_event(tool=tool, event=Event.PostToolUse, session_dir=tmp_path, **kw))
+    state = mock_tool_event(tool="Bash", event=Event.PostToolUse, command="cc-notes status", session_dir=tmp_path).ctx.s.load(TouchedEntities)
+    check("compact ignores: lists/search/status/foreign record nothing", state.entries == [], repr(state))
+
+
+def test_compact_tracker_rm_deletes_entry(tmp_path) -> None:
+    """A two-token `*_rm` deletes the tracked entry so a deleted entity is never restored."""
+    ev1 = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__note_add", event=Event.PostToolUse,
+        tool_input={"title": "Doomed"}, output='{"id":"abc123def456"}', session_dir=tmp_path,
+    )
+    record_touched_entities(ev1)
+    ev2 = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__note_rm", event=Event.PostToolUse,
+        tool_input={"id": "abc123def456"}, session_dir=tmp_path,
+    )
+    record_touched_entities(ev2)
+    check("compact rm: entry deleted", ev2.ctx.s.load(TouchedEntities).entries == [], repr(ev2.ctx.s.load(TouchedEntities)))
+
+
+def test_compact_tracker_evicts_beyond_cap(tmp_path) -> None:
+    """Past MAX_ENTRIES the oldest pure-read entry evicts; the set stays capped and keeps the newest."""
+    for i in range(MAX_ENTRIES + 1):
+        record_touched_entities(mock_tool_event(
+            tool="mcp__plugin_cc-notes_cc-notes__note_show", event=Event.PostToolUse,
+            tool_input={"id": f"{i:040d}"}, output="title: n%d\n" % i, session_dir=tmp_path,
+        ))
+    state = mock_tool_event(tool="Bash", event=Event.PostToolUse, command="cc-notes status", session_dir=tmp_path).ctx.s.load(TouchedEntities)
+    ids = {e.id for e in state.entries}
+    check("compact evict: capped at MAX_ENTRIES", len(state.entries) == MAX_ENTRIES, str(len(state.entries)))
+    check("compact evict: oldest read evicted", f"{0:040d}" not in ids, "id0 still present")
+    check("compact evict: newest retained", f"{MAX_ENTRIES:040d}" in ids, "newest missing")
+
+
+def _seed_touched(evt, entries: list[TouchedEntity]) -> None:
+    with evt.ctx.s[TouchedEntities].mutate() as st:
+        st.entries.extend(entries)
+        st.next_seq = max((e.seq for e in entries), default=-1) + 1
+
+
+def test_compact_restore_full_show_small(monkeypatch, tmp_path) -> None:
+    """<=8 touched entities with the binary present restore fresh full `show` bodies, most-recent first, CLI closing hint."""
+    monkeypatch.setattr(compact.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = mock_event("SessionStart", source="compact", session_dir=tmp_path)
+    _seed_touched(evt, [
+        TouchedEntity(id="aaa0001", kind="note", title="Alpha", verbs=["create"], seq=0),
+        TouchedEntity(id="bbb0002", kind="task", title="Beta", verbs=["edit"], seq=1),
+    ])
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no MCP marker -> deterministic CLI wording
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli({
+        ("show", "aaa0001"): "id: aaa0001\ntitle: Alpha\nbody: full alpha",
+        ("show", "bbb0002"): "id: bbb0002\ntitle: Beta\nbody: full beta",
+    }))
+    result = restore_after_compact(evt)
+    check("compact restore full: warns", result is not None, repr(result))
+    msg = result.message
+    check("compact restore full: header present", "just compacted" in msg, msg)
+    check("compact restore full: alpha body injected", "full alpha" in msg, msg)
+    check("compact restore full: beta body injected", "full beta" in msg, msg)
+    check("compact restore full: most-recent (bbb) first", msg.index("bbb0002") < msg.index("aaa0001"), msg)
+    check("compact restore full: CLI closing hint", "cc-notes show <id>" in msg, msg)
+
+
+def test_compact_restore_pointers_large(monkeypatch, tmp_path) -> None:
+    """>8 touched entities restore lean pointer lines capped at POINTER_CAP with a `+N more` tail, never shelling out."""
+    monkeypatch.setattr(compact.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = mock_event("SessionStart", source="compact", session_dir=tmp_path)
+    _seed_touched(evt, [TouchedEntity(id=f"id{i:05d}", kind="note", title=f"N{i}", verbs=["read"], seq=i) for i in range(35)])
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no MCP marker -> deterministic wording, no git shell-out
+    calls: list[tuple] = []
+    monkeypatch.setattr(evt.ctx, "call_cli", lambda args, **k: calls.append(tuple(args)))
+    result = restore_after_compact(evt)
+    check("compact restore large: warns", result is not None, repr(result))
+    msg = result.message
+    check("compact restore large: capped at POINTER_CAP", msg.count("(read)") == POINTER_CAP, str(msg.count("(read)")))
+    check("compact restore large: overflow tail", "+5 more" in msg, msg)
+    check("compact restore large: never shelled out for show", not any(c[:2] == ("cc-notes", "show") for c in calls), repr(calls))
+
+
+def test_compact_restore_source_gate(tmp_path) -> None:
+    """The restorer's condition matches only a compaction, never a fresh startup — even with populated state."""
+    populated = mock_event("SessionStart", source="startup", session_dir=tmp_path)
+    _seed_touched(populated, [TouchedEntity(id="aaa0001", kind="note", verbs=["create"], seq=0)])
+    check("compact gate: startup does not match", not check_condition(CompactResume(), populated))
+    check("compact gate: compact matches", check_condition(CompactResume(), mock_event("SessionStart", source="compact", session_dir=tmp_path)))
+
+
+def test_compact_restore_silent_empty(tmp_path) -> None:
+    """A compaction with no touched entities injects nothing."""
+    check("compact restore empty: silent", restore_after_compact(mock_event("SessionStart", source="compact", session_dir=tmp_path)) is None)
+
+
+def test_compact_restore_binary_missing_pointers(monkeypatch, tmp_path) -> None:
+    """<=8 entities but no binary on PATH falls back to pointer lines without shelling out."""
+    monkeypatch.setattr(compact.shutil, "which", lambda _n: None)
+    evt = mock_event("SessionStart", source="compact", session_dir=tmp_path)
+    _seed_touched(evt, [TouchedEntity(id="aaa0001", kind="note", title="Alpha", verbs=["create"], seq=0)])
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no MCP marker -> deterministic wording, no git shell-out
+    calls: list[tuple] = []
+    monkeypatch.setattr(evt.ctx, "call_cli", lambda args, **k: calls.append(tuple(args)))
+    result = restore_after_compact(evt)
+    check("compact restore no-binary: warns with pointer line", result is not None and "note aaa0001 Alpha (created)" in result.message, repr(result))
+    check("compact restore no-binary: never shelled out for show", not any(c[:2] == ("cc-notes", "show") for c in calls), repr(calls))
+
+
+def test_compact_mapped_tool_moved_home(tmp_path) -> None:
+    """mapped_tool + CC_NOTES_TOOLS moved to common; redirect re-exports the same objects and both resolve."""
+    check("moved helper: redirect re-exports common.mapped_tool", mapped_tool is common.mapped_tool)
+    check("moved helper: CC_NOTES_TOOLS is the shared object", CC_NOTES_TOOLS is common.CC_NOTES_TOOLS)
+    check("moved helper: resolves a 3-token path from its new home", common.mapped_tool(["task", "criterion", "met", "abc"]) == "task_criterion_met")
+
+
+def test_compact_classification_derives_structurally(tmp_path) -> None:
+    """Spot-checks pin the structural classifier's shape rules (create/read/remove/ignored/edit)."""
+    spot = {
+        "task_criterion_add": "edit", "runbook_run_show": "read", "investigation_open": "create",
+        "note_rm": "remove", "task_ready": "ignored", "papercut": "create", "papercut_list": "ignored",
+        "note_add": "create", "show": "read", "attachment_get": "ignored", "log_append": "edit",
+        "investigation_finding_rm": "edit", "runbook_step_add": "edit", "sprint_complete": "edit",
+    }
+    for name, want in spot.items():
+        check(f"classify spot: {name} -> {want}", _classify(name) == want, _classify(name))
+
+
+def test_compact_tracker_drops_flag_value_as_id(tmp_path) -> None:
+    """A value-flag's argument before the id positional never leaks in as the id; id-first ordering still records."""
+    dropped = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse, command='cc-notes log append -m "some entry" abc1234', session_dir=tmp_path,
+    )
+    record_touched_entities(dropped)
+    check("compact flag-guard: -m value not taken as id -> touch dropped", dropped.ctx.s.load(TouchedEntities).entries == [], repr(dropped.ctx.s.load(TouchedEntities)))
+    ok = mock_tool_event(tool="Bash", event=Event.PostToolUse, command='cc-notes log append abc1234 -m "x"', session_dir=tmp_path)
+    record_touched_entities(ok)
+    check("compact flag-guard: id-first ordering still records", ok.ctx.s.load(TouchedEntities).entries[0].id == "abc1234", repr(ok.ctx.s.load(TouchedEntities)))
+
+
+def test_compact_tracker_skips_compound_create(tmp_path) -> None:
+    """A create on a compound line (shared output blob) is not minted; a read/edit on a compound line still tracks by argv."""
+    evt = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse, command='git rev-parse HEAD && cc-notes note add "New note"',
+        output="deadbeefcafe1234\n2c93472\t2026-07-19\t-\tNew note\n", session_dir=tmp_path,
+    )
+    record_touched_entities(evt)
+    check("compact compound: create on a compound line records nothing", evt.ctx.s.load(TouchedEntities).entries == [], repr(evt.ctx.s.load(TouchedEntities)))
+    ok = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse, command="echo hi && cc-notes note show abc1234",
+        output="id: abc1234\ntitle: Shown\n", session_dir=tmp_path,
+    )
+    record_touched_entities(ok)
+    check("compact compound: a read on a compound line still tracks by argv id", ok.ctx.s.load(TouchedEntities).entries[0].id == "abc1234", repr(ok.ctx.s.load(TouchedEntities)))
+
+
+def test_compact_tracker_lean_line_ignores_embedded_json(tmp_path) -> None:
+    """A lean CLI create whose title contains a `{"id":"..."}` fragment mints its first token, not the fragment."""
+    evt = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse, command='cc-notes note add "see {id:deadbeef}"',
+        output='2c93472\t2026-07-19\t-\tsee {"id":"deadbeef"}\n', session_dir=tmp_path,
+    )
+    record_touched_entities(evt)
+    check("compact lean-fragment: mints the short first token, not the embedded id", evt.ctx.s.load(TouchedEntities).entries[0].id == "2c93472", repr(evt.ctx.s.load(TouchedEntities)))
+
+
+def test_compact_tracker_cli_json_create_uses_regex(tmp_path) -> None:
+    """A `--json` CLI create mints the full id via the {"id":...} regex, not the first token of the JSON blob."""
+    full = "bf40c631d8c16a6351ef71d6b0b7417bfd503c53"
+    evt = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse, command='cc-notes note add "T2" --json',
+        output='{"id":"%s","title":"T2","body":""}' % full, session_dir=tmp_path,
+    )
+    record_touched_entities(evt)
+    check("compact cli-json: mints full id via regex", evt.ctx.s.load(TouchedEntities).entries[0].id == full, repr(evt.ctx.s.load(TouchedEntities)))
+
+
+def test_compact_tracker_mcp_task_validate_uses_task_param(tmp_path) -> None:
+    """MCP task_validate carries its id under the `task` param (like task_criterion_*), so it records rather than dropping."""
+    evt = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__task_validate", event=Event.PostToolUse,
+        tool_input={"task": "task9999"}, session_dir=tmp_path,
+    )
+    record_touched_entities(evt)
+    e = evt.ctx.s.load(TouchedEntities).entries[0]
+    check("compact task_validate: id from `task` param", e.id == "task9999", e.id)
+    check("compact task_validate: kind task, edit verb", e.kind == "task" and e.verbs == ["edit"], repr(e))
+
+
+def test_compact_tracker_checkout_records_nothing(tmp_path) -> None:
+    """A `--checkout` CLI create only writes a template file and prints its PATH — no entity is born yet."""
+    evt = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse, command='cc-notes doc add "Guide" --checkout --when "x"',
+        output="/tmp/cc-notes-checkout-abcd.md\n", session_dir=tmp_path,
+    )
+    record_touched_entities(evt)
+    check("compact --checkout: records nothing", evt.ctx.s.load(TouchedEntities).entries == [], repr(evt.ctx.s.load(TouchedEntities)))
+
+
+def test_compact_tracker_entity_kind_upgrades_on_merge(tmp_path) -> None:
+    """A bare-`show` placeholder (kind 'entity') upgrades to the concrete kind when a per-kind touch merges in."""
+    ev1 = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse, command="cc-notes show abc1234",
+        output="id: abc1234\ntitle: Thing\n", session_dir=tmp_path,
+    )
+    record_touched_entities(ev1)
+    check("compact kind-upgrade: bare show records kind 'entity'", ev1.ctx.s.load(TouchedEntities).entries[0].kind == "entity")
+    ev2 = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__task_show", event=Event.PostToolUse,
+        tool_input={"id": "abc1234"}, output="title: Thing\n", session_dir=tmp_path,
+    )
+    record_touched_entities(ev2)
+    state = ev2.ctx.s.load(TouchedEntities)
+    check("compact kind-upgrade: single merged entry", len(state.entries) == 1, repr(state))
+    check("compact kind-upgrade: entity -> task", state.entries[0].kind == "task", state.entries[0].kind)
+
+
+def test_compact_restore_boundary_eight_vs_nine(monkeypatch, tmp_path) -> None:
+    """Exactly FULL_SHOW_CAP entities restore full shows; one more tips into pointer mode with no shell-out."""
+    monkeypatch.setattr(compact.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    e8 = mock_event("SessionStart", source="compact", session_dir=tmp_path / "eight")
+    _seed_touched(e8, [TouchedEntity(id=f"id{i:05d}", kind="note", title=f"N{i}", verbs=["read"], seq=i) for i in range(FULL_SHOW_CAP)])
+    monkeypatch.setattr(e8.ctx, "git", lambda *a: None)
+    monkeypatch.setattr(e8.ctx, "call_cli", stub_cli({("show", f"id{i:05d}"): f"body {i}" for i in range(FULL_SHOW_CAP)}))
+    msg8 = restore_after_compact(e8).message
+    check("compact boundary: exactly FULL_SHOW_CAP restores full shows", "body 0" in msg8 and f"body {FULL_SHOW_CAP - 1}" in msg8, msg8)
+    e9 = mock_event("SessionStart", source="compact", session_dir=tmp_path / "nine")
+    _seed_touched(e9, [TouchedEntity(id=f"id{i:05d}", kind="note", title=f"N{i}", verbs=["read"], seq=i) for i in range(FULL_SHOW_CAP + 1)])
+    monkeypatch.setattr(e9.ctx, "git", lambda *a: None)
+    calls: list[tuple] = []
+    monkeypatch.setattr(e9.ctx, "call_cli", lambda args, **k: calls.append(tuple(args)))
+    msg9 = restore_after_compact(e9).message
+    check("compact boundary: one past the cap tips into pointer mode (no shows)", not any(c[:2] == ("cc-notes", "show") for c in calls), repr(calls))
+    check("compact boundary: pointer mode renders every entry", msg9.count("(read)") == FULL_SHOW_CAP + 1, str(msg9.count("(read)")))
 
 
 class MonkeyPatch:

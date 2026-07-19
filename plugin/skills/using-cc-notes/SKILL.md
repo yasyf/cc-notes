@@ -425,6 +425,19 @@ and syncs only when something is unpushed (needs capt-hook >= 9.2). Note the con
 memory mirror above: a memory write is not an auto-sync trigger, so the mirror still asks you to
 run `cc-notes sync` to share it — the SessionEnd backstop sweeps an unpushed mirror at exit.
 
+## Compact survival (automatic)
+
+Where the cc-notes capt-hook pack is enabled, the entities you touch survive context compaction
+on their own — no re-orienting from scratch after an auto-compact. A `PostToolUse` hook silently
+tracks every cc-notes entity the session creates, edits, or explicitly shows — both surfaces, MCP
+tools and the `cc-notes` CLI; search/list/status results never count as a touch — and after a
+compaction a `SessionStart` hook injects a digest into the fresh window. Eight or fewer entities
+come back as full `show` output, current state straight from the store; more come back as one
+pointer line each (kind · short id · title · how touched), newest first, capped at 30 with a
+`+N more` tail. Deleting an entity (`rm`) drops it from the digest, and repeated compactions
+accumulate rather than reset. Re-open anything from a pointer with `show` (the
+`note_show`/`task_show` tools, or `cc-notes show <id>`).
+
 ## Projects and sprints (optional)
 
 An optional planning layer sits on top of tasks — skip it for the canonical flow above. A
