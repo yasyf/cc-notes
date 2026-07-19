@@ -3,6 +3,7 @@ package store
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -17,6 +18,13 @@ import (
 type tipEntry struct {
 	ref string
 	tip model.SHA
+}
+
+// RootedSnapshot pairs one folded entity with the create commit that owns its
+// durable source identity.
+type RootedSnapshot struct {
+	Snapshot model.Snapshot
+	Root     model.PackCommit
 }
 
 // Load resolves ref and folds its chain into a snapshot. A missing ref
@@ -129,6 +137,93 @@ func listOf[T model.Snapshot](ctx context.Context, s *Store, kind model.Kind, fo
 // dispatch on a runtime kind rather than a static type.
 func (s *Store) ListSnapshots(ctx context.Context, kind model.Kind, opts ListOpts) ([]model.Snapshot, error) {
 	return listOf(ctx, s, kind, fold.Fold, opts)
+}
+
+// ListRootedSnapshots folds every entity of kind once and retains its unique
+// root create commit for authority identity projection.
+func (s *Store) ListRootedSnapshots(ctx context.Context, kind model.Kind, opts ListOpts) ([]RootedSnapshot, error) {
+	entries, err := s.children(ctx, refs.Root(kind))
+	if err != nil {
+		return nil, err
+	}
+	all := make([]RootedSnapshot, len(entries))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(listConcurrency)
+	for i, entry := range entries {
+		g.Go(func() error {
+			chain, err := s.Repo.ReadChain(gctx, entry.tip)
+			if err != nil {
+				return fmt.Errorf("load %s: %w", entry.ref, err)
+			}
+			snapshot, err := fold.Fold(chain)
+			if err != nil {
+				return fmt.Errorf("fold %s: %w", entry.ref, err)
+			}
+			root, err := uniqueRootCommit(chain)
+			if err != nil {
+				return fmt.Errorf("root %s: %w", entry.ref, err)
+			}
+			s.cache.put(entry.tip, snapshot)
+			all[i] = RootedSnapshot{Snapshot: snapshot, Root: root}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	result := make([]RootedSnapshot, 0, len(all))
+	for _, value := range all {
+		if keepInList(value.Snapshot.Meta(), opts) {
+			result = append(result, value)
+		}
+	}
+	slices.SortFunc(result, func(a, b RootedSnapshot) int {
+		am, bm := a.Snapshot.Meta(), b.Snapshot.Meta()
+		if order := am.CreatedAt.Compare(bm.CreatedAt); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.Snapshot.EntityID(), b.Snapshot.EntityID())
+	})
+	return result, nil
+}
+
+func uniqueRootCommit(chain []model.PackCommit) (model.PackCommit, error) {
+	var root model.PackCommit
+	found := false
+	for _, commit := range chain {
+		for _, operation := range commit.Pack.Ops {
+			if _, ok := operation.(model.CreateOp); !ok {
+				continue
+			}
+			if found {
+				return model.PackCommit{}, errors.New("entity chain has multiple create operations")
+			}
+			root, found = commit, true
+		}
+	}
+	if !found {
+		return model.PackCommit{}, errors.New("entity chain has no create operation")
+	}
+	return root, nil
+}
+
+// HasSession reports whether ref already contains an operation pack from the
+// exact idempotency session.
+func (s *Store) HasSession(ctx context.Context, ref, sessionID string) (bool, error) {
+	tip, err := s.Repo.Tip(ctx, ref)
+	if err != nil {
+		return false, err
+	}
+	chain, err := s.Repo.ReadChain(ctx, tip)
+	if err != nil {
+		return false, err
+	}
+	for _, commit := range chain {
+		if commit.Pack.Session == sessionID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ListNotes folds every note in the repository, ordered by creation time then

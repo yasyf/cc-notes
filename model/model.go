@@ -554,6 +554,7 @@ type Task struct {
 	Sprint           EntityID    `json:"sprint"`   // LWW membership, empty means none
 	Project          EntityID    `json:"project"`  // LWW membership, empty means none (independent of Sprint)
 	Criteria         []Criterion `json:"criteria"` // append-ordered by creation (linearization order)
+	Deleted          bool        `json:"deleted,omitempty"`
 }
 
 // Sprint is the folded snapshot of a sprint entity: a time-boxed grouping of
@@ -579,6 +580,7 @@ type Sprint struct {
 	StartedAt   int64        `json:"started_at"`
 	ClosedAt    int64        `json:"closed_at"`
 	Head        SHA          `json:"head"`
+	Deleted     bool         `json:"deleted,omitempty"`
 }
 
 // Project is the folded snapshot of a project entity: a long-lived grouping of
@@ -599,6 +601,7 @@ type Project struct {
 	UpdatedAt   int64         `json:"updated_at"`
 	ClosedAt    int64         `json:"closed_at"`
 	Head        SHA           `json:"head"`
+	Deleted     bool          `json:"deleted,omitempty"`
 }
 
 // RunbookStep is one ordered instruction in a runbook: free text plus an

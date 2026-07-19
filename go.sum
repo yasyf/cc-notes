@@ -109,6 +109,8 @@ github.com/yasyf/daemonkit v0.1.1-0.20260719065454-e738ee00bba1 h1:ctYb+VzmMSF3F
 github.com/yasyf/daemonkit v0.1.1-0.20260719065454-e738ee00bba1/go.mod h1:615tFTdsseJNwpHtb6xMfQcvJFZj62xPZaCm21psoiY=
 github.com/yasyf/fusekit v1.5.1-0.20260719082545-56e1a431ff65 h1:DTt9vKUBCs4zJYgYQX64auYasAJynjKx6PDnCGCYuWc=
 github.com/yasyf/fusekit v1.5.1-0.20260719082545-56e1a431ff65/go.mod h1:oRDhN1FD5w4MaIUY3U1owudk7Oa/n2b/emgiYexv1FE=
+github.com/yasyf/fusekit v1.5.1-0.20260719093641-f595c00bcaef h1:GvIue8tXnxsSVGSro55fTD/HZ3RJbWV9WlwzwyI5dDU=
+github.com/yasyf/fusekit v1.5.1-0.20260719093641-f595c00bcaef/go.mod h1:oRDhN1FD5w4MaIUY3U1owudk7Oa/n2b/emgiYexv1FE=
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=
 github.com/yosida95/uritemplate/v3 v3.0.2/go.mod h1:ILOh0sOhIJR3+L/8afwt/kE++YT040gmv5BQTMR2HP4=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=

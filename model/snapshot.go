@@ -101,6 +101,7 @@ func (t Task) Meta() Meta {
 		Head:      t.Head,
 		CreatedAt: metaTime(t.CreatedAt),
 		UpdatedAt: metaTime(t.UpdatedAt),
+		Deleted:   t.Deleted,
 	}
 }
 
@@ -112,6 +113,7 @@ func (s Sprint) Meta() Meta {
 		Head:      s.Head,
 		CreatedAt: metaTime(s.CreatedAt),
 		UpdatedAt: metaTime(s.UpdatedAt),
+		Deleted:   s.Deleted,
 	}
 }
 
@@ -123,6 +125,7 @@ func (p Project) Meta() Meta {
 		Head:      p.Head,
 		CreatedAt: metaTime(p.CreatedAt),
 		UpdatedAt: metaTime(p.UpdatedAt),
+		Deleted:   p.Deleted,
 	}
 }
 

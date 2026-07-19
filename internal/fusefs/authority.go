@@ -153,7 +153,7 @@ func sourceInput(
 	return catalogservice.SourceTenantInput{
 		Record: catalogproto.SourceTenantRecord{
 			TenantID: catalogproto.TenantID(tenant.ID), Generation: uint64(tenant.Generation),
-			ObjectCount: objectCount, DeleteCount: deleteCount,
+			RootKey: RootKeyForTenant(tenant.ID), ObjectCount: objectCount, DeleteCount: deleteCount,
 		},
 		Objects: objects, Deletes: deletes,
 	}, closers, nil
@@ -175,6 +175,11 @@ func closeAll(closers []io.Closer) {
 // AuthorityForTenant returns cc-notes' unique source authority for tenant.
 func AuthorityForTenant(tenant catalog.TenantID) catalogproto.SourceAuthorityID {
 	return catalogproto.SourceAuthorityID("cc-notes:" + string(tenant))
+}
+
+// RootKeyForTenant returns cc-notes' stable authority-owned catalog root key.
+func RootKeyForTenant(tenant catalog.TenantID) string {
+	return "root:" + string(tenant)
 }
 
 // Tenant is one cc-notes repository's immutable FuseKit identity.
@@ -386,9 +391,19 @@ type projectionBuilder struct {
 func (b *projectionBuilder) build() error {
 	b.snaps = make(map[model.Kind][]model.Snapshot, len(model.Kinds()))
 	for _, kind := range model.Kinds() {
-		snapshots, err := b.store.ListSnapshots(b.ctx, kind, store.ListOpts{})
+		rooted, err := b.store.ListRootedSnapshots(b.ctx, kind, store.ListOpts{})
 		if err != nil {
 			return fmt.Errorf("cc-notes authority: list %s: %w", kind, err)
+		}
+		snapshots := make([]model.Snapshot, len(rooted))
+		keys := make(map[model.EntityID]string, len(rooted))
+		for index, value := range rooted {
+			snapshots[index] = value.Snapshot
+			key, err := entitySourceKey(kind, value.Root)
+			if err != nil {
+				return fmt.Errorf("cc-notes authority: source key for %s %s: %w", kind, value.Snapshot.EntityID(), err)
+			}
+			keys[value.Snapshot.EntityID()] = key
 		}
 		slices.SortFunc(snapshots, func(a, z model.Snapshot) int { return strings.Compare(string(a.EntityID()), string(z.EntityID())) })
 		b.snaps[kind] = snapshots
@@ -401,7 +416,7 @@ func (b *projectionBuilder) build() error {
 			if codecOf(kind).ReadOnly() {
 				mode = 0o444
 			}
-			b.file("entity:"+string(kind)+":"+string(snapshot.EntityID()), parent, Filename(snapshot), mode, body)
+			b.file(keys[snapshot.EntityID()], parent, Filename(snapshot), mode, body)
 			if codecOf(kind).Browsable() {
 				b.dir(browseKey(kind, snapshot.EntityID()), parent, snapshot.EntityID().Short())
 			}

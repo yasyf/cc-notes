@@ -20,7 +20,8 @@ import (
 
 func TestAuthoritySnapshotRendersStableObjectsAndSymlinks(t *testing.T) {
 	source := authorityStore(t)
-	note := createSnapshot(t, source, model.CreateNote{Nonce: model.NewNonce(), Title: "Durable note", Body: "body"}).(model.Note)
+	noteNonce := model.NewNonce()
+	note := createSnapshot(t, source, model.CreateNote{Nonce: noteNonce, Title: "Durable note", Body: "body"}).(model.Note)
 	project := createSnapshot(t, source, model.CreateProject{Nonce: model.NewNonce(), Title: "Project"}).(model.Project)
 	sprint := createSnapshot(t, source, model.CreateSprint{Nonce: model.NewNonce(), Title: "Sprint", Project: project.ID}).(model.Sprint)
 	task := createSnapshot(t, source, model.CreateTask{
@@ -37,7 +38,7 @@ func TestAuthoritySnapshotRendersStableObjectsAndSymlinks(t *testing.T) {
 		t.Fatalf("BuildAuthoritySnapshot: %v", err)
 	}
 	objects := indexAuthorityObjects(snapshot.objects)
-	noteObject := objects["entity:note:"+string(note.ID)]
+	noteObject := objects["entity:note:"+noteNonce]
 	if noteObject.name != Filename(note) || !strings.Contains(string(noteObject.content), "Durable note") {
 		t.Fatalf("note object = %+v content=%q", noteObject, noteObject.content)
 	}
@@ -60,6 +61,9 @@ func TestAuthoritySnapshotRendersStableObjectsAndSymlinks(t *testing.T) {
 	defer closeAll(closers)
 	if input.Record.ObjectCount != uint32(snapshot.Len()) || input.Record.DeleteCount != 0 {
 		t.Fatalf("source record = %+v snapshot len=%d", input.Record, snapshot.Len())
+	}
+	if input.Record.RootKey != RootKeyForTenant(tenant.ID) {
+		t.Fatalf("root key = %q, want %q", input.Record.RootKey, RootKeyForTenant(tenant.ID))
 	}
 	for _, object := range input.Objects {
 		if object.Record.Kind == catalogproto.ObjectKindDirectory {
@@ -120,7 +124,8 @@ func TestAuthoritySnapshotStreamsVerifiedAttachment(t *testing.T) {
 
 func TestAuthorityDeltaPreservesIdentityAcrossRenameAndSortsDeletes(t *testing.T) {
 	source := authorityStore(t)
-	note := createSnapshot(t, source, model.CreateNote{Nonce: model.NewNonce(), Title: "Before", Body: "body"}).(model.Note)
+	nonce := model.NewNonce()
+	note := createSnapshot(t, source, model.CreateNote{Nonce: nonce, Title: "Before", Body: "body"}).(model.Note)
 	before, err := BuildAuthoritySnapshot(t.Context(), source)
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +142,7 @@ func TestAuthorityDeltaPreservesIdentityAcrossRenameAndSortsDeletes(t *testing.T
 	if delta.Len() != 1 || len(delta.objects) != 1 || len(delta.deletes) != 0 {
 		t.Fatalf("rename delta = upserts=%+v deletes=%+v", delta.objects, delta.deletes)
 	}
-	wantKey := "entity:note:" + string(note.ID)
+	wantKey := "entity:note:" + nonce
 	if delta.objects[0].key != wantKey || delta.objects[0].name != Filename(updated) {
 		t.Fatalf("rename upsert = %+v, want key %q name %q", delta.objects[0], wantKey, Filename(updated))
 	}

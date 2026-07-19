@@ -69,6 +69,8 @@ func (f *projectFolder) apply(op model.Op, c model.PackCommit) error {
 		f.project.Description = o.Description
 	case model.SetProjectStatus:
 		applyProjectStatus(&f.project, o.Status, c.AuthorTime)
+	case model.DeleteNote:
+		f.project.Deleted = true
 	default:
 		return fmt.Errorf("%w: %s on a project", ErrKindMismatch, op.OpKind())
 	}

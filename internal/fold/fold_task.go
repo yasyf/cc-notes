@@ -112,6 +112,8 @@ func (f *taskFolder) apply(op model.Op, c model.PackCommit) error {
 		f.task.Sprint = o.Sprint
 	case model.SetProject:
 		f.task.Project = o.Project
+	case model.DeleteNote:
+		f.task.Deleted = true
 	case model.AddCriterion:
 		if criterionIndex(f.criteria, o.ID) < 0 {
 			f.criteria = append(f.criteria, model.Criterion{ID: o.ID, Text: o.Text, Script: o.Script, Status: model.CriterionPending})

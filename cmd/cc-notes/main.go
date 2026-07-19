@@ -14,12 +14,20 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/fold"
+	"github.com/yasyf/cc-notes/internal/fusefs"
 	"github.com/yasyf/cc-notes/model"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if handled, err := fusefs.RunHolderChild(ctx, os.Args[1:], os.Stdin, os.Stdout); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cc-notes holder child: %s\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	root := cli.NewRootCmd()
 	// Present the invoked name (ccn or cc-notes) in help/usage.

@@ -18,6 +18,16 @@ import (
 // a *DuplicateError carrying the survivor; the scan is best-effort and takes no
 // lock, so two truly concurrent creates can still both land.
 func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, error) {
+	return s.create(ctx, ops, true)
+}
+
+// CreateExact roots an entity without content deduplication. The caller must
+// provide its durable create nonce and enforce idempotency before calling.
+func (s *Store) CreateExact(ctx context.Context, ops []model.Op) (model.Snapshot, error) {
+	return s.create(ctx, ops, false)
+}
+
+func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (model.Snapshot, error) {
 	if len(ops) == 0 {
 		return nil, errors.New("create: no ops")
 	}
@@ -30,12 +40,14 @@ func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, err
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
-	existing, err := s.findDuplicate(ctx, kind, pack)
-	if err != nil {
-		return nil, fmt.Errorf("create %s: %w", kind, err)
-	}
-	if existing != nil {
-		return nil, &DuplicateError{Kind: kind, Existing: existing}
+	if deduplicate {
+		existing, err := s.findDuplicate(ctx, kind, pack)
+		if err != nil {
+			return nil, fmt.Errorf("create %s: %w", kind, err)
+		}
+		if existing != nil {
+			return nil, &DuplicateError{Kind: kind, Existing: existing}
+		}
 	}
 	sig, actor, err := s.signature(ctx)
 	if err != nil {

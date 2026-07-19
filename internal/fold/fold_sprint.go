@@ -75,6 +75,8 @@ func (f *sprintFolder) apply(op model.Op, c model.PackCommit) error {
 		f.sprint.StartDate = o.Date
 	case model.SetEndDate:
 		f.sprint.EndDate = o.Date
+	case model.DeleteNote:
+		f.sprint.Deleted = true
 	default:
 		return fmt.Errorf("%w: %s on a sprint", ErrKindMismatch, op.OpKind())
 	}
