@@ -10,8 +10,9 @@ import (
 )
 
 // ScrubEnv clears every git environment knob that could leak host state into
-// a test and pins global/system config to /dev/null. t.Setenv with the
-// original value registers the restore before os.Unsetenv removes the key.
+// a test, pins global/system config to /dev/null, and disables detached
+// maintenance so no Git process outlives its test repository. t.Setenv with
+// the original value registers the restore before os.Unsetenv removes the key.
 func ScrubEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
@@ -30,6 +31,9 @@ func ScrubEnv(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "maintenance.auto")
+	t.Setenv("GIT_CONFIG_VALUE_0", "false")
 }
 
 // Git runs a git command in dir and returns its trimmed combined output,
