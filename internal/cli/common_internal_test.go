@@ -8,7 +8,7 @@ import (
 )
 
 func TestMaxArgs(t *testing.T) {
-	cmd := &cobra.Command{Use: "mount"}
+	cmd := &cobra.Command{Use: "example"}
 	for _, tc := range []struct {
 		name    string
 		n       int

@@ -1,14 +1,9 @@
-//go:build fuse
-
 package fusefs
 
 import "github.com/yasyf/cc-notes/model"
 
-// entityCodec is the per-kind behavior the mount dispatches on: the
-// render/parse/diff/create hooks that translate an entity snapshot to and from
-// its file bytes. codecOf(kind) returns one; the generic codec[S, P] adapter
-// keeps each kind's implementation fully typed behind this type-erased surface.
-// Render's snap and Diff's base are always of the codec's own kind.
+// entityCodec is the product-owned render/diff/create policy that translates
+// one Git entity to and from its authoritative catalog bytes.
 type entityCodec interface {
 	Kind() model.Kind
 	// ReadOnly reports whether the kind's flat files reject writes (runbooks).
@@ -55,8 +50,7 @@ func (c codec[S, P]) New(data []byte) ([]model.Op, error) {
 }
 
 // codecs maps every entity kind to its codec. Read-only codecs wire only
-// render, so the mount rejects every write before a commit path reaches their
-// parse/diff/create hooks.
+// render, so no mutation path reaches their parse/diff/create hooks.
 var codecs = map[model.Kind]entityCodec{
 	model.KindNote:          codec[model.Note, ParsedDoc]{kind: model.KindNote, render: RenderNote, parse: ParseNote, diff: DiffNote, create: NewNote},
 	model.KindDoc:           codec[model.Doc, ParsedDoc]{kind: model.KindDoc, render: RenderDoc, parse: ParseDoc, diff: DiffDoc, create: NewDoc},

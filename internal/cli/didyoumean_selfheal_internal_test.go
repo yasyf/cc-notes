@@ -68,15 +68,6 @@ func TestAcceptedFlagsLineNoFlags(t *testing.T) {
 	}
 }
 
-// TestAcceptedFlagsLineHidden: a hidden flag is elided from the accepted-flags
-// line, so mount advertises only its visible --foreground, not --auto/--socket.
-func TestAcceptedFlagsLineHidden(t *testing.T) {
-	root := NewRootCmd()
-	if got := acceptedFlagsLine(mustFind(t, root, "mount")); got != "mount takes: --foreground" {
-		t.Fatalf("acceptedFlagsLine(mount) = %q, want %q", got, "mount takes: --foreground")
-	}
-}
-
 // TestSiblingFlagScan pins the deterministic selection and format: the top three
 // commands defining the flag, add-verb siblings first then lexicographic, each
 // with its usage; a flag defined nowhere else yields "".
@@ -153,11 +144,10 @@ func TestUnderscoreHint(t *testing.T) {
 }
 
 // TestFlagCommandHint: --grep is templated with the failing command's noun;
-// mount's mode flags map to its subcommands; everything else is "".
+// everything else is "".
 func TestFlagCommandHint(t *testing.T) {
 	root := NewRootCmd()
 	noteList := mustFind(t, root, "note", "list")
-	mount := mustFind(t, root, "mount")
 
 	cases := []struct {
 		name string
@@ -166,10 +156,7 @@ func TestFlagCommandHint(t *testing.T) {
 		want string
 	}{
 		{"grep on note list", noteList, "grep", `use "note search QUERY" or top-level "search QUERY"`},
-		{"list on mount", mount, "list", mountSubcmdHint},
-		{"stop on mount", mount, "stop", mountSubcmdHint},
-		{"shutdown on mount", mount, "shutdown", mountSubcmdHint},
-		{"list off mount", noteList, "list", ""},
+		{"list has no command hint", noteList, "list", ""},
 		{"unknown flag no hint", noteList, "zzz", ""},
 	}
 	for _, tc := range cases {

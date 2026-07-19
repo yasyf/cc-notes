@@ -1,4 +1,4 @@
-"""SessionStart bootstrap: install or upgrade the cc-notes binary and ensure the mount."""
+"""SessionStart bootstrap: install or upgrade the cc-notes binary."""
 
 from __future__ import annotations
 
@@ -33,15 +33,9 @@ def _stale(evt: SessionStartEvent) -> bool:
     return version is None or version < MIN_VERSION
 
 
-def ensure_mount(evt: SessionStartEvent) -> None:
-    # `mount --auto` self-gates on the cc-notes.autoMount config and a fuse-capable binary, adopts a live
-    # mount with zero RPC, and is quiet — a no-op in repos that did not opt in, never blocking startup.
-    run_cc_notes(evt, "mount", "--auto")
-
-
 @on(Event.SessionStart, async_=True)
 def ensure_cc_notes_binary(evt: SessionStartEvent) -> None:
-    """On startup/resume, install or upgrade the cc-notes binary and ensure the mount.
+    """On startup/resume, install or upgrade the cc-notes binary.
 
     Dispatched async (fleet-wide `capt-hook run SessionStart --async`), so the harness ignores its
     return value — this runs side-effects only. The once-per-session availability line the agent
@@ -50,9 +44,7 @@ def ensure_cc_notes_binary(evt: SessionStartEvent) -> None:
     if evt.source not in ("startup", "resume"):
         return
     if shutil.which("cc-notes") is None:
-        if _install(evt):
-            ensure_mount(evt)
+        _install(evt)
         return
     if _stale(evt):
         _install(evt)
-    ensure_mount(evt)

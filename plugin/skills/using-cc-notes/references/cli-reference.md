@@ -129,7 +129,6 @@ sweeps anything unpushed at session end. Outside a hook-managed session, run `cc
 | `--ci` | auto | Force-install the reconcile workflow even without a `.github/` directory (installed by default when `.github/` exists); mutually exclusive with `--no-ci` |
 | `--no-ci` | off | Skip the reconcile workflow even when a `.github/` directory exists |
 | `--hook` | off | Also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj, rebase, and server-side squash) |
-| `--no-mount` | off | Skip auto-mounting the `.notes` filesystem and disable the session-start ensure-mount |
 
 ```console
 $ cc-notes init
@@ -417,46 +416,6 @@ normal sync.
 | `--prune-remote` | off | Physically delete tombstoned refs on the remote |
 | `--json` | off | Emit JSON |
 
-### `cc-notes mount [MOUNTPOINT]`
-
-MCP: — (CLI-only: local FUSE mount lifecycle, not a durable-record op)
-
-Mount the repository's notes and tasks as an editable filesystem. Notes render as Markdown under
-`/notes`; tasks, sprints, and projects render as JSON under `/tasks`, `/sprints`, and
-`/projects`, with edits and diffs flowing back into the object database. A read-only nested tree
-of symlinks under `/projects` and `/sprints` walks the hierarchy; the [sprints and projects
-reference](sprints-and-projects.md) covers it. Requires a `_fuse` binary plus a FUSE
-implementation (`fuse-t` on macOS, `fuse3` on Linux).
-
-`mount` detaches by default: a background mount holder serves the mount, the command prints the
-path and returns, and the mount persists after the command exits. With no `MOUNTPOINT` the mount
-is served at a managed per-repo default under `~/.cc-notes/mnt` and presented in the repo as a
-`.notes` symlink into it (`cd .notes` to browse); the symlink is kept out of git via
-`.git/info/exclude`, never the tracked `.gitignore`, so the live mount stays out of the working
-tree. Pass an explicit `MOUNTPOINT` to serve there instead — it is created if missing and no
-symlink is made. Tear down with `mount stop .notes` (or `mount stop DIR`) or plain `umount`;
-`stop` and `shutdown` remove the `.notes` symlink they created. Holder management is three
-subcommands, each of which acts and exits:
-
-| Subcommand | Meaning |
-|------------|---------|
-| `mount list` | List the mounts the holder serves |
-| `mount stop DIR` | Unmount the mount at `DIR` (or the `.notes` symlink) |
-| `mount shutdown` | Unmount everything and stop the mount holder |
-
-| Flag | Default | Meaning |
-|------|---------|---------|
-| `--foreground` / `-f` | off | Serve in the foreground and unmount on Ctrl-C (bypasses the holder) |
-| `--auto` | off | Session-start ensure-mount: mount only if the repo opted in (`cc-notes.autoMount`) and the binary can host FUSE — self-gating, best-effort, quiet |
-| `--socket <path>` | the shared fusekit-holder cask socket | Mount-holder unix socket path; persistent, so the subcommands take it too |
-
-```console
-$ cc-notes mount
-/abs/path/to/repo/.notes
-$ cc-notes mount stop .notes
-cc-notes: unmounted /Users/me/.cc-notes/mnt/repo-1a2b3c4d
-```
-
 ### `cc-notes viz`
 
 MCP: — (CLI-only: launches a local visualization web server)
@@ -484,7 +443,7 @@ Two tools depart from their lean CLI shape: `attachment_get` requires an `output
 writes the bytes there (never inline), and `task_validate` takes a `yes` boolean in place of the
 interactive confirmation. Free text is passed directly — the literal `-` (the CLI's stdin form) is
 rejected over MCP. Excluded from the tool surface are the operator-only commands — `init`, `mcp`
-itself, `mount`, `gc`/`compact`, `viz`, `version`, and the skills/hooks/workflows installers — and
+itself, `gc`/`compact`, `viz`, `version`, and the skills/hooks/workflows installers — and
 the CLI-only `--checkout`/`--apply`/`--abort` file mode, since an agent passes a long body through
 the `body` tool parameter instead.
 
@@ -836,7 +795,7 @@ MCP: task_criterion_list (task)
 The criterion subgroup manages a task's structured acceptance criteria — the `pending` / `met` /
 `failed` checks that gate `task done`. Every verb addresses a criterion by an id prefix (`CRIT`,
 case-insensitive): no match exits 3, an ambiguous prefix exits 5. Criteria are also editable by
-id through the task's FUSE JSON file. Every verb takes `--json`; the lean `list` line is
+id through `task criterion` commands. Every verb takes `--json`; the lean `list` line is
 `<short7-crit-id>` `<status>` `<text>`.
 
 | Verb | Args | Meaning |

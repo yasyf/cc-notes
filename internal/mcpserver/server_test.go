@@ -400,7 +400,7 @@ func TestListToolsInventory(t *testing.T) {
 		}
 	}
 	for _, absent := range []string{
-		"mcp", "mount", "mount_holder", "init", "gc", "compact", "version", "viz",
+		"mcp", "init", "gc", "compact", "version", "viz",
 		"skills", "hooks", "workflows", "doc_checkout", "note_apply",
 		"task_move", "task_criterion_reset", "sprint_start",
 	} {

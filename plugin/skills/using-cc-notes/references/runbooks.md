@@ -97,9 +97,8 @@ content is `task validate`, behind its own confirmation gate.
   `runbook_list`, `runbook_show`, `runbook_step_add`, `runbook_run_start`,
   `runbook_run_done`, `runbook_run_skip`, `runbook_run_fail`, `runbook_run_finish`.
   Definition micro-editing (`step rm`/`edit`/`move`, `edit`, `archive`) stays on the CLI.
-- On a mounted `.notes` tree, runbooks render read-only at
-  `.notes/runbooks/<short-id>-<slug>.md` — readable procedure prose; edits go through the
-  CLI.
+- Runbook definitions are readable through `cc-notes runbook show`; edits go through the
+  dedicated runbook CLI commands.
 - `cc-notes viz` draws runbooks on the timeline with run-start and run-finish markers.
 
 The full flag tables live in [cli-reference.md](cli-reference.md); the JSON shapes are

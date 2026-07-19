@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **FuseKit authority publication is now a product-owned library surface.**
+  cc-notes renders complete Git-derived snapshots and fenced successor deltas,
+  provisions exact repository tenants, streams attachment content into the
+  catalog, and derives `PrepareTenant` from the committed source response.
 - **Kind-scoped misses now name the entity's actual kind.** When a noun-scoped
   command (`doc show`, `note edit`, `task done`, …) misses, cc-notes scans the
   other kinds for the id and, on a clean match, appends a hint to the exit-3
@@ -23,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Wrong names still fail — arguments are never rewritten.
 
 ### Changed
+- **BREAKING: the legacy mount/content daemon is removed.** The `mount` and
+  `contentd` commands, local holder lifecycle, watcher/spool/registry state,
+  FUSE-specific artifacts, and automatic `.notes` mount setup no longer exist.
+  Signed consumer applications supply their own identity and use FuseKit's
+  persistent catalog and tenant services directly; no compatibility path is
+  retained.
 - **BREAKING (MCP): the `papercut` tool's `text` argument is renamed `body`**,
   matching every other free-text tool argument. Schema-driven callers pick the
   new name up automatically; anything hardcoding `text` now gets the middleware

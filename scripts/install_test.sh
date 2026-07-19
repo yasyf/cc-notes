@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Unit-style harness for install.sh. Fakes `uname` and `curl` on PATH and points
 # the downloader at a local fixture binary, then asserts the platform -> asset
-# mapping, the prefer-fuse rule, and the version no-op re-run. Run manually:
+# mapping, checksum verification, and the version no-op re-run. Run manually:
 #
 #   scripts/install_test.sh
 #
@@ -35,6 +35,14 @@ esac
 EOF
 chmod +x "$WORK/stub/uname"
 
+# Never let a developer machine's Homebrew installation short-circuit the
+# direct-download path this harness exercises.
+cat > "$WORK/stub/brew" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$WORK/stub/brew"
+
 # curl stub: resolves "latest" to FAKE_TAG and "downloads" by copying the
 # fixture, logging the requested asset URL to REQUESTED_LOG.
 cat > "$WORK/stub/curl" <<'EOF'
@@ -51,6 +59,14 @@ case "$*" in
   *url_effective*)
     printf '%s' "https://github.com/yasyf/cc-notes/releases/tag/${FAKE_TAG:-v0.9.9}"
     ;;
+  *SHA256SUMS.txt*)
+    if command -v sha256sum >/dev/null 2>&1; then
+      hash="$(sha256sum "$FIXTURE_BIN" | awk '{print $1}')"
+    else
+      hash="$(shasum -a 256 "$FIXTURE_BIN" | awk '{print $1}')"
+    fi
+    printf '%s  %s\n' "$hash" "$FAKE_ASSET"
+    ;;
   *)
     printf '%s\n' "$url" >> "$REQUESTED_LOG"
     cp "$FIXTURE_BIN" "$out"
@@ -63,15 +79,15 @@ REQUESTED_LOG="$WORK/requested"
 export REQUESTED_LOG FAKE_TAG="v0.9.9"
 export FIXTURE_BIN="$WORK/fixture-binary"
 
-run_install() { # $1=os $2=arch
+run_install() { # $1=os $2=arch $3=expected-asset
   : > "$REQUESTED_LOG"
   rm -rf "${WORK:?}/bin"
-  PATH="$WORK/stub:$PATH" FAKE_OS="$1" FAKE_ARCH="$2" CC_NOTES_BIN_DIR="$WORK/bin" \
+  PATH="$WORK/stub:$PATH" FAKE_OS="$1" FAKE_ARCH="$2" FAKE_ASSET="$3" CC_NOTES_BIN_DIR="$WORK/bin" \
     "$INSTALL" >/dev/null 2>&1
 }
 
 expect() { # $1=os $2=arch $3=expected-asset
-  run_install "$1" "$2"
+  run_install "$1" "$2" "$3"
   got="$(basename "$(tail -n1 "$REQUESTED_LOG")")"
   if [ "$got" != "$3" ]; then
     echo "FAIL: uname(-s=$1 -m=$2) requested '$got', expected '$3'" >&2
@@ -80,19 +96,18 @@ expect() { # $1=os $2=arch $3=expected-asset
   echo "ok: $1/$2 -> $3"
 }
 
-# Platform mapping + prefer-fuse.
-expect Darwin arm64 cc-notes_darwin_arm64_fuse
-expect Darwin x86_64 cc-notes_darwin_amd64_fuse
-expect Linux x86_64 cc-notes_linux_amd64_fuse
-# linux/arm64 has no fuse asset -> falls back to the pure binary.
+# Platform mapping.
+expect Darwin arm64 cc-notes_darwin_arm64
+expect Darwin x86_64 cc-notes_darwin_amd64
+expect Linux x86_64 cc-notes_linux_amd64
 expect Linux aarch64 cc-notes_linux_arm64
 
 # Re-running at the installed version is a silent no-op (no download).
 PATH="$WORK/stub:$PATH" FAKE_OS=Linux FAKE_ARCH=x86_64 CC_NOTES_BIN_DIR="$WORK/bin" \
-  "$INSTALL" >/dev/null 2>&1
+  FAKE_ASSET=cc-notes_linux_amd64 "$INSTALL" >/dev/null 2>&1
 : > "$REQUESTED_LOG"
 PATH="$WORK/stub:$PATH" FAKE_OS=Linux FAKE_ARCH=x86_64 CC_NOTES_BIN_DIR="$WORK/bin" \
-  "$INSTALL" >/dev/null 2>&1
+  FAKE_ASSET=cc-notes_linux_amd64 "$INSTALL" >/dev/null 2>&1
 if [ -s "$REQUESTED_LOG" ]; then
   echo "FAIL: re-run downloaded '$(cat "$REQUESTED_LOG")' instead of a no-op" >&2
   exit 1

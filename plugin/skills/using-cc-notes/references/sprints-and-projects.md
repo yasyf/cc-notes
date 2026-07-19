@@ -420,39 +420,6 @@ Treat a script that arrived over sync as untrusted code. Read the printed script
 confirm, and never wire `task validate --yes` into an unattended pipeline that pulls from a remote
 you do not control.
 
-## On the FUSE mount
-
-`cc-notes mount` exposes sprints and projects alongside notes and tasks (it needs a `_fuse` binary
-plus a FUSE implementation — `fuse-t` on macOS, `fuse3` on Linux). Two shapes appear.
-
-**Flat editable files**, one per entity, mirroring the `--json` record pretty-printed:
-
-```
-/sprints/<short7>.json     # one sprint, editable
-/projects/<short7>.json    # one project, editable
-/tasks/<short7>.json       # one task, editable
-```
-
-Editing a sprint or project file writes the changed fields back as ops. On a **task** file, the
-`criteria` array is editable by id — change a criterion's text, status, or script in place, add a
-new entry with an empty `id` (the store assigns one), or drop one to remove it. The `sprint` and
-`project` fields on a task file are **display-only**: like `branch`, they show current membership
-but you change it through the CLI (`task edit --sprint/--project`), not by editing the file.
-Echoing them unchanged is fine; changing them fails.
-
-**A read-only nested browse tree of symlinks** lets you walk the hierarchy without storing it. Each
-leaf is a symlink to the real flat `/tasks/<short7>.json` file, so editing through a symlink edits
-the one canonical task:
-
-```
-/projects/<p>/sprints/<s>/tasks/<t>.json   ->  ../../../../../tasks/<t>.json
-/projects/<p>/tasks/<t>.json               ->  ../../tasks/<t>.json
-/sprints/<s>/tasks/<t>.json                ->  ../../tasks/<t>.json
-```
-
-The tree is derived from the pointers at read time and is read-only — restructure the hierarchy
-with the CLI, then the browse tree reflects it. `cat /sprints/7016a10/tasks/77bb68a.json` and
-`cat /tasks/77bb68a.json` print the same bytes.
 
 ## When to reach for a sprint or project
 

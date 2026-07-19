@@ -150,7 +150,7 @@ from hooks.redirect import (
 )
 from cc_transcript.command import parse_command_line
 import hooks.bootstrap as bootstrap
-from hooks.bootstrap import ensure_cc_notes_binary, ensure_mount
+from hooks.bootstrap import ensure_cc_notes_binary
 from captain_hook import CommandLine
 from captain_hook.conditions import check_condition
 from captain_hook.testing.helpers import fixture_session, mock_event, mock_tool_event
@@ -533,10 +533,6 @@ def test_approval_cli_condition() -> None:
         ("cc-notes task criterion script a1b2 /tmp/payload.sh", False),  # verb ingests a script path
         ("cc-notes task criterion add a1b2 check --script /tmp/payload.sh", False),  # --script ingest
         ("cc-notes workflows install --dest ../../../tmp/evil", False),  # out-of-tree write
-        ("cc-notes mount --socket /tmp/s", False),  # socket redirection
-        ("cc-notes mount stop", False),  # destructive: unmounts + removes the .notes symlink
-        ("cc-notes mount stop .notes", False),  # same, with an explicit mountpoint
-        ("cc-notes mount shutdown", False),  # destructive: unmounts every cc-notes mount
         ("cc-notes mcp --dir /some/repo", False),  # mcp --dir selects an arbitrary repo to serve
         ("cc-notes mcp --dir=/some/repo", False),  # same, glued form
         # safe neighbors — the carve-out is by dangerous flag/verb, not by noun
@@ -545,8 +541,6 @@ def test_approval_cli_condition() -> None:
         ("cc-notes note add x --dir internal/auth", True),  # record-anchor --dir, not a write path
         ("cc-notes doc add d --body b --dir internal/api", True),  # record-anchor --dir on doc add
         ("cc-notes log list --dir internal/sync", True),  # record-anchor --dir on log list
-        ("cc-notes mount list", True),  # mount subcommand, no dangerous flag
-        ("cc-notes mount --auto", True),  # mount without --socket
     ]
     for command, expected in cases:
         got = cond.check_command_line(SimpleNamespace(), CommandLine.parse(command))
@@ -4050,7 +4044,7 @@ def test_bootstrap_parse_version(monkeypatch) -> None:
 
 
 def test_bootstrap_installs_when_absent(monkeypatch, tmp_path) -> None:
-    """An absent binary runs the curl installer, then ensures the mount. Async dispatch ignores the return."""
+    """An absent binary runs the curl installer. Async dispatch ignores the return."""
     state = {"installed": False}
     monkeypatch.setattr(bootstrap.shutil, "which", lambda _n: "/usr/bin/cc-notes" if state["installed"] else None)
     calls: list[tuple] = []
@@ -4066,12 +4060,11 @@ def test_bootstrap_installs_when_absent(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     result = ensure_cc_notes_binary(evt)
     check("bootstrap absent: ran the curl installer", any(c[:2] == ("sh", "-c") and "install.sh" in c[2] for c in calls), repr(calls))
-    check("bootstrap absent: ensured the mount after a successful install", ("cc-notes", "mount", "--auto") in calls, repr(calls))
     check("bootstrap absent: returns None (async dispatch drops the output)", result is None, repr(result))
 
 
 def test_bootstrap_upgrades_when_stale(monkeypatch, tmp_path) -> None:
-    """A present-but-stale binary reinstalls, then ensures the mount, returning no context line."""
+    """A present-but-stale binary reinstalls and returns no context line."""
     monkeypatch.setattr(bootstrap.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     calls: list[tuple] = []
 
@@ -4083,12 +4076,11 @@ def test_bootstrap_upgrades_when_stale(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     result = ensure_cc_notes_binary(evt)
     check("bootstrap stale: ran the installer", any(c[:2] == ("sh", "-c") for c in calls), repr(calls))
-    check("bootstrap stale: ensured the mount", ("cc-notes", "mount", "--auto") in calls, repr(calls))
     check("bootstrap stale: returns None", result is None, repr(result))
 
 
 def test_bootstrap_noop_when_current(monkeypatch, tmp_path) -> None:
-    """A current binary skips the installer but still ensures the mount, returning no context line."""
+    """A current binary skips the installer and returns no context line."""
     monkeypatch.setattr(bootstrap.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     calls: list[tuple] = []
 
@@ -4100,7 +4092,6 @@ def test_bootstrap_noop_when_current(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     result = ensure_cc_notes_binary(evt)
     check("bootstrap current: no installer ran", not any(c[:2] == ("sh", "-c") for c in calls), repr(calls))
-    check("bootstrap current: ensured the mount", ("cc-notes", "mount", "--auto") in calls, repr(calls))
     check("bootstrap current: returns None", result is None, repr(result))
 
 
@@ -4116,20 +4107,6 @@ def test_bootstrap_skips_non_startup_source(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     check("bootstrap gate: clear source returns None", ensure_cc_notes_binary(evt) is None)
     check("bootstrap gate: no cli calls", calls == [], repr(calls))
-
-
-def test_bootstrap_ensure_mount(monkeypatch, tmp_path) -> None:
-    """ensure_mount shells `cc-notes mount --auto` best-effort."""
-    calls: list[tuple] = []
-
-    def cli(args, *, input=None, timeout=30, env=None, throw=True):
-        calls.append(tuple(args))
-        return ""
-
-    evt = mock_event("SessionStart", source="startup", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_cli", cli)
-    ensure_mount(evt)
-    check("ensure_mount: calls cc-notes mount --auto", ("cc-notes", "mount", "--auto") in calls, repr(calls))
 
 
 class MonkeyPatch:

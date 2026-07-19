@@ -74,12 +74,7 @@ func TestSelfHealingErrors(t *testing.T) {
 			contains: []string{"unknown flag: --grep", `use "note search QUERY" or top-level "search QUERY"`},
 		},
 		{
-			name:     "mount mode flag hints its subcommand",
-			args:     []string{"mount", "--list"},
-			contains: []string{"unknown flag: --list", "now subcommands: cc-notes mount list|stop|shutdown"},
-		},
-		{
-			name:     "mount hint does not leak to other groups; a flagless group still names itself",
+			name:     "a flagless group still names itself",
 			args:     []string{"note", "--list"},
 			contains: []string{"unknown flag: --list", "note takes no flags"},
 			absent:   []string{"now subcommands"},
@@ -179,13 +174,6 @@ func TestSelfHealingErrorExactShapes(t *testing.T) {
 		args []string
 		want string
 	}{
-		{
-			name: "unknown flag with a command hint elides hidden flags",
-			args: []string{"mount", "--list"},
-			want: "unknown flag: --list\n" +
-				"mount takes: --foreground\n" +
-				"now subcommands: cc-notes mount list|stop|shutdown",
-		},
 		{
 			name: "unknown flag with a sibling scan",
 			args: []string{"runbook", "add", "Deploy", "--attach"},

@@ -1,5 +1,3 @@
-//go:build fuse
-
 package fusefs
 
 import (

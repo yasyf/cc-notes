@@ -46,14 +46,14 @@ The install script picks the right binary for your platform, drops it in `~/.loc
 curl -fsSL https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh | sh
 ```
 
-Both installers prefer the FUSE-capable `_fuse` variant where it ships (it adds `cc-notes mount`) and install a `ccn` shorthand for `cc-notes`. The mount itself needs FUSE on the host: `brew install macos-fuse-t/cask/fuse-t` on macOS, `fuse3` on Linux.
+Both installers also install a `ccn` shorthand for `cc-notes`.
 
-| Platform | Binary | With FUSE mount |
-|---|---|---|
-| macOS Apple Silicon | `cc-notes_darwin_arm64` | `cc-notes_darwin_arm64_fuse` |
-| macOS Intel | `cc-notes_darwin_amd64` | `cc-notes_darwin_amd64_fuse` |
-| Linux x86-64 | `cc-notes_linux_amd64` | `cc-notes_linux_amd64_fuse` |
-| Linux arm64 | `cc-notes_linux_arm64` | — |
+| Platform | Binary |
+|---|---|
+| macOS Apple Silicon | `cc-notes_darwin_arm64` |
+| macOS Intel | `cc-notes_darwin_amd64` |
+| Linux x86-64 | `cc-notes_linux_amd64` |
+| Linux arm64 | `cc-notes_linux_arm64` |
 
 </details>
 
@@ -137,10 +137,9 @@ Status moves `open → root_caused → fixed → confirmed`; `exonerate` closes 
 | `cc-notes blame` | Name the task(s) a commit implemented |
 | `cc-notes attachment get` | Stream an attachment's content from the local LFS store (`path` prints its object path) |
 | `cc-notes sync` | Push and pull `refs/cc-notes/*`, union-merging concurrent edits and transferring attachment content |
-| `cc-notes mount` | Expose notes and tasks as an editable `.notes` filesystem (needs a `_fuse` binary; auto-mounted by `init`) |
 | `cc-notes viz` | Watch branch flow and note/task/doc lifecycles live in a browser |
 
-Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) covers every flag. Docs and notes also edit as plain files without a mount: `doc edit <id> --checkout` (or `note edit`) renders the entity to Markdown and prints its path, and `--apply` commits your edits back. Tasks, sprints, projects, and runbooks carry threaded discussion via `<noun> comment`. Every mutation echoes the entity's new state as a tab-separated line, and every command takes `--json`. A global `--repo PATH` (`-R`) points any command at another repository's store from any cwd — pass any path inside it, while file-path arguments still resolve against the invocation cwd.
+Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) covers every flag. Docs and notes also edit as checked-out plain files: `doc edit <id> --checkout` (or `note edit`) renders the entity to Markdown and prints its path, and `--apply` commits your edits back. Tasks, sprints, projects, and runbooks carry threaded discussion via `<noun> comment`. Every mutation echoes the entity's new state as a tab-separated line, and every command takes `--json`. A global `--repo PATH` (`-R`) points any command at another repository's store from any cwd — pass any path inside it, while file-path arguments still resolve against the invocation cwd.
 
 ## MCP server
 
@@ -159,7 +158,7 @@ The Claude Code plugin wires the server for you: it ships a bundled `.mcp.json` 
 }
 ```
 
-Setup and host-facing commands stay CLI-only — `init`, mount, `gc`/`compact`, `viz`, `version`, the skills/hooks/workflows installers, and the `--checkout`/`--apply` file mode the `body` parameter replaces. If the binary is missing or predates this release, the server shows `failed` in `/mcp`, the session carries on, and the capt-hook nudges keep their CLI wording. To keep those hooks but switch the server off, add it to `deniedMcpServers` in your personal settings.
+Setup and host-facing commands stay CLI-only — `init`, `gc`/`compact`, `viz`, `version`, the skills/hooks/workflows installers, and the `--checkout`/`--apply` file mode the `body` parameter replaces. If the binary is missing or predates this release, the server shows `failed` in `/mcp`, the session carries on, and the capt-hook nudges keep their CLI wording. To keep those hooks but switch the server off, add it to `deniedMcpServers` in your personal settings.
 
 ## Attachments
 
@@ -175,7 +174,7 @@ $ cc-notes attachment path f3ab90c flamegraph.svg
 /work/repo/.git/lfs/objects/9f/86/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
 ```
 
-`log append --attach` adds files to an existing log, and `--attach` on `note edit` or `doc edit` attaches to a note or doc that already exists; a name that collides with a live attachment needs `--replace`. `--rm-attachment` on `note|doc|log edit` drops one, and `show` lists each attachment with a missing-locally marker until a sync fetches its bytes. With a `_fuse` binary the mount serves content read-only at `.notes/attachments/<short-id>/<name>`.
+`log append --attach` adds files to an existing log, and `--attach` on `note edit` or `doc edit` attaches to a note or doc that already exists; a name that collides with a live attachment needs `--replace`. `--rm-attachment` on `note|doc|log edit` drops one, and `show` lists each attachment with a missing-locally marker until a sync fetches its bytes.
 
 > [!WARNING]
 > A plain `git push` publishes `refs/cc-notes/*` through the installed wildcard refspec **without** uploading attachment content — a fresh clone then holds references whose bytes 404 at sync. Only `cc-notes sync` holds the objects-before-refs invariant, uploading content before it pushes refs. In an attachment-carrying repo, share with `cc-notes sync`, never a bare `git push`.

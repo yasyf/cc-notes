@@ -21,7 +21,11 @@ func repoSettingsPath(root string) string {
 // userSettingsPath is the user-global Claude Code settings file
 // (~/.claude/settings.json), the target of `--global` plugin enablement.
 func userSettingsPath() string {
-	return filepath.Join(mustHome(), ".claude", "settings.json")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+	return filepath.Join(home, ".claude", "settings.json")
 }
 
 // registerPlugin enables the cc-notes Claude Code plugin in the settings.json at

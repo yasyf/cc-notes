@@ -48,45 +48,6 @@ func TestInitInstallsRefspecs(t *testing.T) {
 	}
 }
 
-// TestInitAutoMountEnabledByDefault proves `init` records the auto-mount
-// preference (cc-notes.autoMount=true) and attempts the mount best-effort: a pure
-// test binary cannot host fuse, so the mount is skipped with a stderr warning,
-// but init still succeeds and the preference persists so a fuse-capable
-// session-start ensure-mount brings it up later.
-func TestInitAutoMountEnabledByDefault(t *testing.T) {
-	dir, _ := initRepoWithRemote(t)
-	_, stderr, err := runCLI(t, dir, "init")
-	if err != nil {
-		t.Fatalf("init: %v", err)
-	}
-	if got := strings.TrimSpace(gittest.Git(t, dir, "config", "--get", "cc-notes.autoMount")); got != "true" {
-		t.Errorf("cc-notes.autoMount = %q, want \"true\"", got)
-	}
-	// This pure test binary cannot host fuse, so auto-mount silently skips — no
-	// holder is spawned and nothing is printed; only the preference persists, for
-	// a fuse-capable session-start ensure-mount to honor later.
-	if strings.Contains(stderr, "auto-mount") {
-		t.Errorf("stderr = %q, want no auto-mount attempt from a non-hosting build", stderr)
-	}
-}
-
-// TestInitNoMountDisablesAutoMount proves `init --no-mount` records the opt-out
-// (cc-notes.autoMount=false) and never attempts a mount, so re-running it can
-// disable a previously enabled auto-mount.
-func TestInitNoMountDisablesAutoMount(t *testing.T) {
-	dir, _ := initRepoWithRemote(t)
-	_, stderr, err := runCLI(t, dir, "init", "--no-mount")
-	if err != nil {
-		t.Fatalf("init --no-mount: %v", err)
-	}
-	if got := strings.TrimSpace(gittest.Git(t, dir, "config", "--get", "cc-notes.autoMount")); got != "false" {
-		t.Errorf("cc-notes.autoMount = %q, want \"false\"", got)
-	}
-	if strings.Contains(stderr, "auto-mount") {
-		t.Errorf("stderr = %q, want no auto-mount attempt under --no-mount", stderr)
-	}
-}
-
 // TestSelfInitOnFirstWriteNoRemote proves a fresh `git init` repo needs no
 // `cc-notes init` before its first write: `note add` and `task add` each create
 // their refs/cc-notes/* ref directly. initRepo never runs `cc-notes init`, so a

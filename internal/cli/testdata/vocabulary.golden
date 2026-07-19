@@ -58,16 +58,6 @@ command: cc-notes compact
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
-command: cc-notes contentd
-  use: contentd
-  aliases: -
-  short: Run cc-notes' content server for the shared fusekit holder
-  hidden: true
-  flags:
-    (none)
-  inherited:
-    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
-
 command: cc-notes doc
   use: doc
   aliases: -
@@ -294,7 +284,6 @@ command: cc-notes init
     --ci shorthand=none type=bool default="false" usage="force-install the reconcile GitHub Actions workflow even without a .github/ directory"
     --hook shorthand=none type=bool default="false" usage="also install a git post-merge hook running `cc-notes reconcile` (git-only; skipped by jj/rebase/server-side squash)"
     --no-ci shorthand=none type=bool default="false" usage="skip the reconcile GitHub Actions workflow even when a .github/ directory exists"
-    --no-mount shorthand=none type=bool default="false" usage="skip auto-mounting the `.notes` filesystem and disable the session-start ensure-mount"
     --remote shorthand=none type=string default="origin" usage="remote to wire"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -697,51 +686,6 @@ command: cc-notes mcp
     --dir shorthand=none type=string default="" usage="project directory (default: $CLAUDE_PROJECT_DIR or cwd)"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
-
-command: cc-notes mount
-  use: mount [MOUNTPOINT]
-  aliases: -
-  short: Mount notes, docs, and tasks as a filesystem (detaches; the shared fusekit holder serves it)
-  hidden: false
-  flags:
-    --auto shorthand=none type=bool default="false" usage="session-start ensure-mount: mount only if this repo opted in (cc-notes.autoMount) and the binary can host fuse; self-gating, best-effort, quiet"
-    --foreground shorthand=-f type=bool default="false" usage="serve in the foreground and unmount on Ctrl-C (bypasses the shared holder)"
-    --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)" persistent
-  inherited:
-    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
-
-command: cc-notes mount list
-  use: list
-  aliases: -
-  short: List cc-notes' mounts on the shared holder
-  hidden: false
-  flags:
-    (none)
-  inherited:
-    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
-    --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)"
-
-command: cc-notes mount shutdown
-  use: shutdown
-  aliases: -
-  short: Unmount cc-notes' own mounts (the shared holder keeps running for other tenants)
-  hidden: false
-  flags:
-    (none)
-  inherited:
-    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
-    --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)"
-
-command: cc-notes mount stop
-  use: stop DIR
-  aliases: -
-  short: Unmount the mount at DIR (DIR may be .notes); the shared holder reconciles it
-  hidden: false
-  flags:
-    (none)
-  inherited:
-    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
-    --socket shorthand=none type=string default="" usage="mount-holder unix socket path (default: the shared fusekit-holder cask socket)"
 
 command: cc-notes note
   use: note

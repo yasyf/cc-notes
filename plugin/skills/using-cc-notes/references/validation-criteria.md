@@ -78,8 +78,6 @@ $ cc-notes task criterion met d82c087 b6ec411
 d82c087	open	P1	-	Add retry backoff to the API client
 ```
 
-Criteria are also editable through the FUSE mount's task JSON file, addressed by id (see `cc-notes mount` in the [CLI reference](cli-reference.md)). Editing a criterion's status there records the same verdict the CLI does — and, like every surface other than `task validate`, it never runs the script.
-
 ## The `task done` gate
 
 `task done` refuses to close a task while any criterion is `pending` or `failed`, and lists each one not yet `met`:
@@ -117,7 +115,7 @@ A criterion's script is **stored content**. It rides the git object database on 
 - **Execution requires opt-in.** Without `--yes`, `validate` prompts on an interactive terminal and proceeds only on `y`/`yes`. A non-interactive stdin — a pipe or a redirect — without `--yes` is a hard error, so a piped or automated invocation can never run a script silently.
 - **It runs locally, bounded.** Each script runs under `sh -c` in the repository directory with a per-script timeout (`--timeout`, default 5m). Exit 0 records `met`; a non-zero exit or a timeout records `failed`.
 
-Validation never happens as a side effect. `sync`, `list`, the fold, `done`, and the FUSE render all read and fold criteria without executing a script. The only way a script runs is a human or agent typing `task validate` and clearing the consent guard — exactly the supply-chain boundary you want, because the script's author may be a different agent on a machine you never audited.
+Validation never happens as a side effect. `sync`, `list`, the fold, and `done` all read and fold criteria without executing a script. The only way a script runs is a human or agent typing `task validate` and clearing the consent guard — exactly the supply-chain boundary you want, because the script's author may be a different agent on a machine you never audited.
 
 On an interactive terminal, `validate` prints the scripts and asks before running:
 

@@ -21,8 +21,6 @@ import (
 var excludedCommands = map[string]bool{
 	"init":      true, // one-time repo adoption, a human-operator step
 	"mcp":       true, // the MCP server's own launch command
-	"mount":     true, // local FUSE mount lifecycle, not a durable-record op
-	"contentd":  true, // internal content server for the shared mount holder
 	"viz":       true, // launches a local visualization web server
 	"gc":        true, // destructive object-store maintenance
 	"compact":   true, // op-log checkpoint maintenance, an operator task
@@ -50,11 +48,10 @@ var excludedCommandPaths = map[string]bool{
 // excludedFlags are CLI-only flags with no agent-facing MCP surface, keyed by
 // flag name.
 var excludedFlags = map[string]bool{
-	"json":       true, // MCP always requests JSON; not an agent-facing choice
-	"checkout":   true, // CLI-only editable-buffer mode; MCP writes the body inline
-	"apply":      true, // CLI-only editable-buffer mode; MCP writes the body inline
-	"abort":      true, // CLI-only editable-buffer mode; MCP writes the body inline
-	"foreground": true, // CLI-only mount lifecycle flag (its command is excluded too)
+	"json":     true, // MCP always requests JSON; not an agent-facing choice
+	"checkout": true, // CLI-only editable-buffer mode; MCP writes the body inline
+	"apply":    true, // CLI-only editable-buffer mode; MCP writes the body inline
+	"abort":    true, // CLI-only editable-buffer mode; MCP writes the body inline
 }
 
 // coverageRecorder accumulates the command paths and Changed flag names the

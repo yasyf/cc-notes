@@ -25,7 +25,7 @@ git add README.md
 git commit -qm "init"
 git push -q origin main
 
-cc-notes init --no-mount --no-ci >/dev/null
+cc-notes init --no-ci >/dev/null
 
 FIRST=$(cc-notes task add "Add retry backoff to the API client" --backlog --priority 1 --label api \
 	--criterion "go test ./internal/api/... passes" | cut -f1)

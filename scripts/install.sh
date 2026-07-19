@@ -1,10 +1,8 @@
 #!/bin/sh
 # Download the prebuilt cc-notes binary for this platform from a GitHub release
 # and install it to ~/.local/bin (override with CC_NOTES_BIN_DIR), alongside a
-# `ccn` shorthand symlink. The FUSE variant is preferred wherever one is
-# published (darwin both arches, linux amd64), falling back to the pure static
-# binary. Re-running for a version that is already installed skips the download
-# but still refreshes the ccn symlink.
+# `ccn` shorthand symlink. Re-running for a version that is already installed
+# skips the download but still refreshes the ccn symlink.
 #
 # Usage:
 #   install.sh [VERSION]        # VERSION defaults to "latest"
@@ -77,11 +75,7 @@ case "$arch" in
     ;;
 esac
 
-# Prefer the fuse asset where the release ships one for this platform.
 asset="cc-notes_${os}_${arch}"
-case "${os}_${arch}" in
-  darwin_arm64 | darwin_amd64 | linux_amd64) asset="${asset}_fuse" ;;
-esac
 
 # Already on the target version? Skip the download, but still refresh the ccn
 # shorthand. Release binaries print "<tag> (<commit>)", so a leading-tag match

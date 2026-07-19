@@ -281,20 +281,10 @@ func commandPathNoRoot(cmd *cobra.Command) string {
 	return strings.TrimPrefix(cmd.CommandPath(), cmd.Root().Name()+" ")
 }
 
-// mountSubcmdHint redirects a --list/--stop/--shutdown flag to the mount
-// subcommands that carry those operations.
-const mountSubcmdHint = "now subcommands: cc-notes mount list|stop|shutdown"
-
 // flagCommandHints maps a command name to flag-shaped mistakes whose real fix is
 // one of that command's subcommands. --grep is not here: its guidance is
 // templated with the failing command's noun, so flagCommandHint builds it.
-var flagCommandHints = map[string]map[string]string{
-	"mount": {
-		"list":     mountSubcmdHint,
-		"stop":     mountSubcmdHint,
-		"shutdown": mountSubcmdHint,
-	},
-}
+var flagCommandHints = map[string]map[string]string{}
 
 // flagCommandHint returns guidance for a flag-shaped mistake whose fix is a
 // command rather than a flag, or "" when none applies. --grep is universal

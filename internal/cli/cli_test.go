@@ -117,8 +117,8 @@ var gitEnvKeys = []string{
 func initRepo(t *testing.T) string {
 	t.Helper()
 	dir := gittest.InitRepo(t)
-	// Isolate HOME so a test that spawns or drives a mount holder writes its
-	// state under ~/.cc-notes in a temp dir, never the real home.
+	// Isolate HOME so tests write state under ~/.cc-notes in a temp dir, never
+	// the real home.
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CC_NOTES_ACTOR", actorA)
 	return dir

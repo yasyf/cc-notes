@@ -1,9 +1,7 @@
-// Package fusefs is the pure translation layer between entities and their
-// filesystem representations: notes render as markdown with YAML
-// frontmatter, tasks as the CLI's --json document pretty-printed. Render,
-// parse, diff, and the path model are plain Go with no cgofuse or git
-// dependency, so the package compiles in the default CGO_ENABLED=0 build;
-// the mount machinery layers on top behind the fuse build tag.
+// Package fusefs owns the product projection between entities and their
+// catalog representations: notes render as markdown with YAML frontmatter,
+// tasks as the CLI's --json document pretty-printed. Render, parse, diff, and
+// the namespace model are plain Go with no native filesystem dependency.
 package fusefs
 
 import (
@@ -836,7 +834,7 @@ func RenderLog(l model.Log) []byte {
 
 // ensureTrailingNewline returns text with a single trailing newline appended
 // when it lacks one, leaving empty text empty. Entry text reaches the renderer
-// in two shapes: the FUSE editor saves text that already ends in a newline,
+// in two shapes: checked-out editors may save text that already ends in a newline,
 // while CLI-created entries (log append, -m, --entry) store the text verbatim
 // with no trailing newline. Terminating every non-empty entry keeps the next
 // fence — or EOF — anchored at a line start so ParseLog can split it, and is

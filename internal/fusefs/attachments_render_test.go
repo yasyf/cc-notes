@@ -1,6 +1,5 @@
 // Attachment render invariant: rendered documents carry no attachments
-// frontmatter — /attachments and `show` are the discovery surfaces — so a
-// mount edit can never touch (or corrupt) an attachment reference.
+// frontmatter, so checked-out content cannot corrupt an attachment reference.
 package fusefs_test
 
 import (

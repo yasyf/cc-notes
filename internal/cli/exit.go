@@ -8,7 +8,6 @@ import (
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/notes"
-	"github.com/yasyf/fusekit/mountd"
 )
 
 // UsageError reports a malformed invocation: an unknown command or flag,
@@ -64,14 +63,7 @@ func classify(err error) (int, string) {
 		return 5, "ambiguous"
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, gitobj.ErrRefNotFound):
 		return 3, "not-found"
-	case errors.As(err, &conflict), errors.As(err, &notesConflict), errors.Is(err, notes.ErrIllegalTransition), errors.Is(err, store.ErrContended), errors.Is(err, ccsync.ErrSyncContended),
-		errors.Is(err, mountd.ErrBusy), errors.Is(err, mountd.ErrForeignMount), errors.Is(err, mountd.ErrBaseMismatch):
-		// Mount-holder conflicts (a dir busy with another op, a foreign mount in
-		// the way, a base mismatch) are transient/holder-state conditions the
-		// caller resolves and retries — exit 4, like a write conflict. Every
-		// other holder-class error (ErrHolderUnavailable, ErrTCCDenied,
-		// ErrUnmountWedged, ErrMountTimeout, ErrMountFailed, ErrUnknownClass) and
-		// the fuse sentinels fall through to a plain exit 1.
+	case errors.As(err, &conflict), errors.As(err, &notesConflict), errors.Is(err, notes.ErrIllegalTransition), errors.Is(err, store.ErrContended), errors.Is(err, ccsync.ErrSyncContended):
 		return 4, "conflict"
 	default:
 		// A *notes.MissingContentError (attachment bytes absent locally) lands

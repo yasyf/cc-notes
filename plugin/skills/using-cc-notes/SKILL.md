@@ -91,7 +91,7 @@ The same shape covers the rest: `doc_add` takes a `when` read-trigger and the fu
 markdown in `body`; `log_append` takes `entry` plus `attach` paths; `search` ranks across
 every kind. `references/cli-reference.md` documents both surfaces — every command block
 opens with an `MCP:` line naming the tool and its properties. Operator commands (`init`,
-`mount`, `gc`, `compact`, `viz`, `version`, the installers) are CLI-only on purpose. Where
+`gc`, `compact`, `viz`, `version`, the installers) are CLI-only on purpose. Where
 the server is active, cc-notes' own capt-hook nudges name the tools; the CLI forms below
 are the fallback for sessions without it.
 
@@ -173,18 +173,6 @@ The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, el
 `user.name`/`user.email`. Claims and leases key on that actor.
 
 See `references/tasks-vs-notes.md` for worked examples of choosing among the seven.
-
-## Mount the notes tree (optional)
-
-The `.notes` mount surfaces every note, doc, and task as editable files at the repo root — read-write Markdown and JSON you browse and edit instead of shelling out. On a `_fuse` binary, `cc-notes init` mounts it by default and records the preference, so each new session re-mounts it automatically and the mount survives reboots with no steady-state cost. A pure (non-fuse) binary records the preference but mounts nothing until a fuse-capable session takes over. Opt out at init time, or manage a live mount:
-
-```console
-$ cc-notes init --no-mount    # skip the mount and disable auto-mount
-$ cc-notes mount              # mount on demand (needs a _fuse binary)
-$ cc-notes mount stop .notes  # unmount this repo's .notes
-```
-
-The mount mechanics — holder model, teardown, the macOS Network Volumes grant — live in `references/cli-reference.md`.
 
 ## Canonical agent flow
 
@@ -394,8 +382,7 @@ Read evidence back with `attachment_get` — it requires an `output` file path a
 bytes there, never inline (CLI: `cc-notes attachment get <id> <name> -o <path>`, or stdout
 with no `-o`) — or `attachment_path`, which prints the local store path for a zero-copy
 read. `show` on the entity lists its attachments and flags any not yet downloaded with a
-sync hint. On a mounted `.notes` tree, attachments also browse read-only at
-`.notes/attachments/<short-id>/<name>`.
+sync hint.
 
 ## Memory mirror (automatic)
 

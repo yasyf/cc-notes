@@ -108,7 +108,7 @@ ODB — the ones that read or write an arbitrary filesystem path, or run a store
 script. Auto-approving those would let a prompt-injected agent write any path,
 read any secret into its context, or execute code with no human in the loop, so
 they always prompt: `attachment get -o/--output`, `--attach`, `--apply`,
-`--abort`, `--script`, `workflows install --dest`, `mount --socket`,
+`--abort`, `--script`, `workflows install --dest`,
 `task validate`, and `task criterion script` — and the matching MCP tools
 (`task_validate`, plus any tool call carrying an `attach`, `output`, `script`,
 or `file` path). Plain `note`/`task`/`doc`/`log` records, `status`, `list`,
@@ -230,11 +230,8 @@ is captured once, by the mirror, never also nudged.
 
 The pack bootstraps its own binary. `ensure_cc_notes_binary` runs at `SessionStart` under
 async dispatch (the captain-hook plugin's `run SessionStart --async`): it installs the
-binary through the canonical installer when missing, reinstalls one older than v0.22.0 (the
-flag-cutover floor), then runs `cc-notes mount --auto` — which self-gates on the repo's
-opt-in (`cc-notes.autoMount=true`, set by `cc-notes init` unless you pass `--no-mount`) and
-on a fuse-capable binary, adopts an already-live mount with zero overhead, and is quiet and
-best-effort. Async dispatch drops the handler's output, so the availability line the agent
+binary through the canonical installer when missing and reinstalls one older than v0.26.0
+(the papercut command floor). Async dispatch drops the handler's output, so the availability line the agent
 reads comes from `announce_cc_notes_available`, a once-per-session `UserPromptSubmit` nudge
 that surfaces the installed version at the first prompt. The install reminder above speaks
 only when the bootstrap couldn't land a binary.

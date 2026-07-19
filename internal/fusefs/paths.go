@@ -12,12 +12,10 @@ import (
 // maxSlugLen caps the slug portion of a note filename.
 const maxSlugLen = 40
 
-// ErrPath reports a path outside the fusefs tree shape; the mount maps it
-// to ENOENT.
+// ErrPath reports a path outside the projected namespace shape.
 var ErrPath = errors.New("no such path")
 
-// junkNames are the macOS metadata files Finder and Spotlight probe for;
-// the mount answers them ENOENT without touching the store.
+// junkNames are macOS metadata names excluded from the projected namespace.
 var junkNames = map[string]bool{
 	".DS_Store":             true,
 	".Spotlight-V100":       true,
@@ -28,7 +26,7 @@ var junkNames = map[string]bool{
 	".localized":            true,
 }
 
-// flatLayout is the mount-namespace shape of an entity kind's flat files: the
+// flatLayout is the namespace shape of an entity kind's flat files: the
 // directory they live directly under, their file extension, and whether the
 // filename carries a title slug. It is the single source ParsePath and Filename
 // share, so a kind's directory and naming stay defined in one place.
@@ -49,7 +47,7 @@ var layouts = map[model.Kind]flatLayout{
 	model.KindProject:       {dir: "/projects", ext: ".json"},
 }
 
-// Node is one parsed mount path: the mount root (Root), the flat per-kind
+// Node is one parsed namespace path: the root (Root), the flat per-kind
 // directories (KindDir) and the editable entity files under them (EntityFile,
 // read-only for runbooks and investigations), the read-only nested browse tree
 // of sprints and projects whose task leaves are symlinks to the flat files, and
@@ -58,7 +56,7 @@ type Node interface {
 	node()
 }
 
-// Root is the mount root.
+// Root is the namespace root.
 type Root struct{}
 
 // KindDir is a flat per-kind directory: /notes, /docs, /logs, /runbooks,
@@ -228,13 +226,12 @@ func ShortIDOf(filename string) (string, bool) {
 
 func isHex(c byte) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' }
 
-// JunkName reports whether name is macOS Finder or Spotlight metadata the
-// mount should reject without touching the store.
+// JunkName reports whether name is excluded macOS Finder or Spotlight metadata.
 func JunkName(name string) bool {
 	return junkNames[name] || strings.HasPrefix(name, "._")
 }
 
-// ParsePath decodes an absolute mount path into its syntactic Node. Notes,
+// ParsePath decodes an absolute namespace path into its syntactic Node. Notes,
 // docs, logs, runbooks, tasks, sprints, and projects are flat: a name carrying
 // the kind's extension directly under its directory is an EntityFile keyed by
 // short id, and the bare directory a KindDir. Sprints and projects additionally
@@ -420,7 +417,7 @@ func parseProjects(full string, tail []string) (Node, error) {
 }
 
 // SymlinkTarget returns the relative symlink target from an absolute link path
-// to a flat file flatRel under the mount root. It emits one "../" per path
+// to a flat file flatRel under the namespace root. It emits one "../" per path
 // component in path.Dir(linkPath) — enough to climb back to the root — then
 // flatRel. For /projects/<p>/sprints/<s>/tasks/<t>.json with flatRel
 // "tasks/<t>.json" it returns "../../../../../tasks/<t>.json".

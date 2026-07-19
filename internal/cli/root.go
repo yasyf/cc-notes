@@ -37,7 +37,7 @@ func NewRootCmd() *cobra.Command {
 	// Cobra renders no help for flag groups; append a Constraints: block that
 	// recovers them. Subcommands inherit this template via getUsageTemplateFunc.
 	root.SetUsageTemplate(root.UsageTemplate() + "{{constraints .}}")
-	root.AddCommand(newInitCmd(), newSyncCmd(), newStatusCmd(), newReconcileCmd(), newBlameCmd(), newHistoryCmd(), newShowCmd(), newSearchCmd(), newRelevantCmd(), newCompactCmd(), newGCCmd(), newMountCmd(), newContentdCmd(), newVizCmd(), newMCPCmd(), newVersionCmd(), newNoteCmd(), newDocCmd(), newLogCmd(), newPapercutCmd(), newTaskCmd(), newSprintCmd(), newProjectCmd(), newRunbookCmd(), newInvestigationCmd(), newAttachmentCmd(), newSkillsCmd(), newHooksCmd(), newWorkflowsCmd())
+	root.AddCommand(newInitCmd(), newSyncCmd(), newStatusCmd(), newReconcileCmd(), newBlameCmd(), newHistoryCmd(), newShowCmd(), newSearchCmd(), newRelevantCmd(), newCompactCmd(), newGCCmd(), newVizCmd(), newMCPCmd(), newVersionCmd(), newNoteCmd(), newDocCmd(), newLogCmd(), newPapercutCmd(), newTaskCmd(), newSprintCmd(), newProjectCmd(), newRunbookCmd(), newInvestigationCmd(), newAttachmentCmd(), newSkillsCmd(), newHooksCmd(), newWorkflowsCmd())
 	return root
 }
 

@@ -35,30 +35,6 @@ jobs:
       - name: Cross-compile smoke (darwin/arm64)
         run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/cc-notes_darwin_arm64 ./cmd/cc-notes
 
-  fuse:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: ./.github/actions/setup
-
-      - name: Install fuse-t (build-time headers + dylib)
-        run: brew install macos-fuse-t/cask/fuse-t
-
-      - name: go vet (fuse)
-        run: CGO_ENABLED=1 go vet -tags fuse ./...
-
-      - name: Build smoke (fuse)
-        run: CGO_ENABLED=1 go build -tags fuse ./...
-
-      # Callback-level only: a live mount needs the one-time macOS
-      # "Network Volumes" TCC grant, which is impossible on a CI runner.
-      - name: Test fusefs callbacks
-        run: CGO_ENABLED=1 go test -tags fuse -count=1 ./internal/fusefs
-
-      - name: Build (default, pure Go stays green)
-        run: CGO_ENABLED=0 go build ./...
-
   lint:
     runs-on: ubuntu-latest
     steps:

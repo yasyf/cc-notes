@@ -316,7 +316,7 @@ func TestDedupeReturnsOldest(t *testing.T) {
 
 // TestDedupeSkipsUncoveredPack proves the pack-shape gate: a create pack that
 // bundles an op folding into a field the comparator ignores — AppendEntry into a
-// log's Entries (the FUSE NewLog path), AddComment into a task's Comments — roots
+// log's Entries, AddComment into a task's Comments — roots
 // a fresh entity even when its comparator-covered fields match an existing one,
 // so the bundled op is never silently dropped by a reuse.
 func TestDedupeSkipsUncoveredPack(t *testing.T) {
