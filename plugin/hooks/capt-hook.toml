@@ -1,5 +1,0 @@
-[pack]
-name = "cc-notes"
-version = "0.0.0"
-description = "cc-notes adoption nudges — keep git work in step with cc-notes tasks, notes, docs, and logs"
-hooks = "."

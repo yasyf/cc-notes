@@ -301,7 +301,7 @@ backstop needs capt-hook >= 9.2, the first release whose plugin dispatches
 The hooks carry inline tests. Run them against the module directory:
 
 ```console
-$ uvx capt-hook --hooks plugin/hooks test
+$ uvx --isolated 'capt-hook>=11.0.0' pack test plugin
 ```
 
 Each nudge declares its own `tests={Input(...): Warn()/Allow()}` cases covering a
@@ -333,5 +333,5 @@ with `shutil.which` mocked, and the firing handlers with stubbed CLI and LLM out
 have direct unit tests in `tests/test_cc_notes.py`:
 
 ```console
-$ uv run plugin/hooks/tests/test_cc_notes.py
+$ uv run plugin/capt-hook/hooks/tests/test_cc_notes.py
 ```

@@ -11,7 +11,7 @@ import (
 
 // inventoryRelPath is the module-root-relative path of the hook-pack module
 // holding the CC_NOTES_TOOLS inventory this test ties to the live tool registry.
-var inventoryRelPath = filepath.Join("plugin", "hooks", "common.py")
+var inventoryRelPath = filepath.Join("plugin", "capt-hook", "hooks", "common.py")
 
 // toolLiteral matches a python double-quoted tool-name literal inside the
 // CC_NOTES_TOOLS block (comments in that block carry no quotes, so this never

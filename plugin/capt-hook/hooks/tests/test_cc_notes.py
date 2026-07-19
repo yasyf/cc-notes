@@ -22,7 +22,7 @@ relative-import split can't silently break.
 
 Run with the same toolchain the inline tests use::
 
-    uv run plugin/hooks/tests/test_cc_notes.py
+    uv run plugin/capt-hook/hooks/tests/test_cc_notes.py
 """
 
 from __future__ import annotations
@@ -34,9 +34,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-# The pack is the relative-import package ``hooks`` (this file's grandparent dir is
-# ``plugin/``, which must be on sys.path so ``from .common import ...`` resolves when
-# the modules import each other). parents[2] is ``plugin/``; parents[1] is ``hooks/``.
+# ``hooks`` is a relative-import package; parents[2] (``plugin/capt-hook/``) goes on
+# sys.path so its modules' ``from .common import ...`` resolves.
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from hooks.approval import CcNotesCli, CcNotesMcp, cc_notes_mcp_tool
@@ -2756,7 +2755,7 @@ def test_pack_loads_under_discover_pack() -> None:
     from captain_hook.app import _state
     from captain_hook.loader import discover_pack
 
-    pack_dir = Path(__file__).parents[1]  # plugin/hooks
+    pack_dir = Path(__file__).parents[1]  # plugin/capt-hook/hooks
     before_count = len(_state.hooks)  # the list grows by one per registered hook (count, not name-set)
     try:
         discover_pack("cc-notes", pack_dir)
