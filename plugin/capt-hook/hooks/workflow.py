@@ -60,8 +60,8 @@ class CommandFamily(CustomCondition):
         self.exclude = exclude
 
     def check(self, evt: BaseHookEvent) -> bool:
-        line = evt.command_line
-        return line is not None and any(self._fires(cmd) for cmd in line.commands)
+        line = evt.cmd.line
+        return bool(line) and any(self._fires(cmd) for cmd in line.commands)
 
     def _fires(self, cmd: Command) -> bool:
         argv = cmd.argv
@@ -176,8 +176,8 @@ class CcNotesCliWrite(CustomCondition):
     """Matches a Bash cc-notes subcommand that writes refs/cc-notes/* (a state change or reconcile)."""
 
     def check(self, evt: BaseHookEvent) -> bool:
-        line = evt.command_line
-        return line is not None and any(is_cc_notes_write(cmd) for cmd in line.commands)
+        line = evt.cmd.line
+        return bool(line) and any(is_cc_notes_write(cmd) for cmd in line.commands)
 
 
 class CcNotesMcpWrite(CustomCondition):
@@ -510,8 +510,8 @@ def sync_after_record_write(evt: PostToolUseEvent) -> HookResult | None:
     lands: a target inside the session repo (the repo itself, or an unresolvable one) syncs the session
     repo; a foreign target syncs THAT repo directly, named in the confirmation.
     """
-    line = evt.command_line
-    if line is None:
+    line = evt.cmd.line
+    if not line:
         return evt.warn(msg) if (msg := auto_sync(evt)) else None
     base = resolve_project_dir()
     base_real = os.path.realpath(base) if base is not None else None

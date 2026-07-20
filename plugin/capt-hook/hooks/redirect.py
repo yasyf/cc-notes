@@ -68,8 +68,8 @@ def redirect_target(evt: PostToolUseFailureEvent) -> str | None:
     """The MCP tool a failed cc-notes Bash call maps to, or None when it should stay silent."""
     if _exit_code(evt.error) != 2:
         return None
-    cl = evt.command_line
-    if cl is None or not is_single_command(cl):
+    cl = evt.cmd.line
+    if not cl or not is_single_command(cl):
         return None
     if cl.primary is None or not is_plain_argv(cl):
         return None

@@ -215,8 +215,8 @@ def _touches(evt: BaseHookEvent) -> list[_Touch]:
     if name.startswith(MCP_TOOL_PREFIX):
         touch = _resolve(name[len(MCP_TOOL_PREFIX) :], "mcp", dict(evt._tool_input), [], output, can_mint=True, prefer_json=True)
         return [touch] if touch else []
-    line = evt.command_line
-    if line is None:
+    line = evt.cmd.line
+    if not line:
         return []
     single = is_single_command(line)
     out: list[_Touch] = []
@@ -274,8 +274,8 @@ class CcNotesEntityCall(CustomCondition):
         name = evt.tool_name or ""
         if name.startswith(MCP_TOOL_PREFIX):
             return True
-        line = evt.command_line
-        if line is None:
+        line = evt.cmd.line
+        if not line:
             return False
         return any(
             (argv := _strip_wrappers([cmd.executable, *cmd.args])) and os.path.basename(argv[0]) in CC_NOTES_EXECUTABLES

@@ -433,7 +433,7 @@ class EvidenceArchive(CustomCondition):
     """Matches machine-generated evidence landing in a durable tree — a Bash cp/mv/rsync of run output, or a Write/Edit of an evidence-suffixed file."""
 
     def check(self, evt: BaseHookEvent) -> bool:
-        if (line := evt.command_line) is not None:
+        if line := evt.cmd.line:
             return bool(evidence_transfers(line))
         file = evt.file
         return file is not None and file.suffix.lower() in EVIDENCE_SUFFIXES and durable_dest(str(file))
@@ -459,7 +459,7 @@ def tree_bytes(path: Path) -> int:
 
 
 def evidence_payload_bytes(evt: PostToolUseEvent) -> int:
-    if (line := evt.command_line) is not None:
+    if line := evt.cmd.line:
         return sum(tree_bytes(Path(dest)) for dest in evidence_transfers(line))
     return len((evt.content or "").encode())
 
@@ -497,7 +497,7 @@ def nudge_record_evidence(evt: PostToolUseEvent) -> HookResult | None:
     if fired_this_turn(evt):
         return None
     record_fire(evt)
-    landed = "This copy lands" if evt.command_line is not None else f"{evt.file} lands"
+    landed = "This copy lands" if evt.cmd.line else f"{evt.file} lands"
     weight = (
         " >1MB of machine-generated content in the tracked tree — git history is forever; an LFS attachment is one flag."
         if evidence_payload_bytes(evt) > EVIDENCE_TRIPWIRE_BYTES
@@ -599,8 +599,8 @@ class EphemeralRecordReference(CustomCondition):
     """Matches a cc-notes note/doc/log/papercut record whose title or body text points at a purge-bound path (/tmp, /var, a session scratchpad)."""
 
     def check(self, evt: BaseHookEvent) -> bool:
-        line = evt.command_line
-        return line is not None and bool(ephemeral_record_refs(line))
+        line = evt.cmd.line
+        return bool(line) and bool(ephemeral_record_refs(line))
 
 
 @on(
@@ -631,8 +631,8 @@ def nudge_ephemeral_record_reference(evt: PostToolUseEvent) -> HookResult | None
     if fired_this_turn(evt):
         return None
     record_fire(evt)
-    line = evt.command_line
-    papercut = line is not None and ephemeral_papercut(line)
+    line = evt.cmd.line
+    papercut = bool(line) and ephemeral_papercut(line)
     return evt.warn(EPHEMERAL_REFERENCE_LEDE, *_carry_content_fixes(mcp_active(evt), papercut=papercut))
 
 
@@ -906,8 +906,8 @@ def _investigation_verb(evt: BaseHookEvent) -> str | None:
     name = evt.tool_name or ""
     if name.startswith(INVESTIGATION_MCP_PREFIX):
         return name[len(INVESTIGATION_MCP_PREFIX) :]
-    line = evt.command_line
-    if line is not None:
+    line = evt.cmd.line
+    if line:
         for cmd in line.commands:
             if (verb := _cli_investigation_verb(cmd)) is not None:
                 return verb
@@ -935,8 +935,8 @@ def _output_investigation_id(evt: BaseHookEvent) -> str | None:
 
 
 def _cli_positional_id(evt: BaseHookEvent) -> str | None:
-    line = evt.command_line
-    if line is None:
+    line = evt.cmd.line
+    if not line:
         return None
     for cmd in line.commands:
         if _cli_investigation_verb(cmd) is not None and len(cmd.args) > 2:
@@ -1001,7 +1001,7 @@ def _bump_subagents(evt: BaseHookEvent) -> int:
 
 
 def _run_url(evt: BaseHookEvent) -> str | None:
-    for text in (evt.command or "", _tool_output(evt), _event_error(evt)):
+    for text in (evt.cmd.raw, _tool_output(evt), _event_error(evt)):
         if m := RUN_URL_RE.search(text):
             return m.group(0)
     return None
@@ -1057,7 +1057,7 @@ class CiTriageMoment(CustomCondition):
     def check(self, evt: BaseHookEvent) -> bool:
         if any(m in (evt.agent_type or "") for m in CI_TRIAGE_AGENT_MARKERS):
             return True
-        cmd = evt.command or ""
+        cmd = evt.cmd.raw
         if GH_RUN_RE.search(cmd) and GH_LOG_FAILED_RE.search(cmd):
             return True
         if GH_WATCH_RE.search(cmd) or SHIP_RE.search(cmd):
