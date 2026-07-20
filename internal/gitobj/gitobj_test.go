@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -243,27 +244,48 @@ func TestSourceOperationProofRoundTripAndDeterminism(t *testing.T) {
 	repo := open(t, initRepo(t))
 	committed := write(t, repo, nil, t0, createPack)
 	expected := write(t, repo, nil, t1, retitlePack)
-	proof := gitobj.SourceOperationProof{
-		OperationID: strings.Repeat("a", 64), Expected: expected, Committed: committed,
-		Result: "entity:note:result", RequestDigest: sha256.Sum256([]byte("request")),
+	retained := []model.SHA{
+		write(t, repo, nil, t2, bodyPack),
+		write(t, repo, nil, t3, tagPack),
 	}
-	sha, err := repo.WriteSourceOperationProof(t.Context(), proof)
-	if err != nil {
-		t.Fatalf("WriteSourceOperationProof: %v", err)
+	slices.Sort(retained)
+	requestDigest := sha256.Sum256([]byte("request"))
+	receiptDigest := sha256.Sum256([]byte("receipt"))
+	retainedOID := fmt.Sprintf("%x", sha256.Sum256([]byte("retained LFS body")))
+	proofs := []gitobj.SourceOperationProof{
+		{
+			OperationID: strings.Repeat("a", 64), State: gitobj.SourceOperationApplied, Expected: expected, Committed: committed,
+			Result: "entity:note:result", RequestDigest: requestDigest, RetainedTips: retained,
+			RetainedLFS: []gitobj.SourceOperationLFS{{OID: retainedOID, Size: 17}},
+		},
+		{
+			OperationID: strings.Repeat("b", 64), State: gitobj.SourceOperationAcknowledged, Expected: expected, Committed: committed,
+			Result: "entity:note:result", RequestDigest: requestDigest, ReceiptDigest: receiptDigest,
+		},
+		{
+			OperationID: strings.Repeat("c", 64), State: gitobj.SourceOperationForgotten,
+			RequestDigest: requestDigest, ReceiptDigest: receiptDigest,
+		},
 	}
-	again, err := repo.WriteSourceOperationProof(t.Context(), proof)
-	if err != nil {
-		t.Fatalf("WriteSourceOperationProof again: %v", err)
-	}
-	if again != sha {
-		t.Fatalf("proof rewrite = %s, want %s", again, sha)
-	}
-	got, err := repo.ReadSourceOperationProof(t.Context(), sha)
-	if err != nil {
-		t.Fatalf("ReadSourceOperationProof: %v", err)
-	}
-	if !reflect.DeepEqual(got, proof) {
-		t.Fatalf("proof = %+v, want %+v", got, proof)
+	for _, proof := range proofs {
+		sha, err := repo.WriteSourceOperationProof(t.Context(), proof)
+		if err != nil {
+			t.Fatalf("WriteSourceOperationProof(%d): %v", proof.State, err)
+		}
+		again, err := repo.WriteSourceOperationProof(t.Context(), proof)
+		if err != nil {
+			t.Fatalf("WriteSourceOperationProof again(%d): %v", proof.State, err)
+		}
+		if again != sha {
+			t.Fatalf("proof rewrite(%d) = %s, want %s", proof.State, again, sha)
+		}
+		got, err := repo.ReadSourceOperationProof(t.Context(), sha)
+		if err != nil {
+			t.Fatalf("ReadSourceOperationProof(%d): %v", proof.State, err)
+		}
+		if !reflect.DeepEqual(got, proof) {
+			t.Fatalf("proof(%d) = %+v, want %+v", proof.State, got, proof)
+		}
 	}
 }
 
@@ -271,7 +293,7 @@ func TestSourceOperationProofRejectsInvalidIdentity(t *testing.T) {
 	repo := open(t, initRepo(t))
 	committed := write(t, repo, nil, t0, createPack)
 	_, err := repo.WriteSourceOperationProof(t.Context(), gitobj.SourceOperationProof{
-		OperationID: "short", Expected: committed, Committed: committed,
+		OperationID: "short", State: gitobj.SourceOperationApplied, Expected: committed, Committed: committed,
 	})
 	if err == nil {
 		t.Fatal("WriteSourceOperationProof = nil, want identity error")

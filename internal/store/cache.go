@@ -12,18 +12,14 @@ import (
 )
 
 const (
-	// foldCacheVersion prefixes every entry; bumping it invalidates every
-	// on-disk entry without touching the files, since a leading version
-	// mismatch reads as a miss. v5: snapshots gained Attachments — a v4 entry
-	// read by this binary (or a v5 entry read by an older one) would silently
-	// serve an attachment-less snapshot.
-	foldCacheVersion = 5
+	// foldCacheVersion is the single hard-cut cache format.
+	foldCacheVersion = 1
 	// foldCacheCap bounds the number of on-disk entries; the least-recently
 	// used are evicted past it.
 	foldCacheCap = 1024
 	// foldCacheSubdir is the path under the git common dir where entries live;
 	// it is never a ref, so it is never pushed or synced.
-	foldCacheSubdir = "cc-notes/folds"
+	foldCacheSubdir = "cc-notes/folds-v1"
 )
 
 // foldCache is a persistent, local, tip-keyed snapshot cache: a pure

@@ -132,9 +132,9 @@ type RefUpdate struct {
 	Old model.SHA
 }
 
-// UpdateRefs atomically applies every exact ref compare-and-swap. An empty or
-// all-zero Old requires the ref not to exist. No ref moves when validation,
-// locking, or any compare-and-swap fails.
+// UpdateRefs atomically applies every exact ref compare-and-swap. An empty New
+// deletes the exact nonempty Old. An empty or all-zero Old requires a created
+// ref not to exist. No ref moves when validation, locking, or comparison fails.
 func (g Git) UpdateRefs(ctx context.Context, updates []RefUpdate) error {
 	if len(updates) == 0 {
 		return errors.New("update refs: no updates")
@@ -146,13 +146,17 @@ func (g Git) UpdateRefs(ctx context.Context, updates []RefUpdate) error {
 		switch {
 		case update.Ref == "":
 			return errors.New("update refs: empty ref")
-		case update.New == "":
-			return fmt.Errorf("update ref %s: empty new sha", update.Ref)
+		case update.New == "" && isZero(update.Old):
+			return fmt.Errorf("delete ref %s: exact old sha is required", update.Ref)
 		}
 		if _, duplicate := seen[update.Ref]; duplicate {
 			return fmt.Errorf("update refs: duplicate ref %s", update.Ref)
 		}
 		seen[update.Ref] = struct{}{}
+		if update.New == "" {
+			fmt.Fprintf(&directive, "delete %s\x00%s\x00", update.Ref, update.Old)
+			continue
+		}
 		old := update.Old
 		if isZero(old) {
 			old = model.SHA(strings.Repeat("0", len(update.New)))

@@ -16,8 +16,7 @@ import (
 // version-and-kind header line (kind spelled as the Meta().Kind wire value)
 // followed by the snapshot's own JSON. The format is frozen — a cross-binary
 // entry read must byte-match — so this guards the Meta().Kind-derived header
-// against any drift from the pre-refactor per-type switch, and a hand-crafted
-// old-format entry must still decode.
+// against any drift from the per-type encoding contract.
 func TestFoldEntryByteFormat(t *testing.T) {
 	note := model.Note{ID: "noteid", Title: "t", Head: "abc123"}
 	body, err := json.Marshal(note)
@@ -112,18 +111,48 @@ func TestFoldCacheRebuildAfterDelete(t *testing.T) {
 	}
 }
 
-func TestFoldCacheVersionBump(t *testing.T) {
+func TestFoldCacheRejectsDifferentEpoch(t *testing.T) {
 	dir := t.TempDir()
 	c := newFoldCache(dir, foldCacheCap)
 	tip := model.SHA("aaaa000000000000000000000000000000000000")
 
-	stale := append([]byte{byte('0' + foldCacheVersion - 1), ' '}, "note\n{\"id\":\"x\"}"...)
+	stale := append([]byte{'9', ' '}, "note\n{\"id\":\"x\"}"...)
 	if err := os.WriteFile(filepath.Join(dir, string(tip)), stale, 0o600); err != nil {
 		t.Fatalf("write stale entry: %v", err)
 	}
 
 	if _, ok := c.get(tip); ok {
 		t.Fatal("get of version-mismatched entry: want miss")
+	}
+}
+
+func TestFoldCacheV1NamespaceRebuildsDerivedEntries(t *testing.T) {
+	common := t.TempDir()
+	tip := model.SHA("abababababababababababababababababababab")
+	entry, ok := encodeFoldEntry(model.Note{ID: "noteid", Title: "old derived entry", Head: tip})
+	if !ok {
+		t.Fatal("encode old derived entry")
+	}
+	oldDir := filepath.Join(common, "cc-notes", "folds")
+	if err := os.MkdirAll(oldDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, string(tip)), entry, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cache := newFoldCache("", foldCacheCap)
+	cache.commonDir = func() (string, error) { return common, nil }
+	if _, found := cache.get(tip); found {
+		t.Fatal("prior derived-cache namespace was read")
+	}
+	want := model.Note{ID: "noteid", Title: "rebuilt", Head: tip}
+	cache.put(tip, want)
+	if got, found := cache.get(tip); !found || !reflect.DeepEqual(got, want) {
+		t.Fatalf("rebuilt v1 cache entry = %#v found=%v", got, found)
+	}
+	if _, err := os.Stat(filepath.Join(common, foldCacheSubdir, string(tip))); err != nil {
+		t.Fatalf("rebuilt v1 cache path: %v", err)
 	}
 }
 
@@ -310,44 +339,6 @@ func TestFoldCacheTaskP3FieldsRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotTask.Commits, task.Commits) {
 		t.Errorf("Commits = %v, want %v", gotTask.Commits, task.Commits)
-	}
-}
-
-func TestFoldCachePreP3EntryInvalidated(t *testing.T) {
-	dir := t.TempDir()
-	c := newFoldCache(dir, foldCacheCap)
-	tip := model.SHA("dddd444444444444444444444444444444444444")
-
-	// A valid task entry written by a pre-P3 binary under cache version 2: the
-	// JSON predates the heartbeat_at/heartbeat_lamport/commits fields. The body
-	// parses cleanly, so the version byte is the only thing that makes get miss;
-	// reverting foldCacheVersion to 2 turns this into a hit and fails the test.
-	preP3 := append([]byte{byte('0' + 2), ' '}, "task\n{\"id\":\"taskid\",\"branch\":\"main\",\"title\":\"old\",\"head\":\""+string(tip)+"\"}"...)
-	if err := os.WriteFile(filepath.Join(dir, string(tip)), preP3, 0o600); err != nil {
-		t.Fatalf("write pre-P3 entry: %v", err)
-	}
-
-	if _, ok := c.get(tip); ok {
-		t.Fatal("get of pre-P3 (version 2) task entry: want miss after bump to 3")
-	}
-}
-
-func TestFoldCachePreAttachmentEntryInvalidated(t *testing.T) {
-	dir := t.TempDir()
-	c := newFoldCache(dir, foldCacheCap)
-	tip := model.SHA("eeee555555555555555555555555555555555555")
-
-	// A valid note entry written by a pre-attachment binary under cache
-	// version 4: the JSON predates the attachments field. The body parses
-	// cleanly, so the version byte is the only thing that makes get miss;
-	// reverting foldCacheVersion to 4 turns this into a hit and fails the test.
-	preLFS := append([]byte{byte('0' + 4), ' '}, "note\n{\"id\":\"noteid\",\"title\":\"old\",\"head\":\""+string(tip)+"\"}"...)
-	if err := os.WriteFile(filepath.Join(dir, string(tip)), preLFS, 0o600); err != nil {
-		t.Fatalf("write pre-attachment entry: %v", err)
-	}
-
-	if _, ok := c.get(tip); ok {
-		t.Fatal("get of pre-attachment (version 4) note entry: want miss after bump to 5")
 	}
 }
 
