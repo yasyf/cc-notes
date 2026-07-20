@@ -25,7 +25,9 @@ const (
 )
 
 var (
-	ErrContended       = errors.New("source index contended")
+	// ErrContended reports repeated source-head movement during refresh.
+	ErrContended = errors.New("source index contended")
+	// ErrOperationExists reports an already committed operation identity.
 	ErrOperationExists = errors.New("source operation already committed")
 )
 

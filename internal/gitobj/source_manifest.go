@@ -22,6 +22,7 @@ const (
 	sourceManifestHeader = "cc-notes-source-index-v1\n"
 )
 
+// ErrCorruptSourceManifest reports malformed derived source-index state.
 var ErrCorruptSourceManifest = errors.New("corrupt source manifest")
 
 // SourceRefTip is one entity ref and its immutable commit tip.
@@ -117,19 +118,19 @@ func (r *Repo) ReadSourceManifestCommit(ctx context.Context, sha model.SHA) (Sou
 	}
 	file, err := commit.File(sourceManifestFile)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: source revision %s: %v", ErrCorruptSourceManifest, sha, err)
+		return nil, "", fmt.Errorf("%w: source revision %s: %w", ErrCorruptSourceManifest, sha, err)
 	}
 	reader, err := file.Reader()
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: source revision %s reader: %v", ErrCorruptSourceManifest, sha, err)
+		return nil, "", fmt.Errorf("%w: source revision %s reader: %w", ErrCorruptSourceManifest, sha, err)
 	}
 	data, readErr := io.ReadAll(reader)
 	closeErr := reader.Close()
 	if readErr != nil {
-		return nil, "", fmt.Errorf("%w: source revision %s read: %v", ErrCorruptSourceManifest, sha, readErr)
+		return nil, "", fmt.Errorf("%w: source revision %s read: %w", ErrCorruptSourceManifest, sha, readErr)
 	}
 	if closeErr != nil {
-		return nil, "", fmt.Errorf("%w: source revision %s close: %v", ErrCorruptSourceManifest, sha, closeErr)
+		return nil, "", fmt.Errorf("%w: source revision %s close: %w", ErrCorruptSourceManifest, sha, closeErr)
 	}
 	manifest, err := decodeSourceManifest(data)
 	if err != nil {
@@ -180,7 +181,7 @@ func decodeSourceManifest(data []byte) (SourceManifest, error) {
 			return nil, fmt.Errorf("%w: malformed line %d", ErrCorruptSourceManifest, index)
 		}
 		if err := validateSourceRefTip(entry); err != nil {
-			return nil, fmt.Errorf("%w: line %d: %v", ErrCorruptSourceManifest, index, err)
+			return nil, fmt.Errorf("%w: line %d: %w", ErrCorruptSourceManifest, index, err)
 		}
 		if previous != "" && entry.Ref <= previous {
 			return nil, fmt.Errorf("%w: refs are not strictly sorted", ErrCorruptSourceManifest)
