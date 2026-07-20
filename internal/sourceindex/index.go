@@ -4,6 +4,7 @@ package sourceindex
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"runtime"
@@ -46,9 +47,11 @@ type Changes struct {
 // Operation is one durably committed mutation proof. Token is the exact
 // source revision atomically published with the entity ref changes.
 type Operation struct {
-	Token    model.SHA
-	Previous model.SHA
-	Changes  Changes
+	Token         model.SHA
+	Previous      model.SHA
+	Result        string
+	RequestDigest [sha256.Size]byte
+	Changes       Changes
 }
 
 // Refresh seals the current entity refs as a new source revision when their
@@ -160,7 +163,13 @@ func (i Index) ChangesSince(ctx context.Context, from, to model.SHA) (Changes, e
 // happens before this call; a failed comparison leaves every ref untouched.
 // The returned token also incorporates unrelated external ref movement
 // observed immediately after the commit.
-func (i Index) CommitOperation(ctx context.Context, expected model.SHA, operationID string, updates []gitcmd.RefUpdate) (model.SHA, error) {
+func (i Index) CommitOperation(
+	ctx context.Context,
+	expected model.SHA,
+	operationID, result string,
+	requestDigest [sha256.Size]byte,
+	updates []gitcmd.RefUpdate,
+) (model.SHA, error) {
 	if err := i.validate(); err != nil {
 		return "", err
 	}
@@ -227,9 +236,16 @@ func (i Index) CommitOperation(ctx context.Context, expected model.SHA, operatio
 	if err != nil {
 		return "", err
 	}
+	proof, err := i.Repo.WriteSourceOperationProof(ctx, gitobj.SourceOperationProof{
+		OperationID: operationID, Expected: expected, Committed: next,
+		Result: result, RequestDigest: requestDigest,
+	})
+	if err != nil {
+		return "", err
+	}
 	transaction = append(transaction,
 		gitcmd.RefUpdate{Ref: Ref, New: next, Old: expected},
-		gitcmd.RefUpdate{Ref: operationRef, New: next},
+		gitcmd.RefUpdate{Ref: operationRef, New: proof},
 	)
 	if err := i.Git.UpdateRefs(ctx, transaction); err != nil {
 		return "", fmt.Errorf("source index commit: %w", err)
@@ -247,25 +263,28 @@ func (i Index) InspectOperation(ctx context.Context, operationID string) (operat
 	if err != nil {
 		return Operation{}, false, err
 	}
-	token, err := i.Repo.Tip(ctx, ref)
+	proofToken, err := i.Repo.Tip(ctx, ref)
 	if errors.Is(err, gitobj.ErrRefNotFound) {
 		return Operation{}, false, nil
 	}
 	if err != nil {
 		return Operation{}, false, fmt.Errorf("inspect source operation: %w", err)
 	}
-	_, previous, err := i.Repo.ReadSourceManifestCommit(ctx, token)
+	proof, err := i.Repo.ReadSourceOperationProof(ctx, proofToken)
 	if err != nil {
 		return Operation{}, false, err
 	}
-	if previous == "" {
-		return Operation{}, false, fmt.Errorf("inspect source operation: revision %s has no predecessor", token)
+	if proof.OperationID != operationID {
+		return Operation{}, false, errors.New("inspect source operation: proof identity differs from ref")
 	}
-	changes, err := i.ChangesSince(ctx, previous, token)
+	changes, err := i.ChangesSince(ctx, proof.Expected, proof.Committed)
 	if err != nil {
 		return Operation{}, false, err
 	}
-	return Operation{Token: token, Previous: previous, Changes: changes}, true, nil
+	return Operation{
+		Token: proof.Committed, Previous: proof.Expected, Result: proof.Result,
+		RequestDigest: proof.RequestDigest, Changes: changes,
+	}, true, nil
 }
 
 func (i Index) liveManifest(ctx context.Context) (gitobj.SourceManifest, error) {
@@ -326,12 +345,12 @@ func zero(sha model.SHA) bool {
 }
 
 func operationRef(operationID string) (string, error) {
-	if len(operationID) != 32 {
-		return "", errors.New("source index operation id must be 32 lowercase hex characters")
+	if len(operationID) != 64 {
+		return "", errors.New("source index operation id must be 64 lowercase hex characters")
 	}
 	for _, character := range operationID {
 		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
-			return "", errors.New("source index operation id must be 32 lowercase hex characters")
+			return "", errors.New("source index operation id must be 64 lowercase hex characters")
 		}
 	}
 	return "refs/cc-notes-source/operations/" + operationID, nil

@@ -1,6 +1,7 @@
 package sourceindex_test
 
 import (
+	"crypto/sha256"
 	"errors"
 	"testing"
 	"time"
@@ -98,8 +99,9 @@ func TestCommitAtomicallyAdvancesEntityAndSourceRevision(t *testing.T) {
 		t.Fatalf("Refresh: %v", err)
 	}
 	nextEntity := commit(t, repo, root, model.Pack{Lamport: 2, Session: "operation-1", Ops: []model.Op{model.SetTitle{Title: "changed"}}})
-	operationID := "11111111111111111111111111111111"
-	after, err := index.CommitOperation(t.Context(), before, operationID, []gitcmd.RefUpdate{{Ref: ref, New: nextEntity, Old: root}})
+	operationID := "1111111111111111111111111111111111111111111111111111111111111111"
+	requestDigest := sha256.Sum256([]byte("request-1"))
+	after, err := index.CommitOperation(t.Context(), before, operationID, "entity:note:"+string(root), requestDigest, []gitcmd.RefUpdate{{Ref: ref, New: nextEntity, Old: root}})
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -117,10 +119,11 @@ func TestCommitAtomicallyAdvancesEntityAndSourceRevision(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("InspectOperation = %+v found=%v err=%v", proof, found, err)
 	}
-	if proof.Previous != before || len(proof.Changes.Upserts) != 1 || proof.Changes.Upserts[0].Tip != nextEntity {
+	if proof.Previous != before || proof.RequestDigest != requestDigest || proof.Result != "entity:note:"+string(root) ||
+		len(proof.Changes.Upserts) != 1 || proof.Changes.Upserts[0].Tip != nextEntity {
 		t.Fatalf("operation proof = %+v", proof)
 	}
-	if _, err := index.CommitOperation(t.Context(), after, operationID, []gitcmd.RefUpdate{{Ref: ref, New: root, Old: nextEntity}}); !errors.Is(err, sourceindex.ErrOperationExists) {
+	if _, err := index.CommitOperation(t.Context(), after, operationID, "different", sha256.Sum256([]byte("different")), []gitcmd.RefUpdate{{Ref: ref, New: root, Old: nextEntity}}); !errors.Is(err, sourceindex.ErrOperationExists) {
 		t.Fatalf("replayed CommitOperation = %v, want ErrOperationExists", err)
 	}
 }
@@ -144,7 +147,7 @@ func TestCommitRejectsStaleSourceWithoutMovingEntity(t *testing.T) {
 		t.Fatalf("Refresh external: %v", err)
 	}
 	proposed := commit(t, repo, root, model.Pack{Lamport: 2, Ops: []model.Op{model.SetTitle{Title: "proposed"}}})
-	_, err = index.CommitOperation(t.Context(), stale, "22222222222222222222222222222222", []gitcmd.RefUpdate{{Ref: ref, New: proposed, Old: root}})
+	_, err = index.CommitOperation(t.Context(), stale, "2222222222222222222222222222222222222222222222222222222222222222", "", sha256.Sum256([]byte("stale")), []gitcmd.RefUpdate{{Ref: ref, New: proposed, Old: root}})
 	if !errors.Is(err, gitcmd.ErrCASMismatch) {
 		t.Fatalf("stale Commit = %v, want ErrCASMismatch", err)
 	}
@@ -158,7 +161,7 @@ func TestInspectOperationDistinguishesNeverCommitted(t *testing.T) {
 	if _, err := index.Refresh(t.Context()); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
-	operation, found, err := index.InspectOperation(t.Context(), "33333333333333333333333333333333")
+	operation, found, err := index.InspectOperation(t.Context(), "3333333333333333333333333333333333333333333333333333333333333333")
 	if err != nil || found || operation.Token != "" {
 		t.Fatalf("InspectOperation = %+v found=%v err=%v, want absent", operation, found, err)
 	}

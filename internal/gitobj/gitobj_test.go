@@ -3,6 +3,7 @@ package gitobj_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -235,6 +236,45 @@ func TestSourceManifestRejectsInvalidOrNoncanonicalInput(t *testing.T) {
 		if _, err := repo.WriteSourceManifestCommit(t.Context(), "", manifest); err == nil {
 			t.Fatalf("WriteSourceManifestCommit(%+v) = nil, want error", manifest)
 		}
+	}
+}
+
+func TestSourceOperationProofRoundTripAndDeterminism(t *testing.T) {
+	repo := open(t, initRepo(t))
+	committed := write(t, repo, nil, t0, createPack)
+	expected := write(t, repo, nil, t1, retitlePack)
+	proof := gitobj.SourceOperationProof{
+		OperationID: strings.Repeat("a", 64), Expected: expected, Committed: committed,
+		Result: "entity:note:result", RequestDigest: sha256.Sum256([]byte("request")),
+	}
+	sha, err := repo.WriteSourceOperationProof(t.Context(), proof)
+	if err != nil {
+		t.Fatalf("WriteSourceOperationProof: %v", err)
+	}
+	again, err := repo.WriteSourceOperationProof(t.Context(), proof)
+	if err != nil {
+		t.Fatalf("WriteSourceOperationProof again: %v", err)
+	}
+	if again != sha {
+		t.Fatalf("proof rewrite = %s, want %s", again, sha)
+	}
+	got, err := repo.ReadSourceOperationProof(t.Context(), sha)
+	if err != nil {
+		t.Fatalf("ReadSourceOperationProof: %v", err)
+	}
+	if !reflect.DeepEqual(got, proof) {
+		t.Fatalf("proof = %+v, want %+v", got, proof)
+	}
+}
+
+func TestSourceOperationProofRejectsInvalidIdentity(t *testing.T) {
+	repo := open(t, initRepo(t))
+	committed := write(t, repo, nil, t0, createPack)
+	_, err := repo.WriteSourceOperationProof(t.Context(), gitobj.SourceOperationProof{
+		OperationID: "short", Expected: committed, Committed: committed,
+	})
+	if err == nil {
+		t.Fatal("WriteSourceOperationProof = nil, want identity error")
 	}
 }
 
