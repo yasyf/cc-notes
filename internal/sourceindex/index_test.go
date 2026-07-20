@@ -85,6 +85,9 @@ func TestRefreshIsIdempotentAndSealsExternalChanges(t *testing.T) {
 	if len(changes.Deletes) != 0 {
 		t.Fatalf("deletes = %v, want none", changes.Deletes)
 	}
+	if _, err := index.ChangesSince(t.Context(), second, first); !errors.Is(err, sourceindex.ErrNotAncestor) {
+		t.Fatalf("reverse ChangesSince = %v, want ErrNotAncestor", err)
+	}
 }
 
 func TestCommitAtomicallyAdvancesEntityAndSourceRevision(t *testing.T) {

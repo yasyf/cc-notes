@@ -30,6 +30,8 @@ var (
 	ErrContended = errors.New("source index contended")
 	// ErrOperationExists reports an already committed operation identity.
 	ErrOperationExists = errors.New("source operation already committed")
+	// ErrNotAncestor reports a delta request with no causal predecessor relation.
+	ErrNotAncestor = errors.New("source revision is not an ancestor")
 )
 
 // Index binds immutable object access to real-Git atomic ref transactions.
@@ -133,7 +135,7 @@ func (i Index) ChangesSince(ctx context.Context, from, to model.SHA) (Changes, e
 		return Changes{}, fmt.Errorf("source index ancestry: %w", err)
 	}
 	if !ancestor {
-		return Changes{}, fmt.Errorf("source index revision %s is not an ancestor of %s", from, to)
+		return Changes{}, fmt.Errorf("source index revision %s is not an ancestor of %s: %w", from, to, ErrNotAncestor)
 	}
 	before, err := i.Snapshot(ctx, from)
 	if err != nil {
