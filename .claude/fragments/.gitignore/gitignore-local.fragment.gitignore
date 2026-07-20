@@ -1,0 +1,6 @@
+# Go build output
+/cc-notes
+
+# Web frontend
+web/dist/
+web/node_modules/
