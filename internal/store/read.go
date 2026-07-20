@@ -70,6 +70,25 @@ func (s *Store) LoadAt(ctx context.Context, head model.SHA) (model.Snapshot, err
 	return snapshot, nil
 }
 
+// LoadRootedAt folds the immutable chain ending at head and returns both its
+// snapshot and unique create commit. It never resolves a mutable ref.
+func (s *Store) LoadRootedAt(ctx context.Context, head model.SHA) (RootedSnapshot, error) {
+	chain, err := s.Repo.ReadChain(ctx, head)
+	if err != nil {
+		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
+	}
+	snapshot, err := fold.Fold(chain)
+	if err != nil {
+		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
+	}
+	root, err := uniqueRootCommit(chain)
+	if err != nil {
+		return RootedSnapshot{}, fmt.Errorf("root at %s: %w", head, err)
+	}
+	s.cache.put(head, snapshot)
+	return RootedSnapshot{Snapshot: snapshot, Root: root}, nil
+}
+
 // HasNotes reports whether the repository holds any cc-notes entity: any ref
 // under refs/cc-notes/. It is the in-process equivalent of
 // `git for-each-ref --count=1 refs/cc-notes/`, with no binary lookup.

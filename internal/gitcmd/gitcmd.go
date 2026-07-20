@@ -125,24 +125,55 @@ func isZero(sha model.SHA) bool {
 	return true
 }
 
+// RefUpdate is one exact ref compare-and-swap in an UpdateRefs transaction.
+type RefUpdate struct {
+	Ref string
+	New model.SHA
+	Old model.SHA
+}
+
+// UpdateRefs atomically applies every exact ref compare-and-swap. An empty or
+// all-zero Old requires the ref not to exist. No ref moves when validation,
+// locking, or any compare-and-swap fails.
+func (g Git) UpdateRefs(ctx context.Context, updates []RefUpdate) error {
+	if len(updates) == 0 {
+		return errors.New("update refs: no updates")
+	}
+	seen := make(map[string]struct{}, len(updates))
+	var directive strings.Builder
+	directive.WriteString("start\x00")
+	for _, update := range updates {
+		switch {
+		case update.Ref == "":
+			return errors.New("update refs: empty ref")
+		case update.New == "":
+			return fmt.Errorf("update ref %s: empty new sha", update.Ref)
+		}
+		if _, duplicate := seen[update.Ref]; duplicate {
+			return fmt.Errorf("update refs: duplicate ref %s", update.Ref)
+		}
+		seen[update.Ref] = struct{}{}
+		old := update.Old
+		if isZero(old) {
+			old = model.SHA(strings.Repeat("0", len(update.New)))
+		}
+		fmt.Fprintf(&directive, "update %s\x00%s\x00%s\x00", update.Ref, update.New, old)
+	}
+	directive.WriteString("prepare\x00commit\x00")
+	_, err := g.run(ctx, directive.String(), "update-ref", "--stdin", "-z")
+	if err = classify(err, ErrCASMismatch, casPatterns); err != nil {
+		return fmt.Errorf("update refs: %w", err)
+	}
+	return nil
+}
+
 // UpdateRef atomically points ref at new under a real ref lock, succeeding
 // only if the ref currently equals old. An empty or all-zero old means the
 // ref must not exist yet (create); the zero id's length is derived from
 // newRef. The unverified update form is never emitted. A CAS failure wraps
 // ErrCASMismatch.
 func (g Git) UpdateRef(ctx context.Context, ref string, newRef, old model.SHA) error {
-	if newRef == "" {
-		return fmt.Errorf("update ref %s: empty new sha", ref)
-	}
-	if isZero(old) {
-		old = model.SHA(strings.Repeat("0", len(newRef)))
-	}
-	directive := fmt.Sprintf("update %s\x00%s\x00%s\x00", ref, newRef, old)
-	_, err := g.run(ctx, directive, "update-ref", "--stdin", "-z")
-	if err = classify(err, ErrCASMismatch, casPatterns); err != nil {
-		return fmt.Errorf("update ref %s: %w", ref, err)
-	}
-	return nil
+	return g.UpdateRefs(ctx, []RefUpdate{{Ref: ref, New: newRef, Old: old}})
 }
 
 // DeleteRef atomically deletes ref locally under a real ref lock, succeeding

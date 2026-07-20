@@ -1,6 +1,7 @@
 package gitobj_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -174,6 +175,66 @@ func TestWriteOpsCommitInvalidParent(t *testing.T) {
 	_, err := repo.WriteOpsCommit(t.Context(), []model.SHA{"not-a-sha"}, sigAt(t0), "m", createPack)
 	if err == nil || !strings.Contains(err.Error(), "not-a-sha") {
 		t.Fatalf("WriteOpsCommit with bad parent = %v, want error naming it", err)
+	}
+}
+
+func TestSourceManifestCommitDeterministicAndLinked(t *testing.T) {
+	dir := initRepo(t)
+	repo := open(t, dir)
+	entityA := write(t, repo, nil, t0, createPack)
+	entityB := write(t, repo, nil, t1, model.Pack{Lamport: 1, Ops: []model.Op{model.CreateNote{
+		Nonce: "abcdef0123456789abcdef0123456789", Title: "second",
+	}}})
+	manifest, err := gitobj.NewSourceManifest(map[string]model.SHA{
+		"refs/cc-notes/notes/" + string(entityB): entityB,
+		"refs/cc-notes/notes/" + string(entityA): entityA,
+	})
+	if err != nil {
+		t.Fatalf("NewSourceManifest: %v", err)
+	}
+	root, err := repo.WriteSourceManifestCommit(t.Context(), "", manifest)
+	if err != nil {
+		t.Fatalf("WriteSourceManifestCommit root: %v", err)
+	}
+	again, err := repo.WriteSourceManifestCommit(t.Context(), "", manifest)
+	if err != nil {
+		t.Fatalf("WriteSourceManifestCommit again: %v", err)
+	}
+	if again != root {
+		t.Fatalf("deterministic root = %s, want %s", again, root)
+	}
+	child, err := repo.WriteSourceManifestCommit(t.Context(), root, manifest)
+	if err != nil {
+		t.Fatalf("WriteSourceManifestCommit child: %v", err)
+	}
+	got, parent, err := repo.ReadSourceManifestCommit(t.Context(), child)
+	if err != nil {
+		t.Fatalf("ReadSourceManifestCommit: %v", err)
+	}
+	if parent != root {
+		t.Fatalf("parent = %s, want %s", parent, root)
+	}
+	if !got.Equal(manifest) {
+		t.Fatalf("manifest = %+v, want %+v", got, manifest)
+	}
+	if raw := gitRaw(t, dir, "show", string(child)+":source-index"); !bytes.HasPrefix(raw, []byte("cc-notes-source-index-v1\n")) {
+		t.Fatalf("source-index = %q, want version header", raw)
+	}
+}
+
+func TestSourceManifestRejectsInvalidOrNoncanonicalInput(t *testing.T) {
+	repo := open(t, initRepo(t))
+	sha := write(t, repo, nil, t0, createPack)
+	for _, manifest := range []gitobj.SourceManifest{
+		{{Ref: "", Tip: sha}},
+		{{Ref: "refs/cc-notes/notes/x\n", Tip: sha}},
+		{{Ref: "refs/cc-notes/notes/x", Tip: "invalid"}},
+		{{Ref: "refs/z", Tip: sha}, {Ref: "refs/a", Tip: sha}},
+		{{Ref: "refs/a", Tip: sha}, {Ref: "refs/a", Tip: sha}},
+	} {
+		if _, err := repo.WriteSourceManifestCommit(t.Context(), "", manifest); err == nil {
+			t.Fatalf("WriteSourceManifestCommit(%+v) = nil, want error", manifest)
+		}
 	}
 }
 

@@ -80,6 +80,66 @@ func TestUpdateRefCreateAndCAS(t *testing.T) {
 	}
 }
 
+func TestUpdateRefsAtomicCAS(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	base := commitEmpty(t, g, "base")
+	next := commitEmpty(t, g, "next")
+	other := commitEmpty(t, g, "other")
+	left := "refs/cc-notes/notes/" + string(base)
+	right := "refs/cc-notes/tasks/" + string(base)
+	if err := g.UpdateRefs(ctx, []gitcmd.RefUpdate{
+		{Ref: left, New: base},
+		{Ref: right, New: base},
+	}); err != nil {
+		t.Fatalf("create transaction: %v", err)
+	}
+	if err := g.UpdateRefs(ctx, []gitcmd.RefUpdate{
+		{Ref: left, New: next, Old: base},
+		{Ref: right, New: other, Old: next},
+	}); !errors.Is(err, gitcmd.ErrCASMismatch) {
+		t.Fatalf("stale transaction = %v, want ErrCASMismatch", err)
+	}
+	if got := resolve(t, g.Dir, left); got != base {
+		t.Fatalf("failed transaction moved left to %s, want %s", got, base)
+	}
+	if got := resolve(t, g.Dir, right); got != base {
+		t.Fatalf("failed transaction moved right to %s, want %s", got, base)
+	}
+	if err := g.UpdateRefs(ctx, []gitcmd.RefUpdate{
+		{Ref: left, New: next, Old: base},
+		{Ref: right, New: other, Old: base},
+	}); err != nil {
+		t.Fatalf("update transaction: %v", err)
+	}
+	if got := resolve(t, g.Dir, left); got != next {
+		t.Fatalf("left = %s, want %s", got, next)
+	}
+	if got := resolve(t, g.Dir, right); got != other {
+		t.Fatalf("right = %s, want %s", got, other)
+	}
+}
+
+func TestUpdateRefsRejectsInvalidTransaction(t *testing.T) {
+	g := initRepo(t)
+	sha := commitEmpty(t, g, "commit")
+	for _, tc := range []struct {
+		name    string
+		updates []gitcmd.RefUpdate
+	}{
+		{name: "empty", updates: nil},
+		{name: "empty ref", updates: []gitcmd.RefUpdate{{New: sha}}},
+		{name: "empty new", updates: []gitcmd.RefUpdate{{Ref: "refs/x"}}},
+		{name: "duplicate", updates: []gitcmd.RefUpdate{{Ref: "refs/x", New: sha}, {Ref: "refs/x", New: sha}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := g.UpdateRefs(t.Context(), tc.updates); err == nil {
+				t.Fatal("UpdateRefs = nil, want error")
+			}
+		})
+	}
+}
+
 func TestUpdateRefBranchPaths(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

@@ -87,3 +87,27 @@ func TestListSnapshotsMatchesTyped(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRootedAtPinsImmutableTip(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	created := create(t, s, noteOps("before")).(model.Note)
+	ref := refs.For(model.KindNote, created.ID)
+	before, err := s.Repo.Tip(ctx, ref)
+	if err != nil {
+		t.Fatalf("Tip before append: %v", err)
+	}
+	if _, err := s.Append(ctx, ref, []model.Op{model.SetTitle{Title: "after"}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	rooted, err := s.LoadRootedAt(ctx, before)
+	if err != nil {
+		t.Fatalf("LoadRootedAt: %v", err)
+	}
+	if rooted.Snapshot.(model.Note).Title != "before" {
+		t.Fatalf("pinned title = %q, want before", rooted.Snapshot.(model.Note).Title)
+	}
+	if rooted.Root.SHA != before {
+		t.Fatalf("root sha = %s, want %s", rooted.Root.SHA, before)
+	}
+}
