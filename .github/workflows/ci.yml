@@ -35,6 +35,23 @@ jobs:
       - name: Cross-compile smoke (darwin/arm64)
         run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/cc-notes_darwin_arm64 ./cmd/cc-notes
 
+  holder:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Install FUSE-T headers
+        run: brew install macos-fuse-t/cask/fuse-t
+      - name: Build the dedicated signed-holder target
+        run: CGO_ENABLED=1 go build -tags fuse ./cmd/cc-notes-holder
+      - name: Prove the ordinary CLI has no FuseKit child dispatcher
+        run: |
+          CGO_ENABLED=0 go build -o /tmp/cc-notes ./cmd/cc-notes
+          if strings -a /tmp/cc-notes | grep -q -- '--fusekit-'; then
+            echo "::error::ordinary cc-notes CLI still embeds a FuseKit child mode"
+            exit 1
+          fi
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -86,7 +103,7 @@ jobs:
         run: uv run --no-project --with capt-hook python -c "from captain_hook.util.model_cache import ensure_nlp_resources; ensure_nlp_resources()"
 
       - name: capt-hook pack test
-        run: uvx --isolated 'capt-hook>=11.0.0' pack test plugin
+        run: uvx --isolated 'capt-hook>=12.0.0' pack test plugin
 
       - name: pack unit tests
         run: uv run plugin/capt-hook/hooks/tests/test_cc_notes.py
