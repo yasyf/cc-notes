@@ -8,8 +8,8 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
-	github.com/yasyf/daemonkit v0.1.1-0.20260721044346-f090a23cf11f
-	github.com/yasyf/fusekit v1.5.1-0.20260721063431-85cd94530185
+	github.com/yasyf/daemonkit v0.2.0
+	github.com/yasyf/fusekit v1.6.0
 	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
 )
