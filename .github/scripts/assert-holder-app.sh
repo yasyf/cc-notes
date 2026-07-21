@@ -32,7 +32,7 @@ codesign --verify --deep --strict --verbose=2 "$APP"
 verify_designated_requirement
 test "$(codesign -d --verbose=4 "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')" = "$TEAM_ID"
 test "$(codesign -d --verbose=4 "$APP" 2>&1 | sed -n 's/^Identifier=//p')" = "com.yasyf.cc-notes.holder"
-codesign -d --verbose=4 "$APP" 2>&1 | grep -Eq '^flags=.*runtime'
+codesign -d --verbose=4 "$APP" 2>&1 | grep -Eq 'flags=.*\(([^,]+,)*runtime(,[^,]+)*\)'
 if codesign -d --entitlements - "$APP" 2>&1 | grep -q 'disable-library-validation'; then
   echo "::error::CCNotesHolder.app permits unsigned or foreign dynamic libraries"
   exit 1
