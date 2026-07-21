@@ -112,8 +112,8 @@ github.com/xanzy/ssh-agent v0.3.3 h1:+/15pJfg/RsTxqYcX6fHqOXZwwMP+2VyYWJeWM2qQFM
 github.com/xanzy/ssh-agent v0.3.3/go.mod h1:6dzNDKs0J9rVPHPhaGCukekBHKqfl+L3KghI1Bc68Uw=
 github.com/yasyf/daemonkit v0.2.0 h1:eRa9aU6oHbgXK6PWNv6uN293Hvgr2XqJHMtVvBXlGuA=
 github.com/yasyf/daemonkit v0.2.0/go.mod h1:nJvh9FlJ3XPTuDkUb3PMcW0ZupIXsJJCkTGzfE40r/I=
-github.com/yasyf/fusekit v1.6.1 h1:uGTEWcZdh/1kEpImqAc2gi49pz0bzCsRzC0kpSSTTsY=
-github.com/yasyf/fusekit v1.6.1/go.mod h1:veCFqVG3dr1O1HZfjGweUrOeyh9BZBNMPP7kCe3sdVE=
+github.com/yasyf/fusekit v1.6.2 h1:e4QInYSCPfjwfhUqP4tNOyQeTGoTtIzjuPh9rLqKh+k=
+github.com/yasyf/fusekit v1.6.2/go.mod h1:veCFqVG3dr1O1HZfjGweUrOeyh9BZBNMPP7kCe3sdVE=
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=
 github.com/yosida95/uritemplate/v3 v3.0.2/go.mod h1:ILOh0sOhIJR3+L/8afwt/kE++YT040gmv5BQTMR2HP4=
 go.etcd.io/bbolt v1.5.0 h1:S7GAl7Fxv12yohbwFfIbQCGDWbQbtDGPET4P/bD4lxU=
