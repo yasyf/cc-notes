@@ -57,6 +57,7 @@ func TestReleasePinsExactHolderDesignatedRequirement(t *testing.T) {
 	)
 	assertFileContains(t, filepath.Join(root, ".github", "scripts", "assert-holder-app.sh"),
 		`codesign --verify --strict --verbose=2 -R "=$DESIGNATED_REQUIREMENT" "$APP"`,
+		`CODE_DETAILS="$(codesign -d --verbose=4 "$APP" 2>&1)"`,
 		`flags=.*\(([^,]+,)*runtime(,[^,]+)*\)`,
 	)
 }

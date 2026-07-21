@@ -30,10 +30,12 @@ GOWORK=off GOFLAGS=-mod=readonly go run ./cmd/cc-notes-fuse-package \
 
 codesign --verify --deep --strict --verbose=2 "$APP"
 verify_designated_requirement
-test "$(codesign -d --verbose=4 "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')" = "$TEAM_ID"
-test "$(codesign -d --verbose=4 "$APP" 2>&1 | sed -n 's/^Identifier=//p')" = "com.yasyf.cc-notes.holder"
-codesign -d --verbose=4 "$APP" 2>&1 | grep -Eq 'flags=.*\(([^,]+,)*runtime(,[^,]+)*\)'
-if codesign -d --entitlements - "$APP" 2>&1 | grep -q 'disable-library-validation'; then
+CODE_DETAILS="$(codesign -d --verbose=4 "$APP" 2>&1)"
+test "$(sed -n 's/^TeamIdentifier=//p' <<< "$CODE_DETAILS")" = "$TEAM_ID"
+test "$(sed -n 's/^Identifier=//p' <<< "$CODE_DETAILS")" = "com.yasyf.cc-notes.holder"
+grep -Eq 'flags=.*\(([^,]+,)*runtime(,[^,]+)*\)' <<< "$CODE_DETAILS"
+ENTITLEMENTS="$(codesign -d --entitlements - "$APP" 2>&1)"
+if grep -q 'disable-library-validation' <<< "$ENTITLEMENTS"; then
   echo "::error::CCNotesHolder.app permits unsigned or foreign dynamic libraries"
   exit 1
 fi
