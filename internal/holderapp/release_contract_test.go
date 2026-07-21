@@ -5,13 +5,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yasyf/daemonkit/trust"
 )
 
 func TestReleaseOwnsOneFixedSignedHolderTopology(t *testing.T) {
 	root := filepath.Join("..", "..")
 	assertFileContains(t, filepath.Join(root, ".github", "workflows", "release.yml"),
 		"./cmd/cc-notes-holder",
-		"APP_PATH=\"$APP\" TEAM_ID=\"$TEAM_ID\" bash .github/scripts/assert-holder-app.sh",
+		`APP_PATH="$APP" TEAM_ID="$TEAM_ID" DESIGNATED_REQUIREMENT_FILE="$REQUIREMENTS"`,
+		"bash .github/scripts/assert-holder-app.sh",
 		"yasyf/homebrew-tap/.github/actions/sign-notarize-app@v1",
 		"needs: [release, holder-app]",
 		"Publish the exact CLI and holder pair to the tap",
@@ -36,6 +39,24 @@ func TestReleaseOwnsOneFixedSignedHolderTopology(t *testing.T) {
 		"go run ./cmd/cc-notes-fuse-package",
 		"Contents/Frameworks/libfuse-t.dylib",
 		"disable-library-validation",
+	)
+}
+
+func TestReleasePinsExactHolderDesignatedRequirement(t *testing.T) {
+	requirement, err := (trust.Requirement{
+		TeamID: TeamID, SigningIdentifier: BundleID,
+	}).DRString()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join("..", "..")
+	assertFileContains(t, filepath.Join(root, ".github", "workflows", "release.yml"),
+		"designated => "+requirement,
+		`--requirements "$REQUIREMENTS"`,
+		`DESIGNATED_REQUIREMENT_FILE="$REQUIREMENTS"`,
+	)
+	assertFileContains(t, filepath.Join(root, ".github", "scripts", "assert-holder-app.sh"),
+		`codesign --verify --strict --verbose=2 -R "=$DESIGNATED_REQUIREMENT" "$APP"`,
 	)
 }
 

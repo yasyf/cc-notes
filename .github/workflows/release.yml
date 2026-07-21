@@ -210,10 +210,17 @@ jobs:
           </dict></plist>
           PLIST
 
+          REQUIREMENTS="$RUNNER_TEMP/cc-notes-holder.requirements"
+          cat > "$REQUIREMENTS" <<'REQUIREMENTS'
+          designated => identifier "com.yasyf.cc-notes.holder" and anchor apple generic and certificate leaf[subject.OU] = "SXKCTF23Q2" and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists
+          REQUIREMENTS
+
           codesign --force --options runtime --timestamp \
             --identifier com.yasyf.cc-notes.holder \
+            --requirements "$REQUIREMENTS" \
             --sign "$MACOS_SIGN_IDENTITY" "$APP"
-          APP_PATH="$APP" TEAM_ID="$TEAM_ID" bash .github/scripts/assert-holder-app.sh
+          APP_PATH="$APP" TEAM_ID="$TEAM_ID" DESIGNATED_REQUIREMENT_FILE="$REQUIREMENTS" \
+            bash .github/scripts/assert-holder-app.sh
 
       - id: package
         name: Notarize, staple, and package the fixed app
