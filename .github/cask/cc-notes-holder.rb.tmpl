@@ -1,0 +1,43 @@
+# Fixed FuseKit holder for cc-notes. GENERATED per release from this template.
+cask "__CASK_TOKEN__" do
+  version "__VERSION__"
+  sha256 "__SHA_APP__"
+
+  url "https://github.com/__REPO__/releases/download/v#{version}/__CASK_TOKEN__-v#{version}-darwin.zip"
+  name "cc-notes Holder"
+  desc "Fixed signed FuseKit holder for cc-notes repositories"
+  homepage "https://github.com/__REPO__"
+
+  depends_on macos: :sequoia
+  depends_on cask: "macos-fuse-t/homebrew-cask/fuse-t"
+  depends_on formula: "cc-notes"
+
+  app "__APP_NAME__.app"
+
+  preflight do
+    executable = "/Applications/__APP_NAME__.app/Contents/MacOS/__APP_NAME__"
+    system_command executable, args: ["--stop-service"], must_succeed: true if File.executable?(executable)
+  end
+
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "/Applications/__APP_NAME__.app"],
+                   must_succeed: false
+    system_command "/Applications/__APP_NAME__.app/Contents/MacOS/__APP_NAME__",
+                   args: ["--install-service"],
+                   must_succeed: true
+  end
+
+  uninstall_preflight do
+    system_command "/Applications/__APP_NAME__.app/Contents/MacOS/__APP_NAME__",
+                   args: ["--stop-service"],
+                   must_succeed: true
+  end
+
+  zap trash: "~/.cc-notes/fusekit-v1"
+
+  caveats <<~EOS
+    The fixed signed holder service exposes provisioned cc-notes tenants through FuseKit.
+    Its derived runtime state lives under ~/.cc-notes/fusekit-v1.
+  EOS
+end

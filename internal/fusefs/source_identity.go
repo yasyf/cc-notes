@@ -1,48 +1,18 @@
 package fusefs
 
 import (
-	"errors"
 	"fmt"
-	"strings"
+
+	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/yasyf/cc-notes/model"
 )
 
 func entitySourceKey(kind model.Kind, root model.PackCommit) (string, error) {
-	if len(root.Pack.Ops) == 0 {
-		return "", errors.New("root pack has no operations")
+	if !plumbing.IsHash(string(root.SHA)) {
+		return "", fmt.Errorf("root commit %q has invalid source identity", root.SHA)
 	}
-	nonce, err := createNonce(root.Pack.Ops[0])
-	if err != nil {
-		return "", err
-	}
-	if nonce == "" || strings.ContainsAny(nonce, "/\\\x00") {
-		return "", errors.New("create nonce is not an opaque source key component")
-	}
-	return "entity:" + string(kind) + ":" + nonce, nil
-}
-
-func createNonce(operation model.Op) (string, error) {
-	switch value := operation.(type) {
-	case model.CreateNote:
-		return value.Nonce, nil
-	case model.CreateDoc:
-		return value.Nonce, nil
-	case model.CreateLog:
-		return value.Nonce, nil
-	case model.CreateTask:
-		return value.Nonce, nil
-	case model.CreateSprint:
-		return value.Nonce, nil
-	case model.CreateProject:
-		return value.Nonce, nil
-	case model.CreateRunbook:
-		return value.Nonce, nil
-	case model.CreateInvestigation:
-		return value.Nonce, nil
-	default:
-		return "", fmt.Errorf("operation %q is not a create", operation.OpKind())
-	}
+	return "entity:" + string(kind) + ":" + string(root.SHA), nil
 }
 
 func setCreateNonce(operation model.Op, nonce string) (model.Op, error) {

@@ -97,7 +97,7 @@ jobs:
         with:
           name: cc-notes_darwin_arm64
           path: bin
-      - name: Smoke pure darwin binary (init, note add/list round-trip)
+      - name: Smoke pure darwin binary and signed-holder boundary
         run: |
           chmod +x bin/cc-notes_darwin_arm64
           BIN="$PWD/bin/cc-notes_darwin_arm64"
@@ -113,7 +113,11 @@ jobs:
           git config user.name smoke
           git config user.email smoke@example.com
           git remote add origin "$REMOTE"
-          "$BIN" init
+          if "$BIN" init >init.out 2>init.err; then
+            echo "::error::unsigned release CLI provisioned FuseKit without CCNotesHolder.app"
+            exit 1
+          fi
+          grep -Fq 'brew install --cask yasyf/tap/cc-notes-holder' init.err
           "$BIN" note add "smoke test note"
           out="$("$BIN" note list)"
           echo "$out"
@@ -148,9 +152,82 @@ jobs:
               --title "$GITHUB_REF_NAME" --generate-notes $PRERELEASE
           gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" dist/* --clobber
 
+  holder-app:
+    name: fixed signed holder app
+    runs-on: macos-15
+    needs: [verify-tag-on-main, release]
+    outputs:
+      sha256: ${{ steps.package.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Import Developer ID certificate
+        uses: yasyf/homebrew-tap/.github/actions/import-developer-id@v1
+        with:
+          p12: ${{ secrets.MACOS_SIGN_P12 }}
+          p12-password: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
+          notary-key-id: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          notary-issuer-id: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+
+      - name: Install reviewed FUSE-T packaging input
+        run: brew install macos-fuse-t/cask/fuse-t
+
+      - name: Build and assemble the universal fixed app
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          MARKETING="${VERSION#v}"
+          MARKETING="${MARKETING%%-*}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${VERSION} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT}"
+          APP="$PWD/dist/CCNotesHolder.app"
+          mkdir -p "$APP/Contents/MacOS"
+
+          CGO_ENABLED=1 GOARCH=arm64 go build -tags fuse -ldflags "$LDFLAGS" \
+            -o dist/holder-arm64 ./cmd/cc-notes-holder
+          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -tags fuse -ldflags "$LDFLAGS" \
+            -o dist/holder-amd64 ./cmd/cc-notes-holder
+          lipo -create -output "$APP/Contents/MacOS/CCNotesHolder" dist/holder-arm64 dist/holder-amd64
+
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleExecutable</key><string>CCNotesHolder</string>
+            <key>CFBundleIdentifier</key><string>com.yasyf.cc-notes.holder</string>
+            <key>CFBundleName</key><string>CCNotesHolder</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${MARKETING}</string>
+            <key>CFBundleVersion</key><string>${GITHUB_RUN_NUMBER}</string>
+            <key>LSMinimumSystemVersion</key><string>15.0</string>
+            <key>LSUIElement</key><true/>
+          </dict></plist>
+          PLIST
+
+          codesign --force --options runtime --timestamp \
+            --identifier com.yasyf.cc-notes.holder \
+            --sign "$MACOS_SIGN_IDENTITY" "$APP"
+          APP_PATH="$APP" TEAM_ID="$TEAM_ID" bash .github/scripts/assert-holder-app.sh
+
+      - id: package
+        name: Notarize, staple, and package the fixed app
+        uses: yasyf/homebrew-tap/.github/actions/sign-notarize-app@v1
+        with:
+          app: dist/CCNotesHolder.app
+          name: cc-notes-holder
+          sign: "false"
+          bundle-id: com.yasyf.cc-notes.holder
+          attach-to-release: "true"
+
   bump-formula:
     runs-on: ubuntu-latest
-    needs: [release]
+    needs: [release, holder-app]
     # Prerelease tags (v1.2.3-rc.1) publish assets but never touch the formula.
     if: ${{ !contains(github.ref_name, '-') }}
     steps:
@@ -185,7 +262,17 @@ jobs:
             __SHA_DARWIN_AMD64__=${{ steps.shas.outputs.darwin_amd64 }}
             __SHA_LINUX_AMD64__=${{ steps.shas.outputs.linux_amd64 }}
             __SHA_LINUX_ARM64__=${{ steps.shas.outputs.linux_arm64 }}
-      - name: Publish Formula to the tap
+      - name: Render Casks/cc-notes-holder.rb
+        uses: yasyf/homebrew-tap/.github/actions/render-formula@v1
+        with:
+          template: .github/cask/cc-notes-holder.rb.tmpl
+          output: Casks/cc-notes-holder.rb
+          substitutions: |
+            __SHA_APP__=${{ needs.holder-app.outputs.sha256 }}
+            __CASK_TOKEN__=cc-notes-holder
+            __APP_NAME__=CCNotesHolder
+            __REPO__=${{ github.repository }}
+      - name: Publish the exact CLI and holder pair to the tap
         uses: yasyf/homebrew-tap/.github/actions/publish@v1
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}

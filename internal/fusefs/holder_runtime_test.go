@@ -19,7 +19,6 @@ import (
 )
 
 func TestHolderPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
-	plan := testPlan(t)
 	first := testTenant(t)
 	secondID, err := catalog.NewTenantID("cc-notes-second")
 	if err != nil {
@@ -27,12 +26,9 @@ func TestHolderPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	}
 	second := Tenant{
 		ID: secondID, Generation: 8, Authority: AuthorityForTenant(secondID),
-		Domain: "mount:cc-notes-second", RouteName: "repo-second", RepoRoot: filepath.Join(t.TempDir(), "repo"),
+		RouteName: "repo-second", RepoRoot: filepath.Join(t.TempDir(), "repo"),
 	}
-	policy, err := newHolderPolicy(plan, []Tenant{first, second})
-	if err != nil {
-		t.Fatalf("newHolderPolicy: %v", err)
-	}
+	policy := newHolderPolicy()
 
 	productSession, productClient := openAcceptedSession(t)
 	productIdentity := mountservice.Identity{Peer: productSession.Peer(), Build: productSession.Build(), Session: productSession}
@@ -44,12 +40,8 @@ func TestHolderPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 		t.Fatal("cross-tenant session reuse succeeded")
 	}
 	catalogIdentity := catalogservice.Identity{Peer: productSession.Peer(), Build: productSession.Build(), Session: productSession}
-	authorization, err := policy.authorizeCatalog(catalogIdentity, catalogproto.OperationSourceReconcile, catalogservice.Route{})
-	if err != nil || authorization.Role != catalogservice.RoleSourcePublisher || string(authorization.SourceAuthority) != string(first.Authority) {
-		t.Fatalf("source authorization = %+v err=%v", authorization, err)
-	}
 	prepareRoute := catalogservice.Route{Tenant: first.ID, Generation: first.Generation}
-	authorization, err = policy.authorizeCatalog(catalogIdentity, catalogproto.OperationTenantPrepare, prepareRoute)
+	authorization, err := policy.authorizeCatalog(catalogIdentity, catalogproto.OperationTenantPrepare, prepareRoute)
 	if err != nil || authorization.Role != catalogservice.RoleTenantOwner {
 		t.Fatalf("prepare authorization = %+v err=%v", authorization, err)
 	}
@@ -67,14 +59,26 @@ func TestHolderPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	if err != nil || authorization.Role != catalogservice.RoleMount || authorization.Presentation != catalog.PresentationMount {
 		t.Fatalf("native catalog authorization = %+v err=%v", authorization, err)
 	}
-	if _, err := policy.authorizeCatalog(nativeCatalog, catalogproto.OperationSourceReconcile, catalogservice.Route{}); err == nil {
-		t.Fatal("native session became a source publisher")
+	if _, err := policy.authorizeCatalog(nativeCatalog, catalogproto.OperationDomainPrepare, catalogservice.Route{}); err == nil {
+		t.Fatal("native session became a domain owner")
 	}
 
 	unboundSession, unboundClient := openAcceptedSession(t)
 	unboundIdentity := catalogservice.Identity{Peer: unboundSession.Peer(), Build: unboundSession.Build(), Session: unboundSession}
-	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationSourceReconcile, catalogservice.Route{}); err == nil {
-		t.Fatal("unbound session published a source snapshot")
+	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationDomainPrepare, catalogservice.Route{}); err == nil {
+		t.Fatal("unbound session accessed a protected catalog operation")
+	}
+	admin, err := policy.authorizeCatalog(
+		unboundIdentity, catalogproto.OperationSourceAuthorityReadDesiredFleet, catalogservice.Route{},
+	)
+	if err != nil || admin.Role != catalogservice.RoleProductAdmin || admin.Principal != string(holderOwner) {
+		t.Fatalf("product admin authorization = %+v err=%v", admin, err)
+	}
+	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationSourceAuthorityPublishDesiredFleet, catalogservice.Route{}); err != nil {
+		t.Fatalf("reuse product admin session: %v", err)
+	}
+	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationTenantPrepare, prepareRoute); err == nil {
+		t.Fatal("product admin session became a tenant owner")
 	}
 
 	if err := productClient.Close(); err != nil {
@@ -85,12 +89,46 @@ func TestHolderPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	_ = unboundClient.Close()
 }
 
-func TestHolderPolicyRejectsDuplicateConfiguredIdentity(t *testing.T) {
-	plan := testPlan(t)
-	configured := testTenant(t)
-	if _, err := newHolderPolicy(plan, []Tenant{configured, configured}); err == nil {
-		t.Fatal("duplicate tenant was accepted")
+func TestHolderPolicyStartsEmptyAndBindsFirstExactTenantGeneration(t *testing.T) {
+	policy := newHolderPolicy()
+	tenantID, err := catalog.NewTenantID("cc-notes-dynamic")
+	if err != nil {
+		t.Fatal(err)
 	}
+	session, client := openAcceptedSession(t)
+	identity := mountservice.Identity{Peer: session.Peer(), Build: session.Build(), Session: session}
+	if _, err := policy.authorizeMount(
+		t.Context(), identity, mountproto.OperationTenantProvision, tenantID, 7,
+	); err != nil {
+		t.Fatalf("authorize first desired tenant: %v", err)
+	}
+	if _, err := policy.authorizeMount(
+		t.Context(), identity, mountproto.OperationTenantReplace, tenantID, 8,
+	); err == nil {
+		t.Fatal("session crossed its bound tenant generation")
+	}
+	_ = client.Close()
+}
+
+func TestHolderPolicyTenantStateCannotUnlockPreparation(t *testing.T) {
+	policy := newHolderPolicy()
+	tenant := testTenant(t)
+	session, client := openAcceptedSession(t)
+	identity := mountservice.Identity{Peer: session.Peer(), Build: session.Build(), Session: session}
+	owner, err := policy.authorizeMount(
+		t.Context(), identity, mountproto.OperationTenantState, tenant.ID, 0,
+	)
+	if err != nil || owner != holderOwner {
+		t.Fatalf("authorize state owner=%q err=%v", owner, err)
+	}
+	catalogIdentity := catalogservice.Identity{Peer: session.Peer(), Build: session.Build(), Session: session}
+	if _, err := policy.authorizeCatalog(
+		catalogIdentity, catalogproto.OperationTenantPrepare,
+		catalogservice.Route{Tenant: tenant.ID, Generation: tenant.Generation},
+	); err == nil {
+		t.Fatal("tenant state session unlocked tenant preparation")
+	}
+	_ = client.Close()
 }
 
 func openAcceptedSession(t *testing.T) (*wire.AcceptedSession, *wire.Client) {
@@ -113,7 +151,7 @@ func openAcceptedSession(t *testing.T) (*wire.AcceptedSession, *wire.Client) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	admit := func() (func(), error) { return func() {}, nil }
-	go func() { done <- server.Serve(ctx, listener, admit, admit) }()
+	go func() { done <- server.Serve(ctx, listener, func() error { return nil }, admit, admit) }()
 	client, err := wire.NewClient(t.Context(), wire.ClientConfig{
 		Dial: wire.UnixDialer(listener.Addr().String()), Build: server.Build,
 	})

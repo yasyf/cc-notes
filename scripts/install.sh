@@ -29,12 +29,19 @@ link_alias() {
 }
 
 # Prefer Homebrew for the default "latest" install: it owns updates, lands on
-# PATH, and the formula carries its own checksums. Best-effort — any failure
+# PATH, and installs the exact signed holder pair on macOS. Best-effort — any failure
 # (no brew, the Homebrew 6 tap-trust sandbox bug #22603, network) falls through
 # to the direct release download below. A pinned-version request skips brew,
 # since the formula only tracks the latest stable release.
 if [ "$VERSION" = "latest" ] && command -v brew >/dev/null 2>&1; then
-  if brew install yasyf/tap/cc-notes >/dev/null 2>&1 && command -v cc-notes >/dev/null 2>&1; then
+  install_brew() {
+    if [ "$(uname -s)" = "Darwin" ]; then
+      brew install --cask yasyf/tap/cc-notes-holder
+    else
+      brew install yasyf/tap/cc-notes
+    fi
+  }
+  if install_brew >/dev/null 2>&1 && command -v cc-notes >/dev/null 2>&1; then
     echo "cc-notes: installed via Homebrew ($(cc-notes version))" >&2
     exit 0
   fi

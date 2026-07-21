@@ -83,6 +83,9 @@ func newInitCmd() *cobra.Command {
 					return err
 				}
 			}
+			if err := provisionRepository(ctx, root); err != nil {
+				return err
+			}
 			// The capt-hook calls shell out to uvx over the network, so they run
 			// last: a failure here never blocks the local-only refspecs, plugin
 			// registration, CI workflow, or post-merge hook above.

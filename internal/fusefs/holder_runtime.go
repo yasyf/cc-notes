@@ -3,7 +3,6 @@ package fusefs
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -13,7 +12,6 @@ import (
 	"github.com/yasyf/fusekit/catalog"
 	"github.com/yasyf/fusekit/catalogproto"
 	"github.com/yasyf/fusekit/catalogservice"
-	"github.com/yasyf/fusekit/causal"
 	"github.com/yasyf/fusekit/holder"
 	"github.com/yasyf/fusekit/mountproto"
 	"github.com/yasyf/fusekit/mountservice"
@@ -25,30 +23,39 @@ const holderOwner tenant.OwnerID = "cc-notes"
 
 // HolderRuntimeConfig defines the cc-notes product policy embedded by its fixed signed app.
 type HolderRuntimeConfig struct {
-	Plan                   holder.Plan
-	Tenants                []Tenant
-	WorkerLimit            int
-	NativeOptions          []string
-	NativeReadinessTimeout time.Duration
-	NativeStdout           io.Writer
-	NativeStderr           io.Writer
-	ShutdownTimeout        time.Duration
-	Signals                <-chan os.Signal
+	Plan                    holder.RuntimePlan
+	Drivers                 holder.DriverFactories
+	WorkerLimit             int
+	NativeOptions           []string
+	NativeReadinessTimeout  time.Duration
+	NativeStdout            io.Writer
+	NativeStderr            io.Writer
+	SourceReadinessTimeout  time.Duration
+	SourceStdout            io.Writer
+	SourceStderr            io.Writer
+	CatalogReadinessTimeout time.Duration
+	CatalogOperationTimeout time.Duration
+	CatalogStdout           io.Writer
+	CatalogStderr           io.Writer
+	ShutdownTimeout         time.Duration
+	Signals                 <-chan os.Signal
 }
 
 // NewHolderRuntime composes cc-notes policy with FuseKit's production holder runtime.
 func NewHolderRuntime(ctx context.Context, config HolderRuntimeConfig) (*holder.Runtime, error) {
-	policy, err := newHolderPolicy(config.Plan, config.Tenants)
-	if err != nil {
-		return nil, err
-	}
-	planner := sourceMutationPlanner{executable: config.Plan.Executable(), tenants: policy.tenants}
+	policy := newHolderPolicy()
 	return holder.New(ctx, holder.Config{
 		Plan: config.Plan, Build: transportproto.Build,
-		SourceMutation: planner, CatalogAuthorizer: catalogAuthorizer{policy}, Authorizer: mountAuthorizer{policy},
+		Owner: catalog.SourceAuthorityFleetOwnerID(holderOwner), Drivers: config.Drivers,
+		CatalogAuthorizer: catalogAuthorizer{policy}, Authorizer: mountAuthorizer{policy},
 		WorkerLimit: config.WorkerLimit, NativeOptions: config.NativeOptions,
 		NativeReadinessTimeout: config.NativeReadinessTimeout,
 		NativeStdout:           config.NativeStdout, NativeStderr: config.NativeStderr,
+		SourceReadinessTimeout: config.SourceReadinessTimeout,
+		SourceStdout:           config.SourceStdout, SourceStderr: config.SourceStderr,
+		CatalogReadinessTimeout: config.CatalogReadinessTimeout,
+		CatalogOperationTimeout: config.CatalogOperationTimeout,
+		CatalogStdout:           config.CatalogStdout, CatalogStderr: config.CatalogStderr,
 		ShutdownTimeout: config.ShutdownTimeout, Signals: config.Signals,
 	})
 }
@@ -58,41 +65,24 @@ type holderSessionRole uint8
 const (
 	holderSessionProduct holderSessionRole = iota + 1
 	holderSessionNative
+	holderSessionAdmin
 )
 
 type holderSessionBinding struct {
-	role   holderSessionRole
-	tenant catalog.TenantID
+	role       holderSessionRole
+	tenant     catalog.TenantID
+	generation catalog.Generation
 }
 
 type holderPolicy struct {
-	uid     int
-	tenants map[catalog.TenantID]Tenant
+	uid int
 
 	mu       sync.Mutex
 	bindings map[*wire.AcceptedSession]holderSessionBinding
 }
 
-func newHolderPolicy(plan holder.Plan, tenants []Tenant) (*holderPolicy, error) {
-	if len(tenants) == 0 {
-		return nil, errors.New("cc-notes holder: at least one tenant is required")
-	}
-	configured := make(map[catalog.TenantID]Tenant, len(tenants))
-	authorities := make(map[catalogproto.SourceAuthorityID]catalog.TenantID, len(tenants))
-	for _, candidate := range tenants {
-		if err := candidate.Validate(plan); err != nil {
-			return nil, err
-		}
-		if _, exists := configured[candidate.ID]; exists {
-			return nil, fmt.Errorf("cc-notes holder: duplicate tenant %q", candidate.ID)
-		}
-		if owner, exists := authorities[candidate.Authority]; exists {
-			return nil, fmt.Errorf("cc-notes holder: source authority %q is shared by tenants %q and %q", candidate.Authority, owner, candidate.ID)
-		}
-		configured[candidate.ID] = candidate
-		authorities[candidate.Authority] = candidate.ID
-	}
-	return &holderPolicy{uid: os.Getuid(), tenants: configured, bindings: make(map[*wire.AcceptedSession]holderSessionBinding)}, nil
+func newHolderPolicy() *holderPolicy {
+	return &holderPolicy{uid: os.Getuid(), bindings: make(map[*wire.AcceptedSession]holderSessionBinding)}
 }
 
 func (p *holderPolicy) authorizeMount(
@@ -105,11 +95,21 @@ func (p *holderPolicy) authorizeMount(
 	if !tenantLifecycleOperation(operation) {
 		return "", mountservice.ErrUnauthorized
 	}
-	configured, ok := p.tenants[tenantID]
-	if !ok || configured.Generation != generation {
+	if _, err := catalog.NewTenantID(string(tenantID)); err != nil {
 		return "", mountservice.ErrUnauthorized
 	}
-	if err := p.bind(identity.Peer, identity.Session, holderSessionBinding{role: holderSessionProduct, tenant: tenantID}); err != nil {
+	if operation == mountproto.OperationTenantState {
+		if generation != 0 || identity.Peer.UID != p.uid || identity.Session == nil {
+			return "", mountservice.ErrUnauthorized
+		}
+		return holderOwner, nil
+	}
+	if generation == 0 {
+		return "", mountservice.ErrUnauthorized
+	}
+	if err := p.bind(identity.Peer, identity.Session, holderSessionBinding{
+		role: holderSessionProduct, tenant: tenantID, generation: generation,
+	}); err != nil {
 		return "", err
 	}
 	return holderOwner, nil
@@ -131,6 +131,17 @@ func (p *holderPolicy) authorizeCatalog(
 	operation catalogproto.Operation,
 	route catalogservice.Route,
 ) (catalogservice.Authorization, error) {
+	if productAdminOperation(operation) {
+		if route != (catalogservice.Route{}) {
+			return catalogservice.Authorization{}, errors.New("cc-notes holder: product admin request carries a tenant route")
+		}
+		if err := p.bind(identity.Peer, identity.Session, holderSessionBinding{role: holderSessionAdmin}); err != nil {
+			return catalogservice.Authorization{}, err
+		}
+		return catalogservice.Authorization{
+			Principal: string(holderOwner), Role: catalogservice.RoleProductAdmin, Route: route,
+		}, nil
+	}
 	binding, err := p.bound(identity.Peer, identity.Session)
 	if err != nil {
 		return catalogservice.Authorization{}, err
@@ -138,18 +149,9 @@ func (p *holderPolicy) authorizeCatalog(
 	principal := "cc-notes"
 	switch binding.role {
 	case holderSessionProduct:
-		configured := p.tenants[binding.tenant]
 		switch operation {
-		case catalogproto.OperationSourceReconcile:
-			if route != (catalogservice.Route{}) {
-				return catalogservice.Authorization{}, errors.New("cc-notes holder: source publication carries a tenant route")
-			}
-			return catalogservice.Authorization{
-				Principal: principal, Role: catalogservice.RoleSourcePublisher,
-				Route: route, SourceAuthority: causal.SourceAuthorityID(configured.Authority),
-			}, nil
 		case catalogproto.OperationTenantPrepare:
-			if route.Tenant != binding.tenant || route.Generation != configured.Generation || route.Forwarded || route.Domain != "" {
+			if route.Tenant != binding.tenant || route.Generation != binding.generation || route.Forwarded || route.Domain != "" {
 				return catalogservice.Authorization{}, errors.New("cc-notes holder: tenant preparation does not match the bound tenant")
 			}
 			return catalogservice.Authorization{Principal: principal, Role: catalogservice.RoleTenantOwner, Route: route}, nil
@@ -160,17 +162,20 @@ func (p *holderPolicy) authorizeCatalog(
 		if !catalogPresentationOperation(operation) || route.Forwarded || route.Domain != "" {
 			return catalogservice.Authorization{}, errors.New("cc-notes holder: native session operation is not a mount presentation request")
 		}
-		configured, ok := p.tenants[route.Tenant]
-		if !ok || configured.Generation != route.Generation {
-			return catalogservice.Authorization{}, errors.New("cc-notes holder: native catalog route is not configured")
-		}
 		return catalogservice.Authorization{
 			Principal: principal, Role: catalogservice.RoleMount,
 			Presentation: catalog.PresentationMount, Route: route,
 		}, nil
+	case holderSessionAdmin:
+		return catalogservice.Authorization{}, errors.New("cc-notes holder: product admin session cannot access tenant operations")
 	default:
 		return catalogservice.Authorization{}, errors.New("cc-notes holder: invalid session role")
 	}
+}
+
+func productAdminOperation(operation catalogproto.Operation) bool {
+	return operation == catalogproto.OperationSourceAuthorityPublishDesiredFleet ||
+		operation == catalogproto.OperationSourceAuthorityReadDesiredFleet
 }
 
 type mountAuthorizer struct{ policy *holderPolicy }
@@ -258,7 +263,7 @@ func tenantLifecycleOperation(operation mountproto.Operation) bool {
 func nativeOperation(operation mountproto.Operation) bool {
 	switch operation {
 	case mountproto.OperationNativeBind, mountproto.OperationNativeReady,
-		mountproto.OperationNativeRoutes, mountproto.OperationNativePin,
+		mountproto.OperationNativeUnbind, mountproto.OperationNativeRoutePage, mountproto.OperationNativePin,
 		mountproto.OperationNativeRelease:
 		return true
 	default:

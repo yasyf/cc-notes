@@ -40,7 +40,7 @@ func TestMain(m *testing.M) {
 	}
 	testBinary = filepath.Join(dir, "cc-notes")
 	//nolint:gosec // G204: fixed go-build of this repo's own binary in the e2e test setup.
-	build := exec.Command("go", "build", "-o", testBinary, "github.com/yasyf/cc-notes/cmd/cc-notes")
+	build := exec.Command("go", "build", "-tags", "ccnotes_test", "-o", testBinary, "github.com/yasyf/cc-notes/cmd/cc-notes")
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build cc-notes: %v\n%s", err, out)
 		_ = os.RemoveAll(dir)

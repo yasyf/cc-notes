@@ -7,24 +7,19 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"math"
-	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
-	"github.com/yasyf/daemonkit/wire"
 	"github.com/yasyf/fusekit/catalog"
-	"github.com/yasyf/fusekit/catalogproto"
-	"github.com/yasyf/fusekit/catalogservice"
-	"github.com/yasyf/fusekit/convergence"
-	"github.com/yasyf/fusekit/holder"
-	"github.com/yasyf/fusekit/mountproto"
-	"github.com/yasyf/fusekit/mountservice"
-	"github.com/yasyf/fusekit/transportproto"
+	"github.com/yasyf/fusekit/causal"
+	"github.com/yasyf/fusekit/sourcedriver"
 
+	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -38,20 +33,20 @@ type AuthoritySnapshot struct {
 // deletes derived from two complete snapshots.
 type AuthorityDelta struct {
 	objects []authorityObject
-	deletes []catalogproto.SourceDeleteRecord
+	deletes []sourcedriver.LogicalID
 }
 
 type authorityObject struct {
-	key         string
-	parent      string
-	name        string
-	kind        catalogproto.ObjectKind
-	mode        uint32
-	content     []byte
-	contentPath string
-	size        uint64
-	hash        string
-	linkTarget  string
+	key        string
+	parent     string
+	name       string
+	kind       catalog.Kind
+	mode       uint32
+	content    []byte
+	attachment string
+	size       int64
+	hash       catalog.ContentHash
+	linkTarget string
 }
 
 // BuildAuthoritySnapshot renders one repository without starting a watcher,
@@ -61,6 +56,22 @@ func BuildAuthoritySnapshot(ctx context.Context, source *store.Store) (Authority
 		return AuthoritySnapshot{}, errors.New("cc-notes authority: store is required")
 	}
 	projection := projectionBuilder{ctx: ctx, store: source}
+	if err := projection.build(); err != nil {
+		return AuthoritySnapshot{}, err
+	}
+	if err := validateAuthorityObjects(projection.objects); err != nil {
+		return AuthoritySnapshot{}, err
+	}
+	return AuthoritySnapshot{objects: projection.objects}, nil
+}
+
+// BuildAuthoritySnapshotAt renders the exact immutable entity tips sealed by
+// a source revision. It never resolves mutable entity refs while projecting.
+func BuildAuthoritySnapshotAt(ctx context.Context, source *store.Store, manifest gitobj.SourceManifest) (AuthoritySnapshot, error) {
+	if source == nil {
+		return AuthoritySnapshot{}, errors.New("cc-notes authority: store is required")
+	}
+	projection := projectionBuilder{ctx: ctx, store: source, manifest: manifest}
 	if err := projection.build(); err != nil {
 		return AuthoritySnapshot{}, err
 	}
@@ -93,11 +104,11 @@ func DiffAuthoritySnapshots(previous, next AuthoritySnapshot) AuthorityDelta {
 	}
 	for key := range before {
 		if _, found := after[key]; !found {
-			result.deletes = append(result.deletes, catalogproto.SourceDeleteRecord{SourceKey: key})
+			result.deletes = append(result.deletes, sourcedriver.LogicalID(key))
 		}
 	}
-	slices.SortFunc(result.deletes, func(a, z catalogproto.SourceDeleteRecord) int {
-		return strings.Compare(a.SourceKey, z.SourceKey)
+	slices.SortFunc(result.deletes, func(a, z sourcedriver.LogicalID) int {
+		return strings.Compare(string(a), string(z))
 	})
 	return result
 }
@@ -105,76 +116,9 @@ func DiffAuthoritySnapshots(previous, next AuthoritySnapshot) AuthorityDelta {
 // Len returns the number of upserts and deletes in the delta.
 func (d AuthorityDelta) Len() int { return len(d.objects) + len(d.deletes) }
 
-func sourceInput(
-	tenant Tenant,
-	revision uint64,
-	values []authorityObject,
-	deletes []catalogproto.SourceDeleteRecord,
-) (catalogservice.SourceTenantInput, []io.Closer, error) {
-	objectCount, err := catalogCount("objects", len(values))
-	if err != nil {
-		return catalogservice.SourceTenantInput{}, nil, err
-	}
-	deleteCount, err := catalogCount("deletes", len(deletes))
-	if err != nil {
-		return catalogservice.SourceTenantInput{}, nil, err
-	}
-	objects := make([]catalogservice.SourceObjectInput, 0, len(values))
-	closers := make([]io.Closer, 0)
-	for _, object := range values {
-		record := catalogproto.SourceObjectRecord{
-			SourceKey: object.key, ParentKey: object.parent, Name: object.name,
-			Kind: object.kind, Mode: object.mode, LinkTarget: object.linkTarget,
-			MountVisible: true,
-		}
-		var content io.Reader
-		switch object.kind {
-		case catalogproto.ObjectKindFile:
-			record.ContentRevision = revision
-			if object.contentPath == "" {
-				hash := sha256.Sum256(object.content)
-				record.Size = uint64(len(object.content))
-				record.Hash = hex.EncodeToString(hash[:])
-				content = bytes.NewReader(object.content)
-			} else {
-				file, err := os.Open(object.contentPath)
-				if err != nil {
-					closeAll(closers)
-					return catalogservice.SourceTenantInput{}, nil, fmt.Errorf("cc-notes authority: open %s: %w", object.key, err)
-				}
-				closers = append(closers, file)
-				record.Size, record.Hash, content = object.size, object.hash, file
-			}
-		case catalogproto.ObjectKindSymlink:
-			record.ContentRevision = revision
-		}
-		objects = append(objects, catalogservice.SourceObjectInput{Record: record, Content: content})
-	}
-	return catalogservice.SourceTenantInput{
-		Record: catalogproto.SourceTenantRecord{
-			TenantID: catalogproto.TenantID(tenant.ID), Generation: uint64(tenant.Generation),
-			RootKey: RootKeyForTenant(tenant.ID), ObjectCount: objectCount, DeleteCount: deleteCount,
-		},
-		Objects: objects, Deletes: deletes,
-	}, closers, nil
-}
-
-func catalogCount(name string, value int) (uint32, error) {
-	if value > math.MaxUint32 {
-		return 0, fmt.Errorf("cc-notes authority: too many %s", name)
-	}
-	return uint32(value), nil //nolint:gosec // explicit uint32 protocol bound above
-}
-
-func closeAll(closers []io.Closer) {
-	for _, closer := range closers {
-		_ = closer.Close()
-	}
-}
-
-// AuthorityForTenant returns cc-notes' unique source authority for tenant.
-func AuthorityForTenant(tenant catalog.TenantID) catalogproto.SourceAuthorityID {
-	return catalogproto.SourceAuthorityID("cc-notes:" + string(tenant))
+// AuthorityForTenant returns cc-notes' default isolated source authority for tenant.
+func AuthorityForTenant(tenant catalog.TenantID) causal.SourceAuthorityID {
+	return causal.SourceAuthorityID("cc-notes:" + string(tenant))
 }
 
 // RootKeyForTenant returns cc-notes' stable authority-owned catalog root key.
@@ -186,212 +130,52 @@ func RootKeyForTenant(tenant catalog.TenantID) string {
 type Tenant struct {
 	ID         catalog.TenantID
 	Generation catalog.Generation
-	Authority  catalogproto.SourceAuthorityID
-	Domain     catalogproto.DomainID
+	Authority  causal.SourceAuthorityID
 	RouteName  string
 	RepoRoot   string
 }
 
 // Validate rejects identities that cannot be represented by the hard runtime.
-func (t Tenant) Validate(plan holder.Plan) error {
+func (t Tenant) Validate() error {
 	if _, err := catalog.NewTenantID(string(t.ID)); err != nil {
 		return fmt.Errorf("cc-notes authority: tenant id: %w", err)
 	}
+	tenantID := string(t.ID)
+	rootKey := RootKeyForTenant(t.ID)
+	authorityID := string(t.Authority)
 	switch {
+	case len(tenantID) > 255 || !utf8.ValidString(tenantID) || strings.IndexFunc(tenantID, unicode.IsControl) >= 0:
+		return fmt.Errorf("cc-notes authority: tenant id %q is not source-driver representable", t.ID)
+	case len(rootKey) > sourcedriver.LogicalIDMaxBytes || strings.ContainsAny(rootKey, "/\\") ||
+		strings.IndexFunc(rootKey, unicode.IsControl) >= 0:
+		return fmt.Errorf("cc-notes authority: derived root key for tenant %q is not representable", t.ID)
 	case t.Generation == 0:
 		return errors.New("cc-notes authority: generation is required")
-	case t.Authority != AuthorityForTenant(t.ID):
-		return fmt.Errorf("cc-notes authority: source authority %q does not match tenant %q", t.Authority, t.ID)
-	case t.Domain == "":
-		return errors.New("cc-notes authority: domain is required")
-	case t.RouteName == "" || filepath.Base(t.RouteName) != t.RouteName || t.RouteName == "." || t.RouteName == "..":
+	case causal.ValidateSourceAuthorityID(t.Authority) != nil || strings.IndexFunc(authorityID, unicode.IsControl) >= 0:
+		return fmt.Errorf("cc-notes authority: invalid source authority %q", t.Authority)
+	case t.RouteName == "" || len(t.RouteName) > 255 || !utf8.ValidString(t.RouteName) ||
+		strings.IndexFunc(t.RouteName, unicode.IsControl) >= 0 || filepath.Base(t.RouteName) != t.RouteName ||
+		t.RouteName == "." || t.RouteName == "..":
 		return fmt.Errorf("cc-notes authority: invalid route name %q", t.RouteName)
 	case !exactAbsolutePath(t.RepoRoot):
 		return fmt.Errorf("cc-notes authority: repository root %q is not an exact absolute path", t.RepoRoot)
-	case plan.Paths().PresentationRoot == "":
-		return errors.New("cc-notes authority: holder plan is required")
 	default:
 		return nil
 	}
 }
 
-// NewHolderPlan binds cc-notes to a caller-supplied, already-registered signed
-// application. Bundle identity and signing credentials remain consumer-owned.
-func NewHolderPlan(application holder.SignedApplication, runtimeDirectory string) (holder.Plan, error) {
-	return holder.NewPlan(holder.PlanSpec{Application: application, RuntimeDirectory: runtimeDirectory})
-}
-
-// RuntimeClient owns one exact persistent session shared by the mount and
-// catalog protocols.
-type RuntimeClient struct {
-	wire    *wire.Client
-	mount   *mountservice.Client
-	catalog *catalogservice.Client
-	plan    holder.Plan
-}
-
-// NewRuntimeClient connects to the fixed signed holder named by plan.
-func NewRuntimeClient(ctx context.Context, plan holder.Plan) (*RuntimeClient, error) {
-	if plan.Paths().Socket == "" {
-		return nil, errors.New("cc-notes authority: holder plan is required")
-	}
-	session, err := wire.NewClient(ctx, wire.ClientConfig{
-		Dial: wire.UnixDialer(plan.Paths().Socket), Build: transportproto.Build,
-	})
-	if err != nil {
-		return nil, err
-	}
-	mountClient, err := mountservice.NewClientOn(session)
-	if err != nil {
-		_ = session.Close()
-		return nil, err
-	}
-	catalogClient, err := catalogservice.NewClientOn(session)
-	if err != nil {
-		_ = session.Close()
-		return nil, err
-	}
-	return &RuntimeClient{wire: session, mount: mountClient, catalog: catalogClient, plan: plan}, nil
-}
-
-// Close settles the shared persistent session.
-func (c *RuntimeClient) Close() error {
-	if c == nil || c.wire == nil {
-		return nil
-	}
-	return c.wire.Close()
-}
-
-// ProvisionTenant durably creates one exact repository tenant.
-func (c *RuntimeClient) ProvisionTenant(ctx context.Context, tenant Tenant) error {
-	if err := tenant.Validate(c.plan); err != nil {
-		return err
-	}
-	_, err := c.mount.ProvisionTenant(ctx, tenant.ID, tenantDefinition(c.plan, tenant))
-	return err
-}
-
-func tenantDefinition(plan holder.Plan, tenant Tenant) mountproto.TenantDefinition {
-	return mountproto.TenantDefinition{
-		PresentationRoot: filepath.Join(plan.Paths().PresentationRoot, tenant.RouteName),
-		BackingRoot:      tenant.RepoRoot, ContentSourceID: string(tenant.Authority),
-		AccessMode: mountproto.AccessModeReadWrite, CasePolicy: mountproto.CasePolicySensitive,
-		Presentations: []mountproto.Presentation{mountproto.PresentationMount},
-		Generation:    uint64(tenant.Generation),
-	}
-}
-
-// PublishSnapshot commits one complete authority revision, then derives and
-// waits for the exact PrepareTenant proof from that commit.
-func (c *RuntimeClient) PublishSnapshot(
-	ctx context.Context,
-	tenant Tenant,
-	revision uint64,
-	snapshot AuthoritySnapshot,
-	cause catalogproto.ConvergenceCause,
-) (catalogproto.PreparationProof, error) {
-	return c.publishAndPrepare(ctx, tenant, revision, 0, catalogproto.SourceModeSnapshot, snapshot.objects, nil, cause)
-}
-
-// PublishDelta commits one exact successor revision and waits for its derived
-// PrepareTenant proof. Skipped or mismatched predecessors fail locally.
-func (c *RuntimeClient) PublishDelta(
-	ctx context.Context,
-	tenant Tenant,
-	revision, predecessor uint64,
-	delta AuthorityDelta,
-	cause catalogproto.ConvergenceCause,
-) (catalogproto.PreparationProof, error) {
-	if predecessor == 0 || revision != predecessor+1 {
-		return catalogproto.PreparationProof{}, errors.New("cc-notes authority: delta must be the exact successor of a nonzero predecessor")
-	}
-	return c.publishAndPrepare(ctx, tenant, revision, predecessor, catalogproto.SourceModeDelta, delta.objects, delta.deletes, cause)
-}
-
-func (c *RuntimeClient) publishAndPrepare(
-	ctx context.Context,
-	tenant Tenant,
-	revision, predecessor uint64,
-	mode catalogproto.SourceMode,
-	objects []authorityObject,
-	deletes []catalogproto.SourceDeleteRecord,
-	cause catalogproto.ConvergenceCause,
-) (catalogproto.PreparationProof, error) {
-	if err := tenant.Validate(c.plan); err != nil {
-		return catalogproto.PreparationProof{}, err
-	}
-	if revision == 0 {
-		return catalogproto.PreparationProof{}, errors.New("cc-notes authority: source revision is required")
-	}
-	changeID, err := convergence.NewChangeID()
-	if err != nil {
-		return catalogproto.PreparationProof{}, err
-	}
-	operationID, err := convergence.NewOperationID()
-	if err != nil {
-		return catalogproto.PreparationProof{}, err
-	}
-	change := catalogproto.ChangeID(hex.EncodeToString(changeID[:]))
-	operation := catalogproto.MutationID(hex.EncodeToString(operationID[:]))
-	input, closers, err := sourceInput(tenant, revision, objects, deletes)
-	if err != nil {
-		return catalogproto.PreparationProof{}, err
-	}
-	defer closeAll(closers)
-	response, err := c.catalog.ReconcileSource(ctx, catalogproto.SourceReconcileRequest{
-		Protocol: catalogproto.Version, Mode: mode,
-		SourceAuthority: tenant.Authority, SourceRevision: revision, PredecessorRevision: predecessor,
-		ChangeID: change, OperationID: operation, Cause: cause,
-		AffectedKeys: affectedKeys(objects, deletes), TenantCount: 1,
-	}, []catalogservice.SourceTenantInput{input})
-	if err != nil {
-		return catalogproto.PreparationProof{}, err
-	}
-	if len(response.Commits) != 1 || response.Commits[0].TenantID != catalogproto.TenantID(tenant.ID) {
-		return catalogproto.PreparationProof{}, errors.New("cc-notes authority: source response did not commit the requested tenant")
-	}
-	prepared, err := c.catalog.PrepareTenant(ctx, catalogproto.TenantID(tenant.ID), prepareRequest(tenant, response))
-	if err != nil {
-		return catalogproto.PreparationProof{}, err
-	}
-	if prepared.Proof == nil {
-		return catalogproto.PreparationProof{}, errors.New("cc-notes authority: PrepareTenant returned no proof")
-	}
-	return *prepared.Proof, nil
-}
-
-func affectedKeys(objects []authorityObject, deletes []catalogproto.SourceDeleteRecord) []string {
-	keys := make([]string, 0, len(objects)+len(deletes))
-	for _, object := range objects {
-		keys = append(keys, object.key)
-	}
-	for _, record := range deletes {
-		keys = append(keys, record.SourceKey)
-	}
-	slices.Sort(keys)
-	return slices.Compact(keys)
-}
-
-func prepareRequest(tenant Tenant, response catalogproto.SourceReconcileResponse) catalogproto.PrepareTenantRequest {
-	return catalogproto.PrepareTenantRequest{
-		Protocol: catalogproto.Version, DomainID: tenant.Domain, Generation: uint64(tenant.Generation),
-		CatalogRevision: response.Commits[0].CatalogRevision,
-		SourceAuthority: response.SourceAuthority, SourceRevision: response.SourceRevision,
-		ChangeID: response.ChangeID, OperationID: response.OperationID,
-	}
-}
-
 type projectionBuilder struct {
-	ctx     context.Context
-	store   *store.Store
-	objects []authorityObject
-	snaps   map[model.Kind][]model.Snapshot
+	ctx      context.Context
+	store    *store.Store
+	manifest gitobj.SourceManifest
+	objects  []authorityObject
+	snaps    map[model.Kind][]model.Snapshot
 }
 
 func (b *projectionBuilder) build() error {
 	b.snaps = make(map[model.Kind][]model.Snapshot, len(model.Kinds()))
 	for _, kind := range model.Kinds() {
-		rooted, err := b.store.ListRootedSnapshots(b.ctx, kind, store.ListOpts{})
+		rooted, err := b.rootedSnapshots(kind)
 		if err != nil {
 			return fmt.Errorf("cc-notes authority: list %s: %w", kind, err)
 		}
@@ -424,6 +208,35 @@ func (b *projectionBuilder) build() error {
 	}
 	b.buildBrowseTrees()
 	return b.buildAttachments()
+}
+
+func (b *projectionBuilder) rootedSnapshots(kind model.Kind) ([]store.RootedSnapshot, error) {
+	if b.manifest == nil {
+		return b.store.ListRootedSnapshots(b.ctx, kind, store.ListOpts{})
+	}
+	result := make([]store.RootedSnapshot, 0)
+	for _, entry := range b.manifest {
+		parsed, err := refs.Parse(entry.Ref)
+		if err != nil {
+			return nil, err
+		}
+		if parsed.Kind != kind {
+			continue
+		}
+		rooted, err := b.store.LoadRootedAt(b.ctx, entry.Tip)
+		if err != nil {
+			return nil, fmt.Errorf("load %s at %s: %w", entry.Ref, entry.Tip, err)
+		}
+		meta := rooted.Snapshot.Meta()
+		if meta.Deleted || meta.Superseded {
+			continue
+		}
+		if rooted.Snapshot.EntityID() != parsed.ID {
+			return nil, fmt.Errorf("source ref %s identifies %s but folds to %s", entry.Ref, parsed.ID, rooted.Snapshot.EntityID())
+		}
+		result = append(result, rooted)
+	}
+	return result, nil
 }
 
 func (b *projectionBuilder) buildBrowseTrees() {
@@ -484,10 +297,6 @@ func (b *projectionBuilder) buildAttachments() error {
 			}
 		}
 	}
-	lfs, err := b.store.LFS(b.ctx)
-	if err != nil {
-		return fmt.Errorf("cc-notes authority: resolve attachment store: %w", err)
-	}
 	shorts := make([]string, 0, len(byShort))
 	for short := range byShort {
 		shorts = append(shorts, short)
@@ -502,34 +311,20 @@ func (b *projectionBuilder) buildAttachments() error {
 		parent := "attachments:" + string(snapshot.EntityID())
 		b.dir(parent, root, short)
 		for _, attachment := range snapshot.Meta().Attachments {
-			attachmentPath := lfs.Path(attachment.OID)
-			file, err := lfs.Open(attachment.OID)
-			if err != nil {
-				return fmt.Errorf("cc-notes authority: read attachment %s/%s: %w", snapshot.EntityID(), attachment.Name, err)
-			}
-			digest := sha256.New()
-			size, copyErr := io.Copy(digest, file)
-			closeErr := file.Close()
-			if copyErr != nil {
-				return fmt.Errorf("cc-notes authority: hash attachment %s/%s: %w", snapshot.EntityID(), attachment.Name, copyErr)
-			}
-			if closeErr != nil {
-				return fmt.Errorf("cc-notes authority: close attachment %s/%s: %w", snapshot.EntityID(), attachment.Name, closeErr)
-			}
-			if size != attachment.Size || hex.EncodeToString(digest.Sum(nil)) != attachment.OID {
-				return fmt.Errorf("cc-notes authority: attachment %s/%s failed size/hash verification", snapshot.EntityID(), attachment.Name)
-			}
-			contentSize, err := nonnegativeSize(size)
+			hash, err := contentHash(attachment.OID)
 			if err != nil {
 				return fmt.Errorf("cc-notes authority: attachment %s/%s: %w", snapshot.EntityID(), attachment.Name, err)
 			}
-			b.filePath(
-				"attachment:"+string(snapshot.EntityID())+":"+attachment.Name,
+			if attachment.Size < 0 {
+				return fmt.Errorf("cc-notes authority: attachment %s/%s has negative size", snapshot.EntityID(), attachment.Name)
+			}
+			b.fileAttachment(
+				attachmentKey(snapshot.EntityID(), attachment.Name),
 				parent,
 				attachment.Name,
 				0o444,
-				attachmentPath,
-				contentSize,
+				attachment.Size,
+				hash,
 				attachment.OID,
 			)
 		}
@@ -537,34 +332,46 @@ func (b *projectionBuilder) buildAttachments() error {
 	return nil
 }
 
-func nonnegativeSize(value int64) (uint64, error) {
-	if value < 0 {
-		return 0, errors.New("negative content size")
-	}
-	return uint64(value), nil //nolint:gosec // nonnegative value proved above
-}
-
 func (b *projectionBuilder) dir(key, parent, name string) {
-	b.objects = append(b.objects, authorityObject{key: key, parent: parent, name: name, kind: catalogproto.ObjectKindDirectory, mode: 0o755})
+	b.objects = append(b.objects, authorityObject{key: key, parent: parent, name: name, kind: catalog.KindDirectory, mode: 0o755})
 }
 
 func (b *projectionBuilder) file(key, parent, name string, mode uint32, content []byte) {
-	b.objects = append(b.objects, authorityObject{key: key, parent: parent, name: name, kind: catalogproto.ObjectKindFile, mode: mode, content: content})
+	hash := sha256.Sum256(content)
+	b.objects = append(b.objects, authorityObject{
+		key: key, parent: parent, name: name, kind: catalog.KindFile, mode: mode,
+		content: content, size: int64(len(content)), hash: catalog.ContentHash(hash),
+	})
 }
 
-func (b *projectionBuilder) filePath(key, parent, name string, mode uint32, contentPath string, size uint64, hash string) {
+func (b *projectionBuilder) fileAttachment(key, parent, name string, mode uint32, size int64, hash catalog.ContentHash, oid string) {
 	b.objects = append(b.objects, authorityObject{
-		key: key, parent: parent, name: name, kind: catalogproto.ObjectKindFile,
-		mode: mode, contentPath: contentPath, size: size, hash: hash,
+		key: key, parent: parent, name: name, kind: catalog.KindFile,
+		mode: mode, attachment: oid, size: size, hash: hash,
 	})
 }
 
 func (b *projectionBuilder) symlink(key, parent, name, target string) {
-	b.objects = append(b.objects, authorityObject{key: key, parent: parent, name: name, kind: catalogproto.ObjectKindSymlink, mode: 0o777, linkTarget: target})
+	b.objects = append(b.objects, authorityObject{key: key, parent: parent, name: name, kind: catalog.KindSymlink, mode: 0o777, linkTarget: target})
+}
+
+func contentHash(value string) (catalog.ContentHash, error) {
+	raw, err := hex.DecodeString(value)
+	if err != nil || len(raw) != sha256.Size {
+		return catalog.ContentHash{}, errors.New("content hash is not canonical SHA-256")
+	}
+	var hash catalog.ContentHash
+	copy(hash[:], raw)
+	return hash, nil
 }
 
 func browseKey(kind model.Kind, id model.EntityID) string {
 	return "browse:" + string(kind) + ":" + string(id)
+}
+
+func attachmentKey(id model.EntityID, name string) string {
+	digest := sha256.Sum256([]byte(name))
+	return "attachment:" + string(id) + ":" + hex.EncodeToString(digest[:])
 }
 
 func typedSnapshots[T model.Snapshot](values []model.Snapshot) []T {
@@ -579,7 +386,7 @@ func validateAuthorityObjects(objects []authorityObject) error {
 	keys := make(map[string]struct{}, len(objects))
 	names := make(map[string]struct{}, len(objects))
 	for _, object := range objects {
-		if object.key == "" || object.name == "" || object.name == "." || object.name == ".." || strings.ContainsAny(object.name, "/\x00") {
+		if !validAuthorityKey(object.key) || object.name == "" || object.name == "." || object.name == ".." || strings.ContainsAny(object.name, "/\x00") {
 			return fmt.Errorf("cc-notes authority: invalid object %q/%q", object.key, object.name)
 		}
 		if _, found := keys[object.key]; found {
@@ -592,6 +399,9 @@ func validateAuthorityObjects(objects []authorityObject) error {
 		}
 		names[nameKey] = struct{}{}
 		if object.parent != "" {
+			if !validAuthorityKey(object.parent) {
+				return fmt.Errorf("cc-notes authority: invalid parent key %q", object.parent)
+			}
 			if _, found := keys[object.parent]; !found {
 				return fmt.Errorf("cc-notes authority: parent %q is not ordered before %q", object.parent, object.key)
 			}
@@ -600,9 +410,14 @@ func validateAuthorityObjects(objects []authorityObject) error {
 	return nil
 }
 
+func validAuthorityKey(value string) bool {
+	return value != "" && len(value) <= 255 && !strings.ContainsAny(value, "/\\") &&
+		strings.IndexFunc(value, unicode.IsControl) < 0
+}
+
 func sameAuthorityObject(a, b authorityObject) bool {
 	return a.key == b.key && a.parent == b.parent && a.name == b.name && a.kind == b.kind &&
-		a.mode == b.mode && a.contentPath == b.contentPath && a.size == b.size && a.hash == b.hash &&
+		a.mode == b.mode && a.attachment == b.attachment && a.size == b.size && a.hash == b.hash &&
 		a.linkTarget == b.linkTarget && bytes.Equal(a.content, b.content)
 }
 
