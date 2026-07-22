@@ -88,7 +88,7 @@ func initRepo(t *testing.T) string {
 
 func open(t *testing.T, dir string) *gitobj.Repo {
 	t.Helper()
-	repo, err := gitobj.Open(dir)
+	repo, err := gitobj.Open(gittest.Dirs(t, dir))
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)
 	}
@@ -744,6 +744,112 @@ func TestOpenFromSubdirectory(t *testing.T) {
 	}
 }
 
+func TestOpenWorktreeConfigExtension(t *testing.T) {
+	for _, version := range []string{"0", "1"} {
+		t.Run("format v"+version, func(t *testing.T) {
+			dir := initRepo(t)
+			git(t, dir, "config", "core.repositoryformatversion", version)
+			git(t, dir, "config", "extensions.worktreeConfig", "true")
+
+			repo := open(t, dir)
+			sha := write(t, repo, nil, t0, createPack)
+			ref := "refs/cc-notes/notes/" + string(sha)
+			git(t, dir, "update-ref", ref, string(sha))
+			got, err := repo.Tip(t.Context(), ref)
+			if err != nil {
+				t.Fatalf("Tip: %v", err)
+			}
+			if got != sha {
+				t.Errorf("Tip = %s, want %s", got, sha)
+			}
+		})
+	}
+}
+
+func TestOpenRejectsUnsupportedLayout(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		want   string
+	}{
+		{
+			name:   "object format",
+			config: "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tObjectFormat = SHA256\n",
+			want:   "extensions.objectformat",
+		},
+		{
+			name:   "object format sha1",
+			config: "[extensions]\n\tobjectformat = sha1\n",
+		},
+		{
+			name:   "object format last supported wins",
+			config: "[extensions]\n\tobjectformat = sha256\n\tobjectformat = sha1\n",
+		},
+		{
+			name:   "object format last unsupported wins",
+			config: "[extensions]\n\tobjectformat = sha1\n\tobjectformat = sha256\n",
+			want:   "sha256",
+		},
+		{
+			name:   "ref storage",
+			config: "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tRefStorage = Reftable\n",
+			want:   "extensions.refstorage",
+		},
+		{
+			name:   "ref storage files",
+			config: "[extensions]\n\trefstorage = files\n",
+		},
+		{
+			name:   "ref storage last supported wins",
+			config: "[extensions]\n\trefstorage = reftable\n\trefstorage = files\n",
+		},
+		{
+			name:   "ref storage last unsupported wins",
+			config: "[extensions]\n\trefstorage = files\n\trefstorage = reftable\n",
+			want:   "reftable",
+		},
+		{
+			name:   "repository format version",
+			config: "",
+			want:   "core.repositoryformatversion",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			gitDir, commonDir := gittest.Dirs(t, dir)
+			configPath := filepath.Join(dir, ".git", "config")
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatalf("read config: %v", err)
+			}
+			if tc.config == "" {
+				old := []byte("repositoryformatversion = 0")
+				data = bytes.Replace(data, old, []byte("repositoryformatversion = 2"), 1)
+				if bytes.Contains(data, old) {
+					t.Fatal("repository format version was not replaced")
+				}
+			} else {
+				data = append(data, '\n')
+				data = append(data, tc.config...)
+			}
+			if err := os.WriteFile(configPath, data, 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			_, err = gitobj.Open(gitDir, commonDir)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("Open: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), tc.want) {
+				t.Fatalf("Open error = %v, want key %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestOpenLinkedWorktree(t *testing.T) {
 	dir := initRepo(t)
 	git(t, dir, "commit", "--allow-empty", "-q", "-m", "base")
@@ -789,6 +895,52 @@ func TestOpenLinkedWorktree(t *testing.T) {
 	}
 	if got, err := open(t, sub).Tip(t.Context(), ref); err != nil || got != sha {
 		t.Errorf("Tip from worktree subdirectory = %s, %v; want %s, nil", got, err, sha)
+	}
+}
+
+func TestOpenLinkedWorktreeWorktreeConfig(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "config", "extensions.worktreeConfig", "true")
+	git(t, dir, "commit", "--allow-empty", "-q", "-m", "base")
+	main := open(t, dir)
+	sha := write(t, main, nil, t0, createPack)
+	ref := "refs/cc-notes/notes/" + string(sha)
+	git(t, dir, "update-ref", ref, string(sha))
+
+	wt := filepath.Join(t.TempDir(), "wt")
+	git(t, dir, "worktree", "add", "-q", "-b", "scratch", wt)
+	git(t, wt, "config", "--worktree", "push.autoSetupRemote", "true")
+	gitDir, _ := gittest.Dirs(t, wt)
+	if _, err := os.Stat(filepath.Join(gitDir, "config.worktree")); err != nil {
+		t.Fatalf("worktree config: %v", err)
+	}
+
+	repo := open(t, wt)
+	got, err := repo.Tip(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Tip from worktree: %v", err)
+	}
+	if got != sha {
+		t.Errorf("Tip = %s, want %s", got, sha)
+	}
+	listed, err := repo.ListPrefix(t.Context(), "refs/cc-notes/")
+	if err != nil {
+		t.Fatalf("ListPrefix from worktree: %v", err)
+	}
+	if want := map[string]model.SHA{ref: sha}; !reflect.DeepEqual(listed, want) {
+		t.Errorf("ListPrefix = %v, want %v", listed, want)
+	}
+
+	child := write(t, repo, []model.SHA{sha}, t1, retitlePack)
+	if typ := git(t, dir, "cat-file", "-t", string(child)); typ != "commit" {
+		t.Fatalf("worktree-written object not in shared ODB: cat-file -t = %q", typ)
+	}
+	chain, err := open(t, dir).ReadChain(t.Context(), child)
+	if err != nil {
+		t.Fatalf("ReadChain from main repo: %v", err)
+	}
+	if len(chain) != 2 || chain[0].SHA != child || chain[1].SHA != sha {
+		t.Errorf("chain = %+v, want [%s %s]", chain, child, sha)
 	}
 }
 

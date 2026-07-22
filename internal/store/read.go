@@ -90,8 +90,7 @@ func (s *Store) LoadRootedAt(ctx context.Context, head model.SHA) (RootedSnapsho
 }
 
 // HasNotes reports whether the repository holds any cc-notes entity: any ref
-// under refs/cc-notes/. It is the in-process equivalent of
-// `git for-each-ref --count=1 refs/cc-notes/`, with no binary lookup.
+// under refs/cc-notes/, scanned in-process from the open storage.
 func (s *Store) HasNotes(ctx context.Context) (bool, error) {
 	tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
 	if err != nil {

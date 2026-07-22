@@ -52,10 +52,7 @@ func (e *engine) uploadAttachments(ctx context.Context) error {
 	if len(referenced) == 0 {
 		return nil
 	}
-	content, err := e.store.LFS(ctx)
-	if err != nil {
-		return fmt.Errorf("upload attachments: %w", err)
-	}
+	content := e.store.LFS()
 	present := make([]store.ReferencedObject, 0, len(referenced))
 	for _, obj := range referenced {
 		if content.Has(obj.OID) {
@@ -91,10 +88,7 @@ func (e *engine) downloadAttachments(ctx context.Context) error {
 	if len(referenced) == 0 {
 		return nil
 	}
-	content, err := e.store.LFS(ctx)
-	if err != nil {
-		return fmt.Errorf("download attachments: %w", err)
-	}
+	content := e.store.LFS()
 	missing := make([]store.ReferencedObject, 0, len(referenced))
 	for _, obj := range referenced {
 		if !content.Has(obj.OID) {

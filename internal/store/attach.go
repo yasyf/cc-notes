@@ -64,12 +64,8 @@ type useKey struct {
 // LFS returns the repository's local LFS content store, rooted at
 // <git-common-dir>/lfs so linked worktrees share one store and the git-lfs
 // CLI reads and writes the same objects.
-func (s *Store) LFS(ctx context.Context) (lfs.Store, error) {
-	common, err := s.resolveCommonDir(ctx)
-	if err != nil {
-		return lfs.Store{}, fmt.Errorf("lfs store: %w", err)
-	}
-	return lfs.Store{Dir: filepath.Join(common, "lfs")}, nil
+func (s *Store) LFS() lfs.Store {
+	return lfs.Store{Dir: filepath.Join(s.commonDir, "lfs")}
 }
 
 // AttachFile hashes path's content into the local LFS store and returns the
@@ -80,10 +76,10 @@ func (s *Store) LFS(ctx context.Context) (lfs.Store, error) {
 // installed PruneGuardConfig — set once per repository, on the first attach —
 // so the caller can print the config line that one time.
 func (s *Store) AttachFile(ctx context.Context, path string) (att model.Attachment, guarded bool, err error) {
-	content, err := s.LFS(ctx)
-	if err != nil {
-		return model.Attachment{}, false, fmt.Errorf("attach %s: %w", path, err)
+	if err := ctx.Err(); err != nil {
+		return model.Attachment{}, false, err
 	}
+	content := s.LFS()
 	oid, size, err := content.PutFile(path)
 	if err != nil {
 		return model.Attachment{}, false, fmt.Errorf("attach %s: %w", path, err)

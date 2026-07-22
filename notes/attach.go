@@ -97,11 +97,11 @@ func (c *Client) AttachmentInfos(ctx context.Context, atts []model.Attachment) (
 	if len(atts) == 0 {
 		return out, nil
 	}
-	content, err := c.s.LFS(ctx)
-	if err != nil {
-		return nil, err
-	}
+	content := c.s.LFS()
 	for _, a := range atts {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
 		out = append(out, AttachmentInfo{Attachment: a, Present: content.Has(a.OID)})
 	}
 	return out, nil
@@ -118,11 +118,7 @@ func (c *Client) lookupAttachment(ctx context.Context, kind model.Kind, id model
 	atts := snapshot.Meta().Attachments
 	for _, a := range atts {
 		if a.Name == name {
-			content, err := c.s.LFS(ctx)
-			if err != nil {
-				return model.Attachment{}, lfs.Store{}, err
-			}
-			return a, content, nil
+			return a, c.s.LFS(), nil
 		}
 	}
 	names := make([]string, len(atts))

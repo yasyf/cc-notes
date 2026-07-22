@@ -264,8 +264,8 @@ func TestRepoFlag(t *testing.T) {
 		}
 	})
 
-	// An existing directory that is not a repository fails loudly. go-git walks
-	// up from it and reaches the filesystem root without a .git.
+	// An existing directory that is not a repository fails loudly when git
+	// rev-parse cannot discover repository paths.
 	t.Run("non-repo target errors", func(t *testing.T) {
 		cwd := t.TempDir()
 		nonRepo := t.TempDir()
@@ -273,8 +273,8 @@ func TestRepoFlag(t *testing.T) {
 		if err == nil {
 			t.Fatalf("note list --repo %s = nil error, want failure", nonRepo)
 		}
-		if !strings.Contains(err.Error(), "repository does not exist") && !strings.Contains(stderr, "repository does not exist") {
-			t.Fatalf("error = %v (stderr %q), want \"repository does not exist\"", err, stderr)
+		if !strings.Contains(err.Error(), "not a git repository") && !strings.Contains(stderr, "not a git repository") {
+			t.Fatalf("error = %v (stderr %q), want \"not a git repository\"", err, stderr)
 		}
 	})
 

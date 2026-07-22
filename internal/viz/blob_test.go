@@ -174,10 +174,7 @@ func TestBlobDeletedLocalObject(t *testing.T) {
 	s := r.openStore()
 	att := attachContent(t, s, refs.For(model.KindNote, createNote(t, s, "deleted object")), "gone.txt", []byte("about to be deleted"))
 
-	content, err := s.LFS(t.Context())
-	if err != nil {
-		t.Fatalf("LFS: %v", err)
-	}
+	content := s.LFS()
 	if err := os.Remove(content.Path(att.OID)); err != nil {
 		t.Fatalf("remove object: %v", err)
 	}

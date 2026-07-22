@@ -64,7 +64,7 @@ func (r *Repo) WriteOpsCommit(ctx context.Context, parents []model.SHA, sig Sign
 }
 
 func (r *Repo) writeBlob(data []byte) (plumbing.Hash, error) {
-	obj := r.repo.Storer.NewEncodedObject()
+	obj := r.storage.NewEncodedObject()
 	obj.SetType(plumbing.BlobObject)
 	w, err := obj.Writer()
 	if err != nil {
@@ -77,13 +77,13 @@ func (r *Repo) writeBlob(data []byte) (plumbing.Hash, error) {
 	if err := w.Close(); err != nil {
 		return plumbing.ZeroHash, err
 	}
-	return r.repo.Storer.SetEncodedObject(obj)
+	return r.storage.SetEncodedObject(obj)
 }
 
 func (r *Repo) writeObject(o encoder) (plumbing.Hash, error) {
-	obj := r.repo.Storer.NewEncodedObject()
+	obj := r.storage.NewEncodedObject()
 	if err := o.Encode(obj); err != nil {
 		return plumbing.ZeroHash, err
 	}
-	return r.repo.Storer.SetEncodedObject(obj)
+	return r.storage.SetEncodedObject(obj)
 }

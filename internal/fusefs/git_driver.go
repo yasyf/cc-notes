@@ -323,10 +323,7 @@ func (d *GitDriver) OpenContent(
 	if object.attachment == "" {
 		return newVerifiedSource(io.NopCloser(bytes.NewReader(object.content)), ref.Size, ref.Hash), nil
 	}
-	lfs, err := source.LFS(ctx)
-	if err != nil {
-		return nil, err
-	}
+	lfs := source.LFS()
 	file, err := lfs.Open(object.attachment)
 	if err != nil {
 		return nil, fmt.Errorf("cc-notes source: open attachment %s: %w", object.attachment, err)

@@ -33,14 +33,7 @@ const (
 // failure.
 type foldCache struct {
 	capacity int
-
-	// commonDir resolves the git common dir for lazy directory resolution. It
-	// is nil when the directory was supplied explicitly (tests).
-	commonDir func() (string, error)
-
-	once   sync.Once
-	dir    string
-	dirErr error
+	dir      string
 
 	mu     sync.Mutex
 	seeded bool
@@ -49,51 +42,17 @@ type foldCache struct {
 	order []model.SHA
 }
 
-// newFoldCache returns a cache bounded at capacity entries. A non-empty dir is
-// used verbatim (tests inject a temp dir and a small capacity); an empty dir
-// is resolved lazily on first access via the commonDir hook the Store wires.
+// newFoldCache returns a cache rooted at non-empty dir and bounded at capacity
+// entries.
 func newFoldCache(dir string, capacity int) *foldCache {
-	c := &foldCache{capacity: capacity}
-	if dir != "" {
-		c.dir = dir
-	}
-	return c
-}
-
-// resolveDir resolves the cache directory once. An explicit dir set at
-// construction is used as-is; otherwise it joins the git common dir with
-// foldCacheSubdir, so linked worktrees share one cache.
-func (c *foldCache) resolveDir() (string, error) {
-	c.once.Do(func() {
-		if c.dir != "" {
-			return
-		}
-		if c.commonDir == nil {
-			return
-		}
-		common, err := c.commonDir()
-		if err != nil {
-			c.dirErr = err
-			return
-		}
-		c.dir = filepath.Join(common, foldCacheSubdir)
-	})
-	if c.dirErr != nil {
-		return "", c.dirErr
-	}
-	return c.dir, nil
+	return &foldCache{capacity: capacity, dir: dir}
 }
 
 // get returns the cached snapshot for tip, or ok=false on any miss: an absent
-// entry, an unresolvable directory, an unreadable or corrupt file, or a
-// version mismatch.
+// entry, an unreadable or corrupt file, or a version mismatch.
 func (c *foldCache) get(tip model.SHA) (model.Snapshot, bool) {
-	dir, err := c.resolveDir()
-	if err != nil || dir == "" {
-		return nil, false
-	}
 	//nolint:gosec // G304: dir is this store's own fold-cache directory and tip is a validated SHA key, not external input.
-	data, err := os.ReadFile(filepath.Join(dir, string(tip)))
+	data, err := os.ReadFile(filepath.Join(c.dir, string(tip)))
 	if err != nil {
 		return nil, false
 	}
@@ -109,21 +68,17 @@ func (c *foldCache) get(tip model.SHA) (model.Snapshot, bool) {
 // enforces the LRU bound. Every error is swallowed: the cache is a pure
 // accelerator.
 func (c *foldCache) put(tip model.SHA, snap model.Snapshot) {
-	dir, err := c.resolveDir()
-	if err != nil || dir == "" {
-		return
-	}
 	data, ok := encodeFoldEntry(snap)
 	if !ok {
 		return
 	}
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(c.dir, 0o750); err != nil {
 		return
 	}
-	if !writeFileAtomic(dir, string(tip), data) {
+	if !writeFileAtomic(c.dir, string(tip), data) {
 		return
 	}
-	c.record(dir, tip)
+	c.record(c.dir, tip)
 }
 
 // touch moves an already-present tip to the most-recently-used end.
@@ -215,14 +170,10 @@ func seedOrder(dir string) []model.SHA {
 }
 
 // tips lists the chain tips currently cached on disk, best-effort: an
-// unresolvable or unreadable directory yields an empty slice. GCLocal walks it
-// to find entries orphaned by appends, compaction, and merges.
+// unreadable directory yields an empty slice. GCLocal walks it to find entries
+// orphaned by appends, compaction, and merges.
 func (c *foldCache) tips() []model.SHA {
-	dir, err := c.resolveDir()
-	if err != nil || dir == "" {
-		return nil
-	}
-	ents, err := os.ReadDir(dir)
+	ents, err := os.ReadDir(c.dir)
 	if err != nil {
 		return nil
 	}
@@ -237,15 +188,10 @@ func (c *foldCache) tips() []model.SHA {
 }
 
 // delete removes the cache entry for tip and drops it from the LRU index. It is
-// best-effort: a missing file or unresolvable directory is a no-op. GCLocal and
-// physical prune call it to evict entries orphaned by appends, compaction,
-// merges, and tombstone removal.
+// best-effort: a missing file is a no-op. GCLocal and physical prune call it to
+// evict entries orphaned by appends, compaction, merges, and tombstone removal.
 func (c *foldCache) delete(tip model.SHA) {
-	dir, err := c.resolveDir()
-	if err != nil || dir == "" {
-		return
-	}
-	_ = os.Remove(filepath.Join(dir, string(tip)))
+	_ = os.Remove(filepath.Join(c.dir, string(tip)))
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if i := slices.Index(c.order, tip); i >= 0 {

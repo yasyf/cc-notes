@@ -39,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hint naming `body`.
 
 ### Fixed
+- cc-notes now opens repositories with `extensions.worktreeConfig`, including
+  Conductor shared repos and jj-colocated checkouts, and partial clones by
+  resolving repository paths with real git and constructing go-git's
+  filesystem storage directly, bypassing its open-time extension allowlist.
+  Repositories with `extensions.objectFormat` other than `sha1` or
+  `extensions.refStorage` other than `files` are rejected with specific errors;
+  repository discovery now runs through the real git binary, so opening a
+  repository requires git on PATH, consistent with every other cc-notes
+  operation.
 - Cross-kind ambiguity reports from top-level `show`/`compact` no longer
   mislabel every match as a note: both commands now resolve through
   `notes.Client.ResolveEntity`, whose `AmbiguousKindsError` carries the real

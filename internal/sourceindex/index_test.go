@@ -23,11 +23,17 @@ import (
 func fixture(t *testing.T) (sourceindex.Index, *gitobj.Repo) {
 	t.Helper()
 	dir := gittest.InitRepo(t)
-	repo, err := gitobj.Open(dir)
+	repo := openRepo(t, dir)
+	return sourceindex.Index{Repo: repo, Git: gitcmd.Git{Dir: dir}}, repo
+}
+
+func openRepo(t *testing.T, dir string) *gitobj.Repo {
+	t.Helper()
+	repo, err := gitobj.Open(gittest.Dirs(t, dir))
 	if err != nil {
 		t.Fatalf("gitobj.Open: %v", err)
 	}
-	return sourceindex.Index{Repo: repo, Git: gitcmd.Git{Dir: dir}}, repo
+	return repo
 }
 
 func commit(t *testing.T, repo *gitobj.Repo, parent model.SHA, pack model.Pack) model.SHA {
@@ -172,10 +178,7 @@ func TestOperationProofRetainsAppliedViewUntilAcknowledge(t *testing.T) {
 	}
 	gittest.Git(t, index.Git.Dir, "reflog", "expire", "--expire=now", "--all")
 	gittest.Git(t, index.Git.Dir, "gc", "--prune=now")
-	repo, err = gitobj.Open(index.Git.Dir)
-	if err != nil {
-		t.Fatalf("reopen git objects: %v", err)
-	}
+	repo = openRepo(t, index.Git.Dir)
 	index.Repo = repo
 	operation, found, err := index.InspectOperation(t.Context(), operationID)
 	if err != nil || !found {
@@ -206,10 +209,7 @@ func TestOperationProofRetainsAppliedViewUntilAcknowledge(t *testing.T) {
 	}
 	gittest.Git(t, index.Git.Dir, "reflog", "expire", "--expire=now", "--all")
 	gittest.Git(t, index.Git.Dir, "gc", "--prune=now")
-	repo, err = gitobj.Open(index.Git.Dir)
-	if err != nil {
-		t.Fatalf("reopen after acknowledge: %v", err)
-	}
+	repo = openRepo(t, index.Git.Dir)
 	index.Repo = repo
 	if _, err := index.Snapshot(t.Context(), committed); err != nil {
 		t.Fatalf("acknowledged source manifest: %v", err)
@@ -239,10 +239,7 @@ func TestOperationProofRetainsAppliedViewUntilAcknowledge(t *testing.T) {
 	}
 	gittest.Git(t, index.Git.Dir, "reflog", "expire", "--expire=now", "--all")
 	gittest.Git(t, index.Git.Dir, "gc", "--prune=now")
-	repo, err = gitobj.Open(index.Git.Dir)
-	if err != nil {
-		t.Fatalf("reopen after forget: %v", err)
-	}
+	repo = openRepo(t, index.Git.Dir)
 	index.Repo = repo
 	tombstone, found, err := index.InspectOperationState(t.Context(), operationID)
 	if err != nil || !found || tombstone.State != gitobj.SourceOperationForgotten || tombstone.RequestDigest != requestDigest || tombstone.ReceiptDigest != receiptDigest {

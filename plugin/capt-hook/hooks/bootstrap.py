@@ -9,10 +9,9 @@ from captain_hook import Event, SessionStartEvent, on
 
 from .common import run_cc_notes
 
-# papercut ships in v0.26.0, and the nudges now suggest `cc-notes papercut` — a command older binaries
-# lack — so a cc-notes older than this is reinstalled. (Supersedes the v0.22.0 --label/--body/--entry
-# flag-cutover floor.)
-MIN_VERSION = (0, 26, 0)
+# v0.39.0 opens extensions.worktreeConfig repos (Conductor, jj-colocated); older
+# binaries refuse to open them at all, so anything older is reinstalled.
+MIN_VERSION = (0, 39, 0)
 INSTALL_URL = "https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh"
 _VERSION_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
 

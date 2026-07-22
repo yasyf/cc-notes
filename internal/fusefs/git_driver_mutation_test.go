@@ -170,10 +170,7 @@ func TestGitDriverAppliedReceiptSurvivesRestartChurnGCAndLFSPrune(t *testing.T) 
 	note, noteKey := createRootedNote(t, source, "Receipt source", "before")
 	attachmentBody := []byte("receipt-pinned LFS body")
 	attachmentOID := fmt.Sprintf("%x", sha256.Sum256(attachmentBody))
-	content, err := source.LFS(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
+	content := source.LFS()
 	if err := content.PutVerified(bytes.NewReader(attachmentBody), attachmentOID, int64(len(attachmentBody))); err != nil {
 		t.Fatal(err)
 	}

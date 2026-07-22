@@ -67,11 +67,7 @@ func Serve(ctx context.Context, dir string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	common, err := s.Git.CommonDir(ctx)
-	if err != nil {
-		return err
-	}
-	markerDir := filepath.Join(common, "cc-notes", "mcp")
+	markerDir := filepath.Join(s.CommonDir(), "cc-notes", "mcp")
 	if err := WriteMarker(markerDir); err != nil {
 		return err
 	}

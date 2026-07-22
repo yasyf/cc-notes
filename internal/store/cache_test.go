@@ -83,10 +83,7 @@ func TestFoldCacheRebuildAfterDelete(t *testing.T) {
 	if _, err := s.Load(ctx, ref); err != nil {
 		t.Fatalf("Load (populate): %v", err)
 	}
-	dir, err := s.cache.resolveDir()
-	if err != nil {
-		t.Fatalf("resolveDir: %v", err)
-	}
+	dir := s.cache.dir
 	tip, err := s.Repo.Tip(ctx, ref)
 	if err != nil {
 		t.Fatalf("Tip: %v", err)
@@ -141,8 +138,7 @@ func TestFoldCacheV1NamespaceRebuildsDerivedEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cache := newFoldCache("", foldCacheCap)
-	cache.commonDir = func() (string, error) { return common, nil }
+	cache := newFoldCache(filepath.Join(common, foldCacheSubdir), foldCacheCap)
 	if _, found := cache.get(tip); found {
 		t.Fatal("prior derived-cache namespace was read")
 	}
@@ -351,10 +347,7 @@ func TestFoldCacheCorruptEntryIsMiss(t *testing.T) {
 	if _, err := s.Load(ctx, ref); err != nil {
 		t.Fatalf("Load (populate): %v", err)
 	}
-	dir, err := s.cache.resolveDir()
-	if err != nil {
-		t.Fatalf("resolveDir: %v", err)
-	}
+	dir := s.cache.dir
 	tip, err := s.Repo.Tip(ctx, ref)
 	if err != nil {
 		t.Fatalf("Tip: %v", err)

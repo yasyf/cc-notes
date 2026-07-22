@@ -72,11 +72,11 @@ func entityAttachments(ctx context.Context, s *store.Store, atts []model.Attachm
 	if len(atts) == 0 {
 		return out, nil
 	}
-	content, err := s.LFS(ctx)
-	if err != nil {
-		return nil, err
-	}
+	content := s.LFS()
 	for _, a := range atts {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
 		out = append(out, attachmentDTO{Name: a.Name, OID: a.OID, Size: a.Size, Present: content.Has(a.OID)})
 	}
 	return out, nil

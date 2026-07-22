@@ -261,10 +261,7 @@ func TestGCLocalPrunesOrphanedCacheEntry(t *testing.T) {
 		t.Fatalf("Tip post: %v", err)
 	}
 
-	dir, err := s.cache.resolveDir()
-	if err != nil {
-		t.Fatalf("resolveDir: %v", err)
-	}
+	dir := s.cache.dir
 	if _, err := os.Stat(filepath.Join(dir, string(oldTip))); err != nil {
 		t.Fatalf("orphaned entry missing before gc: %v", err)
 	}

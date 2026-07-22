@@ -898,6 +898,73 @@ func TestCommonDir(t *testing.T) {
 	}
 }
 
+func TestDirs(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	commitEmpty(t, g, "c1")
+	normalize := func(path string) string {
+		t.Helper()
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			t.Fatalf("eval symlinks %s: %v", path, err)
+		}
+		return resolved
+	}
+	wantCommon := filepath.Join(normalize(g.Dir), ".git")
+
+	gitDir, commonDir, err := g.Dirs(ctx)
+	if err != nil {
+		t.Fatalf("dirs: %v", err)
+	}
+	gitDir, commonDir = normalize(gitDir), normalize(commonDir)
+	if gitDir != wantCommon || commonDir != wantCommon {
+		t.Fatalf("main dirs = %q, %q; want %q, %q", gitDir, commonDir, wantCommon, wantCommon)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	relative, err := filepath.Rel(cwd, g.Dir)
+	if err != nil {
+		t.Fatalf("relative repo path: %v", err)
+	}
+	relativeGitDir, relativeCommonDir, err := (gitcmd.Git{Dir: relative}).Dirs(ctx)
+	if err != nil {
+		t.Fatalf("relative repo dirs: %v", err)
+	}
+	if !filepath.IsAbs(relativeGitDir) || !filepath.IsAbs(relativeCommonDir) {
+		t.Fatalf("relative repo dirs = %q, %q; want absolute paths", relativeGitDir, relativeCommonDir)
+	}
+	if normalize(relativeGitDir) != wantCommon || normalize(relativeCommonDir) != wantCommon {
+		t.Fatalf("relative repo dirs = %q, %q; want %q, %q", relativeGitDir, relativeCommonDir, wantCommon, wantCommon)
+	}
+
+	linked := t.TempDir()
+	gittest.Git(t, g.Dir, "worktree", "add", "-q", linked)
+	linkedGitDir, linkedCommonDir, err := (gitcmd.Git{Dir: linked}).Dirs(ctx)
+	if err != nil {
+		t.Fatalf("linked worktree dirs: %v", err)
+	}
+	linkedGitDir, linkedCommonDir = normalize(linkedGitDir), normalize(linkedCommonDir)
+	worktreesDir := filepath.Join(wantCommon, "worktrees") + string(filepath.Separator)
+	if !strings.HasPrefix(linkedGitDir, worktreesDir) || linkedCommonDir != wantCommon {
+		t.Fatalf("linked dirs = %q, %q; want git dir under %q and common dir %q", linkedGitDir, linkedCommonDir, worktreesDir, wantCommon)
+	}
+
+	sub := filepath.Join(g.Dir, "nested", "dir")
+	if err := os.MkdirAll(sub, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	subGitDir, subCommonDir, err := (gitcmd.Git{Dir: sub}).Dirs(ctx)
+	if err != nil {
+		t.Fatalf("subdirectory dirs: %v", err)
+	}
+	subGitDir, subCommonDir = normalize(subGitDir), normalize(subCommonDir)
+	if subGitDir != wantCommon || subCommonDir != wantCommon {
+		t.Fatalf("subdirectory dirs = %q, %q; want %q, %q", subGitDir, subCommonDir, wantCommon, wantCommon)
+	}
+}
+
 func TestRoot(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()

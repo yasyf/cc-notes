@@ -199,10 +199,7 @@ func attachFile(t *testing.T, s *store.Store, ref, name string, content []byte) 
 // readObject returns the local LFS store's bytes for oid.
 func readObject(t *testing.T, s *store.Store, oid string) []byte {
 	t.Helper()
-	content, err := s.LFS(t.Context())
-	if err != nil {
-		t.Fatalf("LFS: %v", err)
-	}
+	content := s.LFS()
 	data, err := os.ReadFile(content.Path(oid))
 	if err != nil {
 		t.Fatalf("read object %s: %v", oid, err)
@@ -212,10 +209,7 @@ func readObject(t *testing.T, s *store.Store, oid string) []byte {
 
 func hasObject(t *testing.T, s *store.Store, oid string) bool {
 	t.Helper()
-	content, err := s.LFS(t.Context())
-	if err != nil {
-		t.Fatalf("LFS: %v", err)
-	}
+	content := s.LFS()
 	return content.Has(oid)
 }
 

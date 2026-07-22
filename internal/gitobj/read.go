@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/storer"
 
 	"github.com/yasyf/cc-notes/model"
 )
@@ -62,7 +63,7 @@ func (r *Repo) Tip(ctx context.Context, ref string) (model.SHA, error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	resolved, err := r.repo.Reference(plumbing.ReferenceName(ref), true)
+	resolved, err := storer.ResolveReference(r.storage, plumbing.ReferenceName(ref))
 	if errors.Is(err, plumbing.ErrReferenceNotFound) {
 		return "", fmt.Errorf("%w: %s", ErrRefNotFound, ref)
 	}
@@ -80,7 +81,7 @@ func (r *Repo) ListPrefix(ctx context.Context, prefix string) (map[string]model.
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	iter, err := retryEmptyRef(ctx, r.repo.References)
+	iter, err := retryEmptyRef(ctx, r.storage.IterReferences)
 	if err != nil {
 		return nil, fmt.Errorf("list refs: %w", err)
 	}
@@ -130,7 +131,7 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b model.SHA) (bool, error) {
 
 func (r *Repo) lookupCommit(hash plumbing.Hash) (*object.Commit, error) {
 	return retry(r, func() (*object.Commit, error) {
-		return object.GetCommit(r.repo.Storer, hash)
+		return object.GetCommit(r.storage, hash)
 	})
 }
 
@@ -149,7 +150,7 @@ func (r *Repo) commit(sha model.SHA) (*object.Commit, error) {
 }
 
 func (r *Repo) missingSuffix() string {
-	shallow, err := r.repo.Storer.Shallow()
+	shallow, err := r.storage.Shallow()
 	if err == nil && len(shallow) > 0 {
 		return "missing (shallow clone)"
 	}
@@ -169,7 +170,7 @@ func (r *Repo) packCommit(commit *object.Commit) (model.PackCommit, error) {
 		return model.PackCommit{}, fmt.Errorf("%w: commit %s has no %s", ErrCorruptCommit, commit.Hash, opsFile)
 	}
 	blob, err := retry(r, func() (*object.Blob, error) {
-		return object.GetBlob(r.repo.Storer, entry.Hash)
+		return object.GetBlob(r.storage, entry.Hash)
 	})
 	if errors.Is(err, plumbing.ErrObjectNotFound) {
 		return model.PackCommit{}, fmt.Errorf("%w: ops blob of commit %s %s", ErrIncompleteChain, commit.Hash, r.missingSuffix())

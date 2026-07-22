@@ -103,6 +103,34 @@ func chronoProjects(a, b model.Project) int {
 	return strings.Compare(string(a.ID), string(b.ID))
 }
 
+func TestOpenWorktreeConfig(t *testing.T) {
+	dir := gittest.InitRepo(t)
+	gittest.Git(t, dir, "config", "extensions.worktreeConfig", "true")
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	created, ok := create(t, s, noteOps("worktree config")).(model.Note)
+	if !ok {
+		t.Fatal("Create did not return a note")
+	}
+	loaded, err := s.Load(t.Context(), refs.For(model.KindNote, created.ID))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded, created) {
+		t.Errorf("Load = %#v, want %#v", loaded, created)
+	}
+}
+
+func TestOpenNonRepo(t *testing.T) {
+	gittest.ScrubEnv(t)
+	_, err := Open(t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("Open error = %v, want not a git repository", err)
+	}
+}
+
 func TestCreateNoteRoundTrip(t *testing.T) {
 	s := initStore(t)
 	ops := []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "hello", Body: "world", Tags: []string{"b", "a"}}}

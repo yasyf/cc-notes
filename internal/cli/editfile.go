@@ -219,12 +219,8 @@ type editFiles struct {
 // editDir is the per-repo directory holding edit buffers: a sibling of the
 // fold cache under the git common dir, so it is shared across worktrees,
 // rebuildable, and never pushed.
-func editDir(ctx context.Context, s *store.Store) (string, error) {
-	common, err := s.Git.CommonDir(ctx)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(common, "cc-notes", "edit"), nil
+func editDir(s *store.Store) string {
+	return filepath.Join(s.CommonDir(), "cc-notes", "edit")
 }
 
 func bufferFiles(dir, stem string) editFiles {
@@ -415,10 +411,7 @@ func editCheckout(ctx context.Context, cmd *cobra.Command, s *store.Store, a edi
 	if err != nil {
 		return err
 	}
-	dir, err := editDir(ctx, s)
-	if err != nil {
-		return err
-	}
+	dir := editDir(s)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("create edit dir: %w", err)
 	}
@@ -441,10 +434,7 @@ func editApply(ctx context.Context, cmd *cobra.Command, s *store.Store, c *notes
 	if err != nil {
 		return err
 	}
-	dir, err := editDir(ctx, s)
-	if err != nil {
-		return err
-	}
+	dir := editDir(s)
 	files := bufferFiles(dir, string(parsed.ID))
 	meta, data, err := readBuffer(files)
 	if err != nil {
@@ -492,10 +482,7 @@ func editAbort(ctx context.Context, cmd *cobra.Command, s *store.Store, a editAd
 	if err != nil {
 		return err
 	}
-	dir, err := editDir(ctx, s)
-	if err != nil {
-		return err
-	}
+	dir := editDir(s)
 	return abortFiles(cmd, bufferFiles(dir, id))
 }
 
@@ -510,10 +497,7 @@ func addCheckout(ctx context.Context, cmd *cobra.Command, s *store.Store, a edit
 		return err
 	}
 	p.commits = commits
-	dir, err := editDir(ctx, s)
-	if err != nil {
-		return err
-	}
+	dir := editDir(s)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("create edit dir: %w", err)
 	}

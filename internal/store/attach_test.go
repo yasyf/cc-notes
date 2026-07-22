@@ -58,10 +58,7 @@ func TestAttachFile(t *testing.T) {
 			t.Errorf("%s = %q, want %q", key, got, "true")
 		}
 	}
-	content2, err := s.LFS(t.Context())
-	if err != nil {
-		t.Fatalf("LFS: %v", err)
-	}
+	content2 := s.LFS()
 	if !content2.Has(wantOID) {
 		t.Errorf("LFS store missing %s after AttachFile", wantOID)
 	}
@@ -187,10 +184,7 @@ func TestPruneGuardRetainsUnsyncedObject(t *testing.T) {
 	if !guarded {
 		t.Fatal("AttachFile guarded = false, want true")
 	}
-	content, err := s.LFS(t.Context())
-	if err != nil {
-		t.Fatalf("LFS: %v", err)
-	}
+	content := s.LFS()
 
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()

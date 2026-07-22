@@ -1,20 +1,22 @@
-// Package gitobj is the go-git half of the repository access split: it owns
-// object writes (content-addressed, so no locking is needed) and all reads —
-// ref tips, prefix listings, ancestry, and entity commit chains. Ref writes,
-// fetch/push, and config live in internal/gitcmd, which execs the system git
-// binary for real ref locks, reflogs, and credential handling. Neither
-// package imports the other.
+// Package gitobj owns object writes and all reads through go-git's filesystem
+// ODB storage. Repository discovery belongs to the caller, which uses real git
+// rev-parse. This bypasses go-git's repository open, whose extension allowlist
+// rejects extensions.worktreeConfig repositories. Ref writes, fetch/push, and
+// config live outside this package.
 package gitobj
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/cache"
+	formatcfg "github.com/go-git/go-git/v5/plumbing/format/config"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 )
@@ -49,21 +51,54 @@ type Repo struct {
 	// lists, ObjectStorage pack indexes) with no locking of its own, so every
 	// method serializes on mu.
 	mu      sync.Mutex
-	repo    *gogit.Repository
 	storage *filesystem.Storage
 }
 
-// Open opens the git repository containing dir, following worktree and
-// subdirectory indirection so refs and objects are the main repository's.
-func Open(dir string) (*Repo, error) {
-	repo, err := gogit.PlainOpenWithOptions(dir, &gogit.PlainOpenOptions{
-		DetectDotGit:          true,
-		EnableDotGitCommonDir: true,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("open git repository at %s: %w", dir, err)
+// Open opens filesystem storage at the discovered per-worktree and shared git
+// directories.
+func Open(gitDir, commonDir string) (*Repo, error) {
+	fs := dotgit.NewRepositoryFilesystem(osfs.New(gitDir), osfs.New(commonDir))
+	storage := filesystem.NewStorage(fs, cache.NewObjectLRUDefault())
+	if err := verifyLayout(storage); err != nil {
+		return nil, err
 	}
-	return &Repo{repo: repo, storage: repo.Storer.(*filesystem.Storage)}, nil
+	return &Repo{storage: storage}, nil
+}
+
+func verifyLayout(storage *filesystem.Storage) error {
+	cfg, err := storage.Config()
+	if err != nil {
+		return fmt.Errorf("read repository config: %w", err)
+	}
+	version := strings.ToLower(lastOption(cfg.Raw.Section("core").Options, "repositoryformatversion"))
+	switch version {
+	case "", "0", "1":
+	default:
+		return fmt.Errorf("unsupported core.repositoryformatversion %q", version)
+	}
+	objectFormat := lastOption(cfg.Raw.Section("extensions").Options, "objectformat")
+	switch strings.ToLower(objectFormat) {
+	case "", "sha1":
+	default:
+		return fmt.Errorf("unsupported extensions.objectformat %q: cc-notes reads sha1 object databases", objectFormat)
+	}
+	refStorage := lastOption(cfg.Raw.Section("extensions").Options, "refstorage")
+	switch strings.ToLower(refStorage) {
+	case "", "files":
+	default:
+		return fmt.Errorf("unsupported extensions.refstorage %q: cc-notes reads the files ref backend", refStorage)
+	}
+	return nil
+}
+
+func lastOption(options formatcfg.Options, key string) string {
+	value := ""
+	for _, option := range options {
+		if strings.EqualFold(option.Key, key) {
+			value = option.Value
+		}
+	}
+	return value
 }
 
 func staleIndex(err error) bool {

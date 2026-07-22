@@ -117,11 +117,7 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := s.store.LFS(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	content := s.store.LFS()
 	f, err := content.Open(oid)
 	if errors.Is(err, lfs.ErrObjectMissing) {
 		writeError(w, http.StatusNotFound, blobMissingMessage(obj))

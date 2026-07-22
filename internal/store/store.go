@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -110,18 +110,10 @@ type Store struct {
 
 	// now stamps commit signatures; tests freeze it.
 	now func() time.Time
-	// cache is the local, tip-keyed fold accelerator; its directory resolves
-	// lazily on first use. It lives outside refs/cc-notes/* and is never
-	// pushed.
-	cache *foldCache
-
-	// commonDirOnce memoizes the git common dir — a rev-parse subprocess —
-	// for the store's lifetime. It is fixed for the life of the repository,
-	// so the LFS store and the fold cache share one resolution rather than
-	// exec'ing per entity. Concurrency-safe.
-	commonDirOnce sync.Once
-	commonDir     string
-	commonDirErr  error
+	// cache is the local, tip-keyed fold accelerator. It lives outside
+	// refs/cc-notes/* and is never pushed.
+	cache     *foldCache
+	commonDir string
 }
 
 // Open opens the git repository containing dir, following worktree and
@@ -135,30 +127,28 @@ func Open(dir string) (*Store, error) {
 	return OpenContext(context.Background(), dir)
 }
 
-// OpenContext is Open with an explicit context threaded into the lazy git
-// common-dir resolution the fold cache performs. Callers that already hold a
-// request context should prefer it so cancellation propagates into the cache
-// directory lookup.
+// OpenContext is Open with an explicit context for repository discovery.
 func OpenContext(ctx context.Context, dir string) (*Store, error) {
-	repo, err := gitobj.Open(dir)
+	git := gitcmd.Git{Dir: dir}
+	gitDir, commonDir, err := git.Dirs(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open git repository at %s: %w", dir, err)
 	}
-	s := &Store{Repo: repo, Git: gitcmd.Git{Dir: dir}, now: time.Now, cache: newFoldCache("", foldCacheCap)}
-	s.cache.commonDir = func() (string, error) { return s.resolveCommonDir(ctx) }
-	return s, nil
+	repo, err := gitobj.Open(gitDir, commonDir)
+	if err != nil {
+		return nil, fmt.Errorf("open git repository at %s: %w", dir, err)
+	}
+	return &Store{
+		Repo:      repo,
+		Git:       git,
+		now:       time.Now,
+		cache:     newFoldCache(filepath.Join(commonDir, foldCacheSubdir), foldCacheCap),
+		commonDir: commonDir,
+	}, nil
 }
 
-// resolveCommonDir resolves the repository's shared git directory once per
-// store lifetime. rev-parse is a subprocess and the common dir is fixed for
-// the life of the repository, so the LFS store and the fold cache share a
-// single resolution. Concurrency-safe.
-func (s *Store) resolveCommonDir(ctx context.Context) (string, error) {
-	s.commonDirOnce.Do(func() {
-		s.commonDir, s.commonDirErr = s.Git.CommonDir(ctx)
-	})
-	return s.commonDir, s.commonDirErr
-}
+// CommonDir returns the repository's absolute shared git directory.
+func (s *Store) CommonDir() string { return s.commonDir }
 
 func (s *Store) signature(ctx context.Context) (gitobj.Signature, model.Actor, error) {
 	name, email, err := s.actor(ctx)

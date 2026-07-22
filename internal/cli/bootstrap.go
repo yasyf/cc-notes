@@ -22,8 +22,8 @@ const defaultRemote = "origin"
 
 // repoDir resolves the directory a command operates on: the --repo flag value
 // when set, otherwise the working directory. A set-but-missing --repo is a usage
-// error rather than a silent walk-up — go-git's DetectDotGit ascends from a
-// nonexistent start path, so an unvalidated typo would open the ancestor repo.
+// error rather than passing a nonexistent start path to git rev-parse for
+// repository discovery.
 func repoDir(cmd *cobra.Command) (string, error) {
 	repo, err := cmd.Flags().GetString("repo")
 	if err != nil {

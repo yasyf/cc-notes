@@ -5,6 +5,7 @@ package gittest
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -46,6 +47,21 @@ func Git(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// Dirs returns the repository's per-worktree and shared git directories.
+func Dirs(t *testing.T, dir string) (gitDir, commonDir string) {
+	t.Helper()
+	lines := strings.Split(Git(t, dir, "rev-parse", "--absolute-git-dir", "--git-common-dir"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("rev-parse git dirs returned %d lines, want 2", len(lines))
+	}
+	gitDir = strings.TrimSpace(lines[0])
+	commonDir = strings.TrimSpace(lines[1])
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(dir, commonDir)
+	}
+	return gitDir, commonDir
 }
 
 // InitRepo scrubs the git environment and creates a repository on branch
