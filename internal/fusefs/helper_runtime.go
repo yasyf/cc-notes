@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yasyf/daemonkit/proc"
 	"github.com/yasyf/daemonkit/wire"
 	"github.com/yasyf/fusekit/catalog"
 	"github.com/yasyf/fusekit/catalogproto"
@@ -26,8 +25,6 @@ const helperOwner tenant.OwnerID = "cc-notes"
 type HelperRuntimeConfig struct {
 	Plan                    holder.RuntimePlan
 	Drivers                 holder.DriverFactories
-	StopRole                string
-	StopControlStore        proc.StopControlStore
 	WorkerLimit             int
 	NativeOptions           []string
 	NativeReadinessTimeout  time.Duration
@@ -48,9 +45,8 @@ type HelperRuntimeConfig struct {
 func NewHelperRuntime(ctx context.Context, config HelperRuntimeConfig) (*holder.Runtime, error) {
 	policy := newHelperPolicy()
 	return holder.New(ctx, holder.Config{
-		Plan: config.Plan, RuntimeBuild: config.Plan.BuildID(),
+		Plan: config.Plan, Build: transportproto.Build,
 		Owner: catalog.SourceAuthorityFleetOwnerID(helperOwner), Drivers: config.Drivers,
-		StopRole: config.StopRole, StopControlStore: config.StopControlStore,
 		CatalogAuthorizer: catalogAuthorizer{policy}, Authorizer: mountAuthorizer{policy},
 		WorkerLimit: config.WorkerLimit, NativeOptions: config.NativeOptions,
 		NativeReadinessTimeout: config.NativeReadinessTimeout,
@@ -130,13 +126,14 @@ func (p *helperPolicy) authorizeNative(
 	return p.bind(identity.Peer, identity.Session, helperSessionBinding{role: helperSessionNative})
 }
 
-func (p *helperPolicy) authorizeObservation(
+func (p *helperPolicy) authorizeRuntime(
 	_ context.Context,
-	identity mountservice.ObservationIdentity,
+	identity mountservice.Identity,
 	operation mountproto.Operation,
 ) error {
 	if operation != mountproto.OperationRuntimeHealth ||
-		identity.WireBuild != transportproto.WireBuild ||
+		identity.Build != transportproto.Build ||
+		identity.Session == nil ||
 		identity.Peer.PID <= 1 ||
 		identity.Peer.UID != p.uid {
 		return mountservice.ErrUnauthorized
@@ -198,12 +195,12 @@ func productAdminOperation(operation catalogproto.Operation) bool {
 
 type mountAuthorizer struct{ policy *helperPolicy }
 
-func (a mountAuthorizer) AuthorizeObservation(
+func (a mountAuthorizer) AuthorizeRuntime(
 	ctx context.Context,
-	identity mountservice.ObservationIdentity,
+	identity mountservice.Identity,
 	operation mountproto.Operation,
 ) error {
-	return a.policy.authorizeObservation(ctx, identity, operation)
+	return a.policy.authorizeRuntime(ctx, identity, operation)
 }
 
 func (a mountAuthorizer) Authorize(

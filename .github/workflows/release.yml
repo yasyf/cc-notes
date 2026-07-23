@@ -320,7 +320,7 @@ jobs:
             __SHA_LINUX_AMD64__=${{ steps.shas.outputs.linux_amd64 }}
             __SHA_LINUX_ARM64__=${{ steps.shas.outputs.linux_arm64 }}
       - name: Publish the exact CLI to the tap
-        uses: yasyf/homebrew-tap/.github/actions/publish@v2
+        uses: yasyf/homebrew-tap/.github/actions/publish@v1
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           dir: tap-staging

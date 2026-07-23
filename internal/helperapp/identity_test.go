@@ -1,17 +1,13 @@
 package helperapp
 
 import (
-	"encoding/binary"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/daemonkit/codeidentity"
-	"github.com/yasyf/daemonkit/proc"
-	"github.com/yasyf/daemonkit/wire"
 	"github.com/yasyf/fusekit/holder"
 )
 
@@ -42,51 +38,6 @@ func TestRuntimeDirectoryUsesOnlyV1DerivedState(t *testing.T) {
 	}
 }
 
-func TestStopControlStoreConsumesOnlyExactRoleAndProcessGeneration(t *testing.T) {
-	runtimeDirectory := t.TempDir()
-	store := stopControlStore(runtimeDirectory)
-	var audit proc.AuditToken
-	binary.NativeEndian.PutUint32(audit[20:24], 42)
-	binary.NativeEndian.PutUint32(audit[28:32], 1)
-	expires := time.Now().Add(time.Minute).UnixMilli()
-	identity := proc.Identity{
-		PID: 42, StartTime: "start", Boot: "boot", Comm: ExecutableName,
-		Executable: filepath.Join(runtimeDirectory, ExecutableName), AuditToken: audit,
-	}
-	record := proc.Record{
-		RecoveryClass: proc.RecoveryStopControl,
-		PID:           identity.PID, StartTime: identity.StartTime, Boot: identity.Boot, Comm: identity.Comm,
-		Executable: identity.Executable, AuditToken: identity.AuditToken, Generation: "controller-generation",
-		Role: StopControlRole, RuntimeBuild: "v0.40.0", RuntimeProtocol: 1,
-		TargetProcessGeneration: "runtime-generation", Intent: string(wire.StopIntentRestart),
-		StopAuthorityState: proc.StopAuthorityArmed, ExpiresUnixMilli: expires,
-	}
-	if err := store.Add(t.Context(), record); err != nil {
-		t.Fatal(err)
-	}
-	if _, consumed, err := store.ConsumeStopControl(
-		t.Context(), identity, BundleID+".daemon", record.TargetProcessGeneration, time.Now(),
-	); err != nil || consumed {
-		t.Fatalf("consume wrong role = (%t, %v)", consumed, err)
-	}
-	if _, consumed, err := store.ConsumeStopControl(
-		t.Context(), identity, record.Role, "other-generation", time.Now(),
-	); err != nil || consumed {
-		t.Fatalf("consume wrong process generation = (%t, %v)", consumed, err)
-	}
-	consumedRecord, consumed, err := store.ConsumeStopControl(
-		t.Context(), identity, record.Role, record.TargetProcessGeneration, time.Now(),
-	)
-	if err != nil || !consumed || consumedRecord != record {
-		t.Fatalf("consume exact stop authority = (%+v, %t, %v)", consumedRecord, consumed, err)
-	}
-	if _, consumed, err := store.ConsumeStopControl(
-		t.Context(), identity, record.Role, record.TargetProcessGeneration, time.Now(),
-	); err != nil || consumed {
-		t.Fatalf("replay consumed stop authority = (%t, %v)", consumed, err)
-	}
-}
-
 func TestInstalledApplicationUsesFixedUserApplicationsRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -109,7 +60,7 @@ func TestDeploymentPlanRejectsHiddenHelper(t *testing.T) {
 		Application:      Application(filepath.Join(account.HomeDir, ".cc-notes", "helper", "CCNotesHelper.app")),
 		RuntimeDirectory: filepath.Join(account.HomeDir, ".cc-notes", "plan-runtime"),
 		PresentationRoot: filepath.Join(account.HomeDir, ".cc-notes", "plan-presentation"),
-		BuildID:          "v0.40.0", RuntimePolicyDigest: codeidentity.PolicyDigest{1},
+		BuildID:          "v0.39.3", RuntimePolicyDigest: codeidentity.PolicyDigest{1},
 	}
 	if _, err := holder.NewDeploymentPlan(spec); err == nil || !strings.Contains(err.Error(), "not a fixed installed application") {
 		t.Fatalf("hidden helper plan error = %v", err)
