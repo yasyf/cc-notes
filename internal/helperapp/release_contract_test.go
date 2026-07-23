@@ -75,6 +75,7 @@ func TestReleasePublishesOnlyOneCompleteCallerOwnedDraft(t *testing.T) {
 	workflow := filepath.Join("..", "..", ".github", "workflows", "release.yml")
 	assertFileContains(t, workflow,
 		"needs: [pure, smoke-linux, smoke-macos, helper-app]",
+		"  bump-formula:\n    runs-on: ubuntu-latest\n    needs: [release, helper-app]",
 		"name: ${{ needs.helper-app.outputs.artifact_name }}",
 		`mv "$checksums" dist/SHA256SUMS.txt`,
 		`cat dist/SHA256SUMS.txt`,
