@@ -143,6 +143,7 @@ func ensureInstallDirectory(path string) error {
 			return fmt.Errorf("cc-notes holder: install path %q is not a real directory", directory)
 		}
 		if info.Mode().Perm() != 0o700 {
+			//nolint:gosec // Private directories require the owner execute bit.
 			if err := os.Chmod(directory, 0o700); err != nil {
 				return fmt.Errorf("cc-notes holder: protect install directory %q: %w", directory, err)
 			}
