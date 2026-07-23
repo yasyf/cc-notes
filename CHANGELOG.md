@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **BREAKING: the legacy mount/content daemon is removed.** The `mount` and
-  `contentd` commands, local holder lifecycle, watcher/spool/registry state,
+  `contentd` commands, local runtime lifecycle, watcher/spool/registry state,
   FUSE-specific artifacts, and automatic `.notes` mount setup no longer exist.
   Signed consumer applications supply their own identity and use FuseKit's
   persistent catalog and tenant services directly; no compatibility path is

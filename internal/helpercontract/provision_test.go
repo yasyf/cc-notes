@@ -36,7 +36,7 @@ func TestProvisionInvocationRequiresExactBuildAndProtocol(t *testing.T) {
 	}
 }
 
-func TestParseProvisionIgnoresOtherHolderOperations(t *testing.T) {
+func TestParseProvisionIgnoresOtherServiceOperations(t *testing.T) {
 	if root, recognized, err := ParseProvision([]string{"--install-service"}); root != "" || recognized || err != nil {
 		t.Fatalf("ParseProvision = (%q, %v, %v)", root, recognized, err)
 	}

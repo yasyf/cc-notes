@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/cc-notes/internal/version"
+	"github.com/yasyf/daemonkit/proc"
 	"github.com/yasyf/daemonkit/supervise"
 	"github.com/yasyf/fusekit/fuset"
 	"github.com/yasyf/fusekit/holder"
@@ -20,6 +22,8 @@ const (
 	TeamID = helperclient.TeamID
 	// ExecutableName is the fixed helper executable basename.
 	ExecutableName = helperclient.ExecutableName
+	// StopControlRole is the sole tracked helper process role allowed to settle the runtime.
+	StopControlRole = BundleID + ".stop-control"
 )
 
 // Application returns cc-notes' fixed signed helper identity.
@@ -35,6 +39,19 @@ func Application(appPath string) holder.SignedApplication {
 // RuntimeDirectory returns the sole v1 derived helper state root.
 func RuntimeDirectory() (string, error) {
 	return helperclient.HomeStateDir("fusekit-v1")
+}
+
+// StopControlStore returns the controller-owned one-shot stop authority store.
+func StopControlStore(plan holder.RuntimePlan) proc.StopControlStore {
+	return stopControlStore(plan.Paths().Directory)
+}
+
+func stopControlStore(runtimeDirectory string) *proc.FileStore {
+	return &proc.FileStore{Path: serviceProcessPath(runtimeDirectory)}
+}
+
+func serviceProcessPath(runtimeDirectory string) string {
+	return filepath.Join(runtimeDirectory, "service-processes.db")
 }
 
 // RuntimePlanSpec returns cc-notes' concrete signed-side helper contract.

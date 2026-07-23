@@ -44,15 +44,15 @@ func TestToolRunnerExecutesAndSettlesOneTask(t *testing.T) {
 }
 
 func TestHelperReleasePinsExactVersionURLAndDigest(t *testing.T) {
-	setHelperRelease(t, "v0.39.3", "0.39.3", strings.Repeat("ab", 32))
+	setHelperRelease(t, "v0.40.0", "0.40.0", strings.Repeat("ab", 32))
 	release, err := helperRelease()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if release.Version != "0.39.3" {
+	if release.Version != "0.40.0" {
 		t.Fatalf("version = %q", release.Version)
 	}
-	if release.URL != "https://github.com/yasyf/cc-notes/releases/download/v0.39.3/cc-notes-helper-v0.39.3-darwin.zip" {
+	if release.URL != "https://github.com/yasyf/cc-notes/releases/download/v0.40.0/cc-notes-helper-v0.40.0-darwin.zip" {
 		t.Fatalf("asset URL = %q", release.URL)
 	}
 	if release.SHA256.String() != strings.Repeat("ab", 32) {
@@ -61,30 +61,30 @@ func TestHelperReleasePinsExactVersionURLAndDigest(t *testing.T) {
 }
 
 func TestHelperReleaseMatchesPrereleaseBundleMarketingVersion(t *testing.T) {
-	setHelperRelease(t, "v0.39.3-rc.1", "0.39.3", strings.Repeat("ab", 32))
+	setHelperRelease(t, "v0.40.0-rc.1", "0.40.0", strings.Repeat("ab", 32))
 	release, err := helperRelease()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if release.Version != "0.39.3" {
+	if release.Version != "0.40.0" {
 		t.Fatalf("version = %q", release.Version)
 	}
-	if release.URL != "https://github.com/yasyf/cc-notes/releases/download/v0.39.3-rc.1/cc-notes-helper-v0.39.3-rc.1-darwin.zip" {
+	if release.URL != "https://github.com/yasyf/cc-notes/releases/download/v0.40.0-rc.1/cc-notes-helper-v0.40.0-rc.1-darwin.zip" {
 		t.Fatalf("asset URL = %q", release.URL)
 	}
 }
 
 func TestHelperReleaseRejectsMissingDigest(t *testing.T) {
-	setHelperRelease(t, "v0.39.3", "0.39.3", "")
+	setHelperRelease(t, "v0.40.0", "0.40.0", "")
 	if _, err := helperRelease(); err == nil {
 		t.Fatal("helperRelease succeeded without an exact digest")
 	}
 }
 
 func TestHelperReleaseRejectsInvalidBundleVersion(t *testing.T) {
-	for _, value := range []string{"", " 0.39.3"} {
+	for _, value := range []string{"", " 0.40.0"} {
 		t.Run(value, func(t *testing.T) {
-			setHelperRelease(t, "v0.39.3", value, strings.Repeat("ab", 32))
+			setHelperRelease(t, "v0.40.0", value, strings.Repeat("ab", 32))
 			if _, err := helperRelease(); err == nil {
 				t.Fatalf("helperRelease succeeded with version %q", value)
 			}
@@ -93,7 +93,7 @@ func TestHelperReleaseRejectsInvalidBundleVersion(t *testing.T) {
 }
 
 func TestReconcileHelperCallsFetcherWhenExecutableAlreadyExists(t *testing.T) {
-	setHelperRelease(t, "v0.39.3", "0.39.3", strings.Repeat("cd", 32))
+	setHelperRelease(t, "v0.40.0", "0.40.0", strings.Repeat("cd", 32))
 	t.Setenv("HOME", t.TempDir())
 	dir, err := InstalledDir()
 	if err != nil {
@@ -131,7 +131,7 @@ func TestReconcileHelperCallsFetcherWhenExecutableAlreadyExists(t *testing.T) {
 }
 
 func TestReconcileHelperCreatesPrivateUserApplicationsDirectory(t *testing.T) {
-	setHelperRelease(t, "v0.39.3", "0.39.3", strings.Repeat("cd", 32))
+	setHelperRelease(t, "v0.40.0", "0.40.0", strings.Repeat("cd", 32))
 	home := t.TempDir()
 	if err := os.Chmod(home, 0o755); err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestReconcileHelperCreatesPrivateUserApplicationsDirectory(t *testing.T) {
 }
 
 func TestReconcileHelperRejectsSymlinkedApplicationsDirectory(t *testing.T) {
-	setHelperRelease(t, "v0.39.3", "0.39.3", strings.Repeat("cd", 32))
+	setHelperRelease(t, "v0.40.0", "0.40.0", strings.Repeat("cd", 32))
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	if err := os.Symlink(t.TempDir(), filepath.Join(home, "Applications")); err != nil {
@@ -182,7 +182,7 @@ func TestReconcileHelperRejectsSymlinkedApplicationsDirectory(t *testing.T) {
 }
 
 func TestReconcileHelperRejectsSymlinkedHome(t *testing.T) {
-	setHelperRelease(t, "v0.39.3", "0.39.3", strings.Repeat("cd", 32))
+	setHelperRelease(t, "v0.40.0", "0.40.0", strings.Repeat("cd", 32))
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	if err := os.Symlink(t.TempDir(), home); err != nil {
@@ -199,7 +199,7 @@ func TestReconcileHelperRejectsSymlinkedHome(t *testing.T) {
 }
 
 func TestReconcileHelperReturnsFetchFailure(t *testing.T) {
-	setHelperRelease(t, "v0.39.3", "0.39.3", strings.Repeat("ef", 32))
+	setHelperRelease(t, "v0.40.0", "0.40.0", strings.Repeat("ef", 32))
 	t.Setenv("HOME", t.TempDir())
 	want := errors.New("download failed")
 	fetcher := &recordingHelperFetcher{err: want}

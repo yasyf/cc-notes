@@ -90,12 +90,11 @@ func TestReleaseDoesNotPublishStandaloneRuntimeCask(t *testing.T) {
 	root := filepath.Join("..", "..")
 	assertFileExcludes(t, filepath.Join(root, ".github", "workflows", "release.yml"),
 		"render-cask",
-		"Casks/cc-notes-helper.rb",
-		"Casks/cc-notes-holder.rb",
+		"Casks/",
 	)
 	for _, path := range []string{
-		filepath.Join(root, ".github", "cask", "cc-notes-helper.rb.tmpl"),
-		filepath.Join(root, ".github", "cask", "cc-notes-holder.rb.tmpl"),
+		filepath.Join(root, "Casks"),
+		filepath.Join(root, ".github", "cask"),
 	} {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Fatalf("standalone runtime cask %q exists or could not be inspected: %v", path, err)

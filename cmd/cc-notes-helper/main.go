@@ -18,6 +18,9 @@ import (
 )
 
 func run(ctx context.Context, arguments []string) error {
+	if recognized, err := helperapp.RunStopControlChild(ctx, arguments); recognized {
+		return err
+	}
 	repository, provisioning, err := helpercontract.ParseProvision(arguments)
 	if err != nil {
 		return err
@@ -59,6 +62,7 @@ func run(ctx context.Context, arguments []string) error {
 	}
 	runtime, err := fusefs.NewHelperRuntime(ctx, fusefs.HelperRuntimeConfig{
 		Plan: plan, Drivers: drivers,
+		StopRole: helperapp.StopControlRole, StopControlStore: helperapp.StopControlStore(plan),
 	})
 	if err != nil {
 		return err

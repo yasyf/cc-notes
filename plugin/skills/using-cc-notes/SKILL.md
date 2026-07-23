@@ -350,7 +350,7 @@ verdict in the entry text, evidence attached to the entity:
 ```json
 {
   "id": "4a81c9e",
-  "entry": "phase 2: forced unmount wedges the holder; panic captured",
+  "entry": "phase 2: forced unmount wedges the mount runtime; panic captured",
   "attach": ["results/scenario.log", "results/panics/boot.panic"]
 }
 ```
