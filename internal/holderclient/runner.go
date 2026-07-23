@@ -8,9 +8,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/yasyf/daemonkit/bundle"
 	"github.com/yasyf/daemonkit/codeidentity"
+	"github.com/yasyf/daemonkit/daemon"
 	"github.com/yasyf/daemonkit/fetch"
 	"github.com/yasyf/daemonkit/proc"
 	"github.com/yasyf/daemonkit/supervise"
@@ -74,44 +77,97 @@ func (r *ToolRunner) Close(ctx context.Context) error {
 	return errors.Join(err, os.RemoveAll(r.directory))
 }
 
-// The holder ships in lockstep with the CLI under the same release tag, so
-// version.Version names the release carrying the matching signed asset.
-func installHolder(ctx context.Context) error {
+type holderFetcher interface {
+	Fetch(context.Context, fetch.Config) (fetch.Installation, error)
+}
+
+func holderRelease() (fetch.Release, error) {
+	if version.HolderVersion == "" || strings.TrimSpace(version.HolderVersion) != version.HolderVersion {
+		return fetch.Release{}, errors.New("cc-notes holder: release bundle version is not exact")
+	}
+	digest, err := fetch.ParseSHA256(version.HolderSHA256)
+	if err != nil {
+		return fetch.Release{}, fmt.Errorf("cc-notes holder: parse release digest: %w", err)
+	}
+	return fetch.Release{
+		Version: version.HolderVersion,
+		URL: fmt.Sprintf(
+			"https://github.com/yasyf/cc-notes/releases/download/%s/cc-notes-holder-%s-darwin.zip",
+			version.Version, version.Version,
+		),
+		SHA256: digest,
+	}, nil
+}
+
+func reconcileHolder(ctx context.Context, fetcher holderFetcher) (string, error) {
 	dir, err := InstalledDir()
 	if err != nil {
-		return err
+		return "", err
 	}
-	asset := fmt.Sprintf(
-		"https://github.com/yasyf/cc-notes/releases/download/%s/cc-notes-holder-%s-darwin.zip",
-		version.Version, version.Version,
-	)
-	if _, err := fetch.New().Fetch(ctx, fetch.Config{
-		AssetURL:     asset,
-		ChecksumsURL: asset + ".sha256",
-		Dir:          dir,
-		AppName:      ExecutableName,
-		Identity:     codeidentity.CodeIdentity{TeamID: TeamID, SigningIdentifier: BundleID},
-	}); err != nil {
-		return fmt.Errorf("cc-notes holder: fetch signed app %s: %w", version.Version, err)
+	if err := ensureInstallDirectory(dir); err != nil {
+		return "", err
+	}
+	release, err := holderRelease()
+	if err != nil {
+		return "", err
+	}
+	installation, err := fetcher.Fetch(ctx, fetch.Config{
+		Release: release,
+		Dir:     dir,
+		AppName: ExecutableName,
+		Identity: codeidentity.CodeIdentity{
+			TeamID: TeamID, SigningIdentifier: BundleID,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("cc-notes holder: fetch signed app %s: %w", version.Version, err)
+	}
+	return bundle.ExePath(installation.Path, ExecutableName), nil
+}
+
+func ensureInstallDirectory(path string) error {
+	for _, directory := range []string{filepath.Dir(path), path} {
+		created := false
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			if !errors.Is(err, os.ErrExist) {
+				return fmt.Errorf("cc-notes holder: create install directory %q: %w", directory, err)
+			}
+		} else {
+			created = true
+		}
+		info, err := os.Lstat(directory)
+		if err != nil {
+			return fmt.Errorf("cc-notes holder: inspect install directory %q: %w", directory, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("cc-notes holder: install path %q is not a real directory", directory)
+		}
+		if info.Mode().Perm() != 0o700 {
+			if err := os.Chmod(directory, 0o700); err != nil {
+				return fmt.Errorf("cc-notes holder: protect install directory %q: %w", directory, err)
+			}
+			if err := daemon.SyncDir(directory); err != nil {
+				return fmt.Errorf("cc-notes holder: persist install directory permissions: %w", err)
+			}
+		}
+		if created {
+			if err := daemon.SyncDir(filepath.Dir(directory)); err != nil {
+				return fmt.Errorf("cc-notes holder: persist install directory: %w", err)
+			}
+		}
 	}
 	return nil
 }
 
 // ProvisionRepository runs the sole signed-app repository provisioning operation.
 func ProvisionRepository(ctx context.Context, repoRoot string) (resultErr error) {
-	executable, err := ExecutablePath()
+	executable, err := reconcileHolder(ctx, fetch.New())
 	if err != nil {
 		return err
 	}
 	info, err := os.Stat(executable)
 	if err != nil {
-		if err := installHolder(ctx); err != nil {
-			return err
-		}
-		info, err = os.Stat(executable)
-		if err != nil {
-			return fmt.Errorf("cc-notes holder: fixed signed app missing after install: %w", err)
-		}
+		return fmt.Errorf("cc-notes holder: fixed signed app missing after reconciliation: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
 		return errors.New("cc-notes holder: fixed signed app executable is invalid")

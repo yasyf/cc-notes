@@ -126,6 +126,21 @@ func (p *holderPolicy) authorizeNative(
 	return p.bind(identity.Peer, identity.Session, holderSessionBinding{role: holderSessionNative})
 }
 
+func (p *holderPolicy) authorizeRuntime(
+	_ context.Context,
+	identity mountservice.Identity,
+	operation mountproto.Operation,
+) error {
+	if operation != mountproto.OperationRuntimeHealth ||
+		identity.Build != transportproto.Build ||
+		identity.Session == nil ||
+		identity.Peer.PID <= 1 ||
+		identity.Peer.UID != p.uid {
+		return mountservice.ErrUnauthorized
+	}
+	return nil
+}
+
 func (p *holderPolicy) authorizeCatalog(
 	identity catalogservice.Identity,
 	operation catalogproto.Operation,
@@ -179,6 +194,14 @@ func productAdminOperation(operation catalogproto.Operation) bool {
 }
 
 type mountAuthorizer struct{ policy *holderPolicy }
+
+func (a mountAuthorizer) AuthorizeRuntime(
+	ctx context.Context,
+	identity mountservice.Identity,
+	operation mountproto.Operation,
+) error {
+	return a.policy.authorizeRuntime(ctx, identity, operation)
+}
 
 func (a mountAuthorizer) Authorize(
 	ctx context.Context,

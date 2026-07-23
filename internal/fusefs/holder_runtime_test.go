@@ -16,7 +16,49 @@ import (
 	"github.com/yasyf/fusekit/catalogservice"
 	"github.com/yasyf/fusekit/mountproto"
 	"github.com/yasyf/fusekit/mountservice"
+	"github.com/yasyf/fusekit/transportproto"
 )
+
+func TestHolderPolicyAuthorizesOnlyExactRuntimeHealthIdentity(t *testing.T) {
+	policy := newHolderPolicy()
+	session, client := openAcceptedSession(t)
+	identity := mountservice.Identity{
+		Peer: session.Peer(), Build: transportproto.Build, Session: session,
+	}
+	if err := policy.authorizeRuntime(t.Context(), identity, mountproto.OperationRuntimeHealth); err != nil {
+		t.Fatalf("authorize runtime health: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		identity  mountservice.Identity
+		operation mountproto.Operation
+	}{
+		{name: "wrong operation", identity: identity, operation: mountproto.OperationNativeBind},
+		{name: "wrong uid", identity: mountservice.Identity{
+			Peer:  wire.Peer{PID: identity.Peer.PID, UID: identity.Peer.UID + 1},
+			Build: identity.Build, Session: identity.Session,
+		}, operation: mountproto.OperationRuntimeHealth},
+		{name: "invalid pid", identity: mountservice.Identity{
+			Peer:  wire.Peer{PID: 1, UID: identity.Peer.UID},
+			Build: identity.Build, Session: identity.Session,
+		}, operation: mountproto.OperationRuntimeHealth},
+		{name: "missing session", identity: mountservice.Identity{
+			Peer: identity.Peer, Build: identity.Build,
+		}, operation: mountproto.OperationRuntimeHealth},
+		{name: "wrong build", identity: mountservice.Identity{
+			Peer: identity.Peer, Build: "wrong-build", Session: identity.Session,
+		}, operation: mountproto.OperationRuntimeHealth},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := policy.authorizeRuntime(t.Context(), test.identity, test.operation); !errors.Is(err, mountservice.ErrUnauthorized) {
+				t.Fatalf("authorize runtime = %v, want %v", err, mountservice.ErrUnauthorized)
+			}
+		})
+	}
+	_ = client.Close()
+}
 
 func TestHolderPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	first := testTenant(t)

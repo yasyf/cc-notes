@@ -28,15 +28,15 @@ link_alias() {
   ln -sf cc-notes "$BIN_DIR/ccn"
 }
 
-# The signed holder is fetched at first run, but its FUSE-T userspace mount needs
-# the system fuse-t components, which a formula can't pull in (no cask depends).
+# Repository provisioning reconciles the exact signed holder release, but its
+# FUSE-T userspace mount needs system components a formula can't pull in.
 if [ "$(uname -s)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
   brew install --cask macos-fuse-t/cask/fuse-t >/dev/null 2>&1 ||
     echo "cc-notes: fuse-t not installed; run 'brew install --cask macos-fuse-t/cask/fuse-t' if FuseKit mounts fail" >&2
 fi
 
-# Best-effort Homebrew for "latest"; the CLI fetches its signed holder at first
-# run on macOS, so the formula suffices. Any failure falls through to download.
+# Best-effort Homebrew for "latest"; the CLI owns signed-holder reconciliation
+# on macOS, so the formula suffices. Any failure falls through to download.
 if [ "$VERSION" = "latest" ] && command -v brew >/dev/null 2>&1; then
   if brew install yasyf/tap/cc-notes >/dev/null 2>&1 && command -v cc-notes >/dev/null 2>&1; then
     echo "cc-notes: installed via Homebrew ($(cc-notes version))" >&2
