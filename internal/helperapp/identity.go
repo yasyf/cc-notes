@@ -41,6 +41,11 @@ func RuntimeDirectory() (string, error) {
 	return helperclient.HomeStateDir("fusekit-v1")
 }
 
+// PresentationRoot returns the sole native mount presentation root.
+func PresentationRoot() (string, error) {
+	return helperclient.HomeStateDir("mnt")
+}
+
 // StopControlStore returns the controller-owned one-shot stop authority store.
 func StopControlStore(plan holder.RuntimePlan) proc.StopControlStore {
 	return stopControlStore(plan.Paths().Directory)
@@ -55,10 +60,14 @@ func serviceProcessPath(runtimeDirectory string) string {
 }
 
 // RuntimePlanSpec returns cc-notes' concrete signed-side helper contract.
-func RuntimePlanSpec(appPath, runtimeDirectory, buildID string, verifier *holder.FUSEVerifier) holder.RuntimePlanSpec {
+func RuntimePlanSpec(
+	appPath, runtimeDirectory, presentationRoot, buildID string,
+	verifier *holder.FUSEVerifier,
+) holder.RuntimePlanSpec {
 	return holder.RuntimePlanSpec{
 		Application: Application(appPath), RuntimeDirectory: runtimeDirectory,
-		BuildID: buildID, SourceCapable: true, FUSEVerifier: verifier,
+		Native:  &holder.NativeRuntimeSpec{PresentationRoot: presentationRoot, FUSEVerifier: verifier},
+		BuildID: buildID, Readiness: holder.StandardReadinessContract(), SourceCapable: true,
 	}
 }
 
@@ -76,12 +85,16 @@ func NewRuntimePlan(ctx context.Context) (holder.RuntimePlan, error) {
 	if pathErr != nil {
 		return holder.RuntimePlan{}, errors.Join(pathErr, runner.Close(ctx))
 	}
+	presentationRoot, presentationErr := PresentationRoot()
+	if presentationErr != nil {
+		return holder.RuntimePlan{}, errors.Join(presentationErr, runner.Close(ctx))
+	}
 	installedPath, installedErr := helperclient.InstalledPath()
 	if installedErr != nil {
 		return holder.RuntimePlan{}, errors.Join(installedErr, runner.Close(ctx))
 	}
 	plan, planErr := holder.NewRuntimePlan(RuntimePlanSpec(
-		installedPath, runtimeDirectory, version.String(), verifier,
+		installedPath, runtimeDirectory, presentationRoot, version.String(), verifier,
 	))
 	if err := errors.Join(planErr, runner.Close(ctx)); err != nil {
 		return holder.RuntimePlan{}, fmt.Errorf("cc-notes helper: derive runtime plan: %w", err)

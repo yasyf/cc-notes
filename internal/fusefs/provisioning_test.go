@@ -23,11 +23,14 @@ func TestRepositoryProvisionIsOpaqueExactAndStable(t *testing.T) {
 		t.Fatalf("same repository changed identity: %+v != %+v", first, second)
 	}
 	if first.Tenant.Generation != 1 || first.Definition.Generation != 1 ||
-		first.Definition.PresentationRoot != filepath.Join(presentation, first.Tenant.RouteName) ||
+		first.Definition.Mount == nil ||
+		first.Definition.Mount.PresentationRoot != filepath.Join(presentation, first.Tenant.RouteName) ||
 		first.Definition.BackingRoot != repository ||
 		first.Definition.ContentSourceID != string(first.Tenant.Authority) ||
 		first.Definition.AccessMode != mountproto.AccessModeReadWrite ||
 		first.Definition.CasePolicy != mountproto.CasePolicySensitive ||
+		first.Definition.FileProviderPresentationInstanceID != "" ||
+		first.Definition.FileProviderDisplayName != "" ||
 		len(first.Definition.Presentations) != 1 || first.Definition.Presentations[0] != mountproto.PresentationMount {
 		t.Fatalf("repository provision = %+v", first)
 	}

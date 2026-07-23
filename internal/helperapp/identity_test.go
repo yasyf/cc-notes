@@ -40,6 +40,29 @@ func TestRuntimeDirectoryUsesOnlyV1DerivedState(t *testing.T) {
 	if filepath.Base(directory) != "fusekit-v1" || filepath.Base(filepath.Dir(directory)) != ".cc-notes" {
 		t.Fatalf("runtime directory = %q", directory)
 	}
+	presentation, err := PresentationRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(presentation) != "mnt" || filepath.Dir(presentation) != filepath.Dir(directory) {
+		t.Fatalf("presentation root = %q", presentation)
+	}
+}
+
+func TestRuntimePlanSpecPinsNativeContract(t *testing.T) {
+	verifier := new(holder.FUSEVerifier)
+	spec := RuntimePlanSpec("/Applications/CCNotesHelper.app", "/runtime", "/presentation", "v0.41.0", verifier)
+	if spec.Native == nil || spec.Native.PresentationRoot != "/presentation" || spec.Native.FUSEVerifier != verifier {
+		t.Fatalf("native runtime spec = %#v", spec.Native)
+	}
+	if spec.RuntimeDirectory != "/runtime" || spec.BuildID != "v0.41.0" ||
+		spec.Readiness != holder.StandardReadinessContract() || !spec.SourceCapable {
+		t.Fatalf("runtime plan spec = %#v", spec)
+	}
+	if spec.Application.Broker != (holder.SignedExecutable{}) || spec.BrokerPolicy.RequiredAppGroup != "" ||
+		len(spec.BrokerPolicy.RequiredEntitlements) != 0 {
+		t.Fatalf("mount-only runtime carried broker policy: %#v", spec)
+	}
 }
 
 func TestStopControlStoreConsumesOnlyExactRoleAndProcessGeneration(t *testing.T) {
@@ -57,7 +80,7 @@ func TestStopControlStoreConsumesOnlyExactRoleAndProcessGeneration(t *testing.T)
 		RecoveryClass: proc.RecoveryStopControl,
 		PID:           identity.PID, StartTime: identity.StartTime, Boot: identity.Boot, Comm: identity.Comm,
 		Executable: identity.Executable, AuditToken: identity.AuditToken, Generation: "controller-generation",
-		Role: StopControlRole, RuntimeBuild: "v0.40.0", RuntimeProtocol: 1,
+		Role: StopControlRole, RuntimeBuild: "v0.41.0", RuntimeProtocol: 1,
 		TargetProcessGeneration: "runtime-generation", Intent: string(wire.StopIntentRestart),
 		StopAuthorityState: proc.StopAuthorityArmed, ExpiresUnixMilli: expires,
 	}
@@ -108,8 +131,11 @@ func TestDeploymentPlanRejectsHiddenHelper(t *testing.T) {
 	spec := holder.DeploymentPlanSpec{
 		Application:      Application(filepath.Join(account.HomeDir, ".cc-notes", "helper", "CCNotesHelper.app")),
 		RuntimeDirectory: filepath.Join(account.HomeDir, ".cc-notes", "plan-runtime"),
-		PresentationRoot: filepath.Join(account.HomeDir, ".cc-notes", "plan-presentation"),
-		BuildID:          "v0.40.0", RuntimePolicyDigest: codeidentity.PolicyDigest{1},
+		Native: &holder.NativeDeploymentSpec{
+			PresentationRoot: filepath.Join(account.HomeDir, ".cc-notes", "plan-presentation"),
+		},
+		BuildID: "v0.41.0", Readiness: holder.StandardReadinessContract(),
+		RuntimePolicyDigest: codeidentity.PolicyDigest{1},
 	}
 	if _, err := holder.NewDeploymentPlan(spec); err == nil || !strings.Contains(err.Error(), "not a fixed installed application") {
 		t.Fatalf("hidden helper plan error = %v", err)

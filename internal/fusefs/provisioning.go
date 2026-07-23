@@ -45,8 +45,8 @@ func NewRepositoryProvision(presentationRoot, repoRoot string) (RepositoryProvis
 	return RepositoryProvision{
 		Tenant: tenant,
 		Definition: mountproto.TenantDefinition{
-			PresentationRoot: filepath.Join(presentationRoot, routeName),
-			BackingRoot:      repoRoot, ContentSourceID: string(tenant.Authority),
+			Mount:       &mountproto.MountSpec{PresentationRoot: filepath.Join(presentationRoot, routeName)},
+			BackingRoot: repoRoot, ContentSourceID: string(tenant.Authority),
 			AccessMode: mountproto.AccessModeReadWrite, CasePolicy: mountproto.CasePolicySensitive,
 			Presentations: []mountproto.Presentation{mountproto.PresentationMount},
 			Generation:    uint64(repositoryGeneration),
