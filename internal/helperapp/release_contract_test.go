@@ -358,6 +358,25 @@ func TestPluginBootstrapEnforcesV045WithoutInstallingService(t *testing.T) {
 	}
 }
 
+func TestHookCIUsesOneExactCaptainHookRelease(t *testing.T) {
+	root := filepath.Join("..", "..")
+	workflow := filepath.Join(root, ".github", "workflows", "ci.yml")
+	assertFileContains(t, workflow,
+		`CAPT_HOOK_VERSION: "12.15.3"`,
+		`key: capt-hook-${{ env.CAPT_HOOK_VERSION }}-nlp-v5`,
+		`--with "capt-hook==$CAPT_HOOK_VERSION"`,
+		`uvx --isolated "capt-hook==$CAPT_HOOK_VERSION" pack test plugin`,
+	)
+	assertFileExcludes(t, workflow,
+		"--with capt-hook ",
+		"capt-hook>=",
+	)
+	assertFileContains(t,
+		filepath.Join(root, "plugin", "capt-hook", "hooks", "tests", "test_cc_notes.py"),
+		`# dependencies = ["capt-hook==12.15.3", "pydantic>=2"]`,
+	)
+}
+
 func writeExecutable(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {

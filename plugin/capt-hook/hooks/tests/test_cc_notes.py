@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.13"
-# dependencies = ["capt-hook>=12", "pydantic>=2"]
+# dependencies = ["capt-hook==12.15.3", "pydantic>=2"]
 # ///
 """Direct unit tests for the cc-notes capt-hook pack's pure helpers and handlers.
 

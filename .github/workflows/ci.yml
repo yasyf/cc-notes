@@ -75,6 +75,8 @@ jobs:
 
   hook-tests:
     runs-on: ubuntu-latest
+    env:
+      CAPT_HOOK_VERSION: "12.15.3"
     steps:
       - uses: actions/checkout@v7
 
@@ -96,15 +98,15 @@ jobs:
           path: |
             ~/.cache/spacy/models
             ~/.wn_data
-          key: capt-hook-nlp-en_core_web_sm-oewn2025
+          key: capt-hook-${{ env.CAPT_HOOK_VERSION }}-nlp-v5
 
       - name: Provision NLP resources (spaCy en_core_web_sm + oewn:2025 lexicon)
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: uv run --no-project --with capt-hook python -c "from captain_hook.util.model_cache import ensure_nlp_resources; ensure_nlp_resources()"
+        run: uv run --no-project --with "capt-hook==$CAPT_HOOK_VERSION" python -c "from captain_hook.util.model_cache import ensure_nlp_resources; ensure_nlp_resources()"
 
       - name: capt-hook pack test
-        run: uvx --isolated 'capt-hook>=12.0.0' pack test plugin
+        run: uvx --isolated "capt-hook==$CAPT_HOOK_VERSION" pack test plugin
 
       - name: pack unit tests
         run: uv run plugin/capt-hook/hooks/tests/test_cc_notes.py
