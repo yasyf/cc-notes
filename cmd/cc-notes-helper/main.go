@@ -1,6 +1,6 @@
 //go:build darwin && cgo && fuse
 
-// Command cc-notes-holder is the fixed signed FuseKit runtime executable.
+// Command cc-notes-helper is the fixed signed FuseKit runtime executable.
 package main
 
 import (
@@ -12,21 +12,21 @@ import (
 	"syscall"
 
 	"github.com/yasyf/cc-notes/internal/fusefs"
-	"github.com/yasyf/cc-notes/internal/holderapp"
-	"github.com/yasyf/cc-notes/internal/holdercontract"
+	"github.com/yasyf/cc-notes/internal/helperapp"
+	"github.com/yasyf/cc-notes/internal/helpercontract"
 	"github.com/yasyf/fusekit/holder"
 )
 
 func run(ctx context.Context, arguments []string) error {
-	repository, provisioning, err := holdercontract.ParseProvision(arguments)
+	repository, provisioning, err := helpercontract.ParseProvision(arguments)
 	if err != nil {
 		return err
 	}
 	if provisioning {
-		if err := holderapp.EnsureService(ctx); err != nil {
+		if err := helperapp.EnsureService(ctx); err != nil {
 			return err
 		}
-		plan, err := holderapp.NewRuntimePlan(ctx)
+		plan, err := helperapp.NewRuntimePlan(ctx)
 		if err != nil {
 			return err
 		}
@@ -35,9 +35,9 @@ func run(ctx context.Context, arguments []string) error {
 	if len(arguments) == 1 {
 		switch arguments[0] {
 		case "--install-service":
-			return holderapp.EnsureService(ctx)
+			return helperapp.EnsureService(ctx)
 		case "--stop-service":
-			return holderapp.StopService(ctx)
+			return helperapp.StopService(ctx)
 		}
 	}
 	drivers, err := fusefs.NewGitDriverFactories()
@@ -51,13 +51,13 @@ func run(ctx context.Context, arguments []string) error {
 		return err
 	}
 	if len(arguments) != 0 {
-		return errors.New("cc-notes holder: unknown invocation")
+		return errors.New("cc-notes helper: unknown invocation")
 	}
-	plan, err := holderapp.NewRuntimePlan(ctx)
+	plan, err := helperapp.NewRuntimePlan(ctx)
 	if err != nil {
 		return err
 	}
-	runtime, err := fusefs.NewHolderRuntime(ctx, fusefs.HolderRuntimeConfig{
+	runtime, err := fusefs.NewHelperRuntime(ctx, fusefs.HelperRuntimeConfig{
 		Plan: plan, Drivers: drivers,
 	})
 	if err != nil {

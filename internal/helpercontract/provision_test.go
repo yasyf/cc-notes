@@ -1,4 +1,4 @@
-package holdercontract
+package helpercontract
 
 import (
 	"slices"
@@ -23,9 +23,9 @@ func TestProvisionInvocationRequiresExactBuildAndProtocol(t *testing.T) {
 		wantErr  bool
 	}{
 		{name: "exact", args: exact, build: version.String(), protocol: transportproto.Build, wantRoot: "/repo"},
-		{name: "new cli old holder build", args: exact, build: "old-holder", protocol: transportproto.Build, wantErr: true},
-		{name: "new cli old holder protocol", args: exact, build: version.String(), protocol: "old-protocol", wantErr: true},
-		{name: "old cli new holder", args: []string{provisionOperation, "/repo"}, build: version.String(), protocol: transportproto.Build, wantErr: true},
+		{name: "new cli old helper build", args: exact, build: "old-helper", protocol: transportproto.Build, wantErr: true},
+		{name: "new cli old helper protocol", args: exact, build: version.String(), protocol: "old-protocol", wantErr: true},
+		{name: "old cli new helper", args: []string{provisionOperation, "/repo"}, build: version.String(), protocol: transportproto.Build, wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root, recognized, err := parseProvision(test.args, test.build, test.protocol)

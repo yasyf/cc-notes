@@ -35,15 +35,15 @@ jobs:
       - name: Cross-compile smoke (darwin/arm64)
         run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/cc-notes_darwin_arm64 ./cmd/cc-notes
 
-  holder:
+  helper:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - name: Install FUSE-T headers
         run: brew install macos-fuse-t/cask/fuse-t
-      - name: Build the dedicated signed-holder target
-        run: CGO_ENABLED=1 go build -tags fuse ./cmd/cc-notes-holder
+      - name: Build the dedicated signed-helper target
+        run: CGO_ENABLED=1 go build -tags fuse ./cmd/cc-notes-helper
       - name: Prove the ordinary CLI has no FuseKit child dispatcher
         run: |
           CGO_ENABLED=0 go build -o /tmp/cc-notes ./cmd/cc-notes

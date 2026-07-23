@@ -1,4 +1,4 @@
-package holderclient
+package helperclient
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 	"github.com/yasyf/daemonkit/proc"
 	"github.com/yasyf/daemonkit/supervise"
 
-	"github.com/yasyf/cc-notes/internal/holdercontract"
+	"github.com/yasyf/cc-notes/internal/helpercontract"
 	"github.com/yasyf/cc-notes/internal/version"
 )
 
@@ -30,11 +30,11 @@ type ToolRunner struct {
 	directory string
 }
 
-// NewToolRunner creates a disposable runner for signed-holder and packaging operations.
+// NewToolRunner creates a disposable runner for signed-helper and packaging operations.
 func NewToolRunner(ctx context.Context) (*ToolRunner, error) {
-	directory, err := os.MkdirTemp("", "cc-notes-holder-tools-")
+	directory, err := os.MkdirTemp("", "cc-notes-helper-tools-")
 	if err != nil {
-		return nil, fmt.Errorf("cc-notes holder: create tool recovery directory: %w", err)
+		return nil, fmt.Errorf("cc-notes helper: create tool recovery directory: %w", err)
 	}
 	var generation [16]byte
 	if _, err := rand.Read(generation[:]); err != nil {
@@ -77,29 +77,29 @@ func (r *ToolRunner) Close(ctx context.Context) error {
 	return errors.Join(err, os.RemoveAll(r.directory))
 }
 
-type holderFetcher interface {
+type helperFetcher interface {
 	Fetch(context.Context, fetch.Config) (fetch.Installation, error)
 }
 
-func holderRelease() (fetch.Release, error) {
-	if version.HolderVersion == "" || strings.TrimSpace(version.HolderVersion) != version.HolderVersion {
-		return fetch.Release{}, errors.New("cc-notes holder: release bundle version is not exact")
+func helperRelease() (fetch.Release, error) {
+	if version.HelperVersion == "" || strings.TrimSpace(version.HelperVersion) != version.HelperVersion {
+		return fetch.Release{}, errors.New("cc-notes helper: release bundle version is not exact")
 	}
-	digest, err := fetch.ParseSHA256(version.HolderSHA256)
+	digest, err := fetch.ParseSHA256(version.HelperSHA256)
 	if err != nil {
-		return fetch.Release{}, fmt.Errorf("cc-notes holder: parse release digest: %w", err)
+		return fetch.Release{}, fmt.Errorf("cc-notes helper: parse release digest: %w", err)
 	}
 	return fetch.Release{
-		Version: version.HolderVersion,
+		Version: version.HelperVersion,
 		URL: fmt.Sprintf(
-			"https://github.com/yasyf/cc-notes/releases/download/%s/cc-notes-holder-%s-darwin.zip",
+			"https://github.com/yasyf/cc-notes/releases/download/%s/cc-notes-helper-%s-darwin.zip",
 			version.Version, version.Version,
 		),
 		SHA256: digest,
 	}, nil
 }
 
-func reconcileHolder(ctx context.Context, fetcher holderFetcher) (string, error) {
+func reconcileHelper(ctx context.Context, fetcher helperFetcher) (string, error) {
 	dir, err := InstalledDir()
 	if err != nil {
 		return "", err
@@ -107,7 +107,7 @@ func reconcileHolder(ctx context.Context, fetcher holderFetcher) (string, error)
 	if err := ensureInstallDirectory(dir); err != nil {
 		return "", err
 	}
-	release, err := holderRelease()
+	release, err := helperRelease()
 	if err != nil {
 		return "", err
 	}
@@ -120,41 +120,47 @@ func reconcileHolder(ctx context.Context, fetcher holderFetcher) (string, error)
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("cc-notes holder: fetch signed app %s: %w", version.Version, err)
+		return "", fmt.Errorf("cc-notes helper: fetch signed app %s: %w", version.Version, err)
 	}
 	return bundle.ExePath(installation.Path, ExecutableName), nil
 }
 
 func ensureInstallDirectory(path string) error {
-	for _, directory := range []string{filepath.Dir(path), path} {
-		created := false
-		if err := os.Mkdir(directory, 0o700); err != nil {
-			if !errors.Is(err, os.ErrExist) {
-				return fmt.Errorf("cc-notes holder: create install directory %q: %w", directory, err)
-			}
-		} else {
-			created = true
+	parent := filepath.Dir(path)
+	parentInfo, err := os.Lstat(parent)
+	if err != nil {
+		return fmt.Errorf("cc-notes helper: inspect install parent %q: %w", parent, err)
+	}
+	if !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("cc-notes helper: install parent %q is not a real directory", parent)
+	}
+	created := false
+	if err := os.Mkdir(path, 0o700); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("cc-notes helper: create install directory %q: %w", path, err)
 		}
-		info, err := os.Lstat(directory)
-		if err != nil {
-			return fmt.Errorf("cc-notes holder: inspect install directory %q: %w", directory, err)
+	} else {
+		created = true
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("cc-notes helper: inspect install directory %q: %w", path, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("cc-notes helper: install path %q is not a real directory", path)
+	}
+	if info.Mode().Perm() != 0o700 {
+		//nolint:gosec // Private directories require the owner execute bit.
+		if err := os.Chmod(path, 0o700); err != nil {
+			return fmt.Errorf("cc-notes helper: protect install directory %q: %w", path, err)
 		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("cc-notes holder: install path %q is not a real directory", directory)
+		if err := daemon.SyncDir(path); err != nil {
+			return fmt.Errorf("cc-notes helper: persist install directory permissions: %w", err)
 		}
-		if info.Mode().Perm() != 0o700 {
-			//nolint:gosec // Private directories require the owner execute bit.
-			if err := os.Chmod(directory, 0o700); err != nil {
-				return fmt.Errorf("cc-notes holder: protect install directory %q: %w", directory, err)
-			}
-			if err := daemon.SyncDir(directory); err != nil {
-				return fmt.Errorf("cc-notes holder: persist install directory permissions: %w", err)
-			}
-		}
-		if created {
-			if err := daemon.SyncDir(filepath.Dir(directory)); err != nil {
-				return fmt.Errorf("cc-notes holder: persist install directory: %w", err)
-			}
+	}
+	if created {
+		if err := daemon.SyncDir(parent); err != nil {
+			return fmt.Errorf("cc-notes helper: persist install directory: %w", err)
 		}
 	}
 	return nil
@@ -162,16 +168,16 @@ func ensureInstallDirectory(path string) error {
 
 // ProvisionRepository runs the sole signed-app repository provisioning operation.
 func ProvisionRepository(ctx context.Context, repoRoot string) (resultErr error) {
-	executable, err := reconcileHolder(ctx, fetch.New())
+	executable, err := reconcileHelper(ctx, fetch.New())
 	if err != nil {
 		return err
 	}
 	info, err := os.Stat(executable)
 	if err != nil {
-		return fmt.Errorf("cc-notes holder: fixed signed app missing after reconciliation: %w", err)
+		return fmt.Errorf("cc-notes helper: fixed signed app missing after reconciliation: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
-		return errors.New("cc-notes holder: fixed signed app executable is invalid")
+		return errors.New("cc-notes helper: fixed signed app executable is invalid")
 	}
 	runner, err := NewToolRunner(ctx)
 	if err != nil {
@@ -180,9 +186,9 @@ func ProvisionRepository(ctx context.Context, repoRoot string) (resultErr error)
 	defer func() { resultErr = errors.Join(resultErr, runner.Close(ctx)) }()
 	if err := runner.Run(ctx, supervise.Task{
 		RecoveryClass: proc.RecoveryTask, Path: executable,
-		Args: holdercontract.ProvisionArguments(repoRoot), Stdout: os.Stdout, Stderr: os.Stderr,
+		Args: helpercontract.ProvisionArguments(repoRoot), Stdout: os.Stdout, Stderr: os.Stderr,
 	}); err != nil {
-		return fmt.Errorf("cc-notes holder: provision repository through signed app: %w", err)
+		return fmt.Errorf("cc-notes helper: provision repository through signed app: %w", err)
 	}
 	return nil
 }

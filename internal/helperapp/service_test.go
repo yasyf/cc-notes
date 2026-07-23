@@ -1,4 +1,4 @@
-package holderapp
+package helperapp
 
 import (
 	"testing"

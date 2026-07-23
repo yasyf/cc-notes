@@ -87,7 +87,7 @@ func protocolFleetStateForTest(
 		t.Fatal(err)
 	}
 	return catalogproto.DesiredSourceFleetState{
-		Owner: string(holderOwner), Generation: 1, AuthorityCount: uint64(len(declarations)),
+		Owner: string(helperOwner), Generation: 1, AuthorityCount: uint64(len(declarations)),
 		AuthoritiesDigest:  hex.EncodeToString(authoritiesDigest[:]),
 		DeclarationsDigest: hex.EncodeToString(declarationsDigest[:]),
 	}

@@ -8,10 +8,10 @@ var (
 	Version = "dev"
 	// Commit is the short git SHA, set by -ldflags at release time.
 	Commit = ""
-	// HolderVersion is the exact signed-holder bundle version, set by -ldflags.
-	HolderVersion = ""
-	// HolderSHA256 is the exact signed-holder release digest, set by -ldflags.
-	HolderSHA256 = ""
+	// HelperVersion is the exact signed-helper bundle version, set by -ldflags.
+	HelperVersion = ""
+	// HelperSHA256 is the exact signed-helper release digest, set by -ldflags.
+	HelperSHA256 = ""
 )
 
 // String renders a human-readable version line.

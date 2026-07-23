@@ -5,9 +5,9 @@ package cli
 import (
 	"context"
 
-	"github.com/yasyf/cc-notes/internal/holderclient"
+	"github.com/yasyf/cc-notes/internal/helperclient"
 )
 
 func provisionRepositoryPlatform(ctx context.Context, root string) error {
-	return holderclient.ProvisionRepository(ctx, root)
+	return helperclient.ProvisionRepository(ctx, root)
 }

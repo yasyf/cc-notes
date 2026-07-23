@@ -19,8 +19,8 @@ import (
 	"github.com/yasyf/fusekit/transportproto"
 )
 
-func TestHolderPolicyAuthorizesOnlyExactRuntimeHealthIdentity(t *testing.T) {
-	policy := newHolderPolicy()
+func TestHelperPolicyAuthorizesOnlyExactRuntimeHealthIdentity(t *testing.T) {
+	policy := newHelperPolicy()
 	session, client := openAcceptedSession(t)
 	identity := mountservice.Identity{
 		Peer: session.Peer(), Build: transportproto.Build, Session: session,
@@ -60,7 +60,7 @@ func TestHolderPolicyAuthorizesOnlyExactRuntimeHealthIdentity(t *testing.T) {
 	_ = client.Close()
 }
 
-func TestHolderPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
+func TestHelperPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	first := testTenant(t)
 	secondID, err := catalog.NewTenantID("cc-notes-second")
 	if err != nil {
@@ -70,12 +70,12 @@ func TestHolderPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 		ID: secondID, Generation: 8, Authority: AuthorityForTenant(secondID),
 		RouteName: "repo-second", RepoRoot: filepath.Join(t.TempDir(), "repo"),
 	}
-	policy := newHolderPolicy()
+	policy := newHelperPolicy()
 
 	productSession, productClient := openAcceptedSession(t)
 	productIdentity := mountservice.Identity{Peer: productSession.Peer(), Build: productSession.Build(), Session: productSession}
 	owner, err := policy.authorizeMount(t.Context(), productIdentity, mountproto.OperationTenantProvision, first.ID, first.Generation)
-	if err != nil || owner != holderOwner {
+	if err != nil || owner != helperOwner {
 		t.Fatalf("authorize product owner=%q err=%v", owner, err)
 	}
 	if _, err := policy.authorizeMount(t.Context(), productIdentity, mountproto.OperationTenantProvision, second.ID, second.Generation); err == nil {
@@ -113,7 +113,7 @@ func TestHolderPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	admin, err := policy.authorizeCatalog(
 		unboundIdentity, catalogproto.OperationSourceAuthorityReadDesiredFleet, catalogservice.Route{},
 	)
-	if err != nil || admin.Role != catalogservice.RoleProductAdmin || admin.Principal != string(holderOwner) {
+	if err != nil || admin.Role != catalogservice.RoleProductAdmin || admin.Principal != string(helperOwner) {
 		t.Fatalf("product admin authorization = %+v err=%v", admin, err)
 	}
 	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationSourceAuthorityPublishDesiredFleet, catalogservice.Route{}); err != nil {
@@ -131,8 +131,8 @@ func TestHolderPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	_ = unboundClient.Close()
 }
 
-func TestHolderPolicyStartsEmptyAndBindsFirstExactTenantGeneration(t *testing.T) {
-	policy := newHolderPolicy()
+func TestHelperPolicyStartsEmptyAndBindsFirstExactTenantGeneration(t *testing.T) {
+	policy := newHelperPolicy()
 	tenantID, err := catalog.NewTenantID("cc-notes-dynamic")
 	if err != nil {
 		t.Fatal(err)
@@ -152,15 +152,15 @@ func TestHolderPolicyStartsEmptyAndBindsFirstExactTenantGeneration(t *testing.T)
 	_ = client.Close()
 }
 
-func TestHolderPolicyTenantStateCannotUnlockPreparation(t *testing.T) {
-	policy := newHolderPolicy()
+func TestHelperPolicyTenantStateCannotUnlockPreparation(t *testing.T) {
+	policy := newHelperPolicy()
 	tenant := testTenant(t)
 	session, client := openAcceptedSession(t)
 	identity := mountservice.Identity{Peer: session.Peer(), Build: session.Build(), Session: session}
 	owner, err := policy.authorizeMount(
 		t.Context(), identity, mountproto.OperationTenantState, tenant.ID, 0,
 	)
-	if err != nil || owner != holderOwner {
+	if err != nil || owner != helperOwner {
 		t.Fatalf("authorize state owner=%q err=%v", owner, err)
 	}
 	catalogIdentity := catalogservice.Identity{Peer: session.Peer(), Build: session.Build(), Session: session}
@@ -225,7 +225,7 @@ func openAcceptedSession(t *testing.T) (*wire.AcceptedSession, *wire.Client) {
 	return session, client
 }
 
-func waitBindingReleased(t *testing.T, policy *holderPolicy, session *wire.AcceptedSession) {
+func waitBindingReleased(t *testing.T, policy *helperPolicy, session *wire.AcceptedSession) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

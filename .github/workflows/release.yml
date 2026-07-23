@@ -72,7 +72,7 @@ jobs:
 
   pure:
     name: pure ${{ matrix.goos }}/${{ matrix.goarch }}
-    needs: [verify-tag-on-main, web-dist, holder-app]
+    needs: [verify-tag-on-main, web-dist, helper-app]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -90,7 +90,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           COMMIT="$(git rev-parse --short HEAD)"
-          LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${RELEASE_TAG} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT} -X github.com/yasyf/cc-notes/internal/version.HolderVersion=${{ needs.holder-app.outputs.version }} -X github.com/yasyf/cc-notes/internal/version.HolderSHA256=${{ needs.holder-app.outputs.sha256 }}"
+          LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${RELEASE_TAG} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT} -X github.com/yasyf/cc-notes/internal/version.HelperVersion=${{ needs.helper-app.outputs.version }} -X github.com/yasyf/cc-notes/internal/version.HelperSHA256=${{ needs.helper-app.outputs.sha256 }}"
           mkdir -p dist
           CGO_ENABLED=0 go build -tags webui -ldflags "$LDFLAGS" -o "dist/cc-notes_${GOOS}_${GOARCH}" ./cmd/cc-notes
       - uses: actions/upload-artifact@v7
@@ -122,7 +122,7 @@ jobs:
         with:
           name: cc-notes_darwin_arm64
           path: bin
-      - name: Smoke pure darwin binary and signed-holder boundary
+      - name: Smoke pure darwin binary and signed-helper boundary
         run: |
           chmod +x bin/cc-notes_darwin_arm64
           BIN="$PWD/bin/cc-notes_darwin_arm64"
@@ -142,10 +142,10 @@ jobs:
           # asset exists. An immutable-tag recovery run may reuse that already
           # published and verified asset.
           if "$BIN" init >init.out 2>init.err; then
-            test -x "$HOME/.cc-notes/holder/CCNotesHolder.app/Contents/MacOS/CCNotesHolder"
-            test -f "$HOME/.cc-notes/holder/.daemonkit-fetch/CCNotesHolder/receipt.json"
+            test -x "$HOME/Applications/CCNotesHelper.app/Contents/MacOS/CCNotesHelper"
+            test -f "$HOME/Applications/.daemonkit-fetch/CCNotesHelper/receipt.json"
           else
-            grep -Fq 'cc-notes holder: fetch signed app' init.err
+            grep -Fq 'cc-notes helper: fetch signed app' init.err
           fi
           "$BIN" note add "smoke test note"
           out="$("$BIN" note list)"
@@ -155,7 +155,7 @@ jobs:
   release:
     name: publish release
     runs-on: ubuntu-latest
-    needs: [pure, smoke-linux, smoke-macos, holder-app]
+    needs: [pure, smoke-linux, smoke-macos, helper-app]
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -165,7 +165,7 @@ jobs:
         run: |
           mkdir -p dist
           find artifacts -type f -name 'cc-notes_*' -exec cp {} dist/ \;
-          find artifacts -type f -name 'cc-notes-holder-*.zip' -exec cp {} dist/ \;
+          find artifacts -type f -name 'cc-notes-helper-*.zip' -exec cp {} dist/ \;
           cd dist
           sha256sum cc-notes_* > SHA256SUMS.txt
           cat SHA256SUMS.txt
@@ -182,13 +182,13 @@ jobs:
               --title "$RELEASE_TAG" --generate-notes $PRERELEASE
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" dist/* --clobber
 
-  holder-app:
-    name: fixed signed holder app
+  helper-app:
+    name: fixed signed helper app
     runs-on: macos-15
     needs: [verify-tag-on-main]
     outputs:
       sha256: ${{ steps.package.outputs.sha256 }}
-      version: ${{ steps.holder-version.outputs.version }}
+      version: ${{ steps.helper-version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -208,8 +208,8 @@ jobs:
           notary-key-id: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           notary-issuer-id: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
 
-      - id: holder-version
-        name: Resolve exact holder bundle version
+      - id: helper-version
+        name: Resolve exact helper bundle version
         run: |
           MARKETING="${RELEASE_TAG#v}"
           MARKETING="${MARKETING%%-*}"
@@ -223,25 +223,25 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG}"
-          MARKETING="${{ steps.holder-version.outputs.version }}"
+          MARKETING="${{ steps.helper-version.outputs.version }}"
           COMMIT="$(git rev-parse --short HEAD)"
           LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${VERSION} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT}"
-          APP="$PWD/dist/CCNotesHolder.app"
+          APP="$PWD/dist/CCNotesHelper.app"
           mkdir -p "$APP/Contents/MacOS"
 
           CGO_ENABLED=1 GOARCH=arm64 go build -tags fuse -ldflags "$LDFLAGS" \
-            -o dist/holder-arm64 ./cmd/cc-notes-holder
+            -o dist/helper-arm64 ./cmd/cc-notes-helper
           CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -tags fuse -ldflags "$LDFLAGS" \
-            -o dist/holder-amd64 ./cmd/cc-notes-holder
-          lipo -create -output "$APP/Contents/MacOS/CCNotesHolder" dist/holder-arm64 dist/holder-amd64
+            -o dist/helper-amd64 ./cmd/cc-notes-helper
+          lipo -create -output "$APP/Contents/MacOS/CCNotesHelper" dist/helper-arm64 dist/helper-amd64
 
           cat > "$APP/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
-            <key>CFBundleExecutable</key><string>CCNotesHolder</string>
-            <key>CFBundleIdentifier</key><string>com.yasyf.cc-notes.holder</string>
-            <key>CFBundleName</key><string>CCNotesHolder</string>
+            <key>CFBundleExecutable</key><string>CCNotesHelper</string>
+            <key>CFBundleIdentifier</key><string>com.yasyf.cc-notes.helper</string>
+            <key>CFBundleName</key><string>CCNotesHelper</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>${MARKETING}</string>
             <key>CFBundleVersion</key><string>${GITHUB_RUN_NUMBER}</string>
@@ -250,38 +250,38 @@ jobs:
           </dict></plist>
           PLIST
 
-          REQUIREMENTS="$RUNNER_TEMP/cc-notes-holder.requirements"
+          REQUIREMENTS="$RUNNER_TEMP/cc-notes-helper.requirements"
           cat > "$REQUIREMENTS" <<'REQUIREMENTS'
-          designated => identifier "com.yasyf.cc-notes.holder" and anchor apple generic and certificate leaf[subject.OU] = "SXKCTF23Q2" and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists
+          designated => identifier "com.yasyf.cc-notes.helper" and anchor apple generic and certificate leaf[subject.OU] = "SXKCTF23Q2" and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists
           REQUIREMENTS
 
           codesign --force --options runtime --timestamp \
-            --identifier com.yasyf.cc-notes.holder \
+            --identifier com.yasyf.cc-notes.helper \
             --requirements "$REQUIREMENTS" \
             --sign "$MACOS_SIGN_IDENTITY" "$APP"
           APP_PATH="$APP" TEAM_ID="$TEAM_ID" DESIGNATED_REQUIREMENT_FILE="$REQUIREMENTS" \
-            bash .github/scripts/assert-holder-app.sh
+            bash .github/scripts/assert-helper-app.sh
 
       - id: package
         name: Notarize, staple, and package the fixed app
         uses: yasyf/homebrew-tap/.github/actions/sign-notarize-app@v2
         with:
-          app: dist/CCNotesHolder.app
-          name: cc-notes-holder
+          app: dist/CCNotesHelper.app
+          name: cc-notes-helper
           release-tag: ${{ env.RELEASE_TAG }}
           sign: "false"
-          bundle-id: com.yasyf.cc-notes.holder
+          bundle-id: com.yasyf.cc-notes.helper
           attach-to-release: "false"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: cc-notes-holder-release
-          path: dist/cc-notes-holder-*.zip
+          name: cc-notes-helper-release
+          path: dist/cc-notes-helper-*.zip
           if-no-files-found: error
 
   bump-formula:
     runs-on: ubuntu-latest
-    needs: [release, holder-app]
+    needs: [release, helper-app]
     # Prerelease tags (v1.2.3-rc.1) publish assets but never touch the formula.
     if: ${{ !contains(inputs.release_tag || github.ref_name, '-') }}
     steps:

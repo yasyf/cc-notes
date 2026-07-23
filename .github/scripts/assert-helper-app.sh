@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${APP_PATH:?APP_PATH must name the built CCNotesHolder.app}"
+: "${APP_PATH:?APP_PATH must name the built CCNotesHelper.app}"
 : "${TEAM_ID:?TEAM_ID must be exported by import-developer-id}"
 : "${MACOS_SIGN_IDENTITY:?MACOS_SIGN_IDENTITY must be exported by import-developer-id}"
-: "${DESIGNATED_REQUIREMENT_FILE:?DESIGNATED_REQUIREMENT_FILE must name the exact holder requirement}"
+: "${DESIGNATED_REQUIREMENT_FILE:?DESIGNATED_REQUIREMENT_FILE must name the exact helper requirement}"
 
 APP="$APP_PATH"
-EXECUTABLE="$APP/Contents/MacOS/CCNotesHolder"
+EXECUTABLE="$APP/Contents/MacOS/CCNotesHelper"
 test -d "$APP"
 test -f "$EXECUTABLE"
 test ! -L "$APP"
@@ -32,11 +32,11 @@ codesign --verify --deep --strict --verbose=2 "$APP"
 verify_designated_requirement
 CODE_DETAILS="$(codesign -d --verbose=4 "$APP" 2>&1)"
 test "$(sed -n 's/^TeamIdentifier=//p' <<< "$CODE_DETAILS")" = "$TEAM_ID"
-test "$(sed -n 's/^Identifier=//p' <<< "$CODE_DETAILS")" = "com.yasyf.cc-notes.holder"
+test "$(sed -n 's/^Identifier=//p' <<< "$CODE_DETAILS")" = "com.yasyf.cc-notes.helper"
 grep -Eq 'flags=.*\(([^,]+,)*runtime(,[^,]+)*\)' <<< "$CODE_DETAILS"
 ENTITLEMENTS="$(codesign -d --entitlements - "$APP" 2>&1)"
 if grep -q 'disable-library-validation' <<< "$ENTITLEMENTS"; then
-  echo "::error::CCNotesHolder.app permits unsigned or foreign dynamic libraries"
+  echo "::error::CCNotesHelper.app permits unsigned or foreign dynamic libraries"
   exit 1
 fi
 

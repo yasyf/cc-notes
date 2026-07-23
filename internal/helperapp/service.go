@@ -1,4 +1,4 @@
-package holderapp
+package helperapp
 
 import (
 	"context"
@@ -19,16 +19,16 @@ const (
 	serviceCloseLimit     = 30 * time.Second
 )
 
-var errServiceBootstrapFailed = errors.New("cc-notes holder: service bootstrap failed")
+var errServiceBootstrapFailed = errors.New("cc-notes helper: service bootstrap failed")
 
-// EnsureService installs the fixed holder LaunchAgent and proves its exact transport ready.
+// EnsureService installs the fixed helper LaunchAgent and proves its exact transport ready.
 func EnsureService(ctx context.Context) error {
 	plan, err := NewRuntimePlan(ctx)
 	if err != nil {
 		return err
 	}
 	if err := convergeServices(ctx, []service.Agent{plan.Deployment().Agent()}); err != nil {
-		return fmt.Errorf("cc-notes holder: install service: %w", err)
+		return fmt.Errorf("cc-notes helper: install service: %w", err)
 	}
 	readyCtx, cancel := context.WithTimeout(ctx, serviceReadinessLimit)
 	defer cancel()
@@ -52,7 +52,7 @@ func EnsureService(ctx context.Context) error {
 				return peer.Close()
 			}
 			if readinessErr == nil {
-				lastErr = errors.New("holder runtime is not healthy")
+				lastErr = errors.New("helper runtime is not healthy")
 			}
 		} else {
 			lastErr = healthErr
@@ -60,7 +60,7 @@ func EnsureService(ctx context.Context) error {
 		select {
 		case <-readyCtx.Done():
 			_ = peer.Close()
-			return fmt.Errorf("cc-notes holder: wait for service readiness: %w", errors.Join(readyCtx.Err(), lastErr))
+			return fmt.Errorf("cc-notes helper: wait for service readiness: %w", errors.Join(readyCtx.Err(), lastErr))
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
@@ -68,7 +68,7 @@ func EnsureService(ctx context.Context) error {
 
 func serviceHealthReady(build string, health daemon.Health) (bool, error) {
 	if health.Build != build || health.Protocol != int(wire.ProtocolVersion) {
-		return false, errors.New("cc-notes holder: service health has the wrong build or protocol")
+		return false, errors.New("cc-notes helper: service health has the wrong build or protocol")
 	}
 	if health.State == daemon.StateFailed {
 		return false, errServiceBootstrapFailed
@@ -76,10 +76,10 @@ func serviceHealthReady(build string, health daemon.Health) (bool, error) {
 	return health.State == daemon.StateHealthy && !health.Draining, nil
 }
 
-// StopService removes the holder from the complete desired service set.
+// StopService removes the helper from the complete desired service set.
 func StopService(ctx context.Context) error {
 	if err := convergeServices(ctx, nil); err != nil {
-		return fmt.Errorf("cc-notes holder: remove service: %w", err)
+		return fmt.Errorf("cc-notes helper: remove service: %w", err)
 	}
 	return nil
 }

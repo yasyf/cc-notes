@@ -1,5 +1,5 @@
-// Package holdercontract defines cc-notes' exact CLI-to-holder invocation.
-package holdercontract
+// Package helpercontract defines cc-notes' exact CLI-to-helper invocation.
+package helpercontract
 
 import (
 	"errors"
@@ -22,18 +22,18 @@ func ParseProvision(arguments []string) (string, bool, error) {
 	return parseProvision(arguments, version.String(), transportproto.Build)
 }
 
-func parseProvision(arguments []string, holderBuild, holderProtocol string) (string, bool, error) {
+func parseProvision(arguments []string, helperBuild, helperProtocol string) (string, bool, error) {
 	if len(arguments) == 0 || arguments[0] != provisionOperation {
 		return "", false, nil
 	}
 	if len(arguments) != 4 {
-		return "", true, errors.New("cc-notes holder: provisioning invocation has the wrong v1 shape")
+		return "", true, errors.New("cc-notes helper: provisioning invocation has the wrong v1 shape")
 	}
-	if arguments[1] != holderBuild {
-		return "", true, fmt.Errorf("cc-notes holder: caller build %q differs from holder build %q", arguments[1], holderBuild)
+	if arguments[1] != helperBuild {
+		return "", true, fmt.Errorf("cc-notes helper: caller build %q differs from helper build %q", arguments[1], helperBuild)
 	}
-	if arguments[2] != holderProtocol {
-		return "", true, errors.New("cc-notes holder: caller protocol differs from holder protocol")
+	if arguments[2] != helperProtocol {
+		return "", true, errors.New("cc-notes helper: caller protocol differs from helper protocol")
 	}
 	return arguments[3], true, nil
 }

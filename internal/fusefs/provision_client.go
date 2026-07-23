@@ -72,11 +72,11 @@ func publishRepositoryDeclaration(
 			return errors.New("cc-notes provision: desired source fleet is at its v1 bound")
 		}
 		response, err := client.PublishDesiredSourceFleet(ctx, catalogproto.PublishDesiredSourceFleetRequest{
-			Protocol: catalogproto.Version, Owner: string(holderOwner),
+			Protocol: catalogproto.Version, Owner: string(helperOwner),
 			ExpectedGeneration: expectedGeneration, Generation: nextGeneration, Declarations: declarations,
 		})
 		if err == nil {
-			if response.State == nil || response.State.Owner != string(holderOwner) ||
+			if response.State == nil || response.State.Owner != string(helperOwner) ||
 				response.State.Generation != nextGeneration || response.State.AuthorityCount != uint64(len(declarations)) {
 				return errors.New("cc-notes provision: desired source fleet publication returned a mismatched state")
 			}
@@ -124,7 +124,7 @@ func readDesiredSourceFleet(
 	client *catalogservice.Client,
 ) (uint64, []catalogproto.SourceAuthorityDeclaration, error) {
 	request := catalogproto.ReadDesiredSourceFleetRequest{
-		Protocol: catalogproto.Version, Owner: string(holderOwner), Limit: catalogproto.MaxSourceFleetDeclarations,
+		Protocol: catalogproto.Version, Owner: string(helperOwner), Limit: catalogproto.MaxSourceFleetDeclarations,
 	}
 	response, err := client.ReadDesiredSourceFleet(ctx, request)
 	if err != nil {
@@ -134,7 +134,7 @@ func readDesiredSourceFleet(
 		}
 		return 0, nil, fmt.Errorf("cc-notes provision: read desired source fleet: %w", err)
 	}
-	if response.State == nil || response.State.Owner != string(holderOwner) || response.State.Generation == 0 {
+	if response.State == nil || response.State.Owner != string(helperOwner) || response.State.Generation == 0 {
 		return 0, nil, errors.New("cc-notes provision: desired source fleet head is invalid")
 	}
 	state := *response.State
@@ -143,7 +143,7 @@ func readDesiredSourceFleet(
 		snapshotDigest := state.DeclarationsDigest
 		after := *response.Next
 		response, err = client.ReadDesiredSourceFleet(ctx, catalogproto.ReadDesiredSourceFleetRequest{
-			Protocol: catalogproto.Version, Owner: string(holderOwner), Generation: state.Generation,
+			Protocol: catalogproto.Version, Owner: string(helperOwner), Generation: state.Generation,
 			SnapshotDigest: &snapshotDigest, After: &after, Limit: catalogproto.MaxSourceFleetDeclarations,
 		})
 		if err != nil {
