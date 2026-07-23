@@ -28,20 +28,17 @@ link_alias() {
   ln -sf cc-notes "$BIN_DIR/ccn"
 }
 
-# Prefer Homebrew for the default "latest" install: it owns updates, lands on
-# PATH, and installs the exact signed holder pair on macOS. Best-effort — any failure
-# (no brew, the Homebrew 6 tap-trust sandbox bug #22603, network) falls through
-# to the direct release download below. A pinned-version request skips brew,
-# since the formula only tracks the latest stable release.
+# The signed holder is fetched at first run, but its FUSE-T userspace mount needs
+# the system fuse-t components, which a formula can't pull in (no cask depends).
+if [ "$(uname -s)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+  brew install --cask macos-fuse-t/cask/fuse-t >/dev/null 2>&1 ||
+    echo "cc-notes: fuse-t not installed; run 'brew install --cask macos-fuse-t/cask/fuse-t' if FuseKit mounts fail" >&2
+fi
+
+# Best-effort Homebrew for "latest"; the CLI fetches its signed holder at first
+# run on macOS, so the formula suffices. Any failure falls through to download.
 if [ "$VERSION" = "latest" ] && command -v brew >/dev/null 2>&1; then
-  install_brew() {
-    if [ "$(uname -s)" = "Darwin" ]; then
-      brew install --cask yasyf/tap/cc-notes-holder
-    else
-      brew install yasyf/tap/cc-notes
-    fi
-  }
-  if install_brew >/dev/null 2>&1 && command -v cc-notes >/dev/null 2>&1; then
+  if brew install yasyf/tap/cc-notes >/dev/null 2>&1 && command -v cc-notes >/dev/null 2>&1; then
     echo "cc-notes: installed via Homebrew ($(cc-notes version))" >&2
     exit 0
   fi

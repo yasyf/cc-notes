@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/yasyf/cc-notes/internal/holderclient"
 	"github.com/yasyf/cc-notes/internal/version"
@@ -22,8 +20,6 @@ const (
 	TeamID = holderclient.TeamID
 	// ExecutableName is the fixed holder executable basename.
 	ExecutableName = holderclient.ExecutableName
-	// InstalledPath is the fixed holder application path.
-	InstalledPath = holderclient.InstalledPath
 )
 
 // Application returns cc-notes' fixed signed holder identity.
@@ -38,14 +34,7 @@ func Application(appPath string) holder.SignedApplication {
 
 // RuntimeDirectory returns the sole v1 derived holder state root.
 func RuntimeDirectory() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("cc-notes holder: resolve home: %w", err)
-	}
-	if !filepath.IsAbs(home) || filepath.Clean(home) != home {
-		return "", errors.New("cc-notes holder: home is not an exact absolute path")
-	}
-	return filepath.Join(home, ".cc-notes", "fusekit-v1"), nil
+	return holderclient.HomeStateDir("fusekit-v1")
 }
 
 // RuntimePlanSpec returns cc-notes' concrete signed-side holder contract.
@@ -70,8 +59,12 @@ func NewRuntimePlan(ctx context.Context) (holder.RuntimePlan, error) {
 	if pathErr != nil {
 		return holder.RuntimePlan{}, errors.Join(pathErr, runner.Close(ctx))
 	}
+	installedPath, installedErr := holderclient.InstalledPath()
+	if installedErr != nil {
+		return holder.RuntimePlan{}, errors.Join(installedErr, runner.Close(ctx))
+	}
 	plan, planErr := holder.NewRuntimePlan(RuntimePlanSpec(
-		InstalledPath, runtimeDirectory, version.String(), verifier,
+		installedPath, runtimeDirectory, version.String(), verifier,
 	))
 	if err := errors.Join(planErr, runner.Close(ctx)); err != nil {
 		return holder.RuntimePlan{}, fmt.Errorf("cc-notes holder: derive runtime plan: %w", err)

@@ -10,10 +10,13 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/yasyf/daemonkit/codeidentity"
+	"github.com/yasyf/daemonkit/fetch"
 	"github.com/yasyf/daemonkit/proc"
 	"github.com/yasyf/daemonkit/supervise"
 
 	"github.com/yasyf/cc-notes/internal/holdercontract"
+	"github.com/yasyf/cc-notes/internal/version"
 )
 
 const toolRunnerCloseTimeout = 30 * time.Second
@@ -71,12 +74,44 @@ func (r *ToolRunner) Close(ctx context.Context) error {
 	return errors.Join(err, os.RemoveAll(r.directory))
 }
 
+// The holder ships in lockstep with the CLI under the same release tag, so
+// version.Version names the release carrying the matching signed asset.
+func installHolder(ctx context.Context) error {
+	dir, err := InstalledDir()
+	if err != nil {
+		return err
+	}
+	asset := fmt.Sprintf(
+		"https://github.com/yasyf/cc-notes/releases/download/%s/cc-notes-holder-%s-darwin.zip",
+		version.Version, version.Version,
+	)
+	if _, err := fetch.New().Fetch(ctx, fetch.Config{
+		AssetURL:     asset,
+		ChecksumsURL: asset + ".sha256",
+		Dir:          dir,
+		AppName:      ExecutableName,
+		Identity:     codeidentity.CodeIdentity{TeamID: TeamID, SigningIdentifier: BundleID},
+	}); err != nil {
+		return fmt.Errorf("cc-notes holder: fetch signed app %s: %w", version.Version, err)
+	}
+	return nil
+}
+
 // ProvisionRepository runs the sole signed-app repository provisioning operation.
 func ProvisionRepository(ctx context.Context, repoRoot string) (resultErr error) {
-	executable := ExecutablePath()
+	executable, err := ExecutablePath()
+	if err != nil {
+		return err
+	}
 	info, err := os.Stat(executable)
 	if err != nil {
-		return fmt.Errorf("cc-notes holder: run `brew install --cask yasyf/tap/cc-notes-holder` before init: %w", err)
+		if err := installHolder(ctx); err != nil {
+			return err
+		}
+		info, err = os.Stat(executable)
+		if err != nil {
+			return fmt.Errorf("cc-notes holder: fixed signed app missing after install: %w", err)
+		}
 	}
 	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
 		return errors.New("cc-notes holder: fixed signed app executable is invalid")

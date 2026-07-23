@@ -3,11 +3,17 @@ package holderapp
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/yasyf/cc-notes/internal/holderclient"
 )
 
 func TestApplicationPinsFixedSignedIdentity(t *testing.T) {
-	application := Application(InstalledPath)
-	if application.AppPath != InstalledPath || application.BundleID != BundleID || application.TeamID != TeamID {
+	installedPath, err := holderclient.InstalledPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	application := Application(installedPath)
+	if application.AppPath != installedPath || application.BundleID != BundleID || application.TeamID != TeamID {
 		t.Fatalf("application = %+v", application)
 	}
 	if application.Broker.ExecutableName != "" || application.Broker.SigningIdentifier != "" {
