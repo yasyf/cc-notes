@@ -101,16 +101,7 @@ jobs:
       - name: Provision NLP resources (spaCy en_core_web_sm + oewn:2025 lexicon)
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          for attempt in 1 2 3 4; do
-            if uv run --no-project --with capt-hook python -c "from captain_hook.util.model_cache import ensure_nlp_resources; ensure_nlp_resources()"; then
-              exit 0
-            fi
-            if [ "$attempt" -eq 4 ]; then
-              exit 1
-            fi
-            sleep $((attempt * 5))
-          done
+        run: uv run --no-project --with capt-hook python -c "from captain_hook.util.model_cache import ensure_nlp_resources; ensure_nlp_resources()"
 
       - name: capt-hook pack test
         run: uvx --isolated 'capt-hook>=12.0.0' pack test plugin
