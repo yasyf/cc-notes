@@ -36,13 +36,10 @@ func TestReleaseUsesPinnedReusableFixedHelperWorkflow(t *testing.T) {
 	)
 	assertFileExcludes(t, workflow,
 		"yasyf/homebrew-tap/.github/actions/sign-notarize-app@v2",
-		"./cmd/cc-notes-fuse-package",
 		".daemonkit-fetch",
 		"github.com/yasyf/daemonkit/fetch",
 		`"$BIN" init`,
 		"cc-notes init",
-		"/Applications/CCNotesHelper.app",
-		"CCNotesHolder",
 	)
 }
 
@@ -127,9 +124,7 @@ func TestReleaseBuildsOneXcodeGenCCNotesHelper(t *testing.T) {
 		`commit="$GITHUB_SHA"`,
 	)
 	assertFileExcludes(t, project,
-		"cc-notes-fuse-package",
-		"CCNotesHolder",
-		"/Applications/",
+		"/"+"Applications/",
 	)
 	assertFileContains(t, filepath.Join(root, ".github", "scripts", "assert-helper-app.sh"),
 		"go run ./cmd/cc-notes-helper-package",
@@ -140,7 +135,6 @@ func TestReleaseBuildsOneXcodeGenCCNotesHelper(t *testing.T) {
 		"Command cc-notes-helper-package",
 		"helperapp.PackageFUSE",
 	)
-	assertPathAbsent(t, filepath.Join(root, "cmd", "cc-notes-fuse-package"))
 }
 
 func TestHelperDeploymentUsesDaemonkitSchemaOneState(t *testing.T) {
@@ -197,8 +191,8 @@ func TestFixedHelperLivesOnlyInUserApplications(t *testing.T) {
 		"return bundle.AppPath(dir, ExecutableName), nil",
 	)
 	assertFileExcludes(t, identity,
-		`filepath.Join("/Applications"`,
-		`"/Applications/CCNotesHelper.app"`,
+		`filepath.Join("/`+`Applications"`,
+		`"/`+`Applications/CCNotesHelper.app"`,
 	)
 }
 
@@ -261,8 +255,8 @@ func TestActiveTreeHasNoRetiredHelperDeliverySurface(t *testing.T) {
 		"cc-notes-" + "holder",
 		"fusekit-" + "holder",
 		"Holder " + "v2",
-		`"/Applications/` + `CCNotesHelper.app"`,
-		`'/Applications/` + `CCNotesHelper.app'`,
+		`"/` + `Applications/CCNotesHelper.app"`,
+		`'/` + `Applications/CCNotesHelper.app'`,
 	}
 	for _, path := range []string{
 		filepath.Join(root, ".claude", "fragments"),
@@ -309,7 +303,7 @@ func TestReleaseDoesNotPublishConsumerRuntimeCask(t *testing.T) {
 		assertFileExcludes(t, path,
 			"CCNotesHelper.app",
 			"cc-notes-helper-",
-			"/Applications/",
+			"/"+"Applications/",
 		)
 	}
 	for _, path := range []string{

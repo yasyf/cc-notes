@@ -47,7 +47,7 @@ func TestRuntimeDirectoryUsesOnlyV1DerivedState(t *testing.T) {
 
 func TestRuntimePlanSpecPinsNativeContract(t *testing.T) {
 	verifier := new(holder.FUSEVerifier)
-	spec := RuntimePlanSpec("/Users/example/Applications/CCNotesHelper.app", "/runtime", "/presentation", "v0.41.0", verifier)
+	spec := RuntimePlanSpec(filepath.Join("/Users/example", "Applications", "CCNotesHelper.app"), "/runtime", "/presentation", "v0.41.0", verifier)
 	if spec.Native == nil || spec.Native.PresentationRoot != "/presentation" || spec.Native.FUSEVerifier != verifier {
 		t.Fatalf("native runtime spec = %#v", spec.Native)
 	}

@@ -1,6 +1,7 @@
 package helperdeployment
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
@@ -12,7 +13,7 @@ import (
 func TestRuntimeAndDeploymentSpecsShareOneFixedContract(t *testing.T) {
 	verifier := new(holder.FUSEVerifier)
 	runtime := RuntimePlanSpec(
-		"/Users/example/Applications/CCNotesHelper.app", "/runtime", "/presentation", "v0.45.0", verifier,
+		filepath.Join("/Users/example", "Applications", "CCNotesHelper.app"), "/runtime", "/presentation", "v0.45.0", verifier,
 	)
 	digest := codeidentity.PolicyDigest{1}
 	deployment := DeploymentPlanSpec(
