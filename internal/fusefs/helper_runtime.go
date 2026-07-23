@@ -34,11 +34,9 @@ type HelperRuntimeConfig struct {
 	NativeStdout            io.Writer
 	NativeStderr            io.Writer
 	SourceReadinessTimeout  time.Duration
-	SourceStdout            io.Writer
 	SourceStderr            io.Writer
 	CatalogReadinessTimeout time.Duration
 	CatalogOperationTimeout time.Duration
-	CatalogStdout           io.Writer
 	CatalogStderr           io.Writer
 	ShutdownTimeout         time.Duration
 	Signals                 <-chan os.Signal
@@ -55,12 +53,12 @@ func NewHelperRuntime(ctx context.Context, config HelperRuntimeConfig) (*holder.
 		WorkerLimit: config.WorkerLimit, NativeOptions: config.NativeOptions,
 		NativeReadinessTimeout: config.NativeReadinessTimeout,
 		NativeStdout:           config.NativeStdout, NativeStderr: config.NativeStderr,
-		SourceReadinessTimeout: config.SourceReadinessTimeout,
-		SourceStdout:           config.SourceStdout, SourceStderr: config.SourceStderr,
+		SourceReadinessTimeout:  config.SourceReadinessTimeout,
+		SourceStderr:            config.SourceStderr,
 		CatalogReadinessTimeout: config.CatalogReadinessTimeout,
 		CatalogOperationTimeout: config.CatalogOperationTimeout,
-		CatalogStdout:           config.CatalogStdout, CatalogStderr: config.CatalogStderr,
-		ShutdownTimeout: config.ShutdownTimeout, Signals: config.Signals,
+		CatalogStderr:           config.CatalogStderr,
+		ShutdownTimeout:         config.ShutdownTimeout, Signals: config.Signals,
 	})
 }
 
