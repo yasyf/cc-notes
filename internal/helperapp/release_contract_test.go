@@ -67,7 +67,7 @@ func TestReleasePinsEveryExternalActionByCommit(t *testing.T) {
 		"actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
 		"actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
 		"yasyf/homebrew-tap/.github/actions/render-formula@33755e73573a27eebbc5962cdf04b7b7e302c8f5",
-		"yasyf/homebrew-tap/.github/actions/publish@a968ce7d5ac7097beac83a0083007bbfaa87942f",
+		"yasyf/homebrew-tap/.github/actions/publish@9ca67392d45d66b6ae01e262383c8f3138d56f5e",
 	)
 }
 
@@ -80,7 +80,7 @@ func TestReleasePublishesOnlyOneCompleteCallerOwnedDraft(t *testing.T) {
 		`cat dist/SHA256SUMS.txt`,
 		`find dist -maxdepth 1 -type f -print | LC_ALL=C sort`,
 		`test "$HELPER_ASSET_FILENAME" = "cc-notes-helper-${RELEASE_TAG}-darwin.zip"`,
-		`uses: yasyf/homebrew-tap/.github/actions/stage-draft-release@54e3e194bda69896894a82c17fcdb2822beefab5`,
+		`uses: yasyf/homebrew-tap/.github/actions/stage-draft-release@e4c3108e693681df1a3c666bae80e890bc44cf3e`,
 		`uses: yasyf/homebrew-tap/.github/actions/publish-draft-release@54e3e194bda69896894a82c17fcdb2822beefab5`,
 		`manifest: ${{ runner.temp }}/cc-notes-release-assets.txt`,
 		`release-id: ${{ steps.stage-release.outputs.release-id }}`,
@@ -104,7 +104,7 @@ func TestReleasePublishesOnlyOneCompleteCallerOwnedDraft(t *testing.T) {
 		t.Fatalf("public release transitions = %d, want exactly 1", count)
 	}
 	text := string(payload)
-	verify := strings.Index(text, `stage-draft-release@54e3e194bda69896894a82c17fcdb2822beefab5`)
+	verify := strings.Index(text, `stage-draft-release@e4c3108e693681df1a3c666bae80e890bc44cf3e`)
 	publish := strings.Index(text, `publish-draft-release@54e3e194bda69896894a82c17fcdb2822beefab5`)
 	if verify < 0 || publish < 0 || publish <= verify {
 		t.Fatal("public release transition does not follow draft redownload verification")

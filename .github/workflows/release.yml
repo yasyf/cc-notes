@@ -197,7 +197,7 @@ jobs:
             > "$RUNNER_TEMP/cc-notes-release-assets.txt"
       - name: Stage and verify the exact draft release
         id: stage-release
-        uses: yasyf/homebrew-tap/.github/actions/stage-draft-release@54e3e194bda69896894a82c17fcdb2822beefab5
+        uses: yasyf/homebrew-tap/.github/actions/stage-draft-release@e4c3108e693681df1a3c666bae80e890bc44cf3e
         with:
           token: ${{ github.token }}
           tag: ${{ env.RELEASE_TAG }}
@@ -280,7 +280,7 @@ jobs:
             __SHA_LINUX_AMD64__=${{ steps.shas.outputs.linux_amd64 }}
             __SHA_LINUX_ARM64__=${{ steps.shas.outputs.linux_arm64 }}
       - name: Publish the exact CLI to the tap
-        uses: yasyf/homebrew-tap/.github/actions/publish@a968ce7d5ac7097beac83a0083007bbfaa87942f
+        uses: yasyf/homebrew-tap/.github/actions/publish@9ca67392d45d66b6ae01e262383c8f3138d56f5e
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           dir: tap-staging
