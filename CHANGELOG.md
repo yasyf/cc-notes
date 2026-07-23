@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The macOS FuseKit service now has an explicit, fenced machine lifecycle.**
+  `cc-notes service install` deploys or exactly reconciles the fixed signed
+  `~/Applications/CCNotesHelper.app` through daemonkit, while `service uninstall`
+  durably deactivates its runtime and retains the verified app for reactivation.
+  Repository `init` only provisions through an already-installed service.
 - **FuseKit authority publication is now a product-owned library surface.**
   cc-notes renders complete Git-derived snapshots and fenced successor deltas,
   provisions exact repository tenants, streams attachment content into the
@@ -27,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Wrong names still fail — arguments are never rewritten.
 
 ### Changed
+- **BREAKING: helper deployment is explicit and has no compatibility path.**
+  Repository provisioning no longer fetches, installs, upgrades, starts, or
+  retires helper generations. The old helper fetch state, direct service
+  controller, and implicit `init` lifecycle are deleted.
 - **BREAKING: the legacy mount/content daemon is removed.** The `mount` and
   `contentd` commands, local runtime lifecycle, watcher/spool/registry state,
   FUSE-specific artifacts, and automatic `.notes` mount setup no longer exist.
@@ -180,11 +189,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.27.0] - 2026-07-12
 
-Holder v2: cc-notes becomes a plain tenant of the shared `fusekit-holder`.
+Shared runtime v2: cc-notes becomes a plain tenant of the shared FuseKit runtime.
 
 ### Changed
 - **The private mount holder is gone.** Mounts are served by the shared
-  multi-tenant `fusekit-holder` cask (wire proto 2, `Owner="cc-notes"`,
+  multi-tenant FuseKit runtime (wire proto 2, `Owner="cc-notes"`,
   feature-negotiated via `hello`), and the store→tree renderer now runs
   behind **contentd** — a KeepAlive LaunchAgent serving the content tree on
   `~/.fusekit/spool/cc-notes/c.sock` with commit-on-Flush semantics and

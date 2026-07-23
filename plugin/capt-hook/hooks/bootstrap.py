@@ -9,9 +9,9 @@ from captain_hook import Event, SessionStartEvent, on
 
 from .common import run_cc_notes
 
-# v0.39.0 opens extensions.worktreeConfig repos (Conductor, jj-colocated); older
-# binaries refuse to open them at all, so anything older is reinstalled.
-MIN_VERSION = (0, 39, 0)
+# v0.45.0 is the hard deployment cut. Older binaries carry retired helper and
+# protocol semantics, so anything older is reinstalled.
+MIN_VERSION = (0, 45, 0)
 INSTALL_URL = "https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh"
 _VERSION_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
 

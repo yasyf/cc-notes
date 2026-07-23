@@ -44,8 +44,12 @@ type HelperRuntimeConfig struct {
 
 // NewHelperRuntime composes cc-notes policy with FuseKit's production runtime.
 func NewHelperRuntime(ctx context.Context, config HelperRuntimeConfig) (*holder.Runtime, error) {
+	return holder.New(ctx, newHolderConfig(config))
+}
+
+func newHolderConfig(config HelperRuntimeConfig) holder.Config {
 	policy := newHelperPolicy()
-	return holder.New(ctx, holder.Config{
+	return holder.Config{
 		Plan: config.Plan, RuntimeBuild: config.Plan.BuildID(),
 		Owner: catalog.SourceAuthorityFleetOwnerID(helperOwner), Drivers: config.Drivers,
 		StopRole: config.StopRole, StopControlStore: config.StopControlStore,
@@ -59,7 +63,7 @@ func NewHelperRuntime(ctx context.Context, config HelperRuntimeConfig) (*holder.
 		CatalogOperationTimeout: config.CatalogOperationTimeout,
 		CatalogStderr:           config.CatalogStderr,
 		ShutdownTimeout:         config.ShutdownTimeout, Signals: config.Signals,
-	})
+	}
 }
 
 type helperSessionRole uint8
@@ -149,7 +153,7 @@ func (p *helperPolicy) authorizeCatalog(
 ) (catalogservice.Authorization, error) {
 	if productAdminOperation(operation) {
 		if route != (catalogservice.Route{}) {
-			return catalogservice.Authorization{}, errors.New("cc-notes helper: product admin request carries a tenant route")
+			return catalogservice.Authorization{}, errors.New("FuseKit runtime: product admin request carries a tenant route")
 		}
 		if err := p.bind(identity.Peer, identity.Session, helperSessionBinding{role: helperSessionAdmin}); err != nil {
 			return catalogservice.Authorization{}, err
@@ -168,24 +172,24 @@ func (p *helperPolicy) authorizeCatalog(
 		switch operation {
 		case catalogproto.OperationTenantPrepare:
 			if route.Tenant != binding.tenant || route.Generation != binding.generation || route.Forwarded || route.Domain != "" {
-				return catalogservice.Authorization{}, errors.New("cc-notes helper: tenant preparation does not match the bound tenant")
+				return catalogservice.Authorization{}, errors.New("FuseKit runtime: tenant preparation does not match the bound tenant")
 			}
 			return catalogservice.Authorization{Principal: principal, Role: catalogservice.RoleTenantOwner, Route: route}, nil
 		default:
-			return catalogservice.Authorization{}, errors.New("cc-notes helper: product session cannot access catalog presentation operations")
+			return catalogservice.Authorization{}, errors.New("FuseKit runtime: product session cannot access catalog presentation operations")
 		}
 	case helperSessionNative:
 		if !catalogPresentationOperation(operation) || route.Forwarded || route.Domain != "" {
-			return catalogservice.Authorization{}, errors.New("cc-notes helper: native session operation is not a mount presentation request")
+			return catalogservice.Authorization{}, errors.New("FuseKit runtime: native session operation is not a mount presentation request")
 		}
 		return catalogservice.Authorization{
 			Principal: principal, Role: catalogservice.RoleMount,
 			Presentation: catalog.PresentationMount, Route: route,
 		}, nil
 	case helperSessionAdmin:
-		return catalogservice.Authorization{}, errors.New("cc-notes helper: product admin session cannot access tenant operations")
+		return catalogservice.Authorization{}, errors.New("FuseKit runtime: product admin session cannot access tenant operations")
 	default:
-		return catalogservice.Authorization{}, errors.New("cc-notes helper: invalid session role")
+		return catalogservice.Authorization{}, errors.New("FuseKit runtime: invalid session role")
 	}
 }
 
@@ -235,14 +239,14 @@ func (a catalogAuthorizer) Authorize(
 
 func (p *helperPolicy) bind(peer wire.Peer, session *wire.AcceptedSession, binding helperSessionBinding) error {
 	if session == nil || peer.UID != p.uid {
-		return errors.New("cc-notes helper: unauthenticated session")
+		return errors.New("FuseKit runtime: unauthenticated session")
 	}
 	p.mu.Lock()
 	existing, exists := p.bindings[session]
 	if exists {
 		p.mu.Unlock()
 		if existing != binding {
-			return errors.New("cc-notes helper: persistent session is already bound to a different tenant or role")
+			return errors.New("FuseKit runtime: persistent session is already bound to a different tenant or role")
 		}
 		return nil
 	}
@@ -254,13 +258,13 @@ func (p *helperPolicy) bind(peer wire.Peer, session *wire.AcceptedSession, bindi
 
 func (p *helperPolicy) bound(peer wire.Peer, session *wire.AcceptedSession) (helperSessionBinding, error) {
 	if session == nil || peer.UID != p.uid {
-		return helperSessionBinding{}, errors.New("cc-notes helper: unauthenticated session")
+		return helperSessionBinding{}, errors.New("FuseKit runtime: unauthenticated session")
 	}
 	p.mu.Lock()
 	binding, ok := p.bindings[session]
 	p.mu.Unlock()
 	if !ok {
-		return helperSessionBinding{}, errors.New("cc-notes helper: session has not provisioned or bound a tenant")
+		return helperSessionBinding{}, errors.New("FuseKit runtime: session has not provisioned or bound a tenant")
 	}
 	return binding, nil
 }

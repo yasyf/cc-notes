@@ -1,3 +1,7 @@
 package cli
 
-var provisionRepository = provisionRepositoryPlatform
+var (
+	installService      = installServicePlatform
+	uninstallService    = uninstallServicePlatform
+	provisionRepository = provisionRepositoryPlatform
+)

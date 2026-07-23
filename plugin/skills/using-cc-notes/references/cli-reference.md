@@ -1,9 +1,11 @@
 # cc-notes CLI reference
 
-The command surface, grouped by noun: repo, task, sprint, project, runbook, investigation, note,
-doc, log, papercut. Every command takes `-h`/`--help` and a global `--repo PATH` (`-R`) that targets another
-repository's store from any cwd — pass any path inside it, while file-path arguments still resolve
-against the invocation cwd. Every note, doc, log, papercut, task, sprint, project,
+The command surface, grouped by noun: service, repo, task, sprint, project, runbook, investigation, note,
+doc, log, papercut. Every command takes `-h`/`--help`. Commands outside the `service` group also accept
+a global `--repo PATH` (`-R`) that targets another repository's store from any cwd — pass any path
+inside it, while file-path arguments still resolve against the invocation cwd. Cobra displays the
+inherited repository flag in service help, but both service operations reject it before doing work.
+Every note, doc, log, papercut, task, sprint, project,
 runbook, investigation, sync, and reconcile command takes `--json` for a machine-readable record; without it,
 mutations echo a lean tab-separated line and listings print one lean line per entity.
 
@@ -17,6 +19,37 @@ Sprints and projects are an optional planning layer over tasks — group work in
 sprint or a long-lived project without touching the canonical task and note flow. A task that
 joins neither behaves exactly as a task does today. Runbooks are the layer's third noun: a
 repeatable procedure of ordered steps whose every execution is a tracked run.
+
+## Machine service
+
+### `cc-notes service install`
+
+MCP: — (CLI-only: one-time macOS machine administration)
+
+Install or exactly reconcile the current signed `~/Applications/CCNotesHelper.app` generation and its
+global FuseKit service. This command takes no arguments and rejects the global `--repo`
+flag because it does not open, initialize, or provision a repository or tenant. A repeat
+run is an idempotent repair of the same release and service plan. Live invocation is
+macOS-only and requires the FUSE-T provider.
+
+```console
+$ cc-notes service install
+installed: CCNotesHelper service
+```
+
+### `cc-notes service uninstall`
+
+MCP: — (CLI-only: macOS machine administration)
+
+Durably deactivate the global FuseKit service through daemonkit's fenced deployment
+controller. This takes no arguments, rejects `--repo`, retains the verified signed app,
+and is idempotent when the service is already inactive or was never installed. A later
+`service install` reactivates the retained generation or installs the current release.
+
+```console
+$ cc-notes service uninstall
+uninstalled: CCNotesHelper service
+```
 
 ## The model in one screen
 
@@ -110,6 +143,10 @@ publishes the cc-notes refs alongside your branches; a plain `git fetch`/`git pu
 incoming refs in a tracking namespace (`refs/cc-notes-sync/<remote>/*`), and `cc-notes sync`
 folds them into the canonical refs — the capt-hook pack and the reconcile CI workflow run
 sync for you.
+
+On macOS, init provisions the repository tenant through the already-installed signed
+service. It never installs or upgrades the service; run `cc-notes service install` first
+when the helper is absent.
 
 When a `.claude/` directory exists, init registers the cc-notes plugin in
 `.claude/settings.json`, enables the captain-hook plugin (via `uvx capt-hook skills install`,

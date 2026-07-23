@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/helpercontract"
 	"github.com/yasyf/daemonkit/wire"
 	"github.com/yasyf/fusekit/catalog"
 	"github.com/yasyf/fusekit/catalogproto"
@@ -18,6 +19,25 @@ import (
 	"github.com/yasyf/fusekit/mountservice"
 	"github.com/yasyf/fusekit/transportproto"
 )
+
+func TestHolderConfigCarriesExactProductRuntimeBudgets(t *testing.T) {
+	config := newHolderConfig(HelperRuntimeConfig{
+		NativeReadinessTimeout:  helpercontract.RuntimeNativeReadinessTimeout,
+		SourceReadinessTimeout:  helpercontract.RuntimeSourceReadinessTimeout,
+		CatalogReadinessTimeout: helpercontract.RuntimeCatalogReadinessTimeout,
+		CatalogOperationTimeout: helpercontract.RuntimeCatalogOperationTimeout,
+		ShutdownTimeout:         helpercontract.RuntimeShutdownTimeout,
+	})
+	if config.NativeReadinessTimeout != helpercontract.RuntimeNativeReadinessTimeout ||
+		config.SourceReadinessTimeout != helpercontract.RuntimeSourceReadinessTimeout ||
+		config.CatalogReadinessTimeout != helpercontract.RuntimeCatalogReadinessTimeout ||
+		config.CatalogOperationTimeout != helpercontract.RuntimeCatalogOperationTimeout ||
+		config.ShutdownTimeout != helpercontract.RuntimeShutdownTimeout {
+		t.Fatalf("holder runtime budgets = (%s, %s, %s, %s, %s)",
+			config.NativeReadinessTimeout, config.SourceReadinessTimeout,
+			config.CatalogReadinessTimeout, config.CatalogOperationTimeout, config.ShutdownTimeout)
+	}
+}
 
 func TestHelperPolicyAuthorizesOnlyExactRuntimeHealthIdentity(t *testing.T) {
 	policy := newHelperPolicy()

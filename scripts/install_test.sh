@@ -19,6 +19,7 @@ mkdir -p "$WORK/stub"
 # Fixture "binary": prints a fixed version line so the no-op path can match.
 cat > "$WORK/fixture-binary" <<'EOF'
 #!/bin/sh
+printf '%s\n' "$*" >> "$FIXTURE_COMMAND_LOG"
 [ "$1" = "version" ] && echo "v0.9.9 (deadbee)"
 exit 0
 EOF
@@ -76,7 +77,8 @@ EOF
 chmod +x "$WORK/stub/curl"
 
 REQUESTED_LOG="$WORK/requested"
-export REQUESTED_LOG FAKE_TAG="v0.9.9"
+FIXTURE_COMMAND_LOG="$WORK/fixture-commands"
+export REQUESTED_LOG FIXTURE_COMMAND_LOG FAKE_TAG="v0.9.9"
 export FIXTURE_BIN="$WORK/fixture-binary"
 
 run_install() { # $1=os $2=arch $3=expected-asset
@@ -121,5 +123,11 @@ if PATH="$WORK/stub:$PATH" FAKE_OS=Plan9 FAKE_ARCH=x86_64 CC_NOTES_BIN_DIR="$WOR
   exit 1
 fi
 echo "ok: unsupported OS errors"
+
+if grep -Eq '(^| )((service (install|uninstall))|init)( |$)' "$FIXTURE_COMMAND_LOG"; then
+  echo "FAIL: installer implicitly invoked init or changed the service" >&2
+  exit 1
+fi
+echo "ok: installer leaves repository and service setup explicit"
 
 echo "PASS: install.sh harness"

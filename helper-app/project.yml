@@ -1,0 +1,71 @@
+# XcodeGen harness for the fixed signed helper. The Release build replaces its
+# Swift stub with the universal Go helper before Xcode performs code signing.
+name: CCNotesHelper
+options:
+  bundleIdPrefix: com.yasyf.cc-notes
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+
+configFiles:
+  Debug: Version.xcconfig
+  Release: Version.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    PRODUCT_NAME: $(TARGET_NAME)
+
+targets:
+  CCNotesHelper:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    info:
+      path: Generated/Info.plist
+      properties:
+        CFBundleDisplayName: CCNotesHelper
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSUIElement: true
+        LSApplicationCategoryType: public.app-category.developer-tools
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yasyf.cc-notes.helper
+    postBuildScripts:
+      - name: Replace executable with universal Go helper
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          : "${GITHUB_REF_NAME:?release tag is required}"
+          : "${GITHUB_SHA:?release commit is required}"
+          case "$GITHUB_REF_NAME" in
+            v*) ;;
+            *) echo "release tag must start with v" >&2; exit 1 ;;
+          esac
+
+          repo="$SRCROOT/.."
+          arm64="$DERIVED_FILE_DIR/CCNotesHelper-arm64"
+          amd64="$DERIVED_FILE_DIR/CCNotesHelper-amd64"
+          executable="$TARGET_BUILD_DIR/$EXECUTABLE_PATH"
+          commit="$GITHUB_SHA"
+          ldflags="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=$GITHUB_REF_NAME -X github.com/yasyf/cc-notes/internal/version.Commit=$commit"
+
+          cd "$repo"
+          GOWORK=off GOFLAGS=-mod=readonly CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \
+            go build -tags fuse -ldflags "$ldflags" -o "$arm64" ./cmd/cc-notes-helper
+          GOWORK=off GOFLAGS=-mod=readonly CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 \
+            CC="clang -arch x86_64" go build -tags fuse -ldflags "$ldflags" \
+            -o "$amd64" ./cmd/cc-notes-helper
+
+          rm -f "$executable"
+          lipo -create "$arm64" "$amd64" -output "$executable"
+          chmod 0755 "$executable"
+          archs="$(lipo -archs "$executable")"
+          case "$archs" in
+            "arm64 x86_64"|"x86_64 arm64") ;;
+            *) echo "unexpected helper architectures: $archs" >&2; exit 1 ;;
+          esac

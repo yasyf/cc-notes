@@ -4,7 +4,7 @@ package helperclient
 import (
 	"errors"
 	"fmt"
-	"os"
+	"os/user"
 	"path/filepath"
 
 	"github.com/yasyf/daemonkit/bundle"
@@ -30,10 +30,11 @@ func HomeStateDir(sub string) (string, error) {
 }
 
 func homeDirectory() (string, error) {
-	home, err := os.UserHomeDir()
+	account, err := user.Current()
 	if err != nil {
-		return "", fmt.Errorf("cc-notes helper: resolve home: %w", err)
+		return "", fmt.Errorf("cc-notes helper: resolve current account: %w", err)
 	}
+	home := account.HomeDir
 	if !filepath.IsAbs(home) || filepath.Clean(home) != home {
 		return "", errors.New("cc-notes helper: home is not an exact absolute path")
 	}

@@ -10,10 +10,11 @@
 
 ```bash
 brew install yasyf/tap/cc-notes
+cc-notes service install # macOS: install or reconcile the signed FuseKit service
 cc-notes init
 ```
 
-`init` installs the `refs/cc-notes/*` refspecs and wires up whatever the repo is ready for: the Claude Code plugin and capt-hook pack when `.claude/` exists, the reconcile CI workflow when `.github/` does (`--no-ci` to skip). From then on `cc-notes status` is the board — here it is in a fresh session, everything on it served from hidden refs with zero files in the checkout:
+On macOS, `service install` reconciles exactly the signed `~/Applications/CCNotesHelper.app` generation and its global FuseKit service without initializing a repository or tenant. `init` then provisions that repository through the already-installed service; it never installs or upgrades the service itself. It also installs the `refs/cc-notes/*` refspecs and wires up whatever the repo is ready for: the Claude Code plugin and capt-hook pack when `.claude/` exists, the reconcile CI workflow when `.github/` does (`--no-ci` to skip). From then on `cc-notes status` is the board — here it is in a fresh session, everything on it served from hidden refs with zero files in the checkout:
 
 <img src="docs/assets/demo.png" alt="Terminal running 'cc-notes status' — a backlog of open tasks, an in-progress claim with a fresh lease, and note and doc counters, all served from git refs" width="700">
 
@@ -30,7 +31,7 @@ The plugin auto-installs the binary on its first session, and with the capt-hook
 <summary>Not on Claude Code? Paste this prompt instead.</summary>
 
 ```text
-Install cc-notes with `brew install yasyf/tap/cc-notes`, then run `cc-notes init` in this repo.
+Install cc-notes with `brew install yasyf/tap/cc-notes`. On macOS run `cc-notes service install`, then run `cc-notes init` in this repo.
 Record each open work item with `cc-notes task add "<title>" --criterion "<how to verify it is done>" --backlog`, then `cc-notes sync` to share.
 Run `cc-notes status` at the start of every session to orient; `cc-notes --help` covers the rest.
 ```
@@ -119,7 +120,9 @@ Status moves `open → root_caused → fixed → confirmed`; `exonerate` closes 
 
 | Command | What it does |
 |---|---|
-| `cc-notes init` | Install refspecs; register the plugin and CI workflow when the repo is ready |
+| `cc-notes service install` | macOS: install or exactly reconcile the signed global FuseKit service; no repository or tenant initialization |
+| `cc-notes service uninstall` | macOS: durably deactivate the global FuseKit service while retaining the verified signed app for later reactivation |
+| `cc-notes init` | Provision through the installed macOS service; install refspecs and register ready plugin/CI surfaces; never install or upgrade the service |
 | `cc-notes status` | Read-only board: backlog, your branch's tasks, in-progress claims, notes needing review |
 | `cc-notes task add` | Create a task (`--backlog` for the shared queue, `--criterion` for a validation gate) |
 | `cc-notes task start` / `done` | Claim a task onto your branch; close it and anchor your HEAD commit |

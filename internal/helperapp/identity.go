@@ -8,8 +8,9 @@ import (
 	"path/filepath"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
+	"github.com/yasyf/cc-notes/internal/helperdeployment"
 	"github.com/yasyf/cc-notes/internal/version"
-	"github.com/yasyf/daemonkit/proc"
+	"github.com/yasyf/daemonkit/service"
 	"github.com/yasyf/daemonkit/supervise"
 	"github.com/yasyf/fusekit/fuset"
 	"github.com/yasyf/fusekit/holder"
@@ -28,35 +29,17 @@ const (
 
 // Application returns cc-notes' fixed signed helper identity.
 func Application(appPath string) holder.SignedApplication {
-	return holder.SignedApplication{
-		AppPath: appPath, BundleID: BundleID, TeamID: TeamID,
-		Runtime: holder.SignedExecutable{
-			ExecutableName: ExecutableName, SigningIdentifier: BundleID,
-		},
-	}
+	return helperdeployment.Application(appPath)
 }
 
 // RuntimeDirectory returns the sole v1 derived helper state root.
 func RuntimeDirectory() (string, error) {
-	return helperclient.HomeStateDir("fusekit-v1")
+	return helperdeployment.RuntimeDirectory()
 }
 
 // PresentationRoot returns the sole native mount presentation root.
 func PresentationRoot() (string, error) {
-	return helperclient.HomeStateDir("mnt")
-}
-
-// StopControlStore returns the controller-owned one-shot stop authority store.
-func StopControlStore(plan holder.RuntimePlan) proc.StopControlStore {
-	return stopControlStore(plan.Paths().Directory)
-}
-
-func stopControlStore(runtimeDirectory string) *proc.FileStore {
-	return &proc.FileStore{Path: serviceProcessPath(runtimeDirectory)}
-}
-
-func serviceProcessPath(runtimeDirectory string) string {
-	return filepath.Join(runtimeDirectory, "service-processes.db")
+	return helperdeployment.PresentationRoot()
 }
 
 // RuntimePlanSpec returns cc-notes' concrete signed-side helper contract.
@@ -64,40 +47,32 @@ func RuntimePlanSpec(
 	appPath, runtimeDirectory, presentationRoot, buildID string,
 	verifier *holder.FUSEVerifier,
 ) holder.RuntimePlanSpec {
-	return holder.RuntimePlanSpec{
-		Application: Application(appPath), RuntimeDirectory: runtimeDirectory,
-		Native:  &holder.NativeRuntimeSpec{PresentationRoot: presentationRoot, FUSEVerifier: verifier},
-		BuildID: buildID, Readiness: holder.StandardReadinessContract(), SourceCapable: true,
-	}
+	return helperdeployment.RuntimePlanSpec(appPath, runtimeDirectory, presentationRoot, buildID, verifier)
 }
 
 // NewRuntimePlan verifies the installed application and derives its runtime plan.
 func NewRuntimePlan(ctx context.Context) (holder.RuntimePlan, error) {
-	runner, err := helperclient.NewToolRunner(ctx)
+	executable, err := service.CanonicalExecutable()
 	if err != nil {
-		return holder.RuntimePlan{}, err
+		return holder.RuntimePlan{}, fmt.Errorf("FuseKit runtime: resolve canonical executable: %w", err)
 	}
-	verifier, verifierErr := holder.NewFUSEVerifier(runner)
-	if verifierErr != nil {
-		return holder.RuntimePlan{}, errors.Join(verifierErr, runner.Close(ctx))
+	macOS := filepath.Dir(executable)
+	contents := filepath.Dir(macOS)
+	appPath := filepath.Dir(contents)
+	if filepath.Base(executable) != ExecutableName || filepath.Base(macOS) != "MacOS" ||
+		filepath.Base(contents) != "Contents" || filepath.Base(appPath) != ExecutableName+".app" {
+		return holder.RuntimePlan{}, errors.New("FuseKit runtime: executable is not the fixed CCNotesHelper app child")
 	}
-	runtimeDirectory, pathErr := RuntimeDirectory()
-	if pathErr != nil {
-		return holder.RuntimePlan{}, errors.Join(pathErr, runner.Close(ctx))
+	installedPath, err := helperclient.InstalledPath()
+	if err != nil {
+		return holder.RuntimePlan{}, fmt.Errorf("FuseKit runtime: resolve fixed application path: %w", err)
 	}
-	presentationRoot, presentationErr := PresentationRoot()
-	if presentationErr != nil {
-		return holder.RuntimePlan{}, errors.Join(presentationErr, runner.Close(ctx))
+	if appPath != installedPath {
+		return holder.RuntimePlan{}, errors.New("FuseKit runtime: application is not installed at the fixed user path")
 	}
-	installedPath, installedErr := helperclient.InstalledPath()
-	if installedErr != nil {
-		return holder.RuntimePlan{}, errors.Join(installedErr, runner.Close(ctx))
-	}
-	plan, planErr := holder.NewRuntimePlan(RuntimePlanSpec(
-		installedPath, runtimeDirectory, presentationRoot, version.String(), verifier,
-	))
-	if err := errors.Join(planErr, runner.Close(ctx)); err != nil {
-		return holder.RuntimePlan{}, fmt.Errorf("cc-notes helper: derive runtime plan: %w", err)
+	plan, err := helperdeployment.NewRuntimePlan(ctx, appPath, version.String())
+	if err != nil {
+		return holder.RuntimePlan{}, fmt.Errorf("FuseKit runtime: derive runtime plan: %w", err)
 	}
 	return plan, nil
 }

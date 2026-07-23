@@ -3,7 +3,7 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "command -v cc-notes >/dev/null 2>&1 || curl -fsSL https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh | sh", "async": true }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/ensure-cc-notes.sh\"", "async": true }
         ]
       }
     ]

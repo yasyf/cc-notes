@@ -7,32 +7,38 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:
-    inputs:
-      release_tag:
-        description: Existing immutable release tag to publish
-        required: true
-        type: string
 
 concurrency:
-  group: release-${{ inputs.release_tag || github.ref_name }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
   contents: write
 
 env:
-  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+  RELEASE_TAG: ${{ github.ref_name }}
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      marketing: ${{ steps.derive.outputs.marketing }}
+    steps:
+      - id: derive
+        name: Derive the numeric helper marketing version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "marketing=${version%%-*}" >> "$GITHUB_OUTPUT"
+
   web-dist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ env.RELEASE_TAG }}
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: "22"
           cache: npm
@@ -44,7 +50,7 @@ jobs:
           npm ci
           npm run build
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: web-dist
           path: web/dist
@@ -53,14 +59,14 @@ jobs:
   verify-tag-on-main:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
       - name: Verify the immutable tag is an exact main ancestor
         run: |
           set -euo pipefail
-          printf '%s\n' "$RELEASE_TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
+          printf '%s\n' "$RELEASE_TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
           git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           tag_commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
           test "$tag_commit" = "$(git rev-parse HEAD)"
@@ -72,14 +78,14 @@ jobs:
 
   pure:
     name: pure ${{ matrix.goos }}/${{ matrix.goarch }}
-    needs: [verify-tag-on-main, web-dist, helper-app]
+    needs: [verify-tag-on-main, web-dist, version, helper-app]
     runs-on: ubuntu-latest
     strategy:
       matrix:
         goos: [darwin, linux]
         goarch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ env.RELEASE_TAG }}
       - uses: ./.github/actions/setup
@@ -89,11 +95,11 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          COMMIT="$(git rev-parse --short HEAD)"
-          LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${RELEASE_TAG} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT} -X github.com/yasyf/cc-notes/internal/version.HelperVersion=${{ needs.helper-app.outputs.version }} -X github.com/yasyf/cc-notes/internal/version.HelperSHA256=${{ needs.helper-app.outputs.sha256 }}"
+          COMMIT="$GITHUB_SHA"
+          LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${RELEASE_TAG} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT} -X github.com/yasyf/cc-notes/internal/version.HelperVersion=${{ needs.version.outputs.marketing }} -X github.com/yasyf/cc-notes/internal/version.HelperSHA256=${{ needs.helper-app.outputs.sha256 }}"
           mkdir -p dist
           CGO_ENABLED=0 go build -tags webui -ldflags "$LDFLAGS" -o "dist/cc-notes_${GOOS}_${GOARCH}" ./cmd/cc-notes
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cc-notes_${{ matrix.goos }}_${{ matrix.goarch }}
           path: dist/cc-notes_${{ matrix.goos }}_${{ matrix.goarch }}
@@ -104,7 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [pure]
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: cc-notes_linux_amd64
           path: bin
@@ -114,15 +120,15 @@ jobs:
           bin/cc-notes_linux_amd64 version | grep -q "${RELEASE_TAG}"
 
   smoke-macos:
-    name: smoke macos (pure)
+    name: smoke macos (pure, no live mount)
     runs-on: macos-latest
     needs: [pure]
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: cc-notes_darwin_arm64
           path: bin
-      - name: Smoke pure darwin binary and signed-helper boundary
+      - name: Smoke pure darwin binary
         run: |
           chmod +x bin/cc-notes_darwin_arm64
           BIN="$PWD/bin/cc-notes_darwin_arm64"
@@ -138,15 +144,8 @@ jobs:
           git config user.name smoke
           git config user.email smoke@example.com
           git remote add origin "$REMOTE"
-          # A first tag run reaches the exact fetch boundary before the release
-          # asset exists. An immutable-tag recovery run may reuse that already
-          # published and verified asset.
-          if "$BIN" init >init.out 2>init.err; then
-            test -x "$HOME/Applications/CCNotesHelper.app/Contents/MacOS/CCNotesHelper"
-            test -f "$HOME/Applications/.daemonkit-fetch/CCNotesHelper/receipt.json"
-          else
-            grep -Fq 'cc-notes helper: fetch signed app' init.err
-          fi
+          # Signed-helper deployment starts a real FuseKit mount and belongs in
+          # the VM gate, never on a hosted release runner.
           "$BIN" note add "smoke test note"
           out="$("$BIN" note list)"
           echo "$out"
@@ -157,136 +156,97 @@ jobs:
     runs-on: ubuntu-latest
     needs: [pure, smoke-linux, smoke-macos, helper-app]
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          pattern: cc-notes_*
           path: artifacts
           merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.helper-app.outputs.artifact_name }}
+          path: helper-artifact
       - name: Assemble dist and checksums
-        run: |
-          mkdir -p dist
-          find artifacts -type f -name 'cc-notes_*' -exec cp {} dist/ \;
-          find artifacts -type f -name 'cc-notes-helper-*.zip' -exec cp {} dist/ \;
-          cd dist
-          sha256sum cc-notes_* cc-notes-helper-*.zip > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-      - name: Create GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          HELPER_ASSET_FILENAME: ${{ needs.helper-app.outputs.asset_filename }}
+          HELPER_ASSET_URL: ${{ needs.helper-app.outputs.asset_url }}
+          HELPER_SHA256: ${{ needs.helper-app.outputs.sha256 }}
         run: |
-          PRERELEASE=""
-          case "$RELEASE_TAG" in
-            *-*) PRERELEASE="--prerelease" ;;
-          esac
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "$RELEASE_TAG" --generate-notes $PRERELEASE
-          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" dist/* --clobber
+          set -euo pipefail
+          mkdir -p dist
+          test "$HELPER_ASSET_FILENAME" = "cc-notes-helper-${RELEASE_TAG}-darwin.zip"
+          find artifacts -type f -name 'cc-notes_*' -exec cp {} dist/ \;
+          mapfile -t helper_assets < <(find helper-artifact -type f -name "$HELPER_ASSET_FILENAME")
+          test "${#helper_assets[@]}" = 1
+          cp "${helper_assets[0]}" "dist/$HELPER_ASSET_FILENAME"
+          helper_sidecar="${helper_assets[0]}.sha256"
+          test -f "$helper_sidecar"
+          cp "$helper_sidecar" "dist/$HELPER_ASSET_FILENAME.sha256"
+          (cd dist && sha256sum -c "$HELPER_ASSET_FILENAME.sha256")
+          test "$(sha256sum "dist/$HELPER_ASSET_FILENAME" | awk '{print $1}')" = "$HELPER_SHA256"
+          test "$HELPER_ASSET_URL" = "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${HELPER_ASSET_FILENAME}"
+          checksums="$(mktemp)"
+          (
+            cd dist
+            find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum > "$checksums"
+          )
+          mv "$checksums" dist/SHA256SUMS.txt
+          cat dist/SHA256SUMS.txt
+          find dist -maxdepth 1 -type f -print | LC_ALL=C sort \
+            > "$RUNNER_TEMP/cc-notes-release-assets.txt"
+      - name: Stage and verify the exact draft release
+        id: stage-release
+        uses: yasyf/homebrew-tap/.github/actions/stage-draft-release@54e3e194bda69896894a82c17fcdb2822beefab5
+        with:
+          token: ${{ github.token }}
+          tag: ${{ env.RELEASE_TAG }}
+          title: ${{ env.RELEASE_TAG }}
+          manifest: ${{ runner.temp }}/cc-notes-release-assets.txt
+          prerelease: ${{ contains(github.ref_name, '-') }}
+      - name: Publish the exact verified release
+        uses: yasyf/homebrew-tap/.github/actions/publish-draft-release@54e3e194bda69896894a82c17fcdb2822beefab5
+        with:
+          token: ${{ github.token }}
+          release-id: ${{ steps.stage-release.outputs.release-id }}
+          tag: ${{ env.RELEASE_TAG }}
+          manifest: ${{ runner.temp }}/cc-notes-release-assets.txt
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make-latest: ${{ !contains(github.ref_name, '-') }}
 
   helper-app:
     name: fixed signed helper app
-    runs-on: macos-15
-    needs: [verify-tag-on-main]
-    outputs:
-      sha256: ${{ steps.package.outputs.sha256 }}
-      version: ${{ steps.helper-version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Import Developer ID certificate
-        uses: yasyf/homebrew-tap/.github/actions/import-developer-id@v1
-        with:
-          p12: ${{ secrets.MACOS_SIGN_P12 }}
-          p12-password: ${{ secrets.MACOS_SIGN_PASSWORD }}
-          notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
-          notary-key-id: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
-
-      - id: helper-version
-        name: Resolve exact helper bundle version
-        run: |
-          MARKETING="${RELEASE_TAG#v}"
-          MARKETING="${MARKETING%%-*}"
-          test -n "$MARKETING"
-          echo "version=$MARKETING" >> "$GITHUB_OUTPUT"
-
-      - name: Install reviewed FUSE-T packaging input
-        run: brew install macos-fuse-t/cask/fuse-t
-
-      - name: Build and assemble the universal fixed app
-        run: |
-          set -euo pipefail
-          VERSION="${RELEASE_TAG}"
-          MARKETING="${{ steps.helper-version.outputs.version }}"
-          COMMIT="$(git rev-parse --short HEAD)"
-          LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${VERSION} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT}"
-          APP="$PWD/dist/CCNotesHelper.app"
-          mkdir -p "$APP/Contents/MacOS"
-
-          CGO_ENABLED=1 GOARCH=arm64 go build -tags fuse -ldflags "$LDFLAGS" \
-            -o dist/helper-arm64 ./cmd/cc-notes-helper
-          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -tags fuse -ldflags "$LDFLAGS" \
-            -o dist/helper-amd64 ./cmd/cc-notes-helper
-          lipo -create -output "$APP/Contents/MacOS/CCNotesHelper" dist/helper-arm64 dist/helper-amd64
-
-          cat > "$APP/Contents/Info.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>CFBundleExecutable</key><string>CCNotesHelper</string>
-            <key>CFBundleIdentifier</key><string>com.yasyf.cc-notes.helper</string>
-            <key>CFBundleName</key><string>CCNotesHelper</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>${MARKETING}</string>
-            <key>CFBundleVersion</key><string>${GITHUB_RUN_NUMBER}</string>
-            <key>LSMinimumSystemVersion</key><string>15.0</string>
-            <key>LSUIElement</key><true/>
-          </dict></plist>
-          PLIST
-
-          REQUIREMENTS="$RUNNER_TEMP/cc-notes-helper.requirements"
-          cat > "$REQUIREMENTS" <<'REQUIREMENTS'
-          designated => identifier "com.yasyf.cc-notes.helper" and anchor apple generic and certificate leaf[subject.OU] = "SXKCTF23Q2" and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists
-          REQUIREMENTS
-
-          codesign --force --options runtime --timestamp \
-            --identifier com.yasyf.cc-notes.helper \
-            --requirements "$REQUIREMENTS" \
-            --sign "$MACOS_SIGN_IDENTITY" "$APP"
-          APP_PATH="$APP" TEAM_ID="$TEAM_ID" DESIGNATED_REQUIREMENT_FILE="$REQUIREMENTS" \
-            bash .github/scripts/assert-helper-app.sh
-
-      - id: package
-        name: Notarize, staple, and package the fixed app
-        uses: yasyf/homebrew-tap/.github/actions/sign-notarize-app@v2
-        with:
-          app: dist/CCNotesHelper.app
-          name: cc-notes-helper
-          release-tag: ${{ env.RELEASE_TAG }}
-          sign: "false"
-          bundle-id: com.yasyf.cc-notes.helper
-          attach-to-release: "false"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: cc-notes-helper-release
-          path: dist/cc-notes-helper-*.zip
-          if-no-files-found: error
+    needs: [verify-tag-on-main, version]
+    permissions:
+      contents: read
+    uses: yasyf/homebrew-tap/.github/workflows/release-app.yml@83ee384b1d4fe25a8e4aa7258bb76d55e1593735
+    with:
+      app_name: CCNotesHelper
+      asset_name: cc-notes-helper
+      project_dir: helper-app
+      scheme: CCNotesHelper
+      bundle_id: com.yasyf.cc-notes.helper
+      marketing_version: ${{ needs.version.outputs.marketing }}
+      assert_script: .github/scripts/assert-helper-app.sh
+      go_version: 1.26.5
+      go_cache_dependency_path: go.sum
+      prebuild_brew_packages: macos-fuse-t/cask/fuse-t
+      prebuild_script: helper-app/prepare-release.sh
+    secrets:
+      MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+      MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+      MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
 
   bump-formula:
     runs-on: ubuntu-latest
     needs: [release, helper-app]
     # Prerelease tags (v1.2.3-rc.1) publish assets but never touch the formula.
-    if: ${{ !contains(inputs.release_tag || github.ref_name, '-') }}
+    if: ${{ !contains(github.ref_name, '-') }}
     steps:
       # The formula template is part of the immutable release source.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ env.RELEASE_TAG }}
       - name: Extract asset checksums
@@ -309,7 +269,7 @@ jobs:
         id: version
         run: echo "value=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
       - name: Render Formula/cc-notes.rb
-        uses: yasyf/homebrew-tap/.github/actions/render-formula@v1
+        uses: yasyf/homebrew-tap/.github/actions/render-formula@33755e73573a27eebbc5962cdf04b7b7e302c8f5
         with:
           template: .github/formula/cc-notes.rb.tmpl
           output: Formula/cc-notes.rb
@@ -320,8 +280,8 @@ jobs:
             __SHA_LINUX_AMD64__=${{ steps.shas.outputs.linux_amd64 }}
             __SHA_LINUX_ARM64__=${{ steps.shas.outputs.linux_arm64 }}
       - name: Publish the exact CLI to the tap
-        uses: yasyf/homebrew-tap/.github/actions/publish@v2
+        uses: yasyf/homebrew-tap/.github/actions/publish@a968ce7d5ac7097beac83a0083007bbfaa87942f
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           dir: tap-staging
-          message: "cc-notes ${{ inputs.release_tag || github.ref_name }}"
+          message: "cc-notes ${{ github.ref_name }}"

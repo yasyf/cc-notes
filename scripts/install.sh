@@ -28,18 +28,25 @@ link_alias() {
   ln -sf cc-notes "$BIN_DIR/ccn"
 }
 
-# Repository provisioning reconciles the exact signed helper release, but its
-# FUSE-T userspace mount needs system components a formula can't pull in.
+service_hint() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    echo "cc-notes: run 'cc-notes service install' to install or reconcile the macOS service" >&2
+  fi
+}
+
+# The explicit `cc-notes service install` command reconciles the exact signed
+# service release. Its FUSE-T mount needs system components a formula can't pull in.
 if [ "$(uname -s)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
   brew install --cask macos-fuse-t/cask/fuse-t >/dev/null 2>&1 ||
     echo "cc-notes: fuse-t not installed; run 'brew install --cask macos-fuse-t/cask/fuse-t' if FuseKit mounts fail" >&2
 fi
 
-# Best-effort Homebrew for "latest"; the CLI owns signed-helper reconciliation
-# on macOS, so the formula suffices. Any failure falls through to download.
+# Best-effort Homebrew for "latest". Service reconciliation remains an explicit
+# CLI operation on macOS. Any failure falls through to download.
 if [ "$VERSION" = "latest" ] && command -v brew >/dev/null 2>&1; then
   if brew install yasyf/tap/cc-notes >/dev/null 2>&1 && command -v cc-notes >/dev/null 2>&1; then
     echo "cc-notes: installed via Homebrew ($(cc-notes version))" >&2
+    service_hint
     exit 0
   fi
   echo "cc-notes: Homebrew unavailable or failed (e.g. tap-trust #22603); using direct download" >&2
@@ -87,7 +94,7 @@ asset="cc-notes_${os}_${arch}"
 if [ -x "$DEST" ]; then
   installed="$("$DEST" version 2>/dev/null || true)"
   case "$installed" in
-    "$VERSION" | "$VERSION "*) link_alias; exit 0 ;;
+    "$VERSION" | "$VERSION "*) link_alias; service_hint; exit 0 ;;
   esac
 fi
 
@@ -119,3 +126,4 @@ chmod +x "$tmp"
 mv -f "$tmp" "$DEST"
 link_alias
 echo "cc-notes: installed $DEST ($("$DEST" version))" >&2
+service_hint

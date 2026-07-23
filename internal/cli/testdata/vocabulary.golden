@@ -1354,6 +1354,36 @@ command: cc-notes search
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
+command: cc-notes service
+  use: service
+  aliases: -
+  short: Manage the signed cc-notes service
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes service install
+  use: install
+  aliases: -
+  short: Install or reconcile the signed cc-notes service
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes service uninstall
+  use: uninstall
+  aliases: -
+  short: Deactivate the signed cc-notes service
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
 command: cc-notes show
   use: show ID
   aliases: -

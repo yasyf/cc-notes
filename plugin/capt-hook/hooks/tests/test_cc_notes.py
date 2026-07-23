@@ -4081,12 +4081,17 @@ def test_bootstrap_upgrades_when_stale(monkeypatch, tmp_path) -> None:
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
         calls.append(tuple(args))
-        return "0.21.0 (old)" if args == ["cc-notes", "version"] else ""
+        return "0.44.0 (old)" if args == ["cc-notes", "version"] else ""
 
     evt = mock_event("SessionStart", source="startup", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     result = ensure_cc_notes_binary(evt)
     check("bootstrap stale: ran the installer", any(c[:2] == ("sh", "-c") for c in calls), repr(calls))
+    check(
+        "bootstrap stale: never changes the service",
+        all("service install" not in " ".join(c) and "service uninstall" not in " ".join(c) for c in calls),
+        repr(calls),
+    )
     check("bootstrap stale: returns None", result is None, repr(result))
 
 
@@ -4097,7 +4102,7 @@ def test_bootstrap_noop_when_current(monkeypatch, tmp_path) -> None:
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
         calls.append(tuple(args))
-        return "0.39.0 (cur)" if args == ["cc-notes", "version"] else ""
+        return "0.45.0 (cur)" if args == ["cc-notes", "version"] else ""
 
     evt = mock_event("SessionStart", source="startup", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", cli)

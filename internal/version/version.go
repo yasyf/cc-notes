@@ -6,7 +6,7 @@ import "runtime/debug"
 var (
 	// Version is the semantic version, set by -ldflags at release time.
 	Version = "dev"
-	// Commit is the short git SHA, set by -ldflags at release time.
+	// Commit is the exact git commit, set by -ldflags at release time.
 	Commit = ""
 	// HelperVersion is the exact signed-helper bundle version, set by -ldflags.
 	HelperVersion = ""

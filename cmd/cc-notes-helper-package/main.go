@@ -1,4 +1,4 @@
-// Command cc-notes-fuse-package embeds the reviewed FUSE-T bundle in CCNotesHelper.app.
+// Command cc-notes-helper-package embeds the reviewed FUSE-T bundle in CCNotesHelper.app.
 package main
 
 import (
@@ -15,22 +15,22 @@ import (
 )
 
 func run(ctx context.Context, arguments []string) (resultErr error) {
-	flags := flag.NewFlagSet("cc-notes-fuse-package", flag.ContinueOnError)
+	flags := flag.NewFlagSet("cc-notes-helper-package", flag.ContinueOnError)
 	appPath := flags.String("app", "", "exact application bundle path")
 	signingIdentity := flags.String("signing-identity", "", "Developer ID signing identity")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || *appPath == "" || *signingIdentity == "" {
-		return errors.New("cc-notes-fuse-package: -app and -signing-identity are required")
+		return errors.New("cc-notes-helper-package: -app and -signing-identity are required")
 	}
 	runner, err := helperclient.NewToolRunner(ctx)
 	if err != nil {
-		return fmt.Errorf("cc-notes-fuse-package: start tool runner: %w", err)
+		return fmt.Errorf("cc-notes-helper-package: start tool runner: %w", err)
 	}
 	defer func() { resultErr = errors.Join(resultErr, runner.Close(ctx)) }()
 	if err := helperapp.PackageFUSE(ctx, runner, *signingIdentity, *appPath); err != nil {
-		return fmt.Errorf("cc-notes-fuse-package: %w", err)
+		return fmt.Errorf("cc-notes-helper-package: %w", err)
 	}
 	return nil
 }

@@ -176,7 +176,10 @@ See `references/tasks-vs-notes.md` for worked examples of choosing among the sev
 
 ## Canonical agent flow
 
-The spine of day-to-day use. Run `init` once per repo; everything else recurs as you work.
+The spine of day-to-day use. On macOS, a human runs `cc-notes service install` once per
+machine before first use; it installs or exactly reconciles the signed global FuseKit
+service without initializing a repository or tenant. Run `init` once per repo; everything
+else recurs as you work.
 Each step names the MCP tool first; the CLI form is the fallback when no server is live.
 
 **1. Initialize (once per repo — CLI only).** `cc-notes init` installs the refspecs: plain
@@ -191,6 +194,9 @@ workflow (`--no-ci` to skip, `--ci` to force without `.github/`). init never cre
 path doesn't hold (`jj git push`/`jj git fetch` bridge only `refs/heads/*`, leaving
 `refs/cc-notes/*` behind), so run `sync`, which drives git directly and carries the refs
 both ways regardless of front-end.
+On macOS this step provisions the repository through the already-installed signed service;
+it never installs or upgrades that service. If it is absent, a human must first run
+`cc-notes service install` outside the agent-facing MCP flow.
 
 ```console
 $ cc-notes init
@@ -286,6 +292,8 @@ The full surface — every flag, property, default, and output shape — is in
 
 | Purpose | MCP tool (key properties) | CLI fallback |
 |---------|---------------------------|--------------|
+| Install the macOS service (once per machine) | — (CLI-only) | `cc-notes service install` |
+| Deactivate the macOS service but retain its app | — (CLI-only) | `cc-notes service uninstall` |
 | Set up a repo (once) | — (CLI-only) | `cc-notes init` |
 | Orient: backlog, tasks, leases, review count | `status` | `cc-notes status` |
 | Union-merge refs + attachments with the remote | `sync` | `cc-notes sync` |

@@ -8,18 +8,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/yasyf/daemonkit/bundle"
-	"github.com/yasyf/daemonkit/codeidentity"
-	"github.com/yasyf/daemonkit/daemon"
-	"github.com/yasyf/daemonkit/fetch"
 	"github.com/yasyf/daemonkit/proc"
 	"github.com/yasyf/daemonkit/supervise"
 
 	"github.com/yasyf/cc-notes/internal/helpercontract"
-	"github.com/yasyf/cc-notes/internal/version"
 )
 
 const toolRunnerCloseTimeout = 30 * time.Second
@@ -77,106 +71,16 @@ func (r *ToolRunner) Close(ctx context.Context) error {
 	return errors.Join(err, os.RemoveAll(r.directory))
 }
 
-type helperFetcher interface {
-	Fetch(context.Context, fetch.Config) (fetch.Installation, error)
-}
-
-func helperRelease() (fetch.Release, error) {
-	if version.HelperVersion == "" || strings.TrimSpace(version.HelperVersion) != version.HelperVersion {
-		return fetch.Release{}, errors.New("cc-notes helper: release bundle version is not exact")
+// RunProvision invokes the exact deployed helper for one repository provisioning operation.
+func RunProvision(ctx context.Context, executable, repoRoot string) (resultErr error) {
+	if !filepath.IsAbs(executable) || filepath.Clean(executable) != executable {
+		return errors.New("cc-notes helper: fixed signed app executable path is not exact and absolute")
 	}
-	digest, err := fetch.ParseSHA256(version.HelperSHA256)
+	info, err := os.Lstat(executable)
 	if err != nil {
-		return fetch.Release{}, fmt.Errorf("cc-notes helper: parse release digest: %w", err)
+		return fmt.Errorf("cc-notes helper: fixed signed app is not installed; run `cc-notes service install`: %w", err)
 	}
-	return fetch.Release{
-		Version: version.HelperVersion,
-		URL: fmt.Sprintf(
-			"https://github.com/yasyf/cc-notes/releases/download/%s/cc-notes-helper-%s-darwin.zip",
-			version.Version, version.Version,
-		),
-		SHA256: digest,
-	}, nil
-}
-
-func reconcileHelper(ctx context.Context, fetcher helperFetcher) (string, error) {
-	dir, err := InstalledDir()
-	if err != nil {
-		return "", err
-	}
-	if err := ensureInstallDirectory(dir); err != nil {
-		return "", err
-	}
-	release, err := helperRelease()
-	if err != nil {
-		return "", err
-	}
-	installation, err := fetcher.Fetch(ctx, fetch.Config{
-		Release: release,
-		Dir:     dir,
-		AppName: ExecutableName,
-		Identity: codeidentity.CodeIdentity{
-			TeamID: TeamID, SigningIdentifier: BundleID,
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("cc-notes helper: fetch signed app %s: %w", version.Version, err)
-	}
-	return bundle.ExePath(installation.Path, ExecutableName), nil
-}
-
-func ensureInstallDirectory(path string) error {
-	parent := filepath.Dir(path)
-	parentInfo, err := os.Lstat(parent)
-	if err != nil {
-		return fmt.Errorf("cc-notes helper: inspect install parent %q: %w", parent, err)
-	}
-	if !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("cc-notes helper: install parent %q is not a real directory", parent)
-	}
-	created := false
-	if err := os.Mkdir(path, 0o700); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("cc-notes helper: create install directory %q: %w", path, err)
-		}
-	} else {
-		created = true
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("cc-notes helper: inspect install directory %q: %w", path, err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("cc-notes helper: install path %q is not a real directory", path)
-	}
-	if info.Mode().Perm() != 0o700 {
-		//nolint:gosec // Private directories require the owner execute bit.
-		if err := os.Chmod(path, 0o700); err != nil {
-			return fmt.Errorf("cc-notes helper: protect install directory %q: %w", path, err)
-		}
-		if err := daemon.SyncDir(path); err != nil {
-			return fmt.Errorf("cc-notes helper: persist install directory permissions: %w", err)
-		}
-	}
-	if created {
-		if err := daemon.SyncDir(parent); err != nil {
-			return fmt.Errorf("cc-notes helper: persist install directory: %w", err)
-		}
-	}
-	return nil
-}
-
-// ProvisionRepository runs the sole signed-app repository provisioning operation.
-func ProvisionRepository(ctx context.Context, repoRoot string) (resultErr error) {
-	executable, err := reconcileHelper(ctx, fetch.New())
-	if err != nil {
-		return err
-	}
-	info, err := os.Stat(executable)
-	if err != nil {
-		return fmt.Errorf("cc-notes helper: fixed signed app missing after reconciliation: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode()&0o111 == 0 {
 		return errors.New("cc-notes helper: fixed signed app executable is invalid")
 	}
 	runner, err := NewToolRunner(ctx)

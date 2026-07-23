@@ -28,7 +28,9 @@ func newInitCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Set up cc-notes in this repository",
 		Long: "Set up cc-notes in this repository. Installs the refs/cc-notes/* fetch and\n" +
-			"push refspecs, then does everything the repo is ready for:\n\n" +
+			"push refspecs, then does everything the repo is ready for. On macOS, run\n" +
+			"`cc-notes service install` first; init provisions through that already-installed\n" +
+			"service but never installs or upgrades it.\n\n" +
 			"  - When a .claude/ directory exists (the repo uses Claude Code), registers\n" +
 			"    the cc-notes plugin in .claude/settings.json and enables the cc-notes\n" +
 			"    capt-hook pack via `capt-hook pack add`.\n" +

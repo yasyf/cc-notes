@@ -25,7 +25,7 @@ verify_designated_requirement() {
 
 verify_designated_requirement
 
-GOWORK=off GOFLAGS=-mod=readonly go run ./cmd/cc-notes-fuse-package \
+GOWORK=off GOFLAGS=-mod=readonly go run ./cmd/cc-notes-helper-package \
   -app "$APP" -signing-identity "$MACOS_SIGN_IDENTITY"
 
 codesign --verify --deep --strict --verbose=2 "$APP"

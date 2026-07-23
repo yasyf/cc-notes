@@ -20,6 +20,7 @@ import (
 // subtree is skipped).
 var excludedCommands = map[string]bool{
 	"init":      true, // one-time repo adoption, a human-operator step
+	"service":   true, // installs or deactivates the macOS machine service
 	"mcp":       true, // the MCP server's own launch command
 	"viz":       true, // launches a local visualization web server
 	"gc":        true, // destructive object-store maintenance
