@@ -172,7 +172,8 @@ func (h productHooks) readiness(
 	for {
 		health, observeErr := h.observe(readyCtx, target.socket)
 		if observeErr == nil {
-			if validateErr := validateRuntimeReadiness(target, health); validateErr == nil {
+			validateErr := validateRuntimeReadiness(target, health)
+			if validateErr == nil {
 				return deployment.Proof{
 					Role: operation.Role, PlanDigest: operation.PlanDigest,
 					Digest: h.proofDigest(
@@ -180,9 +181,8 @@ func (h productHooks) readiness(
 						health.ActivationGeneration,
 					),
 				}, nil
-			} else {
-				lastErr = validateErr
 			}
+			lastErr = validateErr
 		} else {
 			lastErr = observeErr
 		}
@@ -195,10 +195,6 @@ func (h productHooks) readiness(
 		case <-time.After(readinessPoll):
 		}
 	}
-}
-
-func (h productHooks) planForOperation(operation deployment.Operation) (holder.DeploymentPlan, error) {
-	return h.planForBuild(operation, h.buildID)
 }
 
 func (h productHooks) planForBuild(
@@ -333,7 +329,8 @@ func validateRuntimeReadiness(target runtimeTarget, health mountproto.RuntimeHea
 
 func (h productHooks) proofDigest(kind string, operation deployment.Operation, details ...string) deployment.SHA256 {
 	digest := sha256.New()
-	values := []string{
+	values := make([]string, 0, 15+len(details))
+	values = append(values,
 		helperclient.DeploymentProofIdentity, kind, operation.ID,
 		string(operation.Role), operation.PlanDigest.String(),
 		operation.Generation.Path, operation.Generation.Release.Version,
@@ -341,7 +338,7 @@ func (h productHooks) proofDigest(kind string, operation deployment.Operation, d
 		operation.Generation.DesignatedRequirement, operation.Generation.CDHash,
 		operation.Generation.BundleDigest.String(), operation.Generation.Device, operation.Generation.Inode,
 		h.policyDigest.String(),
-	}
+	)
 	values = append(values, details...)
 	for _, value := range values {
 		var length [8]byte

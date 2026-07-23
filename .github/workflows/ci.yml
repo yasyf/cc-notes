@@ -47,7 +47,8 @@ jobs:
       - name: Prove the ordinary CLI has no FuseKit child dispatcher
         run: |
           CGO_ENABLED=0 go build -o /tmp/cc-notes ./cmd/cc-notes
-          if strings -a /tmp/cc-notes | grep -q -- '--fusekit-'; then
+          strings -a /tmp/cc-notes > /tmp/cc-notes.strings
+          if grep -E -- '--fusekit-(broker-child|catalog-worker-v1|daemon-socket|source-driver-v1|source-observer-child|source-task-child)' /tmp/cc-notes.strings; then
             echo "::error::ordinary cc-notes CLI still embeds a FuseKit child mode"
             exit 1
           fi

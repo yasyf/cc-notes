@@ -321,6 +321,7 @@ func ensureInstallDirectory(path string) error {
 		return fmt.Errorf("cc-notes helper: install path %q is not a real directory", path)
 	}
 	if created && info.Mode().Perm() != 0o700 {
+		// #nosec G302 -- this is a verified directory and requires owner execute permission.
 		if err := os.Chmod(path, 0o700); err != nil {
 			return fmt.Errorf("cc-notes helper: protect install directory %q: %w", path, err)
 		}

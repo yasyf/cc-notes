@@ -223,15 +223,30 @@ func currentConsumerBuild() (string, error) {
 	return consumerBuildForExecutable(path)
 }
 
-func consumerBuildForExecutable(path string) (string, error) {
+func consumerBuildForExecutable(path string) (build string, returnErr error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return "", errors.New("cc-notes helper: updater executable path is not exact and absolute")
 	}
-	file, err := os.Open(path)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return "", fmt.Errorf("cc-notes helper: open updater directory: %w", err)
+	}
+	defer func() {
+		if err := root.Close(); err != nil && returnErr == nil {
+			build = ""
+			returnErr = fmt.Errorf("cc-notes helper: close updater directory: %w", err)
+		}
+	}()
+	file, err := root.Open(filepath.Base(path))
 	if err != nil {
 		return "", fmt.Errorf("cc-notes helper: open updater executable: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil && returnErr == nil {
+			build = ""
+			returnErr = fmt.Errorf("cc-notes helper: close updater executable: %w", err)
+		}
+	}()
 	info, err := file.Stat()
 	if err != nil {
 		return "", fmt.Errorf("cc-notes helper: inspect updater executable: %w", err)
