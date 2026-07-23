@@ -31,6 +31,7 @@ func TestReleaseOwnsOneFixedSignedHelperTopology(t *testing.T) {
 		"github.com/yasyf/cc-notes/internal/version.HelperSHA256=${{ needs.helper-app.outputs.sha256 }}",
 		"needs: [pure, smoke-linux, smoke-macos, helper-app]",
 		"path: dist/cc-notes-helper-*.zip",
+		"sha256sum cc-notes_* cc-notes-helper-*.zip > SHA256SUMS.txt",
 		`attach-to-release: "false"`,
 	)
 	assertFileContains(t, filepath.Join(root, "cmd", "cc-notes-helper", "main.go"),

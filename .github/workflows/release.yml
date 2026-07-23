@@ -167,7 +167,7 @@ jobs:
           find artifacts -type f -name 'cc-notes_*' -exec cp {} dist/ \;
           find artifacts -type f -name 'cc-notes-helper-*.zip' -exec cp {} dist/ \;
           cd dist
-          sha256sum cc-notes_* > SHA256SUMS.txt
+          sha256sum cc-notes_* cc-notes-helper-*.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Create GitHub release
         env:
