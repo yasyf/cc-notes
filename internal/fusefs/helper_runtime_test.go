@@ -21,43 +21,38 @@ import (
 
 func TestHelperPolicyAuthorizesOnlyExactRuntimeHealthIdentity(t *testing.T) {
 	policy := newHelperPolicy()
-	session, client := openAcceptedSession(t)
-	identity := mountservice.Identity{
-		Peer: session.Peer(), Build: transportproto.Build, Session: session,
+	identity := mountservice.ObservationIdentity{
+		Peer: wire.Peer{PID: os.Getpid(), UID: os.Getuid()}, WireBuild: transportproto.WireBuild,
 	}
-	if err := policy.authorizeRuntime(t.Context(), identity, mountproto.OperationRuntimeHealth); err != nil {
+	if err := policy.authorizeObservation(t.Context(), identity, mountproto.OperationRuntimeHealth); err != nil {
 		t.Fatalf("authorize runtime health: %v", err)
 	}
 
 	tests := []struct {
 		name      string
-		identity  mountservice.Identity
+		identity  mountservice.ObservationIdentity
 		operation mountproto.Operation
 	}{
 		{name: "wrong operation", identity: identity, operation: mountproto.OperationNativeBind},
-		{name: "wrong uid", identity: mountservice.Identity{
-			Peer:  wire.Peer{PID: identity.Peer.PID, UID: identity.Peer.UID + 1},
-			Build: identity.Build, Session: identity.Session,
+		{name: "wrong uid", identity: mountservice.ObservationIdentity{
+			Peer:      wire.Peer{PID: identity.Peer.PID, UID: identity.Peer.UID + 1},
+			WireBuild: identity.WireBuild,
 		}, operation: mountproto.OperationRuntimeHealth},
-		{name: "invalid pid", identity: mountservice.Identity{
-			Peer:  wire.Peer{PID: 1, UID: identity.Peer.UID},
-			Build: identity.Build, Session: identity.Session,
+		{name: "invalid pid", identity: mountservice.ObservationIdentity{
+			Peer:      wire.Peer{PID: 1, UID: identity.Peer.UID},
+			WireBuild: identity.WireBuild,
 		}, operation: mountproto.OperationRuntimeHealth},
-		{name: "missing session", identity: mountservice.Identity{
-			Peer: identity.Peer, Build: identity.Build,
-		}, operation: mountproto.OperationRuntimeHealth},
-		{name: "wrong build", identity: mountservice.Identity{
-			Peer: identity.Peer, Build: "wrong-build", Session: identity.Session,
+		{name: "wrong build", identity: mountservice.ObservationIdentity{
+			Peer: identity.Peer, WireBuild: "wrong-build",
 		}, operation: mountproto.OperationRuntimeHealth},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := policy.authorizeRuntime(t.Context(), test.identity, test.operation); !errors.Is(err, mountservice.ErrUnauthorized) {
+			if err := policy.authorizeObservation(t.Context(), test.identity, test.operation); !errors.Is(err, mountservice.ErrUnauthorized) {
 				t.Fatalf("authorize runtime = %v, want %v", err, mountservice.ErrUnauthorized)
 			}
 		})
 	}
-	_ = client.Close()
 }
 
 func TestHelperPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
@@ -73,7 +68,7 @@ func TestHelperPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	policy := newHelperPolicy()
 
 	productSession, productClient := openAcceptedSession(t)
-	productIdentity := mountservice.Identity{Peer: productSession.Peer(), Build: productSession.Build(), Session: productSession}
+	productIdentity := mountservice.Identity{Peer: productSession.Peer(), WireBuild: productSession.WireBuild(), Session: productSession}
 	owner, err := policy.authorizeMount(t.Context(), productIdentity, mountproto.OperationTenantProvision, first.ID, first.Generation)
 	if err != nil || owner != helperOwner {
 		t.Fatalf("authorize product owner=%q err=%v", owner, err)
@@ -81,7 +76,7 @@ func TestHelperPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	if _, err := policy.authorizeMount(t.Context(), productIdentity, mountproto.OperationTenantProvision, second.ID, second.Generation); err == nil {
 		t.Fatal("cross-tenant session reuse succeeded")
 	}
-	catalogIdentity := catalogservice.Identity{Peer: productSession.Peer(), Build: productSession.Build(), Session: productSession}
+	catalogIdentity := catalogservice.Identity{Peer: productSession.Peer(), WireBuild: productSession.WireBuild(), Session: productSession}
 	prepareRoute := catalogservice.Route{Tenant: first.ID, Generation: first.Generation}
 	authorization, err := policy.authorizeCatalog(catalogIdentity, catalogproto.OperationTenantPrepare, prepareRoute)
 	if err != nil || authorization.Role != catalogservice.RoleTenantOwner {
@@ -92,11 +87,11 @@ func TestHelperPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	}
 
 	nativeSession, nativeClient := openAcceptedSession(t)
-	nativeIdentity := mountservice.Identity{Peer: nativeSession.Peer(), Build: nativeSession.Build(), Session: nativeSession}
+	nativeIdentity := mountservice.Identity{Peer: nativeSession.Peer(), WireBuild: nativeSession.WireBuild(), Session: nativeSession}
 	if err := policy.authorizeNative(t.Context(), nativeIdentity, mountproto.OperationNativeBind); err != nil {
 		t.Fatalf("authorize native: %v", err)
 	}
-	nativeCatalog := catalogservice.Identity{Peer: nativeSession.Peer(), Build: nativeSession.Build(), Session: nativeSession}
+	nativeCatalog := catalogservice.Identity{Peer: nativeSession.Peer(), WireBuild: nativeSession.WireBuild(), Session: nativeSession}
 	authorization, err = policy.authorizeCatalog(nativeCatalog, catalogproto.OperationCatalogHead, prepareRoute)
 	if err != nil || authorization.Role != catalogservice.RoleMount || authorization.Presentation != catalog.PresentationMount {
 		t.Fatalf("native catalog authorization = %+v err=%v", authorization, err)
@@ -106,7 +101,7 @@ func TestHelperPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	}
 
 	unboundSession, unboundClient := openAcceptedSession(t)
-	unboundIdentity := catalogservice.Identity{Peer: unboundSession.Peer(), Build: unboundSession.Build(), Session: unboundSession}
+	unboundIdentity := catalogservice.Identity{Peer: unboundSession.Peer(), WireBuild: unboundSession.WireBuild(), Session: unboundSession}
 	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationDomainPrepare, catalogservice.Route{}); err == nil {
 		t.Fatal("unbound session accessed a protected catalog operation")
 	}
@@ -138,7 +133,7 @@ func TestHelperPolicyStartsEmptyAndBindsFirstExactTenantGeneration(t *testing.T)
 		t.Fatal(err)
 	}
 	session, client := openAcceptedSession(t)
-	identity := mountservice.Identity{Peer: session.Peer(), Build: session.Build(), Session: session}
+	identity := mountservice.Identity{Peer: session.Peer(), WireBuild: session.WireBuild(), Session: session}
 	if _, err := policy.authorizeMount(
 		t.Context(), identity, mountproto.OperationTenantProvision, tenantID, 7,
 	); err != nil {
@@ -156,14 +151,14 @@ func TestHelperPolicyTenantStateCannotUnlockPreparation(t *testing.T) {
 	policy := newHelperPolicy()
 	tenant := testTenant(t)
 	session, client := openAcceptedSession(t)
-	identity := mountservice.Identity{Peer: session.Peer(), Build: session.Build(), Session: session}
+	identity := mountservice.Identity{Peer: session.Peer(), WireBuild: session.WireBuild(), Session: session}
 	owner, err := policy.authorizeMount(
 		t.Context(), identity, mountproto.OperationTenantState, tenant.ID, 0,
 	)
 	if err != nil || owner != helperOwner {
 		t.Fatalf("authorize state owner=%q err=%v", owner, err)
 	}
-	catalogIdentity := catalogservice.Identity{Peer: session.Peer(), Build: session.Build(), Session: session}
+	catalogIdentity := catalogservice.Identity{Peer: session.Peer(), WireBuild: session.WireBuild(), Session: session}
 	if _, err := policy.authorizeCatalog(
 		catalogIdentity, catalogproto.OperationTenantPrepare,
 		catalogservice.Route{Tenant: tenant.ID, Generation: tenant.Generation},
@@ -184,7 +179,7 @@ func openAcceptedSession(t *testing.T) (*wire.AcceptedSession, *wire.Client) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &wire.Server{Build: "cc-notes-policy-test"}
+	server := &wire.Server{WireBuild: "cc-notes-policy-test"}
 	captured := make(chan *wire.AcceptedSession, 1)
 	server.RegisterConcurrent("capture", func(_ context.Context, request wire.Request) (any, error) {
 		captured <- request.Session
@@ -195,7 +190,7 @@ func openAcceptedSession(t *testing.T) (*wire.AcceptedSession, *wire.Client) {
 	admit := func() (func(), error) { return func() {}, nil }
 	go func() { done <- server.Serve(ctx, listener, func() error { return nil }, admit, admit) }()
 	client, err := wire.NewClient(t.Context(), wire.ClientConfig{
-		Dial: wire.UnixDialer(listener.Addr().String()), Build: server.Build,
+		Dial: wire.UnixDialer(listener.Addr().String()), WireBuild: server.WireBuild,
 	})
 	if err != nil {
 		cancel()

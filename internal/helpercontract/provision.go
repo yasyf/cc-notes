@@ -14,12 +14,12 @@ const provisionOperation = "--provision-repository"
 
 // ProvisionArguments returns the exact hard-cut repository provisioning invocation.
 func ProvisionArguments(repoRoot string) []string {
-	return []string{provisionOperation, version.String(), transportproto.Build, repoRoot}
+	return []string{provisionOperation, version.String(), transportproto.WireBuild, repoRoot}
 }
 
 // ParseProvision recognizes and authenticates one exact provisioning invocation.
 func ParseProvision(arguments []string) (string, bool, error) {
-	return parseProvision(arguments, version.String(), transportproto.Build)
+	return parseProvision(arguments, version.String(), transportproto.WireBuild)
 }
 
 func parseProvision(arguments []string, helperBuild, helperProtocol string) (string, bool, error) {

@@ -11,7 +11,7 @@ import (
 
 func TestProvisionInvocationRequiresExactBuildAndProtocol(t *testing.T) {
 	exact := ProvisionArguments("/repo")
-	if want := []string{provisionOperation, version.String(), transportproto.Build, "/repo"}; !slices.Equal(exact, want) {
+	if want := []string{provisionOperation, version.String(), transportproto.WireBuild, "/repo"}; !slices.Equal(exact, want) {
 		t.Fatalf("ProvisionArguments = %q, want %q", exact, want)
 	}
 	for _, test := range []struct {
@@ -22,10 +22,10 @@ func TestProvisionInvocationRequiresExactBuildAndProtocol(t *testing.T) {
 		wantRoot string
 		wantErr  bool
 	}{
-		{name: "exact", args: exact, build: version.String(), protocol: transportproto.Build, wantRoot: "/repo"},
-		{name: "new cli old helper build", args: exact, build: "old-helper", protocol: transportproto.Build, wantErr: true},
+		{name: "exact", args: exact, build: version.String(), protocol: transportproto.WireBuild, wantRoot: "/repo"},
+		{name: "new cli old helper build", args: exact, build: "old-helper", protocol: transportproto.WireBuild, wantErr: true},
 		{name: "new cli old helper protocol", args: exact, build: version.String(), protocol: "old-protocol", wantErr: true},
-		{name: "old cli new helper", args: []string{provisionOperation, "/repo"}, build: version.String(), protocol: transportproto.Build, wantErr: true},
+		{name: "old cli new helper", args: []string{provisionOperation, "/repo"}, build: version.String(), protocol: transportproto.WireBuild, wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root, recognized, err := parseProvision(test.args, test.build, test.protocol)
