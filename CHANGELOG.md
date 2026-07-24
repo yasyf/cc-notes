@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Wrong names still fail — arguments are never rewritten.
 
 ### Changed
+- **The Claude plugin versions in lockstep with the binary.** `plugin.json`'s
+  version now tracks the release-tag line: it jumps to `0.46.0`, and every
+  future `vX.Y.Z` tag rewrites it to match, so a consumer's plugin cache
+  refreshes to the pack that ships with the binary it installed. The shared
+  plugin autobump now guards `cc-notes`, warning on drift instead of advancing
+  the retired `0.15.x` patch line.
 - **BREAKING: helper deployment is explicit and has no compatibility path.**
   Repository provisioning no longer fetches, installs, upgrades, starts, or
   retires helper generations. The old helper fetch state, direct service
