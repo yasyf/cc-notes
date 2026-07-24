@@ -45,9 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING: the legacy mount/content daemon is removed.** The `mount` and
   `contentd` commands, local runtime lifecycle, watcher/spool/registry state,
   FUSE-specific artifacts, and automatic `.notes` mount setup no longer exist.
-  Signed consumer applications supply their own identity and use FuseKit's
-  persistent catalog and tenant services directly; no compatibility path is
-  retained.
+  The fixed signed helper embeds FuseKit and provisions repositories through
+  one callback-scoped, publication-fenced tenant controller on its existing
+  daemonkit session. There is no second product listener, helper subprocess,
+  or compatibility path.
 - **BREAKING (MCP): the `papercut` tool's `text` argument is renamed `body`**,
   matching every other free-text tool argument. Schema-driven callers pick the
   new name up automatically; anything hardcoding `text` now gets the middleware
