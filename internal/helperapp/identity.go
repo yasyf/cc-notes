@@ -11,7 +11,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/helperdeployment"
 	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/daemonkit/service"
-	"github.com/yasyf/daemonkit/supervise"
+	"github.com/yasyf/daemonkit/trust"
 	"github.com/yasyf/fusekit/fuset"
 	"github.com/yasyf/fusekit/holder"
 )
@@ -23,9 +23,15 @@ const (
 	TeamID = helperclient.TeamID
 	// ExecutableName is the fixed helper executable basename.
 	ExecutableName = helperclient.ExecutableName
-	// StopControlRole is the sole tracked helper process role allowed to settle the runtime.
-	StopControlRole = BundleID + ".stop-control"
 )
+
+// RuntimeTrustRequirements pins every protected lifecycle role to the sole fixed signed helper.
+func RuntimeTrustRequirements() holder.RuntimeTrustRequirements {
+	requirement := trust.Requirement{TeamID: TeamID, SigningIdentifier: BundleID}
+	return holder.RuntimeTrustRequirements{
+		StopController: requirement, ReceiptController: requirement, ReadinessController: requirement,
+	}
+}
 
 // Application returns cc-notes' fixed signed helper identity.
 func Application(appPath string) holder.SignedApplication {
@@ -78,8 +84,8 @@ func NewRuntimePlan(ctx context.Context) (holder.RuntimePlan, error) {
 }
 
 // PackageFUSE delegates the complete reviewed FUSE-T bundle transaction to FuseKit.
-func PackageFUSE(ctx context.Context, runner supervise.TaskRunner, signingIdentity, appPath string) error {
-	packager, err := holder.NewFUSEPackager(runner, signingIdentity)
+func PackageFUSE(ctx context.Context, pool *fuset.ToolPool, signingIdentity, appPath string) error {
+	packager, err := holder.NewFUSEPackager(pool, signingIdentity)
 	if err != nil {
 		return fmt.Errorf("cc-notes helper: create FUSE packager: %w", err)
 	}

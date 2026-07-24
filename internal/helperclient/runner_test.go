@@ -1,12 +1,15 @@
 package helperclient
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
-	"github.com/yasyf/daemonkit/proc"
-	"github.com/yasyf/daemonkit/supervise"
+	"github.com/yasyf/daemonkit/worker"
+
+	"github.com/yasyf/cc-notes/internal/helpercontract"
 )
 
 func TestToolRunnerExecutesAndSettlesOneTask(t *testing.T) {
@@ -14,10 +17,14 @@ func TestToolRunnerExecutesAndSettlesOneTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(t.Context(), supervise.Task{
-		RecoveryClass: proc.RecoveryTask, Path: "/usr/bin/true",
-	}); err != nil {
+	result, err := runner.Run(t.Context(), worker.CommandRequest{
+		Path: "/usr/bin/true", Dir: "/", TotalTimeout: 5 * time.Second,
+	})
+	if err != nil {
 		t.Fatalf("run: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("exit code = %d", result.ExitCode)
 	}
 	if err := runner.Close(t.Context()); err != nil {
 		t.Fatalf("close: %v", err)
@@ -38,5 +45,14 @@ func TestRunProvisionRejectsInexactExecutable(t *testing.T) {
 	}
 	if err := RunProvision(t.Context(), link, t.TempDir()); err == nil {
 		t.Fatal("RunProvision accepted a symlinked executable")
+	}
+}
+
+func TestRunDeploymentRejectsInexactExecutable(t *testing.T) {
+	if _, err := RunDeployment(t.Context(), "relative", helpercontract.DeploymentActivate); err == nil {
+		t.Fatal("RunDeployment accepted a relative executable")
+	}
+	if _, err := RunDeployment(context.Background(), "/missing/helper", helpercontract.DeploymentActivate); err == nil {
+		t.Fatal("RunDeployment accepted a missing helper")
 	}
 }

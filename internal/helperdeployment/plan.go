@@ -1,4 +1,4 @@
-// Package helperdeployment owns cc-notes' unsigned fixed-helper deployment policy.
+// Package helperdeployment owns cc-notes' signed fixed-helper deployment policy.
 package helperdeployment
 
 import (
@@ -59,12 +59,12 @@ func DeploymentPlanSpec(
 
 // NewRuntimePlan verifies one exact installed app generation and derives its runtime plan.
 func NewRuntimePlan(ctx context.Context, appPath, buildID string) (plan holder.RuntimePlan, resultErr error) {
-	runner, err := helperclient.NewToolRunner(ctx)
+	runner, err := helperclient.NewFUSEToolPool(ctx)
 	if err != nil {
 		return holder.RuntimePlan{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, runner.Close(ctx)) }()
-	verifier, err := holder.NewFUSEVerifier(runner)
+	verifier, err := holder.NewFUSEVerifier(runner.Pool())
 	if err != nil {
 		return holder.RuntimePlan{}, err
 	}

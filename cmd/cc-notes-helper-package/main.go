@@ -24,12 +24,12 @@ func run(ctx context.Context, arguments []string) (resultErr error) {
 	if flags.NArg() != 0 || *appPath == "" || *signingIdentity == "" {
 		return errors.New("cc-notes-helper-package: -app and -signing-identity are required")
 	}
-	runner, err := helperclient.NewToolRunner(ctx)
+	runner, err := helperclient.NewFUSEToolPool(ctx)
 	if err != nil {
 		return fmt.Errorf("cc-notes-helper-package: start tool runner: %w", err)
 	}
 	defer func() { resultErr = errors.Join(resultErr, runner.Close(ctx)) }()
-	if err := helperapp.PackageFUSE(ctx, runner, *signingIdentity, *appPath); err != nil {
+	if err := helperapp.PackageFUSE(ctx, runner.Pool(), *signingIdentity, *appPath); err != nil {
 		return fmt.Errorf("cc-notes-helper-package: %w", err)
 	}
 	return nil
