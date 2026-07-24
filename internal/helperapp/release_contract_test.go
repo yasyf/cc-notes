@@ -309,12 +309,31 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 	formula := filepath.Join(root, ".github", "formula", "cc-notes.rb.tmpl")
 	assertFileContains(t, formula,
 		`resource "helper" do`,
-		`cc-notes-helper-v#{version}-darwin.zip`,
+		`url "https://github.com/yasyf/cc-notes/releases/download/v__VERSION__/cc-notes-helper-v__VERSION__-darwin.zip"`,
 		`sha256 "__SHA_HELPER__"`,
 		`system "/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "CCNotesHelper.app"`,
 		`libexec.install "CCNotesHelper.app"`,
 		`cc-notes package install`,
 	)
+	formulaPayload, err := os.ReadFile(formula)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const resourceStart = `resource "helper" do`
+	const resourceEnd = "\n\n    on_arm do"
+	start := strings.Index(string(formulaPayload), resourceStart)
+	end := strings.Index(string(formulaPayload), resourceEnd)
+	if start < 0 || end <= start {
+		t.Fatal("helper resource block is not exact")
+	}
+	if strings.Contains(string(formulaPayload[start:end]), "#{version}") {
+		t.Fatal("helper resource uses resource-local version")
+	}
+	rendered := strings.ReplaceAll(string(formulaPayload), "__VERSION__", "0.46.1")
+	const renderedURL = `url "https://github.com/yasyf/cc-notes/releases/download/v0.46.1/cc-notes-helper-v0.46.1-darwin.zip"`
+	if !strings.Contains(rendered, renderedURL) {
+		t.Fatalf("rendered helper URL does not contain %q", renderedURL)
+	}
 	assertFileExcludes(t, formula,
 		"Casks/",
 		`/Applications`,
