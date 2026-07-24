@@ -96,8 +96,8 @@ github.com/winfsp/cgofuse v1.6.1-0.20260531120352-2fa812d1bdc7 h1:NObFZ97L9X6GLy
 github.com/winfsp/cgofuse v1.6.1-0.20260531120352-2fa812d1bdc7/go.mod h1:uxjoF2jEYT3+x+vC2KJddEGdk/LU8pRowXmyVMHSV5I=
 github.com/xanzy/ssh-agent v0.3.3 h1:+/15pJfg/RsTxqYcX6fHqOXZwwMP+2VyYWJeWM2qQFM=
 github.com/xanzy/ssh-agent v0.3.3/go.mod h1:6dzNDKs0J9rVPHPhaGCukekBHKqfl+L3KghI1Bc68Uw=
-github.com/yasyf/daemonkit v0.17.3 h1:4CkmPsMY1JFNrblXTJMIxI+b6jSloIUXm27xx6DVGqo=
-github.com/yasyf/daemonkit v0.17.3/go.mod h1:5tYeENawEKN1GpM12YXTqIZ1fbWv7bj9P4TyIcSZ24Q=
+github.com/yasyf/daemonkit v0.17.4 h1:mp7kj/RF2MG3ueiANWBEsaeUypznsHn9eNksECJsA5I=
+github.com/yasyf/daemonkit v0.17.4/go.mod h1:5tYeENawEKN1GpM12YXTqIZ1fbWv7bj9P4TyIcSZ24Q=
 github.com/yasyf/fusekit v1.13.2 h1:L9s3H7fjRyW6oEF71LA4MV65d98A6FCIiGmzBtJlRMI=
 github.com/yasyf/fusekit v1.13.2/go.mod h1:WHk3QDdPY1/+V3hDoPlXtpiRmgogpn9lkQT+o5waUdI=
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=

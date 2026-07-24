@@ -9,7 +9,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
-	github.com/yasyf/daemonkit v0.17.3
+	github.com/yasyf/daemonkit v0.17.4
 	github.com/yasyf/fusekit v1.13.2
 	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
