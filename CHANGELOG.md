@@ -8,10 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **The macOS FuseKit service now has an explicit, fenced machine lifecycle.**
-  `cc-notes service install` deploys or exactly reconciles the fixed signed
-  `~/Applications/CCNotesHelper.app` through daemonkit, while `service uninstall`
-  durably deactivates its runtime and retains the verified app for reactivation.
-  Repository `init` only provisions through an already-installed service.
+  `cc-notes package install` verifies the delivered signed app, atomically publishes it at
+  `~/Applications/CCNotesHelper.app`, and activates the `~/CCNotes` presentation through
+  daemonkit. `service uninstall` durably deactivates the runtime while retaining the app;
+  `package uninstall` removes both. Repository `init` only provisions through an already-installed service.
 - **FuseKit authority publication is now a product-owned library surface.**
   cc-notes renders complete Git-derived snapshots and fenced successor deltas,
   provisions exact repository tenants, streams attachment content into the
