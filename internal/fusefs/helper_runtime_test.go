@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/helpercontract"
+	"github.com/yasyf/daemonkit/daemon"
+	"github.com/yasyf/daemonkit/proc"
+	"github.com/yasyf/daemonkit/trust"
 	"github.com/yasyf/daemonkit/wire"
+	"github.com/yasyf/daemonkit/worker"
 	"github.com/yasyf/fusekit/catalog"
 	"github.com/yasyf/fusekit/catalogproto"
 	"github.com/yasyf/fusekit/catalogservice"
@@ -23,18 +26,16 @@ import (
 func TestHolderConfigCarriesExactProductRuntimeBudgets(t *testing.T) {
 	config := newHolderConfig(HelperRuntimeConfig{
 		NativeReadinessTimeout:  helpercontract.RuntimeNativeReadinessTimeout,
-		SourceReadinessTimeout:  helpercontract.RuntimeSourceReadinessTimeout,
 		CatalogReadinessTimeout: helpercontract.RuntimeCatalogReadinessTimeout,
 		CatalogOperationTimeout: helpercontract.RuntimeCatalogOperationTimeout,
 		ShutdownTimeout:         helpercontract.RuntimeShutdownTimeout,
 	})
 	if config.NativeReadinessTimeout != helpercontract.RuntimeNativeReadinessTimeout ||
-		config.SourceReadinessTimeout != helpercontract.RuntimeSourceReadinessTimeout ||
 		config.CatalogReadinessTimeout != helpercontract.RuntimeCatalogReadinessTimeout ||
 		config.CatalogOperationTimeout != helpercontract.RuntimeCatalogOperationTimeout ||
 		config.ShutdownTimeout != helpercontract.RuntimeShutdownTimeout {
-		t.Fatalf("holder runtime budgets = (%s, %s, %s, %s, %s)",
-			config.NativeReadinessTimeout, config.SourceReadinessTimeout,
+		t.Fatalf("holder runtime budgets = (%s, %s, %s, %s)",
+			config.NativeReadinessTimeout,
 			config.CatalogReadinessTimeout, config.CatalogOperationTimeout, config.ShutdownTimeout)
 	}
 }
@@ -72,6 +73,43 @@ func TestHelperPolicyAuthorizesOnlyExactRuntimeHealthIdentity(t *testing.T) {
 				t.Fatalf("authorize runtime = %v, want %v", err, mountservice.ErrUnauthorized)
 			}
 		})
+	}
+}
+
+func TestNativeOperationAuthorizationCoversExactProtocolSurface(t *testing.T) {
+	allowed := []mountproto.Operation{
+		mountproto.OperationNativeBind,
+		mountproto.OperationNativeMounted,
+		mountproto.OperationNativeReady,
+		mountproto.OperationNativeUnbind,
+		mountproto.OperationNativeRoutePage,
+		mountproto.OperationNativePin,
+		mountproto.OperationNativeRelease,
+		mountproto.OperationNativeSnapshotOpen,
+		mountproto.OperationNativeSnapshotRead,
+		mountproto.OperationNativeSnapshotClose,
+		mountproto.OperationNativeWriteOpen,
+		mountproto.OperationNativeWriteRead,
+		mountproto.OperationNativeWriteWrite,
+		mountproto.OperationNativeWriteTruncate,
+		mountproto.OperationNativeWriteSync,
+		mountproto.OperationNativeWriteCommit,
+		mountproto.OperationNativeWriteAbort,
+	}
+	for _, operation := range allowed {
+		if !nativeOperation(operation) {
+			t.Errorf("native operation %q was denied", operation)
+		}
+	}
+	for _, operation := range []mountproto.Operation{
+		"",
+		mountproto.OperationRuntimeHealth,
+		mountproto.OperationTenantProvision,
+		mountproto.OperationTenantState,
+	} {
+		if nativeOperation(operation) {
+			t.Errorf("non-native operation %q was allowed", operation)
+		}
 	}
 }
 
@@ -116,13 +154,13 @@ func TestHelperPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	if err != nil || authorization.Role != catalogservice.RoleMount || authorization.Presentation != catalog.PresentationMount {
 		t.Fatalf("native catalog authorization = %+v err=%v", authorization, err)
 	}
-	if _, err := policy.authorizeCatalog(nativeCatalog, catalogproto.OperationDomainPrepare, catalogservice.Route{}); err == nil {
+	if _, err := policy.authorizeCatalog(nativeCatalog, catalogproto.OperationActivationAck, catalogservice.Route{}); err == nil {
 		t.Fatal("native session became a domain owner")
 	}
 
 	unboundSession, unboundClient := openAcceptedSession(t)
 	unboundIdentity := catalogservice.Identity{Peer: unboundSession.Peer(), WireBuild: unboundSession.WireBuild(), Session: unboundSession}
-	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationDomainPrepare, catalogservice.Route{}); err == nil {
+	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationActivationAck, catalogservice.Route{}); err == nil {
 		t.Fatal("unbound session accessed a protected catalog operation")
 	}
 	admin, err := policy.authorizeCatalog(
@@ -190,51 +228,103 @@ func TestHelperPolicyTenantStateCannotUnlockPreparation(t *testing.T) {
 
 func openAcceptedSession(t *testing.T) (*wire.AcceptedSession, *wire.Client) {
 	t.Helper()
-	directory, err := os.MkdirTemp("/tmp", "ccn-wire-")
+	directory, err := os.MkdirTemp("", "ccn-wire-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(directory) })
-	listener, err := net.Listen("unix", filepath.Join(directory, "wire.sock"))
+	const captureOp wire.Op = "capture"
+	ladder, err := wire.NewLadder(
+		map[wire.Op]time.Duration{captureOp: time.Second},
+		map[wire.Op]time.Duration{captureOp: 2 * time.Second},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &wire.Server{WireBuild: "cc-notes-policy-test"}
+	server := &wire.Server{WireBuild: "cc-notes-policy-test", Ladder: ladder}
 	captured := make(chan *wire.AcceptedSession, 1)
-	server.RegisterConcurrent("capture", func(_ context.Context, request wire.Request) (any, error) {
-		captured <- request.Session
-		return json.RawMessage(`{}`), nil
+	server.Register(wire.HandlerSpec{
+		Op: captureOp, Concurrent: true,
+		Handler: func(_ context.Context, request wire.Request) (any, error) {
+			captured <- request.Session
+			return json.RawMessage(`{}`), nil
+		},
 	})
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	admit := func() (func(), error) { return func() {}, nil }
-	go func() { done <- server.Serve(ctx, listener, func() error { return nil }, admit, admit) }()
-	client, err := wire.NewClient(t.Context(), wire.ClientConfig{
-		Dial: wire.UnixDialer(listener.Addr().String()), WireBuild: server.WireBuild,
-	})
+	generation, err := proc.ProcessGeneration()
 	if err != nil {
-		cancel()
-		_ = listener.Close()
 		t.Fatal(err)
 	}
-	if _, err := client.Call(t.Context(), "capture", "", nil); err != nil {
+	reaper := func(name string) *proc.Reaper {
+		return &proc.Reaper{
+			Store: &proc.FileStore{Path: filepath.Join(directory, name+".db")}, Generation: generation,
+			Grace: 10 * time.Millisecond, Settlement: time.Second,
+		}
+	}
+	workers, err := worker.NewPool(worker.Config{
+		Capacity: 2, QueueCapacity: 2, MaxTotalRun: 5 * time.Second,
+		MaxStdinBytes: 4096, MaxStdoutBytes: 4096, MaxStderrBytes: 4096,
+	}, reaper("workers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	children, err := proc.NewManager(2, reaper("children"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	trustPolicy, err := trust.NewTrustPolicy(trust.TrustPolicyConfig{
+		ExpectedUID: os.Geteuid(), AllowUnprotected: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(directory, "wire.sock")
+	runtime, err := wire.NewRuntime(wire.RuntimeConfig{
+		Socket: socket, RuntimeBuild: server.WireBuild, RuntimeProtocol: 1,
+		Wire: server, TrustPolicy: trustPolicy,
+		StopControlStore: &proc.FileStore{Path: filepath.Join(directory, "stop.db")},
+		Workers:          workers, Children: children, ShutdownTimeout: 2 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot := daemon.NewPublicationSlot[struct{}](runtime)
+	activation, err := runtime.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication, err := slot.Stage(activation, struct{}{})
+	if err != nil {
+		_ = activation.Fail(err)
+		t.Fatal(err)
+	}
+	if err := activation.CommitReady(publication); err != nil {
+		_ = activation.Fail(err)
+		t.Fatal(err)
+	}
+	client, err := wire.NewClient(t.Context(), wire.ClientConfig{
+		Dial: wire.UnixDialer(socket), WireBuild: server.WireBuild,
+		Role: trust.UnprotectedRole, Ladder: ladder,
+	})
+	if err != nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = runtime.Close(closeCtx)
+		t.Fatal(err)
+	}
+	if _, err := client.Call(t.Context(), captureOp, "", nil); err != nil {
 		_ = client.Close()
-		cancel()
-		_ = listener.Close()
+		closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = runtime.Close(closeCtx)
 		t.Fatal(err)
 	}
 	session := <-captured
 	t.Cleanup(func() {
 		_ = client.Close()
-		cancel()
-		_ = listener.Close()
-		select {
-		case serveErr := <-done:
-			if serveErr != nil && !errors.Is(serveErr, context.Canceled) && !errors.Is(serveErr, net.ErrClosed) {
-				t.Errorf("wire server: %v", serveErr)
-			}
-		case <-time.After(5 * time.Second):
-			t.Error("wire server did not stop")
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := runtime.Close(closeCtx); err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("wire runtime: %v", err)
 		}
 	})
 	return session, client

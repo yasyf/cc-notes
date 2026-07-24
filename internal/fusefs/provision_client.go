@@ -18,6 +18,7 @@ import (
 	"github.com/yasyf/fusekit/mountproto"
 	"github.com/yasyf/fusekit/mountservice"
 	"github.com/yasyf/fusekit/transportproto"
+	"github.com/yasyf/fusekit/trustroles"
 )
 
 const desiredFleetCASLimit = 8
@@ -33,6 +34,7 @@ func ProvisionRepository(ctx context.Context, plan holder.RuntimePlan, repoRoot 
 	}
 	session, err := wire.NewClient(ctx, wire.ClientConfig{
 		Dial: wire.UnixDialer(plan.Paths().Socket), WireBuild: transportproto.WireBuild,
+		Role: trustroles.ReceiptController,
 	})
 	if err != nil {
 		return fmt.Errorf("cc-notes provision: connect tenant service: %w", err)
@@ -133,7 +135,9 @@ func publishRepositoryDeclaration(
 	plan holder.RuntimePlan,
 	declaration catalog.SourceAuthorityDeclaration,
 ) (resultErr error) {
-	client, err := catalogservice.NewClient(ctx, wire.ClientConfig{Dial: wire.UnixDialer(plan.Paths().Socket)})
+	client, err := catalogservice.NewClient(ctx, wire.ClientConfig{
+		Dial: wire.UnixDialer(plan.Paths().Socket), Role: trustroles.ReceiptController,
+	})
 	if err != nil {
 		return fmt.Errorf("cc-notes provision: connect source fleet service: %w", err)
 	}

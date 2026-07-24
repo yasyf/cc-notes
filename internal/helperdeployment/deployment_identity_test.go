@@ -1,4 +1,4 @@
-package helperclient
+package helperdeployment
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/cc-notes/internal/helpercontract"
 	"github.com/yasyf/daemonkit/deployment"
 	"github.com/yasyf/daemonkit/trust"
@@ -107,7 +108,6 @@ func TestDeploymentPolicyJSONAndDigestAreExact(t *testing.T) {
 	}
 	wantBudgets := deploymentRuntimeBudgetPolicy{
 		NativeReadinessTimeout:  helpercontract.RuntimeNativeReadinessTimeout,
-		SourceReadinessTimeout:  helpercontract.RuntimeSourceReadinessTimeout,
 		CatalogReadinessTimeout: helpercontract.RuntimeCatalogReadinessTimeout,
 		CatalogOperationTimeout: helpercontract.RuntimeCatalogOperationTimeout,
 		ShutdownTimeout:         helpercontract.RuntimeShutdownTimeout,
@@ -116,7 +116,7 @@ func TestDeploymentPolicyJSONAndDigestAreExact(t *testing.T) {
 		t.Fatalf("runtime budgets = %+v, want %+v", decoded.Runtime.Budgets, wantBudgets)
 	}
 	wantRuntimePolicy, err := (trust.Requirement{
-		TeamID: TeamID, SigningIdentifier: BundleID,
+		TeamID: helperclient.TeamID, SigningIdentifier: helperclient.BundleID,
 	}).ValidationDigest()
 	if err != nil {
 		t.Fatal(err)
@@ -124,8 +124,8 @@ func TestDeploymentPolicyJSONAndDigestAreExact(t *testing.T) {
 	if got := decoded.Runtime.State.RuntimePolicyDigest; got != hex.EncodeToString(wantRuntimePolicy[:]) {
 		t.Fatalf("runtime policy digest = %q, want %x", got, wantRuntimePolicy)
 	}
-	if wantBudgets.NativeReadinessTimeout <= 0 || wantBudgets.SourceReadinessTimeout <= 0 ||
-		wantBudgets.CatalogReadinessTimeout <= 0 || wantBudgets.CatalogOperationTimeout <= 0 ||
+	if wantBudgets.NativeReadinessTimeout <= 0 || wantBudgets.CatalogReadinessTimeout <= 0 ||
+		wantBudgets.CatalogOperationTimeout <= 0 ||
 		wantBudgets.ShutdownTimeout <= 0 || wantBudgets.ShutdownTimeout >= time.Minute {
 		t.Fatalf("runtime budgets are not explicit bounded positive values: %+v", wantBudgets)
 	}
@@ -133,7 +133,7 @@ func TestDeploymentPolicyJSONAndDigestAreExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantDigest = "43484ef49e4af1e14518743e0ae4defde886610dc5675f91a1985270ce5cfd3f"
+	const wantDigest = "477107e87da0d357510afeae68a41740720e3f2b0a1094bace0290750ff3c468"
 	got := hex.EncodeToString(digest[:])
 	if got != wantDigest {
 		t.Fatalf("policy digest = %s, want %s", got, wantDigest)
