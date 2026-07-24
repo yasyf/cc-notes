@@ -4102,7 +4102,7 @@ def test_bootstrap_noop_when_current(monkeypatch, tmp_path) -> None:
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
         calls.append(tuple(args))
-        return "0.45.0 (cur)" if args == ["cc-notes", "version"] else ""
+        return "0.46.0 (cur)" if args == ["cc-notes", "version"] else ""
 
     evt = mock_event("SessionStart", source="startup", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", cli)

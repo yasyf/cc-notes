@@ -176,9 +176,9 @@ See `references/tasks-vs-notes.md` for worked examples of choosing among the sev
 
 ## Canonical agent flow
 
-The spine of day-to-day use. On macOS, a human runs `cc-notes service install` once per
-machine before first use; it installs or exactly reconciles the signed global FuseKit
-service without initializing a repository or tenant. Run `init` once per repo; everything
+The spine of day-to-day use. On macOS, a human runs `cc-notes package install` once per
+machine before first use; it verifies and installs the signed helper and activates the global
+FuseKit service without initializing a repository or tenant. Run `init` once per repo; everything
 else recurs as you work.
 Each step names the MCP tool first; the CLI form is the fallback when no server is live.
 
@@ -196,7 +196,7 @@ path doesn't hold (`jj git push`/`jj git fetch` bridge only `refs/heads/*`, leav
 both ways regardless of front-end.
 On macOS this step provisions the repository through the already-installed signed service;
 it never installs or upgrades that service. If it is absent, a human must first run
-`cc-notes service install` outside the agent-facing MCP flow.
+`cc-notes package install` outside the agent-facing MCP flow.
 
 ```console
 $ cc-notes init
@@ -292,7 +292,8 @@ The full surface — every flag, property, default, and output shape — is in
 
 | Purpose | MCP tool (key properties) | CLI fallback |
 |---------|---------------------------|--------------|
-| Install the macOS service (once per machine) | — (CLI-only) | `cc-notes service install` |
+| Install the macOS helper and service (once per machine) | — (CLI-only) | `cc-notes package install` |
+| Reactivate the retained macOS helper | — (CLI-only) | `cc-notes service install` |
 | Deactivate the macOS service but retain its app | — (CLI-only) | `cc-notes service uninstall` |
 | Set up a repo (once) | — (CLI-only) | `cc-notes init` |
 | Orient: backlog, tasks, leases, review count | `status` | `cc-notes status` |

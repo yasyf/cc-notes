@@ -68,11 +68,11 @@ def announce_cc_notes_available(evt: UserPromptSubmitEvent) -> HookResult | None
             f"cc-notes {version} is installed and its MCP server is active — record durable work with the "
             "cc-notes tools (task_add, note_add, doc_add, log_add, papercut, runbook_add, investigation_open; "
             "orient with status), each with a typed schema, rather than shelling out. On macOS, a human "
-            "must run `cc-notes service install` before repository provisioning."
+            "must run `cc-notes package install` before repository provisioning."
         )
     return evt.warn(
         f"cc-notes {version} is installed; its durable task, note, doc, log, papercut, runbook, "
-        "and investigation tooling is available. On macOS, a human must run `cc-notes service install` "
+        "and investigation tooling is available. On macOS, a human must run `cc-notes package install` "
         "before repository provisioning."
     )
 
