@@ -192,11 +192,7 @@ func UninstallPackage(ctx context.Context) error {
 		return errors.New("cc-notes package: daemonkit returned an inexact uninstall receipt")
 	}
 	generation := receipt.Generation()
-	marketingVersion, err := helperMarketingVersion()
-	if err != nil {
-		return err
-	}
-	if generation.Path() != target.AppPath || generation.Version() != marketingVersion ||
+	if generation.Path() != target.AppPath || generation.Version() == "" ||
 		generation.TeamID() != target.Identity.TeamID ||
 		generation.SigningIdentifier() != target.Identity.SigningIdentifier ||
 		generation.BundleDigest() == (deployment.SHA256{}) ||
