@@ -1,4 +1,4 @@
-package helperclient
+package helperdeployment
 
 import (
 	"crypto/sha256"
@@ -11,14 +11,15 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/cc-notes/internal/helpercontract"
 	"github.com/yasyf/daemonkit/deployment"
 	"github.com/yasyf/daemonkit/service"
 	"github.com/yasyf/daemonkit/trust"
-	"github.com/yasyf/daemonkit/wire"
 	"github.com/yasyf/fusekit/holder"
 	"github.com/yasyf/fusekit/mountproto"
 	"github.com/yasyf/fusekit/transportproto"
+	"github.com/yasyf/fusekit/trustroles"
 )
 
 const (
@@ -26,10 +27,8 @@ const (
 	deploymentPolicyIdentity = "cc-notes.deployment-callbacks.v1"
 	// DeploymentProofIdentity is the v1 product-proof digest domain.
 	DeploymentProofIdentity = "cc-notes.deployment-proof.v1"
-	// DeploymentStopRole is the exact disposable stop-control role.
-	DeploymentStopRole = BundleID + ".stop-control"
 	// DeploymentServiceLabel is the exact helper launch-agent label.
-	DeploymentServiceLabel = BundleID + ".fusekit"
+	DeploymentServiceLabel = helperclient.BundleID + ".fusekit"
 )
 
 var (
@@ -54,7 +53,7 @@ type deploymentApplicationPolicy struct {
 	ExecutableName              string `json:"executable_name"`
 	ExecutableRelativePath      string `json:"executable_relative_path"`
 	RequireCanonicalAccountHome bool   `json:"require_canonical_account_home"`
-	StopControlRole             string `json:"stop_control_role"`
+	ProtectedControllerBundleID string `json:"protected_controller_bundle_id"`
 }
 
 type deploymentProtocolPolicy struct {
@@ -75,7 +74,6 @@ type deploymentRuntimePolicy struct {
 
 type deploymentRuntimeBudgetPolicy struct {
 	NativeReadinessTimeout  time.Duration `json:"native_readiness_timeout_ns"`
-	SourceReadinessTimeout  time.Duration `json:"source_readiness_timeout_ns"`
 	CatalogReadinessTimeout time.Duration `json:"catalog_readiness_timeout_ns"`
 	CatalogOperationTimeout time.Duration `json:"catalog_operation_timeout_ns"`
 	ShutdownTimeout         time.Duration `json:"shutdown_timeout_ns"`
@@ -155,56 +153,49 @@ type deploymentReadinessPolicy struct {
 }
 
 type deploymentServicePolicy struct {
-	AgentLabel                     string                  `json:"agent_label"`
-	ExactSingleAgentPlan           bool                    `json:"exact_single_agent_plan"`
-	AssociatedBundleID             string                  `json:"associated_bundle_id"`
-	RestartPolicy                  service.RestartPolicy   `json:"restart_policy"`
-	SessionType                    service.SessionType     `json:"session_type"`
-	StartInterval                  time.Duration           `json:"start_interval_ns"`
-	ProcessType                    service.ProcessType     `json:"process_type"`
-	ProgramIsFixedBundleExecutable bool                    `json:"program_is_fixed_bundle_executable"`
-	RequireNoArguments             bool                    `json:"require_no_arguments"`
-	RequireNoWatchPaths            bool                    `json:"require_no_watch_paths"`
-	RequireNoCalendarIntervals     bool                    `json:"require_no_calendar_intervals"`
-	BuildEnvironmentKey            string                  `json:"build_environment_key"`
-	RequireExactBuildEnvironment   bool                    `json:"require_exact_build_environment"`
-	ReplacementOwnsRestartFence    bool                    `json:"replacement_owns_restart_fence"`
-	Proofs                         deploymentProofPolicy   `json:"proofs"`
-	Quiesce                        deploymentQuiescePolicy `json:"quiesce"`
+	AgentLabel                     string                     `json:"agent_label"`
+	ExactSingleAgentPlan           bool                       `json:"exact_single_agent_plan"`
+	AssociatedBundleID             string                     `json:"associated_bundle_id"`
+	RestartPolicy                  service.RestartPolicy      `json:"restart_policy"`
+	SessionType                    service.SessionType        `json:"session_type"`
+	StartInterval                  time.Duration              `json:"start_interval_ns"`
+	ProcessType                    service.ProcessType        `json:"process_type"`
+	ProgramIsFixedBundleExecutable bool                       `json:"program_is_fixed_bundle_executable"`
+	RequireNoArguments             bool                       `json:"require_no_arguments"`
+	RequireNoWatchPaths            bool                       `json:"require_no_watch_paths"`
+	RequireNoCalendarIntervals     bool                       `json:"require_no_calendar_intervals"`
+	BuildEnvironmentKey            string                     `json:"build_environment_key"`
+	RequireExactBuildEnvironment   bool                       `json:"require_exact_build_environment"`
+	ReplacementOwnsRestartFence    bool                       `json:"replacement_owns_restart_fence"`
+	Activation                     deploymentActivationPolicy `json:"activation"`
+	Quiesce                        deploymentQuiescePolicy    `json:"quiesce"`
 }
 
-type deploymentProofPolicy struct {
-	PostInstallRole                       deployment.ProofRole `json:"post_install_role"`
-	CandidateReadyRole                    deployment.ProofRole `json:"candidate_ready_role"`
-	PriorRestoreRole                      deployment.ProofRole `json:"prior_restore_role"`
-	PriorReadyRole                        deployment.ProofRole `json:"prior_ready_role"`
-	PriorRuntimeRole                      deployment.ProofRole `json:"prior_runtime_role"`
-	RollbackRuntimeRole                   deployment.ProofRole `json:"rollback_runtime_role"`
-	RequireReturnedRoleMatch              bool                 `json:"require_returned_role_match"`
-	RequireReadinessPlanDigestMatch       bool                 `json:"require_readiness_plan_digest_match"`
-	GenerationBindingIncludesCDHash       bool                 `json:"generation_binding_includes_cdhash"`
-	GenerationBindingIncludesBundleDigest bool                 `json:"generation_binding_includes_bundle_digest"`
+type deploymentActivationPolicy struct {
+	DaemonkitOwnsOperationID      bool `json:"daemonkit_owns_operation_id"`
+	RequireExactSignedGeneration  bool `json:"require_exact_signed_generation"`
+	RequireExactPlan              bool `json:"require_exact_plan"`
+	RequireExactReadinessReplay   bool `json:"require_exact_readiness_replay"`
+	GenerationBindingIncludesFUSE bool `json:"generation_binding_includes_fuse"`
 }
 
 type deploymentQuiescePolicy struct {
-	ProofIdentity                   string               `json:"proof_identity"`
-	StopControlArguments            []string             `json:"stop_control_arguments"`
-	ReplacementStopIntent           wire.StopIntent      `json:"replacement_stop_intent"`
-	ReconfigureStopIntent           wire.StopIntent      `json:"reconfigure_stop_intent"`
-	DeactivateStopIntent            wire.StopIntent      `json:"deactivate_stop_intent"`
-	RollbackStopIntent              wire.StopIntent      `json:"rollback_stop_intent"`
-	PriorRuntimeProofRole           deployment.ProofRole `json:"prior_runtime_proof_role"`
-	RollbackRuntimeProofRole        deployment.ProofRole `json:"rollback_runtime_proof_role"`
-	RuntimeBuildSource              string               `json:"runtime_build_source"`
-	RequireTargetProcessGeneration  bool                 `json:"require_target_process_generation"`
-	RequireExactExecutableInventory bool                 `json:"require_exact_executable_inventory"`
-	AbsentRequiresEmptyInventory    bool                 `json:"absent_requires_empty_inventory"`
-	RequireExactHealthTarget        bool                 `json:"require_exact_health_target"`
-	RequireExactStopResult          bool                 `json:"require_exact_stop_result"`
+	ProofIdentity                   string `json:"proof_identity"`
+	ControllerBundleID              string `json:"controller_bundle_id"`
+	ControllerRequestSchema         uint16 `json:"controller_request_schema"`
+	StopRole                        string `json:"stop_role"`
+	ReceiptRole                     string `json:"receipt_role"`
+	ReadinessRole                   string `json:"readiness_role"`
+	RuntimeBuildSource              string `json:"runtime_build_source"`
+	RequireTargetProcessGeneration  bool   `json:"require_target_process_generation"`
+	RequireExactExecutableInventory bool   `json:"require_exact_executable_inventory"`
+	AbsentRequiresEmptyInventory    bool   `json:"absent_requires_empty_inventory"`
+	RequireExactHealthTarget        bool   `json:"require_exact_health_target"`
+	RequireExactStopResult          bool   `json:"require_exact_stop_result"`
+	RequireDaemonkitStopReceipt     bool   `json:"require_daemonkit_stop_receipt"`
 }
 
-// DeploymentIdentity returns the startup-frozen updater build and callback
-// policy identities used by helper release deployment.
+// DeploymentIdentity returns the startup-frozen signed-helper build and policy identities.
 func DeploymentIdentity() (string, deployment.SHA256, error) {
 	if startupConsumerBuildErr != nil {
 		return "", deployment.SHA256{}, fmt.Errorf("cc-notes helper: cache deployment consumer build: %w", startupConsumerBuildErr)
@@ -272,7 +263,7 @@ func makeDeploymentPolicyDigest() (deployment.SHA256, error) {
 func deploymentPolicyJSON() ([]byte, error) {
 	readiness := holder.StandardReadinessContract()
 	runtimePolicy, err := (trust.Requirement{
-		TeamID: TeamID, SigningIdentifier: BundleID,
+		TeamID: helperclient.TeamID, SigningIdentifier: helperclient.BundleID,
 	}).ValidationDigest()
 	if err != nil {
 		return nil, err
@@ -281,11 +272,11 @@ func deploymentPolicyJSON() ([]byte, error) {
 		Identity: deploymentPolicyIdentity,
 		Schema:   1,
 		Application: deploymentApplicationPolicy{
-			BundleID: BundleID, TeamID: TeamID, InstallRootHomeRelative: "Applications",
-			BundleLeaf: ExecutableName + ".app", ExecutableName: ExecutableName,
-			ExecutableRelativePath:      "Contents/MacOS/" + ExecutableName,
+			BundleID: helperclient.BundleID, TeamID: helperclient.TeamID, InstallRootHomeRelative: "Applications",
+			BundleLeaf: helperclient.ExecutableName + ".app", ExecutableName: helperclient.ExecutableName,
+			ExecutableRelativePath:      "Contents/MacOS/" + helperclient.ExecutableName,
 			RequireCanonicalAccountHome: true,
-			StopControlRole:             DeploymentStopRole,
+			ProtectedControllerBundleID: helperclient.BundleID,
 		},
 		Protocols: deploymentProtocolPolicy{
 			MountProtocol: mountproto.Version, RuntimeProtocol: mountproto.RuntimeProtocolVersion,
@@ -313,7 +304,7 @@ func deploymentPolicyJSON() ([]byte, error) {
 						"/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
 						"/usr/lib/libSystem.B.dylib", "/usr/lib/libiconv.2.dylib",
 					},
-					NestedSigningIdentifier:    BundleID + ".fuse-t",
+					NestedSigningIdentifier:    helperclient.BundleID + ".fuse-t",
 					RequireSignedLibraryDigest: true, RequireOuterEntitlementsDigest: true,
 					RequireStrictBundleDescendants: true, RequireRegularNonSymlinkFiles: true,
 					RequireExactNestedRequirement: true, RequireExactOuterRequirement: true,
@@ -333,7 +324,6 @@ func deploymentPolicyJSON() ([]byte, error) {
 			Broker: deploymentBrokerPolicy{Enabled: false},
 			Budgets: deploymentRuntimeBudgetPolicy{
 				NativeReadinessTimeout:  helpercontract.RuntimeNativeReadinessTimeout,
-				SourceReadinessTimeout:  helpercontract.RuntimeSourceReadinessTimeout,
 				CatalogReadinessTimeout: helpercontract.RuntimeCatalogReadinessTimeout,
 				CatalogOperationTimeout: helpercontract.RuntimeCatalogOperationTimeout,
 				ShutdownTimeout:         helpercontract.RuntimeShutdownTimeout,
@@ -351,30 +341,27 @@ func deploymentPolicyJSON() ([]byte, error) {
 			},
 		},
 		Service: deploymentServicePolicy{
-			AgentLabel: DeploymentServiceLabel, ExactSingleAgentPlan: true, AssociatedBundleID: BundleID,
+			AgentLabel: DeploymentServiceLabel, ExactSingleAgentPlan: true, AssociatedBundleID: helperclient.BundleID,
 			RestartPolicy: service.RestartAlways, SessionType: service.SessionTypeAqua,
 			StartInterval: 0, ProcessType: 0,
 			ProgramIsFixedBundleExecutable: true, RequireNoArguments: true,
 			RequireNoWatchPaths: true, RequireNoCalendarIntervals: true,
 			BuildEnvironmentKey: "FUSEKIT_BUILD_ID", RequireExactBuildEnvironment: true,
 			ReplacementOwnsRestartFence: true,
-			Proofs: deploymentProofPolicy{
-				PostInstallRole: deployment.ProofPostInstall, CandidateReadyRole: deployment.ProofCandidateReady,
-				PriorRestoreRole: deployment.ProofPriorRestore, PriorReadyRole: deployment.ProofPriorReady,
-				PriorRuntimeRole: deployment.ProofPriorRuntime, RollbackRuntimeRole: deployment.ProofRollbackRuntime,
-				RequireReturnedRoleMatch: true, RequireReadinessPlanDigestMatch: true,
-				GenerationBindingIncludesCDHash: true, GenerationBindingIncludesBundleDigest: true,
+			Activation: deploymentActivationPolicy{
+				DaemonkitOwnsOperationID: true, RequireExactSignedGeneration: true,
+				RequireExactPlan: true, RequireExactReadinessReplay: true,
+				GenerationBindingIncludesFUSE: true,
 			},
 			Quiesce: deploymentQuiescePolicy{
-				ProofIdentity: DeploymentProofIdentity, StopControlArguments: holder.StopControlChildArguments(),
-				ReplacementStopIntent: wire.StopIntentUpgrade, ReconfigureStopIntent: wire.StopIntentRestart,
-				DeactivateStopIntent: wire.StopIntentUninstall, RollbackStopIntent: wire.StopIntentUninstall,
-				PriorRuntimeProofRole:           deployment.ProofPriorRuntime,
-				RollbackRuntimeProofRole:        deployment.ProofRollbackRuntime,
-				RuntimeBuildSource:              "invoking_build",
+				ProofIdentity: DeploymentProofIdentity, ControllerBundleID: helperclient.BundleID, ControllerRequestSchema: 1,
+				StopRole: string(trustroles.StopController), ReceiptRole: string(trustroles.ReceiptController),
+				ReadinessRole:                   string(trustroles.ReadinessController),
+				RuntimeBuildSource:              "observed_runtime",
 				RequireTargetProcessGeneration:  true,
 				RequireExactExecutableInventory: true, AbsentRequiresEmptyInventory: true,
 				RequireExactHealthTarget: true, RequireExactStopResult: true,
+				RequireDaemonkitStopReceipt: true,
 			},
 		},
 	})

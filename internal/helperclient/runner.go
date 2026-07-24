@@ -2,99 +2,172 @@ package helperclient
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/yasyf/daemonkit/proc"
-	"github.com/yasyf/daemonkit/supervise"
+	"github.com/yasyf/daemonkit/worker"
 
 	"github.com/yasyf/cc-notes/internal/helpercontract"
 )
 
-const toolRunnerCloseTimeout = 30 * time.Second
+const (
+	toolRunnerCloseTimeout   = 30 * time.Second
+	toolRunnerMaxTotalRun    = 15 * time.Minute
+	toolRunnerMaxOutputBytes = 1 << 20
+)
 
 // ToolRunner is one isolated durable daemonkit task runner.
 type ToolRunner struct {
-	pool      *supervise.Pool
+	claim     *worker.RuntimeClaim
 	directory string
 }
 
 // NewToolRunner creates a disposable runner for signed-helper and packaging operations.
 func NewToolRunner(ctx context.Context) (*ToolRunner, error) {
-	directory, err := os.MkdirTemp("", "cc-notes-helper-tools-")
+	directory, generation, err := newToolIdentity("cc-notes-helper-tools-")
 	if err != nil {
-		return nil, fmt.Errorf("cc-notes helper: create tool recovery directory: %w", err)
-	}
-	var generation [16]byte
-	if _, err := rand.Read(generation[:]); err != nil {
-		return nil, errors.Join(err, os.RemoveAll(directory))
+		return nil, err
 	}
 	reaper := &proc.Reaper{
 		Store:      &proc.FileStore{Path: filepath.Join(directory, "processes.db")},
-		Generation: hex.EncodeToString(generation[:]),
+		Generation: generation,
 	}
-	pool, err := supervise.NewPool(1, reaper)
+	pool, err := worker.NewPool(worker.Config{
+		Capacity: 1, QueueCapacity: 0, MaxTotalRun: toolRunnerMaxTotalRun,
+		MaxStdinBytes: 0, MaxStdoutBytes: toolRunnerMaxOutputBytes, MaxStderrBytes: toolRunnerMaxOutputBytes,
+	}, reaper)
 	if err != nil {
 		return nil, errors.Join(err, os.RemoveAll(directory))
 	}
-	if err := pool.Recover(ctx); err != nil {
-		pool.Close()
-		pool.Cancel()
-		waitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), toolRunnerCloseTimeout)
-		defer cancel()
-		return nil, errors.Join(err, pool.Wait(waitCtx), os.RemoveAll(directory))
+	claim, err := pool.ClaimRuntime()
+	if err != nil {
+		return nil, errors.Join(err, os.RemoveAll(directory))
 	}
-	return &ToolRunner{pool: pool, directory: directory}, nil
+	if err := claim.Recover(ctx); err != nil {
+		return nil, errors.Join(err, claim.Release(context.WithoutCancel(ctx)), os.RemoveAll(directory))
+	}
+	if err := claim.Activate(); err != nil {
+		return nil, errors.Join(err, claim.Release(context.WithoutCancel(ctx)), os.RemoveAll(directory))
+	}
+	return &ToolRunner{claim: claim, directory: directory}, nil
 }
 
 // Run executes one daemonkit task.
-func (r *ToolRunner) Run(ctx context.Context, task supervise.Task) error {
-	return r.pool.Run(ctx, task)
+func (r *ToolRunner) Run(ctx context.Context, request worker.CommandRequest) (worker.CommandResult, error) {
+	return r.claim.Product().Run(ctx, request)
 }
 
 // Close settles all work and removes the private recovery directory.
 func (r *ToolRunner) Close(ctx context.Context) error {
-	if r == nil || r.pool == nil {
+	if r == nil || r.claim == nil {
 		return nil
 	}
-	r.pool.Close()
-	r.pool.Cancel()
 	waitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), toolRunnerCloseTimeout)
 	defer cancel()
-	err := r.pool.Wait(waitCtx)
-	r.pool = nil
+	err := r.claim.Close(waitCtx)
+	r.claim = nil
 	return errors.Join(err, os.RemoveAll(r.directory))
 }
 
 // RunProvision invokes the exact deployed helper for one repository provisioning operation.
 func RunProvision(ctx context.Context, executable, repoRoot string) (resultErr error) {
-	if !filepath.IsAbs(executable) || filepath.Clean(executable) != executable {
-		return errors.New("cc-notes helper: fixed signed app executable path is not exact and absolute")
-	}
-	info, err := os.Lstat(executable)
-	if err != nil {
-		return fmt.Errorf("cc-notes helper: fixed signed app is not installed; run `cc-notes service install`: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode()&0o111 == 0 {
-		return errors.New("cc-notes helper: fixed signed app executable is invalid")
-	}
-	runner, err := NewToolRunner(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { resultErr = errors.Join(resultErr, runner.Close(ctx)) }()
-	if err := runner.Run(ctx, supervise.Task{
-		RecoveryClass: proc.RecoveryTask, Path: executable,
-		Args: helpercontract.ProvisionArguments(repoRoot), Stdout: os.Stdout, Stderr: os.Stderr,
-	}); err != nil {
+	result, err := runInstalledRequest(
+		ctx, executable, helpercontract.ProvisionArguments(repoRoot), toolRunnerMaxTotalRun,
+	)
+	outputErr := errors.Join(writeAll(os.Stdout, result.Stdout), writeAll(os.Stderr, result.Stderr))
+	if err := errors.Join(err, outputErr); err != nil {
 		return fmt.Errorf("cc-notes helper: provision repository through signed app: %w", err)
 	}
 	return nil
 }
 
-var _ supervise.TaskRunner = (*ToolRunner)(nil)
+// RunDeployment asks the fixed signed helper to execute one complete deployment operation.
+func RunDeployment(
+	ctx context.Context,
+	executable string,
+	action helpercontract.DeploymentAction,
+) (helpercontract.DeploymentResult, error) {
+	wantExecutable, err := ExecutablePath()
+	if err != nil {
+		return helpercontract.DeploymentResult{}, err
+	}
+	if executable != wantExecutable {
+		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: deployment requires the fixed signed app path")
+	}
+	result, err := runInstalledRequest(
+		ctx, executable, helpercontract.DeploymentArguments(action), toolRunnerMaxTotalRun,
+	)
+	if err != nil {
+		return helpercontract.DeploymentResult{}, fmt.Errorf("cc-notes helper: execute signed deployment: %w", err)
+	}
+	receipt, err := helpercontract.DecodeDeploymentResult(result.Stdout)
+	if err != nil {
+		return helpercontract.DeploymentResult{}, err
+	}
+	if receipt.Action != action {
+		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: deployment result action differs from request")
+	}
+	return receipt, nil
+}
+
+func runInstalledRequest(
+	ctx context.Context,
+	executable string,
+	arguments []string,
+	timeout time.Duration,
+) (result worker.CommandResult, resultErr error) {
+	if !filepath.IsAbs(executable) || filepath.Clean(executable) != executable {
+		return worker.CommandResult{}, errors.New("cc-notes helper: fixed signed app executable path is not exact and absolute")
+	}
+	info, err := os.Lstat(executable)
+	if err != nil {
+		return worker.CommandResult{}, fmt.Errorf("cc-notes helper: fixed signed app is not installed; run `cc-notes service install`: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode()&0o111 == 0 {
+		return worker.CommandResult{}, errors.New("cc-notes helper: fixed signed app executable is invalid")
+	}
+	runner, err := NewToolRunner(ctx)
+	if err != nil {
+		return worker.CommandResult{}, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, runner.Close(ctx)) }()
+	result, err = runner.Run(ctx, worker.CommandRequest{
+		Path: executable, Dir: "/", Args: arguments, TotalTimeout: timeout,
+	})
+	if err != nil {
+		return result, fmt.Errorf("signed app request: %w: %s", err, strings.TrimSpace(string(result.Stderr)))
+	}
+	return result, nil
+}
+
+func newToolIdentity(prefix string) (string, proc.OwnerGeneration, error) {
+	directory, err := os.MkdirTemp("", prefix)
+	if err != nil {
+		return "", proc.OwnerGeneration{}, fmt.Errorf("cc-notes helper: create tool recovery directory: %w", err)
+	}
+	generation, err := proc.ProcessGeneration()
+	if err != nil {
+		return "", proc.OwnerGeneration{}, errors.Join(err, os.RemoveAll(directory))
+	}
+	return directory, generation, nil
+}
+
+func writeAll(file *os.File, content []byte) error {
+	for len(content) != 0 {
+		written, err := file.Write(content)
+		content = content[written:]
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var _ interface {
+	Run(context.Context, worker.CommandRequest) (worker.CommandResult, error)
+} = (*ToolRunner)(nil)

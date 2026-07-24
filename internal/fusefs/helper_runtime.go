@@ -26,14 +26,13 @@ const helperOwner tenant.OwnerID = "cc-notes"
 type HelperRuntimeConfig struct {
 	Plan                    holder.RuntimePlan
 	Drivers                 holder.DriverFactories
-	StopRole                string
-	StopControlStore        proc.StopControlStore
+	TrustRequirements       holder.RuntimeTrustRequirements
+	StopControlStore        *proc.FileStore
 	WorkerLimit             int
 	NativeOptions           []string
 	NativeReadinessTimeout  time.Duration
 	NativeStdout            io.Writer
 	NativeStderr            io.Writer
-	SourceReadinessTimeout  time.Duration
 	SourceStderr            io.Writer
 	CatalogReadinessTimeout time.Duration
 	CatalogOperationTimeout time.Duration
@@ -52,12 +51,11 @@ func newHolderConfig(config HelperRuntimeConfig) holder.Config {
 	return holder.Config{
 		Plan: config.Plan, RuntimeBuild: config.Plan.BuildID(),
 		Owner: catalog.SourceAuthorityFleetOwnerID(helperOwner), Drivers: config.Drivers,
-		StopRole: config.StopRole, StopControlStore: config.StopControlStore,
+		TrustRequirements: config.TrustRequirements, StopControlStore: config.StopControlStore,
 		CatalogAuthorizer: catalogAuthorizer{policy}, Authorizer: mountAuthorizer{policy},
 		WorkerLimit: config.WorkerLimit, NativeOptions: config.NativeOptions,
 		NativeReadinessTimeout: config.NativeReadinessTimeout,
 		NativeStdout:           config.NativeStdout, NativeStderr: config.NativeStderr,
-		SourceReadinessTimeout:  config.SourceReadinessTimeout,
 		SourceStderr:            config.SourceStderr,
 		CatalogReadinessTimeout: config.CatalogReadinessTimeout,
 		CatalogOperationTimeout: config.CatalogOperationTimeout,
@@ -290,9 +288,15 @@ func tenantLifecycleOperation(operation mountproto.Operation) bool {
 
 func nativeOperation(operation mountproto.Operation) bool {
 	switch operation {
-	case mountproto.OperationNativeBind, mountproto.OperationNativeReady,
-		mountproto.OperationNativeUnbind, mountproto.OperationNativeRoutePage, mountproto.OperationNativePin,
-		mountproto.OperationNativeRelease:
+	case mountproto.OperationNativeBind, mountproto.OperationNativeMounted,
+		mountproto.OperationNativeReady, mountproto.OperationNativeUnbind,
+		mountproto.OperationNativeRoutePage, mountproto.OperationNativePin,
+		mountproto.OperationNativeRelease, mountproto.OperationNativeSnapshotOpen,
+		mountproto.OperationNativeSnapshotRead, mountproto.OperationNativeSnapshotClose,
+		mountproto.OperationNativeWriteOpen, mountproto.OperationNativeWriteRead,
+		mountproto.OperationNativeWriteWrite, mountproto.OperationNativeWriteTruncate,
+		mountproto.OperationNativeWriteSync, mountproto.OperationNativeWriteCommit,
+		mountproto.OperationNativeWriteAbort:
 		return true
 	default:
 		return false

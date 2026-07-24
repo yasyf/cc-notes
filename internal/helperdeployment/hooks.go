@@ -18,6 +18,8 @@ import (
 	"github.com/yasyf/fusekit/holder"
 	"github.com/yasyf/fusekit/mountproto"
 	"github.com/yasyf/fusekit/mountservice"
+	"github.com/yasyf/fusekit/transportproto"
+	"github.com/yasyf/fusekit/trustroles"
 )
 
 const readinessPoll = 100 * time.Millisecond
@@ -26,23 +28,37 @@ type productHooks struct {
 	buildID          string
 	policyDigest     deployment.SHA256
 	verifyInstalled  func(context.Context, string, string) (string, string, error)
-	servicePlan      func(deployment.Operation) (service.Plan, error)
-	servicePlanBuild func(deployment.Operation, string) (service.Plan, error)
-	target           func(deployment.Operation) (runtimeTarget, error)
-	targetBuild      func(deployment.Operation, string) (runtimeTarget, error)
-	observe          func(context.Context, string) (mountproto.RuntimeHealthResponse, error)
+	servicePlanBuild func(string, string) (service.Plan, error)
+	targetBuild      func(string, string) (runtimeTarget, error)
+	observe          func(context.Context, runtimeTarget) (mountproto.RuntimeHealthResponse, error)
+	stop             func(context.Context, deployment.RuntimeStopper, runtimeTarget, service.StopRuntimeRequest) (runtimeStopProof, error)
 	identities       func(string) ([]proc.Identity, error)
 }
 
 func newProductHooks(buildID string, policyDigest deployment.SHA256) productHooks {
 	hooks := productHooks{
 		buildID: buildID, policyDigest: policyDigest,
-		verifyInstalled: verifyInstalledGeneration, observe: observeRuntimeHealth,
+		verifyInstalled: verifyInstalledGeneration,
+		observe:         observeRuntime,
+		stop: func(
+			ctx context.Context,
+			stopper deployment.RuntimeStopper,
+			_ runtimeTarget,
+			request service.StopRuntimeRequest,
+		) (runtimeStopProof, error) {
+			receipt, err := stopper.StopRuntime(ctx, request)
+			if err != nil {
+				return runtimeStopProof{}, err
+			}
+			return runtimeStopProof{
+				operationID: receipt.OperationID(), target: receipt.Target(),
+				processRecordDigest: receipt.ProcessRecordDigest(), settlement: receipt.Settlement(),
+				receiptDigest: receipt.Digest(),
+			}, nil
+		},
 		identities: proc.ExecutableIdentities,
 	}
-	hooks.servicePlan = hooks.servicePlanForOperation
 	hooks.servicePlanBuild = hooks.servicePlanForBuild
-	hooks.target = hooks.runtimeTargetForOperation
 	hooks.targetBuild = hooks.runtimeTargetForBuild
 	return hooks
 }
@@ -54,25 +70,51 @@ type runtimeTarget struct {
 	presentationRoot string
 }
 
+type runtimeStopProof struct {
+	operationID         string
+	target              wire.RuntimeIdentity
+	processRecordDigest proc.RecordDigest
+	settlement          service.StopSettlement
+	receiptDigest       service.StopReceiptDigest
+}
+
+func observeRuntime(
+	ctx context.Context,
+	target runtimeTarget,
+) (health mountproto.RuntimeHealthResponse, resultErr error) {
+	client, err := mountservice.NewClient(ctx, wire.ClientConfig{
+		Dial: wire.UnixDialer(target.socket), WireBuild: transportproto.WireBuild,
+		Role: trustroles.ReadinessController,
+	})
+	if err != nil {
+		return mountproto.RuntimeHealthResponse{}, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, client.Close()) }()
+	return client.RuntimeHealth(ctx)
+}
+
 func (h productHooks) runtimeQuiesce(
 	ctx context.Context,
 	stopper deployment.RuntimeStopper,
-	operation deployment.RuntimeQuiesceOperation,
+	operation deployment.DeactivateInstalledOperation,
 ) (deployment.RuntimeProof, error) {
-	productOperation := deployment.Operation{
-		ID: operation.ID, Generation: operation.Generation, Role: operation.Role,
-	}
-	target, err := h.target(productOperation)
+	activation := operation.Activation()
+	generation := activation.Generation()
+	plan := activation.Plan()
+	buildID, err := exactPlanBuildID(generation.Path(), plan)
 	if err != nil {
 		return deployment.RuntimeProof{}, err
 	}
-	health, observeErr := h.observe(ctx, target.socket)
+	target, err := h.targetBuild(generation.Path(), buildID)
+	if err != nil {
+		return deployment.RuntimeProof{}, err
+	}
+	health, observeErr := h.observe(ctx, target)
 	if observeErr != nil {
 		identities, inventoryErr := h.identities(target.executable)
 		if inventoryErr != nil {
 			return deployment.RuntimeProof{}, fmt.Errorf(
-				"cc-notes helper: prove prior runtime absence: %w",
-				errors.Join(observeErr, inventoryErr),
+				"cc-notes helper: prove prior runtime absence: %w", errors.Join(observeErr, inventoryErr),
 			)
 		}
 		if len(identities) != 0 {
@@ -81,106 +123,109 @@ func (h productHooks) runtimeQuiesce(
 				len(identities), observeErr,
 			)
 		}
-		return deployment.RuntimeProof{
-			Role: operation.Role, Absent: true,
-			Digest: h.proofDigest("runtime-absent", productOperation, target.executable),
-		}, nil
+		return deployment.NewRuntimeProof(true, proc.OwnerGeneration{}, h.proofDigest(
+			"runtime-absent", operation.OperationID(), generation, plan, target.executable,
+		))
 	}
 	if err := validateRuntimeTarget(health); err != nil {
 		return deployment.RuntimeProof{}, err
 	}
-	switch operation.Intent {
-	case wire.StopIntentUpgrade, wire.StopIntentRestart, wire.StopIntentUninstall:
-	default:
-		return deployment.RuntimeProof{}, errors.New("cc-notes helper: runtime quiesce has an invalid stop intent")
+	processGeneration, err := proc.ParseOwnerGeneration(health.ProcessGeneration)
+	if err != nil {
+		return deployment.RuntimeProof{}, fmt.Errorf("cc-notes helper: parse observed runtime generation: %w", err)
 	}
-	result, err := stopper.StopRuntime(ctx, service.StopControlSpec{
-		Executable: target.executable, Args: holder.StopControlChildArguments(),
-		Role: helperclient.DeploymentStopRole, RuntimeBuild: h.buildID,
-		RuntimeProtocol:         int(mountproto.RuntimeProtocolVersion),
-		TargetProcessGeneration: health.ProcessGeneration, Intent: operation.Intent,
-	})
+	request := runtimeStopRequest(operation.OperationID(), target, health.RuntimeBuild)
+	receipt, err := h.stop(ctx, stopper, target, request)
 	if err != nil {
 		return deployment.RuntimeProof{}, fmt.Errorf("cc-notes helper: settle prior runtime: %w", err)
 	}
-	if !result.Stopped || result.ProcessGeneration != health.ProcessGeneration ||
-		result.RuntimeBuild != health.RuntimeBuild || result.RuntimeProtocol != int(mountproto.RuntimeProtocolVersion) {
-		return deployment.RuntimeProof{}, errors.New("cc-notes helper: stop result does not match the observed runtime generation")
+	if err := validateRuntimeStopProof(operation.OperationID(), processGeneration, health.RuntimeBuild, receipt); err != nil {
+		return deployment.RuntimeProof{}, err
 	}
-	return deployment.RuntimeProof{
-		Role:              operation.Role,
-		ProcessGeneration: health.ProcessGeneration,
-		Digest: h.proofDigest(
-			"runtime-quiesced", productOperation, string(operation.Intent), h.buildID,
-			health.RuntimeBuild, health.ProcessGeneration,
-		),
-	}, nil
+	return deployment.NewRuntimeProof(true, processGeneration, h.proofDigest(
+		"runtime-quiesced", operation.OperationID(), generation, plan,
+		health.RuntimeBuild, health.ProcessGeneration,
+		fmt.Sprintf("%x", receipt.processRecordDigest), fmt.Sprintf("%x", receipt.receiptDigest),
+	))
 }
 
-func (h productHooks) postInstallProof(ctx context.Context, operation deployment.Operation) (deployment.Proof, error) {
-	return h.installedProof(ctx, "post-install", operation)
-}
-
-func (h productHooks) priorAppRestoreProof(ctx context.Context, operation deployment.Operation) (deployment.Proof, error) {
-	return h.installedProof(ctx, "prior-restored", operation)
-}
-
-func (h productHooks) installedProof(
-	ctx context.Context,
-	kind string,
-	operation deployment.Operation,
-) (deployment.Proof, error) {
-	library, digest, err := h.verifyInstalled(ctx, operation.Generation.Path, h.buildID)
-	if err != nil {
-		return deployment.Proof{}, err
+func runtimeStopRequest(operationID string, target runtimeTarget, buildID string) service.StopRuntimeRequest {
+	return service.StopRuntimeRequest{
+		OperationID: operationID,
+		RuntimeClientConfig: wire.RuntimeClientConfig{
+			Client: wire.ClientConfig{
+				Dial: wire.UnixDialer(target.socket), WireBuild: transportproto.WireBuild,
+				Role: trustroles.StopController,
+			},
+			NoProgressTimeout: holder.StandardReadinessContract().PreparationNoProgressTimeout(),
+		},
+		ExpectedRuntimeBuild: buildID,
+		ControlRole:          trustroles.StopController,
 	}
-	if library == "" || digest == "" {
-		return deployment.Proof{}, errors.New("cc-notes helper: installed app has no exact FUSE proof")
-	}
-	return deployment.Proof{
-		Role: operation.Role, Digest: h.proofDigest(kind, operation, library, digest),
-	}, nil
 }
 
-func (h productHooks) buildPlan(_ context.Context, operation deployment.Operation) (service.Plan, error) {
-	return h.servicePlan(operation)
+func validateRuntimeStopProof(
+	operationID string,
+	processGeneration proc.OwnerGeneration,
+	buildID string,
+	receipt runtimeStopProof,
+) error {
+	if receipt.operationID != operationID || receipt.target.ProcessGeneration != processGeneration ||
+		receipt.target.RuntimeBuild != buildID ||
+		receipt.processRecordDigest == (proc.RecordDigest{}) || receipt.settlement != service.StopSettlementGone ||
+		receipt.receiptDigest == (service.StopReceiptDigest{}) {
+		return errors.New("cc-notes helper: stop result does not match the observed runtime generation")
+	}
+	return nil
 }
 
 func (h productHooks) readiness(
 	ctx context.Context,
-	operation deployment.Operation,
-	got service.Plan,
-) (deployment.Proof, error) {
-	buildID, err := exactPlanBuildID(operation, got)
+	operation deployment.InstalledOperation,
+) (deployment.ReadinessProof, error) {
+	generation := operation.Generation()
+	got := operation.Plan()
+	buildID, err := exactPlanBuildID(generation.Path(), got)
 	if err != nil {
-		return deployment.Proof{}, err
+		return deployment.ReadinessProof{}, err
 	}
-	want, err := h.servicePlanBuild(operation, buildID)
+	want, err := h.servicePlanBuild(generation.Path(), buildID)
 	if err != nil {
-		return deployment.Proof{}, err
+		return deployment.ReadinessProof{}, err
 	}
 	if got.Digest() != want.Digest() || !reflect.DeepEqual(got.Agents(), want.Agents()) {
-		return deployment.Proof{}, errors.New("cc-notes helper: readiness plan is not the exact helper plan")
+		return deployment.ReadinessProof{}, errors.New("cc-notes helper: readiness plan is not the exact helper plan")
 	}
-	target, err := h.targetBuild(operation, buildID)
+	library, fuseDigest, err := h.verifyInstalled(ctx, generation.Path(), buildID)
 	if err != nil {
-		return deployment.Proof{}, err
+		return deployment.ReadinessProof{}, err
+	}
+	if library == "" || fuseDigest == "" {
+		return deployment.ReadinessProof{}, errors.New("cc-notes helper: installed app has no exact FUSE proof")
+	}
+	target, err := h.targetBuild(generation.Path(), buildID)
+	if err != nil {
+		return deployment.ReadinessProof{}, err
 	}
 	readyCtx, cancel := context.WithTimeout(ctx, holder.StandardReadinessContract().ObservationTimeout())
 	defer cancel()
 	var lastErr error
 	for {
-		health, observeErr := h.observe(readyCtx, target.socket)
+		health, observeErr := h.observe(readyCtx, target)
 		if observeErr == nil {
 			validateErr := validateRuntimeReadiness(target, health)
 			if validateErr == nil {
-				return deployment.Proof{
-					Role: operation.Role, PlanDigest: operation.PlanDigest,
-					Digest: h.proofDigest(
-						"runtime-ready", operation, got.Digest().String(), health.ProcessGeneration,
-						health.ActivationGeneration,
+				processGeneration, parseErr := proc.ParseOwnerGeneration(health.ProcessGeneration)
+				if parseErr != nil {
+					return deployment.ReadinessProof{}, parseErr
+				}
+				return deployment.NewReadinessProof(
+					health.RuntimeBuild, processGeneration,
+					h.proofDigest(
+						"runtime-ready", operation.OperationID(), generation, got,
+						library, fuseDigest, health.ProcessGeneration, health.ActivationGeneration,
 					),
-				}, nil
+				)
 			}
 			lastErr = validateErr
 		} else {
@@ -188,19 +233,15 @@ func (h productHooks) readiness(
 		}
 		select {
 		case <-readyCtx.Done():
-			return deployment.Proof{}, fmt.Errorf(
-				"cc-notes helper: wait for deployment readiness: %w",
-				errors.Join(readyCtx.Err(), lastErr),
+			return deployment.ReadinessProof{}, fmt.Errorf(
+				"cc-notes helper: wait for deployment readiness: %w", errors.Join(readyCtx.Err(), lastErr),
 			)
 		case <-time.After(readinessPoll):
 		}
 	}
 }
 
-func (h productHooks) planForBuild(
-	operation deployment.Operation,
-	buildID string,
-) (holder.DeploymentPlan, error) {
+func (h productHooks) planForBuild(appPath, buildID string) (holder.DeploymentPlan, error) {
 	runtimeDirectory, err := RuntimeDirectory()
 	if err != nil {
 		return holder.DeploymentPlan{}, err
@@ -214,34 +255,20 @@ func (h productHooks) planForBuild(
 		return holder.DeploymentPlan{}, err
 	}
 	return holder.NewDeploymentPlan(DeploymentPlanSpec(
-		operation.Generation.Path, runtimeDirectory, presentationRoot, buildID, digest,
+		appPath, runtimeDirectory, presentationRoot, buildID, digest,
 	))
 }
 
-func (h productHooks) servicePlanForOperation(operation deployment.Operation) (service.Plan, error) {
-	return h.servicePlanForBuild(operation, h.buildID)
-}
-
-func (h productHooks) servicePlanForBuild(
-	operation deployment.Operation,
-	buildID string,
-) (service.Plan, error) {
-	plan, err := h.planForBuild(operation, buildID)
+func (h productHooks) servicePlanForBuild(appPath, buildID string) (service.Plan, error) {
+	plan, err := h.planForBuild(appPath, buildID)
 	if err != nil {
 		return service.Plan{}, err
 	}
 	return service.NewPlan([]service.Agent{plan.Agent()})
 }
 
-func (h productHooks) runtimeTargetForOperation(operation deployment.Operation) (runtimeTarget, error) {
-	return h.runtimeTargetForBuild(operation, h.buildID)
-}
-
-func (h productHooks) runtimeTargetForBuild(
-	operation deployment.Operation,
-	buildID string,
-) (runtimeTarget, error) {
-	plan, err := h.planForBuild(operation, buildID)
+func (h productHooks) runtimeTargetForBuild(appPath, buildID string) (runtimeTarget, error) {
+	plan, err := h.planForBuild(appPath, buildID)
 	if err != nil {
 		return runtimeTarget{}, err
 	}
@@ -255,14 +282,14 @@ func (h productHooks) runtimeTargetForBuild(
 	}, nil
 }
 
-func exactPlanBuildID(operation deployment.Operation, plan service.Plan) (string, error) {
+func exactPlanBuildID(appPath string, plan service.Plan) (string, error) {
 	agents := plan.Agents()
 	if len(agents) != 1 {
 		return "", errors.New("cc-notes helper: readiness plan must contain exactly one helper agent")
 	}
 	agent := agents[0]
 	buildID := agent.Env["FUSEKIT_BUILD_ID"]
-	if agent.Program != helperExecutablePath(operation.Generation.Path) || buildID == "" {
+	if agent.Program != helperExecutablePath(appPath) || buildID == "" {
 		return "", errors.New("cc-notes helper: readiness plan does not target the exact helper generation")
 	}
 	return buildID, nil
@@ -284,23 +311,14 @@ func verifyInstalledGeneration(ctx context.Context, appPath, buildID string) (st
 	return library, digest, nil
 }
 
-func observeRuntimeHealth(
-	ctx context.Context,
-	socket string,
-) (health mountproto.RuntimeHealthResponse, resultErr error) {
-	client, err := mountservice.NewClient(ctx, wire.ClientConfig{Dial: wire.UnixDialer(socket)})
-	if err != nil {
-		return mountproto.RuntimeHealthResponse{}, err
-	}
-	defer func() { resultErr = errors.Join(resultErr, client.Close()) }()
-	return client.RuntimeHealth(ctx)
-}
-
 func validateRuntimeTarget(health mountproto.RuntimeHealthResponse) error {
 	if health.Protocol != mountproto.Version || health.Code != mountproto.ErrorCodeOk || health.Message != "" ||
 		health.RuntimeBuild == "" || health.RuntimeProtocol != mountproto.RuntimeProtocolVersion ||
 		health.RuntimePID <= 0 || health.ProcessGeneration == "" {
 		return errors.New("cc-notes helper: prior runtime health has the wrong exact generation")
+	}
+	if _, err := proc.ParseOwnerGeneration(health.ProcessGeneration); err != nil {
+		return errors.New("cc-notes helper: prior runtime health has a malformed process generation")
 	}
 	return nil
 }
@@ -327,17 +345,19 @@ func validateRuntimeReadiness(target runtimeTarget, health mountproto.RuntimeHea
 	return nil
 }
 
-func (h productHooks) proofDigest(kind string, operation deployment.Operation, details ...string) deployment.SHA256 {
+func (h productHooks) proofDigest(
+	kind, operationID string,
+	generation deployment.InstalledAttestation,
+	plan service.Plan,
+	details ...string,
+) deployment.SHA256 {
 	digest := sha256.New()
-	values := make([]string, 0, 15+len(details))
+	values := make([]string, 0, 14+len(details))
 	values = append(values,
-		helperclient.DeploymentProofIdentity, kind, operation.ID,
-		string(operation.Role), operation.PlanDigest.String(),
-		operation.Generation.Path, operation.Generation.Release.Version,
-		operation.Generation.Release.URL, operation.Generation.Release.SHA256.String(),
-		operation.Generation.DesignatedRequirement, operation.Generation.CDHash,
-		operation.Generation.BundleDigest.String(), operation.Generation.Device, operation.Generation.Inode,
-		h.policyDigest.String(),
+		DeploymentProofIdentity, kind, operationID, plan.Digest().String(),
+		generation.Path(), generation.Version(), generation.TeamID(), generation.SigningIdentifier(),
+		generation.DesignatedRequirement(), generation.CDHash(), generation.BundleDigest().String(),
+		generation.EntitlementsDigest().String(), h.policyDigest.String(),
 	)
 	values = append(values, details...)
 	for _, value := range values {

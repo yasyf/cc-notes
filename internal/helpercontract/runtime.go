@@ -5,8 +5,6 @@ import "time"
 const (
 	// RuntimeNativeReadinessTimeout bounds native presentation startup readiness.
 	RuntimeNativeReadinessTimeout = 30 * time.Second
-	// RuntimeSourceReadinessTimeout bounds source observer startup readiness.
-	RuntimeSourceReadinessTimeout = 30 * time.Second
 	// RuntimeCatalogReadinessTimeout bounds catalog worker startup readiness.
 	RuntimeCatalogReadinessTimeout = 30 * time.Second
 	// RuntimeCatalogOperationTimeout bounds each catalog worker operation.
