@@ -290,7 +290,7 @@ func deploymentPolicyJSON() ([]byte, error) {
 				RuntimePolicyDigest: hex.EncodeToString(runtimePolicy[:]),
 			},
 			Native: deploymentNativePolicy{
-				Enabled: true, PresentationRootHomeRelative: ".cc-notes/mnt",
+				Enabled: true, PresentationRootHomeRelative: "CCNotes",
 				RequiredPhase: mountproto.NativePhaseLive, Filesystem: mountproto.NativeMountFilesystem,
 				FUSE: deploymentFUSEPolicy{
 					ManifestVersion: 1, SourceSHA256: holder.FUSESourceSHA256,

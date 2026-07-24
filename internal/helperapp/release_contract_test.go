@@ -199,6 +199,16 @@ func TestFixedHelperLivesOnlyInUserApplications(t *testing.T) {
 	)
 }
 
+func TestReleasedNativePresentationRootIsUserVisible(t *testing.T) {
+	root := filepath.Join("..", "..")
+	assertFileContains(t, filepath.Join(root, "internal", "helperclient", "identity.go"),
+		`return filepath.Join(home, "CCNotes"), nil`,
+	)
+	assertFileContains(t, filepath.Join(root, "internal", "helperdeployment", "deployment_identity.go"),
+		`PresentationRootHomeRelative: "CCNotes"`,
+	)
+}
+
 func TestServiceCommandsAreExplicitMachineOnlyOperations(t *testing.T) {
 	serviceSource := filepath.Join("..", "..", "internal", "cli", "service.go")
 	assertFileContains(t, serviceSource,
