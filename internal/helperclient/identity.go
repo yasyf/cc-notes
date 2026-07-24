@@ -6,9 +6,33 @@ import (
 	"fmt"
 	"os/user"
 	"path/filepath"
+	"regexp"
+	"strings"
 
+	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/daemonkit/bundle"
+	"github.com/yasyf/daemonkit/codeidentity"
 )
+
+var releaseVersionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+
+// CodeIdentity returns the only accepted signed helper identity.
+func CodeIdentity() codeidentity.CodeIdentity {
+	return codeidentity.CodeIdentity{TeamID: TeamID, SigningIdentifier: BundleID}
+}
+
+// MarketingVersion returns the exact numeric helper bundle version for this release.
+func MarketingVersion() (string, error) {
+	tag := version.Version
+	if !releaseVersionPattern.MatchString(tag) {
+		return "", fmt.Errorf("cc-notes helper: build version %q is not an exact release tag", tag)
+	}
+	marketing := strings.TrimPrefix(tag, "v")
+	if separator := strings.IndexByte(marketing, '-'); separator >= 0 {
+		marketing = marketing[:separator]
+	}
+	return marketing, nil
+}
 
 const (
 	// BundleID is the fixed helper application signing identifier.

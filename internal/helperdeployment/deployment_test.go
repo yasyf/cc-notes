@@ -55,7 +55,7 @@ func TestHelperMarketingVersionIsExactReleaseTag(t *testing.T) {
 	t.Cleanup(func() { version.Version = original })
 	for tag, want := range map[string]string{
 		"v1.2.3":      "1.2.3",
-		"v1.2.3-rc.4": "1.2.3-rc.4",
+		"v1.2.3-rc.4": "1.2.3",
 	} {
 		version.Version = tag
 		got, err := helperMarketingVersion()

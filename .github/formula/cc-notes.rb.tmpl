@@ -1,6 +1,5 @@
 # Homebrew formula for cc-notes. Installs the prebuilt binary for the current
 # platform from cc-notes' GitHub Releases — no Go toolchain needed.
-# `brew install --HEAD` builds (pure Go) from source instead.
 #
 #   brew install yasyf/tap/cc-notes
 #
@@ -20,12 +19,12 @@ class CcNotes < Formula
     strategy :github_latest
   end
 
-  head do
-    url "https://github.com/yasyf/cc-notes.git", branch: "main"
-    depends_on "go" => :build
-  end
-
   on_macos do
+    resource "helper" do
+      url "https://github.com/yasyf/cc-notes/releases/download/v#{version}/cc-notes-helper-v#{version}-darwin.zip"
+      sha256 "__SHA_HELPER__"
+    end
+
     on_arm do
       url "https://github.com/yasyf/cc-notes/releases/download/v#{version}/cc-notes_darwin_arm64"
       sha256 "__SHA_DARWIN_ARM64__"
@@ -48,15 +47,24 @@ class CcNotes < Formula
   end
 
   def install
-    if build.head?
-      ENV["CGO_ENABLED"] = "0"
-      ldflags = "-s -w -X github.com/yasyf/cc-notes/internal/version.Version=#{version}"
-      system "go", "build", *std_go_args(ldflags: ldflags, output: bin/"cc-notes"), "./cmd/cc-notes"
-    else
-      # The release asset is a bare binary staged under its asset name.
-      bin.install Dir["cc-notes_*"].first => "cc-notes"
+    # The release asset is a bare binary staged under its asset name.
+    bin.install Dir["cc-notes_*"].first => "cc-notes"
+    if OS.mac?
+      resource("helper").stage do
+        system "/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "CCNotesHelper.app"
+        libexec.install "CCNotesHelper.app"
+      end
     end
     bin.install_symlink "cc-notes" => "ccn"
+  end
+
+  def caveats
+    return if OS.linux?
+
+    <<~EOS
+      Install and activate the fixed signed helper explicitly:
+        cc-notes package install
+    EOS
   end
 
   test do

@@ -24,6 +24,7 @@ printf '%s\n' "$*" >> "$FIXTURE_COMMAND_LOG"
 exit 0
 EOF
 chmod +x "$WORK/fixture-binary"
+printf 'signed helper archive fixture\n' > "$WORK/fixture-helper"
 
 # uname stub: answers from FAKE_OS / FAKE_ARCH.
 cat > "$WORK/stub/uname" <<'EOF'
@@ -43,6 +44,14 @@ cat > "$WORK/stub/brew" <<'EOF'
 exit 1
 EOF
 chmod +x "$WORK/stub/brew"
+
+cat > "$WORK/stub/ditto" <<'EOF'
+#!/bin/sh
+for destination; do :; done
+mkdir -p "$destination/CCNotesHelper.app"
+printf 'fixture\n' > "$destination/CCNotesHelper.app/marker"
+EOF
+chmod +x "$WORK/stub/ditto"
 
 # curl stub: resolves "latest" to FAKE_TAG and "downloads" by copying the
 # fixture, logging the requested asset URL to REQUESTED_LOG.
@@ -67,10 +76,19 @@ case "$*" in
       hash="$(shasum -a 256 "$FIXTURE_BIN" | awk '{print $1}')"
     fi
     printf '%s  %s\n' "$hash" "$FAKE_ASSET"
+    if command -v sha256sum >/dev/null 2>&1; then
+      helper_hash="$(sha256sum "$FIXTURE_HELPER" | awk '{print $1}')"
+    else
+      helper_hash="$(shasum -a 256 "$FIXTURE_HELPER" | awk '{print $1}')"
+    fi
+    printf '%s  cc-notes-helper-%s-darwin.zip\n' "$helper_hash" "${FAKE_TAG:-v0.9.9}"
     ;;
   *)
     printf '%s\n' "$url" >> "$REQUESTED_LOG"
-    cp "$FIXTURE_BIN" "$out"
+    case "$url" in
+      *cc-notes-helper-*) cp "$FIXTURE_HELPER" "$out" ;;
+      *) cp "$FIXTURE_BIN" "$out" ;;
+    esac
     ;;
 esac
 EOF
@@ -80,19 +98,19 @@ REQUESTED_LOG="$WORK/requested"
 FIXTURE_COMMAND_LOG="$WORK/fixture-commands"
 export REQUESTED_LOG FIXTURE_COMMAND_LOG FAKE_TAG="v0.9.9"
 export FIXTURE_BIN="$WORK/fixture-binary"
+export FIXTURE_HELPER="$WORK/fixture-helper"
 
 run_install() { # $1=os $2=arch $3=expected-asset
   : > "$REQUESTED_LOG"
-  rm -rf "${WORK:?}/bin"
+  rm -rf "${WORK:?}/bin" "${WORK:?}/libexec"
   PATH="$WORK/stub:$PATH" FAKE_OS="$1" FAKE_ARCH="$2" FAKE_ASSET="$3" CC_NOTES_BIN_DIR="$WORK/bin" \
     "$INSTALL" >/dev/null 2>&1
 }
 
 expect() { # $1=os $2=arch $3=expected-asset
   run_install "$1" "$2" "$3"
-  got="$(basename "$(tail -n1 "$REQUESTED_LOG")")"
-  if [ "$got" != "$3" ]; then
-    echo "FAIL: uname(-s=$1 -m=$2) requested '$got', expected '$3'" >&2
+  if ! grep -q "/$3$" "$REQUESTED_LOG"; then
+    echo "FAIL: uname(-s=$1 -m=$2) did not request '$3': $(cat "$REQUESTED_LOG")" >&2
     exit 1
   fi
   echo "ok: $1/$2 -> $3"
@@ -128,6 +146,10 @@ if grep -Eq '(^| )((service (install|uninstall))|init)( |$)' "$FIXTURE_COMMAND_L
   echo "FAIL: installer implicitly invoked init or changed the service" >&2
   exit 1
 fi
-echo "ok: installer leaves repository and service setup explicit"
+if ! grep -qx 'package install' "$FIXTURE_COMMAND_LOG"; then
+  echo "FAIL: Darwin installer did not activate the packaged helper" >&2
+  exit 1
+fi
+echo "ok: installer activates only the packaged helper"
 
 echo "PASS: install.sh harness"
