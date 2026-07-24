@@ -8,10 +8,6 @@ var (
 	Version = "dev"
 	// Commit is the exact git commit, set by -ldflags at release time.
 	Commit = ""
-	// HelperVersion is the exact signed-helper bundle version, set by -ldflags.
-	HelperVersion = ""
-	// HelperSHA256 is the exact signed-helper release digest, set by -ldflags.
-	HelperSHA256 = ""
 )
 
 // String renders a human-readable version line.

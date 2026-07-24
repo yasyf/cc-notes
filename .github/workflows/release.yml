@@ -78,7 +78,7 @@ jobs:
 
   pure:
     name: pure ${{ matrix.goos }}/${{ matrix.goarch }}
-    needs: [verify-tag-on-main, web-dist, version, helper-app]
+    needs: [verify-tag-on-main, web-dist, version]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -96,7 +96,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           COMMIT="$GITHUB_SHA"
-          LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${RELEASE_TAG} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT} -X github.com/yasyf/cc-notes/internal/version.HelperVersion=${{ needs.version.outputs.marketing }} -X github.com/yasyf/cc-notes/internal/version.HelperSHA256=${{ needs.helper-app.outputs.sha256 }}"
+          LDFLAGS="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=${RELEASE_TAG} -X github.com/yasyf/cc-notes/internal/version.Commit=${COMMIT}"
           mkdir -p dist
           CGO_ENABLED=0 go build -tags webui -ldflags "$LDFLAGS" -o "dist/cc-notes_${GOOS}_${GOARCH}" ./cmd/cc-notes
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -258,12 +258,14 @@ jobs:
           sha() { awk -v a="$1" '$2 == a {print $1}' sums.txt; }
           da="$(sha cc-notes_darwin_arm64)"; dx="$(sha cc-notes_darwin_amd64)"
           la="$(sha cc-notes_linux_arm64)"; lx="$(sha cc-notes_linux_amd64)"
-          test -n "$da" && test -n "$dx" && test -n "$la" && test -n "$lx"
+          helper="$(sha "cc-notes-helper-${RELEASE_TAG}-darwin.zip")"
+          test -n "$da" && test -n "$dx" && test -n "$la" && test -n "$lx" && test -n "$helper"
           {
             echo "darwin_arm64=$da"
             echo "darwin_amd64=$dx"
             echo "linux_amd64=$lx"
             echo "linux_arm64=$la"
+            echo "helper=$helper"
           } >> "$GITHUB_OUTPUT"
       - name: Resolve formula version
         id: version
@@ -279,6 +281,7 @@ jobs:
             __SHA_DARWIN_AMD64__=${{ steps.shas.outputs.darwin_amd64 }}
             __SHA_LINUX_AMD64__=${{ steps.shas.outputs.linux_amd64 }}
             __SHA_LINUX_ARM64__=${{ steps.shas.outputs.linux_arm64 }}
+            __SHA_HELPER__=${{ steps.shas.outputs.helper }}
       - name: Publish the exact CLI to the tap
         uses: yasyf/homebrew-tap/.github/actions/publish@9ca67392d45d66b6ae01e262383c8f3138d56f5e
         with:

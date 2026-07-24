@@ -6,13 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"regexp"
 	"strings"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/cc-notes/internal/helpercontract"
 	"github.com/yasyf/cc-notes/internal/version"
-	"github.com/yasyf/daemonkit/codeidentity"
 	"github.com/yasyf/daemonkit/deployment"
 	"github.com/yasyf/daemonkit/service"
 )
@@ -31,12 +29,6 @@ var (
 	executeActivation      = activateInstalled
 	executeDeactivation    = deactivateInstalled
 )
-
-var releaseVersionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
-
-func helperCodeIdentity() codeidentity.CodeIdentity {
-	return codeidentity.CodeIdentity{TeamID: helperclient.TeamID, SigningIdentifier: helperclient.BundleID}
-}
 
 // ExecuteDeployment runs one complete activation operation inside the fixed signed helper.
 func ExecuteDeployment(
@@ -75,16 +67,12 @@ func installedSpec() (deployment.InstalledSpec, error) {
 		return deployment.InstalledSpec{}, err
 	}
 	return deployment.InstalledSpec{
-		AppPath: appPath, Version: marketingVersion, Identity: helperCodeIdentity(),
+		AppPath: appPath, Version: marketingVersion, Identity: helperclient.CodeIdentity(),
 	}, nil
 }
 
 func helperMarketingVersion() (string, error) {
-	tag := version.Version
-	if !releaseVersionPattern.MatchString(tag) {
-		return "", fmt.Errorf("cc-notes helper: build version %q is not an exact release tag", tag)
-	}
-	return strings.TrimPrefix(tag, "v"), nil
+	return helperclient.MarketingVersion()
 }
 
 func activationInputs(

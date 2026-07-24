@@ -26,13 +26,13 @@ func TestReleaseUsesPinnedReusableFixedHelperWorkflow(t *testing.T) {
 		"assert_script: .github/scripts/assert-helper-app.sh",
 		"prebuild_brew_packages: macos-fuse-t/cask/fuse-t",
 		"prebuild_script: helper-app/prepare-release.sh",
-		"github.com/yasyf/cc-notes/internal/version.HelperVersion=${{ needs.version.outputs.marketing }}",
-		"github.com/yasyf/cc-notes/internal/version.HelperSHA256=${{ needs.helper-app.outputs.sha256 }}",
 		`COMMIT="$GITHUB_SHA"`,
 		`grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'`,
 		"HELPER_ASSET_FILENAME: ${{ needs.helper-app.outputs.asset_filename }}",
 		"HELPER_ASSET_URL: ${{ needs.helper-app.outputs.asset_url }}",
 		"HELPER_SHA256: ${{ needs.helper-app.outputs.sha256 }}",
+		`helper="$(sha "cc-notes-helper-${RELEASE_TAG}-darwin.zip")"`,
+		"__SHA_HELPER__=${{ steps.shas.outputs.helper }}",
 	)
 	assertFileExcludes(t, workflow,
 		"yasyf/homebrew-tap/.github/actions/sign-notarize-app@v2",
@@ -281,7 +281,7 @@ func TestActiveTreeHasNoRetiredHelperDeliverySurface(t *testing.T) {
 	}
 }
 
-func TestReleaseDoesNotPublishConsumerRuntimeCask(t *testing.T) {
+func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 	root := filepath.Join("..", "..")
 	workflow := filepath.Join(root, ".github", "workflows", "release.yml")
 	assertFileExcludes(t, workflow,
@@ -293,22 +293,30 @@ func TestReleaseDoesNotPublishConsumerRuntimeCask(t *testing.T) {
 	assertFileContains(t, workflow,
 		`test "$HELPER_ASSET_URL" = "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${HELPER_ASSET_FILENAME}"`,
 	)
-	assertFileExcludes(t, filepath.Join(root, ".github", "formula", "cc-notes.rb.tmpl"),
-		"CCNotesHelper",
-		"cc-notes-helper",
-		"service install",
-		"Casks/",
+	formula := filepath.Join(root, ".github", "formula", "cc-notes.rb.tmpl")
+	assertFileContains(t, formula,
+		`resource "helper" do`,
+		`cc-notes-helper-v#{version}-darwin.zip`,
+		`sha256 "__SHA_HELPER__"`,
+		`system "/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "CCNotesHelper.app"`,
+		`libexec.install "CCNotesHelper.app"`,
+		`cc-notes package install`,
 	)
-	for _, path := range []string{
-		filepath.Join(root, "scripts", "install.sh"),
-		filepath.Join(root, "plugin", "hooks", "ensure-cc-notes.sh"),
-	} {
-		assertFileExcludes(t, path,
-			"CCNotesHelper.app",
-			"cc-notes-helper-",
-			"/"+"Applications/",
-		)
-	}
+	assertFileExcludes(t, formula,
+		"Casks/",
+		`/Applications`,
+		`FileUtils.cp_r`,
+	)
+	installer := filepath.Join(root, "scripts", "install.sh")
+	assertFileContains(t, installer,
+		`helper_asset="cc-notes-helper-${VERSION}-darwin.zip"`,
+		`ditto -x -k "$helper_zip" "$helper_stage"`,
+		`"$DEST" package install`,
+	)
+	assertFileExcludes(t, installer, "/"+"Applications/")
+	assertFileExcludes(t, filepath.Join(root, "plugin", "hooks", "ensure-cc-notes.sh"),
+		"CCNotesHelper.app", "cc-notes-helper-", "/"+"Applications/",
+	)
 	for _, path := range []string{
 		filepath.Join(root, "Casks"),
 		filepath.Join(root, ".github", "cask"),
