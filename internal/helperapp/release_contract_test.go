@@ -322,11 +322,18 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 	)
 	installer := filepath.Join(root, "scripts", "install.sh")
 	assertFileContains(t, installer,
-		`helper_asset="cc-notes-helper-${VERSION}-darwin.zip"`,
-		`ditto -x -k "$helper_zip" "$helper_stage"`,
-		`"$DEST" package install`,
+		`brew install yasyf/tap/cc-notes`,
+		`cc-notes package install`,
+		`macOS installs only the latest signed formula release`,
 	)
-	assertFileExcludes(t, installer, "/"+"Applications/")
+	assertFileExcludes(t, installer,
+		"/"+"Applications/",
+		"helper_asset=",
+		"helper_zip",
+		"helper_stage",
+		"ditto -x",
+		"cc-notes-helper-${VERSION}",
+	)
 	assertFileExcludes(t, filepath.Join(root, "plugin", "hooks", "ensure-cc-notes.sh"),
 		"CCNotesHelper.app", "cc-notes-helper-", "/"+"Applications/",
 	)

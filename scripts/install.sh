@@ -1,8 +1,8 @@
 #!/bin/sh
 # Download the prebuilt cc-notes binary for this platform from a GitHub release
 # and install it to ~/.local/bin (override with CC_NOTES_BIN_DIR), alongside a
-# `ccn` shorthand symlink. On macOS it also installs the release's signed helper
-# under the matching prefix and explicitly activates its fixed user copy.
+# `ccn` shorthand symlink. macOS installation is exclusively through Homebrew,
+# whose formula carries the signed helper as a verified local resource.
 #
 # Usage:
 #   install.sh [VERSION]        # VERSION defaults to "latest"
@@ -13,8 +13,6 @@ REPO="yasyf/cc-notes"
 VERSION="${1:-latest}"
 BIN_DIR="${CC_NOTES_BIN_DIR:-$HOME/.local/bin}"
 DEST="$BIN_DIR/cc-notes"
-LIBEXEC_DIR="${CC_NOTES_LIBEXEC_DIR:-$(dirname "$BIN_DIR")/libexec}"
-PACKAGED_HELPER="$LIBEXEC_DIR/CCNotesHelper.app"
 
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -36,17 +34,24 @@ if [ "$(uname -s)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
     echo "cc-notes: fuse-t not installed; run 'brew install --cask macos-fuse-t/cask/fuse-t' if FuseKit mounts fail" >&2
 fi
 
-# Best-effort Homebrew for "latest". install.sh explicitly publishes the helper
-# after Homebrew has verified and installed its release resource.
-if [ "$VERSION" = "latest" ] && command -v brew >/dev/null 2>&1; then
-  if brew install yasyf/tap/cc-notes >/dev/null 2>&1 && command -v cc-notes >/dev/null 2>&1; then
-    if [ "$(uname -s)" = "Darwin" ]; then
-      cc-notes package install
-    fi
-    echo "cc-notes: installed via Homebrew ($(cc-notes version))" >&2
-    exit 0
+# The macOS helper is never fetched or unpacked by this script. Homebrew alone
+# supplies the formula-bound local resource consumed by `package install`.
+if [ "$(uname -s)" = "Darwin" ]; then
+  if [ "$VERSION" != "latest" ]; then
+    echo "cc-notes: macOS installs only the latest signed formula release" >&2
+    exit 1
   fi
-  echo "cc-notes: Homebrew unavailable or failed (e.g. tap-trust #22603); using direct download" >&2
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "cc-notes: Homebrew is required on macOS" >&2
+    exit 1
+  fi
+  if ! brew install yasyf/tap/cc-notes >/dev/null 2>&1 || ! command -v cc-notes >/dev/null 2>&1; then
+    echo "cc-notes: Homebrew could not install yasyf/tap/cc-notes" >&2
+    exit 1
+  fi
+  cc-notes package install
+  echo "cc-notes: installed via Homebrew ($(cc-notes version))" >&2
+  exit 0
 fi
 
 # Resolve "latest" to a concrete tag by following the releases/latest redirect
@@ -66,7 +71,7 @@ fi
 # Map uname output onto the GOOS/GOARCH tokens used in the asset names.
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$os" in
-  darwin | linux) ;;
+  linux) ;;
   *)
     echo "cc-notes: unsupported OS '$os'" >&2
     exit 1
@@ -84,7 +89,6 @@ case "$arch" in
 esac
 
 asset="cc-notes_${os}_${arch}"
-helper_asset="cc-notes-helper-${VERSION}-darwin.zip"
 
 # Already on the target version? Skip the download, but still refresh the ccn
 # shorthand. Release binaries print "<tag> (<commit>)", so a leading-tag match
@@ -94,13 +98,7 @@ if [ -x "$DEST" ]; then
   case "$installed" in
     "$VERSION" | "$VERSION "*)
       link_alias
-      if [ "$os" != "darwin" ]; then
-        exit 0
-      fi
-      if [ -d "$PACKAGED_HELPER" ]; then
-        "$DEST" package install
-        exit 0
-      fi
+      exit 0
       ;;
   esac
 fi
@@ -111,12 +109,8 @@ mkdir -p "$BIN_DIR"
 # running executable fails with ETXTBSY on Linux, and the rename keeps any
 # still-executing inode alive.
 tmp="$(mktemp "$BIN_DIR/.cc-notes.XXXXXX")"
-helper_zip=""
-helper_stage=""
 cleanup() {
   rm -f "$tmp"
-  [ -z "$helper_zip" ] || rm -f "$helper_zip"
-  [ -z "$helper_stage" ] || rm -rf "$helper_stage"
 }
 trap cleanup EXIT
 curl -fsSL --retry 2 -o "$tmp" "$url"
@@ -137,39 +131,6 @@ if [ "$actual" != "$expected" ]; then
   exit 1
 fi
 chmod +x "$tmp"
-if [ "$os" = "darwin" ]; then
-  helper_expected="$(printf '%s\n' "$sums" | awk -v a="$helper_asset" '$2 == a {print $1}')"
-  if [ -z "$helper_expected" ]; then
-    echo "cc-notes: no checksum for $helper_asset in SHA256SUMS.txt" >&2
-    exit 1
-  fi
-  mkdir -p "$LIBEXEC_DIR"
-  helper_zip="$(mktemp "$LIBEXEC_DIR/.cc-notes-helper-zip.XXXXXX")"
-  curl -fsSL --retry 2 -o "$helper_zip" \
-    "https://github.com/$REPO/releases/download/$VERSION/$helper_asset"
-  helper_actual="$(sha256_of "$helper_zip")"
-  if [ "$helper_actual" != "$helper_expected" ]; then
-    echo "cc-notes: checksum mismatch for $helper_asset (expected $helper_expected, got $helper_actual)" >&2
-    exit 1
-  fi
-  helper_stage="$(mktemp -d "$LIBEXEC_DIR/.cc-notes-helper.XXXXXX")"
-  ditto -x -k "$helper_zip" "$helper_stage"
-  if [ ! -d "$helper_stage/CCNotesHelper.app" ]; then
-    echo "cc-notes: helper archive has no top-level CCNotesHelper.app" >&2
-    exit 1
-  fi
-  if [ -e "$PACKAGED_HELPER" ]; then
-    mv "$PACKAGED_HELPER" "$helper_stage/PreviousCCNotesHelper.app"
-  fi
-  if ! mv "$helper_stage/CCNotesHelper.app" "$PACKAGED_HELPER"; then
-    [ ! -e "$helper_stage/PreviousCCNotesHelper.app" ] || \
-      mv "$helper_stage/PreviousCCNotesHelper.app" "$PACKAGED_HELPER"
-    exit 1
-  fi
-fi
 mv -f "$tmp" "$DEST"
 link_alias
 echo "cc-notes: installed $DEST ($("$DEST" version))" >&2
-if [ "$os" = "darwin" ]; then
-  "$DEST" package install
-fi

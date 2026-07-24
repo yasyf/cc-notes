@@ -24,7 +24,6 @@ printf '%s\n' "$*" >> "$FIXTURE_COMMAND_LOG"
 exit 0
 EOF
 chmod +x "$WORK/fixture-binary"
-printf 'signed helper archive fixture\n' > "$WORK/fixture-helper"
 
 # uname stub: answers from FAKE_OS / FAKE_ARCH.
 cat > "$WORK/stub/uname" <<'EOF'
@@ -37,21 +36,19 @@ esac
 EOF
 chmod +x "$WORK/stub/uname"
 
-# Never let a developer machine's Homebrew installation short-circuit the
-# direct-download path this harness exercises.
 cat > "$WORK/stub/brew" <<'EOF'
 #!/bin/sh
-exit 1
+[ "${FAKE_BREW_SUCCESS:-0}" = 1 ]
 EOF
 chmod +x "$WORK/stub/brew"
 
-cat > "$WORK/stub/ditto" <<'EOF'
+cat > "$WORK/stub/cc-notes" <<'EOF'
 #!/bin/sh
-for destination; do :; done
-mkdir -p "$destination/CCNotesHelper.app"
-printf 'fixture\n' > "$destination/CCNotesHelper.app/marker"
+printf '%s\n' "$*" >> "$FIXTURE_COMMAND_LOG"
+[ "$1" = "version" ] && echo "v0.9.9 (deadbee)"
+exit 0
 EOF
-chmod +x "$WORK/stub/ditto"
+chmod +x "$WORK/stub/cc-notes"
 
 # curl stub: resolves "latest" to FAKE_TAG and "downloads" by copying the
 # fixture, logging the requested asset URL to REQUESTED_LOG.
@@ -76,19 +73,10 @@ case "$*" in
       hash="$(shasum -a 256 "$FIXTURE_BIN" | awk '{print $1}')"
     fi
     printf '%s  %s\n' "$hash" "$FAKE_ASSET"
-    if command -v sha256sum >/dev/null 2>&1; then
-      helper_hash="$(sha256sum "$FIXTURE_HELPER" | awk '{print $1}')"
-    else
-      helper_hash="$(shasum -a 256 "$FIXTURE_HELPER" | awk '{print $1}')"
-    fi
-    printf '%s  cc-notes-helper-%s-darwin.zip\n' "$helper_hash" "${FAKE_TAG:-v0.9.9}"
     ;;
   *)
     printf '%s\n' "$url" >> "$REQUESTED_LOG"
-    case "$url" in
-      *cc-notes-helper-*) cp "$FIXTURE_HELPER" "$out" ;;
-      *) cp "$FIXTURE_BIN" "$out" ;;
-    esac
+    cp "$FIXTURE_BIN" "$out"
     ;;
 esac
 EOF
@@ -98,11 +86,10 @@ REQUESTED_LOG="$WORK/requested"
 FIXTURE_COMMAND_LOG="$WORK/fixture-commands"
 export REQUESTED_LOG FIXTURE_COMMAND_LOG FAKE_TAG="v0.9.9"
 export FIXTURE_BIN="$WORK/fixture-binary"
-export FIXTURE_HELPER="$WORK/fixture-helper"
 
 run_install() { # $1=os $2=arch $3=expected-asset
   : > "$REQUESTED_LOG"
-  rm -rf "${WORK:?}/bin" "${WORK:?}/libexec"
+  rm -rf "${WORK:?}/bin"
   PATH="$WORK/stub:$PATH" FAKE_OS="$1" FAKE_ARCH="$2" FAKE_ASSET="$3" CC_NOTES_BIN_DIR="$WORK/bin" \
     "$INSTALL" >/dev/null 2>&1
 }
@@ -117,10 +104,31 @@ expect() { # $1=os $2=arch $3=expected-asset
 }
 
 # Platform mapping.
-expect Darwin arm64 cc-notes_darwin_arm64
-expect Darwin x86_64 cc-notes_darwin_amd64
 expect Linux x86_64 cc-notes_linux_amd64
 expect Linux aarch64 cc-notes_linux_arm64
+
+# macOS never downloads a helper or CLI directly. The formula-local helper is
+# installed and activated only after Homebrew succeeds.
+: > "$REQUESTED_LOG"
+: > "$FIXTURE_COMMAND_LOG"
+PATH="$WORK/stub:$PATH" FAKE_OS=Darwin FAKE_ARCH=arm64 FAKE_BREW_SUCCESS=1 \
+  "$INSTALL" >/dev/null 2>&1
+if [ -s "$REQUESTED_LOG" ]; then
+  echo "FAIL: macOS formula install performed a direct download: $(cat "$REQUESTED_LOG")" >&2
+  exit 1
+fi
+if ! grep -qx 'package install' "$FIXTURE_COMMAND_LOG"; then
+  echo "FAIL: macOS formula install did not activate its local helper resource" >&2
+  exit 1
+fi
+echo "ok: macOS uses only the formula-local helper"
+
+if PATH="$WORK/stub:$PATH" FAKE_OS=Darwin FAKE_ARCH=arm64 FAKE_BREW_SUCCESS=0 \
+  "$INSTALL" >/dev/null 2>&1; then
+  echo "FAIL: macOS install succeeded without Homebrew" >&2
+  exit 1
+fi
+echo "ok: macOS without Homebrew fails closed"
 
 # Re-running at the installed version is a silent no-op (no download).
 PATH="$WORK/stub:$PATH" FAKE_OS=Linux FAKE_ARCH=x86_64 CC_NOTES_BIN_DIR="$WORK/bin" \
@@ -146,10 +154,4 @@ if grep -Eq '(^| )((service (install|uninstall))|init)( |$)' "$FIXTURE_COMMAND_L
   echo "FAIL: installer implicitly invoked init or changed the service" >&2
   exit 1
 fi
-if ! grep -qx 'package install' "$FIXTURE_COMMAND_LOG"; then
-  echo "FAIL: Darwin installer did not activate the packaged helper" >&2
-  exit 1
-fi
-echo "ok: installer activates only the packaged helper"
-
 echo "PASS: install.sh harness"
