@@ -2,14 +2,11 @@ package helperdeployment
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
-	"github.com/yasyf/cc-notes/internal/helpercontract"
 	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/daemonkit/deployment"
 	"github.com/yasyf/daemonkit/service"
@@ -17,44 +14,161 @@ import (
 
 type installedController interface {
 	AttestInstalled(context.Context, deployment.InstalledSpec) (deployment.InstalledAttestation, error)
-	StatusInstalled(context.Context, deployment.InstalledSpec) (deployment.InstalledStatus, error)
 	ActivateInstalled(context.Context, deployment.ActivateInstalledConfig) (deployment.ActivationReceipt, error)
-	DeactivateInstalled(context.Context, deployment.DeactivateInstalledConfig) (deployment.DeactivationReceipt, error)
+	ApplyInstalledCandidate(context.Context, deployment.ApplyInstalledCandidateConfig) (deployment.ApplyInstalledCandidateReceipt, error)
+	DeactivateCurrentInstalled(context.Context, deployment.DeactivateCurrentInstalledConfig) (deployment.DeactivationReceipt, error)
+	UninstallCurrentInstalled(context.Context, deployment.UninstallCurrentInstalledConfig) (deployment.UninstallReceipt, error)
 }
 
 var (
 	newInstalledController = func() installedController { return deployment.New() }
-	canonicalExecutable    = service.CanonicalExecutable
 	installedPath          = helperclient.InstalledPath
-	executeActivation      = activateInstalled
-	executeDeactivation    = deactivateInstalled
+	helperMarketingVersion = helperclient.MarketingVersion
 )
 
-// ExecuteDeployment runs one complete activation operation inside the fixed signed helper.
-func ExecuteDeployment(
+// InstallCandidate installs and activates one locally packaged signed helper.
+func InstallCandidate(ctx context.Context, candidateSourcePath string) error {
+	controller := newInstalledController()
+	target, err := installedPath()
+	if err != nil {
+		return err
+	}
+	marketingVersion, err := helperMarketingVersion()
+	if err != nil {
+		return err
+	}
+	candidate, err := controller.AttestInstalled(ctx, deployment.InstalledSpec{
+		AppPath: candidateSourcePath, Version: marketingVersion, Identity: helperclient.CodeIdentity(),
+	})
+	if err != nil {
+		return fmt.Errorf("cc-notes helper: attest packaged candidate: %w", err)
+	}
+	plan, hooks, err := activationInputs(ctx, candidate, target)
+	if err != nil {
+		return err
+	}
+	receipt, err := controller.ApplyInstalledCandidate(ctx, deployment.ApplyInstalledCandidateConfig{
+		Target: deployment.CurrentInstalledSpec{
+			AppPath: target, Identity: helperclient.CodeIdentity(),
+		},
+		CandidateSourcePath:   candidateSourcePath,
+		CandidateVersion:      marketingVersion,
+		CandidateBundleDigest: candidate.BundleDigest(),
+		ConsumerBuild:         version.String(),
+		PolicyDigest:          hooks.policyDigest,
+		Plan:                  plan,
+		RuntimeQuiesce:        quiesceInstalled,
+		Readiness:             hooks.readiness,
+	})
+	if err != nil {
+		return fmt.Errorf("cc-notes helper: apply packaged candidate: %w", err)
+	}
+	activation := receipt.Activation()
+	if receipt.OperationID() == "" || !activation.Active() {
+		return errors.New("cc-notes helper: daemonkit returned an incomplete candidate receipt")
+	}
+	return validateActivationReceipt(activation, activation.Generation(), plan, version.String())
+}
+
+// ActivateCurrent activates or exactly reconciles the installed helper.
+func ActivateCurrent(ctx context.Context) error {
+	controller := newInstalledController()
+	spec, err := installedSpec()
+	if err != nil {
+		return err
+	}
+	attestation, err := controller.AttestInstalled(ctx, spec)
+	if err != nil {
+		return fmt.Errorf("cc-notes helper: attest installed app: %w", err)
+	}
+	plan, hooks, err := activationInputs(ctx, attestation, attestation.Path())
+	if err != nil {
+		return err
+	}
+	receipt, err := controller.ActivateInstalled(ctx, deployment.ActivateInstalledConfig{
+		Expected: attestation, ConsumerBuild: version.String(), PolicyDigest: hooks.policyDigest,
+		Plan: plan, Readiness: hooks.readiness,
+	})
+	if err != nil {
+		return fmt.Errorf("cc-notes helper: activate installed app: %w", err)
+	}
+	return validateActivationReceipt(receipt, attestation, plan, version.String())
+}
+
+// DeactivateCurrent deactivates the controller-sealed installed helper.
+func DeactivateCurrent(ctx context.Context) error {
+	target, err := installedPath()
+	if err != nil {
+		return err
+	}
+	receipt, err := newInstalledController().DeactivateCurrentInstalled(ctx, deployment.DeactivateCurrentInstalledConfig{
+		Current: deployment.CurrentInstalledSpec{
+			AppPath: target, Identity: helperclient.CodeIdentity(),
+		},
+		RuntimeQuiesce: quiesceInstalled,
+		Readiness:      readinessInstalled,
+	})
+	if err != nil {
+		return fmt.Errorf("cc-notes helper: deactivate installed app: %w", err)
+	}
+	proof := receipt.RuntimeProof()
+	if receipt.OperationID() == "" || !proof.Absent() || proof.Digest() == (deployment.SHA256{}) {
+		return errors.New("cc-notes helper: daemonkit returned an incomplete deactivation receipt")
+	}
+	return nil
+}
+
+// UninstallCurrent deactivates and removes the controller-sealed installed helper.
+func UninstallCurrent(ctx context.Context) error {
+	controller := newInstalledController()
+	target, err := installedPath()
+	if err != nil {
+		return err
+	}
+	receipt, err := controller.UninstallCurrentInstalled(ctx, deployment.UninstallCurrentInstalledConfig{
+		Current: deployment.CurrentInstalledSpec{
+			AppPath: target, Identity: helperclient.CodeIdentity(),
+		},
+		RuntimeQuiesce: quiesceInstalled,
+		Readiness:      readinessInstalled,
+	})
+	if err != nil {
+		return fmt.Errorf("cc-notes helper: uninstall installed app: %w", err)
+	}
+	proof := receipt.RuntimeProof()
+	if receipt.OperationID() == "" || receipt.DeactivationOperationID() == "" ||
+		validateInstalledReceiptGeneration(receipt.Generation(), target) != nil || !proof.Absent() ||
+		proof.Digest() == (deployment.SHA256{}) {
+		return errors.New("cc-notes helper: daemonkit returned an incomplete uninstall receipt")
+	}
+	return nil
+}
+
+func readinessInstalled(
 	ctx context.Context,
-	request helpercontract.DeploymentRequest,
-) (helpercontract.DeploymentResult, error) {
-	running, err := canonicalExecutable()
+	operation deployment.InstalledOperation,
+) (deployment.ReadinessProof, error) {
+	generation := operation.Generation()
+	buildID, err := exactPlanBuildID(generation.Path(), operation.Plan())
 	if err != nil {
-		return helpercontract.DeploymentResult{}, fmt.Errorf("cc-notes helper: resolve running signed helper: %w", err)
+		return deployment.ReadinessProof{}, err
 	}
-	appPath, err := installedPath()
+	runtimePlan, err := NewRuntimePlan(ctx, generation.Path(), buildID)
 	if err != nil {
-		return helpercontract.DeploymentResult{}, err
+		return deployment.ReadinessProof{}, err
 	}
-	wantExecutable := helperExecutablePath(appPath)
-	if running != wantExecutable {
-		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: deployment request did not reach the fixed signed app")
+	hooks := newProductHooks(buildID, deployment.SHA256(runtimePlan.Deployment().RuntimePolicyDigest()))
+	return hooks.readiness(ctx, operation)
+}
+
+func validateInstalledReceiptGeneration(generation deployment.InstalledAttestation, target string) error {
+	identity := helperclient.CodeIdentity()
+	if generation.Path() != target || generation.Version() == "" ||
+		generation.TeamID() != identity.TeamID || generation.SigningIdentifier() != identity.SigningIdentifier ||
+		generation.BundleDigest() == (deployment.SHA256{}) || generation.EntitlementsDigest() == (deployment.SHA256{}) {
+		return errors.New("cc-notes helper: deployment receipt generation is inexact")
 	}
-	switch request.Action {
-	case helpercontract.DeploymentActivate:
-		return executeActivation(ctx, newInstalledController())
-	case helpercontract.DeploymentDeactivate:
-		return executeDeactivation(ctx, newInstalledController())
-	default:
-		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: deployment request action is invalid")
-	}
+	return nil
 }
 
 func installedSpec() (deployment.InstalledSpec, error) {
@@ -71,133 +185,46 @@ func installedSpec() (deployment.InstalledSpec, error) {
 	}, nil
 }
 
-func helperMarketingVersion() (string, error) {
-	return helperclient.MarketingVersion()
-}
-
 func activationInputs(
 	ctx context.Context,
 	attestation deployment.InstalledAttestation,
+	activationPath string,
 ) (service.Plan, productHooks, error) {
-	consumerBuild, policyDigest, err := DeploymentIdentity()
-	if err != nil {
-		return service.Plan{}, productHooks{}, err
-	}
-	hooks := newProductHooks(version.String(), policyDigest)
-	runtimePlan, err := NewRuntimePlan(ctx, attestation.Path(), hooks.buildID)
+	runtimePlan, err := NewRuntimePlan(ctx, attestation.Path(), version.String())
 	if err != nil {
 		return service.Plan{}, productHooks{}, err
 	}
 	fuseAttestation, ok := runtimePlan.FUSEAttestation()
 	if !ok {
-		return service.Plan{}, productHooks{}, errors.New("cc-notes helper: installed app has no exact FUSE attestation")
+		return service.Plan{}, productHooks{}, errors.New("cc-notes helper: signed app has no exact FUSE attestation")
 	}
 	if deployment.SHA256(fuseAttestation.OuterEntitlementsSHA256) != attestation.EntitlementsDigest() {
 		return service.Plan{}, productHooks{}, errors.New("cc-notes helper: FuseKit outer entitlements differ from daemonkit attestation")
 	}
-	plan, err := service.NewPlan([]service.Agent{runtimePlan.Deployment().Agent()})
+	hooks := newProductHooks(version.String(), deployment.SHA256(runtimePlan.Deployment().RuntimePolicyDigest()))
+	plan, err := hooks.servicePlanForBuild(activationPath, version.String())
 	if err != nil {
 		return service.Plan{}, productHooks{}, err
 	}
-	_ = consumerBuild
 	return plan, hooks, nil
 }
 
-func activateInstalled(
+func quiesceInstalled(
 	ctx context.Context,
-	controller installedController,
-) (helpercontract.DeploymentResult, error) {
-	spec, err := installedSpec()
+	stopper deployment.RuntimeStopper,
+	operation deployment.DeactivateInstalledOperation,
+) (deployment.RuntimeProof, error) {
+	activation := operation.Activation()
+	buildID, err := exactPlanBuildID(activation.Generation().Path(), activation.Plan())
 	if err != nil {
-		return helpercontract.DeploymentResult{}, err
+		return deployment.RuntimeProof{}, err
 	}
-	attestation, err := controller.AttestInstalled(ctx, spec)
+	runtimePlan, err := NewRuntimePlan(ctx, activation.Generation().Path(), buildID)
 	if err != nil {
-		return helpercontract.DeploymentResult{}, fmt.Errorf("cc-notes helper: attest packaged app: %w", err)
+		return deployment.RuntimeProof{}, err
 	}
-	plan, hooks, err := activationInputs(ctx, attestation)
-	if err != nil {
-		return helpercontract.DeploymentResult{}, err
-	}
-	consumerBuild, policyDigest, err := DeploymentIdentity()
-	if err != nil {
-		return helpercontract.DeploymentResult{}, err
-	}
-	receipt, err := controller.ActivateInstalled(ctx, deployment.ActivateInstalledConfig{
-		Expected: attestation, ConsumerBuild: consumerBuild, PolicyDigest: policyDigest,
-		Plan: plan, Readiness: hooks.readiness,
-	})
-	if err != nil {
-		return helpercontract.DeploymentResult{}, fmt.Errorf("cc-notes helper: activate packaged app: %w", err)
-	}
-	if err := validateActivationReceipt(receipt, attestation, plan, hooks.buildID); err != nil {
-		return helpercontract.DeploymentResult{}, err
-	}
-	return helpercontract.NewDeploymentResult(helpercontract.DeploymentActivate, helpercontract.DeploymentActive)
-}
-
-func deactivateInstalled(
-	ctx context.Context,
-	controller installedController,
-) (helpercontract.DeploymentResult, error) {
-	spec, err := installedSpec()
-	if err != nil {
-		return helpercontract.DeploymentResult{}, err
-	}
-	status, err := controller.StatusInstalled(ctx, spec)
-	if err != nil {
-		return helpercontract.DeploymentResult{}, fmt.Errorf("cc-notes helper: inspect packaged activation: %w", err)
-	}
-	if status.State() == deployment.InstalledVerifiedUnactivated {
-		return helpercontract.NewDeploymentResult(helpercontract.DeploymentDeactivate, helpercontract.DeploymentInactive)
-	}
-	activation, ok := status.Receipt()
-	if !ok {
-		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: activation state has no exact receipt")
-	}
-	consumerBuild, policyDigest, err := DeploymentIdentity()
-	if err != nil {
-		return helpercontract.DeploymentResult{}, err
-	}
-	hooks := newProductHooks(version.String(), policyDigest)
-	if status.State() == deployment.InstalledPrepared {
-		plan, preparedHooks, err := activationInputs(ctx, status.Attestation())
-		if err != nil {
-			return helpercontract.DeploymentResult{}, err
-		}
-		activation, err = controller.ActivateInstalled(ctx, deployment.ActivateInstalledConfig{
-			Expected: status.Attestation(), ConsumerBuild: consumerBuild, PolicyDigest: policyDigest,
-			Plan: plan, Readiness: preparedHooks.readiness,
-		})
-		if err != nil {
-			return helpercontract.DeploymentResult{}, fmt.Errorf("cc-notes helper: recover prepared activation: %w", err)
-		}
-		hooks = preparedHooks
-	} else if status.State() != deployment.InstalledActive {
-		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: installed activation has an unknown state")
-	}
-	receipt, err := controller.DeactivateInstalled(ctx, deployment.DeactivateInstalledConfig{
-		Expected: activation, ConsumerBuild: consumerBuild, PolicyDigest: policyDigest,
-		RuntimeQuiesce: hooks.runtimeQuiesce,
-	})
-	if err != nil {
-		return helpercontract.DeploymentResult{}, fmt.Errorf("cc-notes helper: deactivate packaged app: %w", err)
-	}
-	proof := receipt.RuntimeProof()
-	if !validDeploymentOperationID(receipt.OperationID()) || !proof.Absent() || proof.Digest() == (deployment.SHA256{}) {
-		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: daemonkit returned an inexact deactivation receipt")
-	}
-	after, err := controller.StatusInstalled(ctx, spec)
-	if err != nil {
-		return helpercontract.DeploymentResult{}, fmt.Errorf("cc-notes helper: verify deactivated app: %w", err)
-	}
-	if after.State() != deployment.InstalledVerifiedUnactivated {
-		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: deactivation retained activation ownership")
-	}
-	if _, hasReceipt := after.Receipt(); hasReceipt {
-		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: deactivation retained an activation receipt")
-	}
-	return helpercontract.NewDeploymentResult(helpercontract.DeploymentDeactivate, helpercontract.DeploymentInactive)
+	hooks := newProductHooks(buildID, deployment.SHA256(runtimePlan.Deployment().RuntimePolicyDigest()))
+	return hooks.runtimeQuiesce(ctx, stopper, operation)
 }
 
 func validateActivationReceipt(
@@ -206,13 +233,14 @@ func validateActivationReceipt(
 	plan service.Plan,
 	buildID string,
 ) error {
-	readiness, ready := receipt.Readiness()
-	if !receipt.Active() || !ready || !validDeploymentOperationID(receipt.OperationID()) ||
-		!sameAttestation(receipt.Generation(), want) ||
-		receipt.Plan().Digest() != plan.Digest() || !reflect.DeepEqual(receipt.Plan().Agents(), plan.Agents()) ||
-		readiness.RuntimeBuild() != buildID || readiness.ProcessGeneration().String() == strings.Repeat("0", 32) ||
-		readiness.ResourceDigest() == (deployment.SHA256{}) {
+	if receipt.OperationID() == "" || !receipt.Active() || !sameAttestation(receipt.Generation(), want) ||
+		receipt.Plan().Digest() != plan.Digest() || !reflect.DeepEqual(receipt.Plan().Agents(), plan.Agents()) {
 		return errors.New("cc-notes helper: daemonkit returned an inexact activation receipt")
+	}
+	readiness, ok := receipt.Readiness()
+	if !ok || readiness.RuntimeBuild() != buildID || readiness.ProcessGeneration().String() == "" ||
+		readiness.ResourceDigest() == (deployment.SHA256{}) {
+		return errors.New("cc-notes helper: daemonkit activation lacks exact readiness")
 	}
 	return nil
 }
@@ -223,20 +251,4 @@ func sameAttestation(left, right deployment.InstalledAttestation) bool {
 		left.DesignatedRequirement() == right.DesignatedRequirement() && left.CDHash() == right.CDHash() &&
 		left.BundleDigest() == right.BundleDigest() && left.EntitlementsDigest() == right.EntitlementsDigest() &&
 		left.Device() == right.Device() && left.Inode() == right.Inode()
-}
-
-func validDeploymentOperationID(value string) bool {
-	if len(value) != 64 || value != strings.ToLower(value) {
-		return false
-	}
-	decoded, err := hex.DecodeString(value)
-	if err != nil || len(decoded) != 32 {
-		return false
-	}
-	for _, octet := range decoded {
-		if octet != 0 {
-			return true
-		}
-	}
-	return false
 }

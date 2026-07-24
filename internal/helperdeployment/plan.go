@@ -8,7 +8,6 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/daemonkit/codeidentity"
-	"github.com/yasyf/daemonkit/trust"
 	"github.com/yasyf/fusekit/holder"
 )
 
@@ -83,10 +82,4 @@ func NewRuntimePlan(ctx context.Context, appPath, buildID string) (plan holder.R
 		return holder.RuntimePlan{}, fmt.Errorf("cc-notes helper: derive runtime plan: %w", err)
 	}
 	return plan, nil
-}
-
-func runtimePolicyDigest() (codeidentity.PolicyDigest, error) {
-	return (trust.Requirement{
-		TeamID: helperclient.TeamID, SigningIdentifier: helperclient.BundleID,
-	}).ValidationDigest()
 }

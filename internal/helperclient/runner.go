@@ -86,35 +86,6 @@ func RunProvision(ctx context.Context, executable, repoRoot string) (resultErr e
 	return nil
 }
 
-// RunDeployment asks the fixed signed helper to execute one complete deployment operation.
-func RunDeployment(
-	ctx context.Context,
-	executable string,
-	action helpercontract.DeploymentAction,
-) (helpercontract.DeploymentResult, error) {
-	wantExecutable, err := ExecutablePath()
-	if err != nil {
-		return helpercontract.DeploymentResult{}, err
-	}
-	if executable != wantExecutable {
-		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: deployment requires the fixed signed app path")
-	}
-	result, err := runInstalledRequest(
-		ctx, executable, helpercontract.DeploymentArguments(action), toolRunnerMaxTotalRun,
-	)
-	if err != nil {
-		return helpercontract.DeploymentResult{}, fmt.Errorf("cc-notes helper: execute signed deployment: %w", err)
-	}
-	receipt, err := helpercontract.DecodeDeploymentResult(result.Stdout)
-	if err != nil {
-		return helpercontract.DeploymentResult{}, err
-	}
-	if receipt.Action != action {
-		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: deployment result action differs from request")
-	}
-	return receipt, nil
-}
-
 func runInstalledRequest(
 	ctx context.Context,
 	executable string,

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
+	"github.com/yasyf/daemonkit/codeidentity"
 	"github.com/yasyf/daemonkit/deployment"
 	"github.com/yasyf/daemonkit/proc"
 	"github.com/yasyf/daemonkit/service"
@@ -22,7 +23,10 @@ import (
 	"github.com/yasyf/fusekit/trustroles"
 )
 
-const readinessPoll = 100 * time.Millisecond
+const (
+	readinessPoll           = 100 * time.Millisecond
+	deploymentProofIdentity = "cc-notes.deployment-proof.v1"
+)
 
 type productHooks struct {
 	buildID          string
@@ -250,12 +254,8 @@ func (h productHooks) planForBuild(appPath, buildID string) (holder.DeploymentPl
 	if err != nil {
 		return holder.DeploymentPlan{}, err
 	}
-	digest, err := runtimePolicyDigest()
-	if err != nil {
-		return holder.DeploymentPlan{}, err
-	}
 	return holder.NewDeploymentPlan(DeploymentPlanSpec(
-		appPath, runtimeDirectory, presentationRoot, buildID, digest,
+		appPath, runtimeDirectory, presentationRoot, buildID, codeidentity.PolicyDigest(h.policyDigest),
 	))
 }
 
@@ -354,10 +354,10 @@ func (h productHooks) proofDigest(
 	digest := sha256.New()
 	values := make([]string, 0, 14+len(details))
 	values = append(values,
-		DeploymentProofIdentity, kind, operationID, plan.Digest().String(),
+		deploymentProofIdentity, kind, operationID, plan.Digest().String(),
 		generation.Path(), generation.Version(), generation.TeamID(), generation.SigningIdentifier(),
 		generation.DesignatedRequirement(), generation.CDHash(), generation.BundleDigest().String(),
-		generation.EntitlementsDigest().String(), h.policyDigest.String(),
+		generation.EntitlementsDigest().String(),
 	)
 	values = append(values, details...)
 	for _, value := range values {

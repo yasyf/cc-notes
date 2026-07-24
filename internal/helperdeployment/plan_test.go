@@ -6,7 +6,6 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/daemonkit/codeidentity"
-	"github.com/yasyf/daemonkit/trust"
 	"github.com/yasyf/fusekit/holder"
 )
 
@@ -26,21 +25,5 @@ func TestRuntimeAndDeploymentSpecsShareOneFixedContract(t *testing.T) {
 		deployment.BuildID != runtime.BuildID || deployment.Readiness != runtime.Readiness ||
 		!deployment.SourceCapable || deployment.RuntimePolicyDigest != digest {
 		t.Fatalf("runtime/deployment specs = %#v / %#v", runtime, deployment)
-	}
-}
-
-func TestRuntimePolicyDigestMatchesSignedHelperRequirement(t *testing.T) {
-	got, err := runtimePolicyDigest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := (trust.Requirement{
-		TeamID: helperclient.TeamID, SigningIdentifier: helperclient.BundleID,
-	}).ValidationDigest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Fatalf("runtime policy digest = %x, want %x", got, want)
 	}
 }

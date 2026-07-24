@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
+	"github.com/yasyf/cc-notes/internal/helperdeployment"
 )
 
 func provisionRepositoryPlatform(ctx context.Context, root string) error {
@@ -13,9 +14,9 @@ func provisionRepositoryPlatform(ctx context.Context, root string) error {
 }
 
 func installServicePlatform(ctx context.Context) error {
-	return helperclient.ActivateService(ctx)
+	return helperdeployment.ActivateCurrent(ctx)
 }
 
 func uninstallServicePlatform(ctx context.Context) error {
-	return helperclient.DeactivateService(ctx)
+	return helperdeployment.DeactivateCurrent(ctx)
 }

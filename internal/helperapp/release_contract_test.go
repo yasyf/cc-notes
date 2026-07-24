@@ -144,20 +144,20 @@ func TestHelperDeploymentUsesDaemonkitSchemaOneState(t *testing.T) {
 	assertFileContains(t, deploymentSource,
 		`"github.com/yasyf/daemonkit/deployment"`,
 		"AttestInstalled(context.Context, deployment.InstalledSpec)",
-		"StatusInstalled(context.Context, deployment.InstalledSpec)",
 		"ActivateInstalled(context.Context, deployment.ActivateInstalledConfig)",
-		"DeactivateInstalled(context.Context, deployment.DeactivateInstalledConfig)",
+		"ApplyInstalledCandidate(context.Context, deployment.ApplyInstalledCandidateConfig)",
+		"DeactivateCurrentInstalled(context.Context, deployment.DeactivateCurrentInstalledConfig)",
+		"UninstallCurrentInstalled(context.Context, deployment.UninstallCurrentInstalledConfig)",
 		"newInstalledController = func() installedController { return deployment.New() }",
-		"controller.AttestInstalled(ctx, spec)",
+		"CandidateSourcePath:   candidateSourcePath",
+		"CandidateBundleDigest: candidate.BundleDigest()",
+		"PolicyDigest:          hooks.policyDigest",
+		"RuntimeQuiesce:        quiesceInstalled",
+		"Readiness:             hooks.readiness",
 		"controller.ActivateInstalled(ctx, deployment.ActivateInstalledConfig{",
-		"Expected: attestation, ConsumerBuild: consumerBuild, PolicyDigest: policyDigest",
-		"Readiness: hooks.readiness",
-		"validateActivationReceipt(receipt, attestation, plan, hooks.buildID)",
-		"controller.DeactivateInstalled(ctx, deployment.DeactivateInstalledConfig{",
-		"Expected: activation, ConsumerBuild: consumerBuild, PolicyDigest: policyDigest",
-		"RuntimeQuiesce: hooks.runtimeQuiesce",
-		"!validDeploymentOperationID(receipt.OperationID())",
-		"after.State() != deployment.InstalledVerifiedUnactivated",
+		"newInstalledController().DeactivateCurrentInstalled(ctx, deployment.DeactivateCurrentInstalledConfig{",
+		"controller.UninstallCurrentInstalled(ctx, deployment.UninstallCurrentInstalledConfig{",
+		"runtimePlan.Deployment().RuntimePolicyDigest()",
 	)
 	assertFileExcludes(t, deploymentSource,
 		"daemonkit/fetch",
@@ -171,11 +171,8 @@ func TestHelperDeploymentUsesDaemonkitSchemaOneState(t *testing.T) {
 		"os.RemoveAll(",
 		"os.Rename(",
 	)
-	assertFileContains(t, filepath.Join(root, "internal", "helperdeployment", "deployment_identity.go"),
-		`deploymentPolicyIdentity = "cc-notes.deployment-callbacks.v1"`,
-		"Schema:   1",
-		"startupConsumerBuild, startupConsumerBuildErr = currentConsumerBuild()",
-	)
+	assertPathAbsent(t, filepath.Join(root, "internal", "helperdeployment", "deployment_identity.go"))
+	assertPathAbsent(t, filepath.Join(root, "internal", "helpercontract", "deployment.go"))
 	assertFileContains(t, filepath.Join(root, "cmd", "cc-notes-helper", "main.go"),
 		"deployment.RuntimeStopControlStore()",
 		"holder.RunChild",
@@ -204,8 +201,8 @@ func TestReleasedNativePresentationRootIsUserVisible(t *testing.T) {
 	assertFileContains(t, filepath.Join(root, "internal", "helperclient", "identity.go"),
 		`return filepath.Join(home, "CCNotes"), nil`,
 	)
-	assertFileContains(t, filepath.Join(root, "internal", "helperdeployment", "deployment_identity.go"),
-		`PresentationRootHomeRelative: "CCNotes"`,
+	assertFileContains(t, filepath.Join(root, "internal", "helperdeployment", "plan.go"),
+		"presentationRoot, err := PresentationRoot()",
 	)
 }
 
@@ -316,6 +313,14 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 		"Casks/",
 		`/Applications`,
 		`FileUtils.cp_r`,
+	)
+	packageInstaller := filepath.Join(root, "internal", "helperpackage", "install_darwin.go")
+	assertFileContains(t, packageInstaller,
+		"helperdeployment.InstallCandidate",
+		"helperdeployment.UninstallCurrent",
+	)
+	assertFileExcludes(t, packageInstaller,
+		"os.Rename(", "os.RemoveAll(", "/usr/bin/ditto", "copyApp", "rollbackPublished",
 	)
 	installer := filepath.Join(root, "scripts", "install.sh")
 	assertFileContains(t, installer,

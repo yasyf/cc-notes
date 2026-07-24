@@ -15,27 +15,11 @@ import (
 	"github.com/yasyf/cc-notes/internal/fusefs"
 	"github.com/yasyf/cc-notes/internal/helperapp"
 	"github.com/yasyf/cc-notes/internal/helpercontract"
-	"github.com/yasyf/cc-notes/internal/helperdeployment"
 	"github.com/yasyf/daemonkit/deployment"
 	"github.com/yasyf/fusekit/holder"
 )
 
 func run(ctx context.Context, arguments []string) error {
-	request, deploymentRequest, err := helpercontract.ParseDeployment(arguments)
-	if err != nil {
-		return err
-	}
-	if deploymentRequest {
-		result, err := helperdeployment.ExecuteDeployment(ctx, request)
-		if err != nil {
-			return err
-		}
-		payload, err := helpercontract.EncodeDeploymentResult(result)
-		if err != nil {
-			return err
-		}
-		return writeResponse(payload)
-	}
 	repository, provisioning, err := helpercontract.ParseProvision(arguments)
 	if err != nil {
 		return err
@@ -80,17 +64,6 @@ func run(ctx context.Context, arguments []string) error {
 		return err
 	}
 	return runtime.Run(ctx)
-}
-
-func writeResponse(payload []byte) error {
-	for len(payload) != 0 {
-		written, err := os.Stdout.Write(payload)
-		payload = payload[written:]
-		if err != nil {
-			return fmt.Errorf("FuseKit runtime: write controller response: %w", err)
-		}
-	}
-	return nil
 }
 
 func main() {
