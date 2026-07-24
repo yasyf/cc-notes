@@ -82,6 +82,9 @@ func fuseToolStateDirectory() (string, error) {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return "", errors.New("cc-notes helper: FUSE tool state directory is not a real directory")
 	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return "", errors.New("cc-notes helper: FUSE tool state directory is not private")
+	}
 	resolved, err := filepath.EvalSymlinks(directory)
 	if err != nil {
 		return "", fmt.Errorf("cc-notes helper: resolve FUSE tool state directory: %w", err)
