@@ -859,6 +859,36 @@ command: cc-notes note verify
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
+command: cc-notes package
+  use: package
+  aliases: -
+  short: Install or remove the delivered signed helper
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes package install
+  use: install
+  aliases: -
+  short: Verify, install, and activate the delivered signed helper
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes package uninstall
+  use: uninstall
+  aliases: -
+  short: Deactivate and remove the installed signed helper
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
 command: cc-notes papercut
   use: papercut [TEXT]
   aliases: -
