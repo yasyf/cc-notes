@@ -27,7 +27,7 @@ type ToolRunner struct {
 	directory string
 }
 
-// NewToolRunner creates a disposable runner for signed-helper and packaging operations.
+// NewToolRunner creates a disposable runner for signed-helper operations.
 func NewToolRunner(ctx context.Context) (*ToolRunner, error) {
 	directory, generation, err := newToolIdentity("cc-notes-helper-tools-")
 	if err != nil {
@@ -86,35 +86,6 @@ func RunProvision(ctx context.Context, executable, repoRoot string) (resultErr e
 	return nil
 }
 
-// RunDeployment asks the fixed signed helper to execute one complete deployment operation.
-func RunDeployment(
-	ctx context.Context,
-	executable string,
-	action helpercontract.DeploymentAction,
-) (helpercontract.DeploymentResult, error) {
-	wantExecutable, err := ExecutablePath()
-	if err != nil {
-		return helpercontract.DeploymentResult{}, err
-	}
-	if executable != wantExecutable {
-		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: deployment requires the fixed signed app path")
-	}
-	result, err := runInstalledRequest(
-		ctx, executable, helpercontract.DeploymentArguments(action), toolRunnerMaxTotalRun,
-	)
-	if err != nil {
-		return helpercontract.DeploymentResult{}, fmt.Errorf("cc-notes helper: execute signed deployment: %w", err)
-	}
-	receipt, err := helpercontract.DecodeDeploymentResult(result.Stdout)
-	if err != nil {
-		return helpercontract.DeploymentResult{}, err
-	}
-	if receipt.Action != action {
-		return helpercontract.DeploymentResult{}, errors.New("cc-notes helper: deployment result action differs from request")
-	}
-	return receipt, nil
-}
-
 func runInstalledRequest(
 	ctx context.Context,
 	executable string,
@@ -126,7 +97,7 @@ func runInstalledRequest(
 	}
 	info, err := os.Lstat(executable)
 	if err != nil {
-		return worker.CommandResult{}, fmt.Errorf("cc-notes helper: fixed signed app is not installed; run `cc-notes service install`: %w", err)
+		return worker.CommandResult{}, fmt.Errorf("cc-notes helper: fixed signed app is not installed; run `cc-notes package install`: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode()&0o111 == 0 {
 		return worker.CommandResult{}, errors.New("cc-notes helper: fixed signed app executable is invalid")

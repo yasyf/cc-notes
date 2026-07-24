@@ -1,15 +1,12 @@
 package helperclient
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/yasyf/daemonkit/worker"
-
-	"github.com/yasyf/cc-notes/internal/helpercontract"
 )
 
 func TestToolRunnerExecutesAndSettlesOneTask(t *testing.T) {
@@ -45,14 +42,5 @@ func TestRunProvisionRejectsInexactExecutable(t *testing.T) {
 	}
 	if err := RunProvision(t.Context(), link, t.TempDir()); err == nil {
 		t.Fatal("RunProvision accepted a symlinked executable")
-	}
-}
-
-func TestRunDeploymentRejectsInexactExecutable(t *testing.T) {
-	if _, err := RunDeployment(t.Context(), "relative", helpercontract.DeploymentActivate); err == nil {
-		t.Fatal("RunDeployment accepted a relative executable")
-	}
-	if _, err := RunDeployment(context.Background(), "/missing/helper", helpercontract.DeploymentActivate); err == nil {
-		t.Fatal("RunDeployment accepted a missing helper")
 	}
 }

@@ -26,10 +26,10 @@ repeatable procedure of ordered steps whose every execution is a tracked run.
 
 MCP: — (CLI-only: one-time macOS machine administration)
 
-Verify the signed helper delivered beside the current CLI, copy and attest it in a private
-staging directory, deactivate the prior canonical generation, atomically replace it at
-`~/Applications/CCNotesHelper.app`, and activate the new service. Any activation failure
-restores and reactivates the prior generation. The native catalog is presented at `~/CCNotes`.
+Submit the exact signed helper delivered beside the current CLI to daemonkit. Daemonkit owns
+candidate copying, attestation, canonical replacement at `~/Applications/CCNotesHelper.app`,
+activation, and rollback of a failed generation. The native catalog is presented at
+`~/CCNotes`.
 
 ```console
 $ cc-notes package install
