@@ -83,6 +83,15 @@ func InstalledPath() (string, error) {
 	return bundle.AppPath(dir, ExecutableName), nil
 }
 
+// PresentationRoot returns the sole user-visible native mount root.
+func PresentationRoot() (string, error) {
+	home, err := homeDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "CCNotes"), nil
+}
+
 // ExecutablePath returns the fixed signed helper executable path.
 func ExecutablePath() (string, error) {
 	appPath, err := InstalledPath()
