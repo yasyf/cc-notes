@@ -269,7 +269,7 @@ jobs:
         id: version
         run: echo "value=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
       - name: Render Formula/cc-notes.rb
-        uses: yasyf/homebrew-tap/.github/actions/render-formula@33755e73573a27eebbc5962cdf04b7b7e302c8f5
+        uses: yasyf/homebrew-tap/.github/actions/render-formula@19c3d5013032ad9c88f9a8f1170d1f366c19b8d9
         with:
           template: .github/formula/cc-notes.rb.tmpl
           output: Formula/cc-notes.rb
