@@ -20,17 +20,6 @@ import (
 )
 
 func run(ctx context.Context, arguments []string) error {
-	repository, provisioning, err := helpercontract.ParseProvision(arguments)
-	if err != nil {
-		return err
-	}
-	if provisioning {
-		plan, err := helperapp.NewRuntimePlan(ctx)
-		if err != nil {
-			return err
-		}
-		return fusefs.ProvisionRepository(ctx, plan, repository)
-	}
 	drivers, err := fusefs.NewGitDriverFactories()
 	if err != nil {
 		return err

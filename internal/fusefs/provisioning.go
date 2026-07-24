@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/yasyf/fusekit/catalog"
-	"github.com/yasyf/fusekit/mountproto"
+	"github.com/yasyf/fusekit/tenant"
 )
 
 const repositoryGeneration catalog.Generation = 1
@@ -15,7 +15,7 @@ const repositoryGeneration catalog.Generation = 1
 // RepositoryProvision is cc-notes' complete immutable v1 repository declaration.
 type RepositoryProvision struct {
 	Tenant      Tenant
-	Definition  mountproto.TenantDefinition
+	Spec        tenant.TenantSpec
 	Declaration catalog.SourceAuthorityDeclaration
 }
 
@@ -31,25 +31,28 @@ func NewRepositoryProvision(presentationRoot, repoRoot string) (RepositoryProvis
 		return RepositoryProvision{}, err
 	}
 	routeName := "repo-" + encoded[:16]
-	tenant := Tenant{
+	productTenant := Tenant{
 		ID: tenantID, Generation: repositoryGeneration, Authority: AuthorityForTenant(tenantID),
 		RouteName: routeName, RepoRoot: repoRoot,
 	}
-	if err := tenant.Validate(); err != nil {
+	if err := productTenant.Validate(); err != nil {
 		return RepositoryProvision{}, err
 	}
-	declaration, err := newGitDriverDeclaration(tenant.Authority, repoRoot)
+	declaration, err := newGitDriverDeclaration(productTenant.Authority, repoRoot)
 	if err != nil {
 		return RepositoryProvision{}, err
 	}
 	return RepositoryProvision{
-		Tenant: tenant,
-		Definition: mountproto.TenantDefinition{
-			Mount:       &mountproto.MountSpec{PresentationRoot: filepath.Join(presentationRoot, routeName)},
-			BackingRoot: repoRoot, ContentSourceID: string(tenant.Authority),
-			AccessMode: mountproto.AccessModeReadWrite, CasePolicy: mountproto.CasePolicySensitive,
-			Presentations: []mountproto.Presentation{mountproto.PresentationMount},
-			Generation:    uint64(repositoryGeneration),
+		Tenant: productTenant,
+		Spec: tenant.TenantSpec{
+			OwnerID: helperOwner, ID: productTenant.ID,
+			Mount:   tenant.MountSpec{PresentationRoot: filepath.Join(presentationRoot, routeName)},
+			Backing: tenant.BackingSpec{Root: repoRoot}, Content: tenant.ContentSource{ID: string(productTenant.Authority)},
+			Traits: tenant.TenantTraits{
+				Access: tenant.ReadWrite, CaseSensitivity: catalog.CaseSensitive,
+				Presentations: catalog.PresentMount,
+			},
+			Generation: repositoryGeneration,
 		},
 		Declaration: declaration,
 	}, nil

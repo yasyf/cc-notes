@@ -33,7 +33,10 @@ func TestHolderConfigCarriesExactProductRuntimeBudgets(t *testing.T) {
 	if config.NativeReadinessTimeout != helpercontract.RuntimeNativeReadinessTimeout ||
 		config.CatalogReadinessTimeout != helpercontract.RuntimeCatalogReadinessTimeout ||
 		config.CatalogOperationTimeout != helpercontract.RuntimeCatalogOperationTimeout ||
-		config.ShutdownTimeout != helpercontract.RuntimeShutdownTimeout {
+		config.ShutdownTimeout != helpercontract.RuntimeShutdownTimeout ||
+		len(config.BusinessHandlers) != 1 ||
+		config.BusinessHandlers[0].Op != helpercontract.ProvisionRepositoryOperation ||
+		config.BusinessHandlers[0].Handler == nil || config.BusinessHandlers[0].Concurrent {
 		t.Fatalf("holder runtime budgets = (%s, %s, %s, %s)",
 			config.NativeReadinessTimeout,
 			config.CatalogReadinessTimeout, config.CatalogOperationTimeout, config.ShutdownTimeout)
@@ -113,36 +116,32 @@ func TestNativeOperationAuthorizationCoversExactProtocolSurface(t *testing.T) {
 	}
 }
 
-func TestHelperPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
-	first := testTenant(t)
-	secondID, err := catalog.NewTenantID("cc-notes-second")
+func TestHelperPolicyExposesOnlyNativePresentationSessions(t *testing.T) {
+	policy := newHelperPolicy()
+	tenantID, err := catalog.NewTenantID("cc-notes-native")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second := Tenant{
-		ID: secondID, Generation: 8, Authority: AuthorityForTenant(secondID),
-		RouteName: "repo-second", RepoRoot: filepath.Join(t.TempDir(), "repo"),
-	}
-	policy := newHelperPolicy()
+	route := catalogservice.Route{Tenant: tenantID, Generation: 1}
 
 	productSession, productClient := openAcceptedSession(t)
-	productIdentity := mountservice.Identity{Peer: productSession.Peer(), WireBuild: productSession.WireBuild(), Session: productSession}
-	owner, err := policy.authorizeMount(t.Context(), productIdentity, mountproto.OperationTenantProvision, first.ID, first.Generation)
-	if err != nil || owner != helperOwner {
-		t.Fatalf("authorize product owner=%q err=%v", owner, err)
+	productIdentity := mountservice.Identity{
+		Peer: productSession.Peer(), WireBuild: productSession.WireBuild(), Session: productSession,
 	}
-	if _, err := policy.authorizeMount(t.Context(), productIdentity, mountproto.OperationTenantProvision, second.ID, second.Generation); err == nil {
-		t.Fatal("cross-tenant session reuse succeeded")
+	if _, err := policy.authorizeMount(
+		t.Context(), productIdentity, mountproto.OperationTenantProvision, tenantID, 1,
+	); !errors.Is(err, mountservice.ErrUnauthorized) {
+		t.Fatalf("product tenant operation = %v, want unauthorized", err)
 	}
-	catalogIdentity := catalogservice.Identity{Peer: productSession.Peer(), WireBuild: productSession.WireBuild(), Session: productSession}
-	prepareRoute := catalogservice.Route{Tenant: first.ID, Generation: first.Generation}
-	authorization, err := policy.authorizeCatalog(catalogIdentity, catalogproto.OperationTenantPrepare, prepareRoute)
-	if err != nil || authorization.Role != catalogservice.RoleTenantOwner {
-		t.Fatalf("prepare authorization = %+v err=%v", authorization, err)
+	productCatalog := catalogservice.Identity{
+		Peer: productSession.Peer(), WireBuild: productSession.WireBuild(), Session: productSession,
 	}
-	if _, err := policy.authorizeCatalog(catalogIdentity, catalogproto.OperationCatalogHead, prepareRoute); err == nil {
-		t.Fatal("product session became a mount presentation")
+	if _, err := policy.authorizeCatalog(
+		productCatalog, catalogproto.OperationSourceAuthorityReadDesiredFleet, catalogservice.Route{},
+	); err == nil {
+		t.Fatal("product source-fleet operation was exposed")
 	}
+	_ = productClient.Close()
 
 	nativeSession, nativeClient := openAcceptedSession(t)
 	nativeIdentity := mountservice.Identity{Peer: nativeSession.Peer(), WireBuild: nativeSession.WireBuild(), Session: nativeSession}
@@ -150,7 +149,7 @@ func TestHelperPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 		t.Fatalf("authorize native: %v", err)
 	}
 	nativeCatalog := catalogservice.Identity{Peer: nativeSession.Peer(), WireBuild: nativeSession.WireBuild(), Session: nativeSession}
-	authorization, err = policy.authorizeCatalog(nativeCatalog, catalogproto.OperationCatalogHead, prepareRoute)
+	authorization, err := policy.authorizeCatalog(nativeCatalog, catalogproto.OperationCatalogHead, route)
 	if err != nil || authorization.Role != catalogservice.RoleMount || authorization.Presentation != catalog.PresentationMount {
 		t.Fatalf("native catalog authorization = %+v err=%v", authorization, err)
 	}
@@ -163,67 +162,10 @@ func TestHelperPolicyFencesTenantAndRoleForSessionLifetime(t *testing.T) {
 	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationActivationAck, catalogservice.Route{}); err == nil {
 		t.Fatal("unbound session accessed a protected catalog operation")
 	}
-	admin, err := policy.authorizeCatalog(
-		unboundIdentity, catalogproto.OperationSourceAuthorityReadDesiredFleet, catalogservice.Route{},
-	)
-	if err != nil || admin.Role != catalogservice.RoleProductAdmin || admin.Principal != string(helperOwner) {
-		t.Fatalf("product admin authorization = %+v err=%v", admin, err)
-	}
-	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationSourceAuthorityPublishDesiredFleet, catalogservice.Route{}); err != nil {
-		t.Fatalf("reuse product admin session: %v", err)
-	}
-	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationTenantPrepare, prepareRoute); err == nil {
-		t.Fatal("product admin session became a tenant owner")
-	}
 
-	if err := productClient.Close(); err != nil {
-		t.Fatalf("close product session: %v", err)
-	}
-	waitBindingReleased(t, policy, productSession)
 	_ = nativeClient.Close()
+	waitBindingReleased(t, policy, nativeSession)
 	_ = unboundClient.Close()
-}
-
-func TestHelperPolicyStartsEmptyAndBindsFirstExactTenantGeneration(t *testing.T) {
-	policy := newHelperPolicy()
-	tenantID, err := catalog.NewTenantID("cc-notes-dynamic")
-	if err != nil {
-		t.Fatal(err)
-	}
-	session, client := openAcceptedSession(t)
-	identity := mountservice.Identity{Peer: session.Peer(), WireBuild: session.WireBuild(), Session: session}
-	if _, err := policy.authorizeMount(
-		t.Context(), identity, mountproto.OperationTenantProvision, tenantID, 7,
-	); err != nil {
-		t.Fatalf("authorize first desired tenant: %v", err)
-	}
-	if _, err := policy.authorizeMount(
-		t.Context(), identity, mountproto.OperationTenantReplace, tenantID, 8,
-	); err == nil {
-		t.Fatal("session crossed its bound tenant generation")
-	}
-	_ = client.Close()
-}
-
-func TestHelperPolicyTenantStateCannotUnlockPreparation(t *testing.T) {
-	policy := newHelperPolicy()
-	tenant := testTenant(t)
-	session, client := openAcceptedSession(t)
-	identity := mountservice.Identity{Peer: session.Peer(), WireBuild: session.WireBuild(), Session: session}
-	owner, err := policy.authorizeMount(
-		t.Context(), identity, mountproto.OperationTenantState, tenant.ID, 0,
-	)
-	if err != nil || owner != helperOwner {
-		t.Fatalf("authorize state owner=%q err=%v", owner, err)
-	}
-	catalogIdentity := catalogservice.Identity{Peer: session.Peer(), WireBuild: session.WireBuild(), Session: session}
-	if _, err := policy.authorizeCatalog(
-		catalogIdentity, catalogproto.OperationTenantPrepare,
-		catalogservice.Route{Tenant: tenant.ID, Generation: tenant.Generation},
-	); err == nil {
-		t.Fatal("tenant state session unlocked tenant preparation")
-	}
-	_ = client.Close()
 }
 
 func openAcceptedSession(t *testing.T) (*wire.AcceptedSession, *wire.Client) {

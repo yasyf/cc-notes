@@ -61,21 +61,16 @@ func newHolderConfig(config HelperRuntimeConfig) holder.Config {
 		CatalogOperationTimeout: config.CatalogOperationTimeout,
 		CatalogStderr:           config.CatalogStderr,
 		ShutdownTimeout:         config.ShutdownTimeout, Signals: config.Signals,
+		BusinessHandlers: BusinessHandlers(config.Plan),
 	}
 }
 
 type helperSessionRole uint8
 
-const (
-	helperSessionProduct helperSessionRole = iota + 1
-	helperSessionNative
-	helperSessionAdmin
-)
+const helperSessionNative helperSessionRole = 1
 
 type helperSessionBinding struct {
-	role       helperSessionRole
-	tenant     catalog.TenantID
-	generation catalog.Generation
+	role helperSessionRole
 }
 
 type helperPolicy struct {
@@ -96,27 +91,11 @@ func (p *helperPolicy) authorizeMount(
 	tenantID catalog.TenantID,
 	generation catalog.Generation,
 ) (tenant.OwnerID, error) {
-	if !tenantLifecycleOperation(operation) {
-		return "", mountservice.ErrUnauthorized
-	}
-	if _, err := catalog.NewTenantID(string(tenantID)); err != nil {
-		return "", mountservice.ErrUnauthorized
-	}
-	if operation == mountproto.OperationTenantState {
-		if generation != 0 || identity.Peer.UID != p.uid || identity.Session == nil {
-			return "", mountservice.ErrUnauthorized
-		}
-		return helperOwner, nil
-	}
-	if generation == 0 {
-		return "", mountservice.ErrUnauthorized
-	}
-	if err := p.bind(identity.Peer, identity.Session, helperSessionBinding{
-		role: helperSessionProduct, tenant: tenantID, generation: generation,
-	}); err != nil {
-		return "", err
-	}
-	return helperOwner, nil
+	_ = identity
+	_ = operation
+	_ = tenantID
+	_ = generation
+	return "", mountservice.ErrUnauthorized
 }
 
 func (p *helperPolicy) authorizeNative(
@@ -149,51 +128,21 @@ func (p *helperPolicy) authorizeCatalog(
 	operation catalogproto.Operation,
 	route catalogservice.Route,
 ) (catalogservice.Authorization, error) {
-	if productAdminOperation(operation) {
-		if route != (catalogservice.Route{}) {
-			return catalogservice.Authorization{}, errors.New("FuseKit runtime: product admin request carries a tenant route")
-		}
-		if err := p.bind(identity.Peer, identity.Session, helperSessionBinding{role: helperSessionAdmin}); err != nil {
-			return catalogservice.Authorization{}, err
-		}
-		return catalogservice.Authorization{
-			Principal: string(helperOwner), Role: catalogservice.RoleProductAdmin, Route: route,
-		}, nil
-	}
 	binding, err := p.bound(identity.Peer, identity.Session)
 	if err != nil {
 		return catalogservice.Authorization{}, err
 	}
 	principal := "cc-notes"
-	switch binding.role {
-	case helperSessionProduct:
-		switch operation {
-		case catalogproto.OperationTenantPrepare:
-			if route.Tenant != binding.tenant || route.Generation != binding.generation || route.Forwarded || route.Domain != "" {
-				return catalogservice.Authorization{}, errors.New("FuseKit runtime: tenant preparation does not match the bound tenant")
-			}
-			return catalogservice.Authorization{Principal: principal, Role: catalogservice.RoleTenantOwner, Route: route}, nil
-		default:
-			return catalogservice.Authorization{}, errors.New("FuseKit runtime: product session cannot access catalog presentation operations")
-		}
-	case helperSessionNative:
-		if !catalogPresentationOperation(operation) || route.Forwarded || route.Domain != "" {
-			return catalogservice.Authorization{}, errors.New("FuseKit runtime: native session operation is not a mount presentation request")
-		}
-		return catalogservice.Authorization{
-			Principal: principal, Role: catalogservice.RoleMount,
-			Presentation: catalog.PresentationMount, Route: route,
-		}, nil
-	case helperSessionAdmin:
-		return catalogservice.Authorization{}, errors.New("FuseKit runtime: product admin session cannot access tenant operations")
-	default:
+	if binding.role != helperSessionNative {
 		return catalogservice.Authorization{}, errors.New("FuseKit runtime: invalid session role")
 	}
-}
-
-func productAdminOperation(operation catalogproto.Operation) bool {
-	return operation == catalogproto.OperationSourceAuthorityPublishDesiredFleet ||
-		operation == catalogproto.OperationSourceAuthorityReadDesiredFleet
+	if !catalogPresentationOperation(operation) || route.Forwarded || route.Domain != "" {
+		return catalogservice.Authorization{}, errors.New("FuseKit runtime: native session operation is not a mount presentation request")
+	}
+	return catalogservice.Authorization{
+		Principal: principal, Role: catalogservice.RoleMount,
+		Presentation: catalog.PresentationMount, Route: route,
+	}, nil
 }
 
 type mountAuthorizer struct{ policy *helperPolicy }
@@ -274,16 +223,6 @@ func (p *helperPolicy) releaseWhenDone(session *wire.AcceptedSession, binding he
 		delete(p.bindings, session)
 	}
 	p.mu.Unlock()
-}
-
-func tenantLifecycleOperation(operation mountproto.Operation) bool {
-	switch operation {
-	case mountproto.OperationTenantProvision, mountproto.OperationTenantReplace,
-		mountproto.OperationTenantRemove, mountproto.OperationTenantState:
-		return true
-	default:
-		return false
-	}
 }
 
 func nativeOperation(operation mountproto.Operation) bool {

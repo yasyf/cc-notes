@@ -1,39 +1,48 @@
-// Package helpercontract defines cc-notes' exact CLI-to-helper invocation.
+// Package helpercontract defines cc-notes' exact helper business protocol.
 package helpercontract
 
 import (
 	"errors"
-	"fmt"
+	"path/filepath"
 
-	"github.com/yasyf/fusekit/transportproto"
-
-	"github.com/yasyf/cc-notes/internal/version"
+	"github.com/yasyf/daemonkit/wire"
 )
 
-const provisionOperation = "--provision-repository"
+const (
+	// ProvisionRepositoryOperation is the sole v1 repository provisioning operation.
+	ProvisionRepositoryOperation wire.Op = "product.cc-notes.repository.provision.v1"
+	// ProvisionSchema is the hard-cut business payload schema.
+	ProvisionSchema uint16 = 1
+)
 
-// ProvisionArguments returns the exact hard-cut repository provisioning invocation.
-func ProvisionArguments(repoRoot string) []string {
-	return []string{provisionOperation, version.String(), transportproto.WireBuild, repoRoot}
+// ProvisionRepositoryRequest identifies one canonical repository root.
+type ProvisionRepositoryRequest struct {
+	Schema         uint16 `json:"schema"`
+	RepositoryRoot string `json:"repository_root"`
 }
 
-// ParseProvision recognizes and authenticates one exact provisioning invocation.
-func ParseProvision(arguments []string) (string, bool, error) {
-	return parseProvision(arguments, version.String(), transportproto.WireBuild)
+// Validate rejects any non-v1 or path-ambiguous request.
+func (r ProvisionRepositoryRequest) Validate() error {
+	if r.Schema != ProvisionSchema {
+		return errors.New("cc-notes helper: repository provision schema is not v1")
+	}
+	if !filepath.IsAbs(r.RepositoryRoot) || filepath.Clean(r.RepositoryRoot) != r.RepositoryRoot {
+		return errors.New("cc-notes helper: repository root is not exact and absolute")
+	}
+	return nil
 }
 
-func parseProvision(arguments []string, helperBuild, helperProtocol string) (string, bool, error) {
-	if len(arguments) == 0 || arguments[0] != provisionOperation {
-		return "", false, nil
+// ProvisionRepositoryResponse proves one exact tenant generation was prepared.
+type ProvisionRepositoryResponse struct {
+	Schema     uint16 `json:"schema"`
+	Tenant     string `json:"tenant"`
+	Generation uint64 `json:"generation"`
+}
+
+// Validate rejects any incomplete or non-v1 response.
+func (r ProvisionRepositoryResponse) Validate() error {
+	if r.Schema != ProvisionSchema || r.Tenant == "" || r.Generation == 0 {
+		return errors.New("cc-notes helper: repository provision response is not exact v1")
 	}
-	if len(arguments) != 4 {
-		return "", true, errors.New("cc-notes helper: provisioning invocation has the wrong v1 shape")
-	}
-	if arguments[1] != helperBuild {
-		return "", true, fmt.Errorf("cc-notes helper: caller build %q differs from helper build %q", arguments[1], helperBuild)
-	}
-	if arguments[2] != helperProtocol {
-		return "", true, errors.New("cc-notes helper: caller protocol differs from helper protocol")
-	}
-	return arguments[3], true, nil
+	return nil
 }

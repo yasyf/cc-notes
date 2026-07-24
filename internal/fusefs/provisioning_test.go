@@ -5,7 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/yasyf/fusekit/mountproto"
+	"github.com/yasyf/fusekit/catalog"
+	"github.com/yasyf/fusekit/tenant"
 )
 
 func TestRepositoryProvisionIsOpaqueExactAndStable(t *testing.T) {
@@ -22,16 +23,15 @@ func TestRepositoryProvisionIsOpaqueExactAndStable(t *testing.T) {
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("same repository changed identity: %+v != %+v", first, second)
 	}
-	if first.Tenant.Generation != 1 || first.Definition.Generation != 1 ||
-		first.Definition.Mount == nil ||
-		first.Definition.Mount.PresentationRoot != filepath.Join(presentation, first.Tenant.RouteName) ||
-		first.Definition.BackingRoot != repository ||
-		first.Definition.ContentSourceID != string(first.Tenant.Authority) ||
-		first.Definition.AccessMode != mountproto.AccessModeReadWrite ||
-		first.Definition.CasePolicy != mountproto.CasePolicySensitive ||
-		first.Definition.FileProviderPresentationInstanceID != "" ||
-		first.Definition.FileProviderDisplayName != "" ||
-		len(first.Definition.Presentations) != 1 || first.Definition.Presentations[0] != mountproto.PresentationMount {
+	if first.Tenant.Generation != 1 || first.Spec.Generation != 1 ||
+		first.Spec.OwnerID != helperOwner || first.Spec.ID != first.Tenant.ID ||
+		first.Spec.Mount.PresentationRoot != filepath.Join(presentation, first.Tenant.RouteName) ||
+		first.Spec.Backing.Root != repository ||
+		first.Spec.Content.ID != string(first.Tenant.Authority) ||
+		first.Spec.Traits.Access != tenant.ReadWrite ||
+		first.Spec.Traits.CaseSensitivity != catalog.CaseSensitive ||
+		first.Spec.Traits.Presentations != catalog.PresentMount ||
+		first.Spec.FileProvider != (tenant.FileProviderSpec{}) {
 		t.Fatalf("repository provision = %+v", first)
 	}
 	if first.Declaration.Authority != first.Tenant.Authority || first.Declaration.DriverID != gitDriverID {
