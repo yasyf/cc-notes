@@ -1,6 +1,6 @@
 // Package cli wires the cobra command tree for cc-notes: the note, doc, log,
 // task, sprint, project, runbook, investigation, attachment, skills, hooks, workflows,
-// and machine service noun groups plus init, sync, and version. Output is agents-first — lean
+// and machine service/package noun groups plus init, sync, and version. Output is agents-first — lean
 // deterministic lines or compact JSON on stdout, one labeled error line on
 // stderr, exit codes mapped from typed errors via ExitCode.
 package cli
@@ -37,7 +37,7 @@ func NewRootCmd() *cobra.Command {
 	// Cobra renders no help for flag groups; append a Constraints: block that
 	// recovers them. Subcommands inherit this template via getUsageTemplateFunc.
 	root.SetUsageTemplate(root.UsageTemplate() + "{{constraints .}}")
-	root.AddCommand(newInitCmd(), newSyncCmd(), newStatusCmd(), newReconcileCmd(), newBlameCmd(), newHistoryCmd(), newShowCmd(), newSearchCmd(), newRelevantCmd(), newCompactCmd(), newGCCmd(), newVizCmd(), newMCPCmd(), newVersionCmd(), newNoteCmd(), newDocCmd(), newLogCmd(), newPapercutCmd(), newTaskCmd(), newSprintCmd(), newProjectCmd(), newRunbookCmd(), newInvestigationCmd(), newAttachmentCmd(), newSkillsCmd(), newHooksCmd(), newWorkflowsCmd(), newServiceCmd())
+	root.AddCommand(newInitCmd(), newSyncCmd(), newStatusCmd(), newReconcileCmd(), newBlameCmd(), newHistoryCmd(), newShowCmd(), newSearchCmd(), newRelevantCmd(), newCompactCmd(), newGCCmd(), newVizCmd(), newMCPCmd(), newVersionCmd(), newNoteCmd(), newDocCmd(), newLogCmd(), newPapercutCmd(), newTaskCmd(), newSprintCmd(), newProjectCmd(), newRunbookCmd(), newInvestigationCmd(), newAttachmentCmd(), newSkillsCmd(), newHooksCmd(), newWorkflowsCmd(), newServiceCmd(), newPackageCmd())
 	return root
 }
 
