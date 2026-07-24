@@ -24,6 +24,22 @@ func TestInstalledPathUsesCanonicalAccountHome(t *testing.T) {
 	}
 }
 
+func TestPresentationRootUsesCanonicalAccountHome(t *testing.T) {
+	account, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	path, err := PresentationRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(account.HomeDir, "CCNotes")
+	if path != want {
+		t.Fatalf("presentation root = %q, want %q", path, want)
+	}
+}
+
 func TestHelperReleaseIdentityIsExact(t *testing.T) {
 	identity := CodeIdentity()
 	if identity.TeamID != TeamID || identity.SigningIdentifier != BundleID {

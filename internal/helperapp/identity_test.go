@@ -40,7 +40,11 @@ func TestRuntimeDirectoryUsesOnlyV1DerivedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(presentation) != "mnt" || filepath.Dir(presentation) != filepath.Dir(directory) {
+	account, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if presentation != filepath.Join(account.HomeDir, "CCNotes") {
 		t.Fatalf("presentation root = %q", presentation)
 	}
 }

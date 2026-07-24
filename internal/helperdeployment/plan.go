@@ -29,7 +29,7 @@ func RuntimeDirectory() (string, error) {
 
 // PresentationRoot returns the sole native mount presentation root.
 func PresentationRoot() (string, error) {
-	return helperclient.HomeStateDir("mnt")
+	return helperclient.PresentationRoot()
 }
 
 // RuntimePlanSpec returns the signed-side native runtime contract.
