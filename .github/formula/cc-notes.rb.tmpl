@@ -21,7 +21,7 @@ class CcNotes < Formula
 
   on_macos do
     resource "helper" do
-      url "https://github.com/yasyf/cc-notes/releases/download/v__VERSION__/cc-notes-helper-v__VERSION__-darwin.zip"
+      url "https://github.com/yasyf/cc-notes/releases/download/v__VERSION__/cc-notes-helper-v__VERSION__-darwin.zip", using: :nounzip
       sha256 "__SHA_HELPER__"
     end
 
@@ -51,6 +51,7 @@ class CcNotes < Formula
     bin.install Dir["cc-notes_*"].first => "cc-notes"
     if OS.mac?
       resource("helper").stage do
+        system "/usr/bin/ditto", "-x", "-k", resource("helper").cached_download, "."
         system "/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "CCNotesHelper.app"
         libexec.install "CCNotesHelper.app"
       end
