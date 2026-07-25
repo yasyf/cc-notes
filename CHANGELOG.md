@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Signed helper deployment now uses FuseKit `v1.15.1` canonical entitlement
   attestation, and releases require one immutable annotated tag signed by the
   fleet release key.
+- Helper application publishing now uses the final reusable release workflow,
+  which applies the same trusted signed-tag gate before building the nested
+  application artifact.
 - cc-notes now opens repositories with `extensions.worktreeConfig`, including
   Conductor shared repos and jj-colocated checkouts, and partial clones by
   resolving repository paths with real git and constructing go-git's
