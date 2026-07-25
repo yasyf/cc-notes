@@ -2,6 +2,7 @@ package gitobj_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -203,5 +204,69 @@ func TestFirstParentMerges(t *testing.T) {
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("FirstParentMerges = %+v, want %+v (fm %s must be skipped, c1 %s is not a merge)", got, want, fm, c1)
+	}
+}
+
+// TestFirstParentMergesNonMonotonicSince pins the window walk against
+// backdated commits. A single ancient-dated commit between the tip and an
+// in-window merge must not end the walk — sinceSlop tolerates the blip — while
+// a merge buried behind sinceSlop consecutive old commits stays out of reach,
+// and merges older than since are never collected.
+func TestFirstParentMergesNonMonotonicSince(t *testing.T) {
+	t3 := t0.Add(3 * time.Minute)
+	ancient := t0.Add(-24 * time.Hour)
+
+	dir := initRepo(t)
+	commitAt(t, dir, t0, "base")
+	git(t, dir, "checkout", "-q", "-b", "side")
+	commitAt(t, dir, t1, "s1")
+	git(t, dir, "checkout", "-q", "main")
+	m := mergeAt(t, dir, t2, "side", "merge side")
+	commitAt(t, dir, ancient, "backdated")
+	tip := commitAt(t, dir, t3, "tip")
+
+	repo := open(t, dir)
+	got, err := repo.FirstParentMerges(t.Context(), tip, 0, t2.Unix())
+	if err != nil {
+		t.Fatalf("FirstParentMerges: %v", err)
+	}
+	if len(got) != 1 || got[0].SHA != m {
+		t.Errorf("FirstParentMerges past a backdated blip = %+v, want just merge %s", got, m)
+	}
+
+	got, err = repo.FirstParentMerges(t.Context(), tip, 0, t3.Unix()+1)
+	if err != nil {
+		t.Fatalf("FirstParentMerges: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("FirstParentMerges with everything before since = %+v, want none", got)
+	}
+}
+
+// TestFirstParentMergesSinceSlopStops proves the walk terminates: an in-window
+// merge hidden behind sinceSlop (100) consecutive out-of-window commits is not
+// reached — the run of old commits ends the walk before it.
+func TestFirstParentMergesSinceSlopStops(t *testing.T) {
+	t3 := t0.Add(3 * time.Minute)
+	ancient := t0.Add(-24 * time.Hour)
+
+	dir := initRepo(t)
+	commitAt(t, dir, t0, "base")
+	git(t, dir, "checkout", "-q", "-b", "side")
+	commitAt(t, dir, t1, "s1")
+	git(t, dir, "checkout", "-q", "main")
+	m := mergeAt(t, dir, t2, "side", "merge side")
+	for i := range 100 {
+		commitAt(t, dir, ancient, fmt.Sprintf("old-%d", i))
+	}
+	tip := commitAt(t, dir, t3, "tip")
+
+	repo := open(t, dir)
+	got, err := repo.FirstParentMerges(t.Context(), tip, 0, t2.Unix())
+	if err != nil {
+		t.Fatalf("FirstParentMerges: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("FirstParentMerges behind %d old commits = %+v, want none (walk must stop at the slop, not reach %s)", 100, got, m)
 	}
 }

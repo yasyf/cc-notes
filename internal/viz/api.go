@@ -63,8 +63,9 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var timeout buildTimeoutError
 		switch {
-		case r.Context().Err() != nil:
-			// The client is gone; the shared build runs on to warm the cache.
+		case errors.Is(err, context.Canceled) && r.Context().Err() != nil:
+			// The client is gone; the shared build runs on to warm the cache. A
+			// build failure racing the disconnect still falls through and logs.
 		case errors.As(err, &timeout):
 			s.writeError(w, r, http.StatusGatewayTimeout, err.Error())
 		default:

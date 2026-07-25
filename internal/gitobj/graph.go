@@ -86,7 +86,17 @@ func (r *Repo) WalkCommits(ctx context.Context, tips []model.SHA, limit int, sin
 	return out, truncated, nil
 }
 
-// FirstParentMerges returns the merge commits (more than one parent) on tip's first-parent path, newest first, bounded by limit and since.
+// sinceSlop is how many consecutive first-parent commits older than since a
+// walk tolerates before stopping. Committer dates are not monotonic — rebases,
+// cherry-picks, and clock skew backdate individual commits — so a hard stop at
+// the first old commit would hide every in-window merge behind one backdated
+// blip; a bounded run of old commits is the signal the window is truly past.
+const sinceSlop = 100
+
+// FirstParentMerges returns the merge commits (more than one parent) on tip's
+// first-parent path, newest first, bounded by limit. Only merges committed at
+// or after since (unix seconds, 0 = unbounded) are collected, and the walk
+// stops once sinceSlop consecutive commits predate since.
 func (r *Repo) FirstParentMerges(ctx context.Context, tip model.SHA, limit int, since int64) ([]CodeCommit, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -104,17 +114,22 @@ func (r *Repo) FirstParentMerges(ctx context.Context, tip model.SHA, limit int, 
 		return nil, fmt.Errorf("read commit %s: %w", tip, err)
 	}
 	var merges []CodeCommit
+	old := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if cur.Committer.When.Unix() < since {
-			break
-		}
-		if len(cur.ParentHashes) > 1 {
-			merges = append(merges, newCodeCommit(cur))
-			if limit > 0 && len(merges) == limit {
+			if old++; old == sinceSlop {
 				break
+			}
+		} else {
+			old = 0
+			if len(cur.ParentHashes) > 1 {
+				merges = append(merges, newCodeCommit(cur))
+				if limit > 0 && len(merges) == limit {
+					break
+				}
 			}
 		}
 		if len(cur.ParentHashes) == 0 {

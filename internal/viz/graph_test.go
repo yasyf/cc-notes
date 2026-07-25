@@ -477,3 +477,45 @@ func laneString(l Lane) string {
 	return fmt.Sprintf("Lane{name=%s parent=%s status=%s inferred=%t fork=%s merge=%s tip=%s start=%d end=%d commits=%d}",
 		l.Name, l.Parent, l.Status, l.Inferred, fork, merge, tip, l.Start, l.End, l.Commits)
 }
+
+// TestTopologyNestingCrissCross pins the parentage scan against a criss-cross
+// history where the pair (p, trunk) has two best common ancestors and git's
+// single-answer merge-base picks one arbitrarily. A fork-base shortcut over
+// that answer once dropped p from s's candidates even though s genuinely
+// nests under p: s forks off p's merged-in side line, so p is s's only true
+// parent and must win over the trunk fallback.
+func TestTopologyNestingCrissCross(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("root")
+	r.git("checkout", "-q", "-b", "bline")
+	r.commit("b1")
+	b2 := r.commit("b2")
+	r.git("checkout", "-q", "-b", "aline", "main")
+	r.commit("a1")
+	r.commit("a2")
+	r.git("checkout", "-q", "main")
+	r.mergeNoFF(r.clock+fxStep, "bline", "Merge branch 'bline'")
+	r.mergeNoFF(r.clock+2*fxStep, "aline", "Merge branch 'aline'")
+	r.git("checkout", "-q", "bline")
+	r.at(r.clock + 3*fxStep)
+	r.commit("b3")
+	r.git("checkout", "-q", "-b", "p", "aline")
+	r.mergeNoFF(r.clock+fxStep, "bline", "Merge branch 'bline' into p")
+	r.git("checkout", "-q", "-b", "s", "bline")
+	r.at(r.clock + 2*fxStep)
+	r.commit("s1")
+	r.git("checkout", "-q", "main")
+	r.git("branch", "-q", "-D", "bline")
+
+	g, err := NewBuilder(r.openStore()).Graph(t.Context(), fullWindow)
+	if err != nil {
+		t.Fatalf("Graph: %v", err)
+	}
+	s := laneByName(t, g, "s")
+	if s.Parent != "p" {
+		t.Errorf("parent(s) = %q, want p", s.Parent)
+	}
+	if s.Fork == nil || s.Fork.SHA != b2.sha {
+		t.Errorf("s fork = %+v, want %s (b2, its divergence from the trunk)", s.Fork, b2.sha)
+	}
+}

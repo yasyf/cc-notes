@@ -25,8 +25,8 @@ type nesting struct {
 //
 // Ancestry is read off merge bases rather than walked: a is an ancestor of b
 // exactly when merge-base(a, b) == a. That keeps the whole scan on batched git
-// execs — the candidate pre-filter, then the surviving pairs, then their
-// fork-base checks, each prefetched in one bounded fan-out.
+// execs — the pairwise merge bases, then their fork-base checks, each
+// prefetched in one bounded fan-out.
 func (b *Builder) assignParents(ctx context.Context, trunk *branchState, others []*branchState, r *topoRun) error {
 	for _, s := range others {
 		s.parent = trunk.name
@@ -34,11 +34,7 @@ func (b *Builder) assignParents(ctx context.Context, trunk *branchState, others 
 	if len(others) > maxParentageBranches {
 		return nil
 	}
-	candidates, err := b.nestingCandidates(ctx, others)
-	if err != nil {
-		return err
-	}
-	links, err := b.nestingLinks(ctx, others, candidates)
+	links, err := b.nestingLinks(ctx, others)
 	if err != nil {
 		return err
 	}
@@ -81,16 +77,24 @@ func (b *Builder) assignParents(ctx context.Context, trunk *branchState, others 
 	return nil
 }
 
-// nestingLinks resolves the merge base of every candidate pair, prefetched in
-// one fan-out, and keeps the pairs that can still parent: those sharing a real
-// merge base that is not simply s's own fork off the trunk, and where p does not
-// descend from s — a branch never adopts its own descendant, an identical-tip
-// pair broken by name so exactly one direction parents.
-func (b *Builder) nestingLinks(ctx context.Context, others []*branchState, candidates map[*branchState][]*branchState) ([]nesting, error) {
+// nestingLinks resolves the merge base of every forked pair, prefetched in one
+// fan-out, and keeps the pairs that can parent: those sharing a real merge base
+// that is not simply s's own fork off the trunk, and where p does not descend
+// from s — a branch never adopts its own descendant, an identical-tip pair
+// broken by name so exactly one direction parents. The scan is deliberately
+// unfiltered: any shortcut over fork-base ancestry is unsound when a criss-cross
+// history gives a pair several best common ancestors and git's single-answer
+// merge-base picks one arbitrarily.
+func (b *Builder) nestingLinks(ctx context.Context, others []*branchState) ([]nesting, error) {
 	var pairs [][2]model.SHA
 	for _, s := range others {
-		for _, p := range candidates[s] {
-			pairs = append(pairs, [2]model.SHA{s.tip, p.tip})
+		if !s.hasFork {
+			continue
+		}
+		for _, p := range others {
+			if p != s && p.hasFork {
+				pairs = append(pairs, [2]model.SHA{s.tip, p.tip})
+			}
 		}
 	}
 	if err := b.prefetchMergeBases(ctx, pairs); err != nil {
@@ -98,7 +102,13 @@ func (b *Builder) nestingLinks(ctx context.Context, others []*branchState, candi
 	}
 	var links []nesting
 	for _, s := range others {
-		for _, p := range candidates[s] {
+		if !s.hasFork {
+			continue
+		}
+		for _, p := range others {
+			if p == s || !p.hasFork {
+				continue
+			}
 			mb, found, err := b.mergeBaseOf(ctx, s.tip, p.tip)
 			if err != nil {
 				return nil, err
@@ -113,61 +123,4 @@ func (b *Builder) nestingLinks(ctx context.Context, others []*branchState, candi
 		}
 	}
 	return links, nil
-}
-
-// nestingCandidates pre-filters the quadratic parentage scan down to the pairs
-// that can nest at all. P can parent B only when B's fork off the trunk is an
-// ancestor of P's: B's merge base with P descends from B's fork and is itself an
-// ancestor of P, so B's fork is a common ancestor of P's tip and the trunk, and
-// therefore an ancestor of P's own fork. Distinct fork points are usually far
-// fewer than branches — nested branches share one outright — so the check costs
-// one merge base per pair of fork points instead of one per pair of branches.
-func (b *Builder) nestingCandidates(ctx context.Context, others []*branchState) (map[*branchState][]*branchState, error) {
-	var forks []model.SHA
-	seen := make(map[model.SHA]bool, len(others))
-	for _, s := range others {
-		if !s.hasFork || seen[s.forkBase] {
-			continue
-		}
-		seen[s.forkBase] = true
-		forks = append(forks, s.forkBase)
-	}
-	var pairs [][2]model.SHA
-	for i, f := range forks {
-		for _, other := range forks[i+1:] {
-			pairs = append(pairs, [2]model.SHA{f, other})
-		}
-	}
-	if err := b.prefetchMergeBases(ctx, pairs); err != nil {
-		return nil, err
-	}
-	ancestor := make(map[[2]model.SHA]bool, len(pairs)*2)
-	for _, pair := range pairs {
-		mb, found, err := b.mergeBaseOf(ctx, pair[0], pair[1])
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			continue
-		}
-		ancestor[[2]model.SHA{pair[0], pair[1]}] = mb == pair[0]
-		ancestor[[2]model.SHA{pair[1], pair[0]}] = mb == pair[1]
-	}
-
-	candidates := make(map[*branchState][]*branchState, len(others))
-	for _, s := range others {
-		if !s.hasFork {
-			continue
-		}
-		for _, p := range others {
-			if p == s || !p.hasFork {
-				continue
-			}
-			if s.forkBase != p.forkBase && !ancestor[[2]model.SHA{s.forkBase, p.forkBase}] {
-				continue
-			}
-			candidates[s] = append(candidates[s], p)
-		}
-	}
-	return candidates, nil
 }
