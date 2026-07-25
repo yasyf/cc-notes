@@ -601,9 +601,9 @@ export function normalizeEntities(raw: RawStateResponse): StateResponse {
   };
 }
 
-// Comfortably above the server's 60s default build deadline, so the server's
-// descriptive 504 arrives first; the abort is the backstop for a wedged
-// connection.
+// Backstop abort for the fast endpoints, where any response this late means a
+// wedged connection. /api/graph opts out (see fetchGraph): its latency is
+// legitimately operator-configurable via --build-timeout.
 const FETCH_TIMEOUT_MS = 90_000;
 
 // errorDetail extracts the server's JSON error message when present, falling
@@ -626,17 +626,17 @@ export function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function getJSON<T>(path: string): Promise<T> {
+async function getJSON<T>(path: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
       headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "TimeoutError") {
       throw new Error(
-        `${path}: no response after ${FETCH_TIMEOUT_MS / 1000}s — the server may still be building; reload to retry`,
+        `${path}: no response after ${timeoutMs / 1000}s — the server may still be building; reload to retry`,
       );
     }
     throw err;
@@ -653,7 +653,10 @@ export function fetchRepo(): Promise<RepoInfo> {
 
 export async function fetchGraph(since?: number): Promise<Graph> {
   const q = since !== undefined ? `?since=${since}` : "";
-  return normalizeGraph(await getJSON<RawGraph>(`/api/graph${q}`));
+  // No client abort: the server bounds this request with --build-timeout and
+  // always answers — a descriptive 504 past the deadline — so an abort here
+  // would only defeat an operator-raised deadline.
+  return normalizeGraph(await getJSON<RawGraph>(`/api/graph${q}`, 0));
 }
 
 export async function fetchCommits(

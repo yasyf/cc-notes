@@ -3,6 +3,7 @@ import type { RunbookRunSnapshot, RunbookStepSnapshot } from "./api";
 import {
   errorText,
   fetchGraph,
+  fetchRepo,
   normalizeCommits,
   normalizeEntities,
   normalizeEntity,
@@ -268,15 +269,29 @@ describe("getJSON error handling (via fetchGraph)", () => {
 
   it("maps a fetch timeout to a friendly retry message", async () => {
     // Tests the mapping, not the real timer — AbortSignal.timeout doesn't
-    // cooperate with fake timers.
+    // cooperate with fake timers. Exercised via fetchRepo: the graph fetch
+    // deliberately carries no abort (see below).
     vi.stubGlobal(
       "fetch",
       vi.fn().mockRejectedValue(new DOMException("signal timed out", "TimeoutError")),
     );
-    const err = (await fetchGraph().catch((e: unknown) => e)) as Error;
+    const err = (await fetchRepo().catch((e: unknown) => e)) as Error;
     expect(err.message).toBe(
-      "/api/graph: no response after 90s — the server may still be building; reload to retry",
+      "/api/repo: no response after 90s — the server may still be building; reload to retry",
     );
+  });
+
+  it("sends the graph fetch without an abort signal", async () => {
+    // An abort on /api/graph would defeat an operator-raised --build-timeout;
+    // the server's own deadline bounds that request instead.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ repo: {}, lanes: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchGraph();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.signal).toBeUndefined();
   });
 });
 
