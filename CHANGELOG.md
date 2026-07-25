@@ -205,6 +205,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolve structurally (`cd -`, a `$var`, a `~`, a backtick substitution)
   falls back to the session repo; record writes only, and an MCP write
   always targets the session repo.
+- **`cc-notes viz` no longer hangs forever on large repositories.** The graph
+  build did per-branch serial git work — one `merge-base` exec plus an
+  in-process ancestry walk per branch — which took 10+ minutes over a few
+  hundred branches while the browser sat on "Loading timeline…" with no
+  feedback. Enumeration, tip times, and merged-detection now batch into single
+  `for-each-ref` calls, the surviving merge-base execs run eight wide, the
+  first-parent scans are memoized and bounded by the history window, and
+  concurrent page loads share one build instead of stacking rebuilds. Lanes
+  are windowed as a result: a branch whose tip predates the history window
+  (default 90 days) is hidden unless it is the trunk, rejoined the trunk
+  inside the window, or is named by a live task; deleted branches merged
+  before the window are no longer mined; `--max-lanes` (default 100) caps the
+  board, and the header counts hidden lanes. viz also never hangs silently
+  now: `--build-timeout` (default 60s) cuts a runaway build over to a
+  descriptive 504 the UI renders, the browser aborts a wedged request after
+  90s with a reload hint, and the serving terminal logs 5xx responses and
+  slow builds.
 
 ## [0.27.0] - 2026-07-12
 

@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RunbookRunSnapshot, RunbookStepSnapshot } from "./api";
 import {
+  errorText,
+  fetchGraph,
   normalizeCommits,
   normalizeEntities,
   normalizeEntity,
@@ -229,6 +231,62 @@ describe("normalizeEntities", () => {
     expect(state.investigations[0]?.findings).toEqual([
       { id: "f1", text: "pool rewrite", status: "cleared", note: "predates rewrite" },
     ]);
+  });
+});
+
+describe("getJSON error handling (via fetchGraph)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("surfaces the server's JSON error body on a 504", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ error: "graph build exceeded 1m0s; repo may be too large" }),
+          { status: 504, statusText: "Gateway Timeout" },
+        ),
+      ),
+    );
+    const err = (await fetchGraph().catch((e: unknown) => e)) as Error;
+    expect(err.message).toBe(
+      "/api/graph: graph build exceeded 1m0s; repo may be too large",
+    );
+  });
+
+  it("falls back to the status line when the error body isn't JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("not json", { status: 500, statusText: "Internal Server Error" }),
+      ),
+    );
+    const err = (await fetchGraph().catch((e: unknown) => e)) as Error;
+    expect(err.message).toBe("/api/graph: 500 Internal Server Error");
+  });
+
+  it("maps a fetch timeout to a friendly retry message", async () => {
+    // Tests the mapping, not the real timer — AbortSignal.timeout doesn't
+    // cooperate with fake timers.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new DOMException("signal timed out", "TimeoutError")),
+    );
+    const err = (await fetchGraph().catch((e: unknown) => e)) as Error;
+    expect(err.message).toBe(
+      "/api/graph: no response after 90s — the server may still be building; reload to retry",
+    );
+  });
+});
+
+describe("errorText", () => {
+  it("returns an Error's message", () => {
+    expect(errorText(new Error("boom"))).toBe("boom");
+  });
+
+  it("stringifies a non-Error value", () => {
+    expect(errorText("boom")).toBe("boom");
   });
 });
 

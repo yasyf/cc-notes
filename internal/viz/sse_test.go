@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,7 +19,7 @@ func newStreamServer(t *testing.T) (*Server, *Hub) {
 	r := newGitRepo(t)
 	r.commit("c1")
 	s := r.openStore()
-	srv := NewServer(s, NewBuilder(s))
+	srv := NewServer(s, NewBuilder(s), log.New(io.Discard, "", 0))
 	return srv, srv.Hub()
 }
 

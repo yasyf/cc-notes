@@ -16,13 +16,15 @@ type Graph struct {
 
 // RepoInfo is the graph header: the worktree root, the resolved trunk branch,
 // the branch HEAD points at (empty when detached), the RFC3339 generation
-// instant, and whether the commit walk hit its cap.
+// instant, whether the commit walk hit its cap, and how many branch lanes the
+// window filter and the lane cap dropped (absent when none were).
 type RepoInfo struct {
-	Root        string `json:"root"`
-	Trunk       string `json:"trunk"`
-	Head        string `json:"head"`
-	GeneratedAt string `json:"generated_at"`
-	Truncated   bool   `json:"truncated"`
+	Root         string `json:"root"`
+	Trunk        string `json:"trunk"`
+	Head         string `json:"head"`
+	GeneratedAt  string `json:"generated_at"`
+	Truncated    bool   `json:"truncated"`
+	LanesOmitted int    `json:"lanes_omitted,omitempty"`
 }
 
 // Point is a commit on a lane: its sha and commit time in unix seconds.

@@ -501,7 +501,16 @@ func assertTreeExcludes(t *testing.T, root string, fragments ...string) {
 		if entry.Name() == "release_contract_test.go" {
 			return nil
 		}
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+		if entry.IsDir() {
+			// Only the shipped source tree is contract surface: skip git
+			// metadata, vendored node_modules, and agent worktrees under .claude.
+			switch entry.Name() {
+			case ".git", ".claude", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
 		payload, err := os.ReadFile(path)

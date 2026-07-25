@@ -103,28 +103,28 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	oid := r.PathValue("oid")
 	if !model.ValidAttachmentOID(oid) {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid attachment oid %q: want 64 lower-hex characters", oid))
+		s.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("invalid attachment oid %q: want 64 lower-hex characters", oid))
 		return
 	}
 
 	obj, ok, err := s.builder.ReferencedAttachment(ctx, oid)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if !ok {
-		writeError(w, http.StatusNotFound, "no entity references attachment "+oid)
+		s.writeError(w, r, http.StatusNotFound, "no entity references attachment "+oid)
 		return
 	}
 
 	content := s.store.LFS()
 	f, err := content.Open(oid)
 	if errors.Is(err, lfs.ErrObjectMissing) {
-		writeError(w, http.StatusNotFound, blobMissingMessage(obj))
+		s.writeError(w, r, http.StatusNotFound, blobMissingMessage(obj))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer func() { _ = f.Close() }()
@@ -137,7 +137,7 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 	if ctype == "" {
 		ctype, err = sniffContentType(f)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			s.writeError(w, r, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}

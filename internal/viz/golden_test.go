@@ -25,49 +25,68 @@ const (
 
 // TestGraphGolden pins one end-to-end Builder.Graph over a fixture spanning every
 // merge classification, a deleted-branch lane, nested branches, and every entity
-// kind. The output is normalized (see normalizeGraph) because op-commit shas,
-// ids, and times are random per run. A second Graph call proves cache-hit
-// equivalence: it returns the identical cached pointer, whose normalized JSON is
-// byte-identical.
+// kind, at both window settings. The output is normalized (see normalizeGraph)
+// because op-commit shas, ids, and times are random per run. A second Graph call
+// proves cache-hit equivalence: it returns the identical cached pointer, whose
+// normalized JSON is byte-identical.
 //
-// The default window (Graph called with since 0) spans the last ninety days from
-// now, which is later than the fixed January-2026 fixture commits, so the
-// window-bounded attribution — every lane's Commits and the trunk's window start
-// — is empty; the golden pins that empty attribution alongside the topology,
-// events, and entity summaries, which do not depend on the window.
+// The two windows pin complementary halves. The default window (since 0) spans
+// the last ninety days, which postdates the fixed January-2026 fixture commits
+// entirely, so every branch lane falls outside it: graph_full.json pins the
+// filtered board — the trunk, the lanes_omitted count, and the deleted lane
+// reconstructed from a task trail — and proves the hidden branches claim their
+// names, since a hidden branch leaking out of that set would fabricate a second
+// "deleted (inferred)" lane for a branch whose ref plainly exists. The open
+// window (since fullWindow) admits every fixture commit, so
+// graph_open_window.json pins the topology the filter hides: each merge
+// classification, the mined deleted lane, nested parentage, and the
+// window-bounded commit attribution. Events and entity summaries come from the
+// entity trails and are identical either way.
 func TestGraphGolden(t *testing.T) {
-	r := buildGoldenRepo(t)
-	b := NewBuilder(r.openStore())
+	cases := []struct {
+		name   string
+		since  int64
+		golden string
+	}{
+		{"default window", 0, "graph_full.json"},
+		{"open window", fullWindow, "graph_open_window.json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := buildGoldenRepo(t)
+			b := NewBuilder(r.openStore())
 
-	g1, err := b.Graph(t.Context(), 0)
-	if err != nil {
-		t.Fatalf("Graph: %v", err)
-	}
-	got := normalizeGraph(t, g1)
+			g1, err := b.Graph(t.Context(), tc.since)
+			if err != nil {
+				t.Fatalf("Graph: %v", err)
+			}
+			got := normalizeGraph(t, g1)
 
-	golden := filepath.Join("testdata", "graph_full.json")
-	if *updateGolden {
-		if err := os.WriteFile(golden, []byte(got), 0o600); err != nil {
-			t.Fatalf("write golden: %v", err)
-		}
-	}
-	want, err := os.ReadFile(golden)
-	if err != nil {
-		t.Fatalf("read golden (regenerate with -update): %v", err)
-	}
-	if got != string(want) {
-		t.Errorf("normalized graph mismatch (regenerate with -update):\n%s", got)
-	}
+			golden := filepath.Join("testdata", tc.golden)
+			if *updateGolden {
+				if err := os.WriteFile(golden, []byte(got), 0o600); err != nil {
+					t.Fatalf("write golden: %v", err)
+				}
+			}
+			want, err := os.ReadFile(golden)
+			if err != nil {
+				t.Fatalf("read golden (regenerate with -update): %v", err)
+			}
+			if got != string(want) {
+				t.Errorf("normalized graph mismatch (regenerate with -update):\n%s", got)
+			}
 
-	g2, err := b.Graph(t.Context(), 0)
-	if err != nil {
-		t.Fatalf("Graph second call: %v", err)
-	}
-	if g2 != g1 {
-		t.Errorf("second Graph call returned a fresh graph, want the cached pointer")
-	}
-	if got2 := normalizeGraph(t, g2); got2 != got {
-		t.Errorf("cached graph normalized differently:\n%s", got2)
+			g2, err := b.Graph(t.Context(), tc.since)
+			if err != nil {
+				t.Fatalf("Graph second call: %v", err)
+			}
+			if g2 != g1 {
+				t.Errorf("second Graph call returned a fresh graph, want the cached pointer")
+			}
+			if got2 := normalizeGraph(t, g2); got2 != got {
+				t.Errorf("cached graph normalized differently:\n%s", got2)
+			}
+		})
 	}
 }
 

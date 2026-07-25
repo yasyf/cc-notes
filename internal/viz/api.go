@@ -43,7 +43,7 @@ func (b *Builder) RepoInfo(ctx context.Context) (RepoInfo, error) {
 func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	info, err := s.builder.RepoInfo(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, info)
@@ -54,14 +54,22 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("since"); raw != "" {
 		v, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid since %q: want a unix timestamp", raw))
+			s.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("invalid since %q: want a unix timestamp", raw))
 			return
 		}
 		since = v
 	}
 	g, err := s.builder.Graph(r.Context(), since)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		var timeout buildTimeoutError
+		switch {
+		case r.Context().Err() != nil:
+			// The client is gone; the shared build runs on to warm the cache.
+		case errors.As(err, &timeout):
+			s.writeError(w, r, http.StatusGatewayTimeout, err.Error())
+		default:
+			s.writeError(w, r, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, g)
@@ -120,35 +128,35 @@ func (s *Server) handleEntity(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	kind, ok := entityKind(r.PathValue("kind"))
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown kind %q: want note|doc|log|task|sprint|project|runbook|investigation", r.PathValue("kind")))
+		s.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("unknown kind %q: want note|doc|log|task|sprint|project|runbook|investigation", r.PathValue("kind")))
 		return
 	}
 	ref, err := s.store.Resolve(ctx, kind, r.PathValue("id"))
 	var ambig *store.AmbiguousError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
+		s.writeError(w, r, http.StatusNotFound, err.Error())
 		return
 	case errors.As(err, &ambig):
 		writeJSON(w, http.StatusBadRequest, ambiguousBody(ambig))
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	steps, err := s.store.History(ctx, ref)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 	entries, err := trail.Entries(steps)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if len(entries) == 0 {
-		writeError(w, http.StatusInternalServerError, "empty trail for "+ref)
+		s.writeError(w, r, http.StatusInternalServerError, "empty trail for "+ref)
 		return
 	}
 

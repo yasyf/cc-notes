@@ -112,7 +112,7 @@ func (h *Hub) subscriberCount() int {
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		s.writeError(w, r, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
 	ch, cancel := s.hub.Subscribe()

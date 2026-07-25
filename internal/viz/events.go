@@ -61,12 +61,17 @@ func (b *Builder) eventsAndEntities(ctx context.Context, topo *topology) ([]Even
 	return events, entities, nil
 }
 
-// liveBranches is the set of branch names backed by a live ref: the trunk and
-// every enumerated branch lane. A deleted-branch lane never shadows one.
+// liveBranches is the set of branch names backed by a live ref: the trunk, every
+// enumerated branch lane, and the branches the window filter hid — hidden is not
+// deleted, and a branch whose ref still exists must never be reconstructed as a
+// deleted lane. A deleted-branch lane never shadows one.
 func liveBranches(topo *topology) map[string]bool {
-	live := make(map[string]bool, len(topo.branches)+1)
+	live := make(map[string]bool, len(topo.branches)+len(topo.hidden)+1)
 	live[topo.trunk.name] = true
 	for _, s := range topo.branches {
+		live[s.name] = true
+	}
+	for _, s := range topo.hidden {
 		live[s.name] = true
 	}
 	return live

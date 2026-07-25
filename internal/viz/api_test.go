@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -33,7 +34,7 @@ func newVizServer(t *testing.T, r *gitRepo) (*httptest.Server, *store.Store, *Bu
 	t.Helper()
 	s := r.openStore()
 	b := NewBuilder(s)
-	ts := httptest.NewServer(NewServer(s, b))
+	ts := httptest.NewServer(NewServer(s, b, log.New(io.Discard, "", 0)))
 	t.Cleanup(ts.Close)
 	return ts, s, b
 }
@@ -220,6 +221,31 @@ func TestAPIGraphBadSince(t *testing.T) {
 	if !strings.Contains(errResp.Error, "since") {
 		t.Errorf("error = %q, want it to name since", errResp.Error)
 	}
+}
+
+// TestAPIGraphBuildTimeout504 pins the never-hang guardrail end to end: a build
+// past the deadline answers 504 with the descriptive body the SPA renders, and
+// the server fault reaches the operator's log.
+func TestAPIGraphBuildTimeout504(t *testing.T) {
+	r := newGitRepo(t)
+	r.commit("c1")
+	s := r.openStore()
+	b := NewBuilder(s)
+	b.BuildTimeout = 50 * time.Millisecond
+	b.buildHook = func(ctx context.Context) { <-ctx.Done() }
+	logger := newBufLogger()
+	ts := httptest.NewServer(NewServer(s, b, logger))
+	t.Cleanup(ts.Close)
+
+	code, body := getBody(t, ts.URL+"/api/graph")
+	if code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504 (%s)", code, body)
+	}
+	want := `{"error":"graph build exceeded 50ms; repo may be too large"}`
+	if got := string(body); got != want {
+		t.Fatalf("body = %s, want %s", got, want)
+	}
+	logger.awaitLine(t, "GET /api/graph -> 504")
 }
 
 // TestAPIEntityTaskWithCheckpoint drives the entity endpoint over a task whose

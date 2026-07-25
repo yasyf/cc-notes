@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"time"
@@ -15,11 +16,15 @@ import (
 )
 
 // vizOptions collects the viz command's flags. poll is the interval the liveness
-// Watcher polls refs at to feed the /api/stream SSE endpoint.
+// Watcher polls refs at to feed the /api/stream SSE endpoint; maxLanes caps the
+// rendered branch lanes, 0 selecting the builder's default; buildTimeout bounds
+// one graph build, past which GET /api/graph answers 504.
 type vizOptions struct {
-	port   int
-	noOpen bool
-	poll   time.Duration
+	port         int
+	noOpen       bool
+	poll         time.Duration
+	maxLanes     int
+	buildTimeout time.Duration
 }
 
 // newVizCmd builds "cc-notes viz": serve the branch-and-task visualization over
@@ -39,6 +44,8 @@ func newVizCmd() *cobra.Command {
 	f.IntVar(&opts.port, "port", 0, "TCP port to listen on (0 = ephemeral)")
 	f.BoolVar(&opts.noOpen, "no-open", false, "do not open a browser")
 	f.DurationVar(&opts.poll, "poll", 2*time.Second, "liveness poll interval")
+	f.IntVar(&opts.maxLanes, "max-lanes", 0, "maximum branch lanes to render (0 = default)")
+	f.DurationVar(&opts.buildTimeout, "build-timeout", viz.DefaultBuildTimeout, "maximum time one graph build may take")
 	return cmd
 }
 
@@ -49,12 +56,22 @@ func runViz(cmd *cobra.Command, opts vizOptions) error {
 	if opts.poll <= 0 {
 		return &UsageError{Err: fmt.Errorf("--poll must be positive, got %s", opts.poll)}
 	}
+	if opts.maxLanes < 0 {
+		return &UsageError{Err: fmt.Errorf("--max-lanes must not be negative, got %d", opts.maxLanes)}
+	}
+	if opts.buildTimeout <= 0 {
+		return &UsageError{Err: fmt.Errorf("--build-timeout must be positive, got %s", opts.buildTimeout)}
+	}
 	s, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
+	logger := log.New(cmd.ErrOrStderr(), "", log.Ltime)
 	builder := viz.NewBuilder(s)
-	srv := viz.NewServer(s, builder)
+	builder.MaxLanes = opts.maxLanes
+	builder.BuildTimeout = opts.buildTimeout
+	builder.Log = logger
+	srv := viz.NewServer(s, builder, logger)
 	hub := srv.Hub()
 	watcher := viz.NewWatcher(s, builder, hub, opts.poll)
 
@@ -75,7 +92,15 @@ func runViz(cmd *cobra.Command, opts vizOptions) error {
 		}
 	}
 
-	httpSrv := &http.Server{Handler: srv, ReadHeaderTimeout: 5 * time.Second}
+	// WriteTimeout and ReadTimeout stay unset deliberately: both are absolute
+	// per-request deadlines, and /api/stream is a long-lived SSE response they
+	// would cut off mid-stream. IdleTimeout bounds a kept-alive but idle
+	// connection instead, which SSE never is.
+	httpSrv := &http.Server{
+		Handler:           srv,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 	g, gctx := errgroup.WithContext(cmd.Context())
 	g.Go(func() error {
 		return watcher.Run(gctx)

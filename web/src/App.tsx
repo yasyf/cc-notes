@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchEntities, fetchGraph, fetchRepo } from "./api";
+import { errorText, fetchEntities, fetchGraph, fetchRepo } from "./api";
 import { Browse } from "./browse/Browse";
 import { HeaderSearch } from "./browse/HeaderSearch";
 import { relativeTime } from "./dag/badges";
@@ -56,7 +56,7 @@ function AppShell() {
       })
       .catch((err: unknown) => {
         if (loadSeq.current.isLatest(token))
-          dispatch({ type: "load-error", error: String(err) });
+          dispatch({ type: "load-error", error: errorText(err) });
       });
   }, [dispatch]);
 
@@ -72,7 +72,7 @@ function AppShell() {
     fetchEntities()
       .then((data) => dispatch({ type: "entities-loaded", data, gen }))
       .catch((err: unknown) =>
-        dispatch({ type: "entities-load-error", error: String(err), gen }),
+        dispatch({ type: "entities-load-error", error: errorText(err), gen }),
       );
   }, [dispatch]);
 
@@ -334,6 +334,11 @@ function RepoBadge() {
           {repo.truncated && (
             <span className="repo-trunc" title="History was truncated to the view window">
               truncated
+            </span>
+          )}
+          {repo.lanes_omitted !== undefined && repo.lanes_omitted > 0 && (
+            <span className="repo-trunc" title="Older lanes were hidden from the view window">
+              {repo.lanes_omitted} older lanes hidden
             </span>
           )}
         </>

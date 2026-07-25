@@ -52,7 +52,7 @@ func (s *Server) handleCommits(w http.ResponseWriter, r *http.Request) {
 	if raw := q.Get("limit"); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid limit %q: want an integer", raw))
+			s.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("invalid limit %q: want an integer", raw))
 			return
 		}
 		limit = v
@@ -67,12 +67,12 @@ func (s *Server) handleCommits(w http.ResponseWriter, r *http.Request) {
 
 	g, err := s.builder.Graph(ctx, 0)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 	all, truncated, err := s.store.Repo.WalkCommits(ctx, liveTips(g), maxCommitLimit, 0)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -80,7 +80,7 @@ func (s *Server) handleCommits(w http.ResponseWriter, r *http.Request) {
 	if before != "" {
 		idx := indexOfSHA(all, model.SHA(before))
 		if idx < 0 {
-			writeError(w, http.StatusBadRequest, "unknown before cursor "+before)
+			s.writeError(w, r, http.StatusBadRequest, "unknown before cursor "+before)
 			return
 		}
 		start = idx + 1
@@ -91,12 +91,12 @@ func (s *Server) handleCommits(w http.ResponseWriter, r *http.Request) {
 	cache := make(map[model.SHA]reachSet)
 	order, err := attributeCommits(ctx, s.store, g, cache)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 	trailers, err := commitTrailers(ctx, s.store, g, cache)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 	resolve := taskResolver(g)

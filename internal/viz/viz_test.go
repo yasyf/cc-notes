@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -44,6 +45,18 @@ type gitRepo struct {
 
 // newGitRepo initializes a repository on the main branch.
 func newGitRepo(t *testing.T) *gitRepo { return newGitRepoOn(t, "main") }
+
+// newRecentGitRepo initializes a repository whose fixture clock starts an hour
+// ago instead of at fxBase, so its branches fall inside the default history
+// window. Tests reaching an endpoint that is fixed at the default window need
+// it, since fxBase long predates that window and its lanes would be filtered
+// out; tests that assert exact commit times keep newGitRepo's fixed clock.
+func newRecentGitRepo(t *testing.T) *gitRepo {
+	t.Helper()
+	r := newGitRepoOn(t, "main")
+	r.clock = time.Now().Unix() - int64(time.Hour.Seconds())
+	return r
+}
 
 // newGitRepoOn initializes a repository on the named initial branch.
 func newGitRepoOn(t *testing.T, branch string) *gitRepo {
@@ -78,6 +91,10 @@ func (r *gitRepo) gitAt(when int64, args ...string) string {
 	}
 	return strings.TrimSpace(stdout.String())
 }
+
+// at repositions the fixture clock so the next commit lands exactly at when
+// (unix seconds), letting a fixture straddle the default history window.
+func (r *gitRepo) at(when int64) { r.clock = when - fxStep }
 
 // commit writes a unique file and commits it with message on the current
 // branch, advancing the clock.

@@ -51,17 +51,28 @@ type carrier struct {
 // carries the same merge transitively. Only the first extra parent takes the
 // merge subject's parsed name; further octopus parents and unparseable subjects
 // fall back to a sha placeholder. The result is memoized by (trunk tip, sorted
-// live tips, since) so entity-ref churn does not re-mine.
-func (b *Builder) mineDeletedBranches(ctx context.Context, trunk *branchState, others []*branchState, r *topoRun) ([]Lane, error) {
-	key := minedKey(trunk.tip, others, r.since)
+// live tips, cutoff) so entity-ref churn does not re-mine.
+//
+// Scanning is bounded by the window cutoff, so a branch merged and deleted
+// before the window is not reconstructed. The hidden branches — enumerated but
+// filtered out of the rendering — are excluded alongside the rendered ones: their
+// refs are live, so mining a lane for them would invent a deleted branch that
+// plainly exists. They are not carriers, though; a lane parented to a hidden
+// branch would dangle.
+func (b *Builder) mineDeletedBranches(ctx context.Context, trunk *branchState, others, hidden []*branchState, r *topoRun) ([]Lane, error) {
+	key := minedKey(trunk.tip, others, hidden, r.cutoff)
 	if lanes, ok := b.cachedMined(key); ok {
 		return lanes, nil
 	}
 
-	live := make(map[string]bool, len(others)+1)
-	liveTip := make(map[model.SHA]bool, len(others))
+	live := make(map[string]bool, len(others)+len(hidden)+1)
+	liveTip := make(map[model.SHA]bool, len(others)+len(hidden))
 	live[trunk.name] = true
 	for _, s := range others {
+		live[s.name] = true
+		liveTip[s.tip] = true
+	}
+	for _, s := range hidden {
 		live[s.name] = true
 		liveTip[s.tip] = true
 	}
@@ -77,9 +88,9 @@ func (b *Builder) mineDeletedBranches(ctx context.Context, trunk *branchState, o
 	var lanes []Lane
 	for i := 0; i < len(queue); i++ {
 		c := queue[i]
-		merges, err := b.store.Repo.FirstParentMerges(ctx, c.tip, walkLimit, 0)
+		merges, err := r.firstParentMerges(c.tip)
 		if err != nil {
-			return nil, fmt.Errorf("first-parent merges %s: %w", c.tip, err)
+			return nil, err
 		}
 		for _, m := range merges {
 			if seenMerge[m.SHA] {
@@ -194,24 +205,29 @@ func stripFirstSegment(s string) string {
 	return s
 }
 
-// minedKey digests the mining inputs — the trunk tip, the sorted live branch
-// tips, and the window floor — into the minedCache key. Entity-ref tips are
-// deliberately absent: they churn on every note or task edit but never change
-// which branches were merged and deleted, so folding them in would defeat the
-// cache the whole-graph digest already refreshes.
-func minedKey(trunkTip model.SHA, others []*branchState, since int64) string {
-	tips := make([]string, 0, len(others))
-	for _, s := range others {
-		tips = append(tips, string(s.tip))
-	}
-	sort.Strings(tips)
+// minedKey digests the mining inputs — the trunk tip, the sorted rendered and
+// hidden branch tips, and the window floor — into the minedCache key. The two
+// tip groups are digested apart because they play different roles: the rendered
+// branches seed the carrier queue, the hidden ones only exclude. Entity-ref tips
+// are deliberately absent: they churn on every note or task edit but never
+// change which branches were merged and deleted, so folding them in would defeat
+// the cache the whole-graph digest already refreshes.
+func minedKey(trunkTip model.SHA, others, hidden []*branchState, cutoff int64) string {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "trunk=%s\n", trunkTip)
-	for _, t := range tips {
-		h.Write([]byte(t))
-		h.Write([]byte{'\n'})
+	for _, group := range [][]*branchState{others, hidden} {
+		tips := make([]string, 0, len(group))
+		for _, s := range group {
+			tips = append(tips, string(s.tip))
+		}
+		sort.Strings(tips)
+		for _, t := range tips {
+			h.Write([]byte(t))
+			h.Write([]byte{'\n'})
+		}
+		h.Write([]byte{0})
 	}
-	_, _ = fmt.Fprintf(h, "since=%d", since)
+	_, _ = fmt.Fprintf(h, "cutoff=%d", cutoff)
 	return hex.EncodeToString(h.Sum(nil))
 }
 

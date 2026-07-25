@@ -96,7 +96,7 @@ func TestCommitsUnknownBefore(t *testing.T) {
 // lane, the squash commit stays on the trunk and carries the resolved task id,
 // and a linked commit surfaces its commit_linked event.
 func TestCommitsAttribution(t *testing.T) {
-	r := newGitRepo(t)
+	r := newRecentGitRepo(t)
 	r.commit("c1")
 	r.commit("c2")
 	r.git("checkout", "-q", "-b", "feature")
@@ -172,7 +172,7 @@ func TestCommitsRootTrailer(t *testing.T) {
 // commits that carried no branch before the DAG was mined now attribute to the
 // reconstructed lane, while the merge commit stays on the trunk.
 func TestCommitsDeletedBranchAttribution(t *testing.T) {
-	r := newGitRepo(t)
+	r := newRecentGitRepo(t)
 	r.commit("c1")
 	c2 := r.commit("c2")
 	r.git("checkout", "-q", "-b", "gone")

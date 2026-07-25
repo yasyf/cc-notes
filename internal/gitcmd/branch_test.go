@@ -2,12 +2,23 @@ package gitcmd_test
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/model"
 )
+
+func commitAt(t *testing.T, g gitcmd.Git, msg string, unix int64) model.SHA {
+	t.Helper()
+	date := fmt.Sprintf("@%d +0000", unix)
+	t.Setenv("GIT_AUTHOR_DATE", date)
+	t.Setenv("GIT_COMMITTER_DATE", date)
+	gittest.Git(t, g.Dir, "commit", "-q", "--allow-empty", "-m", msg)
+	return model.SHA(gittest.Git(t, g.Dir, "rev-parse", "HEAD"))
+}
 
 func TestTrunkBranch(t *testing.T) {
 	for _, tc := range []struct {
@@ -205,5 +216,69 @@ func TestCurrentBranch(t *testing.T) {
 				t.Fatalf("CurrentBranch() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRefTips(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	c1 := commitAt(t, g, "c1", 1700000000)
+	gittest.Git(t, g.Dir, "checkout", "-q", "-b", "feat")
+	c2 := commitAt(t, g, "c2", 1700000100)
+	gittest.Git(t, g.Dir, "update-ref", "refs/remotes/origin/release", string(c1))
+
+	got, err := g.RefTips(ctx, "refs/heads/", "refs/remotes/origin/")
+	if err != nil {
+		t.Fatalf("RefTips: %v", err)
+	}
+	want := []gitcmd.RefTip{
+		{Ref: "refs/heads/feat", Tip: c2, Time: 1700000100},
+		{Ref: "refs/heads/main", Tip: c1, Time: 1700000000},
+		{Ref: "refs/remotes/origin/release", Tip: c1, Time: 1700000000},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("RefTips() = %+v, want %+v", got, want)
+	}
+
+	got, err = g.RefTips(ctx, "refs/does-not-exist/")
+	if err != nil {
+		t.Fatalf("RefTips no match: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("RefTips no match = %+v, want nil", got)
+	}
+}
+
+func TestMergedRefs(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	commitAt(t, g, "c1", 1700000000)
+	gittest.Git(t, g.Dir, "checkout", "-q", "-b", "merged-branch")
+	commitAt(t, g, "c2", 1700000100)
+	gittest.Git(t, g.Dir, "checkout", "-q", "main")
+	gittest.Git(t, g.Dir, "merge", "-q", "--no-ff", "-m", "merge merged-branch", "merged-branch")
+	trunkTip := resolve(t, g.Dir, "HEAD")
+	gittest.Git(t, g.Dir, "checkout", "-q", "-b", "equal-branch", string(trunkTip))
+	gittest.Git(t, g.Dir, "checkout", "-q", "-b", "unmerged-branch", "merged-branch")
+	commitAt(t, g, "c3", 1700000200)
+	gittest.Git(t, g.Dir, "checkout", "-q", "main")
+
+	got, err := g.MergedRefs(ctx, trunkTip, "refs/heads/")
+	if err != nil {
+		t.Fatalf("MergedRefs: %v", err)
+	}
+	want := []string{"refs/heads/equal-branch", "refs/heads/main", "refs/heads/merged-branch"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("MergedRefs() = %v, want %v", got, want)
+	}
+
+	got, err = g.MergedRefs(ctx, trunkTip, "refs/does-not-exist/")
+	if err != nil {
+		t.Fatalf("MergedRefs no match: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("MergedRefs no match = %v, want nil", got)
 	}
 }

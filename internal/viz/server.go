@@ -42,17 +42,19 @@ type Server struct {
 	builder *Builder
 	hub     *Hub
 	mux     *http.ServeMux
+	log     Logger
 
 	// static serves the embedded SPA with an index.html fallback; it is nil in a
 	// build without the web UI, where handleRoot serves noWebUIPage instead.
 	static http.Handler
 }
 
-// NewServer builds the viz HTTP handler over the store and its Builder. It owns
-// the SSE Hub that backs GET /api/stream; the caller drives a Watcher that
-// publishes to Hub() and closes it on shutdown.
-func NewServer(s *store.Store, b *Builder) *Server {
-	srv := &Server{store: s, builder: b, hub: NewHub(), mux: http.NewServeMux()}
+// NewServer builds the viz HTTP handler over the store, its Builder, and the
+// logger that receives every server-fault response. It owns the SSE Hub that
+// backs GET /api/stream; the caller drives a Watcher that publishes to Hub()
+// and closes it on shutdown.
+func NewServer(s *store.Store, b *Builder, log Logger) *Server {
+	srv := &Server{store: s, builder: b, hub: NewHub(), mux: http.NewServeMux(), log: log}
 	if web.Embedded {
 		srv.static = spaHandler()
 	}
@@ -78,7 +80,7 @@ func (s *Server) Hub() *Hub { return s.hub }
 // handler runs.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !loopbackHost(r.Host) {
-		writeError(w, http.StatusForbidden, "forbidden host "+r.Host)
+		s.writeError(w, r, http.StatusForbidden, "forbidden host "+r.Host)
 		return
 	}
 	s.mux.ServeHTTP(w, r)
@@ -104,7 +106,7 @@ func loopbackHost(host string) bool {
 // build without the web UI, the placeholder page.
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
-		writeError(w, http.StatusNotFound, "no such endpoint: "+r.URL.Path)
+		s.writeError(w, r, http.StatusNotFound, "no such endpoint: "+r.URL.Path)
 		return
 	}
 	if s.static == nil {
@@ -150,7 +152,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_, _ = w.Write(data)
 }
 
-// writeError writes {"error": msg} with status.
-func writeError(w http.ResponseWriter, status int, msg string) {
+// writeError writes {"error": msg} with status, logging the request only for a
+// server fault: a 4xx is the caller's own mistake, already visible in its
+// response, and would only noise up the operator's terminal.
+func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	if status >= http.StatusInternalServerError {
+		s.log.Printf("%s %s -> %d: %s", r.Method, r.URL.Path, status, msg)
+	}
 	writeJSON(w, status, map[string]string{"error": msg})
 }

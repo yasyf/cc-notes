@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/yasyf/cc-notes/model"
@@ -12,6 +13,13 @@ import (
 // ErrNoTrunk reports that no trunk branch could be resolved: origin/HEAD is
 // unset and neither a local main nor master ref exists.
 var ErrNoTrunk = errors.New("cannot determine trunk")
+
+// RefTip is one ref with its tip commit and committer time (unix seconds).
+type RefTip struct {
+	Ref  string
+	Tip  model.SHA
+	Time int64
+}
 
 // TrunkBranch resolves the repository's trunk: the remote default branch
 // (origin/HEAD) when set, else a probe of local main then master. It wraps
@@ -59,6 +67,42 @@ func (g Git) CurrentBranch(ctx context.Context) (model.Branch, error) {
 	default:
 		return "", err
 	}
+}
+
+// RefTips lists every ref under the given patterns with its tip and committer
+// time in one git for-each-ref invocation.
+func (g Git) RefTips(ctx context.Context, patterns ...string) ([]RefTip, error) {
+	out, err := g.run(ctx, "", append([]string{"for-each-ref", "--format=%(refname)%00%(objectname)%00%(committerdate:unix)"}, patterns...)...)
+	if err != nil {
+		return nil, fmt.Errorf("ref tips: %w", err)
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) == 0 {
+		return nil, nil
+	}
+	tips := make([]RefTip, len(lines))
+	for i, line := range lines {
+		fields := strings.Split(line, "\x00")
+		if len(fields) != 3 || fields[0] == "" || fields[1] == "" {
+			return nil, fmt.Errorf("ref tips: malformed line %q", line)
+		}
+		sec, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("ref tips: parse committer time %q: %w", line, err)
+		}
+		tips[i] = RefTip{Ref: fields[0], Tip: model.SHA(fields[1]), Time: sec}
+	}
+	return tips, nil
+}
+
+// MergedRefs lists the full ref names under patterns whose tips are reachable
+// from commit (git for-each-ref --merged=<commit>).
+func (g Git) MergedRefs(ctx context.Context, commit model.SHA, patterns ...string) ([]string, error) {
+	out, err := g.run(ctx, "", append([]string{"for-each-ref", "--merged=" + string(commit), "--format=%(refname)"}, patterns...)...)
+	if err != nil {
+		return nil, fmt.Errorf("merged refs %s: %w", commit, err)
+	}
+	return nonEmptyLines(out), nil
 }
 
 func (g Git) nearestBookmarkAncestor(ctx context.Context, trunk model.Branch) (model.Branch, error) {

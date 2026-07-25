@@ -1929,6 +1929,8 @@ command: cc-notes viz
   short: Serve the branch-and-task visualization in a browser
   hidden: false
   flags:
+    --build-timeout shorthand=none type=duration default="1m0s" usage="maximum time one graph build may take"
+    --max-lanes shorthand=none type=int default="0" usage="maximum branch lanes to render (0 = default)"
     --no-open shorthand=none type=bool default="false" usage="do not open a browser"
     --poll shorthand=none type=duration default="2s" usage="liveness poll interval"
     --port shorthand=none type=int default="0" usage="TCP port to listen on (0 = ephemeral)"

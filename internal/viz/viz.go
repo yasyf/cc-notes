@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
@@ -39,7 +41,26 @@ const (
 	// since == 0: ninety days back from now, floored no earlier than the
 	// oldest live lane's fork.
 	defaultWindow = 90 * 24 * time.Hour
+	// defaultMaxLanes caps the rendered non-trunk lanes when Builder.MaxLanes is
+	// unset. It is the backstop under the window filter: a repository that
+	// really does have hundreds of branches active in the window still yields a
+	// readable board and a bounded build.
+	defaultMaxLanes = 100
+	// gitConcurrency bounds the parallel git execs a build fans out. Only execs
+	// run in parallel; every go-git read is serialized by the repository mutex,
+	// so widening this buys nothing there.
+	gitConcurrency = 8
+	// defaultSlowThreshold is the build duration past which Graph narrates: a
+	// "still running" line while the build is in flight and a cost line when it
+	// lands.
+	defaultSlowThreshold = 5 * time.Second
 )
+
+// DefaultBuildTimeout bounds one graph build. It is long enough for a cold
+// build over a large repository — the walks and merge-base execs a first load
+// pays for — and short enough that a pathological repository surfaces as a
+// descriptive 504 instead of a browser that loads forever.
+const DefaultBuildTimeout = 60 * time.Second
 
 // Builder assembles the visualization graph for one repository. It is safe for
 // concurrent use: each cache carries its own mutex (see cache.go) and the build
@@ -47,11 +68,40 @@ const (
 type Builder struct {
 	store *store.Store
 
+	// MaxLanes caps how many non-trunk branch lanes a graph renders; 0 selects
+	// defaultMaxLanes. Lanes past the cap are dropped stalest-tip first and
+	// counted in RepoInfo.LanesOmitted, except lanes a live task names, which are
+	// exempt. Set it before the first Graph call; it is read without
+	// synchronization.
+	MaxLanes int
+
+	// BuildTimeout bounds one shared graph build; past it the build is cancelled
+	// and Graph reports a buildTimeoutError. Set it before the first Graph call
+	// and never after: it is read without synchronization.
+	BuildTimeout time.Duration
+
+	// Log receives the slow-build lines. Set it before the first Graph call and
+	// never after: it is read without synchronization.
+	Log Logger
+
 	// graphMu guards graphCache. It is held only around the get and the put,
-	// never across a build, so two concurrent Graph calls may both compute the
-	// same digest; the builds are pure reads, so the last put simply wins.
+	// never across a build; builds themselves are deduped by digest through
+	// builds, so concurrent callers share one.
 	graphMu    sync.Mutex
 	graphCache map[string]*Graph
+
+	// builds collapses concurrent builds of the same digest into one: late
+	// callers wait on the in-flight build instead of starting their own, so a
+	// reload storm costs one walk.
+	builds singleflight.Group
+
+	// slowThreshold is the duration past which a build narrates itself; tests
+	// shorten it. Same set-before-serve story as BuildTimeout.
+	slowThreshold time.Duration
+
+	// buildHook runs at the top of every buildGraph when non-nil. It is nil in
+	// production — the seam tests use to count and stall builds.
+	buildHook func(ctx context.Context)
 
 	// trailMu guards trailCache and refTips together. A trail is keyed by its
 	// entity ref tip, which is immutable, so a cached entry is always valid;
@@ -73,8 +123,9 @@ type Builder struct {
 	attCache *attIndex
 
 	// minedMu guards minedCache. Mined deleted-branch lanes are keyed by a
-	// digest of the trunk tip, the sorted live branch tips, and the window floor
-	// alone — the inputs that decide which branches were merged and deleted — so
+	// digest of the trunk tip, the sorted rendered and hidden branch tips, and
+	// the window floor alone — the inputs that decide which branches were merged
+	// and deleted, and which of them a live ref still claims — so
 	// entity-ref churn reuses the cached mining instead of re-walking the DAG.
 	// InvalidateRefs drops it only on a head or remote ref move to bound growth.
 	minedMu    sync.Mutex
@@ -84,21 +135,32 @@ type Builder struct {
 // NewBuilder returns a Builder that reads the given store.
 func NewBuilder(s *store.Store) *Builder {
 	return &Builder{
-		store:      s,
-		graphCache: make(map[string]*Graph),
-		trailCache: make(map[model.SHA][]trail.Entry),
-		refTips:    make(map[string]model.SHA),
-		mbCache:    make(map[string]mergeBase),
-		minedCache: make(map[string][]Lane),
+		store:         s,
+		BuildTimeout:  DefaultBuildTimeout,
+		Log:           nopLogger{},
+		slowThreshold: defaultSlowThreshold,
+		graphCache:    make(map[string]*Graph),
+		trailCache:    make(map[model.SHA][]trail.Entry),
+		refTips:       make(map[string]model.SHA),
+		mbCache:       make(map[string]mergeBase),
+		minedCache:    make(map[string][]Lane),
 	}
 }
 
 // Graph assembles the whole graph for the repository over the history window
 // beginning at since (unix seconds); since == 0 selects the default window
-// (defaultWindow back from now, floored at the oldest live lane's fork). The
-// result is cached by a digest of every branch and entity ref tip plus since,
-// so repeated calls over an unchanged repository return the same value until a
-// ref moves or InvalidateRefs drops the cache.
+// (defaultWindow back from now, floored at the oldest rendered lane's fork).
+// The window also decides which branches get a lane at all: one whose tip
+// predates it is dropped unless a live task names it or the trunk absorbed it
+// inside the window, and RepoInfo.LanesOmitted counts what went, along with any
+// lane past MaxLanes. The result is cached by a digest of every branch and
+// entity ref tip plus since, so repeated calls over an unchanged repository
+// return the same value until a ref moves or InvalidateRefs drops the cache.
+//
+// Concurrent callers of the same digest share one build, bounded by
+// BuildTimeout. The build runs detached from the caller's context, so a client
+// that navigates away leaves it running to warm the cache for the reload;
+// that caller gets its own ctx.Err().
 func (b *Builder) Graph(ctx context.Context, since int64) (*Graph, error) {
 	digest, err := b.digest(ctx, since)
 	if err != nil {
@@ -108,6 +170,50 @@ func (b *Builder) Graph(ctx context.Context, since int64) (*Graph, error) {
 		return g, nil
 	}
 
+	built := b.builds.DoChan(digest, func() (any, error) {
+		bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), b.BuildTimeout)
+		defer cancel()
+
+		started := time.Now()
+		slow := time.AfterFunc(b.slowThreshold, func() {
+			b.Log.Printf("graph build still running after %s", b.slowThreshold)
+		})
+		defer slow.Stop()
+
+		g, err := b.buildGraph(bctx, since)
+		if err != nil {
+			// The deadline surfaces from the build as whatever the cancelled
+			// operation reported ("signal: killed" from an exec), so the context
+			// is the only reliable witness.
+			if bctx.Err() == context.DeadlineExceeded {
+				return nil, buildTimeoutError{timeout: b.BuildTimeout}
+			}
+			return nil, err
+		}
+		if took := time.Since(started); took >= b.slowThreshold {
+			b.Log.Printf("graph build took %s: %d lanes, %d events", took.Round(time.Millisecond), len(g.Lanes), len(g.Events))
+		}
+		b.putGraph(digest, g)
+		return g, nil
+	})
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-built:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*Graph), nil
+	}
+}
+
+// buildGraph assembles the graph from scratch — topology, events and entities,
+// then the repo header — under the build's own deadline.
+func (b *Builder) buildGraph(ctx context.Context, since int64) (*Graph, error) {
+	if b.buildHook != nil {
+		b.buildHook(ctx)
+	}
 	topo, err := b.topology(ctx, since)
 	if err != nil {
 		return nil, err
@@ -126,20 +232,27 @@ func (b *Builder) Graph(ctx context.Context, since int64) (*Graph, error) {
 		return nil, fmt.Errorf("resolve repo root: %w", err)
 	}
 
-	g := &Graph{
+	return &Graph{
 		Repo: RepoInfo{
-			Root:        root,
-			Trunk:       topo.trunk.name,
-			Head:        head,
-			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-			Truncated:   topo.truncated,
+			Root:         root,
+			Trunk:        topo.trunk.name,
+			Head:         head,
+			GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
+			Truncated:    topo.truncated,
+			LanesOmitted: len(topo.hidden),
 		},
 		Lanes:    topo.lanes(),
 		Events:   events,
 		Entities: entities,
-	}
-	b.putGraph(digest, g)
-	return g, nil
+	}, nil
+}
+
+// buildTimeoutError reports a graph build cut off at Builder.BuildTimeout; the
+// API layer maps it to 504.
+type buildTimeoutError struct{ timeout time.Duration }
+
+func (e buildTimeoutError) Error() string {
+	return fmt.Sprintf("graph build exceeded %s; repo may be too large", e.timeout)
 }
 
 // InvalidateRefs drops the whole-graph cache and the trail entries for the

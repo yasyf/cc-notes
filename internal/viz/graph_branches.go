@@ -8,7 +8,6 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
-	"github.com/yasyf/cc-notes/model"
 )
 
 // errNoTrunk reports that the trunk branch could not be resolved by any of the
@@ -54,53 +53,58 @@ func (b *Builder) trunkName(ctx context.Context) (string, error) {
 
 // enumerate lists every branch lane keyed by short name: local heads plus
 // remote-only origin branches (origin/HEAD excluded), deduped preferring the
-// local ref. The trunk is guaranteed present even when it has only a remote or
+// local ref. One for-each-ref carries each ref's tip and committer time
+// together, so the window filter can judge a branch before any per-branch git
+// work runs. The trunk is guaranteed present even when it has only a remote or
 // no enumerated ref.
 func (b *Builder) enumerate(ctx context.Context, trunkName string) (map[string]*branchState, error) {
-	heads, err := b.store.Repo.ListPrefix(ctx, headsPrefix)
+	tips, err := b.store.Git.RefTips(ctx, headsPrefix, remotesPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("list heads: %w", err)
+		return nil, fmt.Errorf("list branch refs: %w", err)
 	}
-	remotes, err := b.store.Repo.ListPrefix(ctx, remotesPrefix)
-	if err != nil {
-		return nil, fmt.Errorf("list remotes: %w", err)
-	}
-	states := make(map[string]*branchState, len(heads)+len(remotes))
-	for full, tip := range heads {
-		short := strings.TrimPrefix(full, headsPrefix)
-		states[short] = &branchState{name: short, ref: full, tip: tip}
-	}
-	for full, tip := range remotes {
-		if full == originHead {
+	states := make(map[string]*branchState, len(tips))
+	for _, rt := range tips {
+		if !strings.HasPrefix(rt.Ref, headsPrefix) {
 			continue
 		}
-		short := strings.TrimPrefix(full, remotesPrefix)
+		short := strings.TrimPrefix(rt.Ref, headsPrefix)
+		states[short] = &branchState{name: short, ref: rt.Ref, tip: rt.Tip, tipTime: rt.Time}
+	}
+	for _, rt := range tips {
+		if !strings.HasPrefix(rt.Ref, remotesPrefix) || rt.Ref == originHead {
+			continue
+		}
+		short := strings.TrimPrefix(rt.Ref, remotesPrefix)
 		if _, ok := states[short]; ok {
 			continue
 		}
-		states[short] = &branchState{name: short, ref: full, tip: tip, remote: true}
+		states[short] = &branchState{name: short, ref: rt.Ref, tip: rt.Tip, tipTime: rt.Time, remote: true}
 	}
 	if _, ok := states[trunkName]; !ok {
-		tip, ref, err := b.resolveTrunkTip(ctx, trunkName)
+		trunk, err := b.resolveTrunkTip(ctx, trunkName)
 		if err != nil {
 			return nil, err
 		}
-		states[trunkName] = &branchState{name: trunkName, ref: ref, tip: tip}
+		states[trunkName] = trunk
 	}
 	return states, nil
 }
 
-// resolveTrunkTip resolves the trunk's tip when it was not among the enumerated
-// heads or remotes — a remote default with no local branch — by probing the
+// resolveTrunkTip resolves the trunk's lane when it was not among the enumerated
+// heads or remotes — a remote default whose branch ref is absent — by probing the
 // local then the origin ref.
-func (b *Builder) resolveTrunkTip(ctx context.Context, trunkName string) (model.SHA, string, error) {
-	for _, ref := range []string{headsPrefix + trunkName, remotesPrefix + trunkName} {
-		switch tip, err := b.store.Repo.Tip(ctx, ref); {
-		case err == nil:
-			return tip, ref, nil
-		case !errors.Is(err, gitobj.ErrRefNotFound):
-			return "", "", fmt.Errorf("resolve trunk tip %s: %w", ref, err)
+func (b *Builder) resolveTrunkTip(ctx context.Context, trunkName string) (*branchState, error) {
+	local, remote := headsPrefix+trunkName, remotesPrefix+trunkName
+	tips, err := b.store.Git.RefTips(ctx, local, remote)
+	if err != nil {
+		return nil, fmt.Errorf("resolve trunk tip %s: %w", trunkName, err)
+	}
+	for _, want := range []string{local, remote} {
+		for _, rt := range tips {
+			if rt.Ref == want {
+				return &branchState{name: trunkName, ref: rt.Ref, tip: rt.Tip, tipTime: rt.Time, remote: want == remote}, nil
+			}
 		}
 	}
-	return "", "", fmt.Errorf("%w: no ref for %s", errNoTrunk, trunkName)
+	return nil, fmt.Errorf("%w: no ref for %s", errNoTrunk, trunkName)
 }

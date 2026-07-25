@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -39,6 +41,39 @@ func (b *Builder) mergeBaseOf(ctx context.Context, a, c model.SHA) (base model.S
 	}
 	b.storeMergeBase(key, mergeBase{Base: got})
 	return got, true, nil
+}
+
+// prefetchMergeBases resolves every uncached pair concurrently so a scan that
+// needs many merge bases pays one bounded fan-out of git execs instead of a
+// serial one. Pairs already memoized are skipped, duplicates collapse through
+// mergeBaseKey, and each worker stores its result through mergeBaseOf, so a
+// later lookup is a cache hit. Only these execs run in parallel: the go-git
+// reads behind them are serialized by the repository mutex and never fan out.
+func (b *Builder) prefetchMergeBases(ctx context.Context, pairs [][2]model.SHA) error {
+	seen := make(map[string]struct{}, len(pairs))
+	todo := make([][2]model.SHA, 0, len(pairs))
+	b.mbMu.Lock()
+	for _, pair := range pairs {
+		key := mergeBaseKey(pair[0], pair[1])
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if _, ok := b.mbCache[key]; !ok {
+			todo = append(todo, pair)
+		}
+	}
+	b.mbMu.Unlock()
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(gitConcurrency)
+	for _, pair := range todo {
+		g.Go(func() error {
+			_, _, err := b.mergeBaseOf(gctx, pair[0], pair[1])
+			return err
+		})
+	}
+	return g.Wait()
 }
 
 func (b *Builder) storeMergeBase(key string, mb mergeBase) {

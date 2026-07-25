@@ -17,6 +17,7 @@ export interface RepoInfo {
   head: string;
   generated_at: string;
   truncated: boolean;
+  lanes_omitted?: number;
 }
 
 export interface Point {
@@ -600,10 +601,48 @@ export function normalizeEntities(raw: RawStateResponse): StateResponse {
   };
 }
 
+// Comfortably above the server's 60s default build deadline, so the server's
+// descriptive 504 arrives first; the abort is the backstop for a wedged
+// connection.
+const FETCH_TIMEOUT_MS = 90_000;
+
+// errorDetail extracts the server's JSON error message when present, falling
+// back to the bare HTTP status line.
+export async function errorDetail(res: Response): Promise<string> {
+  const fallback = `${res.status} ${res.statusText}`;
+  try {
+    const body: unknown = await res.json();
+    if (typeof body === "object" && body !== null && "error" in body) {
+      const { error } = body as { error: unknown };
+      if (typeof error === "string" && error !== "") return error;
+    }
+  } catch {
+    return fallback;
+  }
+  return fallback;
+}
+
+export function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 async function getJSON<T>(path: string): Promise<T> {
-  const res = await fetch(path, { headers: { Accept: "application/json" } });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      throw new Error(
+        `${path}: no response after ${FETCH_TIMEOUT_MS / 1000}s — the server may still be building; reload to retry`,
+      );
+    }
+    throw err;
+  }
   if (!res.ok) {
-    throw new Error(`${path}: ${res.status} ${res.statusText}`);
+    throw new Error(`${path}: ${await errorDetail(res)}`);
   }
   return (await res.json()) as T;
 }

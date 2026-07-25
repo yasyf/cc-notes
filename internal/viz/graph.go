@@ -76,8 +76,13 @@ func (s *branchState) toLane() Lane {
 // non-trunk lane sorted by short name, whether the commit walk truncated, and
 // two kinds of synthesized lane with no live ref.
 type topology struct {
-	trunk     *branchState
-	branches  []*branchState
+	trunk    *branchState
+	branches []*branchState
+	// hidden holds the enumerated branches the window filter and the lane cap
+	// dropped, sorted by short name. They render no lane, but their refs are
+	// live, so every reconstruction of a deleted branch must still exclude them
+	// by name and tip or it invents a lane for a branch that plainly exists.
+	hidden    []*branchState
 	truncated bool
 	// mined holds the deleted-branch lanes reconstructed from the git DAG — a
 	// merged branch whose ref was later deleted — each DAG-proven with a real
@@ -107,10 +112,16 @@ func (t *topology) lanes() []Lane {
 
 // topology builds the branch topology over the history window starting at since
 // (unix seconds; 0 selects the default window). It resolves the trunk,
-// enumerates every branch, finds each fork point, infers nested parentage,
-// classifies each branch's merge into the trunk, attributes walked commits to
-// lanes, then mines the lanes of branches that were merged and deleted from the
-// git DAG.
+// enumerates every branch, drops the ones outside the window, finds each
+// surviving fork point, infers nested parentage, classifies each branch's merge
+// into the trunk, attributes walked commits to lanes, then mines the lanes of
+// branches that were merged and deleted from the git DAG.
+//
+// The window cutoff is fixed before any per-branch work, so every scan below it
+// is bounded; the attribution window since is resolved only after merge
+// classification, which rewrites merged branches' fork times and so the floor
+// they imply. cutoff is never later than since, so a scan bounded by it covers
+// everything attribution reads.
 func (b *Builder) topology(ctx context.Context, since int64) (*topology, error) {
 	trunkName, err := b.trunkName(ctx)
 	if err != nil {
@@ -124,50 +135,37 @@ func (b *Builder) topology(ctx context.Context, since int64) (*topology, error) 
 	trunk.isTrunk = true
 	trunk.status = statusActive
 
+	cutoff := since
+	if cutoff == 0 {
+		cutoff = time.Now().Unix() - int64(defaultWindow.Seconds())
+	}
+	r := newTopoRun(ctx, b, cutoff)
+
 	others := make([]*branchState, 0, len(states)-1)
 	for name, s := range states {
+		r.times[s.tip] = s.tipTime
 		if name != trunkName {
 			others = append(others, s)
 		}
 	}
 	sort.Slice(others, func(i, j int) bool { return others[i].name < others[j].name })
 
-	r := &topoRun{
-		b:       b,
-		ctx:     ctx,
-		times:   make(map[model.SHA]int64),
-		windows: make(map[model.SHA]windowSet),
-	}
-	if trunk.tipTime, err = r.commitTime(trunk.tip); err != nil {
-		return nil, err
-	}
-	for _, s := range others {
-		if s.tipTime, err = r.commitTime(s.tip); err != nil {
-			return nil, err
-		}
-		base, found, err := b.mergeBaseOf(ctx, s.tip, trunk.tip)
-		if err != nil {
-			return nil, err
-		}
-		if found {
-			s.hasFork = true
-			s.forkBase = base
-			if s.forkTime, err = r.commitTime(base); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if err := b.assignParents(ctx, trunk, others, r); err != nil {
-		return nil, err
-	}
 	tasks, err := b.store.ListTasks(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
 	}
-	for _, s := range others {
-		if err := b.detectMerge(ctx, s, trunk, tasks, r); err != nil {
-			return nil, err
-		}
+	others, hidden, err := b.filterLanes(trunk, others, tasks, r)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.resolveForks(ctx, trunk, others, r); err != nil {
+		return nil, err
+	}
+	if err := b.assignParents(ctx, trunk, others, r); err != nil {
+		return nil, err
+	}
+	if err := b.classifyMerges(ctx, trunk, others, tasks, r); err != nil {
+		return nil, err
 	}
 
 	if since == 0 {
@@ -182,73 +180,36 @@ func (b *Builder) topology(ctx context.Context, since int64) (*topology, error) 
 	if err := r.attribute(trunk, others); err != nil {
 		return nil, err
 	}
-	mined, err := b.mineDeletedBranches(ctx, trunk, others, r)
+	mined, err := b.mineDeletedBranches(ctx, trunk, others, hidden, r)
 	if err != nil {
 		return nil, err
 	}
-	return &topology{trunk: trunk, branches: others, truncated: truncated, mined: mined}, nil
+	return &topology{trunk: trunk, branches: others, hidden: hidden, truncated: truncated, mined: mined}, nil
 }
 
-// assignParents infers each branch's parent lane. Every branch defaults to the
-// trunk. When the branch count is within maxParentageBranches, parent(B) is the
-// lane P whose merge-base with B has the greatest commit time among lanes whose
-// merge-base with B strictly descends from B's fork off the trunk; a tie for
-// that maximum, or no candidate, falls back to the trunk. A candidate that
-// descends from B is skipped so a branch never adopts its own descendant, with
-// an identical-tip pair broken by name so exactly one direction parents. Above
-// the cap the pairwise scan is quadratic, so parentage stays flat.
-func (b *Builder) assignParents(ctx context.Context, trunk *branchState, others []*branchState, r *topoRun) error {
+// resolveForks sets every branch's fork point off the trunk — its merge base
+// with the trunk tip — with the whole batch of merge bases prefetched in one
+// bounded fan-out.
+func (b *Builder) resolveForks(ctx context.Context, trunk *branchState, others []*branchState, r *topoRun) error {
+	pairs := make([][2]model.SHA, 0, len(others))
 	for _, s := range others {
-		s.parent = trunk.name
+		pairs = append(pairs, [2]model.SHA{s.tip, trunk.tip})
 	}
-	if len(others) > maxParentageBranches {
-		return nil
+	if err := b.prefetchMergeBases(ctx, pairs); err != nil {
+		return err
 	}
 	for _, s := range others {
-		if !s.hasFork {
+		base, found, err := b.mergeBaseOf(ctx, s.tip, trunk.tip)
+		if err != nil {
+			return err
+		}
+		if !found {
 			continue
 		}
-		bestName := ""
-		var bestTime int64
-		tie := false
-		for _, p := range others {
-			if p == s {
-				continue
-			}
-			descFromS, err := b.store.Repo.IsAncestor(ctx, s.tip, p.tip)
-			if err != nil {
-				return fmt.Errorf("ancestry %s %s: %w", s.tip, p.tip, err)
-			}
-			if descFromS && (s.tip != p.tip || s.name < p.name) {
-				continue
-			}
-			mb, found, err := b.mergeBaseOf(ctx, s.tip, p.tip)
-			if err != nil {
-				return err
-			}
-			if !found || mb == s.forkBase {
-				continue
-			}
-			desc, err := b.store.Repo.IsAncestor(ctx, s.forkBase, mb)
-			if err != nil {
-				return fmt.Errorf("ancestry %s %s: %w", s.forkBase, mb, err)
-			}
-			if !desc {
-				continue
-			}
-			mbTime, err := r.commitTime(mb)
-			if err != nil {
-				return err
-			}
-			switch {
-			case bestName == "" || mbTime > bestTime:
-				bestName, bestTime, tie = p.name, mbTime, false
-			case mbTime == bestTime:
-				tie = true
-			}
-		}
-		if bestName != "" && !tie {
-			s.parent = bestName
+		s.hasFork = true
+		s.forkBase = base
+		if s.forkTime, err = r.commitTime(base); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -270,9 +231,10 @@ func (b *Builder) walkTruncated(ctx context.Context, trunk *branchState, others 
 }
 
 // oldestRefBackedFork is the earliest fork time among the ref-backed lanes —
-// every enumerated branch, merged included — or 0 when none has a fork. The
-// synthesized inferred and deleted lanes carry no ref and never reach here, so
-// they are naturally excluded. It floors the default history window so a merged
+// every rendered branch, merged included — or 0 when none has a fork. The
+// synthesized inferred and deleted lanes carry no ref and never reach here, and
+// neither do the branches the window filter hid, so a stale branch cannot drag
+// the attribution window back open. It floors the default history window so a merged
 // branch that forked before every open branch still starts the trunk rail early
 // enough for its fork and merge connectors to land on it.
 func oldestRefBackedFork(others []*branchState) int64 {

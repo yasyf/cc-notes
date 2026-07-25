@@ -5,7 +5,7 @@
 // boundary.
 
 import { useCallback, useRef } from "react";
-import { fetchCommits } from "../api";
+import { errorText, fetchCommits } from "../api";
 import { useDispatch, useStore } from "../store";
 
 export interface CommitsLoader {
@@ -29,7 +29,7 @@ export function useCommitsLoader(): CommitsLoader {
     fetchCommits()
       .then((page) => dispatch({ type: "commits-loaded", page, reset: true, gen }))
       .catch((err: unknown) =>
-        dispatch({ type: "commits-load-error", error: String(err), gen }),
+        dispatch({ type: "commits-load-error", error: errorText(err), gen }),
       );
   }, [dispatch]);
 
@@ -40,7 +40,7 @@ export function useCommitsLoader(): CommitsLoader {
       fetchCommits(before)
         .then((page) => dispatch({ type: "commits-loaded", page, reset: false, gen }))
         .catch((err: unknown) =>
-          dispatch({ type: "commits-load-error", error: String(err), gen }),
+          dispatch({ type: "commits-load-error", error: errorText(err), gen }),
         );
     },
     [dispatch],
