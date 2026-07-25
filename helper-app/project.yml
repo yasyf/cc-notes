@@ -32,6 +32,12 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.developer-tools
+    entitlements:
+      # The deployment attestation seals the complete entitlement dictionary.
+      # This helper needs no privileges, but it must carry an explicit empty
+      # dictionary so absence cannot bypass that identity input.
+      path: Generated/CCNotesHelper.entitlements
+      properties: {}
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yasyf.cc-notes.helper

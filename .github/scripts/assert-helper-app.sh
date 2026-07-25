@@ -34,9 +34,19 @@ CODE_DETAILS="$(codesign -d --verbose=4 "$APP" 2>&1)"
 test "$(sed -n 's/^TeamIdentifier=//p' <<< "$CODE_DETAILS")" = "$TEAM_ID"
 test "$(sed -n 's/^Identifier=//p' <<< "$CODE_DETAILS")" = "com.yasyf.cc-notes.helper"
 grep -Eq 'flags=.*\(([^,]+,)*runtime(,[^,]+)*\)' <<< "$CODE_DETAILS"
-ENTITLEMENTS="$(codesign -d --entitlements - "$APP" 2>&1)"
+ENTITLEMENTS="$(codesign -d --entitlements - --xml "$APP" 2>&1)"
+if ! grep -q '<?xml' <<< "$ENTITLEMENTS" || \
+  ! grep -q '</plist>' <<< "$ENTITLEMENTS" || \
+  ! grep -Eq '<dict([[:space:]]*/>|[[:space:]]*>)' <<< "$ENTITLEMENTS"; then
+  echo "::error::CCNotesHelper.app has no sealed entitlement dictionary"
+  exit 1
+fi
 if grep -q 'disable-library-validation' <<< "$ENTITLEMENTS"; then
   echo "::error::CCNotesHelper.app permits unsigned or foreign dynamic libraries"
+  exit 1
+fi
+if grep -q '<key>' <<< "$ENTITLEMENTS"; then
+  echo "::error::CCNotesHelper.app carries unexpected entitlements"
   exit 1
 fi
 

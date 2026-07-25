@@ -120,6 +120,8 @@ func TestReleaseBuildsOneXcodeGenCCNotesHelper(t *testing.T) {
 		"CCNotesHelper:",
 		"type: application",
 		"PRODUCT_BUNDLE_IDENTIFIER: com.yasyf.cc-notes.helper",
+		"path: Generated/CCNotesHelper.entitlements",
+		"properties: {}",
 		"./cmd/cc-notes-helper",
 		`lipo -create "$arm64" "$amd64" -output "$executable"`,
 		`commit="$GITHUB_SHA"`,
@@ -130,6 +132,9 @@ func TestReleaseBuildsOneXcodeGenCCNotesHelper(t *testing.T) {
 	assertFileContains(t, filepath.Join(root, ".github", "scripts", "assert-helper-app.sh"),
 		"go run ./cmd/cc-notes-helper-package",
 		"Contents/Frameworks/libfuse-t.dylib",
+		`codesign -d --entitlements - --xml "$APP"`,
+		"has no sealed entitlement dictionary",
+		"carries unexpected entitlements",
 		"disable-library-validation",
 	)
 	assertFileContains(t, filepath.Join(root, "cmd", "cc-notes-helper-package", "main.go"),
