@@ -63,18 +63,7 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
-      - name: Verify the immutable tag is an exact main ancestor
-        run: |
-          set -euo pipefail
-          printf '%s\n' "$RELEASE_TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
-          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
-          tag_commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
-          test "$tag_commit" = "$(git rev-parse HEAD)"
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            test "$tag_commit" = "$GITHUB_SHA"
-          fi
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main
+      - uses: yasyf/homebrew-tap/.github/actions/verify-tag-on-main@a4179241558456339fa2e41b97693a6cebae2e36
 
   pure:
     name: pure ${{ matrix.goos }}/${{ matrix.goarch }}

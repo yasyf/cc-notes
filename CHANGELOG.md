@@ -55,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hint naming `body`.
 
 ### Fixed
+- Helper runtime replacement now uses daemonkit `v0.19.1` terminal owner
+  claims, so a failed owner settles and releases its listener before a
+  successor starts.
+- Signed helper deployment now uses FuseKit `v1.15.1` canonical entitlement
+  attestation, and releases require one immutable annotated tag signed by the
+  fleet release key.
 - cc-notes now opens repositories with `extensions.worktreeConfig`, including
   Conductor shared repos and jj-colocated checkouts, and partial clones by
   resolving repository paths with real git and constructing go-git's

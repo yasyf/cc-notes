@@ -27,7 +27,6 @@ func TestReleaseUsesPinnedReusableFixedHelperWorkflow(t *testing.T) {
 		"prebuild_brew_packages: macos-fuse-t/cask/fuse-t",
 		"prebuild_script: helper-app/prepare-release.sh",
 		`COMMIT="$GITHUB_SHA"`,
-		`grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'`,
 		"HELPER_ASSET_FILENAME: ${{ needs.helper-app.outputs.asset_filename }}",
 		"HELPER_ASSET_URL: ${{ needs.helper-app.outputs.asset_url }}",
 		"HELPER_SHA256: ${{ needs.helper-app.outputs.sha256 }}",
@@ -66,6 +65,7 @@ func TestReleasePinsEveryExternalActionByCommit(t *testing.T) {
 		"actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
 		"actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
 		"actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+		"yasyf/homebrew-tap/.github/actions/verify-tag-on-main@a4179241558456339fa2e41b97693a6cebae2e36",
 		"yasyf/homebrew-tap/.github/actions/render-formula@19c3d5013032ad9c88f9a8f1170d1f366c19b8d9",
 		"yasyf/homebrew-tap/.github/actions/publish@9525763796fce4d1042cf3393d9479f791908eaa",
 	)
