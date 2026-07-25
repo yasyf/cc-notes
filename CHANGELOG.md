@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Signed helper deployment now uses FuseKit `v1.15.1` canonical entitlement
   attestation, and releases require one immutable annotated tag signed by the
   fleet release key.
+- Signed FUSE libraries without entitlements now use FuseKit `v1.15.2`'s
+  canonical empty entitlement identity while malformed codesign output remains
+  rejected.
 - Helper application publishing now uses the final reusable release workflow,
   which applies the same trusted signed-tag gate before building the nested
   application artifact.
