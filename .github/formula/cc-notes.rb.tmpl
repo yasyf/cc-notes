@@ -46,6 +46,8 @@ class CcNotes < Formula
     end
   end
 
+  preserve_rpath
+
   def install
     # The release asset is a bare binary staged under its asset name.
     bin.install Dir["cc-notes_*"].first => "cc-notes"
@@ -71,5 +73,9 @@ class CcNotes < Formula
   test do
     # Release binaries print "<tag> (<commit>)", e.g. "v0.2.0 (ab12cd3)".
     assert_match version.to_s, shell_output("#{bin}/cc-notes version")
+    if OS.mac?
+      system "/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=2", libexec/"CCNotesHelper.app"
+      system "/usr/bin/xcrun", "stapler", "validate", libexec/"CCNotesHelper.app"
+    end
   end
 end

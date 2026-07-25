@@ -314,6 +314,9 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 		`system "/usr/bin/ditto", "-x", "-k", resource("helper").cached_download, "."`,
 		`system "/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "CCNotesHelper.app"`,
 		`libexec.install "CCNotesHelper.app"`,
+		`preserve_rpath`,
+		`system "/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=2", libexec/"CCNotesHelper.app"`,
+		`system "/usr/bin/xcrun", "stapler", "validate", libexec/"CCNotesHelper.app"`,
 		`cc-notes package install`,
 	)
 	formulaPayload, err := os.ReadFile(formula)
@@ -330,8 +333,8 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 	if strings.Contains(string(formulaPayload[start:end]), "#{version}") {
 		t.Fatal("helper resource uses resource-local version")
 	}
-	rendered := strings.ReplaceAll(string(formulaPayload), "__VERSION__", "0.46.2")
-	const renderedURL = `url "https://github.com/yasyf/cc-notes/releases/download/v0.46.2/cc-notes-helper-v0.46.2-darwin.zip", using: :nounzip`
+	rendered := strings.ReplaceAll(string(formulaPayload), "__VERSION__", "0.46.3")
+	const renderedURL = `url "https://github.com/yasyf/cc-notes/releases/download/v0.46.3/cc-notes-helper-v0.46.3-darwin.zip", using: :nounzip`
 	if !strings.Contains(rendered, renderedURL) {
 		t.Fatalf("rendered helper URL does not contain %q", renderedURL)
 	}
@@ -340,6 +343,12 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 	install := strings.Index(string(formulaPayload), `libexec.install "CCNotesHelper.app"`)
 	if extract < 0 || verify <= extract || install <= verify {
 		t.Fatal("helper archive must be extracted before signature verification and installation")
+	}
+	linux := strings.Index(string(formulaPayload), "  on_linux do")
+	preserve := strings.Index(string(formulaPayload), "  preserve_rpath")
+	installMethod := strings.Index(string(formulaPayload), "  def install")
+	if linux < 0 || preserve <= linux || installMethod <= preserve {
+		t.Fatal("formula must preserve signed helper rpaths after platform declarations")
 	}
 	assertFileExcludes(t, formula,
 		"Casks/",
