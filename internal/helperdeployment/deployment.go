@@ -12,6 +12,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/daemonkit/deployment"
 	"github.com/yasyf/daemonkit/service"
+	"github.com/yasyf/fusekit/holder"
 )
 
 type controller interface {
@@ -73,6 +74,47 @@ func activationInputs(
 	return plan, hooks, nil
 }
 
+func candidateInputs(
+	ctx context.Context,
+	candidate deployment.InstalledAttestation,
+	target deployment.CurrentInstalledSpec,
+) (deployment.CandidatePlan, productHooks, error) {
+	_, policyDigest, err := DeploymentIdentity()
+	if err != nil {
+		return deployment.CandidatePlan{}, productHooks{}, err
+	}
+	hooks := newProductHooks(version.String(), policyDigest)
+	if err := verifyPackagedFUSE(ctx, candidate.Path(), candidate.EntitlementsDigest()); err != nil {
+		return deployment.CandidatePlan{}, productHooks{}, err
+	}
+	runtimeDirectory, err := RuntimeDirectory()
+	if err != nil {
+		return deployment.CandidatePlan{}, productHooks{}, err
+	}
+	presentationRoot, err := PresentationRoot()
+	if err != nil {
+		return deployment.CandidatePlan{}, productHooks{}, err
+	}
+	runtimeDigest, err := runtimePolicyDigest()
+	if err != nil {
+		return deployment.CandidatePlan{}, productHooks{}, err
+	}
+	plan, err := holder.NewCandidatePlan(DeploymentPlanSpec(
+		target.AppPath,
+		runtimeDirectory,
+		presentationRoot,
+		hooks.buildID,
+		runtimeDigest,
+	), candidate.Path())
+	if err != nil {
+		return deployment.CandidatePlan{}, productHooks{}, fmt.Errorf(
+			"cc-notes package: bind delivered service plan: %w",
+			err,
+		)
+	}
+	return plan, hooks, nil
+}
+
 // ApplyPackage installs and activates one exact delivered helper candidate.
 func ApplyPackage(ctx context.Context, source string) error {
 	manager := newController()
@@ -84,19 +126,15 @@ func ApplyPackage(ctx context.Context, source string) error {
 	if err != nil {
 		return fmt.Errorf("cc-notes package: attest delivered app: %w", err)
 	}
-	candidateServicePlan, hooks, err := activationInputs(ctx, candidate)
+	target, err := currentSpec()
 	if err != nil {
 		return err
 	}
-	candidatePlan, err := deployment.NewCandidatePlan(source, candidateServicePlan.Agents())
+	candidatePlan, hooks, err := candidateInputs(ctx, candidate, target)
 	if err != nil {
-		return fmt.Errorf("cc-notes package: bind delivered service plan: %w", err)
+		return err
 	}
 	consumerBuild, policyDigest, err := DeploymentIdentity()
-	if err != nil {
-		return err
-	}
-	target, err := currentSpec()
 	if err != nil {
 		return err
 	}

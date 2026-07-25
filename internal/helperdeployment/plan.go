@@ -8,6 +8,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/daemonkit/codeidentity"
+	"github.com/yasyf/daemonkit/deployment"
 	"github.com/yasyf/daemonkit/trust"
 	"github.com/yasyf/fusekit/holder"
 )
@@ -83,6 +84,34 @@ func NewRuntimePlan(ctx context.Context, appPath, buildID string) (plan holder.R
 		return holder.RuntimePlan{}, fmt.Errorf("cc-notes helper: derive runtime plan: %w", err)
 	}
 	return plan, nil
+}
+
+func verifyPackagedFUSE(
+	ctx context.Context,
+	appPath string,
+	wantEntitlements deployment.SHA256,
+) (resultErr error) {
+	runner, err := helperclient.NewFUSEToolPool(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, runner.Close(ctx)) }()
+	verifier, err := holder.NewFUSEVerifier(runner.Pool())
+	if err != nil {
+		return err
+	}
+	manifest, err := verifier.Verify(ctx, Application(appPath))
+	if err != nil {
+		return fmt.Errorf("cc-notes helper: verify packaged FUSE bundle: %w", err)
+	}
+	gotEntitlements, err := deployment.ParseSHA256(manifest.OuterEntitlementsSHA256)
+	if err != nil {
+		return fmt.Errorf("cc-notes helper: parse packaged FUSE entitlement digest: %w", err)
+	}
+	if gotEntitlements != wantEntitlements {
+		return errors.New("cc-notes helper: FuseKit outer entitlements differ from daemonkit attestation")
+	}
+	return nil
 }
 
 func runtimePolicyDigest() (codeidentity.PolicyDigest, error) {
