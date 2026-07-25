@@ -119,6 +119,33 @@ func (r *gitRepo) commitMsg(messages ...string) commitInfo {
 	return commitInfo{sha: r.head(), time: r.clock}
 }
 
+// commitChain fast-imports n empty commits onto main in one subprocess,
+// advancing the clock per commit; the last commit's message paragraphs are
+// tipMessages, so a trailer block can ride along. The repository must have no
+// commits yet. Returns the tip commit.
+func (r *gitRepo) commitChain(n int, tipMessages ...string) commitInfo {
+	r.t.Helper()
+	var stream bytes.Buffer
+	for i := 1; i <= n; i++ {
+		r.clock += fxStep
+		msg := fmt.Sprintf("c%d\n", i)
+		if i == n {
+			msg = strings.Join(tipMessages, "\n\n") + "\n"
+		}
+		fmt.Fprintf(&stream, "commit refs/heads/main\ncommitter %s <%s> %d +0000\ndata %d\n%s\n", fxName, fxEmail, r.clock, len(msg), msg)
+	}
+	//nolint:gosec // G204: test helper shells out to git with fixed args.
+	cmd := exec.Command("git", "-C", r.dir, "fast-import", "--quiet")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Stdin = &stream
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		r.t.Fatalf("git fast-import: %v\n%s", err, stderr.String())
+	}
+	return commitInfo{sha: model.SHA(r.git("rev-parse", "main")), time: r.clock}
+}
+
 // mergeNoFF merges branch into the current branch with a merge commit at time
 // when, returning the merge commit.
 func (r *gitRepo) mergeNoFF(when int64, branch, message string) commitInfo {

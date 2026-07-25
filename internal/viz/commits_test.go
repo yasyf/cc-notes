@@ -167,6 +167,101 @@ func TestCommitsRootTrailer(t *testing.T) {
 	}
 }
 
+// TestCommitsDeepHistoryTrailers pins the truncated-window path: history deeper
+// than maxCommitLimit leaves no parentless commit in the window, so the trunk
+// must read its walked set verbatim instead of running git against an empty
+// root sha (a 500 on every page).
+func TestCommitsDeepHistoryTrailers(t *testing.T) {
+	r := newGitRepo(t)
+	tip := r.commitChain(maxCommitLimit+1, "tip", "cc-task: deadbee")
+
+	ts, _, _ := newVizServer(t, r)
+	resp := getCommits(t, ts.URL, "")
+
+	if !resp.Truncated {
+		t.Errorf("truncated = false, want true")
+	}
+	if len(resp.Commits) == 0 || resp.Commits[0].SHA != tip.sha {
+		t.Fatalf("first commit = %v, want tip %s", shas(resp.Commits), tip.sha)
+	}
+	if got := resp.Commits[0].Tasks; len(got) != 1 || got[0] != "deadbee" {
+		t.Errorf("tip tasks = %v, want [deadbee]", got)
+	}
+}
+
+// TestCommitsShallowCloneTrailers pins the truncated-window path on a shallow
+// clone: the deepest fetched commit still lists a parent missing from the ODB,
+// so no parentless commit exists — both in-window commits keep their trailers.
+func TestCommitsShallowCloneTrailers(t *testing.T) {
+	origin := newGitRepo(t)
+	origin.commit("c1")
+	c2 := origin.commitMsg("c2", "cc-task: task-c2")
+	c3 := origin.commitMsg("c3", "cc-task: task-c3")
+
+	r := &gitRepo{t: t, dir: t.TempDir(), clock: origin.clock}
+	r.git("clone", "-q", "--depth", "2", "file://"+origin.dir, ".")
+
+	ts, _, _ := newVizServer(t, r)
+	resp := getCommits(t, ts.URL, "")
+
+	byName := map[model.SHA]commitPage{}
+	for _, c := range resp.Commits {
+		byName[c.SHA] = c
+	}
+	for sha, want := range map[model.SHA]string{c2.sha: "task-c2", c3.sha: "task-c3"} {
+		got, ok := byName[sha]
+		if !ok {
+			t.Fatalf("commit %s absent from page %v", sha, shas(resp.Commits))
+		}
+		if len(got.Tasks) != 1 || got.Tasks[0] != want {
+			t.Errorf("%s tasks = %v, want [%s]", sha, got.Tasks, want)
+		}
+	}
+}
+
+// TestCommitsSkewedMergeShallowTrailers pins the truncated window against clock
+// skew: r's committer time is newer than both its merged children, so the walk
+// pops [m, a, r, b] and any single range bounded at the oldest-popped commit b
+// would exclude b's walked ancestor r. Every walked commit keeps its trailer.
+func TestCommitsSkewedMergeShallowTrailers(t *testing.T) {
+	origin := newGitRepo(t)
+	origin.commit("q")
+	origin.at(fxBase + 600)
+	r0 := origin.commitMsg("r", "cc-task: task-r")
+	origin.git("checkout", "-q", "-b", "brA")
+	origin.at(fxBase + 300)
+	a := origin.commitMsg("a", "cc-task: task-a")
+	origin.git("checkout", "-q", "main")
+	origin.git("checkout", "-q", "-b", "brB")
+	origin.at(fxBase + 180)
+	b := origin.commitMsg("b", "cc-task: task-b")
+	origin.git("checkout", "-q", "brA")
+	m := origin.mergeNoFF(fxBase+900, "brB", "m\n\ncc-task: task-m")
+	origin.git("checkout", "-q", "main")
+	origin.git("merge", "-q", "--ff-only", "brA")
+	origin.git("branch", "-q", "-D", "brA", "brB")
+
+	r := &gitRepo{t: t, dir: t.TempDir(), clock: origin.clock}
+	r.git("clone", "-q", "--depth", "3", "file://"+origin.dir, ".")
+
+	ts, _, _ := newVizServer(t, r)
+	resp := getCommits(t, ts.URL, "")
+
+	byName := map[model.SHA]commitPage{}
+	for _, c := range resp.Commits {
+		byName[c.SHA] = c
+	}
+	for sha, want := range map[model.SHA]string{m.sha: "task-m", a.sha: "task-a", r0.sha: "task-r", b.sha: "task-b"} {
+		got, ok := byName[sha]
+		if !ok {
+			t.Fatalf("commit %s absent from page %v", sha, shas(resp.Commits))
+		}
+		if len(got.Tasks) != 1 || got.Tasks[0] != want {
+			t.Errorf("%s tasks = %v, want [%s]", sha, got.Tasks, want)
+		}
+	}
+}
+
 // TestCommitsDeletedBranchAttribution pins that a merged-then-deleted branch's
 // exclusive commits claim its mined lane in /api/commits — the second-parent
 // commits that carried no branch before the DAG was mined now attribute to the

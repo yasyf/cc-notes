@@ -2,6 +2,7 @@ package gitcmd_test
 
 import (
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -677,6 +678,33 @@ func TestTaskTrailers(t *testing.T) {
 	}
 	if want := []string{"aaa1111", "bbb2222"}; !slices.Equal(got, want) {
 		t.Fatalf("multi: got %q, want %q", got, want)
+	}
+}
+
+func TestTaskTrailersAt(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	// The unrequested ancestor carries a trailer, so a walking read would leak
+	// it: the map is exactly the requested commits or the no-walk read regressed.
+	gittest.Git(t, g.Dir, "commit", "-q", "--allow-empty", "-m", "ancestor\n\ncc-task: ccc3333")
+	none := commitEmpty(t, g, "no trailer")
+	gittest.Git(t, g.Dir, "commit", "-q", "--allow-empty", "-m", "one\n\ncc-task: d82c087")
+	single := model.SHA(gittest.Git(t, g.Dir, "rev-parse", "HEAD"))
+	gittest.Git(t, g.Dir, "commit", "-q", "--allow-empty", "-m", "two\n\ncc-task: aaa1111\ncc-task: bbb2222")
+	multi := model.SHA(gittest.Git(t, g.Dir, "rev-parse", "HEAD"))
+
+	got, err := g.TaskTrailersAt(ctx, []model.SHA{none, single, multi})
+	if err != nil {
+		t.Fatalf("TaskTrailersAt: %v", err)
+	}
+	want := map[model.SHA][]string{single: {"d82c087"}, multi: {"aaa1111", "bbb2222"}}
+	if !maps.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+
+	if _, err := g.TaskTrailersAt(ctx, []model.SHA{"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}); err == nil {
+		t.Fatal("absent sha: want error")
 	}
 }
 

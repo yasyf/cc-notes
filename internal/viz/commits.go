@@ -3,7 +3,9 @@ package viz
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -151,7 +153,9 @@ func indexOfSHA(commits []gitobj.CodeCommit, sha model.SHA) int {
 }
 
 // reachSet is a tip's reachable-commit set within the walk window plus one
-// parentless commit reachable from it, the root that bounds a trailer range.
+// parentless commit reachable from it, the root that bounds a trailer range;
+// root is empty when the window truncates before one (history deeper than the
+// window, or a shallow clone's missing-parent edge).
 type reachSet struct {
 	set  map[model.SHA]bool
 	root model.SHA
@@ -249,7 +253,8 @@ func claimLane(order []laneClaim, sha model.SHA) *string {
 // fork..tip for a forked branch (its exclusive commits) and root..tip for the
 // trunk (its whole reachable history) — so a squash-merge trailer on a trunk
 // commit is covered. The root commit's own trailers are merged in separately,
-// since root..tip by range semantics excludes the root itself.
+// since root..tip by range semantics excludes the root itself. A trunk whose
+// walk window truncated before a root reads its walked set without ranges.
 func commitTrailers(ctx context.Context, st *store.Store, g *Graph, cache map[model.SHA]reachSet) (map[model.SHA][]string, error) {
 	merged := make(map[model.SHA][]string)
 	for _, lane := range g.Lanes {
@@ -264,6 +269,20 @@ func commitTrailers(ctx context.Context, st *store.Store, g *Graph, cache map[mo
 			if err != nil {
 				return nil, err
 			}
+			if rs.root == "" {
+				// No range is exact here: any base's unwalked ancestry both
+				// hides skew-ordered walked commits and costs unbounded walking.
+				trailers, err := st.Git.TaskTrailersAt(ctx, slices.Sorted(maps.Keys(rs.set)))
+				if err != nil {
+					return nil, err
+				}
+				for sha, vals := range trailers {
+					if _, ok := merged[sha]; !ok {
+						merged[sha] = vals
+					}
+				}
+				continue
+			}
 			base = string(rs.root)
 			// root..tip excludes root, so fold in the root's own trailers.
 			rootTrailers, err := st.Git.TaskTrailers(ctx, string(rs.root))
@@ -276,7 +295,7 @@ func commitTrailers(ctx context.Context, st *store.Store, g *Graph, cache map[mo
 				}
 			}
 		}
-		if base == "" || base == string(lane.Tip.SHA) {
+		if base == string(lane.Tip.SHA) {
 			continue
 		}
 		trailers, err := st.Git.TaskTrailersRange(ctx, base, string(lane.Tip.SHA))

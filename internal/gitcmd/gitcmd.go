@@ -375,8 +375,24 @@ func (g Git) TaskTrailersFirstParent(ctx context.Context, base, head string) (ma
 	return parseTaskTrailerLog(out), nil
 }
 
-// parseTaskTrailerLog decodes the git log output shared by TaskTrailersRange and
-// TaskTrailersFirstParent, both formatted %x00%H%n%(trailers:key=cc-task,valueonly).
+// TaskTrailersAt maps each given commit to the values of its cc-task: trailers
+// without walking history, in one git log --no-walk invocation; commits without
+// trailers are omitted.
+func (g Git) TaskTrailersAt(ctx context.Context, shas []model.SHA) (map[model.SHA][]string, error) {
+	lines := make([]string, len(shas))
+	for i, sha := range shas {
+		lines[i] = string(sha)
+	}
+	out, err := g.run(ctx, strings.Join(lines, "\n"), "log", "--stdin", "--no-walk=unsorted", "--format=%x00%H%n%(trailers:key=cc-task,valueonly)")
+	if err != nil {
+		return nil, fmt.Errorf("task trailers at %d commits: %w", len(shas), err)
+	}
+	return parseTaskTrailerLog(out), nil
+}
+
+// parseTaskTrailerLog decodes the git log output shared by TaskTrailersRange,
+// TaskTrailersFirstParent, and TaskTrailersAt, all formatted
+// %x00%H%n%(trailers:key=cc-task,valueonly).
 // Each record begins with a NUL byte, then the commit hash, then a newline, then
 // that commit's cc-task: trailer values one per line. Splitting on the NUL record
 // separator and reading the first line of each record as the hash and the
