@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -80,16 +81,20 @@ stdin ("... | cc-notes papercut -").`,
 	flags.StringVar(&modelID, "model", "", "model identity to record on the entry (default: CC_NOTES_MODEL)")
 	bindBody(flags, &body, "the complaint; - reads stdin")
 	bindJSON(flags, &jsonOut)
-	cmd.AddCommand(newPapercutListCmd())
+	cmd.AddCommand(newPapercutListCmd(), newPapercutShowCmd())
 	return cmd
 }
 
 func newPapercutListCmd() *cobra.Command {
+	var limit int
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List every papercut complaint in timestamp order",
-		Args:  exactArgs(0),
+		Short: "List the most recent papercut complaints, newest first",
+		Long: `List the journal newest-first, capped at --limit and with each complaint clipped
+to a preview. The clip marker names the "papercut show LOG_ID INDEX" call that
+reads that one complaint back in full.`,
+		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_, c, err := openStoreClient(cmd)
 			if err != nil {
@@ -99,11 +104,54 @@ func newPapercutListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rows := papercutRows(logs)
+			rows := papercutRecent(papercutRows(logs), limit)
 			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), papercutEntryDTOs(rows))
+				return printJSON(cmd.OutOrStdout(), papercutEntryDTOs(rows, false))
 			}
-			return printPapercutRows(cmd, rows)
+			return printPapercutRows(cmd, rows, false)
+		},
+	}
+	flags := cmd.Flags()
+	bindLimit(flags, &limit, 20)
+	bindJSON(flags, &jsonOut)
+	return cmd
+}
+
+func newPapercutShowCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "show LOG_ID INDEX",
+		Short: "Show one papercut complaint with its full untruncated text",
+		Long: `Read back the complaint a "papercut list" row previews, addressed by that row's
+log_id and index. The index is the entry's position within its own journal, so
+the address holds whatever --limit or ordering the listing used.`,
+		Args: exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			index, err := strconv.Atoi(args[1])
+			if err != nil {
+				return &UsageError{Err: fmt.Errorf("papercut index %q is not a number — pass the index a papercut list row carries", args[1])}
+			}
+			ctx := cmd.Context()
+			c, err := openClient(cmd)
+			if err != nil {
+				return err
+			}
+			id, err := c.ResolveLog(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			journal, err := c.Log(ctx, id)
+			if err != nil {
+				return err
+			}
+			row, err := papercutEntry(journal, index)
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), newPapercutEntryDTO(row, true))
+			}
+			return printPapercutRows(cmd, []papercutRow{row}, true)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)
@@ -187,29 +235,71 @@ func papercutRows(logs []model.Log) []papercutRow {
 	return rows
 }
 
-// papercutEntryDTO is one papercut complaint in the list DTO: its journal id,
-// the recorded model identity (null when unset), the author and RFC3339 UTC
-// timestamp from the carrying commit, and the complaint text.
+// papercutRecent takes the limit newest rows off the tail of the chronology (0 =
+// all) and flips them newest-first, so a capped listing surfaces the freshest
+// friction instead of burying it under the oldest.
+func papercutRecent(rows []papercutRow, limit int) []papercutRow {
+	if limit > 0 && limit < len(rows) {
+		rows = rows[len(rows)-limit:]
+	}
+	slices.Reverse(rows)
+	return rows
+}
+
+// papercutEntry addresses one complaint by its index within journal. A log
+// outside the journal set and an index no entry occupies are both caller
+// mistakes the listing's log_id and index pair prevents.
+func papercutEntry(journal model.Log, index int) (papercutRow, error) {
+	if !slices.Contains(journal.Tags, papercutTag) {
+		return papercutRow{}, &UsageError{Err: fmt.Errorf("log %s is not a papercut journal — it carries no %q tag", journal.ID.Short(), papercutTag)}
+	}
+	if index < 0 || index >= len(journal.Entries) {
+		return papercutRow{}, &UsageError{Err: fmt.Errorf("papercut index %d is out of range — journal %s holds %d complaint(s), indexed from 0", index, journal.ID.Short(), len(journal.Entries))}
+	}
+	return papercutRow{log: journal, entry: journal.Entries[index], index: index}, nil
+}
+
+// papercutText renders the complaint as a listing carries it — clipped, the
+// in-band marker naming the exact "papercut show" call that recovers it — or
+// verbatim when full.
+func papercutText(r papercutRow, full bool) string {
+	if full {
+		return r.entry.Text
+	}
+	return clipHistoryString(r.entry.Text, fmt.Sprintf("papercut show %s %d", r.log.ID.Short(), r.index))
+}
+
+// papercutEntryDTO is one papercut complaint in the list DTO: the journal id and
+// within-journal index that address it, the recorded model identity (null when
+// unset), the author and RFC3339 UTC timestamp from the carrying commit, and the
+// complaint text.
 type papercutEntryDTO struct {
 	LogID  string  `json:"log_id"`
+	Index  int     `json:"index"`
 	Model  *string `json:"model"`
 	Author string  `json:"author"`
 	TS     string  `json:"ts"`
 	Text   string  `json:"text"`
 }
 
+// newPapercutEntryDTO renders one row, clipping its text unless full.
+func newPapercutEntryDTO(r papercutRow, full bool) papercutEntryDTO {
+	return papercutEntryDTO{
+		LogID:  string(r.log.ID),
+		Index:  r.index,
+		Model:  render.OptString(r.entry.Model),
+		Author: string(r.entry.Author),
+		TS:     render.RFC3339(r.entry.TS),
+		Text:   papercutText(r, full),
+	}
+}
+
 // papercutEntryDTOs renders unioned rows into their DTO form, always non-nil so
 // an empty journal set marshals as [] rather than null.
-func papercutEntryDTOs(rows []papercutRow) []papercutEntryDTO {
+func papercutEntryDTOs(rows []papercutRow, full bool) []papercutEntryDTO {
 	out := make([]papercutEntryDTO, len(rows))
 	for i, r := range rows {
-		out[i] = papercutEntryDTO{
-			LogID:  string(r.log.ID),
-			Model:  render.OptString(r.entry.Model),
-			Author: string(r.entry.Author),
-			TS:     render.RFC3339(r.entry.TS),
-			Text:   r.entry.Text,
-		}
+		out[i] = newPapercutEntryDTO(r, full)
 	}
 	return out
 }
@@ -217,17 +307,18 @@ func papercutEntryDTOs(rows []papercutRow) []papercutEntryDTO {
 // printPapercutRows writes each complaint as a "-- <model> — <author> <ts>"
 // block, dropping the "<model> — " segment when no model was recorded, in the
 // block idiom renderLogShow entries and task comments share, with a blank line
-// between blocks. Empty input prints nothing.
-func printPapercutRows(cmd *cobra.Command, rows []papercutRow) error {
+// between blocks and the text clipped unless full. Empty input prints nothing.
+func printPapercutRows(cmd *cobra.Command, rows []papercutRow, full bool) error {
 	var b strings.Builder
 	for i, r := range rows {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
+		text := papercutText(r, full)
 		if r.entry.Model != "" {
-			fmt.Fprintf(&b, "-- %s — %s %s\n%s\n", r.entry.Model, r.entry.Author, render.RFC3339(r.entry.TS), r.entry.Text)
+			fmt.Fprintf(&b, "-- %s — %s %s\n%s\n", r.entry.Model, r.entry.Author, render.RFC3339(r.entry.TS), text)
 		} else {
-			fmt.Fprintf(&b, "-- %s %s\n%s\n", r.entry.Author, render.RFC3339(r.entry.TS), r.entry.Text)
+			fmt.Fprintf(&b, "-- %s %s\n%s\n", r.entry.Author, render.RFC3339(r.entry.TS), text)
 		}
 	}
 	_, err := fmt.Fprint(cmd.OutOrStdout(), b.String())

@@ -2,10 +2,17 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// errEmptyOutput rejects a blank attachment_get destination: with no -o the CLI
+// streams the attachment to stdout, which the bridge would hand back as the
+// result text — the inline binary the tool promises never to return.
+var errEmptyOutput = errors.New("a destination file path is required; without one the CLI streams the attachment to stdout and the bytes would come back inline")
 
 type statusArgs struct{}
 
@@ -68,7 +75,7 @@ func registerRepo(ts *toolset, b *bridge) {
 			return b.run(ctx, "status", "--json")
 		})
 
-	addTool(ts, &mcp.Tool{Name: "relevant", Description: "Surface the notes, docs, and tasks anchored to a repository path — run before editing unfamiliar code. Each hit is a summary under its kind key; that kind's show tool (note_show, doc_show, log_show, runbook_show, investigation_show) reads one back in full."},
+	addTool(ts, &mcp.Tool{Name: "relevant", Description: "Surface the notes, docs, logs, runbooks, and investigations anchored to a repository path — run before editing unfamiliar code. Each hit is a summary under its kind key; that kind's show tool (note_show, doc_show, log_show, runbook_show, investigation_show) reads one back in full."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in relevantArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--branch", in.Branch)
@@ -106,7 +113,7 @@ func registerRepo(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"history"}, flags, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "search", Description: "Ranked search across every note, doc, log, and runbook. Each hit is a summary under its kind key; that kind's show tool (note_show, doc_show, log_show, runbook_show, investigation_show) reads one back in full."},
+	addTool(ts, &mcp.Tool{Name: "search", Description: "Ranked search across every note, doc, log, runbook, and investigation. Each hit is a summary under its kind key; that kind's show tool (note_show, doc_show, log_show, runbook_show, investigation_show) reads one back in full."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in searchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -132,8 +139,10 @@ func registerRepo(ts *toolset, b *bridge) {
 
 	addTool(ts, &mcp.Tool{Name: "attachment_get", Description: "Write an entity's attachment bytes to a file path (binary is never returned inline)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in attachmentGetArgs) (*mcp.CallToolResult, any, error) {
-			flags := optStr(nil, "--output", in.Output)
-			res, _, err := b.run(ctx, argvFor([]string{"attachment", "get"}, flags, in.ID, in.Name)...)
+			if strings.TrimSpace(in.Output) == "" {
+				return nil, nil, fmt.Errorf("--output: %w", errEmptyOutput)
+			}
+			res, _, err := b.run(ctx, argvFor([]string{"attachment", "get"}, []string{"--output", in.Output}, in.ID, in.Name)...)
 			if err != nil {
 				return nil, nil, err
 			}

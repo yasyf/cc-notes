@@ -2,6 +2,8 @@ package cli
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -19,6 +21,7 @@ func newLogCmd() *cobra.Command {
 	cmd.AddCommand(
 		newLogAddCmd(),
 		newLogAppendCmd(),
+		newLogEntryCmd(),
 		newLogListCmd(),
 		newLogShowCmd(),
 		newLogEditCmd(),
@@ -82,7 +85,7 @@ func newLogAddCmd() *cobra.Command {
 			if reused {
 				warnDuplicate(cmd, "log", log.ID)
 			}
-			return printLog(cmd, c, log, jsonOut)
+			return printLog(cmd, c, log, jsonOut, writeAck{Reused: reused})
 		},
 	}
 	flags := cmd.Flags()
@@ -157,6 +160,57 @@ func newLogAppendCmd() *cobra.Command {
 	flags.BoolVar(&replace, "replace", false, "allow --attach to overwrite a live attachment with the same name")
 	bindJSON(flags, &jsonOut)
 	return cmd
+}
+
+func newLogEntryCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "entry",
+		Short: "The append-only entries under a log",
+		Args:  noUnknownSubcommand,
+		RunE:  runHelp,
+	}
+	cmd.AddCommand(newLogEntryListCmd())
+	return cmd
+}
+
+func newLogEntryListCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "list LOG",
+		Short: "List every entry of a log, uncapped",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			_, c, err := openStoreClient(cmd)
+			if err != nil {
+				return err
+			}
+			id, err := c.ResolveLog(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			log, err := c.Log(ctx, id)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if jsonOut {
+				return printJSONList(out, logEntryDTOs(log.Entries))
+			}
+			_, err = fmt.Fprint(out, renderEntryList(log.Entries))
+			return err
+		},
+	}
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
+}
+
+// renderEntryList renders a timeline as the same "-- <author> <RFC3339>" blocks
+// a show prints, minus the blank line a show leaves before its first block.
+func renderEntryList(entries []model.LogEntry) string {
+	var b strings.Builder
+	renderLogEntries(&b, entries)
+	return strings.TrimPrefix(b.String(), "\n")
 }
 
 func newLogListCmd() *cobra.Command {

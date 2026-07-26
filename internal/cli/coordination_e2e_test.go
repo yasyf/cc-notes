@@ -128,6 +128,43 @@ func TestTaskStartAmbiguousHead(t *testing.T) {
 	}
 }
 
+// TestWriteAckBranchSet pins the machine-readable half of the degraded-claim
+// contract: on an unresolvable HEAD the start ack carries "branch_set": false,
+// because an absent "branch" alone is ambiguous — a backlog task has none
+// either. A start that does set a branch carries no "branch_set" key.
+func TestWriteAckBranchSet(t *testing.T) {
+	dir := initRepo(t)
+	degraded := addTaskBin(t, dir, "Ambiguous", "--backlog")
+	flagged := addTaskBin(t, dir, "With flag", "--backlog")
+	gittest.Git(t, dir, "checkout", "-q", "-b", "wip")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c1")
+	gittest.Git(t, dir, "checkout", "-q", "--detach")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "c2")
+
+	res, err := execBin(dir, actorA, "task", "start", degraded.ID, "--json")
+	if err != nil {
+		t.Fatalf("ambiguous start: %v", err)
+	}
+	if res.Code != 0 {
+		t.Fatalf("ambiguous start exit = %d, stderr %q", res.Code, res.Stderr)
+	}
+	ack := mustJSON[map[string]any](t, res.Stdout)
+	if ack["branch_set"] != false {
+		t.Fatalf("ambiguous start ack branch_set = %v, want false", ack["branch_set"])
+	}
+	if _, ok := ack["branch"]; ok {
+		t.Fatalf("ambiguous start ack = %v, want no branch key (that is the ambiguity)", ack)
+	}
+
+	set := mustJSON[map[string]any](t, mustBin(t, dir, actorA, "task", "start", flagged.ID, "--branch", "feat", "--json"))
+	if _, ok := set["branch_set"]; ok {
+		t.Fatalf("--branch start ack = %v, want no branch_set key", set)
+	}
+	if set["branch"] != "feat" {
+		t.Fatalf("--branch start ack branch = %v, want feat", set["branch"])
+	}
+}
+
 // TestTaskStartRejectsBadBranch pins that a bad --branch is a UsageError raised
 // at the resolve gate before the Claim append. The empty case is the regression:
 // an explicitly-passed --branch= must NOT fall through to the current branch the

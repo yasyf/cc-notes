@@ -31,6 +31,7 @@ func newInvestigationCmd() *cobra.Command {
 		newInvestigationListCmd(),
 		newInvestigationShowCmd(),
 		newInvestigationAppendCmd(),
+		newInvestigationEntryCmd(),
 		newInvestigationFindingCmd(),
 		newInvestigationRootCauseCmd(),
 		newInvestigationFixCmd(),
@@ -100,7 +101,7 @@ func newInvestigationOpenCmd() *cobra.Command {
 			if reused {
 				warnDuplicate(cmd, "investigation", inv.ID)
 			}
-			return printInvestigation(cmd, c, inv, jsonOut)
+			return printInvestigation(cmd, c, inv, jsonOut, writeAck{Reused: reused})
 		},
 	}
 	flags := cmd.Flags()
@@ -221,6 +222,49 @@ func newInvestigationAppendCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
 	bindJSON(flags, &jsonOut)
+	return cmd
+}
+
+func newInvestigationEntryCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "entry",
+		Short: "The append-only evidence timeline under an investigation",
+		Args:  noUnknownSubcommand,
+		RunE:  runHelp,
+	}
+	cmd.AddCommand(newInvestigationEntryListCmd())
+	return cmd
+}
+
+func newInvestigationEntryListCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "list INVESTIGATION",
+		Short: "List every timeline entry of an investigation, uncapped",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			_, c, err := openStoreClient(cmd)
+			if err != nil {
+				return err
+			}
+			id, err := c.ResolveInvestigation(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			inv, err := c.Investigation(ctx, id)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if jsonOut {
+				return printJSONList(out, logEntryDTOs(inv.Entries))
+			}
+			_, err = fmt.Fprint(out, renderEntryList(inv.Entries))
+			return err
+		},
+	}
+	bindJSON(cmd.Flags(), &jsonOut)
 	return cmd
 }
 
@@ -422,7 +466,7 @@ func newFindingListCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSON(out, findingDTOs(inv.Findings))
+				return printJSONList(out, findingDTOs(inv.Findings))
 			}
 			for _, finding := range inv.Findings {
 				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\n", render.ShortWireID(finding.ID), finding.Status, finding.Text); err != nil {

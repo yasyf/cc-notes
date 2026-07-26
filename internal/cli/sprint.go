@@ -93,7 +93,7 @@ func newSprintAddCmd() *cobra.Command {
 			if reused {
 				warnDuplicate(cmd, "sprint", sprint.ID)
 			}
-			return printSprint(cmd, c, sprint, jsonOut)
+			return printSprint(cmd, c, sprint, jsonOut, writeAck{Reused: reused})
 		},
 	}
 	flags := cmd.Flags()

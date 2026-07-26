@@ -57,6 +57,10 @@ type investigationFindingListArgs struct {
 	ID string `json:"id" jsonschema:"investigation id prefix"`
 }
 
+type investigationEntryListArgs struct {
+	ID string `json:"id" jsonschema:"investigation id prefix"`
+}
+
 type investigationTransitionArgs struct {
 	ID   string `json:"id" jsonschema:"investigation id prefix"`
 	Text string `json:"text" jsonschema:"evidence or reason for the transition"`
@@ -141,6 +145,11 @@ func registerInvestigation(ts *toolset, b *bridge) {
 			}
 			flags := optRepeated([]string{"--json"}, "--attach", in.Attach)
 			return b.run(ctx, argvFor([]string{"investigation", "append"}, flags, positionals...)...)
+		})
+
+	addTool(ts, &mcp.Tool{Name: "investigation_entry_list", Description: "Read an investigation's complete evidence timeline, uncapped — investigation_show caps entries at the 20 most recent and reports the rest as entries_omitted."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationEntryListArgs) (*mcp.CallToolResult, any, error) {
+			return b.run(ctx, argvFor([]string{"investigation", "entry", "list"}, []string{"--json"}, in.ID)...)
 		})
 
 	addTool(ts, &mcp.Tool{Name: "investigation_finding_add", Description: "Add an open finding to an investigation. The ack is a summary carrying the finding tally; investigation_finding_list reads the findings back."},

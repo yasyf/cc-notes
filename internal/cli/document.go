@@ -146,7 +146,7 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 			if reused {
 				warnDuplicate(cmd, spec.noun, ent.EntityID())
 			}
-			return spec.kind.print(cmd, c, ent, jsonOut)
+			return spec.kind.print(cmd, c, ent, jsonOut, writeAck{Reused: reused})
 		},
 	}
 	flags := cmd.Flags()

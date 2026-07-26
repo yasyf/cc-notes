@@ -226,7 +226,7 @@ func newTaskAddCmd() *cobra.Command {
 			if created.Degraded {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "cc-notes: detached HEAD with no resolvable branch; created on the backlog — pass --branch to set one")
 			}
-			return printTask(cmd, c, created.Task, jsonOut)
+			return printTask(cmd, c, created.Task, jsonOut, writeAck{Reused: created.Reused})
 		},
 	}
 	flags := cmd.Flags()
@@ -388,7 +388,7 @@ func newTaskStartCmd() *cobra.Command {
 			if !result.BranchSet {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "cc-notes: detached HEAD with no resolvable branch; claimed %s without setting a branch — pass --branch to set one\n", result.Task.ID.Short())
 			}
-			return printTask(cmd, c, result.Task, jsonOut)
+			return printTask(cmd, c, result.Task, jsonOut, branchAck(result.BranchSet))
 		},
 	}
 	flags := cmd.Flags()
@@ -746,7 +746,50 @@ func newTaskCommentCmd() *cobra.Command {
 	flags := cmd.Flags()
 	bindBody(flags, &body, "comment body; - reads stdin")
 	bindJSON(flags, &jsonOut)
+	cmd.AddCommand(newTaskCommentListCmd())
 	return cmd
+}
+
+func newTaskCommentListCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "list TASK",
+		Short: "List every comment on a task, uncapped",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			_, c, err := openStoreClient(cmd)
+			if err != nil {
+				return err
+			}
+			id, err := c.ResolveTask(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			task, err := c.Task(ctx, id)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if jsonOut {
+				return printJSONList(out, commentDTOs(task.Comments))
+			}
+			_, err = fmt.Fprint(out, renderEntryList(commentEntries(task.Comments)))
+			return err
+		},
+	}
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
+}
+
+// commentEntries views comments as the log entries they render identically to,
+// so a comment thread prints through the shared entry blocks.
+func commentEntries(comments []model.Comment) []model.LogEntry {
+	out := make([]model.LogEntry, len(comments))
+	for i, c := range comments {
+		out[i] = model.LogEntry{Author: c.Author, TS: c.TS, Text: c.Body}
+	}
+	return out
 }
 
 func newTaskDepCmd() *cobra.Command {
@@ -1109,7 +1152,7 @@ func newCriterionListCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSON(out, criterionSummaryDTOs(task.Criteria))
+				return printJSONList(out, criterionSummaryDTOs(task.Criteria))
 			}
 			for _, crit := range task.Criteria {
 				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\n", render.ShortWireID(crit.ID), crit.Status, crit.Text); err != nil {

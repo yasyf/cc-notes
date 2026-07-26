@@ -74,7 +74,7 @@ func newProjectAddCmd() *cobra.Command {
 			if reused {
 				warnDuplicate(cmd, "project", project.ID)
 			}
-			return printProject(cmd, c, project, jsonOut)
+			return printProject(cmd, c, project, jsonOut, writeAck{Reused: reused})
 		},
 	}
 	flags := cmd.Flags()

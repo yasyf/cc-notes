@@ -30,6 +30,10 @@ type logEditArgs struct {
 	RmAttachments []string `json:"rm_attachments,omitempty" jsonschema:"attachment names to remove"`
 }
 
+type logEntryListArgs struct {
+	ID string `json:"id" jsonschema:"log id prefix"`
+}
+
 type logListArgs struct {
 	Labels []string `json:"labels,omitempty" jsonschema:"require every label (ANDed; echoed as 'tags' in the DTO)"`
 	Path   string   `json:"path,omitempty" jsonschema:"require path anchor"`
@@ -89,6 +93,11 @@ func registerLog(ts *toolset, b *bridge) {
 		})
 
 	idTool(ts, b, "log_show", "Show one log with its entries in chronological order.", "log", "show")
+
+	addTool(ts, &mcp.Tool{Name: "log_entry_list", Description: "Read a log's complete entry timeline, uncapped — log_show caps entries at the 20 most recent and reports the rest as entries_omitted."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in logEntryListArgs) (*mcp.CallToolResult, any, error) {
+			return b.run(ctx, argvFor([]string{"log", "entry", "list"}, []string{"--json"}, in.ID)...)
+		})
 
 	addTool(ts, &mcp.Tool{Name: "log_search", Description: "Ranked search across log titles, labels, and entry text. Returns summaries carrying an entry tally, not the entries; log_show reads them back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entitySearchArgs) (*mcp.CallToolResult, any, error) {

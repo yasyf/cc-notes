@@ -124,6 +124,10 @@ type criterionListArgs struct {
 	Task string `json:"task" jsonschema:"task id prefix"`
 }
 
+type taskCommentListArgs struct {
+	Task string `json:"task" jsonschema:"task id prefix"`
+}
+
 func registerTask(ts *toolset, b *bridge) {
 	addTool(ts, &mcp.Tool{Name: "task_add", Description: "Create a task (durable, cross-agent). Provide acceptance criteria or set no_validation_criteria. The ack is a summary; task_show reads the body and criteria back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskAddArgs) (*mcp.CallToolResult, any, error) {
@@ -228,6 +232,11 @@ func registerTask(ts *toolset, b *bridge) {
 		})
 
 	commentTool(ts, b, "task")
+
+	addTool(ts, &mcp.Tool{Name: "task_comment_list", Description: "Read a task's complete comment thread, uncapped — task_show caps comments at the 20 most recent and reports the rest as comments_omitted."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in taskCommentListArgs) (*mcp.CallToolResult, any, error) {
+			return b.run(ctx, argvFor([]string{"task", "comment", "list"}, []string{"--json"}, in.Task)...)
+		})
 
 	addTool(ts, &mcp.Tool{Name: "task_dep", Description: "Add a dependency: ID is blocked by BLOCKER (rejects cycles). The ack is a summary; task_show reads the dependency edges back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskDepArgs) (*mcp.CallToolResult, any, error) {

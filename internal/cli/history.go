@@ -233,16 +233,16 @@ func derefString(p *string) string {
 	return *p
 }
 
-// clipHistoryString caps one rendered history value at maxHistoryValueChars,
-// marking the clip in-band with the kept and true character counts so the prefix
-// can never be mistaken for the value. It cuts on a rune boundary, so a
-// multi-byte value never yields invalid UTF-8.
-func clipHistoryString(s string) string {
+// clipHistoryString caps one rendered value at maxHistoryValueChars, marking the
+// clip in-band with the kept and true character counts plus hint — the call that
+// recovers the value in full — so the prefix can never be mistaken for the value.
+// It cuts on a rune boundary, so a multi-byte value never yields invalid UTF-8.
+func clipHistoryString(s, hint string) string {
 	n := utf8.RuneCountInString(s)
 	if n <= maxHistoryValueChars {
 		return s
 	}
-	return string([]rune(s)[:maxHistoryValueChars]) + fmt.Sprintf("…(%d of %d chars; --full)", maxHistoryValueChars, n)
+	return string([]rune(s)[:maxHistoryValueChars]) + fmt.Sprintf("…(%d of %d chars; %s)", maxHistoryValueChars, n, hint)
 }
 
 // clipHistoryValue caps a scalar from/to value; full returns it verbatim.
@@ -250,7 +250,7 @@ func clipHistoryValue(p *string, full bool) *string {
 	if p == nil || full {
 		return p
 	}
-	clipped := clipHistoryString(*p)
+	clipped := clipHistoryString(*p, "--full")
 	return &clipped
 }
 
@@ -263,7 +263,7 @@ func clipHistorySet(elems []string, full bool) []string {
 	}
 	out := make([]string, len(elems))
 	for i, e := range elems {
-		out[i] = clipHistoryString(e)
+		out[i] = clipHistoryString(e, "--full")
 	}
 	return out
 }

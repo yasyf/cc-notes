@@ -353,6 +353,26 @@ command: cc-notes investigation edit
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
+command: cc-notes investigation entry
+  use: entry
+  aliases: -
+  short: The append-only evidence timeline under an investigation
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes investigation entry list
+  use: list INVESTIGATION
+  aliases: -
+  short: List every timeline entry of an investigation, uncapped
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
 command: cc-notes investigation exonerate
   use: exonerate ID TEXT
   aliases: -
@@ -612,6 +632,26 @@ command: cc-notes log edit
     --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
     --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
     --title shorthand=none type=string default="" usage="new title"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes log entry
+  use: entry
+  aliases: -
+  short: The append-only entries under a log
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes log entry list
+  use: list LOG
+  aliases: -
+  short: List every entry of a log, uncapped
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -909,7 +949,18 @@ command: cc-notes papercut
 command: cc-notes papercut list
   use: list
   aliases: -
-  short: List every papercut complaint in timestamp order
+  short: List the most recent papercut complaints, newest first
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes papercut show
+  use: show LOG_ID INDEX
+  aliases: -
+  short: Show one papercut complaint with its full untruncated text
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
@@ -1676,6 +1727,16 @@ command: cc-notes task comment
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="comment body; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes task comment list
+  use: list TASK
+  aliases: -
+  short: List every comment on a task, uncapped
+  hidden: false
+  flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"

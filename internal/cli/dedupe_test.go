@@ -96,6 +96,50 @@ func TestTaskAddDedupe(t *testing.T) {
 	}
 }
 
+// TestWriteAckReused pins the machine-readable half of the dedupe contract for
+// every kind that creates: the ack for a reuse carries "reused": true beside the
+// survivor's id, and an ordinary create carries no "reused" key at all, so an
+// agent tells the two apart without parsing the stderr prose.
+func TestWriteAckReused(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		add  []string
+	}{
+		{"note", []string{"note", "add", "T", "--body", "B", "--json"}},
+		{"doc", []string{"doc", "add", "T", "--body", "B", "--json"}},
+		{"log", []string{"log", "add", "T", "--json"}},
+		{"task", []string{"task", "add", "T", "--no-validation-criteria", "--json"}},
+		{"sprint", []string{"sprint", "add", "T", "--json"}},
+		{"project", []string{"project", "add", "T", "--json"}},
+		{"runbook", []string{"runbook", "add", "T", "--json"}},
+		{"investigation", []string{"investigation", "open", "T", "P", "--json"}},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			dir := initRepo(t)
+
+			first := mustJSON[map[string]any](t, mustRun(t, dir, tc.add...))
+			if _, ok := first["reused"]; ok {
+				t.Fatalf("first %s ack = %v, want no reused key", tc.kind, first)
+			}
+
+			out, stderr, err := runCLI(t, dir, tc.add...)
+			if err != nil {
+				t.Fatalf("dup %s create: %v (stderr %q)", tc.kind, err, stderr)
+			}
+			if !strings.Contains(stderr, "reusing the existing "+tc.kind) {
+				t.Fatalf("dup %s stderr = %q, want the reuse notice", tc.kind, stderr)
+			}
+			dup := mustJSON[map[string]any](t, out)
+			if dup["reused"] != true {
+				t.Fatalf("dup %s ack reused = %v, want true", tc.kind, dup["reused"])
+			}
+			if dup["id"] != first["id"] {
+				t.Fatalf("dup %s ack id = %v, want survivor %v", tc.kind, dup["id"], first["id"])
+			}
+		})
+	}
+}
+
 // TestNoteAddAfterExpireCreatesFresh proves an expired note never blocks
 // re-asserting its fact: `note add` of the same content after `note expire`
 // roots a fresh note (no dedupe warning), leaving the stale twin flagged.

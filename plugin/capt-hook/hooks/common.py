@@ -108,12 +108,14 @@ CC_NOTES_TOOLS = frozenset(
         "doc_review", "doc_verify", "doc_supersede", "doc_expire",
         # log
         "log_add", "log_append", "log_edit", "log_rm", "log_show", "log_list", "log_search",
+        "log_entry_list",
         # papercut
-        "papercut", "papercut_list",
+        "papercut", "papercut_list", "papercut_show",
         # task
         "task_add", "task_edit", "task_show", "task_list", "task_claim", "task_start",
         "task_done", "task_cancel", "task_comment", "task_dep", "task_undep", "task_ready",
         "task_stale", "task_backlog", "task_archived", "task_renew", "task_validate",
+        "task_comment_list",
         # task criterion
         "task_criterion_add", "task_criterion_rm", "task_criterion_list", "task_criterion_met",
         "task_criterion_failed", "task_criterion_pending", "task_criterion_script",
@@ -133,6 +135,7 @@ CC_NOTES_TOOLS = frozenset(
         "runbook_run_skip", "runbook_run_fail", "runbook_run_finish",
         # investigation
         "investigation_open", "investigation_list", "investigation_show", "investigation_append",
+        "investigation_entry_list",
         "investigation_finding_add", "investigation_finding_edit", "investigation_finding_clear",
         "investigation_finding_confirm", "investigation_finding_rm", "investigation_finding_list",
         "investigation_root_cause", "investigation_fix", "investigation_confirm",

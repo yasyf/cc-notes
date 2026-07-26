@@ -46,7 +46,7 @@ type editAdapter struct {
 	diffOps    func(base model.Snapshot, data []byte) ([]model.Op, error)
 	createOps  func(data []byte) ([]model.Op, error)
 	bornVerify func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error)
-	print      func(cmd *cobra.Command, c *notes.Client, snap model.Snapshot, jsonOut bool) error
+	print      func(cmd *cobra.Command, c *notes.Client, snap model.Snapshot, jsonOut bool, ack ...writeAck) error
 }
 
 // noun is the entity word used in messages; for the cc-notes kinds it equals
@@ -106,8 +106,8 @@ func docAdapter() editAdapter {
 		bornVerify: func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error) {
 			return bornVerify(ctx, s, refs.For(model.KindDoc, snap.EntityID()), snap.(model.Doc).Anchors)
 		},
-		print: func(cmd *cobra.Command, c *notes.Client, snap model.Snapshot, jsonOut bool) error {
-			return printDoc(cmd, c, snap.(model.Doc), jsonOut)
+		print: func(cmd *cobra.Command, c *notes.Client, snap model.Snapshot, jsonOut bool, ack ...writeAck) error {
+			return printDoc(cmd, c, snap.(model.Doc), jsonOut, ack...)
 		},
 	}
 }
@@ -157,8 +157,8 @@ func noteAdapter() editAdapter {
 		bornVerify: func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error) {
 			return bornVerify(ctx, s, refs.For(model.KindNote, snap.EntityID()), snap.(model.Note).Anchors)
 		},
-		print: func(cmd *cobra.Command, c *notes.Client, snap model.Snapshot, jsonOut bool) error {
-			return printNote(cmd, c, snap.(model.Note), jsonOut)
+		print: func(cmd *cobra.Command, c *notes.Client, snap model.Snapshot, jsonOut bool, ack ...writeAck) error {
+			return printNote(cmd, c, snap.(model.Note), jsonOut, ack...)
 		},
 	}
 }
@@ -532,7 +532,7 @@ func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, c *notes.
 	if err != nil {
 		return err
 	}
-	snap, err := createEntity(ctx, cmd, s, append(ops, attOps...))
+	snap, reused, err := createEntity(ctx, cmd, s, append(ops, attOps...))
 	if err != nil {
 		return err
 	}
@@ -546,7 +546,7 @@ func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, c *notes.
 		return err
 	}
 	removeBuffer(files)
-	return a.print(cmd, c, snap, jsonOut)
+	return a.print(cmd, c, snap, jsonOut, writeAck{Reused: reused})
 }
 
 // resolveOpCommitAnchors rewrites every commit-anchor value in ops to its full

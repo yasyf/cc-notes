@@ -16,7 +16,7 @@ import (
 // mutation-echo printer that renders a just-written snapshot.
 type kindSpec[T model.Snapshot] struct {
 	kind  model.Kind
-	print func(cmd *cobra.Command, c *notes.Client, v T, jsonOut bool) error
+	print func(cmd *cobra.Command, c *notes.Client, v T, jsonOut bool, ack ...writeAck) error
 }
 
 // load resolves an id prefix to its ref and folds the entity chain into T.
@@ -43,8 +43,8 @@ var (
 	taskSpec    = kindSpec[model.Task]{kind: model.KindTask, print: printTask}
 	sprintSpec  = kindSpec[model.Sprint]{kind: model.KindSprint, print: printSprint}
 	projectSpec = kindSpec[model.Project]{kind: model.KindProject, print: printProject}
-	runbookSpec = kindSpec[model.Runbook]{kind: model.KindRunbook, print: func(cmd *cobra.Command, _ *notes.Client, rb model.Runbook, jsonOut bool) error {
-		return printRunbook(cmd, rb, jsonOut)
+	runbookSpec = kindSpec[model.Runbook]{kind: model.KindRunbook, print: func(cmd *cobra.Command, _ *notes.Client, rb model.Runbook, jsonOut bool, ack ...writeAck) error {
+		return printRunbook(cmd, rb, jsonOut, ack...)
 	}}
 	investigationSpec = kindSpec[model.Investigation]{kind: model.KindInvestigation, print: printInvestigation}
 )

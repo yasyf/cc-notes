@@ -85,7 +85,7 @@ func newRunbookAddCmd() *cobra.Command {
 			if reused {
 				warnDuplicate(cmd, "runbook", rb.ID)
 			}
-			return printRunbook(cmd, rb, jsonOut)
+			return printRunbook(cmd, rb, jsonOut, writeAck{Reused: reused})
 		},
 	}
 	flags := cmd.Flags()
