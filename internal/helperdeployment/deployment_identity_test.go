@@ -133,7 +133,7 @@ func TestDeploymentPolicyJSONAndDigestAreExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantDigest = "196114742940d7e926cf55eb7c82d97cb80354c204a2adcab899beb28ca6e5c8"
+	const wantDigest = "8418f2c021f7d4bb1733d3b298ec32fb95caefd11644bb2c64d2bd382e1e54ac"
 	got := hex.EncodeToString(digest[:])
 	if got != wantDigest {
 		t.Fatalf("policy digest = %s, want %s", got, wantDigest)

@@ -130,6 +130,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mislabel every match as a note: both commands now resolve through
   `notes.Client.ResolveEntity`, whose `AmbiguousKindsError` carries the real
   per-kind labels (the CLI-internal duplicate resolver is gone).
+- Signed helper deployment now uses FuseKit `v1.15.4`, whose launchd job drops
+  `LimitLoadToSessionType`: the key made `launchctl bootstrap` fail with
+  `Input/output error` on every load, so upgrades never converged. cc-notes'
+  deployment attestation drops its matching `Aqua` session type too, so the
+  policy digest still describes the plan that is actually deployed.
 
 ### Added
 - **Writes stamp the Claude session id into their op pack.** Every entity

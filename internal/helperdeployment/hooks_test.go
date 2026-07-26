@@ -135,8 +135,7 @@ func testServicePlan(t *testing.T, program, buildID string) service.Plan {
 	plan, err := service.NewPlan([]service.Agent{{
 		Label: "com.yasyf.cc-notes.helper.fusekit", Program: program,
 		LogPath: filepath.Join(realTempDir(t), "helper.log"), RestartPolicy: service.RestartAlways,
-		LimitLoadToSessionType: service.SessionTypeAqua,
-		Env:                    map[string]string{"FUSEKIT_BUILD_ID": buildID},
+		Env: map[string]string{"FUSEKIT_BUILD_ID": buildID},
 	}})
 	if err != nil {
 		t.Fatal(err)

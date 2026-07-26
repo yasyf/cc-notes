@@ -342,7 +342,7 @@ func deploymentPolicyJSON() ([]byte, error) {
 		},
 		Service: deploymentServicePolicy{
 			AgentLabel: DeploymentServiceLabel, ExactSingleAgentPlan: true, AssociatedBundleID: helperclient.BundleID,
-			RestartPolicy: service.RestartAlways, SessionType: service.SessionTypeAqua,
+			RestartPolicy: service.RestartAlways, SessionType: 0,
 			StartInterval: 0, ProcessType: 0,
 			ProgramIsFixedBundleExecutable: true, RequireNoArguments: true,
 			RequireNoWatchPaths: true, RequireNoCalendarIntervals: true,
