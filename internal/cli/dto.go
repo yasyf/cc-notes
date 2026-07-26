@@ -874,6 +874,17 @@ func tailWithCount[T any](items []T, n int) ([]T, int) {
 	return items[len(items)-n:], len(items) - n
 }
 
+// printJSONList writes items as a whole JSON response, rendering an empty
+// collection as [] rather than null. The DTO constructors return a nil slice for
+// "no members" so an embedded field omits itself, but a nil slice marshals to
+// null, which a client iterating a whole response cannot consume.
+func printJSONList[T any](w io.Writer, items []T) error {
+	if items == nil {
+		items = []T{}
+	}
+	return printJSON(w, items)
+}
+
 // printJSON writes v as one compact JSON document with a trailing newline.
 func printJSON(w io.Writer, v any) error {
 	data, err := json.Marshal(v)

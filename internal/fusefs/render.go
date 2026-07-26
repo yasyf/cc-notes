@@ -201,7 +201,7 @@ type ParsedLease struct {
 // taskDoc mirrors internal/cli's taskDTO field for field: the rendered task
 // file must stay byte-compatible with `task show --json` pretty-printed
 // (TestRenderTaskMatchesCLIJSON pins it), so any change there lands here
-// too.
+// too. The one deliberate divergence is comments — see RenderTask.
 type taskDoc struct {
 	ID           string            `json:"id"`
 	Branch       string            `json:"branch,omitempty"`
@@ -1009,9 +1009,11 @@ func NewLog(p ParsedLog) ([]model.Op, error) {
 
 // RenderTask renders t as the CLI's --json document pretty-printed with
 // 2-space indent and a trailing newline, byte-compatible with
-// `task show --json`. Blocks is a derived cross-entity index this layer
-// cannot compute from one task, so it stays absent; DiffTask pins it to
-// empty in turn.
+// `task show --json` for a task inside the show history cap. Blocks is a
+// derived cross-entity index this layer cannot compute from one task, so it
+// stays absent; DiffTask pins it to empty in turn. Comments are rendered whole
+// where show keeps only the 20 most recent: this file round-trips through
+// DiffTask into edit ops, so a capped render would read back as a deletion.
 func RenderTask(t model.Task) []byte {
 	doc := taskDoc{
 		ID:           string(t.ID),

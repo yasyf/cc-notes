@@ -529,7 +529,7 @@ func newStepListCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSON(out, runbookStepDTOs(rb.Steps))
+				return printJSONList(out, runbookStepDTOs(rb.Steps))
 			}
 			for i, st := range rb.Steps {
 				if _, err := fmt.Fprintf(out, "%s\t%d\t%s\t%s\n", render.ShortWireID(st.ID), i+1, st.Text, orDash(st.Command)); err != nil {

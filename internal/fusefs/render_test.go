@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -1641,7 +1642,8 @@ func addTaskID(t *testing.T, dir string, args ...string) string {
 
 // TestRenderTaskMatchesCLIJSON pins the byte-compatibility contract between
 // RenderTask and the CLI: the rendered file must equal `task show --json`
-// pretty-printed, for a task exercising every DTO field.
+// pretty-printed, for a task exercising every DTO field inside the show
+// history cap. TestRenderTaskKeepsEveryCommentPastShowCap covers past it.
 func TestRenderTaskMatchesCLIJSON(t *testing.T) {
 	dir := initRepo(t)
 	parentID := addTaskID(t, dir, "task", "add", "Parent epic", "--type", "epic", "--no-validation-criteria")
@@ -1669,6 +1671,40 @@ func TestRenderTaskMatchesCLIJSON(t *testing.T) {
 	}
 	if got := fusefs.RenderTask(snapshot.(model.Task)); !bytes.Equal(got, want.Bytes()) {
 		t.Errorf("RenderTask diverges from CLI --json:\n got %s\nwant %s", got, want.Bytes())
+	}
+}
+
+// TestRenderTaskKeepsEveryCommentPastShowCap pins the deliberate divergence
+// from `task show --json`: the FUSE file round-trips through DiffTask into edit
+// ops, so capping comments the way show does would read back as a deletion.
+func TestRenderTaskKeepsEveryCommentPastShowCap(t *testing.T) {
+	const comments = 25
+	dir := initRepo(t)
+	id := addTaskID(t, dir, "task", "add", "Chatty", "--no-validation-criteria")
+	for i := range comments {
+		runCLI(t, dir, "task", "comment", id, fmt.Sprintf("comment %d", i))
+	}
+
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	snapshot, err := s.Load(t.Context(), refs.For(model.KindTask, model.EntityID(id)))
+	if err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+	var doc struct {
+		Comments        []json.RawMessage `json:"comments"`
+		CommentsOmitted *int              `json:"comments_omitted"`
+	}
+	if err := json.Unmarshal(fusefs.RenderTask(snapshot.(model.Task)), &doc); err != nil {
+		t.Fatalf("unmarshal rendered task: %v", err)
+	}
+	if len(doc.Comments) != comments {
+		t.Errorf("RenderTask kept %d comments, want all %d", len(doc.Comments), comments)
+	}
+	if doc.CommentsOmitted != nil {
+		t.Errorf("RenderTask emitted comments_omitted = %d; the FUSE file elides nothing", *doc.CommentsOmitted)
 	}
 }
 
