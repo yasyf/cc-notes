@@ -12,10 +12,11 @@ mutations echo a lean tab-separated line and listings print one lean line per en
 `--json` speaks two shapes. A listing or a mutation acknowledgement returns a *summary* — the
 identity, the lifecycle status, and a count wherever the entity carries an append-only history —
 never the body, entries, comments, criteria, steps, or runs. Those live behind `show`:
-`cc-notes <noun> show <id> --json`, or the kind-agnostic `cc-notes show <id> --json`. Two
-sub-entity listings are their own payload and stay full — `investigation finding list` and
-`runbook step list`. Each per-kind JSON block below gives the summary and the full record
-separately.
+`cc-notes <noun> show <id> --json`, or the kind-agnostic `cc-notes show <id> --json`. Sub-entity
+listings are their own payload and return every member — `task criterion list`,
+`runbook step list`, `runbook run list`, `investigation finding list`, and the uncapped history
+readers `log entry list`, `investigation entry list`, and `task comment list`. Each per-kind JSON
+block below gives the summary and the full record separately.
 
 Each command block opens with a machine-readable `MCP:` line — the MCP tool that carries the
 command, with the tool's property names in parentheses, or `MCP: —` plus the reason a command is
@@ -170,13 +171,19 @@ key is no labels, no `priority` key is priority 0, no `entry_count` key is an em
 below marks the few fields that survive their zero value and are always present. `papercut list` is
 the one holdout — its `model` stays an explicit `null` when no model was recorded.
 
-A `show` returns the entity whole, with one bound: the append-only histories cap at the 20 most
-recent members, and the count of older ones elided rides beside them as `entries_omitted`,
+A write acknowledgement is the entity's summary plus at most two per-write facts, each subject to
+the same omission: `"reused": true` when the create's duplicate guard returned an existing entity
+instead of writing a twin, and `"branch_set": false` when `task start` won its claim from a
+detached HEAD without setting a branch. An ordinary ack carries neither.
+
+A `show` returns the entity whole, with one bound: five append-only collections cap at their 20
+most recent members, and the count of older ones elided rides beside them as `entries_omitted`,
 `findings_omitted`, `comments_omitted`, or `runs_omitted`. The cap applies to a log's `entries`, an
-investigation's `findings` and `entries`, a task's `comments`, and a runbook's `runs`; each omitted
-count is itself absent when nothing was elided. Past the cap, `investigation finding list` returns
-every finding and `runbook run list` every run (then `runbook run show` for one run's steps); for a
-log's older entries and a task's older comments, walk the trail with `history <id>`.
+investigation's `findings` and `entries`, a task's `comments`, and a runbook's `runs` — sprint,
+project, and runbook comments come back whole — and each omitted count is itself absent when
+nothing was elided. Past the cap, `log entry list`, `investigation entry list`, and `task comment
+list` return the complete timeline or thread, `investigation finding list` every finding, and
+`runbook run list` every run (then `runbook run show` for one run's steps).
 
 ## Repo commands
 
@@ -733,7 +740,9 @@ lost claim leaves the task on its original branch.
 
 The branch resolves jj-aware on a detached HEAD; `--branch` sets one explicitly. When no branch
 resolves and no `--branch` is given, start still claims the task — without setting a branch — and
-warns on stderr. An explicit empty `--branch=` is a usage error, rejected before any mutation.
+warns on stderr; under `--json` the acknowledgement carries `"branch_set": false`, and a claim
+that set a branch stamps nothing. An explicit empty `--branch=` is a usage error, rejected before
+any mutation.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -823,6 +832,20 @@ comment refreshes the task's lease.
 |------|---------|---------|
 | `--body <text>` | none | Comment text; positional `BODY` and `-` (stdin) are equivalent |
 | `--json` | off | Emit JSON |
+
+### `cc-notes task comment list TASK`
+
+MCP: task_comment_list (task)
+
+List every comment on a task, uncapped and oldest-first — the read past `task show --json`'s
+20-comment cap. Comments print as the same `-- <author> <rfc3339>` blocks a show prints.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+`--json` emits the comments as an array — `[{"author":string,"ts":rfc3339,"body":string}]` — and
+`[]` when there are none.
 
 ### `cc-notes task dep ID BLOCKER`
 
@@ -1012,7 +1035,8 @@ the derived reverse index of `blocked_by`; an absent `branch` is a backlog task.
 `project` are the task's independent membership pointers; each criterion's `status` is `pending`,
 `met`, or `failed`, with `note` carrying the evidence recorded with that verdict; `closed_forced`
 is `true` only for a `done` task closed with at least one criterion still unmet. `comments` holds
-the 20 most recent, with `comments_omitted` counting the older ones.
+the 20 most recent, with `comments_omitted` counting the older ones; `task comment list` reads the
+complete thread back.
 
 `task criterion list` returns criterion summaries of its own —
 `{"id":string,"text":string,"status":string,"note":string,"has_script":bool}` — reporting whether a
@@ -1746,6 +1770,23 @@ $ cc-notes investigation append a1b2 "Reproduced locally: -race -count=50 hangs 
 a1b2c3d	open	TestPool deadlock on CI
 ```
 
+### `cc-notes investigation entry list INVESTIGATION`
+
+MCP: investigation_entry_list (id)
+
+List every evidence entry of an investigation, uncapped and oldest-first — the read past
+`investigation show --json`'s 20-entry cap. Entries print as the same `-- <author> <rfc3339>`
+blocks a show prints; unlike the show timeline, no transition events are interleaved — this is
+the append-only evidence alone.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+`--json` emits the entries as an array —
+`[{"author":string,"ts":rfc3339,"text":string,"model":string}]` — and `[]` when the timeline is
+empty.
+
 ### `cc-notes investigation finding add INVESTIGATION [TEXT]`
 
 MCP: investigation_finding_add (id, text)
@@ -1907,7 +1948,8 @@ disposition evidence. `body` is the resolution summary. `fix_commits` names the 
 `fix`; `commits` is the general commit-link set `blame` unions with `cc-investigation:` trailers.
 An investigation anchor never carries a `witness` — investigations have no freshness lifecycle to
 witness. `findings` and `entries` each hold their 20 most recent, with `findings_omitted` and
-`entries_omitted` counting the older ones.
+`entries_omitted` counting the older ones; `investigation entry list` reads the complete evidence
+timeline back.
 
 `investigation finding list` returns the findings in full,
 `[{"id":string,"text":string,"status":string,"note":string}]` — uncapped, and the way to read past
@@ -2588,6 +2630,20 @@ flipped to 5%
 ramped to 50%
 ```
 
+### `cc-notes log entry list LOG`
+
+MCP: log_entry_list (id)
+
+List every entry of a log, uncapped and oldest-first — the read past `log show --json`'s 20-entry
+cap. Entries print as the same `-- <author> <rfc3339>` blocks a show prints.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+`--json` emits the entries as an array —
+`[{"author":string,"ts":rfc3339,"text":string,"model":string}]` — and `[]` when the log is empty.
+
 ### `cc-notes log rm ID`
 
 MCP: log_rm (id)
@@ -2615,7 +2671,8 @@ Full — `log show ID --json`:
 `text`. `entries` is the append-only list in chronological order, each carrying the author and
 timestamp of the commit that appended it plus an optional `model` identity (recorded by `cc-notes
 papercut`, absent otherwise); it holds the 20 most recent, with `entries_omitted` counting the
-older ones. A log has none of the doc's freshness fields — no `when`, `verified_at`,
+older ones, and `log entry list` reads the complete timeline back. A log has none of the doc's
+freshness fields — no `when`, `verified_at`,
 `superseded_by`, `drift`, or expiry — because it never drifts.
 
 ## Papercut commands
@@ -2623,8 +2680,8 @@ older ones. A log has none of the doc's freshness fields — no `when`, `verifie
 A papercut is a friction complaint stored as a log entry: every complaint appends one entry to the
 repo-wide `papercuts` journal — an ordinary log titled `papercuts`, tagged `papercut`, auto-created
 on the first `cc-notes papercut`. The tag is the journal's identity (retitling never forks it), and
-because the journal is a log, `show`, `log show`, `history`, and `relevant` all take its id with no
-papercut-specific verbs — the `relevant`/`show` kind stays `log`.
+because the journal is a log, `show`, `log show`, `history`, and `relevant` all take its id — the
+`relevant`/`show` kind stays `log`.
 
 ### `cc-notes papercut [TEXT]`
 
@@ -2638,7 +2695,7 @@ journal's Log lean line.
 |------|---------|---------|
 | `--body <text>` | none | Complaint text; positional `TEXT` and `-` (stdin) are equivalent |
 | `--model <id>` | `CC_NOTES_MODEL` | Model identity recorded on the entry; the flag wins over the environment variable |
-| `--json` | off | Emit the journal's JSON log record |
+| `--json` | off | Emit the journal's JSON summary |
 
 ```console
 $ cc-notes papercut "log search --json drops entry text, so I re-ran log show per hit" --model claude-fable-5
@@ -2651,15 +2708,18 @@ Because `list` is a subcommand, a complaint whose text is literally `list` needs
 
 ### `cc-notes papercut list`
 
-MCP: papercut_list
+MCP: papercut_list (limit)
 
-List every complaint across all live papercut-tagged journals as one chronology, ordered by entry
-timestamp (ties broken by journal creation time, journal id, then entry index). Each complaint
-prints as a `-- <model> — <author> <rfc3339>` block — the `<model> — ` segment drops when no model
-was recorded — with a blank line between blocks; an empty journal prints nothing.
+List complaints newest-first across all live papercut-tagged journals as one chronology (entry
+timestamp, ties broken by journal creation time, journal id, then entry index), capped at
+`--limit` and with each complaint's text clipped to a 300-character preview whose in-band marker
+names the exact `papercut show` call that reads it back whole. Each complaint prints as a
+`-- <model> — <author> <rfc3339>` block — the `<model> — ` segment drops when no model was
+recorded — with a blank line between blocks; an empty journal prints nothing.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--limit <N>` | `20` | Maximum complaints, newest first; 0 = all |
 | `--json` | off | Emit JSON |
 
 ```console
@@ -2669,5 +2729,20 @@ log search --json drops entry text, so I re-ran log show per hit
 ```
 
 `--json` emits the complaints as an array —
-`[{"log_id":string,"model":string|null,"author":string,"ts":rfc3339,"text":string}]` — and `[]`
-when there are none.
+`[{"log_id":string,"index":int,"model":string|null,"author":string,"ts":rfc3339,"text":string}]` —
+and `[]` when there are none. `index` is the complaint's position within its own journal, stable
+under any `--limit`; `log_id` and `index` together address the complaint for `papercut show`.
+
+### `cc-notes papercut show LOG_ID INDEX`
+
+MCP: papercut_show (log_id, index)
+
+Read one complaint back in full — the untruncated text a `papercut list` row previews — addressed
+by that row's `log_id` and `index`. A non-numeric index, a log carrying no `papercut` tag, and an
+index no entry occupies all exit 2.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+`--json` emits one complaint object in the `papercut list` row shape, with `text` untruncated.

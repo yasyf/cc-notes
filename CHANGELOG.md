@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Four uncapped readers open the capped show histories.** `log entry list`
+  (MCP: `log_entry_list`), `investigation entry list`
+  (`investigation_entry_list`), and `task comment list` (`task_comment_list`)
+  return every record — uncapped, oldest-first, no `--limit` — as the read
+  past a `show --json` cap; `papercut show LOG_ID INDEX` (`papercut_show`)
+  returns one complaint in full by the address a `papercut list` row carries.
+  Findings, criteria, and runs already had readers (`investigation finding
+  list`, `task criterion list`, `runbook run list`).
+- **Write acknowledgements carry two new per-write facts.** Both omitempty,
+  so an ordinary ack is byte-identical to the bare summary: `reused: true`
+  when the create's duplicate guard returned an existing entity instead of
+  writing a twin, and `branch_set: false` when `task start` won its claim
+  from a detached HEAD without setting a branch (`task claim` never carries
+  it).
 - **The macOS FuseKit service now has an explicit, fenced machine lifecycle.**
   `cc-notes package install` verifies the delivered signed app, atomically publishes it at
   `~/Applications/CCNotesHelper.app`, and activates the `~/CCNotes` presentation through
@@ -32,6 +46,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Wrong names still fail — arguments are never rewritten.
 
 ### Changed
+- **Listings and write acknowledgements return summaries.** Every MCP tool
+  result is the CLI's `--json`, and a listing or ack used to ship every byte
+  of body/entries/comments/steps/runs/findings — `log_append` echoed a whole
+  journal back as the receipt for one appended entry. They now emit per-kind
+  summary DTOs whose field set mirrors the lean text lines: identity,
+  lifecycle status, and a tally wherever the entity carries an append-only
+  history. Measured on this repository: `doc list` 91,830 → 3,877 bytes,
+  `note list` 85,718 → 16,476, `search` 40,745 → 4,069, `relevant`
+  46,348 → 3,122, `status` 15,855 → 1,923.
+- **Every JSON field omits its zero value.** DTO fields are `omitempty`
+  across the board and empty slices stay nil, so no payload carries a field
+  at its zero value — absence means the zero value. The few fields that
+  survive their zero value are named per shape in the CLI reference.
+- **`<noun> show --json` caps its embedded history at the 20 most recent.**
+  Exactly five collections cap, each beside a count of what was elided: log
+  entries and investigation timeline entries (`entries_omitted`),
+  investigation findings (`findings_omitted`), task comments
+  (`comments_omitted`), and runbook runs (`runs_omitted`). Sprint, project,
+  and runbook comments come back whole; the new uncapped readers recover the
+  elided members.
+- **`papercut list` is newest-first, capped, and clipped.** The listing caps
+  at 20 (`--limit N`, 0 = all) and clips each complaint's text to a
+  300-character preview whose in-band marker names the exact `papercut show`
+  call that reads it back whole. Rows carry an `index` — the entry's position
+  within its own journal, stable regardless of `--limit`.
+- **`history` clips change values at 300 characters.** The scalar `from`/`to`
+  and each element of an added/removed set delta clip alike, carrying the
+  marker in-band; `--full` (MCP: `full`) emits the exact historical values.
 - **The Claude plugin versions in lockstep with the binary.** `plugin.json`'s
   version now tracks the release-tag line: it jumps to `0.46.0`, and every
   future `vX.Y.Z` tag rewrites it to match, so a consumer's plugin cache
@@ -55,6 +97,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hint naming `body`.
 
 ### Fixed
+- **`attachment_get` rejects an empty `output`.** It previously dropped the
+  `--output` flag when the value was `""`, which made the CLI stream raw
+  attachment bytes into the tool result — the one thing its description
+  promises never happens. An empty path now fails before the CLI runs.
+- **A whole-response empty array renders as `[]`, not `null`.** The
+  zero-value omission left nil slices marshalling to `null` at the top level
+  of a listing, which a client iterating a whole response cannot consume;
+  an empty collection now pins to `[]`.
 - Helper runtime replacement now uses daemonkit `v0.19.1` terminal owner
   claims, so a failed owner settles and releases its listener before a
   successor starts.

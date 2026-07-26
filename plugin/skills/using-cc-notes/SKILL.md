@@ -48,7 +48,10 @@ never the body, entries, comments, criteria, steps, or runs. The `*_show` tools 
 whole: `note_show`, `doc_show`, `log_show`, `task_show`, `sprint_show`, `project_show`,
 `runbook_show`, `investigation_show`, or the kind-agnostic `show`. So `note_add` hands back the id,
 not the body you just wrote, and `log_append` hands back an entry tally, not the entry. Fetch a
-body only to read one you did not write.
+body only to read one you did not write. An acknowledgement also carries up to two per-write
+facts, both absent ordinarily: `reused: true` when the duplicate guard returned an existing
+entity instead of creating one, and `branch_set: false` when `task_start` claimed a task from a
+detached HEAD without setting a branch.
 
 Property names mirror the flags. The four anchored kinds — note, doc, log, runbook — take
 anchor arrays (commits, paths, dirs, branches) on their add tools and the add_*/rm_* octet
@@ -174,8 +177,10 @@ A **papercut** is the fire-and-forget corner of the log: `papercut` with the com
 tool call, a broken link, a misleading doc — instead of silently pushing through. Every complaint
 appends one entry to a single repo-wide journal (a log titled `papercuts`, tagged `papercut`,
 auto-created on first use), so there is nothing to set up and no review lifecycle to run: entries
-are never edited, `papercut_list` reads the chronology back, and `model` (or `CC_NOTES_MODEL`,
-with the parameter winning) records which model hit the friction.
+are never edited, `papercut_list` skims the chronology newest-first (clipped previews, capped at
+`limit`), `papercut_show` reads one complaint back whole by the listing row's `log_id` and
+`index`, and `model` (or `CC_NOTES_MODEL`, with the parameter winning) records which model hit
+the friction.
 
 The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, else your git
 `user.name`/`user.email`. Claims and leases key on that actor.
@@ -311,7 +316,7 @@ The full surface — every flag, property, default, and output shape — is in
 | Ranked search across every kind | `search` (`query`, `labels`, `limit`) | `cc-notes search "<query>"` |
 | List the task(s) a commit implemented | `blame` (`sha`) | `cc-notes blame <sha>` |
 | Show any entity by id | `show` (`id`) | `cc-notes show <id>` |
-| An entity's edit history | `history` (`id`, `reverse`, `limit`) | `cc-notes history <id>` |
+| An entity's edit history | `history` (`id`, `reverse`, `limit`, `full`) | `cc-notes history <id>` |
 | Capture work | `task_add` (`title`, `criteria`, `backlog`) | `cc-notes task add "<title>" --criterion <text>` |
 | The pickup queue | `task_ready` | `cc-notes task ready` |
 | Claim + move onto your branch | `task_start` (`id`) | `cc-notes task start <id>` |
@@ -330,6 +335,7 @@ The full surface — every flag, property, default, and output shape — is in
 | Start an append-only journal | `log_add` (`title`, `entry`) | `cc-notes log add "<title>"` |
 | Append an entry / artifacts | `log_append` (`id`, `entry`, `attach`) | `cc-notes log append <id> "<text>"` |
 | Read a journal back | `log_show` (`id`) | `cc-notes log show <id>` |
+| Read a capped history whole | `log_entry_list` / `investigation_entry_list` (`id`) / `task_comment_list` (`task`) | `cc-notes log entry list <id>` |
 | Open an investigation on a suspicion | `investigation_open` (`title`, `premise`, `findings`) | `cc-notes investigation open "<title>" "<premise>"` |
 | Append evidence per triage step | `investigation_append` (`id`, `text`, `attach`) | `cc-notes investigation append <id> "<text>"` |
 | Rule a suspect out / in | `investigation_finding_clear` / `_confirm` (`id`, `finding`, `why`) | `cc-notes investigation finding clear <id> <finding> --why "<evidence>"` |
@@ -337,7 +343,8 @@ The full surface — every flag, property, default, and output shape — is in
 | Record the fixing commits | `investigation_fix` (`id`, `commits`) | `cc-notes investigation fix <id> --commit <sha>` |
 | Close with proof, or reopen on regression | `investigation_confirm` / `investigation_reopen` (`id`, `text`) | `cc-notes investigation confirm <id> "<proof>"` |
 | File a friction complaint | `papercut` (`body`) | `cc-notes papercut "<complaint>"` |
-| Read every complaint | `papercut_list` | `cc-notes papercut list` |
+| Skim recent complaints, newest first | `papercut_list` (`limit`) | `cc-notes papercut list` |
+| Read one complaint in full | `papercut_show` (`log_id`, `index`) | `cc-notes papercut show <log-id> <index>` |
 | Retrieve an attachment | `attachment_get` (`id`, `name`, `output`) | `cc-notes attachment get <id> <name> -o <path>` |
 | Store a procedure | `runbook_add` (`title`, `steps`, `paths`) | `cc-notes runbook add "<title>" --step "<text>"` |
 | Add a positioned step | `runbook_step_add` (`id`, `text`, `command`, `after`) | `cc-notes runbook step add <id> "<text>"` |
@@ -348,9 +355,13 @@ The full surface — every flag, property, default, and output shape — is in
 A tool result is the command's `--json`; on the CLI, append `--json` to any note, doc, log,
 investigation, papercut, task, sync, reconcile, or status command for the same machine-readable
 record instead of the lean line. Listings and write acknowledgements come back as summaries; a
-`show` returns the record whole, capping each append-only history at its 20 most recent members
-with an `entries_omitted`, `findings_omitted`, `comments_omitted`, or `runs_omitted` count beside
-it.
+`show` returns the record whole, capping exactly five collections at their 20 most recent members
+— a log's entries, an investigation's timeline entries and findings, a task's comments, and a
+runbook's runs — with an `entries_omitted`, `findings_omitted`, `comments_omitted`, or
+`runs_omitted` count beside each. Sprint, project, and runbook comments come back whole. Past a
+cap, `log_entry_list`, `investigation_entry_list`, and `task_comment_list` return the complete
+timeline or thread, and `investigation_finding_list` and `runbook_run_list` were already
+uncapped.
 
 `--repo PATH` (`-R`) targets another repository's store from any cwd — pass any path inside it;
 file-path arguments (e.g. `--attach`) still resolve against the invocation cwd.
