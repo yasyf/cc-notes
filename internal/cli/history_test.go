@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -410,6 +411,192 @@ func TestHistoryElementJSON(t *testing.T) {
 	if len(transition.Removed) != 1 || transition.Removed[0] != `"tests pass" [pending]` {
 		t.Errorf("transition removed = %#v, want [\"tests pass\" [pending]]", transition.Removed)
 	}
+}
+
+// TestHistoryJSONValueClip pins the JSON trail's scalar clip against the cap
+// boundary: a value at or under it is emitted verbatim and unmarked, a longer
+// one is cut on a rune boundary and marked in-band with its true character
+// count, and --full recovers the exact historical value in every case.
+func TestHistoryJSONValueClip(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "under the cap is verbatim",
+			body: strings.Repeat("u", 299),
+			want: strings.Repeat("u", 299),
+		},
+		{
+			name: "exactly at the cap is verbatim",
+			body: strings.Repeat("e", 300),
+			want: strings.Repeat("e", 300),
+		},
+		{
+			name: "one over the cap is clipped and marked",
+			body: strings.Repeat("o", 301),
+			want: strings.Repeat("o", 300) + "…(300 of 301 chars; --full)",
+		},
+		{
+			name: "a long body reports its true length",
+			body: strings.Repeat("f", 1237),
+			want: strings.Repeat("f", 300) + "…(300 of 1237 chars; --full)",
+		},
+		{
+			name: "multi-byte runes clip on a rune boundary",
+			body: strings.Repeat("é", 400),
+			want: strings.Repeat("é", 300) + "…(300 of 400 chars; --full)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			id := histID(t, mustRun(t, dir, "note", "add", "clipped", "--body", tc.body, "--json"))
+
+			if got := historyScalarTo(t, mustRun(t, dir, "history", id, "--json"), "body"); got != tc.want {
+				t.Errorf("body to = %q, want %q", got, tc.want)
+			}
+			if got := historyScalarTo(t, mustRun(t, dir, "history", id, "--json", "--full"), "body"); got != tc.body {
+				t.Errorf("--full body to = %q, want the exact original %q", got, tc.body)
+			}
+		})
+	}
+}
+
+// TestHistoryJSONSetElementClip pins per-element clipping of a set delta. Set
+// elements reach the DTO as rendered strings, so one long comment, log entry, or
+// criterion would otherwise dump whole user prose into the trail; each element
+// clips on its own, and --full recovers all of them exactly.
+func TestHistoryJSONSetElementClip(t *testing.T) {
+	longComment := "C" + strings.Repeat("c", 4999)
+	longEntry := "E" + strings.Repeat("e", 2999)
+	longNote := "N" + strings.Repeat("n", 1999)
+	longCrit := "L" + strings.Repeat("l", 4999)
+
+	for _, tc := range []struct {
+		name  string
+		field string
+		setup func(t *testing.T, dir string) string
+		full  []string
+	}{
+		{
+			name:  "a short element is verbatim and unmarked",
+			field: "comments",
+			setup: func(t *testing.T, dir string) string {
+				id := histID(t, mustRun(t, dir, "task", "add", "c", "--no-validation-criteria", "--json"))
+				mustRun(t, dir, "task", "comment", id, "ship it")
+				return id
+			},
+			full: []string{`comment by ` + actorA + `: "ship it"`},
+		},
+		{
+			name:  "a long comment body is clipped and marked",
+			field: "comments",
+			setup: func(t *testing.T, dir string) string {
+				id := histID(t, mustRun(t, dir, "task", "add", "c", "--no-validation-criteria", "--json"))
+				mustRun(t, dir, "task", "comment", id, longComment)
+				return id
+			},
+			full: []string{`comment by ` + actorA + `: "` + longComment + `"`},
+		},
+		{
+			name:  "a long log entry is clipped and marked",
+			field: "entries",
+			setup: func(t *testing.T, dir string) string {
+				id := histID(t, mustRun(t, dir, "log", "add", "Dump", "--json"))
+				mustRun(t, dir, "log", "append", id, longEntry)
+				return id
+			},
+			full: []string{`entry by ` + actorA + `: "` + longEntry + `"`},
+		},
+		{
+			name:  "a long criterion note is clipped and marked",
+			field: "criteria",
+			setup: func(t *testing.T, dir string) string {
+				id := histID(t, mustRun(t, dir, "task", "add", "c", "--criterion", "crit text", "--json"))
+				task := mustJSON[taskJSON](t, mustRun(t, dir, "task", "show", id, "--json"))
+				mustRun(t, dir, "task", "criterion", "met", id, task.Criteria[0].ID, "--note", longNote)
+				return id
+			},
+			full: []string{`"crit text" [met] note "` + longNote + `"`},
+		},
+		{
+			name:  "each element of a mixed set clips independently",
+			field: "criteria",
+			setup: func(t *testing.T, dir string) string {
+				return histID(t, mustRun(t, dir, "task", "add", "c", "--criterion", longCrit, "--criterion", "short crit", "--json"))
+			},
+			full: []string{`"` + longCrit + `" [pending]`, `"short crit" [pending]`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			id := tc.setup(t, dir)
+
+			want := make([]string, len(tc.full))
+			for i, e := range tc.full {
+				want[i] = clipWant(e)
+			}
+			got := historySetAdded(t, mustRun(t, dir, "history", id, "--json"), tc.field)
+			if !slices.Equal(got, want) {
+				t.Errorf("%s added = %s, want %s", tc.field, briefElems(got), briefElems(want))
+			}
+			full := historySetAdded(t, mustRun(t, dir, "history", id, "--json", "--full"), tc.field)
+			if !slices.Equal(full, tc.full) {
+				t.Errorf("--full %s added = %s, want %s", tc.field, briefElems(full), briefElems(tc.full))
+			}
+		})
+	}
+}
+
+// maxClipTestChars mirrors the internal maxHistoryValueChars cap (unexported).
+const maxClipTestChars = 300
+
+// clipWant is the expected clipped form of one rendered set element.
+func clipWant(s string) string {
+	r := []rune(s)
+	if len(r) <= maxClipTestChars {
+		return s
+	}
+	return string(r[:maxClipTestChars]) + fmt.Sprintf("…(%d of %d chars; --full)", maxClipTestChars, len(r))
+}
+
+// briefElems renders elements as length-tagged heads so a mismatch names the
+// difference instead of dumping kilobytes of filler.
+func briefElems(elems []string) string {
+	out := make([]string, len(elems))
+	for i, e := range elems {
+		r := []rune(e)
+		head := string(r[:min(60, len(r))])
+		tail := string(r[max(0, len(r)-30):])
+		out[i] = fmt.Sprintf("<%d chars %q…%q>", len(r), head, tail)
+	}
+	return "[" + strings.Join(out, " ") + "]"
+}
+
+// historySetAdded returns a field's added elements from the newest history entry
+// carrying that field.
+func historySetAdded(t *testing.T, raw, field string) []string {
+	t.Helper()
+	ch, ok := firstChange(unmarshalHistory(t, raw), field)
+	if !ok {
+		t.Fatalf("no %q change in history:\n%s", field, raw)
+	}
+	return ch.Added
+}
+
+// historyScalarTo returns a field's scalar `to` value from the newest history
+// entry carrying that field.
+func historyScalarTo(t *testing.T, raw, field string) string {
+	t.Helper()
+	ch, ok := firstChange(unmarshalHistory(t, raw), field)
+	if !ok {
+		t.Fatalf("no %q change in history:\n%s", field, raw)
+	}
+	if ch.To == nil {
+		t.Fatalf("%q change carries no scalar to: %+v", field, ch)
+	}
+	return *ch.To
 }
 
 func firstLine(s string) string {

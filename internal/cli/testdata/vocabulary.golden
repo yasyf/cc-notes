@@ -136,6 +136,7 @@ command: cc-notes doc history
   short: Show this doc's edit history
   hidden: false
   flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
@@ -249,6 +250,7 @@ command: cc-notes history
   short: Show the edit history of any note, doc, log, task, sprint, project, runbook, or investigation
   hidden: false
   flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
@@ -452,6 +454,7 @@ command: cc-notes investigation history
   short: Show this investigation's edit history
   hidden: false
   flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
@@ -618,6 +621,7 @@ command: cc-notes log history
   short: Show this log's edit history
   hidden: false
   flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
@@ -763,6 +767,7 @@ command: cc-notes note history
   short: Show this note's edit history
   hidden: false
   flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
@@ -1004,6 +1009,7 @@ command: cc-notes project history
   short: Show this project's edit history
   hidden: false
   flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
@@ -1146,6 +1152,7 @@ command: cc-notes runbook history
   short: Show this runbook's edit history
   hidden: false
   flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
@@ -1536,6 +1543,7 @@ command: cc-notes sprint history
   short: Show this sprint's edit history
   hidden: false
   flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
@@ -1811,6 +1819,7 @@ command: cc-notes task history
   short: Show this task's edit history
   hidden: false
   flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"

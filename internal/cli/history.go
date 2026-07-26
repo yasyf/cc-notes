@@ -6,6 +6,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +14,12 @@ import (
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
+
+// maxHistoryValueChars caps a scalar from/to value in the JSON trail: uncapped,
+// an entity revised N times echoes its whole body 2N times and the change log
+// outgrows the entity. --full lifts the cap, since a historical value exists
+// nowhere else — show reports only the current state.
+const maxHistoryValueChars = 300
 
 // newHistoryCmd builds the top-level "cc-notes history ID": the edit trail of
 // any entity, resolving the id across every kind. Each entry is one commit in
@@ -74,6 +81,7 @@ type historyOpts struct {
 	jsonOut bool
 	reverse bool
 	limit   int
+	full    bool
 }
 
 func historyCmd(use, short string, resolve func(context.Context, *notes.Client, string) (model.Kind, model.EntityID, error)) *cobra.Command {
@@ -103,6 +111,7 @@ func historyCmd(use, short string, resolve func(context.Context, *notes.Client, 
 	bindJSON(flags, &opts.jsonOut)
 	flags.BoolVar(&opts.reverse, "reverse", false, "oldest first (chronological); default is newest first")
 	bindLimit(flags, &opts.limit, 0)
+	flags.BoolVar(&opts.full, "full", false, fmt.Sprintf("emit untruncated change values in --json (default: clipped at %d chars)", maxHistoryValueChars))
 	return cmd
 }
 
@@ -119,7 +128,7 @@ func printHistory(cmd *cobra.Command, kind model.Kind, entries []notes.HistoryEn
 		for i, e := range entries {
 			changes := make([]historyChangeDTO, len(e.Changes))
 			for j, ch := range e.Changes {
-				changes[j] = historyChangeDTO{Field: ch.Field, From: ch.From, To: ch.To, Added: ch.Added, Removed: ch.Removed}
+				changes[j] = historyChangeDTO{Field: ch.Field, From: clipHistoryValue(ch.From, opts.full), To: clipHistoryValue(ch.To, opts.full), Added: clipHistorySet(ch.Added, opts.full), Removed: clipHistorySet(ch.Removed, opts.full)}
 			}
 			dtos[i] = historyEntryDTO{
 				SHA:     string(e.SHA),
@@ -224,8 +233,44 @@ func derefString(p *string) string {
 	return *p
 }
 
+// clipHistoryString caps one rendered history value at maxHistoryValueChars,
+// marking the clip in-band with the kept and true character counts so the prefix
+// can never be mistaken for the value. It cuts on a rune boundary, so a
+// multi-byte value never yields invalid UTF-8.
+func clipHistoryString(s string) string {
+	n := utf8.RuneCountInString(s)
+	if n <= maxHistoryValueChars {
+		return s
+	}
+	return string([]rune(s)[:maxHistoryValueChars]) + fmt.Sprintf("…(%d of %d chars; --full)", maxHistoryValueChars, n)
+}
+
+// clipHistoryValue caps a scalar from/to value; full returns it verbatim.
+func clipHistoryValue(p *string, full bool) *string {
+	if p == nil || full {
+		return p
+	}
+	clipped := clipHistoryString(*p)
+	return &clipped
+}
+
+// clipHistorySet caps each element of a set delta independently, since one long
+// element (a comment body, a log entry, a criterion note) must not cost the
+// others their content; full returns them verbatim.
+func clipHistorySet(elems []string, full bool) []string {
+	if full || len(elems) == 0 {
+		return elems
+	}
+	out := make([]string, len(elems))
+	for i, e := range elems {
+		out[i] = clipHistoryString(e)
+	}
+	return out
+}
+
 // historyChangeDTO is one field delta in JSON: a scalar carries from/to (null
-// when the field was unset on that side); a set carries added/removed.
+// when the field was unset on that side); a set carries added/removed. Every
+// value is clipped per element unless --full.
 type historyChangeDTO struct {
 	Field   string   `json:"field"`
 	From    *string  `json:"from,omitempty"`

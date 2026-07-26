@@ -34,6 +34,7 @@ type historyArgs struct {
 	ID      string `json:"id" jsonschema:"entity id prefix (resolved across note, doc, log, task, sprint, project)"`
 	Reverse bool   `json:"reverse,omitempty" jsonschema:"oldest first (chronological); default is newest first"`
 	Limit   *int   `json:"limit,omitempty" jsonschema:"show at most N most recent entries (0 = all)"`
+	Full    bool   `json:"full,omitempty" jsonschema:"emit untruncated change values (default: clipped at 300 chars)"`
 }
 
 type searchArgs struct {
@@ -101,6 +102,7 @@ func registerRepo(ts *toolset, b *bridge) {
 			flags := []string{"--json"}
 			flags = optBool(flags, "--reverse", in.Reverse)
 			flags = optInt(flags, "--limit", in.Limit)
+			flags = optBool(flags, "--full", in.Full)
 			return b.run(ctx, argvFor([]string{"history"}, flags, in.ID)...)
 		})
 

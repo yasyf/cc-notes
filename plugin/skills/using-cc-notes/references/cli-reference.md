@@ -410,7 +410,7 @@ read verbs are kind-agnostic: `show`, `history`, and `compact` take any entity i
 
 ### `cc-notes history <id>`
 
-MCP: history (id, reverse, limit)
+MCP: history (id, reverse, limit, full)
 
 Show an entity's edit trail: one entry per commit in the chain, with the fields that commit
 changed. The id resolves across every kind. Each entry computes its delta by folding the chain
@@ -418,10 +418,17 @@ up to that point, so you see `status: open → in_progress`, not a raw op dump. 
 effect was on bookkeeping (a lease heartbeat) or that were idempotent are skipped; a checkpoint
 shows as a `compacted` marker. Entries run newest-first by default.
 
+Under `--json`, every change value clips at 300 characters — `from` and `to`, plus each `added` or
+`removed` element on its own — carrying the clip in-band as `…(300 of 1237 chars; --full)`. A
+revised body, a long comment, and a bulky log entry are summarized instead of echoed once per
+revision. `--full` emits the exact historical values. They live nowhere else, since `show` reports
+only the current state.
+
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--reverse` | off | Oldest first (chronological) |
 | `--limit N` | 0 (all) | Show at most the N most recent entries |
+| `--full` | off | Emit untruncated change values in `--json` |
 | `--json` | off | Emit JSON |
 
 ```console
