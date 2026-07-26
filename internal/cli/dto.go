@@ -408,7 +408,7 @@ type runbookSummaryDTO struct {
 
 func newNoteDTO(n model.Note, drift string, atts []attachmentDTO) noteDTO {
 	byAnchor := witnessIndex(n.Witness)
-	var anchors []anchorDTO
+	anchors := make([]anchorDTO, 0, len(n.Anchors))
 	for _, a := range n.Anchors {
 		var witness *string
 		if w, ok := byAnchor[a]; ok {
@@ -426,7 +426,7 @@ func newNoteDTO(n model.Note, drift string, atts []attachmentDTO) noteDTO {
 		ID:           string(n.ID),
 		Title:        n.Title,
 		Body:         n.Body,
-		Tags:         nilIfEmpty(n.Tags),
+		Tags:         n.Tags,
 		Anchors:      anchors,
 		Author:       string(n.Author),
 		CreatedAt:    render.RFC3339(n.CreatedAt),
@@ -439,7 +439,7 @@ func newNoteDTO(n model.Note, drift string, atts []attachmentDTO) noteDTO {
 		StaleAt:      render.OptTime(n.StaleAt),
 		StaleBy:      render.OptString(string(n.StaleBy)),
 		StaleReason:  render.OptString(n.StaleReason),
-		Attachments:  nilIfEmpty(atts),
+		Attachments:  atts,
 	}
 }
 
@@ -449,7 +449,7 @@ func newNoteSummaryDTO(n model.Note, drift string) noteSummaryDTO {
 	return noteSummaryDTO{
 		ID:        string(n.ID),
 		Title:     n.Title,
-		Tags:      nilIfEmpty(n.Tags),
+		Tags:      n.Tags,
 		Author:    string(n.Author),
 		UpdatedAt: render.RFC3339(n.UpdatedAt),
 		Drift:     drift,
@@ -458,7 +458,7 @@ func newNoteSummaryDTO(n model.Note, drift string) noteSummaryDTO {
 
 func newDocDTO(d model.Doc, drift string, atts []attachmentDTO) docDTO {
 	byAnchor := witnessIndex(d.Witness)
-	var anchors []anchorDTO
+	anchors := make([]anchorDTO, 0, len(d.Anchors))
 	for _, a := range d.Anchors {
 		var witness *string
 		if w, ok := byAnchor[a]; ok {
@@ -477,7 +477,7 @@ func newDocDTO(d model.Doc, drift string, atts []attachmentDTO) docDTO {
 		Title:        d.Title,
 		Body:         d.Body,
 		When:         d.When,
-		Tags:         nilIfEmpty(d.Tags),
+		Tags:         d.Tags,
 		Anchors:      anchors,
 		Author:       string(d.Author),
 		CreatedAt:    render.RFC3339(d.CreatedAt),
@@ -490,7 +490,7 @@ func newDocDTO(d model.Doc, drift string, atts []attachmentDTO) docDTO {
 		StaleAt:      render.OptTime(d.StaleAt),
 		StaleBy:      render.OptString(string(d.StaleBy)),
 		StaleReason:  render.OptString(d.StaleReason),
-		Attachments:  nilIfEmpty(atts),
+		Attachments:  atts,
 	}
 }
 
@@ -501,7 +501,7 @@ func newDocSummaryDTO(d model.Doc, drift string) docSummaryDTO {
 		ID:        string(d.ID),
 		Title:     d.Title,
 		When:      d.When,
-		Tags:      nilIfEmpty(d.Tags),
+		Tags:      d.Tags,
 		Author:    string(d.Author),
 		UpdatedAt: render.RFC3339(d.UpdatedAt),
 		Drift:     drift,
@@ -511,7 +511,7 @@ func newDocSummaryDTO(d model.Doc, drift string) docSummaryDTO {
 // newLogDTO renders a log snapshot into its DTO. A log carries no per-anchor
 // witness, so every anchor's witness is omitted.
 func newLogDTO(l model.Log, atts []attachmentDTO) logDTO {
-	var anchors []anchorDTO
+	anchors := make([]anchorDTO, 0, len(l.Anchors))
 	for _, a := range l.Anchors {
 		anchors = append(anchors, anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: nil})
 	}
@@ -519,13 +519,13 @@ func newLogDTO(l model.Log, atts []attachmentDTO) logDTO {
 		ID:          string(l.ID),
 		Title:       l.Title,
 		Entries:     logEntryDTOs(l.Entries),
-		Tags:        nilIfEmpty(l.Tags),
+		Tags:        l.Tags,
 		Anchors:     anchors,
 		Author:      string(l.Author),
 		CreatedAt:   render.RFC3339(l.CreatedAt),
 		UpdatedAt:   render.RFC3339(l.UpdatedAt),
 		Deleted:     l.Deleted,
-		Attachments: nilIfEmpty(atts),
+		Attachments: atts,
 	}
 }
 
@@ -535,7 +535,7 @@ func newLogSummaryDTO(l model.Log) logSummaryDTO {
 	return logSummaryDTO{
 		ID:         string(l.ID),
 		Title:      l.Title,
-		Tags:       nilIfEmpty(l.Tags),
+		Tags:       l.Tags,
 		Author:     string(l.Author),
 		UpdatedAt:  render.RFC3339(l.UpdatedAt),
 		EntryCount: len(l.Entries),
@@ -543,18 +543,18 @@ func newLogSummaryDTO(l model.Log) logSummaryDTO {
 }
 
 // logEntryDTOs renders a folded entry slice into its DTO form with RFC3339 UTC
-// timestamps, nil when there are no entries.
+// timestamps, empty when there are no entries.
 func logEntryDTOs(entries []model.LogEntry) []logEntryDTO {
-	var out []logEntryDTO
+	out := make([]logEntryDTO, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, logEntryDTO{Author: string(e.Author), TS: render.RFC3339(e.TS), Text: e.Text, Model: render.OptString(e.Model)})
 	}
 	return out
 }
 
-// findingDTOs renders findings into their DTO form, nil when there are none.
+// findingDTOs renders findings into their DTO form, empty when there are none.
 func findingDTOs(findings []model.Finding) []findingDTO {
-	var out []findingDTO
+	out := make([]findingDTO, 0, len(findings))
 	for _, finding := range findings {
 		out = append(out, findingDTO{ID: finding.ID, Text: finding.Text, Status: string(finding.Status), Note: finding.Note})
 	}
@@ -563,7 +563,7 @@ func findingDTOs(findings []model.Finding) []findingDTO {
 
 // newInvestigationDTO renders an investigation snapshot into its DTO.
 func newInvestigationDTO(inv model.Investigation, atts []attachmentDTO) investigationDTO {
-	var anchors []anchorDTO
+	anchors := make([]anchorDTO, 0, len(inv.Anchors))
 	for _, anchor := range inv.Anchors {
 		anchors = append(anchors, anchorDTO{Kind: string(anchor.Kind), Value: anchor.Value, Witness: nil})
 	}
@@ -576,19 +576,19 @@ func newInvestigationDTO(inv model.Investigation, atts []attachmentDTO) investig
 		RootCause:    inv.RootCause,
 		Findings:     findingDTOs(inv.Findings),
 		Entries:      logEntryDTOs(inv.Entries),
-		FollowUps:    nilIfEmpty(render.IDStrings(inv.FollowUps)),
-		FixCommits:   nilIfEmpty(render.SHAStrings(inv.FixCommits)),
-		Commits:      nilIfEmpty(render.SHAStrings(inv.Commits)),
-		Labels:       nilIfEmpty(inv.Tags),
+		FollowUps:    render.IDStrings(inv.FollowUps),
+		FixCommits:   render.SHAStrings(inv.FixCommits),
+		Commits:      render.SHAStrings(inv.Commits),
+		Labels:       inv.Tags,
 		Anchors:      anchors,
-		SupersededBy: nilIfEmpty(render.IDStrings(inv.SupersededBy)),
+		SupersededBy: render.IDStrings(inv.SupersededBy),
 		Author:       string(inv.Author),
 		CreatedAt:    render.RFC3339(inv.CreatedAt),
 		UpdatedAt:    render.RFC3339(inv.UpdatedAt),
 		ClosedAt:     render.OptTime(inv.ClosedAt),
 		ClosedBy:     render.OptString(string(inv.ClosedBy)),
 		Deleted:      inv.Deleted,
-		Attachments:  nilIfEmpty(atts),
+		Attachments:  atts,
 	}
 }
 
@@ -615,12 +615,12 @@ func newTaskDTO(t model.Task, blocks []model.EntityID) taskDTO {
 		Status:       string(t.Status),
 		Priority:     int(t.Priority),
 		Assignee:     render.OptString(string(t.Assignee)),
-		Labels:       nilIfEmpty(t.Labels),
-		BlockedBy:    nilIfEmpty(render.IDStrings(t.BlockedBy)),
-		Blocks:       nilIfEmpty(render.IDStrings(blocks)),
+		Labels:       t.Labels,
+		BlockedBy:    render.IDStrings(t.BlockedBy),
+		Blocks:       render.IDStrings(blocks),
 		Parent:       render.OptString(string(t.Parent)),
 		Comments:     commentDTOs(t.Comments),
-		Commits:      nilIfEmpty(render.SHAStrings(t.Commits)),
+		Commits:      render.SHAStrings(t.Commits),
 		Lease:        newLeaseDTO(t),
 		CreatedAt:    render.RFC3339(t.CreatedAt),
 		UpdatedAt:    render.RFC3339(t.UpdatedAt),
@@ -657,19 +657,19 @@ func newLeaseDTO(t model.Task) *leaseDTO {
 	return &leaseDTO{Holder: holder, Heartbeat: heartbeat}
 }
 
-// criterionDTOs renders a task's criteria as DTOs, nil when there are none.
+// criterionDTOs renders a task's criteria as DTOs, empty when there are none.
 func criterionDTOs(criteria []model.Criterion) []criterionDTO {
-	var out []criterionDTO
+	out := make([]criterionDTO, 0, len(criteria))
 	for _, c := range criteria {
 		out = append(out, criterionDTO{ID: c.ID, Text: c.Text, Script: c.Script, Status: string(c.Status), Note: c.Note})
 	}
 	return out
 }
 
-// criterionSummaryDTOs renders a task's criteria as summaries, nil when there
-// are none.
+// criterionSummaryDTOs renders a task's criteria as summaries, empty when
+// there are none.
 func criterionSummaryDTOs(criteria []model.Criterion) []criterionSummaryDTO {
-	var out []criterionSummaryDTO
+	out := make([]criterionSummaryDTO, 0, len(criteria))
 	for _, c := range criteria {
 		out = append(out, criterionSummaryDTO{ID: c.ID, Text: c.Text, Status: string(c.Status), Note: c.Note, HasScript: c.Script != ""})
 	}
@@ -691,9 +691,9 @@ func closedForced(t model.Task) bool {
 }
 
 // commentDTOs renders a folded comment slice into its DTO form with RFC3339 UTC
-// timestamps, nil when there are no comments.
+// timestamps, empty when there are no comments.
 func commentDTOs(comments []model.Comment) []commentDTO {
-	var out []commentDTO
+	out := make([]commentDTO, 0, len(comments))
 	for _, c := range comments {
 		out = append(out, commentDTO{Author: string(c.Author), TS: render.RFC3339(c.TS), Body: c.Body})
 	}
@@ -711,15 +711,15 @@ func newSprintDTO(s model.Sprint, tasks []model.EntityID) sprintDTO {
 		Status:      string(s.Status),
 		StartDate:   render.OptTime(s.StartDate),
 		EndDate:     render.OptTime(s.EndDate),
-		Labels:      nilIfEmpty(s.Labels),
-		Commits:     nilIfEmpty(render.SHAStrings(s.Commits)),
+		Labels:      s.Labels,
+		Commits:     render.SHAStrings(s.Commits),
 		Comments:    commentDTOs(s.Comments),
 		Author:      string(s.Author),
 		CreatedAt:   render.RFC3339(s.CreatedAt),
 		UpdatedAt:   render.RFC3339(s.UpdatedAt),
 		StartedAt:   render.OptTime(s.StartedAt),
 		ClosedAt:    render.OptTime(s.ClosedAt),
-		Tasks:       nilIfEmpty(render.IDStrings(tasks)),
+		Tasks:       render.IDStrings(tasks),
 	}
 }
 
@@ -741,15 +741,15 @@ func newProjectDTO(p model.Project, sprints, tasks []model.EntityID) projectDTO 
 		Title:       p.Title,
 		Description: p.Description,
 		Status:      string(p.Status),
-		Labels:      nilIfEmpty(p.Labels),
-		Commits:     nilIfEmpty(render.SHAStrings(p.Commits)),
+		Labels:      p.Labels,
+		Commits:     render.SHAStrings(p.Commits),
 		Comments:    commentDTOs(p.Comments),
 		Author:      string(p.Author),
 		CreatedAt:   render.RFC3339(p.CreatedAt),
 		UpdatedAt:   render.RFC3339(p.UpdatedAt),
 		ClosedAt:    render.OptTime(p.ClosedAt),
-		Sprints:     nilIfEmpty(render.IDStrings(sprints)),
-		Tasks:       nilIfEmpty(render.IDStrings(tasks)),
+		Sprints:     render.IDStrings(sprints),
+		Tasks:       render.IDStrings(tasks),
 	}
 }
 
@@ -763,10 +763,10 @@ func newProjectSummaryDTO(p model.Project) projectSummaryDTO {
 	}
 }
 
-// runbookStepDTOs renders a folded step slice into its DTO form, nil when the
-// runbook has no steps.
+// runbookStepDTOs renders a folded step slice into its DTO form, empty when
+// the runbook has no steps.
 func runbookStepDTOs(steps []model.RunbookStep) []runbookStepDTO {
-	var out []runbookStepDTO
+	out := make([]runbookStepDTO, 0, len(steps))
 	for _, st := range steps {
 		out = append(out, runbookStepDTO{ID: st.ID, Text: st.Text, Command: st.Command, Position: st.Position})
 	}
@@ -781,7 +781,7 @@ func newRunbookRunDTO(rb model.Runbook, run model.RunbookRun) runbookRunDTO {
 	for _, r := range run.Results {
 		byStep[r.StepID] = r
 	}
-	var steps []runbookRunStepDTO
+	steps := make([]runbookRunStepDTO, 0, len(rb.Steps))
 	for _, st := range rb.Steps {
 		entry := runbookRunStepDTO{Step: st.ID, Status: runbookStepPending}
 		if res, ok := byStep[st.ID]; ok {
@@ -818,11 +818,11 @@ func newRunbookRunSummaryDTO(rb model.Runbook, run model.RunbookRun) runbookRunS
 // newRunbookDTO renders a runbook snapshot into its DTO. Like a log, a runbook
 // anchor carries no witness, so every anchor's witness is omitted.
 func newRunbookDTO(rb model.Runbook) runbookDTO {
-	var runs []runbookRunDTO
+	runs := make([]runbookRunDTO, 0, len(rb.Runs))
 	for _, r := range rb.Runs {
 		runs = append(runs, newRunbookRunDTO(rb, r))
 	}
-	var anchors []anchorDTO
+	anchors := make([]anchorDTO, 0, len(rb.Anchors))
 	for _, a := range rb.Anchors {
 		anchors = append(anchors, anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: nil})
 	}
@@ -833,7 +833,7 @@ func newRunbookDTO(rb model.Runbook) runbookDTO {
 		Status:      string(rb.Status),
 		Steps:       runbookStepDTOs(rb.Steps),
 		Runs:        runs,
-		Labels:      nilIfEmpty(rb.Labels),
+		Labels:      rb.Labels,
 		Anchors:     anchors,
 		Comments:    commentDTOs(rb.Comments),
 		Author:      string(rb.Author),
@@ -857,32 +857,12 @@ func newRunbookSummaryDTO(rb model.Runbook) runbookSummaryDTO {
 	}
 }
 
-// nilIfEmpty returns nil for an empty slice so an omitempty field vanishes
-// instead of marshaling as [].
-func nilIfEmpty[T any](items []T) []T {
-	if len(items) == 0 {
-		return nil
-	}
-	return items
-}
-
 // tailWithCount returns the last n items of items and the number elided.
 func tailWithCount[T any](items []T, n int) ([]T, int) {
 	if len(items) <= n {
 		return items, 0
 	}
 	return items[len(items)-n:], len(items) - n
-}
-
-// printJSONList writes items as a whole JSON response, rendering an empty
-// collection as [] rather than null. The DTO constructors return a nil slice for
-// "no members" so an embedded field omits itself, but a nil slice marshals to
-// null, which a client iterating a whole response cannot consume.
-func printJSONList[T any](w io.Writer, items []T) error {
-	if items == nil {
-		items = []T{}
-	}
-	return printJSON(w, items)
 }
 
 // printJSON writes v as one compact JSON document with a trailing newline.

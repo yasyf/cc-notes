@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -92,9 +93,14 @@ func TestNewRunbookDTO(t *testing.T) {
 		t.Fatalf("archived ArchivedAt = %v, want the stamp", adto.ArchivedAt)
 	}
 
-	empty := newRunbookDTO(model.Runbook{ID: "0000000aa"})
-	if empty.Steps != nil || empty.Runs != nil || empty.Labels != nil || empty.Comments != nil {
-		t.Fatalf("empty runbook slices must be nil so omitempty drops the keys: steps=%v runs=%v labels=%v comments=%v", empty.Steps, empty.Runs, empty.Labels, empty.Comments)
+	empty, err := json.Marshal(newRunbookDTO(model.Runbook{ID: "0000000aa"}))
+	if err != nil {
+		t.Fatalf("marshal empty runbook: %v", err)
+	}
+	for _, key := range []string{`"steps"`, `"runs"`, `"labels"`, `"comments"`} {
+		if strings.Contains(string(empty), key) {
+			t.Errorf("empty runbook carries %s; omitempty drops an empty collection: %s", key, empty)
+		}
 	}
 }
 

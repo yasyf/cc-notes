@@ -772,7 +772,7 @@ func newTaskCommentListCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSONList(out, commentDTOs(task.Comments))
+				return printJSON(out, commentDTOs(task.Comments))
 			}
 			_, err = fmt.Fprint(out, renderEntryList(commentEntries(task.Comments)))
 			return err
@@ -1152,7 +1152,7 @@ func newCriterionListCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSONList(out, criterionSummaryDTOs(task.Criteria))
+				return printJSON(out, criterionSummaryDTOs(task.Criteria))
 			}
 			for _, crit := range task.Criteria {
 				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\n", render.ShortWireID(crit.ID), crit.Status, crit.Text); err != nil {

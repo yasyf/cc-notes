@@ -258,7 +258,7 @@ func newInvestigationEntryListCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSONList(out, logEntryDTOs(inv.Entries))
+				return printJSON(out, logEntryDTOs(inv.Entries))
 			}
 			_, err = fmt.Fprint(out, renderEntryList(inv.Entries))
 			return err
@@ -466,7 +466,7 @@ func newFindingListCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSONList(out, findingDTOs(inv.Findings))
+				return printJSON(out, findingDTOs(inv.Findings))
 			}
 			for _, finding := range inv.Findings {
 				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\n", render.ShortWireID(finding.ID), finding.Status, finding.Text); err != nil {

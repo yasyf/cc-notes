@@ -218,6 +218,8 @@ func TestChildListEmptyCollection(t *testing.T) {
 	dir := initRepo(t)
 	logID := jsonID(t, mustRun(t, dir, "log", "add", "Empty", "--json"))
 	taskID := jsonID(t, mustRun(t, dir, "task", "add", "Uncommented", "--no-validation-criteria", "--json"))
+	invID := jsonID(t, mustRun(t, dir, "investigation", "open", "Unexplored", "nothing observed yet", "--json"))
+	runbookID := jsonID(t, mustRun(t, dir, "runbook", "add", "Stepless", "--json"))
 
 	for _, tc := range []struct {
 		name string
@@ -225,6 +227,10 @@ func TestChildListEmptyCollection(t *testing.T) {
 	}{
 		{name: "log entries", argv: []string{"log", "entry", "list", logID}},
 		{name: "task comments", argv: []string{"task", "comment", "list", taskID}},
+		{name: "investigation entries", argv: []string{"investigation", "entry", "list", invID}},
+		{name: "investigation findings", argv: []string{"investigation", "finding", "list", invID}},
+		{name: "task criteria", argv: []string{"task", "criterion", "list", taskID}},
+		{name: "runbook steps", argv: []string{"runbook", "step", "list", runbookID}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := mustRun(t, dir, tc.argv...); got != "" {

@@ -1057,9 +1057,9 @@ func renderLease(t model.Task) *leaseDoc {
 	return &leaseDoc{Holder: holder, Heartbeat: heartbeat}
 }
 
-// renderCriteria mirrors internal/cli's criterionDTOs: nil when there are none.
+// renderCriteria mirrors internal/cli's criterionDTOs: empty when there are none.
 func renderCriteria(criteria []model.Criterion) []ParsedCriterion {
-	var out []ParsedCriterion
+	out := make([]ParsedCriterion, 0, len(criteria))
 	for _, c := range criteria {
 		out = append(out, ParsedCriterion{ID: c.ID, Text: c.Text, Script: c.Script, Status: string(c.Status), Note: c.Note})
 	}
@@ -1854,7 +1854,7 @@ func immutableComments(f Field[[]ParsedComment], base []model.Comment) error {
 }
 
 func renderComments(comments []model.Comment) []ParsedComment {
-	var out []ParsedComment
+	out := make([]ParsedComment, 0, len(comments))
 	for _, c := range comments {
 		out = append(out, ParsedComment{Author: string(c.Author), TS: render.RFC3339(c.TS), Body: c.Body})
 	}

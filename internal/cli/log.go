@@ -195,7 +195,7 @@ func newLogEntryListCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSONList(out, logEntryDTOs(log.Entries))
+				return printJSON(out, logEntryDTOs(log.Entries))
 			}
 			_, err = fmt.Fprint(out, renderEntryList(log.Entries))
 			return err

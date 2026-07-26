@@ -93,7 +93,7 @@ func printStatusJSON(cmd *cobra.Command, report notes.StatusReport) error {
 // taskSummaryDTOs maps tasks to their JSON summary DTOs, nil when there are
 // none.
 func taskSummaryDTOs(tasks []model.Task) []taskSummaryDTO {
-	var dtos []taskSummaryDTO
+	dtos := make([]taskSummaryDTO, 0, len(tasks))
 	for _, t := range tasks {
 		dtos = append(dtos, newTaskSummaryDTO(t))
 	}
