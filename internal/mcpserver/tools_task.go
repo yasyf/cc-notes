@@ -125,7 +125,7 @@ type criterionListArgs struct {
 }
 
 func registerTask(ts *toolset, b *bridge) {
-	addTool(ts, &mcp.Tool{Name: "task_add", Description: "Create a task (durable, cross-agent). Provide acceptance criteria or set no_validation_criteria."},
+	addTool(ts, &mcp.Tool{Name: "task_add", Description: "Create a task (durable, cross-agent). Provide acceptance criteria or set no_validation_criteria. The ack is a summary; task_show reads the body and criteria back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
 			if err != nil {
@@ -145,7 +145,7 @@ func registerTask(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"task", "add"}, flags, in.Title)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "task_list", Description: "List tasks, filtered by status, label, assignee, type, and branch scope."},
+	addTool(ts, &mcp.Tool{Name: "task_list", Description: "List tasks, filtered by status, label, assignee, type, and branch scope. Returns summaries; task_show reads the body, criteria, comments, and dependency edges back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--status", in.Status)
@@ -160,7 +160,7 @@ func registerTask(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"task", "list"}, flags)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "task_ready", Description: "List unblocked, unclaimed tasks ready to pick up."},
+	addTool(ts, &mcp.Tool{Name: "task_ready", Description: "List unblocked, unclaimed tasks ready to pick up. Returns summaries; task_show reads the body, criteria, comments, and dependency edges back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskBranchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--branch", in.Branch)
@@ -169,7 +169,7 @@ func registerTask(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"task", "ready"}, flags)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "task_backlog", Description: "List the shared backlog tasks (no branch)."},
+	addTool(ts, &mcp.Tool{Name: "task_backlog", Description: "List the shared backlog tasks (no branch). Returns summaries; task_show reads the body, criteria, comments, and dependency edges back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ statusArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, "task", "backlog", "--json")
 		})
@@ -201,7 +201,7 @@ func registerTask(ts *toolset, b *bridge) {
 
 	idTool(ts, b, "task_cancel", "Cancel a task (from open or in-progress).", "task", "cancel")
 
-	addTool(ts, &mcp.Tool{Name: "task_edit", Description: "Edit a task's title, body, type, priority, status, assignee, branch, labels, and hierarchy."},
+	addTool(ts, &mcp.Tool{Name: "task_edit", Description: "Edit a task's title, body, type, priority, status, assignee, branch, labels, and hierarchy. The ack is a summary; task_show reads the body and criteria back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
@@ -229,24 +229,24 @@ func registerTask(ts *toolset, b *bridge) {
 
 	commentTool(ts, b, "task")
 
-	addTool(ts, &mcp.Tool{Name: "task_dep", Description: "Add a dependency: ID is blocked by BLOCKER (rejects cycles)."},
+	addTool(ts, &mcp.Tool{Name: "task_dep", Description: "Add a dependency: ID is blocked by BLOCKER (rejects cycles). The ack is a summary; task_show reads the dependency edges back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskDepArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"task", "dep"}, []string{"--json"}, in.ID, in.Blocker)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "task_undep", Description: "Remove a dependency edge between ID and BLOCKER."},
+	addTool(ts, &mcp.Tool{Name: "task_undep", Description: "Remove a dependency edge between ID and BLOCKER. The ack is a summary; task_show reads the dependency edges back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskDepArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"task", "undep"}, []string{"--json"}, in.ID, in.Blocker)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "task_stale", Description: "List in-progress tasks whose lease has gone idle past the threshold."},
+	addTool(ts, &mcp.Tool{Name: "task_stale", Description: "List in-progress tasks whose lease has gone idle past the threshold. Returns summaries plus each task's idle seconds; task_show reads one back in full."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskStaleArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--idle-after", in.IdleAfter)
 			return b.run(ctx, argvFor([]string{"task", "stale"}, flags)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "task_archived", Description: "List old done/cancelled tasks past the archive cutoff."},
+	addTool(ts, &mcp.Tool{Name: "task_archived", Description: "List old done/cancelled tasks past the archive cutoff. Returns summaries; task_show reads the body, criteria, comments, and dependency edges back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskArchivedArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--closed-before", in.ClosedBefore)
@@ -265,7 +265,7 @@ func registerTask(ts *toolset, b *bridge) {
 }
 
 func registerCriterion(ts *toolset, b *bridge) {
-	addTool(ts, &mcp.Tool{Name: "task_criterion_add", Description: "Add an acceptance criterion to a task, optionally with a validation script file."},
+	addTool(ts, &mcp.Tool{Name: "task_criterion_add", Description: "Add an acceptance criterion to a task, optionally with a validation script file. The ack is the task summary; task_criterion_list reads the criteria back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in criterionAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Text)
 			if err != nil {
@@ -293,7 +293,7 @@ func registerCriterion(ts *toolset, b *bridge) {
 			})
 	}
 
-	addTool(ts, &mcp.Tool{Name: "task_criterion_script", Description: "Set or clear a criterion's validation script."},
+	addTool(ts, &mcp.Tool{Name: "task_criterion_script", Description: "Set or clear a criterion's validation script. The ack is the task summary; task_criterion_list reads the criteria back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in criterionScriptArgs) (*mcp.CallToolResult, any, error) {
 			flags := optBool([]string{"--json"}, "--clear", in.Clear)
 			positionals := []string{in.Task, in.Crit}
@@ -303,21 +303,22 @@ func registerCriterion(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"task", "criterion", "script"}, flags, positionals...)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "task_criterion_list", Description: "List a task's acceptance criteria and their status."},
+	addTool(ts, &mcp.Tool{Name: "task_criterion_list", Description: "List a task's acceptance criteria and their status. Returns summaries reporting whether a script is attached; task_show reads the script bodies back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in criterionListArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"task", "criterion", "list"}, []string{"--json"}, in.Task)...)
 		})
 }
 
 func criterionVerbDescription(verb string) string {
+	const ack = " The ack is the task summary; task_criterion_list reads the criteria back."
 	switch verb {
 	case "rm":
-		return "Remove an acceptance criterion from a task."
+		return "Remove an acceptance criterion from a task." + ack
 	case "met":
-		return "Mark a criterion as met."
+		return "Mark a criterion as met." + ack
 	case "failed":
-		return "Mark a criterion as failed."
+		return "Mark a criterion as failed." + ack
 	default: // pending
-		return "Reset a criterion to pending."
+		return "Reset a criterion to pending." + ack
 	}
 }

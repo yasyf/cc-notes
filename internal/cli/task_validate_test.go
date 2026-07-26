@@ -33,6 +33,20 @@ func withFileStdin(t *testing.T) {
 	})
 }
 
+// tkShow reads a task back in full. A mutation acknowledges with a summary, so
+// the description, criteria, comments, and membership live only here.
+func tkShow(t *testing.T, dir, id string) taskDTO {
+	t.Helper()
+	return spJSON[taskDTO](t, spMust(t, dir, "task", "show", id, "--json"))
+}
+
+// tkMutate runs one task mutation and reads the resulting task back in full,
+// keyed off the id its summary acknowledgement carries.
+func tkMutate(t *testing.T, dir string, args ...string) taskDTO {
+	t.Helper()
+	return tkShow(t, dir, spID(t, spMust(t, dir, args...)))
+}
+
 func TestTaskAddCriteriaRequired(t *testing.T) {
 	dir := spInitRepo(t)
 
@@ -49,7 +63,7 @@ func TestTaskAddCriteriaRequired(t *testing.T) {
 		t.Fatalf("task add --criterion + --no-validation-criteria err = %v, want UsageError exit 2", err)
 	}
 
-	added := spJSON[taskDTO](t, spMust(t, dir, "task", "add", "Free", "--no-validation-criteria", "--json"))
+	added := tkMutate(t, dir, "task", "add", "Free", "--no-validation-criteria", "--json")
 	if len(added.Criteria) != 0 {
 		t.Errorf("criteria = %v, want empty under --no-validation-criteria", added.Criteria)
 	}
@@ -60,9 +74,9 @@ func TestTaskAddCriteriaAndMembership(t *testing.T) {
 	proj := spID(t, spMust(t, dir, "project", "add", "P", "--json"))
 	sp := spID(t, spMust(t, dir, "sprint", "add", "S", "--json"))
 
-	task := spJSON[taskDTO](t, spMust(t, dir, "task", "add", "Work",
+	task := tkMutate(t, dir, "task", "add", "Work",
 		"--criterion", "first", "--criterion", "second",
-		"--sprint", sp, "--project", proj, "--json"))
+		"--sprint", sp, "--project", proj, "--json")
 
 	if len(task.Criteria) != 2 || task.Criteria[0].Text != "first" || task.Criteria[1].Text != "second" {
 		t.Fatalf("criteria = %+v, want [first second] in order", task.Criteria)
@@ -85,7 +99,7 @@ func TestTaskAddCriteriaAndMembership(t *testing.T) {
 
 func TestTaskDoneCriteriaGate(t *testing.T) {
 	dir := spInitRepo(t)
-	task := spJSON[taskDTO](t, spMust(t, dir, "task", "add", "Gated", "--criterion", "must pass", "--json"))
+	task := tkMutate(t, dir, "task", "add", "Gated", "--criterion", "must pass", "--json")
 	crit := task.Criteria[0]
 
 	_, _, err := spRun(t, dir, "", "task", "done", task.ID)
@@ -95,19 +109,19 @@ func TestTaskDoneCriteriaGate(t *testing.T) {
 	if msg := err.Error(); !strings.Contains(msg, crit.ID[:7]) || !strings.Contains(msg, "must pass") || !strings.Contains(msg, "--force") {
 		t.Errorf("gate error %q must list the criterion (%s / text) and instruct --force", msg, crit.ID[:7])
 	}
-	shown := spJSON[taskDTO](t, spMust(t, dir, "task", "show", task.ID, "--json"))
+	shown := tkShow(t, dir, task.ID)
 	if shown.Status != "open" {
 		t.Fatalf("status = %q after blocked done, want open (nothing written)", shown.Status)
 	}
 
-	forced := spJSON[taskDTO](t, spMust(t, dir, "task", "done", task.ID, "--force", "--json"))
+	forced := tkMutate(t, dir, "task", "done", task.ID, "--force", "--json")
 	if forced.Status != "done" || !forced.ClosedForced {
 		t.Fatalf("forced done = status %q closed_forced %v, want done/true", forced.Status, forced.ClosedForced)
 	}
 
-	met := spJSON[taskDTO](t, spMust(t, dir, "task", "add", "Met", "--criterion", "c", "--json"))
+	met := tkMutate(t, dir, "task", "add", "Met", "--criterion", "c", "--json")
 	spMust(t, dir, "task", "criterion", "met", met.ID, met.Criteria[0].ID[:7])
-	done := spJSON[taskDTO](t, spMust(t, dir, "task", "done", met.ID, "--json"))
+	done := tkMutate(t, dir, "task", "done", met.ID, "--json")
 	if done.Status != "done" || done.ClosedForced {
 		t.Fatalf("done with met criterion = status %q closed_forced %v, want done/false", done.Status, done.ClosedForced)
 	}
@@ -115,9 +129,9 @@ func TestTaskDoneCriteriaGate(t *testing.T) {
 
 func TestTaskCriterionRoundTrip(t *testing.T) {
 	dir := spInitRepo(t)
-	task := spJSON[taskDTO](t, spMust(t, dir, "task", "add", "T", "--no-validation-criteria", "--json"))
+	task := tkMutate(t, dir, "task", "add", "T", "--no-validation-criteria", "--json")
 
-	added := spJSON[taskDTO](t, spMust(t, dir, "task", "criterion", "add", task.ID, "first criterion", "--json"))
+	added := tkMutate(t, dir, "task", "criterion", "add", task.ID, "first criterion", "--json")
 	if len(added.Criteria) != 1 || added.Criteria[0].Text != "first criterion" || added.Criteria[0].Status != "pending" {
 		t.Fatalf("after add criteria = %+v, want one pending 'first criterion'", added.Criteria)
 	}
@@ -130,7 +144,7 @@ func TestTaskCriterionRoundTrip(t *testing.T) {
 		{"failed", "failed"},
 		{"pending", "pending"},
 	} {
-		out := spJSON[taskDTO](t, spMust(t, dir, "task", "criterion", tc.verb, task.ID, cid[:7], "--json"))
+		out := tkMutate(t, dir, "task", "criterion", tc.verb, task.ID, cid[:7], "--json")
 		if out.Criteria[0].Status != tc.want {
 			t.Errorf("criterion %s -> status %q, want %q", tc.verb, out.Criteria[0].Status, tc.want)
 		}
@@ -140,11 +154,11 @@ func TestTaskCriterionRoundTrip(t *testing.T) {
 	if err := os.WriteFile(scriptFile, []byte("exit 0"), 0o600); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
-	scripted := spJSON[taskDTO](t, spMust(t, dir, "task", "criterion", "script", task.ID, cid[:7], scriptFile, "--json"))
+	scripted := tkMutate(t, dir, "task", "criterion", "script", task.ID, cid[:7], scriptFile, "--json")
 	if scripted.Criteria[0].Script != "exit 0" {
 		t.Errorf("script = %q, want %q", scripted.Criteria[0].Script, "exit 0")
 	}
-	cleared := spJSON[taskDTO](t, spMust(t, dir, "task", "criterion", "script", task.ID, cid[:7], "--clear", "--json"))
+	cleared := tkMutate(t, dir, "task", "criterion", "script", task.ID, cid[:7], "--clear", "--json")
 	if cleared.Criteria[0].Script != "" {
 		t.Errorf("script = %q after --clear, want empty", cleared.Criteria[0].Script)
 	}
@@ -162,7 +176,7 @@ func TestTaskCriterionRoundTrip(t *testing.T) {
 		t.Errorf("unknown criterion prefix err = %v (exit %d), want ErrNotFound exit 3", err, ExitCode(err))
 	}
 
-	removed := spJSON[taskDTO](t, spMust(t, dir, "task", "criterion", "rm", task.ID, cid[:7], "--json"))
+	removed := tkMutate(t, dir, "task", "criterion", "rm", task.ID, cid[:7], "--json")
 	if len(removed.Criteria) != 0 {
 		t.Errorf("criteria = %+v after rm, want empty", removed.Criteria)
 	}
@@ -170,8 +184,8 @@ func TestTaskCriterionRoundTrip(t *testing.T) {
 
 func TestTaskValidate(t *testing.T) {
 	dir := spInitRepo(t)
-	task := spJSON[taskDTO](t, spMust(t, dir, "task", "add", "Validate me",
-		"--criterion", "passes", "--criterion", "fails", "--json"))
+	task := tkMutate(t, dir, "task", "add", "Validate me",
+		"--criterion", "passes", "--criterion", "fails", "--json")
 	pass, fail := task.Criteria[0].ID, task.Criteria[1].ID
 
 	passFile := filepath.Join(dir, "pass.sh")
@@ -197,7 +211,7 @@ func TestTaskValidate(t *testing.T) {
 		}
 	}
 
-	validated := spJSON[taskDTO](t, spMust(t, dir, "task", "validate", task.ID, "--yes", "--json"))
+	validated := tkMutate(t, dir, "task", "validate", task.ID, "--yes", "--json")
 	got := map[string]string{}
 	for _, c := range validated.Criteria {
 		got[c.ID] = c.Status
@@ -209,7 +223,7 @@ func TestTaskValidate(t *testing.T) {
 		t.Errorf("failing criterion status = %q, want failed", got[fail])
 	}
 
-	none := spJSON[taskDTO](t, spMust(t, dir, "task", "add", "No scripts", "--criterion", "manual", "--json"))
+	none := tkMutate(t, dir, "task", "add", "No scripts", "--criterion", "manual", "--json")
 	if _, stderr, err := spRun(t, dir, "", "task", "validate", none.ID); err != nil {
 		t.Fatalf("validate with no scripted criteria err = %v (stderr %q)", err, stderr)
 	}
@@ -223,9 +237,9 @@ func TestTaskEditSprintProject(t *testing.T) {
 	dir := spInitRepo(t)
 	proj := spID(t, spMust(t, dir, "project", "add", "P", "--json"))
 	sp := spID(t, spMust(t, dir, "sprint", "add", "S", "--json"))
-	task := spJSON[taskDTO](t, spMust(t, dir, "task", "add", "T", "--no-validation-criteria", "--json"))
+	task := tkMutate(t, dir, "task", "add", "T", "--no-validation-criteria", "--json")
 
-	edited := spJSON[taskDTO](t, spMust(t, dir, "task", "edit", task.ID, "--sprint", sp, "--project", proj, "--json"))
+	edited := tkMutate(t, dir, "task", "edit", task.ID, "--sprint", sp, "--project", proj, "--json")
 	if edited.Sprint == nil || *edited.Sprint != sp {
 		t.Errorf("sprint = %v, want %s", edited.Sprint, sp)
 	}
@@ -233,7 +247,7 @@ func TestTaskEditSprintProject(t *testing.T) {
 		t.Errorf("project = %v, want %s", edited.Project, proj)
 	}
 
-	cleared := spJSON[taskDTO](t, spMust(t, dir, "task", "edit", task.ID, "--no-sprint", "--no-project", "--json"))
+	cleared := tkMutate(t, dir, "task", "edit", task.ID, "--no-sprint", "--no-project", "--json")
 	if cleared.Sprint != nil {
 		t.Errorf("sprint = %v after --no-sprint, want null", *cleared.Sprint)
 	}

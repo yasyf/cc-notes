@@ -48,7 +48,7 @@ func lastComment(t *testing.T, dir, taskID string) string {
 func TestCriterionNoteRoundTrip(t *testing.T) {
 	dir := initRepo(t)
 	task := addTask(t, dir, "Ship it")
-	withCrit := mustJSON[taskJSON](t, mustRun(t, dir, "task", "criterion", "add", task.ID, "all tests pass", "--json"))
+	withCrit := showJSON[taskJSON](t, dir, mustRun(t, dir, "task", "criterion", "add", task.ID, "all tests pass", "--json"))
 	if len(withCrit.Criteria) != 1 {
 		t.Fatalf("criteria after add = %d, want 1", len(withCrit.Criteria))
 	}
@@ -107,12 +107,12 @@ func TestCriterionNoteFlagScope(t *testing.T) {
 func TestTaskAddBodyForms(t *testing.T) {
 	dir := initRepo(t)
 
-	pos := mustJSON[taskJSON](t, mustRun(t, dir, "task", "add", "Pos", "positional body", "--no-validation-criteria", "--json"))
+	pos := showJSON[taskJSON](t, dir, mustRun(t, dir, "task", "add", "Pos", "positional body", "--no-validation-criteria", "--json"))
 	if pos.Description != "positional body" {
 		t.Errorf("positional body desc = %q, want %q", pos.Description, "positional body")
 	}
 
-	flag := mustJSON[taskJSON](t, mustRun(t, dir, "task", "add", "Flag", "--body", "flag body", "--no-validation-criteria", "--json"))
+	flag := showJSON[taskJSON](t, dir, mustRun(t, dir, "task", "add", "Flag", "--body", "flag body", "--no-validation-criteria", "--json"))
 	if flag.Description != "flag body" {
 		t.Errorf("--body desc = %q, want %q", flag.Description, "flag body")
 	}
@@ -121,11 +121,11 @@ func TestTaskAddBodyForms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stdin add: %v (stderr %q)", err, stderr)
 	}
-	if s := mustJSON[taskJSON](t, stdout); s.Description != "stdin body" {
+	if s := showJSON[taskJSON](t, dir, stdout); s.Description != "stdin body" {
 		t.Errorf("stdin desc = %q, want %q", s.Description, "stdin body")
 	}
 
-	none := mustJSON[taskJSON](t, mustRun(t, dir, "task", "add", "None", "--no-validation-criteria", "--json"))
+	none := showJSON[taskJSON](t, dir, mustRun(t, dir, "task", "add", "None", "--no-validation-criteria", "--json"))
 	if none.Description != "" {
 		t.Errorf("no-body desc = %q, want empty", none.Description)
 	}
@@ -171,13 +171,13 @@ func TestCriterionAddTextForms(t *testing.T) {
 	dir := initRepo(t)
 
 	posTask := addTask(t, dir, "Pos")
-	pos := mustJSON[taskJSON](t, mustRun(t, dir, "task", "criterion", "add", posTask.ID, "positional crit", "--json"))
+	pos := showJSON[taskJSON](t, dir, mustRun(t, dir, "task", "criterion", "add", posTask.ID, "positional crit", "--json"))
 	if pos.Criteria[0].Text != "positional crit" {
 		t.Errorf("positional crit text = %q, want %q", pos.Criteria[0].Text, "positional crit")
 	}
 
 	flagTask := addTask(t, dir, "Flag")
-	flag := mustJSON[taskJSON](t, mustRun(t, dir, "task", "criterion", "add", flagTask.ID, "--body", "flag crit", "--json"))
+	flag := showJSON[taskJSON](t, dir, mustRun(t, dir, "task", "criterion", "add", flagTask.ID, "--body", "flag crit", "--json"))
 	if flag.Criteria[0].Text != "flag crit" {
 		t.Errorf("--body crit text = %q, want %q", flag.Criteria[0].Text, "flag crit")
 	}
@@ -187,7 +187,7 @@ func TestCriterionAddTextForms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stdin crit add: %v (stderr %q)", err, stderr)
 	}
-	if s := mustJSON[taskJSON](t, stdout); s.Criteria[0].Text != "stdin crit" {
+	if s := showJSON[taskJSON](t, dir, stdout); s.Criteria[0].Text != "stdin crit" {
 		t.Errorf("stdin crit text = %q, want %q", s.Criteria[0].Text, "stdin crit")
 	}
 
@@ -232,7 +232,7 @@ func TestTaskFlagExclusionsExit2(t *testing.T) {
 func TestTaskEditLabelEdits(t *testing.T) {
 	dir := initRepo(t)
 	task := addTask(t, dir, "Labeled", "--label", "a", "--label", "b")
-	edited := mustJSON[taskJSON](t, mustRun(t, dir, "task", "edit", task.ID, "--add-label", "c", "--rm-label", "a", "--json"))
+	edited := showJSON[taskJSON](t, dir, mustRun(t, dir, "task", "edit", task.ID, "--add-label", "c", "--rm-label", "a", "--json"))
 	if got := strings.Join(edited.Labels, ","); got != "b,c" {
 		t.Errorf("labels after add c / rm a = %q, want %q", got, "b,c")
 	}

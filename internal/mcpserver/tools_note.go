@@ -27,7 +27,7 @@ type noteEditArgs struct {
 }
 
 func registerNote(ts *toolset, b *bridge) {
-	addTool(ts, &mcp.Tool{Name: "note_add", Description: "Record a durable fact or decision as a note (git-synced, optionally anchored to commits/paths/dirs/branches)."},
+	addTool(ts, &mcp.Tool{Name: "note_add", Description: "Record a durable fact or decision as a note (git-synced, optionally anchored to commits/paths/dirs/branches). The ack is a summary; note_show reads the body back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in noteAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
 			if err != nil {
@@ -39,7 +39,7 @@ func registerNote(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"note", "add"}, flags, in.Title)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "note_edit", Description: "Edit a note: title, body, labels, anchors, and attachments."},
+	addTool(ts, &mcp.Tool{Name: "note_edit", Description: "Edit a note: title, body, labels, anchors, and attachments. The ack is a summary; note_show reads the body back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in noteEditArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := noteDocEditFlags(in)
 			if err != nil {
@@ -124,7 +124,7 @@ type reviewArgs struct {
 func registerNoteDocShared(ts *toolset, b *bridge, noun string) {
 	idTool(ts, b, noun+"_rm", "Tombstone a "+noun+".", noun, "rm")
 
-	addTool(ts, &mcp.Tool{Name: noun + "_list", Description: "List " + noun + "s, optionally filtered by label and anchors."},
+	addTool(ts, &mcp.Tool{Name: noun + "_list", Description: "List " + noun + "s, optionally filtered by label and anchors. Returns summaries without the body; " + noun + "_show reads one back in full."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entityListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -139,7 +139,7 @@ func registerNoteDocShared(ts *toolset, b *bridge, noun string) {
 
 	idTool(ts, b, noun+"_show", "Show one "+noun+" with its verdict and attachments.", noun, "show")
 
-	addTool(ts, &mcp.Tool{Name: noun + "_search", Description: "Ranked search across " + noun + " titles, labels, and bodies."},
+	addTool(ts, &mcp.Tool{Name: noun + "_search", Description: "Ranked search across " + noun + " titles, labels, and bodies. Returns summaries without the body; " + noun + "_show reads one back in full."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entitySearchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -169,7 +169,7 @@ func registerNoteDocShared(ts *toolset, b *bridge, noun string) {
 			return b.run(ctx, argvFor([]string{noun, "expire"}, flags, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: noun + "_review", Description: "Surface " + noun + "s needing attention (drifted, never-verified, or expired), each with a verdict."},
+	addTool(ts, &mcp.Tool{Name: noun + "_review", Description: "Surface " + noun + "s needing attention (drifted, never-verified, or expired), each with a verdict. Returns summaries without the body; " + noun + "_show reads one back in full."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in reviewArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--stale-after", in.StaleAfter)

@@ -178,7 +178,15 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 
 def note_entry(note_id: str, *, drift: str | None = None, title: str = "t", reasons: list[str] | None = None) -> dict:
-    return {"note": {"id": note_id, "title": title, "drift": drift}, "score": 1, "reasons": ["path"] if reasons is None else reasons}
+    """A `kind == "note"` relevance entry: the note summary under "note".
+
+    ``drift`` is omitted when the note is fresh. The CLI omits every zero-valued
+    field, so a fresh note carries no ``drift`` key at all rather than a null one.
+    """
+    note = {"id": note_id, "title": title}
+    if drift is not None:
+        note["drift"] = drift
+    return {"kind": "note", "note": note, "score": 1, "reasons": ["path"] if reasons is None else reasons}
 
 
 def doc_entry(
@@ -188,63 +196,56 @@ def doc_entry(
     drift: str | None = None,
     title: str = "d",
     reasons: list[str] | None = None,
-    body: str = "LONG_DOC_BODY",
 ) -> dict:
-    """A `kind == "doc"` relevance entry: the doc DTO under "doc", no "note" key.
+    """A `kind == "doc"` relevance entry: the doc summary under "doc", no "note" key.
 
-    Carries a ``body`` the render path must never surface — the float only ever
-    emits the pointer (title/when/verdict/`doc show`), never the long body.
+    The summary carries no body — a body never rides a `relevant` result — so the
+    float can only ever emit the pointer. ``when`` and ``drift`` are omitted at
+    their zero values, exactly as the CLI omits them.
     """
-    return {
-        "kind": "doc",
-        "doc": {"id": doc_id, "title": title, "when": when, "drift": drift, "body": body},
-        "score": 1,
-        "reasons": ["dir"] if reasons is None else reasons,
-    }
+    doc = {"id": doc_id, "title": title}
+    if when:
+        doc["when"] = when
+    if drift is not None:
+        doc["drift"] = drift
+    return {"kind": "doc", "doc": doc, "score": 1, "reasons": ["dir"] if reasons is None else reasons}
 
 
-def log_entry(
-    log_id: str,
-    *,
-    title: str = "l",
-    reasons: list[str] | None = None,
-    entries: list[dict] | None = None,
-) -> dict:
-    """A `kind == "log"` relevance entry: the log DTO under "log", no "note"/"doc" key.
+def log_entry(log_id: str, *, title: str = "l", reasons: list[str] | None = None) -> dict:
+    """A `kind == "log"` relevance entry: the log summary under "log", no "note"/"doc" key.
 
-    A log is append-only and never drifts, so it carries no ``drift`` field. The
-    ``entries`` chronology must never reach the float — the pointer renders only
-    the title and a ``log show`` hint, never the entry text.
+    The summary carries neither the entry chronology nor a drift verdict — a log is
+    append-only and never drifts — so the float renders only the title and a hint.
     """
     return {
         "kind": "log",
-        "log": {"id": log_id, "title": title, "entries": [{"text": "LOG_ENTRY_TEXT"}] if entries is None else entries},
+        "log": {"id": log_id, "title": title},
         "score": 1,
         "reasons": ["dir"] if reasons is None else reasons,
     }
 
 
 def runbook_entry(runbook_id: str, *, title: str = "r", reasons: list[str] | None = None) -> dict:
-    """A `kind == "runbook"` relevance entry: the runbook DTO under "runbook", no "note" key.
+    """A `kind == "runbook"` relevance entry: the runbook summary under "runbook", no "note" key.
 
-    Carries steps the render path must never surface — only the pointer floats.
+    The summary carries the lifecycle status but never the steps.
     """
     return {
         "kind": "runbook",
-        "runbook": {"id": runbook_id, "title": title, "status": "active", "steps": [{"text": "RUNBOOK_STEP_TEXT"}]},
+        "runbook": {"id": runbook_id, "title": title, "status": "active"},
         "score": 1,
         "reasons": ["dir"] if reasons is None else reasons,
     }
 
 
 def investigation_entry(investigation_id: str, *, title: str = "i", status: str = "open", reasons: list[str] | None = None) -> dict:
-    """A `kind == "investigation"` relevance entry: the DTO under "investigation", no "note" key.
+    """A `kind == "investigation"` relevance entry: the summary under "investigation", no "note" key.
 
-    Carries a premise the render path must never surface — the status is the signal.
+    The summary carries the lifecycle status but never the premise — the status is the signal.
     """
     return {
         "kind": "investigation",
-        "investigation": {"id": investigation_id, "title": title, "status": status, "premise": "INVESTIGATION_PREMISE"},
+        "investigation": {"id": investigation_id, "title": title, "status": status},
         "score": 1,
         "reasons": ["dir"] if reasons is None else reasons,
     }
@@ -306,7 +307,6 @@ def test_render_doc_lines() -> None:
         stale == ["def5678 Parser notes — when: before editing the parser [stale] (path) — cc-notes doc show def5678"],
         repr(stale),
     )
-    check("render: doc line never leaks the body", all("LONG_DOC_BODY" not in line for line in fresh + stale), repr(fresh + stale))
     # A mixed list dispatches per entry kind: the note renders the note line, the doc the doc line.
     mixed = render_note_lines(
         [note_entry("0123456abcdef", drift=None, title="Retry ceiling", reasons=["path"]), doc_entry("99aa00bb11c", when="when X", title="Doc", reasons=["dir"])]
@@ -337,8 +337,6 @@ def test_render_log_lines() -> None:
     )
     # A log never carries a drift verdict, so the line never gains a `[...]` suffix.
     check("render_log_line: no drift suffix", "[" not in line, repr(line))
-    # The chronology stays in cc-notes — only the pointer floats, never the entry text.
-    check("render_log_line: never leaks entry text", "LOG_ENTRY_TEXT" not in routed[0], repr(routed))
     # A mixed list dispatches per kind: note, doc, and log each take their own render path.
     mixed = render_note_lines(
         [
@@ -366,7 +364,6 @@ def test_render_runbook_investigation_lines() -> None:
 
     rb = render_runbook_line(runbook_entry("abc1234def0", title="Release dance", reasons=["dir"]))
     check("render_runbook_line: id + title + reasons + runbook show", rb == "abc1234 Release dance (dir) — cc-notes runbook show abc1234", repr(rb))
-    check("render_runbook_line: never leaks step text", "RUNBOOK_STEP_TEXT" not in rb, repr(rb))
 
     inv = render_investigation_line(investigation_entry("def5678aaa0", title="CI deadlock", status="root_caused", reasons=["path"]))
     check(
@@ -374,7 +371,6 @@ def test_render_runbook_investigation_lines() -> None:
         inv == "def5678 CI deadlock [root_caused] (path) — cc-notes investigation show def5678",
         repr(inv),
     )
-    check("render_investigation_line: never leaks the premise", "INVESTIGATION_PREMISE" not in inv, repr(inv))
 
     routed = render_note_lines([runbook_entry("abc1234def0", title="R", reasons=[]), investigation_entry("def5678aaa0", title="I", status="open", reasons=[])])
     check(
@@ -1475,7 +1471,11 @@ def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
     if result and result.message:
         check("staleness doc: renders doc pointer", "Parser handoff" in result.message and "cc-notes doc show drifted" in result.message, result.message)
         check("staleness doc: lowercased verdict", "[drifted]" in result.message, result.message)
-        check("staleness doc: never leaks the body", "LONG_DOC_BODY" not in result.message, result.message)
+        check(
+            "staleness doc: renders the doc pointer line verbatim, nothing more",
+            result.message.count("drifted Parser handoff — when: before touching the parser [drifted] (path) — cc-notes doc show drifted") == 1,
+            result.message,
+        )
         check("staleness doc: names doc reconciliation commands", "cc-notes doc verify/edit/supersede/expire" in result.message, result.message)
 
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
@@ -2017,7 +2017,11 @@ def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
         check("doc float: renders when trigger", "before touching the auth flow" in result.message, result.message)
         check("doc float: renders lowercased verdict", "[drifted]" in result.message, result.message)
         check("doc float: renders doc show hint", "cc-notes doc show d0cd0c0" in result.message, result.message)
-        check("doc float: never leaks the body", "LONG_DOC_BODY" not in result.message, result.message)
+        check(
+            "doc float: renders the doc pointer line verbatim, nothing more",
+            result.message.count("d0cd0c0 Auth handoff — when: before touching the auth flow [drifted] (dir) — cc-notes doc show d0cd0c0") == 1,
+            result.message,
+        )
 
     evt2 = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
@@ -2043,7 +2047,11 @@ def test_float_note_context_floats_log(monkeypatch, tmp_path) -> None:
         check("log float: renders title", "Auth rollout" in result.message, result.message)
         check("log float: renders log show hint", "cc-notes log show 105f00b" in result.message, result.message)
         check("log float: no drift verdict", "[" not in result.message.split("Auth rollout", 1)[1], result.message)
-        check("log float: never leaks entry text", "LOG_ENTRY_TEXT" not in result.message, result.message)
+        check(
+            "log float: renders the log pointer line verbatim, nothing more",
+            result.message.count("105f00b Auth rollout (dir) — cc-notes log show 105f00b") == 1,
+            result.message,
+        )
 
     evt2 = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
@@ -2337,12 +2345,33 @@ def write_memory(tmp_path: Path, slug: str, mtype: str, description: str, body: 
     return mempath
 
 
-def mirror_cli(list_payload: str = "[]", add_payload: str = '{"id": "abc1234def0"}'):
+def memory_summary(note_id: str, title: str, slug: str) -> dict:
+    """The summary shape a `note list --json` row actually carries — no body.
+
+    Bodies ride `note show` alone, so a stub that hands one back to the listing would
+    hide the very regression these tests exist to catch.
+    """
+    return {
+        "id": note_id,
+        "title": title,
+        "tags": ["memory", f"memory:{slug}", "memory-type:feedback"],
+        "author": "yasyf",
+        "updated_at": "2026-07-24T18:03:11Z",
+    }
+
+
+def memory_full(note_id: str, title: str, slug: str, body: str) -> dict:
+    """The full shape `note show ID --json` carries — the summary plus the body."""
+    return {**memory_summary(note_id, title, slug), "body": body, "created_at": "2026-07-01T09:00:00Z"}
+
+
+def mirror_cli(list_payload: str = "[]", show_payload: str = "{}", add_payload: str = '{"id": "abc1234def0"}'):
     """A recording call_cli stub for the memory mirror, returning canned note output.
 
-    Dispatches on the ``note <verb>`` pair: ``list`` yields ``list_payload``, ``add``
-    yields ``add_payload``, ``edit`` yields ``""``. Records every argv so a test can
-    assert exactly which commands the handler issued (and which it skipped).
+    Dispatches on the ``note <verb>`` pair: ``list`` yields ``list_payload``, ``show``
+    yields ``show_payload``, ``add`` yields ``add_payload``, ``edit`` yields ``""``.
+    Records every argv so a test can assert exactly which commands the handler issued
+    (and which it skipped).
     """
     calls: list[list[str]] = []
 
@@ -2351,6 +2380,8 @@ def mirror_cli(list_payload: str = "[]", add_payload: str = '{"id": "abc1234def0
         verb = tuple(args[1:3])
         if verb == ("note", "list"):
             return list_payload
+        if verb == ("note", "show"):
+            return show_payload
         if verb == ("note", "add"):
             return add_payload
         if verb == ("note", "edit"):
@@ -2419,16 +2450,23 @@ def test_mirror_creates_note(monkeypatch, tmp_path) -> None:
 
 
 def test_mirror_updates_note(monkeypatch, tmp_path) -> None:
-    """A later write with a changed body edits the SAME note id in place, never adds."""
+    """A later write with a changed body edits the SAME note id in place, never adds.
+
+    The body the comparison sees comes from `note show`, not the bodyless listing, so
+    this also pins that the show is issued against the id the listing resolved.
+    """
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     mem = write_memory(tmp_path, "retry-ceiling", "feedback", "Retry ceiling", "v2 body")
     evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
-    existing = json.dumps([{"id": "abc1234def0", "title": "Retry ceiling", "body": "v1 body", "tags": ["memory", "memory:retry-ceiling"]}])
-    call, calls = mirror_cli(list_payload=existing)
+    existing = json.dumps([memory_summary("abc1234def0", "Retry ceiling", "retry-ceiling")])
+    shown = json.dumps(memory_full("abc1234def0", "Retry ceiling", "retry-ceiling", "v1 body"))
+    call, calls = mirror_cli(list_payload=existing, show_payload=shown)
     monkeypatch.setattr(evt.ctx, "call_cli", call)
 
     result = mirror_memory_to_note(evt)
     check("mirror update: warns 'updated'", result is not None and "updated" in (result.message or ""), repr(result))
+    shows = [c for c in calls if tuple(c[1:3]) == ("note", "show")]
+    check("mirror update: one show fetches the body by the listed id", len(shows) == 1 and shows[0][3:] == ["abc1234def0", "--json"], repr(calls))
     edits = [c for c in calls if tuple(c[1:3]) == ("note", "edit")]
     check("mirror update: one edit on the same id", len(edits) == 1 and edits[0][3] == "abc1234def0", repr(calls))
     if edits:
@@ -2438,16 +2476,41 @@ def test_mirror_updates_note(monkeypatch, tmp_path) -> None:
 
 
 def test_mirror_skips_unchanged(monkeypatch, tmp_path) -> None:
-    """When the existing note's title and body already match, only the lookup runs — no edit churn."""
+    """When the shown body and the listed title already match, only the reads run — no edit churn.
+
+    The listing payload is the real summary shape and carries NO body: a mirror that
+    compared against `note list` output would read "" here, miss the match, and edit on
+    every single write.
+    """
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     mem = write_memory(tmp_path, "retry-ceiling", "feedback", "Retry ceiling", "same body")
     evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
-    existing = json.dumps([{"id": "abc1234def0", "title": "Retry ceiling", "body": "same body"}])
-    call, calls = mirror_cli(list_payload=existing)
+    existing = json.dumps([memory_summary("abc1234def0", "Retry ceiling", "retry-ceiling")])
+    shown = json.dumps(memory_full("abc1234def0", "Retry ceiling", "retry-ceiling", "same body"))
+    call, calls = mirror_cli(list_payload=existing, show_payload=shown)
     monkeypatch.setattr(evt.ctx, "call_cli", call)
 
     check("mirror skip: silent when unchanged", mirror_memory_to_note(evt) is None)
-    check("mirror skip: only a list lookup issued", [tuple(c[1:3]) for c in calls] == [("note", "list")], repr(calls))
+    check("mirror skip: no body key ever rides the listing stub", "body" not in json.loads(existing)[0], existing)
+    check("mirror skip: only the list + show reads issued", [tuple(c[1:3]) for c in calls] == [("note", "list"), ("note", "show")], repr(calls))
+    check("mirror skip: the show targets the listed id", calls[-1][3:] == ["abc1234def0", "--json"], repr(calls[-1]))
+
+
+def test_mirror_changed_title_skips_show(monkeypatch, tmp_path) -> None:
+    """A changed title settles the comparison off the listing alone — no body fetch, straight to the edit."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    mem = write_memory(tmp_path, "retry-ceiling", "feedback", "Retry ceiling, revised", "same body")
+    evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
+    existing = json.dumps([memory_summary("abc1234def0", "Retry ceiling", "retry-ceiling")])
+    call, calls = mirror_cli(list_payload=existing, show_payload=json.dumps(memory_full("abc1234def0", "Retry ceiling", "retry-ceiling", "same body")))
+    monkeypatch.setattr(evt.ctx, "call_cli", call)
+
+    result = mirror_memory_to_note(evt)
+    check("mirror retitle: warns 'updated'", result is not None and "updated" in (result.message or ""), repr(result))
+    check("mirror retitle: no body fetch — the title alone decided it", [tuple(c[1:3]) for c in calls] == [("note", "list"), ("note", "edit")], repr(calls))
+    edits = [c for c in calls if tuple(c[1:3]) == ("note", "edit")]
+    if edits:
+        check("mirror retitle: carries the new title", "--title=Retry ceiling, revised" in edits[0], repr(edits[0]))
 
 
 def test_mirror_skips_user_type(monkeypatch, tmp_path) -> None:

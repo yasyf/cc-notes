@@ -10,6 +10,11 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
+// showHistoryCap bounds the append-only history a show embeds: the most recent
+// entries, findings, comments, or runs survive, with the elided count beside
+// them. The rest stays reachable through that kind's list verb.
+const showHistoryCap = 20
+
 // newShowCmd builds the top-level "cc-notes show ID": show any entity, resolving
 // the id across every kind and dispatching to that kind's renderer. Like
 // history, compact, and blame, it is global because an id-addressed read whose
@@ -135,7 +140,7 @@ func showLog(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) er
 		return err
 	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newLogDTO(log, atts))
+		return printJSON(cmd.OutOrStdout(), newLogShowDTO(log, atts))
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), renderLogShow(log, atts))
 	return err
@@ -152,7 +157,7 @@ func showInvestigation(cmd *cobra.Command, s *store.Store, prefix string, jsonOu
 		return err
 	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newInvestigationDTO(inv, atts))
+		return printJSON(cmd.OutOrStdout(), newInvestigationShowDTO(inv, atts))
 	}
 	steps, err := s.History(ctx, ref)
 	if err != nil {
@@ -174,7 +179,7 @@ func showTask(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) e
 	}
 	blocks := blocksFor(live, task.ID)
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newTaskDTO(task, blocks))
+		return printJSON(cmd.OutOrStdout(), newTaskShowDTO(task, blocks))
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), renderTaskShow(task, blocks))
 	return err
@@ -205,7 +210,7 @@ func showRunbook(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool
 		return err
 	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newRunbookDTO(rb))
+		return printJSON(cmd.OutOrStdout(), newRunbookShowDTO(rb))
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), renderRunbookShow(rb))
 	return err
@@ -232,4 +237,63 @@ func showProject(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), renderProjectShow(project, projectSprints, projectTasks))
 	return err
+}
+
+// logShowDTO is the log DTO with its entries capped at the most recent
+// showHistoryCap, beside the count of older entries elided.
+type logShowDTO struct {
+	logDTO
+	EntriesOmitted int `json:"entries_omitted,omitempty"`
+}
+
+func newLogShowDTO(l model.Log, atts []attachmentDTO) logShowDTO {
+	dto := newLogDTO(l, atts)
+	entries, omitted := tailWithCount(dto.Entries, showHistoryCap)
+	dto.Entries = entries
+	return logShowDTO{logDTO: dto, EntriesOmitted: omitted}
+}
+
+// investigationShowDTO is the investigation DTO with its findings and timeline
+// each capped at the most recent showHistoryCap, beside the elided counts.
+type investigationShowDTO struct {
+	investigationDTO
+	FindingsOmitted int `json:"findings_omitted,omitempty"`
+	EntriesOmitted  int `json:"entries_omitted,omitempty"`
+}
+
+func newInvestigationShowDTO(inv model.Investigation, atts []attachmentDTO) investigationShowDTO {
+	dto := newInvestigationDTO(inv, atts)
+	findings, findingsOmitted := tailWithCount(dto.Findings, showHistoryCap)
+	dto.Findings = findings
+	entries, entriesOmitted := tailWithCount(dto.Entries, showHistoryCap)
+	dto.Entries = entries
+	return investigationShowDTO{investigationDTO: dto, FindingsOmitted: findingsOmitted, EntriesOmitted: entriesOmitted}
+}
+
+// taskShowDTO is the task DTO with its comments capped at the most recent
+// showHistoryCap, beside the count of older comments elided.
+type taskShowDTO struct {
+	taskDTO
+	CommentsOmitted int `json:"comments_omitted,omitempty"`
+}
+
+func newTaskShowDTO(t model.Task, blocks []model.EntityID) taskShowDTO {
+	dto := newTaskDTO(t, blocks)
+	comments, omitted := tailWithCount(dto.Comments, showHistoryCap)
+	dto.Comments = comments
+	return taskShowDTO{taskDTO: dto, CommentsOmitted: omitted}
+}
+
+// runbookShowDTO is the runbook DTO with its runs capped at the most recent
+// showHistoryCap, beside the count of older runs elided.
+type runbookShowDTO struct {
+	runbookDTO
+	RunsOmitted int `json:"runs_omitted,omitempty"`
+}
+
+func newRunbookShowDTO(rb model.Runbook) runbookShowDTO {
+	dto := newRunbookDTO(rb)
+	runs, omitted := tailWithCount(dto.Runs, showHistoryCap)
+	dto.Runs = runs
+	return runbookShowDTO{runbookDTO: dto, RunsOmitted: omitted}
 }

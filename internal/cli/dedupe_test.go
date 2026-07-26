@@ -102,7 +102,7 @@ func TestTaskAddDedupe(t *testing.T) {
 func TestNoteAddAfterExpireCreatesFresh(t *testing.T) {
 	dir := initRepo(t)
 
-	first := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "T", "--body", "B", "--json"))
+	first := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "T", "--body", "B", "--json"))
 	mustRun(t, dir, "note", "expire", first.ID, "--reason", "outdated", "--json")
 
 	out, stderr, err := runCLI(t, dir, "note", "add", "T", "--body", "B", "--json")
@@ -136,7 +136,7 @@ func TestNoteAddDedupeRefreshesWitness(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "f.go", "one")
 
-	first := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "T", "--body", "B", "--path", "f.go", "--json"))
+	first := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "T", "--body", "B", "--path", "f.go", "--json"))
 	if len(first.Anchors) != 1 || first.Anchors[0].Witness == nil {
 		t.Fatalf("first add anchors = %+v, want one witnessed path anchor", first.Anchors)
 	}
@@ -152,7 +152,7 @@ func TestNoteAddDedupeRefreshesWitness(t *testing.T) {
 	if stderr != wantWarn {
 		t.Fatalf("dedupe re-add stderr = %q, want %q", stderr, wantWarn)
 	}
-	dup := mustJSON[noteJSON](t, out)
+	dup := showJSON[noteJSON](t, dir, out)
 	if dup.ID != first.ID {
 		t.Fatalf("dedupe re-add id = %s, want existing %s", dup.ID, first.ID)
 	}
@@ -213,7 +213,7 @@ func TestNoteAddDedupeBinary(t *testing.T) {
 func TestLogAddDedupeAppendsEntry(t *testing.T) {
 	dir := initRepo(t)
 
-	base := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Incident", "--json"))
+	base := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "Incident", "--json"))
 	if len(base.Entries) != 0 {
 		t.Fatalf("seed log entries = %d, want 0 on a bare add", len(base.Entries))
 	}
@@ -226,7 +226,7 @@ func TestLogAddDedupeAppendsEntry(t *testing.T) {
 	if stderr != wantWarn {
 		t.Fatalf("dedupe add stderr = %q, want %q", stderr, wantWarn)
 	}
-	got := mustJSON[logJSON](t, out)
+	got := showJSON[logJSON](t, dir, out)
 	if got.ID != base.ID {
 		t.Fatalf("dedupe add id = %s, want existing %s", got.ID, base.ID)
 	}
@@ -254,7 +254,7 @@ func TestLogAddDedupeAppendsEntry(t *testing.T) {
 	if secondErr != wantSecondWarn {
 		t.Fatalf("second rollout add stderr = %q, want %q", secondErr, wantSecondWarn)
 	}
-	second := mustJSON[logJSON](t, secondOut)
+	second := showJSON[logJSON](t, dir, secondOut)
 	if second.ID != first.ID {
 		t.Fatalf("second rollout id = %s, want existing %s", second.ID, first.ID)
 	}

@@ -40,7 +40,7 @@ type logListArgs struct {
 }
 
 func registerLog(ts *toolset, b *bridge) {
-	addTool(ts, &mcp.Tool{Name: "log_add", Description: "Create an append-only log (incident timeline, rollout log, debugging record)."},
+	addTool(ts, &mcp.Tool{Name: "log_add", Description: "Create an append-only log (incident timeline, rollout log, debugging record). The ack is a summary carrying the entry tally; log_show reads the entries back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--entry", in.Entry)
 			if err != nil {
@@ -52,7 +52,7 @@ func registerLog(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"log", "add"}, flags, in.Title)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "log_append", Description: "Append one entry to a log, and/or attach files. Entries are append-only."},
+	addTool(ts, &mcp.Tool{Name: "log_append", Description: "Append one entry to a log, and/or attach files. Entries are append-only. The ack is a summary carrying the entry tally; log_show reads the entries back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logAppendArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--entry", in.Entry)
 			if err != nil {
@@ -76,7 +76,7 @@ func registerLog(ts *toolset, b *bridge) {
 
 	idTool(ts, b, "log_rm", "Tombstone a log.", "log", "rm")
 
-	addTool(ts, &mcp.Tool{Name: "log_list", Description: "List logs, optionally filtered by label and anchors."},
+	addTool(ts, &mcp.Tool{Name: "log_list", Description: "List logs, optionally filtered by label and anchors. Returns summaries carrying an entry tally, not the entries; log_show reads them back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -90,7 +90,7 @@ func registerLog(ts *toolset, b *bridge) {
 
 	idTool(ts, b, "log_show", "Show one log with its entries in chronological order.", "log", "show")
 
-	addTool(ts, &mcp.Tool{Name: "log_search", Description: "Ranked search across log titles, labels, and entry text."},
+	addTool(ts, &mcp.Tool{Name: "log_search", Description: "Ranked search across log titles, labels, and entry text. Returns summaries carrying an entry tally, not the entries; log_show reads them back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entitySearchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)

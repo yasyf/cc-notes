@@ -29,7 +29,7 @@ func papercutLogs(t *testing.T, dir string) []logJSON {
 
 func TestPapercutFirstCreatesJournal(t *testing.T) {
 	dir := initRepo(t)
-	echo := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "unquoted globs broke rg", "--json"))
+	echo := showJSON[logJSON](t, dir, mustRun(t, dir, "papercut", "unquoted globs broke rg", "--json"))
 	if echo.Title != "papercuts" {
 		t.Fatalf("journal title = %q, want papercuts", echo.Title)
 	}
@@ -46,8 +46,8 @@ func TestPapercutFirstCreatesJournal(t *testing.T) {
 
 func TestPapercutSecondAppendsSameJournal(t *testing.T) {
 	dir := initRepo(t)
-	first := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "first friction", "--json"))
-	second := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "second friction", "--json"))
+	first := showJSON[logJSON](t, dir, mustRun(t, dir, "papercut", "first friction", "--json"))
+	second := showJSON[logJSON](t, dir, mustRun(t, dir, "papercut", "second friction", "--json"))
 	if second.ID != first.ID {
 		t.Fatalf("second journal id = %q, want %q (idempotent find-or-create)", second.ID, first.ID)
 	}
@@ -61,7 +61,7 @@ func TestPapercutSecondAppendsSameJournal(t *testing.T) {
 
 func TestPapercutModelInShowJSON(t *testing.T) {
 	dir := initRepo(t)
-	echo := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "friction", "--model", "claude-fable-5", "--json"))
+	echo := showJSON[logJSON](t, dir, mustRun(t, dir, "papercut", "friction", "--model", "claude-fable-5", "--json"))
 	shown := mustJSON[logJSON](t, mustRun(t, dir, "log", "show", echo.ID, "--json"))
 	if len(shown.Entries) != 1 {
 		t.Fatalf("entries = %+v, want one", shown.Entries)
@@ -76,12 +76,12 @@ func TestPapercutModelEnvAndFlagPrecedence(t *testing.T) {
 	// The env value carries surrounding whitespace to prove it is trimmed.
 	t.Setenv("CC_NOTES_MODEL", "  claude-opus-4-8  ")
 
-	env := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "via env", "--json"))
+	env := showJSON[logJSON](t, dir, mustRun(t, dir, "papercut", "via env", "--json"))
 	if got := env.Entries[0].Model; got == nil || *got != "claude-opus-4-8" {
 		t.Fatalf("env entry model = %v, want the trimmed CC_NOTES_MODEL claude-opus-4-8", got)
 	}
 
-	flagged := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "via flag", "--model", "claude-fable-5", "--json"))
+	flagged := showJSON[logJSON](t, dir, mustRun(t, dir, "papercut", "via flag", "--model", "claude-fable-5", "--json"))
 	last := flagged.Entries[len(flagged.Entries)-1]
 	if got := last.Model; got == nil || *got != "claude-fable-5" {
 		t.Fatalf("flagged entry model = %v, want claude-fable-5 (flag beats env)", got)
@@ -111,7 +111,7 @@ func TestPapercutListLeanBlocks(t *testing.T) {
 
 func TestPapercutListJSONShape(t *testing.T) {
 	dir := initRepo(t)
-	j := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "no model", "--json"))
+	j := showJSON[logJSON](t, dir, mustRun(t, dir, "papercut", "no model", "--json"))
 	mustRun(t, dir, "papercut", "with model", "--model", "claude-fable-5")
 
 	raw := mustRun(t, dir, "papercut", "list", "--json")
@@ -138,7 +138,7 @@ func TestPapercutListJSONShape(t *testing.T) {
 
 func TestPapercutTwinConvergence(t *testing.T) {
 	dir := initRepo(t)
-	first := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "original complaint", "--json"))
+	first := showJSON[logJSON](t, dir, mustRun(t, dir, "papercut", "original complaint", "--json"))
 
 	// Mint a deliberate same-content twin. A create bundled with an append_entry
 	// is not dedupe-covered (dedupeCovered excludes append_entry), so the store
@@ -179,7 +179,7 @@ func TestPapercutTwinConvergence(t *testing.T) {
 		}
 	}
 
-	appended := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "converged complaint", "--json"))
+	appended := showJSON[logJSON](t, dir, mustRun(t, dir, "papercut", "converged complaint", "--json"))
 	if appended.ID != canonicalID {
 		t.Fatalf("converged onto %q, want the canonical (oldest) journal %q", appended.ID, canonicalID)
 	}
@@ -215,7 +215,7 @@ func TestPapercutStdin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("papercut -: %v (stderr %q)", err, stderr)
 	}
-	echo := mustJSON[logJSON](t, stdout)
+	echo := showJSON[logJSON](t, dir, stdout)
 	if len(echo.Entries) != 1 || echo.Entries[0].Text != "friction from stdin" {
 		t.Fatalf("entries = %+v, want the stdin complaint with the trailing newline trimmed", echo.Entries)
 	}
@@ -224,7 +224,7 @@ func TestPapercutStdin(t *testing.T) {
 func TestPapercutBodyFlagAndConflict(t *testing.T) {
 	dir := initRepo(t)
 
-	flagged := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "--body", "flag friction", "--json"))
+	flagged := showJSON[logJSON](t, dir, mustRun(t, dir, "papercut", "--body", "flag friction", "--json"))
 	if len(flagged.Entries) != 1 || flagged.Entries[0].Text != "flag friction" {
 		t.Fatalf("entries = %+v, want the single --body complaint", flagged.Entries)
 	}
@@ -259,7 +259,7 @@ func TestPapercutDashDashFilesLiteralList(t *testing.T) {
 	dir := initRepo(t)
 	// "papercut list" reads the journal, so filing a complaint whose text is
 	// "list" needs the -- escape (--json sits before -- so it stays a flag).
-	echo := mustJSON[logJSON](t, mustRun(t, dir, "papercut", "--json", "--", "list"))
+	echo := showJSON[logJSON](t, dir, mustRun(t, dir, "papercut", "--json", "--", "list"))
 	if len(echo.Entries) != 1 || echo.Entries[0].Text != "list" {
 		t.Fatalf("entries = %+v, want a complaint whose text is literally 'list'", echo.Entries)
 	}

@@ -630,9 +630,9 @@ func newRunListCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				runs := make([]runbookRunDTO, len(rb.Runs))
+				runs := make([]runbookRunSummaryDTO, len(rb.Runs))
 				for i, r := range rb.Runs {
-					runs[i] = newRunbookRunDTO(rb, r)
+					runs[i] = newRunbookRunSummaryDTO(rb, r)
 				}
 				return printJSON(out, runs)
 			}
@@ -831,14 +831,14 @@ func (p *stepPlacement) toPlacement() notes.Placement {
 	}
 }
 
-// printRunbookList writes runbooks as a JSON array of their DTOs or one lean
-// line per runbook.
+// printRunbookList writes runbooks as a JSON array of their summary DTOs or one
+// lean line per runbook.
 func printRunbookList(cmd *cobra.Command, runbooks []model.Runbook, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
-		dtos := make([]runbookDTO, len(runbooks))
+		dtos := make([]runbookSummaryDTO, len(runbooks))
 		for i, rb := range runbooks {
-			dtos[i] = newRunbookDTO(rb)
+			dtos[i] = newRunbookSummaryDTO(rb)
 		}
 		return printJSON(out, dtos)
 	}

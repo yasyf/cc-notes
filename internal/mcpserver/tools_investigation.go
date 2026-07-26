@@ -105,7 +105,7 @@ func investigationTextPositionals(id, text string, required bool) ([]string, err
 }
 
 func registerInvestigation(ts *toolset, b *bridge) {
-	addTool(ts, &mcp.Tool{Name: "investigation_open", Description: "Open an investigation around a falsifiable premise."},
+	addTool(ts, &mcp.Tool{Name: "investigation_open", Description: "Open an investigation around a falsifiable premise. The ack is a summary; investigation_show reads the premise back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationOpenArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Premise)
 			if err != nil {
@@ -118,7 +118,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"investigation", "open"}, flags, in.Title)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "investigation_list", Description: "List investigations, optionally filtered by status, label, and anchors."},
+	addTool(ts, &mcp.Tool{Name: "investigation_list", Description: "List investigations, optionally filtered by status, label, and anchors. Returns summaries carrying finding and timeline tallies; investigation_show reads the premise, findings, and evidence back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--status", in.Status)
@@ -133,7 +133,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 
 	idTool(ts, b, "investigation_show", "Show one investigation with its findings and evidence timeline.", "investigation", "show")
 
-	addTool(ts, &mcp.Tool{Name: "investigation_append", Description: "Append evidence from one investigation step, and/or attach files."},
+	addTool(ts, &mcp.Tool{Name: "investigation_append", Description: "Append evidence from one investigation step, and/or attach files. The ack is a summary carrying the timeline tally; investigation_show reads the timeline back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationAppendArgs) (*mcp.CallToolResult, any, error) {
 			positionals, err := investigationTextPositionals(in.ID, in.Text, false)
 			if err != nil {
@@ -143,7 +143,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"investigation", "append"}, flags, positionals...)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "investigation_finding_add", Description: "Add an open finding to an investigation."},
+	addTool(ts, &mcp.Tool{Name: "investigation_finding_add", Description: "Add an open finding to an investigation. The ack is a summary carrying the finding tally; investigation_finding_list reads the findings back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationFindingAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Text)
 			if err != nil {
@@ -152,7 +152,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"investigation", "finding", "add"}, flags, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "investigation_finding_edit", Description: "Edit a finding's text."},
+	addTool(ts, &mcp.Tool{Name: "investigation_finding_edit", Description: "Edit a finding's text. The ack is a summary carrying the finding tally; investigation_finding_list reads the findings back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationFindingEditArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Text)
 			if err != nil {
@@ -161,19 +161,19 @@ func registerInvestigation(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"investigation", "finding", "edit"}, flags, in.ID, in.Finding)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "investigation_finding_clear", Description: "Clear a finding with supporting evidence."},
+	addTool(ts, &mcp.Tool{Name: "investigation_finding_clear", Description: "Clear a finding with supporting evidence. The ack is a summary carrying the finding tally; investigation_finding_list reads the findings back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationFindingDispositionArgs) (*mcp.CallToolResult, any, error) {
 			flags := optStr([]string{"--json"}, "--why", in.Why)
 			return b.run(ctx, argvFor([]string{"investigation", "finding", "clear"}, flags, in.ID, in.Finding)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "investigation_finding_confirm", Description: "Confirm a finding with supporting evidence."},
+	addTool(ts, &mcp.Tool{Name: "investigation_finding_confirm", Description: "Confirm a finding with supporting evidence. The ack is a summary carrying the finding tally; investigation_finding_list reads the findings back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationFindingDispositionArgs) (*mcp.CallToolResult, any, error) {
 			flags := optStr([]string{"--json"}, "--why", in.Why)
 			return b.run(ctx, argvFor([]string{"investigation", "finding", "confirm"}, flags, in.ID, in.Finding)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "investigation_finding_rm", Description: "Remove a finding from an investigation."},
+	addTool(ts, &mcp.Tool{Name: "investigation_finding_rm", Description: "Remove a finding from an investigation. The ack is a summary carrying the finding tally; investigation_finding_list reads the findings back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationFindingRefArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"investigation", "finding", "rm"}, []string{"--json"}, in.ID, in.Finding)...)
 		})
@@ -252,7 +252,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"investigation", "edit"}, flags, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "investigation_search", Description: "Ranked search across investigation titles, premises, timelines, findings, and verdicts."},
+	addTool(ts, &mcp.Tool{Name: "investigation_search", Description: "Ranked search across investigation titles, premises, timelines, findings, and verdicts. Returns summaries carrying finding and timeline tallies; investigation_show reads the premise, findings, and evidence back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationSearchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)

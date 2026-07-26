@@ -53,7 +53,7 @@ type projectListArgs struct {
 }
 
 func registerPlanning(ts *toolset, b *bridge) {
-	addTool(ts, &mcp.Tool{Name: "sprint_add", Description: "Create a sprint (a time-boxed grouping of tasks)."},
+	addTool(ts, &mcp.Tool{Name: "sprint_add", Description: "Create a sprint (a time-boxed grouping of tasks). The ack is a summary; sprint_show reads the description and task roll-up back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in sprintAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
 			if err != nil {
@@ -66,7 +66,7 @@ func registerPlanning(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"sprint", "add"}, flags, in.Title)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "sprint_edit", Description: "Edit a sprint's title, description, project, dates, and labels."},
+	addTool(ts, &mcp.Tool{Name: "sprint_edit", Description: "Edit a sprint's title, description, project, dates, and labels. The ack is a summary; sprint_show reads the description and task roll-up back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in sprintEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
@@ -85,7 +85,7 @@ func registerPlanning(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"sprint", "edit"}, flags, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "sprint_list", Description: "List sprints, filtered by project and status."},
+	addTool(ts, &mcp.Tool{Name: "sprint_list", Description: "List sprints, filtered by project and status. Returns summaries; sprint_show reads the description, comments, and task roll-up back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in sprintListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--project", in.Project)
@@ -99,7 +99,7 @@ func registerPlanning(ts *toolset, b *bridge) {
 
 	statusTools(ts, b, "sprint", "activate", "complete", "cancel")
 
-	addTool(ts, &mcp.Tool{Name: "project_add", Description: "Create a project (a long-lived grouping of sprints and tasks)."},
+	addTool(ts, &mcp.Tool{Name: "project_add", Description: "Create a project (a long-lived grouping of sprints and tasks). The ack is a summary; project_show reads the description and roll-ups back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
 			if err != nil {
@@ -109,7 +109,7 @@ func registerPlanning(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"project", "add"}, flags, in.Title)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "project_edit", Description: "Edit a project's title, description, and labels."},
+	addTool(ts, &mcp.Tool{Name: "project_edit", Description: "Edit a project's title, description, and labels. The ack is a summary; project_show reads the description and roll-ups back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectEditArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--title", in.Title)
@@ -122,7 +122,7 @@ func registerPlanning(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"project", "edit"}, flags, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "project_list", Description: "List projects, filtered by status."},
+	addTool(ts, &mcp.Tool{Name: "project_list", Description: "List projects, filtered by status. Returns summaries; project_show reads the description, comments, and sprint and task roll-ups back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--status", in.Status)

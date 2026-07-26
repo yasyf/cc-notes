@@ -103,7 +103,6 @@ const goldenTask = `{
   "blocked_by": [
     "9999aaaa9999aaaa9999aaaa9999aaaa9999aaaa"
   ],
-  "blocks": [],
   "parent": "8888bbbb8888bbbb8888bbbb8888bbbb8888bbbb",
   "comments": [
     {
@@ -123,7 +122,6 @@ const goldenTask = `{
   "created_at": "2025-12-12T02:54:56Z",
   "updated_at": "2025-12-13T02:54:56Z",
   "started_at": "2025-12-12T03:10:00Z",
-  "closed_at": null,
   "sprint": "7777cccc7777cccc7777cccc7777cccc7777cccc",
   "project": "6666dddd6666dddd6666dddd6666dddd6666dddd",
   "criteria": [
@@ -136,11 +134,9 @@ const goldenTask = `{
     {
       "id": "bbbb2222bbbb2222bbbb2222bbbb2222",
       "text": "Tests pass",
-      "script": "",
       "status": "pending"
     }
-  ],
-  "closed_forced": false
+  ]
 }
 `
 
@@ -169,9 +165,7 @@ const goldenSprint = `{
   "author": "Agent A a@example.com",
   "created_at": "2025-12-12T02:54:56Z",
   "updated_at": "2025-12-13T02:54:56Z",
-  "started_at": "2025-12-12T03:10:00Z",
-  "closed_at": null,
-  "tasks": []
+  "started_at": "2025-12-12T03:10:00Z"
 }
 `
 
@@ -196,10 +190,7 @@ const goldenProject = `{
   ],
   "author": "Agent A a@example.com",
   "created_at": "2025-12-12T02:54:56Z",
-  "updated_at": "2025-12-13T02:54:56Z",
-  "closed_at": null,
-  "sprints": [],
-  "tasks": []
+  "updated_at": "2025-12-13T02:54:56Z"
 }
 `
 

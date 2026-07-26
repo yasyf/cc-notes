@@ -1,0 +1,9 @@
+{
+  "id": "task-full-000000000000000000000000000000",
+  "title": "implement the thing",
+  "status": "done",
+  "priority": 2,
+  "assignee": "alice \u003calice@example.com\u003e",
+  "branch": "feature/x",
+  "updated_at": "2023-11-14T23:13:20Z"
+}

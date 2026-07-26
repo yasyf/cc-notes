@@ -111,6 +111,20 @@ func spAssertSorted(t *testing.T, pairs [][2]string) {
 	}
 }
 
+// spShow reads a sprint back in full. A mutation acknowledges with a summary,
+// so the description, dates, labels, and member tasks live only here.
+func spShow(t *testing.T, dir, id string) sprintDTO {
+	t.Helper()
+	return spJSON[sprintDTO](t, spMust(t, dir, "sprint", "show", id, "--json"))
+}
+
+// spMutate runs one sprint mutation and reads the resulting sprint back in
+// full, keyed off the id its summary acknowledgement carries.
+func spMutate(t *testing.T, dir string, args ...string) sprintDTO {
+	t.Helper()
+	return spShow(t, dir, spID(t, spMust(t, dir, args...)))
+}
+
 func TestSprintAddShow(t *testing.T) {
 	dir := spInitRepo(t)
 	proj := spID(t, spMust(t, dir, "project", "add", "Roadmap", "--json"))
@@ -121,12 +135,15 @@ func TestSprintAddShow(t *testing.T) {
 	if !strings.HasPrefix(out, `{"id":"`) {
 		t.Fatalf("sprint JSON does not lead with id: %q", out)
 	}
-	for _, frag := range []string{`"status":"planned"`, `"start_date":"2026-01-01T00:00:00Z"`, `"end_date":"2026-02-01T00:00:00Z"`, `"tasks":[]`} {
-		if !strings.Contains(out, frag) {
-			t.Errorf("sprint JSON %q missing %q", out, frag)
+	for _, frag := range []string{`"start_date"`, `"end_date"`, `"tasks"`, `"description"`, `"project"`} {
+		if strings.Contains(out, frag) {
+			t.Errorf("sprint add ack %q carries %q; a write acknowledgement is a summary", out, frag)
 		}
 	}
-	added := spJSON[sprintDTO](t, out)
+	if ack := spJSON[sprintSummaryDTO](t, out); ack.Title != "Sprint 1" || ack.Status != "planned" {
+		t.Errorf("add ack = %+v, want Sprint 1/planned", ack)
+	}
+	added := spShow(t, dir, spID(t, out))
 	if added.Title != "Sprint 1" || added.Description != "first sprint" {
 		t.Errorf("title/desc = %q/%q", added.Title, added.Description)
 	}
@@ -171,19 +188,19 @@ func TestSprintAddShow(t *testing.T) {
 func TestSprintListOrderAndFilter(t *testing.T) {
 	dir := spInitRepo(t)
 	proj := spID(t, spMust(t, dir, "project", "add", "P", "--json"))
-	a := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "A", "--project", proj, "--json"))
-	b := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "B", "--json"))
-	c := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "C", "--json"))
+	a := spMutate(t, dir, "sprint", "add", "A", "--project", proj, "--json")
+	b := spMutate(t, dir, "sprint", "add", "B", "--json")
+	c := spMutate(t, dir, "sprint", "add", "C", "--json")
 	spMust(t, dir, "sprint", "activate", a.ID)
 
-	all := spJSON[[]sprintDTO](t, spMust(t, dir, "sprint", "list", "--json"))
+	all := spJSON[[]sprintSummaryDTO](t, spMust(t, dir, "sprint", "list", "--json"))
 	if len(all) != 3 {
 		t.Fatalf("list --json returned %d sprints, want 3", len(all))
 	}
 	pairs := make([][2]string, len(all))
 	seen := map[string]bool{}
 	for i, sp := range all {
-		pairs[i] = [2]string{sp.CreatedAt, sp.ID}
+		pairs[i] = [2]string{spShow(t, dir, sp.ID).CreatedAt, sp.ID}
 		seen[sp.ID] = true
 	}
 	spAssertSorted(t, pairs)
@@ -193,11 +210,11 @@ func TestSprintListOrderAndFilter(t *testing.T) {
 		}
 	}
 
-	active := spJSON[[]sprintDTO](t, spMust(t, dir, "sprint", "list", "--status", "active", "--json"))
+	active := spJSON[[]sprintSummaryDTO](t, spMust(t, dir, "sprint", "list", "--status", "active", "--json"))
 	if len(active) != 1 || active[0].ID != a.ID {
 		t.Errorf("list --status active = %v, want only %s", active, a.ID)
 	}
-	planned := spJSON[[]sprintDTO](t, spMust(t, dir, "sprint", "list", "--status", "planned", "--json"))
+	planned := spJSON[[]sprintSummaryDTO](t, spMust(t, dir, "sprint", "list", "--status", "planned", "--json"))
 	if len(planned) != 2 {
 		t.Errorf("list --status planned = %d sprints, want 2 (B,C)", len(planned))
 	}
@@ -206,11 +223,11 @@ func TestSprintListOrderAndFilter(t *testing.T) {
 			t.Errorf("list --status planned included the active sprint %s", a.ID)
 		}
 	}
-	both := spJSON[[]sprintDTO](t, spMust(t, dir, "sprint", "list", "--status", "planned,active", "--json"))
+	both := spJSON[[]sprintSummaryDTO](t, spMust(t, dir, "sprint", "list", "--status", "planned,active", "--json"))
 	if len(both) != 3 {
 		t.Errorf("list --status planned,active = %d sprints, want 3", len(both))
 	}
-	inProj := spJSON[[]sprintDTO](t, spMust(t, dir, "sprint", "list", "--project", proj, "--json"))
+	inProj := spJSON[[]sprintSummaryDTO](t, spMust(t, dir, "sprint", "list", "--project", proj, "--json"))
 	if len(inProj) != 1 || inProj[0].ID != a.ID {
 		t.Errorf("list --project = %v, want only %s", inProj, a.ID)
 	}
@@ -224,12 +241,12 @@ func TestSprintEdit(t *testing.T) {
 	dir := spInitRepo(t)
 	p1 := spID(t, spMust(t, dir, "project", "add", "P1", "--json"))
 	p2 := spID(t, spMust(t, dir, "project", "add", "P2", "--json"))
-	sp := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "S", "--project", p1,
-		"--start", "2026-01-01", "--end", "2026-02-01", "--label", "keep", "--label", "drop", "--json"))
+	sp := spMutate(t, dir, "sprint", "add", "S", "--project", p1,
+		"--start", "2026-01-01", "--end", "2026-02-01", "--label", "keep", "--label", "drop", "--json")
 
-	edited := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "edit", sp.ID,
+	edited := spMutate(t, dir, "sprint", "edit", sp.ID,
 		"--title", "S2", "--project", p2, "--start", "2026-03-01", "--no-end",
-		"--add-label", "new", "--rm-label", "drop", "--json"))
+		"--add-label", "new", "--rm-label", "drop", "--json")
 	if edited.Title != "S2" {
 		t.Errorf("title = %q, want S2", edited.Title)
 	}
@@ -246,7 +263,7 @@ func TestSprintEdit(t *testing.T) {
 		t.Errorf("labels = %v, want [keep new]", edited.Labels)
 	}
 
-	cleared := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "edit", sp.ID, "--no-project", "--no-start", "--json"))
+	cleared := spMutate(t, dir, "sprint", "edit", sp.ID, "--no-project", "--no-start", "--json")
 	if cleared.Project != nil {
 		t.Errorf("project = %v, want null after --no-project", *cleared.Project)
 	}
@@ -275,11 +292,11 @@ func TestSprintEdit(t *testing.T) {
 func TestSprintAddBodyForms(t *testing.T) {
 	dir := spInitRepo(t)
 
-	pos := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "S1", "positional desc", "--json"))
+	pos := spMutate(t, dir, "sprint", "add", "S1", "positional desc", "--json")
 	if pos.Description != "positional desc" {
 		t.Errorf("positional desc = %q, want %q", pos.Description, "positional desc")
 	}
-	flag := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "S2", "--body", "flag desc", "--json"))
+	flag := spMutate(t, dir, "sprint", "add", "S2", "--body", "flag desc", "--json")
 	if flag.Description != "flag desc" {
 		t.Errorf("--body desc = %q, want %q", flag.Description, "flag desc")
 	}
@@ -287,7 +304,7 @@ func TestSprintAddBodyForms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sprint add - : %v", err)
 	}
-	if got := spJSON[sprintDTO](t, out).Description; got != "stdin desc" {
+	if got := spShow(t, dir, spID(t, out)).Description; got != "stdin desc" {
 		t.Errorf("stdin desc = %q, want %q", got, "stdin desc")
 	}
 	if _, _, err := spRun(t, dir, "", "sprint", "add", "S4", "pos", "--body", "flag"); !isUsage(err) {
@@ -300,7 +317,7 @@ func TestSprintAddBodyForms(t *testing.T) {
 // persists it.
 func TestSprintCommentBodyForms(t *testing.T) {
 	dir := spInitRepo(t)
-	sp := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "S", "--json"))
+	sp := spMutate(t, dir, "sprint", "add", "S", "--json")
 
 	spMust(t, dir, "sprint", "comment", sp.ID, "positional comment")
 	spMust(t, dir, "sprint", "comment", sp.ID, "--body", "flag comment")
@@ -328,17 +345,17 @@ func TestSprintCommentBodyForms(t *testing.T) {
 
 func TestSprintStatusTransitions(t *testing.T) {
 	dir := spInitRepo(t)
-	sp := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "S", "--json"))
+	sp := spMutate(t, dir, "sprint", "add", "S", "--json")
 	if sp.Status != "planned" || sp.StartedAt != nil || sp.ClosedAt != nil {
 		t.Fatalf("fresh sprint = %+v, want planned/null/null", sp)
 	}
 
-	started := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "activate", sp.ID, "--json"))
+	started := spMutate(t, dir, "sprint", "activate", sp.ID, "--json")
 	if started.Status != "active" || started.StartedAt == nil || started.ClosedAt != nil {
 		t.Fatalf("started = %+v, want active with started_at set, closed_at null", started)
 	}
 
-	completed := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "complete", sp.ID, "--json"))
+	completed := spMutate(t, dir, "sprint", "complete", sp.ID, "--json")
 	if completed.Status != "completed" || completed.ClosedAt == nil {
 		t.Fatalf("completed = %+v, want completed with closed_at set", completed)
 	}
@@ -357,8 +374,8 @@ func TestSprintStatusTransitions(t *testing.T) {
 		}
 	}
 
-	sp2 := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "S2", "--json"))
-	cancelled := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "cancel", sp2.ID, "--json"))
+	sp2 := spMutate(t, dir, "sprint", "add", "S2", "--json")
+	cancelled := spMutate(t, dir, "sprint", "cancel", sp2.ID, "--json")
 	if cancelled.Status != "cancelled" || cancelled.ClosedAt == nil {
 		t.Fatalf("cancelled = %+v, want cancelled with closed_at set", cancelled)
 	}
@@ -366,7 +383,7 @@ func TestSprintStatusTransitions(t *testing.T) {
 
 func TestSprintReverseIndexTasks(t *testing.T) {
 	dir := spInitRepo(t)
-	sp := spJSON[sprintDTO](t, spMust(t, dir, "sprint", "add", "S", "--json"))
+	sp := spMutate(t, dir, "sprint", "add", "S", "--json")
 	member := spID(t, spMust(t, dir, "task", "add", "Member", "--no-validation-criteria", "--json"))
 	spSetTaskSprint(t, dir, member, sp.ID)
 	spMust(t, dir, "task", "add", "Outsider", "--no-validation-criteria", "--json")

@@ -26,9 +26,9 @@ type searchHitJSON struct {
 func searchFixture(t *testing.T) (dir string, note noteJSON, doc docJSON, log logJSON, runbookID string) {
 	t.Helper()
 	dir = initRepo(t)
-	note = mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "token rotation plan", "--label", "infra", "--path", "auth.go", "--json"))
-	doc = mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Auth guide", "--body", "b", "--label", "token", "--json"))
-	log = mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "ops journal", "--entry", "rotated the token today", "--json"))
+	note = showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "token rotation plan", "--label", "infra", "--path", "auth.go", "--json"))
+	doc = showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "Auth guide", "--body", "b", "--label", "token", "--json"))
+	log = showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "ops journal", "--entry", "rotated the token today", "--json"))
 	rb := mustJSON[struct {
 		ID string `json:"id"`
 	}](t, mustRun(t, dir, "runbook", "add", "deploy service", "--body", "rotate the token safely", "--label", "infra", "--json"))

@@ -123,7 +123,7 @@ func newInvestigationListCmd() *cobra.Command {
 		Short: "List active investigations (open, root-caused, or fixed unless --all)",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -149,7 +149,7 @@ func newInvestigationListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printEntityList(cmd, s, invs, jsonOut, investigationListDTO, leanInvestigationLine)
+			return printEntityList(cmd, invs, jsonOut, investigationListDTO, leanInvestigationLine)
 		},
 	}
 	flags := cmd.Flags()
@@ -631,7 +631,7 @@ func newInvestigationSearchCmd() *cobra.Command {
 		Short: "Ranked search across investigation titles, premises, timelines, findings, and verdicts",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -648,7 +648,7 @@ func newInvestigationSearchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printEntityList(cmd, s, invs, jsonOut, investigationListDTO, leanInvestigationLine)
+			return printEntityList(cmd, invs, jsonOut, investigationListDTO, leanInvestigationLine)
 		},
 	}
 	flags := cmd.Flags()
@@ -674,6 +674,6 @@ func investigationEditEmpty(edit notes.InvestigationEdit) bool {
 		anchorSpecEmpty(edit.AddAnchors) && anchorSpecEmpty(edit.RemoveAnchors)
 }
 
-func investigationListDTO(inv model.Investigation, atts []attachmentDTO) any {
-	return newInvestigationDTO(inv, atts)
+func investigationListDTO(inv model.Investigation) any {
+	return newInvestigationSummaryDTO(inv)
 }

@@ -32,72 +32,76 @@ const maxTitleTestBytes = 256
 type noteJSON struct {
 	ID      string   `json:"id"`
 	Title   string   `json:"title"`
-	Body    string   `json:"body"`
-	Tags    []string `json:"tags"`
+	Body    string   `json:"body,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
 	Anchors []struct {
 		Kind    string  `json:"kind"`
 		Value   string  `json:"value"`
-		Witness *string `json:"witness"`
-	} `json:"anchors"`
-	Author       string           `json:"author"`
+		Witness *string `json:"witness,omitempty"`
+	} `json:"anchors,omitempty"`
+	Author       string           `json:"author,omitempty"`
 	CreatedAt    string           `json:"created_at"`
 	UpdatedAt    string           `json:"updated_at"`
-	VerifiedAt   *string          `json:"verified_at"`
-	VerifiedBy   *string          `json:"verified_by"`
-	SupersededBy *string          `json:"superseded_by"`
-	Drift        *string          `json:"drift"`
-	Deleted      bool             `json:"deleted"`
-	StaleAt      *string          `json:"stale_at"`
-	StaleBy      *string          `json:"stale_by"`
-	StaleReason  *string          `json:"stale_reason"`
-	Attachments  []attachmentJSON `json:"attachments"`
+	VerifiedAt   *string          `json:"verified_at,omitempty"`
+	VerifiedBy   *string          `json:"verified_by,omitempty"`
+	SupersededBy *string          `json:"superseded_by,omitempty"`
+	Drift        *string          `json:"drift,omitempty"`
+	Deleted      bool             `json:"deleted,omitempty"`
+	StaleAt      *string          `json:"stale_at,omitempty"`
+	StaleBy      *string          `json:"stale_by,omitempty"`
+	StaleReason  *string          `json:"stale_reason,omitempty"`
+	Attachments  []attachmentJSON `json:"attachments,omitempty"`
 }
 
 // attachmentJSON mirrors the attachment output DTO for round-trip assertions.
 type attachmentJSON struct {
 	Name    string `json:"name"`
 	OID     string `json:"oid"`
-	Size    int64  `json:"size"`
+	Size    int64  `json:"size,omitempty"`
 	Present bool   `json:"present"`
 }
 
 // taskJSON mirrors the task output DTO for round-trip assertions.
 type taskJSON struct {
 	ID          string   `json:"id"`
-	Branch      string   `json:"branch"`
+	Branch      string   `json:"branch,omitempty"`
 	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Type        string   `json:"type"`
+	Description string   `json:"description,omitempty"`
+	Type        string   `json:"type,omitempty"`
 	Status      string   `json:"status"`
 	Priority    int      `json:"priority"`
-	Assignee    *string  `json:"assignee"`
-	Labels      []string `json:"labels"`
-	BlockedBy   []string `json:"blocked_by"`
-	Blocks      []string `json:"blocks"`
-	Parent      *string  `json:"parent"`
+	Assignee    *string  `json:"assignee,omitempty"`
+	Labels      []string `json:"labels,omitempty"`
+	BlockedBy   []string `json:"blocked_by,omitempty"`
+	Blocks      []string `json:"blocks,omitempty"`
+	Parent      *string  `json:"parent,omitempty"`
 	Comments    []struct {
-		Author string `json:"author"`
+		Author string `json:"author,omitempty"`
 		TS     string `json:"ts"`
 		Body   string `json:"body"`
-	} `json:"comments"`
-	Commits []string `json:"commits"`
-	Lease   struct {
-		Holder    *string `json:"holder"`
-		Heartbeat *string `json:"heartbeat"`
-	} `json:"lease"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
-	StartedAt *string `json:"started_at"`
-	ClosedAt  *string `json:"closed_at"`
-	Sprint    *string `json:"sprint"`
-	Project   *string `json:"project"`
+	} `json:"comments,omitempty"`
+	Commits   []string       `json:"commits,omitempty"`
+	Lease     *taskLeaseJSON `json:"lease,omitempty"`
+	CreatedAt string         `json:"created_at"`
+	UpdatedAt string         `json:"updated_at"`
+	StartedAt *string        `json:"started_at,omitempty"`
+	ClosedAt  *string        `json:"closed_at,omitempty"`
+	Sprint    *string        `json:"sprint,omitempty"`
+	Project   *string        `json:"project,omitempty"`
 	Criteria  []struct {
 		ID     string `json:"id"`
 		Text   string `json:"text"`
-		Script string `json:"script"`
+		Script string `json:"script,omitempty"`
 		Status string `json:"status"`
-	} `json:"criteria"`
-	ClosedForced bool `json:"closed_forced"`
+		Note   string `json:"note,omitempty"`
+	} `json:"criteria,omitempty"`
+	ClosedForced bool `json:"closed_forced,omitempty"`
+}
+
+// taskLeaseJSON mirrors the lease sub-object of the task output DTO.
+type taskLeaseJSON struct {
+	Holder    *string `json:"holder,omitempty"`
+	Heartbeat *string `json:"heartbeat,omitempty"`
 }
 
 // gitEnvKeys are the environment knobs that could leak host git state into a
@@ -179,7 +183,23 @@ func mustJSON[T any](t *testing.T, raw string) T {
 func addTask(t *testing.T, dir, title string, extra ...string) taskJSON {
 	t.Helper()
 	args := append([]string{"task", "add", title, "--no-validation-criteria", "--json"}, extra...)
-	return mustJSON[taskJSON](t, mustRun(t, dir, args...))
+	return showJSON[taskJSON](t, dir, mustRun(t, dir, args...))
+}
+
+// jsonID extracts the entity id from any JSON acknowledgement.
+func jsonID(t *testing.T, raw string) string {
+	t.Helper()
+	return mustJSON[struct {
+		ID string `json:"id"`
+	}](t, raw).ID
+}
+
+// showJSON reads an entity back in full, keyed off the id its acknowledgement
+// carries: a mutation acknowledges with a summary, so bodies, anchors,
+// verification, and histories live only with "show".
+func showJSON[T any](t *testing.T, dir, ack string) T {
+	t.Helper()
+	return mustJSON[T](t, mustRun(t, dir, "show", jsonID(t, ack), "--json"))
 }
 
 func dateOf(t *testing.T, rfc string) string {
@@ -370,7 +390,7 @@ func TestNoteJSONRoundTrip(t *testing.T) {
 
 func TestNoteEditRequiresFlag(t *testing.T) {
 	dir := initRepo(t)
-	dto := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "N", "--json"))
+	dto := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "N", "--json"))
 	_, _, err := runCLI(t, dir, "note", "edit", dto.ID)
 	var usage *cli.UsageError
 	if !errors.As(err, &usage) {
@@ -379,7 +399,7 @@ func TestNoteEditRequiresFlag(t *testing.T) {
 	if code := cli.ExitCode(err); code != 2 {
 		t.Fatalf("ExitCode = %d, want 2", code)
 	}
-	edited := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", dto.ID, "--add-label", "x", "--title", "M", "--json"))
+	edited := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "edit", dto.ID, "--add-label", "x", "--title", "M", "--json"))
 	if edited.Title != "M" || strings.Join(edited.Tags, ",") != "x" {
 		t.Fatalf("edited title/tags = %q/%v, want M/[x]", edited.Title, edited.Tags)
 	}
@@ -387,7 +407,7 @@ func TestNoteEditRequiresFlag(t *testing.T) {
 
 func TestNoteRmAndSearch(t *testing.T) {
 	dir := initRepo(t)
-	parser := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Parser bug", "--body", "the Tokenizer breaks", "--label", "bug", "--json"))
+	parser := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Parser bug", "--body", "the Tokenizer breaks", "--label", "bug", "--json"))
 	mustRun(t, dir, "note", "add", "Other", "--label", "misc")
 	//nolint:gosec // G101: test fixture, not a credential — "PARSER" is a search query string.
 	for query, wantTitle := range map[string]string{"PARSER": "Parser bug", "tokenizer": "Parser bug", "misc": "Other"} {
@@ -421,10 +441,15 @@ func TestTaskJSONRoundTrip(t *testing.T) {
 	out := mustRun(t, dir, "task", "add", "Main", "--body", "Body text", "--type", "bug",
 		"--priority", "1", "--label", "x", "--label", "a", "--no-validation-criteria",
 		"--parent", blocker.ID, "--blocked-by", blocker.ID, "--json")
-	if !strings.HasPrefix(out, `{"id":"`) || !strings.Contains(out, `","branch":"main",`) {
+	if !strings.HasPrefix(out, `{"id":"`) || !strings.Contains(out, `,"branch":"main",`) {
 		t.Fatalf("task JSON field order broken: %q", out)
 	}
-	added := mustJSON[taskJSON](t, out)
+	for _, frag := range []string{`"description"`, `"comments"`, `"criteria"`, `"blocked_by"`, `"lease"`} {
+		if strings.Contains(out, frag) {
+			t.Errorf("task add ack %q carries %q; a write acknowledgement is a summary", out, frag)
+		}
+	}
+	added := showJSON[taskJSON](t, dir, out)
 	if c := mustRun(t, dir, "task", "comment", added.ID, "hello"); c != added.ID[:7]+"\topen\tP1\t-\tMain\n" {
 		t.Fatalf("comment output = %q, want the post-append lean line", c)
 	}
@@ -504,7 +529,7 @@ func TestTaskLifecycleConflicts(t *testing.T) {
 		}
 	}
 
-	reopened := mustJSON[taskJSON](t, mustRun(t, dir, "task", "edit", task.ID, "--status", "open", "--no-assignee", "--json"))
+	reopened := showJSON[taskJSON](t, dir, mustRun(t, dir, "task", "edit", task.ID, "--status", "open", "--no-assignee", "--json"))
 	if reopened.Status != "open" || reopened.Assignee != nil || reopened.ClosedAt != nil {
 		t.Fatalf("reopen = %+v, want open/unassigned/closed_at null", reopened)
 	}
@@ -724,7 +749,8 @@ func TestStdinBody(t *testing.T) {
 	if _, stderr, err := runCLIIn(t, dir, "line1\nline2\n", "note", "add", "Piped", "--body", "-"); err != nil {
 		t.Fatalf("note add --body -: %v (stderr %q)", err, stderr)
 	}
-	dto := mustJSON[[]noteJSON](t, mustRun(t, dir, "note", "list", "--json"))[0]
+	listed := mustJSON[[]noteJSON](t, mustRun(t, dir, "note", "list", "--json"))[0]
+	dto := mustJSON[noteJSON](t, mustRun(t, dir, "note", "show", listed.ID, "--json"))
 	if dto.Body != "line1\nline2" {
 		t.Fatalf("body = %q, want %q", dto.Body, "line1\nline2")
 	}
@@ -812,11 +838,11 @@ func TestTitleCap(t *testing.T) {
 
 	// The byte cap is the boundary: 256 bytes passes on note add and doc
 	// add-with-body, preserving the title verbatim.
-	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", at, "--json"))
+	note := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", at, "--json"))
 	if note.Title != at {
 		t.Fatalf("note title = %d bytes, want the %d-byte title verbatim", len(note.Title), maxTitleTestBytes)
 	}
-	doc := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", at, "--body", "b", "--json"))
+	doc := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", at, "--body", "b", "--json"))
 	if doc.Title != at {
 		t.Fatalf("doc title = %d bytes, want the %d-byte title verbatim", len(doc.Title), maxTitleTestBytes)
 	}
@@ -879,12 +905,12 @@ func TestTitleCap(t *testing.T) {
 func TestNoteVerify(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "f.go", "v1\n")
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Note", "--path", "f.go", "--json"))
+	added := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Note", "--path", "f.go", "--json"))
 	ref := "refs/cc-notes/notes/" + added.ID
 	if got := gittest.Git(t, dir, "rev-list", "--count", ref); got != "2" {
 		t.Fatalf("after add: %s commits, want 2 (create + born-verified)", got)
 	}
-	verified := mustJSON[noteJSON](t, mustRun(t, dir, "note", "verify", added.ID, "--json"))
+	verified := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "verify", added.ID, "--json"))
 	if verified.ID != added.ID {
 		t.Fatalf("verify id = %q, want %q (stable)", verified.ID, added.ID)
 	}
@@ -899,7 +925,7 @@ func TestNoteVerify(t *testing.T) {
 func TestNoteReviewDrift(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "auth.go", "v1\n")
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Auth note", "--path", "auth.go", "--label", "design", "--json"))
+	added := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Auth note", "--path", "auth.go", "--label", "design", "--json"))
 	if out := mustRun(t, dir, "note", "review"); out != "" {
 		t.Fatalf("review of a fresh note = %q, want empty", out)
 	}
@@ -928,7 +954,7 @@ func TestNoteReviewDrift(t *testing.T) {
 
 func TestNoteReviewStale(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Old note", "--json"))
+	added := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Old note", "--json"))
 
 	t.Setenv("CC_NOTES_NOTE_STALE_AFTER", "1ns")
 	review := mustRun(t, dir, "note", "review")
@@ -947,7 +973,7 @@ func TestNoteCommitAnchorDrift(t *testing.T) {
 	side := commitFile(t, dir, "side.go", "side\n")
 	gittest.Git(t, dir, "checkout", "-q", "main")
 
-	drifted := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Side note", "--commit", side, "--json"))
+	drifted := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Side note", "--commit", side, "--json"))
 	mustRun(t, dir, "note", "add", "Base note", "--commit", base)
 
 	review := mustRun(t, dir, "note", "review")
@@ -958,8 +984,8 @@ func TestNoteCommitAnchorDrift(t *testing.T) {
 
 func TestNoteSupersede(t *testing.T) {
 	dir := initRepo(t)
-	old := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Old decision", "--label", "design", "--json"))
-	neu := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "New decision", "--label", "design", "--json"))
+	old := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Old decision", "--label", "design", "--json"))
+	neu := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "New decision", "--label", "design", "--json"))
 
 	if _, _, err := runCLI(t, dir, "note", "supersede", old.ID); err == nil {
 		t.Fatal("supersede without --by, want UsageError")
@@ -1008,9 +1034,9 @@ func TestNoteSupersede(t *testing.T) {
 
 func TestNoteSupersedeChainNotDangling(t *testing.T) {
 	dir := initRepo(t)
-	a := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "A decision", "--label", "design", "--json"))
-	b := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "B decision", "--label", "design", "--json"))
-	c := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "C decision", "--label", "design", "--json"))
+	a := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "A decision", "--label", "design", "--json"))
+	b := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "B decision", "--label", "design", "--json"))
+	c := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "C decision", "--label", "design", "--json"))
 
 	mustRun(t, dir, "note", "supersede", a.ID, "--by", b.ID)
 	mustRun(t, dir, "note", "supersede", b.ID, "--by", c.ID)
@@ -1027,7 +1053,7 @@ func TestNoteSupersedeChainNotDangling(t *testing.T) {
 func TestNoteJSONContract(t *testing.T) {
 	dir := initRepo(t)
 	base := commitFile(t, dir, "auth.go", "code\n")
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Auth note", "--body", "details",
+	added := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Auth note", "--body", "details",
 		"--label", "design", "--path", "auth.go", "--commit", base, "--branch", "main", "--json"))
 
 	raw := mustRun(t, dir, "note", "show", added.ID, "--json")
@@ -1058,9 +1084,14 @@ func TestNoteJSONContract(t *testing.T) {
 			}
 		}
 	}
-	for _, frag := range []string{`"verified_at":"`, `"verified_by":"`, `"superseded_by":null`, `"drift":null`} {
+	for _, frag := range []string{`"verified_at":"`, `"verified_by":"`} {
 		if !strings.Contains(raw, frag) {
 			t.Errorf("note JSON %q missing %q", raw, frag)
+		}
+	}
+	for _, frag := range []string{`"superseded_by"`, `"drift"`, `"deleted"`, `"stale_at"`, `"attachments"`} {
+		if strings.Contains(raw, frag) {
+			t.Errorf("note JSON %q carries %q at its zero value", raw, frag)
 		}
 	}
 }

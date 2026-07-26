@@ -14,8 +14,7 @@
     },
     {
       "kind": "path",
-      "value": "internal/cli/output.go",
-      "witness": null
+      "value": "internal/cli/output.go"
     }
   ],
   "author": "ada \u003cada@example.com\u003e",

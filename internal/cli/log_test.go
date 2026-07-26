@@ -3,6 +3,8 @@ package cli_test
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -86,7 +88,7 @@ func TestLogAddRoundTrip(t *testing.T) {
 
 func TestLogAddWithFirstEntry(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Rollout", "--entry", "flipped to 5%", "--json"))
+	added := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "Rollout", "--entry", "flipped to 5%", "--json"))
 	if len(added.Entries) != 1 {
 		t.Fatalf("entries = %+v, want one first entry", added.Entries)
 	}
@@ -110,12 +112,12 @@ func TestLogAddWithFirstEntry(t *testing.T) {
 func TestLogAddBodyForms(t *testing.T) {
 	dir := initRepo(t)
 
-	pos := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Positional", "first via positional", "--json"))
+	pos := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "Positional", "first via positional", "--json"))
 	if len(pos.Entries) != 1 || pos.Entries[0].Text != "first via positional" {
 		t.Fatalf("positional entries = %+v, want one 'first via positional'", pos.Entries)
 	}
 
-	flag := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Flagged", "--entry", "first via flag", "--json"))
+	flag := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "Flagged", "--entry", "first via flag", "--json"))
 	if len(flag.Entries) != 1 || flag.Entries[0].Text != "first via flag" {
 		t.Fatalf("--entry entries = %+v, want one 'first via flag'", flag.Entries)
 	}
@@ -124,11 +126,11 @@ func TestLogAddBodyForms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("log add - : %v (stderr %q)", err, stderr)
 	}
-	if got := mustJSON[logJSON](t, stdout).Entries; len(got) != 1 || got[0].Text != "first via stdin" {
+	if got := showJSON[logJSON](t, dir, stdout).Entries; len(got) != 1 || got[0].Text != "first via stdin" {
 		t.Fatalf("stdin entries = %+v, want one 'first via stdin'", got)
 	}
 
-	bare := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Bare", "--json"))
+	bare := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "Bare", "--json"))
 	if len(bare.Entries) != 0 {
 		t.Fatalf("bare add entries = %+v, want none", bare.Entries)
 	}
@@ -140,7 +142,7 @@ func TestLogAddBodyForms(t *testing.T) {
 
 func TestLogAppendSources(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Incident", "--json"))
+	added := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "Incident", "--json"))
 
 	// positional TEXT
 	mustRun(t, dir, "log", "append", added.ID, "first via positional")
@@ -178,7 +180,7 @@ func TestLogAppendSources(t *testing.T) {
 
 func TestLogAppendZeroSources(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "L", "--json"))
+	added := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "L", "--json"))
 
 	_, _, err := runCLI(t, dir, "log", "append", added.ID)
 	var usage *cli.UsageError
@@ -195,7 +197,7 @@ func TestLogAppendZeroSources(t *testing.T) {
 
 func TestLogAppendMultipleSources(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "L", "--json"))
+	added := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "L", "--json"))
 
 	// positional TEXT and --entry together is ambiguous.
 	_, _, err := runCLI(t, dir, "log", "append", added.ID, "positional", "--entry", "flagged")
@@ -232,7 +234,7 @@ func TestLogAddLeanLine(t *testing.T) {
 
 func TestLogEditMetadataOnly(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "First title", "--json"))
+	added := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "First title", "--json"))
 
 	// edit with no flags is a usage error, exactly like doc edit.
 	_, _, err := runCLI(t, dir, "log", "edit", added.ID)
@@ -241,7 +243,7 @@ func TestLogEditMetadataOnly(t *testing.T) {
 		t.Fatalf("log edit with no flags err = %v (exit %d), want UsageError exit 2", err, cli.ExitCode(err))
 	}
 
-	edited := mustJSON[logJSON](t, mustRun(t, dir, "log", "edit", added.ID, "--title", "Second title", "--add-label", "ops", "--json"))
+	edited := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "edit", added.ID, "--title", "Second title", "--add-label", "ops", "--json"))
 	if edited.ID != added.ID {
 		t.Fatalf("edit id = %q, want %q (stable)", edited.ID, added.ID)
 	}
@@ -251,7 +253,7 @@ func TestLogEditMetadataOnly(t *testing.T) {
 	// edit never touches entries: there is no flag to do so, and existing
 	// entries survive metadata edits untouched.
 	mustRun(t, dir, "log", "append", added.ID, "an entry")
-	editedAgain := mustJSON[logJSON](t, mustRun(t, dir, "log", "edit", added.ID, "--add-label", "rollout", "--json"))
+	editedAgain := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "edit", added.ID, "--add-label", "rollout", "--json"))
 	if len(editedAgain.Entries) != 1 || editedAgain.Entries[0].Text != "an entry" {
 		t.Fatalf("entries after metadata edit = %+v, want the one append preserved", editedAgain.Entries)
 	}
@@ -259,7 +261,7 @@ func TestLogEditMetadataOnly(t *testing.T) {
 
 func TestLogListFiltersAndRm(t *testing.T) {
 	dir := initRepo(t)
-	keep := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Kept", "--label", "keep", "--dir", "internal/api", "--json"))
+	keep := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "Kept", "--label", "keep", "--dir", "internal/api", "--json"))
 	mustRun(t, dir, "log", "add", "Dropped", "--label", "skip", "--dir", "internal/sync")
 
 	byTag := mustJSON[[]logJSON](t, mustRun(t, dir, "log", "list", "--label", "keep", "--json"))
@@ -285,7 +287,7 @@ func TestLogListFiltersAndRm(t *testing.T) {
 
 func TestLogSearch(t *testing.T) {
 	dir := initRepo(t)
-	rollout := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Rollout log", "--label", "ops", "--json"))
+	rollout := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "Rollout log", "--label", "ops", "--json"))
 	mustRun(t, dir, "log", "append", rollout.ID, "the Tokenizer panicked at noon")
 	mustRun(t, dir, "log", "add", "Other", "--label", "misc")
 
@@ -308,7 +310,7 @@ func TestLogSearch(t *testing.T) {
 
 func TestLogDeletedShowAndAppend(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Doomed", "--json"))
+	added := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "Doomed", "--json"))
 	mustRun(t, dir, "log", "rm", added.ID)
 
 	// show on a deleted log still resolves and renders it flagged deleted,
@@ -324,7 +326,7 @@ func TestLogDeletedShowAndAppend(t *testing.T) {
 
 	// append to a tombstoned log still resolves the ref and appends — DeleteNote
 	// is a soft tombstone, not a hard delete, just like doc.
-	appended := mustJSON[logJSON](t, mustRun(t, dir, "log", "append", added.ID, "post-mortem note", "--json"))
+	appended := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "append", added.ID, "post-mortem note", "--json"))
 	if len(appended.Entries) != 1 || appended.Entries[0].Text != "post-mortem note" {
 		t.Fatalf("entries after append to deleted = %+v, want the appended entry", appended.Entries)
 	}
@@ -336,4 +338,67 @@ func TestLogNotFound(t *testing.T) {
 	if !errors.Is(err, store.ErrNotFound) || cli.ExitCode(err) != 3 {
 		t.Fatalf("log show err = %v (exit %d), want ErrNotFound exit 3", err, cli.ExitCode(err))
 	}
+}
+
+// TestLogAppendAckIsSummary is the payload-size regression: an append to a long
+// log acknowledges with a summary that names the log and tallies its entries,
+// never echoing every entry ever appended, and emits no key sitting at its zero
+// value. The mirror half proves log show still hands back the entries, capped
+// at the most recent showHistoryCap with the elided count beside them.
+func TestLogAppendAckIsSummary(t *testing.T) {
+	dir := initRepo(t)
+	id := jsonID(t, mustRun(t, dir, "log", "add", "Rollout", "--json"))
+	for i := range 25 {
+		mustRun(t, dir, "log", "append", id, fmt.Sprintf("entry %02d", i))
+	}
+
+	raw := mustRun(t, dir, "log", "append", id, "entry 25", "--json")
+	ack := mustJSON[map[string]any](t, raw)
+	if _, ok := ack["entries"]; ok {
+		t.Errorf("append ack %q echoes the entries; the ack is a summary", raw)
+	}
+	wantKeys := []string{"author", "entry_count", "id", "title", "updated_at"}
+	gotKeys := slices.Sorted(maps.Keys(ack))
+	if !slices.Equal(gotKeys, wantKeys) {
+		t.Errorf("append ack keys = %v, want %v", gotKeys, wantKeys)
+	}
+	if ack["id"] != id || ack["title"] != "Rollout" || ack["entry_count"] != float64(26) {
+		t.Errorf("append ack = %v, want log %s titled Rollout with 26 entries", ack, id)
+	}
+	for key, value := range ack {
+		if isZeroJSON(value) {
+			t.Errorf("append ack key %q = %#v at its zero value; it must be omitted", key, value)
+		}
+	}
+
+	shown := mustJSON[struct {
+		Entries        []logEntryJSON `json:"entries"`
+		EntriesOmitted int            `json:"entries_omitted"`
+	}](t, mustRun(t, dir, "log", "show", id, "--json"))
+	if len(shown.Entries) != 20 || shown.EntriesOmitted != 6 {
+		t.Fatalf("show = %d entries with %d omitted, want the most recent 20 and 6 elided", len(shown.Entries), shown.EntriesOmitted)
+	}
+	if first, last := shown.Entries[0].Text, shown.Entries[19].Text; first != "entry 06" || last != "entry 25" {
+		t.Errorf("show entries span %q..%q, want entry 06..entry 25 (the newest window)", first, last)
+	}
+}
+
+// isZeroJSON reports whether a decoded JSON value sits at its Go zero value —
+// the shape a DTO field must omit rather than emit.
+func isZeroJSON(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return true
+	case string:
+		return v == ""
+	case float64:
+		return v == 0
+	case bool:
+		return !v
+	case []any:
+		return len(v) == 0
+	case map[string]any:
+		return len(v) == 0
+	}
+	return false
 }

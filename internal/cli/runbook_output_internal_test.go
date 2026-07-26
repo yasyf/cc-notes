@@ -93,14 +93,47 @@ func TestNewRunbookDTO(t *testing.T) {
 	}
 
 	empty := newRunbookDTO(model.Runbook{ID: "0000000aa"})
-	if empty.Steps == nil || empty.Runs == nil || empty.Labels == nil || empty.Comments == nil {
-		t.Fatalf("empty runbook slices must be non-nil: steps=%v runs=%v labels=%v comments=%v", empty.Steps, empty.Runs, empty.Labels, empty.Comments)
+	if empty.Steps != nil || empty.Runs != nil || empty.Labels != nil || empty.Comments != nil {
+		t.Fatalf("empty runbook slices must be nil so omitempty drops the keys: steps=%v runs=%v labels=%v comments=%v", empty.Steps, empty.Runs, empty.Labels, empty.Comments)
 	}
-	if len(empty.Comments) != 0 {
-		t.Fatalf("empty runbook has phantom comments: %+v", empty.Comments)
+}
+
+// TestNewRunbookSummaryDTO proves the listing projection trades the steps and
+// runs for their tallies and carries the full id as the agent's handle.
+func TestNewRunbookSummaryDTO(t *testing.T) {
+	rb := sampleRunbook()
+	summary := newRunbookSummaryDTO(rb)
+
+	if summary.ID != "deadbeefcafe1234" {
+		t.Errorf("ID = %q, want the full id, not a short prefix", summary.ID)
 	}
-	if len(empty.Steps) != 0 || len(empty.Runs) != 0 {
-		t.Fatalf("empty runbook has phantom steps/runs: %+v", empty)
+	if summary.Title != "Deploy" || summary.Status != "active" || summary.UpdatedAt != "2025-01-01T00:00:00Z" {
+		t.Errorf("summary = %+v, want Deploy/active/2025-01-01T00:00:00Z", summary)
+	}
+	if summary.StepCount != 2 || summary.RunCount != 1 {
+		t.Errorf("counts = %d steps/%d runs, want 2/1", summary.StepCount, summary.RunCount)
+	}
+
+	empty := newRunbookSummaryDTO(model.Runbook{ID: "0000000aa", Status: model.RunbookActive})
+	if empty.StepCount != 0 || empty.RunCount != 0 {
+		t.Errorf("empty counts = %d/%d, want 0/0 so omitempty drops both keys", empty.StepCount, empty.RunCount)
+	}
+}
+
+// TestNewRunbookRunSummaryDTO proves a run's listing projection trades the
+// per-step entries for the done-over-total tally.
+func TestNewRunbookRunSummaryDTO(t *testing.T) {
+	rb := sampleRunbook()
+	summary := newRunbookRunSummaryDTO(rb, rb.Runs[0])
+
+	if summary.ID != "run111cccccccc" || summary.Status != "succeeded" || summary.Runner != "Ada <ada@x>" {
+		t.Errorf("summary = %+v, want run111cccccccc/succeeded/Ada <ada@x>", summary)
+	}
+	if summary.StartedAt != "2025-01-01T00:00:00Z" {
+		t.Errorf("StartedAt = %q, want 2025-01-01T00:00:00Z", summary.StartedAt)
+	}
+	if summary.StepsDone != 1 || summary.StepsTotal != 2 {
+		t.Errorf("progress = %d/%d, want 1/2", summary.StepsDone, summary.StepsTotal)
 	}
 }
 

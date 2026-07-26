@@ -10,6 +10,20 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
+// rbShow reads a runbook back in full. A mutation acknowledges with a summary,
+// so the description, steps, runs, and comments live only here.
+func rbShow(t *testing.T, dir, id string) runbookDTO {
+	t.Helper()
+	return spJSON[runbookDTO](t, spMust(t, dir, "runbook", "show", id, "--json"))
+}
+
+// rbMutate runs one runbook mutation and reads the resulting runbook back in
+// full, keyed off the id its summary acknowledgement carries.
+func rbMutate(t *testing.T, dir string, args ...string) runbookDTO {
+	t.Helper()
+	return rbShow(t, dir, spID(t, spMust(t, dir, args...)))
+}
+
 // rbStepID returns the id of the step with the given text in rb, failing if
 // none matches.
 func rbStepID(t *testing.T, rb runbookDTO, text string) string {
@@ -36,8 +50,15 @@ func TestRunbookAddWithSteps(t *testing.T) {
 	dir := spInitRepo(t)
 	out := spMust(t, dir, "runbook", "add", "Deploy", "--body", "how to deploy",
 		"--label", "ops", "--step", "build", "--step", "test", "--step", "ship", "--json")
-	rb := spJSON[runbookDTO](t, out)
+	ack := spJSON[runbookSummaryDTO](t, out)
+	if ack.Title != "Deploy" || ack.Status != "active" || ack.StepCount != 3 {
+		t.Errorf("add ack = %+v, want Deploy/active/3 steps", ack)
+	}
+	if strings.Contains(out, `"steps"`) || strings.Contains(out, `"description"`) {
+		t.Errorf("add ack %q carries the steps or description; a write acknowledgement is a summary", out)
+	}
 
+	rb := rbShow(t, dir, ack.ID)
 	if rb.Title != "Deploy" || rb.Description != "how to deploy" {
 		t.Errorf("title/desc = %q/%q", rb.Title, rb.Description)
 	}
@@ -53,8 +74,8 @@ func TestRunbookAddWithSteps(t *testing.T) {
 	if strings.Join(rb.Labels, ",") != "ops" {
 		t.Errorf("labels = %v, want [ops]", rb.Labels)
 	}
-	if rb.Runs == nil || len(rb.Runs) != 0 {
-		t.Errorf("runs = %v, want empty non-nil", rb.Runs)
+	if len(rb.Runs) != 0 {
+		t.Errorf("runs = %v, want none", rb.Runs)
 	}
 	if rb.Author != spActor {
 		t.Errorf("author = %q, want %q", rb.Author, spActor)
@@ -71,15 +92,15 @@ func TestRunbookAddWithSteps(t *testing.T) {
 
 func TestRunbookListActiveVsAll(t *testing.T) {
 	dir := spInitRepo(t)
-	a := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "A", "--json"))
-	b := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "B", "--json"))
+	a := rbMutate(t, dir, "runbook", "add", "A", "--json")
+	b := rbMutate(t, dir, "runbook", "add", "B", "--json")
 	spMust(t, dir, "runbook", "archive", b.ID)
 
-	active := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--json"))
+	active := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "list", "--json"))
 	if len(active) != 1 || active[0].ID != a.ID {
 		t.Fatalf("list --json = %v, want only active %s", active, a.ID)
 	}
-	all := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--all", "--json"))
+	all := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "list", "--all", "--json"))
 	if len(all) != 2 {
 		t.Fatalf("list --all --json = %d, want 2", len(all))
 	}
@@ -91,7 +112,7 @@ func TestRunbookListActiveVsAll(t *testing.T) {
 
 func TestRunbookShowRendersStepsAndRuns(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "Deploy", "--step", "build", "--step", "ship", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "Deploy", "--step", "build", "--step", "ship", "--json")
 	spMust(t, dir, "runbook", "run", "start", rb.ID)
 	spMust(t, dir, "runbook", "run", "done", rb.ID, rbStepID(t, rb, "build")[:8])
 	spMust(t, dir, "runbook", "run", "finish", rb.ID)
@@ -107,24 +128,24 @@ func TestRunbookShowRendersStepsAndRuns(t *testing.T) {
 
 func TestRunbookStepPlacementAndMove(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--json"))
-	first := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "step", "add", rb.ID, "first", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--json")
+	first := rbMutate(t, dir, "runbook", "step", "add", rb.ID, "first", "--json")
 	spMust(t, dir, "runbook", "step", "add", rb.ID, "third", "--json") // appends last
 	firstID := rbStepID(t, first, "first")
-	after := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "step", "add", rb.ID, "second", "--after", firstID[:8], "--json"))
+	after := rbMutate(t, dir, "runbook", "step", "add", rb.ID, "second", "--after", firstID[:8], "--json")
 	if got := rbStepTexts(after); strings.Join(got, ",") != "first,second,third" {
 		t.Fatalf("after --after = %v, want [first second third]", got)
 	}
-	zeroed := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "step", "add", rb.ID, "zero", "--first", "--json"))
+	zeroed := rbMutate(t, dir, "runbook", "step", "add", rb.ID, "zero", "--first", "--json")
 	if got := rbStepTexts(zeroed); strings.Join(got, ",") != "zero,first,second,third" {
 		t.Fatalf("after --first = %v, want [zero first second third]", got)
 	}
 	thirdID := rbStepID(t, zeroed, "third")
-	beforeThird := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "step", "add", rb.ID, "pre", "--before", thirdID[:8], "--json"))
+	beforeThird := rbMutate(t, dir, "runbook", "step", "add", rb.ID, "pre", "--before", thirdID[:8], "--json")
 	if got := rbStepTexts(beforeThird); strings.Join(got, ",") != "zero,first,second,pre,third" {
 		t.Fatalf("after --before = %v, want [zero first second pre third]", got)
 	}
-	moved := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "step", "move", rb.ID, firstID[:8], "--last", "--json"))
+	moved := rbMutate(t, dir, "runbook", "step", "move", rb.ID, firstID[:8], "--last", "--json")
 	if got := rbStepTexts(moved); strings.Join(got, ",") != "zero,second,pre,third,first" {
 		t.Fatalf("after move --last = %v, want [zero second pre third first]", got)
 	}
@@ -142,14 +163,14 @@ func TestRunbookStepPlacementAndMove(t *testing.T) {
 
 func TestRunbookStepEditRemove(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--step", "a", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--step", "a", "--json")
 	id := rbStepID(t, rb, "a")
 
-	edited := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "step", "edit", rb.ID, id[:8], "--text", "A2", "--command", "echo hi", "--json"))
+	edited := rbMutate(t, dir, "runbook", "step", "edit", rb.ID, id[:8], "--text", "A2", "--command", "echo hi", "--json")
 	if edited.Steps[0].Text != "A2" || edited.Steps[0].Command != "echo hi" {
 		t.Fatalf("edit = %+v, want text A2 command 'echo hi'", edited.Steps[0])
 	}
-	cleared := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "step", "edit", rb.ID, id[:8], "--no-command", "--json"))
+	cleared := rbMutate(t, dir, "runbook", "step", "edit", rb.ID, id[:8], "--no-command", "--json")
 	if cleared.Steps[0].Command != "" {
 		t.Fatalf("command = %q after --no-command, want empty", cleared.Steps[0].Command)
 	}
@@ -165,7 +186,7 @@ func TestRunbookStepEditRemove(t *testing.T) {
 		}
 	}
 
-	removed := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "step", "rm", rb.ID, id[:8], "--json"))
+	removed := rbMutate(t, dir, "runbook", "step", "rm", rb.ID, id[:8], "--json")
 	if len(removed.Steps) != 0 {
 		t.Fatalf("steps = %v after rm, want empty", removed.Steps)
 	}
@@ -173,10 +194,10 @@ func TestRunbookStepEditRemove(t *testing.T) {
 
 func TestRunbookRunLifecycle(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--step", "a", "--step", "b", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--step", "a", "--step", "b", "--json")
 	task := spID(t, spMust(t, dir, "task", "add", "T", "--no-validation-criteria", "--json"))
 
-	started := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "run", "start", rb.ID, "--task", task, "--json"))
+	started := rbMutate(t, dir, "runbook", "run", "start", rb.ID, "--task", task, "--json")
 	if len(started.Runs) != 1 || started.Runs[0].Status != "running" {
 		t.Fatalf("runs = %+v, want one running", started.Runs)
 	}
@@ -185,7 +206,7 @@ func TestRunbookRunLifecycle(t *testing.T) {
 	}
 
 	spMust(t, dir, "runbook", "run", "done", rb.ID, rbStepID(t, rb, "a")[:8], "--note", "built")
-	skipped := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "run", "skip", rb.ID, rbStepID(t, rb, "b")[:8], "--json"))
+	skipped := rbMutate(t, dir, "runbook", "run", "skip", rb.ID, rbStepID(t, rb, "b")[:8], "--json")
 	run := skipped.Runs[0]
 	if run.Steps[0].Status != "done" || run.Steps[0].Note != "built" {
 		t.Fatalf("step a = %+v, want done/built", run.Steps[0])
@@ -194,7 +215,7 @@ func TestRunbookRunLifecycle(t *testing.T) {
 		t.Fatalf("step b = %+v, want skipped", run.Steps[1])
 	}
 
-	finished := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "run", "finish", rb.ID, "--json"))
+	finished := rbMutate(t, dir, "runbook", "run", "finish", rb.ID, "--json")
 	if finished.Runs[0].Status != "succeeded" || finished.Runs[0].FinishedAt == nil {
 		t.Fatalf("finished run = %+v, want succeeded with finish stamp", finished.Runs[0])
 	}
@@ -202,7 +223,7 @@ func TestRunbookRunLifecycle(t *testing.T) {
 
 func TestRunbookRunDefaultResolution(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--step", "a", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--step", "a", "--json")
 	step := rbStepID(t, rb, "a")[:8]
 
 	// zero running runs → conflict.
@@ -217,7 +238,7 @@ func TestRunbookRunDefaultResolution(t *testing.T) {
 
 	// two running runs → ambiguous, unless --run disambiguates.
 	spMust(t, dir, "runbook", "run", "start", rb.ID)
-	two := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "run", "start", rb.ID, "--json"))
+	two := rbMutate(t, dir, "runbook", "run", "start", rb.ID, "--json")
 	if _, _, err := spRun(t, dir, "", "runbook", "run", "done", rb.ID, step); !errors.Is(err, store.ErrAmbiguous) || ExitCode(err) != 5 {
 		t.Fatalf("done with two runs err = %v (exit %d), want ambiguous", err, ExitCode(err))
 	}
@@ -227,20 +248,20 @@ func TestRunbookRunDefaultResolution(t *testing.T) {
 
 func TestRunbookFinishStatusAndFlags(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--step", "a", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--step", "a", "--json")
 	step := rbStepID(t, rb, "a")[:8]
 
 	// a failed step defaults the finish to failed.
 	spMust(t, dir, "runbook", "run", "start", rb.ID)
 	spMust(t, dir, "runbook", "run", "fail", rb.ID, step)
-	failed := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "run", "finish", rb.ID, "--json"))
+	failed := rbMutate(t, dir, "runbook", "run", "finish", rb.ID, "--json")
 	if failed.Runs[0].Status != "failed" {
 		t.Fatalf("finish default = %q, want failed (a step failed)", failed.Runs[0].Status)
 	}
 
 	// explicit --abandoned overrides.
 	spMust(t, dir, "runbook", "run", "start", rb.ID)
-	ab := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "run", "finish", rb.ID, "--abandoned", "--json"))
+	ab := rbMutate(t, dir, "runbook", "run", "finish", rb.ID, "--abandoned", "--json")
 	if ab.Runs[len(ab.Runs)-1].Status != "abandoned" {
 		t.Fatalf("finish --abandoned = %q, want abandoned", ab.Runs[len(ab.Runs)-1].Status)
 	}
@@ -258,9 +279,9 @@ func TestRunbookFinishStatusAndFlags(t *testing.T) {
 
 func TestRunbookStatusConflicts(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--json")
 
-	archived := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "archive", rb.ID, "--json"))
+	archived := rbMutate(t, dir, "runbook", "archive", rb.ID, "--json")
 	if archived.Status != "archived" || archived.ArchivedAt == nil {
 		t.Fatalf("archived = %+v, want archived with stamp", archived)
 	}
@@ -282,7 +303,7 @@ func TestRunbookStatusConflicts(t *testing.T) {
 
 func TestRunbookArchivedWriteGating(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--step", "a", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--step", "a", "--json")
 	spMust(t, dir, "runbook", "archive", rb.ID)
 
 	for _, args := range [][]string{
@@ -308,9 +329,9 @@ func TestRunbookArchivedWriteGating(t *testing.T) {
 
 func TestRunbookEditAndComment(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--label", "keep", "--label", "drop", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--label", "keep", "--label", "drop", "--json")
 
-	edited := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "edit", rb.ID, "--title", "R2", "--body", "desc", "--add-label", "new", "--rm-label", "drop", "--json"))
+	edited := rbMutate(t, dir, "runbook", "edit", rb.ID, "--title", "R2", "--body", "desc", "--add-label", "new", "--rm-label", "drop", "--json")
 	if edited.Title != "R2" || edited.Description != "desc" {
 		t.Fatalf("edit = title %q desc %q", edited.Title, edited.Description)
 	}
@@ -426,7 +447,7 @@ func TestResolveTargetRun(t *testing.T) {
 // pre-migration CLI's own target resolution would otherwise raise first.
 func TestRunbookFinishArchivedBeatsAmbiguousRuns(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--step", "a", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--step", "a", "--json")
 	spMust(t, dir, "runbook", "run", "start", rb.ID)
 	spMust(t, dir, "runbook", "run", "start", rb.ID) // two concurrent running runs
 	spMust(t, dir, "runbook", "archive", rb.ID)
@@ -447,7 +468,7 @@ func TestRunbookFinishArchivedBeatsAmbiguousRuns(t *testing.T) {
 // the not-found (exit 3) the pre-migration CLI would raise first.
 func TestRunbookStartArchivedBeatsTaskResolution(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--json")
 	spMust(t, dir, "runbook", "archive", rb.ID)
 
 	_, _, err := spRun(t, dir, "", "runbook", "run", "start", rb.ID, "--task", "deadbeef")
@@ -465,7 +486,7 @@ func TestRunbookStartArchivedBeatsTaskResolution(t *testing.T) {
 // the plain notes error (exit 1) the raw ErrSelfRelative would map to.
 func TestRunbookStepMoveSelfRelative(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--step", "a", "--step", "b", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--step", "a", "--step", "b", "--json")
 	aID := rbStepID(t, rb, "a")
 
 	for _, flag := range []string{"--before", "--after"} {
@@ -480,7 +501,7 @@ func TestRunbookStepMoveSelfRelative(t *testing.T) {
 }
 
 // runbookIDs returns the ids of a runbook DTO slice.
-func runbookIDs(rbs []runbookDTO) []string {
+func runbookIDs(rbs []runbookSummaryDTO) []string {
 	out := make([]string, len(rbs))
 	for i, rb := range rbs {
 		out[i] = rb.ID
@@ -496,8 +517,8 @@ func TestRunbookAddAnchorsRoundTrip(t *testing.T) {
 	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
 	sha := gittest.Git(t, dir, "rev-parse", "HEAD")
 
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "Deploy",
-		"--commit", "HEAD", "--path", "scripts/deploy.sh", "--dir", "internal/auth", "--branch", "main", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "Deploy",
+		"--commit", "HEAD", "--path", "scripts/deploy.sh", "--dir", "internal/auth", "--branch", "main", "--json")
 	// A second, anchorless runbook must never match an anchor filter.
 	spMust(t, dir, "runbook", "add", "Bare", "--json")
 
@@ -520,7 +541,7 @@ func TestRunbookAddAnchorsRoundTrip(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"runbook", "list", "--json"}, tc.args...)
-			got := spJSON[[]runbookDTO](t, spMust(t, dir, args...))
+			got := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, args...))
 			matched := len(got) == 1 && got[0].ID == rb.ID
 			if matched != tc.match {
 				t.Fatalf("list %v = %v, want match=%v", tc.args, runbookIDs(got), tc.match)
@@ -535,36 +556,36 @@ func TestRunbookAddAnchorsRoundTrip(t *testing.T) {
 // rule or a dropped anchor conjunction changes these counts.
 func TestRunbookListLabelFilter(t *testing.T) {
 	dir := spInitRepo(t)
-	both := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "Both",
-		"--label", "ops", "--label", "db", "--path", "deploy.sh", "--json"))
+	both := rbMutate(t, dir, "runbook", "add", "Both",
+		"--label", "ops", "--label", "db", "--path", "deploy.sh", "--json")
 	spMust(t, dir, "runbook", "add", "OpsOnly", "--label", "ops", "--json")
 	spMust(t, dir, "runbook", "add", "DbOnly", "--label", "db", "--json")
 
 	// A single label matches every runbook carrying it.
-	ops := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--json"))
+	ops := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--json"))
 	if len(ops) != 2 {
 		t.Fatalf("list --label ops = %v, want 2 (Both, OpsOnly)", runbookIDs(ops))
 	}
 
 	// Two labels are ANDed: only the runbook carrying both survives.
-	and := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--label", "db", "--json"))
+	and := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--label", "db", "--json"))
 	if len(and) != 1 || and[0].ID != both.ID {
 		t.Fatalf("list --label ops --label db = %v, want only Both %s", runbookIDs(and), both.ID)
 	}
 
 	// --label composes with an anchor: both the label and the path must match.
-	composed := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--path", "deploy.sh", "--json"))
+	composed := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--path", "deploy.sh", "--json"))
 	if len(composed) != 1 || composed[0].ID != both.ID {
 		t.Fatalf("list --label ops --path deploy.sh = %v, want only Both %s", runbookIDs(composed), both.ID)
 	}
 
 	// Label matches but anchor does not: the conjunction rejects it.
-	if got := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--path", "other.sh", "--json")); len(got) != 0 {
+	if got := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "list", "--label", "ops", "--path", "other.sh", "--json")); len(got) != 0 {
 		t.Fatalf("list --label ops --path other.sh = %v, want empty (anchor unmatched)", runbookIDs(got))
 	}
 
 	// Anchor matches but label does not: still rejected.
-	if got := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--label", "absent", "--path", "deploy.sh", "--json")); len(got) != 0 {
+	if got := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "list", "--label", "absent", "--path", "deploy.sh", "--json")); len(got) != 0 {
 		t.Fatalf("list --label absent --path deploy.sh = %v, want empty (label unmatched)", runbookIDs(got))
 	}
 }
@@ -573,9 +594,9 @@ func TestRunbookListLabelFilter(t *testing.T) {
 // the list filter and that an anchor-only edit is not an empty edit.
 func TestRunbookEditAnchors(t *testing.T) {
 	dir := spInitRepo(t)
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--path", "a.go", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--path", "a.go", "--json")
 
-	byPath := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--path", "a.go", "--json"))
+	byPath := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "list", "--path", "a.go", "--json"))
 	if len(byPath) != 1 || byPath[0].ID != rb.ID {
 		t.Fatalf("pre-edit list --path a.go = %v, want [%s]", runbookIDs(byPath), rb.ID)
 	}
@@ -583,10 +604,10 @@ func TestRunbookEditAnchors(t *testing.T) {
 	// an anchor-only edit is accepted (not an empty-edit usage error).
 	spMust(t, dir, "runbook", "edit", rb.ID, "--add-dir", "internal/x", "--rm-path", "a.go")
 
-	if got := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--dir", "internal/x", "--json")); len(got) != 1 || got[0].ID != rb.ID {
+	if got := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "list", "--dir", "internal/x", "--json")); len(got) != 1 || got[0].ID != rb.ID {
 		t.Fatalf("post-edit list --dir internal/x = %v, want [%s]", runbookIDs(got), rb.ID)
 	}
-	if got := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "list", "--path", "a.go", "--json")); len(got) != 0 {
+	if got := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "list", "--path", "a.go", "--json")); len(got) != 0 {
 		t.Fatalf("post-edit list --path a.go = %v, want empty (path removed)", runbookIDs(got))
 	}
 
@@ -600,23 +621,23 @@ func TestRunbookEditAnchors(t *testing.T) {
 // re-adding identical content roots a fresh runbook.
 func TestRunbookRm(t *testing.T) {
 	dir := spInitRepo(t)
-	gone := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "Gone", "--json"))
-	keep := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "Keep", "--json"))
+	gone := rbMutate(t, dir, "runbook", "add", "Gone", "--json")
+	keep := rbMutate(t, dir, "runbook", "add", "Keep", "--json")
 
-	removed := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "rm", gone.ID[:8], "--json"))
+	removed := rbMutate(t, dir, "runbook", "rm", gone.ID[:8], "--json")
 	if removed.ID != gone.ID {
 		t.Fatalf("rm returned %s, want tombstoned %s", removed.ID, gone.ID)
 	}
 
 	for _, listArgs := range [][]string{{"runbook", "list", "--json"}, {"runbook", "list", "--all", "--json"}} {
-		got := spJSON[[]runbookDTO](t, spMust(t, dir, listArgs...))
+		got := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, listArgs...))
 		if len(got) != 1 || got[0].ID != keep.ID {
 			t.Fatalf("%v after rm = %v, want only %s (tombstone hidden)", listArgs, runbookIDs(got), keep.ID)
 		}
 	}
 
 	// dedupe-safe: the tombstone is not live, so identical content roots anew.
-	re := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "Gone", "--json"))
+	re := rbMutate(t, dir, "runbook", "add", "Gone", "--json")
 	if re.ID == gone.ID {
 		t.Fatalf("re-add converged on tombstoned runbook %s", gone.ID)
 	}
@@ -627,30 +648,30 @@ func TestRunbookRm(t *testing.T) {
 // are excluded.
 func TestRunbookSearch(t *testing.T) {
 	dir := spInitRepo(t)
-	byTitle := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "deploy service", "--json"))
-	byLabel := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "rollout", "--label", "deploy", "--json"))
-	byStep := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "release", "--step", "deploy the binary", "--json"))
+	byTitle := rbMutate(t, dir, "runbook", "add", "deploy service", "--json")
+	byLabel := rbMutate(t, dir, "runbook", "add", "rollout", "--label", "deploy", "--json")
+	byStep := rbMutate(t, dir, "runbook", "add", "release", "--step", "deploy the binary", "--json")
 	spMust(t, dir, "runbook", "add", "unrelated", "--json")
 
-	ranked := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--json"))
+	ranked := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--json"))
 	if want := []string{byTitle.ID, byLabel.ID, byStep.ID}; strings.Join(runbookIDs(ranked), ",") != strings.Join(want, ",") {
 		t.Fatalf("search deploy = %v, want %v (title > label > step)", runbookIDs(ranked), want)
 	}
 
-	one := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--limit", "1", "--json"))
+	one := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--limit", "1", "--json"))
 	if len(one) != 1 || one[0].ID != byTitle.ID {
 		t.Fatalf("search --limit 1 = %v, want [%s]", runbookIDs(one), byTitle.ID)
 	}
-	all := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--limit", "0", "--json"))
+	all := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--limit", "0", "--json"))
 	if len(all) != 3 {
 		t.Fatalf("search --limit 0 = %v, want all 3 (0 = all)", runbookIDs(all))
 	}
-	if none := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "search", "nomatch", "--json")); len(none) != 0 {
+	if none := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "search", "nomatch", "--json")); len(none) != 0 {
 		t.Fatalf("search nomatch = %v, want empty", runbookIDs(none))
 	}
 
 	spMust(t, dir, "runbook", "archive", byTitle.ID)
-	afterArchive := spJSON[[]runbookDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--json"))
+	afterArchive := spJSON[[]runbookSummaryDTO](t, spMust(t, dir, "runbook", "search", "deploy", "--json"))
 	if want := []string{byLabel.ID, byStep.ID}; strings.Join(runbookIDs(afterArchive), ",") != strings.Join(want, ",") {
 		t.Fatalf("search after archive = %v, want %v (archived excluded)", runbookIDs(afterArchive), want)
 	}
@@ -662,7 +683,7 @@ func TestRunbookFreeText(t *testing.T) {
 	dir := spInitRepo(t)
 
 	// add: positional BODY.
-	pos := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "P", "positional desc", "--json"))
+	pos := rbMutate(t, dir, "runbook", "add", "P", "positional desc", "--json")
 	if pos.Description != "positional desc" {
 		t.Fatalf("add positional desc = %q, want 'positional desc'", pos.Description)
 	}
@@ -671,7 +692,7 @@ func TestRunbookFreeText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add stdin: %v (%s)", err, stderr)
 	}
-	if desc := spJSON[runbookDTO](t, out).Description; desc != "piped desc" {
+	if desc := rbShow(t, dir, spID(t, out)).Description; desc != "piped desc" {
 		t.Fatalf("add stdin desc = %q, want 'piped desc'", desc)
 	}
 	// add: positional and --body together conflict.
@@ -679,10 +700,10 @@ func TestRunbookFreeText(t *testing.T) {
 		t.Fatalf("add positional+--body err = %v, want usage", err)
 	}
 
-	rb := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "add", "R", "--json"))
+	rb := rbMutate(t, dir, "runbook", "add", "R", "--json")
 
 	// comment: --body flag, then stdin, then the required-absence and conflict errors.
-	commented := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "comment", rb.ID, "--body", "flag comment", "--json"))
+	commented := rbMutate(t, dir, "runbook", "comment", rb.ID, "--body", "flag comment", "--json")
 	if len(commented.Comments) != 1 || commented.Comments[0].Body != "flag comment" {
 		t.Fatalf("comment --body = %+v, want one 'flag comment'", commented.Comments)
 	}
@@ -690,7 +711,7 @@ func TestRunbookFreeText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("comment stdin: %v (%s)", err, stderr)
 	}
-	if last := spJSON[runbookDTO](t, out).Comments; len(last) != 2 || last[1].Body != "stdin comment" {
+	if last := rbShow(t, dir, spID(t, out)).Comments; len(last) != 2 || last[1].Body != "stdin comment" {
 		t.Fatalf("comment stdin = %+v, want 'stdin comment' second", last)
 	}
 	if _, _, err := spRun(t, dir, "", "runbook", "comment", rb.ID); !isUsage(err) {
@@ -701,7 +722,7 @@ func TestRunbookFreeText(t *testing.T) {
 	}
 
 	// step add: --text flag, then the required-absence and conflict errors.
-	viaText := spJSON[runbookDTO](t, spMust(t, dir, "runbook", "step", "add", rb.ID, "--text", "flag step", "--json"))
+	viaText := rbMutate(t, dir, "runbook", "step", "add", rb.ID, "--text", "flag step", "--json")
 	if len(viaText.Steps) != 1 || viaText.Steps[0].Text != "flag step" {
 		t.Fatalf("step add --text = %+v, want one 'flag step'", viaText.Steps)
 	}
@@ -718,7 +739,7 @@ func TestRunbookFreeText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("step edit stdin: %v (%s)", err, stderr)
 	}
-	if edited := spJSON[runbookDTO](t, out); edited.Steps[0].Text != "edited via stdin" {
+	if edited := rbShow(t, dir, spID(t, out)); edited.Steps[0].Text != "edited via stdin" {
 		t.Fatalf("step edit --text - = %q, want 'edited via stdin'", edited.Steps[0].Text)
 	}
 }

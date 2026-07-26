@@ -9,20 +9,20 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
 
 // searchDTO is one merged hit of the top-level search: a kind discriminator
-// plus the matching entity DTO, mutually exclusive like relevantDTO's fields.
+// plus the matching entity's summary DTO, mutually exclusive like relevantDTO's
+// fields.
 type searchDTO struct {
-	Kind          string            `json:"kind"`
-	Note          *noteDTO          `json:"note,omitempty"`
-	Doc           *docDTO           `json:"doc,omitempty"`
-	Log           *logDTO           `json:"log,omitempty"`
-	Runbook       *runbookDTO       `json:"runbook,omitempty"`
-	Investigation *investigationDTO `json:"investigation,omitempty"`
+	Kind          string                   `json:"kind"`
+	Note          *noteSummaryDTO          `json:"note,omitempty"`
+	Doc           *docSummaryDTO           `json:"doc,omitempty"`
+	Log           *logSummaryDTO           `json:"log,omitempty"`
+	Runbook       *runbookSummaryDTO       `json:"runbook,omitempty"`
+	Investigation *investigationSummaryDTO `json:"investigation,omitempty"`
 }
 
 // searchHit pairs one matched entity with its kind's own rank tier, so the
@@ -47,7 +47,7 @@ func newSearchCmd() *cobra.Command {
 		Short: "Ranked search across every note, doc, log, runbook, and investigation",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -68,7 +68,7 @@ func newSearchCmd() *cobra.Command {
 			if limit > 0 && len(hits) > limit {
 				hits = hits[:limit]
 			}
-			return printSearchHits(cmd, s, hits, jsonOut)
+			return printSearchHits(cmd, hits, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -152,7 +152,7 @@ func compareSearchHits(a, b searchHit) int {
 
 // printSearchHits writes the merged hits as searchDTOs in JSON, or as each
 // kind's lean line prefixed with a kind tag column.
-func printSearchHits(cmd *cobra.Command, s *store.Store, hits []searchHit, jsonOut bool) error {
+func printSearchHits(cmd *cobra.Command, hits []searchHit, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		dtos := make([]searchDTO, len(hits))
@@ -160,35 +160,19 @@ func printSearchHits(cmd *cobra.Command, s *store.Store, hits []searchHit, jsonO
 			dto := searchDTO{Kind: string(h.snap.Meta().Kind)}
 			switch v := h.snap.(type) {
 			case model.Note:
-				atts, err := entityAttachments(cmd.Context(), s, v.Attachments)
-				if err != nil {
-					return err
-				}
-				n := newNoteDTO(v, "", atts)
+				n := newNoteSummaryDTO(v, "")
 				dto.Note = &n
 			case model.Doc:
-				atts, err := entityAttachments(cmd.Context(), s, v.Attachments)
-				if err != nil {
-					return err
-				}
-				d := newDocDTO(v, "", atts)
+				d := newDocSummaryDTO(v, "")
 				dto.Doc = &d
 			case model.Log:
-				atts, err := entityAttachments(cmd.Context(), s, v.Attachments)
-				if err != nil {
-					return err
-				}
-				l := newLogDTO(v, atts)
+				l := newLogSummaryDTO(v)
 				dto.Log = &l
 			case model.Runbook:
-				rb := newRunbookDTO(v)
+				rb := newRunbookSummaryDTO(v)
 				dto.Runbook = &rb
 			case model.Investigation:
-				atts, err := entityAttachments(cmd.Context(), s, v.Attachments)
-				if err != nil {
-					return err
-				}
-				inv := newInvestigationDTO(v, atts)
+				inv := newInvestigationSummaryDTO(v)
 				dto.Investigation = &inv
 			default:
 				panic(fmt.Sprintf("searchAllKinds returned unknown snapshot %T", h.snap))

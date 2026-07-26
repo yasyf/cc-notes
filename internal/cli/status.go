@@ -28,7 +28,7 @@ func newStatusCmd() *cobra.Command {
 				return err
 			}
 			if jsonOut {
-				return printStatusJSON(cmd, c, report)
+				return printStatusJSON(cmd, report)
 			}
 			return printStatusText(cmd, report)
 		},
@@ -67,16 +67,11 @@ func printStatusText(cmd *cobra.Command, report notes.StatusReport) error {
 	return err
 }
 
-func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusReport) error {
-	blocking, err := c.TasksBlockingIndex(cmd.Context())
-	if err != nil {
-		return err
-	}
+func printStatusJSON(cmd *cobra.Command, report notes.StatusReport) error {
 	dto := statusDTO{
 		Branch:     string(report.Branch),
-		Backlog:    taskDTOs(report.Backlog, blocking),
-		YourBranch: taskDTOs(report.YourBranch, blocking),
-		InProgress: make([]statusAssigneeDTO, 0, len(report.InProgress)),
+		Backlog:    taskSummaryDTOs(report.Backlog),
+		YourBranch: taskSummaryDTOs(report.YourBranch),
 		Notes:      statusNotesDTO{Total: report.Notes.Total, NeedsReview: report.Notes.NeedsReview},
 		Docs:       statusNotesDTO{Total: report.Docs.Total, NeedsReview: report.Docs.NeedsReview},
 		Logs:       statusLogsDTO{Total: report.Logs},
@@ -88,19 +83,19 @@ func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusRep
 	for _, grp := range report.InProgress {
 		staleDTOs := make([]statusStaleDTO, len(grp.Tasks))
 		for i, st := range grp.Tasks {
-			staleDTOs[i] = statusStaleDTO{taskDTO: newTaskDTO(st.Task, blocking[st.Task.ID]), Stale: st.Stale}
+			staleDTOs[i] = statusStaleDTO{taskSummaryDTO: newTaskSummaryDTO(st.Task), Stale: st.Stale}
 		}
 		dto.InProgress = append(dto.InProgress, statusAssigneeDTO{Assignee: string(grp.Assignee), Tasks: staleDTOs})
 	}
 	return printJSON(cmd.OutOrStdout(), dto)
 }
 
-// taskDTOs maps tasks to their JSON DTOs, indexing each task's derived blocks
-// from the reverse dependency index.
-func taskDTOs(tasks []model.Task, blocking map[model.EntityID][]model.EntityID) []taskDTO {
-	dtos := make([]taskDTO, len(tasks))
-	for i, t := range tasks {
-		dtos[i] = newTaskDTO(t, blocking[t.ID])
+// taskSummaryDTOs maps tasks to their JSON summary DTOs, nil when there are
+// none.
+func taskSummaryDTOs(tasks []model.Task) []taskSummaryDTO {
+	var dtos []taskSummaryDTO
+	for _, t := range tasks {
+		dtos = append(dtos, newTaskSummaryDTO(t))
 	}
 	return dtos
 }
@@ -110,9 +105,9 @@ func taskDTOs(tasks []model.Task, blocking map[model.EntityID][]model.EntityID) 
 // grouped by assignee, and the note, doc, log, and investigation summaries.
 type statusDTO struct {
 	Branch         string                  `json:"branch"`
-	Backlog        []taskDTO               `json:"backlog"`
-	YourBranch     []taskDTO               `json:"your_branch"`
-	InProgress     []statusAssigneeDTO     `json:"in_progress"`
+	Backlog        []taskSummaryDTO        `json:"backlog,omitempty"`
+	YourBranch     []taskSummaryDTO        `json:"your_branch,omitempty"`
+	InProgress     []statusAssigneeDTO     `json:"in_progress,omitempty"`
 	Notes          statusNotesDTO          `json:"notes"`
 	Docs           statusNotesDTO          `json:"docs"`
 	Logs           statusLogsDTO           `json:"logs"`
@@ -125,10 +120,10 @@ type statusAssigneeDTO struct {
 	Tasks    []statusStaleDTO `json:"tasks"`
 }
 
-// statusStaleDTO embeds a taskDTO, inlining its fields, plus the reader-side
-// stale verdict.
+// statusStaleDTO embeds a taskSummaryDTO, inlining its fields, plus the
+// reader-side stale verdict.
 type statusStaleDTO struct {
-	taskDTO
+	taskSummaryDTO
 	Stale bool `json:"stale"`
 }
 

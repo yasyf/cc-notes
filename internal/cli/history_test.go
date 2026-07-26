@@ -280,7 +280,7 @@ func TestHistoryElementFormats(t *testing.T) {
 			name: "task criterion and its status transition",
 			setup: func(t *testing.T, dir string) string {
 				id := histID(t, mustRun(t, dir, "task", "add", "build", "--no-validation-criteria", "--json"))
-				task := mustJSON[taskJSON](t, mustRun(t, dir, "task", "criterion", "add", id, "tests pass", "--json"))
+				task := showJSON[taskJSON](t, dir, mustRun(t, dir, "task", "criterion", "add", id, "tests pass", "--json"))
 				mustRun(t, dir, "task", "criterion", "met", id, task.Criteria[0].ID)
 				return id
 			},
@@ -382,7 +382,7 @@ func TestHistoryElementJSON(t *testing.T) {
 	}
 
 	taskID := histID(t, mustRun(t, dir, "task", "add", "build", "--no-validation-criteria", "--json"))
-	task := mustJSON[taskJSON](t, mustRun(t, dir, "task", "criterion", "add", taskID, "tests pass", "--json"))
+	task := showJSON[taskJSON](t, dir, mustRun(t, dir, "task", "criterion", "add", taskID, "tests pass", "--json"))
 	mustRun(t, dir, "task", "criterion", "met", taskID, task.Criteria[0].ID)
 	tEntries := unmarshalHistory(t, mustRun(t, dir, "history", taskID, "--json"))
 

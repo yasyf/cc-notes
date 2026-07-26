@@ -12,23 +12,22 @@ import (
 )
 
 // relevantDTO is one ranked entity in the JSON output of relevant: a kind
-// discriminator ("note"|"doc"|"log"|"runbook"|"investigation"), the matching entity DTO (the
-// note DTO on a note entry, the doc DTO — carrying the free-text trigger — on a
-// doc entry, the log DTO on a log entry, the runbook DTO on a runbook entry;
-// notes and docs carry the drift verdict, logs and runbooks never drift), the
-// summed relevance score, and the matched reasons in fixed priority order. The
-// entity fields are mutually exclusive; the unused ones are omitted so the
-// float hook can index entry["note"]/entry["doc"]/entry["log"]/
-// entry["runbook"]/entry["investigation"] by kind.
+// discriminator ("note"|"doc"|"log"|"runbook"|"investigation"), the matching
+// summary DTO — the doc summary carrying the free-text trigger, notes and docs
+// carrying the drift verdict, logs and runbooks never drifting — the summed
+// relevance score, and the matched reasons in fixed priority order. The entity
+// fields are mutually exclusive; the unused ones are omitted so the float hook
+// can index entry["note"]/entry["doc"]/entry["log"]/entry["runbook"]/
+// entry["investigation"] by kind. Bodies stay with the per-kind show verbs.
 type relevantDTO struct {
-	Kind          string            `json:"kind"`
-	Note          *noteDTO          `json:"note,omitempty"`
-	Doc           *docDTO           `json:"doc,omitempty"`
-	Log           *logDTO           `json:"log,omitempty"`
-	Runbook       *runbookDTO       `json:"runbook,omitempty"`
-	Investigation *investigationDTO `json:"investigation,omitempty"`
-	Score         int               `json:"score"`
-	Reasons       []string          `json:"reasons"`
+	Kind          string                   `json:"kind"`
+	Note          *noteSummaryDTO          `json:"note,omitempty"`
+	Doc           *docSummaryDTO           `json:"doc,omitempty"`
+	Log           *logSummaryDTO           `json:"log,omitempty"`
+	Runbook       *runbookSummaryDTO       `json:"runbook,omitempty"`
+	Investigation *investigationSummaryDTO `json:"investigation,omitempty"`
+	Score         int                      `json:"score"`
+	Reasons       []string                 `json:"reasons"`
 }
 
 func newRelevantCmd() *cobra.Command {
@@ -60,7 +59,7 @@ func newRelevantCmd() *cobra.Command {
 			if limit > 0 && len(entries) > limit {
 				entries = entries[:limit]
 			}
-			return printRelevant(cmd, c, entries, jsonOut)
+			return printRelevant(cmd, entries, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -78,7 +77,7 @@ func newRelevantCmd() *cobra.Command {
 // A doc line additionally carries a bracketed verdict flag and a "doc show
 // <short-id>" hint, and never the long body. Each entry carries its own drift
 // verdict; a log never drifts, so its verdict is empty.
-func printRelevant(cmd *cobra.Command, c *notes.Client, entries []notes.RelevantEntry, jsonOut bool) error {
+func printRelevant(cmd *cobra.Command, entries []notes.RelevantEntry, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		dtos := make([]relevantDTO, len(entries))
@@ -86,35 +85,19 @@ func printRelevant(cmd *cobra.Command, c *notes.Client, entries []notes.Relevant
 			dto := relevantDTO{Kind: string(e.Kind), Score: e.Score, Reasons: e.Reasons}
 			switch e.Kind {
 			case model.KindDoc:
-				infos, err := c.AttachmentInfos(cmd.Context(), e.Doc.Attachments)
-				if err != nil {
-					return err
-				}
-				d := newDocDTO(e.Doc, string(e.Verdict), attachmentInfoDTOs(infos))
+				d := newDocSummaryDTO(e.Doc, string(e.Verdict))
 				dto.Doc = &d
 			case model.KindLog:
-				infos, err := c.AttachmentInfos(cmd.Context(), e.Log.Attachments)
-				if err != nil {
-					return err
-				}
-				l := newLogDTO(e.Log, attachmentInfoDTOs(infos))
+				l := newLogSummaryDTO(e.Log)
 				dto.Log = &l
 			case model.KindRunbook:
-				rb := newRunbookDTO(e.Runbook)
+				rb := newRunbookSummaryDTO(e.Runbook)
 				dto.Runbook = &rb
 			case model.KindInvestigation:
-				infos, err := c.AttachmentInfos(cmd.Context(), e.Investigation.Attachments)
-				if err != nil {
-					return err
-				}
-				inv := newInvestigationDTO(e.Investigation, attachmentInfoDTOs(infos))
+				inv := newInvestigationSummaryDTO(e.Investigation)
 				dto.Investigation = &inv
 			default:
-				infos, err := c.AttachmentInfos(cmd.Context(), e.Note.Attachments)
-				if err != nil {
-					return err
-				}
-				n := newNoteDTO(e.Note, string(e.Verdict), attachmentInfoDTOs(infos))
+				n := newNoteSummaryDTO(e.Note, string(e.Verdict))
 				dto.Note = &n
 			}
 			dtos[i] = dto

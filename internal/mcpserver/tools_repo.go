@@ -62,12 +62,12 @@ type attachmentGetArgs struct {
 }
 
 func registerRepo(ts *toolset, b *bridge) {
-	addTool(ts, &mcp.Tool{Name: "status", Description: "Orient on the backlog: tasks in flight, who holds what, and notes and docs needing attention."},
+	addTool(ts, &mcp.Tool{Name: "status", Description: "Orient on the backlog: tasks in flight, who holds what, and notes and docs needing attention. Tasks come back as summaries; task_show reads one back in full."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ statusArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, "status", "--json")
 		})
 
-	addTool(ts, &mcp.Tool{Name: "relevant", Description: "Surface the notes, docs, and tasks anchored to a repository path — run before editing unfamiliar code."},
+	addTool(ts, &mcp.Tool{Name: "relevant", Description: "Surface the notes, docs, and tasks anchored to a repository path — run before editing unfamiliar code. Each hit is a summary under its kind key; that kind's show tool (note_show, doc_show, log_show, runbook_show, investigation_show) reads one back in full."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in relevantArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--branch", in.Branch)
@@ -104,7 +104,7 @@ func registerRepo(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"history"}, flags, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "search", Description: "Ranked search across every note, doc, log, and runbook."},
+	addTool(ts, &mcp.Tool{Name: "search", Description: "Ranked search across every note, doc, log, and runbook. Each hit is a summary under its kind key; that kind's show tool (note_show, doc_show, log_show, runbook_show, investigation_show) reads one back in full."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in searchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -118,7 +118,7 @@ func registerRepo(ts *toolset, b *bridge) {
 
 	idTool(ts, b, "show", "Show any note, doc, log, task, sprint, project, or runbook by id prefix.", "show")
 
-	addTool(ts, &mcp.Tool{Name: "blame", Description: "Find the tasks that produced a commit, via its recorded commit links and task trailers."},
+	addTool(ts, &mcp.Tool{Name: "blame", Description: "Find the tasks that produced a commit, via its recorded commit links and task trailers. Returns task and investigation summaries; task_show or investigation_show reads one back in full."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in blameArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"blame"}, []string{"--json"}, in.SHA)...)
 		})

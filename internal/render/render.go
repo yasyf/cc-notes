@@ -56,15 +56,6 @@ func SHAStrings(shas []model.SHA) []string {
 	return out
 }
 
-// EmptyNotNil returns items unchanged, or an empty non-nil slice when items is
-// nil, so JSON serializes an empty array rather than null.
-func EmptyNotNil(items []string) []string {
-	if items == nil {
-		return []string{}
-	}
-	return items
-}
-
 // AnchorValues extracts the values of anchors matching kind, in order.
 func AnchorValues(anchors []model.Anchor, kind model.AnchorKind) []string {
 	var values []string

@@ -42,6 +42,14 @@ booleans, and the properties are named in the schema instead of remembered — a
 drives the CLI in-process, so validation, semantics, and output are identical: a tool
 result is the command's `--json`.
 
+That result comes in two shapes. A listing or a write acknowledgement returns a *summary* — the
+identity, the lifecycle status, and a tally where the entity carries an append-only history — and
+never the body, entries, comments, criteria, steps, or runs. The `*_show` tools return the record
+whole: `note_show`, `doc_show`, `log_show`, `task_show`, `sprint_show`, `project_show`,
+`runbook_show`, `investigation_show`, or the kind-agnostic `show`. So `note_add` hands back the id,
+not the body you just wrote, and `log_append` hands back an entry tally, not the entry. Fetch a
+body only to read one you did not write.
+
 Property names mirror the flags. The four anchored kinds — note, doc, log, runbook — take
 anchor arrays (commits, paths, dirs, branches) on their add tools and the add_*/rm_* octet
 on their edit tools; task, sprint, project, and the criterion/step tools do not carry anchors
@@ -339,7 +347,10 @@ The full surface — every flag, property, default, and output shape — is in
 
 A tool result is the command's `--json`; on the CLI, append `--json` to any note, doc, log,
 investigation, papercut, task, sync, reconcile, or status command for the same machine-readable
-record instead of the lean line.
+record instead of the lean line. Listings and write acknowledgements come back as summaries; a
+`show` returns the record whole, capping each append-only history at its 20 most recent members
+with an `entries_omitted`, `findings_omitted`, `comments_omitted`, or `runs_omitted` count beside
+it.
 
 `--repo PATH` (`-R`) targets another repository's store from any cwd — pass any path inside it;
 file-path arguments (e.g. `--attach`) still resolve against the invocation cwd.
@@ -482,8 +493,8 @@ See `references/runbooks.md`.
 ## References
 
 - `references/cli-reference.md` — the complete command surface: every MCP tool and its
-  properties, every flag and default, and the lean-line and `--json` output shape for each
-  command.
+  properties, every flag and default, and the lean-line output plus both `--json` shapes — the
+  listing summary and the full `show` record — for each command.
 - `references/coordination.md` — how agents coordinate over time: the backlog and the branch
   attribute, claims and leases, stale-claim recovery, deps and blocking, reconcile-on-merge,
   and union-merge sync across a shared remote.

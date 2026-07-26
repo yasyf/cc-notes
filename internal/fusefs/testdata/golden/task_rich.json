@@ -14,7 +14,6 @@
   "blocked_by": [
     "9999aaaa9999aaaa9999aaaa9999aaaa9999aaaa"
   ],
-  "blocks": [],
   "parent": "8888bbbb8888bbbb8888bbbb8888bbbb8888bbbb",
   "comments": [
     {
@@ -34,7 +33,6 @@
   "created_at": "2025-12-12T02:54:56Z",
   "updated_at": "2025-12-13T02:54:56Z",
   "started_at": "2025-12-12T03:10:00Z",
-  "closed_at": null,
   "sprint": "7777cccc7777cccc7777cccc7777cccc7777cccc",
   "project": "6666dddd6666dddd6666dddd6666dddd6666dddd",
   "criteria": [
@@ -47,9 +45,7 @@
     {
       "id": "bbbb2222bbbb2222bbbb2222bbbb2222",
       "text": "Tests pass",
-      "script": "",
       "status": "pending"
     }
-  ],
-  "closed_forced": false
+  ]
 }

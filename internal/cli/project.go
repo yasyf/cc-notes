@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
@@ -94,7 +93,7 @@ func newProjectListCmd() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -112,7 +111,7 @@ func newProjectListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printProjectList(cmd, s, projects, jsonOut)
+			return printProjectList(cmd, projects, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -273,23 +272,14 @@ func projectEditEmpty(e notes.ProjectEdit) bool {
 	return e.Title == nil && e.Description == nil && len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0
 }
 
-// printProjectList writes projects as a JSON array of their DTOs — each carrying
-// its reverse-index sprint and task ids — or one lean line per project.
-func printProjectList(cmd *cobra.Command, s *store.Store, projects []model.Project, jsonOut bool) error {
+// printProjectList writes projects as a JSON array of their summary DTOs or one
+// lean line per project.
+func printProjectList(cmd *cobra.Command, projects []model.Project, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
-		ctx := cmd.Context()
-		sprints, err := s.ListSprints(ctx)
-		if err != nil {
-			return err
-		}
-		tasks, err := s.ListTasks(ctx)
-		if err != nil {
-			return err
-		}
-		dtos := make([]projectDTO, len(projects))
+		dtos := make([]projectSummaryDTO, len(projects))
 		for i, p := range projects {
-			dtos[i] = newProjectDTO(p, sprintsInProject(sprints, p.ID), tasksInProject(tasks, sprints, p.ID))
+			dtos[i] = newProjectSummaryDTO(p)
 		}
 		return printJSON(out, dtos)
 	}

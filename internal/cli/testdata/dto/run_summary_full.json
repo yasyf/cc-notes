@@ -1,0 +1,8 @@
+{
+  "id": "run00001",
+  "status": "succeeded",
+  "runner": "ci \u003cci@example.com\u003e",
+  "started_at": "2023-11-15T02:13:20Z",
+  "steps_done": 1,
+  "steps_total": 2
+}

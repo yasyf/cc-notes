@@ -1,0 +1,11 @@
+{
+  "id": "doc-full-0000000000000000000000000000000",
+  "title": "auth migration handoff",
+  "when": "resuming the auth cutover",
+  "tags": [
+    "auth"
+  ],
+  "author": "ada \u003cada@example.com\u003e",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "drift": "DRIFTED"
+}

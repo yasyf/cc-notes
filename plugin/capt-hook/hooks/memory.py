@@ -85,14 +85,20 @@ def memory_notes(evt: PostToolUseEvent, slug: str) -> list[dict[str, Any]]:
     return [n for n in parsed if isinstance(n, dict)] if isinstance(parsed, list) else []
 
 
-def note_id_of(out: str | None) -> str:
+def note_field(out: str | None, key: str) -> str:
     if not out or not out.strip():
         return ""
     try:
         parsed = json.loads(out)
     except json.JSONDecodeError:
         return ""
-    return parsed.get("id", "") if isinstance(parsed, dict) else ""
+    return parsed.get(key, "") if isinstance(parsed, dict) else ""
+
+
+def note_body(evt: PostToolUseEvent, note_id: str) -> str:
+    # A listing carries only the summary shape (id, title, tags, author, updated_at, drift);
+    # the body rides `note show` alone, so comparing it costs a second call.
+    return note_field(run_cc_notes(evt, "note", "show", note_id, "--json"), "body")
 
 
 def clamp_title(title: str, max_bytes: int = MAX_TITLE_BYTES) -> str:
@@ -140,12 +146,12 @@ def mirror_memory_to_note(evt: PostToolUseEvent) -> HookResult | None:
     title = clamp_title(parsed.title or slug.replace("-", " "))
     existing = memory_notes(evt, slug)
     if existing:
-        note = existing[0]
-        if note.get("title", "") == title and note.get("body", "") == parsed.body:
+        note_id = existing[0].get("id", "")
+        if existing[0].get("title", "") == title and note_body(evt, note_id) == parsed.body:
             return None
-        if run_cc_notes(evt, "note", "edit", note.get("id", ""), f"--title={title}", f"--body={parsed.body}") is None:
+        if run_cc_notes(evt, "note", "edit", note_id, f"--title={title}", f"--body={parsed.body}") is None:
             return None
-        note_id, action = note.get("id", ""), "updated"
+        action = "updated"
     else:
         out = run_cc_notes(
             evt,
@@ -166,7 +172,7 @@ def mirror_memory_to_note(evt: PostToolUseEvent) -> HookResult | None:
         # memory write that already landed.
         if out is None:
             return None
-        note_id, action = note_id_of(out), "created"
+        note_id, action = note_field(out, "id"), "created"
     return evt.warn(
         f"Mirrored memory '{slug}' → durable cc-notes note {short_id(note_id)} ({action}), "
         f"labeled `memory` / `memory:{slug}`. Run `cc-notes sync` to share it.",

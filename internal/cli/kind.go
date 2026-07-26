@@ -37,10 +37,8 @@ func (k kindSpec[T]) load(ctx context.Context, s *store.Store, prefix string) (s
 }
 
 var (
-	noteSpec = kindSpec[model.Note]{kind: model.KindNote, print: printNote}
-	docSpec  = kindSpec[model.Doc]{kind: model.KindDoc, print: func(cmd *cobra.Command, c *notes.Client, d model.Doc, jsonOut bool) error {
-		return printDoc(cmd, c, d, "", jsonOut)
-	}}
+	noteSpec    = kindSpec[model.Note]{kind: model.KindNote, print: printNote}
+	docSpec     = kindSpec[model.Doc]{kind: model.KindDoc, print: printDoc}
 	logSpec     = kindSpec[model.Log]{kind: model.KindLog, print: printLog}
 	taskSpec    = kindSpec[model.Task]{kind: model.KindTask, print: printTask}
 	sprintSpec  = kindSpec[model.Sprint]{kind: model.KindSprint, print: printSprint}

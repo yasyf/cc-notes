@@ -265,8 +265,8 @@ func TestRelevantJSON(t *testing.T) {
 	if len(d.Reasons) != 1 || d.Reasons[0] != "path" {
 		t.Errorf("json reasons = %v, want [path]", d.Reasons)
 	}
-	if d.Note.Drift == nil || *d.Note.Drift != verdictDrifted {
-		t.Errorf("json drift = %v, want %q", d.Note.Drift, verdictDrifted)
+	if d.Note.Drift != verdictDrifted {
+		t.Errorf("json drift = %q, want %q", d.Note.Drift, verdictDrifted)
 	}
 }
 
@@ -539,8 +539,8 @@ func TestRelevantDocJSON(t *testing.T) {
 		t.Errorf("doc reasons = %v, want [dir]", docEntry.Reasons)
 	}
 	// A freshly created (unverified) doc carries its verdict in the doc DTO.
-	if docEntry.Doc.Drift == nil || *docEntry.Doc.Drift != verdictUnverified {
-		t.Errorf("doc drift = %v, want %q", docEntry.Doc.Drift, verdictUnverified)
+	if docEntry.Doc.Drift != verdictUnverified {
+		t.Errorf("doc drift = %q, want %q", docEntry.Doc.Drift, verdictUnverified)
 	}
 }
 
@@ -604,8 +604,8 @@ func TestRelevantLogJSONAndLeanLine(t *testing.T) {
 	if entry.Log.ID != string(logID) {
 		t.Errorf("log id = %q, want %q", entry.Log.ID, logID)
 	}
-	if len(entry.Log.Entries) != 1 || entry.Log.Entries[0].Text != "first entry" {
-		t.Errorf("log entries = %+v, want the one appended entry", entry.Log.Entries)
+	if entry.Log.EntryCount != 1 {
+		t.Errorf("log entry count = %d, want the one appended entry", entry.Log.EntryCount)
 	}
 	if entry.Score != 60 {
 		t.Errorf("log score = %d, want %d", entry.Score, 60)

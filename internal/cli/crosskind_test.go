@@ -25,7 +25,7 @@ func TestCrossKindNotFoundHint(t *testing.T) {
 		{
 			name: "single other kind",
 			setup: func(t *testing.T, dir string) string {
-				n := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "A note", "--json"))
+				n := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "A note", "--json"))
 				return n.ID
 			},
 			wantHint: []string{"note", "cc-notes show"},
@@ -38,7 +38,7 @@ func TestCrossKindNotFoundHint(t *testing.T) {
 		{
 			name: "no match anywhere",
 			setup: func(t *testing.T, dir string) string {
-				n := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "A note", "--json"))
+				n := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "A note", "--json"))
 				// One hex longer than a full id: prefixes nothing in any kind.
 				return n.ID + "0"
 			},
@@ -147,7 +147,7 @@ func pigeonholeNoteAndTask(t *testing.T, dir string) string {
 	notesByChar := map[byte][]string{}
 	tasksByChar := map[byte][]string{}
 	for i := 0; i < 32; i++ {
-		n := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", fmt.Sprintf("note-%d", i), "--json"))
+		n := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", fmt.Sprintf("note-%d", i), "--json"))
 		notesByChar[n.ID[0]] = append(notesByChar[n.ID[0]], n.ID)
 		tk := addTask(t, dir, fmt.Sprintf("task-%d", i))
 		tasksByChar[tk.ID[0]] = append(tasksByChar[tk.ID[0]], tk.ID)

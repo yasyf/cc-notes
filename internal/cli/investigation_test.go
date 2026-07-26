@@ -58,9 +58,9 @@ func assertInvestigationStoryState(t *testing.T, inv investigationDTO, id string
 	if inv.RootCause != want.rootCause {
 		t.Errorf("root cause = %q, want %q", inv.RootCause, want.rootCause)
 	}
-	if inv.Entries == nil || inv.FollowUps == nil || inv.FixCommits == nil || inv.Commits == nil || inv.SupersededBy == nil || inv.Attachments == nil {
-		t.Errorf("DTO set/list fields must be arrays, got entries=%v follow_ups=%v fix_commits=%v commits=%v superseded_by=%v attachments=%v",
-			inv.Entries, inv.FollowUps, inv.FixCommits, inv.Commits, inv.SupersededBy, inv.Attachments)
+	if inv.FollowUps != nil || inv.Commits != nil || inv.SupersededBy != nil {
+		t.Errorf("never-set list fields must be absent, got follow_ups=%v commits=%v superseded_by=%v",
+			inv.FollowUps, inv.Commits, inv.SupersededBy)
 	}
 	if strings.Join(inv.Labels, ",") != "ci" {
 		t.Errorf("labels = %v, want [ci]", inv.Labels)
@@ -96,6 +96,22 @@ func assertInvestigationStoryState(t *testing.T, inv investigationDTO, id string
 	}
 	if want.terminal != (inv.ClosedBy != nil) {
 		t.Errorf("closed_by = %v, terminal = %t", inv.ClosedBy, want.terminal)
+	}
+}
+
+// assertInvestigationStorySummary pins what a listing carries: the identity and
+// status a reader triages on, the finding and timeline tallies, and nothing
+// else — a summary has no premise, findings, or entries to inspect.
+func assertInvestigationStorySummary(t *testing.T, inv investigationSummaryDTO, id string, want investigationStoryWant) {
+	t.Helper()
+	if inv.ID != id || inv.Title != invTitle || inv.Status != want.status {
+		t.Errorf("summary = %s/%q/%q, want %s/%q/%q", inv.ID, inv.Title, inv.Status, id, invTitle, want.status)
+	}
+	if inv.FindingCount != 1 {
+		t.Errorf("finding_count = %d, want 1", inv.FindingCount)
+	}
+	if inv.EntryCount != len(want.entries) {
+		t.Errorf("entry_count = %d, want %d", inv.EntryCount, len(want.entries))
 	}
 }
 
@@ -178,16 +194,16 @@ func assertInvestigationStorySurfaces(t *testing.T, dir, id string, want investi
 		t.Errorf("show at %s has %d resolution lines, want %d (closed records add the header summary):\n%s", want.status, got, wantResolutionLines, plain)
 	}
 
-	all := spJSON[[]investigationDTO](t, spMust(t, dir, "investigation", "list", "--all", "--json"))
+	all := spJSON[[]investigationSummaryDTO](t, spMust(t, dir, "investigation", "list", "--all", "--json"))
 	if len(all) != 1 {
 		t.Fatalf("list --all at %s = %d entries, want 1", want.status, len(all))
 	}
-	assertInvestigationStoryState(t, all[0], id, want)
-	filtered := spJSON[[]investigationDTO](t, spMust(t, dir, "investigation", "list", "--status", want.status, "--json"))
+	assertInvestigationStorySummary(t, all[0], id, want)
+	filtered := spJSON[[]investigationSummaryDTO](t, spMust(t, dir, "investigation", "list", "--status", want.status, "--json"))
 	if len(filtered) != 1 || filtered[0].ID != id {
 		t.Fatalf("list --status %s = %+v, want %s", want.status, filtered, id)
 	}
-	listed := spJSON[[]investigationDTO](t, spMust(t, dir, "investigation", "list", "--json"))
+	listed := spJSON[[]investigationSummaryDTO](t, spMust(t, dir, "investigation", "list", "--json"))
 	if want.terminal {
 		if len(listed) != 0 {
 			t.Errorf("default list at terminal %s = %+v, want empty", want.status, listed)
@@ -196,11 +212,11 @@ func assertInvestigationStorySurfaces(t *testing.T, dir, id string, want investi
 		t.Errorf("default list at %s = %+v, want %s", want.status, listed, id)
 	}
 
-	found := spJSON[[]investigationDTO](t, spMust(t, dir, "investigation", "search", "daemonkit", "--json"))
+	found := spJSON[[]investigationSummaryDTO](t, spMust(t, dir, "investigation", "search", "daemonkit", "--json"))
 	if len(found) != 1 {
 		t.Fatalf("search at %s = %d entries, want 1", want.status, len(found))
 	}
-	assertInvestigationStoryState(t, found[0], id, want)
+	assertInvestigationStorySummary(t, found[0], id, want)
 	leanWant := id[:7] + "\t" + want.status + "\t" + invTitle + "\n"
 	if got := spMust(t, dir, "investigation", "list", "--all"); got != leanWant {
 		t.Errorf("lean list at %s = %q, want %q", want.status, got, leanWant)
@@ -208,6 +224,13 @@ func assertInvestigationStorySurfaces(t *testing.T, dir, id string, want investi
 	if got := spMust(t, dir, "investigation", "search", "daemonkit"); got != leanWant {
 		t.Errorf("lean search at %s = %q, want %q", want.status, got, leanWant)
 	}
+}
+
+// invShow reads an investigation back in full. A mutation acknowledges with a
+// summary, so the premise and the findings live only here.
+func invShow(t *testing.T, dir, id string) investigationDTO {
+	t.Helper()
+	return spJSON[investigationDTO](t, spMust(t, dir, "investigation", "show", id, "--json"))
 }
 
 func TestInvestigationOpenForms(t *testing.T) {
@@ -229,9 +252,12 @@ func TestInvestigationOpenForms(t *testing.T) {
 			if err != nil {
 				t.Fatalf("cc-notes %s: %v (stderr %q)", strings.Join(tc.args, " "), err, stderr)
 			}
-			inv := spJSON[investigationDTO](t, stdout)
-			if inv.Title != tc.title || inv.Premise != tc.premise || inv.Status != "open" {
-				t.Errorf("open = %q/%q/%q, want %q/%q/open", inv.Title, inv.Premise, inv.Status, tc.title, tc.premise)
+			ack := spJSON[investigationSummaryDTO](t, stdout)
+			if ack.Title != tc.title || ack.Status != "open" {
+				t.Errorf("open ack = %q/%q, want %q/open", ack.Title, ack.Status, tc.title)
+			}
+			if got := invShow(t, dir, ack.ID).Premise; got != tc.premise {
+				t.Errorf("premise = %q, want %q", got, tc.premise)
 			}
 		})
 	}
@@ -264,57 +290,57 @@ func TestInvestigationRequiredTextRejectsEmpty(t *testing.T) {
 		{
 			name: "finding add positional",
 			args: func(t *testing.T, dir string) []string {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--json"))
-				return []string{"investigation", "finding", "add", inv.ID, ""}
+				id := spID(t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--json"))
+				return []string{"investigation", "finding", "add", id, ""}
 			},
 		},
 		{
 			name: "finding add flag",
 			args: func(t *testing.T, dir string) []string {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--json"))
-				return []string{"investigation", "finding", "add", inv.ID, "--body", ""}
+				id := spID(t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--json"))
+				return []string{"investigation", "finding", "add", id, "--body", ""}
 			},
 		},
 		{
 			name: "finding add stdin",
 			args: func(t *testing.T, dir string) []string {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--json"))
-				return []string{"investigation", "finding", "add", inv.ID, "-"}
+				id := spID(t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--json"))
+				return []string{"investigation", "finding", "add", id, "-"}
 			},
 		},
 		{
 			name: "finding edit positional",
 			args: func(t *testing.T, dir string) []string {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--finding", "original", "--json"))
-				return []string{"investigation", "finding", "edit", inv.ID, inv.Findings[0].ID, ""}
+				id := spID(t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--finding", "original", "--json"))
+				return []string{"investigation", "finding", "edit", id, invShow(t, dir, id).Findings[0].ID, ""}
 			},
 		},
 		{
 			name: "finding edit flag",
 			args: func(t *testing.T, dir string) []string {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--finding", "original", "--json"))
-				return []string{"investigation", "finding", "edit", inv.ID, inv.Findings[0].ID, "--body", ""}
+				id := spID(t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--finding", "original", "--json"))
+				return []string{"investigation", "finding", "edit", id, invShow(t, dir, id).Findings[0].ID, "--body", ""}
 			},
 		},
 		{
 			name: "finding edit stdin",
 			args: func(t *testing.T, dir string) []string {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--finding", "original", "--json"))
-				return []string{"investigation", "finding", "edit", inv.ID, inv.Findings[0].ID, "-"}
+				id := spID(t, spMust(t, dir, "investigation", "open", "Finding", "premise", "--finding", "original", "--json"))
+				return []string{"investigation", "finding", "edit", id, invShow(t, dir, id).Findings[0].ID, "-"}
 			},
 		},
 		{
 			name: "required transition positional",
 			args: func(t *testing.T, dir string) []string {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Transition", "premise", "--json"))
-				return []string{"investigation", "root-cause", inv.ID, ""}
+				id := spID(t, spMust(t, dir, "investigation", "open", "Transition", "premise", "--json"))
+				return []string{"investigation", "root-cause", id, ""}
 			},
 		},
 		{
 			name: "required transition stdin",
 			args: func(t *testing.T, dir string) []string {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Transition", "premise", "--json"))
-				return []string{"investigation", "root-cause", inv.ID, "-"}
+				id := spID(t, spMust(t, dir, "investigation", "open", "Transition", "premise", "--json"))
+				return []string{"investigation", "root-cause", id, "-"}
 			},
 		},
 	} {
@@ -335,7 +361,7 @@ func TestInvestigationOpenRejectsEmptyFinding(t *testing.T) {
 	if !errors.Is(err, notes.ErrEmptyFinding) {
 		t.Fatalf("open with empty finding error = %v, want ErrEmptyFinding", err)
 	}
-	got := spJSON[[]investigationDTO](t, spMust(t, dir, "investigation", "list", "--all", "--json"))
+	got := spJSON[[]investigationSummaryDTO](t, spMust(t, dir, "investigation", "list", "--all", "--json"))
 	if len(got) != 0 {
 		t.Fatalf("investigations after rejected open = %+v, want none", got)
 	}
@@ -377,8 +403,8 @@ func TestInvestigationTitleStatusHint(t *testing.T) {
 			if err != nil {
 				t.Fatalf("open title containing %s: %v", word, err)
 			}
-			if inv := spJSON[investigationDTO](t, stdout); inv.Status != "open" {
-				t.Errorf("status = %q, want open", inv.Status)
+			if ack := spJSON[investigationSummaryDTO](t, stdout); ack.Status != "open" {
+				t.Errorf("status = %q, want open", ack.Status)
 			}
 			if !strings.Contains(stderr, word) || !strings.Contains(stderr, "status is structural") {
 				t.Errorf("stderr = %q, want structural-status hint for %s", stderr, word)
@@ -395,38 +421,49 @@ func TestInvestigationCommandCases(t *testing.T) {
 		{
 			name: "finding CRUD",
 			run: func(t *testing.T, dir string) {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Findings", "test suspects", "--json"))
-				added := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "finding", "add", inv.ID, "suspect A", "--json"))
-				if len(added.Findings) != 1 || added.Findings[0].Status != "open" {
-					t.Fatalf("finding add = %+v, want one open finding", added.Findings)
+				id := spID(t, spMust(t, dir, "investigation", "open", "Findings", "test suspects", "--json"))
+				ack := spJSON[investigationSummaryDTO](t, spMust(t, dir, "investigation", "finding", "add", id, "suspect A", "--json"))
+				if ack.FindingCount != 1 {
+					t.Fatalf("finding add ack = %+v, want finding_count 1", ack)
 				}
-				findingID := added.Findings[0].ID
-				edited := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "finding", "edit", inv.ID, findingID[:8], "suspect B", "--json"))
-				if edited.Findings[0].Text != "suspect B" {
-					t.Errorf("finding edit text = %q, want suspect B", edited.Findings[0].Text)
+				added := invShow(t, dir, id).Findings
+				if len(added) != 1 || added[0].Status != "open" {
+					t.Fatalf("finding add = %+v, want one open finding", added)
 				}
-				listed := spJSON[[]findingDTO](t, spMust(t, dir, "investigation", "finding", "list", inv.ID, "--json"))
+				findingID := added[0].ID
+				spMust(t, dir, "investigation", "finding", "edit", id, findingID[:8], "suspect B", "--json")
+				if got := invShow(t, dir, id).Findings[0].Text; got != "suspect B" {
+					t.Errorf("finding edit text = %q, want suspect B", got)
+				}
+				listed := spJSON[[]findingDTO](t, spMust(t, dir, "investigation", "finding", "list", id, "--json"))
 				if len(listed) != 1 || listed[0].ID != findingID || listed[0].Text != "suspect B" {
 					t.Fatalf("finding list = %+v, want edited finding %s", listed, findingID)
 				}
-				confirmed := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "finding", "confirm", inv.ID, findingID[:8], "--why", "stack points here", "--json"))
-				if confirmed.Findings[0].Status != "confirmed" || confirmed.Findings[0].Note != "stack points here" {
-					t.Errorf("finding confirm = %+v, want confirmed with why", confirmed.Findings[0])
+				spMust(t, dir, "investigation", "finding", "confirm", id, findingID[:8], "--why", "stack points here", "--json")
+				if got := invShow(t, dir, id).Findings[0]; got.Status != "confirmed" || got.Note != "stack points here" {
+					t.Errorf("finding confirm = %+v, want confirmed with why", got)
 				}
-				removed := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "finding", "rm", inv.ID, findingID[:8], "--json"))
-				if len(removed.Findings) != 0 {
-					t.Errorf("finding rm = %+v, want empty", removed.Findings)
+				removed := spJSON[investigationSummaryDTO](t, spMust(t, dir, "investigation", "finding", "rm", id, findingID[:8], "--json"))
+				if removed.FindingCount != 0 {
+					t.Errorf("finding rm ack = %+v, want finding_count dropped", removed)
+				}
+				if got := invShow(t, dir, id).Findings; len(got) != 0 {
+					t.Errorf("finding rm = %+v, want empty", got)
 				}
 			},
 		},
 		{
 			name: "edit",
 			run: func(t *testing.T, dir string) {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Old title", "immutable premise", "--label", "old", "--path", "old.go", "--json"))
-				edited := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "edit", inv.ID,
+				id := spID(t, spMust(t, dir, "investigation", "open", "Old title", "immutable premise", "--label", "old", "--path", "old.go", "--json"))
+				ack := spJSON[investigationSummaryDTO](t, spMust(t, dir, "investigation", "edit", id,
 					"--title", "New title", "--body", "resolution summary",
 					"--add-label", "new", "--rm-label", "old",
 					"--add-path", "new.go", "--rm-path", "old.go", "--json"))
+				if ack.Title != "New title" {
+					t.Errorf("edit ack title = %q, want New title", ack.Title)
+				}
+				edited := invShow(t, dir, id)
 				if edited.Title != "New title" || edited.Premise != "immutable premise" || edited.Body != "resolution summary" {
 					t.Errorf("edited text = %q/%q/%q", edited.Title, edited.Premise, edited.Body)
 				}
@@ -441,41 +478,52 @@ func TestInvestigationCommandCases(t *testing.T) {
 		{
 			name: "exonerate",
 			run: func(t *testing.T, dir string) {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "False lead", "suspect cache", "--json"))
-				done := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "exonerate", inv.ID, "cache disabled and failure persists", "--json"))
-				if done.Status != "exonerated" || done.ClosedAt == nil || !slices.Equal(investigationEntryTexts(done), []string{"cache disabled and failure persists"}) {
-					t.Errorf("exonerate = status %q closed %v entries %v", done.Status, done.ClosedAt, investigationEntryTexts(done))
+				id := spID(t, spMust(t, dir, "investigation", "open", "False lead", "suspect cache", "--json"))
+				ack := spJSON[investigationSummaryDTO](t, spMust(t, dir, "investigation", "exonerate", id, "cache disabled and failure persists", "--json"))
+				if ack.Status != "exonerated" || ack.EntryCount != 1 {
+					t.Errorf("exonerate ack = %+v, want exonerated with entry_count 1", ack)
+				}
+				done := invShow(t, dir, id)
+				if done.ClosedAt == nil || !slices.Equal(investigationEntryTexts(done), []string{"cache disabled and failure persists"}) {
+					t.Errorf("exonerate = closed %v entries %v", done.ClosedAt, investigationEntryTexts(done))
 				}
 			},
 		},
 		{
 			name: "abandon and reopen",
 			run: func(t *testing.T, dir string) {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Dormant", "needs hardware", "--json"))
-				abandoned := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "abandon", inv.ID, "--json"))
-				if abandoned.Status != "abandoned" || abandoned.ClosedAt == nil || len(abandoned.Entries) != 0 {
-					t.Errorf("abandon = status %q closed %v entries %v", abandoned.Status, abandoned.ClosedAt, abandoned.Entries)
+				id := spID(t, spMust(t, dir, "investigation", "open", "Dormant", "needs hardware", "--json"))
+				ack := spJSON[investigationSummaryDTO](t, spMust(t, dir, "investigation", "abandon", id, "--json"))
+				if ack.Status != "abandoned" || ack.EntryCount != 0 {
+					t.Errorf("abandon ack = %+v, want abandoned with no entries", ack)
 				}
-				reopened := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "reopen", inv.ID, "hardware arrived", "--json"))
-				if reopened.Status != "open" || reopened.ClosedAt != nil || !slices.Equal(investigationEntryTexts(reopened), []string{"hardware arrived"}) {
-					t.Errorf("reopen = status %q closed %v entries %v", reopened.Status, reopened.ClosedAt, investigationEntryTexts(reopened))
+				abandoned := invShow(t, dir, id)
+				if abandoned.ClosedAt == nil || len(abandoned.Entries) != 0 {
+					t.Errorf("abandon = closed %v entries %v", abandoned.ClosedAt, abandoned.Entries)
+				}
+				if got := spJSON[investigationSummaryDTO](t, spMust(t, dir, "investigation", "reopen", id, "hardware arrived", "--json")).Status; got != "open" {
+					t.Errorf("reopen ack status = %q, want open", got)
+				}
+				reopened := invShow(t, dir, id)
+				if reopened.ClosedAt != nil || !slices.Equal(investigationEntryTexts(reopened), []string{"hardware arrived"}) {
+					t.Errorf("reopen = closed %v entries %v", reopened.ClosedAt, investigationEntryTexts(reopened))
 				}
 			},
 		},
 		{
 			name: "history and remove",
 			run: func(t *testing.T, dir string) {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Disposable", "history premise", "--json"))
-				spMust(t, dir, "investigation", "append", inv.ID, "evidence")
-				history := spJSON[[]historyEntryDTO](t, spMust(t, dir, "investigation", "history", inv.ID, "--json"))
+				id := spID(t, spMust(t, dir, "investigation", "open", "Disposable", "history premise", "--json"))
+				spMust(t, dir, "investigation", "append", id, "evidence")
+				history := spJSON[[]historyEntryDTO](t, spMust(t, dir, "investigation", "history", id, "--json"))
 				if len(history) != 2 || history[1].Kind != "create" {
 					t.Errorf("history = %+v, want edit then create", history)
 				}
-				removed := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "rm", inv.ID, "--json"))
-				if !removed.Deleted {
+				spMust(t, dir, "investigation", "rm", id, "--json")
+				if !invShow(t, dir, id).Deleted {
 					t.Errorf("rm deleted = false")
 				}
-				if listed := spJSON[[]investigationDTO](t, spMust(t, dir, "investigation", "list", "--all", "--json")); len(listed) != 0 {
+				if listed := spJSON[[]investigationSummaryDTO](t, spMust(t, dir, "investigation", "list", "--all", "--json")); len(listed) != 0 {
 					t.Errorf("list --all after rm = %+v, want empty", listed)
 				}
 			},
@@ -489,12 +537,12 @@ func TestInvestigationCommandCases(t *testing.T) {
 
 func TestInvestigationCrossKindShowHistorySearch(t *testing.T) {
 	dir := spInitRepo(t)
-	inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "crosskind investigation token", "generic surfaces", "--json"))
+	invID := spID(t, spMust(t, dir, "investigation", "open", "crosskind investigation token", "generic surfaces", "--json"))
 
-	if got, want := spMust(t, dir, "show", inv.ID), spMust(t, dir, "investigation", "show", inv.ID); got != want {
+	if got, want := spMust(t, dir, "show", invID), spMust(t, dir, "investigation", "show", invID); got != want {
 		t.Errorf("top-level show differs from investigation show:\n top:\n%s\n scoped:\n%s", got, want)
 	}
-	if got, want := spMust(t, dir, "show", inv.ID, "--json"), spMust(t, dir, "investigation", "show", inv.ID, "--json"); got != want {
+	if got, want := spMust(t, dir, "show", invID, "--json"), spMust(t, dir, "investigation", "show", invID, "--json"); got != want {
 		t.Errorf("top-level show --json differs from investigation show --json:\n top: %s\n scoped: %s", got, want)
 	}
 
@@ -503,23 +551,23 @@ func TestInvestigationCrossKindShowHistorySearch(t *testing.T) {
 		t.Fatalf("top-level search = %+v, want one investigation", hits)
 	}
 	hit := hits[0]
-	if hit.Kind != "investigation" || hit.Investigation == nil || hit.Investigation.ID != inv.ID || hit.Investigation.Status != "open" {
-		t.Fatalf("top-level search hit = %+v, want open investigation %s", hit, inv.ID)
+	if hit.Kind != "investigation" || hit.Investigation == nil || hit.Investigation.ID != invID || hit.Investigation.Status != "open" {
+		t.Fatalf("top-level search hit = %+v, want open investigation %s", hit, invID)
 	}
 	if hit.Note != nil || hit.Doc != nil || hit.Log != nil || hit.Runbook != nil {
 		t.Errorf("top-level search investigation hit populates a foreign entity field: %+v", hit)
 	}
-	if got, want := spMust(t, dir, "search", "crosskind"), "investigation\t"+inv.ID[:7]+"\topen\tcrosskind investigation token\n"; got != want {
+	if got, want := spMust(t, dir, "search", "crosskind"), "investigation\t"+invID[:7]+"\topen\tcrosskind investigation token\n"; got != want {
 		t.Errorf("top-level lean search = %q, want %q", got, want)
 	}
 
-	spMust(t, dir, "investigation", "append", inv.ID, "history evidence")
-	if got, want := spMust(t, dir, "history", inv.ID), spMust(t, dir, "investigation", "history", inv.ID); got != want {
+	spMust(t, dir, "investigation", "append", invID, "history evidence")
+	if got, want := spMust(t, dir, "history", invID), spMust(t, dir, "investigation", "history", invID); got != want {
 		t.Errorf("top-level history differs from investigation history:\n top:\n%s\n scoped:\n%s", got, want)
 	} else if !strings.Contains(got, "created investigation") || !strings.Contains(got, "history evidence") {
 		t.Errorf("investigation history omits create or append change:\n%s", got)
 	}
-	if got, want := spMust(t, dir, "history", inv.ID, "--json"), spMust(t, dir, "investigation", "history", inv.ID, "--json"); got != want {
+	if got, want := spMust(t, dir, "history", invID, "--json"), spMust(t, dir, "investigation", "history", invID, "--json"); got != want {
 		t.Errorf("top-level history --json differs from investigation history --json:\n top: %s\n scoped: %s", got, want)
 	}
 }
@@ -536,14 +584,14 @@ func TestInvestigationRelevantJSONAndLean(t *testing.T) {
 	gittest.Git(t, dir, "add", "internal/pool/pool.go")
 	gittest.Git(t, dir, "commit", "-q", "-m", "add pool")
 
-	inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "active pool deadlock", "pool stalls", "--path", "internal/pool/pool.go", "--json"))
+	invID := spID(t, spMust(t, dir, "investigation", "open", "active pool deadlock", "pool stalls", "--path", "internal/pool/pool.go", "--json"))
 	dtos := spJSON[[]relevantDTO](t, spMust(t, dir, "relevant", "internal/pool/pool.go", "--json"))
 	if len(dtos) != 1 {
 		t.Fatalf("relevant --json = %+v, want one investigation", dtos)
 	}
 	dto := dtos[0]
-	if dto.Kind != "investigation" || dto.Investigation == nil || dto.Investigation.ID != inv.ID || dto.Investigation.Status != "open" {
-		t.Fatalf("relevant entry = %+v, want open investigation %s", dto, inv.ID)
+	if dto.Kind != "investigation" || dto.Investigation == nil || dto.Investigation.ID != invID || dto.Investigation.Status != "open" {
+		t.Fatalf("relevant entry = %+v, want open investigation %s", dto, invID)
 	}
 	if dto.Note != nil || dto.Doc != nil || dto.Log != nil || dto.Runbook != nil {
 		t.Errorf("relevant investigation entry populates a foreign entity field: %+v", dto)
@@ -551,7 +599,7 @@ func TestInvestigationRelevantJSONAndLean(t *testing.T) {
 	if dto.Score != 150 || !slices.Equal(dto.Reasons, []string{"investigation-open", "path"}) {
 		t.Errorf("relevant score/reasons = %d/%v, want 150/[investigation-open path]", dto.Score, dto.Reasons)
 	}
-	leanWant := inv.ID[:7] + "\topen\tactive pool deadlock\tinvestigation-open,path\tinvestigation show " + inv.ID[:7] + "\n"
+	leanWant := invID[:7] + "\topen\tactive pool deadlock\tinvestigation-open,path\tinvestigation show " + invID[:7] + "\n"
 	if got := spMust(t, dir, "relevant", "internal/pool/pool.go"); got != leanWant {
 		t.Errorf("relevant lean = %q, want %q", got, leanWant)
 	}
@@ -559,9 +607,9 @@ func TestInvestigationRelevantJSONAndLean(t *testing.T) {
 
 func TestInvestigationBlameAndTaskCompatibility(t *testing.T) {
 	dir := spInitRepo(t)
-	inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Blame investigation", "pool stalls", "--json"))
+	inv := spJSON[investigationSummaryDTO](t, spMust(t, dir, "investigation", "open", "Blame investigation", "pool stalls", "--json"))
 	spMust(t, dir, "investigation", "root-cause", inv.ID, "blocked sender")
-	task := spJSON[taskDTO](t, spMust(t, dir, "task", "add", "Blame task", "--no-validation-criteria", "--json"))
+	task := spJSON[taskSummaryDTO](t, spMust(t, dir, "task", "add", "Blame task", "--no-validation-criteria", "--json"))
 	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "fix pool\n\ncc-task: "+task.ID)
 	fixSHA := gittest.Git(t, dir, "rev-parse", "HEAD")
 	spMust(t, dir, "investigation", "fix", inv.ID, "--commit", fixSHA)
@@ -580,11 +628,9 @@ func TestInvestigationBlameAndTaskCompatibility(t *testing.T) {
 	}
 	if dtos[1].Kind != "investigation" || dtos[1].Investigation == nil || dtos[1].Investigation.ID != inv.ID || dtos[1].Investigation.Status != "fixed" || dtos[1].Task != nil {
 		t.Errorf("combined blame investigation DTO = %+v", dtos[1])
-	} else if !slices.Equal(dtos[1].Investigation.FixCommits, []string{fixSHA}) {
-		t.Errorf("blamed investigation fix commits = %v, want [%s]", dtos[1].Investigation.FixCommits, fixSHA)
 	}
 
-	taskOnly := spJSON[taskDTO](t, spMust(t, dir, "task", "add", "Task only", "--no-validation-criteria", "--json"))
+	taskOnly := spJSON[taskSummaryDTO](t, spMust(t, dir, "task", "add", "Task only", "--no-validation-criteria", "--json"))
 	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "task only\n\ncc-task: "+taskOnly.ID)
 	taskOnlySHA := gittest.Git(t, dir, "rev-parse", "HEAD")
 	taskOnlyLine := taskOnly.ID[:7] + "\t" + taskOnly.Status + "\tP" + strconv.Itoa(taskOnly.Priority) + "\t-\t" + taskOnly.Title + "\n"
@@ -604,13 +650,14 @@ func TestInvestigationDaemonkitStory(t *testing.T) {
 		t.Fatalf("write attachment: %v", err)
 	}
 
-	opened := spJSON[investigationDTO](t, spMust(t, dir,
+	id := spID(t, spMust(t, dir,
 		"investigation", "open", invTitle, invPremise,
 		"--finding", invFinding, "--path", "internal/pool", "--label", "ci", "--json"))
+	opened := invShow(t, dir, id)
 	if len(opened.Findings) != 1 {
 		t.Fatalf("open findings = %+v, want one", opened.Findings)
 	}
-	id, findingID := opened.ID, opened.Findings[0].ID
+	findingID := opened.Findings[0].ID
 	assertInvestigationStorySurfaces(t, dir, id, investigationStoryWant{status: "open", findingStatus: "open"})
 
 	spMust(t, dir, "investigation", "append", id, invEvidence, "--attach", attachment, "--json")
@@ -651,13 +698,13 @@ func TestInvestigationDaemonkitStory(t *testing.T) {
 
 func TestInvestigationFixRequiresCommit(t *testing.T) {
 	dir := spInitRepo(t)
-	inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "No commit", "premise", "--json"))
-	spMust(t, dir, "investigation", "root-cause", inv.ID, "cause")
-	_, _, err := spRun(t, dir, "", "investigation", "fix", inv.ID)
+	id := spID(t, spMust(t, dir, "investigation", "open", "No commit", "premise", "--json"))
+	spMust(t, dir, "investigation", "root-cause", id, "cause")
+	_, _, err := spRun(t, dir, "", "investigation", "fix", id)
 	if !isUsage(err) || !strings.Contains(err.Error(), "at least one --commit") {
 		t.Fatalf("fix without --commit error = %v, want usage error requiring at least one --commit", err)
 	}
-	shown := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "show", inv.ID, "--json"))
+	shown := invShow(t, dir, id)
 	if shown.Status != "root_caused" || len(shown.FixCommits) != 0 {
 		t.Errorf("after rejected fix = status %q commits %v, want root_caused with no commits", shown.Status, shown.FixCommits)
 	}
@@ -684,8 +731,7 @@ func TestInvestigationCommandErrors(t *testing.T) {
 		{
 			name: "illegal transition",
 			setup: func(t *testing.T, dir string) (string, string) {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Illegal", "still open", "--json"))
-				return inv.ID, ""
+				return spID(t, spMust(t, dir, "investigation", "open", "Illegal", "still open", "--json")), ""
 			},
 			args: func(id, _ string) []string { return []string{"investigation", "confirm", id, "not fixed"} },
 			want: notes.ErrIllegalTransition,
@@ -694,8 +740,7 @@ func TestInvestigationCommandErrors(t *testing.T) {
 			// reopen's TEXT is a required positional enforced at the cobra arg level.
 			name: "reopen without reason",
 			setup: func(t *testing.T, dir string) (string, string) {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "No reason", "open", "--json"))
-				return inv.ID, ""
+				return spID(t, spMust(t, dir, "investigation", "open", "No reason", "open", "--json")), ""
 			},
 			args:  func(id, _ string) []string { return []string{"investigation", "reopen", id} },
 			usage: "(ID TEXT)",
@@ -704,8 +749,8 @@ func TestInvestigationCommandErrors(t *testing.T) {
 			// --why is required at the CLI layer, before the store opens.
 			name: "finding confirm without why",
 			setup: func(t *testing.T, dir string) (string, string) {
-				inv := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "open", "Missing why", "premise", "--finding", "suspect", "--json"))
-				return inv.ID, inv.Findings[0].ID
+				id := spID(t, spMust(t, dir, "investigation", "open", "Missing why", "premise", "--finding", "suspect", "--json"))
+				return id, invShow(t, dir, id).Findings[0].ID
 			},
 			args: func(id, finding string) []string {
 				return []string{"investigation", "finding", "confirm", id, finding[:8]}
@@ -725,7 +770,7 @@ func TestInvestigationCommandErrors(t *testing.T) {
 			} else if !errors.Is(err, tc.want) {
 				t.Fatalf("cc-notes %s error = %v, want errors.Is(%v)", strings.Join(args, " "), err, tc.want)
 			}
-			shown := spJSON[investigationDTO](t, spMust(t, dir, "investigation", "show", id, "--json"))
+			shown := invShow(t, dir, id)
 			if shown.Status != "open" {
 				t.Errorf("status after rejected command = %q, want open", shown.Status)
 			}

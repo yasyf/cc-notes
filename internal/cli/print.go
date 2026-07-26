@@ -33,123 +33,99 @@ func createEntity(ctx context.Context, cmd *cobra.Command, s *store.Store, ops [
 	return snap, nil
 }
 
-// printNote writes n as its JSON DTO or its lean line. A mutation echo carries
-// no drift verdict.
+// printNote writes n as its JSON summary DTO — carrying the drift verdict
+// computed against live content — or its lean line. The body stays with
+// "note show".
 func printNote(cmd *cobra.Command, c *notes.Client, n model.Note, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanNoteLine(n))
 		return err
 	}
-	infos, err := c.AttachmentInfos(cmd.Context(), n.Attachments)
+	ctx := cmd.Context()
+	staleAfter, err := c.NoteStaleAfter(ctx)
 	if err != nil {
 		return err
 	}
-	return printJSON(cmd.OutOrStdout(), newNoteDTO(n, "", attachmentInfoDTOs(infos)))
+	verdict, err := c.NoteVerdict(ctx, n, staleAfter, false)
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), newNoteSummaryDTO(n, string(verdict)))
 }
 
-// printDoc writes d as its JSON DTO carrying the drift verdict, or its lean
-// line. A mutation echo passes an empty drift.
-func printDoc(cmd *cobra.Command, c *notes.Client, d model.Doc, drift string, jsonOut bool) error {
+// printDoc writes d as its JSON summary DTO — carrying the drift verdict
+// computed against live content — or its lean line. The body stays with
+// "doc show".
+func printDoc(cmd *cobra.Command, c *notes.Client, d model.Doc, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanDocLine(d))
 		return err
 	}
-	infos, err := c.AttachmentInfos(cmd.Context(), d.Attachments)
+	ctx := cmd.Context()
+	staleAfter, err := c.NoteStaleAfter(ctx)
 	if err != nil {
 		return err
 	}
-	return printJSON(cmd.OutOrStdout(), newDocDTO(d, drift, attachmentInfoDTOs(infos)))
+	verdict, err := c.DocVerdict(ctx, d, staleAfter, false)
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), newDocSummaryDTO(d, string(verdict)))
 }
 
-// printLog writes l as its JSON DTO or its lean line.
-func printLog(cmd *cobra.Command, c *notes.Client, l model.Log, jsonOut bool) error {
+// printLog writes l as its JSON summary DTO — carrying the entry tally, not the
+// entries — or its lean line.
+func printLog(cmd *cobra.Command, _ *notes.Client, l model.Log, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanLogLine(l))
 		return err
 	}
-	infos, err := c.AttachmentInfos(cmd.Context(), l.Attachments)
-	if err != nil {
-		return err
-	}
-	return printJSON(cmd.OutOrStdout(), newLogDTO(l, attachmentInfoDTOs(infos)))
+	return printJSON(cmd.OutOrStdout(), newLogSummaryDTO(l))
 }
 
-// printTask writes t as its JSON DTO — with the derived blocks index — or
-// its lean line.
-func printTask(cmd *cobra.Command, c *notes.Client, t model.Task, jsonOut bool) error {
+// printTask writes t as its JSON summary DTO or its lean line.
+func printTask(cmd *cobra.Command, _ *notes.Client, t model.Task, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanTaskLine(t))
 		return err
 	}
-	blocks, err := c.TasksBlocking(cmd.Context(), t.ID)
-	if err != nil {
-		return err
-	}
-	return printJSON(cmd.OutOrStdout(), newTaskDTO(t, blocks))
+	return printJSON(cmd.OutOrStdout(), newTaskSummaryDTO(t))
 }
 
-// printSprint writes sprint as its JSON DTO — carrying the reverse-index ids of
-// its tasks — or its lean line.
-func printSprint(cmd *cobra.Command, c *notes.Client, sprint model.Sprint, jsonOut bool) error {
+// printSprint writes sprint as its JSON summary DTO or its lean line.
+func printSprint(cmd *cobra.Command, _ *notes.Client, sprint model.Sprint, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanSprintLine(sprint))
 		return err
 	}
-	tasks, err := c.SprintTasks(cmd.Context(), sprint.ID)
-	if err != nil {
-		return err
-	}
-	return printJSON(cmd.OutOrStdout(), newSprintDTO(sprint, tasks))
+	return printJSON(cmd.OutOrStdout(), newSprintSummaryDTO(sprint))
 }
 
-// printProject writes project as its JSON DTO — carrying the reverse-index ids
-// of its sprints and tasks — or its lean line.
-func printProject(cmd *cobra.Command, c *notes.Client, project model.Project, jsonOut bool) error {
+// printProject writes project as its JSON summary DTO or its lean line.
+func printProject(cmd *cobra.Command, _ *notes.Client, project model.Project, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanProjectLine(project))
 		return err
 	}
-	ctx := cmd.Context()
-	sprints, err := c.ProjectSprints(ctx, project.ID)
-	if err != nil {
-		return err
-	}
-	tasks, err := c.ProjectTasks(ctx, project.ID)
-	if err != nil {
-		return err
-	}
-	return printJSON(cmd.OutOrStdout(), newProjectDTO(project, sprints, tasks))
+	return printJSON(cmd.OutOrStdout(), newProjectSummaryDTO(project))
 }
 
-// attachmentInfoDTOs maps client attachment-presence infos to the CLI's
-// fixed-shape attachment DTOs, always non-nil so JSON serializes an empty list
-// rather than null.
-func attachmentInfoDTOs(infos []notes.AttachmentInfo) []attachmentDTO {
-	out := make([]attachmentDTO, len(infos))
-	for i, a := range infos {
-		out[i] = attachmentDTO{Name: a.Name, OID: a.OID, Size: a.Size, Present: a.Present}
-	}
-	return out
-}
-
-// printRunbook writes runbook as its JSON DTO or its lean line.
+// printRunbook writes runbook as its JSON summary DTO — carrying the step and
+// run tallies, not the steps or runs — or its lean line.
 func printRunbook(cmd *cobra.Command, rb model.Runbook, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanRunbookLine(rb))
 		return err
 	}
-	return printJSON(cmd.OutOrStdout(), newRunbookDTO(rb))
+	return printJSON(cmd.OutOrStdout(), newRunbookSummaryDTO(rb))
 }
 
-// printInvestigation writes inv as its JSON DTO or its structural-status lean line.
-func printInvestigation(cmd *cobra.Command, c *notes.Client, inv model.Investigation, jsonOut bool) error {
+// printInvestigation writes inv as its JSON summary DTO or its structural-status
+// lean line.
+func printInvestigation(cmd *cobra.Command, _ *notes.Client, inv model.Investigation, jsonOut bool) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanInvestigationLine(inv))
 		return err
 	}
-	infos, err := c.AttachmentInfos(cmd.Context(), inv.Attachments)
-	if err != nil {
-		return err
-	}
-	return printJSON(cmd.OutOrStdout(), newInvestigationDTO(inv, attachmentInfoDTOs(infos)))
+	return printJSON(cmd.OutOrStdout(), newInvestigationSummaryDTO(inv))
 }

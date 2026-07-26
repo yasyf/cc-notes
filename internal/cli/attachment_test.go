@@ -39,7 +39,7 @@ func TestNoteAttachGetPathShow(t *testing.T) {
 	content := []byte("attachment payload bytes")
 	path, oid := writeAttachable(t, "report.txt", content)
 
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "With file", "--attach", path, "--json"))
+	added := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "With file", "--attach", path, "--json"))
 	want := []attachmentJSON{{Name: "report.txt", OID: oid, Size: int64(len(content)), Present: true}}
 	if len(added.Attachments) != 1 || added.Attachments[0] != want[0] {
 		t.Fatalf("attachments = %+v, want %+v", added.Attachments, want)
@@ -72,7 +72,7 @@ func TestNoteAttachGetPathShow(t *testing.T) {
 func TestAttachmentMissingLocally(t *testing.T) {
 	dir := initRepo(t)
 	path, oid := writeAttachable(t, "gone.bin", []byte("soon removed"))
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Missing", "--attach", path, "--json"))
+	added := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Missing", "--attach", path, "--json"))
 	objPath := strings.TrimSpace(mustRun(t, dir, "attachment", "path", added.ID, "gone.bin"))
 	if err := os.Remove(objPath); err != nil {
 		t.Fatalf("remove object: %v", err)
@@ -98,7 +98,7 @@ func TestAttachmentMissingLocally(t *testing.T) {
 func TestAttachmentLookupErrors(t *testing.T) {
 	dir := initRepo(t)
 	path, _ := writeAttachable(t, "a.txt", []byte("x"))
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Holder", "--attach", path, "--json"))
+	added := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Holder", "--attach", path, "--json"))
 
 	_, _, err := runCLI(t, dir, "attachment", "get", added.ID, "nope.txt")
 	if cli.ExitCode(err) != 3 || !strings.Contains(err.Error(), "a.txt") {
@@ -112,7 +112,7 @@ func TestAttachmentLookupErrors(t *testing.T) {
 func TestLogAppendAttachReplace(t *testing.T) {
 	dir := initRepo(t)
 	first, firstOID := writeAttachable(t, "trace.log", []byte("first capture"))
-	added := mustJSON[logJSON](t, mustRun(t, dir, "log", "add", "Rollout", "--attach", first, "--json"))
+	added := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "add", "Rollout", "--attach", first, "--json"))
 	if len(added.Attachments) != 1 || added.Attachments[0].OID != firstOID {
 		t.Fatalf("log add attachments = %+v, want oid %s", added.Attachments, firstOID)
 	}
@@ -127,7 +127,7 @@ func TestLogAppendAttachReplace(t *testing.T) {
 		t.Fatalf("attachments after rejected append = %+v, want the original untouched", shown.Attachments)
 	}
 
-	replaced := mustJSON[logJSON](t, mustRun(t, dir, "log", "append", added.ID, "--attach", second, "--replace", "--json"))
+	replaced := showJSON[logJSON](t, dir, mustRun(t, dir, "log", "append", added.ID, "--attach", second, "--replace", "--json"))
 	want := attachmentJSON{Name: "trace.log", OID: secondOID, Size: 22, Present: true}
 	if len(replaced.Attachments) != 1 || replaced.Attachments[0] != want {
 		t.Fatalf("attachments after --replace = %+v, want %+v", replaced.Attachments, want)
@@ -149,23 +149,13 @@ func TestEditRmAttachment(t *testing.T) {
 		t.Run(tc.kind, func(t *testing.T) {
 			path, _ := writeAttachable(t, "scrap.txt", []byte("to be removed"))
 			raw := mustRun(t, dir, tc.kind, "add", "Holder "+tc.kind, "--attach", path, "--json")
-			var added struct {
-				ID          string           `json:"id"`
-				Attachments []attachmentJSON `json:"attachments"`
-			}
-			if err := json.Unmarshal([]byte(raw), &added); err != nil {
-				t.Fatalf("unmarshal %q: %v", raw, err)
-			}
+			id := jsonID(t, raw)
+			added := mustJSON[noteJSON](t, mustRun(t, dir, tc.kind, "show", id, "--json"))
 			if len(added.Attachments) != 1 {
 				t.Fatalf("attachments = %+v, want one", added.Attachments)
 			}
-			edited := mustRun(t, dir, tc.kind, "edit", added.ID, "--rm-attachment", "scrap.txt", "--json")
-			var after struct {
-				Attachments []attachmentJSON `json:"attachments"`
-			}
-			if err := json.Unmarshal([]byte(edited), &after); err != nil {
-				t.Fatalf("unmarshal %q: %v", edited, err)
-			}
+			mustRun(t, dir, tc.kind, "edit", id, "--rm-attachment", "scrap.txt", "--json")
+			after := mustJSON[noteJSON](t, mustRun(t, dir, tc.kind, "show", id, "--json"))
 			if len(after.Attachments) != 0 {
 				t.Fatalf("attachments after --rm-attachment = %+v, want none", after.Attachments)
 			}

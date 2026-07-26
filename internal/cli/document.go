@@ -18,21 +18,21 @@ import (
 
 // documentSpec is the presentation vocabulary the note and doc noun groups share
 // for the freshness lifecycle. It binds the load/print kind, the display noun,
-// the file-mode adapter, the review DTO/lean projections, and the notes.Client
+// the file-mode adapter, the summary DTO/lean projections, and the notes.Client
 // methods that own the domain logic — the verb methods parse flags, validate,
 // call the bound notes method, and render; they hold no store writes of their
 // own.
 type documentSpec[T model.Snapshot] struct {
-	kind         kindSpec[T]
-	noun         string
-	hasWhen      bool
-	bodyRequired bool
-	searchShort  string
-	addLong      string
-	editLong     string
-	adapter      func() editAdapter
-	newDTO       func(T, string, []attachmentDTO) any
-	lean         func(T) string
+	kind          kindSpec[T]
+	noun          string
+	hasWhen       bool
+	bodyRequired  bool
+	searchShort   string
+	addLong       string
+	editLong      string
+	adapter       func() editAdapter
+	newSummaryDTO func(T, string) any
+	lean          func(T) string
 
 	resolve   func(ctx context.Context, c *notes.Client, prefix string) (model.EntityID, error)
 	create    func(ctx context.Context, c *notes.Client, title, body, when string, tags []string, anchors notes.AnchorSpec, atts []model.Attachment) (T, bool, error)
@@ -390,7 +390,7 @@ func (spec documentSpec[T]) reviewVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return reviewDocuments(cmd, s, filterVerdicts(flagged, drift, unverified, expired), jsonOut, spec.newDTO, spec.lean)
+			return reviewDocuments(cmd, filterVerdicts(flagged, drift, unverified, expired), jsonOut, spec.newSummaryDTO, spec.lean)
 		},
 	}
 	flags := cmd.Flags()
@@ -413,7 +413,7 @@ func (spec documentSpec[T]) listVerb() *cobra.Command {
 		Short: "List " + spec.noun + "s",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -426,7 +426,7 @@ func (spec documentSpec[T]) listVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printEntityList(cmd, s, items, jsonOut, spec.listDTO, spec.lean)
+			return printEntityList(cmd, items, jsonOut, spec.listDTO, spec.lean)
 		},
 	}
 	flags := cmd.Flags()
@@ -451,7 +451,7 @@ func (spec documentSpec[T]) searchVerb() *cobra.Command {
 		Short: spec.searchShort,
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -469,7 +469,7 @@ func (spec documentSpec[T]) searchVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printEntityList(cmd, s, items, jsonOut, spec.listDTO, spec.lean)
+			return printEntityList(cmd, items, jsonOut, spec.listDTO, spec.lean)
 		},
 	}
 	flags := cmd.Flags()
@@ -481,10 +481,10 @@ func (spec documentSpec[T]) searchVerb() *cobra.Command {
 	return cmd
 }
 
-// listDTO adapts the spec's review DTO (which carries a drift verdict) to the
+// listDTO adapts the spec's summary DTO (which carries a drift verdict) to the
 // list projection by passing an empty verdict.
-func (spec documentSpec[T]) listDTO(v T, atts []attachmentDTO) any {
-	return spec.newDTO(v, "", atts)
+func (spec documentSpec[T]) listDTO(v T) any {
+	return spec.newSummaryDTO(v, "")
 }
 
 // anchorSetsSpec projects the add-anchor flag set onto a notes.AnchorSpec.
@@ -524,8 +524,8 @@ var noteDocument = documentSpec[model.Note]{
 	editLong: "Edit a note by flags, or as a file: --checkout writes the note to an editable\n" +
 		"Markdown file and prints its path; edit that file with your normal tools, then\n" +
 		"--apply to commit the change (or --abort to discard).",
-	newDTO: func(n model.Note, drift string, atts []attachmentDTO) any { return newNoteDTO(n, drift, atts) },
-	lean:   leanNoteLine,
+	newSummaryDTO: func(n model.Note, drift string) any { return newNoteSummaryDTO(n, drift) },
+	lean:          leanNoteLine,
 	resolve: func(ctx context.Context, c *notes.Client, prefix string) (model.EntityID, error) {
 		return c.ResolveNote(ctx, prefix)
 	},
@@ -589,8 +589,8 @@ var docDocument = documentSpec[model.Doc]{
 	editLong: "Edit a doc by flags, or as a file: --checkout writes the doc to an editable\n" +
 		"Markdown file and prints its path; edit that file with your normal tools, then\n" +
 		"--apply to commit the change (or --abort to discard).",
-	newDTO: func(d model.Doc, drift string, atts []attachmentDTO) any { return newDocDTO(d, drift, atts) },
-	lean:   leanDocLine,
+	newSummaryDTO: func(d model.Doc, drift string) any { return newDocSummaryDTO(d, drift) },
+	lean:          leanDocLine,
 	resolve: func(ctx context.Context, c *notes.Client, prefix string) (model.EntityID, error) {
 		return c.ResolveDoc(ctx, prefix)
 	},
@@ -717,16 +717,12 @@ func textTier(title string, tags []string, bodies []string, q string) int {
 
 // printEntityList writes items as a JSON array of their list DTOs or one lean
 // line each.
-func printEntityList[T model.Snapshot](cmd *cobra.Command, s *store.Store, items []T, jsonOut bool, newDTO func(T, []attachmentDTO) any, lean func(T) string) error {
+func printEntityList[T model.Snapshot](cmd *cobra.Command, items []T, jsonOut bool, newDTO func(T) any, lean func(T) string) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		dtos := make([]any, len(items))
 		for i, it := range items {
-			atts, err := entityAttachments(cmd.Context(), s, it.Meta().Attachments)
-			if err != nil {
-				return err
-			}
-			dtos[i] = newDTO(it, atts)
+			dtos[i] = newDTO(it)
 		}
 		return printJSON(out, dtos)
 	}
@@ -768,18 +764,14 @@ func filterVerdicts[T model.Snapshot](rs []reviewed[T], drift, unverified, expir
 	return slices.DeleteFunc(rs, func(r reviewed[T]) bool { return r.verdict != want })
 }
 
-// reviewDocuments writes the review set as DTOs carrying their verdict in
-// drift, or as lean lines with the verdict appended after a tab.
-func reviewDocuments[T model.Snapshot](cmd *cobra.Command, s *store.Store, rs []reviewed[T], jsonOut bool, newDTO func(T, string, []attachmentDTO) any, lean func(T) string) error {
+// reviewDocuments writes the review set as summary DTOs carrying their verdict
+// in drift, or as lean lines with the verdict appended after a tab.
+func reviewDocuments[T model.Snapshot](cmd *cobra.Command, rs []reviewed[T], jsonOut bool, newSummaryDTO func(T, string) any, lean func(T) string) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		dtos := make([]any, len(rs))
 		for i, r := range rs {
-			atts, err := entityAttachments(cmd.Context(), s, r.entity.Meta().Attachments)
-			if err != nil {
-				return err
-			}
-			dtos[i] = newDTO(r.entity, r.verdict, atts)
+			dtos[i] = newSummaryDTO(r.entity, r.verdict)
 		}
 		return printJSON(out, dtos)
 	}

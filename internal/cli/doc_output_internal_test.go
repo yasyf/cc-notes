@@ -76,6 +76,44 @@ func TestNewDocDTO(t *testing.T) {
 	}
 }
 
+// TestNewDocSummaryDTO pins the listing projection: no body, the full id as the
+// agent's handle, and the two fields the capt-hook surface indexes — the When
+// trigger and the drift verdict — still present.
+func TestNewDocSummaryDTO(t *testing.T) {
+	d := model.Doc{
+		ID:        "deadbeefcafe",
+		Title:     "Auth migration handoff",
+		Body:      "the long body",
+		When:      "resuming the auth cutover",
+		Tags:      []string{"auth"},
+		Author:    "ada <ada@example.com>",
+		CreatedAt: 1735689600,
+		UpdatedAt: 1735689600,
+	}
+	summary := newDocSummaryDTO(d, "STALE")
+
+	if summary.ID != "deadbeefcafe" {
+		t.Errorf("ID = %q, want the full id, not a short prefix", summary.ID)
+	}
+	if summary.When != "resuming the auth cutover" {
+		t.Errorf("When = %q, want the verbatim trigger", summary.When)
+	}
+	if summary.Drift != "STALE" {
+		t.Errorf("Drift = %q, want STALE", summary.Drift)
+	}
+	if summary.UpdatedAt != "2025-01-01T00:00:00Z" {
+		t.Errorf("UpdatedAt = %q, want RFC3339, not the lean line's date", summary.UpdatedAt)
+	}
+	if len(summary.Tags) != 1 || summary.Tags[0] != "auth" {
+		t.Errorf("Tags = %v, want [auth]", summary.Tags)
+	}
+
+	empty := newDocSummaryDTO(model.Doc{ID: "abc1234ff"}, "")
+	if empty.Drift != "" || empty.When != "" || empty.Tags != nil || empty.Author != "" {
+		t.Errorf("bare summary = %+v, want every optional field at its zero value", empty)
+	}
+}
+
 func TestRenderDocShow(t *testing.T) {
 	d := model.Doc{
 		ID:        "deadbeefcafe",

@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
@@ -116,7 +115,7 @@ func newSprintListCmd() *cobra.Command {
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -141,7 +140,7 @@ func newSprintListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printSprintList(cmd, s, sprints, jsonOut)
+			return printSprintList(cmd, sprints, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -357,18 +356,14 @@ func planningErr(err error) error {
 	return err
 }
 
-// printSprintList writes sprints as a JSON array of their DTOs — each carrying
-// its reverse-index task ids — or one lean line per sprint.
-func printSprintList(cmd *cobra.Command, s *store.Store, sprints []model.Sprint, jsonOut bool) error {
+// printSprintList writes sprints as a JSON array of their summary DTOs or one
+// lean line per sprint.
+func printSprintList(cmd *cobra.Command, sprints []model.Sprint, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
-		tasks, err := s.ListTasks(cmd.Context())
-		if err != nil {
-			return err
-		}
-		dtos := make([]sprintDTO, len(sprints))
+		dtos := make([]sprintSummaryDTO, len(sprints))
 		for i, sp := range sprints {
-			dtos[i] = newSprintDTO(sp, tasksInSprint(tasks, sp.ID))
+			dtos[i] = newSprintSummaryDTO(sp)
 		}
 		return printJSON(out, dtos)
 	}

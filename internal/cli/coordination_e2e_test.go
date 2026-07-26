@@ -226,8 +226,8 @@ func TestTaskAddAmbiguousHead(t *testing.T) {
 func TestTaskRenew(t *testing.T) {
 	dir := initRepo(t)
 	task := addTaskBin(t, dir, "Long job")
-	claimed := mustJSON[taskJSON](t, mustBin(t, dir, actorA, "task", "claim", task.ID, "--json"))
-	if claimed.Lease.Heartbeat == nil {
+	claimed := showBinJSON[taskJSON](t, dir, actorA, mustBin(t, dir, actorA, "task", "claim", task.ID, "--json"))
+	if claimed.Lease == nil || claimed.Lease.Heartbeat == nil {
 		t.Fatal("claim left lease.heartbeat null")
 	}
 	before := mustTime(t, *claimed.Lease.Heartbeat)
@@ -243,8 +243,8 @@ func TestTaskRenew(t *testing.T) {
 	// The heartbeat is the assignee op's AuthorTime at one-second granularity, so
 	// advance the wall clock past the claim's second before renewing.
 	time.Sleep(1100 * time.Millisecond)
-	renewed := mustJSON[taskJSON](t, mustBin(t, dir, actorA, "task", "renew", task.ID, "--json"))
-	if renewed.Lease.Heartbeat == nil {
+	renewed := showBinJSON[taskJSON](t, dir, actorA, mustBin(t, dir, actorA, "task", "renew", task.ID, "--json"))
+	if renewed.Lease == nil || renewed.Lease.Heartbeat == nil {
 		t.Fatal("renew left lease.heartbeat null")
 	}
 	after := mustTime(t, *renewed.Lease.Heartbeat)

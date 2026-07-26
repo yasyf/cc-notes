@@ -38,7 +38,7 @@ func newCompactCmd() *cobra.Command {
 			case model.Note:
 				return printNote(cmd, c, v, jsonOut)
 			case model.Doc:
-				return printDoc(cmd, c, v, "", jsonOut)
+				return printDoc(cmd, c, v, jsonOut)
 			case model.Log:
 				return printLog(cmd, c, v, jsonOut)
 			case model.Task:

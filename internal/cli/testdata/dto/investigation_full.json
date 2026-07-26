@@ -1,0 +1,72 @@
+{
+  "id": "inv-full-0000000000000000000000000000000",
+  "title": "flaky sync",
+  "premise": "the union merge drops task branches",
+  "body": "the investigation body",
+  "status": "fixed",
+  "root_cause": "relocate ran before the fold",
+  "findings": [
+    {
+      "id": "f1",
+      "text": "merge order",
+      "status": "confirmed",
+      "note": "reproduced"
+    },
+    {
+      "id": "f2",
+      "text": "clock skew",
+      "status": "cleared"
+    }
+  ],
+  "entries": [
+    {
+      "author": "ada \u003cada@example.com\u003e",
+      "ts": "2023-11-14T22:13:20Z",
+      "text": "repro on a clean clone"
+    },
+    {
+      "author": "bob \u003cbob@example.com\u003e",
+      "ts": "2023-11-14T23:13:20Z",
+      "text": "patched the fold"
+    }
+  ],
+  "follow_ups": [
+    "task-followup01"
+  ],
+  "fix_commits": [
+    "c0ffee0000000000000000000000000000000000"
+  ],
+  "commits": [
+    "d00d000000000000000000000000000000000000"
+  ],
+  "labels": [
+    "sync"
+  ],
+  "anchors": [
+    {
+      "kind": "dir",
+      "value": "internal/api"
+    },
+    {
+      "kind": "path",
+      "value": "internal/cli/output.go"
+    }
+  ],
+  "superseded_by": [
+    "inv-newer-00001"
+  ],
+  "author": "ada \u003cada@example.com\u003e",
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "closed_at": "2023-11-15T03:13:20Z",
+  "closed_by": "bob \u003cbob@example.com\u003e",
+  "deleted": true,
+  "attachments": [
+    {
+      "name": "dump.log",
+      "oid": "abc123",
+      "size": 42,
+      "present": true
+    }
+  ]
+}

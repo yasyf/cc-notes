@@ -984,8 +984,8 @@ var goldenEdits = map[string][]goldenEdit{
 		},
 		{
 			"add criterion",
-			"      \"status\": \"pending\"\n    }\n  ],",
-			"      \"status\": \"pending\"\n    },\n    {\n      \"id\": \"\",\n      \"text\": \"New criterion\",\n      \"script\": \"\",\n      \"status\": \"pending\"\n    }\n  ],",
+			"      \"status\": \"pending\"\n    }\n  ]\n}",
+			"      \"status\": \"pending\"\n    },\n    {\n      \"id\": \"\",\n      \"text\": \"New criterion\",\n      \"script\": \"\",\n      \"status\": \"pending\"\n    }\n  ]\n}",
 			[]model.Op{model.AddCriterion{ID: normalizedNonce, Text: "New criterion", Script: ""}},
 		},
 	},

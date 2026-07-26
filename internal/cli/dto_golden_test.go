@@ -24,10 +24,11 @@ const (
 	dtoEndDate   = int64(1698000000)
 )
 
-// TestDTOGoldens freezes the JSON shape of every entity-kind DTO the CLI emits.
-// Each kind gets a fully-populated snapshot and a minimal one, projected through
-// the real DTO conversion and marshaled; the goldens pin key order, the
-// null-vs-value fields, and the empty-slice fields that must stay [] not null.
+// TestDTOGoldens freezes the JSON shape of every entity-kind DTO the CLI emits,
+// full and summary alike. Each kind gets a fully-populated snapshot and a
+// minimal one, projected through the real DTO conversion and marshaled; the
+// goldens pin key order, the bodies only a full DTO carries, and the absence of
+// every field sitting at its zero value.
 func TestDTOGoldens(t *testing.T) {
 	fullAnchor := model.Anchor{Kind: model.AnchorDir, Value: "internal/api"}
 	bareAnchor := model.Anchor{Kind: model.AnchorPath, Value: "internal/cli/output.go"}
@@ -189,6 +190,37 @@ func TestDTOGoldens(t *testing.T) {
 		Deleted:    true,
 	}
 	runbookMin := model.Runbook{ID: "runbook-min-00000000000000000000000000000", Title: "bare", Status: model.RunbookActive, Author: ada, CreatedAt: dtoCreated, UpdatedAt: dtoUpdated}
+	runMin := model.RunbookRun{ID: "run00002", Status: model.RunRunning, StartedAt: dtoStarted}
+
+	invFull := model.Investigation{
+		ID:        "inv-full-0000000000000000000000000000000",
+		Title:     "flaky sync",
+		Premise:   "the union merge drops task branches",
+		Body:      "the investigation body",
+		Status:    model.InvestigationFixed,
+		RootCause: "relocate ran before the fold",
+		Findings: []model.Finding{
+			{ID: "f1", Text: "merge order", Status: model.FindingConfirmed, Note: "reproduced"},
+			{ID: "f2", Text: "clock skew", Status: model.FindingCleared},
+		},
+		Entries: []model.LogEntry{
+			{Author: ada, TS: dtoCreated, Text: "repro on a clean clone"},
+			{Author: bob, TS: dtoUpdated, Text: "patched the fold"},
+		},
+		FollowUps:    []model.EntityID{"task-followup01"},
+		FixCommits:   []model.SHA{"c0ffee0000000000000000000000000000000000"},
+		Commits:      []model.SHA{"d00d000000000000000000000000000000000000"},
+		Tags:         []string{"sync"},
+		Anchors:      []model.Anchor{fullAnchor, bareAnchor},
+		SupersededBy: []model.EntityID{"inv-newer-00001"},
+		Author:       ada,
+		CreatedAt:    dtoCreated,
+		UpdatedAt:    dtoUpdated,
+		ClosedAt:     dtoClosed,
+		ClosedBy:     bob,
+		Deleted:      true,
+	}
+	invMin := model.Investigation{ID: "inv-min-00000000000000000000000000000000", Title: "bare", Status: model.InvestigationOpen, Author: ada, CreatedAt: dtoCreated, UpdatedAt: dtoUpdated}
 
 	cases := []struct {
 		name string
@@ -208,6 +240,26 @@ func TestDTOGoldens(t *testing.T) {
 		{"project_empty", newProjectDTO(projectMin, nil, nil)},
 		{"runbook_full", newRunbookDTO(runbookFull)},
 		{"runbook_empty", newRunbookDTO(runbookMin)},
+		{"investigation_full", newInvestigationDTO(invFull, noteAtts)},
+		{"investigation_empty", newInvestigationDTO(invMin, []attachmentDTO{})},
+		{"note_summary_full", newNoteSummaryDTO(noteFull, "DRIFTED")},
+		{"note_summary_empty", newNoteSummaryDTO(noteMin, "")},
+		{"doc_summary_full", newDocSummaryDTO(docFull, "DRIFTED")},
+		{"doc_summary_empty", newDocSummaryDTO(docMin, "")},
+		{"log_summary_full", newLogSummaryDTO(logFull)},
+		{"log_summary_empty", newLogSummaryDTO(logMin)},
+		{"task_summary_full", newTaskSummaryDTO(taskFull)},
+		{"task_summary_empty", newTaskSummaryDTO(taskMin)},
+		{"sprint_summary_full", newSprintSummaryDTO(sprintFull)},
+		{"sprint_summary_empty", newSprintSummaryDTO(sprintMin)},
+		{"project_summary_full", newProjectSummaryDTO(projectFull)},
+		{"project_summary_empty", newProjectSummaryDTO(projectMin)},
+		{"runbook_summary_full", newRunbookSummaryDTO(runbookFull)},
+		{"runbook_summary_empty", newRunbookSummaryDTO(runbookMin)},
+		{"run_summary_full", newRunbookRunSummaryDTO(runbookFull, runbookFull.Runs[0])},
+		{"run_summary_empty", newRunbookRunSummaryDTO(runbookMin, runMin)},
+		{"investigation_summary_full", newInvestigationSummaryDTO(invFull)},
+		{"investigation_summary_empty", newInvestigationSummaryDTO(invMin)},
 	}
 
 	for _, tc := range cases {

@@ -65,7 +65,7 @@ func bufExists(path string) bool {
 
 func TestDocEditCheckoutApply(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff",
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "Handoff",
 		"--when", "later", "--body", "orig body", "--label", "design", "--json"))
 	ref := "refs/cc-notes/docs/" + added.ID
 	before := gittest.Git(t, dir, "rev-list", "--count", ref)
@@ -81,7 +81,7 @@ func TestDocEditCheckoutApply(t *testing.T) {
 	replaceInBuf(t, path, "orig body", "EDITED via file")
 	replaceInBuf(t, path, "tags: [design]", "tags: [design, fromfile]")
 
-	applied := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", added.ID, "--apply", "--json"))
+	applied := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "edit", added.ID, "--apply", "--json"))
 	if applied.Body != "EDITED via file" {
 		t.Fatalf("body = %q, want EDITED via file", applied.Body)
 	}
@@ -101,10 +101,10 @@ func TestDocEditCheckoutApply(t *testing.T) {
 
 func TestNoteEditCheckoutApply(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Fact", "--body", "v1", "--json"))
+	added := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Fact", "--body", "v1", "--json"))
 	path := mustCheckout(t, dir, "note", "edit", added.ID, "--checkout")
 	replaceInBuf(t, path, "v1", "v2 via file")
-	applied := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", added.ID, "--apply", "--json"))
+	applied := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "edit", added.ID, "--apply", "--json"))
 	if applied.Body != "v2 via file" {
 		t.Fatalf("body = %q, want v2 via file", applied.Body)
 	}
@@ -125,7 +125,7 @@ func TestDocAddCheckoutApply(t *testing.T) {
 	content += "Body via the file workflow."
 	writeBuf(t, path, content)
 
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "--apply", path, "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "--apply", path, "--json"))
 	if added.Title != "Made from a file" || added.When != "reading the readme" {
 		t.Fatalf("title/when = %q/%q", added.Title, added.When)
 	}
@@ -171,7 +171,7 @@ func TestDocAddApplyOverCapTitleKeepsBuffer(t *testing.T) {
 	}
 
 	replaceInBuf(t, path, over, "Short title")
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "--apply", path, "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "--apply", path, "--json"))
 	if added.Title != "Short title" {
 		t.Fatalf("title = %q, want Short title after fixing the buffer", added.Title)
 	}
@@ -202,7 +202,7 @@ func TestDocAddApplyEmptyBodyKeepsBuffer(t *testing.T) {
 	}
 
 	writeBuf(t, path, content+"Now it has a body.")
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "--apply", path, "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "--apply", path, "--json"))
 	if added.Body != "Now it has a body." {
 		t.Fatalf("body = %q, want the filled-in body", added.Body)
 	}
@@ -214,7 +214,7 @@ func TestDocAddApplyEmptyBodyKeepsBuffer(t *testing.T) {
 // applies, since clearing a note body is legal.
 func TestDocEditApplyBlankBodyKeepsBuffer(t *testing.T) {
 	dir := initRepo(t)
-	doc := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff", "--body", "orig body", "--json"))
+	doc := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "Handoff", "--body", "orig body", "--json"))
 	path := mustCheckout(t, dir, "doc", "edit", doc.ID, "--checkout")
 	replaceInBuf(t, path, "orig body", "")
 
@@ -237,10 +237,10 @@ func TestDocEditApplyBlankBodyKeepsBuffer(t *testing.T) {
 	}
 
 	// A note buffer blanked to no body applies cleanly.
-	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Fact", "--body", "orig body", "--json"))
+	note := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Fact", "--body", "orig body", "--json"))
 	npath := mustCheckout(t, dir, "note", "edit", note.ID, "--checkout")
 	replaceInBuf(t, npath, "orig body", "")
-	cleared := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", note.ID, "--apply", "--json"))
+	cleared := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "edit", note.ID, "--apply", "--json"))
 	if cleared.Body != "" {
 		t.Fatalf("note body = %q, want empty (clearing a note body applies)", cleared.Body)
 	}
@@ -253,7 +253,7 @@ func TestNoteAddCheckoutApply(t *testing.T) {
 	content = strings.Replace(content, "title: \"\"", "title: File note", 1)
 	content += "A fact captured via the file workflow."
 	writeBuf(t, path, content)
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "--apply", path, "--json"))
+	added := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "--apply", path, "--json"))
 	if added.Title != "File note" || added.Body != "A fact captured via the file workflow." {
 		t.Fatalf("title/body = %q/%q", added.Title, added.Body)
 	}
@@ -264,7 +264,7 @@ func TestNoteAddCheckoutApply(t *testing.T) {
 
 func TestEditApplyNoBuffer(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
 	_, _, err := runCLI(t, dir, "doc", "edit", added.ID, "--apply")
 	if !errors.Is(err, store.ErrNotFound) || cli.ExitCode(err) != 3 {
 		t.Fatalf("apply with no buffer err = %v (exit %d), want ErrNotFound exit 3", err, cli.ExitCode(err))
@@ -273,7 +273,7 @@ func TestEditApplyNoBuffer(t *testing.T) {
 
 func TestEditApplyParseErrorKeepsBuffer(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
 	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
 	writeBuf(t, path, "not a valid doc file: no frontmatter delimiter\n")
 	_, _, err := runCLI(t, dir, "doc", "edit", added.ID, "--apply")
@@ -291,7 +291,7 @@ func TestEditApplyParseErrorKeepsBuffer(t *testing.T) {
 
 func TestEditApplyImmutableFieldKeepsBuffer(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
 	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
 	// The author line renders before verified_by, so the first occurrence of the
 	// actor email is the immutable author field.
@@ -307,7 +307,7 @@ func TestEditApplyImmutableFieldKeepsBuffer(t *testing.T) {
 
 func TestEditAbortRemovesBuffer(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
 	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
 	replaceInBuf(t, path, "orig", "discarded edit")
 	mustRun(t, dir, "doc", "edit", added.ID, "--abort")
@@ -326,7 +326,7 @@ func TestEditAbortRemovesBuffer(t *testing.T) {
 
 func TestEditEmptyDiffCommitsNothing(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
 	ref := "refs/cc-notes/docs/" + added.ID
 	before := gittest.Git(t, dir, "rev-list", "--count", ref)
 	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
@@ -351,11 +351,11 @@ func TestEditEmptyDiffCommitsNothing(t *testing.T) {
 // concurrent title edit.
 func TestEditConcurrentMerge(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Title one", "--body", "orig", "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "Title one", "--body", "orig", "--json"))
 	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
 	mustRun(t, dir, "doc", "edit", added.ID, "--title", "Title two")
 	replaceInBuf(t, path, "orig", "body three")
-	applied := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", added.ID, "--apply", "--json"))
+	applied := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "edit", added.ID, "--apply", "--json"))
 	if applied.Title != "Title two" {
 		t.Fatalf("title = %q, want Title two (concurrent title edit must survive)", applied.Title)
 	}
@@ -366,7 +366,7 @@ func TestEditConcurrentMerge(t *testing.T) {
 
 func TestFileModeUsageErrors(t *testing.T) {
 	dir := initRepo(t)
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
 	for _, args := range [][]string{
 		{"doc", "edit", added.ID, "--checkout", "--apply"},       // mutually exclusive
 		{"doc", "edit", added.ID, "--checkout", "--title", "Y"},  // file mode + content flag
@@ -407,7 +407,7 @@ func TestDocAddCheckoutPrefill(t *testing.T) {
 	}
 
 	writeBuf(t, path, buf+"The long-form body.")
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "--apply", path, "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "--apply", path, "--json"))
 	if added.Title != "Prefilled title" || added.When != "resuming" {
 		t.Fatalf("title/when = %q/%q, want Prefilled title/resuming", added.Title, added.When)
 	}
@@ -449,7 +449,7 @@ func TestNoteAddCheckoutPrefill(t *testing.T) {
 	}
 
 	writeBuf(t, path, buf+"The captured fact.")
-	added := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "--apply", path, "--json"))
+	added := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "--apply", path, "--json"))
 	if added.Title != "Prefilled note" || added.Body != "The captured fact." {
 		t.Fatalf("title/body = %q/%q", added.Title, added.Body)
 	}
@@ -477,7 +477,7 @@ func TestDocAddApplyAttach(t *testing.T) {
 	path := mustCheckout(t, dir, "doc", "add", "--checkout")
 	writeBuf(t, path, strings.Replace(readBuf(t, path), "title: \"\"", "title: With attachment", 1)+"The doc body.")
 
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "--apply", path, "--attach", att, "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "--apply", path, "--attach", att, "--json"))
 	if len(added.Attachments) != 1 || added.Attachments[0].Name != "artifact.txt" || added.Attachments[0].OID != oid {
 		t.Fatalf("attachments = %+v, want one artifact.txt oid %s", added.Attachments, oid)
 	}
@@ -523,9 +523,9 @@ func TestDocAddApplyAttach(t *testing.T) {
 
 func TestDocEditAttach(t *testing.T) {
 	dir := initRepo(t)
-	doc := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Handoff", "--body", "orig", "--json"))
+	doc := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "Handoff", "--body", "orig", "--json"))
 	first, firstOID := writeAttachable(t, "report.txt", []byte("first"))
-	edited := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", doc.ID, "--attach", first, "--json"))
+	edited := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "edit", doc.ID, "--attach", first, "--json"))
 	if len(edited.Attachments) != 1 || edited.Attachments[0].OID != firstOID {
 		t.Fatalf("attachments = %+v, want report.txt oid %s", edited.Attachments, firstOID)
 	}
@@ -542,14 +542,14 @@ func TestDocEditAttach(t *testing.T) {
 	}
 
 	// With --replace it succeeds.
-	replaced := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", doc.ID, "--attach", second, "--replace", "--json"))
+	replaced := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "edit", doc.ID, "--attach", second, "--replace", "--json"))
 	if len(replaced.Attachments) != 1 || replaced.Attachments[0].OID != secondOID {
 		t.Fatalf("attachments after --replace = %+v, want oid %s", replaced.Attachments, secondOID)
 	}
 
 	// --rm-attachment coexists with --attach in one invocation.
 	third, thirdOID := writeAttachable(t, "extra.txt", []byte("extra"))
-	both := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", doc.ID, "--rm-attachment", "report.txt", "--attach", third, "--json"))
+	both := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "edit", doc.ID, "--rm-attachment", "report.txt", "--attach", third, "--json"))
 	if len(both.Attachments) != 1 || both.Attachments[0].Name != "extra.txt" || both.Attachments[0].OID != thirdOID {
 		t.Fatalf("attachments after rm+attach = %+v, want only extra.txt", both.Attachments)
 	}
@@ -557,9 +557,9 @@ func TestDocEditAttach(t *testing.T) {
 
 func TestNoteEditAttach(t *testing.T) {
 	dir := initRepo(t)
-	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Fact", "--body", "v1", "--json"))
+	note := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Fact", "--body", "v1", "--json"))
 	first, firstOID := writeAttachable(t, "report.txt", []byte("first"))
-	edited := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", note.ID, "--attach", first, "--json"))
+	edited := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "edit", note.ID, "--attach", first, "--json"))
 	if len(edited.Attachments) != 1 || edited.Attachments[0].OID != firstOID {
 		t.Fatalf("attachments = %+v, want report.txt oid %s", edited.Attachments, firstOID)
 	}
@@ -570,13 +570,13 @@ func TestNoteEditAttach(t *testing.T) {
 		t.Fatalf("colliding edit = %v (exit %d, hint %q), want an exit-2 error naming report.txt with a --replace hint", err, cli.ExitCode(err), cli.Hint(err))
 	}
 
-	replaced := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", note.ID, "--attach", second, "--replace", "--json"))
+	replaced := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "edit", note.ID, "--attach", second, "--replace", "--json"))
 	if len(replaced.Attachments) != 1 || replaced.Attachments[0].OID != secondOID {
 		t.Fatalf("attachments after --replace = %+v, want oid %s", replaced.Attachments, secondOID)
 	}
 
 	third, thirdOID := writeAttachable(t, "extra.txt", []byte("extra"))
-	both := mustJSON[noteJSON](t, mustRun(t, dir, "note", "edit", note.ID, "--rm-attachment", "report.txt", "--attach", third, "--json"))
+	both := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "edit", note.ID, "--rm-attachment", "report.txt", "--attach", third, "--json"))
 	if len(both.Attachments) != 1 || both.Attachments[0].Name != "extra.txt" || both.Attachments[0].OID != thirdOID {
 		t.Fatalf("attachments after rm+attach = %+v, want only extra.txt", both.Attachments)
 	}
@@ -590,7 +590,7 @@ func TestNoteEditAttach(t *testing.T) {
 func TestEditApplyShortenedCommitAnchorSurvives(t *testing.T) {
 	dir := initRepo(t)
 	head := commitFile(t, dir, "seed.go", "package main")
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Anchored", "--body", "b", "--commit", "HEAD", "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "Anchored", "--body", "b", "--commit", "HEAD", "--json"))
 	ref := "refs/cc-notes/docs/" + added.ID
 	before := gittest.Git(t, dir, "rev-list", "--count", ref)
 
@@ -625,13 +625,13 @@ func TestEditApplyShortenedCommitAnchorSurvives(t *testing.T) {
 func TestEditApplyGenuineCommitAnchorChange(t *testing.T) {
 	dir := initRepo(t)
 	first := commitFile(t, dir, "a.go", "package main")
-	added := mustJSON[docJSON](t, mustRun(t, dir, "doc", "add", "Anchored", "--body", "b", "--commit", first, "--json"))
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "Anchored", "--body", "b", "--commit", first, "--json"))
 	second := commitFile(t, dir, "b.go", "package b")
 
 	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
 	replaceInBuf(t, path, "commits: ["+first+"]", "commits: ["+second[:8]+"]")
 
-	applied := mustJSON[docJSON](t, mustRun(t, dir, "doc", "edit", added.ID, "--apply", "--json"))
+	applied := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "edit", added.ID, "--apply", "--json"))
 	var got string
 	for _, a := range applied.Anchors {
 		if a.Kind == "commit" {

@@ -117,7 +117,7 @@ func runbookStepPlacementFlags(flags []string, in runbookStepPlacementArgs) []st
 }
 
 func registerRunbook(ts *toolset, b *bridge) {
-	addTool(ts, &mcp.Tool{Name: "runbook_add", Description: "Create a runbook (a repeatable step-by-step operational procedure), optionally with its first steps."},
+	addTool(ts, &mcp.Tool{Name: "runbook_add", Description: "Create a runbook (a repeatable step-by-step operational procedure), optionally with its first steps. The ack is a summary carrying step and run tallies; runbook_show reads the steps and runs back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runbookAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
 			if err != nil {
@@ -129,7 +129,7 @@ func registerRunbook(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"runbook", "add"}, flags, in.Title)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "runbook_list", Description: "List runbooks, optionally filtered by label and anchors (active only unless all is set)."},
+	addTool(ts, &mcp.Tool{Name: "runbook_list", Description: "List runbooks, optionally filtered by label and anchors (active only unless all is set). Returns summaries carrying step and run tallies; runbook_show reads the steps and runs back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runbookListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -161,7 +161,7 @@ func registerRunbook(ts *toolset, b *bridge) {
 
 	idTool(ts, b, "runbook_rm", "Tombstone a runbook.", "runbook", "rm")
 
-	addTool(ts, &mcp.Tool{Name: "runbook_search", Description: "Ranked search across runbook titles, labels, descriptions, and step text."},
+	addTool(ts, &mcp.Tool{Name: "runbook_search", Description: "Ranked search across runbook titles, labels, descriptions, and step text. Returns summaries carrying step and run tallies; runbook_show reads the steps and runs back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runbookSearchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -176,7 +176,7 @@ func registerRunbook(ts *toolset, b *bridge) {
 
 	commentTool(ts, b, "runbook")
 
-	addTool(ts, &mcp.Tool{Name: "runbook_step_add", Description: "Add a positioned step to a runbook's procedure (default last)."},
+	addTool(ts, &mcp.Tool{Name: "runbook_step_add", Description: "Add a positioned step to a runbook's procedure (default last). The ack is a summary carrying the step tally; runbook_step_list reads the steps back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runbookStepAddArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--command", in.Command)
@@ -188,12 +188,12 @@ func registerRunbook(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"runbook", "step", "add"}, flags, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "runbook_step_rm", Description: "Remove a step from a runbook."},
+	addTool(ts, &mcp.Tool{Name: "runbook_step_rm", Description: "Remove a step from a runbook. The ack is a summary carrying the step tally; runbook_step_list reads the steps back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runbookStepRefArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"runbook", "step", "rm"}, []string{"--json"}, in.ID, in.Step)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "runbook_step_edit", Description: "Edit a runbook step's text or command."},
+	addTool(ts, &mcp.Tool{Name: "runbook_step_edit", Description: "Edit a runbook step's text or command. The ack is a summary carrying the step tally; runbook_step_list reads the steps back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runbookStepEditArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--text", in.Text)
 			if err != nil {
@@ -204,7 +204,7 @@ func registerRunbook(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"runbook", "step", "edit"}, flags, in.ID, in.Step)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "runbook_step_move", Description: "Reorder a step within a runbook."},
+	addTool(ts, &mcp.Tool{Name: "runbook_step_move", Description: "Reorder a step within a runbook. The ack is a summary carrying the step tally; runbook_step_list reads the steps back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runbookStepMoveArgs) (*mcp.CallToolResult, any, error) {
 			flags := runbookStepPlacementFlags([]string{"--json"}, in.runbookStepPlacementArgs)
 			return b.run(ctx, argvFor([]string{"runbook", "step", "move"}, flags, in.ID, in.Step)...)
@@ -215,14 +215,14 @@ func registerRunbook(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"runbook", "step", "list"}, []string{"--json"}, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "runbook_run_start", Description: "Start a tracked run of a runbook, optionally linked to a task."},
+	addTool(ts, &mcp.Tool{Name: "runbook_run_start", Description: "Start a tracked run of a runbook, optionally linked to a task. The ack is the runbook summary; runbook_run_show reads the run back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runbookRunStartArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--task", in.Task)
 			return b.run(ctx, argvFor([]string{"runbook", "run", "start"}, flags, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "runbook_run_list", Description: "List a runbook's tracked runs."},
+	addTool(ts, &mcp.Tool{Name: "runbook_run_list", Description: "List a runbook's tracked runs. Returns summaries carrying step progress; runbook_run_show reads one run's per-step results back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runbookRunListArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"runbook", "run", "list"}, []string{"--json"}, in.ID)...)
 		})
@@ -233,7 +233,7 @@ func registerRunbook(ts *toolset, b *bridge) {
 		})
 
 	for _, verb := range []string{"done", "skip", "fail"} {
-		addTool(ts, &mcp.Tool{Name: "runbook_run_" + verb, Description: "Record a step result (" + verb + ") in a run; re-mark to correct a wrong result."},
+		addTool(ts, &mcp.Tool{Name: "runbook_run_" + verb, Description: "Record a step result (" + verb + ") in a run; re-mark to correct a wrong result. The ack is the runbook summary; runbook_run_show reads the run's per-step results back."},
 			func(ctx context.Context, _ *mcp.CallToolRequest, in runbookRunStepArgs) (*mcp.CallToolResult, any, error) {
 				flags, err := freeTextFlag([]string{"--json"}, "--note", in.Note)
 				if err != nil {
@@ -244,7 +244,7 @@ func registerRunbook(ts *toolset, b *bridge) {
 			})
 	}
 
-	addTool(ts, &mcp.Tool{Name: "runbook_run_finish", Description: "Finish a run (default succeeded, or failed if any step failed)."},
+	addTool(ts, &mcp.Tool{Name: "runbook_run_finish", Description: "Finish a run (default succeeded, or failed if any step failed). The ack is the runbook summary; runbook_run_show reads the run's per-step results back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runbookRunFinishArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--run", in.Run)

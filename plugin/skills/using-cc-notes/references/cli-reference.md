@@ -9,6 +9,14 @@ Every note, doc, log, papercut, task, sprint, project,
 runbook, investigation, sync, and reconcile command takes `--json` for a machine-readable record; without it,
 mutations echo a lean tab-separated line and listings print one lean line per entity.
 
+`--json` speaks two shapes. A listing or a mutation acknowledgement returns a *summary* — the
+identity, the lifecycle status, and a count wherever the entity carries an append-only history —
+never the body, entries, comments, criteria, steps, or runs. Those live behind `show`:
+`cc-notes <noun> show <id> --json`, or the kind-agnostic `cc-notes show <id> --json`. Two
+sub-entity listings are their own payload and stay full — `investigation finding list` and
+`runbook step list`. Each per-kind JSON block below gives the summary and the full record
+separately.
+
 Each command block opens with a machine-readable `MCP:` line — the MCP tool that carries the
 command, with the tool's property names in parentheses, or `MCP: —` plus the reason a command is
 CLI-only. Where the cc-notes MCP server is live (the Claude Code plugin launches it), call the
@@ -134,9 +142,9 @@ naming the replacement (`unknown flag: --desc (did you mean --body?)`), as does 
 sprint, or project writes the `description` field, and `--label` on a note, doc, or log writes
 the `tags` field — in `--json` and in `show` headers alike.
 
-## Lean-line formats
+## Output formats
 
-| Entity | Fields (tab-separated) |
+| Entity | Lean line, fields tab-separated |
 |--------|------------------------|
 | Task | `<short7-id>` `<status>` `P<priority>` `<assignee\|->` `<title>` |
 | Sprint | `<short7-id>` `<status>` `<title>` |
@@ -154,8 +162,21 @@ form: `runbook step list` prints `<short7-step-id>` `<n>` `<text>` `<command|->`
 1-based position), and `runbook run list` prints `<short7-run-id>` `<status>` `<runner>`
 `<YYYY-MM-DD started>` `<done+skipped>/<total>` (steps progressed over the step count). `task stale` appends a trailing idle marker to the task
 line; `note review` and `doc review` append a verdict to the note or doc line. `cc-notes papercut` echoes
-the Log line of the journal it appended to — a papercut is a log entry, not its own entity. JSON
-output uses full 40-hex ids, RFC3339 UTC timestamps, `null` for unset optionals, and sorted set slices.
+the Log line of the journal it appended to — a papercut is a log entry, not its own entity.
+
+JSON output uses full 40-hex ids, RFC3339 UTC timestamps, and sorted set slices. A field at its
+zero value is absent, and absence means the zero value: no `drift` key is a fresh entity, no `tags`
+key is no labels, no `priority` key is priority 0, no `entry_count` key is an empty log. Each shape
+below marks the few fields that survive their zero value and are always present. `papercut list` is
+the one holdout — its `model` stays an explicit `null` when no model was recorded.
+
+A `show` returns the entity whole, with one bound: the append-only histories cap at the 20 most
+recent members, and the count of older ones elided rides beside them as `entries_omitted`,
+`findings_omitted`, `comments_omitted`, or `runs_omitted`. The cap applies to a log's `entries`, an
+investigation's `findings` and `entries`, a task's `comments`, and a runbook's `runs`; each omitted
+count is itself absent when nothing was elided. Past the cap, `investigation finding list` returns
+every finding and `runbook run list` every run (then `runbook run show` for one run's steps); for a
+log's older entries and a task's older comments, walk the trail with `history <id>`.
 
 ## Repo commands
 
@@ -250,6 +271,10 @@ in progress across branches
 notes: 14 total, 3 need review
 ```
 
+JSON shape:
+`{"branch":string,"backlog":[<task summary>,…],"your_branch":[<task summary>,…],"in_progress":[{"assignee":string,"tasks":[<task summary>+"stale":bool,…]}],"notes":{"total":int,"needs_review":int},"docs":{"total":int,"needs_review":int},"logs":{"total":int},"investigations":{"open":int,"awaiting_confirm":int}}`.
+Every task is a summary; `task show` reads one back in full.
+
 ### `cc-notes reconcile`
 
 MCP: reconcile (into, from, force, dry_run)
@@ -309,8 +334,10 @@ carries its free-text `when` trigger as the final lean field, then a bracketed d
 `[drifted]`) when the doc is not fresh, and a trailing `doc show <short-id>` hint in place of the
 long body. A log or runbook line carries no `when` and no drift verdict — neither ever drifts — and
 ends with a `log show <short-id>` or `runbook show <short-id>` hint in place of its content. The
-`--json` form tags each entry with a `kind` discriminator (`note`, `doc`, `log`, or `runbook`) and
-nests the matching entity under that key.
+`--json` form tags each entry with a `kind` discriminator (`note`, `doc`, `log`, `runbook`, or
+`investigation`) and nests that kind's *summary* under the matching key, beside the `score` and the
+`reasons`. A body never rides a `relevant` result — the hint in the lean line is the JSON contract
+too: read the match back with that kind's `show`.
 
 | Signal | Reason | Fires when |
 |--------|--------|------------|
@@ -341,11 +368,12 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes	path,branch	DRIFTE
 ```
 
 JSON shape:
-`[{"kind":string,"note":{<note shape>},"doc":{<doc shape>},"log":{<log shape>},"runbook":{<runbook shape>},"score":int,"reasons":[string,…]}]`.
-`kind` is `note`, `doc`, `log`, or `runbook` and selects which entity key is present (the others are
-omitted); the present value is the full entity, carrying its `drift` verdict for a note or doc, and,
-for a doc, its `when` trigger (a log or runbook carries neither — they never drift). `score` is the
-summed signal weight; `reasons` are the matched reason labels in fixed priority order.
+`[{"kind":string,"note":{<note summary>},"doc":{<doc summary>},"log":{<log summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>},"score":int,"reasons":[string,…]}]`.
+`kind` is `note`, `doc`, `log`, `runbook`, or `investigation` and selects which entity key is
+present (the others are omitted); the present value is that kind's summary, carrying its `drift`
+verdict for a note or doc, and, for a doc, its `when` trigger (a log, runbook, or investigation
+carries neither — none of them ever drifts). `score` is the summed signal weight; `reasons` are the
+matched reason labels in fixed priority order. Read a match back in full with its kind's `show`.
 
 ### `cc-notes blame <sha>`
 
@@ -362,6 +390,10 @@ task commit-anchors. This is the reverse of the commit list `task show` prints.
 $ cc-notes blame 4f1c2ab
 d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 ```
+
+JSON shape:
+`[{"kind":string,"task":{<task summary>},"investigation":{<investigation summary>}}]`.
+`kind` is `task` or `investigation` and selects which key is present; the other is omitted.
 
 ### `cc-notes show <id>`
 
@@ -430,8 +462,10 @@ runbook	2b808c6	active	Deploy hotfix
 ```
 
 JSON shape:
-`[{"kind":string,"note":{<note shape>},"doc":{<doc shape>},"log":{<log shape>},"runbook":{<runbook shape>}}]`.
-`kind` selects which entity key is present per hit; the others are omitted.
+`[{"kind":string,"note":{<note summary>},"doc":{<doc summary>},"log":{<log summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>}}]`.
+`kind` selects which entity key is present per hit; the others are omitted. A hit is a summary, and
+`search` computes no drift verdict, so no hit carries `drift`. Read the match back with its kind's
+`show`.
 
 ### `cc-notes attachment get ID NAME`
 
@@ -952,13 +986,31 @@ threshold — never inside the fold — so it stays deterministic across replica
 `CC_NOTES_LEASE_TTL` (or `cc-notes.leaseTTL` in git config) per-repo so every agent agrees, and
 keep it larger than your sync interval, or a healthy holder behind a slow sync looks stale.
 
-### JSON task shape
+### JSON task shapes
 
-`{"id":string,"branch":string,"title":string,"description":string,"type":string,"status":string,"priority":int,"assignee":string|null,"labels":[…],"blocked_by":[id,…],"blocks":[id,…],"parent":string|null,"comments":[{"author":string,"ts":rfc3339,"body":string}],"commits":[sha,…],"lease":{"holder":string|null,"heartbeat":rfc3339|null},"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339|null,"closed_at":rfc3339|null,"sprint":id|null,"project":id|null,"criteria":[{"id":string,"text":string,"script":string,"status":string}],"closed_forced":bool}`.
-`blocks` is the derived reverse index of `blocked_by`; `branch` is `""` for a backlog task.
-`sprint` and `project` are the task's independent membership pointers (`null` when unset); each
-criterion's `status` is `pending`, `met`, or `failed`, and `script` is `""` when it carries none;
-`closed_forced` is `true` only for a `done` task closed with at least one criterion still unmet.
+Summary — `task list`, `ready`, `backlog`, `stale`, `archived`, `blame`, `status`, and every task
+mutation's acknowledgement:
+
+`{"id":string,"title":string,"status":string,"priority":int,"assignee":string,"branch":string,"updated_at":rfc3339}`.
+`id`, `title`, `status`, and `updated_at` are always present; the rest follow the zero-value
+omission rule, so an unclaimed backlog task at priority 0 carries none of `priority`, `assignee`,
+or `branch`. `task stale` adds an always-present `idle_seconds` int per task, and the
+`in_progress` groups of `status --json` add an always-present `stale` bool.
+
+Full — `task show ID --json` (and `show ID --json` on a task id):
+
+`{"id":string,"branch":string,"title":string,"description":string,"type":string,"status":string,"priority":int,"assignee":string,"labels":[…],"blocked_by":[id,…],"blocks":[id,…],"parent":string,"comments":[{"author":string,"ts":rfc3339,"body":string}],"comments_omitted":int,"commits":[sha,…],"lease":{"holder":string,"heartbeat":rfc3339},"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339,"closed_at":rfc3339,"sprint":id,"project":id,"criteria":[{"id":string,"text":string,"script":string,"status":string,"note":string}],"closed_forced":bool}`.
+`id`, `title`, `status`, `priority`, `created_at`, and `updated_at` are always present. `blocks` is
+the derived reverse index of `blocked_by`; an absent `branch` is a backlog task. `sprint` and
+`project` are the task's independent membership pointers; each criterion's `status` is `pending`,
+`met`, or `failed`, with `note` carrying the evidence recorded with that verdict; `closed_forced`
+is `true` only for a `done` task closed with at least one criterion still unmet. `comments` holds
+the 20 most recent, with `comments_omitted` counting the older ones.
+
+`task criterion list` returns criterion summaries of its own —
+`{"id":string,"text":string,"status":string,"note":string,"has_script":bool}` — reporting whether a
+validation script is attached rather than carrying its body. Read the scripts back from the
+`criteria` of `task show`.
 
 ## Project commands
 
@@ -1090,11 +1142,18 @@ Append a comment from the positional `BODY`, `--body`, or `-` (stdin) — exactl
 | `--body <text>` | none | Comment text; positional `BODY` and `-` (stdin) are equivalent |
 | `--json` | off | Emit JSON |
 
-### JSON project shape
+### JSON project shapes
 
-`{"id":string,"title":string,"description":string,"status":string,"labels":[…],"commits":[sha,…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"closed_at":rfc3339|null,"sprints":[id,…],"tasks":[id,…]}`.
-`status` is `active`, `completed`, `archived`, or `cancelled`; `sprints` and `tasks` are the
-derived reverse indexes as full-hex ids.
+Summary — `project list` and every project mutation's acknowledgement:
+
+`{"id":string,"title":string,"status":string,"updated_at":rfc3339}`. All four are always present.
+
+Full — `project show ID --json`:
+
+`{"id":string,"title":string,"description":string,"status":string,"labels":[…],"commits":[sha,…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"closed_at":rfc3339,"sprints":[id,…],"tasks":[id,…]}`.
+`id`, `title`, `status`, `created_at`, and `updated_at` are always present. `status` is `active`,
+`completed`, `archived`, or `cancelled`; `sprints` and `tasks` are the derived reverse indexes as
+full-hex ids, and they are computed only for a `show` — no listing carries them.
 
 ## Sprint commands
 
@@ -1226,11 +1285,18 @@ Append a comment from the positional `BODY`, `--body`, or `-` (stdin) — exactl
 | `--body <text>` | none | Comment text; positional `BODY` and `-` (stdin) are equivalent |
 | `--json` | off | Emit JSON |
 
-### JSON sprint shape
+### JSON sprint shapes
 
-`{"id":string,"project":id|null,"title":string,"description":string,"status":string,"start_date":rfc3339|null,"end_date":rfc3339|null,"labels":[…],"commits":[sha,…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339|null,"closed_at":rfc3339|null,"tasks":[id,…]}`.
-`status` is `planned`, `active`, `completed`, or `cancelled`; `start_date`/`end_date` are the
-user-set dates (`null` when unset); `tasks` is the derived reverse index as full-hex ids.
+Summary — `sprint list` and every sprint mutation's acknowledgement:
+
+`{"id":string,"title":string,"status":string,"updated_at":rfc3339}`. All four are always present.
+
+Full — `sprint show ID --json`:
+
+`{"id":string,"project":id,"title":string,"description":string,"status":string,"start_date":rfc3339,"end_date":rfc3339,"labels":[…],"commits":[sha,…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339,"closed_at":rfc3339,"tasks":[id,…]}`.
+`id`, `title`, `status`, `created_at`, and `updated_at` are always present. `status` is `planned`,
+`active`, `completed`, or `cancelled`; `start_date`/`end_date` are the user-set dates; `tasks` is
+the derived reverse index as full-hex ids, computed only for a `show`.
 
 ## Runbook commands
 
@@ -1491,15 +1557,32 @@ MCP: runbook_run_show (id, run)
 runbook order — `<short7-step-id>` `<status>` `<text>`, with an indented `note:` line where one
 was recorded.
 
-### JSON runbook shape
+### JSON runbook shapes
 
-`{"id":string,"title":string,"description":string,"status":string,"steps":[{"id":string,"text":string,"command":string,"position":string}],"runs":[{"id":string,"task":id|null,"runner":string,"status":string,"started_at":rfc3339,"finished_at":rfc3339|null,"steps":[{"step":string,"status":string,"note":string?}]}],"labels":[…],"anchors":[{"kind":string,"value":string,"witness":null}],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"archived_at":rfc3339|null}`.
-`status` is `active` or `archived`; a run's `status` is `running`, `succeeded`, `failed`, or
-`abandoned`. A run's `steps` lists every current step in position order with a `status` of
-`done`, `failed`, `skipped`, or `pending` (no outcome recorded); results for since-removed steps
-are historical and not shown. `position` is an opaque ordering key — compare, never parse.
-`anchors` is omitted when empty, and a runbook anchor's `witness` is always `null` — runbooks
-have no freshness lifecycle to witness.
+Summary — `runbook list`, `runbook search`, and every runbook mutation's acknowledgement, the step
+and run verbs included:
+
+`{"id":string,"title":string,"status":string,"updated_at":rfc3339,"step_count":int,"run_count":int}`.
+`id`, `title`, `status`, and `updated_at` are always present; the two tallies vanish at zero.
+
+Full — `runbook show ID --json`:
+
+`{"id":string,"title":string,"description":string,"status":string,"steps":[{"id":string,"text":string,"command":string,"position":string}],"runs":[{"id":string,"task":id,"runner":string,"status":string,"started_at":rfc3339,"finished_at":rfc3339,"steps":[{"step":string,"status":string,"note":string}]}],"runs_omitted":int,"labels":[…],"anchors":[{"kind":string,"value":string}],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"archived_at":rfc3339,"deleted":bool}`.
+`id`, `title`, `status`, `created_at`, and `updated_at` are always present, as are a step's `id`,
+`text`, and `position` and a run's `id`, `status`, and `started_at`. `status` is `active` or
+`archived`; a run's `status` is `running`, `succeeded`, `failed`, or `abandoned`. A run's `steps`
+lists every current step in position order with a `status` of `done`, `failed`, `skipped`, or
+`pending` (no outcome recorded); results for since-removed steps are historical and not shown.
+`position` is an opaque ordering key — compare, never parse. A runbook anchor never carries a
+`witness` — runbooks have no freshness lifecycle to witness. `runs` holds the 20 most recent, with
+`runs_omitted` counting the older ones.
+
+Two sub-entity verbs have shapes of their own. `runbook step list` returns the steps in full,
+`[{"id":string,"text":string,"command":string,"position":string}]` — the steps *are* the payload
+there. `runbook run list` returns run summaries,
+`{"id":string,"status":string,"runner":string,"started_at":rfc3339,"steps_done":int,"steps_total":int}`,
+with `steps_done` counting the `done` and `skipped` steps; `runbook run show RUNBOOK RUN --json`
+returns one run whole, per-step results included.
 
 ## Investigation commands
 
@@ -1798,15 +1881,30 @@ MCP: investigation_rm (id)
 
 Tombstone an investigation. The ref survives until `gc` prunes it.
 
-### JSON investigation shape
+### JSON investigation shapes
 
-`{"id":string,"title":string,"premise":string,"body":string,"status":string,"root_cause":string,"findings":[{"id":string,"text":string,"status":string,"note":string?}],"entries":[{"author":string,"ts":rfc3339,"text":string,"model":string?}],"follow_ups":[id…],"fix_commits":[sha…],"commits":[sha…],"labels":[…],"anchors":[{"kind":string,"value":string,"witness":null}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"closed_at":rfc3339|null,"closed_by":string|null,"attachments":[…]}`.
-`status` is `open`, `root_caused`, `fixed`, `confirmed`, `exonerated`, or `abandoned`; a
-finding's `status` is `open`, `confirmed`, or `cleared`, with `note` carrying the disposition
-evidence. `body` is the resolution summary. `fix_commits` names the commits recorded by `fix`;
-`commits` is the general commit-link set `blame` unions with `cc-investigation:` trailers. An
-investigation anchor's `witness` is always `null` — investigations have no freshness lifecycle
-to witness.
+Summary — `investigation list`, `investigation search`, the top-level `search` and `relevant`,
+`blame`, and every investigation mutation's acknowledgement, the finding verbs included:
+
+`{"id":string,"title":string,"status":string,"updated_at":rfc3339,"finding_count":int,"entry_count":int}`.
+`id`, `title`, `status`, and `updated_at` are always present; the two tallies vanish at zero. The
+premise, the findings, and the evidence timeline never ride a summary.
+
+Full — `investigation show ID --json`:
+
+`{"id":string,"title":string,"premise":string,"body":string,"status":string,"root_cause":string,"findings":[{"id":string,"text":string,"status":string,"note":string}],"findings_omitted":int,"entries":[{"author":string,"ts":rfc3339,"text":string,"model":string}],"entries_omitted":int,"follow_ups":[id…],"fix_commits":[sha…],"commits":[sha…],"labels":[…],"anchors":[{"kind":string,"value":string}],"superseded_by":[id…],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"closed_at":rfc3339,"closed_by":string,"deleted":bool,"attachments":[…]}`.
+`id`, `title`, `status`, `created_at`, and `updated_at` are always present, as are a finding's
+`id`, `text`, and `status`. `status` is `open`, `root_caused`, `fixed`, `confirmed`, `exonerated`,
+or `abandoned`; a finding's `status` is `open`, `confirmed`, or `cleared`, with `note` carrying the
+disposition evidence. `body` is the resolution summary. `fix_commits` names the commits recorded by
+`fix`; `commits` is the general commit-link set `blame` unions with `cc-investigation:` trailers.
+An investigation anchor never carries a `witness` — investigations have no freshness lifecycle to
+witness. `findings` and `entries` each hold their 20 most recent, with `findings_omitted` and
+`entries_omitted` counting the older ones.
+
+`investigation finding list` returns the findings in full,
+`[{"id":string,"text":string,"status":string,"note":string}]` — uncapped, and the way to read past
+a `show`'s finding cap.
 
 ## Note commands
 
@@ -2027,11 +2125,24 @@ Tombstone a note. It drops out of listings; history survives.
 |------|---------|---------|
 | `--json` | off | Emit JSON |
 
-### JSON note shape
+### JSON note shapes
 
-`{"id":string,"title":string,"body":string,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string|null}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"verified_at":rfc3339|null,"verified_by":string|null,"superseded_by":string|null,"drift":string|null,"deleted":bool}`.
-`drift` is the computed verdict (`null` when fresh); `superseded_by` is the replacement note id
-or `null`.
+Summary — `note list`, `note search`, `note review`, the top-level `search` and `relevant`, and
+every note mutation's acknowledgement:
+
+`{"id":string,"title":string,"tags":[…],"author":string,"updated_at":rfc3339,"drift":string}`.
+`id`, `title`, and `updated_at` are always present. `drift` is the computed verdict and is absent
+when the note is fresh — or when the command computed no verdict at all, which is the case for
+`note list`, `note search`, and the top-level `search`. `note review`, `relevant`, and every
+mutation's acknowledgement do compute it. The body never rides a summary.
+
+Full — `note show ID --json`:
+
+`{"id":string,"title":string,"body":string,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"verified_at":rfc3339,"verified_by":string,"superseded_by":string,"drift":string,"deleted":bool,"stale_at":rfc3339,"stale_by":string,"stale_reason":string,"attachments":[{"name":string,"oid":string,"size":int,"present":bool}]}`.
+`id`, `title`, `created_at`, and `updated_at` are always present, as are an attachment's `name`,
+`oid`, and `present`. `drift` is the computed verdict, absent when fresh; `superseded_by` is the
+replacement note id; an anchor carrying no content witness omits `witness`. A note's history is
+not append-only, so a `show` caps nothing.
 
 ## Doc commands
 
@@ -2302,14 +2413,24 @@ Tombstone a doc. It drops out of listings; history survives.
 |------|---------|---------|
 | `--json` | off | Emit JSON |
 
-### JSON doc shape
+### JSON doc shapes
 
-`{"id":string,"title":string,"body":string,"when":string,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string|null}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"verified_at":rfc3339|null,"verified_by":string|null,"superseded_by":string|null,"drift":string|null,"deleted":bool,"stale_at":rfc3339|null,"stale_by":string|null,"stale_reason":string|null}`.
-The doc shape is the note shape plus `when` (the free-text trigger, `""` when unset, always
-present) right after `body`, and the agent-asserted expiry fields `stale_at`/`stale_by`/
-`stale_reason` (each `null` until `doc expire` sets them, cleared by `doc verify` or `doc expire
---clear`). `drift` is the computed verdict (`null` when fresh); `superseded_by` is the replacement
-doc id or `null`.
+Both shapes are the note's plus `when`, the free-text trigger, placed right after `title` in the
+summary and right after `body` in the full record. `when` is absent when unset.
+
+Summary — `doc list`, `doc search`, `doc review`, the top-level `search` and `relevant`, and every
+doc mutation's acknowledgement:
+
+`{"id":string,"title":string,"when":string,"tags":[…],"author":string,"updated_at":rfc3339,"drift":string}`.
+The summary keeps `when` — the field a reader selects on — so a listing settles whether a doc
+applies without a second call. The body still needs `doc show`.
+
+Full — `doc show ID --json`:
+
+`{"id":string,"title":string,"body":string,"when":string,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"verified_at":rfc3339,"verified_by":string,"superseded_by":string,"drift":string,"deleted":bool,"stale_at":rfc3339,"stale_by":string,"stale_reason":string,"attachments":[{"name":string,"oid":string,"size":int,"present":bool}]}`.
+The always-present fields, the `drift` rules, and the `witness` rule match the note shape. The
+agent-asserted expiry fields `stale_at`/`stale_by`/`stale_reason` stay absent until `doc expire`
+sets them, and `doc verify` or `doc expire --clear` clears them again.
 
 ## Log commands
 
@@ -2470,12 +2591,24 @@ Tombstone a log. It drops out of listings; history survives.
 |------|---------|---------|
 | `--json` | off | Emit JSON |
 
-### JSON log shape
+### JSON log shapes
 
-`{"id":string,"title":string,"entries":[{"author":string,"ts":rfc3339,"text":string,"model":string|null}],"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string|null}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"deleted":bool,"attachments":[…]}`.
-`entries` is the append-only list in chronological order, each carrying the author and timestamp of
-the commit that appended it plus an optional `model` identity (recorded by `cc-notes papercut`,
-explicit `null` otherwise). A log has none of the doc's freshness fields — no `when`, `verified_at`,
+Summary — `log list`, `log search`, the top-level `search` and `relevant`, and every log mutation's
+acknowledgement, `log append` included:
+
+`{"id":string,"title":string,"tags":[…],"author":string,"updated_at":rfc3339,"entry_count":int}`.
+`id`, `title`, and `updated_at` are always present; `entry_count` is the tally standing in for the
+entries, absent on an empty log. Appending an entry acknowledges with this shape, so the appended
+text does not come back — `log show` reads it.
+
+Full — `log show ID --json`:
+
+`{"id":string,"title":string,"entries":[{"author":string,"ts":rfc3339,"text":string,"model":string}],"entries_omitted":int,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"deleted":bool,"attachments":[{"name":string,"oid":string,"size":int,"present":bool}]}`.
+`id`, `title`, `created_at`, and `updated_at` are always present, as are an entry's `ts` and
+`text`. `entries` is the append-only list in chronological order, each carrying the author and
+timestamp of the commit that appended it plus an optional `model` identity (recorded by `cc-notes
+papercut`, absent otherwise); it holds the 20 most recent, with `entries_omitted` counting the
+older ones. A log has none of the doc's freshness fields — no `when`, `verified_at`,
 `superseded_by`, `drift`, or expiry — because it never drifts.
 
 ## Papercut commands

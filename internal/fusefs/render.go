@@ -147,18 +147,17 @@ type ParsedWitness struct {
 // ParsedComment is one comment in a task document. TS stays the rendered
 // RFC3339 string so an echoed comment compares exactly.
 type ParsedComment struct {
-	Author string `json:"author"`
+	Author string `json:"author,omitempty"`
 	TS     string `json:"ts"`
 	Body   string `json:"body"`
 }
 
-// ParsedCriterion is one acceptance criterion in a task document. It mirrors the
-// CLI's criterionDTO and adds the stored evidence note, which marshals omitempty
-// so a note-less criterion keeps its CLI-compatible bytes.
+// ParsedCriterion is one acceptance criterion in a task document, mirroring the
+// CLI's criterionDTO field for field.
 type ParsedCriterion struct {
 	ID     string `json:"id"`
 	Text   string `json:"text"`
-	Script string `json:"script"`
+	Script string `json:"script,omitempty"`
 	Status string `json:"status"`
 	Note   string `json:"note,omitempty"`
 }
@@ -205,34 +204,34 @@ type ParsedLease struct {
 // too.
 type taskDoc struct {
 	ID           string            `json:"id"`
-	Branch       string            `json:"branch"`
+	Branch       string            `json:"branch,omitempty"`
 	Title        string            `json:"title"`
-	Description  string            `json:"description"`
-	Type         string            `json:"type"`
+	Description  string            `json:"description,omitempty"`
+	Type         string            `json:"type,omitempty"`
 	Status       string            `json:"status"`
 	Priority     int               `json:"priority"`
-	Assignee     *string           `json:"assignee"`
-	Labels       []string          `json:"labels"`
-	BlockedBy    []string          `json:"blocked_by"`
-	Blocks       []string          `json:"blocks"`
-	Parent       *string           `json:"parent"`
-	Comments     []ParsedComment   `json:"comments"`
-	Commits      []string          `json:"commits"`
-	Lease        leaseDoc          `json:"lease"`
+	Assignee     *string           `json:"assignee,omitempty"`
+	Labels       []string          `json:"labels,omitempty"`
+	BlockedBy    []string          `json:"blocked_by,omitempty"`
+	Blocks       []string          `json:"blocks,omitempty"`
+	Parent       *string           `json:"parent,omitempty"`
+	Comments     []ParsedComment   `json:"comments,omitempty"`
+	Commits      []string          `json:"commits,omitempty"`
+	Lease        *leaseDoc         `json:"lease,omitempty"`
 	CreatedAt    string            `json:"created_at"`
 	UpdatedAt    string            `json:"updated_at"`
-	StartedAt    *string           `json:"started_at"`
-	ClosedAt     *string           `json:"closed_at"`
-	Sprint       *string           `json:"sprint"`
-	Project      *string           `json:"project"`
-	Criteria     []ParsedCriterion `json:"criteria"`
-	ClosedForced bool              `json:"closed_forced"`
+	StartedAt    *string           `json:"started_at,omitempty"`
+	ClosedAt     *string           `json:"closed_at,omitempty"`
+	Sprint       *string           `json:"sprint,omitempty"`
+	Project      *string           `json:"project,omitempty"`
+	Criteria     []ParsedCriterion `json:"criteria,omitempty"`
+	ClosedForced bool              `json:"closed_forced,omitempty"`
 }
 
 // leaseDoc mirrors internal/cli's leaseDTO field for field.
 type leaseDoc struct {
-	Holder    *string `json:"holder"`
-	Heartbeat *string `json:"heartbeat"`
+	Holder    *string `json:"holder,omitempty"`
+	Heartbeat *string `json:"heartbeat,omitempty"`
 }
 
 // noteKeys is the ordered note frontmatter contract: id, title, and tags
@@ -1011,7 +1010,7 @@ func NewLog(p ParsedLog) ([]model.Op, error) {
 // RenderTask renders t as the CLI's --json document pretty-printed with
 // 2-space indent and a trailing newline, byte-compatible with
 // `task show --json`. Blocks is a derived cross-entity index this layer
-// cannot compute from one task, so it renders empty; DiffTask pins it to
+// cannot compute from one task, so it stays absent; DiffTask pins it to
 // empty in turn.
 func RenderTask(t model.Task) []byte {
 	doc := taskDoc{
@@ -1023,13 +1022,12 @@ func RenderTask(t model.Task) []byte {
 		Status:       string(t.Status),
 		Priority:     int(t.Priority),
 		Assignee:     render.OptString(string(t.Assignee)),
-		Labels:       render.EmptyNotNil(t.Labels),
+		Labels:       t.Labels,
 		BlockedBy:    render.IDStrings(t.BlockedBy),
-		Blocks:       []string{},
 		Parent:       render.OptString(string(t.Parent)),
 		Comments:     renderComments(t.Comments),
 		Commits:      render.SHAStrings(t.Commits),
-		Lease:        leaseDoc{Holder: render.OptString(string(t.Assignee)), Heartbeat: render.OptTime(t.HeartbeatAt)},
+		Lease:        renderLease(t),
 		CreatedAt:    render.RFC3339(t.CreatedAt),
 		UpdatedAt:    render.RFC3339(t.UpdatedAt),
 		StartedAt:    render.OptTime(t.StartedAt),
@@ -1046,12 +1044,22 @@ func RenderTask(t model.Task) []byte {
 	return append(data, '\n')
 }
 
-// renderCriteria mirrors internal/cli's criterionDTOs: always non-nil so the
-// JSON serializes an empty list rather than null.
+// renderLease mirrors internal/cli's newLeaseDTO: nil while the task is
+// unheld, so the lease object stays out of the rendered document.
+func renderLease(t model.Task) *leaseDoc {
+	holder := render.OptString(string(t.Assignee))
+	heartbeat := render.OptTime(t.HeartbeatAt)
+	if holder == nil && heartbeat == nil {
+		return nil
+	}
+	return &leaseDoc{Holder: holder, Heartbeat: heartbeat}
+}
+
+// renderCriteria mirrors internal/cli's criterionDTOs: nil when there are none.
 func renderCriteria(criteria []model.Criterion) []ParsedCriterion {
-	out := make([]ParsedCriterion, len(criteria))
-	for i, c := range criteria {
-		out[i] = ParsedCriterion{ID: c.ID, Text: c.Text, Script: c.Script, Status: string(c.Status), Note: c.Note}
+	var out []ParsedCriterion
+	for _, c := range criteria {
+		out = append(out, ParsedCriterion{ID: c.ID, Text: c.Text, Script: c.Script, Status: string(c.Status), Note: c.Note})
 	}
 	return out
 }
@@ -1273,24 +1281,24 @@ func NewTask(p ParsedTask, branch model.Branch) ([]model.Op, error) {
 // sprintDoc mirrors internal/cli's sprintDTO field for field: the rendered
 // sprint file matches `sprint show --json` pretty-printed, so any change there
 // lands here too. The tasks reverse index is cross-entity and cannot be
-// computed from one sprint, so it renders empty (like RenderTask's blocks).
+// computed from one sprint, so it stays absent (like RenderTask's blocks).
 type sprintDoc struct {
 	ID          string          `json:"id"`
-	Project     *string         `json:"project"`
+	Project     *string         `json:"project,omitempty"`
 	Title       string          `json:"title"`
-	Description string          `json:"description"`
+	Description string          `json:"description,omitempty"`
 	Status      string          `json:"status"`
-	StartDate   *string         `json:"start_date"`
-	EndDate     *string         `json:"end_date"`
-	Labels      []string        `json:"labels"`
-	Commits     []string        `json:"commits"`
-	Comments    []ParsedComment `json:"comments"`
-	Author      string          `json:"author"`
+	StartDate   *string         `json:"start_date,omitempty"`
+	EndDate     *string         `json:"end_date,omitempty"`
+	Labels      []string        `json:"labels,omitempty"`
+	Commits     []string        `json:"commits,omitempty"`
+	Comments    []ParsedComment `json:"comments,omitempty"`
+	Author      string          `json:"author,omitempty"`
 	CreatedAt   string          `json:"created_at"`
 	UpdatedAt   string          `json:"updated_at"`
-	StartedAt   *string         `json:"started_at"`
-	ClosedAt    *string         `json:"closed_at"`
-	Tasks       []string        `json:"tasks"`
+	StartedAt   *string         `json:"started_at,omitempty"`
+	ClosedAt    *string         `json:"closed_at,omitempty"`
+	Tasks       []string        `json:"tasks,omitempty"`
 }
 
 // ParsedSprint is the decoded form of a sprint file, mirroring sprintDoc key
@@ -1316,7 +1324,7 @@ type ParsedSprint struct {
 }
 
 // RenderSprint renders s as the CLI's --json sprint document pretty-printed with
-// 2-space indent and a trailing newline. The tasks reverse index renders empty.
+// 2-space indent and a trailing newline. The tasks reverse index stays absent.
 func RenderSprint(s model.Sprint) []byte {
 	doc := sprintDoc{
 		ID:          string(s.ID),
@@ -1326,7 +1334,7 @@ func RenderSprint(s model.Sprint) []byte {
 		Status:      string(s.Status),
 		StartDate:   render.OptTime(s.StartDate),
 		EndDate:     render.OptTime(s.EndDate),
-		Labels:      render.EmptyNotNil(s.Labels),
+		Labels:      s.Labels,
 		Commits:     render.SHAStrings(s.Commits),
 		Comments:    renderComments(s.Comments),
 		Author:      string(s.Author),
@@ -1334,7 +1342,6 @@ func RenderSprint(s model.Sprint) []byte {
 		UpdatedAt:   render.RFC3339(s.UpdatedAt),
 		StartedAt:   render.OptTime(s.StartedAt),
 		ClosedAt:    render.OptTime(s.ClosedAt),
-		Tasks:       []string{},
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -1429,21 +1436,21 @@ func NewSprint(p ParsedSprint) ([]model.Op, error) {
 // projectDoc mirrors internal/cli's projectDTO field for field: the rendered
 // project file matches `project show --json` pretty-printed. The sprints and
 // tasks reverse indexes are cross-entity and cannot be computed from one
-// project, so they render empty (like RenderTask's blocks).
+// project, so they stay absent (like RenderTask's blocks).
 type projectDoc struct {
 	ID          string          `json:"id"`
 	Title       string          `json:"title"`
-	Description string          `json:"description"`
+	Description string          `json:"description,omitempty"`
 	Status      string          `json:"status"`
-	Labels      []string        `json:"labels"`
-	Commits     []string        `json:"commits"`
-	Comments    []ParsedComment `json:"comments"`
-	Author      string          `json:"author"`
+	Labels      []string        `json:"labels,omitempty"`
+	Commits     []string        `json:"commits,omitempty"`
+	Comments    []ParsedComment `json:"comments,omitempty"`
+	Author      string          `json:"author,omitempty"`
 	CreatedAt   string          `json:"created_at"`
 	UpdatedAt   string          `json:"updated_at"`
-	ClosedAt    *string         `json:"closed_at"`
-	Sprints     []string        `json:"sprints"`
-	Tasks       []string        `json:"tasks"`
+	ClosedAt    *string         `json:"closed_at,omitempty"`
+	Sprints     []string        `json:"sprints,omitempty"`
+	Tasks       []string        `json:"tasks,omitempty"`
 }
 
 // ParsedProject is the decoded form of a project file, mirroring projectDoc key
@@ -1467,22 +1474,20 @@ type ParsedProject struct {
 
 // RenderProject renders pr as the CLI's --json project document pretty-printed
 // with 2-space indent and a trailing newline. The sprints and tasks reverse
-// indexes render empty.
+// indexes stay absent.
 func RenderProject(pr model.Project) []byte {
 	doc := projectDoc{
 		ID:          string(pr.ID),
 		Title:       pr.Title,
 		Description: pr.Description,
 		Status:      string(pr.Status),
-		Labels:      render.EmptyNotNil(pr.Labels),
+		Labels:      pr.Labels,
 		Commits:     render.SHAStrings(pr.Commits),
 		Comments:    renderComments(pr.Comments),
 		Author:      string(pr.Author),
 		CreatedAt:   render.RFC3339(pr.CreatedAt),
 		UpdatedAt:   render.RFC3339(pr.UpdatedAt),
 		ClosedAt:    render.OptTime(pr.ClosedAt),
-		Sprints:     []string{},
-		Tasks:       []string{},
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -1847,9 +1852,9 @@ func immutableComments(f Field[[]ParsedComment], base []model.Comment) error {
 }
 
 func renderComments(comments []model.Comment) []ParsedComment {
-	out := make([]ParsedComment, len(comments))
-	for i, c := range comments {
-		out[i] = ParsedComment{Author: string(c.Author), TS: render.RFC3339(c.TS), Body: c.Body}
+	var out []ParsedComment
+	for _, c := range comments {
+		out = append(out, ParsedComment{Author: string(c.Author), TS: render.RFC3339(c.TS), Body: c.Body})
 	}
 	return out
 }

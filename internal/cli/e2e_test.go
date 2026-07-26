@@ -124,12 +124,19 @@ func mustBin(t *testing.T, dir, actor string, args ...string) string {
 	return res.Stdout
 }
 
+// showBinJSON reads an entity back in full through the built binary, keyed off
+// the id its acknowledgement carries: a mutation acknowledges with a summary.
+func showBinJSON[T any](t *testing.T, dir, actor, ack string) T {
+	t.Helper()
+	return mustJSON[T](t, mustBin(t, dir, actor, "show", jsonID(t, ack), "--json"))
+}
+
 // addTaskBin creates a task through the binary as actorA and returns its
 // parsed JSON document.
 func addTaskBin(t *testing.T, dir, title string, extra ...string) taskJSON {
 	t.Helper()
 	args := append([]string{"task", "add", title, "--no-validation-criteria", "--json"}, extra...)
-	return mustJSON[taskJSON](t, mustBin(t, dir, actorA, args...))
+	return showBinJSON[taskJSON](t, dir, actorA, mustBin(t, dir, actorA, args...))
 }
 
 // TestExitCodeMatrix pins the lifecycle x exit-code contract: every case runs
@@ -567,7 +574,7 @@ func TestClaimDetachedHead(t *testing.T) {
 func TestNoteLifecycleViaBinary(t *testing.T) {
 	dir := initRepo(t)
 	short := commitFile(t, dir, "seed.go", "package main")[:8]
-	note := mustJSON[noteJSON](t, mustBin(t, dir, actorA, "note", "add", "Anchored note",
+	note := showBinJSON[noteJSON](t, dir, actorA, mustBin(t, dir, actorA, "note", "add", "Anchored note",
 		"--body", "First body", "--label", "design", "--label", "api",
 		"--commit", short, "--path", "internal/cli", "--json"))
 	mustBin(t, dir, actorA, "note", "add", "Plain", "--label", "misc")
@@ -617,7 +624,7 @@ func TestNoteLifecycleViaBinary(t *testing.T) {
 // --clear with --reason is a usage error.
 func TestNoteExpireViaBinary(t *testing.T) {
 	dir := initRepo(t)
-	note := mustJSON[noteJSON](t, mustBin(t, dir, actorA, "note", "add", "API key rotation",
+	note := showBinJSON[noteJSON](t, dir, actorA, mustBin(t, dir, actorA, "note", "add", "API key rotation",
 		"--body", "rotate quarterly", "--json"))
 	short := note.ID[:7]
 
@@ -724,11 +731,11 @@ func TestTaskJSONContract(t *testing.T) {
 	if len(shown.BlockedBy) != 1 || shown.BlockedBy[0] != blocker.ID {
 		t.Errorf("blocked_by = %v, want [%s]", shown.BlockedBy, blocker.ID)
 	}
-	if len(shown.Blocks) != 0 || !strings.Contains(raw, `"blocks":[]`) {
-		t.Errorf("blocks = %v (raw %q), want empty non-null array", shown.Blocks, raw)
+	if len(shown.Blocks) != 0 || strings.Contains(raw, `"blocks"`) {
+		t.Errorf("blocks = %v (raw %q), want the key absent when nothing blocks", shown.Blocks, raw)
 	}
-	if shown.Parent != nil || !strings.Contains(raw, `"parent":null`) {
-		t.Errorf("parent = %v, want null", shown.Parent)
+	if shown.Parent != nil || strings.Contains(raw, `"parent"`) {
+		t.Errorf("parent = %v, want the key absent when unparented", shown.Parent)
 	}
 	if len(shown.Comments) != 1 || shown.Comments[0].Author != actorB || shown.Comments[0].Body != "observed from B" {
 		t.Errorf("comments = %+v, want one comment by %q", shown.Comments, actorB)
@@ -745,16 +752,16 @@ func TestTaskJSONContract(t *testing.T) {
 	if shown.StartedAt == nil || !strings.HasSuffix(*shown.StartedAt, "Z") {
 		t.Errorf("started_at = %v, want RFC3339Z after claim", shown.StartedAt)
 	}
-	if shown.ClosedAt != nil || !strings.Contains(raw, `"closed_at":null`) {
-		t.Errorf("closed_at = %v, want null", shown.ClosedAt)
+	if shown.ClosedAt != nil || strings.Contains(raw, `"closed_at"`) {
+		t.Errorf("closed_at = %v, want the key absent while the task is open", shown.ClosedAt)
 	}
-	if len(shown.Commits) != 0 || !strings.Contains(raw, `"commits":[]`) {
-		t.Errorf("commits = %v (raw %q), want empty non-null array", shown.Commits, raw)
+	if len(shown.Commits) != 0 || strings.Contains(raw, `"commits"`) {
+		t.Errorf("commits = %v (raw %q), want the key absent with no commits", shown.Commits, raw)
 	}
-	if shown.Lease.Holder == nil || *shown.Lease.Holder != winner {
+	if shown.Lease == nil || shown.Lease.Holder == nil || *shown.Lease.Holder != winner {
 		t.Errorf("lease.holder = %v, want %q", shown.Lease.Holder, winner)
 	}
-	if shown.Lease.Heartbeat == nil || !strings.HasSuffix(*shown.Lease.Heartbeat, "Z") {
+	if shown.Lease == nil || shown.Lease.Heartbeat == nil || !strings.HasSuffix(*shown.Lease.Heartbeat, "Z") {
 		t.Errorf("lease.heartbeat = %v, want RFC3339Z after claim", shown.Lease.Heartbeat)
 	}
 
@@ -763,9 +770,9 @@ func TestTaskJSONContract(t *testing.T) {
 	if len(blockerShown.Blocks) != 1 || blockerShown.Blocks[0] != rich.ID {
 		t.Errorf("blocker blocks = %v, want derived [%s]", blockerShown.Blocks, rich.ID)
 	}
-	for _, fragment := range []string{`"description":""`, `"assignee":null`, `"parent":null`, `"started_at":null`, `"closed_at":null`, `"commits":[]`, `"lease":{"holder":null,"heartbeat":null}`} {
-		if !strings.Contains(rawBlocker, fragment) {
-			t.Errorf("blocker JSON %q missing %q", rawBlocker, fragment)
+	for _, fragment := range []string{`"description"`, `"assignee"`, `"parent"`, `"started_at"`, `"closed_at"`, `"commits"`, `"lease"`, `"comments"`, `"labels"`, `"criteria"`, `"closed_forced"`} {
+		if strings.Contains(rawBlocker, fragment) {
+			t.Errorf("blocker JSON %q carries %q at its zero value", rawBlocker, fragment)
 		}
 	}
 }
@@ -859,7 +866,7 @@ func TestTwoCloneSyncRoundTrip(t *testing.T) {
 
 	cloneA := clone("a")
 	mustBin(t, cloneA, actorA, "init")
-	task := mustJSON[taskJSON](t, mustBin(t, cloneA, actorA, "task", "add", "Shared task", "--no-validation-criteria", "--json"))
+	task := showBinJSON[taskJSON](t, cloneA, actorA, mustBin(t, cloneA, actorA, "task", "add", "Shared task", "--no-validation-criteria", "--json"))
 	if out := mustBin(t, cloneA, actorA, "sync"); out != "pushed: 1\nrounds: 1\n" {
 		t.Fatalf("clone A sync = %q, want pushed: 1 / rounds: 1", out)
 	}

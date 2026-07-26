@@ -168,7 +168,7 @@ func newLogListCmd() *cobra.Command {
 		Short: "List logs",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -180,7 +180,7 @@ func newLogListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printEntityList(cmd, s, logs, jsonOut, logListDTO, leanLogLine)
+			return printEntityList(cmd, logs, jsonOut, logListDTO, leanLogLine)
 		},
 	}
 	flags := cmd.Flags()
@@ -273,7 +273,7 @@ func newLogSearchCmd() *cobra.Command {
 		Short: "Ranked search across log titles, labels, and entry text",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -291,7 +291,7 @@ func newLogSearchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printEntityList(cmd, s, logs, jsonOut, logListDTO, leanLogLine)
+			return printEntityList(cmd, logs, jsonOut, logListDTO, leanLogLine)
 		},
 	}
 	flags := cmd.Flags()
@@ -303,6 +303,6 @@ func newLogSearchCmd() *cobra.Command {
 	return cmd
 }
 
-// logListDTO is the list/search projection for a log: its lean JSON DTO with
-// attachment presence.
-func logListDTO(l model.Log, atts []attachmentDTO) any { return newLogDTO(l, atts) }
+// logListDTO is the list/search projection for a log: its summary DTO, without
+// the entries.
+func logListDTO(l model.Log) any { return newLogSummaryDTO(l) }

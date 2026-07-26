@@ -14,8 +14,8 @@ func noteIDs(notes []noteJSON) []string {
 
 func TestNoteSearchWiring(t *testing.T) {
 	dir := initRepo(t)
-	titleHit := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Token expiry", "--label", "design", "--path", "auth.go", "--json"))
-	bodyHit := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "Other", "--body", "token rotation", "--label", "misc", "--json"))
+	titleHit := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Token expiry", "--label", "design", "--path", "auth.go", "--json"))
+	bodyHit := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "Other", "--body", "token rotation", "--label", "misc", "--json"))
 
 	got := mustJSON[[]noteJSON](t, mustRun(t, dir, "note", "search", "token", "--json"))
 	if len(got) != 2 || got[0].ID != titleHit.ID || got[1].ID != bodyHit.ID {

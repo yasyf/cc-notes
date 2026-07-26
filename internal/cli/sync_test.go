@@ -58,7 +58,7 @@ func TestSelfInitOnFirstWriteNoRemote(t *testing.T) {
 		t.Fatalf("fresh repo already has cc-notes refs %q; want none before any write", refs)
 	}
 
-	note := mustJSON[noteJSON](t, mustRun(t, dir, "note", "add", "First", "--json"))
+	note := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "First", "--json"))
 	noteRef := "refs/cc-notes/notes/" + note.ID
 	if got := gittest.Git(t, dir, "rev-parse", "--verify", noteRef); got == "" {
 		t.Fatalf("note add did not create %s", noteRef)

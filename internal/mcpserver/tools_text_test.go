@@ -55,7 +55,8 @@ func TestFreeTextNonDashPasses(t *testing.T) {
 
 	for _, body := range []string{"plain", "a-b", "--x", " - "} {
 		t.Run(body, func(t *testing.T) {
-			added := decode[noteOut](t, call(t, cs, "note_add", map[string]any{"title": "Fact", "body": body}))
+			ack := call(t, cs, "note_add", map[string]any{"title": "Fact", "body": body})
+			added := show[noteOut](t, cs, "note_show", ackID(t, ack))
 			if added.Body != body {
 				t.Fatalf("note body = %q, want %q (value must pass through unchanged)", added.Body, body)
 			}

@@ -103,6 +103,21 @@ func decode[T any](t *testing.T, raw string) T {
 	return v
 }
 
+// ackID extracts the entity id a tool's summary acknowledgement carries.
+func ackID(t *testing.T, raw string) string {
+	t.Helper()
+	return decode[struct {
+		ID string `json:"id"`
+	}](t, raw).ID
+}
+
+// show reads an entity back in full through its *_show tool: a mutation
+// acknowledges with a summary, so bodies, findings, steps, and runs live here.
+func show[T any](t *testing.T, cs *mcp.ClientSession, tool, id string) T {
+	t.Helper()
+	return decode[T](t, call(t, cs, tool, map[string]any{"id": id}))
+}
+
 type docOut struct {
 	ID          string   `json:"id"`
 	Title       string   `json:"title"`
@@ -116,6 +131,17 @@ type docOut struct {
 	} `json:"attachments"`
 }
 
+// docSummaryOut is what every doc mutation acknowledges with: identity, the
+// When trigger, and the drift verdict, but no body and no attachments.
+type docSummaryOut struct {
+	ID    string   `json:"id"`
+	Title string   `json:"title"`
+	When  string   `json:"when"`
+	Tags  []string `json:"tags"`
+	Drift string   `json:"drift"`
+	Body  string   `json:"body"`
+}
+
 type noteOut struct {
 	ID         string  `json:"id"`
 	Body       string  `json:"body"`
@@ -123,10 +149,24 @@ type noteOut struct {
 	VerifiedBy *string `json:"verified_by"`
 }
 
+// noteSummaryOut is what every note mutation acknowledges with. Body and the
+// verification stamps must stay absent; they live with note_show.
+type noteSummaryOut struct {
+	ID         string  `json:"id"`
+	Title      string  `json:"title"`
+	Drift      string  `json:"drift"`
+	Body       string  `json:"body"`
+	VerifiedAt *string `json:"verified_at"`
+	VerifiedBy *string `json:"verified_by"`
+}
+
+// taskOut is what every task mutation acknowledges with: the triage and claim
+// fields, without the description, comments, or criteria.
 type taskOut struct {
-	ID       string  `json:"id"`
-	Status   string  `json:"status"`
-	Assignee *string `json:"assignee"`
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Status   string `json:"status"`
+	Assignee string `json:"assignee"`
 }
 
 type runbookOut struct {
@@ -148,6 +188,22 @@ type runbookOut struct {
 	} `json:"runs"`
 }
 
+// runbookSummaryOut is what every runbook mutation acknowledges with: the step
+// and run tallies stand in for the steps and runs themselves.
+type runbookSummaryOut struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`
+	StepCount int    `json:"step_count"`
+	RunCount  int    `json:"run_count"`
+	Steps     []struct {
+		ID string `json:"id"`
+	} `json:"steps"`
+	Runs []struct {
+		ID string `json:"id"`
+	} `json:"runs"`
+}
+
 type investigationOut struct {
 	ID         string   `json:"id"`
 	Premise    string   `json:"premise"`
@@ -164,6 +220,24 @@ type investigationOut struct {
 	} `json:"entries"`
 }
 
+// investigationSummaryOut is what every investigation mutation acknowledges
+// with: the status plus the finding and timeline tallies, no premise or bodies.
+type investigationSummaryOut struct {
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	Status       string `json:"status"`
+	FindingCount int    `json:"finding_count"`
+	EntryCount   int    `json:"entry_count"`
+	Premise      string `json:"premise"`
+	RootCause    string `json:"root_cause"`
+	Findings     []struct {
+		ID string `json:"id"`
+	} `json:"findings"`
+	Entries []struct {
+		Text string `json:"text"`
+	} `json:"entries"`
+}
+
 func TestDocAddShowRoundTrip(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
@@ -172,26 +246,26 @@ func TestDocAddShowRoundTrip(t *testing.T) {
 	if err := os.WriteFile(att, []byte("attached bytes\n"), 0o600); err != nil {
 		t.Fatalf("write attachment: %v", err)
 	}
-	added := decode[docOut](t, call(t, cs, "doc_add", map[string]any{
+	ack := decode[docSummaryOut](t, call(t, cs, "doc_add", map[string]any{
 		"title":  "Handoff",
 		"body":   "the long body",
 		"when":   "resuming the cutover",
 		"labels": []string{"design"},
 		"attach": []string{att},
 	}))
-	if added.Title != "Handoff" || added.Body != "the long body" || added.When != "resuming the cutover" {
-		t.Fatalf("added = %+v, want the prefilled fields", added)
+	if ack.Title != "Handoff" || ack.When != "resuming the cutover" {
+		t.Fatalf("ack = %+v, want the title and the When trigger", ack)
 	}
-	if added.VerifiedAt == nil || added.VerifiedBy == nil || *added.VerifiedBy != "Agent A <a@example.com>" {
-		t.Fatalf("doc not born-verified: verified_at=%v verified_by=%v", added.VerifiedAt, added.VerifiedBy)
-	}
-	if len(added.Attachments) != 1 || added.Attachments[0].Name != "artifact.txt" {
-		t.Fatalf("attachments = %+v, want one artifact.txt", added.Attachments)
+	if ack.Body != "" {
+		t.Fatalf("doc_add ack carries the body %q; a write acknowledgement is a summary", ack.Body)
 	}
 
-	shown := decode[docOut](t, call(t, cs, "doc_show", map[string]any{"id": added.ID}))
-	if shown.ID != added.ID || shown.Body != "the long body" {
-		t.Fatalf("show = %+v, want the same doc", shown)
+	shown := show[docOut](t, cs, "doc_show", ack.ID)
+	if shown.ID != ack.ID || shown.Body != "the long body" || shown.When != "resuming the cutover" {
+		t.Fatalf("show = %+v, want the full doc", shown)
+	}
+	if shown.VerifiedAt == nil || shown.VerifiedBy == nil || *shown.VerifiedBy != "Agent A <a@example.com>" {
+		t.Fatalf("doc not born-verified: verified_at=%v verified_by=%v", shown.VerifiedAt, shown.VerifiedBy)
 	}
 	if len(shown.Attachments) != 1 || shown.Attachments[0].Name != "artifact.txt" {
 		t.Fatalf("show attachments = %+v, want artifact.txt listed", shown.Attachments)
@@ -202,13 +276,28 @@ func TestNoteAddVerify(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
 
-	added := decode[noteOut](t, call(t, cs, "note_add", map[string]any{"title": "Fact", "body": "v1"}))
+	ack := decode[noteSummaryOut](t, call(t, cs, "note_add", map[string]any{"title": "Fact", "body": "v1"}))
+	if ack.Title != "Fact" {
+		t.Fatalf("ack = %+v, want the title", ack)
+	}
+	if ack.Body != "" || ack.VerifiedAt != nil || ack.VerifiedBy != nil {
+		t.Fatalf("note_add ack = %+v, want a summary with no body and no verification stamps", ack)
+	}
+
+	added := show[noteOut](t, cs, "note_show", ack.ID)
+	if added.Body != "v1" {
+		t.Fatalf("show body = %q, want v1", added.Body)
+	}
 	if added.VerifiedBy == nil || *added.VerifiedBy != "Agent A <a@example.com>" {
 		t.Fatalf("note not born-verified: %+v", added)
 	}
-	verified := decode[noteOut](t, call(t, cs, "note_verify", map[string]any{"id": added.ID}))
-	if verified.ID != added.ID || verified.VerifiedAt == nil {
-		t.Fatalf("verify = %+v, want the same note re-verified", verified)
+
+	reverified := decode[noteSummaryOut](t, call(t, cs, "note_verify", map[string]any{"id": ack.ID}))
+	if reverified.ID != ack.ID {
+		t.Fatalf("verify ack = %+v, want the same note", reverified)
+	}
+	if verified := show[noteOut](t, cs, "note_show", ack.ID); verified.VerifiedAt == nil {
+		t.Fatalf("verify = %+v, want the note re-verified", verified)
 	}
 }
 
@@ -221,12 +310,12 @@ func TestTaskLifecycle(t *testing.T) {
 		"title":                  "Wire the layer",
 		"no_validation_criteria": true,
 	}))
-	if added.Status != "open" || added.Assignee != nil {
+	if added.Status != "open" || added.Assignee != "" {
 		t.Fatalf("added = %+v, want open and unassigned", added)
 	}
 
 	claimed := decode[taskOut](t, call(t, cs, "task_claim", map[string]any{"id": added.ID}))
-	if claimed.Status != "in_progress" || claimed.Assignee == nil {
+	if claimed.Status != "in_progress" || claimed.Assignee == "" {
 		t.Fatalf("claimed = %+v, want in_progress and assigned", claimed)
 	}
 	done := decode[taskOut](t, call(t, cs, "task_done", map[string]any{"id": added.ID}))
@@ -250,18 +339,27 @@ func TestRunbookRunLoop(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
 
-	added := decode[runbookOut](t, call(t, cs, "runbook_add", map[string]any{
+	ack := decode[runbookSummaryOut](t, call(t, cs, "runbook_add", map[string]any{
 		"title": "Deploy",
 		"steps": []string{"build", "ship"},
 	}))
-	if added.Status != "active" {
-		t.Fatalf("added status = %q, want active", added.Status)
+	if ack.Status != "active" || ack.StepCount != 2 {
+		t.Fatalf("add ack = %+v, want active with step_count 2", ack)
 	}
+	if ack.Steps != nil {
+		t.Fatalf("runbook_add ack carries the steps; a write acknowledgement is a summary")
+	}
+
+	added := show[runbookOut](t, cs, "runbook_show", ack.ID)
 	if len(added.Steps) != 2 || added.Steps[0].Text != "build" || added.Steps[1].Text != "ship" {
 		t.Fatalf("steps = %+v, want build then ship in order", added.Steps)
 	}
 
-	started := decode[runbookOut](t, call(t, cs, "runbook_run_start", map[string]any{"id": added.ID}))
+	startAck := decode[runbookSummaryOut](t, call(t, cs, "runbook_run_start", map[string]any{"id": added.ID}))
+	if startAck.RunCount != 1 || startAck.Runs != nil {
+		t.Fatalf("run_start ack = %+v, want run_count 1 and no runs array", startAck)
+	}
+	started := show[runbookOut](t, cs, "runbook_show", added.ID)
 	if len(started.Runs) != 1 || started.Runs[0].Status != "running" {
 		t.Fatalf("runs = %+v, want one running run", started.Runs)
 	}
@@ -270,7 +368,8 @@ func TestRunbookRunLoop(t *testing.T) {
 	call(t, cs, "runbook_run_done", map[string]any{"id": added.ID, "step": added.Steps[0].ID, "note": "built clean"})
 	call(t, cs, "runbook_run_skip", map[string]any{"id": added.ID, "step": added.Steps[1].ID})
 
-	finished := decode[runbookOut](t, call(t, cs, "runbook_run_finish", map[string]any{"id": added.ID}))
+	call(t, cs, "runbook_run_finish", map[string]any{"id": added.ID})
+	finished := show[runbookOut](t, cs, "runbook_show", added.ID)
 	if len(finished.Runs) != 1 {
 		t.Fatalf("finished runs = %+v, want exactly one", finished.Runs)
 	}
@@ -285,7 +384,7 @@ func TestRunbookRunLoop(t *testing.T) {
 		t.Fatalf("run step[1] = %+v, want skipped", run.Steps[1])
 	}
 
-	shown := decode[runbookOut](t, call(t, cs, "runbook_show", map[string]any{"id": added.ID}))
+	shown := show[runbookOut](t, cs, "runbook_show", added.ID)
 	if len(shown.Runs) != 1 || shown.Runs[0].Status != "succeeded" {
 		t.Fatalf("show runs = %+v, want one succeeded run", shown.Runs)
 	}
@@ -296,55 +395,77 @@ func TestInvestigationLifecycle(t *testing.T) {
 	fixCommit := gittest.Git(t, dir, "rev-parse", "HEAD")
 	cs := connect(t)
 
-	opened := decode[investigationOut](t, call(t, cs, "investigation_open", map[string]any{
+	openAck := decode[investigationSummaryOut](t, call(t, cs, "investigation_open", map[string]any{
 		"title":    "Suspect the parser",
 		"premise":  "the parser drops quoted fields",
 		"findings": []string{"quoted fields disappear"},
 	}))
+	if openAck.Status != "open" || openAck.FindingCount != 1 {
+		t.Fatalf("open ack = %+v, want open with finding_count 1", openAck)
+	}
+	if openAck.Premise != "" || openAck.Findings != nil {
+		t.Fatalf("investigation_open ack = %+v, want a summary with no premise and no findings array", openAck)
+	}
+
+	id := openAck.ID
+	opened := show[investigationOut](t, cs, "investigation_show", id)
 	if opened.Status != "open" || opened.Premise != "the parser drops quoted fields" || len(opened.Findings) != 1 {
 		t.Fatalf("opened = %+v, want an open investigation with its premise and finding", opened)
 	}
 
-	appended := decode[investigationOut](t, call(t, cs, "investigation_append", map[string]any{
-		"id":   opened.ID,
+	if ack := decode[investigationSummaryOut](t, call(t, cs, "investigation_append", map[string]any{
+		"id":   id,
 		"text": "reproduced with a quoted fixture",
-	}))
+	})); ack.EntryCount != 1 || ack.Entries != nil {
+		t.Fatalf("append ack = %+v, want entry_count 1 and no entries array", ack)
+	}
+	appended := show[investigationOut](t, cs, "investigation_show", id)
 	if len(appended.Entries) != 1 || appended.Entries[0].Text != "reproduced with a quoted fixture" {
 		t.Fatalf("entries = %+v, want the appended evidence", appended.Entries)
 	}
 
-	cleared := decode[investigationOut](t, call(t, cs, "investigation_finding_clear", map[string]any{
-		"id":      opened.ID,
+	call(t, cs, "investigation_finding_clear", map[string]any{
+		"id":      id,
 		"finding": opened.Findings[0].ID,
 		"why":     "the fixture was malformed",
-	}))
+	})
+	cleared := show[investigationOut](t, cs, "investigation_show", id)
 	if cleared.Findings[0].Status != "cleared" || cleared.Findings[0].Note != "the fixture was malformed" {
 		t.Fatalf("finding = %+v, want cleared with its evidence", cleared.Findings[0])
 	}
 
-	rooted := decode[investigationOut](t, call(t, cs, "investigation_root_cause", map[string]any{
-		"id":   opened.ID,
+	if ack := decode[investigationSummaryOut](t, call(t, cs, "investigation_root_cause", map[string]any{
+		"id":   id,
 		"text": "the fixture escaped the delimiter twice",
-	}))
-	if rooted.Status != "root_caused" || rooted.RootCause != "the fixture escaped the delimiter twice" {
-		t.Fatalf("root-caused = %+v, want the structural root-cause verdict", rooted)
+	})); ack.Status != "root_caused" || ack.RootCause != "" {
+		t.Fatalf("root-cause ack = %+v, want root_caused with no root_cause text", ack)
+	}
+	rooted := show[investigationOut](t, cs, "investigation_show", id)
+	if rooted.RootCause != "the fixture escaped the delimiter twice" {
+		t.Fatalf("root cause = %q, want the recorded verdict", rooted.RootCause)
 	}
 
-	fixed := decode[investigationOut](t, call(t, cs, "investigation_fix", map[string]any{
-		"id":      opened.ID,
+	if ack := decode[investigationSummaryOut](t, call(t, cs, "investigation_fix", map[string]any{
+		"id":      id,
 		"text":    "corrected fixture escaping",
 		"commits": []string{fixCommit},
-	}))
-	if fixed.Status != "fixed" || len(fixed.FixCommits) != 1 || fixed.FixCommits[0] != fixCommit {
-		t.Fatalf("fixed = %+v, want fixed with the seed commit", fixed)
+	})); ack.Status != "fixed" {
+		t.Fatalf("fix ack = %+v, want fixed", ack)
+	}
+	fixed := show[investigationOut](t, cs, "investigation_show", id)
+	if len(fixed.FixCommits) != 1 || fixed.FixCommits[0] != fixCommit {
+		t.Fatalf("fixed = %+v, want the seed commit recorded", fixed)
 	}
 
-	confirmed := decode[investigationOut](t, call(t, cs, "investigation_confirm", map[string]any{
-		"id":   opened.ID,
+	if ack := decode[investigationSummaryOut](t, call(t, cs, "investigation_confirm", map[string]any{
+		"id":   id,
 		"text": "the quoted fixture now passes",
-	}))
-	if confirmed.Status != "confirmed" || confirmed.Entries[len(confirmed.Entries)-1].Text != "the quoted fixture now passes" {
-		t.Fatalf("confirmed = %+v, want confirmed with proof", confirmed)
+	})); ack.Status != "confirmed" {
+		t.Fatalf("confirm ack = %+v, want confirmed", ack)
+	}
+	confirmed := show[investigationOut](t, cs, "investigation_show", id)
+	if confirmed.Entries[len(confirmed.Entries)-1].Text != "the quoted fixture now passes" {
+		t.Fatalf("confirmed = %+v, want the proof appended", confirmed)
 	}
 }
 

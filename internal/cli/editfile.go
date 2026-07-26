@@ -107,7 +107,7 @@ func docAdapter() editAdapter {
 			return bornVerify(ctx, s, refs.For(model.KindDoc, snap.EntityID()), snap.(model.Doc).Anchors)
 		},
 		print: func(cmd *cobra.Command, c *notes.Client, snap model.Snapshot, jsonOut bool) error {
-			return printDoc(cmd, c, snap.(model.Doc), "", jsonOut)
+			return printDoc(cmd, c, snap.(model.Doc), jsonOut)
 		},
 	}
 }

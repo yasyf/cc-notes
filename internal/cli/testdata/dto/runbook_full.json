@@ -13,7 +13,6 @@
     {
       "id": "step0002",
       "text": "roll out",
-      "command": "",
       "position": "b"
     }
   ],
@@ -44,13 +43,11 @@
   "anchors": [
     {
       "kind": "dir",
-      "value": "internal/api",
-      "witness": null
+      "value": "internal/api"
     },
     {
       "kind": "path",
-      "value": "internal/cli/output.go",
-      "witness": null
+      "value": "internal/cli/output.go"
     }
   ],
   "comments": [
