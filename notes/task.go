@@ -213,6 +213,26 @@ func (c *Client) Tasks(ctx context.Context, f TaskFilter) ([]model.Task, error) 
 	return tasks, nil
 }
 
+// SearchTasks ranks the live task set against query, mirroring SearchNotes: a
+// task matches when its title, a label, or its description contains query.
+func (c *Client) SearchTasks(ctx context.Context, query string, f SearchFilter) ([]model.Task, error) {
+	tasks, err := c.s.ListTasks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return rankDocuments(tasks, query, f, taskRanker), nil
+}
+
+// taskRanker projects a task onto the ranked-search axes. A task records no
+// author, so the author filter matches against its assignee — the only actor it
+// carries.
+var taskRanker = documentRanker[model.Task]{
+	tags:    func(t model.Task) []string { return t.Labels },
+	author:  func(t model.Task) string { return string(t.Assignee) },
+	anchors: func(t model.Task) []model.Anchor { return t.Anchors },
+	tier:    func(t model.Task, q string) int { return textTier(t.Title, t.Labels, []string{t.Description}, q) },
+}
+
 // ReadyTasks folds every task and returns the unblocked, unassigned, open tasks
 // in the given branch scope, in task list order. A task is unblocked when every
 // blocker resolves to a live task that is done or cancelled.

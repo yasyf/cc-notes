@@ -10,6 +10,10 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
+// PapercutTag labels the repo-wide papercut journal. The tag is the journal's
+// identity — a retitle never forks it — so readers find the journal by tag.
+const PapercutTag = "papercut"
+
 // LogSpec is the input to CreateLog. Title is required. Entry, when non-empty,
 // is appended as the log's first entry in a second write after the create.
 // Anchors are attached in commit, path, dir, then branch order; commit values

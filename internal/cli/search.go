@@ -21,6 +21,7 @@ type searchDTO struct {
 	Note          *noteSummaryDTO          `json:"note,omitempty"`
 	Doc           *docSummaryDTO           `json:"doc,omitempty"`
 	Log           *logSummaryDTO           `json:"log,omitempty"`
+	Task          *taskSummaryDTO          `json:"task,omitempty"`
 	Runbook       *runbookSummaryDTO       `json:"runbook,omitempty"`
 	Investigation *investigationSummaryDTO `json:"investigation,omitempty"`
 }
@@ -33,10 +34,10 @@ type searchHit struct {
 }
 
 // newSearchCmd builds the top-level "cc-notes search QUERY": one ranked search
-// fanned out across notes, docs, logs, and runbooks, merged kind-tagged. Like
-// show and history it is global because a query needs no noun; the noun-scoped
-// "<kind> search" commands remain for a single-kind search with that kind's
-// full filter set (e.g. --author).
+// fanned out across every kind, merged kind-tagged. Like show and history it is
+// global because a query needs no noun; the noun-scoped "<kind> search"
+// commands remain for a single-kind search with that kind's full filter set
+// (e.g. --author).
 func newSearchCmd() *cobra.Command {
 	var labels []string
 	var filters anchorFilters
@@ -44,7 +45,7 @@ func newSearchCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
-		Short: "Ranked search across every note, doc, log, runbook, and investigation",
+		Short: "Ranked search across every note, doc, log, task, runbook, and investigation",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openClient(cmd)
@@ -68,7 +69,7 @@ func newSearchCmd() *cobra.Command {
 			if limit > 0 && len(hits) > limit {
 				hits = hits[:limit]
 			}
-			return printSearchHits(cmd, hits, jsonOut)
+			return printSearchHits(cmd, c, hits, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -79,7 +80,7 @@ func newSearchCmd() *cobra.Command {
 	return cmd
 }
 
-// searchAllKinds fans query out to every kind's ranked search and merges the
+// searchAllKinds fans query out to each kind's ranked search and merges the
 // results under the per-kind comparator (tier descending, UpdatedAt descending,
 // id ascending), so the interleave preserves each kind's own order. The tier is
 // re-derived with textTier over the same fields each kind's ranker reads.
@@ -100,7 +101,15 @@ func searchAllKinds(ctx context.Context, c *notes.Client, query string, f notes.
 		return nil, err
 	}
 	for _, d := range docs {
-		hits = append(hits, searchHit{snap: d, tier: textTier(d.Title, d.Tags, []string{d.Body}, q)})
+		hits = append(hits, searchHit{snap: d, tier: textTier(d.Title, d.Tags, []string{d.Body, d.When}, q)})
+	}
+
+	tasks, err := c.SearchTasks(ctx, query, f)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range tasks {
+		hits = append(hits, searchHit{snap: t, tier: textTier(t.Title, t.Labels, []string{t.Description}, q)})
 	}
 
 	logs, err := c.SearchLogs(ctx, query, f)
@@ -151,10 +160,15 @@ func compareSearchHits(a, b searchHit) int {
 }
 
 // printSearchHits writes the merged hits as searchDTOs in JSON, or as each
-// kind's lean line prefixed with a kind tag column.
-func printSearchHits(cmd *cobra.Command, hits []searchHit, jsonOut bool) error {
+// kind's lean line prefixed with a kind tag column. The JSON path folds the
+// reverse dependency index once, for every task hit at a time.
+func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
+		blocks, err := c.TasksBlockingIndex(cmd.Context())
+		if err != nil {
+			return err
+		}
 		dtos := make([]searchDTO, len(hits))
 		for i, h := range hits {
 			dto := searchDTO{Kind: string(h.snap.Meta().Kind)}
@@ -168,6 +182,9 @@ func printSearchHits(cmd *cobra.Command, hits []searchHit, jsonOut bool) error {
 			case model.Log:
 				l := newLogSummaryDTO(v)
 				dto.Log = &l
+			case model.Task:
+				t := newTaskSummaryDTO(v, blocks[v.ID])
+				dto.Task = &t
 			case model.Runbook:
 				rb := newRunbookSummaryDTO(v)
 				dto.Runbook = &rb
@@ -190,6 +207,8 @@ func printSearchHits(cmd *cobra.Command, hits []searchHit, jsonOut bool) error {
 			lean = leanDocLine(v)
 		case model.Log:
 			lean = leanLogLine(v)
+		case model.Task:
+			lean = leanTaskLine(v)
 		case model.Runbook:
 			lean = leanRunbookLine(v)
 		case model.Investigation:

@@ -1454,7 +1454,7 @@ command: cc-notes runbook step rm
 command: cc-notes search
   use: search QUERY
   aliases: -
-  short: Ranked search across every note, doc, log, runbook, and investigation
+  short: Ranked search across every note, doc, log, task, runbook, and investigation
   hidden: false
   flags:
     --branch shorthand=none type=string default="" usage="require branch anchor"
@@ -1651,7 +1651,7 @@ command: cc-notes sprint show
 command: cc-notes status
   use: status
   aliases: board
-  short: Orient: the backlog, your branch, in-progress across branches, notes, and investigations
+  short: Orient: the backlog by readiness, your branch, in-progress leases, runs in flight, and record counts
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"

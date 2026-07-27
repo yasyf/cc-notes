@@ -557,7 +557,8 @@ func (c *Client) SearchNotes(ctx context.Context, query string, f SearchFilter) 
 	return rankDocuments(notes, query, f, noteRanker), nil
 }
 
-// SearchDocs ranks the live doc set against query, mirroring SearchNotes.
+// SearchDocs ranks the live doc set against query, mirroring SearchNotes with
+// the When trigger read alongside the body.
 func (c *Client) SearchDocs(ctx context.Context, query string, f SearchFilter) ([]model.Doc, error) {
 	docs, err := c.s.ListDocs(ctx, false, false)
 	if err != nil {
@@ -587,7 +588,7 @@ var docRanker = documentRanker[model.Doc]{
 	tags:    func(d model.Doc) []string { return d.Tags },
 	author:  func(d model.Doc) string { return string(d.Author) },
 	anchors: func(d model.Doc) []model.Anchor { return d.Anchors },
-	tier:    func(d model.Doc, q string) int { return textTier(d.Title, d.Tags, []string{d.Body}, q) },
+	tier:    func(d model.Doc, q string) int { return textTier(d.Title, d.Tags, []string{d.Body, d.When}, q) },
 }
 
 // rankDocuments filters items by label, author, and anchor, keeps those whose

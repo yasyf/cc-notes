@@ -17,7 +17,7 @@ var errEmptyOutput = errors.New("a destination file path is required; without on
 type statusArgs struct{}
 
 type relevantArgs struct {
-	Path     string `json:"path" jsonschema:"repository path to weigh notes, docs, and tasks against"`
+	Path     string `json:"path" jsonschema:"repository path to weigh notes, docs, logs, runbooks, and investigations against"`
 	Branch   string `json:"branch,omitempty" jsonschema:"branch to weigh against (default: current HEAD branch)"`
 	Base     string `json:"base,omitempty" jsonschema:"merge-base reference for cross-author signals (default: remote default branch)"`
 	Limit    *int   `json:"limit,omitempty" jsonschema:"maximum results (negative: unlimited; default 10)"`
@@ -45,7 +45,7 @@ type historyArgs struct {
 }
 
 type searchArgs struct {
-	Query  string   `json:"query" jsonschema:"search query (matches titles, labels, bodies, log entries, and runbook steps)"`
+	Query  string   `json:"query" jsonschema:"search query (matches titles, labels, bodies, doc triggers, task descriptions, log entries, and runbook steps)"`
 	Labels []string `json:"labels,omitempty" jsonschema:"require every label (ANDed; echoed as 'tags' in entity DTOs)"`
 	Limit  *int     `json:"limit,omitempty" jsonschema:"maximum results (0 = all; default 20)"`
 	Path   string   `json:"path,omitempty" jsonschema:"require path anchor"`

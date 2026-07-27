@@ -765,3 +765,42 @@ func TestTaskAnchorsDedupe(t *testing.T) {
 		t.Fatalf("a differently anchored create reused %s; anchors must be part of the dedupe key", first.Task.ID.Short())
 	}
 }
+
+// TestSearchTasks pins tasks as first-class members of the search corpus: they
+// rank by the same title-over-label-over-body tiers every other kind uses, and a
+// phrase living only in the description still finds its task.
+func TestSearchTasks(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+
+	byTitle := mustTask(t, c, notes.TaskSpec{Title: "Fix the retry backoff", Branch: "main"})
+	byLabel := mustTask(t, c, notes.TaskSpec{Title: "Rewrite the pool", Branch: "main", Labels: []string{"backoff"}})
+	byBody := mustTask(t, c, notes.TaskSpec{
+		Title:       "Tighten the client",
+		Branch:      "main",
+		Description: "the retry backoff caps at 30s",
+	})
+	mustTask(t, c, notes.TaskSpec{Title: "Unrelated", Branch: "main"})
+
+	got, err := c.SearchTasks(ctx, "backoff", notes.SearchFilter{Limit: -1})
+	if err != nil {
+		t.Fatalf("SearchTasks: %v", err)
+	}
+	want := []model.EntityID{byTitle.ID, byLabel.ID, byBody.ID}
+	if !slices.Equal(taskIDs(got), want) {
+		t.Fatalf("SearchTasks ids = %v, want %v (title tier over label over description)", taskIDs(got), want)
+	}
+
+	// A phrase that appears in no title and no label reaches only the description.
+	bodyOnly, err := c.SearchTasks(ctx, "caps at 30s", notes.SearchFilter{Limit: -1})
+	if err != nil {
+		t.Fatalf("SearchTasks body-only: %v", err)
+	}
+	if !slices.Equal(taskIDs(bodyOnly), []model.EntityID{byBody.ID}) {
+		t.Fatalf("body-only search ids = %v, want just %s", taskIDs(bodyOnly), byBody.ID)
+	}
+
+	if none, err := c.SearchTasks(ctx, "nomatch", notes.SearchFilter{Limit: -1}); err != nil || len(none) != 0 {
+		t.Fatalf("SearchTasks(nomatch) = %v/%v, want empty/nil", none, err)
+	}
+}

@@ -13,15 +13,14 @@ import (
 )
 
 // Note review verdicts. A note carries at most one: precedence is
-// EXPIRED > UNVERIFIED > DRIFTED > STALE (DANGLING reported separately for
-// broken supersede edges). The CLI verdict strings alias the notes.Verdict
-// constants that own the vocabulary.
+// EXPIRED > UNVERIFIED > DRIFTED > STALE. DANGLING has no CLI alias — only
+// notes.Client folds supersede edges. The CLI verdict strings alias the
+// notes.Verdict constants that own the vocabulary.
 const (
 	verdictExpired    = string(notes.VerdictExpired)
 	verdictUnverified = string(notes.VerdictUnverified)
 	verdictDrifted    = string(notes.VerdictDrifted)
 	verdictStale      = string(notes.VerdictStale)
-	verdictDangling   = string(notes.VerdictDangling)
 )
 
 // freshEntity carries the freshness-relevant fields a Note and a Doc share —
@@ -115,7 +114,8 @@ func witnessIndex(witness []model.AnchorWitness) map[model.Anchor]model.AnchorWi
 // verdictOf computes the single review verdict for fe against live content at
 // head, returning "" when fresh. Precedence is
 // EXPIRED > UNVERIFIED > DRIFTED > STALE; dangling supersede edges are surfaced
-// separately by reviewNotes/reviewDocs. An unborn HEAD skips drift detection.
+// separately, by notes.Client's ReviewNotes/ReviewDocs. An unborn HEAD skips
+// drift detection.
 // When worktree is true, path anchors drift-check against the on-disk
 // working-tree file rather than the committed blob at head. noteVerdict and
 // docVerdict are thin projections onto this shared core.
@@ -214,59 +214,4 @@ func liveAnchorOID(ctx context.Context, s *store.Store, head model.SHA, a model.
 		return s.Git.WorktreeBlobOID(ctx, a.Value)
 	}
 	return s.Git.PathOID(ctx, string(head), a.Value)
-}
-
-// reviewDocs folds the doc review set (non-deleted, including superseded for
-// dangling detection) and returns each flagged doc with its verdict: a
-// non-superseded doc carries its content verdict
-// (UNVERIFIED/DRIFTED/STALE/EXPIRED); a superseded doc is surfaced only when its
-// edge dangles. Fresh docs are dropped. Order follows ListDocs: creation time
-// then id.
-func reviewDocs(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) ([]reviewed[model.Doc], error) {
-	all, err := s.ListDocs(ctx, false, true)
-	if err != nil {
-		return nil, err
-	}
-	exists := make(map[model.EntityID]bool, len(all))
-	for _, d := range all {
-		exists[d.ID] = true
-	}
-	var out []reviewed[model.Doc]
-	for _, d := range all {
-		if len(d.SupersededBy) > 0 {
-			if supersedeDangling(freshFromDoc(d), exists) {
-				out = append(out, reviewed[model.Doc]{entity: d, verdict: verdictDangling})
-			}
-			continue
-		}
-		verdict, err := docVerdict(ctx, s, head, d, now, staleAfter, false)
-		if err != nil {
-			return nil, err
-		}
-		if verdict != "" {
-			out = append(out, reviewed[model.Doc]{entity: d, verdict: verdict})
-		}
-	}
-	return out, nil
-}
-
-// supersedeDangling reports whether any of fe's supersede targets has been
-// tombstoned — absent from the live (non-deleted) set. A chain whose target is
-// itself superseded but still live is valid, not dangling.
-func supersedeDangling(fe freshEntity, exists map[model.EntityID]bool) bool {
-	for _, target := range fe.SupersededBy {
-		if !exists[target] {
-			return true
-		}
-	}
-	return false
-}
-
-// docReviewCount counts the docs needing review against live content.
-func docReviewCount(ctx context.Context, s *store.Store, head model.SHA, now time.Time, staleAfter time.Duration) (int, error) {
-	reviewed, err := reviewDocs(ctx, s, head, now, staleAfter)
-	if err != nil {
-		return 0, err
-	}
-	return len(reviewed), nil
 }

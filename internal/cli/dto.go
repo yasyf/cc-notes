@@ -61,16 +61,17 @@ type noteDTO struct {
 }
 
 // noteSummaryDTO is one note in a listing or write acknowledgement: the
-// identity, the tags, the drift verdict, and the expiry reason, without the
-// body.
+// identity, the tags, the drift verdict, the commit the note was last checked
+// against, and the expiry reason, without the body.
 type noteSummaryDTO struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Tags        []string `json:"tags,omitempty"`
-	Author      string   `json:"author,omitempty"`
-	UpdatedAt   string   `json:"updated_at"`
-	Drift       string   `json:"drift,omitempty"`
-	StaleReason string   `json:"stale_reason,omitempty"`
+	ID             string   `json:"id"`
+	Title          string   `json:"title"`
+	Tags           []string `json:"tags,omitempty"`
+	Author         string   `json:"author,omitempty"`
+	UpdatedAt      string   `json:"updated_at"`
+	VerifiedCommit string   `json:"verified_commit,omitempty"`
+	Drift          string   `json:"drift,omitempty"`
+	StaleReason    string   `json:"stale_reason,omitempty"`
 }
 
 // docDTO fixes the JSON field order and formats for doc output: the noteDTO
@@ -103,14 +104,15 @@ type docDTO struct {
 // docSummaryDTO is the noteSummaryDTO shape plus the free-text When trigger,
 // the field a reader needs to decide whether the doc applies.
 type docSummaryDTO struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	When        string   `json:"when,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	Author      string   `json:"author,omitempty"`
-	UpdatedAt   string   `json:"updated_at"`
-	Drift       string   `json:"drift,omitempty"`
-	StaleReason string   `json:"stale_reason,omitempty"`
+	ID             string   `json:"id"`
+	Title          string   `json:"title"`
+	When           string   `json:"when,omitempty"`
+	Tags           []string `json:"tags,omitempty"`
+	Author         string   `json:"author,omitempty"`
+	UpdatedAt      string   `json:"updated_at"`
+	VerifiedCommit string   `json:"verified_commit,omitempty"`
+	Drift          string   `json:"drift,omitempty"`
+	StaleReason    string   `json:"stale_reason,omitempty"`
 }
 
 // logEntryDTO is one append-only log entry with its timestamp rendered RFC3339
@@ -478,13 +480,14 @@ func newNoteDTO(n model.Note, drift string, supersedes, liveHead []model.EntityI
 // listing projection, carrying the full id so it stays a usable handle.
 func newNoteSummaryDTO(n model.Note, drift string) noteSummaryDTO {
 	return noteSummaryDTO{
-		ID:          string(n.ID),
-		Title:       n.Title,
-		Tags:        n.Tags,
-		Author:      string(n.Author),
-		UpdatedAt:   render.RFC3339(n.UpdatedAt),
-		Drift:       drift,
-		StaleReason: n.StaleReason,
+		ID:             string(n.ID),
+		Title:          n.Title,
+		Tags:           n.Tags,
+		Author:         string(n.Author),
+		UpdatedAt:      render.RFC3339(n.UpdatedAt),
+		VerifiedCommit: string(n.VerifiedCommit),
+		Drift:          drift,
+		StaleReason:    n.StaleReason,
 	}
 }
 
@@ -536,14 +539,15 @@ func anchorDTOs(anchors []model.Anchor, witness []model.AnchorWitness) []anchorD
 // listing projection, keeping the When trigger the reader selects on.
 func newDocSummaryDTO(d model.Doc, drift string) docSummaryDTO {
 	return docSummaryDTO{
-		ID:          string(d.ID),
-		Title:       d.Title,
-		When:        d.When,
-		Tags:        d.Tags,
-		Author:      string(d.Author),
-		UpdatedAt:   render.RFC3339(d.UpdatedAt),
-		Drift:       drift,
-		StaleReason: d.StaleReason,
+		ID:             string(d.ID),
+		Title:          d.Title,
+		When:           d.When,
+		Tags:           d.Tags,
+		Author:         string(d.Author),
+		UpdatedAt:      render.RFC3339(d.UpdatedAt),
+		VerifiedCommit: string(d.VerifiedCommit),
+		Drift:          drift,
+		StaleReason:    d.StaleReason,
 	}
 }
 

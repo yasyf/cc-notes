@@ -17,13 +17,10 @@ import (
 	"github.com/yasyf/cc-notes/notes"
 )
 
-// papercut identity: the tag is identity (a retitle never forks the journal),
-// the title is display. A papercut is one appended entry in the repo-wide
-// journal, folded and stored as an ordinary Log.
-const (
-	papercutTag   = "papercut"
-	papercutTitle = "papercuts"
-)
+// papercutTitle is display only; notes.PapercutTag is the journal's identity. A
+// papercut is one appended entry in the repo-wide journal, folded and stored as
+// an ordinary Log.
+const papercutTitle = "papercuts"
 
 func newPapercutCmd() *cobra.Command {
 	var modelID, body string
@@ -175,7 +172,7 @@ func resolvePapercutModel(cmd *cobra.Command, flag string) string {
 // dedupeCovered excludes append_entry, so bundling would disable the same-clone
 // convergence backstop.
 func findOrCreatePapercutLog(ctx context.Context, cmd *cobra.Command, c *notes.Client) (model.Log, error) {
-	logs, err := c.Logs(ctx, notes.LogFilter{Labels: []string{papercutTag}})
+	logs, err := c.Logs(ctx, notes.LogFilter{Labels: []string{notes.PapercutTag}})
 	if err != nil {
 		return model.Log{}, err
 	}
@@ -188,7 +185,7 @@ func findOrCreatePapercutLog(ctx context.Context, cmd *cobra.Command, c *notes.C
 		}
 		return canonical, nil
 	}
-	log, reused, err := c.CreateLog(ctx, notes.LogSpec{Title: papercutTitle, Tags: []string{papercutTag}})
+	log, reused, err := c.CreateLog(ctx, notes.LogSpec{Title: papercutTitle, Tags: []string{notes.PapercutTag}})
 	if err != nil {
 		return model.Log{}, err
 	}
@@ -213,7 +210,7 @@ type papercutRow struct {
 func papercutRows(logs []model.Log) []papercutRow {
 	var rows []papercutRow
 	for _, l := range logs {
-		if !slices.Contains(l.Tags, papercutTag) {
+		if !slices.Contains(l.Tags, notes.PapercutTag) {
 			continue
 		}
 		for i, e := range l.Entries {
@@ -250,8 +247,8 @@ func papercutRecent(rows []papercutRow, limit int) []papercutRow {
 // outside the journal set and an index no entry occupies are both caller
 // mistakes the listing's log_id and index pair prevents.
 func papercutEntry(journal model.Log, index int) (papercutRow, error) {
-	if !slices.Contains(journal.Tags, papercutTag) {
-		return papercutRow{}, &UsageError{Err: fmt.Errorf("log %s is not a papercut journal — it carries no %q tag", journal.ID.Short(), papercutTag)}
+	if !slices.Contains(journal.Tags, notes.PapercutTag) {
+		return papercutRow{}, &UsageError{Err: fmt.Errorf("log %s is not a papercut journal — it carries no %q tag", journal.ID.Short(), notes.PapercutTag)}
 	}
 	if index < 0 || index >= len(journal.Entries) {
 		return papercutRow{}, &UsageError{Err: fmt.Errorf("papercut index %d is out of range — journal %s holds %d complaint(s), indexed from 0", index, journal.ID.Short(), len(journal.Entries))}

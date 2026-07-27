@@ -1,6 +1,7 @@
 package notes
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"time"
@@ -8,30 +9,41 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-// StatusReport is the orientation snapshot Status returns: the current branch
-// (empty on a detached HEAD or the backlog), the backlog and current-branch open
-// or in-progress task slices, the in-progress tasks grouped by assignee, and the
-// note, doc, and log summaries. Backlog and YourBranch are ordered by priority
-// then creation time then id; InProgress is ordered by assignee then the same
-// task order.
+// StatusReport is the orientation snapshot Status returns. Branch is empty on a
+// detached HEAD or the backlog. Backlog and YourBranch are ordered by priority
+// then creation time then id; InProgress by assignee then the same task order;
+// Runs by start time then runbook then run id.
 type StatusReport struct {
 	Branch         model.Branch
-	Backlog        []model.Task
+	Backlog        []StatusBacklogTask
 	YourBranch     []model.Task
 	InProgress     []StatusAssignee
+	Runs           []StatusRun
 	Notes          SummaryCount
 	Docs           SummaryCount
 	Logs           int
+	Papercuts      int
 	Investigations InvestigationSummary
 }
 
 // InvestigationSummary is the orientation count of open investigations: Open
-// tallies the still-triaging records (open + root_caused) and AwaitingConfirm the
-// fixed-but-unconfirmed ones. Terminal records — confirmed, exonerated,
-// abandoned — are excluded; only non-terminal investigations need attention.
+// tallies the still-triaging records (open + root_caused), AwaitingConfirm the
+// fixed-but-unconfirmed ones, and OpenFindings the still-undecided suspects
+// across both. Terminal records — confirmed, exonerated, abandoned — are
+// excluded; only non-terminal investigations need attention.
 type InvestigationSummary struct {
 	Open            int
 	AwaitingConfirm int
+	OpenFindings    int
+}
+
+// StatusBacklogTask pairs one backlog task with the dependency verdict
+// ReadyTasks computes: Ready is true when the task is claimable right now —
+// open, unheld, and every blocker done or cancelled — and false when a live
+// blocker or an existing hold keeps it off the ready set.
+type StatusBacklogTask struct {
+	Task  model.Task
+	Ready bool
 }
 
 // StatusAssignee groups one assignee's in-progress tasks, each paired with its
@@ -48,6 +60,18 @@ type StatusTask struct {
 	Stale bool
 }
 
+// StatusRun is one runbook run still in flight, paired with the runbook that
+// owns it — a run id is unique only within its runbook — and the same
+// lease-style verdict an in-progress task carries: Stale is true when the run
+// has been idle longer than the lease TTL, measured from its most recent step
+// result or, when no step has landed, from its start.
+type StatusRun struct {
+	Runbook model.EntityID
+	Title   string
+	Run     model.RunbookRun
+	Stale   bool
+}
+
 // SummaryCount summarizes a note or doc set: the total live entities and the
 // count needing review.
 type SummaryCount struct {
@@ -55,10 +79,8 @@ type SummaryCount struct {
 	NeedsReview int
 }
 
-// Status aggregates the orientation view: the backlog, the current branch's open
-// and in-progress tasks, every in-progress task grouped by assignee with a stale
-// verdict, and the note, doc, and log summaries. The current branch degrades to
-// empty on a detached HEAD.
+// Status aggregates the orientation view in one fold per entity kind. The
+// current branch degrades to empty on a detached HEAD.
 func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	now := time.Now()
 	ttl, err := c.LeaseTTL(ctx)
@@ -70,6 +92,14 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		return StatusReport{}, err
 	}
 	tasks, err := c.s.ListTasks(ctx)
+	if err != nil {
+		return StatusReport{}, err
+	}
+	ready, err := c.ReadyTasks(ctx, ScopeBacklog, "")
+	if err != nil {
+		return StatusReport{}, err
+	}
+	runbooks, err := c.s.ListRunbooks(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
@@ -117,6 +147,11 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	sortTasks(backlog)
 	sortTasks(yourBranch)
 
+	readySet := make(map[model.EntityID]bool, len(ready))
+	for _, t := range ready {
+		readySet[t.ID] = true
+	}
+
 	groups := map[model.Actor][]model.Task{}
 	for _, t := range inProgress {
 		groups[t.Assignee] = append(groups[t.Assignee], t)
@@ -132,23 +167,43 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 
 	var invSummary InvestigationSummary
 	for _, inv := range invList {
+		if !nonTerminalInvestigation(inv.Status) {
+			continue
+		}
 		switch inv.Status {
-		case model.InvestigationOpen, model.InvestigationRootCaused:
-			invSummary.Open++
 		case model.InvestigationFixed:
 			invSummary.AwaitingConfirm++
+		default:
+			invSummary.Open++
+		}
+		for _, f := range inv.Findings {
+			if f.Status == model.FindingOpen {
+				invSummary.OpenFindings++
+			}
+		}
+	}
+
+	papercuts := 0
+	for _, l := range logList {
+		if slices.Contains(l.Tags, PapercutTag) {
+			papercuts += len(l.Entries)
 		}
 	}
 
 	report := StatusReport{
 		Branch:         branch,
-		Backlog:        backlog,
+		Backlog:        make([]StatusBacklogTask, len(backlog)),
 		YourBranch:     yourBranch,
 		InProgress:     make([]StatusAssignee, 0, len(assignees)),
+		Runs:           inFlightRuns(runbooks, now, ttl),
 		Notes:          SummaryCount{Total: len(noteList), NeedsReview: len(noteReviews)},
 		Docs:           SummaryCount{Total: len(docList), NeedsReview: len(docReviews)},
 		Logs:           len(logList),
+		Papercuts:      papercuts,
 		Investigations: invSummary,
+	}
+	for i, t := range backlog {
+		report.Backlog[i] = StatusBacklogTask{Task: t, Ready: readySet[t.ID]}
 	}
 	for _, a := range assignees {
 		grp := groups[a]
@@ -159,4 +214,42 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		report.InProgress = append(report.InProgress, StatusAssignee{Assignee: a, Tasks: staleTasks})
 	}
 	return report, nil
+}
+
+// inFlightRuns collects every still-running run across runbooks with its
+// lease-style stale verdict, oldest start first, ties broken by runbook then run
+// id.
+func inFlightRuns(runbooks []model.Runbook, now time.Time, ttl time.Duration) []StatusRun {
+	var runs []StatusRun
+	for _, rb := range runbooks {
+		for _, run := range rb.Runs {
+			if run.Status != model.RunRunning {
+				continue
+			}
+			runs = append(runs, StatusRun{Runbook: rb.ID, Title: rb.Title, Run: run, Stale: runStale(run, now, ttl)})
+		}
+	}
+	slices.SortFunc(runs, func(a, b StatusRun) int {
+		if c := cmp.Compare(a.Run.StartedAt, b.Run.StartedAt); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.Runbook, b.Runbook); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Run.ID, b.Run.ID)
+	})
+	return runs
+}
+
+// runStale reports a run idle past ttl, measured from its most recent step
+// result or, when no step has landed, from its start — the run-side analogue of
+// a task's lease heartbeat.
+func runStale(run model.RunbookRun, now time.Time, ttl time.Duration) bool {
+	last := run.StartedAt
+	for _, r := range run.Results {
+		if r.TS > last {
+			last = r.TS
+		}
+	}
+	return now.Sub(time.Unix(last, 0)) > ttl
 }

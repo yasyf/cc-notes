@@ -513,3 +513,40 @@ func TestDocSupersedeHeads(t *testing.T) {
 		})
 	}
 }
+
+// TestSearchDocsMatchesWhenTrigger pins the When trigger as searchable body
+// text: the field a reader selects a doc on was invisible to search, so a query
+// naming the moment ("resuming the auth cutover") found nothing.
+func TestSearchDocsMatchesWhenTrigger(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+
+	byWhen, _, err := c.CreateDoc(ctx, notes.DocSpec{
+		Title: "Token refresh loop",
+		Body:  "how the gateway verifies",
+		When:  "resuming the auth cutover",
+	})
+	if err != nil {
+		t.Fatalf("CreateDoc byWhen: %v", err)
+	}
+	if _, _, err := c.CreateDoc(ctx, notes.DocSpec{Title: "Unrelated", Body: "nope", When: "never"}); err != nil {
+		t.Fatalf("CreateDoc miss: %v", err)
+	}
+
+	got, err := c.SearchDocs(ctx, "auth cutover", notes.SearchFilter{Limit: -1})
+	if err != nil {
+		t.Fatalf("SearchDocs: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != byWhen.ID {
+		t.Fatalf("SearchDocs(auth cutover) = %v, want just %s", docIDs(got), byWhen.ID)
+	}
+}
+
+// docIDs projects a doc slice onto its ids.
+func docIDs(ds []model.Doc) []model.EntityID {
+	ids := make([]model.EntityID, len(ds))
+	for i, d := range ds {
+		ids[i] = d.ID
+	}
+	return ids
+}

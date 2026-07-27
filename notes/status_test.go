@@ -28,6 +28,27 @@ func taskIDs(tasks []model.Task) []model.EntityID {
 	return ids
 }
 
+// backlogIDs projects the backlog rows onto their ids, in report order.
+func backlogIDs(rows []notes.StatusBacklogTask) []model.EntityID {
+	ids := make([]model.EntityID, len(rows))
+	for i, r := range rows {
+		ids[i] = r.Task.ID
+	}
+	return ids
+}
+
+// readyBacklogIDs projects the backlog rows the dependency traversal marked
+// claimable, in report order.
+func readyBacklogIDs(rows []notes.StatusBacklogTask) []model.EntityID {
+	var ids []model.EntityID
+	for _, r := range rows {
+		if r.Ready {
+			ids = append(ids, r.Task.ID)
+		}
+	}
+	return ids
+}
+
 func TestStatusBuckets(t *testing.T) {
 	c, dir := newClient(t)
 	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
@@ -44,8 +65,12 @@ func TestStatusBuckets(t *testing.T) {
 	if rep.Branch != "main" {
 		t.Errorf("Branch = %q, want main", rep.Branch)
 	}
-	if got, want := taskIDs(rep.Backlog), []model.EntityID{backlogLo.ID, backlogHi.ID}; !slices.Equal(got, want) {
+	if got, want := backlogIDs(rep.Backlog), []model.EntityID{backlogLo.ID, backlogHi.ID}; !slices.Equal(got, want) {
 		t.Errorf("Backlog ids = %v, want %v (priority-ascending)", got, want)
+	}
+	// Nothing blocks either backlog task, so both come back claimable.
+	if got, want := readyBacklogIDs(rep.Backlog), []model.EntityID{backlogLo.ID, backlogHi.ID}; !slices.Equal(got, want) {
+		t.Errorf("ready backlog ids = %v, want %v", got, want)
 	}
 	if got, want := taskIDs(rep.YourBranch), []model.EntityID{mainOpen.ID}; !slices.Equal(got, want) {
 		t.Errorf("YourBranch ids = %v, want %v", got, want)
@@ -53,17 +78,166 @@ func TestStatusBuckets(t *testing.T) {
 	if len(rep.InProgress) != 0 {
 		t.Errorf("InProgress = %v, want empty (no in-progress task)", rep.InProgress)
 	}
+	if len(rep.Runs) != 0 {
+		t.Errorf("Runs = %v, want empty (no runbook run started)", rep.Runs)
+	}
 	// A task on another branch belongs to no bucket here.
-	for _, id := range append(taskIDs(rep.Backlog), taskIDs(rep.YourBranch)...) {
+	for _, id := range append(backlogIDs(rep.Backlog), taskIDs(rep.YourBranch)...) {
 		if id == feature.ID {
 			t.Errorf("feature/x task %s leaked into backlog or your-branch", feature.ID)
 		}
 	}
-	if rep.Notes != (notes.SummaryCount{}) || rep.Docs != (notes.SummaryCount{}) || rep.Logs != 0 {
-		t.Errorf("summaries = notes %+v docs %+v logs %d, want all zero", rep.Notes, rep.Docs, rep.Logs)
+	if rep.Notes != (notes.SummaryCount{}) || rep.Docs != (notes.SummaryCount{}) || rep.Logs != 0 || rep.Papercuts != 0 {
+		t.Errorf("summaries = notes %+v docs %+v logs %d papercuts %d, want all zero", rep.Notes, rep.Docs, rep.Logs, rep.Papercuts)
 	}
 	if rep.Investigations != (notes.InvestigationSummary{}) {
 		t.Errorf("Investigations = %+v, want zero", rep.Investigations)
+	}
+}
+
+// TestStatusBacklogReadiness pins the split the orientation surface exists for:
+// a backlog task held by a live blocker is not claimable, and closing the
+// blocker flips it — the dependency traversal ReadyTasks runs, projected per
+// row. Drop the ReadyTasks call and every row reads ready.
+func TestStatusBacklogReadiness(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+
+	blocker := mustTask(t, c, notes.TaskSpec{Title: "blocker", Backlog: true, Priority: 0})
+	blocked := mustTask(t, c, notes.TaskSpec{Title: "blocked", Backlog: true, Priority: 1})
+	if _, err := c.AddDep(ctx, blocked.ID, blocker.ID); err != nil {
+		t.Fatalf("AddDep: %v", err)
+	}
+	held := mustTask(t, c, notes.TaskSpec{Title: "held", Backlog: true, Priority: 2})
+	if _, err := c.ClaimTask(ctx, held.ID); err != nil {
+		t.Fatalf("ClaimTask held: %v", err)
+	}
+
+	rep := mustStatus(t, c)
+	if got, want := backlogIDs(rep.Backlog), []model.EntityID{blocker.ID, blocked.ID, held.ID}; !slices.Equal(got, want) {
+		t.Fatalf("Backlog ids = %v, want %v", got, want)
+	}
+	if got, want := readyBacklogIDs(rep.Backlog), []model.EntityID{blocker.ID}; !slices.Equal(got, want) {
+		t.Fatalf("ready ids = %v, want %v (a live blocker and an existing hold are both unready)", got, want)
+	}
+
+	if _, err := c.DoneTask(ctx, blocker.ID, true); err != nil {
+		t.Fatalf("DoneTask blocker: %v", err)
+	}
+	after := mustStatus(t, c)
+	if got, want := readyBacklogIDs(after.Backlog), []model.EntityID{blocked.ID}; !slices.Equal(got, want) {
+		t.Fatalf("ready ids after closing the blocker = %v, want %v", got, want)
+	}
+}
+
+// TestStatusRunsInFlight pins the run board: only running runs appear, and their
+// verdict follows the lease TTL measured from the last recorded step.
+func TestStatusRunsInFlight(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+
+	rb, _, err := c.CreateRunbook(ctx, notes.RunbookSpec{Title: "deploy", Steps: []string{"build", "ship"}})
+	if err != nil {
+		t.Fatalf("CreateRunbook: %v", err)
+	}
+	if _, err := c.StartRun(ctx, rb.ID, ""); err != nil {
+		t.Fatalf("StartRun live: %v", err)
+	}
+	finished, err := c.StartRun(ctx, rb.ID, "")
+	if err != nil {
+		t.Fatalf("StartRun finished: %v", err)
+	}
+	done := finished.Runs[len(finished.Runs)-1]
+	if _, err := c.FinishRun(ctx, rb.ID, done.ID, model.RunSucceeded); err != nil {
+		t.Fatalf("FinishRun: %v", err)
+	}
+
+	t.Setenv("CC_NOTES_LEASE_TTL", "24h")
+	rep := mustStatus(t, c)
+	if len(rep.Runs) != 1 {
+		t.Fatalf("Runs = %+v, want only the still-running run", rep.Runs)
+	}
+	run := rep.Runs[0]
+	if run.Runbook != rb.ID || run.Title != "deploy" {
+		t.Errorf("Runs[0] = runbook %s title %q, want %s deploy", run.Runbook, run.Title, rb.ID)
+	}
+	if run.Run.ID == done.ID {
+		t.Errorf("Runs[0] is the finished run %s, want the running one", done.ID)
+	}
+	if run.Stale {
+		t.Errorf("run %s Stale = true under a 24h TTL, want fresh", run.Run.ID)
+	}
+
+	t.Setenv("CC_NOTES_LEASE_TTL", "1ns")
+	stale := mustStatus(t, c)
+	if len(stale.Runs) != 1 || !stale.Runs[0].Stale {
+		t.Errorf("Runs under a 1ns TTL = %+v, want one stale run", stale.Runs)
+	}
+}
+
+// TestStatusPapercutCount proves the count tallies complaint entries, not
+// journals, and ignores an ordinary untagged log.
+func TestStatusPapercutCount(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+
+	journal, _, err := c.CreateLog(ctx, notes.LogSpec{Title: "papercuts", Tags: []string{notes.PapercutTag}})
+	if err != nil {
+		t.Fatalf("CreateLog journal: %v", err)
+	}
+	for _, text := range []string{"unquoted globs broke rg", "the doc link 404s"} {
+		if _, err := c.AppendLog(ctx, journal.ID, notes.LogAppend{Text: text}); err != nil {
+			t.Fatalf("AppendLog %q: %v", text, err)
+		}
+	}
+	plain, _, err := c.CreateLog(ctx, notes.LogSpec{Title: "rollout"})
+	if err != nil {
+		t.Fatalf("CreateLog plain: %v", err)
+	}
+	if _, err := c.AppendLog(ctx, plain.ID, notes.LogAppend{Text: "not a complaint"}); err != nil {
+		t.Fatalf("AppendLog plain: %v", err)
+	}
+
+	rep := mustStatus(t, c)
+	if rep.Papercuts != 2 {
+		t.Errorf("Papercuts = %d, want 2 (entries in the tagged journal only)", rep.Papercuts)
+	}
+	if rep.Logs != 2 {
+		t.Errorf("Logs = %d, want 2 (the journal counts as a log too)", rep.Logs)
+	}
+}
+
+// TestStatusOpenFindings counts undecided suspects across the non-terminal
+// investigations only: a cleared finding drops out, and a terminal record's
+// findings never count.
+func TestStatusOpenFindings(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+
+	live := driveTo(t, c, model.InvestigationOpen)
+	open, err := c.AddFinding(ctx, live, "the pool rewrite")
+	if err != nil {
+		t.Fatalf("AddFinding open: %v", err)
+	}
+	if _, err := c.AddFinding(ctx, live, "the retry cap"); err != nil {
+		t.Fatalf("AddFinding second: %v", err)
+	}
+	if _, err := c.SetFindingCleared(ctx, live, open.Findings[0].ID, "bisect exonerates it"); err != nil {
+		t.Fatalf("SetFindingCleared: %v", err)
+	}
+
+	closed := driveTo(t, c, model.InvestigationOpen)
+	if _, err := c.AddFinding(ctx, closed, "a suspect nobody decided"); err != nil {
+		t.Fatalf("AddFinding on the abandoned record: %v", err)
+	}
+	if _, err := c.Abandon(ctx, closed, "walked away"); err != nil {
+		t.Fatalf("Abandon: %v", err)
+	}
+
+	rep := mustStatus(t, c)
+	if want := (notes.InvestigationSummary{Open: 1, OpenFindings: 1}); rep.Investigations != want {
+		t.Errorf("Investigations = %+v, want %+v", rep.Investigations, want)
 	}
 }
 

@@ -255,11 +255,15 @@ MCP: status
 
 A sectioned, read-only view to orient before picking up work:
 
-1. the shared backlog (`Branch == ""`),
+1. the shared backlog (`Branch == ""`), each row flagged `ready` or `blocked` — `ready` means
+   claimable right now: open, unheld, and every blocker done or cancelled,
 2. your current branch's open and in-progress tasks,
 3. every in-progress task across all branches, grouped by assignee, each flagged `fresh` or
    `STALE` by its lease,
-4. a note summary, including how many notes need review.
+4. every runbook run still in flight, with the same lease-style flag measured from its last
+   recorded step,
+5. the note, doc, log, papercut, and investigation counts, including how many notes need
+   review and how many investigation findings are still undecided.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -268,18 +272,29 @@ A sectioned, read-only view to orient before picking up work:
 ```console
 $ cc-notes status
 backlog
-  08118da	open	P1	-	build the widget
-  b932fd9	open	P2	-	test the widget
+  08118da	open	P1	-	build the widget	ready
+  b932fd9	open	P2	-	test the widget	blocked
 your branch (feature/auth)
   d82c087	in_progress	P1	ada <ada@example.com>	Add retry backoff to the API client
 in progress across branches
   ada <ada@example.com>	d82c087	fresh
   ben <ben@example.com>	7c1e3f0	STALE
+runs in flight
+  4f2a91c	a3d1	Deploy the gateway	ada <ada@example.com>	fresh
 notes: 14 total, 3 need review
+docs: 6 total, 0 need review
+logs: 2 total
+papercuts: 5 total
+investigations: 2 open, 1 awaiting confirmation, 3 open findings
 ```
 
+A `blocked` row carries its `blocked_by` ids in `--json`, so the reason is one field away. Steal
+an expired lease with `task claim <id> --steal`; the run rows are the runbook's, addressed as
+`runbook run show <runbook> <run>`.
+
 JSON shape:
-`{"branch":string,"backlog":[<task summary>,…],"your_branch":[<task summary>,…],"in_progress":[{"assignee":string,"tasks":[<task summary>+"stale":bool,…]}],"notes":{"total":int,"needs_review":int},"docs":{"total":int,"needs_review":int},"logs":{"total":int},"investigations":{"open":int,"awaiting_confirm":int}}`.
+`{"branch":string,"backlog":[<task summary>+"ready":bool,…],"your_branch":[<task summary>,…],"in_progress":[{"assignee":string,"tasks":[<task summary>+"stale":bool,…]}],"runs":[{"runbook":id,"title":string,"run":string,"runner":string,"started_at":rfc3339,"stale":bool}],"notes":{"total":int,"needs_review":int},"docs":{"total":int,"needs_review":int},"logs":{"total":int},"papercuts":{"total":int},"investigations":{"open":int,"awaiting_confirm":int,"open_findings":int}}`.
+`papercuts` counts complaint entries, not journals, and the journal counts under `logs` too.
 Every task is a summary; `task show` reads one back in full.
 
 ### `cc-notes reconcile`
@@ -455,10 +470,15 @@ $ cc-notes history 0914cfb
 
 MCP: search (query, labels, limit, path, commit, dir, branch)
 
-One ranked search fanned out across every note, doc, log, and runbook, merged kind-tagged — the
-kind-agnostic sibling of the per-noun `search` commands, which remain for a single-kind search
-with that kind's full filter set (e.g. `--author`). Each lean line is the entity's own lean line
-prefixed with a kind tag column.
+One ranked search fanned out across every note, doc, log, task, runbook, and investigation, merged
+kind-tagged — the kind-agnostic sibling of the per-noun `search` commands, which remain for a
+single-kind search with that kind's full filter set (e.g. `--author`). Each lean line is the
+entity's own lean line prefixed with a kind tag column.
+
+Each kind matches on its title, its labels, and its own body text: a note's or doc's body (a doc's
+`when` trigger reads as body text too), a task's description, a log's entries, a runbook's
+description and steps, an investigation's premise, body, root cause, entries, and findings. A title
+match outranks a label match, which outranks a body match.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -473,10 +493,11 @@ prefixed with a kind tag column.
 ```console
 $ cc-notes search "deploy"
 runbook	2b808c6	active	Deploy hotfix
+task	d82c087	open	P1	-	Deploy the gateway behind a flag
 ```
 
 JSON shape:
-`[{"kind":string,"note":{<note summary>},"doc":{<doc summary>},"log":{<log summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>}}]`.
+`[{"kind":string,"note":{<note summary>},"doc":{<doc summary>},"log":{<log summary>},"task":{<task summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>}}]`.
 `kind` selects which entity key is present per hit; the others are omitted. A hit is a summary, and
 `search` computes no drift verdict, so no hit carries `drift`. Read the match back with its kind's
 `show`.
@@ -2266,9 +2287,11 @@ Tombstone a note. It drops out of listings; history survives.
 Summary — `note list`, `note search`, `note review`, the top-level `search` and `relevant`, and
 every note mutation's acknowledgement:
 
-`{"id":string,"title":string,"tags":[…],"author":string,"updated_at":rfc3339,"drift":string,"stale_reason":string}`.
+`{"id":string,"title":string,"tags":[…],"author":string,"updated_at":rfc3339,"verified_commit":sha,"drift":string,"stale_reason":string}`.
 `id`, `title`, and `updated_at` are always present. `stale_reason` is the reason recorded by
 `note expire`, absent until then, so a listing says why a note was retired without a second call.
+`verified_commit` is the HEAD the note was last checked against — the diff base for what changed
+under a drifted note, so a drift warning names it without a second call.
 `drift` is the computed verdict and is absent
 when the note is fresh — or when the command computed no verdict at all, which is the case for
 `note list`, `note search`, and the top-level `search`. `note review`, `relevant`, and every
@@ -2565,7 +2588,7 @@ summary and right after `body` in the full record. `when` is absent when unset.
 Summary — `doc list`, `doc search`, `doc review`, the top-level `search` and `relevant`, and every
 doc mutation's acknowledgement:
 
-`{"id":string,"title":string,"when":string,"tags":[…],"author":string,"updated_at":rfc3339,"drift":string,"stale_reason":string}`.
+`{"id":string,"title":string,"when":string,"tags":[…],"author":string,"updated_at":rfc3339,"verified_commit":sha,"drift":string,"stale_reason":string}`.
 The summary keeps `when` — the field a reader selects on — so a listing settles whether a doc
 applies without a second call, and `stale_reason` the same way for a retired one. The body still
 needs `doc show`.

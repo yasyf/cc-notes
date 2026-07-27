@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
@@ -15,7 +16,7 @@ func newStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "status",
 		Aliases: []string{"board"},
-		Short:   "Orient: the backlog, your branch, in-progress across branches, notes, and investigations",
+		Short:   "Orient: the backlog by readiness, your branch, in-progress leases, runs in flight, and record counts",
 		Args:    exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -40,8 +41,8 @@ func newStatusCmd() *cobra.Command {
 func printStatusText(cmd *cobra.Command, report notes.StatusReport) error {
 	var b strings.Builder
 	b.WriteString("backlog\n")
-	for _, t := range report.Backlog {
-		fmt.Fprintf(&b, "  %s\n", leanTaskLine(t))
+	for _, bt := range report.Backlog {
+		fmt.Fprintf(&b, "  %s\t%s\n", leanTaskLine(bt.Task), readyFlag(bt.Ready))
 	}
 	if report.Branch != "" {
 		fmt.Fprintf(&b, "your branch (%s)\n", report.Branch)
@@ -52,19 +53,38 @@ func printStatusText(cmd *cobra.Command, report notes.StatusReport) error {
 	b.WriteString("in progress across branches\n")
 	for _, grp := range report.InProgress {
 		for _, st := range grp.Tasks {
-			flag := "fresh"
-			if st.Stale {
-				flag = "STALE"
-			}
-			fmt.Fprintf(&b, "  %s\t%s\t%s\n", grp.Assignee, st.Task.ID.Short(), flag)
+			fmt.Fprintf(&b, "  %s\t%s\t%s\n", grp.Assignee, st.Task.ID.Short(), staleFlag(st.Stale))
 		}
+	}
+	b.WriteString("runs in flight\n")
+	for _, r := range report.Runs {
+		fmt.Fprintf(&b, "  %s\t%s\t%s\t%s\t%s\n", r.Runbook.Short(), render.ShortWireID(r.Run.ID), r.Title, r.Run.Runner, staleFlag(r.Stale))
 	}
 	fmt.Fprintf(&b, "notes: %d total, %d need review\n", report.Notes.Total, report.Notes.NeedsReview)
 	fmt.Fprintf(&b, "docs: %d total, %d need review\n", report.Docs.Total, report.Docs.NeedsReview)
 	fmt.Fprintf(&b, "logs: %d total\n", report.Logs)
-	fmt.Fprintf(&b, "investigations: %d open, %d awaiting confirmation\n", report.Investigations.Open, report.Investigations.AwaitingConfirm)
+	fmt.Fprintf(&b, "papercuts: %d total\n", report.Papercuts)
+	fmt.Fprintf(&b, "investigations: %d open, %d awaiting confirmation, %d open findings\n",
+		report.Investigations.Open, report.Investigations.AwaitingConfirm, report.Investigations.OpenFindings)
 	_, err := fmt.Fprint(cmd.OutOrStdout(), b.String())
 	return err
+}
+
+// readyFlag renders a backlog task's dependency verdict as the board's
+// ready/blocked column.
+func readyFlag(ready bool) string {
+	if ready {
+		return "ready"
+	}
+	return "blocked"
+}
+
+// staleFlag renders a lease verdict as the board's fresh/STALE column.
+func staleFlag(stale bool) string {
+	if stale {
+		return "STALE"
+	}
+	return "fresh"
 }
 
 func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusReport) error {
@@ -74,14 +94,17 @@ func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusRep
 	}
 	dto := statusDTO{
 		Branch:     string(report.Branch),
-		Backlog:    taskSummaryDTOs(report.Backlog, blocks),
+		Backlog:    statusBacklogDTOs(report.Backlog, blocks),
 		YourBranch: taskSummaryDTOs(report.YourBranch, blocks),
+		Runs:       make([]statusRunDTO, 0, len(report.Runs)),
 		Notes:      statusNotesDTO{Total: report.Notes.Total, NeedsReview: report.Notes.NeedsReview},
 		Docs:       statusNotesDTO{Total: report.Docs.Total, NeedsReview: report.Docs.NeedsReview},
 		Logs:       statusLogsDTO{Total: report.Logs},
+		Papercuts:  statusLogsDTO{Total: report.Papercuts},
 		Investigations: statusInvestigationsDTO{
 			Open:            report.Investigations.Open,
 			AwaitingConfirm: report.Investigations.AwaitingConfirm,
+			OpenFindings:    report.Investigations.OpenFindings,
 		},
 	}
 	for _, grp := range report.InProgress {
@@ -90,6 +113,16 @@ func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusRep
 			staleDTOs[i] = statusStaleDTO{taskSummaryDTO: newTaskSummaryDTO(st.Task, blocks[st.Task.ID]), Stale: st.Stale}
 		}
 		dto.InProgress = append(dto.InProgress, statusAssigneeDTO{Assignee: string(grp.Assignee), Tasks: staleDTOs})
+	}
+	for _, r := range report.Runs {
+		dto.Runs = append(dto.Runs, statusRunDTO{
+			Runbook:   string(r.Runbook),
+			Title:     r.Title,
+			Run:       r.Run.ID,
+			Runner:    string(r.Run.Runner),
+			StartedAt: render.RFC3339(r.Run.StartedAt),
+			Stale:     r.Stale,
+		})
 	}
 	return printJSON(cmd.OutOrStdout(), dto)
 }
@@ -104,18 +137,50 @@ func taskSummaryDTOs(tasks []model.Task, blocks map[model.EntityID][]model.Entit
 	return dtos
 }
 
+// statusBacklogDTOs maps backlog rows to their JSON DTOs against the same
+// TasksBlockingIndex pass every other status slice reads.
+func statusBacklogDTOs(backlog []notes.StatusBacklogTask, blocks map[model.EntityID][]model.EntityID) []statusBacklogDTO {
+	dtos := make([]statusBacklogDTO, 0, len(backlog))
+	for _, bt := range backlog {
+		dtos = append(dtos, statusBacklogDTO{taskSummaryDTO: newTaskSummaryDTO(bt.Task, blocks[bt.Task.ID]), Ready: bt.Ready})
+	}
+	return dtos
+}
+
 // statusDTO fixes the JSON field order for a status report: the current
 // branch, the backlog and your-branch task slices, the in-progress tasks
-// grouped by assignee, and the note, doc, log, and investigation summaries.
+// grouped by assignee, the runs in flight, and the note, doc, log, papercut,
+// and investigation summaries.
 type statusDTO struct {
 	Branch         string                  `json:"branch"`
-	Backlog        []taskSummaryDTO        `json:"backlog,omitempty"`
+	Backlog        []statusBacklogDTO      `json:"backlog,omitempty"`
 	YourBranch     []taskSummaryDTO        `json:"your_branch,omitempty"`
 	InProgress     []statusAssigneeDTO     `json:"in_progress,omitempty"`
+	Runs           []statusRunDTO          `json:"runs,omitempty"`
 	Notes          statusNotesDTO          `json:"notes"`
 	Docs           statusNotesDTO          `json:"docs"`
 	Logs           statusLogsDTO           `json:"logs"`
+	Papercuts      statusLogsDTO           `json:"papercuts"`
 	Investigations statusInvestigationsDTO `json:"investigations"`
+}
+
+// statusBacklogDTO embeds a taskSummaryDTO, inlining its fields, plus the
+// dependency verdict: whether the task is claimable right now.
+type statusBacklogDTO struct {
+	taskSummaryDTO
+	Ready bool `json:"ready"`
+}
+
+// statusRunDTO is one runbook run still in flight: the owning runbook and its
+// title, the run's identity and runner, its RFC3339 UTC start, and the
+// lease-style stale verdict.
+type statusRunDTO struct {
+	Runbook   string `json:"runbook"`
+	Title     string `json:"title"`
+	Run       string `json:"run"`
+	Runner    string `json:"runner"`
+	StartedAt string `json:"started_at"`
+	Stale     bool   `json:"stale"`
 }
 
 // statusAssigneeDTO groups one assignee's in-progress tasks.
@@ -137,8 +202,8 @@ type statusNotesDTO struct {
 	NeedsReview int `json:"needs_review"`
 }
 
-// statusLogsDTO is the log summary: total logs. Logs have no freshness
-// lifecycle, so there is no needs_review count.
+// statusLogsDTO is the log and papercut summary: a bare total. Neither carries
+// a freshness lifecycle, so there is no needs_review count.
 type statusLogsDTO struct {
 	Total int `json:"total"`
 }
@@ -147,4 +212,5 @@ type statusLogsDTO struct {
 type statusInvestigationsDTO struct {
 	Open            int `json:"open"`
 	AwaitingConfirm int `json:"awaiting_confirm"`
+	OpenFindings    int `json:"open_findings"`
 }

@@ -218,21 +218,29 @@ registered: cc-notes plugin in .claude/settings.json
 ```
 
 **2. Orient.** `status` (CLI: `cc-notes status`, alias `board`) is a read-only, sectioned
-view: the shared backlog, your current branch's open and in-progress tasks, every
-in-progress task across all branches grouped by assignee with a fresh/STALE lease flag, and
-how many notes need review. Run it before picking up work.
+view: the shared backlog with each row flagged `ready` or `blocked`, your current branch's
+open and in-progress tasks, every in-progress task across all branches grouped by assignee
+with a fresh/STALE lease flag, every runbook run still in flight, and the record counts.
+Run it before picking up work: the `ready` rows are what you can claim right now, and a
+`STALE` row is an abandoned claim you can take with `task claim <id> --steal`.
 
 ```console
 $ cc-notes status
 backlog
-  08118da	open	P1	-	build the widget
-  b932fd9	open	P2	-	test the widget
+  08118da	open	P1	-	build the widget	ready
+  b932fd9	open	P2	-	test the widget	blocked
 your branch (feature/auth)
   d82c087	in_progress	P1	ada <ada@example.com>	Add retry backoff to the API client
 in progress across branches
   ada <ada@example.com>	d82c087	fresh
   ben <ben@example.com>	7c1e3f0	STALE
+runs in flight
+  4f2a91c	a3d1	Deploy the gateway	ada <ada@example.com>	fresh
 notes: 14 total, 3 need review
+docs: 6 total, 0 need review
+logs: 2 total
+papercuts: 5 total
+investigations: 2 open, 1 awaiting confirmation, 3 open findings
 ```
 
 **3. Plan.** Capture shared work onto the backlog; capture branch-specific work plainly.
