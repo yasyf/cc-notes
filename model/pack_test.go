@@ -493,6 +493,8 @@ func TestPackGoldenBytes(t *testing.T) {
 		want string
 	}{
 		{
+			// Anchor-less write form: the key stays present as null (no omitempty),
+			// mirroring create_runbook's anchorless golden.
 			name: "task lifecycle pack",
 			pack: Pack{
 				Lamport: 7,
@@ -511,7 +513,7 @@ func TestPackGoldenBytes(t *testing.T) {
 					SetStatus{Status: StatusInProgress},
 				},
 			},
-			want: `{"v":1,"lamport":7,"ops":[{"kind":"create_task","nonce":"0123456789abcdef0123456789abcdef","title":"Fix flaky sync","description":"Two-clone round-trip flakes","type":"bug","priority":1,"branch":"main","parent":"","labels":["ci","sync"]},{"kind":"claim","assignee":"agent-7"},{"kind":"set_status","status":"in_progress"}]}`,
+			want: `{"v":1,"lamport":7,"ops":[{"kind":"create_task","nonce":"0123456789abcdef0123456789abcdef","title":"Fix flaky sync","description":"Two-clone round-trip flakes","type":"bug","priority":1,"branch":"main","parent":"","labels":["ci","sync"],"anchors":null},{"kind":"claim","assignee":"agent-7"},{"kind":"set_status","status":"in_progress"}]}`,
 		},
 		{
 			name: "coordination pack",

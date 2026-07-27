@@ -44,17 +44,19 @@ func classify(err error) (int, string) {
 	var conflict *ConflictError
 	var notesConflict *notes.ConflictError
 	var unmet *notes.UnmetCriteriaError
+	var openFindings *notes.OpenFindingsError
 	var attachExists *notes.AttachmentExistsError
 	var ambiguousKinds *notes.AmbiguousKindsError
 	switch {
 	case err == nil:
 		return 0, ""
-	// An *UnmetCriteriaError from the notes layer is a done-gate refusal the CLI
-	// maps to a usage error (exit 2), the same code the CLI's own gate returns.
-	// ErrEmptyEdit (a no-op edit mask) and an attachment-name collision are
-	// likewise malformed invocations the caller fixes and retries — usage, like
-	// the CLI's own arity and mutual-exclusion guards.
-	case errors.As(err, &usage), errors.As(err, &unmet), errors.Is(err, notes.ErrEmptyEdit), errors.As(err, &attachExists), isFlagGroupError(err):
+	// An *UnmetCriteriaError (the task done gate) and an *OpenFindingsError (the
+	// investigation verdict gate) from the notes layer are force-overridable
+	// refusals the CLI maps to a usage error (exit 2), the same code the CLI's own
+	// gates return. ErrEmptyEdit (a no-op edit mask) and an attachment-name
+	// collision are likewise malformed invocations the caller fixes and retries —
+	// usage, like the CLI's own arity and mutual-exclusion guards.
+	case errors.As(err, &usage), errors.As(err, &unmet), errors.As(err, &openFindings), errors.Is(err, notes.ErrEmptyEdit), errors.As(err, &attachExists), isFlagGroupError(err):
 		return 2, "usage"
 	// A cross-kind prefix collision (*AmbiguousKindsError) already satisfies
 	// Is(ErrAmbiguous); the explicit type match holds the mapping under a future

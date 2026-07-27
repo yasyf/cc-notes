@@ -12,6 +12,7 @@ type taskFolder struct {
 	labels   map[string]bool
 	deps     map[model.EntityID]bool
 	commits  map[model.SHA]bool
+	anchors  map[model.Anchor]bool
 	criteria []model.Criterion
 }
 
@@ -20,6 +21,7 @@ func newTaskFolder() *taskFolder {
 		labels:  map[string]bool{},
 		deps:    map[model.EntityID]bool{},
 		commits: map[model.SHA]bool{},
+		anchors: map[model.Anchor]bool{},
 	}
 }
 
@@ -49,6 +51,9 @@ func (f *taskFolder) seed(state model.Snapshot) error {
 	for _, sha := range seed.Commits {
 		f.commits[sha] = true
 	}
+	for _, a := range seed.Anchors {
+		f.anchors[a] = true
+	}
 	return nil
 }
 
@@ -64,11 +69,14 @@ func (f *taskFolder) create(op model.CreateOp, _ model.Actor) error {
 	for _, l := range o.Labels {
 		f.labels[l] = true
 	}
+	for _, a := range o.Anchors {
+		f.anchors[a] = true
+	}
 	return nil
 }
 
 func (f *taskFolder) apply(op model.Op, c model.PackCommit) error {
-	if applyLabel(f.labels, op) || applyCommitLink(f.commits, op) || applyComment(&f.task.Comments, op, c) {
+	if applyLabel(f.labels, op) || applyCommitLink(f.commits, op) || applyAnchor(f.anchors, op) || applyComment(&f.task.Comments, op, c) {
 		return nil
 	}
 	switch o := op.(type) {
@@ -153,6 +161,7 @@ func (f *taskFolder) finalize(head model.SHA) model.Task {
 	f.task.Labels = sortedKeys(f.labels)
 	f.task.BlockedBy = sortedKeys(f.deps)
 	f.task.Commits = sortedKeys(f.commits)
+	f.task.Anchors = sortedAnchorsNil(f.anchors)
 	if f.criteria == nil {
 		f.criteria = []model.Criterion{}
 	}

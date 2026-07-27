@@ -11,6 +11,24 @@
     "backend",
     "urgent"
   ],
+  "anchors": [
+    {
+      "kind": "commit",
+      "value": "beef000000000000000000000000000000000000"
+    },
+    {
+      "kind": "path",
+      "value": "internal/sync/sync.go"
+    },
+    {
+      "kind": "dir",
+      "value": "internal/sync"
+    },
+    {
+      "kind": "branch",
+      "value": "feature/sync"
+    }
+  ],
   "blocked_by": [
     "task-block-0001",
     "task-block-0002"

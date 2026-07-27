@@ -66,6 +66,12 @@ type investigationTransitionArgs struct {
 	Text string `json:"text" jsonschema:"evidence or reason for the transition"`
 }
 
+type investigationVerdictArgs struct {
+	ID    string `json:"id" jsonschema:"investigation id prefix"`
+	Text  string `json:"text" jsonschema:"evidence supporting the verdict"`
+	Force bool   `json:"force,omitempty" jsonschema:"record the verdict even with open findings"`
+}
+
 type investigationFixArgs struct {
 	ID      string   `json:"id" jsonschema:"investigation id prefix"`
 	Text    string   `json:"text,omitempty" jsonschema:"fix summary"`
@@ -84,6 +90,18 @@ type investigationEditArgs struct {
 	AddLabels []string `json:"add_labels,omitempty" jsonschema:"labels to add"`
 	RmLabels  []string `json:"rm_labels,omitempty" jsonschema:"labels to remove"`
 	anchorEditArgs
+}
+
+type investigationFollowUpArgs struct {
+	ID     string `json:"id" jsonschema:"investigation id prefix"`
+	Target string `json:"target" jsonschema:"id prefix of the entity the investigation spawned; resolved across every kind"`
+	Clear  bool   `json:"clear,omitempty" jsonschema:"remove the follow-up edge instead of adding it"`
+}
+
+type investigationSupersedeArgs struct {
+	ID    string `json:"id" jsonschema:"id prefix of the superseded (old) investigation"`
+	By    string `json:"by" jsonschema:"id prefix of the investigation that replaces it"`
+	Clear bool   `json:"clear,omitempty" jsonschema:"remove the supersede edge instead of adding it"`
 }
 
 type investigationSearchArgs struct {
@@ -211,22 +229,24 @@ func registerInvestigation(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"investigation", "fix"}, flags, positionals...)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "investigation_confirm", Description: "Confirm an investigation's fix with proof."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationTransitionArgs) (*mcp.CallToolResult, any, error) {
+	addTool(ts, &mcp.Tool{Name: "investigation_confirm", Description: "Confirm an investigation's fix with proof (refuses with open findings unless force)."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationVerdictArgs) (*mcp.CallToolResult, any, error) {
 			positionals, err := investigationTextPositionals(in.ID, in.Text, true)
 			if err != nil {
 				return nil, nil, err
 			}
-			return b.run(ctx, argvFor([]string{"investigation", "confirm"}, []string{"--json"}, positionals...)...)
+			flags := optBool([]string{"--json"}, "--force", in.Force)
+			return b.run(ctx, argvFor([]string{"investigation", "confirm"}, flags, positionals...)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "investigation_exonerate", Description: "Falsify the investigation premise with evidence."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationTransitionArgs) (*mcp.CallToolResult, any, error) {
+	addTool(ts, &mcp.Tool{Name: "investigation_exonerate", Description: "Falsify the investigation premise with evidence (refuses with open findings unless force)."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationVerdictArgs) (*mcp.CallToolResult, any, error) {
 			positionals, err := investigationTextPositionals(in.ID, in.Text, true)
 			if err != nil {
 				return nil, nil, err
 			}
-			return b.run(ctx, argvFor([]string{"investigation", "exonerate"}, []string{"--json"}, positionals...)...)
+			flags := optBool([]string{"--json"}, "--force", in.Force)
+			return b.run(ctx, argvFor([]string{"investigation", "exonerate"}, flags, positionals...)...)
 		})
 
 	addTool(ts, &mcp.Tool{Name: "investigation_reopen", Description: "Reopen an investigation with a reason."},
@@ -245,6 +265,19 @@ func registerInvestigation(ts *toolset, b *bridge) {
 				return nil, nil, err
 			}
 			return b.run(ctx, argvFor([]string{"investigation", "abandon"}, []string{"--json"}, positionals...)...)
+		})
+
+	addTool(ts, &mcp.Tool{Name: "investigation_follow_up", Description: "Record what an investigation spawned — a task, a graduated note, or a follow-up investigation — as an outbound edge."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationFollowUpArgs) (*mcp.CallToolResult, any, error) {
+			flags := optBool([]string{"--json"}, "--clear", in.Clear)
+			return b.run(ctx, argvFor([]string{"investigation", "follow-up"}, flags, in.ID, in.Target)...)
+		})
+
+	addTool(ts, &mcp.Tool{Name: "investigation_supersede", Description: "Record that a newer investigation replaces this one, the way note_supersede does for notes."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationSupersedeArgs) (*mcp.CallToolResult, any, error) {
+			flags := optStr([]string{"--json"}, "--by", in.By)
+			flags = optBool(flags, "--clear", in.Clear)
+			return b.run(ctx, argvFor([]string{"investigation", "supersede"}, flags, in.ID)...)
 		})
 
 	addTool(ts, &mcp.Tool{Name: "investigation_edit", Description: "Edit an investigation's title, resolution, labels, and anchors."},

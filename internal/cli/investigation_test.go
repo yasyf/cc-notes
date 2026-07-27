@@ -720,6 +720,45 @@ func TestInvestigationListFlagsMutuallyExclusive(t *testing.T) {
 	}
 }
 
+// TestInvestigationVerdictForceGate pins the CLI face of the verdict gate: the
+// refusal is a usage error (exit 2) listing every open finding with the --force
+// remediation, --force records the verdict, and abandon needs no escape.
+func TestInvestigationVerdictForceGate(t *testing.T) {
+	dir := spInitRepo(t)
+	id := spID(t, spMust(t, dir, "investigation", "open", "Gated", "premise", "--finding", invFinding, "--json"))
+	finding := invShow(t, dir, id).Findings[0]
+
+	_, _, err := spRun(t, dir, "", "investigation", "exonerate", id, "not the pool after all")
+	if !isUsage(err) {
+		t.Fatalf("exonerate with an open finding = %v (exit %d), want a usage error (exit 2)", err, ExitCode(err))
+	}
+	for _, fragment := range []string{
+		id[:7] + " has 1 open finding/findings blocking exonerated",
+		"pass --force to record the verdict anyway",
+		finding.ID[:7] + " " + invFinding,
+	} {
+		if !strings.Contains(err.Error(), fragment) {
+			t.Errorf("refusal omits %q:\n%s", fragment, err.Error())
+		}
+	}
+	if got := invShow(t, dir, id); got.Status != "open" || len(got.Entries) != 0 {
+		t.Fatalf("after refused exonerate = status %q entries %+v, want an untouched open record", got.Status, got.Entries)
+	}
+
+	ack := spJSON[investigationSummaryDTO](t, spMust(t, dir, "investigation", "exonerate", id, "not the pool after all", "--force", "--json"))
+	if ack.Status != "exonerated" {
+		t.Fatalf("forced exonerate ack = %+v, want exonerated", ack)
+	}
+	if got := invShow(t, dir, id).Findings[0].Status; got != "open" {
+		t.Errorf("finding after a forced verdict = %q, want it left open", got)
+	}
+
+	walked := spID(t, spMust(t, dir, "investigation", "open", "Walked", "premise", "--finding", invFinding, "--json"))
+	if got := spJSON[investigationSummaryDTO](t, spMust(t, dir, "investigation", "abandon", walked, "reprioritized", "--json")); got.Status != "abandoned" {
+		t.Fatalf("abandon with an open finding = %+v, want abandoned without --force", got)
+	}
+}
+
 func TestInvestigationCommandErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

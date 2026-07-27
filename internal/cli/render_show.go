@@ -293,7 +293,9 @@ func renderInvestigationShow(inv model.Investigation, atts []attachmentDTO, step
 
 // renderTaskShow renders the lean show view: the fixed-order header block
 // (entity references as short ids), the description separated by a blank
-// line, then each comment as a "-- <author> <RFC3339>" block.
+// line, then each comment as a "-- <author> <RFC3339>" block. Anchors carry an
+// anchor_ prefix here alone, because a task already spends the bare commits and
+// branch names on its linked-commit set and its branch attribute.
 func renderTaskShow(t model.Task, blocks []model.EntityID) string {
 	var b strings.Builder
 	header(&b, "id", string(t.ID))
@@ -312,6 +314,10 @@ func renderTaskShow(t model.Task, blocks []model.EntityID) string {
 	header(&b, "started", orDash(render.OptTimeString(t.StartedAt)))
 	header(&b, "closed", orDash(render.OptTimeString(t.ClosedAt)))
 	header(&b, "commits", csvOrDash(shortSHAs(t.Commits)))
+	header(&b, "anchor_commits", csvOrDash(render.AnchorValues(t.Anchors, model.AnchorCommit)))
+	header(&b, "anchor_paths", csvOrDash(render.AnchorValues(t.Anchors, model.AnchorPath)))
+	header(&b, "anchor_dirs", csvOrDash(render.AnchorValues(t.Anchors, model.AnchorDir)))
+	header(&b, "anchor_branches", csvOrDash(render.AnchorValues(t.Anchors, model.AnchorBranch)))
 	if t.Description != "" {
 		b.WriteByte('\n')
 		b.WriteString(t.Description)

@@ -115,7 +115,7 @@ CC_NOTES_TOOLS = frozenset(
         "task_add", "task_edit", "task_show", "task_list", "task_claim", "task_start",
         "task_done", "task_cancel", "task_comment", "task_dep", "task_undep", "task_ready",
         "task_stale", "task_backlog", "task_archived", "task_renew", "task_validate",
-        "task_comment_list",
+        "task_comment_list", "task_link", "task_unlink",
         # task criterion
         "task_criterion_add", "task_criterion_rm", "task_criterion_list", "task_criterion_met",
         "task_criterion_failed", "task_criterion_pending", "task_criterion_script",
@@ -141,6 +141,7 @@ CC_NOTES_TOOLS = frozenset(
         "investigation_root_cause", "investigation_fix", "investigation_confirm",
         "investigation_exonerate", "investigation_abandon", "investigation_reopen",
         "investigation_edit", "investigation_search", "investigation_rm",
+        "investigation_follow_up", "investigation_supersede",
     }
 )
 

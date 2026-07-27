@@ -618,12 +618,17 @@ lands on.
 
 ### `cc-notes task add TITLE [BODY]`
 
-MCP: task_add (title, body, type, priority, labels, criteria, no_validation_criteria, parent, sprint, project, blocked_by, branch, backlog)
+MCP: task_add (title, body, type, priority, labels, criteria, no_validation_criteria, parent, sprint, project, blocked_by, branch, backlog, commits, paths, dirs)
 
 Create a task. `Branch` defaults to your current branch; `--backlog` sets it to `""`; `--branch`
 sets it explicitly. The default resolves jj-aware on a detached HEAD; when no branch resolves,
 the task lands on the backlog and a stderr note says so — pass `--branch` to place it. An
 explicit empty `--branch=` is a usage error, rejected before anything is written.
+
+Tasks carry anchors like notes and docs do, so `--path internal/sync` says where the work lives
+and `cc-notes relevant` style path queries have something to match on. A task spends `--branch` on
+its branch attribute, so the add verb takes only `--commit`, `--path`, and `--dir`; branch anchors
+go through `task edit --add-branch`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -639,6 +644,9 @@ explicit empty `--branch=` is a usage error, rejected before anything is written
 | `--blocked-by <id>` | none | Blocker task id; repeatable, resolved globally |
 | `--branch <branch>` | current branch | Set the task's branch explicitly |
 | `--backlog` | off | Set `Branch=""` (shared, branch-less) |
+| `--commit <rev>` | none | Commit anchor; repeatable, resolved to a full sha |
+| `--path <path>` | none | Path anchor; repeatable |
+| `--dir <dir>` | none | Directory anchor; repeatable |
 | `--json` | off | Emit JSON |
 
 Acceptance criteria are required by default: a `task add` with no `--criterion` and no
@@ -868,9 +876,25 @@ Remove a blocked-by edge.
 |------|---------|---------|
 | `--json` | off | Emit JSON |
 
+### `cc-notes task link ID [COMMIT]` · `unlink`
+
+MCP: task_link (id, commit)
+
+MCP: task_unlink (id, commit)
+
+Attribute a commit to the task it implemented, or drop that attribution. `COMMIT` is a sha or any
+revision and defaults to `HEAD`. `task done` already links HEAD, so reach for `link` when the
+commit landed before the task closed, when several commits implement one task, or when the task is
+already closed. Linked commits fold as a set, so re-linking the same commit changes nothing, and
+`cc-notes blame COMMIT` reads the edge back in the other direction.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
 ### `cc-notes task edit ID`
 
-MCP: task_edit (id, title, body, type, priority, status, assignee, no_assignee, add_labels, rm_labels, parent, no_parent, sprint, no_sprint, project, no_project, branch, backlog)
+MCP: task_edit (id, title, body, type, priority, status, assignee, no_assignee, add_labels, rm_labels, parent, no_parent, sprint, no_sprint, project, no_project, branch, backlog, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches)
 
 Edit a task without lifecycle transition checks — the escape hatch when the guided verbs do not
 fit. It also re-homes a task: setting `--branch` is a plain attribute write on the `Branch`
@@ -896,7 +920,15 @@ exclusive.
 | `--no-sprint` | Clear the sprint |
 | `--project <id>` | Join a project (id prefix); mutually exclusive with `--no-project` |
 | `--no-project` | Clear the project |
+| `--add-commit` / `--rm-commit` | Commit anchor edits; repeatable |
+| `--add-path` / `--rm-path` | Path anchor edits; repeatable |
+| `--add-dir` / `--rm-dir` | Directory anchor edits; repeatable |
+| `--add-branch` / `--rm-branch` | Branch anchor edits; repeatable — the only way to set one on a task |
 | `--json` | Emit JSON |
+
+Removals match verbatim, so `--rm-commit` takes the stored full sha, not `HEAD`. Anchors here are
+the where-this-work-lives edge: distinct from `commits` (what the work produced, via `task link`)
+and from `--branch` (the task's LWW branch attribute).
 
 ```console
 $ cc-notes task edit 5d3e9c1 --branch main
@@ -1866,9 +1898,9 @@ a1b2c3d	fixed	TestPool deadlock on CI
 
 ### `cc-notes investigation confirm ID TEXT` · `exonerate` · `abandon` · `reopen`
 
-MCP: investigation_confirm (id, text)
+MCP: investigation_confirm (id, text, force)
 
-MCP: investigation_exonerate (id, text)
+MCP: investigation_exonerate (id, text, force)
 
 MCP: investigation_abandon (id, text)
 
@@ -1883,10 +1915,57 @@ non-terminal status; its `TEXT` is optional. `reopen` returns any terminal inves
 Each verb appends its text to the timeline and flips the status in the same commit; the
 closing verbs stamp `closed`/`closed_by`, and `reopen` clears them.
 
+The two verdicts are gated on findings, the way `task done` is gated on criteria. While any
+finding is still `open`, `confirm` and `exonerate` list the undispositioned ones and refuse to
+close (exit 2). Rule each one in or out with `finding confirm` / `finding clear`, or pass
+`--force` to record the verdict anyway. A forced verdict leaves the findings untouched, so the
+`open_finding_count` a summary carries stays non-zero and the override is visible in the
+`--json`. `abandon` is ungated on purpose. It records no verdict, so it remains the way out of
+a record whose suspects were never ruled on.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--force` | off | Record the verdict even with open findings; `confirm` and `exonerate` only |
+| `--json` | off | Emit JSON |
+
 ```console
-$ cc-notes investigation confirm a1b2 "20 green CI runs on main since 5e3c9ce4; no recurrence."
-a1b2c3d	confirmed	TestPool deadlock on CI
+$ cc-notes investigation confirm c8ba4d1 "20 green CI runs on main since 5e3c9ce4; no recurrence."
+usage: c8ba4d1 has 1 open finding/findings blocking confirmed (pass --force to record the verdict anyway):
+  34a83ec the scheduler change
+$ cc-notes investigation finding clear c8ba4d1 34a83ec --why "unrelated; the hang predates it"
+c8ba4d1	fixed	TestPool deadlock on CI
+$ cc-notes investigation confirm c8ba4d1 "20 green CI runs on main since 5e3c9ce4; no recurrence."
+c8ba4d1	confirmed	TestPool deadlock on CI
 ```
+
+### `cc-notes investigation follow-up ID TARGET`
+
+MCP: investigation_follow_up (id, target, clear)
+
+Record what the investigation spawned: a task it filed, a note graduating its finding into a
+durable fact, or a second investigation picking up where it stopped. `TARGET` resolves across
+every kind, so the same verb serves all three. `--clear` removes the edge. The edges read back as
+`follow_ups` on `investigation show`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--clear` | off | Remove the edge instead of adding it |
+| `--json` | off | Emit JSON |
+
+### `cc-notes investigation supersede OLD --by NEW`
+
+MCP: investigation_supersede (id, by, clear)
+
+Record that a newer investigation replaces this one, the way `note supersede` does for notes — the
+re-run of an inquiry whose premise was right but whose evidence went stale. `NEW` must resolve to a
+live investigation, and the superseded record then drops out of `investigation list` the way a
+superseded note drops out of `note list`. `--clear` removes the edge.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--by <id>` | — | The investigation that replaces `OLD` (required) |
+| `--clear` | off | Remove the edge instead of adding it |
+| `--json` | off | Emit JSON |
 
 ### `cc-notes investigation edit ID`
 

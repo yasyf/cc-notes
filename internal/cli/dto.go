@@ -218,8 +218,9 @@ type leaseDTO struct {
 
 // taskDTO fixes the JSON field order and formats for task output: full hex
 // ids, RFC3339 UTC timestamps, sorted set slices, the derived blocks and
-// children reverse indexes, the commits that implement the task, the runbook
-// runs citing it, and the lease (omitted while unheld).
+// children reverse indexes, the anchors locating the work, the commits that
+// implement the task, the runbook runs citing it, and the lease (omitted while
+// unheld). A task carries no per-anchor witness, so every anchor omits it.
 type taskDTO struct {
 	ID           string         `json:"id"`
 	Branch       string         `json:"branch,omitempty"`
@@ -230,6 +231,7 @@ type taskDTO struct {
 	Priority     int            `json:"priority"`
 	Assignee     *string        `json:"assignee,omitempty"`
 	Labels       []string       `json:"labels,omitempty"`
+	Anchors      []anchorDTO    `json:"anchors,omitempty"`
 	BlockedBy    []string       `json:"blocked_by,omitempty"`
 	Blocks       []string       `json:"blocks,omitempty"`
 	Parent       *string        `json:"parent,omitempty"`
@@ -668,6 +670,7 @@ func newTaskDTO(t model.Task, blocks, children []model.EntityID, runs []notes.Ta
 		Priority:     int(t.Priority),
 		Assignee:     render.OptString(string(t.Assignee)),
 		Labels:       t.Labels,
+		Anchors:      anchorDTOs(t.Anchors, nil),
 		BlockedBy:    render.IDStrings(t.BlockedBy),
 		Blocks:       render.IDStrings(blocks),
 		Parent:       render.OptString(string(t.Parent)),

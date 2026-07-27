@@ -404,7 +404,7 @@ func TestRelevantSurfacesInvestigations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateInvestigation closed: %v", err)
 	}
-	if _, err := c.Exonerate(ctx, closedInv.ID, "false alarm"); err != nil {
+	if _, err := c.Exonerate(ctx, closedInv.ID, "false alarm", false); err != nil {
 		t.Fatalf("Exonerate: %v", err)
 	}
 

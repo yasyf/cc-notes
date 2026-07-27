@@ -38,16 +38,26 @@ func (c *Client) resolveCommits(ctx context.Context, commits []string) ([]string
 	}
 	full := make([]string, len(commits))
 	for i, rev := range commits {
-		sha, err := c.s.Git.CommitSHA(ctx, rev)
-		if errors.Is(err, gitcmd.ErrRevNotFound) {
-			return nil, fmt.Errorf("%w: no commit %s", ErrNotFound, rev)
-		}
+		sha, err := c.resolveCommit(ctx, rev)
 		if err != nil {
 			return nil, err
 		}
 		full[i] = string(sha)
 	}
 	return full, nil
+}
+
+// resolveCommit expands one revision to its full sha, wrapping ErrNotFound when
+// it names no commit.
+func (c *Client) resolveCommit(ctx context.Context, rev string) (model.SHA, error) {
+	sha, err := c.s.Git.CommitSHA(ctx, rev)
+	if errors.Is(err, gitcmd.ErrRevNotFound) {
+		return "", fmt.Errorf("%w: no commit %s", ErrNotFound, rev)
+	}
+	if err != nil {
+		return "", err
+	}
+	return sha, nil
 }
 
 // buildAnchors flattens a spec into anchors in commit, path, dir, then branch

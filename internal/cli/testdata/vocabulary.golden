@@ -327,6 +327,7 @@ command: cc-notes investigation confirm
   short: Confirm the fix with proof
   hidden: false
   flags:
+    --force shorthand=none type=bool default="false" usage="record the verdict even with open findings"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -379,6 +380,7 @@ command: cc-notes investigation exonerate
   short: Falsify the investigation premise
   hidden: false
   flags:
+    --force shorthand=none type=bool default="false" usage="record the verdict even with open findings"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -464,6 +466,17 @@ command: cc-notes investigation fix
   hidden: false
   flags:
     --commit shorthand=none type=stringArray default="[]" usage="fixing commit (repeatable; at least one required)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes investigation follow-up
+  use: follow-up ID TARGET
+  aliases: -
+  short: Record what an investigation spawned (--clear undoes the edge)
+  hidden: false
+  flags:
+    --clear shorthand=none type=bool default="false" usage="remove the follow-up edge instead of adding it"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -569,6 +582,18 @@ command: cc-notes investigation show
   short: Show one investigation with its findings and timeline
   hidden: false
   flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes investigation supersede
+  use: supersede OLD --by NEW
+  aliases: -
+  short: Record that investigation NEW replaces OLD (--clear undoes the edge)
+  hidden: false
+  flags:
+    --by shorthand=none type=string default="" usage="the investigation that replaces OLD"
+    --clear shorthand=none type=bool default="false" usage="remove the supersede edge instead of adding it"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -1665,11 +1690,14 @@ command: cc-notes task add
     --blocked-by shorthand=none type=stringArray default="[]" usage="blocker task id prefix (repeatable, resolved globally)"
     --body shorthand=none type=string default="" usage="task description; - reads stdin"
     --branch shorthand=none type=string default="" usage="task branch (default: current branch)"
+    --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
     --criterion shorthand=none type=stringArray default="[]" usage="acceptance criterion text (repeatable, required unless --no-validation-criteria)"
+    --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
     --no-validation-criteria shorthand=none type=bool default="false" usage="create with no acceptance criteria"
     --parent shorthand=none type=string default="" usage="parent task id prefix"
+    --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --priority shorthand=none type=int default="2" usage="priority 0-3 (0 most urgent)"
     --project shorthand=none type=string default="" usage="project id prefix"
     --sprint shorthand=none type=string default="" usage="sprint id prefix"
@@ -1853,7 +1881,11 @@ command: cc-notes task edit
   short: Edit a task without transition checks
   hidden: false
   flags:
+    --add-branch shorthand=none type=stringArray default="[]" usage="add branch anchor (repeatable)"
+    --add-commit shorthand=none type=stringArray default="[]" usage="add commit anchor (repeatable)"
+    --add-dir shorthand=none type=stringArray default="[]" usage="add directory anchor (repeatable)"
     --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
     --assignee shorthand=none type=string default="" usage="new assignee"
     --backlog shorthand=none type=bool default="false" usage="put on the shared backlog (no branch)"
     --body shorthand=none type=string default="" usage="new description; - reads stdin"
@@ -1866,7 +1898,11 @@ command: cc-notes task edit
     --parent shorthand=none type=string default="" usage="new parent task id prefix"
     --priority shorthand=none type=int default="0" usage="new priority 0-3"
     --project shorthand=none type=string default="" usage="new project id prefix"
+    --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
+    --rm-commit shorthand=none type=stringArray default="[]" usage="remove commit anchor (repeatable)"
+    --rm-dir shorthand=none type=stringArray default="[]" usage="remove directory anchor (repeatable)"
     --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
     --sprint shorthand=none type=string default="" usage="new sprint id prefix"
     --status shorthand=none type=string default="" usage="new status (open|in_progress|done|cancelled)"
     --title shorthand=none type=string default="" usage="new title"
@@ -1884,6 +1920,16 @@ command: cc-notes task history
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes task link
+  use: link ID [COMMIT]
+  aliases: -
+  short: Link COMMIT (default HEAD) onto a task, as `task done` links HEAD
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -1965,6 +2011,16 @@ command: cc-notes task undep
   use: undep ID BLOCKER
   aliases: -
   short: Remove a blocked-by dependency
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes task unlink
+  use: unlink ID [COMMIT]
+  aliases: -
+  short: Drop COMMIT (default HEAD) from a task's linked commits
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"

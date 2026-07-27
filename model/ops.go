@@ -168,7 +168,8 @@ func (ClearStale) OpKind() string { return "clear_stale" }
 
 // CreateTask is the root operation of a task chain. The nonce makes
 // otherwise-identical creates hash to distinct entity ids; an empty Parent
-// means no parent.
+// means no parent. Anchors is the task's initial anchor set, carried in the
+// create op exactly as every other anchored kind carries it.
 type CreateTask struct {
 	Nonce       string   `json:"nonce"`
 	Title       string   `json:"title"`
@@ -178,6 +179,7 @@ type CreateTask struct {
 	Branch      Branch   `json:"branch"`
 	Parent      EntityID `json:"parent"`
 	Labels      []string `json:"labels"`
+	Anchors     []Anchor `json:"anchors"`
 }
 
 // OpKind returns "create_task".
@@ -192,6 +194,11 @@ func (o CreateTask) validate() error {
 	}
 	if err := o.Priority.validate(); err != nil {
 		return err
+	}
+	for _, a := range o.Anchors {
+		if err := a.Kind.validate(); err != nil {
+			return err
+		}
 	}
 	if o.Branch == "" {
 		return nil

@@ -20,6 +20,7 @@ type taskAddArgs struct {
 	BlockedBy            []string `json:"blocked_by,omitempty" jsonschema:"blocker task id prefixes (resolved globally)"`
 	Branch               string   `json:"branch,omitempty" jsonschema:"task branch (default: current branch)"`
 	Backlog              bool     `json:"backlog,omitempty" jsonschema:"create on the shared backlog (no branch)"`
+	anchorSetBranchlessArgs
 }
 
 type taskListArgs struct {
@@ -75,11 +76,27 @@ type taskEditArgs struct {
 	NoProject  bool     `json:"no_project,omitempty" jsonschema:"clear the project"`
 	Branch     string   `json:"branch,omitempty" jsonschema:"reassign to this branch"`
 	Backlog    bool     `json:"backlog,omitempty" jsonschema:"move to the shared backlog (clear branch)"`
+	anchorEditArgs
 }
 
 type taskDepArgs struct {
 	ID      string `json:"id" jsonschema:"task id prefix"`
 	Blocker string `json:"blocker" jsonschema:"blocker task id prefix"`
+}
+
+type taskCommitArgs struct {
+	ID     string `json:"id" jsonschema:"task id prefix"`
+	Commit string `json:"commit,omitempty" jsonschema:"commit sha or revision (default HEAD)"`
+}
+
+// taskCommitArgv builds the link/unlink invocation, omitting the optional
+// commit positional so the CLI applies its own HEAD default.
+func taskCommitArgv(verb string, in taskCommitArgs) []string {
+	positionals := []string{in.ID}
+	if in.Commit != "" {
+		positionals = append(positionals, in.Commit)
+	}
+	return argvFor([]string{"task", verb}, []string{"--json"}, positionals...)
 }
 
 type taskStaleArgs struct {
@@ -146,6 +163,7 @@ func registerTask(ts *toolset, b *bridge) {
 			flags = optRepeated(flags, "--blocked-by", in.BlockedBy)
 			flags = optStr(flags, "--branch", in.Branch)
 			flags = optBool(flags, "--backlog", in.Backlog)
+			flags = anchorSetBranchlessFlags(flags, in.anchorSetBranchlessArgs)
 			return b.run(ctx, argvFor([]string{"task", "add"}, flags, in.Title)...)
 		})
 
@@ -228,6 +246,7 @@ func registerTask(ts *toolset, b *bridge) {
 			flags = optBool(flags, "--no-project", in.NoProject)
 			flags = optStr(flags, "--branch", in.Branch)
 			flags = optBool(flags, "--backlog", in.Backlog)
+			flags = anchorEditFlags(flags, in.anchorEditArgs)
 			return b.run(ctx, argvFor([]string{"task", "edit"}, flags, in.ID)...)
 		})
 
@@ -246,6 +265,16 @@ func registerTask(ts *toolset, b *bridge) {
 	addTool(ts, &mcp.Tool{Name: "task_undep", Description: "Remove a dependency edge between ID and BLOCKER. The ack is a summary; task_show reads the dependency edges back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskDepArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"task", "undep"}, []string{"--json"}, in.ID, in.Blocker)...)
+		})
+
+	addTool(ts, &mcp.Tool{Name: "task_link", Description: "Attribute a commit to the task it implemented, after the fact — the explicit form of the HEAD link task_done writes."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in taskCommitArgs) (*mcp.CallToolResult, any, error) {
+			return b.run(ctx, taskCommitArgv("link", in)...)
+		})
+
+	addTool(ts, &mcp.Tool{Name: "task_unlink", Description: "Drop a commit from a task's linked commits, undoing a task_link or the automatic task_done link."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in taskCommitArgs) (*mcp.CallToolResult, any, error) {
+			return b.run(ctx, taskCommitArgv("unlink", in)...)
 		})
 
 	addTool(ts, &mcp.Tool{Name: "task_stale", Description: "List in-progress tasks whose lease has gone idle past the threshold. Returns summaries plus each task's idle seconds; task_show reads one back in full."},

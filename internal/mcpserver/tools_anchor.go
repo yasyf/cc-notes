@@ -10,6 +10,16 @@ type anchorSetArgs struct {
 	Branches []string `json:"branches,omitempty" jsonschema:"branch anchors"`
 }
 
+// anchorSetBranchlessArgs is the add-tool anchor fragment for a kind whose own
+// --branch is a first-class attribute rather than an anchor (task): the same
+// arrays as anchorSetArgs minus branches, which reach the kind through
+// anchorEditArgs.
+type anchorSetBranchlessArgs struct {
+	Commits []string `json:"commits,omitempty" jsonschema:"commit anchors (sha or revision; resolved to full sha)"`
+	Paths   []string `json:"paths,omitempty" jsonschema:"path anchors"`
+	Dirs    []string `json:"dirs,omitempty" jsonschema:"directory anchors"`
+}
+
 // anchorEditArgs is the embedded anchor-edit fragment shared by every edit tool
 // (note/doc/log/runbook): the add/remove octet mirroring the CLI's
 // --add-*/--rm-* anchor flags.
@@ -31,6 +41,15 @@ func anchorSetFlags(flags []string, a anchorSetArgs) []string {
 	flags = optRepeated(flags, "--path", a.Paths)
 	flags = optRepeated(flags, "--dir", a.Dirs)
 	flags = optRepeated(flags, "--branch", a.Branches)
+	return flags
+}
+
+// anchorSetBranchlessFlags appends the --commit/--path/--dir flags for an add
+// tool whose --branch is not an anchor.
+func anchorSetBranchlessFlags(flags []string, a anchorSetBranchlessArgs) []string {
+	flags = optRepeated(flags, "--commit", a.Commits)
+	flags = optRepeated(flags, "--path", a.Paths)
+	flags = optRepeated(flags, "--dir", a.Dirs)
 	return flags
 }
 

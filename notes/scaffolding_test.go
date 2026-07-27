@@ -287,6 +287,11 @@ func TestScaffoldingErrorTypes(t *testing.T) {
 		t.Errorf("UnmetCriteriaError.Error() = %q", uce.Error())
 	}
 
+	ofe := &notes.OpenFindingsError{ID: id, Target: model.InvestigationConfirmed, Open: []model.Finding{{ID: "find1234", Text: "y"}}}
+	if !strings.Contains(ofe.Error(), "1 open finding") || !strings.Contains(ofe.Error(), "confirmed") || !strings.Contains(ofe.Error(), id.Short()) {
+		t.Errorf("OpenFindingsError.Error() = %q", ofe.Error())
+	}
+
 	aee := &notes.AttachmentExistsError{Name: "f.txt"}
 	if !strings.Contains(aee.Error(), "f.txt") {
 		t.Errorf("AttachmentExistsError.Error() = %q", aee.Error())

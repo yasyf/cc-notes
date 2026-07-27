@@ -296,7 +296,7 @@ func (c *Client) RootCause(ctx context.Context, id model.EntityID, text string) 
 	if err != nil {
 		return model.Investigation{}, err
 	}
-	if err := ensureInvestigationTransition(inv, model.InvestigationRootCaused); err != nil {
+	if err := ensureInvestigationTransition(inv, model.InvestigationRootCaused, false); err != nil {
 		return model.Investigation{}, err
 	}
 	ops := []model.Op{
@@ -324,7 +324,7 @@ func (c *Client) Fix(ctx context.Context, id model.EntityID, text string, commit
 	if err != nil {
 		return model.Investigation{}, err
 	}
-	if err := ensureInvestigationTransition(inv, model.InvestigationFixed); err != nil {
+	if err := ensureInvestigationTransition(inv, model.InvestigationFixed, false); err != nil {
 		return model.Investigation{}, err
 	}
 	ops := make([]model.Op, 0, len(full)+2)
@@ -340,23 +340,28 @@ func (c *Client) Fix(ctx context.Context, id model.EntityID, text string, commit
 
 // Confirm records proof that the fix held and transitions the investigation to
 // confirmed in one pack commit: [AppendEntry{proof}, status]. It is legal only
-// from fixed; an empty proof is ErrMissingReason.
-func (c *Client) Confirm(ctx context.Context, id model.EntityID, proof string) (model.Investigation, error) {
-	return c.transitionWithEntry(ctx, id, model.InvestigationConfirmed, proof, true)
+// from fixed; an empty proof is ErrMissingReason. Unless force is set, an
+// investigation still carrying open findings is refused with an
+// *OpenFindingsError.
+func (c *Client) Confirm(ctx context.Context, id model.EntityID, proof string, force bool) (model.Investigation, error) {
+	return c.transitionWithEntry(ctx, id, model.InvestigationConfirmed, proof, true, force)
 }
 
 // Exonerate falsifies the premise and transitions the investigation to
 // exonerated in one pack commit: [AppendEntry{reason}, status]. It is legal from
-// open or root_caused; an empty reason is ErrMissingReason.
-func (c *Client) Exonerate(ctx context.Context, id model.EntityID, reason string) (model.Investigation, error) {
-	return c.transitionWithEntry(ctx, id, model.InvestigationExonerated, reason, true)
+// open or root_caused; an empty reason is ErrMissingReason. Unless force is set,
+// an investigation still carrying open findings is refused with an
+// *OpenFindingsError.
+func (c *Client) Exonerate(ctx context.Context, id model.EntityID, reason string, force bool) (model.Investigation, error) {
+	return c.transitionWithEntry(ctx, id, model.InvestigationExonerated, reason, true, force)
 }
 
 // Abandon walks away from the investigation with no verdict, transitioning it to
 // abandoned in one pack commit: [optional AppendEntry, status]. It is legal from
-// any non-terminal status; text is optional.
+// any non-terminal status; text is optional. Abandoning records no verdict, so
+// open findings do not gate it.
 func (c *Client) Abandon(ctx context.Context, id model.EntityID, text string) (model.Investigation, error) {
-	return c.transitionWithEntry(ctx, id, model.InvestigationAbandoned, text, false)
+	return c.transitionWithEntry(ctx, id, model.InvestigationAbandoned, text, false, false)
 }
 
 // Reopen reopens a non-open investigation — a regression on a confirmed one, a
@@ -364,7 +369,7 @@ func (c *Client) Abandon(ctx context.Context, id model.EntityID, text string) (m
 // [AppendEntry{reason}, status]. The reason is required (ErrMissingReason when
 // empty); reopening an already-open investigation is ErrIllegalTransition.
 func (c *Client) Reopen(ctx context.Context, id model.EntityID, reason string) (model.Investigation, error) {
-	return c.transitionWithEntry(ctx, id, model.InvestigationOpen, reason, true)
+	return c.transitionWithEntry(ctx, id, model.InvestigationOpen, reason, true, false)
 }
 
 // AddFollowUp records an outbound follow-up edge from the investigation to
@@ -379,10 +384,29 @@ func (c *Client) RemoveFollowUp(ctx context.Context, id, followUp model.EntityID
 	return c.appendInvestigation(ctx, id, []model.Op{model.RemoveFollowUp{ID: followUp}})
 }
 
+// SupersedeInvestigation records that the investigation by replaces id,
+// mirroring SupersedeNote: by must resolve to a live investigation and is
+// loaded to validate before the edge is written.
+func (c *Client) SupersedeInvestigation(ctx context.Context, id, by model.EntityID) (model.Investigation, error) {
+	if _, err := c.Investigation(ctx, by); err != nil {
+		return model.Investigation{}, err
+	}
+	return c.appendInvestigation(ctx, id, []model.Op{model.AddSupersededBy{ID: by}})
+}
+
+// UnsupersedeInvestigation clears the edge recording that by replaces id.
+func (c *Client) UnsupersedeInvestigation(ctx context.Context, id, by model.EntityID) (model.Investigation, error) {
+	if _, err := c.Investigation(ctx, by); err != nil {
+		return model.Investigation{}, err
+	}
+	return c.appendInvestigation(ctx, id, []model.Op{model.RemoveSupersededBy{ID: by}})
+}
+
 // transitionWithEntry is the shared body of the confirm/exonerate/abandon/reopen
 // verbs: an optional (or required) timeline entry followed by the LWW status set,
-// in one pack commit, gated on transition legality at op-build time.
-func (c *Client) transitionWithEntry(ctx context.Context, id model.EntityID, target model.InvestigationStatus, text string, requireText bool) (model.Investigation, error) {
+// in one pack commit, gated on transition legality at op-build time. force
+// overrides the open-findings gate the two verdict targets carry.
+func (c *Client) transitionWithEntry(ctx context.Context, id model.EntityID, target model.InvestigationStatus, text string, requireText, force bool) (model.Investigation, error) {
 	if requireText && text == "" {
 		return model.Investigation{}, ErrMissingReason
 	}
@@ -390,7 +414,7 @@ func (c *Client) transitionWithEntry(ctx context.Context, id model.EntityID, tar
 	if err != nil {
 		return model.Investigation{}, err
 	}
-	if err := ensureInvestigationTransition(inv, target); err != nil {
+	if err := ensureInvestigationTransition(inv, target, force); err != nil {
 		return model.Investigation{}, err
 	}
 	var ops []model.Op
@@ -418,12 +442,38 @@ var legalInvestigationTransitions = map[model.InvestigationStatus][]model.Invest
 }
 
 // ensureInvestigationTransition reports an ErrIllegalTransition, naming the
-// current and requested status, unless the move is in the lifecycle machine.
-func ensureInvestigationTransition(inv model.Investigation, target model.InvestigationStatus) error {
-	if slices.Contains(legalInvestigationTransitions[inv.Status], target) {
+// current and requested status, unless the move is in the lifecycle machine, and
+// then — unless force is set — an *OpenFindingsError when a verdict target would
+// land on an investigation whose findings are not all dispositioned.
+func ensureInvestigationTransition(inv model.Investigation, target model.InvestigationStatus, force bool) error {
+	if !slices.Contains(legalInvestigationTransitions[inv.Status], target) {
+		return fmt.Errorf("%w: %s cannot go %s→%s", ErrIllegalTransition, inv.ID.Short(), inv.Status, target)
+	}
+	if force || !verdictInvestigation(target) {
 		return nil
 	}
-	return fmt.Errorf("%w: %s cannot go %s→%s", ErrIllegalTransition, inv.ID.Short(), inv.Status, target)
+	var open []model.Finding
+	for _, f := range inv.Findings {
+		if f.Status == model.FindingOpen {
+			open = append(open, f)
+		}
+	}
+	if len(open) > 0 {
+		return &OpenFindingsError{ID: inv.ID, Target: target, Open: open}
+	}
+	return nil
+}
+
+// verdictInvestigation reports whether a status is one of the two verdicts —
+// confirmed (the premise held and the fix stuck) or exonerated (the premise was
+// falsified). Abandoned is terminal too, but records no verdict, so it answers
+// for none of the suspects the findings name.
+func verdictInvestigation(status model.InvestigationStatus) bool {
+	switch status {
+	case model.InvestigationConfirmed, model.InvestigationExonerated:
+		return true
+	}
+	return false
 }
 
 // nonTerminalInvestigation reports whether an investigation is still in flight —

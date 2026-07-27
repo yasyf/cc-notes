@@ -75,9 +75,9 @@ func driveTo(t *testing.T, c *notes.Client, status model.InvestigationStatus) mo
 	case model.InvestigationConfirmed:
 		step(c.RootCause(ctx, inv.ID, "cause"))
 		step(c.Fix(ctx, inv.ID, "fix", nil))
-		step(c.Confirm(ctx, inv.ID, "proof"))
+		step(c.Confirm(ctx, inv.ID, "proof", false))
 	case model.InvestigationExonerated:
-		step(c.Exonerate(ctx, inv.ID, "premise falsified"))
+		step(c.Exonerate(ctx, inv.ID, "premise falsified", false))
 	case model.InvestigationAbandoned:
 		step(c.Abandon(ctx, inv.ID, "walked away"))
 	default:
@@ -292,7 +292,7 @@ func TestInvestigationLegalArc(t *testing.T) {
 
 	// fixed → confirmed stamps ClosedAt/ClosedBy from the carrying commit, atomically.
 	before = investigationCommits(t, dir, inv.ID)
-	cf, err := c.Confirm(ctx, inv.ID, "20 green CI runs, no recurrence")
+	cf, err := c.Confirm(ctx, inv.ID, "20 green CI runs, no recurrence", false)
 	if err != nil {
 		t.Fatalf("Confirm: %v", err)
 	}
@@ -326,6 +326,110 @@ func TestInvestigationLegalArc(t *testing.T) {
 	}
 }
 
+// TestInvestigationConfirmGatesOnOpenFindings pins the verdict gate: confirm
+// refuses while a finding is undispositioned, naming exactly the open ones and
+// writing nothing, and --force records the verdict anyway. The mid-lifecycle
+// verbs the same investigation passes through are proved ungated on the way.
+func TestInvestigationConfirmGatesOnOpenFindings(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+
+	inv := mustInvestigation(t, c, notes.InvestigationSpec{
+		Title:    "deadlock",
+		Premise:  "the pool rewrite",
+		Findings: []string{"commit 3d55ae2e (pool rewrite)", "the scheduler change"},
+	})
+	if _, err := c.SetFindingCleared(ctx, inv.ID, inv.Findings[0].ID, "bisect reproduces earlier"); err != nil {
+		t.Fatalf("SetFindingCleared: %v", err)
+	}
+	stillOpen := inv.Findings[1]
+
+	// root-cause and fix are mid-lifecycle, not verdicts — an open finding is the
+	// evidence they are recorded from, so neither gates.
+	if _, err := c.RootCause(ctx, inv.ID, "unbuffered chan leaks a blocked send"); err != nil {
+		t.Fatalf("RootCause with an open finding: %v", err)
+	}
+	if _, err := c.Fix(ctx, inv.ID, "buffered the results chan", nil); err != nil {
+		t.Fatalf("Fix with an open finding: %v", err)
+	}
+
+	before := investigationCommits(t, dir, inv.ID)
+	_, err := c.Confirm(ctx, inv.ID, "20 green CI runs", false)
+	var gate *notes.OpenFindingsError
+	if !errors.As(err, &gate) {
+		t.Fatalf("Confirm with an open finding = %v, want *OpenFindingsError", err)
+	}
+	if gate.ID != inv.ID || gate.Target != model.InvestigationConfirmed {
+		t.Errorf("gate = %s → %s, want %s → confirmed", gate.ID, gate.Target, inv.ID)
+	}
+	if len(gate.Open) != 1 || gate.Open[0].ID != stillOpen.ID || gate.Open[0].Text != stillOpen.Text {
+		t.Errorf("gate.Open = %+v, want only the undispositioned %+v", gate.Open, stillOpen)
+	}
+	if got := investigationCommits(t, dir, inv.ID); got != before {
+		t.Errorf("refused Confirm wrote %d commits, want 0", got-before)
+	}
+	if got, err := c.Investigation(ctx, inv.ID); err != nil || got.Status != model.InvestigationFixed {
+		t.Errorf("status after refused Confirm = %q (%v), want fixed", got.Status, err)
+	}
+
+	forced, err := c.Confirm(ctx, inv.ID, "20 green CI runs", true)
+	if err != nil {
+		t.Fatalf("Confirm(force): %v", err)
+	}
+	if forced.Status != model.InvestigationConfirmed || forced.ClosedAt == 0 {
+		t.Errorf("forced confirm = status %q closedAt %d, want confirmed and closed", forced.Status, forced.ClosedAt)
+	}
+	if got := findingByID(t, forced.Findings, stillOpen.ID); got.Status != model.FindingOpen {
+		t.Errorf("forced confirm rewrote the finding to %q, want it left open", got.Status)
+	}
+}
+
+// TestInvestigationExonerateGateAndAbandonEscape pins the other half of the
+// verdict gate — exonerate refuses on an open finding and clears once every
+// suspect is ruled on — and that abandon, the terminal that records no verdict,
+// stays the escape hatch from a record whose suspects never were.
+func TestInvestigationExonerateGateAndAbandonEscape(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+
+	gated := mustInvestigation(t, c, notes.InvestigationSpec{
+		Title:    "gated",
+		Premise:  "the scheduler change",
+		Findings: []string{"the scheduler change"},
+	})
+	_, err := c.Exonerate(ctx, gated.ID, "false alarm", false)
+	var gate *notes.OpenFindingsError
+	if !errors.As(err, &gate) {
+		t.Fatalf("Exonerate with an open finding = %v, want *OpenFindingsError", err)
+	}
+	if gate.Target != model.InvestigationExonerated || len(gate.Open) != 1 {
+		t.Errorf("gate = %s with %d open, want exonerated with 1", gate.Target, len(gate.Open))
+	}
+	if _, err := c.SetFindingConfirmed(ctx, gated.ID, gated.Findings[0].ID, "stack points here"); err != nil {
+		t.Fatalf("SetFindingConfirmed: %v", err)
+	}
+	got, err := c.Exonerate(ctx, gated.ID, "false alarm", false)
+	if err != nil {
+		t.Fatalf("Exonerate once every finding is dispositioned: %v", err)
+	}
+	if got.Status != model.InvestigationExonerated {
+		t.Errorf("status = %q, want exonerated", got.Status)
+	}
+
+	walked := mustInvestigation(t, c, notes.InvestigationSpec{
+		Title:    "walked away",
+		Premise:  "never ruled on",
+		Findings: []string{"suspect nobody looked at"},
+	})
+	abandoned, err := c.Abandon(ctx, walked.ID, "reprioritized")
+	if err != nil {
+		t.Fatalf("Abandon with an open finding: %v", err)
+	}
+	if abandoned.Status != model.InvestigationAbandoned {
+		t.Errorf("status = %q, want abandoned", abandoned.Status)
+	}
+}
+
 func TestInvestigationExonerateAndAbandon(t *testing.T) {
 	c, dir := newClient(t)
 	ctx := t.Context()
@@ -333,7 +437,7 @@ func TestInvestigationExonerateAndAbandon(t *testing.T) {
 	// open → exonerated (premise falsified) stamps closed in one pack commit.
 	ex := driveTo(t, c, model.InvestigationOpen)
 	before := investigationCommits(t, dir, ex)
-	got, err := c.Exonerate(ctx, ex, "bisect reproduces before the suspect commit")
+	got, err := c.Exonerate(ctx, ex, "bisect reproduces before the suspect commit", false)
 	if err != nil {
 		t.Fatalf("Exonerate: %v", err)
 	}
@@ -396,11 +500,11 @@ func TestInvestigationIllegalTransitions(t *testing.T) {
 		return e
 	}
 	confirm := func(ctx context.Context, c *notes.Client, id model.EntityID) error {
-		_, e := c.Confirm(ctx, id, "proof")
+		_, e := c.Confirm(ctx, id, "proof", false)
 		return e
 	}
 	exonerate := func(ctx context.Context, c *notes.Client, id model.EntityID) error {
-		_, e := c.Exonerate(ctx, id, "reason")
+		_, e := c.Exonerate(ctx, id, "reason", false)
 		return e
 	}
 	abandon := func(ctx context.Context, c *notes.Client, id model.EntityID) error {
@@ -850,4 +954,89 @@ func scopedIDs(invs []model.Investigation) []model.EntityID {
 		out[i] = inv.ID
 	}
 	return out
+}
+
+func TestSupersedeInvestigation(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+	old := mustInvestigation(t, c, notes.InvestigationSpec{Title: "first pass", Premise: "the pool leaks"})
+	fresh := mustInvestigation(t, c, notes.InvestigationSpec{Title: "second pass", Premise: "the pool leaks, with better evidence"})
+
+	got, err := c.SupersedeInvestigation(ctx, old.ID, fresh.ID)
+	if err != nil {
+		t.Fatalf("SupersedeInvestigation: %v", err)
+	}
+	if !slices.Equal(got.SupersededBy, []model.EntityID{fresh.ID}) {
+		t.Fatalf("superseded_by = %v, want [%s]", got.SupersededBy, fresh.ID)
+	}
+
+	// A superseded investigation drops out of the live listing, as a superseded
+	// note drops out of note list.
+	live, err := c.Investigations(ctx, notes.InvestigationFilter{})
+	if err != nil {
+		t.Fatalf("Investigations: %v", err)
+	}
+	for _, inv := range live {
+		if inv.ID == old.ID {
+			t.Errorf("superseded investigation %s is still in the live listing", old.ID.Short())
+		}
+	}
+
+	cleared, err := c.UnsupersedeInvestigation(ctx, old.ID, fresh.ID)
+	if err != nil {
+		t.Fatalf("UnsupersedeInvestigation: %v", err)
+	}
+	if len(cleared.SupersededBy) != 0 {
+		t.Fatalf("superseded_by after clear = %v, want none", cleared.SupersededBy)
+	}
+
+	// The replacement is loaded to validate before the edge is written, so a
+	// nonexistent target errors and leaves the old record untouched.
+	if _, err := c.SupersedeInvestigation(ctx, old.ID, "0000000000000000000000000000000000000000"); err == nil {
+		t.Error("SupersedeInvestigation onto a nonexistent target succeeded, want an error")
+	}
+	after, err := c.Investigation(ctx, old.ID)
+	if err != nil {
+		t.Fatalf("Investigation: %v", err)
+	}
+	if len(after.SupersededBy) != 0 {
+		t.Errorf("superseded_by after the refused edge = %v, want none", after.SupersededBy)
+	}
+}
+
+// TestFollowUpAcrossKinds pins that a follow-up edge records any entity kind,
+// which is why the CLI resolves TARGET globally rather than as an investigation.
+func TestFollowUpAcrossKinds(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+	inv := mustInvestigation(t, c, notes.InvestigationSpec{Title: "root caused", Premise: "the retry loop spins"})
+
+	task := mustTask(t, c, notes.TaskSpec{Title: "fix the retry loop", Branch: "main"})
+	note, _, err := c.CreateNote(ctx, notes.NoteSpec{Title: "retry invariant", Body: "the loop must bound its attempts"})
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	next := mustInvestigation(t, c, notes.InvestigationSpec{Title: "follow-up inquiry", Premise: "the bound is still wrong"})
+
+	var got model.Investigation
+	for _, target := range []model.EntityID{task.ID, note.ID, next.ID} {
+		if got, err = c.AddFollowUp(ctx, inv.ID, target); err != nil {
+			t.Fatalf("AddFollowUp(%s): %v", target.Short(), err)
+		}
+	}
+	want := []model.EntityID{task.ID, note.ID, next.ID}
+	slices.Sort(want)
+	if !slices.Equal(got.FollowUps, want) {
+		t.Fatalf("follow_ups = %v, want %v (a task, a note, and an investigation)", got.FollowUps, want)
+	}
+
+	dropped, err := c.RemoveFollowUp(ctx, inv.ID, note.ID)
+	if err != nil {
+		t.Fatalf("RemoveFollowUp: %v", err)
+	}
+	want = []model.EntityID{task.ID, next.ID}
+	slices.Sort(want)
+	if !slices.Equal(dropped.FollowUps, want) {
+		t.Fatalf("follow_ups after remove = %v, want %v", dropped.FollowUps, want)
+	}
 }

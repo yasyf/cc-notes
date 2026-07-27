@@ -469,6 +469,44 @@ func TestInvestigationLifecycle(t *testing.T) {
 	}
 }
 
+// TestInvestigationVerdictForceOverMCP pins that the verdict gate and its escape
+// both reach the MCP surface: a verdict with a finding still open comes back as
+// an error result naming the finding and the remediation, and force records it.
+func TestInvestigationVerdictForceOverMCP(t *testing.T) {
+	initRepo(t)
+	cs := connect(t)
+
+	const suspect = "quoted fields disappear"
+	id := ackID(t, call(t, cs, "investigation_open", map[string]any{
+		"title":    "the parser drops rows",
+		"premise":  "the parser drops quoted fields",
+		"findings": []string{suspect},
+	}))
+	finding := show[investigationOut](t, cs, "investigation_show", id).Findings[0]
+
+	args := map[string]any{"id": id, "text": "the fixture was malformed"}
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "investigation_exonerate", Arguments: args})
+	if err != nil {
+		t.Fatalf("call investigation_exonerate: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("exonerate with an open finding returned no error result: %s", toolText(res))
+	}
+	for _, fragment := range []string{"usage", "1 open finding/findings blocking exonerated", "pass --force", finding.ID[:7], suspect} {
+		if got := toolText(res); !strings.Contains(got, fragment) {
+			t.Errorf("error text omits %q: %s", fragment, got)
+		}
+	}
+	if got := show[investigationOut](t, cs, "investigation_show", id); got.Status != "open" {
+		t.Fatalf("status after the refused verdict = %q, want open", got.Status)
+	}
+
+	args["force"] = true
+	if ack := decode[investigationSummaryOut](t, call(t, cs, "investigation_exonerate", args)); ack.Status != "exonerated" {
+		t.Fatalf("forced exonerate ack = %+v, want exonerated", ack)
+	}
+}
+
 func TestErrorMappingCarriesLabel(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
@@ -498,7 +536,7 @@ func TestListToolsInventory(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	const wantCount = 124
+	const wantCount = 128
 	if len(names) != wantCount {
 		t.Errorf("tool count = %d, want %d; got %v", len(names), wantCount, sortedKeys(names))
 	}

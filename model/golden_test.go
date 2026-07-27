@@ -90,11 +90,17 @@ var preAttachmentGoldens = []struct {
 		ClearStale{},
 		`{"v":1,"lamport":42,"ops":[{"kind":"clear_stale"}]}`,
 	},
+	// The anchored form this binary writes; the pre-anchor wire form is pinned
+	// decode-side in TestPackGoldenBytesPreAnchorTaskDecodes.
 	{"create_task", CreateTask{
 		Nonce: testNonce, Title: "Fix flaky sync", Description: "Two-clone round-trip flakes",
 		Type: TypeBug, Priority: 1, Branch: "feature/sync", Parent: testParent,
 		Labels: []string{"ci", "sync"},
-	}, `{"v":1,"lamport":42,"ops":[{"kind":"create_task","nonce":"0123456789abcdef0123456789abcdef","title":"Fix flaky sync","description":"Two-clone round-trip flakes","type":"bug","priority":1,"branch":"feature/sync","parent":"00112233445566778899aabbccddeeff00112233","labels":["ci","sync"]}]}`},
+		Anchors: []Anchor{
+			{Kind: AnchorPath, Value: "internal/sync/sync.go"},
+			{Kind: AnchorDir, Value: "internal/sync"},
+		},
+	}, `{"v":1,"lamport":42,"ops":[{"kind":"create_task","nonce":"0123456789abcdef0123456789abcdef","title":"Fix flaky sync","description":"Two-clone round-trip flakes","type":"bug","priority":1,"branch":"feature/sync","parent":"00112233445566778899aabbccddeeff00112233","labels":["ci","sync"],"anchors":[{"kind":"path","value":"internal/sync/sync.go"},{"kind":"dir","value":"internal/sync"}]}]}`},
 	{"create_sprint", CreateSprint{
 		Nonce: testNonce, Title: "Q3 sync hardening", Description: "Stabilize two-clone sync",
 		Project: testParent, Labels: []string{"ops", "sync"},
@@ -742,6 +748,57 @@ func TestPackGoldenBytesPreAnchorRunbookDecodes(t *testing.T) {
 	}
 	if !reflect.DeepEqual(back, want) {
 		t.Fatalf("decode = %#v, want %#v", back, want)
+	}
+}
+
+// TestPackGoldenBytesPreAnchorTaskDecodes pins the pre-anchor create_task wire
+// bytes — the form every task chain written before task anchors carries —
+// decode-side only: the bytes must decode to the anchor-less op unchanged. The
+// anchored marshal form is pinned in the pre-attachment golden table; these
+// bytes are never edited, only preserved.
+func TestPackGoldenBytesPreAnchorTaskDecodes(t *testing.T) {
+	wire := `{"v":1,"lamport":42,"ops":[{"kind":"create_task","nonce":"0123456789abcdef0123456789abcdef","title":"Fix flaky sync","description":"Two-clone round-trip flakes","type":"bug","priority":1,"branch":"feature/sync","parent":"00112233445566778899aabbccddeeff00112233","labels":["ci","sync"]}]}`
+	want := Pack{Lamport: 42, Ops: []Op{
+		CreateTask{
+			Nonce: testNonce, Title: "Fix flaky sync", Description: "Two-clone round-trip flakes",
+			Type: TypeBug, Priority: 1, Branch: "feature/sync", Parent: testParent,
+			Labels: []string{"ci", "sync"},
+		},
+	}}
+	back, err := DecodePack([]byte(wire))
+	if err != nil {
+		t.Fatalf("decode pre-anchor golden: %v", err)
+	}
+	if !reflect.DeepEqual(back, want) {
+		t.Fatalf("decode = %#v, want %#v", back, want)
+	}
+}
+
+// TestSnapshotGoldenBytesAnchorlessTask pins the exact json.Marshal bytes of an
+// anchor-less task snapshot: Anchors marshals omitempty, so the bytes — which
+// checkpoint State embeds verbatim — must stay byte-identical to the pre-anchor
+// form and carry no anchors key.
+func TestSnapshotGoldenBytesAnchorlessTask(t *testing.T) {
+	snap := Task{
+		ID: testID, Branch: "feature/sync", Title: "Fix flaky sync",
+		Description: "Two-clone round-trip flakes", Type: TypeBug, Status: StatusDone,
+		Priority: 1, Assignee: "agent-7", HeartbeatAt: 300, HeartbeatLamport: 4,
+		Labels: []string{"ci"}, BlockedBy: []EntityID{testParent}, Parent: testParent,
+		Comments:  []Comment{{Author: "ada", TS: 100, Body: "on it"}},
+		CreatedAt: 100, UpdatedAt: 300, StartedAt: 150, ClosedAt: 300,
+		Commits: []SHA{testParent}, Head: testParent,
+		Criteria: []Criterion{{ID: "crit-1", Text: "all tests pass", Status: CriterionMet}},
+	}
+	want := `{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","branch":"feature/sync","title":"Fix flaky sync","description":"Two-clone round-trip flakes","type":"bug","status":"done","priority":1,"assignee":"agent-7","heartbeat_at":300,"heartbeat_lamport":4,"labels":["ci"],"blocked_by":["00112233445566778899aabbccddeeff00112233"],"parent":"00112233445566778899aabbccddeeff00112233","comments":[{"author":"ada","ts":100,"body":"on it"}],"created_at":100,"updated_at":300,"started_at":150,"closed_at":300,"commits":["00112233445566778899aabbccddeeff00112233"],"head":"00112233445566778899aabbccddeeff00112233","sprint":"","project":"","criteria":[{"id":"crit-1","text":"all tests pass","script":"","status":"met"}]}`
+	got, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("marshal =\n%s\nwant\n%s", got, want)
+	}
+	if strings.Contains(string(got), `"anchors"`) {
+		t.Errorf("anchor-less task snapshot bytes contain \"anchors\"")
 	}
 }
 

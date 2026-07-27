@@ -112,7 +112,7 @@ cc-notes investigation fix a1b2 --commit 5e3c9ce4
 cc-notes investigation confirm a1b2 "20 green CI runs since the fix; no recurrence."
 ```
 
-Status moves `open → root_caused → fixed → confirmed`; `exonerate` closes an arc whose premise turned out wrong — that is a verdict too — and `reopen` returns any closed one when it regresses. Findings (`investigation finding add`, then `clear` or `confirm --why`) hold each suspect hypothesis with its disposition, so a cleared suspect stays cleared.
+Status moves `open → root_caused → fixed → confirmed`; `exonerate` closes an arc whose premise turned out wrong — that is a verdict too — and `reopen` returns any closed one when it regresses. Findings (`investigation finding add`, then `clear` or `confirm --why`) hold each suspect hypothesis with its disposition, so a cleared suspect stays cleared, and a verdict is gated on them. `confirm` and `exonerate` list the still-open suspects and refuse to close over them unless you pass `--force`; `abandon`, which records no verdict, stays ungated.
 
 ---
 

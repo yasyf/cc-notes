@@ -51,7 +51,8 @@ func unmetCriteriaUsage(id model.EntityID, unmet []model.Criterion) error {
 func editEmpty(e notes.TaskEdit) bool {
 	return e.Title == nil && e.Description == nil && e.Type == nil && e.Priority == nil &&
 		e.Status == nil && e.Assignee == nil && e.Parent == nil && e.Sprint == nil &&
-		e.Project == nil && e.Branch == nil && len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0
+		e.Project == nil && e.Branch == nil && len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0 &&
+		anchorSpecEmpty(e.AddAnchors) && anchorSpecEmpty(e.RemoveAnchors)
 }
 
 // branchScopeFromFlags resolves the mutually-exclusive branch-scoping flags into
@@ -110,6 +111,8 @@ func newTaskCmd() *cobra.Command {
 		newTaskCommentCmd(),
 		newTaskDepCmd(),
 		newTaskUndepCmd(),
+		newTaskLinkCmd(),
+		newTaskUnlinkCmd(),
 		newTaskStaleCmd(),
 		newTaskArchivedCmd(),
 		newTaskCriterionCmd(),
@@ -123,6 +126,7 @@ func newTaskAddCmd() *cobra.Command {
 	var body, taskType, parent, branch, sprint, project string
 	var priority int
 	var labels, blockedBy, criteria []string
+	var anchors anchorSets
 	var backlog, noValidation, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "add TITLE [BODY]",
@@ -216,6 +220,7 @@ func newTaskAddCmd() *cobra.Command {
 				Labels:      labels,
 				Criteria:    criteria,
 				BlockedBy:   blockers,
+				Anchors:     anchorSetsSpec(anchors),
 			})
 			if err != nil {
 				return err
@@ -242,6 +247,7 @@ func newTaskAddCmd() *cobra.Command {
 	flags.StringArrayVar(&blockedBy, "blocked-by", nil, "blocker task id prefix (repeatable, resolved globally)")
 	flags.StringVar(&branch, "branch", "", "task branch (default: current branch)")
 	flags.BoolVar(&backlog, "backlog", false, "create on the backlog (no branch)")
+	anchors.bindWithoutBranch(flags)
 	bindJSON(flags, &jsonOut)
 	cmd.MarkFlagsMutuallyExclusive("branch", "backlog")
 	return cmd
@@ -559,6 +565,7 @@ func newTaskEditCmd() *cobra.Command {
 	var priority int
 	var noAssignee, noParent, noSprint, noProject bool
 	var labels labelEdits
+	var anchors anchorEdits
 	var target branchTarget
 	var jsonOut bool
 	cmd := &cobra.Command{
@@ -663,6 +670,8 @@ func newTaskEditCmd() *cobra.Command {
 				var b model.Branch
 				edit.Branch = &b
 			}
+			edit.AddAnchors = notes.AnchorSpec{Commits: anchors.addCommits, Paths: anchors.addPaths, Dirs: anchors.addDirs, Branches: anchors.addBranches}
+			edit.RemoveAnchors = notes.AnchorSpec{Commits: anchors.rmCommits, Paths: anchors.rmPaths, Dirs: anchors.rmDirs, Branches: anchors.rmBranches}
 			if editEmpty(edit) {
 				return &UsageError{Err: errors.New("task edit requires at least one flag")}
 			}
@@ -696,6 +705,7 @@ func newTaskEditCmd() *cobra.Command {
 	flags.StringVar(&project, "project", "", "new project id prefix")
 	flags.BoolVar(&noProject, "no-project", false, "clear the project")
 	target.bind(flags)
+	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
 	cmd.MarkFlagsMutuallyExclusive("assignee", "no-assignee")
 	cmd.MarkFlagsMutuallyExclusive("parent", "no-parent")
@@ -852,6 +862,60 @@ func newTaskUndepCmd() *cobra.Command {
 			task, err := c.RemoveDep(ctx, id, blocker)
 			if err != nil {
 				return err
+			}
+			return printTask(cmd, c, task, jsonOut)
+		},
+	}
+	bindJSON(cmd.Flags(), &jsonOut)
+	return cmd
+}
+
+// newTaskLinkCmd builds "task link ID [COMMIT]", the explicit form of the HEAD
+// link `task done` writes: it attributes a commit to a task after the fact, or
+// a second commit to a task already closed.
+func newTaskLinkCmd() *cobra.Command {
+	return taskCommitLinkCmd("link", "Link COMMIT (default HEAD) onto a task, as `task done` links HEAD",
+		(*notes.Client).LinkCommit)
+}
+
+// newTaskUnlinkCmd builds "task unlink ID [COMMIT]" — the only writer of
+// model.UnlinkCommit, undoing a link `task done` or `task link` wrote.
+func newTaskUnlinkCmd() *cobra.Command {
+	return taskCommitLinkCmd("unlink", "Drop COMMIT (default HEAD) from a task's linked commits",
+		(*notes.Client).UnlinkCommit)
+}
+
+// taskCommitLinkCmd is the shared body of link and unlink: resolve the task,
+// then apply write to the named revision, defaulting to HEAD.
+func taskCommitLinkCmd(verb, short string, write func(*notes.Client, context.Context, model.EntityID, string) (model.Task, error)) *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   verb + " ID [COMMIT]",
+		Short: short,
+		Args:  maxArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return &UsageError{Err: errors.New("task " + verb + " requires a task ID")}
+			}
+			ctx := cmd.Context()
+			s, c, err := openStoreClient(cmd)
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveTask(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			rev := "HEAD"
+			if len(args) > 1 {
+				rev = args[1]
+			}
+			task, err := write(c, ctx, id, rev)
+			if err != nil {
+				return taskErr(err)
 			}
 			return printTask(cmd, c, task, jsonOut)
 		},

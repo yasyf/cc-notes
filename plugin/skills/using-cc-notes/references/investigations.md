@@ -21,7 +21,9 @@ Four parts, each with its own mutation rule:
 - **Findings** — the hypotheses under test, each with a disposition: `open` (still suspect),
   `cleared` (ruled out), or `confirmed` (this was it). A disposition requires `--why` — the
   evidence travels with the ruling. One list serves both flavors of record: a debugging
-  investigation's suspects, and a review pass's N findings with N dispositions.
+  investigation's suspects, and a review pass's N findings with N dispositions. A disposition
+  is load-bearing, not decorative. The two verdicts below refuse to close while any finding is
+  still `open`.
 - **Status** — the verdict, typed: `open → root_caused → fixed → confirmed`, with two other
   terminals, `exonerated` (the premise was falsified) and `abandoned` (walked away, no
   verdict). The status column travels with every list, search, and relevant line, which is why
@@ -41,6 +43,16 @@ first confident theory gets unwound by a bisect.
 Legality is enforced when the verb builds its ops, best-effort against the snapshot it loaded.
 Two agents racing transitions on different machines converge through the CRDT fold — the
 last-write-wins status stands, and the loser's evidence entry survives in the timeline.
+
+The two verdicts carry a second gate, on findings instead of status. A record cannot reach
+`confirmed` or `exonerated` while a suspect is still `open`. The verb lists the undispositioned
+findings and refuses (exit 2), the way `task done` refuses on unmet criteria. Rule the
+stragglers in or out, or pass `--force` to record the verdict over them. A forced verdict
+leaves the findings as they are, so the `open_finding_count` on every summary line keeps the
+override visible to the next reader. `abandon` carries no such gate, by design. It is the
+terminal that records *no* verdict, so walking away from suspects nobody ruled on is what it
+is for. `root-cause` and `fix` are ungated too, since they sit mid-arc and an open finding is
+the evidence they are recorded from.
 
 ## Investigation vs log vs note
 
@@ -78,6 +90,9 @@ $ cc-notes investigation root-cause a1b2 "Unbuffered results chan + early return
 $ cc-notes investigation fix a1b2 --commit 5e3c9ce4
 $ cc-notes investigation confirm a1b2 "20 green CI runs on main since 5e3c9ce4; no recurrence."
 ```
+
+The `finding clear` line is not optional. It is what lets the `confirm` three lines down
+through the verdict gate; skip it and the confirm names the still-open suspect and exits 2.
 
 A recurrence of the same cause reopens the same record (`reopen`, reason required). A new
 suspicion — even an adjacent one — opens a new investigation citing the old one's id, rather

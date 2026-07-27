@@ -561,3 +561,207 @@ func TestCommentTask(t *testing.T) {
 		t.Fatalf("comments = %+v, want one 'looks good'", commented.Comments)
 	}
 }
+
+// commitSHA makes an empty commit with the given message and returns its sha.
+func commitSHA(t *testing.T, dir, msg string) model.SHA {
+	t.Helper()
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", msg)
+	return model.SHA(strings.TrimSpace(gittest.Git(t, dir, "rev-parse", "HEAD")))
+}
+
+func TestLinkAndUnlinkCommit(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	first := commitSHA(t, dir, "first")
+	second := commitSHA(t, dir, "second")
+
+	task := mustTask(t, c, notes.TaskSpec{Title: "linkable", Branch: "main"})
+	if len(task.Commits) != 0 {
+		t.Fatalf("fresh task commits = %v, want none", task.Commits)
+	}
+
+	// A revision expression resolves to the full sha, like an anchor does.
+	linked, err := c.LinkCommit(ctx, task.ID, "HEAD")
+	if err != nil {
+		t.Fatalf("LinkCommit HEAD: %v", err)
+	}
+	if want := []model.SHA{second}; !slices.Equal(linked.Commits, want) {
+		t.Fatalf("commits after LinkCommit(HEAD) = %v, want %v", linked.Commits, want)
+	}
+
+	// Commits fold as a set: a re-link is a no-op on the snapshot, which is why
+	// DoneTask can link HEAD unconditionally without double-counting.
+	relinked, err := c.LinkCommit(ctx, task.ID, string(second))
+	if err != nil {
+		t.Fatalf("LinkCommit re-link: %v", err)
+	}
+	if want := []model.SHA{second}; !slices.Equal(relinked.Commits, want) {
+		t.Fatalf("commits after re-link = %v, want %v (a set, not a bag)", relinked.Commits, want)
+	}
+
+	both, err := c.LinkCommit(ctx, task.ID, string(first))
+	if err != nil {
+		t.Fatalf("LinkCommit first: %v", err)
+	}
+	want := []model.SHA{first, second}
+	slices.Sort(want)
+	if !slices.Equal(both.Commits, want) {
+		t.Fatalf("commits after two links = %v, want %v", both.Commits, want)
+	}
+
+	// Unlink resolves its revision the same way link does.
+	dropped, err := c.UnlinkCommit(ctx, task.ID, "HEAD")
+	if err != nil {
+		t.Fatalf("UnlinkCommit HEAD: %v", err)
+	}
+	if want := []model.SHA{first}; !slices.Equal(dropped.Commits, want) {
+		t.Fatalf("commits after unlink = %v, want %v", dropped.Commits, want)
+	}
+
+	// Unlinking a commit that was never linked leaves the set alone.
+	again, err := c.UnlinkCommit(ctx, task.ID, string(second))
+	if err != nil {
+		t.Fatalf("UnlinkCommit unlinked sha: %v", err)
+	}
+	if want := []model.SHA{first}; !slices.Equal(again.Commits, want) {
+		t.Fatalf("commits after redundant unlink = %v, want %v", again.Commits, want)
+	}
+
+	for _, verb := range []struct {
+		name string
+		call func() (model.Task, error)
+	}{
+		{"LinkCommit", func() (model.Task, error) { return c.LinkCommit(ctx, task.ID, "no-such-rev") }},
+		{"UnlinkCommit", func() (model.Task, error) { return c.UnlinkCommit(ctx, task.ID, "no-such-rev") }},
+	} {
+		if _, err := verb.call(); !errors.Is(err, notes.ErrNotFound) {
+			t.Errorf("%s(no-such-rev) = %v, want ErrNotFound", verb.name, err)
+		}
+	}
+}
+
+// TestDoneTaskLinkDedupes pins that the HEAD link DoneTask writes converges with
+// an explicit link of the same commit: one entry, so blame attributes the commit
+// to the task exactly once.
+func TestDoneTaskLinkDedupes(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	head := commitSHA(t, dir, "work")
+
+	task := mustTask(t, c, notes.TaskSpec{Title: "closes", Branch: "main"})
+	if _, err := c.LinkCommit(ctx, task.ID, "HEAD"); err != nil {
+		t.Fatalf("LinkCommit: %v", err)
+	}
+	done, err := c.DoneTask(ctx, task.ID, false)
+	if err != nil {
+		t.Fatalf("DoneTask: %v", err)
+	}
+	if want := []model.SHA{head}; !slices.Equal(done.Commits, want) {
+		t.Fatalf("commits after link+done = %v, want %v", done.Commits, want)
+	}
+
+	_, blamed, err := c.Blame(ctx, string(head))
+	if err != nil {
+		t.Fatalf("Blame: %v", err)
+	}
+	if len(blamed) != 1 || blamed[0].ID != task.ID {
+		t.Fatalf("Blame(%s) = %d task(s), want exactly %s", head, len(blamed), task.ID.Short())
+	}
+}
+
+func TestTaskAnchors(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	head := commitSHA(t, dir, "root")
+
+	task := mustTask(t, c, notes.TaskSpec{
+		Title:   "anchored",
+		Branch:  "main",
+		Anchors: notes.AnchorSpec{Commits: []string{"HEAD"}, Paths: []string{"internal/sync/sync.go"}, Dirs: []string{"internal/sync"}},
+	})
+	want := []model.Anchor{
+		{Kind: model.AnchorCommit, Value: string(head)},
+		{Kind: model.AnchorDir, Value: "internal/sync"},
+		{Kind: model.AnchorPath, Value: "internal/sync/sync.go"},
+	}
+	if !slices.Equal(task.Anchors, want) {
+		t.Fatalf("create anchors = %v, want %v (sorted by kind then value, commit resolved to a full sha)", task.Anchors, want)
+	}
+
+	// A branch anchor is distinct from the Branch attribute, and reachable only
+	// through the edit path since `task add --branch` is the attribute.
+	edited, err := c.EditTask(ctx, task.ID, notes.TaskEdit{
+		AddAnchors:    notes.AnchorSpec{Branches: []string{"feature/sync"}},
+		RemoveAnchors: notes.AnchorSpec{Dirs: []string{"internal/sync"}},
+	})
+	if err != nil {
+		t.Fatalf("EditTask anchors: %v", err)
+	}
+	want = []model.Anchor{
+		{Kind: model.AnchorBranch, Value: "feature/sync"},
+		{Kind: model.AnchorCommit, Value: string(head)},
+		{Kind: model.AnchorPath, Value: "internal/sync/sync.go"},
+	}
+	if !slices.Equal(edited.Anchors, want) {
+		t.Fatalf("anchors after edit = %v, want %v", edited.Anchors, want)
+	}
+	if edited.Branch != "main" {
+		t.Errorf("branch attribute = %q, want main — a branch anchor must not touch it", edited.Branch)
+	}
+
+	// An anchor-only edit is not an empty mask.
+	if _, err := c.EditTask(ctx, task.ID, notes.TaskEdit{}); !errors.Is(err, notes.ErrEmptyEdit) {
+		t.Errorf("EditTask with an all-empty mask = %v, want ErrEmptyEdit", err)
+	}
+
+	// RemoveAnchors matches verbatim, so a revision expression removes nothing.
+	kept, err := c.EditTask(ctx, task.ID, notes.TaskEdit{RemoveAnchors: notes.AnchorSpec{Commits: []string{"HEAD"}}})
+	if err != nil {
+		t.Fatalf("EditTask verbatim remove: %v", err)
+	}
+	if !slices.Equal(kept.Anchors, want) {
+		t.Fatalf("anchors after a verbatim-miss remove = %v, want %v unchanged", kept.Anchors, want)
+	}
+
+	// An unresolvable commit anchor fails before anything is written.
+	if _, err := c.EditTask(ctx, task.ID, notes.TaskEdit{AddAnchors: notes.AnchorSpec{Commits: []string{"no-such-rev"}}}); !errors.Is(err, notes.ErrNotFound) {
+		t.Errorf("EditTask with a bad commit anchor = %v, want ErrNotFound", err)
+	}
+	after, err := c.Task(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if !slices.Equal(after.Anchors, want) {
+		t.Fatalf("anchors after the refused edit = %v, want %v unchanged", after.Anchors, want)
+	}
+}
+
+// TestTaskAnchorsDedupe pins that anchors participate in the create dedupe key:
+// two otherwise-identical tasks anchored differently are distinct records.
+func TestTaskAnchorsDedupe(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+	spec := notes.TaskSpec{Title: "same", Branch: "main", Anchors: notes.AnchorSpec{Paths: []string{"a.go"}}}
+
+	first, err := c.CreateTask(ctx, spec)
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	same, err := c.CreateTask(ctx, spec)
+	if err != nil {
+		t.Fatalf("CreateTask again: %v", err)
+	}
+	if !same.Reused || same.Task.ID != first.Task.ID {
+		t.Fatalf("identical anchored create = %+v, want a reuse of %s", same, first.Task.ID.Short())
+	}
+
+	other := spec
+	other.Anchors = notes.AnchorSpec{Paths: []string{"b.go"}}
+	differing, err := c.CreateTask(ctx, other)
+	if err != nil {
+		t.Fatalf("CreateTask other anchor: %v", err)
+	}
+	if differing.Reused || differing.Task.ID == first.Task.ID {
+		t.Fatalf("a differently anchored create reused %s; anchors must be part of the dedupe key", first.Task.ID.Short())
+	}
+}

@@ -39,6 +39,8 @@ func newInvestigationCmd() *cobra.Command {
 		newInvestigationExonerateCmd(),
 		newInvestigationAbandonCmd(),
 		newInvestigationReopenCmd(),
+		newInvestigationFollowUpCmd(),
+		newInvestigationSupersedeCmd(),
 		newInvestigationEditCmd(),
 		newInvestigationSearchCmd(),
 		newInvestigationHistoryCmd(),
@@ -490,11 +492,11 @@ func newInvestigationRootCauseCmd() *cobra.Command {
 }
 
 func newInvestigationConfirmCmd() *cobra.Command {
-	return investigationTextTransitionCmd("confirm ID TEXT", "Confirm the fix with proof", true, (*notes.Client).Confirm)
+	return investigationVerdictCmd("confirm ID TEXT", "Confirm the fix with proof", (*notes.Client).Confirm)
 }
 
 func newInvestigationExonerateCmd() *cobra.Command {
-	return investigationTextTransitionCmd("exonerate ID TEXT", "Falsify the investigation premise", true, (*notes.Client).Exonerate)
+	return investigationVerdictCmd("exonerate ID TEXT", "Falsify the investigation premise", (*notes.Client).Exonerate)
 }
 
 func newInvestigationAbandonCmd() *cobra.Command {
@@ -524,38 +526,88 @@ func investigationTextTransitionCmd(use, short string, requireText bool, transit
 			return maxArgs(2)(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var text string
-			var err error
-			if len(args) > 1 {
-				text, err = bodyArg(cmd, args[1])
-				if err != nil {
-					return err
-				}
-			}
-			if requireText && text == "" {
-				return &UsageError{Err: fmt.Errorf("%s requires text", cmd.CommandPath())}
-			}
-			ctx := cmd.Context()
-			s, c, err := openStoreClient(cmd)
-			if err != nil {
-				return err
-			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
-				return err
-			}
-			id, err := c.ResolveInvestigation(ctx, args[0])
-			if err != nil {
-				return err
-			}
-			inv, err := transition(c, ctx, id, text)
-			if err != nil {
-				return err
-			}
-			return printInvestigation(cmd, c, inv, jsonOut)
+			return runInvestigationTransition(cmd, args, requireText, jsonOut, transition)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)
 	return cmd
+}
+
+// investigationVerdictCmd builds a verdict verb — confirm or exonerate — whose
+// TEXT is mandatory and whose --force overrides the open-findings gate.
+func investigationVerdictCmd(use, short string, verdict func(*notes.Client, context.Context, model.EntityID, string, bool) (model.Investigation, error)) *cobra.Command {
+	var force, jsonOut bool
+	cmd := &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runInvestigationTransition(cmd, args, true, jsonOut,
+				func(c *notes.Client, ctx context.Context, id model.EntityID, text string) (model.Investigation, error) {
+					return verdict(c, ctx, id, text, force)
+				})
+		},
+	}
+	flags := cmd.Flags()
+	flags.BoolVar(&force, "force", false, "record the verdict even with open findings")
+	bindJSON(flags, &jsonOut)
+	return cmd
+}
+
+// runInvestigationTransition is the shared body of every text transition verb:
+// read the optional TEXT positional, resolve the id, apply the transition, and
+// print the acknowledgement.
+func runInvestigationTransition(cmd *cobra.Command, args []string, requireText, jsonOut bool, transition func(*notes.Client, context.Context, model.EntityID, string) (model.Investigation, error)) error {
+	var text string
+	var err error
+	if len(args) > 1 {
+		text, err = bodyArg(cmd, args[1])
+		if err != nil {
+			return err
+		}
+	}
+	if requireText && text == "" {
+		return &UsageError{Err: fmt.Errorf("%s requires text", cmd.CommandPath())}
+	}
+	ctx := cmd.Context()
+	s, c, err := openStoreClient(cmd)
+	if err != nil {
+		return err
+	}
+	if err := autoInstall(ctx, cmd, s.Git); err != nil {
+		return err
+	}
+	id, err := c.ResolveInvestigation(ctx, args[0])
+	if err != nil {
+		return err
+	}
+	inv, err := transition(c, ctx, id, text)
+	if err != nil {
+		return investigationErr(err)
+	}
+	return printInvestigation(cmd, c, inv, jsonOut)
+}
+
+// investigationErr maps a *notes.OpenFindingsError to the verdict gate's
+// UsageError with the full finding detail and --force hint, mirroring taskErr's
+// handling of the done gate. Every other error passes through.
+func investigationErr(err error) error {
+	var open *notes.OpenFindingsError
+	if errors.As(err, &open) {
+		return openFindingsUsage(open.ID, open.Target, open.Open)
+	}
+	return err
+}
+
+// openFindingsUsage renders the verdict-gate UsageError: every finding still
+// open, with the --force remediation.
+func openFindingsUsage(id model.EntityID, target model.InvestigationStatus, open []model.Finding) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s has %d open finding/findings blocking %s (pass --force to record the verdict anyway):", id.Short(), len(open), target)
+	for _, f := range open {
+		fmt.Fprintf(&b, "\n  %s %s", render.ShortWireID(f.ID), sanitizeDisplay(f.Text, false))
+	}
+	return &UsageError{Err: errors.New(b.String())}
 }
 
 func newInvestigationFixCmd() *cobra.Command {
@@ -601,6 +653,97 @@ func newInvestigationFixCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringArrayVar(&commits, "commit", nil, "fixing commit (repeatable; at least one required)")
+	bindJSON(flags, &jsonOut)
+	return cmd
+}
+
+// newInvestigationFollowUpCmd builds "investigation follow-up ID TARGET": the
+// outbound edge to what the investigation spawned. TARGET resolves across every
+// kind, since a follow-up is as often a task or a graduated note as another
+// investigation.
+func newInvestigationFollowUpCmd() *cobra.Command {
+	var clearFlag, jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "follow-up ID TARGET",
+		Short: "Record what an investigation spawned (--clear undoes the edge)",
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			s, c, err := openStoreClient(cmd)
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveInvestigation(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			_, target, err := c.ResolveEntity(ctx, args[1])
+			if err != nil {
+				return err
+			}
+			write := c.AddFollowUp
+			if clearFlag {
+				write = c.RemoveFollowUp
+			}
+			inv, err := write(ctx, id, target)
+			if err != nil {
+				return err
+			}
+			return printInvestigation(cmd, c, inv, jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	flags.BoolVar(&clearFlag, "clear", false, "remove the follow-up edge instead of adding it")
+	bindJSON(flags, &jsonOut)
+	return cmd
+}
+
+// newInvestigationSupersedeCmd builds "investigation supersede OLD --by NEW",
+// mirroring the note and doc supersede verb over the same AddSupersededBy op.
+func newInvestigationSupersedeCmd() *cobra.Command {
+	var by string
+	var clearFlag, jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "supersede OLD --by NEW",
+		Short: "Record that investigation NEW replaces OLD (--clear undoes the edge)",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if by == "" {
+				return &UsageError{Err: errors.New("investigation supersede requires --by NEW")}
+			}
+			s, c, err := openStoreClient(cmd)
+			if err != nil {
+				return err
+			}
+			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				return err
+			}
+			id, err := c.ResolveInvestigation(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			byID, err := c.ResolveInvestigation(ctx, by)
+			if err != nil {
+				return err
+			}
+			write := c.SupersedeInvestigation
+			if clearFlag {
+				write = c.UnsupersedeInvestigation
+			}
+			inv, err := write(ctx, id, byID)
+			if err != nil {
+				return err
+			}
+			return printInvestigation(cmd, c, inv, jsonOut)
+		},
+	}
+	flags := cmd.Flags()
+	flags.StringVar(&by, "by", "", "the investigation that replaces OLD")
+	flags.BoolVar(&clearFlag, "clear", false, "remove the supersede edge instead of adding it")
 	bindJSON(flags, &jsonOut)
 	return cmd
 }

@@ -165,6 +165,7 @@ func sameTaskContent(a, b model.Task) bool {
 		a.Project == b.Project &&
 		slices.Equal(a.Labels, b.Labels) &&
 		slices.Equal(a.BlockedBy, b.BlockedBy) &&
+		slices.Equal(a.Anchors, b.Anchors) &&
 		sameCriteria(a.Criteria, b.Criteria)
 }
 

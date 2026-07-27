@@ -267,7 +267,9 @@ a red CI run, a bug hunt, an anomaly — `investigation_open` records that premi
 `investigation_append` logs evidence per triage step, `investigation_finding_add` then
 `_clear`/`_confirm` (with `why`) gives each suspect an explicit disposition, and the arc
 closes through the transition verbs — `investigation_root_cause`, `investigation_fix`,
-`investigation_confirm`, or `investigation_exonerate` when the premise falls. CLI:
+`investigation_confirm`, or `investigation_exonerate` when the premise falls. Those last two
+are gated. A verdict lists the findings still `open` and refuses unless you pass `force`;
+`investigation_abandon` is the ungated way out, since it records no verdict. CLI:
 `cc-notes investigation open "<title>" "<premise>"`.
 
 **8. Record facts.** A note is born verified against the current HEAD — the first worked
@@ -338,10 +340,10 @@ The full surface — every flag, property, default, and output shape — is in
 | Read a capped history whole | `log_entry_list` / `investigation_entry_list` (`id`) / `task_comment_list` (`task`) | `cc-notes log entry list <id>` |
 | Open an investigation on a suspicion | `investigation_open` (`title`, `premise`, `findings`) | `cc-notes investigation open "<title>" "<premise>"` |
 | Append evidence per triage step | `investigation_append` (`id`, `text`, `attach`) | `cc-notes investigation append <id> "<text>"` |
-| Rule a suspect out / in | `investigation_finding_clear` / `_confirm` (`id`, `finding`, `why`) | `cc-notes investigation finding clear <id> <finding> --why "<evidence>"` |
+| Rule a suspect out / in, which every verdict requires | `investigation_finding_clear` / `_confirm` (`id`, `finding`, `why`) | `cc-notes investigation finding clear <id> <finding> --why "<evidence>"` |
 | Record the root cause | `investigation_root_cause` (`id`, `text`) | `cc-notes investigation root-cause <id> "<cause>"` |
 | Record the fixing commits | `investigation_fix` (`id`, `commits`) | `cc-notes investigation fix <id> --commit <sha>` |
-| Close with proof, or reopen on regression | `investigation_confirm` / `investigation_reopen` (`id`, `text`) | `cc-notes investigation confirm <id> "<proof>"` |
+| Close with proof, or reopen on regression | `investigation_confirm` (`id`, `text`, `force`) / `investigation_reopen` (`id`, `text`) | `cc-notes investigation confirm <id> "<proof>"` |
 | File a friction complaint | `papercut` (`body`) | `cc-notes papercut "<complaint>"` |
 | Skim recent complaints, newest first | `papercut_list` (`limit`) | `cc-notes papercut list` |
 | Read one complaint in full | `papercut_show` (`log_id`, `index`) | `cc-notes papercut show <log-id> <index>` |

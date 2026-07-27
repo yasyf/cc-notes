@@ -59,10 +59,17 @@ type anchorSets struct {
 }
 
 func (a *anchorSets) bind(f *pflag.FlagSet) {
+	a.bindWithoutBranch(f)
+	f.StringArrayVar(&a.branches, "branch", nil, "branch anchor (repeatable)")
+}
+
+// bindWithoutBranch binds every add-time anchor flag but --branch, for a command
+// that already spends --branch on a first-class attribute (a task's branch).
+// Branch anchors reach such a kind through the edit octet's --add-branch.
+func (a *anchorSets) bindWithoutBranch(f *pflag.FlagSet) {
 	f.StringArrayVar(&a.commits, "commit", nil, "commit anchor (repeatable)")
 	f.StringArrayVar(&a.paths, "path", nil, "path anchor (repeatable)")
 	f.StringArrayVar(&a.dirs, "dir", nil, "directory anchor (repeatable)")
-	f.StringArrayVar(&a.branches, "branch", nil, "branch anchor (repeatable)")
 }
 
 type anchorEdits struct {

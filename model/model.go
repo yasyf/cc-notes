@@ -530,6 +530,12 @@ type Log struct {
 // lamport of the assignee's latest op (any edit, comment, claim, or renew the
 // assignee authored). Both are zero before any claim. Commits is the sorted set
 // of commit shas that implement the task (the task->commit direction).
+//
+// Anchors is the folded anchor set, sorted by (kind, value) and nil when
+// empty — the field marshals omitempty so anchor-less snapshots keep their
+// pre-anchor bytes. A commit anchor is the where-this-work-lives edge and is
+// distinct from Commits, the what-this-work-produced set that LinkCommit
+// writes; a branch anchor is likewise distinct from the LWW Branch attribute.
 type Task struct {
 	ID               EntityID    `json:"id"`
 	Branch           Branch      `json:"branch"`
@@ -555,6 +561,7 @@ type Task struct {
 	Project          EntityID    `json:"project"`  // LWW membership, empty means none (independent of Sprint)
 	Criteria         []Criterion `json:"criteria"` // append-ordered by creation (linearization order)
 	Deleted          bool        `json:"deleted,omitempty"`
+	Anchors          []Anchor    `json:"anchors,omitempty"`
 }
 
 // Sprint is the folded snapshot of a sprint entity: a time-boxed grouping of

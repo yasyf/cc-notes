@@ -128,6 +128,14 @@ func TestDTOGoldens(t *testing.T) {
 			{ID: "c1", Text: "tests pass", Script: "go test ./...", Status: model.CriterionMet, Note: "go test: 12 passed"},
 			{ID: "c2", Text: "reviewed", Script: "", Status: model.CriterionPending},
 		},
+		// One anchor of every kind: the commit anchor pins that it projects
+		// separately from Commits, and every task anchor omits its witness.
+		Anchors: []model.Anchor{
+			{Kind: model.AnchorCommit, Value: "beef000000000000000000000000000000000000"},
+			{Kind: model.AnchorPath, Value: "internal/sync/sync.go"},
+			{Kind: model.AnchorDir, Value: "internal/sync"},
+			{Kind: model.AnchorBranch, Value: "feature/sync"},
+		},
 	}
 	taskBlocks := []model.EntityID{"task-blocks-001", "task-blocks-002"}
 	taskChildren := []model.EntityID{"task-child-0001", "task-child-0002"}

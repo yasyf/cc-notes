@@ -24,7 +24,8 @@ import (
 // model.TypeTask. Criteria are added verbatim — none is auto-injected, so an
 // empty slice creates a task with no acceptance criteria. Parent, Sprint,
 // Project, and BlockedBy carry full entity ids; the caller resolves any prefix
-// first.
+// first. Anchors are attached in commit, path, dir, then branch order; commit
+// values are resolved to full shas at write time.
 type TaskSpec struct {
 	Title       string
 	Description string
@@ -38,6 +39,7 @@ type TaskSpec struct {
 	Labels      []string
 	Criteria    []string
 	BlockedBy   []model.EntityID
+	Anchors     AnchorSpec
 }
 
 // TaskCreated is the result of CreateTask: the folded task plus two signals the
@@ -96,21 +98,24 @@ type TaskFilter struct {
 
 // TaskEdit is the field mask for EditTask: every field is pointer-optional, the
 // sanctioned tri-state. A nil pointer leaves the field untouched; a non-nil
-// pointer sets it, and a pointer to the zero value clears it. AddLabels and
-// RemoveLabels are applied in order. An all-nil, all-empty mask is ErrEmptyEdit.
+// pointer sets it, and a pointer to the zero value clears it. Label and anchor
+// slices apply in order, AddAnchors' commits resolved to full shas and
+// RemoveAnchors matched verbatim. An all-nil, all-empty mask is ErrEmptyEdit.
 type TaskEdit struct {
-	Title        *string
-	Description  *string
-	Type         *model.TaskType
-	Priority     *model.Priority
-	Status       *model.Status
-	Assignee     *model.Actor
-	AddLabels    []string
-	RemoveLabels []string
-	Parent       *model.EntityID
-	Sprint       *model.EntityID
-	Project      *model.EntityID
-	Branch       *model.Branch
+	Title         *string
+	Description   *string
+	Type          *model.TaskType
+	Priority      *model.Priority
+	Status        *model.Status
+	Assignee      *model.Actor
+	AddLabels     []string
+	RemoveLabels  []string
+	Parent        *model.EntityID
+	Sprint        *model.EntityID
+	Project       *model.EntityID
+	Branch        *model.Branch
+	AddAnchors    AnchorSpec
+	RemoveAnchors AnchorSpec
 }
 
 // CreateTask roots a new task chain and returns its folded snapshot with the
@@ -137,6 +142,10 @@ func (c *Client) CreateTask(ctx context.Context, spec TaskSpec) (TaskCreated, er
 	if taskType == "" {
 		taskType = model.TypeTask
 	}
+	anchors, err := c.resolveAnchors(ctx, spec.Anchors)
+	if err != nil {
+		return TaskCreated{}, err
+	}
 	ops := []model.Op{model.CreateTask{
 		Nonce:       model.NewNonce(),
 		Title:       spec.Title,
@@ -146,6 +155,7 @@ func (c *Client) CreateTask(ctx context.Context, spec TaskSpec) (TaskCreated, er
 		Branch:      branch,
 		Parent:      spec.Parent,
 		Labels:      spec.Labels,
+		Anchors:     anchors,
 	}}
 	if spec.Sprint != "" {
 		ops = append(ops, model.SetSprint{Sprint: spec.Sprint})
@@ -438,6 +448,35 @@ func (c *Client) DoneTask(ctx context.Context, id model.EntityID, force bool) (m
 	return snapshot.(model.Task), nil
 }
 
+// LinkCommit records that rev's commit implements the task. rev is resolved to
+// a full sha, so a revision expression works. Commits fold as a set, so
+// re-linking an already-linked commit is a no-op on the snapshot.
+func (c *Client) LinkCommit(ctx context.Context, id model.EntityID, rev string) (model.Task, error) {
+	sha, err := c.resolveCommit(ctx, rev)
+	if err != nil {
+		return model.Task{}, err
+	}
+	snapshot, err := c.s.Append(ctx, refs.For(model.KindTask, id), []model.Op{model.LinkCommit{SHA: sha}})
+	if err != nil {
+		return model.Task{}, err
+	}
+	return snapshot.(model.Task), nil
+}
+
+// UnlinkCommit drops rev's commit from the task's linked set, resolving rev the
+// same way LinkCommit does so the two are symmetric.
+func (c *Client) UnlinkCommit(ctx context.Context, id model.EntityID, rev string) (model.Task, error) {
+	sha, err := c.resolveCommit(ctx, rev)
+	if err != nil {
+		return model.Task{}, err
+	}
+	snapshot, err := c.s.Append(ctx, refs.For(model.KindTask, id), []model.Op{model.UnlinkCommit{SHA: sha}})
+	if err != nil {
+		return model.Task{}, err
+	}
+	return snapshot.(model.Task), nil
+}
+
 // CancelTask marks the task cancelled. It refuses with a *ConflictError a task
 // already closed.
 func (c *Client) CancelTask(ctx context.Context, id model.EntityID) (model.Task, error) {
@@ -495,6 +534,11 @@ func (c *Client) EditTask(ctx context.Context, id model.EntityID, edit TaskEdit)
 	if edit.Branch != nil {
 		ops = append(ops, model.SetBranch{Branch: *edit.Branch})
 	}
+	addAnchors, err := c.resolveAnchors(ctx, edit.AddAnchors)
+	if err != nil {
+		return model.Task{}, err
+	}
+	ops = anchorEditOps(ops, addAnchors, edit.RemoveAnchors)
 	if len(ops) == 0 {
 		return model.Task{}, ErrEmptyEdit
 	}

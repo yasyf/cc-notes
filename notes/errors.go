@@ -89,6 +89,23 @@ func (e *UnmetCriteriaError) Error() string {
 	return fmt.Sprintf("cc-notes: %s has %d unmet criterion/criteria", e.ID.Short(), len(e.Unmet))
 }
 
+// OpenFindingsError reports an investigation verdict refused because findings
+// are still open. Target names the verdict that was refused and Open carries
+// every undispositioned finding, so the caller renders the detail and the
+// force remediation itself.
+type OpenFindingsError struct {
+	ID     model.EntityID
+	Target model.InvestigationStatus
+	Open   []model.Finding
+}
+
+// Error names the investigation, the count of open findings, and the refused
+// verdict; the finding detail and the --force hint are the caller's to render
+// from Open.
+func (e *OpenFindingsError) Error() string {
+	return fmt.Sprintf("cc-notes: %s has %d open finding/findings blocking %s", e.ID.Short(), len(e.Open), e.Target)
+}
+
 // AttachmentExistsError reports an attach whose name collides with a live
 // attachment, which would orphan the old bytes behind the same name.
 type AttachmentExistsError struct {
