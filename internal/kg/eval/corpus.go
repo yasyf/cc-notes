@@ -180,8 +180,9 @@ func stepText(steps []model.RunbookStep) string {
 	return join(texts...)
 }
 
-// tokenize lowercases and splits text into alphanumeric runs.
-func tokenize(text string) []string {
+// Tokenize lowercases and splits text into alphanumeric runs. It is the one
+// tokenization every scorer over this corpus shares.
+func Tokenize(text string) []string {
 	return strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})

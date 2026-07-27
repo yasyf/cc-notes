@@ -39,7 +39,7 @@ func NewBM25(corpus []Entity, seed int64) *BM25 {
 	df := map[string]int{}
 	total := 0.0
 	for i, e := range corpus {
-		tokens := tokenize(e.Text())
+		tokens := Tokenize(e.Text())
 		counts := make(map[string]int, len(tokens))
 		for _, t := range tokens {
 			counts[t]++
@@ -66,7 +66,7 @@ func NewBM25(corpus []Entity, seed int64) *BM25 {
 // the top k. Entities sharing no term score zero and are dropped, so a query
 // with no lexical overlap retrieves nothing.
 func (b *BM25) Retrieve(_ context.Context, query string, k int) ([]Result, error) {
-	terms := tokenize(query)
+	terms := Tokenize(query)
 	scores := make([]float64, len(b.ids))
 	for _, t := range terms {
 		idf, ok := b.idf[t]
@@ -88,5 +88,5 @@ func (b *BM25) Retrieve(_ context.Context, query string, k int) ([]Result, error
 			out = append(out, Result{ID: b.ids[i], Score: s, Lane: BM25Lane})
 		}
 	}
-	return rank(out, b.seed, k), nil
+	return Rank(out, b.seed, k), nil
 }

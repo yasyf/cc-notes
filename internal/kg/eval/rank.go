@@ -21,9 +21,10 @@ func tieBreak(seed int64, id model.EntityID) uint64 {
 	return h.Sum64()
 }
 
-// rank sorts results by descending score, breaking ties by seed, and truncates
-// to k.
-func rank(results []Result, seed int64, k int) []Result {
+// Rank sorts results by descending score, breaking ties by seed, and truncates
+// to k. Every retriever scored by this harness orders through it, so the
+// tie-break is identical across the configurations a run compares.
+func Rank(results []Result, seed int64, k int) []Result {
 	slices.SortFunc(results, func(a, b Result) int {
 		if c := cmp.Compare(b.Score, a.Score); c != 0 {
 			return c

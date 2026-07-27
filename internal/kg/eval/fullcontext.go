@@ -37,5 +37,5 @@ func (f *FullContext) Retrieve(_ context.Context, _ string, k int) ([]Result, er
 	for i, id := range f.ids {
 		out[i] = Result{ID: id, Score: FullContextScore, Lane: FullContextLane}
 	}
-	return rank(out, f.seed, k), nil
+	return Rank(out, f.seed, k), nil
 }

@@ -150,8 +150,8 @@ func TestTokenize(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tokenize(tc.in); !slices.Equal(got, tc.want) {
-				t.Errorf("tokenize(%q) = %v, want %v", tc.in, got, tc.want)
+			if got := Tokenize(tc.in); !slices.Equal(got, tc.want) {
+				t.Errorf("Tokenize(%q) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
 	}
