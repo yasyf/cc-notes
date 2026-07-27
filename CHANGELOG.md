@@ -135,6 +135,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Input/output error` on every load, so upgrades never converged. cc-notes'
   deployment attestation drops its matching `Aqua` session type too, so the
   policy digest still describes the plan that is actually deployed.
+- Helper installation now uses daemonkit `v0.20.9`, which resolves the real
+  home directory from the passwd database rather than `$HOME`: a helper
+  installed by a Homebrew postinstall, which runs under a sandboxed temporary
+  home, now registers its launchd job against the account's own directory
+  instead of one that vanishes. `launchctl` exit 5 is no longer classified as
+  transient and retried, and recovery-mode reconcile clears an install that
+  has wedged itself.
 
 ### Added
 - **Writes stamp the Claude session id into their op pack.** Every entity
