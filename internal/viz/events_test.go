@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/lifecycle"
+
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -156,11 +158,11 @@ func TestEventsTaskLifecycle(t *testing.T) {
 	g := buildGraph(t, r)
 	got := shapesFor(g, id)
 	want := []evShape{
-		{typ: evCreated, branch: "alpha"},
-		{typ: evClaimed, branch: "alpha"},
-		{typ: evBranchMoved, branch: "beta", detail: map[string]string{"from": "alpha", "to": "beta"}},
-		{typ: evClosed, branch: "beta"},
-		{typ: evCommitLinked, branch: "beta", detail: map[string]string{"sha": string(c1.sha)}},
+		{typ: lifecycle.TypeCreated, branch: "alpha"},
+		{typ: lifecycle.TypeClaimed, branch: "alpha"},
+		{typ: lifecycle.TypeBranchMoved, branch: "beta", detail: map[string]string{"from": "alpha", "to": "beta"}},
+		{typ: lifecycle.TypeClosed, branch: "beta"},
+		{typ: lifecycle.TypeCommitLinked, branch: "beta", detail: map[string]string{"sha": string(c1.sha)}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
@@ -182,9 +184,9 @@ func TestEventsReclaimDistinctFromClaim(t *testing.T) {
 	g := buildGraph(t, r)
 	got := shapesFor(g, id)
 	want := []evShape{
-		{typ: evCreated},
-		{typ: evClaimed},
-		{typ: evReclaimed},
+		{typ: lifecycle.TypeCreated},
+		{typ: lifecycle.TypeClaimed},
+		{typ: lifecycle.TypeReclaimed},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
@@ -207,12 +209,12 @@ func TestEventsNoteAndDoc(t *testing.T) {
 
 	g := buildGraph(t, r)
 	gotNote := shapesFor(g, noteID)
-	wantNote := []evShape{{typ: evCreated}, {typ: evVerified}, {typ: evSuperseded}}
+	wantNote := []evShape{{typ: lifecycle.TypeCreated}, {typ: lifecycle.TypeVerified}, {typ: lifecycle.TypeSuperseded}}
 	if !reflect.DeepEqual(gotNote, wantNote) {
 		t.Errorf("note events =\n%+v\nwant\n%+v", gotNote, wantNote)
 	}
 	gotDoc := shapesFor(g, docID)
-	wantDoc := []evShape{{typ: evCreated}, {typ: evStale}}
+	wantDoc := []evShape{{typ: lifecycle.TypeCreated}, {typ: lifecycle.TypeStale}}
 	if !reflect.DeepEqual(gotDoc, wantDoc) {
 		t.Errorf("doc events =\n%+v\nwant\n%+v", gotDoc, wantDoc)
 	}
@@ -232,9 +234,9 @@ func TestEventsLogEntries(t *testing.T) {
 	g := buildGraph(t, r)
 	got := shapesFor(g, logID)
 	want := []evShape{
-		{typ: evCreated},
-		{typ: evEntry, detail: map[string]string{"text": "first entry"}},
-		{typ: evEntry, detail: map[string]string{"text": "second entry"}},
+		{typ: lifecycle.TypeCreated},
+		{typ: lifecycle.TypeEntry, detail: map[string]string{"text": "first entry"}},
+		{typ: lifecycle.TypeEntry, detail: map[string]string{"text": "second entry"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
@@ -262,11 +264,11 @@ func TestEventsRunbookLifecycle(t *testing.T) {
 	g := buildGraph(t, r)
 	got := shapesFor(g, rb.ID)
 	want := []evShape{
-		{typ: evCreated},
-		{typ: evRunStarted, detail: map[string]string{"run": runID[:7], "task": string(taskID)[:7]}},
-		{typ: evEdited},
-		{typ: evRunFinished, detail: map[string]string{"run": runID[:7], "status": string(model.RunSucceeded)}},
-		{typ: evStatus},
+		{typ: lifecycle.TypeCreated},
+		{typ: lifecycle.TypeRunStarted, detail: map[string]string{"run": runID[:7], "task": string(taskID)[:7]}},
+		{typ: lifecycle.TypeEdited},
+		{typ: lifecycle.TypeRunFinished, detail: map[string]string{"run": runID[:7], "status": string(model.RunSucceeded)}},
+		{typ: lifecycle.TypeStatus},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
@@ -291,9 +293,9 @@ func TestEventsRunbookRunFinishStatuses(t *testing.T) {
 			g := buildGraph(t, r)
 			got := shapesFor(g, rb.ID)
 			want := []evShape{
-				{typ: evCreated},
-				{typ: evRunStarted, detail: map[string]string{"run": runID[:7]}},
-				{typ: evRunFinished, detail: map[string]string{"run": runID[:7], "status": string(status)}},
+				{typ: lifecycle.TypeCreated},
+				{typ: lifecycle.TypeRunStarted, detail: map[string]string{"run": runID[:7]}},
+				{typ: lifecycle.TypeRunFinished, detail: map[string]string{"run": runID[:7], "status": string(status)}},
 			}
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("events =\n%+v\nwant\n%+v", got, want)
@@ -320,10 +322,10 @@ func TestEventsRunbookFinishedRunCorrection(t *testing.T) {
 	g := buildGraph(t, r)
 	got := shapesFor(g, rb.ID)
 	want := []evShape{
-		{typ: evCreated},
-		{typ: evRunStarted, detail: map[string]string{"run": runID[:7]}},
-		{typ: evRunFinished, detail: map[string]string{"run": runID[:7], "status": string(model.RunSucceeded)}},
-		{typ: evEdited},
+		{typ: lifecycle.TypeCreated},
+		{typ: lifecycle.TypeRunStarted, detail: map[string]string{"run": runID[:7]}},
+		{typ: lifecycle.TypeRunFinished, detail: map[string]string{"run": runID[:7], "status": string(model.RunSucceeded)}},
+		{typ: lifecycle.TypeEdited},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
@@ -349,10 +351,10 @@ func TestEventsRunbookStatusAndRunInOnePack(t *testing.T) {
 	g := buildGraph(t, r)
 	got := shapesFor(g, rb.ID)
 	want := []evShape{
-		{typ: evCreated},
-		{typ: evRunStarted, detail: map[string]string{"run": runID[:7]}},
-		{typ: evStatus},
-		{typ: evRunFinished, detail: map[string]string{"run": runID[:7], "status": string(model.RunSucceeded)}},
+		{typ: lifecycle.TypeCreated},
+		{typ: lifecycle.TypeRunStarted, detail: map[string]string{"run": runID[:7]}},
+		{typ: lifecycle.TypeStatus},
+		{typ: lifecycle.TypeRunFinished, detail: map[string]string{"run": runID[:7], "status": string(model.RunSucceeded)}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
@@ -378,13 +380,13 @@ func TestEventsInvestigationLifecycle(t *testing.T) {
 	g := buildGraph(t, r)
 	got := shapesFor(g, inv.ID)
 	want := []evShape{
-		{typ: evCreated},
-		{typ: evEntry, detail: map[string]string{"text": "bisect reproduces before the pool rewrite"}},
-		{typ: evEntry, detail: map[string]string{"text": "the blocked goroutine is sending the result"}},
-		{typ: evFindingCleared, detail: map[string]string{"finding": clearedID[:7]}},
-		{typ: evStatus, detail: map[string]string{"status": string(model.InvestigationRootCaused)}},
-		{typ: evStatus, detail: map[string]string{"status": string(model.InvestigationFixed)}},
-		{typ: evStatus, detail: map[string]string{"status": string(model.InvestigationConfirmed)}},
+		{typ: lifecycle.TypeCreated},
+		{typ: lifecycle.TypeEntry, detail: map[string]string{"text": "bisect reproduces before the pool rewrite"}},
+		{typ: lifecycle.TypeEntry, detail: map[string]string{"text": "the blocked goroutine is sending the result"}},
+		{typ: lifecycle.TypeFindingCleared, detail: map[string]string{"finding": clearedID[:7]}},
+		{typ: lifecycle.TypeStatus, detail: map[string]string{"status": string(model.InvestigationRootCaused)}},
+		{typ: lifecycle.TypeStatus, detail: map[string]string{"status": string(model.InvestigationFixed)}},
+		{typ: lifecycle.TypeStatus, detail: map[string]string{"status": string(model.InvestigationConfirmed)}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
@@ -408,8 +410,8 @@ func TestEventsInvestigationFindingConfirmed(t *testing.T) {
 
 	got := shapesFor(buildGraph(t, r), inv.ID)
 	want := []evShape{
-		{typ: evCreated},
-		{typ: evFindingConfirmed, detail: map[string]string{"finding": findingID[:7]}},
+		{typ: lifecycle.TypeCreated},
+		{typ: lifecycle.TypeFindingConfirmed, detail: map[string]string{"finding": findingID[:7]}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
@@ -441,7 +443,7 @@ func TestEventsInvestigationTerminalAndReopenedStatusDetail(t *testing.T) {
 
 			got := shapesFor(buildGraph(t, r), inv.ID)
 			last := got[len(got)-1]
-			want := evShape{typ: evStatus, detail: map[string]string{"status": tt.want}}
+			want := evShape{typ: lifecycle.TypeStatus, detail: map[string]string{"status": tt.want}}
 			if !reflect.DeepEqual(last, want) {
 				t.Errorf("last event = %+v, want %+v", last, want)
 			}
@@ -465,7 +467,7 @@ func TestEventsCheckpointSkipped(t *testing.T) {
 
 	g := buildGraph(t, r)
 	got := shapesFor(g, noteID)
-	want := []evShape{{typ: evCreated}, {typ: evVerified}}
+	want := []evShape{{typ: lifecycle.TypeCreated}, {typ: lifecycle.TypeVerified}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
 	}
@@ -487,8 +489,8 @@ func TestEventsDeletedBranchLane(t *testing.T) {
 
 	got := shapesFor(g, id)
 	want := []evShape{
-		{typ: evCreated, branch: "feature/gone"},
-		{typ: evBranchMoved, branch: "main", detail: map[string]string{"from": "feature/gone", "to": "main"}},
+		{typ: lifecycle.TypeCreated, branch: "feature/gone"},
+		{typ: lifecycle.TypeBranchMoved, branch: "main", detail: map[string]string{"from": "feature/gone", "to": "main"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)
@@ -507,8 +509,8 @@ func TestEventsDeletedBranchLane(t *testing.T) {
 	if lane.Merge.Into != "main" || lane.Merge.Kind != kindInferred {
 		t.Errorf("lane merge into/kind = %q/%q, want main/%q", lane.Merge.Into, lane.Merge.Kind, kindInferred)
 	}
-	createdAt := eventTime(t, g, id, evCreated)
-	movedAt := eventTime(t, g, id, evBranchMoved)
+	createdAt := eventTime(t, g, id, lifecycle.TypeCreated)
+	movedAt := eventTime(t, g, id, lifecycle.TypeBranchMoved)
 	if lane.Start != createdAt {
 		t.Errorf("lane start = %d, want first event %d", lane.Start, createdAt)
 	}
@@ -538,9 +540,9 @@ func TestEventsBranchAttribution(t *testing.T) {
 	g := buildGraph(t, r)
 	got := shapesFor(g, id)
 	want := []evShape{
-		{typ: evCreated, branch: "wip"},
-		{typ: evBranchMoved, branch: "main", detail: map[string]string{"from": "wip", "to": "main"}},
-		{typ: evStatus, branch: "main"},
+		{typ: lifecycle.TypeCreated, branch: "wip"},
+		{typ: lifecycle.TypeBranchMoved, branch: "main", detail: map[string]string{"from": "wip", "to": "main"}},
+		{typ: lifecycle.TypeStatus, branch: "main"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events =\n%+v\nwant\n%+v", got, want)

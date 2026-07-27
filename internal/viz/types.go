@@ -1,6 +1,25 @@
 package viz
 
-import "github.com/yasyf/cc-notes/model"
+import (
+	"github.com/yasyf/cc-notes/internal/trail"
+	"github.com/yasyf/cc-notes/model"
+)
+
+// Entity kind tags, matching the lowercase names internal/trail.EntityKind
+// emits; they are the EntityRef.Kind and EntitySummary.Kind wire strings.
+const (
+	entityNote          = "note"
+	entityDoc           = "doc"
+	entityLog           = "log"
+	entityTask          = "task"
+	entitySprint        = "sprint"
+	entityProject       = "project"
+	entityRunbook       = "runbook"
+	entityInvestigation = "investigation"
+)
+
+// statusDeleted is the Lane.Status of a synthesized deleted-branch lane.
+const statusDeleted = "deleted"
 
 // Graph is the whole visualization payload for one repository: the repo
 // header, the branch swimlanes, the classified entity lifecycle events, and a
@@ -111,4 +130,20 @@ type EntitySummary struct {
 	Superseded bool           `json:"superseded,omitempty"`
 	StartDate  int64          `json:"start_date,omitempty"`
 	EndDate    int64          `json:"end_date,omitempty"`
+}
+
+// entityRefOf builds the stable EntityRef for an entity from its tip snapshot.
+func entityRefOf(snap model.Snapshot) EntityRef {
+	id := snap.EntityID()
+	return EntityRef{
+		Kind:  trail.EntityKind(snap),
+		ID:    id,
+		Short: id.Short(),
+		Title: entityTitle(snap),
+	}
+}
+
+// entityTitle returns the title of any entity snapshot.
+func entityTitle(snap model.Snapshot) string {
+	return snap.Meta().Title
 }

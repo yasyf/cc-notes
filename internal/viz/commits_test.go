@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/lifecycle"
+
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -135,7 +137,7 @@ func TestCommitsAttribution(t *testing.T) {
 	if len(squash.Tasks) != 1 || squash.Tasks[0] != string(taskID) {
 		t.Errorf("c3 tasks = %v, want [%s]", squash.Tasks, taskID)
 	}
-	if !hasEventType(squash.Events, evCommitLinked) {
+	if !hasEventType(squash.Events, lifecycle.TypeCommitLinked) {
 		t.Errorf("c3 events = %+v, want a commit_linked event", squash.Events)
 	}
 }

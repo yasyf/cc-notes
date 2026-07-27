@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 
+	"github.com/yasyf/cc-notes/internal/lifecycle"
 	"github.com/yasyf/cc-notes/internal/trail"
 )
 
@@ -34,15 +35,15 @@ func (b *Builder) eventsAndEntities(ctx context.Context, topo *topology) ([]Even
 			if trail.IsCheckpoint(entry.Commit) {
 				continue
 			}
-			branch := branchOf(entry.Snapshot)
-			for _, spec := range classify(entry) {
+			branch := lifecycle.Branch(entry.Snapshot)
+			for _, spec := range lifecycle.Classify(entry) {
 				ev := Event{
 					Entity: ref,
-					Type:   spec.typ,
+					Type:   spec.Type,
 					Time:   entry.Commit.AuthorTime,
 					Branch: branch,
 					SHA:    entry.Commit.SHA,
-					Detail: spec.detail,
+					Detail: spec.Detail,
 				}
 				events = append(events, ev)
 				if ref.Kind == entityTask {
@@ -126,7 +127,7 @@ func (d *deadBranches) observe(ev Event, taken map[string]bool) {
 			db.end = ev.Time
 		}
 	}
-	if ev.Type != evBranchMoved {
+	if ev.Type != lifecycle.TypeBranchMoved {
 		return
 	}
 	from, to := ev.Detail["from"], ev.Detail["to"]
@@ -173,7 +174,7 @@ func (d *deadBranches) lanes(taken map[string]bool) []Lane {
 // branch plus, for a branch move, the from and to of the transition.
 func namedBranches(ev Event) []string {
 	names := []string{ev.Branch}
-	if ev.Type == evBranchMoved {
+	if ev.Type == lifecycle.TypeBranchMoved {
 		names = append(names, ev.Detail["from"], ev.Detail["to"])
 	}
 	return names
