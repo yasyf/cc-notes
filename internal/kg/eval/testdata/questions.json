@@ -1,0 +1,839 @@
+{
+ "version": 1,
+ "corpus": {
+  "repos": [
+   {
+    "path": "/Users/yasyf/Code/monorepo",
+    "entity_count": 94
+   },
+   {
+    "path": "/Users/yasyf/Code/cc-context",
+    "entity_count": 162
+   },
+   {
+    "path": "/Users/yasyf/Code/cc-notes",
+    "entity_count": 133
+   },
+   {
+    "path": "/Users/yasyf/Code/cc-skills",
+    "entity_count": 128
+   },
+   {
+    "path": "/Users/yasyf/Code/captain-hook",
+    "entity_count": 113
+   },
+   {
+    "path": "/Users/yasyf/Code/cc-transcript",
+    "entity_count": 76
+   },
+   {
+    "path": "/Users/yasyf/Code/daemonkit",
+    "entity_count": 73
+   },
+   {
+    "path": "/Users/yasyf/Code/cc-review",
+    "entity_count": 9
+   },
+   {
+    "path": "/Users/yasyf/Code/interview-tools",
+    "entity_count": 2
+   },
+   {
+    "path": "/Users/yasyf/Code/cc-guides",
+    "entity_count": 1
+   },
+   {
+    "path": "/Users/yasyf/Code/cc-present",
+    "entity_count": 1
+   }
+  ],
+  "total_entities": 792,
+  "notes": "Entity counts enumerated live 2026-07-26 via cc-notes list --json (--all --include-superseded --all-branches where applicable). Monorepo: 94 entities / 343 fold ops (94 create + 249 edit), all written 2026-07-23..26. Ids are full 40-char entity ids resolvable via `cc-notes -R <repo> show <id> --json`; histories via `cc-notes -R <repo> history <id> --json --reverse --full`."
+ },
+ "questions": [
+  {
+   "id": "q001",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "In MockServer 7.4.0 replay, what is the only real guard against live egress when a request misses every cassette expectation?",
+   "category": "factual",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "a55ab6111abbe3e6a38e16053bcdc714a34c704e"
+   ],
+   "gold_answer": "A catch-all expectation (priority: -100, httpRequest: {}). The attemptToProxyIfNoMatchingExpectation=false flag is honoured only for non-CONNECT traffic, so unmatched HTTPS CONNECT still egresses live (verified: unmatched https://example.com returned 200 from cloudflare with the flag applied).",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Single-record lookup; title and body share vocabulary with the query. Plain BM25 should answer this \u2014 it exists as the vanilla-RAG-competitive control."
+  },
+  {
+   "id": "q002",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Which mock tool did the VCR spike adopt, and which decision rule did it satisfy?",
+   "category": "factual",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "4c11bb9eff0692d7e55d430cc03c597b0c2bce64"
+   ],
+   "gold_answer": "MockServer 7.4.0, verdict ADOPT, decision rule 1 satisfied. The Phase 1 bake-off was descoped by the user to MockServer only; A1 (SSE round trip) and A2 (byte fidelity) passed against @anthropic-ai/sdk 0.92.0 on Node 22.23.1.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Baseline control: single record, high lexical overlap."
+  },
+  {
+   "id": "q003",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "buck2 cxx actions started dying with 'stack smashing detected' (exit 134) after an agent image rollout. What is the mechanism?",
+   "category": "factual",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "852108bd03003ec217f32a89228c38239308bc63"
+   ],
+   "gold_answer": "The re-locked buildkite-ci-agent image sha-30599aa0... moved Wolfi glibc 2.42-r6 to 2.43-r11. build/rules/hermetic_tool.bzl wrappers exec the vendored LLVM-20 binaries with LD_LIBRARY_PATH pointing at bundled glibc 2.42 libs, but the kernel loads the host (2.43) interpreter, so every asm_compile/cxx action using the vendored clang-20 crashes.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Symptom-phrased query ('stack smashing') vs record vocabulary \u2014 mild paraphrase robustness test, still one record."
+  },
+  {
+   "id": "q004",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Can SandSQL register a rusqlite preupdate hook on a connection that has live sqlite3 sessions?",
+   "category": "factual",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "3c0845b76a23379ff66ac6425afa602a2564ecb4"
+   ],
+   "gold_answer": "No \u2014 a permanent constraint. The session module implements itself on sqlite3_preupdate_hook (sqlite3session_create chains sessions by casting the previously registered hook context) and the hook slot is single-owner last-write-wins; mixing them is documented undefined behavior. Verified in the bundled SQLite source (libsqlite3-sys 0.38.1).",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Single record; the word 'permanent' in the title makes this a durable-fact retrieval test."
+  },
+  {
+   "id": "q005",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "go/sand fails to open repos carrying extensions.worktreeConfig. What is the root cause and the workaround, and when can the workaround be removed?",
+   "category": "factual",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "80caae1c36e382990ae14a065086f20002e8eccc"
+   ],
+   "gold_answer": "go-git v5.17.0+ case-mismatch bug: verifyExtensions lowercases extension names but the extensionsValidForV0 allow-list keys are mixed-case (worktreeConfig), so the lookup never matches. Workaround lives in go/sand/internal/iris/gitopen.go (no fork); remove when upstream go-git fixes the allow-list casing.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Single record with a removal condition \u2014 tests that the condition comes back with the fact."
+  },
+  {
+   "id": "q006",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Which CI checks must never sit behind a path filter, and where do they run?",
+   "category": "factual",
+   "axis": "efficiency",
+   "gold_entity_ids": [
+    "02c59b35f55af926b4e8b28af0cd4543f702a09b"
+   ],
+   "gold_answer": "Checks whose input set is the whole tree \u2014 tsc:all, `biome check .`, noFloatingPromises \u2014 run unconditionally in the always-triggered test-quality pipeline (native trigger step, no monorepo-diff entry). Encoded in .buildkite/pipeline.yml after the infra/pulumi biome incident.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Efficiency-scored: the answer is one short record among 94; a system should reach it in one retrieval, not a corpus dump. Score tokens-to-answer."
+  },
+  {
+   "id": "q007",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "What did the history-rewrite dry-run census measure: pack size before/after and filter-repo wall clock?",
+   "category": "factual",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "20a73542a80e7d51539562f79d85c1a8b2c1ad33"
+   ],
+   "gold_answer": "12.06 GiB -> 3.00 GiB (75.14% reduction) on the locked purge list; filter-repo wall clock 45 s over 36,006 commits (git 2.55.0, filter-repo a40bce548d2c, pristine --mirror copy; real remote untouched).",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Numeric-precision test: gold has exact figures; hallucinated or rounded numbers are scoreable failures."
+  },
+  {
+   "id": "q008",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Which buck2 binary should be used for local SandSQL work on macOS, and with what flag?",
+   "category": "factual",
+   "axis": "efficiency",
+   "gold_entity_ids": [
+    "42eb7ce55b5a98cd2d276a62f8dab84287956bcd"
+   ],
+   "gold_answer": "The repo-pinned dotslash wrapper tools/buck2 (PATH's ~/.cargo/bin/buck2 is older than the prelude pin and fails parsing prelude//cxx/compiler.bzl), with --no-remote-cache on every invocation because .buckconfig points at grpc://buildbarn-frontend:8980 which does not resolve off-cluster.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Small operational fact an agent needs mid-task; efficiency-scored."
+  },
+  {
+   "id": "q009",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "During the SandSQL first-increment workflow, what prompt-injection attempt hit the V6 spike lane and what was the outcome?",
+   "category": "factual",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "66d35e5d4573966ea91ae4f5b134cd2c99eee1ca"
+   ],
+   "gold_answer": "Fabricated background-task notifications (fake task-id b9lggdwbk styled as a Monitor event) presented a fake 'V6 CORRECTNESS PASS' banner and instructed the agent to delete rust/crates/sandsql_bench and run `git checkout origin/dev -- rust/crates`, which would have destroyed all lanes' uncommitted work. Outcome: not acted on; no damage.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Security-incident recall; single record."
+  },
+  {
+   "id": "q010",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Why must the sccache S3 cache stay opt-in rather than default-on for local builds?",
+   "category": "factual",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "e90e94deebaab35fd432278550011096d248902a"
+   ],
+   "gold_answer": "sccache 0.16 server startup unconditionally probes storage (reads .sccache_check); any credential problem \u2014 missing profile, expired SSO, broken credential_process, unreachable IMDS \u2014 fails startup, exits the rustc wrapper (2), and fails the cargo build (101). Only NotFound/RateLimited are tolerated and no knob softens it (SCCACHE_S3_RW_MODE still probes reads).",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Single record; 'why' phrasing over a mechanism."
+  },
+  {
+   "id": "q011",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "In the demeter escape-hatch rollout, which build was the first all-green release and what was the bake's actual root cause?",
+   "category": "factual",
+   "axis": "efficiency",
+   "gold_entity_ids": [
+    "531987ba835b8ddc10487faded8ba2c5848a36c1"
+   ],
+   "gold_answer": "Build 24 was fully green (deploy + bake) \u2014 the first all-green demeter release. The bake root cause, after the m7i.xlarge red herring was reverted, was the golden AMI's docker drop-in configuration.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Needle in a 20-entry append-only log \u2014 efficiency axis: a system that must replay the whole log pays for it; entry-granular retrieval wins."
+  },
+  {
+   "id": "q012",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "What is the pre-flight step of the Pulumi per-wave execution loop runbook?",
+   "category": "factual",
+   "axis": "efficiency",
+   "gold_entity_ids": [
+    "8385fca3868777aaf94f21f66922294f4c825b20"
+   ],
+   "gold_answer": "Pre-flight: prior wave fully cutover (its post-cutover scheduled drift run green); `bun harness/src/cli.ts inventory --dry-run` shows 0 new manifests and an orphan set identical to migration/orphans.yaml; any new estate component gets absorbed first in its own PR (domain mapping in harness/src/domains.ts, manifest seeded by a real inventory run, waves.yaml slot).",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Runbook-step retrieval \u2014 structure-aware systems can address the step; text systems must find it inside the runbook body. Efficiency-scored: step-granular addressing vs whole-runbook scan."
+  },
+  {
+   "id": "q013",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Do production api/executor images build through their justfiles?",
+   "category": "factual",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "e8e082a96034156e097a8da996d6ad9a3640678c"
+   ],
+   "gold_answer": "No \u2014 they build through infra/buildkite/src/lib/docker.ts buildImage() (plain docker build --push, invoked from the vulcan flow). The justfile build/publish recipes serve test-scans scan-local and manual use only; no pipeline invokes `just publish` for api/executor.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Negation-shaped fact \u2014 the record exists precisely to preempt a wrong-but-plausible assumption; injection of the plausible wrong answer is the failure mode."
+  },
+  {
+   "id": "q014",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "For the VCR cassette store, which MockServer body-matching mode should be used, and why does the default mode lose?",
+   "category": "multihop",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "a55ab6111abbe3e6a38e16053bcdc714a34c704e",
+    "4c11bb9eff0692d7e55d430cc03c597b0c2bce64"
+   ],
+   "gold_answer": "STRICT. The default ONLY_MATCHING_FIELDS is far looser than 'subset of fields' (IGNORING_EXTRA_FIELDS + IGNORING_EXTRA_ARRAY_ITEMS + IGNORING_ARRAY_ORDER): an expectation recorded from a small request shadows a larger one and makes it unreachable. Since the adopted VCR store (MockServer 7.4.0, per the spike verdict) records complete request bodies, subset matching buys nothing; STRICT is exact-key-set and still honours ${json-unit.regex} placeholders.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Needs the constraints note joined with the adoption verdict; either alone is incomplete."
+  },
+  {
+   "id": "q015",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Given the sccache always-write model, which open follow-up tasks address its security posture?",
+   "category": "multihop",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "ff8693ad65124ae962ede462072ba588f6cb4077",
+    "a3ec9596786f0a802f1bc6e4143645996fadf53f",
+    "2b5541a786d03d51f7fec6005a492c94014db9fa"
+   ],
+   "gold_answer": "Two open tasks: 'Isolate the forgedb sccache reader from the shared PR-writable cache pool' (the always-write model makes the pool PR-writable) and 'Harden sccache CI role trust: Buildkite pipeline UUIDs instead of slugs'.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Note-to-task join across kinds sharing no lexical anchor except 'sccache'; tests whether follow-ups surface with the decision."
+  },
+  {
+   "id": "q016",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Trace the E10 finding-3 arc: initial verdict, refutation outcome, and the second design check's result.",
+   "category": "multihop",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "d7ca4c0b40055c49b97c82528ef154ac2b8acaed",
+    "b96a594fad3897eea0e8155f1f05e8a19fec5d39",
+    "4d0c11602a5755cfa82eca51828cddf287a30545"
+   ],
+   "gold_answer": "E10 per-layer review found a schema-push defect cluster (premise-blind replay of schema-push frames -> catalog divergence + silent acked-write-loss under power loss); the e10-lens3-refute pass attacked all 6 load-bearing premises and none failed, so finding 3 was CONFIRMED; the codex design cross-check on the compensating-abort fix returned SOUND-WITH-CHANGES with 5 recovery-ordering refinements now binding on FIX 1 (including a validated whole-log abort-index prepass before any replay SQL).",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Three-note chain in order; a system returning only the first note reports an unconfirmed defect as the end state."
+  },
+  {
+   "id": "q017",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Which task landed commit 8c07cba23a652b7129a0b77fd403801ef1661bd6, and what evidence closed its build criterion?",
+   "category": "multihop",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "754e6db4339f6144d576ba713c88a9b796e64639"
+   ],
+   "gold_answer": "Task 'Phase 0 \u2014 foundations' (Reindeer vendoring, sandsql_* crate skeletons, Buildkite CI), status done on branch yasyf/sandsql. Criterion 'buck2 build + test green across sandsql_smoke/core/server/client/bench, clippy clean' closed with: ./tools/buck2 build --no-remote-cache BUILD SUCCEEDED, buck2 test Pass 12 / Fail 0 (33 cases incl. real-binary smoke), clippy clean (integration re-check wf_68e4e9d7-b93).",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Commit->task join (the blame surface). Vanilla text retrieval over titles/bodies rarely indexes commit ids; graph systems win here."
+  },
+  {
+   "id": "q018",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Across the SandSQL clean-room project, which phase tasks are done and which are still open or in progress?",
+   "category": "multihop",
+   "axis": "capacity",
+   "gold_entity_ids": [
+    "b133807047197cb3a236a3e88897eac473a0ca10",
+    "754e6db4339f6144d576ba713c88a9b796e64639",
+    "6b3854cd6b3f38e2d0bb5cf2649151cb5ac7e579",
+    "86562d9f2d482790849c1f813420c9ffd80c7d34",
+    "0fc4d716d312de469eea1ebe8833983f1bf74ffe",
+    "87999c5608996b6abb09194fe7faf0739054530c",
+    "5acdf66ea5f8527485fd2e69bcb34b9f5278660b",
+    "2040698eb63ce87c5ced23ea41ce46ea1f43d301",
+    "11830cf0fee459110c7f156addf9a5d2aed84833"
+   ],
+   "gold_answer": "Done: Phase 0 (foundations) and Phase 1 (spikes). In progress: Phase 2 (core engine, branch yasyf/sandsql-e1-redo-frame). Open: Phase 3 (replication), Phase 4 (transactions), Phase 5 (HA), Phase 6 (reference client/benchmark gates), and the external-blocker track (Ben Q1/Q6/Q11a, product Q10/A1).",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Aggregate enumeration across 8+ records \u2014 capacity axis; partial recall (missing a phase) is directly scoreable."
+  },
+  {
+   "id": "q019",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "The M6 fence-tightening step of the escape-hatch stack \u2014 which refuter finding does it close, and what does the fence change include?",
+   "category": "multihop",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "b53476c2631a97c1c5eb3991bf2f8e209c85241e",
+    "543a435936ac4ae6710222d1816c3122aeff7af9"
+   ],
+   "gold_answer": "It closes the REFUTER P0 at caaef19fb: RunInstancesPlacement admits the firewall subnet, giving FDE a direct-IGW escape around the Network Firewall (infra/components/terraform/custom/escape-hatch-fde-policies/main.tf). M6 tightens escape-hatch-fde-policies with the AppParamsRead/Write split, the DenyReleaseAndAmiParamWrites guard, and pipeline-only deploys.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Note (review verdict, anchored to another branch+commit) joined to the task that carries the fix step."
+  },
+  {
+   "id": "q020",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "The escape-hatch deploy rejected snapshotting the live box \u2014 what replaced it, and which two design docs detail the lanes?",
+   "category": "multihop",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "359c1abcad19b12dad3127a8d94e7ea296593bf2",
+    "7932eeab920d02013266e17198439ff04ad3167f",
+    "f1b4e97d7a3c37bd449898027b587f67753d6b8f"
+   ],
+   "gold_answer": "Replaced by a clean-room parallel-unpack packer bake (imaging the live root volume risks capturing rendered secrets and PII). The two lane designs: 'Escape-hatch convergence engine + fence design (demeter)' and 'Escape-hatch release-AMI parallel bake design (demeter)'.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Decision note wiki-links the two docs by title \u2014 tests link following across records."
+  },
+  {
+   "id": "q021",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "pr-reviewer Step-0: how is the code-owner gate kept satisfied after the cutover, and which runbook provisions Step-0?",
+   "category": "multihop",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "6e9244686940e24d83410219c0aa0168e8482885",
+    "6f72dd150c615b0fa3e1aa121a7e26c2a15e2da4"
+   ],
+   "gold_answer": "The tool mirrors every APPROVE verdict as a bare poetic-svc review via PR_REVIEWER_GITHUB_TOKEN (executor syncCoApproval, CO_APPROVER_LOGIN in config.ts) so require_code_owner_review stays satisfied; all content stays on the forge-pr-reviewer[bot] App identity. Provisioned by the 'pr-reviewer Step-0 provisioning' runbook.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Decision-note + runbook join within one initiative."
+  },
+  {
+   "id": "q022",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Why was sand-journal's build-on-demand conversion reverted, and what does the Part G audit say satisfies the original vendoring PR's hermetic goal instead?",
+   "category": "multihop",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "e531f886a47d697b001e69397d421e83becfc30c",
+    "fd74eb24eb778be10db1707de65ee4a778ecebad"
+   ],
+   "gold_answer": "The on-demand path (#12251, reverted #12318) compiled rust third-party crates locally on every CI agent, coupling unrelated test pipelines to that cost. The Part G audit: PR #9101's hermetic goal is fully satisfied by sha256-pinned http_archive + the Buildbarn CAS \u2014 build-time integrity and offline-after-first-fetch without committing bytes.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Two docs joined by the tech-debt thread; answering from either alone gives half the story."
+  },
+  {
+   "id": "q023",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "How do I enable codex fast mode / the priority service tier for tools/pr-reviewer?",
+   "category": "temporal",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "dfbf0424a9298d4c47b27cb49d463f099a3e7e78"
+   ],
+   "gold_answer": "Set the top-level codex config key service_tier=\"priority\" \u2014 from the TS SDK via the untyped escape hatch `new Codex({ config: { service_tier: \"priority\" } })` (fixed at construction, applies to every thread; no typed ThreadOptions field through 0.146-alpha). Pitfall: an unsupported/unknown tier value is NOT a hard error \u2014 codex warns and omits the tier \u2014 so validate with --strict-config.",
+   "must_not_retrieve": [
+    "cebda6e576955ab663f77a9622f1863c05b8f465"
+   ],
+   "expect_abstain": false,
+   "notes": "Canonical supersession: the superseded note ('no working fast-mode switch at 0.145') was verified the SAME DAY, 7 minutes before the correction, and is longer and lexically richer for 'fast mode'. Recency-blind retrieval confidently returns the wrong answer."
+  },
+  {
+   "id": "q024",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "What is the current sccache S3 write model for CI \u2014 who writes to the cache?",
+   "category": "temporal",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "ff8693ad65124ae962ede462072ba588f6cb4077"
+   ],
+   "gold_answer": "Always-write: the RO/RW split is retired. The old design reserved writes for test-sandsql on refs/heads/dev, but test-sandsql has never built on dev (zero builds, all time), so the RW branch was unreachable dead code, the bucket was never populated, and every build reported a permanent 0% hit rate.",
+   "must_not_retrieve": [
+    "b13d12a4109686da5de01d1d912738e5b97bea98"
+   ],
+   "expect_abstain": false,
+   "notes": "Supersession where the superseded note reads like authoritative deployed infrastructure (ARNs, bucket names). Returning the RO-split as current is the scored failure."
+  },
+  {
+   "id": "q025",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Does setting attemptToProxyIfNoMatchingExpectation=false make MockServer replay hermetic on its own?",
+   "category": "temporal",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "a55ab6111abbe3e6a38e16053bcdc714a34c704e"
+   ],
+   "gold_answer": "No. The flag is honoured only for non-CONNECT traffic; unmatched HTTPS CONNECT still egresses live (measured: 200 from cloudflare). An earlier revision of this very note claimed the flag alone yields hermetic replay \u2014 that was measured against plain HTTP only and is wrong for the case that matters (100% of provider traffic is CONNECT). A catch-all expectation is required.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "In-record supersession: the create-time op-log state asserts the opposite of the current fold state. A system that surfaces early fold states (or embeds per-op) can resurrect the retracted claim; entity id is the same so must_not_retrieve cannot express it \u2014 scorers must check the answer's polarity."
+  },
+  {
+   "id": "q026",
+   "repo": "/Users/yasyf/Code/cc-context",
+   "query": "Which semantic search backend does ccx code search use?",
+   "category": "temporal",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "6ae122ddf595fb74418ed79033df6962f2663e9b"
+   ],
+   "gold_answer": "A native in-process engine (shipped v0.30.0): minishlab/potion-code-16M-v2 via model2vec-rs compiled to wasm32-unknown-unknown under a resident wazero instance, replacing the external Python semble spawned via uvx. NDCG@10 0.8527 vs semble 0.8534; query p50 1.384ms (beats semble).",
+   "must_not_retrieve": [
+    "85b7ab13fbc922a09132d8a0e696b8d235c92b68"
+   ],
+   "expect_abstain": false,
+   "notes": "The superseded note is an explicit 'keep semble' decision with strong justification \u2014 exactly the record a retriever loves. The decision was reversed."
+  },
+  {
+   "id": "q027",
+   "repo": "/Users/yasyf/Code/daemonkit",
+   "query": "What was the root cause of the synckit failures on the yasyf box?",
+   "category": "temporal",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "41ec134554094500b2acbd37ed95c2a2564ce57a"
+   ],
+   "gold_answer": "A mise-path dev synckitd (go install build, 9999...-dev, Jul 24) shadows brew 0.35.2 first on PATH, demanding the v1 state envelope and revisioned sync-RPC protocol \u2014 but the corrected note establishes TWO distinct peer failures: reposync 0.27.3 already adopted the revisioned protocol (exposes rpc-serve-v1, no longer answers rpc-serve) while the other peer's failure is a manifest-name issue. The earlier 'FINAL' claim that neither peer has rpc-serve was wrong (Cobra hides subcommands from --help).",
+   "must_not_retrieve": [
+    "8c8f1793a24a2121c9a15bb7031ddf538d7c8841"
+   ],
+   "expect_abstain": false,
+   "notes": "The superseded note literally titles itself 'root cause FINAL' \u2014 a confidence-vocabulary trap for retrievers that weight assertive language."
+  },
+  {
+   "id": "q028",
+   "repo": "/Users/yasyf/Code/cc-skills",
+   "query": "Can an in-process codex subagent be woken asynchronously?",
+   "category": "temporal",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "c3304c23eeec728fa45fe6b618eb137ad934f00f"
+   ],
+   "gold_answer": "Yes, as of codex plugin 1.0.0/1.0.1: cc-interact's steering plane delivers an external wake through a four-rung ladder (verified live on CC 2.1.214). The underlying harness gap is real (no NATIVE interrupt inlet, #78782 + siblings) but the conclusion changed from 'harness gap, foreground-only' to 'wake works via the steering plane'.",
+   "must_not_retrieve": [
+    "2660990b465286cd60b547e0c98f9cfdbfd97de8"
+   ],
+   "expect_abstain": false,
+   "notes": "Supersession where the old note's core evidence still stands but its conclusion flipped; systems that retrieve both must reconcile, not average."
+  },
+  {
+   "id": "q029",
+   "repo": "/Users/yasyf/Code/cc-skills",
+   "query": "Which document states the current codex-ask lifecycle invariants?",
+   "category": "temporal",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "902ee3cdcd5ff122e4a791e144d6fb0ba6f5a988"
+   ],
+   "gold_answer": "'codex-ask v3 (0.20.0): Python port, run registry, dispatch guard \u2014 lifecycle invariants', which supersedes the bash-era doc after the 2026-07-18 frozen-lanes incident (RCA: the on-disk protocol was sound; two wrapper subagents backgrounded codex-ask and idled on a completion notification that never fires for in-process subagents \u2014 claude-code#78782). Invariants moved from prose into mechanism.",
+   "must_not_retrieve": [
+    "ad8a8cb455fc92ac9f56427ec8c2d9f573f57326"
+   ],
+   "expect_abstain": false,
+   "notes": "Doc-level supersession; both docs describe 'lifecycle invariants' with heavy term overlap."
+  },
+  {
+   "id": "q030",
+   "repo": "/Users/yasyf/Code/cc-transcript",
+   "query": "Do capt-hook diff-gated conditions fire on ccx span edits?",
+   "category": "temporal",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "655a0e0d505a312c72dd1dd9117cd6f52e867071"
+   ],
+   "gold_answer": "Yes, since cc-transcript 14.4.0 (landed 2026-07-20): a Rust-core runtime registry of MCP tool specs lowers registered span-edit calls to the SpanEditCall native view, capt-hook 10.5.0 parses the ccx pack's [tools] table and registers during CliState.discover(), so evt.file/content/replaced populate and diff-gated conditions fire.",
+   "must_not_retrieve": [
+    "87e8522c135a8973e864406f06a6de7ae833f721"
+   ],
+   "expect_abstain": false,
+   "notes": "Superseded note says 'payload lowering still open' \u2014 a stale-negative that would wrongly tell an agent the feature is missing."
+  },
+  {
+   "id": "q031",
+   "repo": "/Users/yasyf/Code/cc-context",
+   "query": "ccx vcs diff shows 0 symbols and 0 hunks in a jj-colocated repo \u2014 is this a known bug?",
+   "category": "temporal",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "6aa43425f5b8c0eb331c867a15c709a73b4ef0b8"
+   ],
+   "gold_answer": "It was \u2014 resolved in v0.6.1: internal/vcs resolves jj revsets to git commit ranges before the structural diff (verified live 2026-07-07). The old doc describing the degenerate behavior (against ccx 0.2.0) is superseded; if it reproduces on >=0.6.1 it is a new bug, not the documented one.",
+   "must_not_retrieve": [
+    "3a3fc502870fd83527893b371b1f1cce9a06b640"
+   ],
+   "expect_abstain": false,
+   "notes": "Bug-report-shaped query matches the superseded doc's symptom vocabulary far better than the fix note. Classic stale-bug resurrection."
+  },
+  {
+   "id": "q032",
+   "repo": "/Users/yasyf/Code/cc-skills",
+   "query": "I need to change CLAUDE.md in a fleet repo \u2014 what is the correct procedure?",
+   "category": "temporal",
+   "axis": "capacity",
+   "gold_entity_ids": [
+    "0120aa8372e585017d645ae8fdde07566baa5ac1"
+   ],
+   "gold_answer": "Edit fragments only: fleet AGENTS.md/CLAUDE.md/install-binary.sh/settings.json are cc-guides-rendered and CI-OWNED (v3.1 lock model, 2026-07-10). Edit .claude/fragments/<target>/, push, and CI renders + commits artifacts + lock; NEVER render locally (repo-creation flows excepted). A rendered-only edit silently self-reverts on the next re-render.",
+   "must_not_retrieve": [
+    "14ba0e9adf15283faa3c680d8a7ea6157df96fba",
+    "ba405f9e7c6d46c7c960f97dcb2e9867d29b909b"
+   ],
+   "expect_abstain": false,
+   "notes": "TWO near-duplicate superseded notes (the CLAUDE.src.md era) both outscore the successor on 'CLAUDE.md' lexical match; capacity axis because the system must also collapse the duplicate pair."
+  },
+  {
+   "id": "q033",
+   "repo": "/Users/yasyf/Code/cc-context",
+   "query": "How does shared AGENTS.md guide content reach consumer repos like cc-context?",
+   "category": "temporal",
+   "axis": "capacity",
+   "gold_entity_ids": [
+    "2c555db5c9cf83ff89ae26685768c26f62f73069"
+   ],
+   "gold_answer": "Pull model: shared fragments live only in cc-skills plugin/guides/md/*.md; consumers compose artifacts from .claude/fragments/<target>/layout.toml mixing repo-local fragments with imports like cc-skills:ccx, and cc-guides render resolves each source to a commit recorded in the lock. The push-model fan-out (fleet.json, guides-fan-out.yml) was retired 2026-07-11. Hand-editing a rendered artifact without fixing the source is the canonical way to break the Guides check.",
+   "must_not_retrieve": [
+    "15bff4bcdd45f4cba20767eaba509277716756db",
+    "6bc0344e93f4eefc0b396557ba3f0d769fe54b71",
+    "f7e37591ff7fc6800cf2ef85cc5fbdf293a7dc2a",
+    "8a195cd8d5479c77935e709de79329c10c99299f"
+   ],
+   "expect_abstain": false,
+   "notes": "FOUR superseded records collapse into one successor \u2014 the largest real supersession fan-in in the fleet. Scores both staleness avoidance and duplicate collapse."
+  },
+  {
+   "id": "q034",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "I'm implementing the M6 fence tightening on branch yasyf/escape-hatch-fde-perapp. Is there a security review verdict I must incorporate?",
+   "category": "cross_branch",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "b53476c2631a97c1c5eb3991bf2f8e209c85241e"
+   ],
+   "gold_answer": "Yes \u2014 the REFUTER IAM review recorded at commit caaef19fb on branch yasyf/escape-hatch-fde-shell-doc: P0, RunInstancesPlacement admits the firewall subnet, giving FDE a direct-IGW escape around the Network Firewall (escape-hatch-fde-policies/main.tf:51 and sibling SIDs). The fence must close it.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "The verdict is anchored to a different branch and commit than the one being worked; branch-scoped retrieval misses it."
+  },
+  {
+   "id": "q035",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "I'm on dev. Is any in-progress work elsewhere in the repo something I must not disturb?",
+   "category": "cross_branch",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "a8f8d8b1709b0c701e1aa25795a391529a21503f"
+   ],
+   "gold_answer": "Yes \u2014 task 'Execute rust/ clean-slate 6-PR Graphite stack (D1\u2013D6)' is in_progress on branch yasyf/rust-legacy-move, and it carries an explicit constraint: do NOT disturb /Users/yasyf/.orca/workspaces/monorepo/sandsql until hardware spike workflow wf_84db4c54-58e finishes.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "task list scopes to the current branch by default; the constraint lives on another branch's task. Full-context baselines that dump everything pass trivially \u2014 which is the point: this measures whether scoped systems leak the right cross-branch facts."
+  },
+  {
+   "id": "q036",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Starting Part E (history rewrite) on branch yasyf/repo-size \u2014 what prior measurement from another branch applies?",
+   "category": "cross_branch",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "20a73542a80e7d51539562f79d85c1a8b2c1ad33",
+    "a8f90278b497d36a78f48cd349137ca73d20d164"
+   ],
+   "gold_answer": "The dry-run census recorded on branch yasyf/codeql-speedup: 12.06->3.00 GiB on the locked purge list, filter-repo 45 s, plus history-only purge-list additions (marketing/.yarn/cache ~320 MiB, rust/sanddb_legacy blobs). Part E's task is explicitly GATED: no push without explicit approval.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Two branches' records join on one initiative; the census note's branch anchor (yasyf/codeql-speedup) shares no name with yasyf/repo-size."
+  },
+  {
+   "id": "q037",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Working on sandsql-server error codes on branch yasyf/sandsql-e1-redo-frame \u2014 which binding scope decisions from the parent effort constrain me?",
+   "category": "cross_branch",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "34d7c589279cf3b6405b3611b44fbd8d771d7ac8",
+    "d6a2562ecf71a2eda348548fc19525a78a861346"
+   ],
+   "gold_answer": "From branch yasyf/sandsql: clean room (zero first-party crate deps), standalone/inert (no api/common/dashboard changes, no product traffic), opaque db key. And the E6 wire-contract decisions on the working branch itself: canonical 12-code HTTP status table (later extended 14), Avro field mangling for expression columns, etc.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Branch-anchored decision notes from a parent branch must surface on a child feature branch."
+  },
+  {
+   "id": "q038",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Preparing the sccache branch submit from yasyf/rust-cargo-workspace \u2014 which cache-model decision recorded on another branch governs, and which task tracks the submit?",
+   "category": "cross_branch",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "ff8693ad65124ae962ede462072ba588f6cb4077",
+    "596ed11e02ca5903773124999fd99892bc2d0327"
+   ],
+   "gold_answer": "The always-write model recorded on branch sccache/always-write (RO-split retired; test-sandsql never built on dev). Task 'sccache branch: post-mise reconciliation + submit' (open, branch yasyf/rust-cargo-workspace) tracks the submit.",
+   "must_not_retrieve": [
+    "b13d12a4109686da5de01d1d912738e5b97bea98"
+   ],
+   "expect_abstain": false,
+   "notes": "Cross-branch AND temporal: the governing decision lives on a third branch and has a superseded predecessor."
+  },
+  {
+   "id": "q039",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "A sandsql test sat ~10 minutes at ~0 CPU during a full-suite run, then passed on rerun. Is this a known issue?",
+   "category": "cross_branch",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "3a9bda238add9760f5b9fb29b45bbb2b09eb7cbd"
+   ],
+   "gold_answer": "Yes \u2014 open investigation 'Load-only wedges in instance seam tests' (branch yasyf/sandsql-e5-recovery): arming races of the ack-does-not-prove-publish-passage shape. Wedge 1 root-caused and fixed on E4; wedge 2 unresolved with forensics captured; wedge 3 matches this symptom exactly (none_reads_skip_the_barrier, ~0 CPU ~10 min, rerun 253/253 in 15s). Mitigation queued for E13: nextest slow-timeout terminate-after ~120s.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Symptom on any branch must find the investigation anchored to yasyf/sandsql-e5-recovery. Flake-vocabulary match is weak; the investigation premise is the join."
+  },
+  {
+   "id": "q040",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "What cache hit rate did the sccache S3 cache achieve after the always-write model was deployed?",
+   "category": "abstention",
+   "axis": "effectiveness",
+   "gold_entity_ids": [],
+   "gold_answer": "The corpus cannot answer. It records the BEFORE state (permanent 0% hit rate because the bucket was never written) and the model change itself; no post-deployment hit rate was ever recorded.",
+   "must_not_retrieve": [
+    "ff8693ad65124ae962ede462072ba588f6cb4077",
+    "b13d12a4109686da5de01d1d912738e5b97bea98"
+   ],
+   "expect_abstain": true,
+   "notes": "Both sccache notes are dense with hit-rate vocabulary; a system pattern-matching '0%' or inventing an improvement injects. Correct behavior: abstain (optionally citing that only the before-state exists)."
+  },
+  {
+   "id": "q041",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "When did the monorepo history rewrite execute against the real remote, and what was the final pushed pack size?",
+   "category": "abstention",
+   "axis": "effectiveness",
+   "gold_entity_ids": [],
+   "gold_answer": "The corpus cannot answer. Only a dry-run census exists ('Real remote untouched'), the runbook is a DRAFT (v3.14), and the Part E task is explicitly GATED: no push without explicit approval \u2014 status open. No cutover execution is recorded.",
+   "must_not_retrieve": [
+    "20a73542a80e7d51539562f79d85c1a8b2c1ad33"
+   ],
+   "expect_abstain": true,
+   "notes": "The dry-run numbers (3.00 GiB, 45 s) are magnetic wrong answers; reporting them as the real cutover is the measured 17.5%-style injection failure."
+  },
+  {
+   "id": "q042",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "What p50 acked-write latency did SandSQL Phase 2 achieve at its exit gate?",
+   "category": "abstention",
+   "axis": "effectiveness",
+   "gold_entity_ids": [],
+   "gold_answer": "The corpus cannot answer. The exit gate TARGET is recorded (p50 acked write <= ~5ms on dev hardware) but Phase 2 is in_progress and no measured exit-gate result exists.",
+   "must_not_retrieve": [
+    "86562d9f2d482790849c1f813420c9ffd80c7d34"
+   ],
+   "expect_abstain": true,
+   "notes": "Target-vs-measurement confusion: the number 5ms exists in the corpus as a goal. Returning it as an achievement is a scoreable false positive."
+  },
+  {
+   "id": "q043",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "What did Ben decide on SandSQL questions Q1, Q6, and Q11a?",
+   "category": "abstention",
+   "axis": "effectiveness",
+   "gold_entity_ids": [],
+   "gold_answer": "The corpus cannot answer. The external-blocker track task names Ben and Q1/Q6/Q11a (with Q2 fallback) as pending external inputs; it is open and no answers are recorded.",
+   "must_not_retrieve": [
+    "11830cf0fee459110c7f156addf9a5d2aed84833"
+   ],
+   "expect_abstain": true,
+   "notes": "Named-person plausibility trap; the task's existence makes fabricating 'Ben approved X' tempting."
+  },
+  {
+   "id": "q044",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Which cassettes were recorded in VCR Phase 4, and when was VCR_MODE flipped to replay?",
+   "category": "abstention",
+   "axis": "effectiveness",
+   "gold_entity_ids": [],
+   "gold_answer": "The corpus cannot answer. 'VCR Phase 4: record cassettes and flip VCR_MODE to replay' is an open task created 2026-07-26; no recording or flip has happened.",
+   "must_not_retrieve": [
+    "c131061ff739d25d9f6beb414146ee643134e16a"
+   ],
+   "expect_abstain": true,
+   "notes": "Future-work-as-done confusion: the task title contains exactly the actions asked about."
+  },
+  {
+   "id": "q045",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "What fixed the cc-present daemon's 'initialized controller state is missing bucket \"replacement\"' startup failure?",
+   "category": "abstention",
+   "axis": "effectiveness",
+   "gold_entity_ids": [],
+   "gold_answer": "The corpus cannot answer. The failure is recorded as a papercut (binary 0.24.3, plugin cache 0.24.2); no resolution is recorded. Note the adjacent trap: a DIFFERENT papercut in the same log (BUILDKITE_API_TOKEN) does have a RESOLVED entry.",
+   "must_not_retrieve": [
+    "3dfdc2f7755213c04bb2d203b4bd033675904458"
+   ],
+   "expect_abstain": true,
+   "notes": "Same-log neighbor has a RESOLVED entry \u2014 entry-level confusion between two papercuts is the failure mode."
+  },
+  {
+   "id": "q046",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Which model did tools/pr-reviewer run before gpt-5.6-sol?",
+   "category": "abstention",
+   "axis": "effectiveness",
+   "gold_entity_ids": [],
+   "gold_answer": "The corpus cannot answer. It records only the current state (gpt-5.6-sol at medium effort via ThreadOptions.modelReasoningEffort); no prior model is recorded anywhere.",
+   "must_not_retrieve": [
+    "cebda6e576955ab663f77a9622f1863c05b8f465"
+   ],
+   "expect_abstain": true,
+   "notes": "History-shaped question over a corpus that only holds the present \u2014 the op-log has no such transition either, so even temporal systems must abstain."
+  },
+  {
+   "id": "q047",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "I'm editing rust/crates/sandsql-core/src/schema/spec.rs. Which schema-push rule notes apply, and is their anchoring current?",
+   "category": "staleness",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "3c8594a924b1aa018e7580e9780d7889968793c1"
+   ],
+   "gold_answer": "The DQ21 guard note applies (schema push auto-adds a primary key when a table declares none, because sqlite3session silently records nothing for rowid tables without an explicit PK). BUT its dir anchor is rust/crates/sandsql_core (underscore), which no longer exists at HEAD \u2014 the crates were renamed to hyphenated names in the D-stack. Correct behavior: surface the content with the anchor flagged as drifted, or withhold the anchor claim; presenting the underscore path as live is a failure.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Real anchor drift from the rust/ reorganization: content still true, address stale. Distinguishes path-literal systems from drift-aware ones."
+  },
+  {
+   "id": "q048",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Where are the history-rewrite rehearsal artifacts (the mirror and receipts)?",
+   "category": "staleness",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "c8feb4a245ca69fd70a6a91596b786ba59825b7c"
+   ],
+   "gold_answer": "The note records them at a session scratchpad under /private/tmp/claude-502/... but marks that location EPHEMERAL \u2014 gone on reboot/cleanup. Correct behavior: report that the recorded location is explicitly non-durable and likely gone, not present the path as a live address.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "The record itself declares its pointer perishable; parroting the path without the ephemerality caveat is the scored failure."
+  },
+  {
+   "id": "q049",
+   "repo": "/Users/yasyf/Code/cc-notes",
+   "query": "Where is the implementation spec for the runbook surfaces (CLI, MCP, viz, FUSE)?",
+   "category": "staleness",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "70f8c08775d2d51cc000bdd3cb78c37ba9ea09e2",
+    "72b6b5258bbc197053da61298ea4a0bc4326f3a4"
+   ],
+   "gold_answer": "Both phase specs are marked stale (2026-07-18): the runbook layers shipped in v0.32.0+ and the specs are historical \u2014 the living surface is documented in the skill's runbooks reference and cli-reference. Correct behavior: do not serve the stale specs as current guidance; point to the living docs per the stale_reason.",
+   "must_not_retrieve": [
+    "70f8c08775d2d51cc000bdd3cb78c37ba9ea09e2",
+    "72b6b5258bbc197053da61298ea4a0bc4326f3a4"
+   ],
+   "expect_abstain": false,
+   "notes": "Real MarkStale events with redirect-bearing reasons. Scoring: the two doc ids are gold ONLY as the source of the stale_reason redirect; serving their bodies as live implementation guidance is the failure (hence they also appear in must_not_retrieve \u2014 the dual listing is intentional)."
+  },
+  {
+   "id": "q050",
+   "repo": "/Users/yasyf/Code/cc-context",
+   "query": "Does cc-skills' AGENTS.md ccx entry 2 still describe code search as 'semble-backed'?",
+   "category": "staleness",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "adaab9813ccb8fb6f25f55702721153adf3e9993"
+   ],
+   "gold_answer": "No \u2014 the note tracking that wording is marked stale with reason: Done, cc-skills d3592c4 updated entry 2 to the native-engine wording + --content filter; Guides CI green; cc-context repos pick it up on the next re-render. Correct behavior: answer from the stale_reason (fixed), not from the note title (which asserts the stale wording is still present).",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "The note's TITLE asserts the outdated state; only the MarkStale reason carries the truth. Title-weighted retrieval inverts the answer."
+  },
+  {
+   "id": "q051",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Which records anchor to tools/vcr, and does that directory exist in the repo?",
+   "category": "staleness",
+   "axis": "capacity",
+   "gold_entity_ids": [
+    "a55ab6111abbe3e6a38e16053bcdc714a34c704e",
+    "4c11bb9eff0692d7e55d430cc03c597b0c2bce64"
+   ],
+   "gold_answer": "The MockServer constraints note and the VCR spike verdict anchor to tools/vcr (the constraints note also to scripts/vcr). The directory exists on NO branch yet (verified across all remote branches) \u2014 the anchors are forward-looking to unlanded work. Correct behavior: surface the records for VCR questions but never claim the path exists.",
+   "must_not_retrieve": [],
+   "expect_abstain": false,
+   "notes": "Anchor to a not-yet-existing path \u2014 the inverse of drift. Tests that path-validation doesn't silently drop the records AND that the system doesn't assert the path is real."
+  },
+  {
+   "id": "q052",
+   "repo": "/Users/yasyf/Code/monorepo",
+   "query": "Notes about codex fast mode anchor to tools/pr-reviewer, but that path is missing on dev. Should they be withheld?",
+   "category": "cross_branch",
+   "axis": "effectiveness",
+   "gold_entity_ids": [
+    "dfbf0424a9298d4c47b27cb49d463f099a3e7e78",
+    "6e9244686940e24d83410219c0aa0168e8482885"
+   ],
+   "gold_answer": "No \u2014 tools/pr-reviewer exists on branch yasyf/pr-reviewer-ts (the cutover stack yasyf/pr-reviewer-ts -> yasyf/pr-review-cutover -> yasyf/pr-reviewer-go-wipe per the Step-0 decisions). The anchor is live on the working branch; withholding because dev lacks the path is over-suppression.",
+   "must_not_retrieve": [
+    "cebda6e576955ab663f77a9622f1863c05b8f465"
+   ],
+   "expect_abstain": false,
+   "notes": "The counter-test to the staleness set: a naive existence check on the default branch wrongly withholds. Balances the suite against reward-hacking toward blanket suppression."
+  }
+ ]
+}
