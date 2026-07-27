@@ -16,7 +16,7 @@ func TestReleaseUsesPinnedReusableFixedHelperWorkflow(t *testing.T) {
 	root := filepath.Join("..", "..")
 	workflow := filepath.Join(root, ".github", "workflows", "release.yml")
 	assertFileContains(t, workflow,
-		"uses: yasyf/homebrew-tap/.github/workflows/release-app.yml@7cc8a6c981cbec10fcb7f19bd75b36e9ee65ea7e",
+		"uses: yasyf/homebrew-tap/.github/workflows/release-app.yml@41f8de6765b3b833ef333b0b98f5683f0e46685b",
 		"app_name: CCNotesHelper",
 		"asset_name: cc-notes-helper",
 		"project_dir: helper-app",
@@ -65,7 +65,7 @@ func TestReleasePinsEveryExternalActionByCommit(t *testing.T) {
 		"actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
 		"actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
 		"actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
-		"yasyf/homebrew-tap/.github/actions/verify-tag-on-main@a4179241558456339fa2e41b97693a6cebae2e36",
+		"yasyf/homebrew-tap/.github/actions/verify-tag-on-main@2281a3ea884422db190de44fad65ce9bc08b19c4",
 		"yasyf/homebrew-tap/.github/actions/render-formula@19c3d5013032ad9c88f9a8f1170d1f366c19b8d9",
 		"yasyf/homebrew-tap/.github/actions/publish@9525763796fce4d1042cf3393d9479f791908eaa",
 	)
