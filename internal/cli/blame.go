@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 type blameDTO struct {
@@ -34,18 +35,22 @@ func newBlameCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printBlame(cmd, tasks, invs, jsonOut)
+			return printBlame(cmd, c, tasks, invs, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
 	return cmd
 }
 
-func printBlame(cmd *cobra.Command, tasks []model.Task, invs []model.Investigation, jsonOut bool) error {
+func printBlame(cmd *cobra.Command, c *notes.Client, tasks []model.Task, invs []model.Investigation, jsonOut bool) error {
 	if jsonOut {
+		blocks, err := c.TasksBlockingIndex(cmd.Context())
+		if err != nil {
+			return err
+		}
 		dtos := make([]blameDTO, 0, len(tasks)+len(invs))
 		for _, task := range tasks {
-			t := newTaskSummaryDTO(task)
+			t := newTaskSummaryDTO(task, blocks[task.ID])
 			dtos = append(dtos, blameDTO{Kind: string(model.KindTask), Task: &t})
 		}
 		for _, inv := range invs {
@@ -54,7 +59,7 @@ func printBlame(cmd *cobra.Command, tasks []model.Task, invs []model.Investigati
 		}
 		return printJSON(cmd.OutOrStdout(), dtos)
 	}
-	if err := printTaskList(cmd, tasks, false); err != nil {
+	if err := printTaskList(cmd, c, tasks, false); err != nil {
 		return err
 	}
 	for _, inv := range invs {

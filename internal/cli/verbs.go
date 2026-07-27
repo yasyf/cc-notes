@@ -12,18 +12,18 @@ import (
 
 // showVerb builds the read-only "show ID" command; short is the kind's own
 // help line and show gathers the bespoke read-side data.
-func (k kindSpec[T]) showVerb(short string, show func(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error) *cobra.Command {
+func (k kindSpec[T]) showVerb(short string, show func(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string, jsonOut bool) error) *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "show ID",
 		Short: short,
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore(cmd)
+			s, c, err := openStoreClient(cmd)
 			if err != nil {
 				return err
 			}
-			return show(cmd, s, args[0], jsonOut)
+			return show(cmd, s, c, args[0], jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)

@@ -26,18 +26,21 @@ type docJSON struct {
 		Value   string  `json:"value"`
 		Witness *string `json:"witness"`
 	} `json:"anchors"`
-	Author       string           `json:"author"`
-	CreatedAt    string           `json:"created_at"`
-	UpdatedAt    string           `json:"updated_at"`
-	VerifiedAt   *string          `json:"verified_at"`
-	VerifiedBy   *string          `json:"verified_by"`
-	SupersededBy *string          `json:"superseded_by"`
-	Drift        *string          `json:"drift"`
-	Deleted      bool             `json:"deleted"`
-	StaleAt      *string          `json:"stale_at"`
-	StaleBy      *string          `json:"stale_by"`
-	StaleReason  *string          `json:"stale_reason"`
-	Attachments  []attachmentJSON `json:"attachments"`
+	Author         string           `json:"author"`
+	CreatedAt      string           `json:"created_at"`
+	UpdatedAt      string           `json:"updated_at"`
+	VerifiedAt     *string          `json:"verified_at"`
+	VerifiedBy     *string          `json:"verified_by"`
+	VerifiedCommit *string          `json:"verified_commit"`
+	SupersededBy   []string         `json:"superseded_by"`
+	Supersedes     []string         `json:"supersedes"`
+	LiveHead       []string         `json:"live_head"`
+	Drift          *string          `json:"drift"`
+	Deleted        bool             `json:"deleted"`
+	StaleAt        *string          `json:"stale_at"`
+	StaleBy        *string          `json:"stale_by"`
+	StaleReason    *string          `json:"stale_reason"`
+	Attachments    []attachmentJSON `json:"attachments"`
 }
 
 func docIDs(docs []docJSON) []string {

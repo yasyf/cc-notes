@@ -16,6 +16,11 @@
       "id": "f2",
       "text": "clock skew",
       "status": "cleared"
+    },
+    {
+      "id": "f3",
+      "text": "cache staleness",
+      "status": "open"
     }
   ],
   "entries": [

@@ -1021,17 +1021,22 @@ keep it larger than your sync interval, or a healthy holder behind a slow sync l
 Summary — `task list`, `ready`, `backlog`, `stale`, `archived`, `blame`, `status`, and every task
 mutation's acknowledgement:
 
-`{"id":string,"title":string,"status":string,"priority":int,"assignee":string,"branch":string,"updated_at":rfc3339}`.
+`{"id":string,"title":string,"type":string,"status":string,"priority":int,"assignee":string,"branch":string,"blocked_by":[id,…],"blocks":[id,…],"parent":id,"sprint":id,"project":id,"criteria_met":int,"criteria_total":int,"updated_at":rfc3339}`.
 `id`, `title`, `status`, and `updated_at` are always present; the rest follow the zero-value
 omission rule, so an unclaimed backlog task at priority 0 carries none of `priority`, `assignee`,
-or `branch`. `task stale` adds an always-present `idle_seconds` int per task, and the
-`in_progress` groups of `status --json` add an always-present `stale` bool.
+or `branch`. `blocks` is the derived reverse index of `blocked_by`, resolved for a whole listing in
+one pass; `criteria_met` and `criteria_total` tally the task's acceptance criteria without carrying
+them, and both vanish at zero. `task stale` adds an always-present `idle_seconds` int per task, and
+the `in_progress` groups of `status --json` add an always-present `stale` bool.
 
 Full — `task show ID --json` (and `show ID --json` on a task id):
 
-`{"id":string,"branch":string,"title":string,"description":string,"type":string,"status":string,"priority":int,"assignee":string,"labels":[…],"blocked_by":[id,…],"blocks":[id,…],"parent":string,"comments":[{"author":string,"ts":rfc3339,"body":string}],"comments_omitted":int,"commits":[sha,…],"lease":{"holder":string,"heartbeat":rfc3339},"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339,"closed_at":rfc3339,"sprint":id,"project":id,"criteria":[{"id":string,"text":string,"script":string,"status":string,"note":string}],"closed_forced":bool}`.
+`{"id":string,"branch":string,"title":string,"description":string,"type":string,"status":string,"priority":int,"assignee":string,"labels":[…],"blocked_by":[id,…],"blocks":[id,…],"parent":string,"children":[id,…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"comments_omitted":int,"commits":[sha,…],"runs":[{"runbook":id,"run":string,"status":string,"started_at":rfc3339,"finished_at":rfc3339}],"lease":{"holder":string,"heartbeat":rfc3339},"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339,"closed_at":rfc3339,"sprint":id,"project":id,"criteria":[{"id":string,"text":string,"script":string,"status":string,"note":string}],"closed_forced":bool}`.
 `id`, `title`, `status`, `priority`, `created_at`, and `updated_at` are always present. `blocks` is
-the derived reverse index of `blocked_by`; an absent `branch` is a backlog task. `sprint` and
+the derived reverse index of `blocked_by` and `children` the reverse index of `parent`; `runs`
+lists the tracked runbook runs citing this task, oldest start first, each naming the runbook that
+owns it because a run id is unique only within its runbook. An absent `branch` is a backlog task.
+`sprint` and
 `project` are the task's independent membership pointers; each criterion's `status` is `pending`,
 `met`, or `failed`, with `note` carrying the evidence recorded with that verdict; `closed_forced`
 is `true` only for a `done` task closed with at least one criterion still unmet. `comments` holds
@@ -1598,12 +1603,13 @@ and run verbs included:
 
 Full — `runbook show ID --json`:
 
-`{"id":string,"title":string,"description":string,"status":string,"steps":[{"id":string,"text":string,"command":string,"position":string}],"runs":[{"id":string,"task":id,"runner":string,"status":string,"started_at":rfc3339,"finished_at":rfc3339,"steps":[{"step":string,"status":string,"note":string}]}],"runs_omitted":int,"labels":[…],"anchors":[{"kind":string,"value":string}],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"archived_at":rfc3339,"deleted":bool}`.
+`{"id":string,"title":string,"description":string,"status":string,"steps":[{"id":string,"text":string,"command":string,"position":string}],"runs":[{"id":string,"task":id,"runner":string,"status":string,"started_at":rfc3339,"finished_at":rfc3339,"steps":[{"step":string,"command":string,"status":string,"note":string}]}],"runs_omitted":int,"labels":[…],"anchors":[{"kind":string,"value":string}],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"archived_at":rfc3339,"deleted":bool}`.
 `id`, `title`, `status`, `created_at`, and `updated_at` are always present, as are a step's `id`,
 `text`, and `position` and a run's `id`, `status`, and `started_at`. `status` is `active` or
 `archived`; a run's `status` is `running`, `succeeded`, `failed`, or `abandoned`. A run's `steps`
 lists every current step in position order with a `status` of `done`, `failed`, `skipped`, or
-`pending` (no outcome recorded); results for since-removed steps are historical and not shown.
+`pending` (no outcome recorded), each carrying the step's current `command` so the run reads back
+copy-pasteable; results for since-removed steps are historical and not shown.
 `position` is an opaque ordering key — compare, never parse. A runbook anchor never carries a
 `witness` — runbooks have no freshness lifecycle to witness. `runs` holds the 20 most recent, with
 `runs_omitted` counting the older ones.
@@ -1934,9 +1940,11 @@ Tombstone an investigation. The ref survives until `gc` prunes it.
 Summary — `investigation list`, `investigation search`, the top-level `search` and `relevant`,
 `blame`, and every investigation mutation's acknowledgement, the finding verbs included:
 
-`{"id":string,"title":string,"status":string,"updated_at":rfc3339,"finding_count":int,"entry_count":int}`.
-`id`, `title`, `status`, and `updated_at` are always present; the two tallies vanish at zero. The
-premise, the findings, and the evidence timeline never ride a summary.
+`{"id":string,"title":string,"status":string,"updated_at":rfc3339,"finding_count":int,"open_finding_count":int,"entry_count":int}`.
+`id`, `title`, `status`, and `updated_at` are always present; the tallies vanish at zero.
+`finding_count` counts every finding and `open_finding_count` only those still `open` — neither
+confirmed nor cleared — so a listing shows how many suspects are live without pulling the
+findings. The premise, the findings, and the evidence timeline never ride a summary.
 
 Full — `investigation show ID --json`:
 
@@ -2157,8 +2165,8 @@ MCP: note_show (id)
 
 Show one note: a fixed-order header block (id, title, tags, anchors, author, created, updated,
 verified_at/by, superseded_by, supersedes, drift verdict) then the body after a blank line.
-`supersedes` is a text-only field — the computed reverse index of `superseded_by` — with no JSON
-counterpart, so don't parse it from `--json`.
+`supersedes` is the computed reverse index of `superseded_by`; `--json` carries it too, alongside
+`live_head`, the transitive end of the supersede chain.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -2179,19 +2187,27 @@ Tombstone a note. It drops out of listings; history survives.
 Summary — `note list`, `note search`, `note review`, the top-level `search` and `relevant`, and
 every note mutation's acknowledgement:
 
-`{"id":string,"title":string,"tags":[…],"author":string,"updated_at":rfc3339,"drift":string}`.
-`id`, `title`, and `updated_at` are always present. `drift` is the computed verdict and is absent
+`{"id":string,"title":string,"tags":[…],"author":string,"updated_at":rfc3339,"drift":string,"stale_reason":string}`.
+`id`, `title`, and `updated_at` are always present. `stale_reason` is the reason recorded by
+`note expire`, absent until then, so a listing says why a note was retired without a second call.
+`drift` is the computed verdict and is absent
 when the note is fresh — or when the command computed no verdict at all, which is the case for
 `note list`, `note search`, and the top-level `search`. `note review`, `relevant`, and every
 mutation's acknowledgement do compute it. The body never rides a summary.
 
 Full — `note show ID --json`:
 
-`{"id":string,"title":string,"body":string,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"verified_at":rfc3339,"verified_by":string,"superseded_by":string,"drift":string,"deleted":bool,"stale_at":rfc3339,"stale_by":string,"stale_reason":string,"attachments":[{"name":string,"oid":string,"size":int,"present":bool}]}`.
+`{"id":string,"title":string,"body":string,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"verified_at":rfc3339,"verified_by":string,"verified_commit":sha,"superseded_by":[id,…],"supersedes":[id,…],"live_head":[id,…],"drift":string,"deleted":bool,"stale_at":rfc3339,"stale_by":string,"stale_reason":string,"attachments":[{"name":string,"oid":string,"size":int,"present":bool}]}`.
 `id`, `title`, `created_at`, and `updated_at` are always present, as are an attachment's `name`,
-`oid`, and `present`. `drift` is the computed verdict, absent when fresh; `superseded_by` is the
-replacement note id; an anchor carrying no content witness omits `witness`. A note's history is
-not append-only, so a `show` caps nothing.
+`oid`, and `present`. `drift` is the computed verdict, absent when fresh; `verified_commit` is the
+HEAD the note was last checked against; an anchor carrying no content witness omits `witness`. A
+note's history is not append-only, so a `show` caps nothing.
+
+The three supersede fields are all id arrays. `superseded_by` lists every replacement — a note can
+be superseded by more than one — `supersedes` is its reverse index, and `live_head` walks the
+chain transitively to the notes that terminate it, which is what a reader of a superseded note
+should read instead. `live_head` is absent when the note is current, and also when the chain
+cycles or ends at a tombstone, which `drift` reports as `DANGLING`.
 
 ## Doc commands
 
@@ -2422,9 +2438,9 @@ MCP: doc_show (id)
 
 Show one doc: a fixed-order header block (id, title, when, tags, anchors, author, created, updated,
 verified_at/by, superseded_by, supersedes, drift verdict) then the body after a blank line. The
-`when` trigger sits on its own line right after the title. `supersedes` is a text-only field — the
-computed reverse index of `superseded_by` — with no JSON counterpart, so don't parse it from
-`--json`.
+`when` trigger sits on its own line right after the title. `supersedes` is the computed reverse
+index of `superseded_by`; `--json` carries it too, alongside `live_head`, the transitive end of
+the supersede chain.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -2470,14 +2486,16 @@ summary and right after `body` in the full record. `when` is absent when unset.
 Summary — `doc list`, `doc search`, `doc review`, the top-level `search` and `relevant`, and every
 doc mutation's acknowledgement:
 
-`{"id":string,"title":string,"when":string,"tags":[…],"author":string,"updated_at":rfc3339,"drift":string}`.
+`{"id":string,"title":string,"when":string,"tags":[…],"author":string,"updated_at":rfc3339,"drift":string,"stale_reason":string}`.
 The summary keeps `when` — the field a reader selects on — so a listing settles whether a doc
-applies without a second call. The body still needs `doc show`.
+applies without a second call, and `stale_reason` the same way for a retired one. The body still
+needs `doc show`.
 
 Full — `doc show ID --json`:
 
-`{"id":string,"title":string,"body":string,"when":string,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"verified_at":rfc3339,"verified_by":string,"superseded_by":string,"drift":string,"deleted":bool,"stale_at":rfc3339,"stale_by":string,"stale_reason":string,"attachments":[{"name":string,"oid":string,"size":int,"present":bool}]}`.
-The always-present fields, the `drift` rules, and the `witness` rule match the note shape. The
+`{"id":string,"title":string,"body":string,"when":string,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"verified_at":rfc3339,"verified_by":string,"verified_commit":sha,"superseded_by":[id,…],"supersedes":[id,…],"live_head":[id,…],"drift":string,"deleted":bool,"stale_at":rfc3339,"stale_by":string,"stale_reason":string,"attachments":[{"name":string,"oid":string,"size":int,"present":bool}]}`.
+The always-present fields, the `drift` rules, the `witness` rule, and the three supersede arrays
+match the note shape. The
 agent-asserted expiry fields `stale_at`/`stale_by`/`stale_reason` stay absent until `doc expire`
 sets them, and `doc verify` or `doc expire --clear` clears them again.
 

@@ -746,7 +746,7 @@ func (c *Client) NoteSuperseders(ctx context.Context, id model.EntityID) ([]mode
 	if err != nil {
 		return nil, err
 	}
-	return superseders(all, func(n model.Note) (model.EntityID, []model.EntityID) { return n.ID, n.SupersededBy }, id), nil
+	return superseders(all, noteSupersedeEdge, id), nil
 }
 
 // DocSuperseders returns the ids of docs that supersede id, sorted.
@@ -755,8 +755,36 @@ func (c *Client) DocSuperseders(ctx context.Context, id model.EntityID) ([]model
 	if err != nil {
 		return nil, err
 	}
-	return superseders(all, func(d model.Doc) (model.EntityID, []model.EntityID) { return d.ID, d.SupersededBy }, id), nil
+	return superseders(all, docSupersedeEdge, id), nil
 }
+
+// NoteSupersedeHeads walks the note supersede edge transitively from id and
+// returns the sorted ids of the notes that terminate the chain — what a reader
+// of a superseded note should read instead. The listing includes superseded
+// notes, so the walk can cross a chain of any depth.
+func (c *Client) NoteSupersedeHeads(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
+	all, err := c.s.ListNotes(ctx, false, true)
+	if err != nil {
+		return nil, err
+	}
+	return supersedeHeads(all, noteSupersedeEdge, id), nil
+}
+
+// DocSupersedeHeads walks the doc supersede edge transitively from id, mirroring
+// NoteSupersedeHeads.
+func (c *Client) DocSupersedeHeads(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
+	all, err := c.s.ListDocs(ctx, false, true)
+	if err != nil {
+		return nil, err
+	}
+	return supersedeHeads(all, docSupersedeEdge, id), nil
+}
+
+// noteSupersedeEdge projects a note onto its identity and supersede targets.
+func noteSupersedeEdge(n model.Note) (model.EntityID, []model.EntityID) { return n.ID, n.SupersededBy }
+
+// docSupersedeEdge projects a doc onto its identity and supersede targets.
+func docSupersedeEdge(d model.Doc) (model.EntityID, []model.EntityID) { return d.ID, d.SupersededBy }
 
 // superseders collects the ids of entities whose supersede edge points at id,
 // sorted.
@@ -766,6 +794,41 @@ func superseders[T any](all []T, edge func(T) (model.EntityID, []model.EntityID)
 		self, targets := edge(e)
 		if slices.Contains(targets, id) {
 			out = append(out, self)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// supersedeHeads breadth-first walks the supersede edge from id and returns the
+// sorted ids of the entities terminating the walk: those reachable from id that
+// carry no supersede edge. Reconverging branches yield one head; a target
+// missing from all ends its branch headless, as does a cycle, which the visited
+// set terminates.
+func supersedeHeads[T any](all []T, edge func(T) (model.EntityID, []model.EntityID), id model.EntityID) []model.EntityID {
+	targets := make(map[model.EntityID][]model.EntityID, len(all))
+	for _, e := range all {
+		self, to := edge(e)
+		targets[self] = to
+	}
+	seen := map[model.EntityID]bool{id: true}
+	queue := slices.Clone(targets[id])
+	var out []model.EntityID
+	for len(queue) > 0 {
+		next := queue[0]
+		queue = queue[1:]
+		if seen[next] {
+			continue
+		}
+		seen[next] = true
+		to, live := targets[next]
+		switch {
+		case !live:
+			continue
+		case len(to) == 0:
+			out = append(out, next)
+		default:
+			queue = append(queue, to...)
 		}
 	}
 	slices.Sort(out)

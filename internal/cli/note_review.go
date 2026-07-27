@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"slices"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -261,23 +260,6 @@ func supersedeDangling(fe freshEntity, exists map[model.EntityID]bool) bool {
 		}
 	}
 	return false
-}
-
-// reverseSupersedes returns the ids of notes that supersede id, sorted: the
-// reverse of the supersede edge, computed at read.
-func reverseSupersedes(ctx context.Context, s *store.Store, id model.EntityID) ([]model.EntityID, error) {
-	all, err := s.ListNotes(ctx, false, true)
-	if err != nil {
-		return nil, err
-	}
-	var out []model.EntityID
-	for _, n := range all {
-		if slices.Contains(n.SupersededBy, id) {
-			out = append(out, n.ID)
-		}
-	}
-	slices.Sort(out)
-	return out, nil
 }
 
 // docReviewCount counts the docs needing review against live content.

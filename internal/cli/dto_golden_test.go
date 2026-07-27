@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // Fixed timestamps chosen distinct so each RFC3339 field renders differently in
@@ -36,45 +37,51 @@ func TestDTOGoldens(t *testing.T) {
 	bob := model.Actor("bob <bob@example.com>")
 
 	noteFull := model.Note{
-		ID:           "note-full-000000000000000000000000000000",
-		Title:        "verified superseded note",
-		Body:         "the note body",
-		Tags:         []string{"auth", "handoff"},
-		Anchors:      []model.Anchor{fullAnchor, bareAnchor},
-		Author:       ada,
-		CreatedAt:    dtoCreated,
-		UpdatedAt:    dtoUpdated,
-		Deleted:      true,
-		VerifiedAt:   dtoVerified,
-		VerifiedBy:   ada,
-		Witness:      []model.AnchorWitness{{Anchor: fullAnchor, OID: "f00ba12"}},
-		SupersededBy: []model.EntityID{"note-newer-0001", "note-newer-0002"},
-		StaleAt:      dtoStale,
-		StaleBy:      bob,
-		StaleReason:  "rewritten",
+		ID:             "note-full-000000000000000000000000000000",
+		Title:          "verified superseded note",
+		Body:           "the note body",
+		Tags:           []string{"auth", "handoff"},
+		Anchors:        []model.Anchor{fullAnchor, bareAnchor},
+		Author:         ada,
+		CreatedAt:      dtoCreated,
+		UpdatedAt:      dtoUpdated,
+		Deleted:        true,
+		VerifiedAt:     dtoVerified,
+		VerifiedBy:     ada,
+		VerifiedCommit: "c0ffee0000000000000000000000000000000000",
+		Witness:        []model.AnchorWitness{{Anchor: fullAnchor, OID: "f00ba12"}},
+		SupersededBy:   []model.EntityID{"note-newer-0001", "note-newer-0002"},
+		StaleAt:        dtoStale,
+		StaleBy:        bob,
+		StaleReason:    "rewritten",
 	}
 	noteAtts := []attachmentDTO{{Name: "dump.log", OID: "abc123", Size: 42, Present: true}}
+	noteSupersedes := []model.EntityID{"note-older-0001"}
+	noteLiveHead := []model.EntityID{"note-head-00001", "note-head-00002"}
 	noteMin := model.Note{ID: "note-min-0000000000000000000000000000000", Title: "bare", Author: ada, CreatedAt: dtoCreated, UpdatedAt: dtoUpdated}
 
 	docFull := model.Doc{
-		ID:           "doc-full-0000000000000000000000000000000",
-		Title:        "auth migration handoff",
-		Body:         "the doc body",
-		When:         "resuming the auth cutover",
-		Tags:         []string{"auth"},
-		Anchors:      []model.Anchor{fullAnchor, bareAnchor},
-		Author:       ada,
-		CreatedAt:    dtoCreated,
-		UpdatedAt:    dtoUpdated,
-		Deleted:      true,
-		VerifiedAt:   dtoVerified,
-		VerifiedBy:   ada,
-		Witness:      []model.AnchorWitness{{Anchor: fullAnchor, OID: "f00ba12"}},
-		SupersededBy: []model.EntityID{"doc-newer-0001"},
-		StaleAt:      dtoStale,
-		StaleBy:      bob,
-		StaleReason:  "rewritten",
+		ID:             "doc-full-0000000000000000000000000000000",
+		Title:          "auth migration handoff",
+		Body:           "the doc body",
+		When:           "resuming the auth cutover",
+		Tags:           []string{"auth"},
+		Anchors:        []model.Anchor{fullAnchor, bareAnchor},
+		Author:         ada,
+		CreatedAt:      dtoCreated,
+		UpdatedAt:      dtoUpdated,
+		Deleted:        true,
+		VerifiedAt:     dtoVerified,
+		VerifiedBy:     ada,
+		VerifiedCommit: "c0ffee0000000000000000000000000000000000",
+		Witness:        []model.AnchorWitness{{Anchor: fullAnchor, OID: "f00ba12"}},
+		SupersededBy:   []model.EntityID{"doc-newer-0001"},
+		StaleAt:        dtoStale,
+		StaleBy:        bob,
+		StaleReason:    "rewritten",
 	}
+	docSupersedes := []model.EntityID{"doc-older-0001"}
+	docLiveHead := []model.EntityID{"doc-head-000001"}
 	docMin := model.Doc{ID: "doc-min-00000000000000000000000000000000", Title: "bare", Author: ada, CreatedAt: dtoCreated, UpdatedAt: dtoUpdated}
 
 	logFull := model.Log{
@@ -123,6 +130,11 @@ func TestDTOGoldens(t *testing.T) {
 		},
 	}
 	taskBlocks := []model.EntityID{"task-blocks-001", "task-blocks-002"}
+	taskChildren := []model.EntityID{"task-child-0001", "task-child-0002"}
+	taskRuns := []notes.TaskRun{
+		{Runbook: "runbook-of-run1", Run: model.RunbookRun{ID: "run00001", Task: "task-full-000000000000000000000000000000", Status: model.RunSucceeded, StartedAt: dtoStarted, FinishedAt: dtoClosed}},
+		{Runbook: "runbook-of-run2", Run: model.RunbookRun{ID: "run00002", Task: "task-full-000000000000000000000000000000", Status: model.RunRunning, StartedAt: dtoHeartbeat}},
+	}
 	taskMin := model.Task{ID: "task-min-0000000000000000000000000000000", Title: "bare", CreatedAt: dtoCreated, UpdatedAt: dtoUpdated}
 
 	sprintFull := model.Sprint{
@@ -202,6 +214,7 @@ func TestDTOGoldens(t *testing.T) {
 		Findings: []model.Finding{
 			{ID: "f1", Text: "merge order", Status: model.FindingConfirmed, Note: "reproduced"},
 			{ID: "f2", Text: "clock skew", Status: model.FindingCleared},
+			{ID: "f3", Text: "cache staleness", Status: model.FindingOpen},
 		},
 		Entries: []model.LogEntry{
 			{Author: ada, TS: dtoCreated, Text: "repro on a clean clone"},
@@ -226,14 +239,14 @@ func TestDTOGoldens(t *testing.T) {
 		name string
 		dto  any
 	}{
-		{"note_full", newNoteDTO(noteFull, "DRIFTED", noteAtts)},
-		{"note_empty", newNoteDTO(noteMin, "", []attachmentDTO{})},
-		{"doc_full", newDocDTO(docFull, "DRIFTED", noteAtts)},
-		{"doc_empty", newDocDTO(docMin, "", []attachmentDTO{})},
+		{"note_full", newNoteDTO(noteFull, "DRIFTED", noteSupersedes, noteLiveHead, noteAtts)},
+		{"note_empty", newNoteDTO(noteMin, "", nil, nil, []attachmentDTO{})},
+		{"doc_full", newDocDTO(docFull, "DRIFTED", docSupersedes, docLiveHead, noteAtts)},
+		{"doc_empty", newDocDTO(docMin, "", nil, nil, []attachmentDTO{})},
 		{"log_full", newLogDTO(logFull, logAtts)},
 		{"log_empty", newLogDTO(logMin, []attachmentDTO{})},
-		{"task_full", newTaskDTO(taskFull, taskBlocks)},
-		{"task_empty", newTaskDTO(taskMin, nil)},
+		{"task_full", newTaskDTO(taskFull, taskBlocks, taskChildren, taskRuns)},
+		{"task_empty", newTaskDTO(taskMin, nil, nil, nil)},
 		{"sprint_full", newSprintDTO(sprintFull, sprintTasks)},
 		{"sprint_empty", newSprintDTO(sprintMin, nil)},
 		{"project_full", newProjectDTO(projectFull, projectSprints, projectTasks)},
@@ -248,8 +261,8 @@ func TestDTOGoldens(t *testing.T) {
 		{"doc_summary_empty", newDocSummaryDTO(docMin, "")},
 		{"log_summary_full", newLogSummaryDTO(logFull)},
 		{"log_summary_empty", newLogSummaryDTO(logMin)},
-		{"task_summary_full", newTaskSummaryDTO(taskFull)},
-		{"task_summary_empty", newTaskSummaryDTO(taskMin)},
+		{"task_summary_full", newTaskSummaryDTO(taskFull, taskBlocks)},
+		{"task_summary_empty", newTaskSummaryDTO(taskMin, nil)},
 		{"sprint_summary_full", newSprintSummaryDTO(sprintFull)},
 		{"sprint_summary_empty", newSprintSummaryDTO(sprintMin)},
 		{"project_summary_full", newProjectSummaryDTO(projectFull)},

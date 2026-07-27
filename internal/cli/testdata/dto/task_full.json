@@ -20,6 +20,10 @@
     "task-blocks-002"
   ],
   "parent": "task-parent-001",
+  "children": [
+    "task-child-0001",
+    "task-child-0002"
+  ],
   "comments": [
     {
       "author": "alice \u003calice@example.com\u003e",
@@ -35,6 +39,21 @@
   "commits": [
     "c0ffee0000000000000000000000000000000000",
     "d00d000000000000000000000000000000000000"
+  ],
+  "runs": [
+    {
+      "runbook": "runbook-of-run1",
+      "run": "run00001",
+      "status": "succeeded",
+      "started_at": "2023-11-15T02:13:20Z",
+      "finished_at": "2023-11-15T03:13:20Z"
+    },
+    {
+      "runbook": "runbook-of-run2",
+      "run": "run00002",
+      "status": "running",
+      "started_at": "2023-11-15T04:13:20Z"
+    }
   ],
   "lease": {
     "holder": "alice \u003calice@example.com\u003e",

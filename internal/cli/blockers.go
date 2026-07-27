@@ -53,16 +53,3 @@ func resolveBlocker(ctx context.Context, s *store.Store, prefix string) (model.E
 		return "", nil, &store.AmbiguousError{Kind: model.KindTask, Prefix: prefix, Candidates: candidates}
 	}
 }
-
-// blocksFor derives the reverse dependency index: the ids of live tasks
-// whose blocked_by contains id, sorted.
-func blocksFor(live map[model.EntityID]model.Task, id model.EntityID) []model.EntityID {
-	var blocks []model.EntityID
-	for _, t := range live {
-		if slices.Contains(t.BlockedBy, id) {
-			blocks = append(blocks, t.ID)
-		}
-	}
-	slices.Sort(blocks)
-	return blocks
-}

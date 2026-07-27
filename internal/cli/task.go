@@ -302,7 +302,7 @@ func newTaskListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTaskList(cmd, tasks, jsonOut)
+			return printTaskList(cmd, c, tasks, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -340,7 +340,7 @@ func newTaskReadyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTaskList(cmd, tasks, jsonOut)
+			return printTaskList(cmd, c, tasks, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -876,7 +876,7 @@ func newTaskBacklogCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTaskList(cmd, tasks, jsonOut)
+			return printTaskList(cmd, c, tasks, jsonOut)
 		},
 	}
 	bindJSON(cmd.Flags(), &jsonOut)
@@ -909,7 +909,7 @@ func newTaskStaleCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printStaleTaskList(cmd, tasks, now, jsonOut)
+			return printStaleTaskList(cmd, c, tasks, now, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -942,7 +942,7 @@ func newTaskArchivedCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printTaskList(cmd, tasks, jsonOut)
+			return printTaskList(cmd, c, tasks, jsonOut)
 		},
 	}
 	flags := cmd.Flags()
@@ -1171,12 +1171,16 @@ func newCriterionListCmd() *cobra.Command {
 	return cmd
 }
 
-func printTaskList(cmd *cobra.Command, tasks []model.Task, jsonOut bool) error {
+func printTaskList(cmd *cobra.Command, c *notes.Client, tasks []model.Task, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
+		blocks, err := c.TasksBlockingIndex(cmd.Context())
+		if err != nil {
+			return err
+		}
 		dtos := make([]taskSummaryDTO, len(tasks))
 		for i, t := range tasks {
-			dtos[i] = newTaskSummaryDTO(t)
+			dtos[i] = newTaskSummaryDTO(t, blocks[t.ID])
 		}
 		return printJSON(out, dtos)
 	}
@@ -1191,13 +1195,17 @@ func printTaskList(cmd *cobra.Command, tasks []model.Task, jsonOut bool) error {
 // printStaleTaskList writes stale tasks as their JSON summary DTOs — each
 // carrying the idle duration in seconds — or one lean line per task with a
 // trailing idle marker.
-func printStaleTaskList(cmd *cobra.Command, tasks []model.Task, now time.Time, jsonOut bool) error {
+func printStaleTaskList(cmd *cobra.Command, c *notes.Client, tasks []model.Task, now time.Time, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
+		blocks, err := c.TasksBlockingIndex(cmd.Context())
+		if err != nil {
+			return err
+		}
 		dtos := make([]staleTaskDTO, len(tasks))
 		for i, t := range tasks {
 			idle := now.Sub(time.Unix(taskHeartbeat(t), 0))
-			dtos[i] = staleTaskDTO{taskSummaryDTO: newTaskSummaryDTO(t), IdleSeconds: int64(idle.Seconds())}
+			dtos[i] = staleTaskDTO{taskSummaryDTO: newTaskSummaryDTO(t, blocks[t.ID]), IdleSeconds: int64(idle.Seconds())}
 		}
 		return printJSON(out, dtos)
 	}

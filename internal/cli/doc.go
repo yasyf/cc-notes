@@ -1,13 +1,8 @@
 package cli
 
 import (
-	"context"
-	"slices"
-
 	"github.com/spf13/cobra"
 
-	"github.com/yasyf/cc-notes/internal/store"
-	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
 
@@ -61,20 +56,3 @@ func newDocSupersedeCmd() *cobra.Command { return docDocument.supersedeVerb() }
 func newDocExpireCmd() *cobra.Command { return docDocument.expireVerb() }
 
 func newDocReviewCmd() *cobra.Command { return docDocument.reviewVerb() }
-
-// reverseSupersedesDocs returns the ids of docs that supersede id, sorted: the
-// reverse of the supersede edge, computed at read.
-func reverseSupersedesDocs(ctx context.Context, s *store.Store, id model.EntityID) ([]model.EntityID, error) {
-	all, err := s.ListDocs(ctx, false, true)
-	if err != nil {
-		return nil, err
-	}
-	var out []model.EntityID
-	for _, d := range all {
-		if slices.Contains(d.SupersededBy, id) {
-			out = append(out, d.ID)
-		}
-	}
-	slices.Sort(out)
-	return out, nil
-}

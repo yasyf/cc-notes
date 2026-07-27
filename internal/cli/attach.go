@@ -12,6 +12,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // attachOps ingests every --attach file into the local LFS store — fully
@@ -63,21 +64,16 @@ func checkAttachCollisions(live []model.Attachment, paths []string) error {
 	return nil
 }
 
-// entityAttachments renders an entity's attachments with their local
-// presence, always non-nil so JSON serializes an empty list rather than
-// null. The LFS store is opened only when there is something to probe, so
-// attachment-less output paths cost nothing.
-func entityAttachments(ctx context.Context, s *store.Store, atts []model.Attachment) ([]attachmentDTO, error) {
-	out := make([]attachmentDTO, 0, len(atts))
-	if len(atts) == 0 {
-		return out, nil
+// entityAttachments projects notes.Client.AttachmentInfos onto the DTO,
+// always non-nil so JSON serializes an empty list rather than null.
+func entityAttachments(ctx context.Context, c *notes.Client, atts []model.Attachment) ([]attachmentDTO, error) {
+	infos, err := c.AttachmentInfos(ctx, atts)
+	if err != nil {
+		return nil, err
 	}
-	content := s.LFS()
-	for _, a := range atts {
-		if err := ctx.Err(); err != nil {
-			return out, err
-		}
-		out = append(out, attachmentDTO{Name: a.Name, OID: a.OID, Size: a.Size, Present: content.Has(a.OID)})
+	out := make([]attachmentDTO, 0, len(infos))
+	for _, i := range infos {
+		out = append(out, attachmentDTO{Name: i.Name, OID: i.OID, Size: i.Size, Present: i.Present})
 	}
 	return out, nil
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -49,7 +50,7 @@ func TestNewDocDTO(t *testing.T) {
 		Witness:      []model.AnchorWitness{{Anchor: anchor, OID: "f00ba12"}},
 		SupersededBy: []model.EntityID{"newer000", "newer111"},
 	}
-	dto := newDocDTO(d, "STALE", nil)
+	dto := newDocDTO(d, "STALE", []model.EntityID{"older00"}, []model.EntityID{"newest0"}, nil)
 
 	if dto.When != "resuming the auth cutover" {
 		t.Fatalf("When = %q, want the verbatim trigger", dto.When)
@@ -57,8 +58,14 @@ func TestNewDocDTO(t *testing.T) {
 	if dto.Drift == nil || *dto.Drift != "STALE" {
 		t.Fatalf("Drift = %v, want STALE", dto.Drift)
 	}
-	if dto.SupersededBy == nil || *dto.SupersededBy != "newer000" {
-		t.Fatalf("SupersededBy = %v, want first id newer000", dto.SupersededBy)
+	if !slices.Equal(dto.SupersededBy, []string{"newer000", "newer111"}) {
+		t.Fatalf("SupersededBy = %v, want every id, not just the first", dto.SupersededBy)
+	}
+	if !slices.Equal(dto.Supersedes, []string{"older00"}) {
+		t.Fatalf("Supersedes = %v, want [older00]", dto.Supersedes)
+	}
+	if !slices.Equal(dto.LiveHead, []string{"newest0"}) {
+		t.Fatalf("LiveHead = %v, want [newest0]", dto.LiveHead)
 	}
 	if len(dto.Anchors) != 1 || dto.Anchors[0].Witness == nil || *dto.Anchors[0].Witness != "f00ba12" {
 		t.Fatalf("anchor witness = %+v, want oid f00ba12", dto.Anchors)
@@ -67,7 +74,7 @@ func TestNewDocDTO(t *testing.T) {
 		t.Fatalf("Body = %q, want the long body", dto.Body)
 	}
 
-	empty := newDocDTO(model.Doc{ID: "abc1234ff"}, "", nil)
+	empty := newDocDTO(model.Doc{ID: "abc1234ff"}, "", nil, nil, nil)
 	if empty.Drift != nil {
 		t.Fatalf("Drift = %v on no-drift doc, want nil", empty.Drift)
 	}

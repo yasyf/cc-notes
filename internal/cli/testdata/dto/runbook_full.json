@@ -27,6 +27,7 @@
       "steps": [
         {
           "step": "step0001",
+          "command": "make build",
           "status": "done",
           "note": "ok"
         },

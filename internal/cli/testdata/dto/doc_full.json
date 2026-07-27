@@ -22,7 +22,16 @@
   "updated_at": "2023-11-14T23:13:20Z",
   "verified_at": "2023-11-15T00:13:20Z",
   "verified_by": "ada \u003cada@example.com\u003e",
-  "superseded_by": "doc-newer-0001",
+  "verified_commit": "c0ffee0000000000000000000000000000000000",
+  "superseded_by": [
+    "doc-newer-0001"
+  ],
+  "supersedes": [
+    "doc-older-0001"
+  ],
+  "live_head": [
+    "doc-head-000001"
+  ],
   "drift": "DRIFTED",
   "deleted": true,
   "stale_at": "2023-11-15T01:13:20Z",

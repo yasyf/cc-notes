@@ -7,5 +7,6 @@
   ],
   "author": "ada \u003cada@example.com\u003e",
   "updated_at": "2023-11-14T23:13:20Z",
-  "drift": "DRIFTED"
+  "drift": "DRIFTED",
+  "stale_reason": "rewritten"
 }

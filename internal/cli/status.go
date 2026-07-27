@@ -28,7 +28,7 @@ func newStatusCmd() *cobra.Command {
 				return err
 			}
 			if jsonOut {
-				return printStatusJSON(cmd, report)
+				return printStatusJSON(cmd, c, report)
 			}
 			return printStatusText(cmd, report)
 		},
@@ -67,11 +67,15 @@ func printStatusText(cmd *cobra.Command, report notes.StatusReport) error {
 	return err
 }
 
-func printStatusJSON(cmd *cobra.Command, report notes.StatusReport) error {
+func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusReport) error {
+	blocks, err := c.TasksBlockingIndex(cmd.Context())
+	if err != nil {
+		return err
+	}
 	dto := statusDTO{
 		Branch:     string(report.Branch),
-		Backlog:    taskSummaryDTOs(report.Backlog),
-		YourBranch: taskSummaryDTOs(report.YourBranch),
+		Backlog:    taskSummaryDTOs(report.Backlog, blocks),
+		YourBranch: taskSummaryDTOs(report.YourBranch, blocks),
 		Notes:      statusNotesDTO{Total: report.Notes.Total, NeedsReview: report.Notes.NeedsReview},
 		Docs:       statusNotesDTO{Total: report.Docs.Total, NeedsReview: report.Docs.NeedsReview},
 		Logs:       statusLogsDTO{Total: report.Logs},
@@ -83,19 +87,19 @@ func printStatusJSON(cmd *cobra.Command, report notes.StatusReport) error {
 	for _, grp := range report.InProgress {
 		staleDTOs := make([]statusStaleDTO, len(grp.Tasks))
 		for i, st := range grp.Tasks {
-			staleDTOs[i] = statusStaleDTO{taskSummaryDTO: newTaskSummaryDTO(st.Task), Stale: st.Stale}
+			staleDTOs[i] = statusStaleDTO{taskSummaryDTO: newTaskSummaryDTO(st.Task, blocks[st.Task.ID]), Stale: st.Stale}
 		}
 		dto.InProgress = append(dto.InProgress, statusAssigneeDTO{Assignee: string(grp.Assignee), Tasks: staleDTOs})
 	}
 	return printJSON(cmd.OutOrStdout(), dto)
 }
 
-// taskSummaryDTOs maps tasks to their JSON summary DTOs, nil when there are
-// none.
-func taskSummaryDTOs(tasks []model.Task) []taskSummaryDTO {
+// taskSummaryDTOs maps tasks to their JSON summary DTOs against one
+// TasksBlockingIndex pass, nil when there are none.
+func taskSummaryDTOs(tasks []model.Task, blocks map[model.EntityID][]model.EntityID) []taskSummaryDTO {
 	dtos := make([]taskSummaryDTO, 0, len(tasks))
 	for _, t := range tasks {
-		dtos = append(dtos, newTaskSummaryDTO(t))
+		dtos = append(dtos, newTaskSummaryDTO(t, blocks[t.ID]))
 	}
 	return dtos
 }

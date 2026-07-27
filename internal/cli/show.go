@@ -8,6 +8,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // showHistoryCap bounds the append-only history a show embeds: the most recent
@@ -39,21 +40,21 @@ func newShowCmd() *cobra.Command {
 			id := string(entityID)
 			switch kind {
 			case model.KindNote:
-				return showNote(cmd, s, id, jsonOut)
+				return showNote(cmd, s, c, id, jsonOut)
 			case model.KindDoc:
-				return showDoc(cmd, s, id, jsonOut)
+				return showDoc(cmd, s, c, id, jsonOut)
 			case model.KindLog:
-				return showLog(cmd, s, id, jsonOut)
+				return showLog(cmd, s, c, id, jsonOut)
 			case model.KindTask:
-				return showTask(cmd, s, id, jsonOut)
+				return showTask(cmd, s, c, id, jsonOut)
 			case model.KindSprint:
-				return showSprint(cmd, s, id, jsonOut)
+				return showSprint(cmd, s, c, id, jsonOut)
 			case model.KindProject:
-				return showProject(cmd, s, id, jsonOut)
+				return showProject(cmd, s, c, id, jsonOut)
 			case model.KindRunbook:
-				return showRunbook(cmd, s, id, jsonOut)
+				return showRunbook(cmd, s, c, id, jsonOut)
 			case model.KindInvestigation:
-				return showInvestigation(cmd, s, id, jsonOut)
+				return showInvestigation(cmd, s, c, id, jsonOut)
 			default:
 				panic(fmt.Sprintf("ResolveEntity returned unknown kind %q", kind))
 			}
@@ -63,7 +64,7 @@ func newShowCmd() *cobra.Command {
 	return cmd
 }
 
-func showNote(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
+func showNote(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
 	_, note, err := noteSpec.load(ctx, s, prefix)
 	if err != nil {
@@ -81,22 +82,26 @@ func showNote(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) e
 	if err != nil {
 		return err
 	}
-	supersedes, err := reverseSupersedes(ctx, s, note.ID)
+	supersedes, err := c.NoteSuperseders(ctx, note.ID)
 	if err != nil {
 		return err
 	}
-	atts, err := entityAttachments(ctx, s, note.Attachments)
+	liveHead, err := c.NoteSupersedeHeads(ctx, note.ID)
+	if err != nil {
+		return err
+	}
+	atts, err := entityAttachments(ctx, c, note.Attachments)
 	if err != nil {
 		return err
 	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newNoteDTO(note, verdict, atts))
+		return printJSON(cmd.OutOrStdout(), newNoteDTO(note, verdict, supersedes, liveHead, atts))
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), renderNoteShow(note, verdict, supersedes, atts))
 	return err
 }
 
-func showDoc(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
+func showDoc(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
 	_, doc, err := docSpec.load(ctx, s, prefix)
 	if err != nil {
@@ -114,28 +119,32 @@ func showDoc(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) er
 	if err != nil {
 		return err
 	}
-	supersedes, err := reverseSupersedesDocs(ctx, s, doc.ID)
+	supersedes, err := c.DocSuperseders(ctx, doc.ID)
 	if err != nil {
 		return err
 	}
-	atts, err := entityAttachments(ctx, s, doc.Attachments)
+	liveHead, err := c.DocSupersedeHeads(ctx, doc.ID)
+	if err != nil {
+		return err
+	}
+	atts, err := entityAttachments(ctx, c, doc.Attachments)
 	if err != nil {
 		return err
 	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newDocDTO(doc, verdict, atts))
+		return printJSON(cmd.OutOrStdout(), newDocDTO(doc, verdict, supersedes, liveHead, atts))
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), renderDocShow(doc, verdict, supersedes, atts))
 	return err
 }
 
-func showLog(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
+func showLog(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
 	_, log, err := logSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
-	atts, err := entityAttachments(ctx, s, log.Attachments)
+	atts, err := entityAttachments(ctx, c, log.Attachments)
 	if err != nil {
 		return err
 	}
@@ -146,13 +155,13 @@ func showLog(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) er
 	return err
 }
 
-func showInvestigation(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
+func showInvestigation(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
 	ref, inv, err := investigationSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
-	atts, err := entityAttachments(ctx, s, inv.Attachments)
+	atts, err := entityAttachments(ctx, c, inv.Attachments)
 	if err != nil {
 		return err
 	}
@@ -167,35 +176,41 @@ func showInvestigation(cmd *cobra.Command, s *store.Store, prefix string, jsonOu
 	return err
 }
 
-func showTask(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
+func showTask(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
 	_, task, err := taskSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
-	live, err := allTasks(ctx, s)
+	blocks, err := c.TasksBlocking(ctx, task.ID)
 	if err != nil {
 		return err
 	}
-	blocks := blocksFor(live, task.ID)
+	children, err := c.TaskChildren(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	runs, err := c.TaskRuns(ctx, task.ID)
+	if err != nil {
+		return err
+	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newTaskShowDTO(task, blocks))
+		return printJSON(cmd.OutOrStdout(), newTaskShowDTO(task, blocks, children, runs))
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), renderTaskShow(task, blocks))
 	return err
 }
 
-func showSprint(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
+func showSprint(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
 	_, sprint, err := sprintSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
-	tasks, err := s.ListTasks(ctx)
+	members, err := c.SprintTasks(ctx, sprint.ID)
 	if err != nil {
 		return err
 	}
-	members := tasksInSprint(tasks, sprint.ID)
 	if jsonOut {
 		return printJSON(cmd.OutOrStdout(), newSprintDTO(sprint, members))
 	}
@@ -203,7 +218,7 @@ func showSprint(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool)
 	return err
 }
 
-func showRunbook(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
+func showRunbook(cmd *cobra.Command, s *store.Store, _ *notes.Client, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
 	_, rb, err := runbookSpec.load(ctx, s, prefix)
 	if err != nil {
@@ -216,22 +231,20 @@ func showRunbook(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool
 	return err
 }
 
-func showProject(cmd *cobra.Command, s *store.Store, prefix string, jsonOut bool) error {
+func showProject(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string, jsonOut bool) error {
 	ctx := cmd.Context()
 	_, project, err := projectSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
-	sprints, err := s.ListSprints(ctx)
+	projectSprints, err := c.ProjectSprints(ctx, project.ID)
 	if err != nil {
 		return err
 	}
-	tasks, err := s.ListTasks(ctx)
+	projectTasks, err := c.ProjectTasks(ctx, project.ID)
 	if err != nil {
 		return err
 	}
-	projectSprints := sprintsInProject(sprints, project.ID)
-	projectTasks := tasksInProject(tasks, sprints, project.ID)
 	if jsonOut {
 		return printJSON(cmd.OutOrStdout(), newProjectDTO(project, projectSprints, projectTasks))
 	}
@@ -277,8 +290,8 @@ type taskShowDTO struct {
 	CommentsOmitted int `json:"comments_omitted,omitempty"`
 }
 
-func newTaskShowDTO(t model.Task, blocks []model.EntityID) taskShowDTO {
-	dto := newTaskDTO(t, blocks)
+func newTaskShowDTO(t model.Task, blocks, children []model.EntityID, runs []notes.TaskRun) taskShowDTO {
+	dto := newTaskDTO(t, blocks, children, runs)
 	comments, omitted := tailWithCount(dto.Comments, showHistoryCap)
 	dto.Comments = comments
 	return taskShowDTO{taskDTO: dto, CommentsOmitted: omitted}

@@ -3,6 +3,7 @@
   "title": "flaky sync",
   "status": "fixed",
   "updated_at": "2023-11-14T23:13:20Z",
-  "finding_count": 2,
+  "finding_count": 3,
+  "open_finding_count": 1,
   "entry_count": 2
 }

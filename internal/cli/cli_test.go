@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -39,18 +40,21 @@ type noteJSON struct {
 		Value   string  `json:"value"`
 		Witness *string `json:"witness,omitempty"`
 	} `json:"anchors,omitempty"`
-	Author       string           `json:"author,omitempty"`
-	CreatedAt    string           `json:"created_at"`
-	UpdatedAt    string           `json:"updated_at"`
-	VerifiedAt   *string          `json:"verified_at,omitempty"`
-	VerifiedBy   *string          `json:"verified_by,omitempty"`
-	SupersededBy *string          `json:"superseded_by,omitempty"`
-	Drift        *string          `json:"drift,omitempty"`
-	Deleted      bool             `json:"deleted,omitempty"`
-	StaleAt      *string          `json:"stale_at,omitempty"`
-	StaleBy      *string          `json:"stale_by,omitempty"`
-	StaleReason  *string          `json:"stale_reason,omitempty"`
-	Attachments  []attachmentJSON `json:"attachments,omitempty"`
+	Author         string           `json:"author,omitempty"`
+	CreatedAt      string           `json:"created_at"`
+	UpdatedAt      string           `json:"updated_at"`
+	VerifiedAt     *string          `json:"verified_at,omitempty"`
+	VerifiedBy     *string          `json:"verified_by,omitempty"`
+	VerifiedCommit *string          `json:"verified_commit,omitempty"`
+	SupersededBy   []string         `json:"superseded_by,omitempty"`
+	Supersedes     []string         `json:"supersedes,omitempty"`
+	LiveHead       []string         `json:"live_head,omitempty"`
+	Drift          *string          `json:"drift,omitempty"`
+	Deleted        bool             `json:"deleted,omitempty"`
+	StaleAt        *string          `json:"stale_at,omitempty"`
+	StaleBy        *string          `json:"stale_by,omitempty"`
+	StaleReason    *string          `json:"stale_reason,omitempty"`
+	Attachments    []attachmentJSON `json:"attachments,omitempty"`
 }
 
 // attachmentJSON mirrors the attachment output DTO for round-trip assertions.
@@ -377,7 +381,10 @@ func TestNoteJSONRoundTrip(t *testing.T) {
 		t.Errorf("drift = %v, want null on a fresh note", *shown.Drift)
 	}
 	if shown.SupersededBy != nil {
-		t.Errorf("superseded_by = %v, want null", *shown.SupersededBy)
+		t.Errorf("superseded_by = %v, want absent", shown.SupersededBy)
+	}
+	if shown.VerifiedCommit == nil || *shown.VerifiedCommit == "" {
+		t.Errorf("verified_commit = %v, want the HEAD a born-verified note was checked against", shown.VerifiedCommit)
 	}
 	if shown.Deleted {
 		t.Error("deleted = true, want false")
@@ -444,9 +451,15 @@ func TestTaskJSONRoundTrip(t *testing.T) {
 	if !strings.HasPrefix(out, `{"id":"`) || !strings.Contains(out, `,"branch":"main",`) {
 		t.Fatalf("task JSON field order broken: %q", out)
 	}
-	for _, frag := range []string{`"description"`, `"comments"`, `"criteria"`, `"blocked_by"`, `"lease"`} {
+	for _, frag := range []string{`"description"`, `"comments"`, `"criteria"`, `"lease"`} {
 		if strings.Contains(out, frag) {
 			t.Errorf("task add ack %q carries %q; a write acknowledgement is a summary", out, frag)
+		}
+	}
+	// The summary drops the bodies, not the graph edges a reader triages on.
+	for _, frag := range []string{`"blocked_by":["` + blocker.ID + `"]`, `"parent":"` + blocker.ID + `"`} {
+		if !strings.Contains(out, frag) {
+			t.Errorf("task add ack %q lacks %s; a summary still carries its edges", out, frag)
 		}
 	}
 	added := showJSON[taskJSON](t, dir, out)
@@ -1012,8 +1025,15 @@ func TestNoteSupersede(t *testing.T) {
 	}
 
 	shownOld := mustJSON[noteJSON](t, mustRun(t, dir, "note", "show", old.ID, "--json"))
-	if shownOld.SupersededBy == nil || *shownOld.SupersededBy != neu.ID {
-		t.Fatalf("OLD superseded_by = %v, want %s", shownOld.SupersededBy, neu.ID)
+	if !slices.Equal(shownOld.SupersededBy, []string{neu.ID}) {
+		t.Fatalf("OLD superseded_by = %v, want [%s]", shownOld.SupersededBy, neu.ID)
+	}
+	if !slices.Equal(shownOld.LiveHead, []string{neu.ID}) {
+		t.Fatalf("OLD live_head = %v, want [%s]", shownOld.LiveHead, neu.ID)
+	}
+	shownNew := mustJSON[noteJSON](t, mustRun(t, dir, "note", "show", neu.ID, "--json"))
+	if !slices.Equal(shownNew.Supersedes, []string{old.ID}) {
+		t.Fatalf("NEW supersedes = %v, want [%s]", shownNew.Supersedes, old.ID)
 	}
 	if out := mustRun(t, dir, "note", "show", neu.ID); !strings.Contains(out, "supersedes: "+old.ID[:7]) {
 		t.Fatalf("show NEW = %q, want a supersedes line for %s", out, old.ID[:7])

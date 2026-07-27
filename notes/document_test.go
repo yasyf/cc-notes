@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -390,4 +391,125 @@ func hasAnchorValue(anchors []model.Anchor, kind model.AnchorKind, value string)
 		}
 	}
 	return false
+}
+
+// TestNoteSupersedeHeads walks one fixture graph holding every chain shape the
+// supersede edge can take: a slice-valued edge means branches can diverge and
+// reconverge, and nothing forbids a cycle or a tombstoned target.
+func TestNoteSupersedeHeads(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+	mk := func(title string) model.EntityID {
+		t.Helper()
+		n, _, err := c.CreateNote(ctx, notes.NoteSpec{Title: title, Body: "b"})
+		if err != nil {
+			t.Fatalf("CreateNote(%q): %v", title, err)
+		}
+		return n.ID
+	}
+	link := func(id, by model.EntityID) {
+		t.Helper()
+		if _, err := c.SupersedeNote(ctx, id, by); err != nil {
+			t.Fatalf("SupersedeNote(%s, %s): %v", id, by, err)
+		}
+	}
+
+	l1, l2, l3 := mk("l1"), mk("l2"), mk("l3")
+	v1, v2a, v2b, v3 := mk("v1"), mk("v2a"), mk("v2b"), mk("v3")
+	d1, d2, d3 := mk("d1"), mk("d2"), mk("d3")
+	y1, y2 := mk("y1"), mk("y2")
+	self := mk("self")
+	g1, g2 := mk("g1"), mk("g2")
+	live := mk("live")
+
+	link(l1, l2)
+	link(l2, l3)
+	link(v1, v2a)
+	link(v1, v2b)
+	link(v2a, v3)
+	link(v2b, v3)
+	link(d1, d2)
+	link(d1, d3)
+	link(y1, y2)
+	link(y2, y1)
+	link(self, self)
+	link(g1, g2)
+	if _, err := c.RemoveNote(ctx, g2); err != nil {
+		t.Fatalf("RemoveNote(%s): %v", g2, err)
+	}
+
+	diverged := []model.EntityID{d2, d3}
+	slices.Sort(diverged)
+	for _, tc := range []struct {
+		name string
+		from model.EntityID
+		want []model.EntityID
+	}{
+		{"linear chain resolves to the tail", l1, []model.EntityID{l3}},
+		{"mid-chain resolves to the same tail", l2, []model.EntityID{l3}},
+		{"converging branches yield one head", v1, []model.EntityID{v3}},
+		{"diverging branches yield both heads", d1, diverged},
+		{"two-note cycle terminates headless", y1, nil},
+		{"self-supersede terminates headless", self, nil},
+		{"tombstoned target dangles headless", g1, nil},
+		{"unsuperseded note has no head", live, nil},
+		{"unknown id has no head", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := c.NoteSupersedeHeads(ctx, tc.from)
+			if err != nil {
+				t.Fatalf("NoteSupersedeHeads: %v", err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("NoteSupersedeHeads(%s) = %v, want %v", tc.from, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDocSupersedeHeads pins the doc lane onto the same resolver: the chain is
+// only walkable because the listing includes superseded docs.
+func TestDocSupersedeHeads(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+	mk := func(title string) model.EntityID {
+		t.Helper()
+		d, _, err := c.CreateDoc(ctx, notes.DocSpec{Title: title, Body: "b", When: "always"})
+		if err != nil {
+			t.Fatalf("CreateDoc(%q): %v", title, err)
+		}
+		return d.ID
+	}
+	link := func(id, by model.EntityID) {
+		t.Helper()
+		if _, err := c.SupersedeDoc(ctx, id, by); err != nil {
+			t.Fatalf("SupersedeDoc(%s, %s): %v", id, by, err)
+		}
+	}
+
+	l1, l2, l3 := mk("l1"), mk("l2"), mk("l3")
+	y1, y2 := mk("y1"), mk("y2")
+	link(l1, l2)
+	link(l2, l3)
+	link(y1, y2)
+	link(y2, y1)
+
+	for _, tc := range []struct {
+		name string
+		from model.EntityID
+		want []model.EntityID
+	}{
+		{"linear chain resolves to the tail", l1, []model.EntityID{l3}},
+		{"two-doc cycle terminates headless", y1, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := c.DocSupersedeHeads(ctx, tc.from)
+			if err != nil {
+				t.Fatalf("DocSupersedeHeads: %v", err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("DocSupersedeHeads(%s) = %v, want %v", tc.from, got, tc.want)
+			}
+		})
+	}
 }

@@ -147,13 +147,18 @@ func printLog(cmd *cobra.Command, _ *notes.Client, l model.Log, jsonOut bool, ac
 	return printJSON(cmd.OutOrStdout(), logAckDTO{logSummaryDTO: newLogSummaryDTO(l), writeAck: ackOf(ack)})
 }
 
-// printTask writes t as its JSON summary DTO or its lean line.
-func printTask(cmd *cobra.Command, _ *notes.Client, t model.Task, jsonOut bool, ack ...writeAck) error {
+// printTask writes t as its JSON summary DTO — carrying the tasks it blocks,
+// resolved against the live listing — or its lean line.
+func printTask(cmd *cobra.Command, c *notes.Client, t model.Task, jsonOut bool, ack ...writeAck) error {
 	if !jsonOut {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanTaskLine(t))
 		return err
 	}
-	return printJSON(cmd.OutOrStdout(), taskAckDTO{taskSummaryDTO: newTaskSummaryDTO(t), writeAck: ackOf(ack)})
+	blocks, err := c.TasksBlocking(cmd.Context(), t.ID)
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), taskAckDTO{taskSummaryDTO: newTaskSummaryDTO(t, blocks), writeAck: ackOf(ack)})
 }
 
 // printSprint writes sprint as its JSON summary DTO or its lean line.

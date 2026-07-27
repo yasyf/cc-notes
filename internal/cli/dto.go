@@ -7,6 +7,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // runbookStepPending is the display status of a run step with no recorded
@@ -33,73 +34,83 @@ type attachmentDTO struct {
 
 // noteDTO fixes the JSON field order and formats for note output: full hex
 // id, RFC3339 UTC timestamps, sorted set slices, per-anchor witnesses, the
-// verify metadata, the single replacement id, and the computed drift verdict.
-// Only the id, title, and timestamps survive their zero value.
+// verify metadata, every replacement id, the reverse supersede index, the
+// transitive supersede heads, and the computed drift verdict. Only the id,
+// title, and timestamps survive their zero value.
 type noteDTO struct {
-	ID           string          `json:"id"`
-	Title        string          `json:"title"`
-	Body         string          `json:"body,omitempty"`
-	Tags         []string        `json:"tags,omitempty"`
-	Anchors      []anchorDTO     `json:"anchors,omitempty"`
-	Author       string          `json:"author,omitempty"`
-	CreatedAt    string          `json:"created_at"`
-	UpdatedAt    string          `json:"updated_at"`
-	VerifiedAt   *string         `json:"verified_at,omitempty"`
-	VerifiedBy   *string         `json:"verified_by,omitempty"`
-	SupersededBy *string         `json:"superseded_by,omitempty"`
-	Drift        *string         `json:"drift,omitempty"`
-	Deleted      bool            `json:"deleted,omitempty"`
-	StaleAt      *string         `json:"stale_at,omitempty"`
-	StaleBy      *string         `json:"stale_by,omitempty"`
-	StaleReason  *string         `json:"stale_reason,omitempty"`
-	Attachments  []attachmentDTO `json:"attachments,omitempty"`
+	ID             string          `json:"id"`
+	Title          string          `json:"title"`
+	Body           string          `json:"body,omitempty"`
+	Tags           []string        `json:"tags,omitempty"`
+	Anchors        []anchorDTO     `json:"anchors,omitempty"`
+	Author         string          `json:"author,omitempty"`
+	CreatedAt      string          `json:"created_at"`
+	UpdatedAt      string          `json:"updated_at"`
+	VerifiedAt     *string         `json:"verified_at,omitempty"`
+	VerifiedBy     *string         `json:"verified_by,omitempty"`
+	VerifiedCommit *string         `json:"verified_commit,omitempty"`
+	SupersededBy   []string        `json:"superseded_by,omitempty"`
+	Supersedes     []string        `json:"supersedes,omitempty"`
+	LiveHead       []string        `json:"live_head,omitempty"`
+	Drift          *string         `json:"drift,omitempty"`
+	Deleted        bool            `json:"deleted,omitempty"`
+	StaleAt        *string         `json:"stale_at,omitempty"`
+	StaleBy        *string         `json:"stale_by,omitempty"`
+	StaleReason    *string         `json:"stale_reason,omitempty"`
+	Attachments    []attachmentDTO `json:"attachments,omitempty"`
 }
 
 // noteSummaryDTO is one note in a listing or write acknowledgement: the
-// identity, the tags, and the drift verdict, without the body.
+// identity, the tags, the drift verdict, and the expiry reason, without the
+// body.
 type noteSummaryDTO struct {
-	ID        string   `json:"id"`
-	Title     string   `json:"title"`
-	Tags      []string `json:"tags,omitempty"`
-	Author    string   `json:"author,omitempty"`
-	UpdatedAt string   `json:"updated_at"`
-	Drift     string   `json:"drift,omitempty"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Tags        []string `json:"tags,omitempty"`
+	Author      string   `json:"author,omitempty"`
+	UpdatedAt   string   `json:"updated_at"`
+	Drift       string   `json:"drift,omitempty"`
+	StaleReason string   `json:"stale_reason,omitempty"`
 }
 
 // docDTO fixes the JSON field order and formats for doc output: the noteDTO
 // shape plus the free-text When trigger, surfaced verbatim right after the
 // body.
 type docDTO struct {
-	ID           string          `json:"id"`
-	Title        string          `json:"title"`
-	Body         string          `json:"body,omitempty"`
-	When         string          `json:"when,omitempty"`
-	Tags         []string        `json:"tags,omitempty"`
-	Anchors      []anchorDTO     `json:"anchors,omitempty"`
-	Author       string          `json:"author,omitempty"`
-	CreatedAt    string          `json:"created_at"`
-	UpdatedAt    string          `json:"updated_at"`
-	VerifiedAt   *string         `json:"verified_at,omitempty"`
-	VerifiedBy   *string         `json:"verified_by,omitempty"`
-	SupersededBy *string         `json:"superseded_by,omitempty"`
-	Drift        *string         `json:"drift,omitempty"`
-	Deleted      bool            `json:"deleted,omitempty"`
-	StaleAt      *string         `json:"stale_at,omitempty"`
-	StaleBy      *string         `json:"stale_by,omitempty"`
-	StaleReason  *string         `json:"stale_reason,omitempty"`
-	Attachments  []attachmentDTO `json:"attachments,omitempty"`
+	ID             string          `json:"id"`
+	Title          string          `json:"title"`
+	Body           string          `json:"body,omitempty"`
+	When           string          `json:"when,omitempty"`
+	Tags           []string        `json:"tags,omitempty"`
+	Anchors        []anchorDTO     `json:"anchors,omitempty"`
+	Author         string          `json:"author,omitempty"`
+	CreatedAt      string          `json:"created_at"`
+	UpdatedAt      string          `json:"updated_at"`
+	VerifiedAt     *string         `json:"verified_at,omitempty"`
+	VerifiedBy     *string         `json:"verified_by,omitempty"`
+	VerifiedCommit *string         `json:"verified_commit,omitempty"`
+	SupersededBy   []string        `json:"superseded_by,omitempty"`
+	Supersedes     []string        `json:"supersedes,omitempty"`
+	LiveHead       []string        `json:"live_head,omitempty"`
+	Drift          *string         `json:"drift,omitempty"`
+	Deleted        bool            `json:"deleted,omitempty"`
+	StaleAt        *string         `json:"stale_at,omitempty"`
+	StaleBy        *string         `json:"stale_by,omitempty"`
+	StaleReason    *string         `json:"stale_reason,omitempty"`
+	Attachments    []attachmentDTO `json:"attachments,omitempty"`
 }
 
 // docSummaryDTO is the noteSummaryDTO shape plus the free-text When trigger,
 // the field a reader needs to decide whether the doc applies.
 type docSummaryDTO struct {
-	ID        string   `json:"id"`
-	Title     string   `json:"title"`
-	When      string   `json:"when,omitempty"`
-	Tags      []string `json:"tags,omitempty"`
-	Author    string   `json:"author,omitempty"`
-	UpdatedAt string   `json:"updated_at"`
-	Drift     string   `json:"drift,omitempty"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	When        string   `json:"when,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Author      string   `json:"author,omitempty"`
+	UpdatedAt   string   `json:"updated_at"`
+	Drift       string   `json:"drift,omitempty"`
+	StaleReason string   `json:"stale_reason,omitempty"`
 }
 
 // logEntryDTO is one append-only log entry with its timestamp rendered RFC3339
@@ -177,14 +188,17 @@ type investigationDTO struct {
 
 // investigationSummaryDTO is one investigation in a listing or write
 // acknowledgement: the identity, the lifecycle status, and the finding and
-// timeline tallies, without the premise, findings, or entries.
+// timeline tallies, without the premise, findings, or entries. The finding
+// tally splits: finding_count is every finding, open_finding_count only those
+// neither confirmed nor cleared — the suspects still live.
 type investigationSummaryDTO struct {
-	ID           string `json:"id"`
-	Title        string `json:"title"`
-	Status       string `json:"status"`
-	UpdatedAt    string `json:"updated_at"`
-	FindingCount int    `json:"finding_count,omitempty"`
-	EntryCount   int    `json:"entry_count,omitempty"`
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	Status           string `json:"status"`
+	UpdatedAt        string `json:"updated_at"`
+	FindingCount     int    `json:"finding_count,omitempty"`
+	OpenFindingCount int    `json:"open_finding_count,omitempty"`
+	EntryCount       int    `json:"entry_count,omitempty"`
 }
 
 // commentDTO is one task comment with its timestamp rendered RFC3339 UTC.
@@ -203,9 +217,9 @@ type leaseDTO struct {
 }
 
 // taskDTO fixes the JSON field order and formats for task output: full hex
-// ids, RFC3339 UTC timestamps, sorted set slices, the derived blocks reverse
-// index, the commits that implement the task, and the lease (omitted while
-// unheld).
+// ids, RFC3339 UTC timestamps, sorted set slices, the derived blocks and
+// children reverse indexes, the commits that implement the task, the runbook
+// runs citing it, and the lease (omitted while unheld).
 type taskDTO struct {
 	ID           string         `json:"id"`
 	Branch       string         `json:"branch,omitempty"`
@@ -219,8 +233,10 @@ type taskDTO struct {
 	BlockedBy    []string       `json:"blocked_by,omitempty"`
 	Blocks       []string       `json:"blocks,omitempty"`
 	Parent       *string        `json:"parent,omitempty"`
+	Children     []string       `json:"children,omitempty"`
 	Comments     []commentDTO   `json:"comments,omitempty"`
 	Commits      []string       `json:"commits,omitempty"`
+	Runs         []taskRunDTO   `json:"runs,omitempty"`
 	Lease        *leaseDTO      `json:"lease,omitempty"`
 	CreatedAt    string         `json:"created_at"`
 	UpdatedAt    string         `json:"updated_at"`
@@ -232,17 +248,37 @@ type taskDTO struct {
 	ClosedForced bool           `json:"closed_forced,omitempty"`
 }
 
+// taskRunDTO is one tracked runbook run citing the task: the runbook that owns
+// the run (a run id is unique only within its runbook), the run's identity,
+// its status, and its RFC3339 UTC start and finish.
+type taskRunDTO struct {
+	Runbook    string  `json:"runbook"`
+	Run        string  `json:"run"`
+	Status     string  `json:"status"`
+	StartedAt  string  `json:"started_at"`
+	FinishedAt *string `json:"finished_at,omitempty"`
+}
+
 // taskSummaryDTO is one task in a listing or write acknowledgement: the fields
-// a reader needs to triage and claim, without the description, comments, or
-// criteria.
+// a reader needs to triage and claim, plus the planning edges and the
+// acceptance-criteria tally, without the description, comments, or the criteria
+// themselves.
 type taskSummaryDTO struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Status    string `json:"status"`
-	Priority  int    `json:"priority,omitempty"`
-	Assignee  string `json:"assignee,omitempty"`
-	Branch    string `json:"branch,omitempty"`
-	UpdatedAt string `json:"updated_at"`
+	ID            string   `json:"id"`
+	Title         string   `json:"title"`
+	Type          string   `json:"type,omitempty"`
+	Status        string   `json:"status"`
+	Priority      int      `json:"priority,omitempty"`
+	Assignee      string   `json:"assignee,omitempty"`
+	Branch        string   `json:"branch,omitempty"`
+	BlockedBy     []string `json:"blocked_by,omitempty"`
+	Blocks        []string `json:"blocks,omitempty"`
+	Parent        string   `json:"parent,omitempty"`
+	Sprint        string   `json:"sprint,omitempty"`
+	Project       string   `json:"project,omitempty"`
+	CriteriaMet   int      `json:"criteria_met,omitempty"`
+	CriteriaTotal int      `json:"criteria_total,omitempty"`
+	UpdatedAt     string   `json:"updated_at"`
 }
 
 // criterionDTO is one structured acceptance criterion: the full nonce id, its
@@ -340,12 +376,14 @@ type runbookStepDTO struct {
 }
 
 // runbookRunStepDTO is one step's status within a run, in runbook step order:
-// the full step id, its recorded status ("pending" when no result), and the
+// the full step id, the step's current shell command so the run is
+// copy-pasteable, its recorded status ("pending" when no result), and the
 // recorded note.
 type runbookRunStepDTO struct {
-	Step   string `json:"step"`
-	Status string `json:"status"`
-	Note   string `json:"note,omitempty"`
+	Step    string `json:"step"`
+	Command string `json:"command,omitempty"`
+	Status  string `json:"status"`
+	Note    string `json:"note,omitempty"`
 }
 
 // runbookRunDTO fixes the JSON field order for one tracked run: the full run
@@ -406,40 +444,31 @@ type runbookSummaryDTO struct {
 	RunCount  int    `json:"run_count,omitempty"`
 }
 
-func newNoteDTO(n model.Note, drift string, atts []attachmentDTO) noteDTO {
-	byAnchor := witnessIndex(n.Witness)
-	anchors := make([]anchorDTO, 0, len(n.Anchors))
-	for _, a := range n.Anchors {
-		var witness *string
-		if w, ok := byAnchor[a]; ok {
-			oid := string(w.OID)
-			witness = &oid
-		}
-		anchors = append(anchors, anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: witness})
-	}
-	var superseded *string
-	if len(n.SupersededBy) > 0 {
-		id := string(n.SupersededBy[0])
-		superseded = &id
-	}
+// newNoteDTO renders a note snapshot into its DTO. supersedes is the reverse
+// supersede index and liveHead the transitive supersede heads, both resolved by
+// the caller against the live listing.
+func newNoteDTO(n model.Note, drift string, supersedes, liveHead []model.EntityID, atts []attachmentDTO) noteDTO {
 	return noteDTO{
-		ID:           string(n.ID),
-		Title:        n.Title,
-		Body:         n.Body,
-		Tags:         n.Tags,
-		Anchors:      anchors,
-		Author:       string(n.Author),
-		CreatedAt:    render.RFC3339(n.CreatedAt),
-		UpdatedAt:    render.RFC3339(n.UpdatedAt),
-		VerifiedAt:   render.OptTime(n.VerifiedAt),
-		VerifiedBy:   render.OptString(string(n.VerifiedBy)),
-		SupersededBy: superseded,
-		Drift:        render.OptString(drift),
-		Deleted:      n.Deleted,
-		StaleAt:      render.OptTime(n.StaleAt),
-		StaleBy:      render.OptString(string(n.StaleBy)),
-		StaleReason:  render.OptString(n.StaleReason),
-		Attachments:  atts,
+		ID:             string(n.ID),
+		Title:          n.Title,
+		Body:           n.Body,
+		Tags:           n.Tags,
+		Anchors:        anchorDTOs(n.Anchors, n.Witness),
+		Author:         string(n.Author),
+		CreatedAt:      render.RFC3339(n.CreatedAt),
+		UpdatedAt:      render.RFC3339(n.UpdatedAt),
+		VerifiedAt:     render.OptTime(n.VerifiedAt),
+		VerifiedBy:     render.OptString(string(n.VerifiedBy)),
+		VerifiedCommit: render.OptString(string(n.VerifiedCommit)),
+		SupersededBy:   render.IDStrings(n.SupersededBy),
+		Supersedes:     render.IDStrings(supersedes),
+		LiveHead:       render.IDStrings(liveHead),
+		Drift:          render.OptString(drift),
+		Deleted:        n.Deleted,
+		StaleAt:        render.OptTime(n.StaleAt),
+		StaleBy:        render.OptString(string(n.StaleBy)),
+		StaleReason:    render.OptString(n.StaleReason),
+		Attachments:    atts,
 	}
 }
 
@@ -447,64 +476,72 @@ func newNoteDTO(n model.Note, drift string, atts []attachmentDTO) noteDTO {
 // listing projection, carrying the full id so it stays a usable handle.
 func newNoteSummaryDTO(n model.Note, drift string) noteSummaryDTO {
 	return noteSummaryDTO{
-		ID:        string(n.ID),
-		Title:     n.Title,
-		Tags:      n.Tags,
-		Author:    string(n.Author),
-		UpdatedAt: render.RFC3339(n.UpdatedAt),
-		Drift:     drift,
+		ID:          string(n.ID),
+		Title:       n.Title,
+		Tags:        n.Tags,
+		Author:      string(n.Author),
+		UpdatedAt:   render.RFC3339(n.UpdatedAt),
+		Drift:       drift,
+		StaleReason: n.StaleReason,
 	}
 }
 
-func newDocDTO(d model.Doc, drift string, atts []attachmentDTO) docDTO {
-	byAnchor := witnessIndex(d.Witness)
-	anchors := make([]anchorDTO, 0, len(d.Anchors))
-	for _, a := range d.Anchors {
-		var witness *string
-		if w, ok := byAnchor[a]; ok {
-			oid := string(w.OID)
-			witness = &oid
-		}
-		anchors = append(anchors, anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: witness})
-	}
-	var superseded *string
-	if len(d.SupersededBy) > 0 {
-		id := string(d.SupersededBy[0])
-		superseded = &id
-	}
+// newDocDTO renders a doc snapshot into its DTO, mirroring newNoteDTO with the
+// When trigger.
+func newDocDTO(d model.Doc, drift string, supersedes, liveHead []model.EntityID, atts []attachmentDTO) docDTO {
 	return docDTO{
-		ID:           string(d.ID),
-		Title:        d.Title,
-		Body:         d.Body,
-		When:         d.When,
-		Tags:         d.Tags,
-		Anchors:      anchors,
-		Author:       string(d.Author),
-		CreatedAt:    render.RFC3339(d.CreatedAt),
-		UpdatedAt:    render.RFC3339(d.UpdatedAt),
-		VerifiedAt:   render.OptTime(d.VerifiedAt),
-		VerifiedBy:   render.OptString(string(d.VerifiedBy)),
-		SupersededBy: superseded,
-		Drift:        render.OptString(drift),
-		Deleted:      d.Deleted,
-		StaleAt:      render.OptTime(d.StaleAt),
-		StaleBy:      render.OptString(string(d.StaleBy)),
-		StaleReason:  render.OptString(d.StaleReason),
-		Attachments:  atts,
+		ID:             string(d.ID),
+		Title:          d.Title,
+		Body:           d.Body,
+		When:           d.When,
+		Tags:           d.Tags,
+		Anchors:        anchorDTOs(d.Anchors, d.Witness),
+		Author:         string(d.Author),
+		CreatedAt:      render.RFC3339(d.CreatedAt),
+		UpdatedAt:      render.RFC3339(d.UpdatedAt),
+		VerifiedAt:     render.OptTime(d.VerifiedAt),
+		VerifiedBy:     render.OptString(string(d.VerifiedBy)),
+		VerifiedCommit: render.OptString(string(d.VerifiedCommit)),
+		SupersededBy:   render.IDStrings(d.SupersededBy),
+		Supersedes:     render.IDStrings(supersedes),
+		LiveHead:       render.IDStrings(liveHead),
+		Drift:          render.OptString(drift),
+		Deleted:        d.Deleted,
+		StaleAt:        render.OptTime(d.StaleAt),
+		StaleBy:        render.OptString(string(d.StaleBy)),
+		StaleReason:    render.OptString(d.StaleReason),
+		Attachments:    atts,
 	}
+}
+
+// anchorDTOs renders anchors in stored order, stamping each with its content
+// witness when the entity carries one for that anchor.
+func anchorDTOs(anchors []model.Anchor, witness []model.AnchorWitness) []anchorDTO {
+	byAnchor := witnessIndex(witness)
+	out := make([]anchorDTO, 0, len(anchors))
+	for _, a := range anchors {
+		var oid *string
+		if w, ok := byAnchor[a]; ok {
+			s := string(w.OID)
+			oid = &s
+		}
+		out = append(out, anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: oid})
+	}
+	return out
 }
 
 // newDocSummaryDTO renders a doc snapshot and its drift verdict into the
 // listing projection, keeping the When trigger the reader selects on.
 func newDocSummaryDTO(d model.Doc, drift string) docSummaryDTO {
 	return docSummaryDTO{
-		ID:        string(d.ID),
-		Title:     d.Title,
-		When:      d.When,
-		Tags:      d.Tags,
-		Author:    string(d.Author),
-		UpdatedAt: render.RFC3339(d.UpdatedAt),
-		Drift:     drift,
+		ID:          string(d.ID),
+		Title:       d.Title,
+		When:        d.When,
+		Tags:        d.Tags,
+		Author:      string(d.Author),
+		UpdatedAt:   render.RFC3339(d.UpdatedAt),
+		Drift:       drift,
+		StaleReason: d.StaleReason,
 	}
 }
 
@@ -596,16 +633,31 @@ func newInvestigationDTO(inv model.Investigation, atts []attachmentDTO) investig
 // listing projection, trading the findings and entries for their counts.
 func newInvestigationSummaryDTO(inv model.Investigation) investigationSummaryDTO {
 	return investigationSummaryDTO{
-		ID:           string(inv.ID),
-		Title:        inv.Title,
-		Status:       string(inv.Status),
-		UpdatedAt:    render.RFC3339(inv.UpdatedAt),
-		FindingCount: len(inv.Findings),
-		EntryCount:   len(inv.Entries),
+		ID:               string(inv.ID),
+		Title:            inv.Title,
+		Status:           string(inv.Status),
+		UpdatedAt:        render.RFC3339(inv.UpdatedAt),
+		FindingCount:     len(inv.Findings),
+		OpenFindingCount: openFindings(inv.Findings),
+		EntryCount:       len(inv.Entries),
 	}
 }
 
-func newTaskDTO(t model.Task, blocks []model.EntityID) taskDTO {
+// openFindings counts the findings still neither confirmed nor cleared.
+func openFindings(findings []model.Finding) int {
+	open := 0
+	for _, f := range findings {
+		if f.Status == model.FindingOpen {
+			open++
+		}
+	}
+	return open
+}
+
+// newTaskDTO renders a task snapshot into its DTO. blocks, children, and runs
+// are the reverse indexes the caller resolved: the tasks this one blocks, the
+// subtasks parented to it, and the runbook runs citing it.
+func newTaskDTO(t model.Task, blocks, children []model.EntityID, runs []notes.TaskRun) taskDTO {
 	return taskDTO{
 		ID:           string(t.ID),
 		Branch:       string(t.Branch),
@@ -619,8 +671,10 @@ func newTaskDTO(t model.Task, blocks []model.EntityID) taskDTO {
 		BlockedBy:    render.IDStrings(t.BlockedBy),
 		Blocks:       render.IDStrings(blocks),
 		Parent:       render.OptString(string(t.Parent)),
+		Children:     render.IDStrings(children),
 		Comments:     commentDTOs(t.Comments),
 		Commits:      render.SHAStrings(t.Commits),
+		Runs:         taskRunDTOs(runs),
 		Lease:        newLeaseDTO(t),
 		CreatedAt:    render.RFC3339(t.CreatedAt),
 		UpdatedAt:    render.RFC3339(t.UpdatedAt),
@@ -633,18 +687,54 @@ func newTaskDTO(t model.Task, blocks []model.EntityID) taskDTO {
 	}
 }
 
-// newTaskSummaryDTO renders a task snapshot into the listing projection: the
-// triage and claim fields, without the description, comments, or criteria.
-func newTaskSummaryDTO(t model.Task) taskSummaryDTO {
-	return taskSummaryDTO{
-		ID:        string(t.ID),
-		Title:     t.Title,
-		Status:    string(t.Status),
-		Priority:  int(t.Priority),
-		Assignee:  string(t.Assignee),
-		Branch:    string(t.Branch),
-		UpdatedAt: render.RFC3339(t.UpdatedAt),
+// taskRunDTOs renders the runbook runs citing a task, empty when there are
+// none.
+func taskRunDTOs(runs []notes.TaskRun) []taskRunDTO {
+	out := make([]taskRunDTO, 0, len(runs))
+	for _, r := range runs {
+		out = append(out, taskRunDTO{
+			Runbook:    string(r.Runbook),
+			Run:        r.Run.ID,
+			Status:     string(r.Run.Status),
+			StartedAt:  render.RFC3339(r.Run.StartedAt),
+			FinishedAt: render.OptTime(r.Run.FinishedAt),
+		})
 	}
+	return out
+}
+
+// newTaskSummaryDTO renders a task snapshot and the ids of the tasks it blocks
+// into the listing projection: the triage, claim, and planning fields plus the
+// criteria tally, without the description, comments, or criteria themselves.
+func newTaskSummaryDTO(t model.Task, blocks []model.EntityID) taskSummaryDTO {
+	met, total := criteriaCounts(t.Criteria)
+	return taskSummaryDTO{
+		ID:            string(t.ID),
+		Title:         t.Title,
+		Type:          string(t.Type),
+		Status:        string(t.Status),
+		Priority:      int(t.Priority),
+		Assignee:      string(t.Assignee),
+		Branch:        string(t.Branch),
+		BlockedBy:     render.IDStrings(t.BlockedBy),
+		Blocks:        render.IDStrings(blocks),
+		Parent:        string(t.Parent),
+		Sprint:        string(t.Sprint),
+		Project:       string(t.Project),
+		CriteriaMet:   met,
+		CriteriaTotal: total,
+		UpdatedAt:     render.RFC3339(t.UpdatedAt),
+	}
+}
+
+// criteriaCounts tallies a task's met criteria against its total.
+func criteriaCounts(criteria []model.Criterion) (met, total int) {
+	for _, c := range criteria {
+		if c.Status == model.CriterionMet {
+			met++
+		}
+	}
+	return met, len(criteria)
 }
 
 // newLeaseDTO renders a task's lease, nil when the task was never claimed.
@@ -783,7 +873,7 @@ func newRunbookRunDTO(rb model.Runbook, run model.RunbookRun) runbookRunDTO {
 	}
 	steps := make([]runbookRunStepDTO, 0, len(rb.Steps))
 	for _, st := range rb.Steps {
-		entry := runbookRunStepDTO{Step: st.ID, Status: runbookStepPending}
+		entry := runbookRunStepDTO{Step: st.ID, Command: st.Command, Status: runbookStepPending}
 		if res, ok := byStep[st.ID]; ok {
 			entry.Status = string(res.Status)
 			entry.Note = res.Note
