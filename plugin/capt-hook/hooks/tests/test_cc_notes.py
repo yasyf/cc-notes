@@ -44,6 +44,7 @@ from hooks.common import (
     cap_and_render_tasks,
     CcNotesMcpToolCall,
     dedup_tasks,
+    drift_suffix,
     entry_payload,
     filter_drifted,
     in_cc_pool_memory,
@@ -51,15 +52,21 @@ from hooks.common import (
     McpActive,
     MCP_TOOL_PREFIX,
     parse_relevant,
+    parse_status,
     parse_tasks,
     record_command,
     RecordVerdict,
+    render_doc_line,
     render_investigation_line,
     render_log_line,
+    render_note_line,
     render_note_lines,
     render_runbook_line,
+    render_steal_line,
     render_task_line,
     run_cc_notes,
+    stale_leases,
+    status_tasks,
 )
 from hooks.memory import (
     clamp_title,
@@ -100,6 +107,7 @@ from hooks.record import (
     PlanTasks,
     plan_task_commands,
     plan_text,
+    link_task_to_investigation,
     record_investigation_activity,
     record_mcp_active,
     transfer_operands,
@@ -123,16 +131,19 @@ from hooks.workflow import (
     CcNotesCliWrite,
     CcNotesMcpWrite,
     CLAIM_COMMANDS,
+    ClaimedTasks,
     COMMIT_COMMANDS,
     commit_decision,
     do_sync,
     FETCH_MERGE_COMMANDS,
     is_cc_notes_write,
+    link_claimed_task,
     nudge_claim,
     nudge_commit_record,
     nudge_mirror_native_tasks,
     PUSH_COMMANDS,
     reconcile_after_merge,
+    record_task_claims,
     sync_after_push,
     sync_after_record_write,
     sync_at_session_end,
@@ -447,6 +458,61 @@ def test_dedup_tasks() -> None:
     # An id-less task can't be identified, so it is never collapsed against another.
     idless = [{"status": "open", "title": "x"}, {"status": "open", "title": "y"}]
     check("dedup_tasks: id-less tasks are never collapsed", dedup_tasks(idless) == idless, repr(dedup_tasks(idless)))
+
+
+def test_parse_status() -> None:
+    """The status parser fails closed to {} on everything that is not a JSON object."""
+    for label, payload in (("None", None), ("empty", ""), ("blank", "   "), ("bad json", "{oops"), ("array", "[1,2]"), ("scalar", '"x"')):
+        check(f"parse_status: {label} -> {{}}", parse_status(payload) == {})
+    check("parse_status: object round-trips", parse_status('{"branch":"main"}') == {"branch": "main"})
+
+
+def test_status_tasks_and_stale_leases() -> None:
+    report = {
+        "backlog": [{"id": "a"}, "junk", 7, None, {"id": "b"}],
+        "your_branch": "not a list",
+        "in_progress": [
+            {"assignee": "ada", "tasks": [{"id": "fresh1", "stale": False}, {"id": "dead1", "stale": True}]},
+            "not a group",
+            {"assignee": "ben", "tasks": "not a list"},
+            {"assignee": "cat", "tasks": [{"id": "dead2", "stale": True}, "junk"]},
+        ],
+    }
+    check("status_tasks: drops non-dict rows", [t["id"] for t in status_tasks(report, "backlog")] == ["a", "b"], repr(status_tasks(report, "backlog")))
+    check("status_tasks: a non-list bucket -> []", status_tasks(report, "your_branch") == [])
+    check("status_tasks: a missing bucket -> []", status_tasks(report, "runs") == [])
+    # Only the expired leases, across every assignee group, in group order.
+    check("stale_leases: expired only, all groups", [t["id"] for t in stale_leases(report)] == ["dead1", "dead2"], repr(stale_leases(report)))
+    check("stale_leases: no in_progress -> []", stale_leases({}) == [])
+
+
+def test_render_steal_line() -> None:
+    task = {"id": "104c728ea14", "status": "in_progress", "title": "T", "assignee": "alice"}
+    check(
+        "render_steal_line: CLI reclaim call",
+        render_steal_line(task, mcp=False) == "104c728 in_progress T @alice — lease expired, cc-notes task claim 104c728 --steal",
+        render_steal_line(task, mcp=False),
+    )
+    check(
+        "render_steal_line: MCP reclaim call",
+        render_steal_line(task, mcp=True) == "104c728 in_progress T @alice — lease expired, task_claim tool with id=104c728, steal=true",
+        render_steal_line(task, mcp=True),
+    )
+
+
+def test_drift_suffix_names_the_diff_base() -> None:
+    """A drift warning is actionable only when it names what to diff against."""
+    check("drift_suffix: nothing recorded -> empty", drift_suffix({}) == "")
+    check("drift_suffix: commit only", drift_suffix({"verified_commit": "abc1234def"}) == " (diff against abc1234)")
+    check("drift_suffix: reason only", drift_suffix({"stale_reason": "auth cutover landed"}) == " (reason: auth cutover landed)")
+    both = drift_suffix({"stale_reason": "auth cutover landed", "verified_commit": "abc1234def"})
+    check("drift_suffix: both, reason first", both == " (reason: auth cutover landed; diff against abc1234)", both)
+    line = render_note_line({"note": {"id": "n001234abc", "title": "token loop", "drift": "DRIFTED", "verified_commit": "abc1234def"}, "reasons": ["path"]})
+    check("render_note_line: a drifted note names the diff base", line.endswith("[DRIFTED] (diff against abc1234)"), line)
+    fresh = render_note_line({"note": {"id": "n001234abc", "title": "token loop", "verified_commit": "abc1234def"}, "reasons": ["path"]})
+    check("render_note_line: a fresh note carries no diff base", "diff against" not in fresh, fresh)
+    doc = render_doc_line({"doc": {"id": "d001234abc", "title": "auth", "drift": "STALE", "stale_reason": "retired"}, "reasons": []})
+    check("render_doc_line: a stale doc names the reason", "[stale] (reason: retired)" in doc, doc)
 
 
 def test_approval_server_pin() -> None:
@@ -1256,21 +1322,33 @@ def _spec_for(handler):
     raise AssertionError(f"no registered hook for {handler.__name__}")
 
 
-def test_float_session_tasks_fires(monkeypatch, tmp_path) -> None:
-    """With the gate forced open and a stubbed task list, the floater warns with capped lines."""
+def _status_evt(monkeypatch, tmp_path, report: dict, prompt: str = "let's start"):
+    """A UserPromptSubmit event whose only stubbed CLI call is `status --json`.
+
+    stub_cli raises FileNotFoundError on an unmapped key under throw=True and returns None
+    under throw=False, so mapping ONLY the status read is the regression guard: a floater
+    that still shells out to `task list` reads None and renders nothing.
+    """
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    branch = [{"id": f"branch{i:02d}aaa", "status": "in_progress", "title": f"b{i}", "assignee": "me"} for i in range(3)]
-    backlog = [{"id": f"backlog{i:02d}b", "status": "open", "title": f"k{i}"} for i in range(6)]
-    mapping = {
-        ("task", "list", "--json"): json.dumps(branch),
-        ("task", "list", "--backlog", "--json"): json.dumps(backlog),
-    }
-    evt = mock_event("UserPromptSubmit", prompt="let's start", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
+    evt = mock_event("UserPromptSubmit", prompt=prompt, session_dir=tmp_path)
+    cli, calls = recording_cli({("status", "--json"): json.dumps(report)})
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
     monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no MCP marker -> CLI wording is deterministic
+    evt._cli_calls = calls  # type: ignore[attr-defined]
+    return evt
+
+
+def test_float_session_tasks_fires(monkeypatch, tmp_path) -> None:
+    """One `status --json` read carries every bucket; the floater warns with capped lines."""
+    report = {
+        "your_branch": [{"id": f"branch{i:02d}aaa", "status": "in_progress", "title": f"b{i}", "assignee": "me"} for i in range(3)],
+        "backlog": [{"id": f"backlog{i:02d}b", "status": "open", "title": f"k{i}", "ready": True} for i in range(6)],
+    }
+    evt = _status_evt(monkeypatch, tmp_path, report)
 
     result = float_session_tasks(evt)
     check("float fires: warns", result is not None and result.action is Action.warn, repr(result))
+    check("float fires: exactly one CLI read", len(evt._cli_calls) == 1, repr(evt._cli_calls))
     if result and result.message:
         check("float fires: orientation line present", "cc-notes status" in result.message)
         check("float fires: caps at 7 (3 branch + 4 backlog)", "branch00aaa"[:7] in result.message and "backlog03"[:7] in result.message, result.message)
@@ -1278,51 +1356,96 @@ def test_float_session_tasks_fires(monkeypatch, tmp_path) -> None:
         check("float fires: assignee rendered", "@me" in result.message)
 
 
-def test_float_session_tasks_silent_no_tasks(monkeypatch, tmp_path) -> None:
-    """Gate open but zero tasks -> the floater stays silent."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    mapping = {
-        ("task", "list", "--json"): "[]",
-        ("task", "list", "--backlog", "--json"): "[]",
-    }
-    evt = mock_event("UserPromptSubmit", prompt="hi", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    check("float silent: no tasks -> None", float_session_tasks(evt) is None)
+def test_float_session_tasks_floats_ready_backlog_first(monkeypatch, tmp_path) -> None:
+    """The cap is scarce, so claimable work outranks work held by a dependency.
 
-
-def test_float_session_tasks_dedup_detached_head(monkeypatch, tmp_path) -> None:
-    """Under an unresolvable detached HEAD the no-flag `task list --json` no longer errors — it
-    degrades (exit 0) to the shared backlog set. The floater then reads the same set twice (once
-    as the branch list, once via --backlog), so the two lists overlap. It must surface each task
-    exactly once, never a duplicate row.
-
-    Reproduces the post-Phase-1 overlap byte-for-byte by returning the SAME backlog payload for
-    both reads — the input the floater sees on a truly-unresolvable detached HEAD. Revert the
-    dedup in float_session_tasks and every task renders twice, failing this test.
+    Flip the sort off and the blocked rows (priority-ascending, so they lead the raw
+    bucket) eat the cap and the ready ones never surface.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    # Distinct 7-char id prefixes so each renders as its own short-id line (no prefix collision).
-    backlog = [
-        {"id": "aaa0001dead", "status": "open", "title": "wire the thing"},
-        {"id": "bbb0002dead", "status": "open", "title": "sweep the dust"},
-        {"id": "ccc0003dead", "status": "open", "title": "ship the fix"},
-    ]
-    degraded = json.dumps(backlog)
-    mapping = {
-        ("task", "list", "--json"): degraded,
-        ("task", "list", "--backlog", "--json"): degraded,
+    report = {
+        "backlog": [
+            {"id": "blocked0001", "status": "open", "title": "held", "ready": False},
+            {"id": "ready000002", "status": "open", "title": "claimable", "ready": True},
+        ],
     }
-    evt = mock_event("UserPromptSubmit", prompt="let's start", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no MCP marker -> deterministic branch
+    result = float_session_tasks(_status_evt(monkeypatch, tmp_path, report))
+    check("float ready-first: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        ready_at = result.message.find("ready00")
+        blocked_at = result.message.find("blocked")
+        check("float ready-first: the claimable row leads", 0 <= ready_at < blocked_at, result.message)
+
+
+def test_float_session_tasks_renders_stealable_lease(monkeypatch, tmp_path) -> None:
+    """An expired lease leads the block and carries the exact reclaim call.
+
+    A fresh lease in the same group must NOT render: it is someone's live work, and a
+    steal hint on it would invite a race.
+    """
+    report = {
+        "in_progress": [
+            {
+                "assignee": "ben <ben@example.com>",
+                "tasks": [
+                    {"id": "dead0001abc", "status": "in_progress", "title": "abandoned claim", "assignee": "ben <ben@example.com>", "stale": True},
+                    {"id": "live0002abc", "status": "in_progress", "title": "live claim", "assignee": "ben <ben@example.com>", "stale": False},
+                ],
+            }
+        ],
+        "backlog": [{"id": "back0003abc", "status": "open", "title": "shared work", "ready": True}],
+    }
+    result = float_session_tasks(_status_evt(monkeypatch, tmp_path, report))
+    check("float steal: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check(
+            "float steal: names the reclaim call",
+            "dead000 in_progress abandoned claim @ben <ben@example.com> — lease expired, cc-notes task claim dead000 --steal" in result.message,
+            result.message,
+        )
+        check("float steal: the expired lease leads", result.message.index("dead000") < result.message.index("back000"), result.message)
+        check("float steal: a live lease is not offered", "live000" not in result.message, result.message)
+
+
+def test_float_session_tasks_steal_hint_follows_mcp_wording(monkeypatch, tmp_path) -> None:
+    """With the MCP server active the reclaim hint is a tool call, never a shell line."""
+    report = {"in_progress": [{"assignee": "ben", "tasks": [{"id": "dead0001abc", "status": "in_progress", "title": "abandoned", "stale": True}]}]}
+    evt = _status_evt(monkeypatch, tmp_path, report)
+    evt.ctx.s[McpActive].set(McpActive(active=True))
 
     result = float_session_tasks(evt)
-    check("float dedup: fires (warn) under detached HEAD, no error", result is not None and result.action is Action.warn, repr(result))
+    check("float steal mcp: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        for task in backlog:
-            line = render_task_line(task)
-            check(f"float dedup: '{line}' rendered exactly once", result.message.count(line) == 1, result.message)
-        check("float dedup: 3 unique tasks fit under cap -> no '+K more' tail", "more — run `cc-notes status`" not in result.message, result.message)
+        check("float steal mcp: tool-call hint", "task_claim tool with id=dead000, steal=true" in result.message, result.message)
+        check("float steal mcp: no shell line", "cc-notes task claim" not in result.message, result.message)
+
+
+def test_float_session_tasks_silent_no_tasks(monkeypatch, tmp_path) -> None:
+    """Gate open but an empty board -> the floater stays silent."""
+    check("float silent: no tasks -> None", float_session_tasks(_status_evt(monkeypatch, tmp_path, {}, prompt="hi")) is None)
+
+
+def test_float_session_tasks_dedup_overlapping_buckets(monkeypatch, tmp_path) -> None:
+    """A task can sit in more than one status bucket and must render exactly once.
+
+    An expired lease on the current branch is both an in_progress row and a your_branch
+    row; on an unresolvable detached HEAD the backlog and your_branch sets coincide
+    outright. Revert the dedup and each of these renders twice.
+    """
+    shared = {"id": "aaa0001dead", "status": "open", "title": "wire the thing"}
+    leased = {"id": "bbb0002dead", "status": "in_progress", "title": "sweep the dust", "assignee": "ben", "stale": True}
+    report = {
+        "in_progress": [{"assignee": "ben", "tasks": [leased]}],
+        "your_branch": [dict(shared), dict(leased)],
+        "backlog": [dict(shared, ready=True)],
+    }
+    result = float_session_tasks(_status_evt(monkeypatch, tmp_path, report))
+    check("float dedup: fires (warn)", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        rows = [ln for ln in result.message.splitlines() if ln.startswith(("aaa0001", "bbb0002"))]
+        check("float dedup: the shared row renders once", sum(r.startswith("aaa0001") for r in rows) == 1, repr(rows))
+        check("float dedup: the leased row renders once", sum(r.startswith("bbb0002") for r in rows) == 1, repr(rows))
+        check("float dedup: the surviving leased row kept its steal hint", "--steal" in result.message, result.message)
+        check("float dedup: 2 unique tasks fit under cap -> no '+K more' tail", "more — run `cc-notes status`" not in result.message, result.message)
 
 
 def test_install_nudge_gate(monkeypatch, tmp_path) -> None:
@@ -1590,20 +1713,21 @@ def test_handlers_silent_on_malformed_array(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(edit_evt.ctx, "call_cli", stub_cli(edit_map))
     silent_or_fail("check_note_staleness", check_note_staleness, edit_evt)
 
-    # A malformed task array must not crash the session-start floater either. Two non-dict
-    # backlog entries are dropped; the surviving {} renders a degenerate (blank-field) line
-    # but the handler must return a result without raising.
-    task_map = {
-        ("task", "list", "--json"): '["junk", 5]',
-        ("task", "list", "--backlog", "--json"): '[null, {}]',
-    }
-    prompt_evt = mock_event("UserPromptSubmit", prompt="hi", session_dir=tmp_path)
-    monkeypatch.setattr(prompt_evt.ctx, "call_cli", stub_cli(task_map))
-    try:
-        float_session_tasks(prompt_evt)
-        check("malformed array: float_session_tasks does not crash", True)
-    except BaseException as raised:  # noqa: BLE001
-        check("malformed array: float_session_tasks does not crash", False, f"{type(raised).__name__}: {raised}")
+    # A malformed status payload must not crash the session-start floater either: a
+    # top-level array instead of an object, non-dict bucket rows, an in_progress group
+    # that is not a group. The surviving {} renders a degenerate (blank-field) line but
+    # the handler must return without raising.
+    for label, payload in (
+        ("array instead of object", '["junk", 5]'),
+        ("non-dict rows", '{"backlog": ["junk", 5, null, {}], "your_branch": 7, "in_progress": ["nope", {"tasks": 3}]}'),
+    ):
+        prompt_evt = mock_event("UserPromptSubmit", prompt="hi", session_dir=tmp_path)
+        monkeypatch.setattr(prompt_evt.ctx, "call_cli", stub_cli({("status", "--json"): payload}))
+        try:
+            float_session_tasks(prompt_evt)
+            check(f"malformed status ({label}): float_session_tasks does not crash", True)
+        except BaseException as raised:  # noqa: BLE001
+            check(f"malformed status ({label}): float_session_tasks does not crash", False, f"{type(raised).__name__}: {raised}")
 
 
 def test_record_router_routes_doc(monkeypatch, tmp_path) -> None:
@@ -2806,6 +2930,190 @@ def test_claim_keeps_renew_teach_and_syncs(monkeypatch, tmp_path) -> None:
     check("claim: a cc-notes sync ran", _calls_of(evt._cli_calls, "sync") == [0], repr(evt._cli_calls))
 
 
+LINKED = ("cc-notes", "task", "link", "abc1234", "HEAD")
+
+# The three ways a cc-notes call fails under a hook. recording_cli raises them unconditionally —
+# harsher than the real call_cli, which swallows all three under throw=False.
+CLI_FAILURES = {
+    "cc-notes error": subprocess.CalledProcessError(1, ["cc-notes"], stderr="no such task\n"),
+    "timeout": subprocess.TimeoutExpired(cmd="cc-notes", timeout=10),
+    "missing binary": FileNotFoundError("cc-notes"),
+}
+
+
+def task_call(tmp_path, command=None, *, tool=None, tool_input=None, output=None):
+    """A PostToolUse for one cc-notes task call, on whichever surface, sharing tmp_path's session."""
+    if tool is not None:
+        return mock_tool_event(tool=tool, event=Event.PostToolUse, tool_input=tool_input, output=output, session_dir=tmp_path)
+    return mock_tool_event(tool="Bash", event=Event.PostToolUse, command=command, output=output, session_dir=tmp_path)
+
+
+def commit_after_claims(tmp_path, monkeypatch, *calls, cli=None, mcp=False):
+    """Replay ``calls`` (cc-notes task command lines) through the claim recorder, then commit.
+
+    Returns ``(result, calls_recorded)``. The commit shares tmp_path's session, so the claims the
+    recorder armed are exactly what the commit handler reads.
+    """
+    for command in calls:
+        record_task_claims(task_call(tmp_path, command))
+    evt = commit_event(tmp_path, monkeypatch, mcp=mcp)
+    if cli is None:
+        cli, recorded = recording_cli({("sync",): "ok", LINKED[1:]: "abc1234\tin_progress\tP2\t-\tt"})
+    else:
+        recorded = []
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    return nudge_commit_record(evt), recorded
+
+
+def test_commit_links_the_single_claimed_task(monkeypatch, tmp_path) -> None:
+    """One held claim makes the commit's task unambiguous, so the hook writes the `task link` edge.
+
+    End to end: the claim recorder arms the id from a real `cc-notes task claim` line, and the
+    commit handler in the same session turns that into `cc-notes task link <id> HEAD`.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    result, calls = commit_after_claims(tmp_path, monkeypatch, "cc-notes task claim abc1234")
+    check("link: the task link ran with HEAD", LINKED in calls, repr(calls))
+    check("link: warns, never blocks", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("link: names the linked task", "Linked this commit onto task abc1234" in result.message, result.message)
+        check("link: names the CLI undo", "cc-notes task unlink abc1234" in result.message, result.message)
+        check("link: keeps the cc-task trailer teach", "cc-task: <id>" in result.message, result.message)
+
+
+def test_commit_link_mcp_wording(monkeypatch, tmp_path) -> None:
+    """With the MCP server active the undo is a tool call, and an MCP claim arms the same id."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    record_task_claims(task_call(tmp_path, tool="mcp__plugin_cc-notes_cc-notes__task_claim", tool_input={"id": "abc1234"}))
+    result, calls = commit_after_claims(tmp_path, monkeypatch, mcp=True)
+    check("link mcp: the task link ran", LINKED in calls, repr(calls))
+    if result and result.message:
+        check("link mcp: names the task_unlink tool", "task_unlink tool with id=abc1234" in result.message, result.message)
+        check("link mcp: drops the CLI undo line", "cc-notes task unlink" not in result.message, result.message)
+
+
+def test_commit_writes_no_link_without_exactly_one_claim(monkeypatch, tmp_path) -> None:
+    """Zero claims, two claims, and a released claim each leave the commit's task a guess — no edge."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    cases = {
+        "no claim at all": ([], ()),
+        "two claims held": (["cc-notes task claim abc1234", "cc-notes task claim def5678"], ()),
+        "the claim was closed": (["cc-notes task claim abc1234", "cc-notes task done abc1234"], ()),
+        "the claim was cancelled": (["cc-notes task claim abc1234", "cc-notes task cancel abc1234"], ()),
+        # A prefix and a full id name one task, so re-claiming under a longer spelling is one hold.
+        "the same task under two spellings": (["cc-notes task claim abc1234", "cc-notes task claim abc1234ff"], ("abc1234ff",)),
+    }
+    for name, (claims, relink) in cases.items():
+        session = tmp_path / name.replace(" ", "_")
+        session.mkdir()
+        result, calls = commit_after_claims(session, monkeypatch, *claims)
+        linked = [c for c in calls if c[:3] == ("cc-notes", "task", "link")]
+        want = [("cc-notes", "task", "link", tid, "HEAD") for tid in relink]
+        check(f"no-link [{name}]: link calls are {want}", linked == want, repr(calls))
+        check(f"no-link [{name}]: still warns the commit reminder", result is not None and result.action is Action.warn, repr(result))
+        if result and result.message and not relink:
+            check(f"no-link [{name}]: no link line", "Linked this commit" not in result.message, result.message)
+
+
+def test_claim_recorder_ignores_the_lines_that_move_no_lease(tmp_path) -> None:
+    """`task renew` keeps a hold rather than moving one, and a `--help` leg takes none at all."""
+    for command in ("cc-notes task claim abc1234", "cc-notes task renew abc1234", "cc-notes task done abc1234 --help"):
+        record_task_claims(task_call(tmp_path, command))
+    held = mock_event("Stop", session_dir=tmp_path).ctx.s.load(ClaimedTasks).ids
+    check("recorder: only the claim moved the set", held == ["abc1234"], repr(held))
+
+
+def test_commit_link_failure_never_costs_the_commit(monkeypatch, tmp_path) -> None:
+    """A failing `task link` must never turn a landed commit into a hook failure.
+
+    PostToolUse fires after the commit exists, so a raised handler or a block action leaves the
+    agent unpicking work that already succeeded. For each failure class the handler must still
+    return a plain warn carrying the commit reminder, drop only the link line, and raise nothing.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    for name, exc in CLI_FAILURES.items():
+        session = tmp_path / f"commit_{name.replace(' ', '_')}"
+        session.mkdir()
+        cli, calls = recording_cli({("sync",): "ok"}, raises={LINKED[1:]: exc})
+        try:
+            result, _ = commit_after_claims(session, monkeypatch, "cc-notes task claim abc1234", cli=cli)
+        except BaseException as e:  # noqa: BLE001 — a raised handler is exactly the regression guarded
+            check(f"commit link [{name}]: handler did not raise", False, f"{type(e).__name__}: {e}")
+            continue
+        check(f"commit link [{name}]: it really attempted the link", LINKED in calls, repr(calls))
+        check(f"commit link [{name}]: warns, never blocks", result is not None and result.action is Action.warn, repr(result))
+        if result and result.message:
+            check(f"commit link [{name}]: keeps the commit reminder", "Commit landed." in result.message, result.message)
+            check(f"commit link [{name}]: claims no link it did not write", "Linked this commit" not in result.message, result.message)
+
+
+def investigation_task_add(tmp_path, monkeypatch, *, unresolved, cli, output="abc1234\topen\tP2\t-\tship the fix"):
+    """A `cc-notes task add` PostToolUse in a session holding ``unresolved`` open investigations."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = task_call(tmp_path, "cc-notes task add 'ship the fix'", output=output)
+    evt.ctx.s[InvestigationActivity].set(InvestigationActivity(written=True, unresolved=list(unresolved)))
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    return evt
+
+
+def test_task_created_mid_investigation_becomes_a_follow_up(monkeypatch, tmp_path) -> None:
+    """One investigation in flight makes a new task its follow-up — the outbound edge, written for real."""
+    follow_up = ("cc-notes", "investigation", "follow-up", "inv0001", "abc1234")
+    cli, calls = recording_cli({follow_up[1:]: "inv0001\topen\tthe rotor stalls"})
+    evt = investigation_task_add(tmp_path, monkeypatch, unresolved=["inv0001"], cli=cli)
+    result = link_task_to_investigation(evt)
+    check("follow-up: the edge was written", calls == [follow_up], repr(calls))
+    check("follow-up: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("follow-up: names both ends", "task abc1234" in result.message and "investigation inv0001" in result.message, result.message)
+
+
+def test_task_created_writes_no_edge_when_the_parent_is_a_guess(monkeypatch, tmp_path) -> None:
+    """No investigation, several, an idless output, and the investigation's own id all write nothing."""
+    cases = {
+        "none in flight": ([], "abc1234\topen\tP2\t-\tt"),
+        "two in flight": (["inv0001", "inv0002"], "abc1234\topen\tP2\t-\tt"),
+        "no id in the output": (["inv0001"], ""),
+        # `investigation follow-up X X` would be a self-edge: the minted id resolves to the parent.
+        "the task id prefixes the investigation": (["inv0001abc"], "inv0001\topen\tP2\t-\tt"),
+    }
+    for name, (unresolved, output) in cases.items():
+        session = tmp_path / name.replace(" ", "_")
+        session.mkdir()
+        cli, calls = recording_cli()
+        result = link_task_to_investigation(investigation_task_add(session, monkeypatch, unresolved=unresolved, cli=cli, output=output))
+        check(f"no follow-up [{name}]: silent", result is None, repr(result))
+        check(f"no follow-up [{name}]: no cc-notes call", calls == [], repr(calls))
+
+
+def test_task_follow_up_failure_never_costs_the_task(monkeypatch, tmp_path) -> None:
+    """A failing `investigation follow-up` must never fail the `task add` that already succeeded."""
+    for name, exc in CLI_FAILURES.items():
+        session = tmp_path / f"followup_{name.replace(' ', '_')}"
+        session.mkdir()
+        cli, calls = recording_cli(raises={("investigation", "follow-up", "inv0001", "abc1234"): exc})
+        evt = investigation_task_add(session, monkeypatch, unresolved=["inv0001"], cli=cli)
+        try:
+            result = link_task_to_investigation(evt)
+        except BaseException as e:  # noqa: BLE001 — a raised handler is exactly the regression guarded
+            check(f"follow-up [{name}]: handler did not raise", False, f"{type(e).__name__}: {e}")
+            continue
+        check(f"follow-up [{name}]: it really attempted the edge", len(calls) == 1, repr(calls))
+        check(f"follow-up [{name}]: claims no edge it did not write", result is None, repr(result))
+
+
+def test_link_claimed_task_survives_an_unreadable_session(monkeypatch, tmp_path) -> None:
+    """A session slot that fails to load drops only the link line — the same fail-closed contract."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    evt = commit_event(tmp_path, monkeypatch)
+
+    def _boom(_model):
+        raise RuntimeError("session state is unreadable")
+
+    monkeypatch.setattr(evt.ctx.s, "load", _boom)
+    check("unreadable session: no link line", link_claimed_task(evt, mcp=False) == [], "expected no lines")
+
+
 def test_pack_loads_under_discover_pack() -> None:
     """The PRODUCTION import path loads the relative-import pack without raising and registers handlers.
 
@@ -2846,6 +3154,8 @@ def test_pack_loads_under_discover_pack() -> None:
         "nudge_commit_record",
         "reconcile_after_merge",
         "nudge_claim",
+        "record_task_claims",
+        "link_task_to_investigation",
         "sync_after_push",
         "sync_after_record_write",
         "sync_at_session_end",
@@ -2855,7 +3165,7 @@ def test_pack_loads_under_discover_pack() -> None:
     missing = expected - names
     check("discover_pack: every cc-notes handler registered", not missing, f"missing handlers: {sorted(missing)}; got={sorted(names)}")
     check(
-        "discover_pack: it registered the full pack (20 named @on handlers + the bare many-native-tasks nudge)",
+        "discover_pack: it registered the full pack (22 named @on handlers + the bare many-native-tasks nudge)",
         len(registered) >= len(expected) + 1,
         f"registered {len(registered)} hooks this pass: {sorted(h.name for h in registered)}",
     )
@@ -3106,15 +3416,9 @@ def test_float_session_tasks_mcp_wording(monkeypatch, tmp_path) -> None:
     Nine branch tasks (> SESSION_TASK_CAP) exercise the "+N more" overflow tail too, which must
     follow the MCP branch — the status-tool wording, never the CLI `cc-notes status`.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     branch = [{"id": f"branch{i:05d}", "status": "in_progress", "title": f"b{i}", "assignee": "me"} for i in range(9)]
-    mapping = {
-        ("task", "list", "--json"): json.dumps(branch),
-        ("task", "list", "--backlog", "--json"): "[]",
-    }
-    evt = mock_event("UserPromptSubmit", prompt="let's start", session_dir=tmp_path)
+    evt = _status_evt(monkeypatch, tmp_path, {"your_branch": branch})
     evt.ctx.s[McpActive].set(McpActive(active=True))
-    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
     result = float_session_tasks(evt)
     check("float mcp: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
@@ -3164,7 +3468,7 @@ def redirect_event(tmp_path, command: str, error: str, *, mcp: bool):
 
 def test_redirect_mapped_tool() -> None:
     """mapped_tool resolves each command shape to its MCP tool by longest-prefix match; operator/unknown -> None."""
-    check("map: inventory is the full 124-tool set", len(CC_NOTES_TOOLS) == 124, str(len(CC_NOTES_TOOLS)))
+    check("map: inventory is the full 128-tool set", len(CC_NOTES_TOOLS) == 128, str(len(CC_NOTES_TOOLS)))
     check("map: runbook add drops the title positional -> runbook_add", mapped_tool(["runbook", "add", "Deploy", "--branch", "main"]) == "runbook_add", repr(mapped_tool(["runbook", "add", "Deploy", "--branch", "main"])))
     check("map: investigation open -> investigation_open", mapped_tool(["investigation", "open", "Deadlock", "premise"]) == "investigation_open")
     check("map: investigation finding clear -> investigation_finding_clear", mapped_tool(["investigation", "finding", "clear", "abc", "f1"]) == "investigation_finding_clear")

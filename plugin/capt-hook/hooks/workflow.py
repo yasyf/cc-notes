@@ -23,14 +23,17 @@ from captain_hook import (
 )
 from captain_hook.util.paths import resolve_project_dir
 from cc_transcript.command import Command, CommandLine
+from pydantic import BaseModel, Field
 
 from .common import (
+    CC_NOTES_EXECUTABLES,
     CcNotesAvailable,
     ManyNativeTasks,
     MCP_TOOL_PREFIX,
     NATIVE_TASK_MIRROR_THRESHOLD,
     NUDGE_MAX_FIRES,
     RecordVerdict,
+    ids_match,
     mcp_active,
     record_command,
     run_cc_notes,
@@ -337,6 +340,102 @@ def auto_reconcile(evt: PostToolUseEvent) -> str | None:
     return f"{reconciled} {synced}" if (synced := auto_sync(evt)) else reconciled
 
 
+TASK_MCP_PREFIX = MCP_TOOL_PREFIX + "task_"
+# The task verbs that move a lease, on both surfaces. `renew` keeps a hold rather than taking one,
+# so it never arms; `cancel` and `done` both end the work the hold covered.
+TASK_CLAIM_VERBS = frozenset({"claim", "start"})
+TASK_RELEASE_VERBS = frozenset({"done", "cancel"})
+TASK_LEASE_VERBS = TASK_CLAIM_VERBS | TASK_RELEASE_VERBS
+
+
+class ClaimedTasks(BaseModel):
+    """Session-durable trace of the task ids this session took a lease on.
+
+    A claim/start arms an id and a done/cancel disarms it, so exactly one armed id names the task a
+    commit implements; zero or several make that attribution a guess. Defaults to the pre-claim
+    state, so a fresh session (or a null session slot in inline tests) holds nothing.
+    """
+
+    ids: list[str] = Field(default_factory=list)
+
+
+def _task_lease_call(evt: BaseHookEvent) -> tuple[str, str] | None:
+    """The (verb, task id) of a task call that moves a lease — an MCP task_* tool or a CLI leg."""
+    name = evt.tool_name or ""
+    if name.startswith(TASK_MCP_PREFIX):
+        task_id = evt.input.raw.get("id")
+        return (name[len(TASK_MCP_PREFIX) :], task_id) if isinstance(task_id, str) and task_id else None
+    line = evt.cmd.line
+    if not line:
+        return None
+    for cmd in line.commands:
+        if cmd.program not in CC_NOTES_EXECUTABLES or len(cmd.args) < 2 or cmd.args[0] != "task":
+            continue
+        # A `--help` leg moves no lease, so it must not arm a phantom claim.
+        if not HELP_FLAGS.isdisjoint(cmd.args):
+            continue
+        if task_id := _first_non_flag(tuple(cmd.args[2:])):
+            return cmd.args[1], task_id
+    return None
+
+
+class TaskLeaseCall(CustomCondition):
+    """Matches a task call that takes or releases a claim: claim/start/done/cancel, on either surface."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        call = _task_lease_call(evt)
+        return call is not None and call[0] in TASK_LEASE_VERBS
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[TaskLeaseCall()],
+    # Uncapped: this records state rather than advising, so a session that claims and closes four
+    # tasks must trace all four, not the first three.
+    max_fires=None,
+    tests={
+        Input(command="cc-notes task claim abc1234"): Allow(),
+        Input(command="cc-notes task renew abc1234"): Allow(),
+        Input(command="cc-notes task list"): Allow(),
+        Input(command="cc-notes task claim abc1234 --help"): Allow(),
+        Input(command="echo 'cc-notes task claim abc1234'"): Allow(),
+        Input(tool="mcp__plugin_cc-notes_cc-notes__task_claim", tool_input={"id": "abc1234"}): Allow(),
+        Input(tool="mcp__plugin_cc-notes_cc-notes__task_list"): Allow(),
+        Input(tool="Edit", file="m.py"): Allow(),
+    },
+)
+def record_task_claims(evt: PostToolUseEvent) -> HookResult | None:
+    """Trace claim and release calls into session state, so a commit knows which task it implements."""
+    call = _task_lease_call(evt)
+    if call is None or call[0] not in TASK_LEASE_VERBS:
+        return None
+    verb, task_id = call
+    try:
+        with evt.ctx.s[ClaimedTasks].mutate() as held:
+            held.ids = [existing for existing in held.ids if not ids_match(existing, task_id)]
+            if verb in TASK_CLAIM_VERBS:
+                held.ids.append(task_id)
+    except Exception:
+        pass
+    return None
+
+
+def link_claimed_task(evt: PostToolUseEvent, *, mcp: bool) -> list[str]:
+    """Attribute the commit just landed to the one task this session holds, as a `task link` edge."""
+    try:
+        held = evt.ctx.s.load(ClaimedTasks).ids
+        if len(held) != 1:
+            return []
+        if run_cc_notes(evt, "task", "link", held[0], "HEAD") is None:
+            return []
+        undo = f"the task_unlink tool with id={held[0]}" if mcp else f"`cc-notes task unlink {held[0]}`"
+        return [f"Linked this commit onto task {held[0]}, the one you hold — undo with {undo}."]
+    except Exception:
+        # Fail closed on everything — an unreadable session slot, a cc-notes error, a missing binary,
+        # a timeout. A missing edge costs a graph hop; a raised hook costs the agent a landed commit.
+        return []
+
+
 COMMIT_DECISION_SYSTEM = (
     "An agent just landed a git commit. Decide whether the change embodies a durable DECISION worth "
     "capturing as a cc-notes record — a design choice, a tradeoff, a non-obvious rationale a future "
@@ -399,18 +498,20 @@ def nudge_commit_record(evt: PostToolUseEvent) -> HookResult | None:
         sha = ""
     if sha and not evt.ctx.s.once(sha, scope="commit"):
         return None
-    if mcp_active(evt):
-        link = (
+    mcp = mcp_active(evt)
+    if mcp:
+        trailer = (
             "Commit landed. Link it to its task with a `cc-task: <id>` trailer (queryable via "
             "`git log --grep`, the blame tool, and the history tool)."
         )
     else:
-        link = (
+        trailer = (
             "Commit landed. Link it to its task with a `cc-task: <id>` trailer (queryable via "
             "`git log --grep`, `cc-notes blame <sha>`, and `cc-notes history <id>`)."
         )
     return evt.warn(
-        link,
+        trailer,
+        *link_claimed_task(evt, mcp=mcp),
         *commit_decision(evt),
         *([line] if (line := auto_sync(evt)) else []),
     )

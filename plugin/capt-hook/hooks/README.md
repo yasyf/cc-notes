@@ -197,6 +197,17 @@ fetched refs still ship; the tasks stay put. This replaces the old reconcile-the
 nudge. jj merges and rebases match no trigger, so after one of those you still run
 `cc-notes reconcile` yourself.
 
+**The graph edges.** Two handlers write the relations an agent would otherwise have to
+remember to write, and only when the answer is unambiguous. After a commit, if the session
+holds exactly one claim — armed by a `task claim`/`task start` on either surface, disarmed by
+`task done`/`task cancel` — the pack runs `cc-notes task link <id> HEAD` and says which task
+it attributed the commit to, with the `task unlink` undo. Hold none or several and the
+attribution would be a guess, so nothing is written. Likewise, a `task add` while exactly one
+investigation is still open records the new task as that investigation's `follow-up`. Both
+fail closed on everything — a cc-notes error, a missing binary, a timeout, an unreadable
+session slot: because they run at `PostToolUse` the commit and the task already exist, so a
+raised handler would cost real work. A missing edge costs one graph hop instead.
+
 **The SessionEnd backstop.** A write-only session can end without ever hitting a sync
 trigger (the memory mirror is the canonical case). At session end an async handler runs a
 zero-network dirty check — local `refs/cc-notes/*` tips against their fetched copies under

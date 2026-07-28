@@ -8,11 +8,15 @@ from .common import (
     SESSION_TASK_CAP,
     CcNotesAvailable,
     CcNotesMissing,
-    cap_and_render_tasks,
+    cap_lines,
     dedup_tasks,
     mcp_active,
-    parse_tasks,
+    parse_status,
+    render_steal_line,
+    render_task_line,
     run_cc_notes,
+    stale_leases,
+    status_tasks,
 )
 
 
@@ -22,30 +26,41 @@ from .common import (
     max_fires=1,
 )
 def float_session_tasks(evt: UserPromptSubmitEvent) -> HookResult | None:
-    """Float this session's durable tasks once, at the first prompt."""
-    tasks = parse_tasks(run_cc_notes(evt, "task", "list", "--json"))
-    if len(tasks) < SESSION_TASK_CAP:
-        tasks += parse_tasks(run_cc_notes(evt, "task", "list", "--backlog", "--json"))
-    # On an unresolvable detached HEAD the branch read degrades to the backlog set, so the
-    # two reads overlap — dedup by id (branch first, first occurrence wins) before capping.
-    tasks = dedup_tasks(tasks)
+    """Float this session's durable tasks once, at the first prompt.
+
+    One `status --json` carries every bucket the floater needs — the current branch's
+    tasks, the shared backlog with each row's ready-to-claim verdict, and the in-progress
+    leases — so session start costs one fold, not one per bucket.
+    """
+    report = parse_status(run_cc_notes(evt, "status", "--json"))
+    active = mcp_active(evt)
+    # An expired lease is the most actionable row on the board: work nobody is driving.
+    # It leads, and its id wins the dedup so the steal hint survives.
+    stealable = stale_leases(report)
+    # sorted() is stable, so ready backlog rows lead in priority order, blocked ones trail.
+    backlog = sorted(status_tasks(report, "backlog"), key=lambda t: not t.get("ready"))
+    tasks = dedup_tasks(stealable + status_tasks(report, "your_branch") + backlog)
     if not tasks:
         return None
-    active = mcp_active(evt)
+    stale_ids = {t["id"] for t in stealable if t.get("id")}
+    lines = [
+        render_steal_line(t, mcp=active) if t.get("id") in stale_ids else render_task_line(t)
+        for t in tasks
+    ]
     if active:
         lede = (
             "Durable cc-notes tasks in play — orient with the status tool "
-            "(shared backlog, your branch's tasks, who holds what, notes needing review), "
+            "(backlog by readiness, your branch's tasks, expired leases you can steal), "
             "then claim one with the task_claim tool:"
         )
         tail = "orient with the status tool"
     else:
         lede = (
             "Durable cc-notes tasks in play — run `cc-notes status` to orient "
-            "(shared backlog, your branch's tasks, who holds what, notes needing review):"
+            "(backlog by readiness, your branch's tasks, expired leases you can steal):"
         )
         tail = "run `cc-notes status`"
-    return evt.warn(lede, *cap_and_render_tasks(tasks, SESSION_TASK_CAP, tail))
+    return evt.warn(lede, *cap_lines(lines, SESSION_TASK_CAP, tail))
 
 
 @on(

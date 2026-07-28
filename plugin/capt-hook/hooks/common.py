@@ -238,8 +238,52 @@ def parse_tasks(out: str | None) -> list[dict[str, Any]]:
     return [t for t in parsed if isinstance(t, dict)]
 
 
+def parse_status(out: str | None) -> dict[str, Any]:
+    """Parse `cc-notes status --json` into its mapping, or {} when absent or malformed."""
+    if not out or not out.strip():
+        return {}
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def status_tasks(report: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    """The task rows under one status bucket (``backlog``, ``your_branch``), ill-shaped rows dropped."""
+    rows = report.get(key)
+    if not isinstance(rows, list):
+        return []
+    return [t for t in rows if isinstance(t, dict)]
+
+
+def stale_leases(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """The in-progress tasks across every assignee whose lease has expired — stealable work."""
+    leases: list[dict[str, Any]] = []
+    groups = report.get("in_progress")
+    if not isinstance(groups, list):
+        return leases
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        tasks = group.get("tasks")
+        if not isinstance(tasks, list):
+            continue
+        leases += [t for t in tasks if isinstance(t, dict) and t.get("stale")]
+    return leases
+
+
 def short_id(full: str) -> str:
     return full[:7]
+
+
+def ids_match(a: str, b: str) -> bool:
+    """Whether two cc-notes id spellings name the same entity.
+
+    Ids resolve by unique prefix, so a stored full id and a short prefix (or the
+    reverse) are the same record.
+    """
+    return a == b or a.startswith(b) or b.startswith(a)
 
 
 def render_note_lines(entries: list[dict[str, Any]]) -> list[str]:
@@ -252,6 +296,17 @@ def render_note_lines(entries: list[dict[str, Any]]) -> list[str]:
     return [dispatch.get(entry_kind(e), render_note_line)(e) for e in entries]
 
 
+def drift_suffix(payload: dict[str, Any]) -> str:
+    """The reconciliation context behind a drift verdict: why it was retired, and the
+    commit it was last checked against — the diff base for what changed under it."""
+    parts = []
+    if reason := payload.get("stale_reason"):
+        parts.append(f"reason: {reason}")
+    if commit := payload.get("verified_commit"):
+        parts.append(f"diff against {short_id(commit)}")
+    return f" ({'; '.join(parts)})" if parts else ""
+
+
 def render_note_line(entry: dict[str, Any]) -> str:
     note = entry.get("note", {})
     reasons = ", ".join(entry.get("reasons", []))
@@ -259,7 +314,7 @@ def render_note_line(entry: dict[str, Any]) -> str:
     if reasons:
         line += f" ({reasons})"
     if drift := note.get("drift"):
-        line += f" [{drift}]"
+        line += f" [{drift}]{drift_suffix(note)}"
     return line
 
 
@@ -270,7 +325,7 @@ def render_doc_line(entry: dict[str, Any]) -> str:
     if when := doc.get("when"):
         line += f" — when: {when}"
     if drift := doc.get("drift"):
-        line += f" [{str(drift).lower()}]"
+        line += f" [{str(drift).lower()}]{drift_suffix(doc)}"
     if reasons := ", ".join(entry.get("reasons", [])):
         line += f" ({reasons})"
     line += f" — cc-notes doc show {short}"
@@ -320,13 +375,20 @@ def render_task_line(task: dict[str, Any]) -> str:
     return line
 
 
+def render_steal_line(task: dict[str, Any], *, mcp: bool) -> str:
+    """Render one expired lease as a summary line ending in the reclaim call."""
+    short = short_id(task.get("id", ""))
+    reclaim = f"task_claim tool with id={short}, steal=true" if mcp else f"cc-notes task claim {short} --steal"
+    return f"{render_task_line(task)} — lease expired, {reclaim}"
+
+
 def dedup_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop tasks whose id already appeared, keeping the first occurrence in order.
 
-    The session floater concatenates the current-branch list with the shared backlog;
-    on an unresolvable detached HEAD the branch read itself degrades to the backlog set,
-    so the two `task list` reads can return the same task. Tasks carrying no id are never
-    collapsed.
+    The session floater concatenates the status report's buckets, and a task can sit in
+    more than one — an expired lease on the current branch is both a stale lease and a
+    your-branch row. First occurrence wins, so the steal-hinted rendering survives. Tasks
+    carrying no id are never collapsed.
     """
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
@@ -340,15 +402,19 @@ def dedup_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int, more_tail: str) -> list[str]:
+def cap_lines(lines: list[str], cap: int, more_tail: str) -> list[str]:
     # more_tail follows the caller's branch (MCP tool vs CLI wording) so the "+N more"
     # overflow line steers to the same surface as the lede, not always `cc-notes status`.
-    if not tasks:
+    if not lines:
         return []
-    lines = [render_task_line(t) for t in tasks[:cap]]
-    if (extra := len(tasks) - cap) > 0:
-        lines.append(f"+{extra} more — {more_tail}")
-    return lines
+    capped = lines[:cap]
+    if (extra := len(lines) - cap) > 0:
+        capped.append(f"+{extra} more — {more_tail}")
+    return capped
+
+
+def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int, more_tail: str) -> list[str]:
+    return cap_lines([render_task_line(t) for t in tasks], cap, more_tail)
 
 
 def in_cc_pool_memory(path: Path) -> bool:

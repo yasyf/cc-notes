@@ -25,6 +25,7 @@ from captain_hook.state import fired_this_turn, record_fire
 from pydantic import BaseModel, Field
 
 from .common import (
+    CC_NOTES_EXECUTABLES,
     CcNotesAvailable,
     CcNotesMcpToolCall,
     LLM_INPUT_CAP,
@@ -33,9 +34,11 @@ from .common import (
     NUDGE_MAX_FIRES,
     RECORD_KINDS,
     RecordVerdict,
+    ids_match,
     in_cc_pool_memory,
     mcp_active,
     record_command,
+    run_cc_notes,
 )
 
 # DurableInternalWrite recall vocabulary: STRONG names look durable-internal on name
@@ -922,8 +925,8 @@ def _event_error(evt: BaseHookEvent) -> str:
     return getattr(evt, "error", None) or ""
 
 
-def _output_investigation_id(evt: BaseHookEvent) -> str | None:
-    # An `open` mints an id in its output: MCP/--json leads with {"id":"..."}, the CLI lean line with
+def _minted_id(evt: BaseHookEvent) -> str | None:
+    # A create mints an id in its output: MCP/--json leads with {"id":"..."}, the CLI lean line with
     # the short id as its first token.
     text = _tool_output(evt) or _event_error(evt)
     if not text:
@@ -948,7 +951,7 @@ def _investigation_id(evt: BaseHookEvent, verb: str) -> str | None:
     """The investigation id a verb acts on: minted from output for a create, else the id positional (CLI)
     or the ``id`` input field (MCP)."""
     if verb in INVESTIGATION_OPEN_VERBS:
-        return _output_investigation_id(evt)
+        return _minted_id(evt)
     name = evt.tool_name or ""
     if name.startswith(INVESTIGATION_MCP_PREFIX):
         raw = evt.input.raw
@@ -956,20 +959,14 @@ def _investigation_id(evt: BaseHookEvent, verb: str) -> str | None:
     return _cli_positional_id(evt)
 
 
-def _ids_match(a: str, b: str) -> bool:
-    # cc-notes ids resolve by unique prefix, so a stored full id and a short prefix (or the reverse)
-    # name the same investigation.
-    return a == b or a.startswith(b) or b.startswith(a)
-
-
 def _arm_id(unresolved: list[str], inv_id: str | None) -> None:
-    if inv_id and not any(_ids_match(existing, inv_id) for existing in unresolved):
+    if inv_id and not any(ids_match(existing, inv_id) for existing in unresolved):
         unresolved.append(inv_id)
 
 
 def _resolve_id(unresolved: list[str], inv_id: str | None) -> None:
     if inv_id:
-        unresolved[:] = [existing for existing in unresolved if not _ids_match(existing, inv_id)]
+        unresolved[:] = [existing for existing in unresolved if not ids_match(existing, inv_id)]
 
 
 def _load_activity(evt: BaseHookEvent) -> InvestigationActivity:
@@ -1041,6 +1038,62 @@ def record_investigation_activity(evt: PostToolUseEvent) -> HookResult | None:
     except Exception:
         pass
     return None
+
+
+TASK_ADD_TOOL = MCP_TOOL_PREFIX + "task_add"
+
+
+def _creates_task(evt: BaseHookEvent) -> bool:
+    if evt.tool_name == TASK_ADD_TOOL:
+        return True
+    line = evt.cmd.line
+    return bool(line) and any(
+        cmd.program in CC_NOTES_EXECUTABLES and list(cmd.args[:2]) == ["task", "add"] for cmd in line.commands
+    )
+
+
+class TaskCreated(CustomCondition):
+    """Matches a task creation — the MCP task_add tool or a `cc-notes/ccn task add` CLI leg."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        return _creates_task(evt)
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[TaskCreated(), CcNotesAvailable()],
+    # Uncapped like every other pure side-effect: an investigation that spawns four tasks earns four
+    # edges, not the first three.
+    max_fires=None,
+    tests={
+        Input(command="cc-notes task list"): Allow(),
+        Input(command="cc-notes task show abc1234"): Allow(),
+        Input(tool="mcp__plugin_cc-notes_cc-notes__task_list"): Allow(),
+        Input(tool="Edit", file="m.py"): Allow(),
+        # No investigation is in flight in the inline harness, so a real creation stays silent too.
+        Input(command="cc-notes task add 'ship the fix'", output="abc1234\topen\tP2\t-\tship the fix"): Allow(),
+    },
+)
+def link_task_to_investigation(evt: PostToolUseEvent) -> HookResult | None:
+    """Record a task created mid-investigation as that investigation's follow-up — the outbound edge.
+
+    Exactly one unresolved investigation names the parent unambiguously; with none or several the
+    attribution would be a guess, so no edge is written.
+    """
+    try:
+        unresolved = _load_activity(evt).unresolved
+        if len(unresolved) != 1:
+            return None
+        task_id = _minted_id(evt)
+        if not task_id or ids_match(task_id, unresolved[0]):
+            return None
+        if run_cc_notes(evt, "investigation", "follow-up", unresolved[0], task_id) is None:
+            return None
+        return evt.warn(f"Recorded task {task_id} as a follow-up of investigation {unresolved[0]}.")
+    except Exception:
+        # Fail closed on everything — an unreadable session slot, a cc-notes error, a missing binary,
+        # a timeout. A missing edge costs a graph hop; a raised hook costs the agent the tool call.
+        return None
 
 
 def _ci_run_failed(evt: BaseHookEvent) -> bool:
