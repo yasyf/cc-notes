@@ -4,26 +4,25 @@ import (
 	"maps"
 	"slices"
 	"testing"
+
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 )
 
-func numstatOutput(commits ...[]string) string {
-	out := ""
-	for _, lines := range commits {
-		out += "\x00\n"
-		for _, l := range lines {
-			out += l + "\n"
-		}
+func churnScan(commits ...[]gitcmd.FileChurn) []gitcmd.CommitChurn {
+	out := make([]gitcmd.CommitChurn, len(commits))
+	for i, files := range commits {
+		out[i] = gitcmd.CommitChurn{Files: files}
 	}
 	return out
 }
 
-func TestParseNumstatCountsRevisionsAndChurn(t *testing.T) {
-	out := numstatOutput(
-		[]string{"10\t2\ta.go", "3\t1\ta_test.go"},
-		[]string{"5\t5\ta.go", "0\t7\tvendored/skip.go"},
-		[]string{"-\t-\tlogo.png", "1\t0\ta.go"},
+func TestFoldCochangeCountsRevisionsAndChurn(t *testing.T) {
+	commits := churnScan(
+		[]gitcmd.FileChurn{{Path: "a.go", Added: 10, Deleted: 2}, {Path: "a_test.go", Added: 3, Deleted: 1}},
+		[]gitcmd.FileChurn{{Path: "a.go", Added: 5, Deleted: 5}, {Path: "vendored/skip.go", Deleted: 7}},
+		[]gitcmd.FileChurn{{Path: "logo.png"}, {Path: "a.go", Added: 1}},
 	)
-	got := parseNumstat(out, []string{"a.go", "a_test.go", "logo.png"})
+	got := foldCochange(commits, []string{"a.go", "a_test.go", "logo.png"})
 
 	want := map[string]pathHistory{
 		"a.go":      {revisions: []int{0, 1, 2}, churn: 23},
@@ -40,11 +39,11 @@ func TestParseNumstatCountsRevisionsAndChurn(t *testing.T) {
 	}
 }
 
-func TestParseNumstatIgnoresUnrequestedPaths(t *testing.T) {
-	out := numstatOutput([]string{"1\t1\twanted.go", "9\t9\tunwanted.go"})
-	got := parseNumstat(out, []string{"wanted.go"})
+func TestFoldCochangeIgnoresUnrequestedPaths(t *testing.T) {
+	commits := churnScan([]gitcmd.FileChurn{{Path: "wanted.go", Added: 1, Deleted: 1}, {Path: "unwanted.go", Added: 9, Deleted: 9}})
+	got := foldCochange(commits, []string{"wanted.go"})
 	if len(got) != 1 || got["wanted.go"].churn != 2 {
-		t.Fatalf("parseNumstat = %+v, want only wanted.go with churn 2", got)
+		t.Fatalf("foldCochange = %+v, want only wanted.go with churn 2", got)
 	}
 }
 

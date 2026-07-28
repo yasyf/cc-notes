@@ -49,10 +49,6 @@ const (
 
 // Default policy thresholds.
 const (
-	// NoteHalfLife is S9's half-life for notes.
-	NoteHalfLife = 60 * 24 * time.Hour
-	// DocHalfLife is S9's half-life for docs.
-	DocHalfLife = 90 * 24 * time.Hour
 	// ChurnHalfLife is the count of churned lines on a record's anchored paths
 	// that halves its rank weight (S7).
 	ChurnHalfLife = 200
@@ -83,10 +79,17 @@ type Policy struct {
 	MaxScanBytes    int64
 }
 
+// decayHalfLives maps the kinds S9 decays to their half-life: the very
+// threshold S1/S3 flag a record stale after, so one cc-notes.noteStaleAfter
+// value tunes review and decay together. Kinds absent from the map never decay.
+func decayHalfLives(staleAfter time.Duration) map[model.Kind]time.Duration {
+	return map[model.Kind]time.Duration{model.KindNote: staleAfter, model.KindDoc: staleAfter}
+}
+
 // DefaultPolicy builds the policy from the repository's own configured
 // thresholds — the same cc-notes.noteStaleAfter and cc-notes.leaseTTL
 // precedence note review and task leases already resolve — plus the package
-// default half-lives, evaluated as of now.
+// default weights, evaluated as of now.
 func DefaultPolicy(ctx context.Context, c *notes.Client, now time.Time) (Policy, error) {
 	staleAfter, err := c.NoteStaleAfter(ctx)
 	if err != nil {
@@ -100,7 +103,7 @@ func DefaultPolicy(ctx context.Context, c *notes.Client, now time.Time) (Policy,
 		Now:             now,
 		StaleAfter:      staleAfter,
 		LeaseTTL:        ttl,
-		HalfLives:       map[model.Kind]time.Duration{model.KindNote: NoteHalfLife, model.KindDoc: DocHalfLife},
+		HalfLives:       decayHalfLives(staleAfter),
 		ChurnHalfLife:   ChurnHalfLife,
 		DeadRefHalfLife: DeadRefHalfLife,
 		ReverifyBelow:   ReverifyBelow,
@@ -142,14 +145,13 @@ type Assessment struct {
 type Evaluator struct {
 	c      *notes.Client
 	git    gitcmd.Git
-	dir    string
 	policy Policy
 }
 
 // New builds an evaluator over the repository at dir, which c must already be
 // open on.
 func New(c *notes.Client, dir string, p Policy) *Evaluator {
-	return &Evaluator{c: c, git: gitcmd.Git{Dir: dir}, dir: dir, policy: p}
+	return &Evaluator{c: c, git: gitcmd.Git{Dir: dir}, policy: p}
 }
 
 // Assess evaluates every record in the corpus and returns the assessments
@@ -168,11 +170,11 @@ func (e *Evaluator) Assess(ctx context.Context) ([]Assessment, error) {
 	if err != nil {
 		return nil, err
 	}
-	tree, err := ScanTree(ctx, e.dir, e.policy.MaxScanBytes)
+	tree, err := ScanTree(ctx, e.git, e.policy.MaxScanBytes)
 	if err != nil {
 		return nil, err
 	}
-	touches, err := churnLog(ctx, e.dir, time.Unix(oldest(recs), 0))
+	touches, err := churnLog(ctx, e.git, time.Unix(oldest(recs), 0))
 	if err != nil {
 		return nil, err
 	}

@@ -40,13 +40,17 @@ func writeFile(t *testing.T, dir, name, body string) {
 	}
 }
 
+// testStaleAfter is the default note staleness threshold (notes.Client's 90d),
+// which is also the decay half-life every default policy runs under.
+const testStaleAfter = 90 * 24 * time.Hour
+
 // testPolicy is the package default policy pinned to a fixed clock.
 func testPolicy(now time.Time) Policy {
 	return Policy{
 		Now:             now,
-		StaleAfter:      90 * 24 * time.Hour,
+		StaleAfter:      testStaleAfter,
 		LeaseTTL:        time.Hour,
-		HalfLives:       map[model.Kind]time.Duration{model.KindNote: NoteHalfLife, model.KindDoc: DocHalfLife},
+		HalfLives:       decayHalfLives(testStaleAfter),
 		ChurnHalfLife:   ChurnHalfLife,
 		DeadRefHalfLife: DeadRefHalfLife,
 		ReverifyBelow:   ReverifyBelow,

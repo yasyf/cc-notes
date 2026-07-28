@@ -76,7 +76,7 @@ func Build(ctx context.Context, s *store.Store, opts Options) (*Graph, error) {
 	if err != nil {
 		return nil, err
 	}
-	touched, err := commitPaths(ctx, s.Git.Dir, taskCommits(records))
+	touched, err := s.Git.CommitPaths(ctx, taskCommits(records))
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +87,7 @@ func Build(ctx context.Context, s *store.Store, opts Options) (*Graph, error) {
 		b.addRecord(r, touched, terms)
 	}
 	b.addContainment()
-	if err := b.addCochange(ctx, s.Git.Dir); err != nil {
+	if err := b.addCochange(ctx, s.Git); err != nil {
 		return nil, err
 	}
 	b.addCooccurrence()

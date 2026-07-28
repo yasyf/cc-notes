@@ -129,7 +129,7 @@ func TestChurnOnAWitnessedRecordGatesFirst(t *testing.T) {
 	}
 }
 
-func TestAssessDecaysNotesFasterThanDocsAndNeverLogs(t *testing.T) {
+func TestAssessDecaysNotesAndDocsAtTheReviewThresholdNeverLogs(t *testing.T) {
 	c, dir := openRepo(t)
 	ctx := t.Context()
 	note := verifiedNote(t, c, "Spin returns one", "pkg/widget.go")
@@ -142,17 +142,41 @@ func TestAssessDecaysNotesFasterThanDocsAndNeverLogs(t *testing.T) {
 		t.Fatalf("CreateLog: %v", err)
 	}
 
-	as := assess(t, c, dir, testPolicy(time.Now().Add(90*24*time.Hour)))
+	as := assess(t, c, dir, testPolicy(time.Now().Add(testStaleAfter)))
 	noteWeight := decayWeightOf(t, find(t, as, note))
 	docWeight := decayWeightOf(t, find(t, as, doc.ID))
 	if math.Abs(docWeight-0.5) > 0.01 {
-		t.Errorf("doc decay after one 90d half-life = %v, want ~0.5", docWeight)
+		t.Errorf("doc decay after one %v half-life = %v, want ~0.5", testStaleAfter, docWeight)
 	}
-	if noteWeight >= docWeight {
-		t.Errorf("note decay %v >= doc decay %v, want the 60d note half-life to bite harder", noteWeight, docWeight)
+	if math.Abs(noteWeight-docWeight) > 0.01 {
+		t.Errorf("note decay %v != doc decay %v, want one half-life for both", noteWeight, docWeight)
 	}
 	if _, ok := penaltyFor(find(t, as, lg.ID), SignalDecay); ok {
 		t.Error("the log decayed; logs are episodic and never go wrong")
+	}
+}
+
+// TestDefaultPolicyHalfLifeTracksTheConfiguredThreshold pins the single number:
+// a repository that retunes cc-notes.noteStaleAfter retunes S9's half-life with
+// it, so review cadence and time decay can never drift apart.
+func TestDefaultPolicyHalfLifeTracksTheConfiguredThreshold(t *testing.T) {
+	c, dir := openRepo(t)
+	gittest.Git(t, dir, "config", "cc-notes.noteStaleAfter", "48h")
+
+	policy, err := DefaultPolicy(t.Context(), c, time.Now())
+	if err != nil {
+		t.Fatalf("DefaultPolicy: %v", err)
+	}
+	if policy.StaleAfter != 48*time.Hour {
+		t.Fatalf("StaleAfter = %v, want 48h", policy.StaleAfter)
+	}
+	for _, kind := range []model.Kind{model.KindNote, model.KindDoc} {
+		if got := policy.HalfLives[kind]; got != policy.StaleAfter {
+			t.Errorf("%s half-life = %v, want the configured %v", kind, got, policy.StaleAfter)
+		}
+	}
+	if _, ok := policy.HalfLives[model.KindLog]; ok {
+		t.Error("logs carry a half-life; they are episodic and must never decay")
 	}
 }
 

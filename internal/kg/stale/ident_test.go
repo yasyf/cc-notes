@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
@@ -40,7 +41,7 @@ func TestCandidates(t *testing.T) {
 
 func TestScanTreeIndexesTrackedIdentifiers(t *testing.T) {
 	_, dir := openRepo(t)
-	tree, err := ScanTree(t.Context(), dir, MaxScanBytes)
+	tree, err := ScanTree(t.Context(), gitcmd.Git{Dir: dir}, MaxScanBytes)
 	if err != nil {
 		t.Fatalf("ScanTree: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestScanTreeSkipsSymlinkToDirectory(t *testing.T) {
 	gittest.Git(t, dir, "add", "-A")
 	gittest.Git(t, dir, "commit", "-q", "-m", "symlink a directory")
 
-	tree, err := ScanTree(t.Context(), dir, MaxScanBytes)
+	tree, err := ScanTree(t.Context(), gitcmd.Git{Dir: dir}, MaxScanBytes)
 	if err != nil {
 		t.Fatalf("ScanTree: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestScanTreeSkipsSymlinkToDirectory(t *testing.T) {
 
 func TestDeadRefsFlagDeletedElementsOnly(t *testing.T) {
 	_, dir := openRepo(t)
-	tree, err := ScanTree(t.Context(), dir, MaxScanBytes)
+	tree, err := ScanTree(t.Context(), gitcmd.Git{Dir: dir}, MaxScanBytes)
 	if err != nil {
 		t.Fatalf("ScanTree: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestDeadRefsFlagDeletedElementsOnly(t *testing.T) {
 // far its meaning has moved.
 func TestDeadRefsMissSemanticDrift(t *testing.T) {
 	_, dir := openRepo(t)
-	tree, err := ScanTree(t.Context(), dir, MaxScanBytes)
+	tree, err := ScanTree(t.Context(), gitcmd.Git{Dir: dir}, MaxScanBytes)
 	if err != nil {
 		t.Fatalf("ScanTree: %v", err)
 	}

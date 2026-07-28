@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
@@ -15,7 +16,7 @@ func TestChurnLogParsesNumstat(t *testing.T) {
 	gittest.Git(t, dir, "add", "-A")
 	gittest.Git(t, dir, "commit", "-q", "-m", "add the rotor, extend the widget")
 
-	touches, err := churnLog(t.Context(), dir, time.Unix(0, 0))
+	touches, err := churnLog(t.Context(), gitcmd.Git{Dir: dir}, time.Unix(0, 0))
 	if err != nil {
 		t.Fatalf("churnLog: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestChurnLogWindowExcludesOlderCommits(t *testing.T) {
 	gittest.Git(t, dir, "add", "-A")
 	gittest.Git(t, dir, "commit", "-q", "-m", "add the rotor")
 
-	touches, err := churnLog(t.Context(), dir, cutoff)
+	touches, err := churnLog(t.Context(), gitcmd.Git{Dir: dir}, cutoff)
 	if err != nil {
 		t.Fatalf("churnLog: %v", err)
 	}

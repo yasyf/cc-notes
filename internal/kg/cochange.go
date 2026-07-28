@@ -1,14 +1,11 @@
 package kg
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"maps"
-	"os/exec"
 	"slices"
-	"strconv"
-	"strings"
+
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 )
 
 const (
@@ -39,67 +36,40 @@ type pathHistory struct {
 // cochangeLog reads the revision and churn history of paths in one git
 // invocation scoped to exactly those paths. Scoping matters: an unscoped
 // --numstat over a monorepo diffs every file of every commit.
-func cochangeLog(ctx context.Context, dir string, paths []string) (map[string]pathHistory, error) {
+func cochangeLog(ctx context.Context, g gitcmd.Git, paths []string) (map[string]pathHistory, error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	flags := []string{
-		"-C", dir, "log", "--no-merges", "--no-renames", "--numstat",
-		"--format=%x00", "-n", strconv.Itoa(cochangeWindow), "--",
+	commits, err := g.NumstatLog(ctx, gitcmd.NumstatScope{Limit: cochangeWindow, Paths: paths})
+	if err != nil {
+		return nil, err
 	}
-	args := make([]string, 0, len(flags)+len(paths))
-	args = append(append(args, flags...), paths...)
-	//nolint:gosec // G204: git is a fixed argv[0], every flag is a literal, and the operands are repository paths the graph already holds.
-	cmd := exec.CommandContext(ctx, "git", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("git log --numstat: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	return parseNumstat(stdout.String(), paths), nil
+	return foldCochange(commits, paths), nil
 }
 
-// parseNumstat reads `git log --numstat --format=%x00` output: a NUL line
-// opens each commit, then one "<added>\t<deleted>\t<path>" line per changed
-// file. Git reports a commit's whole numstat even under a pathspec, so only
-// the requested paths are kept; a binary file's "-" counts as no churn.
-func parseNumstat(out string, paths []string) map[string]pathHistory {
+// foldCochange indexes each commit by its position in the scan and accumulates
+// the requested paths' revisions and churn. Git reports a commit's whole
+// numstat even under a pathspec, so paths outside the request are dropped.
+func foldCochange(commits []gitcmd.CommitChurn, paths []string) map[string]pathHistory {
 	wanted := make(map[string]struct{}, len(paths))
 	for _, p := range paths {
 		wanted[p] = struct{}{}
 	}
 	history := make(map[string]pathHistory, len(paths))
-	revision := -1
-	for line := range strings.SplitSeq(out, "\n") {
-		if line == "\x00" {
-			revision++
-			continue
+	for revision, commit := range commits {
+		for _, f := range commit.Files {
+			if _, want := wanted[f.Path]; !want {
+				continue
+			}
+			h := history[f.Path]
+			if len(h.revisions) == 0 || h.revisions[len(h.revisions)-1] != revision {
+				h.revisions = append(h.revisions, revision)
+			}
+			h.churn += int64(f.Added + f.Deleted)
+			history[f.Path] = h
 		}
-		added, deleted, path, ok := numstatFields(line)
-		if !ok {
-			continue
-		}
-		if _, want := wanted[path]; !want {
-			continue
-		}
-		h := history[path]
-		if len(h.revisions) == 0 || h.revisions[len(h.revisions)-1] != revision {
-			h.revisions = append(h.revisions, revision)
-		}
-		h.churn += added + deleted
-		history[path] = h
 	}
 	return history
-}
-
-func numstatFields(line string) (added, deleted int64, path string, ok bool) {
-	fields := strings.SplitN(line, "\t", 3)
-	if len(fields) != 3 || fields[2] == "" {
-		return 0, 0, "", false
-	}
-	added, _ = strconv.ParseInt(fields[0], 10, 64)
-	deleted, _ = strconv.ParseInt(fields[1], 10, 64)
-	return added, deleted, fields[2], true
 }
 
 // addCochange couples every pair of path nodes that keep changing in the same
@@ -108,8 +78,8 @@ func numstatFields(line string) (added, deleted int64, path string, ok bool) {
 // The coupling is advisory. A source file and its test always co-change, so
 // the signal carries a structural false-positive rate: it may adjust a rank,
 // never assert that two paths are related.
-func (b *builder) addCochange(ctx context.Context, dir string) error {
-	history, err := cochangeLog(ctx, dir, b.pathValues())
+func (b *builder) addCochange(ctx context.Context, g gitcmd.Git) error {
+	history, err := cochangeLog(ctx, g, b.pathValues())
 	if err != nil {
 		return err
 	}

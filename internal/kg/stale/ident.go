@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 )
 
 // minIdentLen is the shortest run S8 will treat as a code reference.
@@ -28,27 +30,24 @@ type Tree struct {
 	idents map[string]struct{}
 }
 
-// ScanTree tokenizes every tracked text file under dir into the identifier set.
-// Files above maxBytes, files holding a NUL byte, and tracked entries that are
-// not regular files — symlinks and submodule gitlinks — are skipped: a binary
-// blob contributes only noise, a symlink's target is either tracked in its own
-// right or outside the tree, and an identifier the scan misses costs S8 a flag
-// it should have raised, never one it should not have.
-func ScanTree(ctx context.Context, dir string, maxBytes int64) (*Tree, error) {
-	root, err := gitOutput(ctx, dir, "rev-parse", "--show-toplevel")
+// ScanTree tokenizes every tracked text file in g's repository into the
+// identifier set. Files above maxBytes, files holding a NUL byte, and tracked
+// entries that are not regular files — symlinks and submodule gitlinks — are
+// skipped: a binary blob contributes only noise, a symlink's target is either
+// tracked in its own right or outside the tree, and an identifier the scan
+// misses costs S8 a flag it should have raised, never one it should not have.
+func ScanTree(ctx context.Context, g gitcmd.Git, maxBytes int64) (*Tree, error) {
+	root, err := g.Root(ctx)
 	if err != nil {
 		return nil, err
 	}
-	listing, err := gitOutput(ctx, dir, "ls-files", "-z")
+	tracked, err := g.TrackedFiles(ctx)
 	if err != nil {
 		return nil, err
 	}
 	t := &Tree{idents: map[string]struct{}{}}
-	for _, name := range strings.Split(listing, "\x00") {
-		if name == "" {
-			continue
-		}
-		full := filepath.Join(strings.TrimSpace(root), name)
+	for _, name := range tracked {
+		full := filepath.Join(root, name)
 		info, err := os.Lstat(full)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
