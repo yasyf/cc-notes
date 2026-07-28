@@ -122,9 +122,6 @@ func ForRepo(commonDir string) (Repo, error) {
 // Graph returns the knowledge-graph index directory.
 func (r Repo) Graph() string { return filepath.Join(r.Dir, "graph-v1") }
 
-// Embed returns the dense-embedding directory.
-func (r Repo) Embed() string { return filepath.Join(r.Dir, "embed-v1") }
-
 // QueuePending returns the directory holding queued work not yet run.
 func (r Repo) QueuePending() string { return filepath.Join(r.Dir, "queue-v1", "pending") }
 

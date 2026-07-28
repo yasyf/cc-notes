@@ -84,7 +84,7 @@ func load(dir string, questions []eval.Question, opts eval.Options) (corpus, err
 		return corpus{}, fmt.Errorf("open store %s: %w", dir, err)
 	}
 	start := time.Now()
-	g, err := kg.Build(ctx, s, kg.Options{})
+	g, err := kg.Build(ctx, s)
 	if err != nil {
 		return corpus{}, fmt.Errorf("build graph %s: %w", dir, err)
 	}

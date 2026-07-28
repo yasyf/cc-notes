@@ -97,17 +97,15 @@ func AnchorNode(a model.Anchor) NodeID {
 // entity metadata; UpdatedAt is an entity's last edit or a session's last
 // event. Revisions and Churn are the co-change scan's per-path history volume
 // — commits touching the path and lines it gained or lost — and stay zero on
-// every other kind. Vector is the dense embedding, present only when the build
-// ran with an Embedder.
+// every other kind.
 type Node struct {
-	ID        NodeID    `json:"id"`
-	Kind      NodeKind  `json:"kind"`
-	Value     string    `json:"value"`
-	Title     string    `json:"title,omitempty"`
-	UpdatedAt int64     `json:"updated_at,omitempty"`
-	Revisions int       `json:"revisions,omitempty"`
-	Churn     int64     `json:"churn,omitempty"`
-	Vector    []float32 `json:"vector,omitempty"`
+	ID        NodeID   `json:"id"`
+	Kind      NodeKind `json:"kind"`
+	Value     string   `json:"value"`
+	Title     string   `json:"title,omitempty"`
+	UpdatedAt int64    `json:"updated_at,omitempty"`
+	Revisions int      `json:"revisions,omitempty"`
+	Churn     int64    `json:"churn,omitempty"`
 }
 
 // EdgeKind names the relation an edge asserts.

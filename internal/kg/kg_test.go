@@ -1,7 +1,6 @@
 package kg_test
 
 import (
-	"context"
 	"math"
 	"os"
 	"path/filepath"
@@ -66,9 +65,9 @@ func (f *fixture) append(t *testing.T, kind model.Kind, id model.EntityID, ops .
 	}
 }
 
-func (f *fixture) build(t *testing.T, opts kg.Options) *kg.Graph {
+func (f *fixture) build(t *testing.T) *kg.Graph {
 	t.Helper()
-	g, err := kg.Build(t.Context(), f.store, opts)
+	g, err := kg.Build(t.Context(), f.store)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -77,11 +76,6 @@ func (f *fixture) build(t *testing.T, opts kg.Options) *kg.Graph {
 
 func pathAnchor(p string) model.Anchor {
 	return model.Anchor{Kind: model.AnchorPath, Value: p}
-}
-
-func sameNode(a, b kg.Node) bool {
-	return a.ID == b.ID && a.Kind == b.Kind && a.Value == b.Value &&
-		a.Title == b.Title && a.UpdatedAt == b.UpdatedAt && slices.Equal(a.Vector, b.Vector)
 }
 
 func findEdge(g *kg.Graph, from, to kg.NodeID, kind kg.EdgeKind) (kg.Edge, bool) {
@@ -144,7 +138,7 @@ func TestBuildDeclaredEdges(t *testing.T) {
 		model.AddFixCommit{SHA: sha},
 	)
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	taskNode := kg.EntityNode(model.KindTask, task)
 	investigationNode := kg.EntityNode(model.KindInvestigation, investigation)
 
@@ -189,7 +183,7 @@ func TestBuildAnchorCarriesWitnessOID(t *testing.T) {
 		Witness:        []model.AnchorWitness{{Anchor: pathAnchor("internal/kg/build.go"), OID: model.SHA(blob)}},
 	})
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	e := requireEdge(t, g, kg.EntityNode(model.KindNote, note), kg.PathNode("internal/kg/build.go"), kg.EdgeAnchor)
 	if e.OID != model.SHA(blob) {
 		t.Fatalf("witness oid = %q, want %q", e.OID, blob)
@@ -207,7 +201,7 @@ func TestBuildDerivesTaskPathAnchorsFromCommits(t *testing.T) {
 	task := f.create(t, model.CreateTask{Nonce: model.NewNonce(), Title: "wire the graph", Type: model.TypeTask, Branch: "main"}).EntityID()
 	f.append(t, model.KindTask, task, model.LinkCommit{SHA: sha})
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	taskNode := kg.EntityNode(model.KindTask, task)
 	for _, p := range []string{"internal/kg/build.go", "internal/kg/index.go"} {
 		e := requireEdge(t, g, taskNode, kg.PathNode(p), kg.EdgeAnchor)
@@ -228,7 +222,7 @@ func TestBuildContainmentChain(t *testing.T) {
 		Anchors: []model.Anchor{pathAnchor("internal/kg/build.go")},
 	})
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	for _, tc := range [][2]kg.NodeID{
 		{kg.PathNode("internal/kg/build.go"), kg.DirNode("internal/kg")},
 		{kg.DirNode("internal/kg"), kg.DirNode("internal")},
@@ -248,7 +242,7 @@ func TestBuildCooccurrenceOverSharedAnchor(t *testing.T) {
 	first := f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "first", Body: "a", Anchors: anchors}).EntityID()
 	second := f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "second", Body: "b", Anchors: anchors}).EntityID()
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	nodes := []kg.NodeID{kg.EntityNode(model.KindNote, first), kg.EntityNode(model.KindNote, second)}
 	slices.Sort(nodes)
 	e := requireEdge(t, g, nodes[0], nodes[1], kg.EdgeCooccur)
@@ -282,7 +276,7 @@ func TestBuildSessionOutweighsAnchor(t *testing.T) {
 	sessionedA := f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "sessioned a", Body: "p"}).EntityID()
 	sessionedB := f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "sessioned b", Body: "q"}).EntityID()
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	anchored := requireCooccur(t, g, anchoredA, anchoredB)
 	sessioned := requireCooccur(t, g, sessionedA, sessionedB)
 	if sessioned.Weight <= anchored.Weight {
@@ -300,7 +294,7 @@ func TestBuildSessionNodes(t *testing.T) {
 	first := f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "first", Body: "a"}).EntityID()
 	second := f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "second", Body: "b"}).EntityID()
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	if node := requireNode(t, g, kg.SessionNode(session)); node.Kind != kg.NodeSession || node.Value != session {
 		t.Fatalf("session node = %+v", node)
 	}
@@ -321,51 +315,10 @@ func TestBuildSupersedeAndTombstone(t *testing.T) {
 	tombstoned := f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "gone", Body: "gone"}).EntityID()
 	f.append(t, model.KindNote, tombstoned, model.DeleteNote{})
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	requireEdge(t, g, kg.EntityNode(model.KindNote, superseded), kg.EntityNode(model.KindNote, replacement), kg.EdgeSupersede)
 	if slices.ContainsFunc(g.Nodes, func(n kg.Node) bool { return n.ID == kg.EntityNode(model.KindNote, tombstoned) }) {
 		t.Fatal("a tombstoned note is in the graph")
-	}
-}
-
-type stubEmbedder struct {
-	texts []string
-}
-
-func (e *stubEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
-	e.texts = texts
-	vectors := make([][]float32, len(texts))
-	for i, text := range texts {
-		vectors[i] = []float32{float32(len(text))}
-	}
-	return vectors, nil
-}
-
-func TestBuildWithoutEmbedderLeavesVectorsEmpty(t *testing.T) {
-	f := newFixture(t)
-	f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "plain", Body: "body"})
-	for _, n := range f.build(t, kg.Options{}).Nodes {
-		if n.Vector != nil {
-			t.Fatalf("node %s carries a vector with no embedder", n.ID)
-		}
-	}
-}
-
-func TestBuildWithEmbedderAttachesVectors(t *testing.T) {
-	f := newFixture(t)
-	note := f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "embedded", Body: "body"}).EntityID()
-	embedder := &stubEmbedder{}
-
-	g := f.build(t, kg.Options{Embedder: embedder})
-	if len(embedder.texts) != 1 || !strings.Contains(embedder.texts[0], "embedded") {
-		t.Fatalf("embedder saw %q", embedder.texts)
-	}
-	entity := requireNode(t, g, kg.EntityNode(model.KindNote, note))
-	if want := []float32{float32(len(embedder.texts[0]))}; !slices.Equal(entity.Vector, want) {
-		t.Fatalf("vector = %v, want %v", entity.Vector, want)
-	}
-	if anchorless := requireNode(t, g, kg.EntityNode(model.KindNote, note)); anchorless.Vector == nil {
-		t.Fatal("entity node lost its vector")
 	}
 }
 
@@ -391,7 +344,7 @@ func TestSourceDigestTracksRefTips(t *testing.T) {
 	if edited == created {
 		t.Fatal("editing a note left the source digest unchanged")
 	}
-	if g := f.build(t, kg.Options{}); g.Source != edited {
+	if g := f.build(t); g.Source != edited {
 		t.Fatalf("Build source = %s, want %s", g.Source, edited)
 	}
 }
@@ -406,7 +359,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	task := f.create(t, model.CreateTask{Nonce: model.NewNonce(), Title: "task", Type: model.TypeTask, Branch: "main"}).EntityID()
 	f.append(t, model.KindTask, task, model.LinkCommit{SHA: sha})
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	repo, err := ccnhome.ForRepo(f.store.CommonDir())
 	if err != nil {
 		t.Fatalf("ForRepo: %v", err)
@@ -485,7 +438,7 @@ func TestLoadMissesOnAnotherSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForRepo: %v", err)
 	}
-	kg.Save(repo.Graph(), f.build(t, kg.Options{}))
+	kg.Save(repo.Graph(), f.build(t))
 
 	f.append(t, model.KindNote, note, model.SetBody{Body: "b"})
 	source, err := kg.SourceDigest(t.Context(), f.store)
@@ -497,7 +450,7 @@ func TestLoadMissesOnAnotherSource(t *testing.T) {
 		t.Fatal("Load hit a graph built from older ref tips")
 	}
 
-	rebuilt := f.build(t, kg.Options{})
+	rebuilt := f.build(t)
 	kg.Save(repo.Graph(), rebuilt)
 	index, ok := kg.Load(repo.Graph(), source)
 	if !ok {
@@ -518,11 +471,11 @@ func TestGraphIsDeterministic(t *testing.T) {
 	task := f.create(t, model.CreateTask{Nonce: model.NewNonce(), Title: "task", Type: model.TypeTask, Branch: "main"}).EntityID()
 	f.append(t, model.KindTask, task, model.LinkCommit{SHA: sha})
 
-	first, second := f.build(t, kg.Options{}), f.build(t, kg.Options{})
+	first, second := f.build(t), f.build(t)
 	if !slices.Equal(first.Edges, second.Edges) {
 		t.Fatal("two builds of one repository produced different edges")
 	}
-	if !slices.EqualFunc(first.Nodes, second.Nodes, sameNode) {
+	if !slices.Equal(first.Nodes, second.Nodes) {
 		t.Fatal("two builds of one repository produced different nodes")
 	}
 	if !slices.IsSortedFunc(first.Nodes, func(a, b kg.Node) int { return strings.Compare(string(a.ID), string(b.ID)) }) {

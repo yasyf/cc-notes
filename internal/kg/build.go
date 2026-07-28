@@ -37,17 +37,6 @@ const (
 	sourceDomain = "cc-notes.kg.v1\x00"
 )
 
-// Embedder maps entity texts to dense vectors, one per input, in order.
-type Embedder interface {
-	Embed(ctx context.Context, texts []string) ([][]float32, error)
-}
-
-// Options tunes a build. The zero value builds the purely structural graph; a
-// non-nil Embedder additionally attaches a vector to every entity node.
-type Options struct {
-	Embedder Embedder
-}
-
 // SourceDigest returns the digest of the repository's current entity ref tips.
 // A stored graph whose Source matches it was folded from exactly these tips,
 // so it is current by construction rather than by heuristic.
@@ -67,7 +56,7 @@ func SourceDigest(ctx context.Context, s *store.Store) (string, error) {
 // nodes imply, and the advisory co-change coupling between anchored paths.
 // Tombstoned entities are dropped; superseded ones are kept, since the
 // supersede edge is the whole point of keeping them.
-func Build(ctx context.Context, s *store.Store, opts Options) (*Graph, error) {
+func Build(ctx context.Context, s *store.Store) (*Graph, error) {
 	tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("list entity refs: %w", err)
@@ -92,13 +81,7 @@ func Build(ctx context.Context, s *store.Store, opts Options) (*Graph, error) {
 	}
 	b.addCooccurrence()
 
-	g := b.graph(sourceDigest(tips), time.Now().Unix(), records)
-	if opts.Embedder != nil {
-		if err := attachVectors(ctx, opts.Embedder, g, records); err != nil {
-			return nil, err
-		}
-	}
-	return g, nil
+	return b.graph(sourceDigest(tips), time.Now().Unix(), records), nil
 }
 
 // record is one folded entity flattened into the fields the graph reads.
@@ -508,28 +491,4 @@ func sourceDigest(tips map[string]model.SHA) string {
 		h.Write([]byte(name + "\x00" + string(tips[name]) + "\n"))
 	}
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-func attachVectors(ctx context.Context, embedder Embedder, g *Graph, records []record) error {
-	texts := make([]string, len(records))
-	for i, r := range records {
-		texts[i] = join(string(r.kind), r.title, r.text)
-	}
-	vectors, err := embedder.Embed(ctx, texts)
-	if err != nil {
-		return fmt.Errorf("embed entities: %w", err)
-	}
-	if len(vectors) != len(records) {
-		return fmt.Errorf("embedder returned %d vectors for %d entities", len(vectors), len(records))
-	}
-	at := make(map[NodeID]int, len(records))
-	for i, r := range records {
-		at[EntityNode(r.kind, r.id)] = i
-	}
-	for i := range g.Nodes {
-		if j, ok := at[g.Nodes[i].ID]; ok {
-			g.Nodes[i].Vector = vectors[j]
-		}
-	}
-	return nil
 }

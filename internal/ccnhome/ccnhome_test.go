@@ -85,7 +85,6 @@ func TestRepoPaths(t *testing.T) {
 	}
 	for _, tc := range []struct{ got, want string }{
 		{repo.Graph(), filepath.Join(repo.Dir, "graph-v1")},
-		{repo.Embed(), filepath.Join(repo.Dir, "embed-v1")},
 		{repo.QueuePending(), filepath.Join(repo.Dir, "queue-v1", "pending")},
 		{repo.QueueFailed(), filepath.Join(repo.Dir, "queue-v1", "failed")},
 		{repo.InfoPath(), filepath.Join(repo.Dir, "repo.json")},

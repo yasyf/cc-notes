@@ -35,7 +35,7 @@ func TestBuildIngestsLifecycleEvents(t *testing.T) {
 	f.append(t, model.KindTask, task, model.LinkCommit{SHA: sha})
 	f.append(t, model.KindTask, task, model.SetStatus{Status: model.StatusDone})
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	node := kg.EntityNode(model.KindTask, task)
 	want := []string{
 		lifecycle.TypeCreated, lifecycle.TypeClaimed,
@@ -60,7 +60,7 @@ func TestBuildEventsAreTimeOrdered(t *testing.T) {
 	f.append(t, model.KindNote, first, model.SetBody{Body: "b"})
 	f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "second", Body: "c"})
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	if len(g.Events) < 3 {
 		t.Fatalf("built %d events, want at least 3", len(g.Events))
 	}
@@ -85,7 +85,7 @@ func TestBuildSessionEdgeWeightsCountEvents(t *testing.T) {
 	t.Setenv("CC_NOTES_SESSION_ID", brief)
 	f.append(t, model.KindNote, note, model.SetBody{Body: "d"})
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	self := kg.EntityNode(model.KindNote, note)
 	busyEdge := requireEdge(t, g, self, kg.SessionNode(busy), kg.EdgeSession)
 	briefEdge := requireEdge(t, g, self, kg.SessionNode(brief), kg.EdgeSession)
@@ -114,7 +114,7 @@ func TestBuildCochangeOverRealHistory(t *testing.T) {
 		})
 	}
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	e := requireEdge(t, g, kg.PathNode(impl), kg.PathNode(test), kg.EdgeCochange)
 	if !e.Advisory || !e.Derived || e.Weight != 1 {
 		t.Fatalf("cochange edge = %+v, want advisory, derived, weight 1", e)
@@ -135,7 +135,7 @@ func TestBuildTagAndConceptEdges(t *testing.T) {
 		Nonce: model.NewNonce(), Title: "second", Body: shared + " again", Tags: []string{"kg"},
 	}).EntityID()
 
-	g := f.build(t, kg.Options{})
+	g := f.build(t)
 	self := kg.EntityNode(model.KindNote, second)
 	if node := requireNode(t, g, kg.TagNode("kg")); node.Kind != kg.NodeTag {
 		t.Fatalf("tag node = %+v", node)
