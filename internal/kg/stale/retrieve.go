@@ -165,7 +165,7 @@ func (g *Gated) Retrieve(ctx context.Context, query string, k int) ([]eval.Resul
 	out := make([]eval.Result, 0, len(raw))
 	for _, r := range raw {
 		a := g.ranker.idx[r.ID]
-		weight, kept := g.ranker.weight(a)
+		weight, kept := g.ranker.policy.Weight(a)
 		if !kept {
 			continue
 		}
@@ -178,17 +178,18 @@ func (g *Gated) Retrieve(ctx context.Context, query string, k int) ([]eval.Resul
 	return eval.Rank(out, g.seed, k), nil
 }
 
-// weight resolves a record's rank multiplier and whether it survives: a
-// withheld gate signal drops it, a demoted one costs a half-life, and an
-// ungated record carries its penalty product raised to the decay exponent.
-func (r *Ranker) weight(a Assessment) (float64, bool) {
+// Weight resolves a record's rank multiplier under this policy and whether it
+// survives at all: a withheld gate signal drops it, a demoted one costs a
+// half-life, and an ungated record carries its penalty product raised to the
+// decay exponent.
+func (p Retrieval) Weight(a Assessment) (float64, bool) {
 	if !a.Gated {
-		return math.Pow(a.Weight, r.policy.Decay), true
+		return math.Pow(a.Weight, p.Decay), true
 	}
-	if slices.Contains(r.policy.Withhold, a.Signal) {
+	if slices.Contains(p.Withhold, a.Signal) {
 		return 0, false
 	}
-	if slices.Contains(r.policy.Demote, a.Signal) {
+	if slices.Contains(p.Demote, a.Signal) {
 		return GateDemotion, true
 	}
 	return 1, true
