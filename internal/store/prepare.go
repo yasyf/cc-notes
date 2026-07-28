@@ -50,7 +50,7 @@ func (s *Store) PrepareCreateExact(ctx context.Context, ops []model.Op) (Prepare
 		return PreparedRef{}, fmt.Errorf("prepare create %s: %w", kind, err)
 	}
 	root := model.PackCommit{SHA: sha, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack}
-	snapshot, err := fold.Fold([]model.PackCommit{root})
+	snapshot, err := fold.Strict([]model.PackCommit{root})
 	if err != nil {
 		return PreparedRef{}, fmt.Errorf("prepare create %s: %w", kind, err)
 	}
@@ -95,7 +95,7 @@ func (s *Store) PrepareAppendAt(ctx context.Context, ref string, expected model.
 	commit := model.PackCommit{
 		SHA: sha, Parents: []model.SHA{expected}, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack,
 	}
-	snapshot, err := fold.Fold(append(chain, commit))
+	snapshot, err := fold.Strict(append(chain, commit))
 	if err != nil {
 		return PreparedRef{}, fmt.Errorf("prepare append to %s: %w", ref, err)
 	}

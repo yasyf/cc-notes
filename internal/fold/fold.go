@@ -24,23 +24,24 @@ var (
 	ErrNoCreate = errors.New("first op is not a create")
 	// ErrDuplicateCreate reports a chain with a second create operation.
 	ErrDuplicateCreate = errors.New("duplicate create op")
-	// ErrKindMismatch reports an op that does not apply to the chain's
-	// entity kind, or a chain folded as the wrong kind.
+	// ErrKindMismatch reports a chain folded as the wrong kind — a create op or
+	// checkpoint state of a foreign kind — or, under Strict only, an op that
+	// does not apply to the chain's entity kind.
 	ErrKindMismatch = errors.New("entity kind mismatch")
 )
 
 // folders maps each entity kind to the boxing fold that turns a linearized
-// chain into its snapshot. Fold and History dispatch through it on the create
-// op's kind. Its keys are exactly model.Kinds() (see TestFoldersExhaustive).
-var folders = map[model.Kind]func([]model.PackCommit) (model.Snapshot, error){
-	model.KindNote:          func(o []model.PackCommit) (model.Snapshot, error) { return foldNote(o) },
-	model.KindDoc:           func(o []model.PackCommit) (model.Snapshot, error) { return foldDoc(o) },
-	model.KindLog:           func(o []model.PackCommit) (model.Snapshot, error) { return foldLog(o) },
-	model.KindTask:          func(o []model.PackCommit) (model.Snapshot, error) { return foldTask(o) },
-	model.KindSprint:        func(o []model.PackCommit) (model.Snapshot, error) { return foldSprint(o) },
-	model.KindProject:       func(o []model.PackCommit) (model.Snapshot, error) { return foldProject(o) },
-	model.KindRunbook:       func(o []model.PackCommit) (model.Snapshot, error) { return foldRunbook(o) },
-	model.KindInvestigation: func(o []model.PackCommit) (model.Snapshot, error) { return foldInvestigation(o) },
+// chain into its snapshot. Fold, Strict, and History dispatch through it on the
+// create op's kind. Its keys are exactly model.Kinds().
+var folders = map[model.Kind]func([]model.PackCommit, mode) (model.Snapshot, error){
+	model.KindNote:          func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldNote(o, m) },
+	model.KindDoc:           func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldDoc(o, m) },
+	model.KindLog:           func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldLog(o, m) },
+	model.KindTask:          func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldTask(o, m) },
+	model.KindSprint:        func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldSprint(o, m) },
+	model.KindProject:       func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldProject(o, m) },
+	model.KindRunbook:       func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldRunbook(o, m) },
+	model.KindInvestigation: func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldInvestigation(o, m) },
 }
 
 // Fold linearizes the chain and replays its operation packs into a snapshot,
@@ -70,7 +71,23 @@ func Fold(commits []model.PackCommit) (model.Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fold(ordered)
+	return fold(ordered, tolerant)
+}
+
+// Strict folds like Fold but refuses history it cannot fully apply: an op that
+// does not apply to the chain's entity kind fails with ErrKindMismatch instead
+// of being skipped and counted. The write path validates candidate chains
+// through it, so an illegal op combination is rejected before its ref moves.
+func Strict(commits []model.PackCommit) (model.Snapshot, error) {
+	ordered, err := Linearize(commits)
+	if err != nil {
+		return nil, err
+	}
+	fold, err := dispatch(firstOp(ordered))
+	if err != nil {
+		return nil, err
+	}
+	return fold(ordered, strict)
 }
 
 // Note linearizes the chain and folds it as a note. It fails with
@@ -80,7 +97,7 @@ func Note(commits []model.PackCommit) (model.Note, error) {
 	if err != nil {
 		return model.Note{}, err
 	}
-	return foldNote(ordered)
+	return foldNote(ordered, tolerant)
 }
 
 // Doc linearizes the chain and folds it as a doc. It fails with
@@ -90,7 +107,7 @@ func Doc(commits []model.PackCommit) (model.Doc, error) {
 	if err != nil {
 		return model.Doc{}, err
 	}
-	return foldDoc(ordered)
+	return foldDoc(ordered, tolerant)
 }
 
 // Log linearizes the chain and folds it as a log. It fails with
@@ -100,7 +117,7 @@ func Log(commits []model.PackCommit) (model.Log, error) {
 	if err != nil {
 		return model.Log{}, err
 	}
-	return foldLog(ordered)
+	return foldLog(ordered, tolerant)
 }
 
 // Task linearizes the chain and folds it as a task. It fails with
@@ -110,7 +127,7 @@ func Task(commits []model.PackCommit) (model.Task, error) {
 	if err != nil {
 		return model.Task{}, err
 	}
-	return foldTask(ordered)
+	return foldTask(ordered, tolerant)
 }
 
 // Sprint linearizes the chain and folds it as a sprint. It fails with
@@ -120,7 +137,7 @@ func Sprint(commits []model.PackCommit) (model.Sprint, error) {
 	if err != nil {
 		return model.Sprint{}, err
 	}
-	return foldSprint(ordered)
+	return foldSprint(ordered, tolerant)
 }
 
 // Project linearizes the chain and folds it as a project. It fails with
@@ -130,7 +147,7 @@ func Project(commits []model.PackCommit) (model.Project, error) {
 	if err != nil {
 		return model.Project{}, err
 	}
-	return foldProject(ordered)
+	return foldProject(ordered, tolerant)
 }
 
 // Runbook linearizes the chain and folds it as a runbook. It fails with
@@ -140,7 +157,7 @@ func Runbook(commits []model.PackCommit) (model.Runbook, error) {
 	if err != nil {
 		return model.Runbook{}, err
 	}
-	return foldRunbook(ordered)
+	return foldRunbook(ordered, tolerant)
 }
 
 // Investigation linearizes the chain and folds it as an investigation. It fails
@@ -150,13 +167,13 @@ func Investigation(commits []model.PackCommit) (model.Investigation, error) {
 	if err != nil {
 		return model.Investigation{}, err
 	}
-	return foldInvestigation(ordered)
+	return foldInvestigation(ordered, tolerant)
 }
 
 // dispatch returns the boxing fold for an already-linearized chain whose first
 // op is first, keyed by the create op's kind exactly as Fold and History need.
 // It fails with ErrNoCreate when first is nil or not a create op.
-func dispatch(first model.Op) (func([]model.PackCommit) (model.Snapshot, error), error) {
+func dispatch(first model.Op) (func([]model.PackCommit, mode) (model.Snapshot, error), error) {
 	co, ok := first.(model.CreateOp)
 	if !ok {
 		if first == nil {

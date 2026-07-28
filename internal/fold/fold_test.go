@@ -1074,42 +1074,6 @@ func TestFoldErrors(t *testing.T) {
 			want: fold.ErrDuplicateCreate,
 		},
 		{
-			name: "task op on a note chain",
-			commits: []model.PackCommit{
-				noteRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetStatus{Status: model.StatusDone}),
-			},
-			via:  noteErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "note op on a task chain",
-			commits: []model.PackCommit{
-				taskRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddTag{Tag: "x"}),
-			},
-			via:  taskErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "verify_note on a task chain",
-			commits: []model.PackCommit{
-				taskRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.VerifyNote{VerifiedCommit: "deadbeef"}),
-			},
-			via:  taskErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "add_superseded_by on a task chain",
-			commits: []model.PackCommit{
-				taskRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddSupersededBy{ID: "feedface"}),
-			},
-			via:  taskErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
 			name:    "task chain folded as note",
 			commits: []model.PackCommit{taskRoot},
 			via:     noteErr,
@@ -1134,24 +1098,6 @@ func TestFoldErrors(t *testing.T) {
 			want:    fold.ErrKindMismatch,
 		},
 		{
-			name: "set_when op on a note chain",
-			commits: []model.PackCommit{
-				noteRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetWhen{When: "x"}),
-			},
-			via:  noteErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "task op on a doc chain",
-			commits: []model.PackCommit{
-				docRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetStatus{Status: model.StatusDone}),
-			},
-			via:  docErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
 			name: "second create_doc",
 			commits: []model.PackCommit{
 				docRoot,
@@ -1174,51 +1120,6 @@ func TestFoldErrors(t *testing.T) {
 			commits: []model.PackCommit{mk("aaa", nil, "alice", 100, 1, model.AppendEntry{Text: "orphan"})},
 			via:     logErr,
 			want:    fold.ErrNoCreate,
-		},
-		{
-			name: "set_when op on a log chain",
-			commits: []model.PackCommit{
-				logRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetWhen{When: "x"}),
-			},
-			via:  logErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "verify_note op on a log chain",
-			commits: []model.PackCommit{
-				logRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.VerifyNote{VerifiedCommit: "deadbeef"}),
-			},
-			via:  logErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "mark_stale op on a log chain",
-			commits: []model.PackCommit{
-				logRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.MarkStale{Reason: "x"}),
-			},
-			via:  logErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "set_body op on a log chain",
-			commits: []model.PackCommit{
-				logRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetBody{Body: "x"}),
-			},
-			via:  logErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "append_entry op on a doc chain",
-			commits: []model.PackCommit{
-				docRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AppendEntry{Text: "x"}),
-			},
-			via:  docErr,
-			want: fold.ErrKindMismatch,
 		},
 		{
 			name:    "log chain folded as doc",
@@ -1257,60 +1158,6 @@ func TestFoldErrors(t *testing.T) {
 			want: fold.ErrDuplicateCreate,
 		},
 		{
-			name: "sprint status op on a task chain",
-			commits: []model.PackCommit{
-				taskRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetSprintStatus{Status: model.SprintActive}),
-			},
-			via:  taskErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "project status op on a task chain",
-			commits: []model.PackCommit{
-				taskRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetProjectStatus{Status: model.ProjectArchived}),
-			},
-			via:  taskErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "start date op on a task chain",
-			commits: []model.PackCommit{
-				taskRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetStartDate{Date: 1000}),
-			},
-			via:  taskErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "end date op on a task chain",
-			commits: []model.PackCommit{
-				taskRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetEndDate{Date: 2000}),
-			},
-			via:  taskErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "task status op on a sprint chain",
-			commits: []model.PackCommit{
-				sprintRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetStatus{Status: model.StatusDone}),
-			},
-			via:  sprintErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "set_sprint op on a sprint chain",
-			commits: []model.PackCommit{
-				sprintRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetSprint{Sprint: "feedface"}),
-			},
-			via:  sprintErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
 			name:    "task chain folded as sprint",
 			commits: []model.PackCommit{taskRoot},
 			via:     sprintErr,
@@ -1321,24 +1168,6 @@ func TestFoldErrors(t *testing.T) {
 			commits: []model.PackCommit{noteRoot},
 			via:     sprintErr,
 			want:    fold.ErrKindMismatch,
-		},
-		{
-			name: "task status op on a project chain",
-			commits: []model.PackCommit{
-				projectRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetStatus{Status: model.StatusDone}),
-			},
-			via:  projectErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "sprint status op on a project chain",
-			commits: []model.PackCommit{
-				projectRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetSprintStatus{Status: model.SprintActive}),
-			},
-			via:  projectErr,
-			want: fold.ErrKindMismatch,
 		},
 		{
 			name:    "sprint chain folded as project",
@@ -1363,42 +1192,6 @@ func TestFoldErrors(t *testing.T) {
 			},
 			via:  projectErr,
 			want: fold.ErrDuplicateCreate,
-		},
-		{
-			name: "add_attachment on a task chain",
-			commits: []model.PackCommit{
-				taskRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddAttachment{Name: "trace.png", OID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Size: 1}),
-			},
-			via:  taskErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "remove_attachment on a task chain",
-			commits: []model.PackCommit{
-				taskRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.RemoveAttachment{Name: "trace.png"}),
-			},
-			via:  taskErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "add_attachment on a sprint chain",
-			commits: []model.PackCommit{
-				sprintRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddAttachment{Name: "trace.png", OID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Size: 1}),
-			},
-			via:  sprintErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "add_attachment on a project chain",
-			commits: []model.PackCommit{
-				projectRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddAttachment{Name: "trace.png", OID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Size: 1}),
-			},
-			via:  projectErr,
-			want: fold.ErrKindMismatch,
 		},
 		{
 			name:    "runbook chain folded as note",
@@ -1483,33 +1276,6 @@ func TestFoldErrors(t *testing.T) {
 			},
 			via:  runbookErr,
 			want: fold.ErrDuplicateCreate,
-		},
-		{
-			name: "sprint status op on a runbook chain",
-			commits: []model.PackCommit{
-				runbookRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetSprintStatus{Status: model.SprintActive}),
-			},
-			via:  runbookErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "task status op on a runbook chain",
-			commits: []model.PackCommit{
-				runbookRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.SetStatus{Status: model.StatusDone}),
-			},
-			via:  runbookErr,
-			want: fold.ErrKindMismatch,
-		},
-		{
-			name: "note op on a runbook chain",
-			commits: []model.PackCommit{
-				runbookRoot,
-				mk("bbb", []string{"aaa"}, "bob", 200, 2, model.AddTag{Tag: "x"}),
-			},
-			via:  runbookErr,
-			want: fold.ErrKindMismatch,
 		},
 		{
 			name: "linearize error propagates through Fold",

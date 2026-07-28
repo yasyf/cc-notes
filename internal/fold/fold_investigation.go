@@ -32,8 +32,8 @@ func newInvestigationFolder() *investigationFolder {
 	}
 }
 
-func foldInvestigation(ordered []model.PackCommit) (model.Investigation, error) {
-	return run[model.Investigation](ordered, newInvestigationFolder())
+func foldInvestigation(ordered []model.PackCommit, m mode) (model.Investigation, error) {
+	return run[model.Investigation](ordered, newInvestigationFolder(), m)
 }
 
 func (f *investigationFolder) fresh(sha model.SHA, createdAt int64) {
@@ -90,11 +90,11 @@ func (f *investigationFolder) create(op model.CreateOp, author model.Actor) erro
 	return nil
 }
 
-func (f *investigationFolder) apply(op model.Op, c model.PackCommit) error {
+func (f *investigationFolder) apply(op model.Op, c model.PackCommit) bool {
 	if applyTag(f.tags, op) || applyAnchor(f.anchors, op) ||
 		applySupersede(f.superseded, op) || applyAttachment(f.attachments, op) ||
 		applyCommitLink(f.commits, op) {
-		return nil
+		return true
 	}
 	switch o := op.(type) {
 	case model.SetTitle:
@@ -135,16 +135,16 @@ func (f *investigationFolder) apply(op model.Op, c model.PackCommit) error {
 	case model.RemoveFollowUp:
 		delete(f.followUps, o.ID)
 	default:
-		return fmt.Errorf("%w: %s on an investigation", ErrKindMismatch, op.OpKind())
+		return false
 	}
-	return nil
+	return true
 }
 
 func (f *investigationFolder) touch(c model.PackCommit) {
 	f.inv.UpdatedAt = c.AuthorTime
 }
 
-func (f *investigationFolder) finalize(head model.SHA) model.Investigation {
+func (f *investigationFolder) finalize(head model.SHA, skipped int) model.Investigation {
 	f.inv.Tags = sortedKeys(f.tags)
 	f.inv.Anchors = sortedAnchors(f.anchors)
 	f.inv.SupersededBy = sortedKeys(f.superseded)
@@ -161,6 +161,7 @@ func (f *investigationFolder) finalize(head model.SHA) model.Investigation {
 	f.inv.Entries = f.entries
 	f.inv.Findings = f.findings
 	f.inv.Head = head
+	f.inv.SkippedOps = skipped
 	return f.inv
 }
 

@@ -249,6 +249,52 @@ func TestCreateRejects(t *testing.T) {
 	}
 }
 
+// TestLoadToleratesNewerHistory replays the release-binary failure end to end:
+// a newer cc-notes appends an op this binary's task folder does not apply, and
+// the read must still succeed — counting the skip, never caching it — while the
+// write path keeps refusing to extend a chain it cannot fully fold.
+func TestLoadToleratesNewerHistory(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	task := create(t, s, taskOps("Ship it", "main")).(model.Task)
+	ref := refs.For(model.KindTask, task.ID)
+	tip, err := s.Repo.Tip(ctx, ref)
+	if err != nil {
+		t.Fatalf("Tip: %v", err)
+	}
+	sig, _, err := s.signature(ctx)
+	if err != nil {
+		t.Fatalf("signature: %v", err)
+	}
+	pack := model.Pack{Lamport: 2, Session: session(), Ops: []model.Op{
+		model.AddAttachment{Name: "trace.png", OID: strings.Repeat("a", 64), Size: 1},
+	}}
+	sha, err := s.Repo.WriteOpsCommit(ctx, []model.SHA{tip}, sig, "cc-notes: add_attachment", pack)
+	if err != nil {
+		t.Fatalf("WriteOpsCommit: %v", err)
+	}
+	if err := s.Git.UpdateRef(ctx, ref, sha, tip); err != nil {
+		t.Fatalf("UpdateRef: %v", err)
+	}
+
+	loaded, err := s.Load(ctx, ref)
+	if err != nil {
+		t.Fatalf("Load = %v, want a clean fold", err)
+	}
+	if got := loaded.Meta().SkippedOps; got != 1 {
+		t.Fatalf("SkippedOps = %d, want 1", got)
+	}
+	if got := loaded.(model.Task).Title; got != "Ship it" {
+		t.Fatalf("Title = %q, want %q", got, "Ship it")
+	}
+	if snap, ok := s.cache.get(sha); ok {
+		t.Errorf("cached a partial fold: %#v", snap)
+	}
+	if _, err := s.Append(ctx, ref, []model.Op{model.SetStatus{Status: model.StatusDone}}); !errors.Is(err, fold.ErrKindMismatch) {
+		t.Fatalf("Append onto a chain this binary cannot fully fold = %v, want ErrKindMismatch", err)
+	}
+}
+
 func TestCreateDedupesSameContent(t *testing.T) {
 	s := initStore(t)
 	ops := []model.Op{model.CreateNote{Nonce: strings.Repeat("ab", 16), Title: "dup"}}

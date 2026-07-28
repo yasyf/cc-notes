@@ -13,6 +13,10 @@ import (
 // detached HEAD or the backlog. Backlog and YourBranch are ordered by priority
 // then creation time then id; InProgress by assignee then the same task order;
 // Runs by start time then runbook then run id.
+//
+// SkippedOps totals the ops this pass could not fold — history a newer
+// cc-notes wrote. Every entity kind contributes, over the live records the
+// report covers. Non-zero means upgrade.
 type StatusReport struct {
 	Branch         model.Branch
 	Backlog        []StatusBacklogTask
@@ -24,6 +28,7 @@ type StatusReport struct {
 	Logs           int
 	Papercuts      int
 	Investigations InvestigationSummary
+	SkippedOps     int
 }
 
 // InvestigationSummary is the orientation count of open investigations: Open
@@ -80,7 +85,9 @@ type SummaryCount struct {
 }
 
 // Status aggregates the orientation view in one fold per entity kind. The
-// current branch degrades to empty on a detached HEAD.
+// current branch degrades to empty on a detached HEAD. Sprints and projects
+// feed nothing but SkippedOps, which states its verdict over the whole
+// repository and so cannot scan only the kinds the view itself needs.
 func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	now := time.Now()
 	ttl, err := c.LeaseTTL(ctx)
@@ -116,6 +123,14 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		return StatusReport{}, err
 	}
 	invList, err := c.s.ListInvestigations(ctx)
+	if err != nil {
+		return StatusReport{}, err
+	}
+	sprintList, err := c.s.ListSprints(ctx)
+	if err != nil {
+		return StatusReport{}, err
+	}
+	projectList, err := c.s.ListProjects(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
@@ -201,6 +216,9 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		Logs:           len(logList),
 		Papercuts:      papercuts,
 		Investigations: invSummary,
+		SkippedOps: sumSkipped(tasks) + sumSkipped(runbooks) + sumSkipped(noteList) +
+			sumSkipped(docList) + sumSkipped(logList) + sumSkipped(invList) +
+			sumSkipped(sprintList) + sumSkipped(projectList),
 	}
 	for i, t := range backlog {
 		report.Backlog[i] = StatusBacklogTask{Task: t, Ready: readySet[t.ID]}
@@ -214,6 +232,15 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		report.InProgress = append(report.InProgress, StatusAssignee{Assignee: a, Tasks: staleTasks})
 	}
 	return report, nil
+}
+
+// sumSkipped totals the ops the fold skipped across snaps.
+func sumSkipped[T model.Snapshot](snaps []T) int {
+	total := 0
+	for _, s := range snaps {
+		total += s.Meta().SkippedOps
+	}
+	return total
 }
 
 // inFlightRuns collects every still-running run across runbooks with its

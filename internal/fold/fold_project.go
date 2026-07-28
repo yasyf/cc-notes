@@ -20,8 +20,8 @@ func newProjectFolder() *projectFolder {
 	}
 }
 
-func foldProject(ordered []model.PackCommit) (model.Project, error) {
-	return run[model.Project](ordered, newProjectFolder())
+func foldProject(ordered []model.PackCommit, m mode) (model.Project, error) {
+	return run[model.Project](ordered, newProjectFolder(), m)
 }
 
 func (f *projectFolder) fresh(sha model.SHA, createdAt int64) {
@@ -58,9 +58,9 @@ func (f *projectFolder) create(op model.CreateOp, author model.Actor) error {
 	return nil
 }
 
-func (f *projectFolder) apply(op model.Op, c model.PackCommit) error {
+func (f *projectFolder) apply(op model.Op, c model.PackCommit) bool {
 	if applyLabel(f.labels, op) || applyCommitLink(f.commits, op) || applyComment(&f.project.Comments, op, c) {
-		return nil
+		return true
 	}
 	switch o := op.(type) {
 	case model.SetTitle:
@@ -72,19 +72,20 @@ func (f *projectFolder) apply(op model.Op, c model.PackCommit) error {
 	case model.DeleteNote:
 		f.project.Deleted = true
 	default:
-		return fmt.Errorf("%w: %s on a project", ErrKindMismatch, op.OpKind())
+		return false
 	}
-	return nil
+	return true
 }
 
 func (f *projectFolder) touch(c model.PackCommit) {
 	f.project.UpdatedAt = c.AuthorTime
 }
 
-func (f *projectFolder) finalize(head model.SHA) model.Project {
+func (f *projectFolder) finalize(head model.SHA, skipped int) model.Project {
 	f.project.Labels = sortedKeys(f.labels)
 	f.project.Commits = sortedKeys(f.commits)
 	f.project.Head = head
+	f.project.SkippedOps = skipped
 	return f.project
 }
 

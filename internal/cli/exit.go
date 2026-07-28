@@ -10,6 +10,10 @@ import (
 	"github.com/yasyf/cc-notes/notes"
 )
 
+// UpgradeRemedy is the remediation clause for history a newer cc-notes wrote:
+// an op kind this binary cannot decode, or one its folders cannot apply.
+const UpgradeRemedy = "run `brew upgrade yasyf/tap/cc-notes` and retry"
+
 // UsageError reports a malformed invocation: an unknown command or flag,
 // wrong argument arity, a missing required flag, or mutually exclusive
 // flags. It maps to exit code 2.

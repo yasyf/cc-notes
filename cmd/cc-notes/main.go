@@ -40,17 +40,17 @@ func main() {
 }
 
 // upgradeHint returns the remediation line for history this binary does not
-// speak: an unknown op kind (e.g. add_attachment read by a pre-LFS binary)
-// means the entity was written by a newer cc-notes, and a fold kind mismatch
-// (e.g. add_anchor on a runbook read by a pre-anchor binary) usually does too.
+// speak: an unknown op kind (e.g. add_attachment read by a pre-LFS binary), or
+// a kind mismatch, which reads tolerate but the write path still refuses (e.g.
+// appending to a chain carrying an op this binary's folder does not apply).
 // It returns "" for every other error.
 func upgradeHint(err error) string {
 	var unknown *model.UnknownKindError
 	if errors.As(err, &unknown) {
-		return fmt.Sprintf("op kind %q was written by a newer cc-notes; run `brew upgrade yasyf/tap/cc-notes` and retry", unknown.Kind)
+		return fmt.Sprintf("op kind %q was written by a newer cc-notes; %s", unknown.Kind, cli.UpgradeRemedy)
 	}
 	if errors.Is(err, fold.ErrKindMismatch) {
-		return "this entity carries history this cc-notes cannot fold; if it was written by a newer cc-notes, run `brew upgrade yasyf/tap/cc-notes` and retry"
+		return "this entity carries history this cc-notes cannot fold; if it was written by a newer cc-notes, " + cli.UpgradeRemedy
 	}
 	return ""
 }

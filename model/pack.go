@@ -249,6 +249,20 @@ func registerOp[T Op]() {
 	opKinds[reflect.TypeOf(zero)] = kind
 }
 
+// OpKinds returns every op wire kind this binary can decode, sorted — the
+// binary's op vocabulary, read straight off the decoder registry. An op that is
+// not registered there does not exist for this binary, so the set moves with
+// every release that adds, drops, or renames one and nobody maintains it by
+// hand. The result is a fresh slice; mutating it does not corrupt the registry.
+func OpKinds() []string {
+	kinds := make([]string, 0, len(opDecoders))
+	for kind := range opDecoders {
+		kinds = append(kinds, kind)
+	}
+	slices.Sort(kinds)
+	return kinds
+}
+
 func init() {
 	registerOp[CreateNote]()
 	registerOp[SetTitle]()

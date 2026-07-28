@@ -36,7 +36,7 @@ func History(commits []model.PackCommit) ([]Step, error) {
 	}
 	steps := make([]Step, len(ordered))
 	for k := range ordered {
-		snapshot, err := foldPrefix(ordered[:k+1])
+		snapshot, err := foldPrefix(ordered[:k+1], tolerant)
 		if err != nil {
 			return nil, err
 		}

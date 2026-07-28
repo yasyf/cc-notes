@@ -20,8 +20,8 @@ func newRunbookFolder() *runbookFolder {
 	return &runbookFolder{labels: map[string]bool{}, anchors: map[model.Anchor]bool{}}
 }
 
-func foldRunbook(ordered []model.PackCommit) (model.Runbook, error) {
-	return run[model.Runbook](ordered, newRunbookFolder())
+func foldRunbook(ordered []model.PackCommit, m mode) (model.Runbook, error) {
+	return run[model.Runbook](ordered, newRunbookFolder(), m)
 }
 
 func (f *runbookFolder) fresh(sha model.SHA, createdAt int64) {
@@ -65,9 +65,9 @@ func (f *runbookFolder) create(op model.CreateOp, author model.Actor) error {
 	return nil
 }
 
-func (f *runbookFolder) apply(op model.Op, c model.PackCommit) error {
+func (f *runbookFolder) apply(op model.Op, c model.PackCommit) bool {
 	if applyLabel(f.labels, op) || applyAnchor(f.anchors, op) || applyComment(&f.rb.Comments, op, c) {
-		return nil
+		return true
 	}
 	switch o := op.(type) {
 	case model.SetTitle:
@@ -124,16 +124,16 @@ func (f *runbookFolder) apply(op model.Op, c model.PackCommit) error {
 	case model.DeleteNote:
 		f.rb.Deleted = true
 	default:
-		return fmt.Errorf("%w: %s on a runbook", ErrKindMismatch, op.OpKind())
+		return false
 	}
-	return nil
+	return true
 }
 
 func (f *runbookFolder) touch(c model.PackCommit) {
 	f.rb.UpdatedAt = c.AuthorTime
 }
 
-func (f *runbookFolder) finalize(head model.SHA) model.Runbook {
+func (f *runbookFolder) finalize(head model.SHA, skipped int) model.Runbook {
 	f.rb.Labels = sortedKeys(f.labels)
 	f.rb.Anchors = sortedAnchorsNil(f.anchors)
 	slices.SortFunc(f.steps, func(a, b model.RunbookStep) int {
@@ -145,6 +145,7 @@ func (f *runbookFolder) finalize(head model.SHA) model.Runbook {
 	f.rb.Steps = f.steps
 	f.rb.Runs = f.runs
 	f.rb.Head = head
+	f.rb.SkippedOps = skipped
 	return f.rb
 }
 

@@ -25,8 +25,8 @@ func newTaskFolder() *taskFolder {
 	}
 }
 
-func foldTask(ordered []model.PackCommit) (model.Task, error) {
-	return run[model.Task](ordered, newTaskFolder())
+func foldTask(ordered []model.PackCommit, m mode) (model.Task, error) {
+	return run[model.Task](ordered, newTaskFolder(), m)
 }
 
 func (f *taskFolder) fresh(sha model.SHA, createdAt int64) {
@@ -75,9 +75,9 @@ func (f *taskFolder) create(op model.CreateOp, _ model.Actor) error {
 	return nil
 }
 
-func (f *taskFolder) apply(op model.Op, c model.PackCommit) error {
+func (f *taskFolder) apply(op model.Op, c model.PackCommit) bool {
 	if applyLabel(f.labels, op) || applyCommitLink(f.commits, op) || applyAnchor(f.anchors, op) || applyComment(&f.task.Comments, op, c) {
-		return nil
+		return true
 	}
 	switch o := op.(type) {
 	case model.SetTitle:
@@ -144,9 +144,9 @@ func (f *taskFolder) apply(op model.Op, c model.PackCommit) error {
 			f.criteria[i].Script = o.Script
 		}
 	default:
-		return fmt.Errorf("%w: %s on a task", ErrKindMismatch, op.OpKind())
+		return false
 	}
-	return nil
+	return true
 }
 
 func (f *taskFolder) touch(c model.PackCommit) {
@@ -157,7 +157,7 @@ func (f *taskFolder) touch(c model.PackCommit) {
 	}
 }
 
-func (f *taskFolder) finalize(head model.SHA) model.Task {
+func (f *taskFolder) finalize(head model.SHA, skipped int) model.Task {
 	f.task.Labels = sortedKeys(f.labels)
 	f.task.BlockedBy = sortedKeys(f.deps)
 	f.task.Commits = sortedKeys(f.commits)
@@ -167,6 +167,7 @@ func (f *taskFolder) finalize(head model.SHA) model.Task {
 	}
 	f.task.Criteria = f.criteria
 	f.task.Head = head
+	f.task.SkippedOps = skipped
 	return f.task
 }
 

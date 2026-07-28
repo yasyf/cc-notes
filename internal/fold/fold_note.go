@@ -24,8 +24,8 @@ func newNoteFolder() *noteFolder {
 	}
 }
 
-func foldNote(ordered []model.PackCommit) (model.Note, error) {
-	return run[model.Note](ordered, newNoteFolder())
+func foldNote(ordered []model.PackCommit, m mode) (model.Note, error) {
+	return run[model.Note](ordered, newNoteFolder(), m)
 }
 
 func (f *noteFolder) fresh(sha model.SHA, createdAt int64) {
@@ -69,10 +69,10 @@ func (f *noteFolder) create(op model.CreateOp, author model.Actor) error {
 	return nil
 }
 
-func (f *noteFolder) apply(op model.Op, c model.PackCommit) error {
+func (f *noteFolder) apply(op model.Op, c model.PackCommit) bool {
 	if applyTag(f.tags, op) || applyAnchor(f.anchors, op) ||
 		applySupersede(f.superseded, op) || applyAttachment(f.attachments, op) {
-		return nil
+		return true
 	}
 	switch o := op.(type) {
 	case model.SetTitle:
@@ -92,21 +92,22 @@ func (f *noteFolder) apply(op model.Op, c model.PackCommit) error {
 	case model.ClearStale:
 		f.note.StaleAt, f.note.StaleBy, f.note.StaleReason = 0, "", ""
 	default:
-		return fmt.Errorf("%w: %s on a note", ErrKindMismatch, op.OpKind())
+		return false
 	}
-	return nil
+	return true
 }
 
 func (f *noteFolder) touch(c model.PackCommit) {
 	f.note.UpdatedAt = c.AuthorTime
 }
 
-func (f *noteFolder) finalize(head model.SHA) model.Note {
+func (f *noteFolder) finalize(head model.SHA, skipped int) model.Note {
 	f.note.Tags = sortedKeys(f.tags)
 	f.note.Anchors = sortedAnchors(f.anchors)
 	f.note.SupersededBy = sortedKeys(f.superseded)
 	f.note.Attachments = sortedAttachments(f.attachments)
 	f.note.Witness = f.witness
 	f.note.Head = head
+	f.note.SkippedOps = skipped
 	return f.note
 }

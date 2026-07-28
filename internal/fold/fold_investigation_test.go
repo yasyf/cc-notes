@@ -200,37 +200,54 @@ func TestFoldInvestigationEmptySlices(t *testing.T) {
 	}
 }
 
-// TestFoldInvestigationRejectsForeignOps pins the accept set. The folder is
-// total but discriminating: an op that does not apply to an investigation (a
-// task op, a note-hygiene op, a comment, a runbook op, or a set_when) is a
-// runtime ErrKindMismatch, and investigation ops on a foreign chain likewise.
-func TestFoldInvestigationRejectsForeignOps(t *testing.T) {
+// TestFoldInvestigationSkipsForeignOps pins the accept set. The folder is total
+// but discriminating: an op outside it (a task op, a note-hygiene op, a comment,
+// a runbook op, or a set_when) is skipped and counted, stamping UpdatedAt from
+// the commit that carried it but touching nothing else — and investigation ops
+// on a foreign chain likewise.
+func TestFoldInvestigationSkipsForeignOps(t *testing.T) {
 	invRoot := mk("aaa", nil, "alice", 100, 1, model.CreateInvestigation{Nonce: "n", Title: "T", Premise: "P"})
 	noteRoot := mk("aaa", nil, "alice", 100, 1, model.CreateNote{Nonce: "n", Title: "T"})
 	cases := []struct {
 		name string
 		op   model.Op
 		root model.PackCommit
-		via  func([]model.PackCommit) error
 	}{
-		{"add_comment on investigation", model.AddComment{Body: "x"}, invRoot, investigationErr},
-		{"set_status on investigation", model.SetStatus{Status: model.StatusDone}, invRoot, investigationErr},
-		{"set_when on investigation", model.SetWhen{When: "x"}, invRoot, investigationErr},
-		{"add_criterion on investigation", model.AddCriterion{ID: "c1", Text: "x"}, invRoot, investigationErr},
-		{"verify_note on investigation", model.VerifyNote{VerifiedCommit: "h"}, invRoot, investigationErr},
-		{"mark_stale on investigation", model.MarkStale{Reason: "x"}, invRoot, investigationErr},
-		{"set_sprint_status on investigation", model.SetSprintStatus{Status: model.SprintActive}, invRoot, investigationErr},
-		{"add_step on investigation", model.AddStep{ID: "s1", Text: "x", Position: "a"}, invRoot, investigationErr},
-		{"set_root_cause on note", model.SetRootCause{Text: "x"}, noteRoot, noteErr},
-		{"add_finding on note", model.AddFinding{ID: "f1", Text: "x"}, noteRoot, noteErr},
-		{"set_investigation_status on note", model.SetInvestigationStatus{Status: model.InvestigationOpen}, noteRoot, noteErr},
-		{"add_fix_commit on note", model.AddFixCommit{SHA: "s"}, noteRoot, noteErr},
+		{"add_comment on investigation", model.AddComment{Body: "x"}, invRoot},
+		{"set_status on investigation", model.SetStatus{Status: model.StatusDone}, invRoot},
+		{"set_when on investigation", model.SetWhen{When: "x"}, invRoot},
+		{"add_criterion on investigation", model.AddCriterion{ID: "c1", Text: "x"}, invRoot},
+		{"verify_note on investigation", model.VerifyNote{VerifiedCommit: "h"}, invRoot},
+		{"mark_stale on investigation", model.MarkStale{Reason: "x"}, invRoot},
+		{"set_sprint_status on investigation", model.SetSprintStatus{Status: model.SprintActive}, invRoot},
+		{"add_step on investigation", model.AddStep{ID: "s1", Text: "x", Position: "a"}, invRoot},
+		{"set_root_cause on note", model.SetRootCause{Text: "x"}, noteRoot},
+		{"add_finding on note", model.AddFinding{ID: "f1", Text: "x"}, noteRoot},
+		{"set_investigation_status on note", model.SetInvestigationStatus{Status: model.InvestigationOpen}, noteRoot},
+		{"add_fix_commit on note", model.AddFixCommit{SHA: "s"}, noteRoot},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			chain := []model.PackCommit{tc.root, mk("bbb", []string{"aaa"}, "bob", 200, 2, tc.op)}
-			if err := tc.via(chain); !errors.Is(err, fold.ErrKindMismatch) {
-				t.Fatalf("err = %v, want ErrKindMismatch", err)
+			got, err := fold.Fold(chain)
+			if err != nil {
+				t.Fatalf("Fold = %v, want a clean fold", err)
+			}
+			if got.Meta().SkippedOps != 1 {
+				t.Fatalf("SkippedOps = %d, want 1", got.Meta().SkippedOps)
+			}
+			if ts := got.Meta().UpdatedAt.Unix(); ts != 200 {
+				t.Fatalf("UpdatedAt = %d, want 200: a skipped op still touches", ts)
+			}
+			base, err := fold.Fold([]model.PackCommit{tc.root})
+			if err != nil {
+				t.Fatalf("Fold of the root alone = %v", err)
+			}
+			if state, want := stateFields(t, got), stateFields(t, base); !reflect.DeepEqual(state, want) {
+				t.Fatalf("state = %v, want %v: the skipped op left a trace", state, want)
+			}
+			if _, err := fold.Strict(chain); !errors.Is(err, fold.ErrKindMismatch) {
+				t.Fatalf("Strict = %v, want ErrKindMismatch", err)
 			}
 		})
 	}

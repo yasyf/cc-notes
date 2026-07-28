@@ -20,8 +20,8 @@ func newSprintFolder() *sprintFolder {
 	}
 }
 
-func foldSprint(ordered []model.PackCommit) (model.Sprint, error) {
-	return run[model.Sprint](ordered, newSprintFolder())
+func foldSprint(ordered []model.PackCommit, m mode) (model.Sprint, error) {
+	return run[model.Sprint](ordered, newSprintFolder(), m)
 }
 
 func (f *sprintFolder) fresh(sha model.SHA, createdAt int64) {
@@ -58,9 +58,9 @@ func (f *sprintFolder) create(op model.CreateOp, author model.Actor) error {
 	return nil
 }
 
-func (f *sprintFolder) apply(op model.Op, c model.PackCommit) error {
+func (f *sprintFolder) apply(op model.Op, c model.PackCommit) bool {
 	if applyLabel(f.labels, op) || applyCommitLink(f.commits, op) || applyComment(&f.sprint.Comments, op, c) {
-		return nil
+		return true
 	}
 	switch o := op.(type) {
 	case model.SetTitle:
@@ -78,19 +78,20 @@ func (f *sprintFolder) apply(op model.Op, c model.PackCommit) error {
 	case model.DeleteNote:
 		f.sprint.Deleted = true
 	default:
-		return fmt.Errorf("%w: %s on a sprint", ErrKindMismatch, op.OpKind())
+		return false
 	}
-	return nil
+	return true
 }
 
 func (f *sprintFolder) touch(c model.PackCommit) {
 	f.sprint.UpdatedAt = c.AuthorTime
 }
 
-func (f *sprintFolder) finalize(head model.SHA) model.Sprint {
+func (f *sprintFolder) finalize(head model.SHA, skipped int) model.Sprint {
 	f.sprint.Labels = sortedKeys(f.labels)
 	f.sprint.Commits = sortedKeys(f.commits)
 	f.sprint.Head = head
+	f.sprint.SkippedOps = skipped
 	return f.sprint
 }
 

@@ -24,25 +24,40 @@ type folder[T model.Snapshot] interface {
 	// engine guarantees op is a create op; a create op of a foreign kind fails
 	// with ErrKindMismatch.
 	create(op model.CreateOp, author model.Actor) error
-	// apply folds one non-create, non-checkpoint op. It fails with
-	// ErrKindMismatch when op does not apply to this kind.
-	apply(op model.Op, c model.PackCommit) error
+	// apply folds one non-create, non-checkpoint op, reporting whether it
+	// applies to this kind. The engine resolves one that does not — see mode.
+	apply(op model.Op, c model.PackCommit) bool
 	// touch stamps per-commit state after a commit carrying a non-checkpoint op.
 	touch(c model.PackCommit)
-	// finalize sorts the auxiliary sets into the snapshot, sets its head, and
-	// returns it.
-	finalize(head model.SHA) T
+	// finalize sorts the auxiliary sets into the snapshot, sets its head and
+	// skipped-op count, and returns it.
+	finalize(head model.SHA, skipped int) T
 }
+
+// mode selects what a fold does with an op that does not apply to the chain's
+// kind: tolerant skips and counts it (SkippedOps), so a binary can read chains
+// a newer one wrote; strict fails with ErrKindMismatch, which the write path
+// needs — an illegal combination must be refused, not written and skipped.
+type mode int
+
+const (
+	tolerant mode = iota
+	strict
+)
 
 // run replays a linearized chain into a snapshot through f. It selects the seed
 // checkpoint, seeds or freshly initializes f, folds every uncovered commit, and
 // finalizes. Every kind flows through this one skeleton, so all kinds share the
 // create/duplicate-create handling, the checkpoint no-op, and the touch gating —
 // the guarantees that make a compacted fold converge with a full fold.
-func run[T model.Snapshot](ordered []model.PackCommit, f folder[T]) (T, error) {
+//
+// A skipped op still touches: the commit is real history, and a binary that
+// does apply the op stamps the same UpdatedAt, so the two converge.
+func run[T model.Snapshot](ordered []model.PackCommit, f folder[T], m mode) (T, error) {
 	var zero T
 	base, seedSHA, covered, seeded := selectSeed(ordered)
 	created := false
+	skipped := 0
 	if seeded {
 		if err := f.seed(base.State); err != nil {
 			return zero, err
@@ -75,8 +90,11 @@ func run[T model.Snapshot](ordered []model.PackCommit, f folder[T]) (T, error) {
 				if co, ok := op.(model.CreateOp); ok {
 					return zero, fmt.Errorf("%w: %s", ErrDuplicateCreate, co.OpKind())
 				}
-				if err := f.apply(op, c); err != nil {
-					return zero, err
+				if !f.apply(op, c) {
+					if m == strict {
+						return zero, fmt.Errorf("%w: %s does not apply to a %s", ErrKindMismatch, op.OpKind(), zero.Meta().Kind)
+					}
+					skipped++
 				}
 			}
 		}
@@ -87,7 +105,7 @@ func run[T model.Snapshot](ordered []model.PackCommit, f folder[T]) (T, error) {
 	if !created {
 		return zero, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
 	}
-	return f.finalize(ordered[len(ordered)-1].SHA), nil
+	return f.finalize(ordered[len(ordered)-1].SHA, skipped), nil
 }
 
 // selectSeed chooses the checkpoint a fold may start its snapshot from, plus

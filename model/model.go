@@ -420,6 +420,9 @@ func validateAttachmentName(name string) error {
 // Attachments is the folded attachment set, LWW by Name, sorted by Name, and
 // nil when empty — the field marshals omitempty so attachment-less snapshots
 // keep their pre-attachment bytes.
+//
+// SkippedOps is the reader-local count of ops this binary's folder does not
+// apply to this kind; it never marshals (see Meta.SkippedOps).
 type Note struct {
 	ID             EntityID        `json:"id"`
 	Title          string          `json:"title"`
@@ -440,6 +443,7 @@ type Note struct {
 	StaleReason    string          `json:"stale_reason"`
 	Head           SHA             `json:"head"`
 	Attachments    []Attachment    `json:"attachments,omitempty"`
+	SkippedOps     int             `json:"-"`
 }
 
 // Doc is the folded snapshot of a doc entity: a long-form markdown document
@@ -468,6 +472,9 @@ type Note struct {
 // Attachments is the folded attachment set, LWW by Name, sorted by Name, and
 // nil when empty — the field marshals omitempty so attachment-less snapshots
 // keep their pre-attachment bytes.
+//
+// SkippedOps is the reader-local count of ops this binary's folder does not
+// apply to this kind; it never marshals (see Meta.SkippedOps).
 type Doc struct {
 	ID             EntityID        `json:"id"`
 	Title          string          `json:"title"`
@@ -489,6 +496,7 @@ type Doc struct {
 	StaleReason    string          `json:"stale_reason"`
 	Head           SHA             `json:"head"`
 	Attachments    []Attachment    `json:"attachments,omitempty"`
+	SkippedOps     int             `json:"-"`
 }
 
 // Log is the folded snapshot of a log entity: an append-only journal — an
@@ -507,6 +515,9 @@ type Doc struct {
 // Attachments is the folded attachment set, LWW by Name, sorted by Name, and
 // nil when empty — the field marshals omitempty so attachment-less snapshots
 // keep their pre-attachment bytes.
+//
+// SkippedOps is the reader-local count of ops this binary's folder does not
+// apply to this kind; it never marshals (see Meta.SkippedOps).
 type Log struct {
 	ID          EntityID     `json:"id"`
 	Title       string       `json:"title"`
@@ -519,6 +530,7 @@ type Log struct {
 	Deleted     bool         `json:"deleted"`
 	Head        SHA          `json:"head"`
 	Attachments []Attachment `json:"attachments,omitempty"`
+	SkippedOps  int          `json:"-"`
 }
 
 // Task is the folded snapshot of a task entity. Timestamps are unix seconds;
@@ -536,6 +548,9 @@ type Log struct {
 // pre-anchor bytes. A commit anchor is the where-this-work-lives edge and is
 // distinct from Commits, the what-this-work-produced set that LinkCommit
 // writes; a branch anchor is likewise distinct from the LWW Branch attribute.
+//
+// SkippedOps is the reader-local count of ops this binary's folder does not
+// apply to this kind; it never marshals (see Meta.SkippedOps).
 type Task struct {
 	ID               EntityID    `json:"id"`
 	Branch           Branch      `json:"branch"`
@@ -562,6 +577,7 @@ type Task struct {
 	Criteria         []Criterion `json:"criteria"` // append-ordered by creation (linearization order)
 	Deleted          bool        `json:"deleted,omitempty"`
 	Anchors          []Anchor    `json:"anchors,omitempty"`
+	SkippedOps       int         `json:"-"`
 }
 
 // Sprint is the folded snapshot of a sprint entity: a time-boxed grouping of
@@ -570,6 +586,9 @@ type Task struct {
 // means none. StartDate and EndDate are user-set LWW scalars, distinct from the
 // CreatedAt and ClosedAt lifecycle stamps. Labels, Commits, and Comments are
 // folded collections; Head is the chain tip the snapshot was folded from.
+//
+// SkippedOps is the reader-local count of ops this binary's folder does not
+// apply to this kind; it never marshals (see Meta.SkippedOps).
 type Sprint struct {
 	ID          EntityID     `json:"id"`
 	Project     EntityID     `json:"project"`
@@ -588,6 +607,7 @@ type Sprint struct {
 	ClosedAt    int64        `json:"closed_at"`
 	Head        SHA          `json:"head"`
 	Deleted     bool         `json:"deleted,omitempty"`
+	SkippedOps  int          `json:"-"`
 }
 
 // Project is the folded snapshot of a project entity: a long-lived grouping of
@@ -595,6 +615,9 @@ type Sprint struct {
 // Projects carry no start or end dates and no StartedAt — only the CreatedAt and
 // ClosedAt lifecycle stamps. Labels, Commits, and Comments are folded
 // collections; Head is the chain tip the snapshot was folded from.
+//
+// SkippedOps is the reader-local count of ops this binary's folder does not
+// apply to this kind; it never marshals (see Meta.SkippedOps).
 type Project struct {
 	ID          EntityID      `json:"id"`
 	Title       string        `json:"title"`
@@ -609,6 +632,7 @@ type Project struct {
 	ClosedAt    int64         `json:"closed_at"`
 	Head        SHA           `json:"head"`
 	Deleted     bool          `json:"deleted,omitempty"`
+	SkippedOps  int           `json:"-"`
 }
 
 // RunbookStep is one ordered instruction in a runbook: free text plus an
@@ -656,6 +680,9 @@ type RunbookRun struct {
 // empty — the field marshals omitempty so anchor-less snapshots keep their
 // pre-anchor bytes. Deleted is the tombstone flag and marshals omitempty for
 // the same reason: an undeleted snapshot keeps its pre-tombstone bytes.
+//
+// SkippedOps is the reader-local count of ops this binary's folder does not
+// apply to this kind; it never marshals (see Meta.SkippedOps).
 type Runbook struct {
 	ID          EntityID      `json:"id"`
 	Title       string        `json:"title"`
@@ -672,6 +699,7 @@ type Runbook struct {
 	Head        SHA           `json:"head"`
 	Anchors     []Anchor      `json:"anchors,omitempty"`
 	Deleted     bool          `json:"deleted,omitempty"`
+	SkippedOps  int           `json:"-"`
 }
 
 // Investigation is the folded snapshot of an investigation entity: a durable
@@ -695,6 +723,9 @@ type Runbook struct {
 // Attachments is the folded attachment set, LWW by Name, sorted by Name, and
 // nil when empty — the field marshals omitempty so attachment-less snapshots
 // keep their pre-attachment bytes.
+//
+// SkippedOps is the reader-local count of ops this binary's folder does not
+// apply to this kind; it never marshals (see Meta.SkippedOps).
 type Investigation struct {
 	ID           EntityID            `json:"id"`
 	Title        string              `json:"title"`
@@ -718,6 +749,7 @@ type Investigation struct {
 	Deleted      bool                `json:"deleted"`
 	Head         SHA                 `json:"head"`
 	Attachments  []Attachment        `json:"attachments,omitempty"`
+	SkippedOps   int                 `json:"-"`
 }
 
 // NewNonce returns 16 crypto/rand bytes hex-encoded (32 characters). Create

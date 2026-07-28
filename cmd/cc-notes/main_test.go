@@ -30,8 +30,8 @@ func TestUpgradeHint(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "fold kind mismatch from a newer binary",
-			err:  fmt.Errorf("load refs/cc-notes/runbooks/x: %w: add_anchor on a runbook", fold.ErrKindMismatch),
+			name: "write refused on a chain from a newer binary",
+			err:  fmt.Errorf("append to refs/cc-notes/tasks/x: %w: add_attachment does not apply to a task", fold.ErrKindMismatch),
 			want: "this entity carries history this cc-notes cannot fold; if it was written by a newer cc-notes, run `brew upgrade yasyf/tap/cc-notes` and retry",
 		},
 		{

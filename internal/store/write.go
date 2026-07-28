@@ -58,7 +58,7 @@ func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (m
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	root := model.PackCommit{SHA: sha, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack}
-	snapshot, err := fold.Fold([]model.PackCommit{root})
+	snapshot, err := fold.Strict([]model.PackCommit{root})
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
@@ -112,7 +112,7 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
 		commit := model.PackCommit{SHA: sha, Parents: []model.SHA{tip}, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack}
-		snapshot, err := fold.Fold(append(chain, commit))
+		snapshot, err := fold.Strict(append(chain, commit))
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
@@ -153,7 +153,7 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 		if err != nil {
 			return nil, fmt.Errorf("compact %s: %w", ref, err)
 		}
-		snap, err := fold.Fold(chain)
+		snap, err := fold.Strict(chain)
 		if err != nil {
 			return nil, fmt.Errorf("compact %s: %w", ref, err)
 		}
@@ -177,7 +177,7 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 			return nil, fmt.Errorf("compact %s: %w", ref, err)
 		}
 		commit := model.PackCommit{SHA: sha, Parents: []model.SHA{tip}, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack}
-		snapshot, err := fold.Fold(append(chain, commit))
+		snapshot, err := fold.Strict(append(chain, commit))
 		if err != nil {
 			return nil, fmt.Errorf("compact %s: %w", ref, err)
 		}
@@ -196,7 +196,8 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 
 // Merge writes the union merge commit joining ours and theirs — two tips of the
 // same entity — then compare-and-swaps ref from ours to it. A lost race fails
-// with gitcmd.ErrCASMismatch.
+// with gitcmd.ErrCASMismatch. The merge pack carries no ops of its own, so the
+// fold stays tolerant: a chain a newer cc-notes wrote still merges here.
 func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (model.SHA, error) {
 	ourChain, err := s.Repo.ReadChain(ctx, ours)
 	if err != nil {

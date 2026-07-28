@@ -1,11 +1,15 @@
 package store
 
 import (
+	"bytes"
 	"cmp"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/yasyf/cc-notes/model"
@@ -22,15 +26,32 @@ const (
 	foldCacheSubdir = "cc-notes/folds-v1"
 )
 
+// foldCacheGeneration tags every entry with the op vocabulary of the binary that
+// wrote it, so an entry a binary with a different vocabulary wrote is a miss.
+// The directory is shared — a brew-installed cc-notes and a dev build read the
+// same one — and without the tag the cache defeats SkippedOps in one direction:
+// the newer binary folds a chain completely and caches it, and the older one,
+// which cannot apply every op in that chain, reads the entry back reporting zero
+// skips, because SkippedOps does not marshal. The tag is derived from
+// model.OpKinds, never declared, so a release that adds an op moves it without
+// anyone bumping a constant.
+var foldCacheGeneration = foldGeneration(model.OpKinds())
+
+// foldGeneration digests an op vocabulary into an entry-header tag.
+func foldGeneration(opKinds []string) string {
+	sum := sha256.Sum256([]byte(strings.Join(opKinds, "\n")))
+	return hex.EncodeToString(sum[:8])
+}
+
 // foldCache is a persistent, local, tip-keyed snapshot cache: a pure
 // accelerator derived from the object database that lets short-lived CLI
 // processes skip re-folding cold chains. The file name is the chain tip sha,
-// which is immutable, so a present entry is always valid — there is no
-// staleness logic. The cache is best-effort by design: every I/O error
-// degrades to a miss (get) or a no-op (put) and is never propagated. This is
-// the one intentional error-swallow in the package — the cache is a derived
-// artifact, rebuildable by deleting the directory, not state whose loss is a
-// failure.
+// which is immutable, so a present entry of this binary's fold generation is
+// always valid — there is no staleness logic. The cache is best-effort by
+// design: every I/O error degrades to a miss (get) or a no-op (put) and is
+// never propagated. This is the one intentional error-swallow in the package —
+// the cache is a derived artifact, rebuildable by deleting the directory, not
+// state whose loss is a failure.
 type foldCache struct {
 	capacity int
 	dir      string
@@ -49,7 +70,8 @@ func newFoldCache(dir string, capacity int) *foldCache {
 }
 
 // get returns the cached snapshot for tip, or ok=false on any miss: an absent
-// entry, an unreadable or corrupt file, or a version mismatch.
+// entry, an unreadable or corrupt file, a version mismatch, or an entry a
+// binary with a different op vocabulary wrote.
 func (c *foldCache) get(tip model.SHA) (model.Snapshot, bool) {
 	//nolint:gosec // G304: dir is this store's own fold-cache directory and tip is a validated SHA key, not external input.
 	data, err := os.ReadFile(filepath.Join(c.dir, string(tip)))
@@ -67,7 +89,15 @@ func (c *foldCache) get(tip model.SHA) (model.Snapshot, bool) {
 // put writes the snapshot for tip, keyed by the resulting chain tip, then
 // enforces the LRU bound. Every error is swallowed: the cache is a pure
 // accelerator.
+//
+// A snapshot whose fold skipped ops is never stored: SkippedOps does not
+// marshal, so a cache hit would report zero where a cold fold reports N. That
+// covers only what this binary writes; foldCacheGeneration covers what another
+// binary wrote.
 func (c *foldCache) put(tip model.SHA, snap model.Snapshot) {
+	if snap.Meta().SkippedOps > 0 {
+		return
+	}
 	data, ok := encodeFoldEntry(snap)
 	if !ok {
 		return
@@ -199,23 +229,27 @@ func (c *foldCache) delete(tip model.SHA) {
 	}
 }
 
-// encodeFoldEntry serializes a snapshot as a version-and-kind header line
-// followed by the snapshot's own JSON. The model types carry Head, so the
-// serialized form self-identifies its tip. The header kind is the snapshot's
-// Meta().Kind, whose wire values are the same tokens the decoder parses.
+// encodeFoldEntry serializes a snapshot as a version, fold-generation, and kind
+// header line followed by the snapshot's own JSON. The model types carry Head,
+// so the serialized form self-identifies its tip. The header kind is the
+// snapshot's Meta().Kind, whose wire values are the same tokens the decoder
+// parses.
 func encodeFoldEntry(snap model.Snapshot) ([]byte, bool) {
 	body, err := json.Marshal(snap)
 	if err != nil {
 		return nil, false
 	}
 	header := []byte{byte('0' + foldCacheVersion), ' '}
+	header = append(header, foldCacheGeneration...)
+	header = append(header, ' ')
 	header = append(header, string(snap.Meta().Kind)...)
 	header = append(header, '\n')
 	return append(header, body...), true
 }
 
-// decodeFoldEntry parses a cache entry, returning ok=false on a missing
-// header, a version mismatch, an unknown kind, or invalid JSON.
+// decodeFoldEntry parses a cache entry, returning ok=false on a missing header,
+// a version mismatch, a fold generation other than this binary's, an unknown
+// kind, or invalid JSON.
 func decodeFoldEntry(data []byte) (model.Snapshot, bool) {
 	nl := slices.Index(data, '\n')
 	if nl < 0 {
@@ -226,7 +260,11 @@ func decodeFoldEntry(data []byte) (model.Snapshot, bool) {
 	if len(header) < 2 || header[0] != byte('0'+foldCacheVersion) || header[1] != ' ' {
 		return nil, false
 	}
-	kind, err := model.ParseKind(string(header[2:]))
+	tail, ours := bytes.CutPrefix(header[2:], []byte(foldCacheGeneration+" "))
+	if !ours {
+		return nil, false
+	}
+	kind, err := model.ParseKind(string(tail))
 	if err != nil {
 		return nil, false
 	}

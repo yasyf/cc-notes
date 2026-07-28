@@ -24,8 +24,8 @@ func newDocFolder() *docFolder {
 	}
 }
 
-func foldDoc(ordered []model.PackCommit) (model.Doc, error) {
-	return run[model.Doc](ordered, newDocFolder())
+func foldDoc(ordered []model.PackCommit, m mode) (model.Doc, error) {
+	return run[model.Doc](ordered, newDocFolder(), m)
 }
 
 func (f *docFolder) fresh(sha model.SHA, createdAt int64) {
@@ -69,10 +69,10 @@ func (f *docFolder) create(op model.CreateOp, author model.Actor) error {
 	return nil
 }
 
-func (f *docFolder) apply(op model.Op, c model.PackCommit) error {
+func (f *docFolder) apply(op model.Op, c model.PackCommit) bool {
 	if applyTag(f.tags, op) || applyAnchor(f.anchors, op) ||
 		applySupersede(f.superseded, op) || applyAttachment(f.attachments, op) {
-		return nil
+		return true
 	}
 	switch o := op.(type) {
 	case model.SetTitle:
@@ -94,21 +94,22 @@ func (f *docFolder) apply(op model.Op, c model.PackCommit) error {
 	case model.ClearStale:
 		f.doc.StaleAt, f.doc.StaleBy, f.doc.StaleReason = 0, "", ""
 	default:
-		return fmt.Errorf("%w: %s on a doc", ErrKindMismatch, op.OpKind())
+		return false
 	}
-	return nil
+	return true
 }
 
 func (f *docFolder) touch(c model.PackCommit) {
 	f.doc.UpdatedAt = c.AuthorTime
 }
 
-func (f *docFolder) finalize(head model.SHA) model.Doc {
+func (f *docFolder) finalize(head model.SHA, skipped int) model.Doc {
 	f.doc.Tags = sortedKeys(f.tags)
 	f.doc.Anchors = sortedAnchors(f.anchors)
 	f.doc.SupersededBy = sortedKeys(f.superseded)
 	f.doc.Attachments = sortedAttachments(f.attachments)
 	f.doc.Witness = f.witness
 	f.doc.Head = head
+	f.doc.SkippedOps = skipped
 	return f.doc
 }

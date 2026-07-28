@@ -15,6 +15,9 @@ type Snapshot interface {
 // concrete snapshot type. A field a kind does not model stays zero — Superseded
 // is false for kinds with no supersede edge, Attachments nil for kinds that
 // carry none.
+//
+// SkippedOps counts ops the fold could not apply to this kind: reader-local,
+// not entity state, so it marshals nowhere — no entity id, no checkpoint.
 type Meta struct {
 	Kind        Kind
 	Title       string
@@ -24,6 +27,7 @@ type Meta struct {
 	Deleted     bool
 	Superseded  bool
 	Attachments []Attachment
+	SkippedOps  int
 }
 
 func metaTime(sec int64) time.Time { return time.Unix(sec, 0).UTC() }
@@ -63,6 +67,7 @@ func (n Note) Meta() Meta {
 		Deleted:     n.Deleted,
 		Superseded:  len(n.SupersededBy) > 0,
 		Attachments: n.Attachments,
+		SkippedOps:  n.SkippedOps,
 	}
 }
 
@@ -77,6 +82,7 @@ func (d Doc) Meta() Meta {
 		Deleted:     d.Deleted,
 		Superseded:  len(d.SupersededBy) > 0,
 		Attachments: d.Attachments,
+		SkippedOps:  d.SkippedOps,
 	}
 }
 
@@ -90,54 +96,59 @@ func (l Log) Meta() Meta {
 		UpdatedAt:   metaTime(l.UpdatedAt),
 		Deleted:     l.Deleted,
 		Attachments: l.Attachments,
+		SkippedOps:  l.SkippedOps,
 	}
 }
 
 // Meta returns the task's header.
 func (t Task) Meta() Meta {
 	return Meta{
-		Kind:      KindTask,
-		Title:     t.Title,
-		Head:      t.Head,
-		CreatedAt: metaTime(t.CreatedAt),
-		UpdatedAt: metaTime(t.UpdatedAt),
-		Deleted:   t.Deleted,
+		Kind:       KindTask,
+		Title:      t.Title,
+		Head:       t.Head,
+		CreatedAt:  metaTime(t.CreatedAt),
+		UpdatedAt:  metaTime(t.UpdatedAt),
+		Deleted:    t.Deleted,
+		SkippedOps: t.SkippedOps,
 	}
 }
 
 // Meta returns the sprint's header.
 func (s Sprint) Meta() Meta {
 	return Meta{
-		Kind:      KindSprint,
-		Title:     s.Title,
-		Head:      s.Head,
-		CreatedAt: metaTime(s.CreatedAt),
-		UpdatedAt: metaTime(s.UpdatedAt),
-		Deleted:   s.Deleted,
+		Kind:       KindSprint,
+		Title:      s.Title,
+		Head:       s.Head,
+		CreatedAt:  metaTime(s.CreatedAt),
+		UpdatedAt:  metaTime(s.UpdatedAt),
+		Deleted:    s.Deleted,
+		SkippedOps: s.SkippedOps,
 	}
 }
 
 // Meta returns the project's header.
 func (p Project) Meta() Meta {
 	return Meta{
-		Kind:      KindProject,
-		Title:     p.Title,
-		Head:      p.Head,
-		CreatedAt: metaTime(p.CreatedAt),
-		UpdatedAt: metaTime(p.UpdatedAt),
-		Deleted:   p.Deleted,
+		Kind:       KindProject,
+		Title:      p.Title,
+		Head:       p.Head,
+		CreatedAt:  metaTime(p.CreatedAt),
+		UpdatedAt:  metaTime(p.UpdatedAt),
+		Deleted:    p.Deleted,
+		SkippedOps: p.SkippedOps,
 	}
 }
 
 // Meta returns the runbook's header.
 func (r Runbook) Meta() Meta {
 	return Meta{
-		Kind:      KindRunbook,
-		Title:     r.Title,
-		Head:      r.Head,
-		CreatedAt: metaTime(r.CreatedAt),
-		UpdatedAt: metaTime(r.UpdatedAt),
-		Deleted:   r.Deleted,
+		Kind:       KindRunbook,
+		Title:      r.Title,
+		Head:       r.Head,
+		CreatedAt:  metaTime(r.CreatedAt),
+		UpdatedAt:  metaTime(r.UpdatedAt),
+		Deleted:    r.Deleted,
+		SkippedOps: r.SkippedOps,
 	}
 }
 
@@ -152,5 +163,6 @@ func (i Investigation) Meta() Meta {
 		Deleted:     i.Deleted,
 		Superseded:  len(i.SupersededBy) > 0,
 		Attachments: i.Attachments,
+		SkippedOps:  i.SkippedOps,
 	}
 }

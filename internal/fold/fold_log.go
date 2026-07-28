@@ -23,8 +23,8 @@ func newLogFolder() *logFolder {
 	}
 }
 
-func foldLog(ordered []model.PackCommit) (model.Log, error) {
-	return run[model.Log](ordered, newLogFolder())
+func foldLog(ordered []model.PackCommit, m mode) (model.Log, error) {
+	return run[model.Log](ordered, newLogFolder(), m)
 }
 
 func (f *logFolder) fresh(sha model.SHA, createdAt int64) {
@@ -66,9 +66,9 @@ func (f *logFolder) create(op model.CreateOp, author model.Actor) error {
 	return nil
 }
 
-func (f *logFolder) apply(op model.Op, c model.PackCommit) error {
+func (f *logFolder) apply(op model.Op, c model.PackCommit) bool {
 	if applyTag(f.tags, op) || applyAnchor(f.anchors, op) || applyAttachment(f.attachments, op) {
-		return nil
+		return true
 	}
 	switch o := op.(type) {
 	case model.SetTitle:
@@ -78,16 +78,16 @@ func (f *logFolder) apply(op model.Op, c model.PackCommit) error {
 	case model.DeleteNote:
 		f.log.Deleted = true
 	default:
-		return fmt.Errorf("%w: %s on a log", ErrKindMismatch, op.OpKind())
+		return false
 	}
-	return nil
+	return true
 }
 
 func (f *logFolder) touch(c model.PackCommit) {
 	f.log.UpdatedAt = c.AuthorTime
 }
 
-func (f *logFolder) finalize(head model.SHA) model.Log {
+func (f *logFolder) finalize(head model.SHA, skipped int) model.Log {
 	f.log.Tags = sortedKeys(f.tags)
 	f.log.Anchors = sortedAnchors(f.anchors)
 	f.log.Attachments = sortedAttachments(f.attachments)
@@ -96,5 +96,6 @@ func (f *logFolder) finalize(head model.SHA) model.Log {
 	}
 	f.log.Entries = f.entries
 	f.log.Head = head
+	f.log.SkippedOps = skipped
 	return f.log
 }

@@ -6,24 +6,26 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
 
-// TestFoldEntryByteFormat pins the exact on-disk entry bytes: the
-// version-and-kind header line (kind spelled as the Meta().Kind wire value)
-// followed by the snapshot's own JSON. The format is frozen — a cross-binary
-// entry read must byte-match — so this guards the Meta().Kind-derived header
-// against any drift from the per-type encoding contract.
+// TestFoldEntryByteFormat pins the exact on-disk entry bytes: the version,
+// fold-generation, and kind header line (kind spelled as the Meta().Kind wire
+// value) followed by the snapshot's own JSON. The layout is frozen — a
+// cross-binary entry read must byte-match — so this guards both the
+// Meta().Kind-derived header and the generation field that discriminates the
+// writing binary's op vocabulary.
 func TestFoldEntryByteFormat(t *testing.T) {
 	note := model.Note{ID: "noteid", Title: "t", Head: "abc123"}
 	body, err := json.Marshal(note)
 	if err != nil {
 		t.Fatalf("marshal note: %v", err)
 	}
-	want := append([]byte{byte('0' + foldCacheVersion), ' '}, "note\n"...)
+	want := append([]byte{byte('0' + foldCacheVersion), ' '}, foldCacheGeneration+" note\n"...)
 	want = append(want, body...)
 
 	got, ok := encodeFoldEntry(note)
@@ -40,6 +42,107 @@ func TestFoldEntryByteFormat(t *testing.T) {
 	}
 	if !reflect.DeepEqual(back, note) {
 		t.Fatalf("decodeFoldEntry = %#v, want %#v", back, note)
+	}
+}
+
+// TestFoldGenerationTracksOpVocabulary proves the generation is derived, not
+// declared: a binary whose op registry differs by even one kind derives a
+// different tag, so a release that adds an op cannot forget to bump it.
+func TestFoldGenerationTracksOpVocabulary(t *testing.T) {
+	ours := model.OpKinds()
+	if len(ours) < 2 {
+		t.Fatalf("model.OpKinds() = %v, want a populated registry", ours)
+	}
+	want := foldGeneration(ours)
+	if got := foldGeneration(model.OpKinds()); got != want {
+		t.Fatalf("foldGeneration is not a function of the vocabulary alone: %q then %q", want, got)
+	}
+	cases := []struct {
+		name  string
+		kinds []string
+	}{
+		{"an op a newer binary adds", append(slices.Clone(ours), "seal_entity")},
+		{"an op this binary would not have", ours[1:]},
+		{"an op renamed on the wire", append(slices.Clone(ours[1:]), ours[0]+"_v2")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := foldGeneration(tc.kinds); got == want {
+				t.Fatalf("foldGeneration over %d kinds = %q, want a tag unequal to this binary's", len(tc.kinds), got)
+			}
+		})
+	}
+}
+
+// TestFoldCacheMissesForeignGeneration is the cross-binary hazard the
+// SkippedOps put guard cannot see: a newer cc-notes folds a chain completely
+// and caches it under the shared git common dir, and this binary — which cannot
+// apply every op in that chain — must re-fold rather than read the entry back
+// reporting zero skips. The foreign entry comes out of this binary's own
+// encoder under a swapped generation, so what fails here is the discrimination
+// itself, not a hand-spelled header the decoder would reject anyway.
+func TestFoldCacheMissesForeignGeneration(t *testing.T) {
+	dir := t.TempDir()
+	c := newFoldCache(dir, foldCacheCap)
+	tip := model.SHA("abababababababababababababababababababab")
+	note := model.Note{ID: "noteid", Title: "folded by a newer binary", Head: tip}
+
+	newerGen := foldGeneration(append(slices.Clone(model.OpKinds()), "seal_entity"))
+	if err := os.WriteFile(filepath.Join(dir, string(tip)), encodeAsGeneration(t, newerGen, note), 0o600); err != nil {
+		t.Fatalf("write newer-binary entry: %v", err)
+	}
+
+	if snap, ok := c.get(tip); ok {
+		t.Fatalf("read a newer binary's entry: %#v", snap)
+	}
+
+	ours := model.Note{ID: "noteid", Title: "re-folded here", Head: tip}
+	c.put(tip, ours)
+	got, ok := c.get(tip)
+	if !ok {
+		t.Fatal("this binary's own entry missed after overwriting the foreign one")
+	}
+	if !reflect.DeepEqual(got, ours) {
+		t.Fatalf("cache round-trip = %#v, want %#v", got, ours)
+	}
+}
+
+// encodeAsGeneration encodes snap the way a binary whose op vocabulary digests
+// to gen writes it: through this binary's encoder, with only the generation
+// swapped.
+func encodeAsGeneration(t *testing.T, gen string, snap model.Snapshot) []byte {
+	t.Helper()
+	ours := foldCacheGeneration
+	foldCacheGeneration = gen
+	defer func() { foldCacheGeneration = ours }()
+	entry, ok := encodeFoldEntry(snap)
+	if !ok {
+		t.Fatalf("encodeFoldEntry %T: ok=false", snap)
+	}
+	return entry
+}
+
+// TestFoldCacheRefusesSkippedOps proves a partial fold never reaches disk.
+// SkippedOps does not marshal, so a stored entry would come back reporting
+// zero — a warm cache silently hiding history this binary cannot fold.
+func TestFoldCacheRefusesSkippedOps(t *testing.T) {
+	cache := newFoldCache(t.TempDir(), foldCacheCap)
+	partial := model.Note{ID: "noteid", Title: "t", Head: "abc123", SkippedOps: 1}
+
+	cache.put("abc123", partial)
+	if snap, ok := cache.get("abc123"); ok {
+		t.Fatalf("cached a partial fold: %#v", snap)
+	}
+
+	whole := partial
+	whole.SkippedOps = 0
+	cache.put("abc123", whole)
+	snap, ok := cache.get("abc123")
+	if !ok {
+		t.Fatal("complete fold missed the cache")
+	}
+	if !reflect.DeepEqual(snap, whole) {
+		t.Fatalf("cache round-trip = %#v, want %#v", snap, whole)
 	}
 }
 
@@ -108,18 +211,31 @@ func TestFoldCacheRebuildAfterDelete(t *testing.T) {
 	}
 }
 
-func TestFoldCacheRejectsDifferentEpoch(t *testing.T) {
-	dir := t.TempDir()
-	c := newFoldCache(dir, foldCacheCap)
-	tip := model.SHA("aaaa000000000000000000000000000000000000")
-
-	stale := append([]byte{'9', ' '}, "note\n{\"id\":\"x\"}"...)
-	if err := os.WriteFile(filepath.Join(dir, string(tip)), stale, 0o600); err != nil {
-		t.Fatalf("write stale entry: %v", err)
+// TestFoldCacheRejectsForeignHeaders covers the two headers this binary must
+// not read back: a cache format from another epoch, and the ungenerationed v1
+// entry every already-installed binary is writing today — the upgrade path,
+// where a hit would report zero skips over a chain this binary may not fold
+// whole.
+func TestFoldCacheRejectsForeignHeaders(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry []byte
+	}{
+		{"a different cache epoch", append([]byte{'9', ' '}, "note\n{\"id\":\"x\"}"...)},
+		{"a v1 entry written before the generation tag", append([]byte{byte('0' + foldCacheVersion), ' '}, "note\n{\"id\":\"x\"}"...)},
 	}
-
-	if _, ok := c.get(tip); ok {
-		t.Fatal("get of version-mismatched entry: want miss")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			c := newFoldCache(dir, foldCacheCap)
+			tip := model.SHA("aaaa000000000000000000000000000000000000")
+			if err := os.WriteFile(filepath.Join(dir, string(tip)), tc.entry, 0o600); err != nil {
+				t.Fatalf("write entry: %v", err)
+			}
+			if snap, ok := c.get(tip); ok {
+				t.Fatalf("read an entry this binary cannot trust: %#v", snap)
+			}
+		})
 	}
 }
 

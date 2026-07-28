@@ -66,6 +66,9 @@ func printStatusText(cmd *cobra.Command, report notes.StatusReport) error {
 	fmt.Fprintf(&b, "papercuts: %d total\n", report.Papercuts)
 	fmt.Fprintf(&b, "investigations: %d open, %d awaiting confirmation, %d open findings\n",
 		report.Investigations.Open, report.Investigations.AwaitingConfirm, report.Investigations.OpenFindings)
+	if report.SkippedOps > 0 {
+		fmt.Fprintf(&b, "skipped %d op(s) this cc-notes cannot fold; %s\n", report.SkippedOps, UpgradeRemedy)
+	}
 	_, err := fmt.Fprint(cmd.OutOrStdout(), b.String())
 	return err
 }
@@ -106,6 +109,7 @@ func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusRep
 			AwaitingConfirm: report.Investigations.AwaitingConfirm,
 			OpenFindings:    report.Investigations.OpenFindings,
 		},
+		SkippedOps: report.SkippedOps,
 	}
 	for _, grp := range report.InProgress {
 		staleDTOs := make([]statusStaleDTO, len(grp.Tasks))
@@ -149,8 +153,8 @@ func statusBacklogDTOs(backlog []notes.StatusBacklogTask, blocks map[model.Entit
 
 // statusDTO fixes the JSON field order for a status report: the current
 // branch, the backlog and your-branch task slices, the in-progress tasks
-// grouped by assignee, the runs in flight, and the note, doc, log, papercut,
-// and investigation summaries.
+// grouped by assignee, the runs in flight, the note, doc, log, papercut,
+// and investigation summaries, and the skipped-op count.
 type statusDTO struct {
 	Branch         string                  `json:"branch"`
 	Backlog        []statusBacklogDTO      `json:"backlog,omitempty"`
@@ -162,6 +166,7 @@ type statusDTO struct {
 	Logs           statusLogsDTO           `json:"logs"`
 	Papercuts      statusLogsDTO           `json:"papercuts"`
 	Investigations statusInvestigationsDTO `json:"investigations"`
+	SkippedOps     int                     `json:"skipped_ops"`
 }
 
 // statusBacklogDTO embeds a taskSummaryDTO, inlining its fields, plus the
