@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -41,6 +42,7 @@ var (
 // not.
 type Index struct {
 	db      *bbolt.DB
+	source  string
 	builtAt int64
 }
 
@@ -73,7 +75,7 @@ func Load(dir, source string) (*Index, bool) {
 		_ = db.Close()
 		return nil, false
 	}
-	return &Index{db: db, builtAt: builtAt}, true
+	return &Index{db: db, source: source, builtAt: builtAt}, true
 }
 
 // Save writes g into dir through a temporary file and a rename, so a reader
@@ -281,6 +283,55 @@ func (i *Index) Events(since, until int64) []Event {
 		return nil
 	})
 	return events
+}
+
+// Graph reads the whole stored graph back into memory in built order, or
+// ok=false when a bucket does not decode — a miss like every other read-path
+// failure. The ranker indexes a *Graph rather than walking an Index, so a
+// caller that needs every node and edge reads it here instead of rebuilding.
+func (i *Index) Graph() (*Graph, bool) {
+	g := Graph{Source: i.source, BuiltAt: i.builtAt}
+	err := i.db.View(func(tx *bbolt.Tx) error {
+		nodes, err := decodeBucket[Node](tx.Bucket(nodeBucket))
+		if err != nil {
+			return err
+		}
+		edges, err := decodeBucket[Edge](tx.Bucket(edgeBucket))
+		if err != nil {
+			return err
+		}
+		events, err := decodeBucket[Event](tx.Bucket(eventBucket))
+		if err != nil {
+			return err
+		}
+		g.Nodes, g.Edges, g.Events = nodes, edges, events
+		return nil
+	})
+	if err != nil {
+		return nil, false
+	}
+	// The forward adjacency key orders edges by (from, to, kind) so one node's
+	// edges are a prefix scan; Graph.Edges is ordered by (from, kind, to).
+	slices.SortFunc(g.Edges, func(a, z Edge) int {
+		return compareEdgeKeys(
+			edgeKey{from: a.From, to: a.To, kind: a.Kind},
+			edgeKey{from: z.From, to: z.To, kind: z.Kind},
+		)
+	})
+	return &g, true
+}
+
+func decodeBucket[T any](b *bbolt.Bucket) ([]T, error) {
+	out := make([]T, 0, b.Stats().KeyN)
+	err := b.ForEach(func(_, value []byte) error {
+		var decoded T
+		if err := json.Unmarshal(value, &decoded); err != nil {
+			return err
+		}
+		out = append(out, decoded)
+		return nil
+	})
+	return out, err
 }
 
 // Counts returns how many nodes, edges, and events the stored graph holds.

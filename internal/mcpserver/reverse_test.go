@@ -24,6 +24,7 @@ var excludedCommands = map[string]bool{
 	"service":   true, // installs or deactivates the macOS machine service
 	"mcp":       true, // the MCP server's own launch command
 	"viz":       true, // launches a local visualization web server
+	"kg":        true, // derived retrieval index with no agent-facing surface yet
 	"gc":        true, // destructive object-store maintenance
 	"compact":   true, // op-log checkpoint maintenance, an operator task
 	"hooks":     true, // installs Claude Code hooks into the checkout

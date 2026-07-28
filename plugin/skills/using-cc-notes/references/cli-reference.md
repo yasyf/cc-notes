@@ -1,7 +1,7 @@
 # cc-notes CLI reference
 
 The command surface, grouped by noun: package, service, repo, task, sprint, project, runbook, investigation, note,
-doc, log, papercut. Every command takes `-h`/`--help`. Commands outside the `service` group also accept
+doc, log, papercut, kg. Every command takes `-h`/`--help`. Commands outside the `service` group also accept
 a global `--repo PATH` (`-R`) that targets another repository's store from any cwd — pass any path
 inside it, while file-path arguments still resolve against the invocation cwd. Cobra displays the
 inherited repository flag in package and service help, but those machine operations reject it before doing work.
@@ -2866,3 +2866,195 @@ index no entry occupies all exit 2.
 | `--json` | off | Emit JSON |
 
 `--json` emits one complaint object in the `papercut list` row shape, with `text` untruncated.
+
+## Knowledge-graph commands
+
+`cc-notes kg` is the derived retrieval layer over `refs/cc-notes/*`: one graph node per entity,
+per anchor target, and per writing session; one edge per declared relation, anchor, containment
+step, and co-occurrence; and the staleness verdict a ranker gates and demotes records with.
+
+The graph is derived state, not synced state. It is folded out of the entity refs and stored under
+the per-user root at `~/.cc-notes/repos/<key>/graph-v1` (`CC_NOTES_HOME` overrides the root), keyed
+by the repository's git common directory — so every linked worktree shares one index, and nothing
+lands in the checkout, on `refs/cc-notes/*`, or inside the git directory. Each stored graph carries
+the digest of the ref tips it was folded from, so a read either matches the repository's current
+tips exactly (`index hit`) or misses. There is no staleness heuristic and no partial reuse.
+
+A miss is never papered over. `kg stat` and `kg query` name it in their `index` field, say so on
+stderr, fold a graph in process to answer, and discard it; `kg build` is the only writer.
+
+Nothing in this group calls a language model. Every score is read from the record text, the graph's
+shape, or git.
+
+### `cc-notes kg build`
+
+MCP: — (CLI-only: derived retrieval index with no agent-facing surface yet)
+
+Fold every live entity under `refs/cc-notes/` into the graph and persist it, then print the same
+report `kg stat` does with `index` reading `written`. The write is verified by reading the stored
+index back, so a persistence that silently failed is an error rather than a false success.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes kg build
+index	written	~/.cc-notes/repos/baa8ec66e5eb510b775a59fa669b5418/graph-v1
+built	2026-07-28T08:16:28Z
+nodes
+  branch	1
+  dir	3
+  doc	1
+  note	1
+  path	1
+  session	1
+  tag	1
+  task	1
+edges
+  anchor	2
+  branch	1
+  cooccur	3
+  session	3
+  tag	1
+  within	3
+nodes: 10 total across 8 kinds
+edges: 13 total across 6 kinds
+events: 5 total
+```
+
+### `cc-notes kg stat`
+
+MCP: — (CLI-only: derived retrieval index with no agent-facing surface yet)
+
+Report the graph: node counts per node kind, edge counts per edge kind, the lifecycle-event total,
+and when the graph was built. The `index` field reads `hit` when the stored graph answered and
+`miss` when none matched the current ref tips.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes kg stat
+index	hit	~/.cc-notes/repos/baa8ec66e5eb510b775a59fa669b5418/graph-v1
+built	2026-07-28T08:16:28Z
+nodes
+  branch	1
+  dir	3
+  doc	1
+  note	1
+  path	1
+  session	1
+  tag	1
+  task	1
+edges
+  anchor	2
+  branch	1
+  cooccur	3
+  session	3
+  tag	1
+  within	3
+nodes: 10 total across 8 kinds
+edges: 13 total across 6 kinds
+events: 5 total
+```
+
+`--json` emits
+`{"index":"hit"|"miss"|"written","path":string,"built_at":rfc3339,"nodes":[{"kind":string,"count":int}],"edges":[…],"totals":{"nodes":int,"edges":int,"events":int}}`.
+`kg build` emits the same object.
+
+### `cc-notes kg query QUERY`
+
+MCP: — (CLI-only: derived retrieval index with no agent-facing surface yet)
+
+Rank every cc-notes record against `QUERY` over two lanes — BM25 across the anchor-enriched record
+text, and a personalized walk over the graph — fused by weighted reciprocal rank, gated by the
+staleness assessment, and diversified. Each lean line is
+`<short7>\t<kind>\t<score>\t<lane>\t<title>`.
+
+The `lane` column is the attribution: `lex`, `graph`, or `lex+graph` for the lanes that produced
+the hit, suffixed `/SIGNAL` when the surfaced record carries a staleness signal. The graph lane
+runs from where the query is asked — the current branch by default, plus every `--path` — so a
+query naming nothing structural still walks out from the agent's position; a session that seeds
+nothing the graph holds leaves the lane silent and the attribution reads `lex`.
+
+A query that reaches neither lane returns nothing at all. Reaching a lane means the query's own
+words did it: a term the corpus holds, or a path, branch, tag, or commit the graph holds. Where
+the agent is standing reaches the same neighbourhood whatever is asked, so `--branch` and
+`--path` reorder a ranking and never conjure one — ask about something the corpus has no record
+of and the answer is no records, not the top of an arbitrary list.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--branch <name>` | current HEAD branch | Branch the query is asked from, seeding the graph lane |
+| `--path <path>` | none | Repository path the query is asked from, seeding the graph lane (repeatable) |
+| `--limit <N>` | `10` | Maximum results; 0 = all |
+| `--explain` | off | Each lane's raw score and the cause behind the staleness signal, inserted before the title |
+| `--json` | off | Emit JSON |
+
+`--explain` puts its columns before the title rather than after it, so the title stays the
+trailing field: a title carrying a tab then widens only itself, and `lex=` is still the fifth
+column.
+
+```console
+$ cc-notes kg query "whitespace tokenizing"
+1ee2fc4	note	1.000	lex+graph/DECAY	The lexer collapses whitespace before tokenizing
+ee819d5	doc	0.978	lex+graph/DECAY	Parser conventions
+4fd888f	task	0.950	lex+graph	Rewrite the lexer for unicode
+
+$ cc-notes kg query "whitespace tokenizing" --explain --path internal/parser/lex.go
+1ee2fc4	note	1.000	lex+graph/DECAY	lex=1.843	graph=0.146	last attested 0 days ago	The lexer collapses whitespace before tokenizing
+ee819d5	doc	0.978	lex+graph/DECAY	lex=0.000	graph=0.191	last attested 0 days ago	Parser conventions
+4fd888f	task	0.950	lex+graph	lex=0.000	graph=0.904	-	Rewrite the lexer for unicode
+
+$ cc-notes kg query "kubernetes ingress annotations"
+$
+```
+
+`--json` emits an array of
+`{"id":string,"kind":string,"title":string,"score":float,"lane":string}`, each carrying
+`"explain":{"lexical":float,"graph":float,"signal":string,"detail":string}` under `--explain`, and
+`[]` when the ranking abstains.
+
+### `cc-notes kg stale`
+
+MCP: — (CLI-only: derived retrieval index with no agent-facing surface yet)
+
+Assess every record against the staleness signals a retrieval ranker gates and demotes with, and
+report the distribution: per kind how many records are gated, fresh, penalized, queued for
+re-verification, or promoted, plus each signal's count and its role. A `gate` signal (`DRIFT`,
+`SUPERSEDED`, `EXPIRED`, `EXONERATED`, `CLOSED`, `RECONCILED`) withholds a record from injection
+outright at weight zero; a `penalty` signal (`CHURN`, `DEAD_REF`, `DECAY`) only costs it rank. The
+verdict composes the notes-side freshness verdict `note review` and `doc review` already compute
+rather than recomputing it.
+
+`--explain` adds one row per record a signal fired on —
+`<short7>\t<kind>\tgated|kept\t<weight>\t<signal>\t<cause>` — naming the gate signal when the
+record is gated and its heaviest penalty otherwise.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--explain` | off | List every record a signal fired on, with the signal and its cause |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes kg stale --explain
+kinds
+  note	1 total	0 gated	0 fresh	1 penalized	0 reverify	0 promoted	1.00 weight
+  doc	1 total	0 gated	0 fresh	1 penalized	0 reverify	0 promoted	1.00 weight
+  task	1 total	0 gated	1 fresh	0 penalized	0 reverify	0 promoted	1.00 weight
+signals
+  DECAY	2	penalty
+records
+  1ee2fc4	note	kept	1.00	DECAY	last attested 0 days ago
+  ee819d5	doc	kept	1.00	DECAY	last attested 0 days ago
+records: 3 total, 0 gated, 2 penalized, 1 fresh
+re-verify queue: 0 records
+```
+
+`--json` emits
+`{"total":int,"gated":int,"fresh":int,"penalized":int,"reverify":int,"promoted":int,"kinds":[…],"signals":[{"signal":string,"count":int,"role":"gate"|"penalty"}]}`,
+with an `explain` array of
+`{"id":string,"kind":string,"gated":bool,"weight":float,"signal":string,"detail":string,"verdict":string,"reverify":bool,"promoted":bool,"penalties":[{"signal":string,"weight":float,"detail":string}]}`
+under `--explain`.

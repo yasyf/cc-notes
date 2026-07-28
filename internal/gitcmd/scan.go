@@ -3,6 +3,7 @@ package gitcmd
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -113,8 +114,13 @@ func numstatCount(field string) (int, error) {
 }
 
 // TrackedFiles lists every path in the index, relative to the repository root.
+// The two arguments beyond -z are what make that true when Dir is a
+// subdirectory, where a bare ls-files answers about that directory alone and
+// names its entries relative to it: the :/ pathspec restores the whole index,
+// and --full-name restores root-relative names, which is what every caller
+// joins onto the root.
 func (g Git) TrackedFiles(ctx context.Context) ([]string, error) {
-	out, err := g.run(ctx, "", "ls-files", "-z")
+	out, err := g.run(ctx, "", "ls-files", "-z", "--full-name", "--", ":/")
 	if err != nil {
 		return nil, fmt.Errorf("list tracked files: %w", err)
 	}
@@ -125,6 +131,36 @@ func (g Git) TrackedFiles(ctx context.Context) ([]string, error) {
 		}
 	}
 	return paths, nil
+}
+
+// HeldObjects reports which of shas the local object database holds, sorted,
+// in one git invocation. A sha this clone has never fetched is absent from the
+// result and is not an error — whether an object is local is the question, not
+// a precondition. It reads no object content and walks no history: cat-file
+// --batch-check resolves each name and stops.
+func (g Git) HeldObjects(ctx context.Context, shas []model.SHA) ([]model.SHA, error) {
+	if len(shas) == 0 {
+		return nil, nil
+	}
+	var stdin strings.Builder
+	for _, sha := range shas {
+		stdin.WriteString(string(sha))
+		stdin.WriteByte('\n')
+	}
+	out, err := g.run(ctx, stdin.String(), "cat-file", "--batch-check=%(objectname)")
+	if err != nil {
+		return nil, fmt.Errorf("object check for %d shas: %w", len(shas), err)
+	}
+	var held []model.SHA
+	for line := range strings.SplitSeq(strings.TrimSuffix(out, "\n"), "\n") {
+		name, verdict, _ := strings.Cut(line, " ")
+		if name == "" || verdict != "" {
+			continue
+		}
+		held = append(held, model.SHA(name))
+	}
+	slices.Sort(held)
+	return held, nil
 }
 
 // CommitPaths lists the paths each of shas touched, keyed by commit, in one git

@@ -154,7 +154,7 @@ func (r *Ranker) Lanes(ctx context.Context, query string) (Lanes, error) {
 	}
 	out := Lanes{Lexical: lexical}
 	if r.graph != nil {
-		seeds := r.graph.personalize(query, r.opts.Session)
+		seeds, _ := r.graph.personalize(query, r.opts.Session)
 		out.Graph = lift(r.graph.walk(seeds, r.opts.Hops, r.opts.Damping), r.importance)
 	}
 	return out, nil
@@ -182,16 +182,16 @@ func (r *Ranker) rank(ctx context.Context, query string) ([]eval.Result, error) 
 	if err != nil {
 		return nil, err
 	}
-	lanes := []lane{{name: LexLane, weight: r.opts.LexWeight, score: lexical}}
+	lanes := []lane{{name: LexLane, weight: r.opts.LexWeight, score: lexical, addressed: true}}
 	if r.graph != nil {
-		seeds := r.graph.personalize(query, r.opts.Session)
+		seeds, named := r.graph.personalize(query, r.opts.Session)
 		walk := lift(r.graph.walk(seeds, r.opts.Hops, r.opts.Damping), r.importance)
 		if len(walk) > 0 {
-			lanes = append(lanes, lane{name: GraphLane, weight: r.opts.GraphWeight, score: walk})
+			lanes = append(lanes, lane{name: GraphLane, weight: r.opts.GraphWeight, score: walk, addressed: named})
 		}
 	}
 	relevance := fuse(lanes, candidates, DefaultRRFK)
-	return r.compose(relevance, candidates, weights, laneName(lanes)), nil
+	return r.compose(relevance, candidates, weights, lanes), nil
 }
 
 // admit drops the records the staleness policy withholds and resolves the rank
@@ -229,13 +229,21 @@ func (r *Ranker) lexical(ctx context.Context, query string, candidates []model.E
 	return out, nil
 }
 
-// compose scales the fused relevance onto [0,1] and applies the staleness
-// weight. Fused reciprocal-rank scores carry no absolute scale, so the best
-// candidate anchors the top of the range.
-func (r *Ranker) compose(relevance map[model.EntityID]float64, candidates []model.EntityID, weights map[model.EntityID]float64, name string) []eval.Result {
+// compose keeps the candidates an addressed lane found, scales their fused
+// relevance onto [0,1], and applies the staleness weight. Fused
+// reciprocal-rank scores carry no absolute scale, so the best candidate
+// anchors the top of the range — which is also why the score cannot decide
+// admission and lane membership does. A query the corpus does not answer
+// reaches no candidate and composes nothing: the ranker abstains.
+func (r *Ranker) compose(relevance map[model.EntityID]float64, candidates []model.EntityID, weights map[model.EntityID]float64, lanes []lane) []eval.Result {
+	support := found(lanes, candidates)
+	name := laneName(lanes)
 	rel := normalize(relevance, candidates)
-	out := make([]eval.Result, 0, len(candidates))
+	out := make([]eval.Result, 0, len(support))
 	for _, id := range candidates {
+		if _, ok := support[id]; !ok {
+			continue
+		}
 		score := rel[id] * weights[id]
 		if score <= 0 {
 			continue

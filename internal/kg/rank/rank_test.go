@@ -104,6 +104,64 @@ func TestEnrichAppendsAnchorAddresses(t *testing.T) {
 	}
 }
 
+// TestRetrieveAbstainsWhenNoLaneReachesTheQuery pins the abstain action the
+// ranker's callers document: a query the corpus does not answer returns
+// nothing, rather than the whole corpus rescaled so its arbitrary head reads
+// 1.000. The session's own position must not lift that — it reaches the same
+// neighbourhood whatever is asked, so a query it alone seeds is still a query
+// the corpus was never addressed by.
+func TestRetrieveAbstainsWhenNoLaneReachesTheQuery(t *testing.T) {
+	cases := []struct {
+		name    string
+		query   string
+		session rank.Session
+		want    []model.EntityID
+	}{
+		{
+			name:  "no lexical term and no graph address",
+			query: "zzqqxxnonexistentterm",
+			want:  nil,
+		},
+		{
+			name:    "the session's branch is not the query addressing anything",
+			query:   "zzqqxxnonexistentterm",
+			session: rank.Session{Branch: branch},
+			want:    nil,
+		},
+		{
+			name:    "the session's path is not the query addressing anything",
+			query:   "zzqqxxnonexistentterm",
+			session: rank.Session{Paths: []string{path}},
+			want:    nil,
+		},
+		{
+			name:  "a lexical term the corpus holds is reached",
+			query: "invoices",
+			want:  []model.EntityID{otherID},
+		},
+		{
+			name:  "a commit the prose never names is reached through the graph alone",
+			query: string(sha),
+			want:  []model.EntityID{taskID, projectID},
+		},
+	}
+	corpus, g := fixture()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := options()
+			opts.Session = tc.session
+			r := rank.New(corpus, g, assessments(), opts)
+			got, err := r.Retrieve(t.Context(), tc.query, 5)
+			if err != nil {
+				t.Fatalf("Retrieve: %v", err)
+			}
+			if !slices.Equal(ids(got), tc.want) {
+				t.Fatalf("Retrieve(%q) = %v, want %v", tc.query, ids(got), tc.want)
+			}
+		})
+	}
+}
+
 func TestRetrieveWithholdsSupersededRecord(t *testing.T) {
 	corpus, g := fixture()
 	r := rank.New(corpus, g, assessments(), options())
@@ -180,12 +238,17 @@ func TestRetrieveLaneAttribution(t *testing.T) {
 	}
 }
 
+// TestFillStopsAtTheTokenBudget needs a query the corpus answers several times
+// over, because the budget can only be the binding constraint when more records
+// are reachable than fit. "warmer loop latency" addresses one term to each of
+// the note, the task and the project; a narrower query is bounded by abstention
+// instead, which is TestRetrieveAbstainsWhenNoLaneReachesTheQuery's subject.
 func TestFillStopsAtTheTokenBudget(t *testing.T) {
 	corpus, g := fixture()
 	r := rank.New(corpus, g, assessments(), options())
 	sizes := map[int]int{}
 	for _, budget := range []int{0, 20, 40, 1000} {
-		got, err := r.Fill(t.Context(), "warm start decision", budget)
+		got, err := r.Fill(t.Context(), "warmer loop latency", budget)
 		if err != nil {
 			t.Fatalf("Fill: %v", err)
 		}

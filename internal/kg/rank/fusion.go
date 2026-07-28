@@ -7,11 +7,14 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-// lane is one retrieval lane's scores over the candidate set.
+// lane is one retrieval lane's scores over the candidate set. addressed says
+// the query itself reached this lane, so what it scored is evidence about the
+// query rather than about where the agent happens to be standing.
 type lane struct {
-	name   string
-	weight float64
-	score  map[model.EntityID]float64
+	name      string
+	weight    float64
+	score     map[model.EntityID]float64
+	addressed bool
 }
 
 // fuse combines the lanes by weighted reciprocal-rank fusion:
@@ -27,6 +30,28 @@ func fuse(lanes []lane, candidates []model.EntityID, k float64) map[model.Entity
 		}
 	}
 	return fused
+}
+
+// found is the candidates an addressed lane actually scored — the ranking's
+// support, and empty exactly when the query reached nothing.
+//
+// It is what abstention keys on, because a fused score cannot: fuse hands every
+// unscored candidate the same tail rank, so a record no lane ever looked at
+// still carries mass, and normalize then scales whatever leads to 1. Lane
+// membership is the one signal here with an absolute meaning.
+func found(lanes []lane, candidates []model.EntityID) map[model.EntityID]struct{} {
+	out := make(map[model.EntityID]struct{}, len(candidates))
+	for _, l := range lanes {
+		if !l.addressed {
+			continue
+		}
+		for id, score := range l.score {
+			if score > 0 {
+				out[id] = struct{}{}
+			}
+		}
+	}
+	return out
 }
 
 // ranks assigns every candidate its 1-based competition rank under score: ties

@@ -43,6 +43,24 @@ func TestTrackedFiles(t *testing.T) {
 	}
 }
 
+// TestTrackedFilesFromASubdirectoryStaysRootRelative pins the documented
+// contract at the seam every caller joins onto the repository root: a bare
+// ls-files under `git -C <subdir>` reports paths relative to that
+// subdirectory, and every join would then miss.
+func TestTrackedFilesFromASubdirectoryStaysRootRelative(t *testing.T) {
+	g := initRepo(t)
+	commitFile(t, g, "pkg/widget.go", "package pkg\n")
+	commitFile(t, g, "README.md", "# hi\n")
+
+	got, err := gitcmd.Git{Dir: filepath.Join(g.Dir, "pkg")}.TrackedFiles(t.Context())
+	if err != nil {
+		t.Fatalf("TrackedFiles: %v", err)
+	}
+	if want := []string{"README.md", "pkg/widget.go"}; !slices.Equal(got, want) {
+		t.Fatalf("TrackedFiles from pkg/ = %v, want %v", got, want)
+	}
+}
+
 func TestTrackedFilesEmptyIndex(t *testing.T) {
 	got, err := initRepo(t).TrackedFiles(t.Context())
 	if err != nil {

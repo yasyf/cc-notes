@@ -598,6 +598,61 @@ command: cc-notes investigation supersede
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
+command: cc-notes kg
+  use: kg
+  aliases: -
+  short: Derived knowledge graph over refs/cc-notes/*: build it, inspect it, query it, assess staleness
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes kg build
+  use: build
+  aliases: -
+  short: Fold refs/cc-notes/* into the knowledge graph and persist it under the per-user state root
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes kg query
+  use: query QUERY
+  aliases: -
+  short: Rank the cc-notes corpus against a query, fusing the lexical and graph lanes
+  hidden: false
+  flags:
+    --branch shorthand=none type=string default="" usage="branch the query is asked from, seeding the graph lane (default: current HEAD branch)"
+    --explain shorthand=none type=bool default="false" usage="add each lane's raw score and the staleness cause behind every result"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="10" usage="maximum results (0 = all)"
+    --path shorthand=none type=stringArray default="[]" usage="repository path the query is asked from, seeding the graph lane (repeatable)"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes kg stale
+  use: stale
+  aliases: -
+  short: Assess every record's staleness: the gate and penalty distribution by kind and by signal
+  hidden: false
+  flags:
+    --explain shorthand=none type=bool default="false" usage="list every record a signal fired on, naming the signal and its cause"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes kg stat
+  use: stat
+  aliases: -
+  short: Report the graph's node counts by node kind, edge counts by edge kind, and totals
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
 command: cc-notes log
   use: log
   aliases: -

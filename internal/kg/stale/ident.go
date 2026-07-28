@@ -36,6 +36,11 @@ type Tree struct {
 // skipped: a binary blob contributes only noise, a symlink's target is either
 // tracked in its own right or outside the tree, and an identifier the scan
 // misses costs S8 a flag it should have raised, never one it should not have.
+//
+// A tracked path the checkout does not hold is skipped on the same terms.
+// TrackedFiles enumerates the index, and the index outlives the file: an
+// unstaged deletion and a sparse checkout both leave entries whose worktree
+// path does not exist, neither of which is an error.
 func ScanTree(ctx context.Context, g gitcmd.Git, maxBytes int64) (*Tree, error) {
 	root, err := g.Root(ctx)
 	if err != nil {

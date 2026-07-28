@@ -10,6 +10,7 @@ import (
 	"math"
 	"path"
 	"slices"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -35,17 +36,49 @@ const (
 	// whole derived artifact: bumping it invalidates every stored graph, which
 	// is what a change to the build's shape or the on-disk format needs.
 	sourceDomain = "cc-notes.kg.v1\x00"
+	// commitDomain separates the source digest's second section from its first.
+	commitDomain = "\x00commits\x00"
 )
 
-// SourceDigest returns the digest of the repository's current entity ref tips.
-// A stored graph whose Source matches it was folded from exactly these tips,
-// so it is current by construction rather than by heuristic.
+// SourceDigest returns the digest of everything a build reads: the
+// repository's current entity ref tips, and which of the commits those tips
+// link the local object database actually holds. A stored graph whose Source
+// matches it was folded from exactly these inputs, so it is current by
+// construction rather than by heuristic.
+//
+// The second section is what the tips alone cannot say. A commit is immutable,
+// so its content needs no digest — but whether this clone holds it is not, and
+// Build silently derives no path anchors from one it does not. A fetch that
+// lands a linked commit moves no entity tip, so without this the graph would
+// stay short those anchors and every read would report a hit.
 func SourceDigest(ctx context.Context, s *store.Store) (string, error) {
 	tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
 	if err != nil {
 		return "", fmt.Errorf("list entity refs: %w", err)
 	}
-	return sourceDigest(tips), nil
+	tasks, err := loadRecords(ctx, s, taskTips(tips))
+	if err != nil {
+		return "", err
+	}
+	held, err := s.Git.HeldObjects(ctx, taskCommits(tasks))
+	if err != nil {
+		return "", err
+	}
+	return sourceDigest(tips, held), nil
+}
+
+// taskTips narrows a tip listing to the task refs — the only kind whose linked
+// commits Build reads the object database for, which taskCommits is the other
+// half of.
+func taskTips(tips map[string]model.SHA) map[string]model.SHA {
+	root := refs.Root(model.KindTask)
+	out := make(map[string]model.SHA, len(tips))
+	for name, sha := range tips {
+		if strings.HasPrefix(name, root) {
+			out[name] = sha
+		}
+	}
+	return out
 }
 
 // Build folds every live entity under refs/cc-notes/ and assembles the graph
@@ -65,7 +98,12 @@ func Build(ctx context.Context, s *store.Store) (*Graph, error) {
 	if err != nil {
 		return nil, err
 	}
-	touched, err := s.Git.CommitPaths(ctx, taskCommits(records))
+	commits := taskCommits(records)
+	touched, err := s.Git.CommitPaths(ctx, commits)
+	if err != nil {
+		return nil, err
+	}
+	held, err := s.Git.HeldObjects(ctx, commits)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +119,7 @@ func Build(ctx context.Context, s *store.Store) (*Graph, error) {
 	}
 	b.addCooccurrence()
 
-	return b.graph(sourceDigest(tips), time.Now().Unix(), records), nil
+	return b.graph(sourceDigest(tips, held), time.Now().Unix(), records), nil
 }
 
 // record is one folded entity flattened into the fields the graph reads.
@@ -484,11 +522,15 @@ func (b *builder) graph(source string, builtAt int64, records []record) *Graph {
 	return &Graph{Source: source, BuiltAt: builtAt, Nodes: nodes, Edges: edges, Events: events}
 }
 
-func sourceDigest(tips map[string]model.SHA) string {
+func sourceDigest(tips map[string]model.SHA, held []model.SHA) string {
 	h := sha256.New()
 	h.Write([]byte(sourceDomain))
 	for _, name := range slices.Sorted(maps.Keys(tips)) {
 		h.Write([]byte(name + "\x00" + string(tips[name]) + "\n"))
+	}
+	h.Write([]byte(commitDomain))
+	for _, sha := range held {
+		h.Write([]byte(string(sha) + "\n"))
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

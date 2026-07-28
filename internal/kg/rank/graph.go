@@ -135,11 +135,17 @@ func normalizeShares(out []neighbour) []neighbour {
 // (5 wins / 5 losses over the evaluation corpus, 2026-07-27) and is not done —
 // the graph lane earns its place by answering what the lexical lane cannot
 // address, not by re-ranking what it already found.
-func (l *graphLane) personalize(query string, sess Session) map[int]float64 {
+//
+// The second return says whether the query itself reached the graph. Only that
+// group is evidence about the query; the session's position is ambient and
+// reaches the same neighbourhood whatever is asked, which is why a walk seeded
+// by it alone may reorder a ranking but never admit a record to one.
+func (l *graphLane) personalize(query string, sess Session) (map[int]float64, bool) {
 	seeds := map[int]float64{}
-	addGroup(seeds, l.querySeeds(query))
+	named := l.querySeeds(query)
+	addGroup(seeds, named)
 	addGroup(seeds, l.sessionSeeds(sess))
-	return seeds
+	return seeds, len(named) > 0
 }
 
 // querySeeds resolves the identifier-shaped node values the query names at a

@@ -1,6 +1,7 @@
 package stale
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -55,6 +56,33 @@ func TestScanTreeIndexesTrackedIdentifiers(t *testing.T) {
 	}
 	if tree.Size() == 0 {
 		t.Error("Size() = 0, want the committed source indexed")
+	}
+}
+
+// TestScanTreeIsIndependentOfTheScanDirectory reproduces the cwd-dependent
+// staleness verdict: ScanTree joins TrackedFiles onto g.Root, so a tracked
+// path reported relative to a subdirectory resolves nowhere, ErrNotExist skips
+// every one of them, and S8 flags DEAD_REF on identifiers the tree holds.
+func TestScanTreeIsIndependentOfTheScanDirectory(t *testing.T) {
+	_, dir := openRepo(t)
+	writeFile(t, dir, "internal/parser/lex.go", "package parser\n\nfunc NormalizeWhitespaceRun() {}\n")
+	gittest.Git(t, dir, "add", "-A")
+	gittest.Git(t, dir, "commit", "-q", "-m", "a second package outside pkg/")
+
+	root, err := ScanTree(t.Context(), gitcmd.Git{Dir: dir}, MaxScanBytes)
+	if err != nil {
+		t.Fatalf("ScanTree at the root: %v", err)
+	}
+	sub, err := ScanTree(t.Context(), gitcmd.Git{Dir: filepath.Join(dir, "pkg")}, MaxScanBytes)
+	if err != nil {
+		t.Fatalf("ScanTree in pkg/: %v", err)
+	}
+	if !maps.Equal(sub.idents, root.idents) {
+		t.Fatalf("ScanTree in pkg/ indexed %d identifiers, the root %d; the sets differ",
+			sub.Size(), root.Size())
+	}
+	if got := sub.DeadRefs("`Widget.Spin` and NormalizeWhitespaceRun are both live"); len(got) != 0 {
+		t.Errorf("DeadRefs from pkg/ = %v, want none — the tree holds every one", got)
 	}
 }
 

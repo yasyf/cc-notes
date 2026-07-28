@@ -349,6 +349,63 @@ func TestSourceDigestTracksRefTips(t *testing.T) {
 	}
 }
 
+// TestSourceDigestTracksLinkedCommitsTheODBGains pins the input the ref tips
+// cannot express: a task links a commit this clone has not fetched, so Build
+// derives no path anchors from it. Fetching the commit moves no entity tip, so
+// a tips-only digest would keep reporting a hit on a graph that is permanently
+// short those anchors.
+func TestSourceDigestTracksLinkedCommitsTheODBGains(t *testing.T) {
+	f := newFixture(t)
+	f.commit(t, "local", "internal/kg/build.go")
+
+	upstream := gittest.InitRepo(t)
+	if err := os.MkdirAll(filepath.Join(upstream, "internal"), 0o750); err != nil {
+		t.Fatalf("mkdir upstream internal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(upstream, "internal/parser.go"), []byte("package parser\n"), 0o600); err != nil {
+		t.Fatalf("write upstream file: %v", err)
+	}
+	gittest.Git(t, upstream, "add", "-A")
+	gittest.Git(t, upstream, "commit", "-q", "-m", "unfetched")
+	unfetched := model.SHA(gittest.Git(t, upstream, "rev-parse", "HEAD"))
+
+	task := f.create(t, model.CreateTask{Nonce: model.NewNonce(), Title: "task", Type: model.TypeTask, Branch: "main"}).EntityID()
+	f.append(t, model.KindTask, task, model.LinkCommit{SHA: unfetched})
+
+	absent, err := kg.SourceDigest(t.Context(), f.store)
+	if err != nil {
+		t.Fatalf("SourceDigest: %v", err)
+	}
+	repo, err := ccnhome.ForRepo(f.store.CommonDir())
+	if err != nil {
+		t.Fatalf("ForRepo: %v", err)
+	}
+	built := f.build(t)
+	if built.Source != absent {
+		t.Fatalf("Build source = %s, want %s", built.Source, absent)
+	}
+	if _, found := findEdge(built, kg.EntityNode(model.KindTask, task), kg.PathNode("internal/parser.go"), kg.EdgeAnchor); found {
+		t.Fatal("a commit outside the object database contributed a derived anchor")
+	}
+	kg.Save(repo.Graph(), built)
+
+	gittest.Git(t, f.dir, "fetch", "-q", upstream, "main")
+	fetched, err := kg.SourceDigest(t.Context(), f.store)
+	if err != nil {
+		t.Fatalf("SourceDigest: %v", err)
+	}
+	if fetched == absent {
+		t.Fatalf("fetching the linked commit left the source digest at %s", absent)
+	}
+	if index, ok := kg.Load(repo.Graph(), fetched); ok {
+		_ = index.Close()
+		t.Fatal("Load hit a graph built before the linked commit reached the object database")
+	}
+	if _, found := findEdge(f.build(t), kg.EntityNode(model.KindTask, task), kg.PathNode("internal/parser.go"), kg.EdgeAnchor); !found {
+		t.Fatal("the rebuilt graph carries no derived anchor from the now-local commit")
+	}
+}
+
 func TestSaveLoadRoundTrip(t *testing.T) {
 	f := newFixture(t)
 	sha := f.commit(t, "base", "internal/kg/build.go")
@@ -459,6 +516,53 @@ func TestLoadMissesOnAnotherSource(t *testing.T) {
 	t.Cleanup(func() { _ = index.Close() })
 	if stored, found := index.Node(kg.EntityNode(model.KindNote, note)); !found || stored.Title != "one" {
 		t.Fatalf("Node = %+v, %v", stored, found)
+	}
+}
+
+func TestIndexGraphRoundTripsTheBuiltGraph(t *testing.T) {
+	f := newFixture(t)
+	sha := f.commit(t, "base", "internal/kg/build.go", "internal/kg/index.go")
+	anchors := []model.Anchor{pathAnchor("internal/kg/build.go"), {Kind: model.AnchorDir, Value: "internal"}}
+	f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "first", Body: "a", Anchors: anchors})
+	f.create(t, model.CreateDoc{Nonce: model.NewNonce(), Title: "second", Body: "b", When: "always", Anchors: anchors})
+	task := f.create(t, model.CreateTask{Nonce: model.NewNonce(), Title: "task", Type: model.TypeTask, Branch: "main"}).EntityID()
+	f.append(t, model.KindTask, task, model.LinkCommit{SHA: sha})
+
+	built := f.build(t)
+	repo, err := ccnhome.ForRepo(f.store.CommonDir())
+	if err != nil {
+		t.Fatalf("ForRepo: %v", err)
+	}
+	kg.Save(repo.Graph(), built)
+	index, ok := kg.Load(repo.Graph(), built.Source)
+	if !ok {
+		t.Fatal("Load missed the graph it just saved")
+	}
+	t.Cleanup(func() { _ = index.Close() })
+
+	read, ok := index.Graph()
+	if !ok {
+		t.Fatal("Graph did not decode the stored graph")
+	}
+	if read.Source != built.Source || read.BuiltAt != built.BuiltAt {
+		t.Fatalf("Graph provenance = %s/%d, want %s/%d", read.Source, read.BuiltAt, built.Source, built.BuiltAt)
+	}
+	if len(built.Nodes) == 0 || len(built.Edges) == 0 || len(built.Events) == 0 {
+		t.Fatalf("fixture built %d nodes / %d edges / %d events; the round trip proves nothing",
+			len(built.Nodes), len(built.Edges), len(built.Events))
+	}
+	if !slices.Equal(read.Nodes, built.Nodes) {
+		t.Fatalf("read back %d nodes, want the %d built", len(read.Nodes), len(built.Nodes))
+	}
+	if !slices.Equal(read.Edges, built.Edges) {
+		t.Fatalf("read back %d edges in a different order or shape than the %d built", len(read.Edges), len(built.Edges))
+	}
+	if !slices.Equal(read.Events, built.Events) {
+		t.Fatalf("read back %d events, want the %d built", len(read.Events), len(built.Events))
+	}
+	nodes, edges, events := index.Counts()
+	if nodes != len(read.Nodes) || edges != len(read.Edges) || events != len(read.Events) {
+		t.Fatalf("Counts = %d/%d/%d, Graph read %d/%d/%d", nodes, edges, events, len(read.Nodes), len(read.Edges), len(read.Events))
 	}
 }
 
