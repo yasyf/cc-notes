@@ -1,19 +1,21 @@
 #!/bin/sh
 # Regenerates docs/assets/demo.png from a real `cc-notes status` run.
 #
-# Stages a throwaway repo (local bare remote, fake identity), runs `cc-notes
-# init`, seeds a backlog, claims one task on a feature branch, then freezes
-# the status board as seen from main. The board prints no ANSI of its own, so
-# bat paints the captured text (yaml reads the board best) before freeze
-# renders it. Requires cc-notes, bat, and freeze on PATH.
+# Stages a throwaway repo (local bare remote, fake identity, and its own
+# CC_NOTES_HOME, so registering the repo leaves nothing in the real one), runs
+# `cc-notes init`, seeds a backlog, claims one task on a feature branch, then
+# freezes the status board as seen from main. The board prints no ANSI of its
+# own, so bat paints the captured text (yaml reads the board best) before
+# freeze renders it. Requires cc-notes, bat, and freeze on PATH.
 set -eu
 
 OUT=$(cd "$(dirname "$0")/../assets" && pwd)/demo.png
 
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
+export CC_NOTES_HOME="$STAGE/home"
 
-mkdir -p "$STAGE/remote" "$STAGE/repo"
+mkdir -p "$STAGE/remote" "$STAGE/repo" "$STAGE/home"
 git -C "$STAGE/remote" init --bare -q
 cd "$STAGE/repo"
 git init -q -b main

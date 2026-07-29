@@ -84,16 +84,6 @@ type kgStaleJSON struct {
 	} `json:"explain"`
 }
 
-// initKGRepo is initRepo plus an isolated CC_NOTES_HOME, so a kg command's
-// derived index lands in the test's own temp root even when the ambient
-// environment points the state root somewhere else.
-func initKGRepo(t *testing.T) string {
-	t.Helper()
-	dir := initRepo(t)
-	t.Setenv(ccnhome.Env, t.TempDir())
-	return dir
-}
-
 // kgGraphDir resolves where the repository's index belongs, without creating it.
 func kgGraphDir(t *testing.T, dir string) string {
 	t.Helper()
@@ -115,7 +105,7 @@ func countKind(counts []kgCountJSON, kind string) int {
 }
 
 func TestKGBuildPersistsOutsideTheRepository(t *testing.T) {
-	dir := initKGRepo(t)
+	dir := initRepo(t)
 	commitFile(t, dir, "internal/parser/lex.go", "package parser\n")
 	mustRun(t, dir, "note", "add", "The lexer owns whitespace", "--path", "internal/parser/lex.go")
 	mustRun(t, dir, "task", "add", "Rewrite the lexer", "--no-validation-criteria")
@@ -177,7 +167,7 @@ func walkAssertNoGraphDB(t *testing.T, root string) {
 }
 
 func TestKGStatSaysWhetherTheStoredIndexMatched(t *testing.T) {
-	dir := initKGRepo(t)
+	dir := initRepo(t)
 	mustRun(t, dir, "note", "add", "Fold order is deterministic")
 
 	cases := []struct {
@@ -212,7 +202,7 @@ func TestKGStatSaysWhetherTheStoredIndexMatched(t *testing.T) {
 }
 
 func TestKGStatCountsByKindSumToTotals(t *testing.T) {
-	dir := initKGRepo(t)
+	dir := initRepo(t)
 	commitFile(t, dir, "internal/store/store.go", "package store\n")
 	mustRun(t, dir, "note", "add", "Store owns CAS", "--path", "internal/store/store.go", "--label", "store")
 	mustRun(t, dir, "note", "add", "Second store note", "--path", "internal/store/store.go")
@@ -249,7 +239,7 @@ func TestKGStatCountsByKindSumToTotals(t *testing.T) {
 }
 
 func TestKGQueryAttributesEveryResultToALane(t *testing.T) {
-	dir := initKGRepo(t)
+	dir := initRepo(t)
 	commitFile(t, dir, "internal/parser/lex.go", "package parser\n")
 	mustRun(t, dir, "note", "add", "The lexer normalizes whitespace before tokenizing",
 		"--path", "internal/parser/lex.go", "--body", "whitespace collapses to a single token boundary")
@@ -304,7 +294,7 @@ func TestKGQueryAttributesEveryResultToALane(t *testing.T) {
 // trailing free text widens, so a consumer reading lex= by index never reads
 // the record's own words instead.
 func TestKGQueryExplainKeepsTheTitleLast(t *testing.T) {
-	dir := initKGRepo(t)
+	dir := initRepo(t)
 	// The branch-reconciliation signal resolves trunk, so the fixture needs a commit.
 	commitFile(t, dir, "internal/release/tag.go", "package release\n")
 	const title = "alpha\tbeta gpg"
@@ -340,7 +330,7 @@ func TestKGQueryExplainKeepsTheTitleLast(t *testing.T) {
 // result against the shipped path, where --branch defaults to HEAD and seeds
 // the graph lane: an ambient seed reorders a ranking, it does not conjure one.
 func TestKGQueryAbstainsOnAQueryTheCorpusDoesNotAnswer(t *testing.T) {
-	dir := initKGRepo(t)
+	dir := initRepo(t)
 	commitFile(t, dir, "internal/parser/lex.go", "package parser\n")
 	mustRun(t, dir, "note", "add", "The lexer normalizes whitespace", "--path", "internal/parser/lex.go")
 	mustRun(t, dir, "note", "add", "Release tags are GPG signed")
@@ -358,7 +348,7 @@ func TestKGQueryAbstainsOnAQueryTheCorpusDoesNotAnswer(t *testing.T) {
 }
 
 func TestKGQueryPathSeedsTheGraphLane(t *testing.T) {
-	dir := initKGRepo(t)
+	dir := initRepo(t)
 	commitFile(t, dir, "internal/lfs/batch.go", "package lfs\n")
 	mustRun(t, dir, "note", "add", "Batch transfers reuse one connection", "--path", "internal/lfs/batch.go")
 	mustRun(t, dir, "note", "add", "Endpoint discovery reads the remote url", "--path", "internal/lfs/batch.go")
@@ -394,7 +384,7 @@ func TestKGQueryPathSeedsTheGraphLane(t *testing.T) {
 }
 
 func TestKGStaleExplainNamesTheTriggeringSignal(t *testing.T) {
-	dir := initKGRepo(t)
+	dir := initRepo(t)
 	// The branch-reconciliation signal resolves trunk, so the fixture needs a commit.
 	commitFile(t, dir, "internal/api/api.go", "package api\n")
 	decayed := jsonID(t, mustRun(t, dir, "note", "add", "Still current", "--json"))
@@ -462,7 +452,7 @@ func TestKGStaleExplainNamesTheTriggeringSignal(t *testing.T) {
 }
 
 func TestKGOnAnEmptyRepository(t *testing.T) {
-	dir := initKGRepo(t)
+	dir := initRepo(t)
 
 	stat := mustJSON[kgStatJSON](t, mustRun(t, dir, "kg", "build", "--json"))
 	if stat.Totals.Nodes != 0 || stat.Totals.Edges != 0 || stat.Totals.Events != 0 {
@@ -496,7 +486,7 @@ func TestKGOnAnEmptyRepository(t *testing.T) {
 }
 
 func TestKGUnknownSubcommandExits2(t *testing.T) {
-	dir := initKGRepo(t)
+	dir := initRepo(t)
 	_, _, err := runCLI(t, dir, "kg", "rebuild")
 	if got := cli.ExitCode(err); got != 2 {
 		t.Fatalf("kg rebuild exit = %d, want 2 (err %v)", got, err)

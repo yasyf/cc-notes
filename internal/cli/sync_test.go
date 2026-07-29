@@ -5,9 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
@@ -45,6 +47,55 @@ func TestInitInstallsRefspecs(t *testing.T) {
 	fetch := gittest.Git(t, dir, "config", "--get-all", "remote.origin.fetch")
 	if !strings.Contains(fetch, "+refs/cc-notes/*:refs/cc-notes-sync/origin/*") {
 		t.Fatalf("fetch refspecs = %q, want cc-notes tracking refspec", fetch)
+	}
+}
+
+// TestInitWritesNoStateOutsideTheTestRoot pins the isolation every in-process
+// `init` now depends on: registration writes per-user state, so a helper that
+// redirected HOME alone would leave a real entry in whatever CC_NOTES_HOME the
+// developer's environment names, pointing at a repository t.TempDir deletes.
+func TestInitWritesNoStateOutsideTheTestRoot(t *testing.T) {
+	ambient := t.TempDir()
+	t.Setenv(ccnhome.Env, ambient)
+	dir, _ := initRepoWithRemote(t)
+	mustRun(t, dir, "init")
+
+	if entries, err := os.ReadDir(ambient); err != nil || len(entries) != 0 {
+		t.Fatalf("ambient state root holds %v (err %v), want it untouched", entries, err)
+	}
+}
+
+// TestInitRegistersRepositoryForResolution pins the registration the daemon's
+// cwd resolver reads: nothing else writes ~/.cc-notes/repos/<key>/repo.json for
+// a repository that never runs `kg build`, and a working directory the registry
+// does not carry resolves to no repository at all.
+func TestInitRegistersRepositoryForResolution(t *testing.T) {
+	t.Setenv(ccnhome.Env, t.TempDir())
+	dir, _ := initRepoWithRemote(t)
+	mustRun(t, dir, "init")
+
+	_, commonDir := gittest.Dirs(t, dir)
+	repo, err := ccnhome.ForRepo(commonDir)
+	if err != nil {
+		t.Fatalf("ForRepo: %v", err)
+	}
+	info, err := repo.ReadInfo()
+	if err != nil {
+		t.Fatalf("ReadInfo: %v", err)
+	}
+	wantCommon, err := filepath.EvalSymlinks(commonDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.CommonDir != wantCommon {
+		t.Errorf("CommonDir = %q, want %q", info.CommonDir, wantCommon)
+	}
+	wantWorktree, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{wantWorktree}; !slices.Equal(info.Worktrees, want) {
+		t.Errorf("Worktrees = %v, want %v", info.Worktrees, want)
 	}
 }
 

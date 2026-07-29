@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/internal/version"
@@ -56,6 +57,9 @@ func newInitCmd() *cobra.Command {
 			}
 			root, err := s.Git.Root(ctx)
 			if err != nil {
+				return err
+			}
+			if _, err := ccnhome.RecordWorktree(s.CommonDir(), root); err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()

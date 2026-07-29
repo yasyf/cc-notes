@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
@@ -125,9 +126,11 @@ var gitEnvKeys = []string{
 func initRepo(t *testing.T) string {
 	t.Helper()
 	dir := gittest.InitRepo(t)
-	// Isolate HOME so tests write state under ~/.cc-notes in a temp dir, never
-	// the real home.
+	// Redirect both roots: HOME alone leaves an ambient CC_NOTES_HOME pointing
+	// per-user state — the registration `init` writes, a kg index — at whatever
+	// the developer's environment names.
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv(ccnhome.Env, t.TempDir())
 	t.Setenv("CC_NOTES_ACTOR", actorA)
 	return dir
 }

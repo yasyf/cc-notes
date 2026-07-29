@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
@@ -32,6 +33,11 @@ const binTimeout = 2 * time.Minute
 
 var testBinary string
 
+// testHome is the CC_NOTES_HOME every subprocess runs under, so a command that
+// records per-user state — `init` registers the repository — writes into the
+// test binary's own temp directory instead of the developer's ~/.cc-notes.
+var testHome string
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "cc-notes-bin-")
 	if err != nil {
@@ -39,6 +45,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	testBinary = filepath.Join(dir, "cc-notes")
+	testHome = filepath.Join(dir, "home")
 	//nolint:gosec // G204: fixed go-build of this repo's own binary in the e2e test setup.
 	build := exec.Command("go", "build", "-tags", "ccnotes_test", "-o", testBinary, "github.com/yasyf/cc-notes/cmd/cc-notes")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -59,7 +66,8 @@ type binResult struct {
 }
 
 // binEnv builds a subprocess environment with every git knob scrubbed,
-// global/system config pinned to /dev/null, and the actor frozen.
+// global/system config pinned to /dev/null, the per-user state root redirected
+// into the test's own temp directory, and the actor frozen.
 func binEnv(actor string) []string {
 	scrub := make(map[string]bool, len(gitEnvKeys))
 	for _, key := range gitEnvKeys {
@@ -77,6 +85,7 @@ func binEnv(actor string) []string {
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_SYSTEM="+os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
+		ccnhome.Env+"="+testHome,
 		"CC_NOTES_ACTOR="+actor,
 	)
 }

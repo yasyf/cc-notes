@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
 func TestInitProvisionsRepositoryWithoutInstallingService(t *testing.T) {
+	t.Setenv(ccnhome.Env, t.TempDir())
 	repo := gittest.InitRepo(t)
 	remote := gittest.InitBare(t)
 	gittest.Git(t, repo, "remote", "add", "origin", remote)
@@ -48,6 +50,7 @@ func TestInitProvisionsRepositoryWithoutInstallingService(t *testing.T) {
 }
 
 func TestServiceInstallThenImmediateInit(t *testing.T) {
+	t.Setenv(ccnhome.Env, t.TempDir())
 	repo := gittest.InitRepo(t)
 	remote := gittest.InitBare(t)
 	gittest.Git(t, repo, "remote", "add", "origin", remote)
