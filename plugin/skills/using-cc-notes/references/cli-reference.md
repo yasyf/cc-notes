@@ -202,6 +202,13 @@ On macOS, init provisions the repository tenant through the already-installed si
 service. It never installs or upgrades the service; run `cc-notes package install` first
 when the helper is absent.
 
+init also records the repository in the per-user root, at
+`~/.cc-notes/repos/<key>/repo.json`, holding the git common directory plus the worktrees
+pointing at it, so a process with only a working directory can tell which repository it is in.
+The key derives from the resolved common directory, so linked worktrees share one entry.
+Nothing reads this registry yet and nothing prunes it, so an entry outlives the clone it
+names.
+
 When a `.claude/` directory exists, init registers the cc-notes plugin in
 `.claude/settings.json`, enables the captain-hook plugin (via `uvx capt-hook skills install`,
 the dispatcher that runs every pack's hooks), and enables the cc-notes capt-hook pack (via
