@@ -106,6 +106,38 @@ func TestLoadQuestions(t *testing.T) {
 	}
 }
 
+// TestDecodeQuestionsReadsSessionContext pins the schema fix behind the whole
+// harness repair: a question records the branch and paths its query was asked
+// from, so the eval can be run in the configuration the product actually ships
+// (internal/cli sets exactly these two on every real query) rather than only in
+// the session-free one.
+func TestDecodeQuestionsReadsSessionContext(t *testing.T) {
+	const set = `{"version":1,"questions":[` +
+		`{"id":"seated","query":"q","session":{"branch":"yasyf/pulumi","paths":[".buildkite/pipeline.yml","svc/cache/warmer.go"]},"gold_entity_ids":["aaaa"]},` +
+		`{"id":"branch only","query":"q","session":{"branch":"dev"},"gold_entity_ids":["aaaa"]},` +
+		`{"id":"unseated","query":"q","gold_entity_ids":["aaaa"]}]}`
+	qs, err := DecodeQuestions([]byte(set))
+	if err != nil {
+		t.Fatalf("DecodeQuestions: %v", err)
+	}
+	seated := qs.Questions[0].Session
+	if seated.Branch != "yasyf/pulumi" {
+		t.Errorf("Session.Branch = %q, want yasyf/pulumi", seated.Branch)
+	}
+	if !slices.Equal(seated.Paths, []string{".buildkite/pipeline.yml", "svc/cache/warmer.go"}) {
+		t.Errorf("Session.Paths = %v, want both paths in file order", seated.Paths)
+	}
+	if seated.Empty() || qs.Questions[1].Session.Empty() {
+		t.Error("a question naming a branch or paths reports an empty session")
+	}
+	if !qs.Questions[2].Session.Empty() {
+		t.Errorf("Session = %+v, want the zero session when the question names none", qs.Questions[2].Session)
+	}
+	if got := Sessioned(qs.Questions); got != 2 {
+		t.Errorf("Sessioned = %d, want 2 of 3", got)
+	}
+}
+
 func TestQuestionSetRepos(t *testing.T) {
 	qs := QuestionSet{Questions: []Question{
 		{ID: "a", Repo: "zeta"},

@@ -13,11 +13,26 @@ import (
 // SchemaVersion is the only question-set schema version this harness reads.
 const SchemaVersion = 1
 
+// Session is the ambient state a query is asked from: the branch the agent is
+// on and the repository paths it has touched. It mirrors exactly what the
+// product sets on every real query (internal/cli, kg query --branch/--path), so
+// a configuration that threads it measures what ships and one that leaves it
+// zero measures a session-free abstraction. A question that names neither is
+// asked from the zero session, and both configurations score it identically.
+type Session struct {
+	Branch model.Branch `json:"branch,omitempty"`
+	Paths  []string     `json:"paths,omitempty"`
+}
+
+// Empty reports whether the session carries no ambient state at all.
+func (s Session) Empty() bool { return s.Branch == "" && len(s.Paths) == 0 }
+
 // Question is one evaluation item: a natural-language query against the
-// cc-notes corpus of the git repository at Repo, with the entities a correct
-// retrieval must surface (GoldEntityIDs), the entities it must not
-// (MustNotRetrieve — superseded, expired, or otherwise temporally wrong
-// records), and whether the right answer is to retrieve nothing (ExpectAbstain).
+// cc-notes corpus of the git repository at Repo, asked from Session, with the
+// entities a correct retrieval must surface (GoldEntityIDs), the entities it
+// must not (MustNotRetrieve — superseded, expired, or otherwise temporally
+// wrong records), and whether the right answer is to retrieve nothing
+// (ExpectAbstain).
 //
 // Category and Axis are the two independent breakdown dimensions the report
 // groups by. GoldAnswer and Notes are provenance for a human reader; the
@@ -26,6 +41,7 @@ type Question struct {
 	ID              string           `json:"id"`
 	Repo            string           `json:"repo"`
 	Query           string           `json:"query"`
+	Session         Session          `json:"session,omitempty"`
 	Category        string           `json:"category"`
 	Axis            string           `json:"axis"`
 	GoldEntityIDs   []model.EntityID `json:"gold_entity_ids"`
@@ -120,6 +136,32 @@ func (qs QuestionSet) ForRepo(repo string) []Question {
 		}
 	}
 	return out
+}
+
+// Graded returns the questions naming gold entities, in input order — the only
+// ones NDCG, recall, and MRR are defined on, and so the only ones a paired
+// comparison or a fold split can carry.
+func Graded(questions []Question) []Question {
+	var out []Question
+	for _, q := range questions {
+		if len(q.GoldEntityIDs) > 0 {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
+// Sessioned counts the questions carrying ambient session state. A set where
+// this is zero cannot distinguish the product's configuration from the
+// session-free one, whatever the harness threads.
+func Sessioned(questions []Question) int {
+	n := 0
+	for _, q := range questions {
+		if !q.Session.Empty() {
+			n++
+		}
+	}
+	return n
 }
 
 // Repos returns the distinct repository directories the questions name, sorted.

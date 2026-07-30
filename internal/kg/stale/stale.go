@@ -68,15 +68,15 @@ const (
 // HalfLives drives S9: a kind absent from the map never decays, which is how
 // logs stay exempt — they are episodic and never go wrong.
 type Policy struct {
-	Now             time.Time
-	StaleAfter      time.Duration
-	LeaseTTL        time.Duration
-	HalfLives       map[model.Kind]time.Duration
-	ChurnHalfLife   int
-	DeadRefHalfLife int
-	ReverifyBelow   float64
-	PromoteWeight   float64
-	MaxScanBytes    int64
+	Now             time.Time                    `json:"now"`
+	StaleAfter      time.Duration                `json:"stale_after"`
+	LeaseTTL        time.Duration                `json:"lease_ttl"`
+	HalfLives       map[model.Kind]time.Duration `json:"half_lives"`
+	ChurnHalfLife   int                          `json:"churn_half_life"`
+	DeadRefHalfLife int                          `json:"dead_ref_half_life"`
+	ReverifyBelow   float64                      `json:"reverify_below"`
+	PromoteWeight   float64                      `json:"promote_weight"`
+	MaxScanBytes    int64                        `json:"max_scan_bytes"`
 }
 
 // decayHalfLives maps the kinds S9 decays to their half-life: the very
@@ -115,9 +115,9 @@ func DefaultPolicy(ctx context.Context, c *notes.Client, now time.Time) (Policy,
 // Penalty is one rank demotion (S7-S9): the signal that produced it, its
 // multiplicative weight in (0,1], and the cause in words.
 type Penalty struct {
-	Signal Signal
-	Weight float64
-	Detail string
+	Signal Signal  `json:"signal"`
+	Weight float64 `json:"weight"`
+	Detail string  `json:"detail"`
 }
 
 // Assessment is one record's staleness verdict, shaped for a ranker that holds
@@ -127,17 +127,17 @@ type Penalty struct {
 // fresh. Verdict carries the notes-side freshness verdict this reuses, empty
 // for the kinds that hold no anchor witness.
 type Assessment struct {
-	ID        model.EntityID
-	Kind      model.Kind
-	Gated     bool
-	Signal    Signal
-	Detail    string
-	Verdict   notes.Verdict
-	Successor []model.EntityID
-	Promoted  bool
-	Reverify  bool
-	Weight    float64
-	Penalties []Penalty
+	ID        model.EntityID   `json:"id"`
+	Kind      model.Kind       `json:"kind"`
+	Gated     bool             `json:"gated"`
+	Signal    Signal           `json:"signal,omitempty"`
+	Detail    string           `json:"detail,omitempty"`
+	Verdict   notes.Verdict    `json:"verdict,omitempty"`
+	Successor []model.EntityID `json:"successor,omitempty"`
+	Promoted  bool             `json:"promoted,omitempty"`
+	Reverify  bool             `json:"reverify,omitempty"`
+	Weight    float64          `json:"weight"`
+	Penalties []Penalty        `json:"penalties,omitempty"`
 }
 
 // Evaluator assesses a repository's whole cc-notes corpus in one pass, sharing

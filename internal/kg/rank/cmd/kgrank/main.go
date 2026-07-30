@@ -1,34 +1,45 @@
 // Command kgrank measures the cc-notes knowledge-graph ranker against the
 // harness baselines: the lane ablation that decides whether the personalized
-// PageRank layer earns its place, the sweep over its fusion weight, the
-// per-question sign tests behind each mean, the abstention signals, and the
-// index and query cost.
+// PageRank layer earns its place, the weight sweep run on a selection fold and
+// scored on a held-out one, the per-question paired tests behind each mean, the
+// cross-repository pool, the abstention signals, and the index and query cost.
+//
+// Every configuration is measured twice where the graph lane is on: once from
+// the zero session, and once from the session each question is asked from,
+// which is what the product sets on every real query.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/kg"
 	"github.com/yasyf/cc-notes/internal/kg/eval"
 	"github.com/yasyf/cc-notes/internal/kg/rank"
+	"github.com/yasyf/cc-notes/internal/kg/snapshot"
 	"github.com/yasyf/cc-notes/internal/kg/stale"
-	"github.com/yasyf/cc-notes/internal/store"
-	"github.com/yasyf/cc-notes/notes"
+	"github.com/yasyf/cc-notes/internal/render"
 )
+
+// sweepWeights are the graph lane's fusion weights the selection fold chooses
+// between, around the lexical lane's 1.0.
+var sweepWeights = []float64{0, 0.25, 0.5, 1, 2, 3}
 
 func main() {
 	questions := flag.String("questions", "", "path to the question set JSON")
+	root := flag.String("snapshot", "", "frozen corpus directory written by kgsnap")
 	repo := flag.String("repo", "", "measure only this repository from the set")
 	k := flag.Int("k", 10, "cutoff for the @k metrics")
 	threshold := flag.Float64("threshold", 0.1, "score below which a result counts as abstention")
 	seeds := flag.Int("seeds", eval.MinSeeds, "seeds per configuration")
 	flag.Parse()
 
-	if err := run(*questions, *repo, *k, *threshold, *seeds); err != nil {
+	if err := run(*questions, *root, *repo, *k, *threshold, *seeds); err != nil {
 		fmt.Fprintln(os.Stderr, "kgrank:", err)
 		os.Exit(1)
 	}
@@ -45,7 +56,10 @@ type corpus struct {
 	options   eval.Options
 }
 
-func run(path, only string, k int, threshold float64, seedCount int) error {
+func run(path, root, only string, k int, threshold float64, seedCount int) error {
+	if root == "" {
+		return errors.New("-snapshot is required: measure a frozen corpus written by kgsnap, never live refs")
+	}
 	qs, err := eval.LoadQuestions(path)
 	if err != nil {
 		return err
@@ -54,65 +68,53 @@ func run(path, only string, k int, threshold float64, seedCount int) error {
 	for i := range seeds {
 		seeds[i] = int64(i + 1)
 	}
+	p := newPool()
 	for _, dir := range qs.Repos() {
 		if only != "" && dir != only {
 			continue
 		}
-		c, err := load(dir, qs.ForRepo(dir), eval.Options{K: k, Threshold: threshold, Seeds: seeds})
+		c, err := load(root, dir, path, qs.ForRepo(dir), eval.Options{K: k, Threshold: threshold, Seeds: seeds})
 		if err != nil {
 			return err
 		}
-		if err := c.report(); err != nil {
+		if err := c.report(p); err != nil {
 			return err
 		}
 	}
+	p.report()
 	return nil
 }
 
-func load(dir string, questions []eval.Question, opts eval.Options) (corpus, error) {
-	ctx := context.Background()
-	client, err := notes.Open(dir)
+func load(root, dir, path string, questions []eval.Question, opts eval.Options) (corpus, error) {
+	snap, err := snapshot.Open(root, dir, path)
 	if err != nil {
-		return corpus{}, fmt.Errorf("open %s: %w", dir, err)
+		return corpus{}, err
 	}
-	entities, err := eval.LoadCorpus(ctx, client)
-	if err != nil {
-		return corpus{}, fmt.Errorf("load corpus %s: %w", dir, err)
-	}
-	s, err := store.Open(dir)
-	if err != nil {
-		return corpus{}, fmt.Errorf("open store %s: %w", dir, err)
-	}
-	start := time.Now()
-	g, err := kg.Build(ctx, s)
-	if err != nil {
-		return corpus{}, fmt.Errorf("build graph %s: %w", dir, err)
-	}
-	build := time.Since(start)
-	policy, err := stale.DefaultPolicy(ctx, client, time.Now())
-	if err != nil {
-		return corpus{}, fmt.Errorf("policy %s: %w", dir, err)
-	}
-	start = time.Now()
-	assess, err := stale.New(client, dir, policy).Assess(ctx)
-	if err != nil {
-		return corpus{}, fmt.Errorf("assess %s: %w", dir, err)
-	}
-	fmt.Printf("=== %s: %d questions, %d entities\n", dir, len(questions), len(entities))
-	fmt.Printf("    graph build %s (%d nodes, %d edges, %d events); staleness assess %s\n\n",
-		build.Round(time.Millisecond), len(g.Nodes), len(g.Edges), len(g.Events),
-		time.Since(start).Round(time.Millisecond))
-	return corpus{dir: dir, questions: questions, entities: entities, graph: g, assess: assess, options: opts}, nil
+	m := snap.Manifest
+	fmt.Printf("=== %s: %d questions (%d graded), %d entities\n", dir, len(questions), len(eval.Graded(questions)), len(snap.Entities))
+	fmt.Printf("    snapshot captured %s at %s (%d nodes, %d edges, %d events)\n",
+		m.CapturedAt.Format(time.RFC3339), render.ShortWireID(string(m.Head)),
+		len(snap.Graph.Nodes), len(snap.Graph.Edges), len(snap.Graph.Events))
+	fmt.Printf("    %d of %d questions carry session context; the rest are asked from the zero session, where the %s arm scores identically to %s\n\n",
+		eval.Sessioned(questions), len(questions), armLabel(true), armLabel(false))
+	return corpus{
+		dir:       dir,
+		questions: questions,
+		entities:  snap.Entities,
+		graph:     snap.Graph,
+		assess:    snap.Assessments,
+		options:   opts,
+	}, nil
 }
 
-func (c corpus) report() error {
+func (c corpus) report(p *pool) error {
 	if err := c.compare(); err != nil {
 		return err
 	}
-	if err := c.sweep(); err != nil {
+	if err := c.tuned(p); err != nil {
 		return err
 	}
-	if err := c.paired(); err != nil {
+	if err := c.paired(p); err != nil {
 		return err
 	}
 	if err := c.abstention(); err != nil {
@@ -121,66 +123,154 @@ func (c corpus) report() error {
 	return c.timing()
 }
 
-// config names one ranker configuration, built off the bare ranker — the
-// lexical lane alone, undiversified — so each case shows exactly what it adds.
-func (c corpus) config(name string, mutate func(*rank.Options)) eval.Config {
-	return eval.Config{Name: name, Build: func(seed int64) eval.Retriever {
-		opts := rank.DefaultOptions()
-		opts.Seed, opts.Lambda = seed, 1
-		opts.Enrich, opts.Graph = false, false
-		mutate(&opts)
-		return rank.New(c.entities, c.graph, c.assess, opts)
-	}}
+// rankers memoizes one indexed ranker per seed and session. rank.New costs an
+// index over the whole corpus, the graph, and the staleness assessments, and
+// none of that depends on the session a question is asked from — only the
+// walk's restart distribution does, so a session that repeats reuses its index.
+type rankers struct {
+	corpus corpus
+	base   rank.Options
+	built  map[string]*rank.Ranker
 }
 
-func (c corpus) enriched() eval.Config {
-	return c.config("lex+enrich", func(o *rank.Options) { o.Enrich = true })
+func newRankers(c corpus, base rank.Options) *rankers {
+	return &rankers{corpus: c, base: base, built: map[string]*rank.Ranker{}}
 }
 
-func (c corpus) fused() eval.Config {
-	return c.config("lex+enrich+graph", func(o *rank.Options) { o.Enrich, o.Graph = true, true })
+func (m *rankers) get(seed int64, sess rank.Session) *rank.Ranker {
+	key := fmt.Sprintf("%d\x00%s\x00%s", seed, sess.Branch, strings.Join(sess.Paths, "\x00"))
+	if r, ok := m.built[key]; ok {
+		return r
+	}
+	opts := m.base
+	opts.Seed, opts.Session = seed, sess
+	r := rank.New(m.corpus.entities, m.corpus.graph, m.corpus.assess, opts)
+	m.built[key] = r
+	return r
 }
 
-func (c corpus) gated() eval.Config {
+// arm is one configuration under test: the eval config the harness scores, plus
+// whether it runs the graph lane and whether it threads the question's session.
+// Those two say which questions could receive the treatment at all.
+type arm struct {
+	config  eval.Config
+	rankers *rankers
+	graph   bool
+	session bool
+}
+
+// armLabel names which session a configuration is asked from.
+func armLabel(session bool) string {
+	if session {
+		return "session-seeded"
+	}
+	return "session-free"
+}
+
+// ambient is the session a question is asked from, as the product builds it
+// (internal/cli sets exactly this branch and these paths on every real query),
+// or the zero session for the arm that measures the ranker without one.
+func ambient(session bool, q eval.Question) rank.Session {
+	if !session {
+		return rank.Session{}
+	}
+	return rank.Session{Branch: q.Session.Branch, Paths: q.Session.Paths}
+}
+
+// arm builds a ranker configuration off the bare ranker — the lexical lane
+// alone, undiversified — so each case shows exactly what it adds.
+func (c corpus) arm(name string, session bool, mutate func(*rank.Options)) arm {
+	base := rank.DefaultOptions()
+	base.Lambda, base.Enrich, base.Graph = 1, false, false
+	mutate(&base)
+	m := newRankers(c, base)
+	return arm{
+		config: eval.Config{Name: name, Build: func(seed int64, q eval.Question) eval.Retriever {
+			return m.get(seed, ambient(session, q))
+		}},
+		rankers: m,
+		graph:   base.Graph,
+		session: session,
+	}
+}
+
+// retriever wraps a configuration the ranker does not build, so the baselines
+// and the staleness-gated retriever join the same arm list.
+func retriever(name string, build func(seed int64) eval.Retriever) arm {
+	return arm{config: eval.Config{Name: name, Build: func(seed int64, _ eval.Question) eval.Retriever {
+		return build(seed)
+	}}}
+}
+
+// untreated reports the questions the arm's graph lane never ran on. rank.go
+// appends the lane only when the personalized walk resolves seeds, so a
+// question it resolves none for is scored by the lexical lane alone: it is
+// structural non-treatment, and counting it as a tie reads as "the lane was
+// tried and changed nothing".
+func (a arm) untreated(ctx context.Context, questions []eval.Question, seed int64) (map[string]bool, error) {
+	out := make(map[string]bool, len(questions))
+	if !a.graph {
+		return out, nil
+	}
+	for _, q := range questions {
+		lanes, err := a.rankers.get(seed, ambient(a.session, q)).Lanes(ctx, q.Query)
+		if err != nil {
+			return nil, fmt.Errorf("lanes for %s: %w", q.ID, err)
+		}
+		out[q.ID] = len(lanes.Graph) == 0
+	}
+	return out, nil
+}
+
+func (c corpus) enriched() arm {
+	return c.arm("lex+enrich", false, func(o *rank.Options) { o.Enrich = true })
+}
+
+func (c corpus) fused(session bool) arm {
+	name := "lex+enrich+graph"
+	if session {
+		name += "+session"
+	}
+	return c.arm(name, session, func(o *rank.Options) { o.Enrich, o.Graph = true, true })
+}
+
+func (c corpus) weighted(w float64, session bool) arm {
+	name := fmt.Sprintf("graph w=%.2f", w)
+	if session {
+		name += "+session"
+	}
+	return c.arm(name, session, func(o *rank.Options) { o.Enrich, o.Graph, o.GraphWeight = true, true, w })
+}
+
+func (c corpus) gated() arm {
 	ranker := stale.NewRanker(c.entities, c.assess, stale.DefaultRetrieval())
-	return eval.Config{Name: "gated", Build: func(seed int64) eval.Retriever {
+	return retriever("gated", func(seed int64) eval.Retriever {
 		return ranker.Wrap(eval.NewBM25(c.entities, seed), seed)
-	}}
+	})
 }
 
 // compare is the kill test: the harness baselines, then each lane the ranker
 // adds, so a layer that does not pay is visible as the row that does not move.
+// The graph rows run at DefaultGraphWeight, which was itself chosen on these
+// questions; the held-out headline below is the out-of-sample reading.
 func (c corpus) compare() error {
-	return c.run("lane ablation", []eval.Config{
-		{Name: "bm25", Build: func(seed int64) eval.Retriever { return eval.NewBM25(c.entities, seed) }},
+	return c.run("lane ablation (every question, graph lanes at the in-sample default weight)", []arm{
+		retriever("bm25", func(seed int64) eval.Retriever { return eval.NewBM25(c.entities, seed) }),
 		c.gated(),
-		{Name: "full-context", Build: func(seed int64) eval.Retriever { return eval.NewFullContext(c.entities, seed) }},
-		c.config("lex", func(*rank.Options) {}),
+		retriever("full-context", func(seed int64) eval.Retriever { return eval.NewFullContext(c.entities, seed) }),
+		c.arm("lex", false, func(*rank.Options) {}),
 		c.enriched(),
-		c.config("lex+graph", func(o *rank.Options) { o.Graph = true }),
-		c.fused(),
-		c.config("lex+enrich+graph+mmr", func(o *rank.Options) {
+		c.arm("lex+graph", false, func(o *rank.Options) { o.Graph = true }),
+		c.fused(false),
+		c.fused(true),
+		c.arm("lex+enrich+graph+mmr", false, func(o *rank.Options) {
 			o.Enrich, o.Graph, o.Lambda = true, true, rank.DefaultLambda
 		}),
-	})
+	}, c.questions)
 }
 
-// sweep is the fused ranking's sensitivity to the graph lane's RRF weight
-// around the lexical lane's 1.0.
-func (c corpus) sweep() error {
-	weights := []float64{0.25, 0.5, 1, 2, 3}
-	configs := make([]eval.Config, 0, len(weights)+1)
-	configs = append(configs, c.enriched())
-	for _, w := range weights {
-		configs = append(configs, c.config(fmt.Sprintf("graph w=%.2f", w), func(o *rank.Options) {
-			o.Enrich, o.Graph, o.GraphWeight = true, true, w
-		}))
-	}
-	return c.run("graph fusion weight", configs)
-}
-
-func (c corpus) run(title string, configs []eval.Config) error {
-	report, err := eval.Run(context.Background(), c.questions, configs, c.options)
+func (c corpus) run(title string, arms []arm, questions []eval.Question) error {
+	report, err := c.evaluate(arms, questions)
 	if err != nil {
 		return err
 	}
@@ -189,12 +279,33 @@ func (c corpus) run(title string, configs []eval.Config) error {
 	return nil
 }
 
+func (c corpus) evaluate(arms []arm, questions []eval.Question) (eval.Report, error) {
+	configs := make([]eval.Config, len(arms))
+	for i, a := range arms {
+		configs[i] = a.config
+	}
+	return eval.Run(context.Background(), questions, configs, c.options)
+}
+
 // timing is what the ranker costs: the one-off index over the corpus and graph,
-// and the per-query lanes, fusion, and diversification.
+// and the per-query lanes, fusion, and diversification — measured with the
+// graph lane on and off, so what the lane costs is the difference between the
+// two rows.
 func (c corpus) timing() error {
+	fmt.Println("--- cost")
+	for _, graph := range []bool{false, true} {
+		if err := c.measure(graph); err != nil {
+			return err
+		}
+	}
+	fmt.Println()
+	return nil
+}
+
+func (c corpus) measure(graph bool) error {
 	ctx := context.Background()
 	opts := rank.DefaultOptions()
-	opts.Seed = c.options.Seeds[0]
+	opts.Seed, opts.Graph = c.options.Seeds[0], graph
 	start := time.Now()
 	r := rank.New(c.entities, c.graph, c.assess, opts)
 	index := time.Since(start)
@@ -216,8 +327,8 @@ func (c corpus) timing() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("--- cost\n  index %s; retrieve %s/query; fill %s for %d records at a %d-token budget\n\n",
-		index.Round(time.Millisecond), perQuery.Round(time.Microsecond),
+	fmt.Printf("  graph=%-5t index %s; retrieve %s/query; fill %s for %d records at a %d-token budget\n",
+		graph, index.Round(time.Millisecond), perQuery.Round(time.Microsecond),
 		time.Since(start).Round(time.Microsecond), len(filled), budget)
 	return nil
 }

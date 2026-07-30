@@ -10,7 +10,8 @@ import (
 // by one table per question category.
 func (r Report) String() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "questions=%d  k=%d  threshold=%.2f  seeds=%v\n\n", r.Questions, r.K, r.Threshold, r.Seeds)
+	fmt.Fprintf(&b, "questions=%d  k=%d  threshold=%.2f  seeds=%v\n", r.Questions, r.K, r.Threshold, r.Seeds)
+	fmt.Fprint(&b, "± is the spread across seeds only, not a confidence interval over questions\n\n")
 	fmt.Fprintf(&b, "overall (n=%d)\n", r.Questions)
 	writeTable(&b, r.K, r.Summaries, func(s Summary) MetricStats { return s.Overall })
 	for _, cat := range r.Categories {

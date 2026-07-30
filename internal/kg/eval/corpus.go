@@ -17,13 +17,13 @@ import (
 // the folded tag or label set, and the superseding edges the superseded-leak
 // metric reads.
 type Entity struct {
-	ID           model.EntityID
-	Kind         model.Kind
-	Title        string
-	Body         string
-	Tags         []string
-	UpdatedAt    int64
-	SupersededBy []model.EntityID
+	ID           model.EntityID   `json:"id"`
+	Kind         model.Kind       `json:"kind"`
+	Title        string           `json:"title"`
+	Body         string           `json:"body,omitempty"`
+	Tags         []string         `json:"tags,omitempty"`
+	UpdatedAt    int64            `json:"updated_at"`
+	SupersededBy []model.EntityID `json:"superseded_by,omitempty"`
 }
 
 // Text is the searchable text of the entity: kind, title, tags, and body.

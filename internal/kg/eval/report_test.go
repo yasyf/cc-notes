@@ -14,8 +14,8 @@ func reportFixture(t *testing.T) Report {
 		{ID: "q2", Query: "b", Category: "history", GoldEntityIDs: []model.EntityID{"absent"}},
 	}
 	configs := []Config{
-		{Name: "hit", Build: func(int64) Retriever { return fixedRetriever{"g", "x"} }},
-		{Name: "miss", Build: func(int64) Retriever { return fixedRetriever{"x"} }},
+		{Name: "hit", Build: func(int64, Question) Retriever { return fixedRetriever{"g", "x"} }},
+		{Name: "miss", Build: func(int64, Question) Retriever { return fixedRetriever{"x"} }},
 	}
 	report, err := Run(t.Context(), questions, configs, Options{K: 2, Threshold: 0.1, Seeds: []int64{1, 2, 3, 4, 5}})
 	if err != nil {
@@ -28,6 +28,7 @@ func TestReportString(t *testing.T) {
 	got := reportFixture(t).String()
 	want := strings.Join([]string{
 		"questions=2  k=2  threshold=0.10  seeds=[1 2 3 4 5]",
+		"± is the spread across seeds only, not a confidence interval over questions",
 		"",
 		"overall (n=2)",
 		"  retriever  ndcg@2        recall@2      mrr           leak          abstain",
@@ -56,8 +57,8 @@ func TestReportAbstentionAndEmptyDenominators(t *testing.T) {
 		{ID: "q2", Query: "b", Category: "present", GoldEntityIDs: []model.EntityID{"g"}},
 	}
 	configs := []Config{
-		{Name: "eager", Build: func(int64) Retriever { return fixedRetriever{"g"} }},
-		{Name: "silent", Build: func(int64) Retriever { return fixedRetriever{} }},
+		{Name: "eager", Build: func(int64, Question) Retriever { return fixedRetriever{"g"} }},
+		{Name: "silent", Build: func(int64, Question) Retriever { return fixedRetriever{} }},
 	}
 	report, err := Run(t.Context(), questions, configs, Options{K: 2, Threshold: 0.1, Seeds: []int64{1, 2, 3, 4, 5}})
 	if err != nil {
@@ -66,6 +67,7 @@ func TestReportAbstentionAndEmptyDenominators(t *testing.T) {
 	got := report.String()
 	want := strings.Join([]string{
 		"questions=2  k=2  threshold=0.10  seeds=[1 2 3 4 5]",
+		"± is the spread across seeds only, not a confidence interval over questions",
 		"",
 		"overall (n=2)",
 		"  retriever  ndcg@2        recall@2      mrr           leak  abstain",

@@ -55,7 +55,7 @@ func runOpts() Options {
 }
 
 func TestRunDeterministicRetrieverHasZeroSpread(t *testing.T) {
-	cfg := Config{Name: "fixed", Build: func(int64) Retriever { return fixedRetriever{"x", "g"} }}
+	cfg := Config{Name: "fixed", Build: func(int64, Question) Retriever { return fixedRetriever{"x", "g"} }}
 	report, err := Run(t.Context(), runQuestions(), []Config{cfg}, runOpts())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -82,7 +82,7 @@ func TestRunDeterministicRetrieverHasZeroSpread(t *testing.T) {
 }
 
 func TestRunSeedSpread(t *testing.T) {
-	cfg := Config{Name: "odd", Build: func(seed int64) Retriever { return oddSeedRetriever(seed) }}
+	cfg := Config{Name: "odd", Build: func(seed int64, _ Question) Retriever { return oddSeedRetriever(seed) }}
 	report, err := Run(t.Context(), runQuestions(), []Config{cfg}, runOpts())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -106,7 +106,7 @@ func TestRunSeedSpread(t *testing.T) {
 }
 
 func TestRunCategoryBreakdown(t *testing.T) {
-	cfg := Config{Name: "fixed", Build: func(int64) Retriever { return fixedRetriever{"g"} }}
+	cfg := Config{Name: "fixed", Build: func(int64, Question) Retriever { return fixedRetriever{"g"} }}
 	questions := append(runQuestions(), Question{
 		ID: "q3", Query: "c", Category: "history", GoldEntityIDs: []model.EntityID{"absent"},
 	})
@@ -126,8 +126,45 @@ func TestRunCategoryBreakdown(t *testing.T) {
 	}
 }
 
+// sessionRetriever finds the gold entity only when the question was asked from
+// a branch, so a harness that drops the session scores it at zero.
+type sessionRetriever Session
+
+func (s sessionRetriever) Retrieve(context.Context, string, int) ([]Result, error) {
+	if s.Branch == "" {
+		return nil, nil
+	}
+	return []Result{{ID: "g", Score: 1, Lane: "stub"}}, nil
+}
+
+// TestRunBuildsEachRetrieverFromItsQuestionsSession is the harness half of the
+// defect this change fixes: Run has to hand Build the question, or every
+// configuration is measured from the zero session while the product runs from
+// the agent's actual branch and paths.
+func TestRunBuildsEachRetrieverFromItsQuestionsSession(t *testing.T) {
+	questions := []Question{
+		{ID: "seated", Query: "a", Category: "mechanism", Session: Session{Branch: "yasyf/pulumi"}, GoldEntityIDs: []model.EntityID{"g"}},
+		{ID: "unseated", Query: "b", Category: "mechanism", GoldEntityIDs: []model.EntityID{"g"}},
+	}
+	seen := map[string]Session{}
+	cfg := Config{Name: "session", Build: func(_ int64, q Question) Retriever {
+		seen[q.ID] = q.Session
+		return sessionRetriever(q.Session)
+	}}
+	report, err := Run(t.Context(), questions, []Config{cfg}, runOpts())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if seen["seated"].Branch != "yasyf/pulumi" || !seen["unseated"].Empty() {
+		t.Fatalf("Build saw sessions %+v, want the seated question's branch and the unseated question's zero session", seen)
+	}
+	if got := report.Summaries[0].Overall.NDCG.Mean; got != 0.5 {
+		t.Errorf("NDCG mean = %v, want 0.5: exactly the seated question should score", got)
+	}
+}
+
 func TestRunRejects(t *testing.T) {
-	cfg := Config{Name: "fixed", Build: func(int64) Retriever { return fixedRetriever{"g"} }}
+	cfg := Config{Name: "fixed", Build: func(int64, Question) Retriever { return fixedRetriever{"g"} }}
 	cases := []struct {
 		name      string
 		questions []Question
@@ -143,7 +180,7 @@ func TestRunRejects(t *testing.T) {
 		{"no seeds", runQuestions(), []Config{cfg}, Options{K: 2}, ErrTooFewSeeds},
 		{
 			"retriever failure", runQuestions(),
-			[]Config{{Name: "boom", Build: func(int64) Retriever { return failingRetriever{} }}},
+			[]Config{{Name: "boom", Build: func(int64, Question) Retriever { return failingRetriever{} }}},
 			runOpts(), errRetrieve,
 		},
 	}

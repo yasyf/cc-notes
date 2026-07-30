@@ -20,11 +20,15 @@ var (
 	ErrTooFewSeeds  = errors.New("run needs at least MinSeeds seeds")
 )
 
-// Config names one retriever under test. Build constructs a fresh retriever per
-// seed, so a stochastic ranker threads the seed through its own randomness.
+// Config names one retriever under test. Build constructs the retriever for one
+// seed and one question, so a stochastic ranker threads the seed through its own
+// randomness and a session-aware one is configured from the ambient state the
+// question is asked from. A Build that ignores its question measures the
+// session-free configuration; caching the expensive index per distinct session
+// is the builder's business, not the harness's.
 type Config struct {
 	Name  string
-	Build func(seed int64) Retriever
+	Build func(seed int64, q Question) Retriever
 }
 
 // Options configures a run: the cutoff k for the @k metrics, the score below
@@ -118,10 +122,9 @@ func Run(ctx context.Context, questions []Question, configs []Config, opts Optio
 func runConfig(ctx context.Context, questions []Question, cfg Config, opts Options, cats []string) (Summary, error) {
 	summary := Summary{Name: cfg.Name, Categories: map[string]MetricStats{}}
 	for _, seed := range opts.Seeds {
-		r := cfg.Build(seed)
 		scores := make([]QuestionScore, len(questions))
 		for i, q := range questions {
-			results, err := r.Retrieve(ctx, q.Query, opts.K)
+			results, err := cfg.Build(seed, q).Retrieve(ctx, q.Query, opts.K)
 			if err != nil {
 				return Summary{}, fmt.Errorf("seed %d question %s: %w", seed, q.ID, err)
 			}

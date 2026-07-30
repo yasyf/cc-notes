@@ -3,99 +3,126 @@ package main
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/yasyf/cc-notes/internal/kg/eval"
 )
 
-// paired reports each stage's per-question win/loss record over the one before
-// it. A mean over thirty-odd graded questions moves on one question, so the
-// sign test is what says whether a difference is a result.
-func (c corpus) paired() error {
-	fmt.Println("--- paired comparison (mean NDCG@k per question, across seeds)")
-	stages := []eval.Config{c.gated(), c.enriched(), c.fused()}
-	for i := range stages[:len(stages)-1] {
-		if err := c.sign(stages[i], stages[i+1]); err != nil {
+// comparison is one paired contrast on one repository: the per-question
+// differences the tests run over, and the scores behind them so a reader can
+// see which questions moved.
+type comparison struct {
+	name      string
+	questions []eval.Question
+	deltas    []eval.Delta
+	before    map[string]float64
+	after     map[string]float64
+}
+
+// paired reports each layer's per-question record over the one below it, and
+// the product's session-seeded configuration against the session-free one the
+// eval measured in its place. Three tests are printed for every contrast: they
+// disagree by construction, and the disagreement is the point — the sign test
+// throws away every tie and every magnitude, which is how a lane that moves a
+// handful of questions a long way reads as no result.
+func (c corpus) paired(p *pool) error {
+	fmt.Println("--- paired comparison over graded questions (mean NDCG@k per question, across seeds)")
+	graded := eval.Graded(c.questions)
+	enriched, fused, seeded := c.enriched(), c.fused(false), c.fused(true)
+	for _, stage := range [][2]arm{
+		{c.gated(), enriched},
+		{enriched, fused},
+		{enriched, seeded},
+		{fused, seeded},
+	} {
+		cmp, err := c.contrast(stage[0], stage[1], graded)
+		if err != nil {
 			return err
 		}
-	}
-	if err := c.sign(stages[0], stages[len(stages)-1]); err != nil {
-		return err
+		cmp.print()
+		p.add(cmp.name, cmp.deltas)
 	}
 	fmt.Println()
 	return nil
 }
 
-func (c corpus) sign(a, z eval.Config) error {
-	before, err := c.perQuestion(a)
+// contrast scores both arms over the same questions and pairs them per
+// question, marking the ones the treatment's graph lane never ran on.
+func (c corpus) contrast(base, treat arm, questions []eval.Question) (comparison, error) {
+	ctx := context.Background()
+	before, err := c.perQuestion(base, questions)
 	if err != nil {
-		return err
+		return comparison{}, err
 	}
-	after, err := c.perQuestion(z)
+	after, err := c.perQuestion(treat, questions)
 	if err != nil {
-		return err
+		return comparison{}, err
 	}
-	wins, losses := 0, 0
-	var moved []string
-	for _, q := range c.questions {
-		d := after[q.ID] - before[q.ID]
-		switch {
-		case d > 1e-9:
-			wins++
-		case d < -1e-9:
-			losses++
-		default:
-			continue
+	skipped, err := treat.untreated(ctx, questions, c.options.Seeds[0])
+	if err != nil {
+		return comparison{}, err
+	}
+	deltas := make([]eval.Delta, len(questions))
+	for i, q := range questions {
+		deltas[i] = eval.Delta{
+			Repo:      c.dir,
+			Question:  q.ID,
+			Value:     after[q.ID] - before[q.ID],
+			Untreated: skipped[q.ID],
 		}
-		moved = append(moved, fmt.Sprintf("      %s %-12s %.3f -> %.3f (%+.3f)", q.ID, q.Category, before[q.ID], after[q.ID], d))
 	}
-	fmt.Printf("  %s -> %s: %d win / %d loss / %d tie, sign-test p=%.4f\n",
-		a.Name, z.Name, wins, losses, len(before)-wins-losses, signTest(wins, losses))
-	for _, line := range moved {
-		fmt.Println(line)
-	}
-	return nil
+	return comparison{
+		name:      base.config.Name + " -> " + treat.config.Name,
+		questions: questions,
+		deltas:    deltas,
+		before:    before,
+		after:     after,
+	}, nil
 }
 
-// perQuestion is one configuration's mean NDCG@k for every graded question.
-func (c corpus) perQuestion(cfg eval.Config) (map[string]float64, error) {
+// print renders a contrast twice: over every graded question, and over only the
+// ones the treatment actually reached. The second is the effect where the lane
+// fires; the first is what a reader gets if untreated questions are allowed to
+// count as evidence that it does nothing.
+func (cm comparison) print() {
+	fmt.Printf("  %s\n", cm.name)
+	fmt.Printf("    every question  %s\n", eval.Compare(cm.deltas))
+	if treated := treated(cm.deltas); len(treated) != len(cm.deltas) {
+		fmt.Printf("    treated only    %s\n", eval.Compare(treated))
+	}
+	for _, q := range cm.questions {
+		d := cm.after[q.ID] - cm.before[q.ID]
+		if d > -1e-9 && d < 1e-9 {
+			continue
+		}
+		fmt.Printf("      %s %-12s %.3f -> %.3f (%+.3f)\n", q.ID, q.Category, cm.before[q.ID], cm.after[q.ID], d)
+	}
+}
+
+// treated drops the questions the treatment never reached.
+func treated(deltas []eval.Delta) []eval.Delta {
+	out := make([]eval.Delta, 0, len(deltas))
+	for _, d := range deltas {
+		if !d.Untreated {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// perQuestion is one arm's mean NDCG@k for every question, averaged over the
+// seeds.
+func (c corpus) perQuestion(a arm, questions []eval.Question) (map[string]float64, error) {
 	ctx := context.Background()
-	out := map[string]float64{}
+	out := make(map[string]float64, len(questions))
 	for _, seed := range c.options.Seeds {
-		r := cfg.Build(seed)
-		for _, q := range c.questions {
-			if len(q.GoldEntityIDs) == 0 {
-				continue
-			}
-			results, err := r.Retrieve(ctx, q.Query, c.options.K)
+		for _, q := range questions {
+			results, err := a.config.Build(seed, q).Retrieve(ctx, q.Query, c.options.K)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%s seed %d question %s: %w", a.config.Name, seed, q.ID, err)
 			}
 			score := eval.ScoreQuestion(q, results, c.options.K, c.options.Threshold)
 			out[q.ID] += score.NDCG / float64(len(c.options.Seeds))
 		}
 	}
 	return out, nil
-}
-
-// signTest is the exact two-sided binomial p-value for wins against losses
-// under the null that either is equally likely.
-func signTest(wins, losses int) float64 {
-	n := wins + losses
-	if n == 0 {
-		return 1
-	}
-	tail := 0.0
-	for i := 0; i <= min(wins, losses); i++ {
-		tail += choose(n, i)
-	}
-	return math.Min(1, 2*tail/math.Pow(2, float64(n)))
-}
-
-func choose(n, k int) float64 {
-	out := 1.0
-	for i := range k {
-		out = out * float64(n-i) / float64(i+1)
-	}
-	return out
 }
