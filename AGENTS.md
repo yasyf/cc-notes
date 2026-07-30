@@ -26,7 +26,8 @@ cc-notes/
 │   ├── fusefs/       #   product source authority, mutation policy, and signed-helper runtime integration
 │   ├── helperclient/ #   fixed signed-app identity and already-installed provisioning client
 │   ├── helperdeployment/ # daemonkit deployment hooks, exact service plan, readiness, install/deactivate boundary
-│   ├── gittest/      #   shared real-git test fixtures — environment scrub, git runner, repo bootstrappers
+│   ├── gittest/      #   shared real-git test fixtures — environment scrub, git runner, repo bootstrappers (side-effect free)
+│   ├── homeguard/    #   test-binary home isolation — init-time three-env redirect, real-home footprint diff, home-discipline contract pins
 │   └── version/      #   ldflags-injected build metadata
 ├── helper-app/       # XcodeGen fixed signed CCNotesHelper.app packaging input
 ├── plugin/           # Claude Code plugin — capt-hook pack (hooks/), using-cc-notes skill + references (skills/), embedded CI workflow (workflows/), bundled .mcp.json

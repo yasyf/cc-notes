@@ -1,5 +1,7 @@
 // Package gittest provides the shared real-git fixtures cc-notes tests build
 // on: an environment scrub, a git command runner, and repo bootstrappers.
+// Importing it has no side effects; the home isolation a test binary reaching
+// per-user state declares lives in internal/homeguard.
 package gittest
 
 import (

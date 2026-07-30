@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/ccnhome"
+	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
@@ -30,33 +31,6 @@ const matrixActor = "Matrix Worker <worker@example.com>"
 // run; it exists only so a subprocess that genuinely stalls fails the test
 // fast instead of hanging the whole package to its global timeout.
 const binTimeout = 2 * time.Minute
-
-var testBinary string
-
-// testHome is the CC_NOTES_HOME every subprocess runs under, so a command that
-// records per-user state — `init` registers the repository — writes into the
-// test binary's own temp directory instead of the developer's ~/.cc-notes.
-var testHome string
-
-func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "cc-notes-bin-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	testBinary = filepath.Join(dir, "cc-notes")
-	testHome = filepath.Join(dir, "home")
-	//nolint:gosec // G204: fixed go-build of this repo's own binary in the e2e test setup.
-	build := exec.Command("go", "build", "-tags", "ccnotes_test", "-o", testBinary, "github.com/yasyf/cc-notes/cmd/cc-notes")
-	if out, err := build.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "build cc-notes: %v\n%s", err, out)
-		_ = os.RemoveAll(dir)
-		os.Exit(1)
-	}
-	code := m.Run()
-	_ = os.RemoveAll(dir)
-	os.Exit(code)
-}
 
 // binResult captures one subprocess invocation of the built binary.
 type binResult struct {
@@ -85,7 +59,7 @@ func binEnv(actor string) []string {
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_SYSTEM="+os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
-		ccnhome.Env+"="+testHome,
+		ccnhome.Env+"="+cli.TestHome,
 		"CC_NOTES_ACTOR="+actor,
 	)
 }
@@ -97,8 +71,8 @@ func binEnv(actor string) []string {
 func execBin(dir, actor string, args ...string) (binResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), binTimeout)
 	defer cancel()
-	//nolint:gosec // G204: testBinary is the e2e-built cc-notes binary; args are test-controlled.
-	cmd := exec.CommandContext(ctx, testBinary, args...)
+	//nolint:gosec // G204: cli.TestBinary is the e2e-built cc-notes binary; args are test-controlled.
+	cmd := exec.CommandContext(ctx, cli.TestBinary, args...)
 	cmd.Dir = dir
 	cmd.Env = binEnv(actor)
 	var stdout, stderr bytes.Buffer

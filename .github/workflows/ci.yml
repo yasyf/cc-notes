@@ -44,6 +44,10 @@ jobs:
         run: brew install macos-fuse-t/cask/fuse-t
       - name: Build the dedicated signed-helper target
         run: CGO_ENABLED=1 go build -tags fuse ./cmd/cc-notes-helper
+      # The home-discipline pins scan the host's file set, so every _darwin.go
+      # file is invisible to the ubuntu test job.
+      - name: Home-discipline contract over the darwin file set
+        run: go test -race -count=1 ./internal/homeguard
       - name: Prove the ordinary CLI has no FuseKit child dispatcher
         run: |
           CGO_ENABLED=0 go build -o /tmp/cc-notes ./cmd/cc-notes
