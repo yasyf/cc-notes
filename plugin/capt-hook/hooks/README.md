@@ -28,6 +28,7 @@ native task tracking versus durable, git-synced cc-notes entities.
 | `cc-notes papercut` | Durable, git-synced | Repo-global, the shared `papercuts` journal | A one-paragraph complaint about friction hit during work — a dead-end tool call, a broken link, a misleading doc |
 | `cc-notes runbook add` | Durable, git-synced | Repo-global, anchored like a note | A repeatable procedure as ordered steps, each optionally carrying a command; every execution is a tracked run with per-step outcomes |
 | `cc-notes investigation open` | Durable, git-synced | Repo-global, anchored like a note | One debugging arc: an immutable premise, findings with dispositions, an append-only evidence timeline, and a status that holds the verdict |
+| `cc-notes plan add` | Durable, git-synced | Repo-global, anchored like a note | One approved plan held verbatim — context, approach, pitfalls, verification — moving draft → approved → executing → done/abandoned, with tasks pointing back at it via `task add --plan <id>`. The pack records this one for you on `ExitPlanMode` |
 
 Tasks are global. The id addresses a task no matter which branch it lives on, and
 its branch is a mutable attribute. `cc-notes task add --backlog` parks work in the
@@ -42,16 +43,17 @@ two directions.
 to it, and a small LLM keeps the subset worth your attention. It fails *open*: if the
 model call errors, every recalled record is shown rather than hide context by breaking.
 
-**Record (push)** takes a write, a copy, a commit, or an approved plan, recalls a candidate
+**Record (push)** takes a write, a copy, or a commit, recalls a candidate
 over a cheap glob or diff, and a small LLM confirms the content is durable and routes it to
-exactly one primitive — note, doc, log, task, papercut, runbook, or investigation — or to nothing. It fails *closed* to
+exactly one primitive — note, doc, log, task, papercut, runbook, investigation, or plan — or to nothing. It fails *closed* to
 silence.
 
 The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
 on purpose; the LLM is the precision gate in both directions. The only deterministic hooks
 are the ones with no "which" to pick: the memory mirror, where the file already declares
 its type, the evidence-archive router, where the kind is always a log with attachments,
-and the pure workflow reminders, where the action is fixed.
+the plan capture, where an approved plan is always a plan, and the pure workflow reminders,
+where the action is fixed.
 
 ### Surface — pull durable records into context
 
@@ -71,16 +73,17 @@ later. The session-start float is deterministic orientation, not a filtered surf
 
 | Trigger | Candidate | The LLM picks |
 |---------|-----------|---------------|
-| `Write` / `Edit` / `MultiEdit` of an internal-looking file (PostToolUse) | a status/handoff/notes/runbook/`memory/` file the static `DurableInternalWrite` gate flags | note / doc / log / task / papercut / runbook / investigation — or none; the subtle calls are doc (living guidance) vs log (append-only chronology), doc (describes) vs runbook (a procedure you re-execute, tracked per run), and log (a finished chronology) vs investigation (a debugging arc still moving toward a verdict), while papercut is a one-off friction gripe with nothing to curate or do |
+| `Write` / `Edit` / `MultiEdit` of an internal-looking file (PostToolUse) | a status/handoff/notes/runbook/`memory/` file the static `DurableInternalWrite` gate flags | note / doc / log / task / papercut / runbook / investigation / plan — or none; the subtle calls are doc (living guidance) vs log (append-only chronology), doc (describes) vs runbook (a procedure you re-execute, tracked per run), log (a finished chronology) vs investigation (a debugging arc still moving toward a verdict), and plan (one approved approach, executed once and closed) vs runbook (a standing procedure) or doc (guidance kept fresh), while papercut is a one-off friction gripe with nothing to curate or do |
 | Bash `cp`/`mv`/`rsync` landing run output in a durable tree, or a `Write`/`Edit` of an evidence-suffixed file (`.log`, `.panic`, `.dump`, …) anywhere in it, `docs/**` included (PostToolUse) | the transfer the static `EvidenceArchive` gate flags — temp/scratchpad, `testdata/` fixtures, `.git` internals, and relative in-repo bulk copies stay exempt | (static, no model) a log entry carrying the artifacts as `--attach` git-lfs attachments; only `cc-notes sync` uploads their content (plain `git push` moves refs without it), and a >1MB payload strengthens the wording |
 | Bash `cc-notes note`/`doc`/`log` `add`/`edit`/`append` (or `cc-notes papercut`) whose title or body text names a purge-bound path (`/tmp`, `/var`, a session scratchpad) the static `EphemeralRecordReference` gate flags — an `--attach` value is exempt (PostToolUse) | the record command the gate flags | (static, no model) carry the content in the record itself — `--body -` (or `--checkout` file mode) for text, `--attach <file>` for artifacts, whose bytes land in the ODB and sync with the repo |
 | `git commit` / `jj commit` / `jj describe` / `ccx vcs ship` (PostToolUse) | the HEAD commit — message, diffstat, bounded patch | whether the change encodes a durable decision worth a note or doc; the `cc-task:` link reminder always fires regardless, and the sync is an automatic side-effect (see below) |
-| `ExitPlanMode` (PostToolUse) | the approved plan's text (`planFilePath`, else inline) | which few plan items are durable work → `cc-notes task add` (`--backlog` if shared); the native-vs-durable teach always fires regardless |
+| `ExitPlanMode` (PostToolUse) | the approved plan's text (`planFilePath`, else inline) | (the capture is static, no model) the plan text is recorded verbatim as an approved `cc-notes plan`, or edited into the plan this session already holds for that file when the title is unchanged; a model then picks which few plan items are durable work → `cc-notes task add --plan <id>` (`--backlog` if shared), and the native-vs-durable teach rides along until the nudge cap |
 | Many open native tasks after `TaskCreate` | the growing native list | (static, no model) mirror the durable or cross-agent items into `cc-notes task add` |
 
 The internal-write and evidence-archive routers share one ask-once-per-turn slot; the commit router judges each HEAD sha once,
-so an amend re-judges while a re-fire on the same commit stays silent; the plan router fires
-once per plan file. Every record nudge falls *closed* to silence on any classifier or git
+so an amend re-judges while a re-fire on the same commit stays silent; the plan capture fires
+once per distinct plan *text*, so a revised plan lands and re-approving unchanged text
+stays quiet. Every record nudge falls *closed* to silence on any classifier or git
 error, never invents a record on a degenerate parse (`record` and the kind both default
 empty), and only ever suggests — it never blocks.
 
@@ -109,11 +112,11 @@ ODB — the ones that read or write an arbitrary filesystem path, or run a store
 script. Auto-approving those would let a prompt-injected agent write any path,
 read any secret into its context, or execute code with no human in the loop, so
 they always prompt: `attachment get -o/--output`, `--attach`, `--apply`,
-`--abort`, `--script`, `workflows install --dest`,
+`--abort`, `--script`, `plan add --body-file`, `workflows install --dest`,
 `task validate`, and `task criterion script` — and the matching MCP tools
 (`task_validate`, plus any tool call carrying an `attach`, `output`, `script`,
-or `file` path). Plain `note`/`task`/`doc`/`log` records, `status`, `list`,
-`show`, and `sync` stay prompt-free.
+`file`, or `body_file` path). Plain `note`/`task`/`doc`/`log`/`plan` records,
+`status`, `list`, `show`, and `sync` stay prompt-free.
 
 Everything else also falls through to the normal dialog: shell expansion
 anywhere in the raw text (`$`, backticks, braces, process substitution),
@@ -131,7 +134,7 @@ dormant without the captain-hook dispatcher plugin.
 
 One cap by class. Every Record router and teach-carrying Workflow reminder is capped at
 `NUDGE_MAX_FIRES` (three) per session as a backstop, and additionally deduped by its own
-key — the turn, the HEAD sha, or the plan path — so it speaks once per real event rather
+key — the turn, the HEAD sha, or the plan text's digest — so it speaks once per real event rather
 than on every fire. The pure sync actions (after a merge/pull/fetch, a push, or a cc-notes
 write) carry no session cap: their only output is the sync confirm, and the per-turn dedup
 already bounds them. The auto-sync action deduplicates per target repo per turn across all of
@@ -238,6 +241,31 @@ you, and the SessionEnd backstop sweeps an unpushed mirror at exit. The cc-pool 
 is the mirror's alone: the internal-write record router hard-excludes it, so a memory write
 is captured once, by the mirror, never also nudged.
 
+**The plan capture.** An approved plan is the densest artifact a session produces — context,
+approach, pitfalls, verification — and it lived only in `~/.claude/plans/*.md`, outside the
+repo and outside the record. On `ExitPlanMode` this handler reads the plan text
+(`planFilePath`, else the inline `plan`) and records it verbatim as an approved
+`cc-notes plan`, titled from the plan's first `# ` heading and falling back to the plan
+file's stem. The text rides `--body=` as one argv element: the handler shells out with a
+bare argv and no shell, so there is no redirect for a `--body-file -` form to read. The
+dedup key is the plan text's SHA-256, not its path — a session revises one plan file in
+place across review rounds, so a path key would have captured the draft you sent back and
+never the approved text.
+
+A review round is one plan, not a pile of rivals. The handler remembers, per session, which
+`cc-notes plan` it recorded for each plan file and under what title: the same file re-approved
+under the same title is a revision, so the body is edited in place (it is LWW, and the drafts
+stay in `cc-notes history`), while a changed title is a reused session planning different
+work and mints a plan of its own with no supersede edge joining the two. The write itself is
+uncapped — `max_fires` reserves its slot before the handler runs and only releases it on a
+falsy result, so a cap here would burn the budget on a session's first few plans and drop
+every later one in silence. The nagging half carries the cap instead: the native-vs-durable
+teach and the model-picked durable items, rendered as `cc-notes task add … --plan <id>` lines
+carrying the id the capture just returned (a placeholder to substitute when the capture
+failed, since a warn cannot write), fire at most `NUDGE_MAX_FIRES` times a session. Like every
+other cc-notes call in the pack it fails closed — a failed capture drops the confirmation and
+keeps the teach.
+
 **The compact tracker.** Compaction wipes the window; the entities the session touched should
 not vanish with it. Every cc-notes entity call — an MCP tool or a `cc-notes`/`ccn` leg of any
 Bash line — silently records which entity it touched and how (created, edited, or explicitly
@@ -324,7 +352,7 @@ subprocess) cannot assert it deterministically.
 The Record routers are LLM-gated, so their inline `tests={...}` cover only the cheap
 static gate: the inline harness stubs `call_llm` to its default verdict, which records
 nothing, so a positive can never fire there. What the gate lets through, what the model
-routes to (note vs doc vs log vs task vs papercut vs runbook vs investigation), the always-on commit and plan teaches, and the
+routes to (note vs doc vs log vs task vs papercut vs runbook vs investigation vs plan), the always-on commit and plan teaches, and the
 per-key dedup are proven in `tests/test_cc_notes.py`, which stubs `evt.ctx.call_llm`
 (and `evt.ctx.git`) directly.
 

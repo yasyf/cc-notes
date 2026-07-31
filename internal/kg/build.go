@@ -139,6 +139,7 @@ type record struct {
 	blockedBy  []model.EntityID
 	sprint     model.EntityID
 	project    model.EntityID
+	plan       model.EntityID
 	followUps  []model.EntityID
 	superseded []model.EntityID
 	events     []Event
@@ -204,7 +205,7 @@ func newRecord(snap model.Snapshot, events []Event) record {
 		// backfill below needs no further change.
 		r.text, r.tags = join(s.Description, commentText(s.Comments), criterionText(s.Criteria)), s.Labels
 		r.commits, r.branch, r.parent = s.Commits, s.Branch, s.Parent
-		r.blockedBy, r.sprint, r.project = s.BlockedBy, s.Sprint, s.Project
+		r.blockedBy, r.sprint, r.project, r.plan = s.BlockedBy, s.Sprint, s.Project, s.Plan
 	case model.Sprint:
 		r.text, r.tags = join(s.Description, commentText(s.Comments)), s.Labels
 		r.commits, r.project = s.Commits, s.Project
@@ -218,6 +219,9 @@ func newRecord(snap model.Snapshot, events []Event) record {
 		r.text, r.tags = join(s.Premise, s.Body, s.RootCause, findingText(s.Findings), entryText(s.Entries)), s.Tags
 		r.anchors, r.commits, r.fixCommits = s.Anchors, s.Commits, s.FixCommits
 		r.followUps, r.superseded = s.FollowUps, s.SupersededBy
+	case model.Plan:
+		r.text, r.tags = join(s.Body, s.Outcome, commentText(s.Comments)), s.Labels
+		r.anchors, r.superseded = s.Anchors, s.SupersededBy
 	default:
 		panic(fmt.Sprintf("kg: unregistered snapshot type %T", snap))
 	}
@@ -365,6 +369,9 @@ func (b *builder) addRecord(r record, touched map[model.SHA][]string, terms map[
 	}
 	if r.project != "" {
 		b.entityEdge(self, r.project, EdgeProject)
+	}
+	if r.plan != "" {
+		b.entityEdge(self, r.plan, EdgePlan)
 	}
 }
 

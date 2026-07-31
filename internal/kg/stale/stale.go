@@ -34,7 +34,8 @@ const (
 	SignalExpired Signal = "EXPIRED"
 	// SignalExonerated is S4: the investigation's premise was refuted.
 	SignalExonerated Signal = "EXONERATED"
-	// SignalClosed is S5: the task is terminal or its claim lease expired.
+	// SignalClosed is S5: the task is terminal or its claim lease expired, or
+	// the plan is done or abandoned.
 	SignalClosed Signal = "CLOSED"
 	// SignalReconciled is S6: the task's branch merged into trunk or is gone.
 	SignalReconciled Signal = "RECONCILED"
@@ -271,6 +272,11 @@ func gate(r record, br branches) (Signal, string) {
 		}
 	case model.KindTask:
 		return taskGate(r, br)
+	case model.KindPlan:
+		switch r.PlanStatus {
+		case model.PlanDone, model.PlanAbandoned:
+			return SignalClosed, fmt.Sprintf("plan %s", r.PlanStatus)
+		}
 	}
 	return "", ""
 }

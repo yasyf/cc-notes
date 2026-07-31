@@ -120,6 +120,8 @@ func (f *taskFolder) apply(op model.Op, c model.PackCommit) bool {
 		f.task.Sprint = o.Sprint
 	case model.SetProject:
 		f.task.Project = o.Project
+	case model.SetPlan:
+		f.task.Plan = o.Plan
 	case model.DeleteNote:
 		f.task.Deleted = true
 	case model.AddCriterion:

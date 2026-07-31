@@ -51,7 +51,7 @@ func unmetCriteriaUsage(id model.EntityID, unmet []model.Criterion) error {
 func editEmpty(e notes.TaskEdit) bool {
 	return e.Title == nil && e.Description == nil && e.Type == nil && e.Priority == nil &&
 		e.Status == nil && e.Assignee == nil && e.Parent == nil && e.Sprint == nil &&
-		e.Project == nil && e.Branch == nil && len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0 &&
+		e.Project == nil && e.Plan == nil && e.Branch == nil && len(e.AddLabels) == 0 && len(e.RemoveLabels) == 0 &&
 		anchorSpecEmpty(e.AddAnchors) && anchorSpecEmpty(e.RemoveAnchors)
 }
 
@@ -123,7 +123,7 @@ func newTaskCmd() *cobra.Command {
 }
 
 func newTaskAddCmd() *cobra.Command {
-	var body, taskType, parent, branch, sprint, project string
+	var body, taskType, parent, branch, sprint, project, plan string
 	var priority int
 	var labels, blockedBy, criteria []string
 	var anchors anchorSets
@@ -199,6 +199,14 @@ func newTaskAddCmd() *cobra.Command {
 				}
 				projectID = proj.ID
 			}
+			var planID model.EntityID
+			if plan != "" {
+				_, pl, err := planSpec.load(ctx, s, plan)
+				if err != nil {
+					return err
+				}
+				planID = pl.ID
+			}
 			var blockers []model.EntityID
 			for _, prefix := range blockedBy {
 				blocker, _, err := resolveBlocker(ctx, s, prefix)
@@ -217,6 +225,7 @@ func newTaskAddCmd() *cobra.Command {
 				Parent:      parentID,
 				Sprint:      sprintID,
 				Project:     projectID,
+				Plan:        planID,
 				Labels:      labels,
 				Criteria:    criteria,
 				BlockedBy:   blockers,
@@ -244,6 +253,7 @@ func newTaskAddCmd() *cobra.Command {
 	flags.StringVar(&parent, "parent", "", "parent task id prefix")
 	flags.StringVar(&sprint, "sprint", "", "sprint id prefix")
 	flags.StringVar(&project, "project", "", "project id prefix")
+	flags.StringVar(&plan, "plan", "", "plan id prefix")
 	flags.StringArrayVar(&blockedBy, "blocked-by", nil, "blocker task id prefix (repeatable, resolved globally)")
 	flags.StringVar(&branch, "branch", "", "task branch (default: current branch)")
 	flags.BoolVar(&backlog, "backlog", false, "create on the backlog (no branch)")
@@ -561,9 +571,9 @@ func newTaskCancelCmd() *cobra.Command {
 }
 
 func newTaskEditCmd() *cobra.Command {
-	var title, body, taskType, status, assignee, parent, sprint, project string
+	var title, body, taskType, status, assignee, parent, sprint, project, plan string
 	var priority int
-	var noAssignee, noParent, noSprint, noProject bool
+	var noAssignee, noParent, noSprint, noProject, noPlan bool
 	var labels labelEdits
 	var anchors anchorEdits
 	var target branchTarget
@@ -659,6 +669,17 @@ func newTaskEditCmd() *cobra.Command {
 				var pr model.EntityID
 				edit.Project = &pr
 			}
+			if flags.Changed("plan") {
+				_, pl, err := planSpec.load(ctx, s, plan)
+				if err != nil {
+					return err
+				}
+				edit.Plan = &pl.ID
+			}
+			if noPlan {
+				var pl model.EntityID
+				edit.Plan = &pl
+			}
 			if flags.Changed("branch") {
 				if err := s.Git.CheckRefFormat(ctx, target.branch); err != nil {
 					return &UsageError{Err: err}
@@ -704,6 +725,8 @@ func newTaskEditCmd() *cobra.Command {
 	flags.BoolVar(&noSprint, "no-sprint", false, "clear the sprint")
 	flags.StringVar(&project, "project", "", "new project id prefix")
 	flags.BoolVar(&noProject, "no-project", false, "clear the project")
+	flags.StringVar(&plan, "plan", "", "new plan id prefix")
+	flags.BoolVar(&noPlan, "no-plan", false, "clear the plan")
 	target.bind(flags)
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
@@ -711,6 +734,7 @@ func newTaskEditCmd() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("parent", "no-parent")
 	cmd.MarkFlagsMutuallyExclusive("sprint", "no-sprint")
 	cmd.MarkFlagsMutuallyExclusive("project", "no-project")
+	cmd.MarkFlagsMutuallyExclusive("plan", "no-plan")
 	cmd.MarkFlagsMutuallyExclusive("branch", "backlog")
 	return cmd
 }

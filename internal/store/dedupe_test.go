@@ -125,6 +125,18 @@ func TestDedupePerKind(t *testing.T) {
 			base: []model.Op{model.CreateInvestigation{Nonce: model.NewNonce(), Title: "T", Premise: "P"}},
 			diff: []model.Op{model.CreateInvestigation{Nonce: model.NewNonce(), Title: "T", Premise: "different suspicion"}},
 		},
+		{
+			name: "plan",
+			base: []model.Op{model.CreatePlan{Nonce: model.NewNonce(), Title: "T", Body: "B", Status: model.PlanDraft, Labels: []string{"a"}}},
+			diff: []model.Op{model.CreatePlan{Nonce: model.NewNonce(), Title: "T", Body: "revised approach", Status: model.PlanDraft, Labels: []string{"a"}}},
+		},
+		{
+			// The born status is content: recording an approved plan must not
+			// collapse into the draft of the same text it was revised from.
+			name: "plan born status",
+			base: []model.Op{model.CreatePlan{Nonce: model.NewNonce(), Title: "T", Body: "B", Status: model.PlanDraft}},
+			diff: []model.Op{model.CreatePlan{Nonce: model.NewNonce(), Title: "T", Body: "B", Status: model.PlanApproved}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := initStore(t)
@@ -159,6 +171,63 @@ func TestDedupeTaskCriteriaIgnoresID(t *testing.T) {
 	}
 }
 
+// TestDedupeTaskDistinguishesPlans proves the plan pointer is task content:
+// "write the tests" under one plan and the same title under another are two
+// tasks, and re-adding one under no plan at all is a third. Without a.Plan ==
+// b.Plan in sameTaskContent the second create would silently collapse into the
+// first, filing the work under the wrong plan.
+func TestDedupeTaskDistinguishesPlans(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	planA := create(t, s, planOps("perf")).(model.Plan)
+	planB := create(t, s, planOps("the plan kind")).(model.Plan)
+
+	under := func(plan model.EntityID) []model.Op {
+		ops := []model.Op{model.CreateTask{
+			Nonce: model.NewNonce(), Title: "write the tests", Type: model.TypeTask, Branch: "main",
+		}}
+		if plan != "" {
+			ops = append(ops, model.SetPlan{Plan: plan})
+		}
+		return ops
+	}
+
+	first := create(t, s, under(planA.ID)).(model.Task)
+	if first.Plan != planA.ID {
+		t.Fatalf("first task Plan = %q, want %q", first.Plan, planA.ID)
+	}
+	second := create(t, s, under(planB.ID)).(model.Task)
+	if second.ID == first.ID {
+		t.Fatalf("same title under a different plan reused id %s", second.ID)
+	}
+	if second.Plan != planB.ID {
+		t.Errorf("second task Plan = %q, want %q", second.Plan, planB.ID)
+	}
+	planless := create(t, s, under("")).(model.Task)
+	if planless.ID == first.ID || planless.ID == second.ID {
+		t.Fatalf("planless twin reused id %s", planless.ID)
+	}
+
+	// The pointer is the only difference, so an identical re-record under the
+	// same plan must still dedupe.
+	got := mustDedupe(t, s, under(planA.ID))
+	if got.EntityID() != first.ID {
+		t.Errorf("reused id = %s, want existing %s", got.EntityID(), first.ID)
+	}
+
+	// Re-pointing an existing task does not retroactively fuse it with a twin.
+	if _, err := s.Append(ctx, refs.For(model.KindTask, second.ID), []model.Op{model.SetPlan{Plan: planA.ID}}); err != nil {
+		t.Fatalf("re-point: %v", err)
+	}
+	tasks, err := s.ListTasks(ctx)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 3 {
+		t.Errorf("ListTasks = %d tasks, want 3", len(tasks))
+	}
+}
+
 // TestDedupeSkipsTombstonedNote proves a soft-deleted twin never suppresses a
 // re-add: after DeleteNote the identical content roots a fresh note.
 func TestDedupeSkipsTombstonedNote(t *testing.T) {
@@ -189,12 +258,15 @@ func TestDedupeSkipsSupersededNote(t *testing.T) {
 	}
 }
 
-// TestDedupeSkipsClosed proves a done task, completed sprint, and archived
-// project never block re-adding identical content — the live-set filter drops
-// entities with ClosedAt set.
+// TestDedupeSkipsClosed proves a done task, completed sprint, archived project,
+// closed investigation, and closed plan never block re-adding identical
+// content — the live-set filter drops entities in a terminal state.
 func TestDedupeSkipsClosed(t *testing.T) {
 	mkInvestigation := func() []model.Op {
 		return []model.Op{model.CreateInvestigation{Nonce: model.NewNonce(), Title: "T", Premise: "P"}}
+	}
+	mkPlan := func() []model.Op {
+		return []model.Op{model.CreatePlan{Nonce: model.NewNonce(), Title: "T", Body: "B", Status: model.PlanApproved}}
 	}
 	for _, tc := range []struct {
 		name  string
@@ -240,6 +312,18 @@ func TestDedupeSkipsClosed(t *testing.T) {
 			close: model.SetInvestigationStatus{Status: model.InvestigationAbandoned},
 			kind:  model.KindInvestigation,
 		},
+		{
+			name:  "plan done",
+			mk:    mkPlan,
+			close: model.SetPlanStatus{Status: model.PlanDone},
+			kind:  model.KindPlan,
+		},
+		{
+			name:  "plan abandoned",
+			mk:    mkPlan,
+			close: model.SetPlanStatus{Status: model.PlanAbandoned},
+			kind:  model.KindPlan,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := initStore(t)
@@ -252,6 +336,56 @@ func TestDedupeSkipsClosed(t *testing.T) {
 				t.Errorf("re-create reused closed id %s", got.EntityID())
 			}
 		})
+	}
+}
+
+// TestLivePlanTargetsOnlyBornStatuses pins the plan live set to the statuses
+// CreatePlan can be born into. Widening it to executing — the state a plan
+// spends most of its life in — states a rule that samePlanContent's Status
+// comparison can never let fire, and narrowing it below the born set would stop
+// dedupe from firing at all.
+func TestLivePlanTargetsOnlyBornStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		status model.PlanStatus
+		want   bool
+	}{
+		{model.PlanDraft, true},
+		{model.PlanApproved, true},
+		{model.PlanExecuting, false},
+		{model.PlanDone, false},
+		{model.PlanAbandoned, false},
+	} {
+		t.Run(string(tc.status), func(t *testing.T) {
+			if got := livePlan(model.Plan{Status: tc.status}); got != tc.want {
+				t.Errorf("livePlan(%s) = %v, want %v", tc.status, got, tc.want)
+			}
+			if livePlan(model.Plan{Status: tc.status, Deleted: true}) {
+				t.Errorf("livePlan(tombstoned %s) = true, want false", tc.status)
+			}
+		})
+	}
+}
+
+// TestDedupeSkipsExecutingPlan proves a plan already under execution never
+// blocks re-recording its text: plan_start moves the record past capture, so
+// the identical plan roots a fresh chain the executing one keeps out of.
+func TestDedupeSkipsExecutingPlan(t *testing.T) {
+	s := initStore(t)
+	mk := func() []model.Op {
+		return []model.Op{model.CreatePlan{Nonce: model.NewNonce(), Title: "T", Body: "B", Status: model.PlanApproved}}
+	}
+	first := create(t, s, mk()).(model.Plan)
+	if got := mustDedupe(t, s, mk()); got.EntityID() != first.ID {
+		t.Fatalf("approved twin deduped to %s, want %s", got.EntityID(), first.ID)
+	}
+	if _, err := s.Append(t.Context(), refs.For(model.KindPlan, first.ID), []model.Op{
+		model.SetPlanStatus{Status: model.PlanExecuting},
+	}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	second := create(t, s, mk())
+	if second.EntityID() == first.ID {
+		t.Fatalf("re-create reused executing id %s", second.EntityID())
 	}
 }
 

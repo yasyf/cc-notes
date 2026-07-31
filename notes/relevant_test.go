@@ -58,6 +58,8 @@ func entryID(e notes.RelevantEntry) model.EntityID {
 		return e.Runbook.ID
 	case model.KindInvestigation:
 		return e.Investigation.ID
+	case model.KindPlan:
+		return e.Plan.ID
 	default:
 		return e.Note.ID
 	}
@@ -74,6 +76,8 @@ func entryUpdatedAt(e notes.RelevantEntry) int64 {
 		return e.Runbook.UpdatedAt
 	case model.KindInvestigation:
 		return e.Investigation.UpdatedAt
+	case model.KindPlan:
+		return e.Plan.UpdatedAt
 	default:
 		return e.Note.UpdatedAt
 	}
@@ -437,6 +441,65 @@ func TestRelevantSurfacesInvestigations(t *testing.T) {
 	// The active investigation, boosted, outranks the terminal one.
 	if entryID(scored[0]) != openInv.ID {
 		t.Errorf("top result = %s, want the active investigation %s", entryID(scored[0]), openInv.ID)
+	}
+}
+
+func TestRelevantSurfacesPlans(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	commitFile(t, dir, "internal/fold/fold.go", "package fold\n")
+
+	// The plan being executed against the file under edit: the highest-value
+	// surfacing, so it earns the executing boost above a plain path match.
+	executing, _, err := c.CreatePlan(ctx, notes.PlanSpec{
+		Title:   "fold rewrite",
+		Body:    "## Context\n\nthe fold is slow\n",
+		Status:  model.PlanApproved,
+		Anchors: notes.AnchorSpec{Paths: []string{"internal/fold/fold.go"}},
+	})
+	if err != nil {
+		t.Fatalf("CreatePlan executing: %v", err)
+	}
+	if _, err := c.StartPlan(ctx, executing.ID); err != nil {
+		t.Fatalf("StartPlan: %v", err)
+	}
+	// A draft against the same path still surfaces, with no boost.
+	draft, _, err := c.CreatePlan(ctx, notes.PlanSpec{
+		Title:   "fold rewrite, take two",
+		Body:    "## Context\n\na different approach\n",
+		Anchors: notes.AnchorSpec{Paths: []string{"internal/fold/fold.go"}},
+	})
+	if err != nil {
+		t.Fatalf("CreatePlan draft: %v", err)
+	}
+
+	scored := mustRelevant(t, c, dir, "internal/fold/fold.go", notes.RelevantFilter{})
+
+	got := findEntry(t, scored, executing.ID)
+	if got.Kind != model.KindPlan || got.Plan.Title != "fold rewrite" {
+		t.Fatalf("executing entry = kind %q title %q, want plan/fold rewrite", got.Kind, got.Plan.Title)
+	}
+	if got.Score != scorePathTest+scoreOpenBoostTest {
+		t.Errorf("executing plan score = %d, want %d (path + executing boost)", got.Score, scorePathTest+scoreOpenBoostTest)
+	}
+	if !slices.Equal(got.Reasons, []string{"plan-executing", "path"}) {
+		t.Errorf("executing plan reasons = %v, want [plan-executing path]", got.Reasons)
+	}
+	// The trap: entryVerdict's note fallback would render a plan UNVERIFIED
+	// forever, because a plan holds no VerifiedAt.
+	if got.Verdict != "" {
+		t.Errorf("plan verdict = %q, want empty (no freshness lifecycle)", got.Verdict)
+	}
+
+	drafted := findEntry(t, scored, draft.ID)
+	if drafted.Score != scorePathTest {
+		t.Errorf("draft plan score = %d, want %d (path only, no boost)", drafted.Score, scorePathTest)
+	}
+	if slices.Contains(drafted.Reasons, "plan-executing") {
+		t.Errorf("draft plan reasons = %v, want no executing boost", drafted.Reasons)
+	}
+	if entryID(scored[0]) != executing.ID {
+		t.Errorf("top result = %s, want the executing plan %s", entryID(scored[0]), executing.ID)
 	}
 }
 

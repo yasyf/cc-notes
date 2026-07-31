@@ -19,10 +19,10 @@ var (
 	// ErrCycle reports a dependency edge that would close a cycle in the task
 	// blocked-by graph.
 	ErrCycle = errors.New("dependency cycle")
-	// ErrIllegalTransition reports an investigation status transition the
-	// lifecycle machine forbids from the current status. The wrapping error names
-	// the current and requested status.
-	ErrIllegalTransition = errors.New("illegal investigation transition")
+	// ErrIllegalTransition reports an investigation or plan status transition the
+	// kind's lifecycle machine forbids from the current status. The wrapping error
+	// names the current and requested status.
+	ErrIllegalTransition = errors.New("illegal status transition")
 	// ErrMissingReason reports a verb that requires an evidence reason — a finding
 	// disposition's why, a transition's proof or reopen reason, or a fix carrying
 	// neither a commit nor a text entry — called with an empty one.
@@ -34,6 +34,10 @@ var (
 	ErrEmptyPremise = errors.New("premise required")
 	// ErrEmptyFinding reports a finding added or edited with empty text.
 	ErrEmptyFinding = errors.New("finding text required")
+	// ErrEmptyBody reports a plan created or edited with an empty body. A plan is
+	// its body — the approved text carried verbatim — so an empty one records
+	// nothing, and blanking an approved plan is never a legal edit.
+	ErrEmptyBody = errors.New("body required")
 )
 
 // AmbiguousError is the rich candidate set behind ErrAmbiguous, re-exported so

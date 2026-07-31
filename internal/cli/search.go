@@ -24,6 +24,7 @@ type searchDTO struct {
 	Task          *taskSummaryDTO          `json:"task,omitempty"`
 	Runbook       *runbookSummaryDTO       `json:"runbook,omitempty"`
 	Investigation *investigationSummaryDTO `json:"investigation,omitempty"`
+	Plan          *planSummaryDTO          `json:"plan,omitempty"`
 }
 
 // searchHit pairs one matched entity with its kind's own rank tier, so the
@@ -34,8 +35,8 @@ type searchHit struct {
 }
 
 // newSearchCmd builds the top-level "cc-notes search QUERY": one ranked search
-// fanned out across every kind, merged kind-tagged. Like show and history it is
-// global because a query needs no noun; the noun-scoped "<kind> search"
+// fanned out across the record kinds, merged kind-tagged. Like show and history
+// it is global because a query needs no noun; the noun-scoped "<kind> search"
 // commands remain for a single-kind search with that kind's full filter set
 // (e.g. --author).
 func newSearchCmd() *cobra.Command {
@@ -45,7 +46,7 @@ func newSearchCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
-		Short: "Ranked search across every note, doc, log, task, runbook, and investigation",
+		Short: "Ranked search across every note, doc, log, task, runbook, investigation, and plan",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openClient(cmd)
@@ -145,6 +146,14 @@ func searchAllKinds(ctx context.Context, c *notes.Client, query string, f notes.
 		hits = append(hits, searchHit{snap: inv, tier: textTier(inv.Title, inv.Tags, investigationSearchBodies(inv), q)})
 	}
 
+	plans, err := c.SearchPlans(ctx, query, f)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range plans {
+		hits = append(hits, searchHit{snap: p, tier: textTier(p.Title, p.Labels, []string{p.Body, p.Outcome}, q)})
+	}
+
 	slices.SortFunc(hits, compareSearchHits)
 	return hits, nil
 }
@@ -191,6 +200,9 @@ func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, json
 			case model.Investigation:
 				inv := newInvestigationSummaryDTO(v)
 				dto.Investigation = &inv
+			case model.Plan:
+				p := newPlanSummaryDTO(v)
+				dto.Plan = &p
 			default:
 				panic(fmt.Sprintf("searchAllKinds returned unknown snapshot %T", h.snap))
 			}
@@ -213,6 +225,8 @@ func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, json
 			lean = leanRunbookLine(v)
 		case model.Investigation:
 			lean = leanInvestigationLine(v)
+		case model.Plan:
+			lean = leanPlanLine(v)
 		default:
 			panic(fmt.Sprintf("searchAllKinds returned unknown snapshot %T", h.snap))
 		}

@@ -83,6 +83,7 @@
   "closed_at": "2023-11-15T03:13:20Z",
   "sprint": "sprint-0000001",
   "project": "project-000001",
+  "plan": "plan-000000001",
   "criteria": [
     {
       "id": "c1",

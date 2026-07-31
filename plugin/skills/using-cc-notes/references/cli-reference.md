@@ -1,12 +1,12 @@
 # cc-notes CLI reference
 
-The command surface, grouped by noun: package, service, repo, task, sprint, project, runbook, investigation, note,
-doc, log, papercut, kg. Every command takes `-h`/`--help`. Commands outside the `service` group also accept
+The command surface, grouped by noun: package, service, repo, task, sprint, project, runbook, investigation, plan,
+note, doc, log, papercut, kg. Every command takes `-h`/`--help`. Commands outside the `service` group also accept
 a global `--repo PATH` (`-R`) that targets another repository's store from any cwd — pass any path
 inside it, while file-path arguments still resolve against the invocation cwd. Cobra displays the
 inherited repository flag in package and service help, but those machine operations reject it before doing work.
 Every note, doc, log, papercut, task, sprint, project,
-runbook, investigation, sync, and reconcile command takes `--json` for a machine-readable record; without it,
+runbook, investigation, plan, sync, and reconcile command takes `--json` for a machine-readable record; without it,
 mutations echo a lean tab-separated line and listings print one lean line per entity.
 
 `--json` speaks two shapes. A listing or a mutation acknowledgement returns a *summary* — the
@@ -24,10 +24,12 @@ CLI-only. Where the cc-notes MCP server is live (the Claude Code plugin launches
 tool instead of shelling out: a tool result is the command's `--json`, and the properties map
 one-to-one onto the flags documented below.
 
-Sprints and projects are an optional planning layer over tasks — group work into a time-boxed
+Sprints and projects are an optional grouping layer over tasks — batch work into a time-boxed
 sprint or a long-lived project without touching the canonical task and note flow. A task that
 joins neither behaves exactly as a task does today. Runbooks are the layer's third noun: a
-repeatable procedure of ordered steps whose every execution is a tracked run.
+repeatable procedure of ordered steps whose every execution is a tracked run. A plan is the
+record of one approved approach, held verbatim and executed once; the tasks that implement it
+point back at it with `--plan`.
 
 ## Machine package and service
 
@@ -135,6 +137,14 @@ uninstalled: CCNotesHelper service
   (`open → root_caused → fixed → confirmed`, with `exonerated` and `abandoned` terminals) that
   holds the verdict instead of the title. It anchors like a note but never drifts — a chronicle
   has no freshness lifecycle. Finding ids are nonces that resolve by prefix like criterion ids.
+- **Plans are repo-global.** A plan holds one approved approach verbatim in its markdown body —
+  context, approach, pitfalls, verification — with a typed status (`draft → approved → executing
+  → done | abandoned`, plus a reopen from either terminal back to `executing`) instead of a
+  freshness lifecycle: a plan goes out of date through its status machine, so it anchors like a
+  note but carries no witness and never drifts. Membership is the task's upward `--plan` pointer,
+  which `plan show` inverts into the task roll-up; a draft re-approved under the same title
+  before work starts is edited into that same plan, and `plan supersede` links the replacement
+  only for a genuine replan once execution has started — an edge, never a status.
 
 This reference describes cc-notes v0.22.0 and later — one flag vocabulary across every noun:
 `--body` for the long text, `--label` for labels. An unknown or renamed flag exits 2 with a hint
@@ -152,6 +162,7 @@ the `tags` field — in `--json` and in `show` headers alike.
 | Project | `<short7-id>` `<status>` `<title>` |
 | Runbook | `<short7-id>` `<status>` `<title>` |
 | Investigation | `<short7-id>` `<status>` `<title>` |
+| Plan | `<short7-id>` `<status>` `<title>` |
 | Note | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` |
 | Doc | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` `<when trigger\|->` |
 | Log | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` |
@@ -180,7 +191,7 @@ A `show` returns the entity whole, with one bound: five append-only collections 
 most recent members, and the count of older ones elided rides beside them as `entries_omitted`,
 `findings_omitted`, `comments_omitted`, or `runs_omitted`. The cap applies to a log's `entries`, an
 investigation's `findings` and `entries`, a task's `comments`, and a runbook's `runs` — sprint,
-project, and runbook comments come back whole — and each omitted count is itself absent when
+project, runbook, and plan comments come back whole — and each omitted count is itself absent when
 nothing was elided. Past the cap, `log entry list`, `investigation entry list`, and `task comment
 list` return the complete timeline or thread, `investigation finding list` every finding, and
 `runbook run list` every run (then `runbook run show` for one run's steps).
@@ -269,8 +280,9 @@ A sectioned, read-only view to orient before picking up work:
    `STALE` by its lease,
 4. every runbook run still in flight, with the same lease-style flag measured from its last
    recorded step,
-5. the note, doc, log, papercut, and investigation counts, including how many notes need
-   review and how many investigation findings are still undecided.
+5. the note, doc, log, papercut, investigation, and plan counts, including how many notes need
+   review, how many investigation findings are still undecided, and how many plans are in
+   flight (draft, approved, or executing).
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -293,6 +305,7 @@ docs: 6 total, 0 need review
 logs: 2 total
 papercuts: 5 total
 investigations: 2 open, 1 awaiting confirmation, 3 open findings
+plans: 1 in flight
 ```
 
 A `blocked` row carries its `blocked_by` ids in `--json`, so the reason is one field away. Steal
@@ -300,7 +313,7 @@ an expired lease with `task claim <id> --steal`; the run rows are the runbook's,
 `runbook run show <runbook> <run>`.
 
 JSON shape:
-`{"branch":string,"backlog":[<task summary>+"ready":bool,…],"your_branch":[<task summary>,…],"in_progress":[{"assignee":string,"tasks":[<task summary>+"stale":bool,…]}],"runs":[{"runbook":id,"title":string,"run":string,"runner":string,"started_at":rfc3339,"stale":bool}],"notes":{"total":int,"needs_review":int},"docs":{"total":int,"needs_review":int},"logs":{"total":int},"papercuts":{"total":int},"investigations":{"open":int,"awaiting_confirm":int,"open_findings":int}}`.
+`{"branch":string,"backlog":[<task summary>+"ready":bool,…],"your_branch":[<task summary>,…],"in_progress":[{"assignee":string,"tasks":[<task summary>+"stale":bool,…]}],"runs":[{"runbook":id,"title":string,"run":string,"runner":string,"started_at":rfc3339,"stale":bool}],"notes":{"total":int,"needs_review":int},"docs":{"total":int,"needs_review":int},"logs":{"total":int},"papercuts":{"total":int},"investigations":{"open":int,"awaiting_confirm":int,"open_findings":int},"plans":{"in_flight":int}}`.
 `papercuts` counts complaint entries, not journals, and the journal counts under `logs` too.
 Every task is a summary; `task show` reads one back in full.
 
@@ -357,15 +370,17 @@ descending, then id ascending. The lean line is the note line followed by a tab,
 reasons as a comma-separated list, and — when the note has a verdict — a final tab and the drift
 verdict.
 
-Docs, logs, and runbooks rank in the same pass: `relevant` scores each against `PATH` by the
-same path, directory, and branch anchor signals as a note and floats the matches inline. A doc line
+Docs, logs, runbooks, investigations, and plans rank in the same pass: `relevant` scores each
+against `PATH` by the same path, directory, and branch anchor signals as a note and floats the
+matches inline. A doc line
 carries its free-text `when` trigger as the final lean field, then a bracketed drift verdict (e.g.
 `[drifted]`) when the doc is not fresh, and a trailing `doc show <short-id>` hint in place of the
-long body. A log or runbook line carries no `when` and no drift verdict — neither ever drifts — and
-ends with a `log show <short-id>` or `runbook show <short-id>` hint in place of its content. The
-`--json` form tags each entry with a `kind` discriminator (`note`, `doc`, `log`, `runbook`, or
-`investigation`) and nests that kind's *summary* under the matching key, beside the `score` and the
-`reasons`. A body never rides a `relevant` result — the hint in the lean line is the JSON contract
+long body. A log, runbook, investigation, or plan line carries no `when` and no drift verdict —
+none of them ever drifts — and ends with that kind's `show <short-id>` hint in place of its
+content. The
+`--json` form tags each entry with a `kind` discriminator (`note`, `doc`, `log`, `runbook`,
+`investigation`, or `plan`) and nests that kind's *summary* under the matching key, beside the
+`score` and the `reasons`. A body never rides a `relevant` result — the hint in the lean line is the JSON contract
 too: read the match back with that kind's `show`.
 
 | Signal | Reason | Fires when |
@@ -397,11 +412,12 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes	path,branch	DRIFTE
 ```
 
 JSON shape:
-`[{"kind":string,"note":{<note summary>},"doc":{<doc summary>},"log":{<log summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>},"score":int,"reasons":[string,…]}]`.
-`kind` is `note`, `doc`, `log`, `runbook`, or `investigation` and selects which entity key is
-present (the others are omitted); the present value is that kind's summary, carrying its `drift`
-verdict for a note or doc, and, for a doc, its `when` trigger (a log, runbook, or investigation
-carries neither — none of them ever drifts). `score` is the summed signal weight; `reasons` are the
+`[{"kind":string,"note":{<note summary>},"doc":{<doc summary>},"log":{<log summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>},"plan":{<plan summary>},"score":int,"reasons":[string,…]}]`.
+`kind` is `note`, `doc`, `log`, `runbook`, `investigation`, or `plan` and selects which entity key
+is present (the others are omitted); the present value is that kind's summary, carrying its
+`drift`
+verdict for a note or doc, and, for a doc, its `when` trigger (a log, runbook, investigation, or
+plan carries neither — none of them ever drifts). `score` is the summed signal weight; `reasons` are the
 matched reason labels in fixed priority order. Read a match back in full with its kind's `show`.
 
 ### `cc-notes blame <sha>`
@@ -428,10 +444,10 @@ JSON shape:
 
 MCP: show (id)
 
-Show any entity by id — note, doc, log, task, sprint, project, or runbook. The id resolves across every
-kind, and the output is exactly what the entity's noun-scoped `show` prints. The id-addressed
-read verbs are kind-agnostic: `show`, `history`, and `compact` take any entity id with no noun
-(`blame` does the same for a commit sha).
+Show any entity by id — note, doc, log, task, sprint, project, runbook, investigation, or plan.
+The id resolves across every kind, and the output is exactly what the entity's noun-scoped `show`
+prints. The id-addressed read verbs are kind-agnostic: `show`, `history`, and `compact` take any
+entity id with no noun (`blame` does the same for a commit sha).
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -477,15 +493,17 @@ $ cc-notes history 0914cfb
 
 MCP: search (query, labels, limit, path, commit, dir, branch)
 
-One ranked search fanned out across every note, doc, log, task, runbook, and investigation, merged
-kind-tagged — the kind-agnostic sibling of the per-noun `search` commands, which remain for a
+One ranked search fanned out across every note, doc, log, task, runbook, investigation, and plan,
+merged kind-tagged — the kind-agnostic sibling of the per-noun `search` commands, which remain for
+a
 single-kind search with that kind's full filter set (e.g. `--author`). Each lean line is the
 entity's own lean line prefixed with a kind tag column.
 
 Each kind matches on its title, its labels, and its own body text: a note's or doc's body (a doc's
 `when` trigger reads as body text too), a task's description, a log's entries, a runbook's
-description and steps, an investigation's premise, body, root cause, entries, and findings. A title
-match outranks a label match, which outranks a body match.
+description and steps, an investigation's premise, body, root cause, entries, and findings, a
+plan's recorded text and outcome. A title match outranks a label match, which outranks a body
+match.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -504,7 +522,7 @@ task	d82c087	open	P1	-	Deploy the gateway behind a flag
 ```
 
 JSON shape:
-`[{"kind":string,"note":{<note summary>},"doc":{<doc summary>},"log":{<log summary>},"task":{<task summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>}}]`.
+`[{"kind":string,"note":{<note summary>},"doc":{<doc summary>},"log":{<log summary>},"task":{<task summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>},"plan":{<plan summary>}}]`.
 `kind` selects which entity key is present per hit; the others are omitted. A hit is a summary, and
 `search` computes no drift verdict, so no hit carries `drift`. Read the match back with its kind's
 `show`.
@@ -533,9 +551,9 @@ file tools. Takes no flags.
 
 MCP: — (CLI-only: op-log checkpoint maintenance, an operator task)
 
-Collapse any entity's op-log — note, doc, log, task, sprint, project, or runbook — into a
-checkpoint so future folds are cheap; the id and the full folded state are preserved and objects
-stay in the ODB.
+Collapse any entity's op-log — note, doc, log, task, sprint, project, runbook, investigation, or
+plan — into a checkpoint so future folds are cheap; the id and the full folded state are preserved
+and objects stay in the ODB.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -646,7 +664,7 @@ lands on.
 
 ### `cc-notes task add TITLE [BODY]`
 
-MCP: task_add (title, body, type, priority, labels, criteria, no_validation_criteria, parent, sprint, project, blocked_by, branch, backlog, commits, paths, dirs)
+MCP: task_add (title, body, type, priority, labels, criteria, no_validation_criteria, parent, sprint, project, plan, blocked_by, branch, backlog, commits, paths, dirs)
 
 Create a task. `Branch` defaults to your current branch; `--backlog` sets it to `""`; `--branch`
 sets it explicitly. The default resolves jj-aware on a detached HEAD; when no branch resolves,
@@ -669,6 +687,7 @@ go through `task edit --add-branch`.
 | `--parent <id>` | none | Parent task id |
 | `--sprint <id>` | none | Join a sprint (id prefix) |
 | `--project <id>` | none | Join a project directly (id prefix) |
+| `--plan <id>` | none | Point at the plan this task executes (id prefix) |
 | `--blocked-by <id>` | none | Blocker task id; repeatable, resolved globally |
 | `--branch <branch>` | current branch | Set the task's branch explicitly |
 | `--backlog` | off | Set `Branch=""` (shared, branch-less) |
@@ -685,7 +704,8 @@ by the `task criterion` subgroup below.
 
 `--sprint` and `--project` are independent: a task may join a sprint, a project, both, or
 neither. Joining a sprint leaves the project pointer untouched; `project show` still counts the
-task through its sprint.
+task through its sprint. `--plan` is a third independent pointer, at the plan whose approach this
+task implements; `plan show` inverts it into the plan's task roll-up.
 
 ```console
 $ cc-notes task add "Add retry backoff to the API client" --priority 1 --label api \
@@ -922,7 +942,7 @@ already closed. Linked commits fold as a set, so re-linking the same commit chan
 
 ### `cc-notes task edit ID`
 
-MCP: task_edit (id, title, body, type, priority, status, assignee, no_assignee, add_labels, rm_labels, parent, no_parent, sprint, no_sprint, project, no_project, branch, backlog, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches)
+MCP: task_edit (id, title, body, type, priority, status, assignee, no_assignee, add_labels, rm_labels, parent, no_parent, sprint, no_sprint, project, no_project, plan, no_plan, branch, backlog, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches)
 
 Edit a task without lifecycle transition checks — the escape hatch when the guided verbs do not
 fit. It also re-homes a task: setting `--branch` is a plain attribute write on the `Branch`
@@ -948,6 +968,8 @@ exclusive.
 | `--no-sprint` | Clear the sprint |
 | `--project <id>` | Join a project (id prefix); mutually exclusive with `--no-project` |
 | `--no-project` | Clear the project |
+| `--plan <id>` | Point at a plan (id prefix); mutually exclusive with `--no-plan` |
+| `--no-plan` | Clear the plan pointer |
 | `--add-commit` / `--rm-commit` | Commit anchor edits; repeatable |
 | `--add-path` / `--rm-path` | Path anchor edits; repeatable |
 | `--add-dir` / `--rm-dir` | Directory anchor edits; repeatable |
@@ -1081,7 +1103,7 @@ keep it larger than your sync interval, or a healthy holder behind a slow sync l
 Summary — `task list`, `ready`, `backlog`, `stale`, `archived`, `blame`, `status`, and every task
 mutation's acknowledgement:
 
-`{"id":string,"title":string,"type":string,"status":string,"priority":int,"assignee":string,"branch":string,"blocked_by":[id,…],"blocks":[id,…],"parent":id,"sprint":id,"project":id,"criteria_met":int,"criteria_total":int,"updated_at":rfc3339}`.
+`{"id":string,"title":string,"type":string,"status":string,"priority":int,"assignee":string,"branch":string,"blocked_by":[id,…],"blocks":[id,…],"parent":id,"sprint":id,"project":id,"plan":id,"criteria_met":int,"criteria_total":int,"updated_at":rfc3339}`.
 `id`, `title`, `status`, and `updated_at` are always present; the rest follow the zero-value
 omission rule, so an unclaimed backlog task at priority 0 carries none of `priority`, `assignee`,
 or `branch`. `blocks` is the derived reverse index of `blocked_by`, resolved for a whole listing in
@@ -1091,13 +1113,13 @@ the `in_progress` groups of `status --json` add an always-present `stale` bool.
 
 Full — `task show ID --json` (and `show ID --json` on a task id):
 
-`{"id":string,"branch":string,"title":string,"description":string,"type":string,"status":string,"priority":int,"assignee":string,"labels":[…],"blocked_by":[id,…],"blocks":[id,…],"parent":string,"children":[id,…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"comments_omitted":int,"commits":[sha,…],"runs":[{"runbook":id,"run":string,"status":string,"started_at":rfc3339,"finished_at":rfc3339}],"lease":{"holder":string,"heartbeat":rfc3339},"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339,"closed_at":rfc3339,"sprint":id,"project":id,"criteria":[{"id":string,"text":string,"script":string,"status":string,"note":string}],"closed_forced":bool}`.
+`{"id":string,"branch":string,"title":string,"description":string,"type":string,"status":string,"priority":int,"assignee":string,"labels":[…],"blocked_by":[id,…],"blocks":[id,…],"parent":string,"children":[id,…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"comments_omitted":int,"commits":[sha,…],"runs":[{"runbook":id,"run":string,"status":string,"started_at":rfc3339,"finished_at":rfc3339}],"lease":{"holder":string,"heartbeat":rfc3339},"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339,"closed_at":rfc3339,"sprint":id,"project":id,"plan":id,"criteria":[{"id":string,"text":string,"script":string,"status":string,"note":string}],"closed_forced":bool}`.
 `id`, `title`, `status`, `priority`, `created_at`, and `updated_at` are always present. `blocks` is
 the derived reverse index of `blocked_by` and `children` the reverse index of `parent`; `runs`
 lists the tracked runbook runs citing this task, oldest start first, each naming the runbook that
 owns it because a run id is unique only within its runbook. An absent `branch` is a backlog task.
-`sprint` and
-`project` are the task's independent membership pointers; each criterion's `status` is `pending`,
+`sprint`, `project`, and `plan` are the task's independent membership pointers; each criterion's
+`status` is `pending`,
 `met`, or `failed`, with `note` carrying the evidence recorded with that verdict; `closed_forced`
 is `true` only for a `done` task closed with at least one criterion still unmet. `comments` holds
 the 20 most recent, with `comments_omitted` counting the older ones; `task comment list` reads the
@@ -2069,6 +2091,252 @@ timeline back.
 `investigation finding list` returns the findings in full,
 `[{"id":string,"text":string,"status":string,"note":string}]` — uncapped, and the way to read past
 a `show`'s finding cap.
+
+## Plan commands
+
+A plan is the durable record of one approved approach, held **verbatim** in a markdown body —
+context, approach, pitfalls, verification — and executed once. Plans are repo-global, resolve by
+id prefix, and carry the same optional commit, path, directory, and branch anchors as a note, but
+no witness and no freshness lifecycle: a plan is work-shaped, not fact-shaped, and it goes out of
+date through its typed status — `draft → approved → executing → done | abandoned`, with `reopen`
+returning either terminal to `executing`. `approve` fires only from `draft`, `done` only from
+`executing`, and `abandon` from any non-terminal status; `start` and `reopen` are one move into
+`executing` under two names, so either accepts `approved`, `done`, or `abandoned`. An illegal
+transition is a conflict (exit 4) naming the current and requested status. The tasks that
+implement a plan point at it (`task add --plan`, `task edit --plan`), and `plan show` inverts
+those pointers into the task roll-up — no downward list is stored. A draft re-approved under the
+same title before work starts is edited into that same plan (`plan edit --body`); a genuine
+replan once execution has started is its own plan, linked with `plan supersede`: supersession is
+an edge, never a status, so a superseded plan keeps the lifecycle status it closed with while
+dropping out of `plan list` and `plan search` (tombstoned plans drop out the same way;
+`plan show` still reads either back). Every command takes `--json`.
+
+### `cc-notes plan add TITLE [BODY]`
+
+MCP: plan_add (title, body, body_file, approved, labels, commits, paths, dirs, branches)
+
+Record a plan. `BODY` is the plan text, verbatim — positional, `--body`, `--body-file`, or `-`
+(stdin) — and it is required: a plan is its body, so an empty body (or an empty `--body-file`) is
+a usage error. The plan is born `draft` unless `--approved` records it already approved — the
+usual capture, since the text lands at the moment a human approves it. An add whose title, body,
+born status, labels, and anchors all match a live non-terminal plan is a duplicate — the existing
+record is returned with a warning.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--body <text>` | none | The plan text, verbatim; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read the plan text from this file; mutually exclusive with `--body` |
+| `--approved` | off | Record the plan already approved instead of draft |
+| `--label <label>` | none | Label; repeatable |
+| `--commit <sha>` | none | Commit anchor; repeatable, resolved to a full sha |
+| `--path <path>` | none | Path anchor; repeatable |
+| `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
+| `--branch <branch>` | none | Branch anchor; repeatable |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes plan add "Fix monorepo read performance" --body-file plan.md --path internal/gitobj --label perf
+8d2ed23	draft	Fix monorepo read performance
+```
+
+### `cc-notes plan list`
+
+MCP: plan_list (status, all, labels, path, commit, dir, branch)
+
+List plans, one lean line each. The default scope is the in-flight set — `draft`, `approved`, and
+`executing` — so closed plans drop out of view; superseded and tombstoned plans stay hidden even
+under `--all`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--status <csv>` | `draft,approved,executing` | Status filter, comma-separated; mutually exclusive with `--all` |
+| `--all` | off | Every status, terminals included |
+| `--label <label>` | none | Require label; repeatable, ANDed |
+| `--commit <sha>` | none | Require commit anchor |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--json` | off | Emit JSON |
+
+### `cc-notes plan show ID`
+
+MCP: plan_show (id)
+
+Show one plan: a fixed-order header block (id, status, title, labels, the four anchor kinds,
+superseded_by, author, created, updated, started, closed, closed_by, and the derived task
+roll-up), then the recorded text verbatim, then the outcome block.
+
+```console
+$ cc-notes plan show 8d2ed23
+id: 8d2ed23de71b3373fe7e9927a3146dacb4ff7334
+status: executing
+title: Fix monorepo read performance
+labels: perf
+commits: -
+paths: internal/gitobj
+dirs: -
+branches: -
+superseded_by: -
+author: ada <ada@example.com>
+created: 2026-07-31T08:29:08Z
+updated: 2026-07-31T08:29:19Z
+started: 2026-07-31T08:29:19Z
+closed: -
+closed_by: -
+tasks: 9a31718
+
+## Context
+status takes 19.8s in the monorepo.
+
+## Approach
+1. Memoize ancestor checks in gitobj.
+2. Reuse the store across sync rounds.
+
+## Verification
+/usr/bin/time -p cc-notes status
+
+outcome:
+-
+```
+
+### `cc-notes plan edit ID`
+
+MCP: plan_edit (id, title, body, outcome, add_labels, rm_labels, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches)
+
+Edit a plan's title, recorded text, outcome, labels, or anchors. `--body` is last-writer-wins:
+re-approving a revised draft under the same title lands here, overwriting the recorded text, and
+every earlier draft survives in `plan history`. That is the revision path — `plan supersede` is
+reserved for a genuine replan once execution has started. Passing an empty `--body` is a usage
+error (exit 2): a plan is its body, so there is no way to blank it.
+
+| Flag | Meaning |
+|------|---------|
+| `--title <text>` | New title |
+| `--body <text>` | New plan text, verbatim; `-` reads stdin |
+| `--outcome <text>` | What executing the plan produced; `-` reads stdin |
+| `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
+| `--add-commit` / `--rm-commit` | Commit anchor edits; repeatable |
+| `--add-path` / `--rm-path` | Path anchor edits; repeatable |
+| `--add-dir` / `--rm-dir` | Directory anchor edits; repeatable |
+| `--add-branch` / `--rm-branch` | Branch anchor edits; repeatable |
+| `--json` | Emit JSON |
+
+### `cc-notes plan approve ID` · `start` · `reopen`
+
+MCP: plan_approve (id)
+
+MCP: plan_start (id)
+
+MCP: plan_reopen (id)
+
+The outcome-free lifecycle verbs. `approve` moves a draft to `approved`; `start` moves an
+approved plan to `executing` and stamps `started_at`; `reopen` returns a `done` or `abandoned`
+plan to `executing` — the same edge as `start`, from the other side — and clears the close
+stamps. Each is legal from exactly the statuses named above; anything else is a conflict (exit
+4).
+
+```console
+$ cc-notes plan approve 8d2ed23
+8d2ed23	approved	Fix monorepo read performance
+$ cc-notes plan start 8d2ed23
+8d2ed23	executing	Fix monorepo read performance
+$ cc-notes plan start 8d2ed23
+conflict: illegal status transition: 8d2ed23 cannot go executing→executing
+```
+
+### `cc-notes plan done ID` · `abandon`
+
+MCP: plan_done (id, outcome)
+
+MCP: plan_abandon (id, outcome)
+
+Close a plan. `done` closes an `executing` plan as done; `abandon` closes from any non-terminal
+status — a draft nobody approved, an approved plan overtaken by events, an execution walked away
+from. Both stamp `closed_at`/`closed_by` and take an optional `--outcome` recording what
+executing the plan actually produced, written in the same commit as the status flip.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--outcome <text>` | none | What executing the plan produced; `-` reads stdin |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes plan done 8d2ed23 --outcome "status 19.8s -> 2.1s on the monorepo"
+8d2ed23	done	Fix monorepo read performance
+```
+
+### `cc-notes plan comment ID [BODY]`
+
+MCP: plan_comment (id, body)
+
+Append a threaded comment — positional `BODY`, `--body`, or `-` (stdin).
+
+### `cc-notes plan supersede OLD --by NEW`
+
+MCP: plan_supersede (id, by, clear)
+
+Record that plan NEW replaces OLD after a genuine replan, the way `note supersede` does for
+notes — a plan revised and re-approved before work starts is edited in place instead, with no
+edge. The superseded plan keeps whatever lifecycle status it holds — supersession is an edge, not
+a sixth status — and drops out of `plan list` and `plan search`; `plan show` still reads it back,
+pointing at its replacement. `--clear` removes the edge.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--by <id>` | required | The plan that replaces OLD |
+| `--clear` | off | Remove the supersede edge instead of adding it |
+| `--json` | off | Emit JSON |
+
+### `cc-notes plan search QUERY`
+
+MCP: plan_search (query, labels, limit, author, path, commit, dir, branch)
+
+Ranked search across plan titles, recorded text, and outcomes. A title match outranks a label
+match, which outranks a body or outcome match; superseded and tombstoned plans never rank.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--label <label>` | none | Require label; repeatable, ANDed |
+| `--limit <N>` | `20` | Maximum results; 0 = all |
+| `--author <actor>` | none | Require author |
+| `--commit <sha>` | none | Require commit anchor |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--json` | off | Emit JSON |
+
+### `cc-notes plan history ID`
+
+MCP: — (CLI-only: covered by the kind-agnostic history tool)
+
+The plan's edit trail — who changed which fields, when, every earlier body draft included. This is
+the only way back to a draft a revision round overwrote. Takes `--reverse`, `--limit`, and
+`--json` like `cc-notes history`.
+
+### `cc-notes plan rm ID`
+
+MCP: plan_rm (id)
+
+Tombstone a plan. The ref survives until `gc` prunes it.
+
+### JSON plan shapes
+
+Summary — `plan list`, `plan search`, the top-level `search` and `relevant`, and every plan
+mutation's acknowledgement:
+
+`{"id":string,"title":string,"status":string,"updated_at":rfc3339}`.
+All four fields are always present. The recorded text, the outcome, and the task roll-up never
+ride a summary.
+
+Full — `plan show ID --json`:
+
+`{"id":string,"title":string,"body":string,"status":string,"outcome":string,"labels":[…],"anchors":[{"kind":string,"value":string}],"superseded_by":[id…],"tasks":[id…],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"started_at":rfc3339,"closed_at":rfc3339,"closed_by":string,"deleted":bool}`.
+`id`, `title`, `body`, `status`, `created_at`, and `updated_at` are always present. `status` is
+`draft`, `approved`, `executing`, `done`, or `abandoned`; `tasks` is the derived roll-up of the
+tasks pointing at this plan — inverted at read time, never stored; `started_at` stamps the latest
+entry into `executing`, and `closed_at`/`closed_by` are set only while the plan sits in a
+terminal status. A plan anchor never carries a `witness` — a plan goes out of date through its
+status machine, not a freshness lifecycle.
 
 ## Note commands
 

@@ -170,6 +170,20 @@ var everyOpSample = []opSample{
 	{"remove_fix_commit", RemoveFixCommit{SHA: testParent}},
 	{"add_follow_up", AddFollowUp{ID: testID}},
 	{"remove_follow_up", RemoveFollowUp{ID: testParent}},
+	{"create_plan", CreatePlan{
+		Nonce:  testNonce,
+		Title:  "Add the plan kind",
+		Body:   "## Context\nA Claude Code plan is never durably recorded.",
+		Status: PlanApproved,
+		Labels: []string{"core", "model"},
+		Anchors: []Anchor{
+			{Kind: AnchorCommit, Value: testID},
+			{Kind: AnchorDir, Value: "internal/fold"},
+		},
+	}},
+	{"set_plan_status", SetPlanStatus{Status: PlanExecuting}},
+	{"set_plan_outcome", SetPlanOutcome{Outcome: "Shipped in v0.51.0; gc.go collapsed onto Kinds()."}},
+	{"set_plan", SetPlan{Plan: testID}},
 	{"checkpoint", Checkpoint{
 		EntityID: testID,
 		State: Note{
@@ -787,6 +801,11 @@ func TestDecodePackFailures(t *testing.T) {
 		{"non-digit add_step position", `{"v":1,"lamport":1,"ops":[{"kind":"add_step","id":"s1","text":"t","command":"","position":"A"}]}`, ErrInvalidValue},
 		{"empty set_step_position position", `{"v":1,"lamport":1,"ops":[{"kind":"set_step_position","id":"s1","position":""}]}`, ErrInvalidValue},
 		{"finish_run running", `{"v":1,"lamport":1,"ops":[{"kind":"finish_run","id":"r1","status":"running"}]}`, ErrInvalidValue},
+		{"bad plan status", `{"v":1,"lamport":1,"ops":[{"kind":"set_plan_status","status":"shipped"}]}`, ErrInvalidValue},
+		{"create_plan executing", `{"v":1,"lamport":1,"ops":[{"kind":"create_plan","nonce":"00","title":"t","body":"b","status":"executing","labels":null,"anchors":null}]}`, ErrInvalidValue},
+		{"create_plan done", `{"v":1,"lamport":1,"ops":[{"kind":"create_plan","nonce":"00","title":"t","body":"b","status":"done","labels":null,"anchors":null}]}`, ErrInvalidValue},
+		{"create_plan statusless", `{"v":1,"lamport":1,"ops":[{"kind":"create_plan","nonce":"00","title":"t","body":"b","labels":null,"anchors":null}]}`, ErrInvalidValue},
+		{"bad anchor kind in create_plan", `{"v":1,"lamport":1,"ops":[{"kind":"create_plan","nonce":"00","title":"t","body":"b","status":"draft","labels":null,"anchors":[{"kind":"url","value":"https://x"}]}]}`, ErrInvalidValue},
 		{"finish_run bogus status", `{"v":1,"lamport":1,"ops":[{"kind":"finish_run","id":"r1","status":"paused"}]}`, ErrInvalidValue},
 		{"bogus set_run_step_status status", `{"v":1,"lamport":1,"ops":[{"kind":"set_run_step_status","run_id":"r1","step_id":"s1","status":"pending","note":""}]}`, ErrInvalidValue},
 		{"bogus set_runbook_status status", `{"v":1,"lamport":1,"ops":[{"kind":"set_runbook_status","status":"deleted"}]}`, ErrInvalidValue},
@@ -970,7 +989,7 @@ func TestOpKindCharset(t *testing.T) {
 // TestNoOpOrSnapshotHasCustomJSON reflects over; the same test asserts every
 // entry is a checkpoint state the codec recognizes, catching a stale entry.
 // Add a new Snapshot type here when you define one.
-var everySnapshot = []Snapshot{Note{}, Doc{}, Log{}, Task{}, Sprint{}, Project{}, Runbook{}, Investigation{}}
+var everySnapshot = []Snapshot{Note{}, Doc{}, Log{}, Task{}, Sprint{}, Project{}, Runbook{}, Investigation{}, Plan{}}
 
 // TestNoOpOrSnapshotHasCustomJSON asserts no op type and no snapshot type
 // implements json.Marshaler or json.Unmarshaler. The byte-splicing codec that

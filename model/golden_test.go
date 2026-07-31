@@ -775,9 +775,9 @@ func TestPackGoldenBytesPreAnchorTaskDecodes(t *testing.T) {
 }
 
 // TestSnapshotGoldenBytesAnchorlessTask pins the exact json.Marshal bytes of an
-// anchor-less task snapshot: Anchors marshals omitempty, so the bytes — which
-// checkpoint State embeds verbatim — must stay byte-identical to the pre-anchor
-// form and carry no anchors key.
+// anchor-less, plan-less task snapshot: Anchors and Plan marshal omitempty, so
+// the bytes — which checkpoint State embeds verbatim — must stay byte-identical
+// to the pre-anchor form and carry neither key.
 func TestSnapshotGoldenBytesAnchorlessTask(t *testing.T) {
 	snap := Task{
 		ID: testID, Branch: "feature/sync", Title: "Fix flaky sync",
@@ -797,8 +797,10 @@ func TestSnapshotGoldenBytesAnchorlessTask(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("marshal =\n%s\nwant\n%s", got, want)
 	}
-	if strings.Contains(string(got), `"anchors"`) {
-		t.Errorf("anchor-less task snapshot bytes contain \"anchors\"")
+	for _, key := range []string{`"anchors"`, `"plan"`} {
+		if strings.Contains(string(got), key) {
+			t.Errorf("anchor-less, plan-less task snapshot bytes contain %s", key)
+		}
 	}
 }
 
@@ -1070,5 +1072,164 @@ func TestPackGoldenBytesCheckpointFullState(t *testing.T) {
 				t.Fatalf("decode = %#v, want %#v", back, pack)
 			}
 		})
+	}
+}
+
+// TestPackGoldenBytesPlanOps pins the exact v1 wire bytes of every plan op kind
+// and a checkpoint over a plan, both directions: marshal to the pinned bytes and
+// decode back to the identical op. These bytes are storage format — entity ids
+// derive from them — so any marshal-layout drift fails here.
+func TestPackGoldenBytesPlanOps(t *testing.T) {
+	cases := []struct {
+		kind string
+		op   Op
+		want string
+	}{
+		{
+			"create_plan",
+			CreatePlan{
+				Nonce: testNonce, Title: "Add the plan kind",
+				Body:   "## Context\nA Claude Code plan is never durably recorded.",
+				Status: PlanApproved, Labels: []string{"core", "model"},
+				Anchors: []Anchor{{Kind: AnchorCommit, Value: testID}, {Kind: AnchorDir, Value: "internal/fold"}},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"create_plan","nonce":"0123456789abcdef0123456789abcdef","title":"Add the plan kind","body":"## Context\nA Claude Code plan is never durably recorded.","status":"approved","labels":["core","model"],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},{"kind":"dir","value":"internal/fold"}]}]}`,
+		},
+		{
+			// Minimal create: nil Labels and Anchors (neither omitempty) pin the null
+			// side of the wire format. Adding omitempty to either — which would drop
+			// the key and change every label-less or anchor-less plan's entity id —
+			// fails here.
+			"create_plan_minimal",
+			CreatePlan{Nonce: testNonce, Title: "Add the plan kind", Body: "ninth kind", Status: PlanDraft},
+			`{"v":1,"lamport":42,"ops":[{"kind":"create_plan","nonce":"0123456789abcdef0123456789abcdef","title":"Add the plan kind","body":"ninth kind","status":"draft","labels":null,"anchors":null}]}`,
+		},
+		{
+			"set_plan_status",
+			SetPlanStatus{Status: PlanExecuting},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_plan_status","status":"executing"}]}`,
+		},
+		{
+			"set_plan_outcome",
+			SetPlanOutcome{Outcome: "Shipped in v0.51.0; liveTips collapsed onto model.Kinds()."},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_plan_outcome","outcome":"Shipped in v0.51.0; liveTips collapsed onto model.Kinds()."}]}`,
+		},
+		{
+			"set_plan",
+			SetPlan{Plan: testID},
+			`{"v":1,"lamport":42,"ops":[{"kind":"set_plan","plan":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"}]}`,
+		},
+		{
+			"checkpoint_plan",
+			Checkpoint{
+				EntityID:      testID,
+				State:         planGoldenSnap(),
+				CoversLamport: 6,
+				CoversShas:    []SHA{testParent, testID},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"plan","state":` + planGoldenSnapJSON + `,"covers_lamport":6,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			pack := Pack{Lamport: 42, Ops: []Op{tc.op}}
+			got, err := json.Marshal(pack)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("marshal =\n%s\nwant\n%s", got, tc.want)
+			}
+			back, err := DecodePack([]byte(tc.want))
+			if err != nil {
+				t.Fatalf("decode golden: %v", err)
+			}
+			if !reflect.DeepEqual(back, pack) {
+				t.Fatalf("decode = %#v, want %#v", back, pack)
+			}
+		})
+	}
+}
+
+// planGoldenSnap is a fully-populated plan snapshot: every field non-zero,
+// including a comment, the sorted anchor and supersede sets, both close stamps,
+// and the outcome. TestSnapshotGoldenBytesPlan pins its bytes and
+// TestPackGoldenBytesPlanOps embeds them as a checkpoint state.
+func planGoldenSnap() Plan {
+	return Plan{
+		ID: testID, Title: "Add the plan kind",
+		Body:   "## Context\nA Claude Code plan is never durably recorded.",
+		Status: PlanDone, Outcome: "Shipped in v0.51.0; liveTips collapsed onto model.Kinds().",
+		Labels:       []string{"core", "model"},
+		Comments:     []Comment{{Author: "ada", TS: 150, Body: "approved as written"}},
+		Anchors:      []Anchor{{Kind: AnchorCommit, Value: testID}, {Kind: AnchorDir, Value: "internal/fold"}},
+		SupersededBy: []EntityID{testParent},
+		Author:       "ada", CreatedAt: 100, UpdatedAt: 300, StartedAt: 200, ClosedAt: 300, ClosedBy: "ada",
+		Head: testParent,
+	}
+}
+
+const planGoldenSnapJSON = `{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Add the plan kind","body":"## Context\nA Claude Code plan is never durably recorded.","status":"done","outcome":"Shipped in v0.51.0; liveTips collapsed onto model.Kinds().","labels":["core","model"],"comments":[{"author":"ada","ts":150,"body":"approved as written"}],"anchors":[{"kind":"commit","value":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"},{"kind":"dir","value":"internal/fold"}],"superseded_by":["00112233445566778899aabbccddeeff00112233"],"author":"ada","created_at":100,"updated_at":300,"started_at":200,"closed_at":300,"closed_by":"ada","head":"00112233445566778899aabbccddeeff00112233","deleted":false}`
+
+// draftPlanGoldenSnapJSON is a freshly-created draft plan: the empty side of
+// every slice and stamp, exactly what a fresh fold produces. The empty (non-nil)
+// slices match sortedKeys/sortedAnchors output.
+const draftPlanGoldenSnapJSON = `{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Add the plan kind","body":"## Context\nninth entity kind","status":"draft","outcome":"","labels":[],"comments":[],"anchors":[],"superseded_by":[],"author":"ada","created_at":100,"updated_at":100,"started_at":0,"closed_at":0,"closed_by":"","head":"00112233445566778899aabbccddeeff00112233","deleted":false}`
+
+// TestSnapshotGoldenBytesPlan pins the exact json.Marshal bytes of a plan
+// snapshot at both ends of its lifecycle. Checkpoint State embeds these bytes
+// verbatim, and checkpoint encode determinism across replicas is part of the
+// storage format, so any marshal-layout drift on any field fails here. The plan
+// snapshot has no omitempty field, so no key is ever absent — the draft case is
+// what pins that.
+func TestSnapshotGoldenBytesPlan(t *testing.T) {
+	draft := Plan{
+		ID: testID, Title: "Add the plan kind", Body: "## Context\nninth entity kind",
+		Status: PlanDraft, Labels: []string{}, Comments: []Comment{},
+		Anchors: []Anchor{}, SupersededBy: []EntityID{},
+		Author: "ada", CreatedAt: 100, UpdatedAt: 100, Head: testParent,
+	}
+	cases := []struct {
+		name string
+		snap Plan
+		want string
+	}{
+		{"done", planGoldenSnap(), planGoldenSnapJSON},
+		{"draft", draft, draftPlanGoldenSnapJSON},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := json.Marshal(tc.snap)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("marshal =\n%s\nwant\n%s", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSnapshotGoldenBytesPlannedTask pins where Task.Plan lands in the task wire
+// layout — between project and criteria — for a task that has one. The plan-less
+// side is pinned by TestSnapshotGoldenBytesAnchorlessTask, whose bytes predate
+// this field and must stay byte-identical: Plan marshals omitempty precisely so
+// that every existing task checkpoint keeps its pre-plan bytes.
+func TestSnapshotGoldenBytesPlannedTask(t *testing.T) {
+	snap := Task{
+		ID: testID, Branch: "feature/plan", Title: "Wire the plan CLI",
+		Description: "plan add/approve/start", Type: TypeTask, Status: StatusInProgress,
+		Priority: 1, Assignee: "agent-7", HeartbeatAt: 300, HeartbeatLamport: 4,
+		Labels: []string{"cli"}, BlockedBy: []EntityID{}, Comments: []Comment{},
+		CreatedAt: 100, UpdatedAt: 300, StartedAt: 200,
+		Commits: []SHA{}, Head: testParent, Plan: testID, Criteria: []Criterion{},
+	}
+	want := `{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","branch":"feature/plan","title":"Wire the plan CLI","description":"plan add/approve/start","type":"task","status":"in_progress","priority":1,"assignee":"agent-7","heartbeat_at":300,"heartbeat_lamport":4,"labels":["cli"],"blocked_by":[],"parent":"","comments":[],"created_at":100,"updated_at":300,"started_at":200,"closed_at":0,"commits":[],"head":"00112233445566778899aabbccddeeff00112233","sprint":"","project":"","plan":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","criteria":[]}`
+	got, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("marshal =\n%s\nwant\n%s", got, want)
 	}
 }

@@ -1,7 +1,7 @@
-# Sprints and projects: the optional planning layer
+# Sprints and projects: the optional grouping layer
 
 Tasks and notes are the whole product. Sprints and projects sit on top of tasks as an optional
-planning layer — batch tasks into a time-boxed sprint or a long-lived project when you want that
+grouping layer — batch tasks into a time-boxed sprint or a long-lived project when you want that
 structure, ignore it when you don't. The canonical loop (`task add`, `task start`, `task done`,
 `note add`) is unchanged; a task with no sprint and no project behaves as it always has.
 
@@ -294,7 +294,8 @@ $ cc-notes task edit 77bb68a --no-sprint           # detach from the sprint, kee
 
 Membership is repo-wide, so it survives re-homing a task between branches (`task edit --branch`)
 and is unaffected by the backlog. A task's `--branch`/`--backlog` scope and its `--sprint`/`--project` membership are
-orthogonal axes: branch says *which line of work*, sprint and project say *which plan*.
+orthogonal axes: branch says *which line of work*, sprint and project say *which grouping* — and
+the independent `--plan` pointer says *which approved plan* (see `plans.md`).
 
 The `taskDTO` gains `sprint`, `project`, and `criteria`, plus a derived `closed_forced` flag (see
 below). The `task show --json` record for the task above:
@@ -435,5 +436,5 @@ look at as a unit:
   view.
 
 Because attachment is just an upward pointer, you can add it late (point existing tasks at a sprint
-you create today) or never. The planning layer bends to the work; the work does not wait on the
-plan.
+you create today) or never. The grouping layer bends to the work; the work does not wait on the
+structure.

@@ -147,8 +147,8 @@ func buildGoldenRepo(t *testing.T) *gitRepo {
 // entries, an archived project, an active sprint carrying literal dates, a task in
 // both, a full-lifecycle task linking a real commit, a task stranded on the
 // deleted feature/gone branch, a runbook run through start, a step mark, and
-// finish, and an investigation carried from evidence gathering through a
-// confirmed fix.
+// finish, an investigation carried from evidence gathering through a confirmed
+// fix, and a branch-anchored plan run from approved through done and reopened.
 func buildGoldenEntities(t *testing.T, s *store.Store, c1, c2, c4 commitInfo) {
 	t.Helper()
 	ctx := t.Context()
@@ -211,6 +211,25 @@ func buildGoldenEntities(t *testing.T, s *store.Store, c1, c2, c4 commitInfo) {
 	appendOps(t, s, invRef, model.SetInvestigationStatus{Status: model.InvestigationRootCaused})
 	appendOps(t, s, invRef, model.SetInvestigationStatus{Status: model.InvestigationFixed})
 	appendOps(t, s, invRef, model.SetInvestigationStatus{Status: model.InvestigationConfirmed})
+
+	planID := createPlan(t, s, "pool rewrite plan", "## Approach\n\nbuffer the results channel", model.Branch("feature/parent"))
+	planRef := refs.For(model.KindPlan, planID)
+	appendOps(t, s, planRef, model.SetPlanStatus{Status: model.PlanExecuting})
+	appendOps(t, s, planRef, model.SetPlanStatus{Status: model.PlanDone}, model.SetPlanOutcome{Outcome: "the buffered send fixed the hang"})
+	appendOps(t, s, planRef, model.SetPlanStatus{Status: model.PlanExecuting})
+}
+
+// createPlan creates an approved plan anchored to a branch, returning its id.
+func createPlan(t *testing.T, s *store.Store, title, body string, branch model.Branch) model.EntityID {
+	t.Helper()
+	snap, err := s.Create(t.Context(), []model.Op{model.CreatePlan{
+		Nonce: model.NewNonce(), Title: title, Body: body, Status: model.PlanApproved,
+		Anchors: []model.Anchor{{Kind: model.AnchorBranch, Value: string(branch)}},
+	}})
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	return snap.(model.Plan).ID
 }
 
 // createDocWhen creates a doc carrying a --when qualifier, returning its id.

@@ -131,6 +131,18 @@ func LoadCorpus(ctx context.Context, c *notes.Client) ([]Entity, error) {
 		})
 	}
 
+	plans, err := c.Plans(ctx, notes.PlanFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("list plans: %w", err)
+	}
+	for _, p := range plans {
+		out = append(out, Entity{
+			ID: p.ID, Kind: model.KindPlan, Title: p.Title,
+			Body: join(p.Body, p.Outcome, commentText(p.Comments)),
+			Tags: p.Labels, UpdatedAt: p.UpdatedAt, SupersededBy: p.SupersededBy,
+		})
+	}
+
 	slices.SortFunc(out, func(a, b Entity) int { return cmp.Compare(a.ID, b.ID) })
 	return out, nil
 }

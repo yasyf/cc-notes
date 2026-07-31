@@ -55,6 +55,11 @@ var dupCheckers = map[model.Kind]dupChecker{
 			func() ([]model.Investigation, error) { return s.ListInvestigations(ctx) },
 			liveInvestigation, sameInvestigationContent)
 	},
+	model.KindPlan: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
+		return scanDup(candidate, fold.Plan,
+			func() ([]model.Plan, error) { return s.ListPlans(ctx) },
+			livePlan, samePlanContent)
+	},
 }
 
 // liveRunbook reports whether rb is a valid dedupe target: active and not
@@ -76,6 +81,25 @@ func liveInvestigation(inv model.Investigation) bool {
 		return false
 	}
 	return true
+}
+
+// livePlan reports whether p is a valid dedupe target: not tombstoned and
+// still in a born status. samePlanContent compares Status and CreatePlan admits
+// only draft and approved, so those are the only statuses a create candidate
+// can ever match; a plan that has moved on to executing, done, or abandoned is a
+// record whose lifecycle has left capture, and planning the same work again
+// mints a fresh chain. Unlike liveInvestigation, whose kind has one born status
+// and therefore encodes the whole rule as terminal-status exclusion, a plan's
+// live set is stated positively so it cannot drift away from the born set.
+func livePlan(p model.Plan) bool {
+	if p.Deleted {
+		return false
+	}
+	switch p.Status {
+	case model.PlanDraft, model.PlanApproved:
+		return true
+	}
+	return false
 }
 
 func (s *Store) findDuplicate(ctx context.Context, kind model.Kind, pack model.Pack) (model.Snapshot, error) {
@@ -118,9 +142,10 @@ func dedupeCovered(ops []model.Op) bool {
 		switch op.(type) {
 		case model.CreateNote, model.CreateDoc, model.CreateLog,
 			model.CreateTask, model.CreateSprint, model.CreateProject,
-			model.CreateRunbook, model.CreateInvestigation, model.AddStep,
+			model.CreateRunbook, model.CreateInvestigation, model.CreatePlan,
+			model.AddStep,
 			model.AddAttachment,
-			model.SetSprint, model.SetProject,
+			model.SetSprint, model.SetProject, model.SetPlan,
 			model.AddCriterion, model.AddDep,
 			model.SetStartDate, model.SetEndDate:
 		default:
@@ -163,6 +188,7 @@ func sameTaskContent(a, b model.Task) bool {
 		a.Parent == b.Parent &&
 		a.Sprint == b.Sprint &&
 		a.Project == b.Project &&
+		a.Plan == b.Plan &&
 		slices.Equal(a.Labels, b.Labels) &&
 		slices.Equal(a.BlockedBy, b.BlockedBy) &&
 		slices.Equal(a.Anchors, b.Anchors) &&
@@ -218,4 +244,18 @@ func sameInvestigationContent(a, b model.Investigation) bool {
 		slices.Equal(a.Tags, b.Tags) &&
 		slices.Equal(a.Anchors, b.Anchors) &&
 		slices.Equal(a.Attachments, b.Attachments)
+}
+
+// samePlanContent compares plans by the fields a create pack can carry: the
+// title, the verbatim body, the born status, and the label and anchor bundles.
+// Status is in because a create recording an already-approved plan must not
+// collapse into an existing draft of the same text. The lifecycle stamps and the
+// outcome are out — re-capturing the same plan text is exactly the duplicate a
+// scan-before-create should collapse.
+func samePlanContent(a, b model.Plan) bool {
+	return a.Title == b.Title &&
+		a.Body == b.Body &&
+		a.Status == b.Status &&
+		slices.Equal(a.Labels, b.Labels) &&
+		slices.Equal(a.Anchors, b.Anchors)
 }

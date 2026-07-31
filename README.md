@@ -114,6 +114,19 @@ cc-notes investigation confirm a1b2 "20 green CI runs since the fix; no recurren
 
 Status moves `open → root_caused → fixed → confirmed`; `exonerate` closes an arc whose premise turned out wrong — that is a verdict too — and `reopen` returns any closed one when it regresses. Findings (`investigation finding add`, then `clear` or `confirm --why`) hold each suspect hypothesis with its disposition, so a cleared suspect stays cleared, and a verdict is gated on them. `confirm` and `exonerate` list the still-open suspects and refuse to close over them unless you pass `--force`; `abandon`, which records no verdict, stays ungated.
 
+### Keep the approved plan on the record while agents execute it
+
+The plan a human signs off on evaporates with the session: the tasks that implement it carry no pointer back, and nobody can later say whether the approach was executed or dropped. A plan holds the approved text verbatim, the tasks point at it, and typed status tracks what became of it:
+
+```bash
+cc-notes plan add "Fix monorepo read performance" --body-file plan.md --approved --path internal/gitobj
+cc-notes task add "Memoize ancestor checks" --plan 8d2ed23 --criterion "status under 2.5s" --backlog
+cc-notes plan start 8d2ed23
+cc-notes plan done 8d2ed23 --outcome "status 19.8s -> 2.1s on the monorepo"
+```
+
+`plan show` reads the arc back whole — the text as approved, the derived task roll-up, and the outcome. A plan revised and re-approved before work starts is still that plan — the body is last-writer-wins and each earlier draft stays readable through `cc-notes history` — while a genuine replan once execution has started becomes its own plan, linked with `plan supersede`. With the capt-hook pack enabled, exiting Claude Code's plan mode records the approved plan for you and revises it in place on every later round.
+
 ---
 
 ## Commands
@@ -136,19 +149,20 @@ Status moves `open → root_caused → fixed → confirmed`; `exonerate` closes 
 | `cc-notes papercut` | File a one-paragraph friction complaint to the repo-wide papercuts journal (`papercut list` reads it back) |
 | `cc-notes investigation open` | Open a debugging arc on a falsifiable premise; findings, an evidence timeline, and status verbs carry it to a verdict |
 | `cc-notes runbook add` | Store a repeatable procedure as ordered steps; `runbook run start` tracks each execution with per-step outcomes |
-| `cc-notes sprint` / `project` | Roll tasks up into the optional planning layer: time-boxed sprints, long-lived projects |
-| `cc-notes relevant` | Rank the anchored records — notes, docs, logs, runbooks, investigations — most relevant to a path, with the reasons each matched |
+| `cc-notes plan add` | Record an approved plan verbatim; status tracks it from draft through execution to an outcome, and `task add --plan` links the work |
+| `cc-notes sprint` / `project` | Roll tasks up into the optional grouping layer: time-boxed sprints, long-lived projects |
+| `cc-notes relevant` | Rank the anchored records — notes, docs, logs, runbooks, investigations, plans — most relevant to a path, with the reasons each matched |
 | `cc-notes reconcile` | Carry merged branches' open tasks onto a target branch |
 | `cc-notes blame` | Name the task(s) a commit implemented |
 | `cc-notes attachment get` | Stream an attachment's content from the local LFS store (`path` prints its object path) |
 | `cc-notes sync` | Push and pull `refs/cc-notes/*`, union-merging concurrent edits and transferring attachment content |
 | `cc-notes viz` | Watch branch flow and note/task/doc lifecycles live in a browser |
 
-Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) covers every flag. Docs and notes also edit as checked-out plain files: `doc edit <id> --checkout` (or `note edit`) renders the entity to Markdown and prints its path, and `--apply` commits your edits back. Tasks, sprints, projects, and runbooks carry threaded discussion via `<noun> comment`. Every mutation echoes a lean tab-separated line, and every command takes `--json` — where listings and mutation acknowledgements return a compact summary, and `<noun> show <id> --json` returns the record whole, its bulkiest append-only histories capped at the 20 most recent with an elided count beside them. A global `--repo PATH` (`-R`) points any command at another repository's store from any cwd — pass any path inside it, while file-path arguments still resolve against the invocation cwd.
+Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) covers every flag. Docs and notes also edit as checked-out plain files: `doc edit <id> --checkout` (or `note edit`) renders the entity to Markdown and prints its path, and `--apply` commits your edits back. Tasks, sprints, projects, runbooks, and plans carry threaded discussion via `<noun> comment`. Every mutation echoes a lean tab-separated line, and every command takes `--json` — where listings and mutation acknowledgements return a compact summary, and `<noun> show <id> --json` returns the record whole, its bulkiest append-only histories capped at the 20 most recent with an elided count beside them. A global `--repo PATH` (`-R`) points any command at another repository's store from any cwd — pass any path inside it, while file-path arguments still resolve against the invocation cwd.
 
 ## MCP server
 
-`cc-notes mcp` runs a stdio [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that mirrors the CLI surface: one `noun_verb` tool per agent-facing command across all eight entity kinds — `doc_add`, `note_edit`, `task_claim`, `task_criterion_met`, `investigation_open`, `runbook_run_done`, `sprint_add`, and the rest — with parity tests guarding both directions. Each tool drives the real CLI in-process, so it validates and returns exactly what the command does — a tool result is the command's `--json`, a summary from a listing or a write, the whole record from a `*_show`. A long doc or note body rides the `body` parameter, so an agent records a handoff in one call, no scratch file and no stdin.
+`cc-notes mcp` runs a stdio [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that mirrors the CLI surface: one `noun_verb` tool per agent-facing command across all nine entity kinds — `doc_add`, `note_edit`, `task_claim`, `task_criterion_met`, `investigation_open`, `runbook_run_done`, `plan_approve`, `sprint_add`, and the rest — with parity tests guarding both directions. Each tool drives the real CLI in-process, so it validates and returns exactly what the command does — a tool result is the command's `--json`, a summary from a listing or a write, the whole record from a `*_show`. A long doc or note body rides the `body` parameter, so an agent records a handoff in one call, no scratch file and no stdin.
 
 The Claude Code plugin wires the server for you: it ships a bundled `.mcp.json` pointed at the `cc-notes` on your `PATH`, and the tools surface as `mcp__plugin_cc-notes_cc-notes__<tool>`. Nothing to install or configure. The plugin also auto-approves cc-notes CLI and MCP calls, so agents are never permission-prompted for them. Recording a handoff is one tool call:
 
@@ -188,7 +202,7 @@ Attachment content lives on your git host's LFS endpoint and counts against its 
 
 ## Visualize
 
-`cc-notes viz` opens a live web view of the current repo. Every branch draws as a swimlane with its fork and merge points, and every entity's lifecycle events — across all eight kinds, investigations and runbooks included — pin to the commits that produced them. Three tabs: the swimlane timeline, a commit DAG, and Browse — a faceted entity table with a task kanban, global search, and a markdown detail sidebar. All of them stream updates over SSE, so the view moves as agents claim, edit, and close work.
+`cc-notes viz` opens a live web view of the current repo. Every branch draws as a swimlane with its fork and merge points, and every entity's lifecycle events — across all nine kinds, investigations, runbooks, and plans included — pin to the commits that produced them. Three tabs: the swimlane timeline, a commit DAG, and Browse — a faceted entity table with a task kanban, global search, and a markdown detail sidebar. All of them stream updates over SSE, so the view moves as agents claim, edit, and close work.
 
 ```bash
 cc-notes viz

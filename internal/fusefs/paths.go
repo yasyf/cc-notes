@@ -42,6 +42,7 @@ var layouts = map[model.Kind]flatLayout{
 	model.KindLog:           {dir: "/logs", ext: ".md", slugged: true},
 	model.KindRunbook:       {dir: "/runbooks", ext: ".md", slugged: true},
 	model.KindInvestigation: {dir: "/investigations", ext: ".md", slugged: true},
+	model.KindPlan:          {dir: "/plans", ext: ".md", slugged: true},
 	model.KindTask:          {dir: "/tasks", ext: ".json"},
 	model.KindSprint:        {dir: "/sprints", ext: ".json"},
 	model.KindProject:       {dir: "/projects", ext: ".json"},
@@ -49,9 +50,9 @@ var layouts = map[model.Kind]flatLayout{
 
 // Node is one parsed namespace path: the root (Root), the flat per-kind
 // directories (KindDir) and the editable entity files under them (EntityFile,
-// read-only for runbooks and investigations), the read-only nested browse tree
-// of sprints and projects whose task leaves are symlinks to the flat files, and
-// the attachment tree.
+// read-only for runbooks, investigations, and plans), the read-only nested
+// browse tree of sprints and projects whose task leaves are symlinks to the flat
+// files, and the attachment tree.
 type Node interface {
 	node()
 }
@@ -60,15 +61,15 @@ type Node interface {
 type Root struct{}
 
 // KindDir is a flat per-kind directory: /notes, /docs, /logs, /runbooks,
-// /tasks, /sprints, or /projects.
+// /investigations, /plans, /tasks, /sprints, or /projects.
 type KindDir struct {
 	Kind model.Kind
 }
 
 // EntityFile is a flat editable entity file directly under its kind's
 // directory, keyed by its short id prefix so a stale slug still resolves. The
-// runbook kind is read-only; the sprint and project files coexist with their
-// browse directories of the same short id.
+// runbook, investigation, and plan kinds are read-only; the sprint and project
+// files coexist with their browse directories of the same short id.
 type EntityFile struct {
 	Kind    model.Kind
 	ShortID string
@@ -231,11 +232,11 @@ func JunkName(name string) bool {
 	return junkNames[name] || strings.HasPrefix(name, "._")
 }
 
-// ParsePath decodes an absolute namespace path into its syntactic Node. Notes,
-// docs, logs, runbooks, tasks, sprints, and projects are flat: a name carrying
-// the kind's extension directly under its directory is an EntityFile keyed by
-// short id, and the bare directory a KindDir. Sprints and projects additionally
-// nest a browse tree. Paths outside the tree shape fail with ErrPath.
+// ParsePath decodes an absolute namespace path into its syntactic Node. Every
+// kind but sprint and project is flat: a name carrying the kind's extension
+// directly under its directory is an EntityFile keyed by short id, and the bare
+// directory a KindDir. Sprints and projects additionally nest a browse tree.
+// Paths outside the tree shape fail with ErrPath.
 func ParsePath(path string) (Node, error) {
 	if path == "/" {
 		return Root{}, nil

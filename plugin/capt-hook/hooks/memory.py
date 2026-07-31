@@ -21,16 +21,14 @@ from captain_hook import (
 
 from .common import (
     CcNotesAvailable,
+    clamp_title,
     in_cc_pool_memory,
+    json_field,
     run_cc_notes,
     short_id,
 )
 
 MIRRORED_MEMORY_TYPES = ("feedback", "project", "reference")
-
-# The Go CLI hard-rejects a note title over 256 UTF-8 bytes (exit 2), and run_cc_notes
-# fails closed, so a long memory description would silently stop mirroring without a clamp.
-MAX_TITLE_BYTES = 256
 
 # Frontmatter fenced by `---` then a markdown body.
 MEMORY_FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?(.*)\Z", re.DOTALL)
@@ -85,33 +83,10 @@ def memory_notes(evt: PostToolUseEvent, slug: str) -> list[dict[str, Any]]:
     return [n for n in parsed if isinstance(n, dict)] if isinstance(parsed, list) else []
 
 
-def note_field(out: str | None, key: str) -> str:
-    if not out or not out.strip():
-        return ""
-    try:
-        parsed = json.loads(out)
-    except json.JSONDecodeError:
-        return ""
-    return parsed.get(key, "") if isinstance(parsed, dict) else ""
-
-
 def note_body(evt: PostToolUseEvent, note_id: str) -> str:
     # A listing carries only the summary shape (id, title, tags, author, updated_at, drift);
     # the body rides `note show` alone, so comparing it costs a second call.
-    return note_field(run_cc_notes(evt, "note", "show", note_id, "--json"), "body")
-
-
-def clamp_title(title: str, max_bytes: int = MAX_TITLE_BYTES) -> str:
-    """Clamp ``title`` to at most ``max_bytes`` UTF-8 bytes on a rune boundary.
-
-    Truncating the encoded bytes then decoding with ``errors="ignore"`` drops a
-    partial trailing rune, so the result never exceeds the cap and never splits a
-    character.
-    """
-    encoded = title.encode()
-    if len(encoded) <= max_bytes:
-        return title
-    return encoded[:max_bytes].decode(errors="ignore")
+    return json_field(run_cc_notes(evt, "note", "show", note_id, "--json"), "body")
 
 
 class MemoryWrite(CustomCondition):
@@ -172,7 +147,7 @@ def mirror_memory_to_note(evt: PostToolUseEvent) -> HookResult | None:
         # memory write that already landed.
         if out is None:
             return None
-        note_id, action = note_field(out, "id"), "created"
+        note_id, action = json_field(out, "id"), "created"
     return evt.warn(
         f"Mirrored memory '{slug}' → durable cc-notes note {short_id(note_id)} ({action}), "
         f"labeled `memory` / `memory:{slug}`. Run `cc-notes sync` to share it.",

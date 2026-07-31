@@ -1,17 +1,18 @@
-# Choosing native todos, cc-notes tasks, notes, docs, logs, investigations, and papercuts
+# Choosing native todos, cc-notes tasks, plans, notes, docs, logs, investigations, and papercuts
 
-Seven tools record "things to remember," and picking the wrong one is the most common mistake. The native todo tool, `cc-notes task`, `cc-notes note`, `cc-notes doc`, `cc-notes log`, `cc-notes investigation`, and `cc-notes papercut` differ along two axes — how long the record lives, and who can see it — plus, for the five durable knowledge records, the *form* the knowledge takes. Get those right and the choice is mechanical.
+Eight tools record "things to remember," and picking the wrong one is the most common mistake. The native todo tool, `cc-notes task`, `cc-notes plan`, `cc-notes note`, `cc-notes doc`, `cc-notes log`, `cc-notes investigation`, and `cc-notes papercut` differ along two axes — how long the record lives, and who can see it — plus, for the five durable knowledge records, the *form* the knowledge takes. Tasks and plans are the two work-shaped records: a task is a unit of work, a plan the approved approach a set of tasks executes. Get those right and the choice is mechanical.
 
 ## The two axes
 
-**Lifetime.** Native todos are ephemeral — they live for one session and vanish when it ends. cc-notes tasks, notes, docs, logs, and papercuts are durable git objects on `refs/cc-notes/*`, so they persist across sessions, machines, and agents; `git push` carries them out, and `cc-notes sync` folds in what other agents pushed.
+**Lifetime.** Native todos are ephemeral — they live for one session and vanish when it ends. cc-notes tasks, plans, notes, docs, logs, and papercuts are durable git objects on `refs/cc-notes/*`, so they persist across sessions, machines, and agents; `git push` carries them out, and `cc-notes sync` folds in what other agents pushed.
 
-**Scope.** Native todos are private to the current agent. A `cc-notes task` is global: it lives at a single flat ref, and any agent who syncs the repo sees it. Its branch is a mutable attribute, not its identity — `task list` and `task ready` default to tasks on your current branch, but the shared backlog (tasks with no branch) is visible to every agent on every branch. cc-notes notes, docs, and logs are repo-global, shared the same way; papercuts share one repo-wide journal.
+**Scope.** Native todos are private to the current agent. A `cc-notes task` is global: it lives at a single flat ref, and any agent who syncs the repo sees it. Its branch is a mutable attribute, not its identity — `task list` and `task ready` default to tasks on your current branch, but the shared backlog (tasks with no branch) is visible to every agent on every branch. cc-notes plans, notes, docs, and logs are repo-global, shared the same way; papercuts share one repo-wide journal.
 
 | Tool | Lifetime | Scope | Records |
 |------|----------|-------|---------|
 | Native todos | Session only | This agent, private | The steps of the task I am doing right now |
 | `cc-notes task` | Durable, synced | Global; a branch attribute plus a shared backlog | A unit of work that outlives the session or coordinates agents |
+| `cc-notes plan` | Durable, synced | Repo-global, shared | An approved plan held verbatim, with a typed lifecycle from draft through execution to an outcome and a roll-up of the tasks executing it |
 | `cc-notes note` | Durable, synced | Repo-global, shared | A one-line decision or fact worth remembering |
 | `cc-notes doc` | Durable, synced | Repo-global, shared | Long-form guidance written for the next agent, with a when-to-read trigger |
 | `cc-notes log` | Durable, synced | Repo-global, shared | An append-only chronology with no verdict coming — each entry an immutable timestamped fact, never edited, optionally carrying attached evidence files |
@@ -23,7 +24,7 @@ Seven tools record "things to remember," and picking the wrong one is the most c
 Ask, in order:
 
 1. **Will this matter after the session ends?** No: native todo. Yes: cc-notes.
-2. **Is it work to do, knowledge to remember, or friction you observed?** Work is a `cc-notes task`; knowledge — a fact, a guide, or a running record — is a note, a doc, or a log (next question). Friction is neither: something slowed you down, you are not fixing it, and it is not a fact worth keeping — file it as a `cc-notes papercut "<complaint>"`, one paragraph, fire and forget, and move on.
+2. **Is it work to do, knowledge to remember, or friction you observed?** Work is a `cc-notes task` — and when the work executes an approach a human approved, record that approach first as a `cc-notes plan`, verbatim, and point each task at it with `--plan`. Knowledge — a fact, a guide, or a running record — is a note, a doc, or a log (next question). Friction is neither: something slowed you down, you are not fixing it, and it is not a fact worth keeping — file it as a `cc-notes papercut "<complaint>"`, one paragraph, fire and forget, and move on.
 3. **A standing fact, living guidance, a growing chronology, or an arc heading for a verdict?** A single verified fact or decision is a `cc-notes note`. Multi-paragraph guidance written *for the next agent* — a handoff, a current-state brief, a *read this before you touch X* — is a `cc-notes doc`, carrying a free-text `--when` trigger that says when the next agent should read it. A chronology you keep adding to with no verdict coming — a rollout log, a migration diary — is a `cc-notes log`: each `log append` is an immutable timestamped entry, and the log never drifts because it never claims to be current truth. A chronology that *opens on a suspicion and closes on a verdict* — a bug hunt, a CI-failure triage, an incident — is a `cc-notes investigation`: the same append-only timeline, plus an immutable premise, findings with evidence-backed dispositions, and a status that records how the arc ended. Machine-generated evidence from a run — logs, panic dumps, repro archives — rides log entries and investigation entries alike as `--attach` files; only a human-facing, publishable report belongs in the repo tree.
 4. **If it is work, who picks it up?** Anyone — drop it in the shared backlog with `cc-notes task add --backlog`. Only this line of work — file it on your current branch with a plain `cc-notes task add`.
 
@@ -62,6 +63,21 @@ body, or a body that says "full detail in `/tmp/.../handoff.md`". The title is a
 caps it at 256 bytes and rejects a body-less doc — and `/tmp` and session scratchpads are purged
 before the next agent ever reads the doc. Carry the content in the record: the `--checkout`/`--apply`
 buffer above for a long body, `--body -` for a short one, and `--attach <file>` for artifacts.
+
+**An approved plan about to fan out into tasks.** `cc-notes plan`, then tasks pointing at it. The plan text a human signed off on is neither a fact (note) nor guidance kept fresh (doc) — it is the approved approach, and the record must hold it word for word while typed status tracks what became of it. Record it at approval, link the work, and close it on what actually happened:
+
+```console
+$ cc-notes plan add "Fix monorepo read performance" --body-file plan.md --approved --path internal/gitobj
+8d2ed23	approved	Fix monorepo read performance
+$ cc-notes task add "Memoize ancestor checks" --plan 8d2ed23 --criterion "status under 2.5s" --backlog
+9a31718	open	P2	-	Memoize ancestor checks
+$ cc-notes plan start 8d2ed23
+8d2ed23	executing	Fix monorepo read performance
+$ cc-notes plan done 8d2ed23 --outcome "status 19.8s -> 2.1s on the monorepo"
+8d2ed23	done	Fix monorepo read performance
+```
+
+`plan show` then reads the whole arc back — the approved text, the tasks that executed it, and the outcome. A revision re-approved before work starts is edited into that same plan; a genuine replan once execution has started is its own plan, linked with `plan supersede`. A repeatable procedure you will run again is a runbook, not a plan.
 
 **Recording a production incident as it unfolds.** `cc-notes investigation`. The value is the chronology *and* the verdict: timestamped entries appended as the incident develops, candidate causes ruled in or out with evidence, and a status that records how it ended. A note would flatten the sequence into one line; a log would keep the timeline but never say whether the cause was found. Open it on the incident statement, anchor it to the affected code, append as you learn, and close it through the transition verbs.
 
@@ -120,4 +136,5 @@ e0b8f73	open	P2	-	Read sessions from the new schema
 - **A cc-notes note no one can place.** An unanchored note about a specific file rots silently. Anchor decisions to a `--path` or `--commit` so the note is born verified and drift is computed against the real code.
 - **A note wholesale-edited into a verdict.** Recording "suspected X" as a note and later rewriting the body to "RESOLVED: actually Y" destroys the arc — the wrong first theory, the evidence, and the reversal all vanish from the live record. That arc is a `cc-notes investigation`: the premise is immutable, evidence appends, and the verdict lands in the status through `root-cause`/`fix`/`confirm` — never in a rewritten body or a shouting title.
 - **Run evidence committed to the repo tree.** Copying VM or CI run output — scenario logs, panic dumps, repro archives — under `docs/` or an `assets/` directory bakes megabytes of one-shot evidence into git history that every clone downloads forever. The chronology is a `cc-notes log`; each run's files ride `log append --attach`, stored in git-lfs and carried by `cc-notes sync`. Repo files are for the human-facing report, not the evidence behind it.
+- **An approved plan left in the transcript.** The plan a human signed off on lives only in the session (or a `/tmp` file the next agent never sees), the tasks carry no pointer back, and nobody can later tell whether the approach was executed or abandoned. Record it as a `cc-notes plan` at approval — verbatim, `--approved` — and point the implementing tasks at it.
 - **A loose `HANDOFF.md` for the next agent.** Nothing surfaces a loose markdown file — the next agent never opens it, it drifts unchecked, and it clutters the human-facing tree. Store the same guidance as a `cc-notes doc` with a `--when` trigger: born verified, drift-checked, and floated into the next agent's context the moment the trigger matches.

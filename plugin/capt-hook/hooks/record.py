@@ -1,7 +1,8 @@
-"""The Record/push routers that flag durable internal writes and evidence archives, plus the plan-tasks nudge."""
+"""The Record/push routers that flag durable internal writes and evidence archives, plus the plan capture."""
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path, PurePosixPath
 
@@ -34,11 +35,14 @@ from .common import (
     NUDGE_MAX_FIRES,
     RECORD_KINDS,
     RecordVerdict,
+    clamp_title,
     ids_match,
     in_cc_pool_memory,
+    json_field,
     mcp_active,
     record_command,
     run_cc_notes,
+    short_id,
 )
 
 # DurableInternalWrite recall vocabulary: STRONG names look durable-internal on name
@@ -218,6 +222,10 @@ RECORD_ROUTER_SYSTEM = (
     "- runbook: a repeatable step-by-step operational procedure meant to be re-executed — deploy "
     "steps, a release checklist, an incident-response procedure. cc-notes has a first-class "
     "runbook primitive that tracks each execution's per-step status.\n"
+    "- plan: an approved plan for work about to be done — context, an ordered approach, pitfalls, "
+    "and how it will be verified — recorded verbatim so the next agent can execute it. cc-notes has "
+    "a first-class plan primitive with a draft → approved → executing → done/abandoned lifecycle and "
+    "tasks that point back at it; a plan goes stale through that lifecycle, not through re-verification.\n"
     "- investigation: a debugging or root-cause arc that reaches a VERDICT — a falsifiable premise "
     "(the suspected cause or symptom), a bisect/triage timeline, suspects that get cleared or "
     "confirmed, a true root cause, a fix, and its confirmation (or a falsified premise / an "
@@ -230,15 +238,19 @@ RECORD_ROUTER_SYSTEM = (
     "runbook splits on execution: a doc describes and explains; a runbook is an ordered procedure "
     "an agent re-executes step by step. log vs investigation splits on the verdict: a log is a "
     "verdict-less chronicle you only append to; an investigation reaches a conclusion (this was the "
-    "root cause; that suspect was cleared) through its findings and status.\n"
+    "root cause; that suspect was cleared) through its findings and status. plan vs runbook splits "
+    "on repetition: a plan is one approved approach to work being done now, executed once; a runbook "
+    "is a standing procedure re-executed on every deploy or incident. plan vs doc splits on shape: a "
+    "plan is work-shaped and closes as done or abandoned; a doc is guidance you keep fresh.\n"
     "\n"
     "When record=true also return: title — a short title; when — for a doc, the free-text 'read "
     "this when…' trigger (leave empty for other kinds); area — the repo directory the record is "
     "about (e.g. internal/api), or '.' if unclear; reasoning — one line explaining the call."
 )
 
-# investigation is not a RECORD_KIND (immutable premise, no --when, verdict transitions), so it
-# routes through these authoring lines rather than record_command, mirroring the runbook branch.
+# investigation and plan are not RECORD_KINDs (no --when; a required premise and a required body
+# respectively, and their own status transitions), so they route through these authoring lines
+# rather than record_command, mirroring the runbook branch.
 SECRET_WARNING = "(Don't put secrets in cc-notes — the refs sync to the remote.)"
 
 
@@ -256,6 +268,21 @@ def investigation_arc_lines(mcp: bool, title: str, premise: str, *, first_eviden
         f'cc-notes investigation open "{title}" "{premise}"',
         f'cc-notes investigation append <id> "{ev}"   # one per evidence step or finding',
         "verdict via `cc-notes investigation root-cause` / `confirm` (or `exonerate` / `abandon`) — never the title.",
+    ]
+
+
+def plan_arc_lines(mcp: bool, title: str) -> list[str]:
+    """The record→execute→close authoring lines for the plan primitive (MCP tools or CLI)."""
+    if mcp:
+        return [
+            f'plan_add — {{"title": "{title}", "body": "<the plan verbatim>", "approved": true}}',
+            "task_add — one call per durable item, plan=<id>, so the work points back at the plan",
+            "plan_start when you begin executing, then plan_done with an outcome (or plan_abandon).",
+        ]
+    return [
+        f'cc-notes plan add "{title}" --body - --approved   # the plan verbatim on stdin',
+        'cc-notes task add "<durable item>" --criterion "<how to verify>" --plan <id>',
+        "`cc-notes plan start <id>` when you begin, then `plan done <id> --outcome …` (or `plan abandon`).",
     ]
 
 
@@ -301,7 +328,7 @@ def nudge_record_durable(evt: PostToolUseEvent) -> HookResult | None:
         .system(RECORD_ROUTER_SYSTEM)
         .context("path", str(evt.file))
         .context("content", (evt.content or "")[:LLM_INPUT_CAP])
-        .ask("Does this belong in cc-notes, and if so as which record (note/doc/log/task/papercut/runbook/investigation)?")
+        .ask("Does this belong in cc-notes, and if so as which record (note/doc/log/task/papercut/runbook/investigation/plan)?")
     )
     try:
         verdict = evt.ctx.call_llm(prompt, response_model=RecordVerdict, model="small", agent=False, transcript=False)
@@ -338,6 +365,16 @@ def nudge_record_durable(evt: PostToolUseEvent) -> HookResult | None:
             f"investigation primitive with an immutable premise, an append-only evidence timeline, "
             f"and verdict transitions ({verdict.reasoning}). Record it, then delete the loose file:",
             *investigation_arc_lines(mcp_active(evt), title, "<the falsifiable suspicion or symptom>"),
+            SECRET_WARNING,
+        )
+    if verdict.record and verdict.kind == "plan":
+        record_fire(evt)
+        title = verdict.title or (evt.file.stem if evt.file else "untitled")
+        return evt.warn(
+            f"{evt.file} reads like a plan for work about to be done — cc-notes has a first-class "
+            f"plan primitive that holds the text verbatim and tracks it through approved → executing "
+            f"→ done ({verdict.reasoning}). Record it, then delete the loose file:",
+            *plan_arc_lines(mcp_active(evt), title),
             SECRET_WARNING,
         )
     if not verdict.record or verdict.kind not in RECORD_KINDS:
@@ -791,7 +828,7 @@ def plan_text(evt: PostToolUseEvent) -> str | None:
     return inline.strip() if isinstance(inline, str) and inline.strip() else None
 
 
-def plan_task_commands(evt: PostToolUseEvent, text: str | None, *, mcp: bool = False) -> list[str]:
+def plan_task_commands(evt: PostToolUseEvent, text: str | None, *, mcp: bool = False, plan: str = "") -> list[str]:
     if not text:
         return []
     prompt = (
@@ -804,39 +841,149 @@ def plan_task_commands(evt: PostToolUseEvent, text: str | None, *, mcp: bool = F
         extracted = evt.ctx.call_llm(prompt, response_model=PlanTasks, model="small", agent=False, transcript=False)
     except Exception:
         return []
+    plan_ref = plan or "<plan id>"
     commands = []
     for task in extracted.tasks[:5]:
         title = task.title.strip()
         if not title:
             continue
         if mcp:
-            commands.append(f'task_add tool: title="{title}", criteria=["<how to verify it is done>"]' + (", backlog=true" if task.shared else ""))
+            commands.append(f'task_add tool: title="{title}", criteria=["<how to verify it is done>"], plan="{plan_ref}"' + (", backlog=true" if task.shared else ""))
         else:
-            commands.append(f'cc-notes task add "{title}" --criterion "<how to verify it is done>"' + (" --backlog" if task.shared else ""))
+            commands.append(f'cc-notes task add "{title}" --criterion "<how to verify it is done>" --plan {plan_ref}' + (" --backlog" if task.shared else ""))
     return commands
+
+
+PLAN_HEADING_RE = re.compile(r"(?m)^#[ \t]+(\S.*?)[ \t]*$")
+
+
+def plan_title(evt: PostToolUseEvent, text: str) -> str:
+    """The captured plan's title: its first markdown H1, else the plan file's stem."""
+    if m := PLAN_HEADING_RE.search(text):
+        return clamp_title(m.group(1))
+    path = evt._tool_input.get("planFilePath")
+    return Path(path).stem if isinstance(path, str) and path else "Approved plan"
+
+
+def capture_plan(evt: PostToolUseEvent, text: str) -> str:
+    """Record the approved plan verbatim as an approved cc-notes plan; its id, or "" if the write failed.
+
+    The text rides ``--body`` as one argv element: ``call_cli`` runs a bare argv with
+    no shell, so the ``--body-file -`` form has no redirect to read the plan from.
+    """
+    out = run_cc_notes(evt, "plan", "add", "--json", "--approved", f"--body={text}", "--", plan_title(evt, text))
+    return json_field(out, "id")
+
+
+def revise_plan(evt: PostToolUseEvent, plan_id: str, text: str) -> str:
+    """Overwrite ``plan_id``'s recorded text with the re-approved draft; its id, or "" if the edit failed.
+
+    The body is LWW, so the edit lands the approved text and every earlier draft stays
+    readable through ``cc-notes history`` — ``body`` is not a hidden trail field.
+    """
+    out = run_cc_notes(evt, "plan", "edit", plan_id, "--json", f"--body={text}")
+    return json_field(out, "id")
+
+
+class CapturedPlan(BaseModel):
+    """The cc-notes plan this session recorded for one plan file, and the title it carried."""
+
+    id: str
+    title: str
+
+
+class PlanCaptures(BaseModel):
+    """Session-durable plan-capture state: the record behind each plan file, and the advisory's fire count.
+
+    ``by_path`` maps a plan file's path — "" for a path-less inline plan — to the record
+    holding it, so a revision round finds the plan to edit instead of minting a rival.
+    ``advisories`` counts the teach/task-routing fires :func:`advisory_budget` meters.
+    Fields default to the pre-capture state, so a fresh session (or a null session slot in
+    inline tests) records its first plan and teaches.
+    """
+
+    by_path: dict[str, CapturedPlan] = Field(default_factory=dict)
+    advisories: int = 0
+
+
+def plan_key(evt: PostToolUseEvent) -> str:
+    """The plan file this approval revises, "" when the plan rode inline with no path."""
+    path = evt._tool_input.get("planFilePath")
+    return path if isinstance(path, str) else ""
+
+
+def record_plan(evt: PostToolUseEvent, text: str) -> tuple[str, bool]:
+    """Land *text* on a cc-notes plan; its id ("" if the write failed) and whether it revised one.
+
+    Same file, same title is one plan carried through review rounds: the record is edited
+    in place, so the session holds one plan in flight and the drafts stay in its history.
+    A changed title on the same file is a reused session planning different work — an
+    unrelated plan, so it gets its own record and no supersede edge joins the two.
+    """
+    title = plan_title(evt, text)
+    prior = evt.ctx.s.load(PlanCaptures).by_path.get(plan_key(evt))
+    if prior and prior.title == title:
+        return revise_plan(evt, prior.id, text), True
+    if not (plan_id := capture_plan(evt, text)):
+        return "", False
+    with evt.ctx.s[PlanCaptures].mutate() as state:
+        state.by_path[plan_key(evt)] = CapturedPlan(id=plan_id, title=title)
+    return plan_id, False
+
+
+def advisory_budget(evt: PostToolUseEvent) -> bool:
+    """Claim one of the session's ``NUDGE_MAX_FIRES`` plan advisories; False once they are spent."""
+    with evt.ctx.s[PlanCaptures].mutate() as state:
+        if state.advisories >= NUDGE_MAX_FIRES:
+            return False
+        state.advisories += 1
+        return True
+
+
+def plan_capture_line(plan_id: str, revised: bool) -> str:
+    """The acknowledgement naming the plan the approval landed on, created or revised."""
+    sid = short_id(plan_id)
+    if revised:
+        return f"Revision written to cc-notes plan {sid} in place; the earlier drafts stay in `cc-notes history {sid}`."
+    return f"Plan recorded verbatim as cc-notes plan {sid} (approved)."
 
 
 @on(
     Event.PostToolUse,
     only_if=[Tool("ExitPlanMode"), CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
+    max_fires=None,
     tests={
         Input(tool="ExitPlanMode"): Warn(pattern="Native TaskCreate/TaskUpdate is your private"),
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
-def nudge_plan_tasks(evt: PostToolUseEvent) -> HookResult | None:
-    """On plan approval, teach the native-vs-durable line and route the plan's durable items to tasks."""
+def nudge_plan_capture(evt: PostToolUseEvent) -> HookResult | None:
+    """On plan approval, record the plan verbatim, teach the native-vs-durable line, and route its durable items to tasks.
+
+    Uncapped, because the capture is a write and not a nudge: ``max_fires`` reserves a slot
+    before the handler runs and gives it back only on a falsy result, so a capped capture
+    burns the session's whole budget on its first few plans and then drops every later one
+    without a word. The nagging half keeps the cap instead — :func:`advisory_budget` meters
+    the teach and the task routing while the write stays unconditional.
+
+    Keyed on the plan text's digest, not its path alone: a session revises one plan file
+    in place across review rounds, so a path key would capture the draft that was sent
+    back and never the approved text.
+    """
     text = plan_text(evt)
-    path = evt._tool_input.get("planFilePath")
-    if isinstance(path, str) and path and not evt.ctx.s.once(path, scope="plan"):
+    digest = hashlib.sha256((text or "").encode()).hexdigest()[:16]
+    if not evt.ctx.s.once(f"{plan_key(evt)}:{digest}", scope="plan"):
         return None
-    mcp = mcp_active(evt)
-    lines = [PLAN_TEACH_MCP if mcp else PLAN_TEACH]
-    if commands := plan_task_commands(evt, text, mcp=mcp):
-        lines.append("These items from your plan look like durable work — capture them:")
-        lines.extend(commands)
-    return evt.warn(*lines)
+    plan_id, revised = record_plan(evt, text) if text else ("", False)
+    lines = [plan_capture_line(plan_id, revised)] if plan_id else []
+    if advisory_budget(evt):
+        mcp = mcp_active(evt)
+        lines.append(PLAN_TEACH_MCP if mcp else PLAN_TEACH)
+        if commands := plan_task_commands(evt, text, mcp=mcp, plan=plan_id):
+            link = "each linked to the plan" if plan_id else "each linked to the plan (substitute its id)"
+            lines.append(f"These items from your plan look like durable work — capture them, {link}:")
+            lines.extend(commands)
+    return evt.warn(*lines) if lines else None
 
 
 INVESTIGATION_MCP_PREFIX = MCP_TOOL_PREFIX + "investigation_"

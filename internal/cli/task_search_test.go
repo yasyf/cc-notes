@@ -23,7 +23,7 @@ func TestSearchFindsTaskByDescription(t *testing.T) {
 	if hit.Kind != "task" || hit.Task == nil || hit.Task.ID != taskID {
 		t.Fatalf("hit = %+v, want task %s", hit, taskID)
 	}
-	if hit.Note != nil || hit.Doc != nil || hit.Log != nil || hit.Runbook != nil || hit.Investigation != nil {
+	if hit.Note != nil || hit.Doc != nil || hit.Log != nil || hit.Runbook != nil || hit.Investigation != nil || hit.Plan != nil {
 		t.Errorf("task hit populates a foreign entity field: %+v", hit)
 	}
 	if got, want := spMust(t, dir, "search", "caps at 30s"), "task\t"+taskID[:7]+"\topen\tP2\t-\tTighten the client\n"; got != want {

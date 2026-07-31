@@ -93,6 +93,7 @@ type taskJSON struct {
 	ClosedAt  *string        `json:"closed_at,omitempty"`
 	Sprint    *string        `json:"sprint,omitempty"`
 	Project   *string        `json:"project,omitempty"`
+	Plan      *string        `json:"plan,omitempty"`
 	Criteria  []struct {
 		ID     string `json:"id"`
 		Text   string `json:"text"`

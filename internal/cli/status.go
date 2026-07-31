@@ -66,6 +66,7 @@ func printStatusText(cmd *cobra.Command, report notes.StatusReport) error {
 	fmt.Fprintf(&b, "papercuts: %d total\n", report.Papercuts)
 	fmt.Fprintf(&b, "investigations: %d open, %d awaiting confirmation, %d open findings\n",
 		report.Investigations.Open, report.Investigations.AwaitingConfirm, report.Investigations.OpenFindings)
+	fmt.Fprintf(&b, "plans: %d in flight\n", report.Plans)
 	if report.SkippedOps > 0 {
 		fmt.Fprintf(&b, "skipped %d op(s) this cc-notes cannot fold; %s\n", report.SkippedOps, UpgradeRemedy)
 	}
@@ -109,6 +110,7 @@ func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusRep
 			AwaitingConfirm: report.Investigations.AwaitingConfirm,
 			OpenFindings:    report.Investigations.OpenFindings,
 		},
+		Plans:      statusPlansDTO{InFlight: report.Plans},
 		SkippedOps: report.SkippedOps,
 	}
 	for _, grp := range report.InProgress {
@@ -166,6 +168,7 @@ type statusDTO struct {
 	Logs           statusLogsDTO           `json:"logs"`
 	Papercuts      statusLogsDTO           `json:"papercuts"`
 	Investigations statusInvestigationsDTO `json:"investigations"`
+	Plans          statusPlansDTO          `json:"plans"`
 	SkippedOps     int                     `json:"skipped_ops"`
 }
 
@@ -211,6 +214,13 @@ type statusNotesDTO struct {
 // a freshness lifecycle, so there is no needs_review count.
 type statusLogsDTO struct {
 	Total int `json:"total"`
+}
+
+// statusPlansDTO is the in-flight-plan summary: the plans still draft,
+// approved, or executing. A plan goes out of date through its status machine
+// rather than a freshness lifecycle, so there is no needs_review count.
+type statusPlansDTO struct {
+	InFlight int `json:"in_flight"`
 }
 
 // statusInvestigationsDTO is the active-investigation summary.

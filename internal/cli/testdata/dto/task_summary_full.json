@@ -17,6 +17,7 @@
   "parent": "task-parent-001",
   "sprint": "sprint-0000001",
   "project": "project-000001",
+  "plan": "plan-000000001",
   "criteria_met": 1,
   "criteria_total": 2,
   "updated_at": "2023-11-14T23:13:20Z"

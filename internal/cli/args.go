@@ -22,6 +22,7 @@ const (
 	titleHintBody  = "put the content in --body (- reads stdin), --checkout file mode, or --attach"
 	titleHintLog   = "put the content in log entries (--entry on add, or log append)"
 	titleHintDesc  = "put the content in --body (- reads stdin)"
+	titleHintPlan  = "put the plan text in --body (- reads stdin) or --body-file"
 	bufferHint     = "put the content in the body below the frontmatter"
 	docBodyHintAdd = "pass --body (- reads stdin), --checkout file mode, or --attach the content"
 )

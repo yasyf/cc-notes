@@ -248,6 +248,7 @@ type taskDTO struct {
 	ClosedAt     *string        `json:"closed_at,omitempty"`
 	Sprint       *string        `json:"sprint,omitempty"`
 	Project      *string        `json:"project,omitempty"`
+	Plan         *string        `json:"plan,omitempty"`
 	Criteria     []criterionDTO `json:"criteria,omitempty"`
 	ClosedForced bool           `json:"closed_forced,omitempty"`
 }
@@ -280,6 +281,7 @@ type taskSummaryDTO struct {
 	Parent        string   `json:"parent,omitempty"`
 	Sprint        string   `json:"sprint,omitempty"`
 	Project       string   `json:"project,omitempty"`
+	Plan          string   `json:"plan,omitempty"`
 	CriteriaMet   int      `json:"criteria_met,omitempty"`
 	CriteriaTotal int      `json:"criteria_total,omitempty"`
 	UpdatedAt     string   `json:"updated_at"`
@@ -446,6 +448,42 @@ type runbookSummaryDTO struct {
 	UpdatedAt string `json:"updated_at"`
 	StepCount int    `json:"step_count,omitempty"`
 	RunCount  int    `json:"run_count,omitempty"`
+}
+
+// planDTO fixes the JSON field order and formats for plan output: full hex ids,
+// RFC3339 UTC timestamps, the recorded plan body verbatim, the outcome prose,
+// and the full-hex ids of the tasks implementing the plan (the reverse index of
+// their upward pointer, passed in). A plan carries no per-anchor witness and no
+// verify lifecycle, so every anchor omits its witness and there is no
+// verified/stale/drift field.
+type planDTO struct {
+	ID           string       `json:"id"`
+	Title        string       `json:"title"`
+	Body         string       `json:"body,omitempty"`
+	Status       string       `json:"status"`
+	Outcome      string       `json:"outcome,omitempty"`
+	Labels       []string     `json:"labels,omitempty"`
+	Anchors      []anchorDTO  `json:"anchors,omitempty"`
+	SupersededBy []string     `json:"superseded_by,omitempty"`
+	Tasks        []string     `json:"tasks,omitempty"`
+	Comments     []commentDTO `json:"comments,omitempty"`
+	Author       string       `json:"author,omitempty"`
+	CreatedAt    string       `json:"created_at"`
+	UpdatedAt    string       `json:"updated_at"`
+	StartedAt    *string      `json:"started_at,omitempty"`
+	ClosedAt     *string      `json:"closed_at,omitempty"`
+	ClosedBy     *string      `json:"closed_by,omitempty"`
+	Deleted      bool         `json:"deleted,omitempty"`
+}
+
+// planSummaryDTO is one plan in a listing or write acknowledgement: the
+// identity and lifecycle status, without the body, outcome, comments, or task
+// roll-up.
+type planSummaryDTO struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // newNoteDTO renders a note snapshot into its DTO. supersedes is the reverse
@@ -689,6 +727,7 @@ func newTaskDTO(t model.Task, blocks, children []model.EntityID, runs []notes.Ta
 		ClosedAt:     render.OptTime(t.ClosedAt),
 		Sprint:       render.OptString(string(t.Sprint)),
 		Project:      render.OptString(string(t.Project)),
+		Plan:         render.OptString(string(t.Plan)),
 		Criteria:     criterionDTOs(t.Criteria),
 		ClosedForced: closedForced(t),
 	}
@@ -728,6 +767,7 @@ func newTaskSummaryDTO(t model.Task, blocks []model.EntityID) taskSummaryDTO {
 		Parent:        string(t.Parent),
 		Sprint:        string(t.Sprint),
 		Project:       string(t.Project),
+		Plan:          string(t.Plan),
 		CriteriaMet:   met,
 		CriteriaTotal: total,
 		UpdatedAt:     render.RFC3339(t.UpdatedAt),
@@ -951,6 +991,45 @@ func newRunbookSummaryDTO(rb model.Runbook) runbookSummaryDTO {
 		UpdatedAt: render.RFC3339(rb.UpdatedAt),
 		StepCount: len(rb.Steps),
 		RunCount:  len(rb.Runs),
+	}
+}
+
+// newPlanDTO renders a plan snapshot plus the reverse-index ids of the tasks
+// implementing it into its DTO. Like a task, a plan anchor carries no witness,
+// so every anchor's witness is omitted.
+func newPlanDTO(p model.Plan, tasks []model.EntityID) planDTO {
+	anchors := make([]anchorDTO, 0, len(p.Anchors))
+	for _, a := range p.Anchors {
+		anchors = append(anchors, anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: nil})
+	}
+	return planDTO{
+		ID:           string(p.ID),
+		Title:        p.Title,
+		Body:         p.Body,
+		Status:       string(p.Status),
+		Outcome:      p.Outcome,
+		Labels:       p.Labels,
+		Anchors:      anchors,
+		SupersededBy: render.IDStrings(p.SupersededBy),
+		Tasks:        render.IDStrings(tasks),
+		Comments:     commentDTOs(p.Comments),
+		Author:       string(p.Author),
+		CreatedAt:    render.RFC3339(p.CreatedAt),
+		UpdatedAt:    render.RFC3339(p.UpdatedAt),
+		StartedAt:    render.OptTime(p.StartedAt),
+		ClosedAt:     render.OptTime(p.ClosedAt),
+		ClosedBy:     render.OptString(string(p.ClosedBy)),
+		Deleted:      p.Deleted,
+	}
+}
+
+// newPlanSummaryDTO renders a plan snapshot into the listing projection.
+func newPlanSummaryDTO(p model.Plan) planSummaryDTO {
+	return planSummaryDTO{
+		ID:        string(p.ID),
+		Title:     p.Title,
+		Status:    string(p.Status),
+		UpdatedAt: render.RFC3339(p.UpdatedAt),
 	}
 }
 

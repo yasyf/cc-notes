@@ -2513,3 +2513,61 @@ func TestRenderInvestigationGolden(t *testing.T) {
 		t.Errorf("investigation render:\n got %q\nwant %q", got, goldenInvestigation)
 	}
 }
+
+const goldenPlan = "---\n" +
+	"id: c1c2c3c4c5c6c7c8c9c0d1d2d3d4d5d6d7d8d9d0\n" +
+	"title: Ninth entity kind\n" +
+	"status: executing\n" +
+	"labels: [model, plan]\n" +
+	"paths: [internal/fold/fold.go]\n" +
+	"dirs: [model]\n" +
+	"superseded_by: [e1e2e3e4e5e6e7e8e9e0f1f2f3f4f5f6f7f8f9f0]\n" +
+	"created: \"2025-12-12T02:54:56Z\"\n" +
+	"updated: \"2025-12-13T02:54:56Z\"\n" +
+	"---\n" +
+	"# Ninth entity kind\n" +
+	"\n" +
+	"## Approach\n" +
+	"\n" +
+	"Fold the plan kind in before the CLI.\n" +
+	"\n" +
+	"## Outcome\n" +
+	"\n" +
+	"Landed as four ops.\n"
+
+func richPlan() model.Plan {
+	return model.Plan{
+		ID:           "c1c2c3c4c5c6c7c8c9c0d1d2d3d4d5d6d7d8d9d0",
+		Title:        "Ninth entity kind",
+		Body:         "## Approach\n\nFold the plan kind in before the CLI.",
+		Status:       model.PlanExecuting,
+		Outcome:      "Landed as four ops.",
+		Labels:       []string{"model", "plan"},
+		SupersededBy: []model.EntityID{"e1e2e3e4e5e6e7e8e9e0f1f2f3f4f5f6f7f8f9f0"},
+		Anchors: []model.Anchor{
+			{Kind: model.AnchorPath, Value: "internal/fold/fold.go"},
+			{Kind: model.AnchorDir, Value: "model"},
+		},
+		CreatedAt: 1765508096,
+		UpdatedAt: 1765594496,
+	}
+}
+
+func TestRenderPlanGolden(t *testing.T) {
+	if got := string(fusefs.RenderPlan(richPlan())); got != goldenPlan {
+		t.Errorf("plan render:\n got %q\nwant %q", got, goldenPlan)
+	}
+}
+
+// TestRenderPlanUnrecordedOutcome pins the placeholder a plan still in flight
+// renders, and the absence of the supersede key when no successor exists.
+func TestRenderPlanUnrecordedOutcome(t *testing.T) {
+	p := model.Plan{ID: "c1c2c3c4c5c6c7c8c9c0d1d2d3d4d5d6d7d8d9d0", Title: "Draft", Body: "text", Status: model.PlanDraft}
+	got := string(fusefs.RenderPlan(p))
+	if !strings.Contains(got, "## Outcome\n\n_Not recorded._\n") {
+		t.Errorf("plan render lost the outcome placeholder:\n%s", got)
+	}
+	if strings.Contains(got, "superseded_by") {
+		t.Errorf("plan render emitted an empty supersede key:\n%s", got)
+	}
+}

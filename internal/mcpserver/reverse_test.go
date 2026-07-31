@@ -46,6 +46,7 @@ var excludedCommandPaths = map[string]bool{
 	"cc-notes project history":       true,
 	"cc-notes runbook history":       true,
 	"cc-notes investigation history": true,
+	"cc-notes plan history":          true,
 }
 
 // excludedFlags are CLI-only flags with no agent-facing MCP surface, keyed by

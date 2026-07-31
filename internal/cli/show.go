@@ -25,7 +25,7 @@ func newShowCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "show ID",
-		Short: "Show any note, doc, log, task, sprint, project, runbook, or investigation by id",
+		Short: "Show any note, doc, log, task, sprint, project, runbook, investigation, or plan by id",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -55,6 +55,8 @@ func newShowCmd() *cobra.Command {
 				return showRunbook(cmd, s, c, id, jsonOut)
 			case model.KindInvestigation:
 				return showInvestigation(cmd, s, c, id, jsonOut)
+			case model.KindPlan:
+				return showPlan(cmd, s, c, id, jsonOut)
 			default:
 				panic(fmt.Sprintf("ResolveEntity returned unknown kind %q", kind))
 			}

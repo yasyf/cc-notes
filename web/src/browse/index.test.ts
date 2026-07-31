@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { InvestigationSnapshot, RunbookSnapshot, StateResponse } from "../api";
+import type {
+  InvestigationSnapshot,
+  PlanSnapshot,
+  RunbookSnapshot,
+  StateResponse,
+} from "../api";
 import { buildIndex } from "./index";
 
 function emptyState(over: Partial<StateResponse> = {}): StateResponse {
@@ -12,6 +17,30 @@ function emptyState(over: Partial<StateResponse> = {}): StateResponse {
     projects: [],
     runbooks: [],
     investigations: [],
+    plans: [],
+    ...over,
+  };
+}
+
+function plan(over: Partial<PlanSnapshot> = {}): PlanSnapshot {
+  return {
+    id: "p1",
+    title: "Add the plan kind",
+    body: "## Context\nplans are never recorded\n\n## Approach\nfold a ninth kind",
+    status: "executing",
+    outcome: "landed as nine kinds",
+    labels: ["kind", "fold"],
+    comments: [{ author: "ann", ts: 7, body: "approved after the second round" }],
+    anchors: [{ kind: "path", value: "internal/fold" }],
+    superseded_by: [],
+    author: "ann",
+    created_at: 1,
+    updated_at: 43,
+    started_at: 8,
+    closed_at: 0,
+    closed_by: "",
+    head: "",
+    deleted: false,
     ...over,
   };
 }
@@ -165,5 +194,39 @@ describe("investigationRow", () => {
   it("places investigations after logs and before runbooks in buildIndex order", () => {
     const state = emptyState({ investigations: [investigation()], runbooks: [runbook()] });
     expect(buildIndex(state).map((r) => r.kind)).toEqual(["investigation", "runbook"]);
+  });
+});
+
+describe("planRow", () => {
+  it("projects a plan into a searchable status row", () => {
+    const rows = buildIndex(emptyState({ plans: [plan()] }));
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("expected a row");
+    expect(row.kind).toBe("plan");
+    expect(row.status).toBe("executing");
+    expect(row.tags).toEqual(["kind", "fold"]);
+    expect(row.updated).toBe(43);
+    expect(row.verifiable).toBe(false);
+    expect(row.superseded).toBe(false);
+    for (const needle of [
+      "plans are never recorded",
+      "fold a ninth kind",
+      "landed as nine kinds",
+      "approved after the second round",
+      "internal/fold",
+    ]) {
+      expect(row.bodyLower).toContain(needle);
+    }
+  });
+
+  it("marks a superseded plan superseded", () => {
+    const rows = buildIndex(emptyState({ plans: [plan({ superseded_by: ["p2"] })] }));
+    expect(rows[0]?.superseded).toBe(true);
+  });
+
+  it("places plans after logs and before investigations in buildIndex order", () => {
+    const state = emptyState({ plans: [plan()], investigations: [investigation()] });
+    expect(buildIndex(state).map((r) => r.kind)).toEqual(["plan", "investigation"]);
   });
 });

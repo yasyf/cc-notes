@@ -233,7 +233,7 @@ func checkpointCovers(c model.PackCommit) int {
 }
 
 // EntityKind returns the lowercase kind name of a snapshot: note, doc, log,
-// task, sprint, project, or runbook.
+// task, sprint, project, runbook, investigation, or plan.
 func EntityKind(snap model.Snapshot) string {
 	return string(snap.Meta().Kind)
 }

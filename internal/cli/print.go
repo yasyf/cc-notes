@@ -95,6 +95,10 @@ type (
 		investigationSummaryDTO
 		writeAck
 	}
+	planAckDTO struct {
+		planSummaryDTO
+		writeAck
+	}
 )
 
 // printNote writes n as its JSON summary DTO — carrying the drift verdict
@@ -197,4 +201,14 @@ func printInvestigation(cmd *cobra.Command, _ *notes.Client, inv model.Investiga
 		return err
 	}
 	return printJSON(cmd.OutOrStdout(), investigationAckDTO{investigationSummaryDTO: newInvestigationSummaryDTO(inv), writeAck: ackOf(ack)})
+}
+
+// printPlan writes plan as its JSON summary DTO or its lean line. The recorded
+// body, the outcome, and the task roll-up stay with "plan show".
+func printPlan(cmd *cobra.Command, _ *notes.Client, plan model.Plan, jsonOut bool, ack ...writeAck) error {
+	if !jsonOut {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanPlanLine(plan))
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), planAckDTO{planSummaryDTO: newPlanSummaryDTO(plan), writeAck: ackOf(ack)})
 }

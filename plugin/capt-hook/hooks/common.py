@@ -22,7 +22,11 @@ NUDGE_MAX_FIRES = 3
 # Cap on body/diff/plan text handed to a small-model classifier.
 LLM_INPUT_CAP = 6000
 
-# The generic record_command() path only — record.py special-cases runbook/investigation; sprint/project never route here.
+# The Go CLI hard-rejects a title over 256 UTF-8 bytes (exit 2), and run_cc_notes fails
+# closed, so an over-long title would silently stop a capture without a clamp.
+MAX_TITLE_BYTES = 256
+
+# The generic record_command() path only — record.py special-cases runbook/investigation/plan; sprint/project never route here.
 RECORD_KINDS = ("note", "doc", "log", "task", "papercut")
 
 # The Claude Code plugin surfaces the cc-notes MCP server's tools under this name prefix.
@@ -142,6 +146,10 @@ CC_NOTES_TOOLS = frozenset(
         "investigation_exonerate", "investigation_abandon", "investigation_reopen",
         "investigation_edit", "investigation_search", "investigation_rm",
         "investigation_follow_up", "investigation_supersede",
+        # plan
+        "plan_add", "plan_edit", "plan_rm", "plan_show", "plan_list", "plan_search",
+        "plan_approve", "plan_start", "plan_reopen", "plan_done", "plan_abandon",
+        "plan_comment", "plan_supersede",
     }
 )
 
@@ -197,6 +205,30 @@ def run_cc_notes(evt: BaseHookEvent, *args: str) -> str | None:
     return evt.ctx.call_cli(["cc-notes", *args], timeout=10, throw=False)
 
 
+def json_field(out: str | None, key: str) -> str:
+    """Read one string field off a ``--json`` object payload, "" when absent or unparseable."""
+    if not out or not out.strip():
+        return ""
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError:
+        return ""
+    return parsed.get(key, "") if isinstance(parsed, dict) else ""
+
+
+def clamp_title(title: str, max_bytes: int = MAX_TITLE_BYTES) -> str:
+    """Clamp ``title`` to at most ``max_bytes`` UTF-8 bytes on a rune boundary.
+
+    Truncating the encoded bytes then decoding with ``errors="ignore"`` drops a
+    partial trailing rune, so the result never exceeds the cap and never splits a
+    character.
+    """
+    encoded = title.encode()
+    if len(encoded) <= max_bytes:
+        return title
+    return encoded[:max_bytes].decode(errors="ignore")
+
+
 def parse_relevant(out: str | None) -> list[dict[str, Any]]:
     if not out or not out.strip():
         return []
@@ -211,7 +243,7 @@ def parse_relevant(out: str | None) -> list[dict[str, Any]]:
 
 def entry_kind(entry: dict[str, Any]) -> str:
     kind = entry.get("kind")
-    return kind if kind in ("doc", "log", "runbook", "investigation") else "note"
+    return kind if kind in ("doc", "log", "runbook", "investigation", "plan") else "note"
 
 
 def entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
@@ -292,6 +324,7 @@ def render_note_lines(entries: list[dict[str, Any]]) -> list[str]:
         "log": render_log_line,
         "runbook": render_runbook_line,
         "investigation": render_investigation_line,
+        "plan": render_plan_line,
     }
     return [dispatch.get(entry_kind(e), render_note_line)(e) for e in entries]
 
@@ -361,6 +394,18 @@ def render_investigation_line(entry: dict[str, Any]) -> str:
     if reasons := ", ".join(entry.get("reasons", [])):
         line += f" ({reasons})"
     line += f" — cc-notes investigation show {short}"
+    return line
+
+
+def render_plan_line(entry: dict[str, Any]) -> str:
+    plan = entry.get("plan", {})
+    short = short_id(plan.get("id", ""))
+    line = f"{short} {plan.get('title', '')}"
+    if status := plan.get("status"):
+        line += f" [{status}]"
+    if reasons := ", ".join(entry.get("reasons", [])):
+        line += f" ({reasons})"
+    line += f" — cc-notes plan show {short}"
     return line
 
 

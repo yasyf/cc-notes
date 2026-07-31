@@ -1753,6 +1753,40 @@ func RenderInvestigation(inv model.Investigation) []byte {
 	return buf.Bytes()
 }
 
+// planKeys is the plan frontmatter contract: id, title, status, labels, the
+// non-empty anchor kinds, the supersede edge when one exists, created, updated.
+var planKeys = slices.Concat(
+	[]fmKey[model.Plan]{
+		{key: "id", node: func(p model.Plan) *yaml.Node { return scalarNode(string(p.ID)) }},
+		{key: "title", node: func(p model.Plan) *yaml.Node { return scalarNode(p.Title) }},
+		{key: "status", node: func(p model.Plan) *yaml.Node { return scalarNode(string(p.Status)) }},
+		{key: "labels", node: func(p model.Plan) *yaml.Node { return flowNode(p.Labels) }},
+	},
+	anchorKeys(func(p model.Plan) []model.Anchor { return p.Anchors }),
+	[]fmKey[model.Plan]{
+		{key: "superseded_by", keep: func(p model.Plan) bool { return len(p.SupersededBy) > 0 }, node: func(p model.Plan) *yaml.Node { return flowNode(render.IDStrings(p.SupersededBy)) }},
+		{key: "created", node: func(p model.Plan) *yaml.Node { return scalarNode(render.RFC3339(p.CreatedAt)) }},
+		{key: "updated", node: func(p model.Plan) *yaml.Node { return scalarNode(render.RFC3339(p.UpdatedAt)) }},
+	},
+)
+
+// RenderPlan renders p as read-only markdown: the planKeys frontmatter, the
+// approved plan text verbatim, then the outcome executing it produced. The file
+// is read-only — no ParsePlan or DiffPlan — so it carries no round-trip
+// obligation. Output is deterministic byte for byte.
+func RenderPlan(p model.Plan) []byte {
+	buf := renderFrontmatter(p, planKeys)
+	fmt.Fprintf(buf, "# %s\n\n", p.Title)
+	buf.WriteString(ensureTrailingNewline(p.Body))
+	buf.WriteString("\n## Outcome\n\n")
+	if p.Outcome == "" {
+		buf.WriteString("_Not recorded._\n")
+	} else {
+		buf.WriteString(ensureTrailingNewline(p.Outcome))
+	}
+	return buf.Bytes()
+}
+
 func cliOnly(kind, field string, set bool) error {
 	if set {
 		return fmt.Errorf("%w: %s on a new %s changes via the CLI", ErrParse, field, kind)

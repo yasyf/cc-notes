@@ -45,6 +45,20 @@ func (c *Client) TasksBlockingIndex(ctx context.Context) (map[model.EntityID][]m
 	return index, nil
 }
 
+// pointingAt returns the sorted ids of the entities in list whose key edge is
+// id — the reader-side inversion of a stored membership or parent pointer, the
+// only direction those edges are written in.
+func pointingAt[T model.Snapshot](list []T, key func(T) model.EntityID, id model.EntityID) []model.EntityID {
+	var ids []model.EntityID
+	for _, e := range list {
+		if key(e) == id {
+			ids = append(ids, e.EntityID())
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
 // TaskChildren returns the sorted ids of the live tasks whose Parent is id —
 // the reverse of a task's parent edge.
 func (c *Client) TaskChildren(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
@@ -52,14 +66,7 @@ func (c *Client) TaskChildren(ctx context.Context, id model.EntityID) ([]model.E
 	if err != nil {
 		return nil, err
 	}
-	var children []model.EntityID
-	for _, t := range tasks {
-		if t.Parent == id {
-			children = append(children, t.ID)
-		}
-	}
-	slices.Sort(children)
-	return children, nil
+	return pointingAt(tasks, func(t model.Task) model.EntityID { return t.Parent }, id), nil
 }
 
 // TaskChildrenIndex folds ListTasks once, mapping each task id to the sorted
@@ -124,14 +131,18 @@ func (c *Client) SprintTasks(ctx context.Context, id model.EntityID) ([]model.En
 	if err != nil {
 		return nil, err
 	}
-	var ids []model.EntityID
-	for _, t := range tasks {
-		if t.Sprint == id {
-			ids = append(ids, t.ID)
-		}
+	return pointingAt(tasks, func(t model.Task) model.EntityID { return t.Sprint }, id), nil
+}
+
+// PlanTasks returns the sorted ids of the tasks whose folded plan is id — the
+// reverse of a task's LWW plan membership, and the only way a plan's task
+// roll-up exists: the downward list is never stored.
+func (c *Client) PlanTasks(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
+	tasks, err := c.s.ListTasks(ctx)
+	if err != nil {
+		return nil, err
 	}
-	slices.Sort(ids)
-	return ids, nil
+	return pointingAt(tasks, func(t model.Task) model.EntityID { return t.Plan }, id), nil
 }
 
 // ProjectSprints returns the sorted ids of the sprints whose folded project is
@@ -141,14 +152,7 @@ func (c *Client) ProjectSprints(ctx context.Context, id model.EntityID) ([]model
 	if err != nil {
 		return nil, err
 	}
-	var ids []model.EntityID
-	for _, s := range sprints {
-		if s.Project == id {
-			ids = append(ids, s.ID)
-		}
-	}
-	slices.Sort(ids)
-	return ids, nil
+	return pointingAt(sprints, func(s model.Sprint) model.EntityID { return s.Project }, id), nil
 }
 
 // ProjectTasks returns the sorted, deduplicated ids of the tasks belonging to

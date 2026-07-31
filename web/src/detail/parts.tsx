@@ -118,6 +118,7 @@ function statusTone(s: string): string {
       return "warn";
     case "in_progress":
     case "active":
+    case "executing":
     case "started":
     case "open":
     case "fixed":

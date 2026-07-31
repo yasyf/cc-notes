@@ -25,6 +25,7 @@
   --viz-s4: #c23d92;
   --viz-s5: #4a3aa7;
   --viz-s6: #eb6834;
+  --viz-s7: #008300;
   --viz-good: #0ca30c;
   --viz-warning: #fab219;
   --viz-serious: #ec835a;
@@ -69,6 +70,7 @@
     --viz-s4: #dd6fb4;
     --viz-s5: #9085e9;
     --viz-s6: #d95926;
+    --viz-s7: #008300;
     --viz-good: #0ca30c;
     --viz-warning: #fab219;
     --viz-serious: #ec835a;
@@ -1949,6 +1951,9 @@ button.chip {
 }
 .kind-project {
   background: color-mix(in srgb, var(--viz-s6) 20%, var(--bg));
+}
+.kind-plan {
+  background: color-mix(in srgb, var(--viz-s7) 20%, var(--bg));
 }
 
 .prio {

@@ -56,6 +56,8 @@ func Classify(entry trail.Entry) []Event {
 		return runbookEvents(entry)
 	case model.Investigation:
 		return investigationEvents(entry)
+	case model.Plan:
+		return planEvents(entry)
 	default:
 		return nil
 	}
@@ -199,6 +201,41 @@ func investigationEvents(entry trail.Entry) []Event {
 		specs = append(specs, Event{Type: TypeEdited})
 	}
 	return specs
+}
+
+// planEvents classifies a plan entry: create, the lifecycle status changes — a
+// move back into executing from a terminal state reads "reopened" — and the
+// supersede edge that hands a plan to its successor. Orthogonal changes in one
+// pack accumulate as separate events.
+func planEvents(entry trail.Entry) []Event {
+	if entry.Kind == trailCreate {
+		return []Event{{Type: TypeCreated}}
+	}
+	var specs []Event
+	if ch, ok := changeFor(entry.Changes, "status"); ok {
+		specs = append(specs, Event{Type: TypeStatus, Detail: map[string]string{"status": planStatusDetail(ch)}})
+	}
+	if ch, ok := changeFor(entry.Changes, "superseded_by"); ok && len(ch.Added) > 0 {
+		specs = append(specs, Event{Type: TypeSuperseded})
+	}
+	if len(specs) == 0 {
+		specs = append(specs, Event{Type: TypeEdited})
+	}
+	return specs
+}
+
+// planStatusDetail names the status a plan moved to, reading a return to
+// executing from a terminal state as a reopen.
+func planStatusDetail(ch trail.Change) string {
+	to := changeStr(ch.To)
+	if to != string(model.PlanExecuting) {
+		return to
+	}
+	switch changeStr(ch.From) {
+	case string(model.PlanDone), string(model.PlanAbandoned):
+		return "reopened"
+	}
+	return to
 }
 
 // findingEvents reads a findings set-delta into first-class disposition
@@ -359,6 +396,8 @@ func Branch(snap model.Snapshot) string {
 	case model.Log:
 		return firstBranchAnchor(s.Anchors)
 	case model.Investigation:
+		return firstBranchAnchor(s.Anchors)
+	case model.Plan:
 		return firstBranchAnchor(s.Anchors)
 	default:
 		return ""

@@ -95,6 +95,26 @@ func TestClassifyEntryKinds(t *testing.T) {
 			}},
 			[]string{lifecycle.TypeStatus},
 		},
+		{
+			"plan create",
+			trail.Entry{Kind: "create", Snapshot: model.Plan{}},
+			[]string{lifecycle.TypeCreated},
+		},
+		{
+			"plan status and supersede accumulate",
+			trail.Entry{Kind: "edit", Snapshot: model.Plan{}, Changes: []trail.Change{
+				scalar("status", string(model.PlanExecuting), string(model.PlanDone)),
+				set("superseded_by", "abc"),
+			}},
+			[]string{lifecycle.TypeStatus, lifecycle.TypeSuperseded},
+		},
+		{
+			"plan body revision falls through",
+			trail.Entry{Kind: "edit", Snapshot: model.Plan{}, Changes: []trail.Change{
+				scalar("body", "a", "b"),
+			}},
+			[]string{lifecycle.TypeEdited},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := types(lifecycle.Classify(tc.entry)); !slices.Equal(got, tc.want) {
@@ -117,6 +137,33 @@ func TestClassifyLogAppendFansOutPerEntry(t *testing.T) {
 	}
 }
 
+func TestClassifyPlanStatusDetail(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		from string
+		to   string
+		want string
+	}{
+		{"approve", string(model.PlanDraft), string(model.PlanApproved), string(model.PlanApproved)},
+		{"start", string(model.PlanApproved), string(model.PlanExecuting), string(model.PlanExecuting)},
+		{"done", string(model.PlanExecuting), string(model.PlanDone), string(model.PlanDone)},
+		{"abandon", string(model.PlanExecuting), string(model.PlanAbandoned), string(model.PlanAbandoned)},
+		{"reopen from done", string(model.PlanDone), string(model.PlanExecuting), "reopened"},
+		{"reopen from abandoned", string(model.PlanAbandoned), string(model.PlanExecuting), "reopened"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := trail.Entry{Kind: "edit", Snapshot: model.Plan{}, Changes: []trail.Change{scalar("status", tc.from, tc.to)}}
+			events := lifecycle.Classify(entry)
+			if len(events) != 1 || events[0].Type != lifecycle.TypeStatus {
+				t.Fatalf("Classify = %v, want one status event", types(events))
+			}
+			if got := events[0].Detail["status"]; got != tc.want {
+				t.Fatalf("status detail = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBranchAttribution(t *testing.T) {
 	branchAnchor := []model.Anchor{{Kind: model.AnchorBranch, Value: "feature/x"}}
 	for _, tc := range []struct {
@@ -128,6 +175,7 @@ func TestBranchAttribution(t *testing.T) {
 		{"note reads its first branch anchor", model.Note{Anchors: branchAnchor}, "feature/x"},
 		{"note with only a path anchor has none", model.Note{Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "a.go"}}}, ""},
 		{"a runbook carries no branch", model.Runbook{}, ""},
+		{"plan reads its first branch anchor", model.Plan{Anchors: branchAnchor}, "feature/x"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := lifecycle.Branch(tc.snap); got != tc.want {

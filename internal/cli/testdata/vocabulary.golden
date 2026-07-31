@@ -1047,6 +1047,199 @@ command: cc-notes papercut show
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
+command: cc-notes plan
+  use: plan
+  aliases: -
+  short: Plans: approved plans recorded verbatim, from draft through execution to outcome
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan abandon
+  use: abandon ID
+  aliases: -
+  short: Close a plan as abandoned, recording why
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --outcome shorthand=none type=string default="" usage="what executing the plan produced; - reads stdin"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan add
+  use: add TITLE [BODY]
+  aliases: -
+  short: Record a plan verbatim (positional BODY, --body, --body-file, or - for stdin)
+  hidden: false
+  flags:
+    --approved shorthand=none type=bool default="false" usage="record the plan already approved instead of draft"
+    --body shorthand=none type=string default="" usage="the plan text, verbatim; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read the plan text from this file"
+    --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
+    --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
+    --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan approve
+  use: approve ID
+  aliases: -
+  short: Approve a drafted plan
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan comment
+  use: comment ID [BODY]
+  aliases: -
+  short: Append a comment (positional BODY, --body, or - for stdin)
+  hidden: false
+  flags:
+    --body shorthand=none type=string default="" usage="comment body; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan done
+  use: done ID
+  aliases: -
+  short: Close a plan as done, recording its outcome
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --outcome shorthand=none type=string default="" usage="what executing the plan produced; - reads stdin"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan edit
+  use: edit ID
+  aliases: -
+  short: Edit a plan's title, recorded text, outcome, labels, or anchors
+  hidden: false
+  flags:
+    --add-branch shorthand=none type=stringArray default="[]" usage="add branch anchor (repeatable)"
+    --add-commit shorthand=none type=stringArray default="[]" usage="add commit anchor (repeatable)"
+    --add-dir shorthand=none type=stringArray default="[]" usage="add directory anchor (repeatable)"
+    --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
+    --body shorthand=none type=string default="" usage="new plan text, verbatim; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --outcome shorthand=none type=string default="" usage="what executing the plan produced; - reads stdin"
+    --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
+    --rm-commit shorthand=none type=stringArray default="[]" usage="remove commit anchor (repeatable)"
+    --rm-dir shorthand=none type=stringArray default="[]" usage="remove directory anchor (repeatable)"
+    --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
+    --title shorthand=none type=string default="" usage="new title"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan history
+  use: history ID
+  aliases: -
+  short: Show this plan's edit history
+  hidden: false
+  flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan list
+  use: list
+  aliases: -
+  short: List in-flight plans (draft, approved, or executing unless --all)
+  hidden: false
+  flags:
+    --all shorthand=none type=bool default="false" usage="every status"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+    --status shorthand=none type=string default="" usage="status filter, comma-separated (default draft,approved,executing)"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan reopen
+  use: reopen ID
+  aliases: -
+  short: Resume executing a closed plan — the same move as start
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan rm
+  use: rm ID
+  aliases: -
+  short: Tombstone a plan
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan search
+  use: search QUERY
+  aliases: -
+  short: Ranked search across plan titles, recorded text, and outcomes
+  hidden: false
+  flags:
+    --author shorthand=none type=string default="" usage="require author"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan show
+  use: show ID
+  aliases: -
+  short: Show one plan with its recorded text, outcome, and tasks
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan start
+  use: start ID
+  aliases: -
+  short: Move a plan into executing, from approved, done, or abandoned
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes plan supersede
+  use: supersede OLD --by NEW
+  aliases: -
+  short: Record that plan NEW replaces OLD (--clear undoes the edge)
+  hidden: false
+  flags:
+    --by shorthand=none type=string default="" usage="the plan that replaces OLD"
+    --clear shorthand=none type=bool default="false" usage="remove the supersede edge instead of adding it"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
 command: cc-notes project
   use: project
   aliases: -
@@ -1185,7 +1378,7 @@ command: cc-notes reconcile
 command: cc-notes relevant
   use: relevant PATH
   aliases: -
-  short: Surface the notes, docs, logs, runbooks, and investigations most relevant to a path, ranked with reasons
+  short: Surface the notes, docs, logs, runbooks, investigations, and plans most relevant to a path, ranked with reasons
   hidden: false
   flags:
     --attached shorthand=none type=bool default="false" usage="keep only entities anchored to the path or a parent directory"
@@ -1509,7 +1702,7 @@ command: cc-notes runbook step rm
 command: cc-notes search
   use: search QUERY
   aliases: -
-  short: Ranked search across every note, doc, log, task, runbook, and investigation
+  short: Ranked search across every note, doc, log, task, runbook, investigation, and plan
   hidden: false
   flags:
     --branch shorthand=none type=string default="" usage="require branch anchor"
@@ -1555,7 +1748,7 @@ command: cc-notes service uninstall
 command: cc-notes show
   use: show ID
   aliases: -
-  short: Show any note, doc, log, task, sprint, project, runbook, or investigation by id
+  short: Show any note, doc, log, task, sprint, project, runbook, investigation, or plan by id
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
@@ -1753,6 +1946,7 @@ command: cc-notes task add
     --no-validation-criteria shorthand=none type=bool default="false" usage="create with no acceptance criteria"
     --parent shorthand=none type=string default="" usage="parent task id prefix"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+    --plan shorthand=none type=string default="" usage="plan id prefix"
     --priority shorthand=none type=int default="2" usage="priority 0-3 (0 most urgent)"
     --project shorthand=none type=string default="" usage="project id prefix"
     --sprint shorthand=none type=string default="" usage="sprint id prefix"
@@ -1948,9 +2142,11 @@ command: cc-notes task edit
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --no-assignee shorthand=none type=bool default="false" usage="clear the assignee"
     --no-parent shorthand=none type=bool default="false" usage="clear the parent"
+    --no-plan shorthand=none type=bool default="false" usage="clear the plan"
     --no-project shorthand=none type=bool default="false" usage="clear the project"
     --no-sprint shorthand=none type=bool default="false" usage="clear the sprint"
     --parent shorthand=none type=string default="" usage="new parent task id prefix"
+    --plan shorthand=none type=string default="" usage="new plan id prefix"
     --priority shorthand=none type=int default="0" usage="new priority 0-3"
     --project shorthand=none type=string default="" usage="new project id prefix"
     --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"

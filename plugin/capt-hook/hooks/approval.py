@@ -57,7 +57,7 @@ UNSAFE_EXPANSION = re.compile(r"[`${]|<\(|>\(")
 
 # CLI long flags carrying a path; `--output` also lands as the `-o` shorthand (below).
 DANGEROUS_CLI_FLAGS = frozenset(
-    {"--output", "--attach", "--script", "--apply", "--abort", "--dest"}
+    {"--output", "--attach", "--script", "--apply", "--abort", "--dest", "--body-file"}
 )
 # Subcommands that take a script/path positional — no flag token to key on.
 DANGEROUS_CLI_VERBS = (
@@ -71,7 +71,7 @@ DANGEROUS_CLI_FLAGS_BY_VERB = {("mcp",): frozenset({"--dir"})}
 # `task_validate` executes stored content and has no path param, so it is named; every
 # other risk (incl. the required `output` of `attachment_get`) is a path-bearing param.
 DANGEROUS_MCP_TOOLS = frozenset({"task_validate"})
-DANGEROUS_MCP_PARAMS = frozenset({"attach", "output", "script", "file"})
+DANGEROUS_MCP_PARAMS = frozenset({"attach", "output", "script", "file", "body_file"})
 
 
 def cc_notes_mcp_tool(tool_name: str | None) -> str | None:
@@ -174,6 +174,8 @@ approve(
         Input(tool="mcp__cc-notes__attachment_get", tool_input={"id": "a1b2", "name": "x", "output": "/tmp/x"}): Ask(),
         Input(tool="mcp__cc-notes__note_add", tool_input={"title": "t", "attach": ["/etc/passwd"]}): Ask(),
         Input(tool="mcp__cc-notes__log_append", tool_input={"id": "a1b2", "attach": ["/etc/passwd"]}): Ask(),
+        Input(tool="mcp__cc-notes__plan_add", tool_input={"title": "t", "body_file": "/etc/passwd"}): Ask(),
+        Input(tool="mcp__cc-notes__plan_add", tool_input={"title": "t", "body": "the plan"}): Allow(explicit=True),
         Input(tool="mcp__cc-notes__note_add", tool_input={"title": "t", "attach": []}): Allow(explicit=True),  # empty attach is safe
     },
 )
@@ -226,6 +228,8 @@ approve(
         Input(command="cc-notes task validate a1b2 --yes"): Ask(),  # runs stored scripts
         Input(command="cc-notes task criterion script a1b2 /tmp/payload.sh"): Ask(),  # ingests a script path
         Input(command="cc-notes task criterion add a1b2 check --script /tmp/payload.sh"): Ask(),  # --script ingest
+        Input(command="cc-notes plan add p --body-file /Users/v/.ssh/id_rsa"): Ask(),  # --body-file read
+        Input(command="cc-notes plan add p --body-file=/etc/passwd"): Ask(),  # same, glued form
         Input(command="cc-notes workflows install --dest ../../../tmp/evil"): Ask(),  # out-of-tree write
         Input(command="cc-notes mcp --dir /some/repo"): Ask(),  # mcp --dir selects an arbitrary repo to serve
         Input(command="cc-notes mcp --dir=/some/repo"): Ask(),  # same, glued form

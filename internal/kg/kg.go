@@ -16,7 +16,7 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-// NodeKind discriminates what a node stands for. The eight entity kinds and
+// NodeKind discriminates what a node stands for. The nine entity kinds and
 // the four anchor kinds reuse their model wire values verbatim, so a Kind or
 // an AnchorKind converts straight across; session is the one node kind with no
 // model counterpart.
@@ -32,6 +32,7 @@ const (
 	NodeProject       = NodeKind(model.KindProject)
 	NodeRunbook       = NodeKind(model.KindRunbook)
 	NodeInvestigation = NodeKind(model.KindInvestigation)
+	NodePlan          = NodeKind(model.KindPlan)
 
 	NodePath   = NodeKind(model.AnchorPath)
 	NodeDir    = NodeKind(model.AnchorDir)
@@ -123,6 +124,7 @@ const (
 	EdgeParent    EdgeKind = "parent"
 	EdgeSprint    EdgeKind = "sprint"
 	EdgeProject   EdgeKind = "project"
+	EdgePlan      EdgeKind = "plan"
 	EdgeFollowUp  EdgeKind = "follow_up"
 	EdgeCommit    EdgeKind = "commit"
 	EdgeFixCommit EdgeKind = "fix_commit"

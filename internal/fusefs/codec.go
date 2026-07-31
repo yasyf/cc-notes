@@ -6,7 +6,8 @@ import "github.com/yasyf/cc-notes/model"
 // one Git entity to and from its authoritative catalog bytes.
 type entityCodec interface {
 	Kind() model.Kind
-	// ReadOnly reports whether the kind's flat files reject writes (runbooks).
+	// ReadOnly reports whether the kind's flat files reject writes (runbooks,
+	// investigations, and plans).
 	ReadOnly() bool
 	// Browsable reports whether the kind's directory also nests a browse tree
 	// under each entity's short id (sprints and projects).
@@ -60,6 +61,7 @@ var codecs = map[model.Kind]entityCodec{
 	model.KindProject:       codec[model.Project, ParsedProject]{kind: model.KindProject, browsable: true, render: RenderProject, parse: ParseProject, diff: DiffProject, create: NewProject},
 	model.KindRunbook:       codec[model.Runbook, struct{}]{kind: model.KindRunbook, readOnly: true, render: RenderRunbook},
 	model.KindInvestigation: codec[model.Investigation, struct{}]{kind: model.KindInvestigation, readOnly: true, render: RenderInvestigation},
+	model.KindPlan:          codec[model.Plan, struct{}]{kind: model.KindPlan, readOnly: true, render: RenderPlan},
 }
 
 // codecOf returns the codec for kind, panicking on an unregistered kind.

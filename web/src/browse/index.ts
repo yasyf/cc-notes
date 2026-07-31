@@ -8,6 +8,7 @@ import type {
   InvestigationSnapshot,
   LogSnapshot,
   NoteSnapshot,
+  PlanSnapshot,
   ProjectSnapshot,
   RunbookSnapshot,
   SprintSnapshot,
@@ -249,6 +250,38 @@ function investigationRow(s: InvestigationSnapshot): Row {
   };
 }
 
+function planRow(s: PlanSnapshot): Row {
+  return {
+    kind: "plan",
+    id: s.id,
+    title: s.title,
+    titleLower: s.title.toLowerCase(),
+    bodyLower: haystack([
+      s.body,
+      s.outcome,
+      ...s.labels,
+      ...s.comments.map((c) => c.body),
+      ...s.anchors.map((anchor) => anchor.value),
+      s.id,
+    ]),
+    status: s.status,
+    priority: null,
+    assignee: "",
+    branch: "",
+    sprint: "",
+    project: "",
+    tags: s.labels,
+    updated: s.updated_at,
+    verifiedAt: 0,
+    verifiable: false,
+    stale: false,
+    superseded: s.superseded_by.length > 0,
+    neverVerified: false,
+    criteriaMet: 0,
+    criteriaTotal: 0,
+  };
+}
+
 // buildIndex folds a StateResponse into the flat Row index, in kind order.
 export function buildIndex(state: StateResponse): Row[] {
   return [
@@ -256,6 +289,7 @@ export function buildIndex(state: StateResponse): Row[] {
     ...state.notes.map((n) => noteDocRow("note", n)),
     ...state.docs.map((d) => noteDocRow("doc", d)),
     ...state.logs.map(logRow),
+    ...state.plans.map(planRow),
     ...state.investigations.map(investigationRow),
     ...state.runbooks.map(runbookRow),
     ...state.sprints.map(sprintRow),
@@ -272,8 +306,11 @@ export function titleMap(rows: readonly Row[]): Map<string, string> {
 const STATUS_RANK: Record<string, number> = {
   open: 0,
   planned: 0,
+  draft: 0,
+  approved: 0,
   in_progress: 1,
   active: 1,
+  executing: 1,
   root_caused: 1,
   fixed: 2,
   done: 3,

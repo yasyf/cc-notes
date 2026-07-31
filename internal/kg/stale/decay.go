@@ -50,8 +50,9 @@ func (e *Evaluator) penalties(r record, promoted bool, tree *Tree, touches []tou
 func halve(x, h float64) float64 { return math.Exp2(-x / h) }
 
 // deadRefs applies S8 only to the kinds that assert facts about the current
-// tree. A task or a project names the code it intends to write, and a log names
-// the code as it stood; neither is stale for citing an identifier HEAD lacks.
+// tree. A task, a project, or a plan names the code it intends to write, and a
+// log names the code as it stood; none of them is stale for citing an identifier
+// HEAD lacks.
 func deadRefs(r record, tree *Tree) []string {
 	switch r.Kind {
 	case model.KindNote, model.KindDoc, model.KindRunbook, model.KindInvestigation:

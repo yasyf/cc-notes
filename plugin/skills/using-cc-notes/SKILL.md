@@ -9,7 +9,8 @@ description: >-
   the backlog and who holds what; claims or starts a
   task; coordinates work across branches and multiple agents; manages leases and
   reclaims stale claims; verifies or supersedes a durable fact; records or executes a
-  repeatable procedure as a runbook with per-run step tracking; syncs tasks and notes
+  repeatable procedure as a runbook with per-run step tracking; records an approved
+  plan verbatim and tracks its execution to an outcome; syncs tasks and notes
   with a remote; reconciles tasks after merging a branch; or links commits to the task
   they implemented.
 allowed-tools: Bash(cc-notes:*), Read
@@ -46,16 +47,17 @@ That result comes in two shapes. A listing or a write acknowledgement returns a 
 identity, the lifecycle status, and a tally where the entity carries an append-only history — and
 never the body, entries, comments, criteria, steps, or runs. The `*_show` tools return the record
 whole: `note_show`, `doc_show`, `log_show`, `task_show`, `sprint_show`, `project_show`,
-`runbook_show`, `investigation_show`, or the kind-agnostic `show`. So `note_add` hands back the id,
+`runbook_show`, `investigation_show`, `plan_show`, or the kind-agnostic `show`. So `note_add` hands back the id,
 not the body you just wrote, and `log_append` hands back an entry tally, not the entry. Fetch a
 body only to read one you did not write. An acknowledgement also carries up to two per-write
 facts, both absent ordinarily: `reused: true` when the duplicate guard returned an existing
 entity instead of creating one, and `branch_set: false` when `task_start` claimed a task from a
 detached HEAD without setting a branch.
 
-Property names mirror the flags. The four anchored kinds — note, doc, log, runbook — take
-anchor arrays (commits, paths, dirs, branches) on their add tools and the add_*/rm_* octet
-on their edit tools; task, sprint, project, and the criterion/step tools do not carry anchors
+Property names mirror the flags. The anchored kinds — note, doc, log, runbook, investigation,
+plan — take anchor arrays (commits, paths, dirs, branches) on their add tools and the add_*/rm_*
+octet
+on their edit tools; sprint, project, and the criterion/step tools do not carry anchors
 (tasks scope to a branch). `--label` becomes `labels`. Long text rides the `body` property
 directly — no `--checkout` buffer round-trip, no stdin; the literal `"-"` is rejected over
 MCP, so pass the text itself.
@@ -106,17 +108,21 @@ opens with an `MCP:` line naming the tool and its properties. Operator commands 
 the server is active, cc-notes' own capt-hook nudges name the tools; the CLI forms below
 are the fallback for sessions without it.
 
-## Seven tools, seven jobs
+## Eight tools, eight jobs
 
-Get this distinction right first. Native todos, cc-notes tasks, cc-notes notes, cc-notes docs,
-cc-notes logs, cc-notes investigations, and cc-notes papercuts differ along two axes — how long
+Get this distinction right first. Native todos, cc-notes tasks, cc-notes plans, cc-notes notes,
+cc-notes docs, cc-notes logs, cc-notes investigations, and cc-notes papercuts differ along two
+axes — how long
 the record lives and who can see it — and the five durable knowledge records, a note, a doc, a
-log, an investigation, and a papercut, split once more by form.
+log, an investigation, and a papercut, split once more by form. Tasks and plans are the two
+work-shaped records: a task is a unit of work, a plan the approved approach a set of tasks
+executes.
 
 | Tool | Lifetime | Scope | Use for |
 |------|----------|-------|---------|
 | Native todos (`TaskCreate`/`TaskUpdate`) | Ephemeral — this session, gone at session end | This agent's private scratchpad | Decomposing the *current* task into in-session steps |
 | `task_*` / `cc-notes task` | Durable — git ODB, synced across machines and agents | Global: one flat ref per task, with a mutable `branch` attribute and a shared backlog every agent sees | Work that outlives the session or coordinates agents: claim, lease, deps, comments, priority, lifecycle |
+| `plan_*` / `cc-notes plan` | Durable — git ODB, synced | Repo-global, anchored like a note | An approved plan held verbatim — context, approach, pitfalls, verification — with a typed status (`draft → approved → executing → done`/`abandoned`) and a derived roll-up of the tasks pointing at it |
 | `note_*` / `cc-notes note` | Durable — git ODB, synced | Repo-global, optionally anchored to a commit, path, or branch | Design decisions and durable facts, verified and searchable |
 | `doc_*` / `cc-notes doc` | Durable — git ODB, synced | Repo-global, anchored like a note, plus a `when` read-trigger | Multi-paragraph guidance written *for the next agent*, verified and floated on read |
 | `log_*` / `cc-notes log` | Durable — git ODB, synced | Repo-global, anchored like a doc | An append-only chronological journal — a rollout log, a migration diary — whose entries are never edited or reordered, with no verify/drift/supersede lifecycle and no verdict |
@@ -133,6 +139,16 @@ what `list`/`ready` read and sets a task's placement on `add`/`edit`. In a coloc
 git HEAD detached at the working-copy parent — the current branch still resolves: the nearest
 unmerged bookmark, else the trunk. When nothing resolves, branch-scoped task commands degrade
 to the backlog instead of failing; an explicit `branch` on `task_start` sets one.
+
+A **plan** is the task's work-shaped sibling: the approved plan text held verbatim
+in a markdown body, never paraphrased, moving `draft → approved → executing → done | abandoned`
+(`plan_reopen` returns a closed plan to `executing`). The tasks that implement it point back with
+`task_add`'s `plan` property, and `plan_show` inverts those pointers into the roll-up. A plan has
+no freshness lifecycle — it goes out of date through its status machine — and a draft re-approved
+under the same title before work starts is that same plan, revised with `plan_edit`;
+`plan_supersede` links a genuine replan once execution has started: an edge, never a status.
+Where the capt-hook pack is enabled, `ExitPlanMode` captures the approved plan for you, revises
+it in place on every later round, and nudges the task links.
 
 A note records when it was last **verified** true; superseding a note points it at its
 replacement and drops it from default listings.
@@ -185,7 +201,7 @@ the friction.
 The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, else your git
 `user.name`/`user.email`. Claims and leases key on that actor.
 
-See `references/tasks-vs-notes.md` for worked examples of choosing among the seven.
+See `references/tasks-vs-notes.md` for worked examples of choosing among the eight.
 
 ## Canonical agent flow
 
@@ -241,12 +257,16 @@ docs: 6 total, 0 need review
 logs: 2 total
 papercuts: 5 total
 investigations: 2 open, 1 awaiting confirmation, 3 open findings
+plans: 1 in flight
 ```
 
 **3. Plan.** Capture shared work onto the backlog; capture branch-specific work plainly.
 The backlog `task_add` is the second worked example above; a branch-scoped one drops
 `backlog` and keeps `criteria`. CLI: `cc-notes task add "<title>" --priority 1 --label api
---criterion "backoff caps at 30s"` (`--backlog` for shared work).
+--criterion "backoff caps at 30s"` (`--backlog` for shared work). When the work executes an
+approved plan, record the plan itself first — `plan_add` with the text verbatim and
+`approved: true` (the capt-hook pack does this on `ExitPlanMode`) — and point each task at it
+with `plan`, so `plan_show` rolls the work up under the approach it implements.
 
 **4. Grab.** `task_start` — `{"id": "d82c087"}` — atomically claims the task
 (deterministic first-wins) and moves it onto your current branch, opening a lease. CLI:
@@ -334,7 +354,12 @@ The full surface — every flag, property, default, and output shape — is in
 | Refresh a lease you hold | `task_renew` (`id`) | `cc-notes task renew <id>` |
 | Close and link HEAD | `task_done` (`id`) | `cc-notes task done <id>` |
 | Re-home a task | `task_edit` (`id`, `branch` or `backlog`) | `cc-notes task edit <id> --branch <branch>` |
-| Thread discussion on a task, sprint, project, or runbook | `task_comment` / `sprint_comment` / `project_comment` / `runbook_comment` (`id`, `body`) | `cc-notes task comment <id> "<text>"` |
+| Thread discussion on a task, sprint, project, runbook, or plan | `task_comment` / `sprint_comment` / `project_comment` / `runbook_comment` / `plan_comment` (`id`, `body`) | `cc-notes task comment <id> "<text>"` |
+| Record an approved plan verbatim | `plan_add` (`title`, `body`, `approved`, `paths`) | `cc-notes plan add "<title>" --body-file <plan.md> --approved` |
+| Point a task at the plan it executes | `task_add` / `task_edit` (`plan`) | `cc-notes task add "<title>" --plan <id>` |
+| Walk the plan lifecycle | `plan_approve` / `plan_start` / `plan_done` (`id`, `outcome`) | `cc-notes plan done <id> --outcome "<result>"` |
+| Revise a plan re-approved before work starts | `plan_edit` (`id`, `body`) | `cc-notes plan edit <id> --body -` |
+| Replace a plan after a genuine replan | `plan_supersede` (`id`, `by`) | `cc-notes plan supersede <old> --by <new>` |
 | Record a durable fact | `note_add` (`title`, `body`, `paths`) | `cc-notes note add "<title>" --path <path>` |
 | Re-confirm a fact | `note_verify` (`id`) | `cc-notes note verify <id>` |
 | Flag a fact out-of-date | `note_expire` (`id`, `reason`) | `cc-notes note expire <id>` |
@@ -363,12 +388,12 @@ The full surface — every flag, property, default, and output shape — is in
 | Close the run | `runbook_run_finish` (`id`, `failed`, `abandoned`) | `cc-notes runbook run finish <id>` |
 
 A tool result is the command's `--json`; on the CLI, append `--json` to any note, doc, log,
-investigation, papercut, task, sync, reconcile, or status command for the same machine-readable
-record instead of the lean line. Listings and write acknowledgements come back as summaries; a
+investigation, plan, papercut, task, sync, reconcile, or status command for the same
+machine-readable record instead of the lean line. Listings and write acknowledgements come back as summaries; a
 `show` returns the record whole, capping exactly five collections at their 20 most recent members
 — a log's entries, an investigation's timeline entries and findings, a task's comments, and a
 runbook's runs — with an `entries_omitted`, `findings_omitted`, `comments_omitted`, or
-`runs_omitted` count beside each. Sprint, project, and runbook comments come back whole. Past a
+`runs_omitted` count beside each. Sprint, project, runbook, and plan comments come back whole. Past a
 cap, `log_entry_list`, `investigation_entry_list`, and `task_comment_list` return the complete
 timeline or thread, and `investigation_finding_list` and `runbook_run_list` were already
 uncapped.
@@ -479,9 +504,24 @@ pointer line each (kind · short id · title · how touched), newest first, capp
 accumulate rather than reset. Re-open anything from a pointer with `show` (the
 `note_show`/`task_show` tools, or `cc-notes show <id>`).
 
+## Plans (optional)
+
+A **plan** records one approved approach verbatim — context, approach, pitfalls, verification —
+and tracks its execution as typed state: `plan_approve` gates a draft, `plan_start` opens
+execution and stamps `started_at`, `plan_done`/`plan_abandon` close it with an optional
+`outcome` recording what actually happened, and `plan_reopen` resumes a closed plan. Plans are
+repo-wide and anchor to commits, paths, dirs, and branches exactly like a note (so `relevant`
+surfaces them), but carry no verify/drift lifecycle: the status machine is the staleness signal.
+The tasks implementing a plan point at it (`plan` on `task_add`/`task_edit`); `plan_show`
+derives the roll-up. The body is last-writer-wins, which is what makes a revision round cheap: a
+draft re-approved under the same title before work starts is edited into that same plan with
+`plan_edit`, and every earlier draft stays readable through `history`. A changed title is
+different work, so it gets its own plan with no edge joining the two, and `plan_supersede` is
+reserved for a genuine replan once execution has started. See `references/plans.md`.
+
 ## Projects and sprints (optional)
 
-An optional planning layer sits on top of tasks — skip it for the canonical flow above. A
+An optional grouping layer sits on top of tasks — skip it for the canonical flow above. A
 task can carry an independent **sprint** pointer (a time-boxed grouping) and **project**
 pointer (a long-lived one), and a sprint can point at a project; all three are optional and
 **repo-wide**, not branch-scoped like a task's `branch`. Membership is an upward pointer the
@@ -519,14 +559,16 @@ See `references/runbooks.md`.
 - `references/coordination.md` — how agents coordinate over time: the backlog and the branch
   attribute, claims and leases, stale-claim recovery, deps and blocking, reconcile-on-merge,
   and union-merge sync across a shared remote.
-- `references/tasks-vs-notes.md` — the seven-way distinction with worked examples of choosing
-  native todo vs cc-notes task vs cc-notes note vs cc-notes doc vs cc-notes log vs cc-notes
-  investigation vs cc-notes papercut.
+- `references/tasks-vs-notes.md` — the eight-way distinction with worked examples of choosing
+  native todo vs cc-notes task vs cc-notes plan vs cc-notes note vs cc-notes doc vs cc-notes log
+  vs cc-notes investigation vs cc-notes papercut.
 - `references/investigations.md` — the investigation record: premise, timeline, findings, and
   the status machine; the log-vs-investigation call; and the multi-agent forensics flow.
 - `references/lifecycle-and-hygiene.md` — keeping the record honest: task leases and
   staleness, note verification, drift, and supersession, and the maintenance verbs.
-- `references/sprints-and-projects.md` — the optional planning layer: tasks rolling up into
+- `references/plans.md` — the plan record: the verbatim body, the status machine, the task
+  roll-up, supersession as an edge, and the plan-vs-runbook-vs-doc call.
+- `references/sprints-and-projects.md` — the optional grouping layer: tasks rolling up into
   sprints and projects, the repo-wide upward pointers, and the derived reverse indexes.
 - `references/runbooks.md` — repeatable procedures: the runbook-vs-doc call, authoring
   steps with positions and commands, and the tracked run loop.

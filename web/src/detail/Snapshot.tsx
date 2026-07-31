@@ -10,6 +10,7 @@ import type {
   InvestigationSnapshot,
   LogSnapshot,
   NoteSnapshot,
+  PlanSnapshot,
   ProjectSnapshot,
   RunbookSnapshot,
   Snapshot,
@@ -39,6 +40,8 @@ export function SnapshotView({ kind, snapshot }: { kind: string; snapshot: Snaps
       return <RunbookView snap={snapshot as RunbookSnapshot} />;
     case "investigation":
       return <InvestigationView snap={snapshot as InvestigationSnapshot} />;
+    case "plan":
+      return <PlanView snap={snapshot as PlanSnapshot} />;
     default:
       return null;
   }
@@ -205,6 +208,9 @@ function TaskView({ snap }: { snap: TaskSnapshot }) {
           {snap.parent !== "" && <Field label="parent" value={<IdChip id={snap.parent} />} />}
           {snap.sprint !== "" && <Field label="sprint" value={<IdChip id={snap.sprint} />} />}
           {snap.project !== "" && <Field label="project" value={<IdChip id={snap.project} />} />}
+          {snap.plan !== undefined && snap.plan !== "" && (
+            <Field label="plan" value={<IdChip id={snap.plan} />} />
+          )}
           {snap.started_at > 0 && <Field label="started" value={<TimeText sec={snap.started_at} />} />}
           {snap.closed_at > 0 && <Field label="closed" value={<TimeText sec={snap.closed_at} />} />}
         </dl>
@@ -474,6 +480,66 @@ function ProjectView({ snap }: { snap: ProjectSnapshot }) {
         </Section>
       )}
       <CommitsSection commits={snap.commits} />
+    </>
+  );
+}
+
+function PlanView({ snap }: { snap: PlanSnapshot }) {
+  return (
+    <>
+      {snap.superseded_by.length > 0 && (
+        <Banner tone="muted">
+          Superseded by{" "}
+          {snap.superseded_by.map((id) => (
+            <IdChip key={id} id={id} />
+          ))}
+        </Banner>
+      )}
+      {snap.body.trim() !== "" && (
+        <Section title="Plan">
+          <Markdown>{snap.body}</Markdown>
+        </Section>
+      )}
+      {snap.outcome.trim() !== "" && (
+        <Section title="Outcome">
+          <Markdown>{snap.outcome}</Markdown>
+        </Section>
+      )}
+      {(snap.started_at > 0 || snap.closed_at > 0 || snap.closed_by !== "") && (
+        <Section title="Details">
+          <dl className="snap-fields">
+            {snap.started_at > 0 && (
+              <Field label="started" value={<TimeText sec={snap.started_at} />} />
+            )}
+            {snap.closed_at > 0 && <Field label="closed" value={<TimeText sec={snap.closed_at} />} />}
+            {snap.closed_by !== "" && <Field label="closed by" value={snap.closed_by} />}
+          </dl>
+        </Section>
+      )}
+      <CommentsSection comments={snap.comments} />
+      {snap.labels.length > 0 && (
+        <Section title="Labels">
+          <ChipRow>
+            {snap.labels.map((l) => (
+              <Chip key={l} className="chip-tag">
+                {l}
+              </Chip>
+            ))}
+          </ChipRow>
+        </Section>
+      )}
+      {snap.anchors.length > 0 && (
+        <Section title="Anchors">
+          <ChipRow>
+            {snap.anchors.map((anchor, i) => (
+              <span key={i} className="chip chip-anchor">
+                <span className="chip-key">{anchor.kind}</span>
+                {anchor.value}
+              </span>
+            ))}
+          </ChipRow>
+        </Section>
+      )}
     </>
   );
 }

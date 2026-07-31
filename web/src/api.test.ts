@@ -190,7 +190,7 @@ describe("normalizeEntities", () => {
     // An empty repo: the Go side marshals each nil kind slice as null.
     const state = normalizeEntities(
       JSON.parse(
-        `{"notes":null,"docs":null,"logs":null,"tasks":null,"sprints":null,"projects":null,"runbooks":null,"investigations":null}`,
+        `{"notes":null,"docs":null,"logs":null,"tasks":null,"sprints":null,"projects":null,"runbooks":null,"investigations":null,"plans":null}`,
       ),
     );
     expect(state.notes).toEqual([]);
@@ -201,6 +201,7 @@ describe("normalizeEntities", () => {
     expect(state.projects).toEqual([]);
     expect(state.runbooks).toEqual([]);
     expect(state.investigations).toEqual([]);
+    expect(state.plans).toEqual([]);
   });
 
   it("keeps present buckets and passes their snapshots through verbatim", () => {
@@ -215,7 +216,9 @@ describe("normalizeEntities", () => {
             "runs":[{"id":"r1","task":"","status":"running","runner":"ann","started_at":5,"finished_at":0,
               "results":[{"step_id":"s1","status":"done","note":"","actor":"ann","ts":6}]}]}],
           "investigations":[{"id":"i1","title":"deadlock","status":"root_caused",
-            "findings":[{"id":"f1","text":"pool rewrite","status":"cleared","note":"predates rewrite"}]}]}`,
+            "findings":[{"id":"f1","text":"pool rewrite","status":"cleared","note":"predates rewrite"}]}],
+          "plans":[{"id":"p1","title":"ninth kind","body":"## Context\\nnine kinds","status":"executing",
+            "outcome":"","anchors":[{"kind":"path","value":"internal/fold"}]}]}`,
       ),
     );
     expect(state.docs).toEqual([]);
@@ -232,6 +235,8 @@ describe("normalizeEntities", () => {
     expect(state.investigations[0]?.findings).toEqual([
       { id: "f1", text: "pool rewrite", status: "cleared", note: "predates rewrite" },
     ]);
+    expect(state.plans[0]?.body).toBe("## Context\nnine kinds");
+    expect(state.plans[0]?.anchors).toEqual([{ kind: "path", value: "internal/fold" }]);
   });
 });
 

@@ -295,6 +295,13 @@ func (s *Store) ListInvestigations(ctx context.Context) ([]model.Investigation, 
 	return listOf(ctx, s, model.KindInvestigation, fold.Investigation, ListOpts{})
 }
 
+// ListPlans folds every plan in the repository, ordered by creation time then
+// id. The default filter hides tombstoned and superseded records, matching the
+// other durable kinds.
+func (s *Store) ListPlans(ctx context.Context) ([]model.Plan, error) {
+	return listOf(ctx, s, model.KindPlan, fold.Plan, ListOpts{})
+}
+
 // children lists the refs that are immediate children of prefix, excluding
 // nested namespaces.
 func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error) {

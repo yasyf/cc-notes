@@ -593,7 +593,7 @@ func TestInvestigationRelevantJSONAndLean(t *testing.T) {
 	if dto.Kind != "investigation" || dto.Investigation == nil || dto.Investigation.ID != invID || dto.Investigation.Status != "open" {
 		t.Fatalf("relevant entry = %+v, want open investigation %s", dto, invID)
 	}
-	if dto.Note != nil || dto.Doc != nil || dto.Log != nil || dto.Runbook != nil {
+	if dto.Note != nil || dto.Doc != nil || dto.Log != nil || dto.Runbook != nil || dto.Plan != nil {
 		t.Errorf("relevant investigation entry populates a foreign entity field: %+v", dto)
 	}
 	if dto.Score != 150 || !slices.Equal(dto.Reasons, []string{"investigation-open", "path"}) {

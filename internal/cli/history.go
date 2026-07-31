@@ -71,6 +71,8 @@ func resolveInKind(ctx context.Context, c *notes.Client, kind model.Kind, prefix
 		return c.ResolveRunbook(ctx, prefix)
 	case model.KindInvestigation:
 		return c.ResolveInvestigation(ctx, prefix)
+	case model.KindPlan:
+		return c.ResolvePlan(ctx, prefix)
 	default:
 		panic(fmt.Sprintf("history: unknown kind %q", kind))
 	}

@@ -23,9 +23,9 @@ import (
 // puts the task on the backlog unconditionally. Type defaults to
 // model.TypeTask. Criteria are added verbatim — none is auto-injected, so an
 // empty slice creates a task with no acceptance criteria. Parent, Sprint,
-// Project, and BlockedBy carry full entity ids; the caller resolves any prefix
-// first. Anchors are attached in commit, path, dir, then branch order; commit
-// values are resolved to full shas at write time.
+// Project, Plan, and BlockedBy carry full entity ids; the caller resolves any
+// prefix first. Anchors are attached in commit, path, dir, then branch order;
+// commit values are resolved to full shas at write time.
 type TaskSpec struct {
 	Title       string
 	Description string
@@ -36,6 +36,7 @@ type TaskSpec struct {
 	Parent      model.EntityID
 	Sprint      model.EntityID
 	Project     model.EntityID
+	Plan        model.EntityID
 	Labels      []string
 	Criteria    []string
 	BlockedBy   []model.EntityID
@@ -113,6 +114,7 @@ type TaskEdit struct {
 	Parent        *model.EntityID
 	Sprint        *model.EntityID
 	Project       *model.EntityID
+	Plan          *model.EntityID
 	Branch        *model.Branch
 	AddAnchors    AnchorSpec
 	RemoveAnchors AnchorSpec
@@ -123,8 +125,8 @@ type TaskEdit struct {
 // basis: an exact duplicate of a live task returns that existing task
 // (Reused=true) instead of rooting a new one, though truly concurrent identical
 // creates can both land. Ops follow the CLI's exact order — create, then
-// SetSprint/SetProject, one AddCriterion per Criteria text, one AddDep per
-// BlockedBy id — so the entity id and dedupe key stay stable.
+// SetSprint/SetProject/SetPlan, one AddCriterion per Criteria text, one AddDep
+// per BlockedBy id — so the entity id and dedupe key stay stable.
 func (c *Client) CreateTask(ctx context.Context, spec TaskSpec) (TaskCreated, error) {
 	branch := spec.Branch
 	var degraded bool
@@ -162,6 +164,9 @@ func (c *Client) CreateTask(ctx context.Context, spec TaskSpec) (TaskCreated, er
 	}
 	if spec.Project != "" {
 		ops = append(ops, model.SetProject{Project: spec.Project})
+	}
+	if spec.Plan != "" {
+		ops = append(ops, model.SetPlan{Plan: spec.Plan})
 	}
 	for _, text := range spec.Criteria {
 		ops = append(ops, model.AddCriterion{ID: model.NewNonce(), Text: text})
@@ -550,6 +555,9 @@ func (c *Client) EditTask(ctx context.Context, id model.EntityID, edit TaskEdit)
 	}
 	if edit.Project != nil {
 		ops = append(ops, model.SetProject{Project: *edit.Project})
+	}
+	if edit.Plan != nil {
+		ops = append(ops, model.SetPlan{Plan: *edit.Plan})
 	}
 	if edit.Branch != nil {
 		ops = append(ops, model.SetBranch{Branch: *edit.Branch})

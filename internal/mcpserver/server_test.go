@@ -507,6 +507,115 @@ func TestInvestigationVerdictForceOverMCP(t *testing.T) {
 	}
 }
 
+type planOut struct {
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Body         string   `json:"body"`
+	Status       string   `json:"status"`
+	Outcome      string   `json:"outcome"`
+	SupersededBy []string `json:"superseded_by"`
+	Tasks        []string `json:"tasks"`
+	Comments     []struct {
+		Body string `json:"body"`
+	} `json:"comments"`
+}
+
+// planSummaryOut is what every plan mutation acknowledges with: identity and
+// lifecycle status, without the recorded text, the outcome, or the task roll-up.
+type planSummaryOut struct {
+	ID      string   `json:"id"`
+	Title   string   `json:"title"`
+	Status  string   `json:"status"`
+	Body    string   `json:"body"`
+	Outcome string   `json:"outcome"`
+	Tasks   []string `json:"tasks"`
+}
+
+// TestPlanLifecycle drives record → start → done → reopen → supersede through
+// the MCP tools, with a task hung off the plan, proving the hand-typed argv
+// resolves semantically and the transition guard reaches the surface as an
+// error result rather than a silent no-op.
+func TestPlanLifecycle(t *testing.T) {
+	initRepo(t)
+	cs := connect(t)
+
+	const body = "## Context\nthe fold drops plans\n\n## Approach\n1. add the kind"
+	addAck := decode[planSummaryOut](t, call(t, cs, "plan_add", map[string]any{
+		"title":    "Add the plan kind",
+		"body":     body,
+		"approved": true,
+		"paths":    []string{"internal/fold"},
+	}))
+	if addAck.Status != "approved" {
+		t.Fatalf("add ack = %+v, want approved", addAck)
+	}
+	if addAck.Body != "" || addAck.Tasks != nil {
+		t.Fatalf("plan_add ack = %+v, want a summary with no body and no task roll-up", addAck)
+	}
+
+	id := addAck.ID
+	recorded := show[planOut](t, cs, "plan_show", id)
+	if recorded.Body != body {
+		t.Fatalf("recorded body = %q, want the plan verbatim", recorded.Body)
+	}
+
+	taskID := ackID(t, call(t, cs, "task_add", map[string]any{
+		"title":                  "Fold the plan kind",
+		"no_validation_criteria": true,
+		"plan":                   id,
+	}))
+	if rolled := show[planOut](t, cs, "plan_show", id); len(rolled.Tasks) != 1 || rolled.Tasks[0] != taskID {
+		t.Fatalf("plan tasks = %v, want the inverted pointer to %s", rolled.Tasks, taskID)
+	}
+
+	if ack := decode[planSummaryOut](t, call(t, cs, "plan_start", map[string]any{"id": id})); ack.Status != "executing" {
+		t.Fatalf("start ack = %+v, want executing", ack)
+	}
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "plan_start", Arguments: map[string]any{"id": id}})
+	if err != nil {
+		t.Fatalf("second plan_start: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("second plan_start succeeded: %s", toolText(res))
+	}
+	if got := toolText(res); !strings.Contains(got, "conflict") {
+		t.Fatalf("second plan_start error = %q, want it to carry the conflict label", got)
+	}
+
+	if ack := decode[planSummaryOut](t, call(t, cs, "plan_done", map[string]any{
+		"id":      id,
+		"outcome": "landed as nine kinds",
+	})); ack.Status != "done" || ack.Outcome != "" {
+		t.Fatalf("done ack = %+v, want done with no outcome text", ack)
+	}
+	if closed := show[planOut](t, cs, "plan_show", id); closed.Outcome != "landed as nine kinds" {
+		t.Fatalf("outcome = %q, want the recorded outcome", closed.Outcome)
+	}
+
+	if ack := decode[planSummaryOut](t, call(t, cs, "plan_reopen", map[string]any{"id": id})); ack.Status != "executing" {
+		t.Fatalf("reopen ack = %+v, want executing", ack)
+	}
+
+	call(t, cs, "plan_comment", map[string]any{"id": id, "body": "revision round two"})
+	commented := show[planOut](t, cs, "plan_show", id)
+	if len(commented.Comments) != 1 || commented.Comments[0].Body != "revision round two" {
+		t.Fatalf("comments = %+v, want the appended comment", commented.Comments)
+	}
+
+	next := ackID(t, call(t, cs, "plan_add", map[string]any{
+		"title": "Add the plan kind, v2",
+		"body":  "## Context\nthe first draft missed the fold bundles",
+	}))
+	call(t, cs, "plan_supersede", map[string]any{"id": id, "by": next})
+	superseded := show[planOut](t, cs, "plan_show", id)
+	if len(superseded.SupersededBy) != 1 || superseded.SupersededBy[0] != next {
+		t.Fatalf("superseded_by = %v, want the edge to %s", superseded.SupersededBy, next)
+	}
+	if superseded.Status != "executing" {
+		t.Fatalf("status after supersede = %q, want executing — supersession is an edge, not a status", superseded.Status)
+	}
+}
+
 func TestErrorMappingCarriesLabel(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
@@ -536,7 +645,7 @@ func TestListToolsInventory(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	const wantCount = 128
+	const wantCount = 141
 	if len(names) != wantCount {
 		t.Errorf("tool count = %d, want %d; got %v", len(names), wantCount, sortedKeys(names))
 	}
@@ -552,6 +661,7 @@ func TestListToolsInventory(t *testing.T) {
 		"investigation_open", "investigation_list", "investigation_show", "investigation_append",
 		"investigation_finding_add", "investigation_finding_edit", "investigation_finding_clear", "investigation_finding_confirm", "investigation_finding_rm", "investigation_finding_list",
 		"investigation_root_cause", "investigation_fix", "investigation_confirm", "investigation_exonerate", "investigation_reopen", "investigation_abandon", "investigation_edit", "investigation_search", "investigation_rm",
+		"plan_add", "plan_list", "plan_show", "plan_edit", "plan_approve", "plan_start", "plan_reopen", "plan_done", "plan_abandon", "plan_comment", "plan_supersede", "plan_search", "plan_rm",
 		"attachment_path", "attachment_get",
 	} {
 		if !names[want] {

@@ -52,6 +52,16 @@ func parseInvestigationStatus(value string) (model.InvestigationStatus, error) {
 	})
 }
 
+func parsePlanStatus(value string) (model.PlanStatus, error) {
+	return parseEnum(value, "plan status", []model.PlanStatus{
+		model.PlanDraft,
+		model.PlanApproved,
+		model.PlanExecuting,
+		model.PlanDone,
+		model.PlanAbandoned,
+	})
+}
+
 func validatePriority(p int) (model.Priority, error) {
 	if p < 0 || p > 3 {
 		return 0, fmt.Errorf("invalid priority %d (0-3)", p)

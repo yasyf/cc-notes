@@ -104,6 +104,9 @@ CC_NOTES_WRITE_VERBS: dict[str, frozenset[str]] = {
     "investigation": frozenset(
         {"open", "add", "append", "root-cause", "fix", "confirm", "exonerate", "abandon", "reopen", "edit", "rm"}
     ),
+    "plan": frozenset(
+        {"add", "edit", "rm", "approve", "start", "reopen", "done", "abandon", "comment", "supersede"}
+    ),
 }
 
 # Two-level nouns: (noun, group) -> the read subcommands of that group. Any other sub writes (fail
@@ -137,6 +140,7 @@ MCP_READ_TOOLS = frozenset(
         "sprint_list", "sprint_show",
         "runbook_list", "runbook_show",
         "investigation_list", "investigation_show", "investigation_search", "investigation_finding_list",
+        "plan_list", "plan_show", "plan_search",
         "papercut_list",
         "status", "blame", "history", "relevant", "attachment_get", "attachment_path", "sync",
     }

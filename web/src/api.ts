@@ -290,6 +290,7 @@ export interface TaskSnapshot {
   head: string;
   sprint: string;
   project: string;
+  plan?: string;
   criteria: Criterion[];
 }
 
@@ -403,6 +404,29 @@ export interface InvestigationSnapshot {
   attachments?: Attachment[];
 }
 
+// PlanSnapshot is the folded snapshot of a plan: the approved plan text
+// verbatim, its lifecycle status, and the outcome executing it produced. A plan
+// carries no per-anchor witness and no verify lifecycle. Mirrors model.Plan.
+export interface PlanSnapshot {
+  id: string;
+  title: string;
+  body: string;
+  status: string;
+  outcome: string;
+  labels: string[];
+  comments: Comment[];
+  anchors: Anchor[];
+  superseded_by: string[];
+  author: string;
+  created_at: number;
+  updated_at: number;
+  started_at: number;
+  closed_at: number;
+  closed_by: string;
+  head: string;
+  deleted: boolean;
+}
+
 // ProjectedRunStep is one current step with the run's recorded status/note, or
 // "pending" when the run has no result for it.
 export interface ProjectedRunStep {
@@ -437,8 +461,8 @@ export function projectRunSteps(
 
 // Snapshot is the full folded entity carried on an EntityDetail and in the
 // /api/entities buckets. Discriminate it by the summary.kind the caller already
-// holds (note | doc | log | task | sprint | project | runbook | investigation) — the snapshots
-// carry no intrinsic tag. Mirrors model.Snapshot.
+// holds (note | doc | log | task | sprint | project | runbook | investigation |
+// plan) — the snapshots carry no intrinsic tag. Mirrors model.Snapshot.
 export type Snapshot =
   | NoteSnapshot
   | DocSnapshot
@@ -447,7 +471,8 @@ export type Snapshot =
   | SprintSnapshot
   | ProjectSnapshot
   | RunbookSnapshot
-  | InvestigationSnapshot;
+  | InvestigationSnapshot
+  | PlanSnapshot;
 
 // EntityDetail is the /api/entity/{kind}/{id} payload: the legend summary, the
 // full folded snapshot, and the change trail, oldest first. Mirrors
@@ -471,6 +496,7 @@ export interface StateResponse {
   projects: ProjectSnapshot[];
   runbooks: RunbookSnapshot[];
   investigations: InvestigationSnapshot[];
+  plans: PlanSnapshot[];
 }
 
 // RawEvent is Event as it arrives on the wire: detail is a Go map that marshals
@@ -539,6 +565,7 @@ interface RawStateResponse {
   projects: ProjectSnapshot[] | null;
   runbooks: RunbookSnapshot[] | null;
   investigations: InvestigationSnapshot[] | null;
+  plans: PlanSnapshot[] | null;
 }
 
 // normalizeGraph fills every nil slice with [] and every nil detail map with {},
@@ -598,6 +625,7 @@ export function normalizeEntities(raw: RawStateResponse): StateResponse {
     projects: raw.projects ?? [],
     runbooks: raw.runbooks ?? [],
     investigations: raw.investigations ?? [],
+    plans: raw.plans ?? [],
   };
 }
 

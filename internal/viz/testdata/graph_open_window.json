@@ -408,66 +408,83 @@
     },
     {
       "entity": {
-        "kind": "project",
+        "kind": "plan",
         "id": "sha-31",
         "short": "sha-31",
-        "title": "platform project"
+        "title": "pool rewrite plan"
       },
       "type": "created",
       "time": "<op-time>",
-      "branch": "",
+      "branch": "feature/parent",
       "sha": "sha-31",
       "detail": null
     },
     {
       "entity": {
-        "kind": "project",
+        "kind": "plan",
         "id": "sha-31",
         "short": "sha-31",
-        "title": "platform project"
+        "title": "pool rewrite plan"
       },
       "type": "status",
       "time": "<op-time>",
-      "branch": "",
+      "branch": "feature/parent",
       "sha": "sha-32",
-      "detail": null
-    },
-    {
-      "entity": {
-        "kind": "runbook",
-        "id": "sha-33",
-        "short": "sha-33",
-        "title": "deploy runbook"
-      },
-      "type": "created",
-      "time": "<op-time>",
-      "branch": "",
-      "sha": "sha-33",
-      "detail": null
-    },
-    {
-      "entity": {
-        "kind": "runbook",
-        "id": "sha-33",
-        "short": "sha-33",
-        "title": "deploy runbook"
-      },
-      "type": "run_started",
-      "time": "<op-time>",
-      "branch": "",
-      "sha": "sha-34",
       "detail": {
-        "run": "sha-35"
+        "status": "executing"
       }
     },
     {
       "entity": {
-        "kind": "runbook",
-        "id": "sha-33",
-        "short": "sha-33",
-        "title": "deploy runbook"
+        "kind": "plan",
+        "id": "sha-31",
+        "short": "sha-31",
+        "title": "pool rewrite plan"
       },
-      "type": "edited",
+      "type": "status",
+      "time": "<op-time>",
+      "branch": "feature/parent",
+      "sha": "sha-33",
+      "detail": {
+        "status": "done"
+      }
+    },
+    {
+      "entity": {
+        "kind": "plan",
+        "id": "sha-31",
+        "short": "sha-31",
+        "title": "pool rewrite plan"
+      },
+      "type": "status",
+      "time": "<op-time>",
+      "branch": "feature/parent",
+      "sha": "sha-34",
+      "detail": {
+        "status": "reopened"
+      }
+    },
+    {
+      "entity": {
+        "kind": "project",
+        "id": "sha-35",
+        "short": "sha-35",
+        "title": "platform project"
+      },
+      "type": "created",
+      "time": "<op-time>",
+      "branch": "",
+      "sha": "sha-35",
+      "detail": null
+    },
+    {
+      "entity": {
+        "kind": "project",
+        "id": "sha-35",
+        "short": "sha-35",
+        "title": "platform project"
+      },
+      "type": "status",
       "time": "<op-time>",
       "branch": "",
       "sha": "sha-36",
@@ -476,63 +493,104 @@
     {
       "entity": {
         "kind": "runbook",
-        "id": "sha-33",
-        "short": "sha-33",
+        "id": "sha-37",
+        "short": "sha-37",
+        "title": "deploy runbook"
+      },
+      "type": "created",
+      "time": "<op-time>",
+      "branch": "",
+      "sha": "sha-37",
+      "detail": null
+    },
+    {
+      "entity": {
+        "kind": "runbook",
+        "id": "sha-37",
+        "short": "sha-37",
+        "title": "deploy runbook"
+      },
+      "type": "run_started",
+      "time": "<op-time>",
+      "branch": "",
+      "sha": "sha-38",
+      "detail": {
+        "run": "sha-39"
+      }
+    },
+    {
+      "entity": {
+        "kind": "runbook",
+        "id": "sha-37",
+        "short": "sha-37",
+        "title": "deploy runbook"
+      },
+      "type": "edited",
+      "time": "<op-time>",
+      "branch": "",
+      "sha": "sha-40",
+      "detail": null
+    },
+    {
+      "entity": {
+        "kind": "runbook",
+        "id": "sha-37",
+        "short": "sha-37",
         "title": "deploy runbook"
       },
       "type": "run_finished",
       "time": "<op-time>",
       "branch": "",
-      "sha": "sha-37",
+      "sha": "sha-41",
       "detail": {
-        "run": "sha-35",
+        "run": "sha-39",
         "status": "succeeded"
       }
     },
     {
       "entity": {
         "kind": "sprint",
-        "id": "sha-38",
-        "short": "sha-38",
+        "id": "sha-42",
+        "short": "sha-42",
         "title": "q3 hardening sprint"
       },
       "type": "created",
       "time": "<op-time>",
       "branch": "",
-      "sha": "sha-38",
+      "sha": "sha-42",
       "detail": null
     },
     {
       "entity": {
         "kind": "sprint",
-        "id": "sha-38",
-        "short": "sha-38",
+        "id": "sha-42",
+        "short": "sha-42",
         "title": "q3 hardening sprint"
       },
       "type": "status",
       "time": "<op-time>",
       "branch": "",
-      "sha": "sha-39",
+      "sha": "sha-43",
       "detail": null
     },
     {
       "entity": {
         "kind": "task",
-        "id": "sha-40",
-        "short": "sha-40",
+        "id": "sha-44",
+        "short": "sha-44",
         "title": "gone branch task"
       },
       "type": "created",
       "time": "<op-time>",
       "branch": "feature/gone",
-      "sha": "sha-40",
+      "sha": "sha-44",
       "detail": null
     },
     {
       "entity": {
         "kind": "task",
-        "id": "sha-40",
-        "short": "sha-40",
+        "id": "sha-44",
+        "short": "sha-44",
         "title": "gone branch task"
       },
       "type": "branch_moved",
@@ -547,40 +605,40 @@
     {
       "entity": {
         "kind": "task",
-        "id": "sha-41",
-        "short": "sha-41",
+        "id": "sha-45",
+        "short": "sha-45",
         "title": "lifecycle task across branches"
       },
       "type": "created",
       "time": "<op-time>",
       "branch": "feature/parent",
-      "sha": "sha-41",
+      "sha": "sha-45",
       "detail": null
     },
     {
       "entity": {
         "kind": "task",
-        "id": "sha-41",
-        "short": "sha-41",
+        "id": "sha-45",
+        "short": "sha-45",
         "title": "lifecycle task across branches"
       },
       "type": "claimed",
       "time": "<op-time>",
       "branch": "feature/parent",
-      "sha": "sha-42",
+      "sha": "sha-46",
       "detail": null
     },
     {
       "entity": {
         "kind": "task",
-        "id": "sha-41",
-        "short": "sha-41",
+        "id": "sha-45",
+        "short": "sha-45",
         "title": "lifecycle task across branches"
       },
       "type": "branch_moved",
       "time": "<op-time>",
       "branch": "main",
-      "sha": "sha-43",
+      "sha": "sha-47",
       "detail": {
         "from": "feature/parent",
         "to": "main"
@@ -589,27 +647,27 @@
     {
       "entity": {
         "kind": "task",
-        "id": "sha-41",
-        "short": "sha-41",
+        "id": "sha-45",
+        "short": "sha-45",
         "title": "lifecycle task across branches"
       },
       "type": "closed",
       "time": "<op-time>",
       "branch": "main",
-      "sha": "sha-44",
+      "sha": "sha-48",
       "detail": null
     },
     {
       "entity": {
         "kind": "task",
-        "id": "sha-41",
-        "short": "sha-41",
+        "id": "sha-45",
+        "short": "sha-45",
         "title": "lifecycle task across branches"
       },
       "type": "commit_linked",
       "time": "<op-time>",
       "branch": "main",
-      "sha": "sha-45",
+      "sha": "sha-49",
       "detail": {
         "sha": "sha-1"
       }
@@ -617,53 +675,53 @@
     {
       "entity": {
         "kind": "task",
-        "id": "sha-46",
-        "short": "sha-46",
+        "id": "sha-50",
+        "short": "sha-50",
         "title": "member task in sprint"
       },
       "type": "created",
       "time": "<op-time>",
       "branch": "",
-      "sha": "sha-46",
+      "sha": "sha-50",
       "detail": null
     },
     {
       "entity": {
         "kind": "task",
-        "id": "sha-46",
-        "short": "sha-46",
+        "id": "sha-50",
+        "short": "sha-50",
         "title": "member task in sprint"
       },
       "type": "edited",
       "time": "<op-time>",
       "branch": "",
-      "sha": "sha-47",
+      "sha": "sha-51",
       "detail": null
     },
     {
       "entity": {
         "kind": "task",
-        "id": "sha-48",
-        "short": "sha-48",
+        "id": "sha-52",
+        "short": "sha-52",
         "title": "squash task on feature-squash"
       },
       "type": "created",
       "time": "<op-time>",
       "branch": "feature/squash",
-      "sha": "sha-48",
+      "sha": "sha-52",
       "detail": null
     },
     {
       "entity": {
         "kind": "task",
-        "id": "sha-48",
-        "short": "sha-48",
+        "id": "sha-52",
+        "short": "sha-52",
         "title": "squash task on feature-squash"
       },
       "type": "closed",
       "time": "<op-time>",
       "branch": "feature/squash",
-      "sha": "sha-49",
+      "sha": "sha-53",
       "detail": null
     }
   ],
@@ -705,41 +763,49 @@
       "superseded": true
     },
     {
-      "kind": "project",
+      "kind": "plan",
       "id": "sha-31",
       "short": "sha-31",
+      "title": "pool rewrite plan",
+      "status": "executing",
+      "started_at": "<op-time>"
+    },
+    {
+      "kind": "project",
+      "id": "sha-35",
+      "short": "sha-35",
       "title": "platform project",
       "status": "archived"
     },
     {
       "kind": "runbook",
-      "id": "sha-33",
-      "short": "sha-33",
+      "id": "sha-37",
+      "short": "sha-37",
       "title": "deploy runbook",
       "status": "active"
     },
     {
       "kind": "sprint",
-      "id": "sha-38",
-      "short": "sha-38",
+      "id": "sha-42",
+      "short": "sha-42",
       "title": "q3 hardening sprint",
       "status": "active",
-      "project": "sha-31",
+      "project": "sha-35",
       "start_date": 1690000000,
       "end_date": 1698000000
     },
     {
       "kind": "task",
-      "id": "sha-40",
-      "short": "sha-40",
+      "id": "sha-44",
+      "short": "sha-44",
       "title": "gone branch task",
       "status": "open",
       "branch": "main"
     },
     {
       "kind": "task",
-      "id": "sha-41",
-      "short": "sha-41",
+      "id": "sha-45",
+      "short": "sha-45",
       "title": "lifecycle task across branches",
       "status": "done",
       "branch": "main",
@@ -749,17 +815,17 @@
     },
     {
       "kind": "task",
-      "id": "sha-46",
-      "short": "sha-46",
+      "id": "sha-50",
+      "short": "sha-50",
       "title": "member task in sprint",
       "status": "open",
-      "sprint": "sha-38",
-      "project": "sha-31"
+      "sprint": "sha-42",
+      "project": "sha-35"
     },
     {
       "kind": "task",
-      "id": "sha-48",
-      "short": "sha-48",
+      "id": "sha-52",
+      "short": "sha-52",
       "title": "squash task on feature-squash",
       "status": "done",
       "branch": "feature/squash",

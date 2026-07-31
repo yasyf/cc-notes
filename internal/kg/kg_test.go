@@ -123,10 +123,15 @@ func TestBuildDeclaredEdges(t *testing.T) {
 	epic := f.create(t, model.CreateTask{Nonce: model.NewNonce(), Title: "epic", Type: model.TypeEpic, Branch: "main"}).EntityID()
 	blocker := f.create(t, model.CreateTask{Nonce: model.NewNonce(), Title: "blocker", Type: model.TypeTask, Branch: "main"}).EntityID()
 	task := f.create(t, model.CreateTask{Nonce: model.NewNonce(), Title: "task", Type: model.TypeTask, Branch: "feat/graph", Parent: epic}).EntityID()
+	plan := f.create(t, model.CreatePlan{
+		Nonce: model.NewNonce(), Title: "graph rewrite", Body: "## Approach\n\nrewrite the walker\n",
+		Status: model.PlanApproved, Anchors: []model.Anchor{pathAnchor("internal/kg/build.go")},
+	}).EntityID()
 	f.append(t, model.KindTask, task,
 		model.AddDep{ID: blocker},
 		model.SetSprint{Sprint: sprint},
 		model.SetProject{Project: project},
+		model.SetPlan{Plan: plan},
 		model.LinkCommit{SHA: sha},
 	)
 	investigation := f.create(t, model.CreateInvestigation{
@@ -151,6 +156,8 @@ func TestBuildDeclaredEdges(t *testing.T) {
 		{taskNode, kg.EntityNode(model.KindTask, epic), kg.EdgeParent},
 		{taskNode, kg.EntityNode(model.KindSprint, sprint), kg.EdgeSprint},
 		{taskNode, kg.EntityNode(model.KindProject, project), kg.EdgeProject},
+		{taskNode, kg.EntityNode(model.KindPlan, plan), kg.EdgePlan},
+		{kg.EntityNode(model.KindPlan, plan), kg.PathNode("internal/kg/build.go"), kg.EdgeAnchor},
 		{taskNode, kg.CommitNode(sha), kg.EdgeCommit},
 		{taskNode, kg.BranchNode("feat/graph"), kg.EdgeBranch},
 		{kg.EntityNode(model.KindSprint, sprint), kg.EntityNode(model.KindProject, project), kg.EdgeProject},
@@ -167,6 +174,34 @@ func TestBuildDeclaredEdges(t *testing.T) {
 	if node.Kind != kg.NodeTask || node.Title != "task" || node.Value != string(task) {
 		t.Fatalf("task node = %+v", node)
 	}
+}
+
+// TestBuildPlanTextSpansOutcomeAndComments proves a plan's indexed text reaches
+// past the approved body: a term carried only by the recorded outcome and one
+// carried only by a comment each become a concept edge, so a plan is findable
+// by what executing it produced and by what was said on it, not only by the
+// text it was captured with.
+func TestBuildPlanTextSpansOutcomeAndComments(t *testing.T) {
+	f := newFixture(t)
+	plan := f.create(t, model.CreatePlan{
+		Nonce: model.NewNonce(), Title: "graph rewrite", Body: "## Approach\n\nrewrite the walker\n",
+		Status: model.PlanApproved,
+	}).EntityID()
+	f.append(t, model.KindPlan, plan,
+		model.SetPlanOutcome{Outcome: "shipped as `PlanOutcomeFold`"},
+		model.AddComment{Body: "the leftover work is `plan_comment_backfill`"},
+	)
+	// A term one entity mentions discriminates nothing, so each needs a second
+	// carrier before it can be a concept node at all.
+	f.create(t, model.CreateNote{
+		Nonce: model.NewNonce(), Title: "aftermath",
+		Body: "`PlanOutcomeFold` landed; `plan_comment_backfill` did not",
+	})
+
+	g := f.build(t)
+	self := kg.EntityNode(model.KindPlan, plan)
+	requireEdge(t, g, self, kg.ConceptNode("planoutcomefold"), kg.EdgeConcept)
+	requireEdge(t, g, self, kg.ConceptNode("plan_comment_backfill"), kg.EdgeConcept)
 }
 
 func TestBuildAnchorCarriesWitnessOID(t *testing.T) {

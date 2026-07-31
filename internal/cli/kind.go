@@ -47,4 +47,5 @@ var (
 		return printRunbook(cmd, rb, jsonOut, ack...)
 	}}
 	investigationSpec = kindSpec[model.Investigation]{kind: model.KindInvestigation, print: printInvestigation}
+	planSpec          = kindSpec[model.Plan]{kind: model.KindPlan, print: printPlan}
 )

@@ -75,13 +75,17 @@ func TestLoadCorpusEveryKind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateInvestigation: %v", err)
 	}
+	plan, _, err := c.CreatePlan(ctx, notes.PlanSpec{Title: "ranker rewrite", Body: "walk the graph breadth first"})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
 
 	corpus, err := LoadCorpus(ctx, c)
 	if err != nil {
 		t.Fatalf("LoadCorpus: %v", err)
 	}
-	if len(corpus) != 9 {
-		t.Fatalf("LoadCorpus = %d entities, want 9: %+v", len(corpus), corpus)
+	if len(corpus) != 10 {
+		t.Fatalf("LoadCorpus = %d entities, want 10: %+v", len(corpus), corpus)
 	}
 	if !slices.IsSortedFunc(corpus, func(a, b Entity) int { return strings.Compare(string(a.ID), string(b.ID)) }) {
 		t.Errorf("LoadCorpus is not sorted by id: %+v", corpus)
@@ -101,6 +105,7 @@ func TestLoadCorpusEveryKind(t *testing.T) {
 		sprint.ID:    model.KindSprint,
 		rb.ID:        model.KindRunbook,
 		inv.ID:       model.KindInvestigation,
+		plan.ID:      model.KindPlan,
 	}
 	for id, kind := range wantKinds {
 		e, ok := byID[id]
@@ -125,6 +130,7 @@ func TestLoadCorpusEveryKind(t *testing.T) {
 		task.Task.ID: {"wire the ranker", "graph lane"},
 		rb.ID:        {"release", "tag and watch"},
 		inv.ID:       {"flaky sync", "union merge drops refs"},
+		plan.ID:      {"ranker rewrite", "walk the graph breadth first"},
 	}
 	for id, wants := range wantText {
 		text := byID[id].Text()

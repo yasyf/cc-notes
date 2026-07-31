@@ -1,0 +1,41 @@
+{
+  "id": "plan-full-000000000000000000000000000000",
+  "title": "fix monorepo read performance",
+  "body": "## Context\nthe plan, verbatim\n",
+  "status": "done",
+  "outcome": "status 19.8s to 2.1s",
+  "labels": [
+    "perf"
+  ],
+  "anchors": [
+    {
+      "kind": "dir",
+      "value": "internal/api"
+    },
+    {
+      "kind": "path",
+      "value": "internal/cli/output.go"
+    }
+  ],
+  "superseded_by": [
+    "plan-newer-0001"
+  ],
+  "tasks": [
+    "task-of-plan001",
+    "task-of-plan002"
+  ],
+  "comments": [
+    {
+      "author": "ada \u003cada@example.com\u003e",
+      "ts": "2023-11-14T22:13:20Z",
+      "body": "approved as written"
+    }
+  ],
+  "author": "ada \u003cada@example.com\u003e",
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "started_at": "2023-11-15T02:13:20Z",
+  "closed_at": "2023-11-15T03:13:20Z",
+  "closed_by": "bob \u003cbob@example.com\u003e",
+  "deleted": true
+}

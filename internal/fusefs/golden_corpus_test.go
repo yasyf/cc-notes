@@ -53,7 +53,7 @@ type corpusEntry struct {
 // corpus returns every fixture in the frozen corpus, rebuilt fresh on each call
 // so no test can mutate another's snapshot.
 func corpus() []corpusEntry {
-	return concat(noteCorpus(), docCorpus(), logCorpus(), taskCorpus(), sprintCorpus(), projectCorpus(), runbookCorpus(), investigationCorpus())
+	return concat(noteCorpus(), docCorpus(), logCorpus(), taskCorpus(), sprintCorpus(), projectCorpus(), runbookCorpus(), investigationCorpus(), planCorpus())
 }
 
 func concat(groups ...[]corpusEntry) []corpusEntry {
@@ -744,6 +744,72 @@ func investigationCorpus() []corpusEntry {
 	}
 }
 
+func planCorpus() []corpusEntry {
+	return []corpusEntry{
+		{"plan_draft", model.Plan{
+			ID:        "6666666666666666666666666666666666666666",
+			Title:     "Buffer the result channel",
+			Body:      "## Context\n\nThe collector returns while a worker is still sending.\n\n## Approach\n\n1. Buffer the result channel.\n2. Wait for every worker before returning.",
+			Status:    model.PlanDraft,
+			Labels:    []string{"concurrency"},
+			Author:    "Agent A <a@example.com>",
+			CreatedAt: cCreated,
+			UpdatedAt: cCreated,
+			Head:      "6666000066660000666600006666000066660000",
+		}},
+		{"plan_executing_anchored", model.Plan{
+			ID:     "7777777777777777777777777777777777777777",
+			Title:  "Rewrite the worker pool",
+			Body:   "## Context\n\nShutdown hangs under cancellation.\n\n## Verification\n\ngo test -race ./internal/pool/",
+			Status: model.PlanExecuting,
+			Labels: []string{"concurrency", "pool"},
+			Comments: []model.Comment{
+				{Author: "Agent B <b@example.com>", TS: cComment, Body: "The second shutdown path needs the same treatment."},
+			},
+			Anchors: []model.Anchor{
+				{Kind: model.AnchorCommit, Value: "7777aaaa7777aaaa7777aaaa7777aaaa7777aaaa"},
+				{Kind: model.AnchorDir, Value: "internal/pool"},
+				{Kind: model.AnchorBranch, Value: "main"},
+			},
+			Author:    "Agent A <a@example.com>",
+			CreatedAt: cCreated,
+			UpdatedAt: cUpdated,
+			StartedAt: cStarted,
+			Head:      "7777000077770000777700007777000077770000",
+		}},
+		{"plan_done_superseded", model.Plan{
+			ID:           "8888888888888888888888888888888888888888",
+			Title:        "First cut at the shutdown fix",
+			Body:         "## Approach\n\nDrain the channel on cancellation.",
+			Status:       model.PlanDone,
+			Outcome:      "Landed, but the drain races the second shutdown path.",
+			SupersededBy: []model.EntityID{"7777777777777777777777777777777777777777"},
+			Labels:       []string{"concurrency"},
+			Anchors:      []model.Anchor{{Kind: model.AnchorPath, Value: "internal/pool/pool.go"}},
+			Author:       "Agent A <a@example.com>",
+			CreatedAt:    cCreated,
+			UpdatedAt:    cClosed,
+			StartedAt:    cStarted,
+			ClosedAt:     cClosed,
+			ClosedBy:     "Agent V <v@example.com>",
+			Head:         "8888000088880000888800008888000088880000",
+		}},
+		{"plan_abandoned", model.Plan{
+			ID:        "9999999999999999999999999999999999999999",
+			Title:     "Replace the pool with an errgroup",
+			Body:      "## Approach\n\nSwap the hand-rolled pool for errgroup.",
+			Status:    model.PlanAbandoned,
+			Outcome:   "errgroup cannot express the per-step lease.",
+			Author:    "Agent A <a@example.com>",
+			CreatedAt: cCreated,
+			UpdatedAt: cClosed,
+			ClosedAt:  cClosed,
+			ClosedBy:  "Agent A <a@example.com>",
+			Head:      "9999000099990000999900009999000099990000",
+		}},
+	}
+}
+
 // renderSnapshot dispatches to the concrete render function for snap's kind.
 func renderSnapshot(snap model.Snapshot) []byte {
 	switch v := snap.(type) {
@@ -763,6 +829,8 @@ func renderSnapshot(snap model.Snapshot) []byte {
 		return fusefs.RenderRunbook(v)
 	case model.Investigation:
 		return fusefs.RenderInvestigation(v)
+	case model.Plan:
+		return fusefs.RenderPlan(v)
 	}
 	panic("golden corpus: unknown snapshot kind")
 }
@@ -782,7 +850,8 @@ func goldenPath(e corpusEntry) string {
 }
 
 // diffSnapshot parses edited and diffs it against snap, returning the reproduced
-// ops. It reports writable=false for the read-only runbook kind.
+// ops. It reports writable=false for the read-only runbook, investigation, and
+// plan kinds.
 func diffSnapshot(t *testing.T, snap model.Snapshot, edited []byte) (ops []model.Op, writable bool) {
 	t.Helper()
 	switch v := snap.(type) {
@@ -846,9 +915,7 @@ func diffSnapshot(t *testing.T, snap model.Snapshot, edited []byte) (ops []model
 			t.Fatalf("DiffProject: %v", err)
 		}
 		return ops, true
-	case model.Runbook:
-		return nil, false
-	case model.Investigation:
+	case model.Runbook, model.Investigation, model.Plan:
 		return nil, false
 	}
 	panic("golden corpus: unknown snapshot kind")
@@ -887,7 +954,7 @@ func TestGoldenRender(t *testing.T) {
 func TestGoldenRoundTrip(t *testing.T) {
 	for _, e := range corpus() {
 		switch e.snap.(type) {
-		case model.Runbook, model.Investigation:
+		case model.Runbook, model.Investigation, model.Plan:
 			continue
 		}
 		t.Run(e.name, func(t *testing.T) {

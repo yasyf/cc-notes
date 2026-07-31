@@ -43,6 +43,7 @@ import hooks.common as common
 from hooks.common import (
     cap_and_render_tasks,
     CcNotesMcpToolCall,
+    clamp_title,
     dedup_tasks,
     drift_suffix,
     entry_payload,
@@ -50,7 +51,9 @@ from hooks.common import (
     in_cc_pool_memory,
     mcp_active,
     McpActive,
+    MAX_TITLE_BYTES,
     MCP_TOOL_PREFIX,
+    NUDGE_MAX_FIRES,
     parse_relevant,
     parse_status,
     parse_tasks,
@@ -61,6 +64,7 @@ from hooks.common import (
     render_log_line,
     render_note_line,
     render_note_lines,
+    render_plan_line,
     render_runbook_line,
     render_steal_line,
     render_task_line,
@@ -69,8 +73,6 @@ from hooks.common import (
     status_tasks,
 )
 from hooks.memory import (
-    clamp_title,
-    MAX_TITLE_BYTES,
     MemoryWrite,
     mirror_memory_to_note,
     parse_memory_file,
@@ -99,7 +101,7 @@ from hooks.record import (
     nudge_investigation_stop_sweep,
     nudge_mcp_ephemeral_reference,
     nudge_multiagent_synthesis,
-    nudge_plan_tasks,
+    nudge_plan_capture,
     nudge_record_durable,
     nudge_record_evidence,
     PLAN_TEACH_MCP,
@@ -107,6 +109,7 @@ from hooks.record import (
     PlanTasks,
     plan_task_commands,
     plan_text,
+    plan_title,
     link_task_to_investigation,
     record_investigation_activity,
     record_mcp_active,
@@ -249,6 +252,20 @@ def runbook_entry(runbook_id: str, *, title: str = "r", reasons: list[str] | Non
     }
 
 
+def plan_entry(plan_id: str, *, title: str = "p", status: str = "executing", reasons: list[str] | None = None) -> dict:
+    """A `kind == "plan"` relevance entry: the summary under "plan", no "note" key.
+
+    The summary carries the lifecycle status but never the plan text, and never a drift
+    verdict — a plan has no freshness lifecycle (`notes/relevant.go` entryVerdict).
+    """
+    return {
+        "kind": "plan",
+        "plan": {"id": plan_id, "title": title, "status": status},
+        "score": 1,
+        "reasons": ["dir"] if reasons is None else reasons,
+    }
+
+
 def investigation_entry(investigation_id: str, *, title: str = "i", status: str = "open", reasons: list[str] | None = None) -> dict:
     """A `kind == "investigation"` relevance entry: the summary under "investigation", no "note" key.
 
@@ -369,9 +386,9 @@ def test_render_log_lines() -> None:
 
 
 def test_render_runbook_investigation_lines() -> None:
-    """Runbook and investigation entries survive parsing and render their own pointer lines, never the note path."""
-    kept = parse_relevant(json.dumps([runbook_entry("abc1234def0"), investigation_entry("def5678aaa0")]))
-    check("parse_relevant: keeps runbook + investigation entries", [entry_payload(e)["id"] for e in kept] == ["abc1234def0", "def5678aaa0"], repr(kept))
+    """Runbook, investigation, and plan entries survive parsing and render their own pointer lines, never the note path."""
+    kept = parse_relevant(json.dumps([runbook_entry("abc1234def0"), investigation_entry("def5678aaa0"), plan_entry("9911aabbcc0")]))
+    check("parse_relevant: keeps runbook + investigation + plan entries", [entry_payload(e)["id"] for e in kept] == ["abc1234def0", "def5678aaa0", "9911aabbcc0"], repr(kept))
 
     rb = render_runbook_line(runbook_entry("abc1234def0", title="Release dance", reasons=["dir"]))
     check("render_runbook_line: id + title + reasons + runbook show", rb == "abc1234 Release dance (dir) — cc-notes runbook show abc1234", repr(rb))
@@ -383,10 +400,25 @@ def test_render_runbook_investigation_lines() -> None:
         repr(inv),
     )
 
-    routed = render_note_lines([runbook_entry("abc1234def0", title="R", reasons=[]), investigation_entry("def5678aaa0", title="I", status="open", reasons=[])])
+    plan = render_plan_line(plan_entry("9911aabbcc0", title="Gateway cutover", status="executing", reasons=["path"]))
     check(
-        "render_note_lines: dispatches runbook + investigation by kind",
-        routed == ["abc1234 R — cc-notes runbook show abc1234", "def5678 I [open] — cc-notes investigation show def5678"],
+        "render_plan_line: id + title + status + plan show",
+        plan == "9911aab Gateway cutover [executing] (path) — cc-notes plan show 9911aab",
+        repr(plan),
+    )
+
+    routed = render_note_lines([
+        runbook_entry("abc1234def0", title="R", reasons=[]),
+        investigation_entry("def5678aaa0", title="I", status="open", reasons=[]),
+        plan_entry("9911aabbcc0", title="P", status="approved", reasons=[]),
+    ])
+    check(
+        "render_note_lines: dispatches runbook + investigation + plan by kind",
+        routed == [
+            "abc1234 R — cc-notes runbook show abc1234",
+            "def5678 I [open] — cc-notes investigation show def5678",
+            "9911aab P [approved] — cc-notes plan show 9911aab",
+        ],
         repr(routed),
     )
 
@@ -1497,7 +1529,7 @@ def test_announce_available_fires_once(monkeypatch, tmp_path) -> None:
     check("announce fires: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("announce fires: names the installed version", "cc-notes 0.22.0 (abc123) is installed" in result.message, result.message)
-        check("announce fires: names the durable tooling", "durable task, note, doc, log, papercut, runbook, and investigation tooling is available" in result.message, result.message)
+        check("announce fires: names the durable tooling", "durable task, note, doc, log, papercut, runbook, investigation, and plan tooling is available" in result.message, result.message)
 
     second = mock_event("UserPromptSubmit", prompt="again", session_dir=tmp_path)
     monkeypatch.setattr(second.ctx, "call_cli", stub_cli(mapping))
@@ -1884,6 +1916,38 @@ def test_record_router_investigation_mcp_wording(monkeypatch, tmp_path) -> None:
     if result and result.message:
         check("investigation mcp: names investigation_open tool", "investigation_open" in result.message, result.message)
         check("investigation mcp: no CLI spelling", "cc-notes investigation open" not in result.message, result.message)
+
+
+def test_record_router_routes_plan(monkeypatch, tmp_path) -> None:
+    """kind=plan routes to the plan primitive — plan add + the lifecycle verbs, never `doc add`."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Write", file="gateway-plan-memo.md", content="## Decision\n## Approach\n1. do it\n", session_dir=tmp_path)
+    verdict = RecordVerdict(record=True, kind="plan", title="Gateway cutover", reasoning="an approved approach to execute")
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
+    result = nudge_record_durable(evt)
+    check("router plan: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        m = result.message
+        check("router plan: names cc-notes plan add", "cc-notes plan add" in m, m)
+        check("router plan: names the lifecycle verbs", "cc-notes plan start" in m and "plan done" in m, m)
+        check("router plan: links tasks back with --plan", "--plan <id>" in m, m)
+        check("router plan: uses title", '"Gateway cutover"' in m, m)
+        check("router plan: cites reasoning", "an approved approach to execute" in m, m)
+        check("router plan: never doc/log add", "doc add" not in m and "log add" not in m, m)
+
+
+def test_record_router_plan_mcp_wording(monkeypatch, tmp_path) -> None:
+    """With the MCP server active, the plan route names the tools, not the CLI."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Write", file="gateway-plan-memo.md", content="## Approach\n1. do it\n", session_dir=tmp_path)
+    evt.ctx.s[McpActive].set(McpActive(active=True))
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="plan", title="Gateway cutover", reasoning="a plan")))
+    result = nudge_record_durable(evt)
+    check("plan mcp: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("plan mcp: names plan_add with approved=true", "plan_add" in result.message and '"approved": true' in result.message, result.message)
+        check("plan mcp: names plan_start / plan_done", "plan_start" in result.message and "plan_done" in result.message, result.message)
+        check("plan mcp: no CLI spelling", "cc-notes plan add" not in result.message, result.message)
 
 
 def test_investigation_arc_and_resolve_lines() -> None:
@@ -2363,10 +2427,58 @@ def test_commit_fails_safe_on_git_timeout(monkeypatch, tmp_path) -> None:
 
 
 SAMPLE_PLAN = "# Plan\n\n## Approach\n1. Add the widget\n2. Wire it up\n\n## Tasks\n- build the gateway client\n"
+REVISED_PLAN = SAMPLE_PLAN + "\n## Pitfalls\n- the widget is load-bearing\n"
+# Same file, a different H1: the session was reused for unrelated work, not a revision round.
+RETITLED_PLAN = "# Rewrite the gateway\n\n## Approach\n1. Start from the transport layer\n"
+PLAN_ID = "a1b2c3d4e5f67890"
+# The ids the capture stub mints in order, so several plans recorded in one session are
+# distinguishable; PLAN_ID leads, and an add past the last is a loud IndexError.
+PLAN_IDS = (PLAN_ID, "b2c3d4e5f6789012", "c3d4e5f678901234", "d4e5f67890123456", "e5f6789012345678", "f678901234567890")
 
 
-def plan_event(tmp_path, monkeypatch, *, plan_path=None, inline=None, tasks=None, mcp=False):
-    """An ExitPlanMode event with planFilePath/plan injected into tool_input and the LLM stubbed."""
+def stub_plan_cli(plan_id: str = PLAN_ID):
+    """A recording ``call_cli`` stub answering `cc-notes plan add|edit --json`.
+
+    Records the ``cc-notes`` argvs only — ``mcp_active``'s git-common-dir probe rides the
+    same ``call_cli`` and would otherwise land in the capture assertions. The capture argv
+    carries the whole plan text, so it is matched on its leading ``plan add`` tokens rather
+    than an exact tuple. Each add mints the next :data:`PLAN_IDS` entry (``plan_id`` leads),
+    so a session that records several plans can tell them apart; an edit answers with the id
+    it was handed, the shape the real CLI prints for an in-place revision. An empty
+    ``plan_id`` returns None, the shape ``run_cc_notes`` produces when the subprocess fails.
+    """
+    calls: list[tuple[str, ...]] = []
+    minted: list[str] = []
+
+    def _call(args, *, input=None, timeout=30, env=None, throw=True):
+        if args[0] != "cc-notes":
+            return None
+        calls.append(tuple(args))
+        verb = tuple(args[1:3])
+        if verb == ("plan", "add"):
+            if not plan_id:
+                return None
+            minted.append(plan_id if not minted else PLAN_IDS[len(minted)])
+            return json.dumps({"id": minted[-1], "title": "t", "status": "approved"})
+        if verb == ("plan", "edit"):
+            return json.dumps({"id": args[3], "title": "t", "status": "approved"}) if plan_id else None
+        if not throw:
+            return None
+        raise FileNotFoundError(args[0])
+
+    return _call, calls
+
+
+def plan_adds(calls: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    return [c for c in calls if c[1:3] == ("plan", "add")]
+
+
+def plan_edits(calls: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    return [c for c in calls if c[1:3] == ("plan", "edit")]
+
+
+def plan_event(tmp_path, monkeypatch, *, plan_path=None, inline=None, tasks=None, mcp=False, cli=None):
+    """An ExitPlanMode event with planFilePath/plan in tool_input, and the LLM + capture CLI stubbed."""
     evt = mock_event("PostToolUse", tool="ExitPlanMode", session_dir=tmp_path)
     ti: dict = {}
     if plan_path is not None:
@@ -2375,55 +2487,221 @@ def plan_event(tmp_path, monkeypatch, *, plan_path=None, inline=None, tasks=None
         ti["plan"] = inline
     evt._raw["tool_input"] = ti
     monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(PlanTasks(tasks=tasks if tasks is not None else [])))
+    monkeypatch.setattr(evt.ctx, "call_cli", cli if cli is not None else stub_plan_cli()[0])
     if mcp:
         evt.ctx.s[McpActive].set(McpActive(active=True))
     return evt
 
 
 def test_plan_teach_always_fires(monkeypatch, tmp_path) -> None:
-    """ExitPlanMode with no readable plan still fires the native-vs-durable teach, no LLM call."""
+    """ExitPlanMode with no readable plan still fires the native-vs-durable teach, no LLM call, no capture."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    evt = plan_event(tmp_path, monkeypatch)
+    cli, calls = stub_plan_cli()
+    evt = plan_event(tmp_path, monkeypatch, cli=cli)
     monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # no plan text -> the extractor is never reached
-    result = nudge_plan_tasks(evt)
+    result = nudge_plan_capture(evt)
     check("plan teach: warns", result is not None and result.action is Action.warn, repr(result))
+    check("plan teach: no text -> nothing captured", calls == [], repr(calls))
     if result and result.message:
         check("plan teach: native-vs-durable line", "Native TaskCreate" in result.message, result.message)
         check("plan teach: names cc-notes task add", "cc-notes task add" in result.message, result.message)
         check("plan teach: no extracted header when none", "look like durable work" not in result.message, result.message)
 
 
+def test_plan_captures_body_verbatim(monkeypatch, tmp_path) -> None:
+    """The approved plan is recorded verbatim as an approved cc-notes plan, titled from its H1."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
+    cli, calls = stub_plan_cli()
+    result = nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli))
+    check("plan capture: one plan add call", len(calls) == 1, repr(calls))
+    argv = calls[0] if calls else ()
+    check("plan capture: cc-notes plan add --json --approved", argv[:5] == ("cc-notes", "plan", "add", "--json", "--approved"), repr(argv))
+    check("plan capture: body carries the plan verbatim", f"--body={SAMPLE_PLAN.strip()}" in argv, repr(argv))
+    check("plan capture: title is the H1, passed after --", argv[-2:] == ("--", "Plan"), repr(argv))
+    check("plan capture: warn names the recorded plan", result is not None and "cc-notes plan a1b2c3d" in (result.message or ""), repr(result))
+
+
+def test_plan_capture_failure_still_teaches(monkeypatch, tmp_path) -> None:
+    """A failed capture (run_cc_notes fails closed to None) drops the confirmation, keeps the teach."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
+    cli, _ = stub_plan_cli(plan_id="")
+    result = nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")], cli=cli))
+    check("plan capture fail: still warns the teach", result is not None and "Native TaskCreate" in (result.message or ""), repr(result))
+    if result and result.message:
+        check("plan capture fail: claims no recorded plan", "Plan recorded verbatim" not in result.message, result.message)
+        check("plan capture fail: task line carries the substitutable placeholder", "--plan <plan id>" in result.message, result.message)
+        check("plan capture fail: says to substitute the id", "substitute its id" in result.message, result.message)
+
+
+def test_plan_title_prefers_h1(tmp_path) -> None:
+    """The captured title is the plan's first H1; without one it falls back to the plan file's stem."""
+    heading = mock_event("PostToolUse", tool="ExitPlanMode")
+    heading._raw["tool_input"] = {"planFilePath": "/p/ccn-purring-treehouse.md"}
+    check("plan title: first H1 wins", plan_title(heading, SAMPLE_PLAN) == "Plan")
+    check("plan title: falls back to the file stem", plan_title(heading, "no heading here\n") == "ccn-purring-treehouse")
+    check("plan title: an `#hashtag` is not a heading", plan_title(heading, "#hashtag not a heading\n") == "ccn-purring-treehouse")
+    inline = mock_event("PostToolUse", tool="ExitPlanMode")
+    inline._raw["tool_input"] = {"plan": "body"}
+    check("plan title: no heading and no file", plan_title(inline, "body only\n") == "Approved plan")
+    check("plan title: clamped to the CLI's title cap", len(plan_title(inline, "# " + "x" * 400).encode()) == MAX_TITLE_BYTES)
+
+
+def test_plan_dedup_per_content(monkeypatch, tmp_path) -> None:
+    """The dedup key is the plan TEXT, not its path: a revision of the same file re-captures.
+
+    The regression this pins: a session revises one plan file in place across review
+    rounds, so a path-keyed gate captured the draft the user sent back and never the
+    approved text.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    plan_path = tmp_path / "plan.md"
+    cli, calls = stub_plan_cli()
+
+    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
+    first = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")], cli=cli)
+    check("plan dedup: first body fires", nudge_plan_capture(first) is not None)
+    plan_path.write_text(REVISED_PLAN, encoding="utf-8")
+    revised = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")], cli=cli)
+    check("plan dedup: same path, revised body re-fires", nudge_plan_capture(revised) is not None)
+    check("plan dedup: both bodies reached cc-notes", len(calls) == 2, repr(calls))
+    check("plan dedup: the second call carries the revised text", len(calls) == 2 and f"--body={REVISED_PLAN.strip()}" in calls[1], repr(calls))
+    check("plan dedup: the revision landed on the record already held", len(calls) == 2 and calls[1][1:3] == ("plan", "edit"), repr(calls))
+
+    again = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")], cli=cli)
+    check("plan dedup: same path, identical body silent", nudge_plan_capture(again) is None)
+    check("plan dedup: the silent re-approval captured nothing more", len(calls) == 2, repr(calls))
+
+    other_path = tmp_path / "plan2.md"
+    other_path.write_text(SAMPLE_PLAN, encoding="utf-8")
+    third = plan_event(tmp_path, monkeypatch, plan_path=other_path, tasks=[PlanTask(title="X")], cli=cli)
+    check("plan dedup: a new plan path re-fires", nudge_plan_capture(third) is not None)
+
+    inline = plan_event(tmp_path, monkeypatch, inline=SAMPLE_PLAN, tasks=[PlanTask(title="X")], cli=cli)
+    check("plan dedup: a path-less inline plan fires", nudge_plan_capture(inline) is not None)
+    inline_again = plan_event(tmp_path, monkeypatch, inline=SAMPLE_PLAN, tasks=[PlanTask(title="X")], cli=cli)
+    check("plan dedup: the same inline plan is silent", nudge_plan_capture(inline_again) is None)
+
+
+def plan_hook_entry():
+    """The registered ``nudge_plan_capture`` hook, loaded through the production pack path.
+
+    ``max_fires`` lives in ``execute_hook``, not the handler: the dispatcher reserves a slot
+    before the handler runs and hands it back only when the result is falsy. A direct handler
+    call cannot see a cap at all, so the capture-budget regression is only observable by
+    driving the registered hook the way production does.
+    """
+    from captain_hook.app import _state
+    from captain_hook.loader import discover_pack
+
+    before = len(_state.hooks)
+    discover_pack("cc-notes", Path(__file__).parents[1])
+    return next(h for h in _state.hooks[before:] if h.name == "nudge_plan_capture")
+
+
+def test_plan_capture_outlives_the_nudge_budget(monkeypatch, tmp_path) -> None:
+    """Six approved plans in one session all reach cc-notes: the capture carries no fire cap.
+
+    The regression this pins: the handler was registered ``max_fires=NUDGE_MAX_FIRES`` and every
+    fire returns a warn, so each capture permanently burned a reserved slot — approvals four
+    through six wrote nothing and said nothing.
+    """
+    from captain_hook.dispatch import execute_hook
+
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    entry = plan_hook_entry()
+    cli, calls = stub_plan_cli()
+    session, hook_state = tmp_path / "session", tmp_path / "hook-state"
+    results = []
+    for i in range(6):
+        plan_path = tmp_path / f"plan{i}.md"
+        plan_path.write_text(f"# Plan {i}\n\n## Approach\n1. Step {i}\n", encoding="utf-8")
+        results.append(execute_hook(entry, plan_event(session, monkeypatch, plan_path=plan_path, cli=cli), hook_state))
+    adds = plan_adds(calls)
+    # A dropped fire is None, not an empty warn — the regression's shape, rendered so the
+    # checks below report it instead of raising on the missing attribute.
+    messages = [(r.message or "") if r else "" for r in results]
+    check("plan budget: the registered hook is uncapped", entry.spec.max_fires is None, repr(entry.spec.max_fires))
+    check("plan budget: all six approvals captured", [c[-1] for c in adds] == [f"Plan {i}" for i in range(6)], repr(adds))
+    check("plan budget: every fire named the plan it wrote", all("cc-notes plan" in m for m in messages), repr(messages))
+    check(
+        "plan budget: the teach stops nagging after the nudge cap",
+        [("Native TaskCreate" in m) for m in messages] == [True] * NUDGE_MAX_FIRES + [False] * (6 - NUDGE_MAX_FIRES),
+        repr(messages),
+    )
+
+
+def test_plan_revision_edits_the_record_in_place(monkeypatch, tmp_path) -> None:
+    """Same file, same title, a revised body: one plan, its text edited in place.
+
+    A revision round is one plan carried through review, not two rival records — the body is
+    LWW and every earlier draft stays readable through ``cc-notes history``.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    plan_path = tmp_path / "plan.md"
+    cli, calls = stub_plan_cli()
+    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
+    nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli))
+    plan_path.write_text(REVISED_PLAN, encoding="utf-8")
+    result = nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli))
+    check("plan revision: exactly one plan was created", len(plan_adds(calls)) == 1, repr(calls))
+    check(
+        "plan revision: the re-approval edits that plan's body",
+        plan_edits(calls) == [("cc-notes", "plan", "edit", PLAN_ID, "--json", f"--body={REVISED_PLAN.strip()}")],
+        repr(plan_edits(calls)),
+    )
+    check("plan revision: the warn names the revised plan", result is not None and f"cc-notes plan {PLAN_ID[:7]}" in (result.message or ""), repr(result))
+    check("plan revision: the warn points at history for the drafts", result is not None and f"cc-notes history {PLAN_ID[:7]}" in (result.message or ""), repr(result))
+
+
+def test_plan_retitle_mints_an_unrelated_plan(monkeypatch, tmp_path) -> None:
+    """Same file, a CHANGED title: a reused session planning different work gets its own plan, unlinked.
+
+    The two plans are unrelated, not successive drafts, so no supersede edge joins them.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    plan_path = tmp_path / "plan.md"
+    cli, calls = stub_plan_cli()
+    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
+    nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli))
+    plan_path.write_text(RETITLED_PLAN, encoding="utf-8")
+    result = nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli))
+    check("plan retitle: two plans recorded", [c[-1] for c in plan_adds(calls)] == ["Plan", "Rewrite the gateway"], repr(plan_adds(calls)))
+    check("plan retitle: the second body was not edited into the first", plan_edits(calls) == [], repr(calls))
+    check("plan retitle: no supersede edge joins them", not [c for c in calls if "supersede" in c], repr(calls))
+    check("plan retitle: the warn names the new plan", result is not None and f"cc-notes plan {PLAN_IDS[1][:7]}" in (result.message or ""), repr(result))
+
+
+def test_plan_identical_body_captures_once(monkeypatch, tmp_path) -> None:
+    """Re-approving byte-identical text writes nothing more — the content digest still gates the fire."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
+    cli, calls = stub_plan_cli()
+    check("plan digest: the first approval captures", nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli)) is not None)
+    check("plan digest: re-approving the same text is silent", nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli)) is None)
+    check("plan digest: one capture, no re-edit", len(plan_adds(calls)) == 1 and plan_edits(calls) == [], repr(calls))
+
+
 def test_plan_extracts_tasks_from_file(monkeypatch, tmp_path) -> None:
-    """A plan file is read and the LLM's durable items render as `cc-notes task add` lines."""
+    """A plan file is read and the LLM's durable items render as `cc-notes task add` lines, linked to the plan."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     plan_path = tmp_path / "plan.md"
     plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
     tasks = [PlanTask(title="Build the gateway client", shared=True), PlanTask(title="Wire the widget", shared=False)]
-    result = nudge_plan_tasks(plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=tasks))
+    result = nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=tasks))
     check("plan extract: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("plan extract: shared item gets --criterion and --backlog", 'cc-notes task add "Build the gateway client" --criterion "<how to verify it is done>" --backlog' in result.message, result.message)
+        check("plan extract: shared item gets --criterion, --plan, and --backlog", f'cc-notes task add "Build the gateway client" --criterion "<how to verify it is done>" --plan {PLAN_ID} --backlog' in result.message, result.message)
         check(
             "plan extract: branch item has no --backlog",
-            'cc-notes task add "Wire the widget"' in result.message and 'cc-notes task add "Wire the widget" --backlog' not in result.message,
+            'cc-notes task add "Wire the widget"' in result.message and 'cc-notes task add "Wire the widget" --criterion "<how to verify it is done>" --plan a1b2c3d4e5f67890 --backlog' not in result.message,
             result.message,
         )
         check("plan extract: the teach is still present", "Native TaskCreate" in result.message, result.message)
-
-
-def test_plan_dedup_per_path(monkeypatch, tmp_path) -> None:
-    """Re-approving the same plan file stays silent; a genuinely new plan path re-fires."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    plan_path = tmp_path / "plan.md"
-    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
-    first = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")])
-    check("plan dedup: first fires", nudge_plan_tasks(first) is not None)
-    second = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")])
-    check("plan dedup: same plan silent", nudge_plan_tasks(second) is None)
-    other_path = tmp_path / "plan2.md"
-    other_path.write_text(SAMPLE_PLAN, encoding="utf-8")
-    third = plan_event(tmp_path, monkeypatch, plan_path=other_path, tasks=[PlanTask(title="X")])
-    check("plan dedup: a new plan path re-fires", nudge_plan_tasks(third) is not None)
 
 
 def test_plan_text_prefers_file_over_inline(tmp_path) -> None:
@@ -2447,8 +2725,9 @@ def test_plan_task_commands_caps_and_skips_blank(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(PlanTasks(tasks=[PlanTask(title=f"t{i}") for i in range(8)])))
     check("plan cmds: caps at five", len(plan_task_commands(evt, "plan")) == 5)
     monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(PlanTasks(tasks=[PlanTask(title="real"), PlanTask(title="   "), PlanTask(title="real2")])))
-    cmds = plan_task_commands(evt, "plan")
-    check("plan cmds: drops blank titles", cmds == ['cc-notes task add "real" --criterion "<how to verify it is done>"', 'cc-notes task add "real2" --criterion "<how to verify it is done>"'], repr(cmds))
+    cmds = plan_task_commands(evt, "plan", plan="abc1234")
+    check("plan cmds: drops blank titles", cmds == ['cc-notes task add "real" --criterion "<how to verify it is done>" --plan abc1234', 'cc-notes task add "real2" --criterion "<how to verify it is done>" --plan abc1234'], repr(cmds))
+    check("plan cmds: no plan id -> a substitutable placeholder", plan_task_commands(evt, "plan")[0].endswith("--plan <plan id>"), repr(plan_task_commands(evt, "plan")))
     check("plan cmds: empty text -> []", plan_task_commands(evt, None) == [])
 
 
@@ -3149,7 +3428,7 @@ def test_pack_loads_under_discover_pack() -> None:
         "nudge_record_evidence",
         "nudge_ephemeral_record_reference",
         "nudge_mcp_ephemeral_reference",
-        "nudge_plan_tasks",
+        "nudge_plan_capture",
         "mirror_memory_to_note",
         "nudge_commit_record",
         "reconcile_after_merge",
@@ -3360,7 +3639,7 @@ def test_plan_teach_mcp_variant(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = plan_event(tmp_path, monkeypatch, mcp=True)
     monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # no plan text -> the extractor is never reached
-    result = nudge_plan_tasks(evt)
+    result = nudge_plan_capture(evt)
     check("plan teach mcp: names the task_add tool", result is not None and "task_add tool" in result.message, repr(result))
     check("plan teach mcp: is the one-line MCP variant, not the CLI teach", result is not None and PLAN_TEACH_MCP in result.message and "cc-notes task add" not in result.message, result.message if result else "")
 
@@ -3370,9 +3649,10 @@ def test_plan_extract_mcp_wording(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     plan_path = tmp_path / "plan.md"
     plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
-    result = nudge_plan_tasks(plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="Build the gateway client", shared=True)], mcp=True))
-    check("plan extract mcp: shared item as task_add tool with criteria + backlog=true", result is not None and 'task_add tool: title="Build the gateway client", criteria=["<how to verify it is done>"], backlog=true' in result.message, result.message if result else "")
+    result = nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="Build the gateway client", shared=True)], mcp=True))
+    check("plan extract mcp: shared item as task_add tool with criteria, plan, + backlog=true", result is not None and f'task_add tool: title="Build the gateway client", criteria=["<how to verify it is done>"], plan="{PLAN_ID}", backlog=true' in result.message, result.message if result else "")
     check("plan extract mcp: no CLI task add line", result is not None and "cc-notes task add" not in result.message, result.message if result else "")
+    check("plan extract mcp: the capture confirmation names the recorded plan", result is not None and "cc-notes plan a1b2c3d" in result.message, result.message if result else "")
 
 
 def test_staleness_mcp_wording(monkeypatch, tmp_path) -> None:
@@ -3468,7 +3748,9 @@ def redirect_event(tmp_path, command: str, error: str, *, mcp: bool):
 
 def test_redirect_mapped_tool() -> None:
     """mapped_tool resolves each command shape to its MCP tool by longest-prefix match; operator/unknown -> None."""
-    check("map: inventory is the full 128-tool set", len(CC_NOTES_TOOLS) == 128, str(len(CC_NOTES_TOOLS)))
+    check("map: inventory is the full 141-tool set", len(CC_NOTES_TOOLS) == 141, str(len(CC_NOTES_TOOLS)))
+    check("map: plan add drops the title positional -> plan_add", mapped_tool(["plan", "add", "Ship it", "--approved"]) == "plan_add", repr(mapped_tool(["plan", "add", "Ship it", "--approved"])))
+    check("map: plan root verbs -> plan_<verb>", mapped_tool(["plan", "start", "abc"]) == "plan_start" and mapped_tool(["plan", "supersede", "abc", "--by", "def"]) == "plan_supersede")
     check("map: runbook add drops the title positional -> runbook_add", mapped_tool(["runbook", "add", "Deploy", "--branch", "main"]) == "runbook_add", repr(mapped_tool(["runbook", "add", "Deploy", "--branch", "main"])))
     check("map: investigation open -> investigation_open", mapped_tool(["investigation", "open", "Deadlock", "premise"]) == "investigation_open")
     check("map: investigation finding clear -> investigation_finding_clear", mapped_tool(["investigation", "finding", "clear", "abc", "f1"]) == "investigation_finding_clear")

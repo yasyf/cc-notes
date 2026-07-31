@@ -28,7 +28,7 @@ from .common import (
 
 SURFACE_FILTER_SYSTEM = (
     "You are a precision filter on the recall side. A cheap ranker has surfaced durable cc-notes "
-    "records (notes, docs, logs, runbooks, investigations) anchored to a file the agent just touched. The ranker over-selects "
+    "records (notes, docs, logs, runbooks, investigations, plans) anchored to a file the agent just touched. The ranker over-selects "
     "on purpose; your job is to keep the ones worth putting in front of the agent right now and drop "
     "only the clearly irrelevant.\n"
     "\n"

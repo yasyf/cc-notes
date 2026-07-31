@@ -386,6 +386,46 @@ func renderProjectShow(p model.Project, sprints, tasks []model.EntityID) string 
 	return b.String()
 }
 
+// renderPlanShow renders the lean show view of a plan: the fixed-order header
+// block ending in the short ids of the tasks implementing it, the recorded plan
+// body separated by a blank line, the outcome block, then each comment as a
+// "-- <author> <RFC3339>" block. A plan carries no witness and no verify
+// lifecycle, so the header has no verified/stale/drift lines.
+func renderPlanShow(p model.Plan, tasks []model.EntityID) string {
+	var b strings.Builder
+	header(&b, "id", string(p.ID))
+	header(&b, "status", string(p.Status))
+	header(&b, "title", p.Title)
+	header(&b, "labels", csvOrDash(p.Labels))
+	header(&b, "commits", csvOrDash(render.AnchorValues(p.Anchors, model.AnchorCommit)))
+	header(&b, "paths", csvOrDash(render.AnchorValues(p.Anchors, model.AnchorPath)))
+	header(&b, "dirs", csvOrDash(render.AnchorValues(p.Anchors, model.AnchorDir)))
+	header(&b, "branches", csvOrDash(render.AnchorValues(p.Anchors, model.AnchorBranch)))
+	header(&b, "superseded_by", csvOrDash(shortIDs(p.SupersededBy)))
+	header(&b, "author", string(p.Author))
+	header(&b, "created", render.RFC3339(p.CreatedAt))
+	header(&b, "updated", render.RFC3339(p.UpdatedAt))
+	header(&b, "started", orDash(render.OptTimeString(p.StartedAt)))
+	header(&b, "closed", orDash(render.OptTimeString(p.ClosedAt)))
+	header(&b, "closed_by", orDash(string(p.ClosedBy)))
+	if p.Deleted {
+		header(&b, "deleted", "true")
+	}
+	header(&b, "tasks", csvOrDash(shortIDs(tasks)))
+	if p.Body != "" {
+		b.WriteByte('\n')
+		b.WriteString(p.Body)
+		b.WriteByte('\n')
+	}
+	b.WriteString("\noutcome:\n")
+	b.WriteString(orDash(p.Outcome))
+	b.WriteByte('\n')
+	for _, c := range p.Comments {
+		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, render.RFC3339(c.TS), c.Body)
+	}
+	return b.String()
+}
+
 // runStepCounts tallies a run's results over the runbook's current steps: the
 // number done-or-skipped (progress), the number skipped, and the number
 // failed. Results for removed steps are excluded so the tallies never exceed

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -167,7 +168,7 @@ func TestExitCodeMatrix(t *testing.T) {
 				return []string{"investigation", "confirm", inv.ID, "not fixed"}, ""
 			},
 			wantCode:   4,
-			wantPrefix: "conflict: illegal investigation transition",
+			wantPrefix: "conflict: illegal status transition",
 		},
 		{
 			name: "claim on done task exits 4",
@@ -866,5 +867,151 @@ func TestTwoCloneSyncRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(listB, `"id":"`+task.ID+`"`) {
 		t.Fatalf("clone B list = %q, missing task %s", listB, task.ID)
+	}
+}
+
+// planJSON mirrors the plan output DTO for round-trip assertions.
+type planJSON struct {
+	ID      string   `json:"id"`
+	Title   string   `json:"title"`
+	Body    string   `json:"body,omitempty"`
+	Status  string   `json:"status"`
+	Outcome string   `json:"outcome,omitempty"`
+	Labels  []string `json:"labels,omitempty"`
+	Anchors []struct {
+		Kind  string `json:"kind"`
+		Value string `json:"value"`
+	} `json:"anchors,omitempty"`
+	SupersededBy []string `json:"superseded_by,omitempty"`
+	Tasks        []string `json:"tasks,omitempty"`
+	Author       string   `json:"author,omitempty"`
+	CreatedAt    string   `json:"created_at"`
+	UpdatedAt    string   `json:"updated_at"`
+	StartedAt    *string  `json:"started_at,omitempty"`
+	ClosedAt     *string  `json:"closed_at,omitempty"`
+	ClosedBy     *string  `json:"closed_by,omitempty"`
+	Deleted      bool     `json:"deleted,omitempty"`
+}
+
+// TestPlanLifecycleViaBinary drives one plan through the real binary: recorded
+// verbatim from a file, approved, started, closed with an outcome. It also runs
+// the kind-agnostic verbs a plan ref reaches by wildcard walk — status, search,
+// relevant, kg build — since each of those crashed or silently mis-rendered
+// before the plan kind was wired into them.
+func TestPlanLifecycleViaBinary(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "internal/gitobj/walk.go", "package gitobj\n")
+	body := "## Context\ncc-notes is slow in a monorepo.\n\n## Approach\n1. stop reopening the pack\n"
+	file := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	ack := mustBin(t, dir, actorA, "plan", "add", "fix monorepo read performance",
+		"--body-file", file, "--path", "internal/gitobj/walk.go", "--label", "perf", "--json")
+	plan := showBinJSON[planJSON](t, dir, actorA, ack)
+	if plan.Status != "draft" {
+		t.Fatalf("status = %q, want draft without --approved", plan.Status)
+	}
+	if want := strings.TrimRight(body, "\n"); plan.Body != want {
+		t.Fatalf("body = %q, want the file's bytes verbatim %q", plan.Body, want)
+	}
+
+	leanOf := func(status string) string {
+		return plan.ID[:7] + "\t" + status + "\tfix monorepo read performance\n"
+	}
+	if out := mustBin(t, dir, actorA, "plan", "list"); out != leanOf("draft") {
+		t.Fatalf("plan list = %q, want %q", out, leanOf("draft"))
+	}
+
+	mustBin(t, dir, actorA, "plan", "approve", plan.ID)
+	task := showBinJSON[taskJSON](t, dir, actorA, mustBin(t, dir, actorA,
+		"task", "add", "walk the pack once", "--no-validation-criteria", "--plan", plan.ID, "--json"))
+	if task.Plan == nil || *task.Plan != plan.ID {
+		t.Fatalf("task plan = %v, want %s", task.Plan, plan.ID)
+	}
+
+	mustBin(t, dir, actorA, "plan", "start", plan.ID)
+	started := mustJSON[planJSON](t, mustBin(t, dir, actorA, "plan", "show", plan.ID, "--json"))
+	if started.Status != "executing" || started.StartedAt == nil {
+		t.Fatalf("after start: status %q started_at %v, want executing with a stamp", started.Status, started.StartedAt)
+	}
+	if !slices.Equal(started.Tasks, []string{task.ID}) {
+		t.Fatalf("tasks = %v, want the roll-up [%s] inverted from the task pointer", started.Tasks, task.ID)
+	}
+	if out := mustBin(t, dir, actorA, "plan", "list"); out != leanOf("executing") {
+		t.Fatalf("plan list = %q, want %q", out, leanOf("executing"))
+	}
+
+	if out := mustBin(t, dir, actorA, "status"); !strings.Contains(out, "plans: 1 in flight") {
+		t.Fatalf("status = %q, want the in-flight plan counted", out)
+	}
+	if out := mustBin(t, dir, actorA, "search", "monorepo"); !strings.Contains(out, plan.ID[:7]) {
+		t.Fatalf("search = %q, want the plan %s", out, plan.ID[:7])
+	}
+	relevant := mustBin(t, dir, actorA, "relevant", "internal/gitobj/walk.go")
+	if !strings.Contains(relevant, plan.ID[:7]) {
+		t.Fatalf("relevant = %q, want the anchored plan %s", relevant, plan.ID[:7])
+	}
+	// entryVerdict's note fallback would stamp a plan UNVERIFIED forever.
+	if strings.Contains(relevant, "UNVERIFIED") {
+		t.Fatalf("relevant = %q, want no verdict on a plan: it has no freshness lifecycle", relevant)
+	}
+	// kg's newRecord panics on an unregistered snapshot, and Build finds plans
+	// by wildcard walk over refs/cc-notes/*.
+	mustBin(t, dir, actorA, "kg", "build")
+
+	mustBin(t, dir, actorA, "plan", "done", plan.ID, "--outcome", "landed as PR 1")
+	done := mustJSON[planJSON](t, mustBin(t, dir, actorA, "plan", "show", plan.ID, "--json"))
+	if done.Status != "done" || done.Outcome != "landed as PR 1" || done.ClosedAt == nil || done.ClosedBy == nil {
+		t.Fatalf("after done: %+v, want done with an outcome and a close stamp", done)
+	}
+	if out := mustBin(t, dir, actorA, "plan", "list"); out != "" {
+		t.Fatalf("plan list after done = %q, want empty: only in-flight plans list", out)
+	}
+	if out := mustBin(t, dir, actorA, "plan", "list", "--all"); out != leanOf("done") {
+		t.Fatalf("plan list --all = %q, want %q", out, leanOf("done"))
+	}
+}
+
+// TestPlanSyncsAcrossClones round-trips a plan and its task pointer through a
+// bare remote: clone A records and syncs, clone B syncs and folds a
+// byte-identical plan, task pointer and roll-up included.
+func TestPlanSyncsAcrossClones(t *testing.T) {
+	gittest.ScrubEnv(t)
+	root := t.TempDir()
+	bare := filepath.Join(root, "remote.git")
+	gittest.Git(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
+
+	clone := func(name string) string {
+		dir := filepath.Join(root, name)
+		gittest.Git(t, root, "clone", "-q", bare, name)
+		gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
+		return dir
+	}
+
+	cloneA := clone("a")
+	mustBin(t, cloneA, actorA, "init")
+	plan := showBinJSON[planJSON](t, cloneA, actorA, mustBin(t, cloneA, actorA,
+		"plan", "add", "Shared plan", "--body", "## Approach\nstep one", "--approved", "--json"))
+	mustBin(t, cloneA, actorA, "task", "add", "step one", "--no-validation-criteria", "--plan", plan.ID)
+	mustBin(t, cloneA, actorA, "plan", "start", plan.ID)
+	if out := mustBin(t, cloneA, actorA, "sync"); out != "pushed: 2\nrounds: 1\n" {
+		t.Fatalf("clone A sync = %q, want pushed: 2 / rounds: 1", out)
+	}
+
+	cloneB := clone("b")
+	if out := mustBin(t, cloneB, actorB, "sync"); out != "created: 2\nrounds: 1\n" {
+		t.Fatalf("clone B sync = %q, want created: 2 / rounds: 1", out)
+	}
+
+	showA := mustBin(t, cloneA, actorA, "plan", "show", plan.ID, "--json")
+	showB := mustBin(t, cloneB, actorB, "plan", "show", plan.ID, "--json")
+	if showB != showA {
+		t.Fatalf("clone B plan = %q, want byte-equal to clone A %q", showB, showA)
+	}
+	folded := mustJSON[planJSON](t, showB)
+	if folded.Status != "executing" || len(folded.Tasks) != 1 {
+		t.Fatalf("clone B plan = %+v, want executing with the one task rolled up", folded)
 	}
 }

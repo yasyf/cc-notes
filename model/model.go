@@ -225,6 +225,29 @@ func (s InvestigationStatus) validate() error {
 	return fmt.Errorf("%w: investigation status %q", ErrInvalidValue, s)
 }
 
+// PlanStatus is the lifecycle state of a plan. draft, approved, and executing
+// are non-terminal; done and abandoned are terminal and stamp ClosedAt/ClosedBy
+// from the carrying commit at fold time. A terminal plan reopens by moving back
+// to executing.
+type PlanStatus string
+
+// Plan lifecycle states.
+const (
+	PlanDraft     PlanStatus = "draft"
+	PlanApproved  PlanStatus = "approved"
+	PlanExecuting PlanStatus = "executing"
+	PlanDone      PlanStatus = "done"
+	PlanAbandoned PlanStatus = "abandoned"
+)
+
+func (s PlanStatus) validate() error {
+	switch s {
+	case PlanDraft, PlanApproved, PlanExecuting, PlanDone, PlanAbandoned:
+		return nil
+	}
+	return fmt.Errorf("%w: plan status %q", ErrInvalidValue, s)
+}
+
 // FindingStatus is the disposition of one investigation finding.
 type FindingStatus string
 
@@ -555,6 +578,11 @@ type Log struct {
 // distinct from Commits, the what-this-work-produced set that LinkCommit
 // writes; a branch anchor is likewise distinct from the LWW Branch attribute.
 //
+// Plan is the upward membership pointer to the plan this task implements, the
+// only stored direction of that edge — a plan's task roll-up is the reader's
+// inversion of it. It marshals omitempty so plan-less snapshots keep their
+// pre-plan bytes.
+//
 // SkippedOps is the reader-local count of ops this binary's folder does not
 // apply to this kind; it never marshals (see Meta.SkippedOps).
 type Task struct {
@@ -578,9 +606,10 @@ type Task struct {
 	ClosedAt         int64       `json:"closed_at"`
 	Commits          []SHA       `json:"commits"`
 	Head             SHA         `json:"head"`
-	Sprint           EntityID    `json:"sprint"`   // LWW membership, empty means none
-	Project          EntityID    `json:"project"`  // LWW membership, empty means none (independent of Sprint)
-	Criteria         []Criterion `json:"criteria"` // append-ordered by creation (linearization order)
+	Sprint           EntityID    `json:"sprint"`         // LWW membership, empty means none
+	Project          EntityID    `json:"project"`        // LWW membership, empty means none (independent of Sprint)
+	Plan             EntityID    `json:"plan,omitempty"` // LWW membership, empty means none (independent of Sprint and Project)
+	Criteria         []Criterion `json:"criteria"`       // append-ordered by creation (linearization order)
 	Deleted          bool        `json:"deleted,omitempty"`
 	Anchors          []Anchor    `json:"anchors,omitempty"`
 	SkippedOps       int         `json:"-"`
@@ -756,6 +785,51 @@ type Investigation struct {
 	Head         SHA                 `json:"head"`
 	Attachments  []Attachment        `json:"attachments,omitempty"`
 	SkippedOps   int                 `json:"-"`
+}
+
+// Plan is the folded snapshot of a plan entity: the durable record of an
+// approved plan — its context, approach, pitfalls, and verification — carried
+// verbatim in Body. Timestamps are unix seconds; zero means unset for StartedAt
+// and ClosedAt. Head is the chain tip the snapshot was folded from.
+//
+// Body is an LWW markdown scalar, so a revision overwrites the recorded text and
+// the previous draft survives only in history. Status runs draft -> approved ->
+// executing -> done | abandoned, with a reopen from either terminal state back
+// to executing; StartedAt stamps each entry into executing, and ClosedAt and
+// ClosedBy are fold-stamped from the commit carrying a terminal SetPlanStatus
+// and zeroed when the status leaves terminal. Outcome is LWW prose recording
+// what executing the plan actually produced.
+//
+// Anchors is the folded anchor set, sorted by (kind, value). A plan carries no
+// witness and no verify lifecycle — it is work-shaped rather than fact-shaped,
+// and goes out of date through its status machine, the same reason a task
+// anchor has no witness. SupersededBy is the sorted set of plans that replace
+// this one: supersession is an edge, not a sixth status.
+//
+// The tasks a plan covers are not stored here. Membership is the upward LWW
+// Task.Plan pointer, which the reader inverts.
+//
+// SkippedOps is the reader-local count of ops this binary's folder does not
+// apply to this kind; it never marshals (see Meta.SkippedOps).
+type Plan struct {
+	ID           EntityID   `json:"id"`
+	Title        string     `json:"title"`
+	Body         string     `json:"body"`
+	Status       PlanStatus `json:"status"`
+	Outcome      string     `json:"outcome"`
+	Labels       []string   `json:"labels"`
+	Comments     []Comment  `json:"comments"`
+	Anchors      []Anchor   `json:"anchors"`
+	SupersededBy []EntityID `json:"superseded_by"`
+	Author       Actor      `json:"author"`
+	CreatedAt    int64      `json:"created_at"`
+	UpdatedAt    int64      `json:"updated_at"`
+	StartedAt    int64      `json:"started_at"`
+	ClosedAt     int64      `json:"closed_at"`
+	ClosedBy     Actor      `json:"closed_by"`
+	Head         SHA        `json:"head"`
+	Deleted      bool       `json:"deleted"`
+	SkippedOps   int        `json:"-"`
 }
 
 // NewNonce returns 16 crypto/rand bytes hex-encoded (32 characters). Create

@@ -9,7 +9,7 @@ import (
 )
 
 func TestKindsCanonicalOrder(t *testing.T) {
-	want := []Kind{KindNote, KindDoc, KindLog, KindTask, KindSprint, KindProject, KindRunbook, KindInvestigation}
+	want := []Kind{KindNote, KindDoc, KindLog, KindTask, KindSprint, KindProject, KindRunbook, KindInvestigation, KindPlan}
 	if got := Kinds(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Kinds() = %v, want %v", got, want)
 	}
@@ -178,6 +178,18 @@ var metaCases = []struct {
 			Attachments: []Attachment{{Name: "stacks.txt", OID: testOID, Size: 4096}},
 		},
 	},
+	{
+		snap: Plan{
+			ID: testID, Title: "Add the plan kind", Body: "## Context\nninth entity kind",
+			Status: PlanExecuting, Author: "ada", CreatedAt: 1700, UpdatedAt: 1800,
+			Deleted: true, SupersededBy: []EntityID{testParent}, Head: testParent,
+		},
+		want: Meta{
+			Kind: KindPlan, Title: "Add the plan kind", Head: testParent,
+			CreatedAt: time.Unix(1700, 0).UTC(), UpdatedAt: time.Unix(1800, 0).UTC(),
+			Deleted: true, Superseded: true,
+		},
+	},
 }
 
 func TestSnapshotMeta(t *testing.T) {
@@ -208,6 +220,7 @@ func TestCreateOpExhaustive(t *testing.T) {
 		"create_project":       KindProject,
 		"create_runbook":       KindRunbook,
 		"create_investigation": KindInvestigation,
+		"create_plan":          KindPlan,
 	}
 	got := map[string]Kind{}
 	for _, s := range everyOpSample {

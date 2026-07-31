@@ -212,6 +212,9 @@ func summaryOf(snap model.Snapshot) EntitySummary {
 		s.Status = string(v.Status)
 	case model.Investigation:
 		s.Status, s.ClosedAt = string(v.Status), v.ClosedAt
+	case model.Plan:
+		s.Status, s.StartedAt, s.ClosedAt = string(v.Status), v.StartedAt, v.ClosedAt
+		s.Superseded = len(v.SupersededBy) > 0
 	default:
 		panic(fmt.Sprintf("viz: no summary for snapshot %T", snap))
 	}

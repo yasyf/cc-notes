@@ -214,6 +214,69 @@ func TestPruneTombstonesDeletesInvestigationRefLocalAndRemote(t *testing.T) {
 	}
 }
 
+func TestPruneTombstonesDeletesPlanRefLocalAndRemote(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	bare := initBareRemote(t, s)
+
+	keep := create(t, s, planOps("keep")).(model.Plan)
+	keepRef := refs.For(model.KindPlan, keep.ID)
+
+	plan := create(t, s, planOps("doomed")).(model.Plan)
+	ref := refs.For(model.KindPlan, plan.ID)
+	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+	gittest.Git(t, s.Git.Dir, "push", "origin", ref+":"+ref)
+
+	pruned, failed, err := s.PruneTombstones(ctx, "origin")
+	if err != nil {
+		t.Fatalf("PruneTombstones: %v", err)
+	}
+	if pruned != 1 || failed != 0 {
+		t.Fatalf("pruned/failed = %d/%d, want 1/0", pruned, failed)
+	}
+	if _, err := s.Repo.Tip(ctx, ref); !errors.Is(err, gitobj.ErrRefNotFound) {
+		t.Fatalf("local plan ref still present: %v", err)
+	}
+	if got := gittest.Git(t, bare, "for-each-ref", "--format=%(refname)", ref); got != "" {
+		t.Fatalf("remote plan ref still present after prune: %q", got)
+	}
+	if _, err := s.Repo.Tip(ctx, keepRef); err != nil {
+		t.Fatalf("live plan ref pruned: %v", err)
+	}
+}
+
+// TestPruneTombstonesSkipsClosedPlan pins that a plan's terminal statuses are
+// not tombstones: only DeleteNote removes a ref, so the record of a done or
+// abandoned plan survives gc.
+func TestPruneTombstonesSkipsClosedPlan(t *testing.T) {
+	for _, status := range []model.PlanStatus{model.PlanDone, model.PlanAbandoned} {
+		t.Run(string(status), func(t *testing.T) {
+			s := initStore(t)
+			ctx := t.Context()
+			initBareRemote(t, s)
+
+			plan := create(t, s, planOps("closed")).(model.Plan)
+			ref := refs.For(model.KindPlan, plan.ID)
+			if _, err := s.Append(ctx, ref, []model.Op{model.SetPlanStatus{Status: status}}); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+
+			pruned, failed, err := s.PruneTombstones(ctx, "origin")
+			if err != nil {
+				t.Fatalf("PruneTombstones: %v", err)
+			}
+			if pruned != 0 || failed != 0 {
+				t.Fatalf("pruned/failed = %d/%d, want 0/0", pruned, failed)
+			}
+			if _, err := s.Repo.Tip(ctx, ref); err != nil {
+				t.Fatalf("%s plan ref pruned: %v", status, err)
+			}
+		})
+	}
+}
+
 func TestPruneTombstonesSkipsSupersededDoc(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
@@ -235,6 +298,46 @@ func TestPruneTombstonesSkipsSupersededDoc(t *testing.T) {
 	}
 	if _, err := s.Repo.Tip(ctx, oldRef); err != nil {
 		t.Fatalf("superseded doc ref pruned: %v", err)
+	}
+}
+
+// TestGCLocalKeepsEveryKindsLiveEntry pins liveTips against model.Kinds(). A
+// kind missing from that scan has its fold-cache entry evicted on every GCLocal
+// run despite the entity being live — what sprint, project, and runbook silently
+// suffered while the kind list was spelled out by hand.
+func TestGCLocalKeepsEveryKindsLiveEntry(t *testing.T) {
+	s := initStore(t)
+	byKind := map[model.Kind][]model.Op{
+		model.KindNote:          noteOps("n"),
+		model.KindDoc:           docOps("d"),
+		model.KindLog:           logOps("l"),
+		model.KindTask:          taskOps("t", "main"),
+		model.KindSprint:        sprintOps("sp"),
+		model.KindProject:       projectOps("pr"),
+		model.KindRunbook:       runbookOps("rb"),
+		model.KindInvestigation: investigationOps("iv"),
+		model.KindPlan:          planOps("pl"),
+	}
+	tips := make(map[model.Kind]model.SHA, len(byKind))
+	for _, kind := range model.Kinds() {
+		ops, ok := byKind[kind]
+		if !ok {
+			t.Fatalf("kind %q has no create ops in this table", kind)
+		}
+		tips[kind] = create(t, s, ops).Meta().Head
+	}
+
+	tidied, err := s.GCLocal(t.Context())
+	if err != nil {
+		t.Fatalf("GCLocal: %v", err)
+	}
+	if tidied != 0 {
+		t.Fatalf("tidied = %d, want 0: GCLocal evicted a live entity's cache entry", tidied)
+	}
+	for _, kind := range model.Kinds() {
+		if _, ok := s.cache.get(tips[kind]); !ok {
+			t.Errorf("%s: live cache entry evicted by GCLocal", kind)
+		}
 	}
 }
 

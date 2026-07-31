@@ -29,9 +29,9 @@ func (s *Store) GCLocal(ctx context.Context) (int, error) {
 	return tidied, nil
 }
 
-// PruneTombstones physically deletes tombstoned note, doc, log, runbook, and
-// investigation refs — those folded to Deleted — locally and on remote via git
-// push --delete, then drops
+// PruneTombstones physically deletes tombstoned note, doc, log, runbook,
+// investigation, and plan refs — those folded to Deleted — locally and on
+// remote via git push --delete, then drops
 // their now-orphaned cache entries. Superseded notes and docs and all tasks are
 // never pruned: a superseded entity keeps its supersede pointer and history, and
 // there is no task tombstone. Pruning is best-effort and non-convergent — a
@@ -139,47 +139,43 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 		}
 		pruned++
 	}
+	plans, err := listOf(ctx, s, model.KindPlan, fold.Plan, ListOpts{IncludeDeleted: true})
+	if err != nil {
+		return pruned, failed, err
+	}
+	for _, p := range plans {
+		if !p.Deleted {
+			continue
+		}
+		ref := refs.For(model.KindPlan, p.ID)
+		if err := s.Git.DeleteRef(ctx, ref, p.Head); err != nil {
+			failed++
+			continue
+		}
+		s.cache.delete(p.Head)
+		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+			failed++
+			continue
+		}
+		pruned++
+	}
 	return pruned, failed, nil
 }
 
 // liveTips returns the set of commit shas that are the current tip of some
-// entity ref — every note, task, doc, log, and investigation.
+// entity ref, over every kind in model.Kinds(). Deriving the kind list rather
+// than spelling it out is load-bearing: a kind missing here is a kind whose
+// cache entries GCLocal evicts on every run, silently costing a re-fold.
 func (s *Store) liveTips(ctx context.Context) (map[model.SHA]bool, error) {
-	notes, err := s.children(ctx, refs.Root(model.KindNote))
-	if err != nil {
-		return nil, err
-	}
-	tasks, err := s.children(ctx, refs.Root(model.KindTask))
-	if err != nil {
-		return nil, err
-	}
-	docs, err := s.children(ctx, refs.Root(model.KindDoc))
-	if err != nil {
-		return nil, err
-	}
-	logs, err := s.children(ctx, refs.Root(model.KindLog))
-	if err != nil {
-		return nil, err
-	}
-	investigations, err := s.children(ctx, refs.Root(model.KindInvestigation))
-	if err != nil {
-		return nil, err
-	}
-	live := make(map[model.SHA]bool, len(notes)+len(tasks)+len(docs)+len(logs)+len(investigations))
-	for _, e := range notes {
-		live[e.tip] = true
-	}
-	for _, e := range tasks {
-		live[e.tip] = true
-	}
-	for _, e := range docs {
-		live[e.tip] = true
-	}
-	for _, e := range logs {
-		live[e.tip] = true
-	}
-	for _, e := range investigations {
-		live[e.tip] = true
+	live := map[model.SHA]bool{}
+	for _, kind := range model.Kinds() {
+		entries, err := s.children(ctx, refs.Root(kind))
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			live[e.tip] = true
+		}
 	}
 	return live, nil
 }

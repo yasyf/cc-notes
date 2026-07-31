@@ -16,6 +16,7 @@ import (
 // Relevance reason labels, in the fixed priority order they are rendered.
 const (
 	reasonInvestigationOpen = "investigation-open"
+	reasonPlanExecuting     = "plan-executing"
 	reasonPath              = "path"
 	reasonDir               = "dir"
 	reasonBranch            = "branch"
@@ -27,9 +28,11 @@ const (
 
 // Relevance signal weights summed into an entity's score. scoreInvestigationOpen
 // is the boost a non-terminal investigation anchored near the target earns, so
-// "you are editing code under active investigation" outranks a plain path match.
+// "you are editing code under active investigation" outranks a plain path match;
+// scorePlanExecuting is its counterpart for the plan currently being executed.
 const (
 	scoreInvestigationOpen = 50
+	scorePlanExecuting     = 50
 	scorePath              = 100
 	scoreDir               = 60
 	scoreBranch            = 40
@@ -41,7 +44,7 @@ const (
 
 // reasonOrder is the fixed render order for an entity's matched reasons.
 var reasonOrder = []string{
-	reasonInvestigationOpen,
+	reasonInvestigationOpen, reasonPlanExecuting,
 	reasonPath, reasonDir, reasonBranch, reasonMergedCommit, reasonMergedBranch, reasonSibling, reasonCrossAuthor,
 }
 
@@ -61,12 +64,12 @@ type RelevantFilter struct {
 }
 
 // RelevantEntry is one ranked entity surfaced by Relevant: a kind discriminator
-// and exactly one of the note, doc, log, runbook, or investigation it carries
-// (the field matching Kind is set, the others zero), the summed relevance Score,
-// the matched Reasons in fixed priority order, and the drift Verdict. Notes and
-// docs carry their content verdict; a log, runbook, or investigation never
-// drifts, so its Verdict is empty. The full entity is carried so a caller can
-// build its own DTOs and lean lines.
+// and exactly one of the note, doc, log, runbook, investigation, or plan it
+// carries (the field matching Kind is set, the others zero), the summed
+// relevance Score, the matched Reasons in fixed priority order, and the drift
+// Verdict. Notes and docs carry their content verdict; a log, runbook,
+// investigation, or plan never drifts, so its Verdict is empty. The full entity
+// is carried so a caller can build its own DTOs and lean lines.
 type RelevantEntry struct {
 	Kind          model.Kind
 	Note          model.Note
@@ -74,6 +77,7 @@ type RelevantEntry struct {
 	Log           model.Log
 	Runbook       model.Runbook
 	Investigation model.Investigation
+	Plan          model.Plan
 	Score         int
 	Reasons       []string
 	Verdict       Verdict
@@ -90,6 +94,8 @@ func (e RelevantEntry) id() model.EntityID {
 		return e.Runbook.ID
 	case model.KindInvestigation:
 		return e.Investigation.ID
+	case model.KindPlan:
+		return e.Plan.ID
 	default:
 		return e.Note.ID
 	}
@@ -106,6 +112,8 @@ func (e RelevantEntry) updatedAt() int64 {
 		return e.Runbook.UpdatedAt
 	case model.KindInvestigation:
 		return e.Investigation.UpdatedAt
+	case model.KindPlan:
+		return e.Plan.UpdatedAt
 	default:
 		return e.Note.UpdatedAt
 	}
@@ -118,15 +126,15 @@ type scoredNote struct {
 	reasons []string
 }
 
-// Relevant scores every live note, doc, log, and active runbook against target
-// and returns those with a positive score, each carrying its drift verdict,
-// sorted by score descending, then UpdatedAt descending, then id ascending.
-// filter.Branch and filter.Base override the resolved branch and merge-base base
-// (taken verbatim, assumed already validated); an empty Branch resolves the
-// current branch, degrading to no branch signals on a detached HEAD.
+// Relevant scores every live note, doc, log, active runbook, investigation, and
+// plan against target and returns those with a positive score, each carrying its
+// drift verdict, sorted by score descending, then UpdatedAt descending, then id
+// ascending. filter.Branch and filter.Base override the resolved branch and
+// merge-base base (taken verbatim, assumed already validated); an empty Branch
+// resolves the current branch, degrading to no branch signals on a detached HEAD.
 // filter.Attached drops entities not anchored to the path or a parent directory;
-// filter.Worktree threads through to each entity's verdict. A log or runbook
-// never drifts, so its verdict is empty.
+// filter.Worktree threads through to each entity's verdict. A log, runbook,
+// investigation, or plan never drifts, so its verdict is empty.
 func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFilter) ([]RelevantEntry, error) {
 	p := path.Clean(target)
 
@@ -248,6 +256,29 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		scored = append(scored, RelevantEntry{Kind: model.KindInvestigation, Investigation: inv, Score: score, Reasons: reasons})
 	}
 
+	plans, err := c.Plans(ctx, PlanFilter{})
+	if err != nil {
+		return nil, err
+	}
+	for _, plan := range plans {
+		score, reasons, err := c.scoreAnchors(ctx, plan.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, err
+		}
+		if score == 0 {
+			continue
+		}
+		if filter.Attached && !anchoredNear(reasons) {
+			continue
+		}
+		if plan.Status == model.PlanExecuting && anchoredNear(reasons) {
+			score += scorePlanExecuting
+			reasons = append(reasons, reasonPlanExecuting)
+			sortReasons(reasons)
+		}
+		scored = append(scored, RelevantEntry{Kind: model.KindPlan, Plan: plan, Score: score, Reasons: reasons})
+	}
+
 	for i := range scored {
 		verdict, err := c.entryVerdict(ctx, scored[i], head, now, staleAfter, filter.Worktree)
 		if err != nil {
@@ -269,13 +300,14 @@ func anchoredNear(reasons []string) bool {
 
 // entryVerdict computes the drift verdict for a kept entity against a single
 // head/now snapshot shared across the whole ranked batch, dispatching to the
-// note/doc verdict core by kind. A log, runbook, or investigation never drifts —
-// none has a freshness lifecycle — so each short-circuits to an empty verdict.
+// note/doc verdict core by kind. A log, runbook, investigation, or plan never
+// drifts — none has a freshness lifecycle — so each short-circuits to an empty
+// verdict.
 func (c *Client) entryVerdict(ctx context.Context, e RelevantEntry, head model.SHA, now time.Time, staleAfter time.Duration, worktree bool) (Verdict, error) {
 	switch e.Kind {
 	case model.KindDoc:
 		return c.verdictOf(ctx, head, freshFromDoc(e.Doc), now, staleAfter, worktree)
-	case model.KindLog, model.KindRunbook, model.KindInvestigation:
+	case model.KindLog, model.KindRunbook, model.KindInvestigation, model.KindPlan:
 		return "", nil
 	default:
 		return c.verdictOf(ctx, head, freshFromNote(e.Note), now, staleAfter, worktree)

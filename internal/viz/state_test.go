@@ -105,6 +105,18 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 	}
 	inv := invSnap.(model.Investigation)
 
+	const planBody = "## Approach\n\nbuffer the results channel"
+	planSnap, err := s.Create(ctx, []model.Op{
+		model.CreatePlan{Nonce: model.NewNonce(), Title: "a plan", Body: planBody, Status: model.PlanApproved},
+	})
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	plan := planSnap.(model.Plan)
+	if _, err := s.Append(ctx, refs.For(model.KindPlan, plan.ID), []model.Op{model.SetPlanStatus{Status: model.PlanExecuting}}); err != nil {
+		t.Fatalf("start plan: %v", err)
+	}
+
 	ts, _, _ := newVizServer(t, r)
 	code, body := getBody(t, ts.URL+"/api/entities")
 	if code != http.StatusOK {
@@ -138,6 +150,9 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 	}
 	if len(resp.Investigations) != 1 {
 		t.Errorf("investigations = %d, want 1", len(resp.Investigations))
+	}
+	if len(resp.Plans) != 1 {
+		t.Errorf("plans = %d, want 1", len(resp.Plans))
 	}
 
 	byID := make(map[model.EntityID]model.Note, len(resp.Notes))
@@ -177,6 +192,15 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 		}
 		if len(got.Entries) != 1 || got.Entries[0].Text != investigationEntry {
 			t.Errorf("investigation entries = %+v, want one entry %q", got.Entries, investigationEntry)
+		}
+	}
+	if len(resp.Plans) == 1 {
+		got := resp.Plans[0]
+		if got.ID != plan.ID || got.Body != planBody {
+			t.Errorf("plan id/body = %s/%q, want %s/%q", got.ID, got.Body, plan.ID, planBody)
+		}
+		if got.Status != model.PlanExecuting || got.StartedAt == 0 {
+			t.Errorf("plan status/started = %q/%d, want executing with a stamped start", got.Status, got.StartedAt)
 		}
 	}
 }

@@ -21,6 +21,7 @@ type record struct {
 	Successors   []model.EntityID
 	InvStatus    model.InvestigationStatus
 	TaskStatus   model.Status
+	PlanStatus   model.PlanStatus
 	Branch       model.Branch
 	LeaseExpired bool
 }
@@ -69,6 +70,10 @@ func (e *Evaluator) load(ctx context.Context) ([]record, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
 	}
+	plans, err := e.c.Plans(ctx, notes.PlanFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("list plans: %w", err)
+	}
 	verdicts, err := e.verdicts(ctx)
 	if err != nil {
 		return nil, err
@@ -84,6 +89,7 @@ func (e *Evaluator) load(ctx context.Context) ([]record, error) {
 	runbookByID := byID(runbooks, func(rb model.Runbook) model.EntityID { return rb.ID })
 	invByID := byID(invs, func(iv model.Investigation) model.EntityID { return iv.ID })
 	taskByID := byID(tasks, func(t model.Task) model.EntityID { return t.ID })
+	planByID := byID(plans, func(p model.Plan) model.EntityID { return p.ID })
 
 	recs := make([]record, len(corpus))
 	for i, ent := range corpus {
@@ -107,6 +113,9 @@ func (e *Evaluator) load(ctx context.Context) ([]record, error) {
 		case model.KindTask:
 			t := taskByID[ent.ID]
 			r.Attested, r.TaskStatus, r.Branch, r.LeaseExpired = t.CreatedAt, t.Status, t.Branch, leased[t.ID]
+		case model.KindPlan:
+			p := planByID[ent.ID]
+			r.Anchors, r.Attested, r.PlanStatus = p.Anchors, p.CreatedAt, p.Status
 		}
 		if len(ent.SupersededBy) > 0 {
 			r.Successors, err = e.successors(ctx, ent)

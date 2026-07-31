@@ -14,6 +14,9 @@ import (
 // then creation time then id; InProgress by assignee then the same task order;
 // Runs by start time then runbook then run id.
 //
+// Plans counts the plans still in flight — draft, approved, or executing —
+// leaving out the done and abandoned ones.
+//
 // SkippedOps totals the ops this pass could not fold — history a newer
 // cc-notes wrote. Every entity kind contributes, over the live records the
 // report covers. Non-zero means upgrade.
@@ -28,6 +31,7 @@ type StatusReport struct {
 	Logs           int
 	Papercuts      int
 	Investigations InvestigationSummary
+	Plans          int
 	SkippedOps     int
 }
 
@@ -134,6 +138,10 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	if err != nil {
 		return StatusReport{}, err
 	}
+	planList, err := c.s.ListPlans(ctx)
+	if err != nil {
+		return StatusReport{}, err
+	}
 	staleAfter, err := c.NoteStaleAfter(ctx)
 	if err != nil {
 		return StatusReport{}, err
@@ -198,6 +206,13 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		}
 	}
 
+	inFlightPlans := 0
+	for _, p := range planList {
+		if nonTerminalPlan(p.Status) {
+			inFlightPlans++
+		}
+	}
+
 	papercuts := 0
 	for _, l := range logList {
 		if slices.Contains(l.Tags, PapercutTag) {
@@ -216,9 +231,10 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		Logs:           len(logList),
 		Papercuts:      papercuts,
 		Investigations: invSummary,
+		Plans:          inFlightPlans,
 		SkippedOps: sumSkipped(tasks) + sumSkipped(runbooks) + sumSkipped(noteList) +
 			sumSkipped(docList) + sumSkipped(logList) + sumSkipped(invList) +
-			sumSkipped(sprintList) + sumSkipped(projectList),
+			sumSkipped(sprintList) + sumSkipped(projectList) + sumSkipped(planList),
 	}
 	for i, t := range backlog {
 		report.Backlog[i] = StatusBacklogTask{Task: t, Ready: readySet[t.ID]}

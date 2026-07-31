@@ -228,6 +228,36 @@ func TestAssessGates(t *testing.T) {
 			wantVerdict: notes.VerdictStale,
 		},
 		{
+			name: "a done plan gates",
+			setup: func(t *testing.T, c *notes.Client, _ string) model.EntityID {
+				id := executingPlan(t, c, "rewrite the rotor")
+				if _, err := c.DonePlan(t.Context(), id, "shipped"); err != nil {
+					t.Fatalf("DonePlan: %v", err)
+				}
+				return id
+			},
+			wantGated:  true,
+			wantSignal: SignalClosed,
+		},
+		{
+			name: "an abandoned plan gates",
+			setup: func(t *testing.T, c *notes.Client, _ string) model.EntityID {
+				id := executingPlan(t, c, "rewrite the rotor")
+				if _, err := c.AbandonPlan(t.Context(), id, "superseded by the simpler fix"); err != nil {
+					t.Fatalf("AbandonPlan: %v", err)
+				}
+				return id
+			},
+			wantGated:  true,
+			wantSignal: SignalClosed,
+		},
+		{
+			name: "an executing plan passes",
+			setup: func(t *testing.T, c *notes.Client, _ string) model.EntityID {
+				return executingPlan(t, c, "rewrite the rotor")
+			},
+		},
+		{
 			name: "an open task on an unmerged branch passes",
 			setup: func(t *testing.T, c *notes.Client, dir string) model.EntityID {
 				gittest.Git(t, dir, "branch", "feature")
@@ -394,6 +424,18 @@ func investigation(t *testing.T, c *notes.Client, title string) model.EntityID {
 		t.Fatalf("CreateInvestigation: %v", err)
 	}
 	return iv.ID
+}
+
+func executingPlan(t *testing.T, c *notes.Client, title string) model.EntityID {
+	t.Helper()
+	p, _, err := c.CreatePlan(t.Context(), notes.PlanSpec{Title: title, Body: "spin the rotor down first", Status: model.PlanApproved})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	if _, err := c.StartPlan(t.Context(), p.ID); err != nil {
+		t.Fatalf("StartPlan: %v", err)
+	}
+	return p.ID
 }
 
 func task(t *testing.T, c *notes.Client, title string, branch model.Branch) model.EntityID {

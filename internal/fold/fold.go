@@ -42,19 +42,19 @@ var folders = map[model.Kind]func([]model.PackCommit, mode) (model.Snapshot, err
 	model.KindProject:       func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldProject(o, m) },
 	model.KindRunbook:       func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldRunbook(o, m) },
 	model.KindInvestigation: func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldInvestigation(o, m) },
+	model.KindPlan:          func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldPlan(o, m) },
 }
 
 // Fold linearizes the chain and replays its operation packs into a snapshot,
 // dispatching on the create op: a create_note chain folds to model.Note, a
 // create_doc chain to model.Doc, a create_log chain to model.Log, a create_task
 // chain to model.Task, a create_sprint chain to model.Sprint, a create_project
-// chain to model.Project, a create_runbook chain to model.Runbook, and a
-// create_investigation chain to model.Investigation.
-// Set-valued snapshot fields come back as
-// non-nil sorted slices; anchors sort by (kind, value). The one exception is
-// Attachments (LWW by name), which sorts by name and comes back nil when
-// empty — the field marshals omitempty, so attachment-less snapshots keep
-// their pre-attachment bytes.
+// chain to model.Project, a create_runbook chain to model.Runbook, a
+// create_investigation chain to model.Investigation, and a create_plan chain to
+// model.Plan. Set-valued snapshot fields come back as non-nil sorted slices;
+// anchors sort by (kind, value). The one exception is Attachments (LWW by
+// name), which sorts by name and comes back nil when empty — the field marshals
+// omitempty, so attachment-less snapshots keep their pre-attachment bytes.
 //
 // A chain may contain Checkpoint commits. Fold receives the full chain (the
 // create commit is always the root); when the newest checkpoint is seed-safe it
@@ -168,6 +168,16 @@ func Investigation(commits []model.PackCommit) (model.Investigation, error) {
 		return model.Investigation{}, err
 	}
 	return foldInvestigation(ordered, tolerant)
+}
+
+// Plan linearizes the chain and folds it as a plan. It fails with
+// ErrKindMismatch when the chain was created as a different kind.
+func Plan(commits []model.PackCommit) (model.Plan, error) {
+	ordered, err := Linearize(commits)
+	if err != nil {
+		return model.Plan{}, err
+	}
+	return foldPlan(ordered, tolerant)
 }
 
 // dispatch returns the boxing fold for an already-linearized chain whose first

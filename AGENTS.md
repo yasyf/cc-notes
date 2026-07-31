@@ -8,7 +8,7 @@ Git-native notes and tasks layer for agents, written in Go (module `github.com/y
 ```
 cc-notes/
 ├── cmd/cc-notes/     # Binary entrypoint — signal-aware main, exit-code mapping
-├── model/            # Public domain vocabulary — entity ids, Note/Doc/Log/Task/Sprint/Project/Runbook/Investigation snapshots, commit/path/dir/branch anchor kinds, task validation criteria, investigation findings, kind-tagged ops, pack codec
+├── model/            # Public domain vocabulary — entity ids, Note/Doc/Log/Task/Sprint/Project/Runbook/Investigation/Plan snapshots, commit/path/dir/branch anchor kinds, task validation criteria, investigation findings, kind-tagged ops, pack codec
 ├── notes/            # Public in-process client (notes.Client) — the domain API the CLI and embedders drive: entity CRUD/read/search, status, relevant, history, blame, sync, reconcile, gc
 ├── internal/         # Go core (not importable outside the module)
 │   ├── refs/         #   pure ref-name build/parse — one global root per entity kind; tasks carry an LWW branch attribute

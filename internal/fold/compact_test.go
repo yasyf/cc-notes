@@ -677,6 +677,89 @@ func TestFoldRunbookConcurrentCheckpoints(t *testing.T) {
 	}
 }
 
+// TestFoldPlanCompactedEqualsFull folds a plan chain whose seed-safe checkpoint
+// lands mid-execution, with a close and a reopen in the suffix. The seeded fold
+// must equal the full replay: the StartedAt the prefix stamped survives the
+// seed, the reopen crossing the boundary clears ClosedAt/ClosedBy and restamps
+// StartedAt, and the label, anchor, comment, and supersede sets span it.
+func TestFoldPlanCompactedEqualsFull(t *testing.T) {
+	c0 := mk("c0", nil, "alice", 100, 1, model.CreatePlan{
+		Nonce: "n", Title: "T0", Body: "B0", Status: model.PlanDraft, Labels: []string{"a"},
+	})
+	c1 := mk("c1", []string{"c0"}, "bob", 200, 2,
+		model.AddComment{Body: "approved as written"},
+		model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "x.go"}},
+		model.SetPlanStatus{Status: model.PlanApproved},
+	)
+	c2 := mk("c2", []string{"c1"}, "carol", 300, 3,
+		model.SetBody{Body: "B2"},
+		model.SetPlanStatus{Status: model.PlanExecuting},
+	)
+	state, err := fold.Plan([]model.PackCommit{c0, c1, c2})
+	if err != nil {
+		t.Fatalf("fold prefix: %v", err)
+	}
+	cK := cp("cK", "c2", "compactor", 350, 4, state, 3, "c0", "c1", "c2")
+	cKempty := mk("cK", []string{"c2"}, "compactor", 350, 4)
+	c3 := mk("c3", []string{"cK"}, "dave", 400, 5,
+		model.SetPlanOutcome{Outcome: "shipped"},
+		model.SetPlanStatus{Status: model.PlanDone},
+	)
+	c4 := mk("c4", []string{"c3"}, "erin", 500, 6,
+		model.AddLabel{Label: "b"},
+		model.AddComment{Body: "reopening: the outcome regressed"},
+		model.AddSupersededBy{ID: "plan2"},
+		model.SetPlanStatus{Status: model.PlanExecuting},
+	)
+	compacted := []model.PackCommit{c0, c1, c2, cK, c3, c4}
+	full := []model.PackCommit{c0, c1, c2, cKempty, c3, c4}
+
+	gotFull, err := fold.Plan(full)
+	if err != nil {
+		t.Fatalf("fold full: %v", err)
+	}
+	gotCompact, err := fold.Plan(compacted)
+	if err != nil {
+		t.Fatalf("fold compacted: %v", err)
+	}
+	if !reflect.DeepEqual(gotCompact, gotFull) {
+		t.Fatalf("compacted = %+v\nfull = %+v", gotCompact, gotFull)
+	}
+	want := model.Plan{
+		ID:      "c0",
+		Title:   "T0",
+		Body:    "B2",
+		Status:  model.PlanExecuting,
+		Outcome: "shipped",
+		Labels:  []string{"a", "b"},
+		Comments: []model.Comment{
+			{Author: "bob", TS: 200, Body: "approved as written"},
+			{Author: "erin", TS: 500, Body: "reopening: the outcome regressed"},
+		},
+		Anchors:      []model.Anchor{{Kind: model.AnchorPath, Value: "x.go"}},
+		SupersededBy: []model.EntityID{"plan2"},
+		Author:       "alice",
+		CreatedAt:    100,
+		UpdatedAt:    500,
+		StartedAt:    500,
+		Head:         "c4",
+	}
+	if !reflect.DeepEqual(gotCompact, want) {
+		t.Fatalf("compacted =\n%#v\nwant\n%#v", gotCompact, want)
+	}
+	//nolint:gosec // G404: deterministic PRNG seeds a reproducible fold fuzz; not security-relevant.
+	r := rand.New(rand.NewPCG(41, 43))
+	for i := range 30 {
+		got, err := fold.Plan(shuffled(compacted, r))
+		if err != nil {
+			t.Fatalf("shuffle %d: %v", i, err)
+		}
+		if !reflect.DeepEqual(got, gotFull) {
+			t.Fatalf("shuffle %d = %+v, want %+v", i, got, gotFull)
+		}
+	}
+}
+
 // TestFoldTwoConcurrentCheckpoints is the convergence trap: two replicas diverge
 // from a common prefix, each appends an op and compacts over its own frontier,
 // then a union merge joins both checkpoints. The newest-coverage checkpoint is

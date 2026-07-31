@@ -124,6 +124,7 @@ func TestDTOGoldens(t *testing.T) {
 		Commits:   []model.SHA{"c0ffee0000000000000000000000000000000000", "d00d000000000000000000000000000000000000"},
 		Sprint:    "sprint-0000001",
 		Project:   "project-000001",
+		Plan:      "plan-000000001",
 		Criteria: []model.Criterion{
 			{ID: "c1", Text: "tests pass", Script: "go test ./...", Status: model.CriterionMet, Note: "go test: 12 passed"},
 			{ID: "c2", Text: "reviewed", Script: "", Status: model.CriterionPending},
@@ -243,6 +244,27 @@ func TestDTOGoldens(t *testing.T) {
 	}
 	invMin := model.Investigation{ID: "inv-min-00000000000000000000000000000000", Title: "bare", Status: model.InvestigationOpen, Author: ada, CreatedAt: dtoCreated, UpdatedAt: dtoUpdated}
 
+	planFull := model.Plan{
+		ID:           "plan-full-000000000000000000000000000000",
+		Title:        "fix monorepo read performance",
+		Body:         "## Context\nthe plan, verbatim\n",
+		Status:       model.PlanDone,
+		Outcome:      "status 19.8s to 2.1s",
+		Labels:       []string{"perf"},
+		Comments:     []model.Comment{{Author: ada, TS: dtoCreated, Body: "approved as written"}},
+		Anchors:      []model.Anchor{fullAnchor, bareAnchor},
+		SupersededBy: []model.EntityID{"plan-newer-0001"},
+		Author:       ada,
+		CreatedAt:    dtoCreated,
+		UpdatedAt:    dtoUpdated,
+		StartedAt:    dtoStarted,
+		ClosedAt:     dtoClosed,
+		ClosedBy:     bob,
+		Deleted:      true,
+	}
+	planTasks := []model.EntityID{"task-of-plan001", "task-of-plan002"}
+	planMin := model.Plan{ID: "plan-min-0000000000000000000000000000000", Title: "bare", Status: model.PlanDraft, Author: ada, CreatedAt: dtoCreated, UpdatedAt: dtoUpdated}
+
 	cases := []struct {
 		name string
 		dto  any
@@ -263,6 +285,8 @@ func TestDTOGoldens(t *testing.T) {
 		{"runbook_empty", newRunbookDTO(runbookMin)},
 		{"investigation_full", newInvestigationDTO(invFull, noteAtts)},
 		{"investigation_empty", newInvestigationDTO(invMin, []attachmentDTO{})},
+		{"plan_full", newPlanDTO(planFull, planTasks)},
+		{"plan_empty", newPlanDTO(planMin, nil)},
 		{"note_summary_full", newNoteSummaryDTO(noteFull, "DRIFTED")},
 		{"note_summary_empty", newNoteSummaryDTO(noteMin, "")},
 		{"doc_summary_full", newDocSummaryDTO(docFull, "DRIFTED")},
@@ -281,6 +305,8 @@ func TestDTOGoldens(t *testing.T) {
 		{"run_summary_empty", newRunbookRunSummaryDTO(runbookMin, runMin)},
 		{"investigation_summary_full", newInvestigationSummaryDTO(invFull)},
 		{"investigation_summary_empty", newInvestigationSummaryDTO(invMin)},
+		{"plan_summary_full", newPlanSummaryDTO(planFull)},
+		{"plan_summary_empty", newPlanSummaryDTO(planMin)},
 	}
 
 	for _, tc := range cases {

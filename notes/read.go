@@ -89,6 +89,16 @@ func (c *Client) Investigation(ctx context.Context, id model.EntityID) (model.In
 	return snapshot.(model.Investigation), nil
 }
 
+// Plan loads the plan with the given id and folds it. A missing entity fails
+// with ErrRefNotFound.
+func (c *Client) Plan(ctx context.Context, id model.EntityID) (model.Plan, error) {
+	snapshot, err := c.s.Load(ctx, refs.For(model.KindPlan, id))
+	if err != nil {
+		return model.Plan{}, err
+	}
+	return snapshot.(model.Plan), nil
+}
+
 // ResolveProject expands a project id prefix to its full EntityID. No match
 // fails with ErrNotFound; an ambiguous prefix fails with ErrAmbiguous.
 func (c *Client) ResolveProject(ctx context.Context, prefix string) (model.EntityID, error) {
@@ -135,6 +145,12 @@ func (c *Client) ResolveRunbook(ctx context.Context, prefix string) (model.Entit
 // No match fails with ErrNotFound; an ambiguous prefix fails with ErrAmbiguous.
 func (c *Client) ResolveInvestigation(ctx context.Context, prefix string) (model.EntityID, error) {
 	return c.resolve(ctx, model.KindInvestigation, prefix)
+}
+
+// ResolvePlan expands a plan id prefix to its full EntityID. No match fails
+// with ErrNotFound; an ambiguous prefix fails with ErrAmbiguous.
+func (c *Client) ResolvePlan(ctx context.Context, prefix string) (model.EntityID, error) {
+	return c.resolve(ctx, model.KindPlan, prefix)
 }
 
 // ResolveEntity expands a kind-agnostic id prefix by resolving it against every

@@ -17,6 +17,7 @@ type taskAddArgs struct {
 	Parent               string   `json:"parent,omitempty" jsonschema:"parent task id prefix"`
 	Sprint               string   `json:"sprint,omitempty" jsonschema:"sprint id prefix"`
 	Project              string   `json:"project,omitempty" jsonschema:"project id prefix"`
+	Plan                 string   `json:"plan,omitempty" jsonschema:"plan id prefix this task executes"`
 	BlockedBy            []string `json:"blocked_by,omitempty" jsonschema:"blocker task id prefixes (resolved globally)"`
 	Branch               string   `json:"branch,omitempty" jsonschema:"task branch (default: current branch)"`
 	Backlog              bool     `json:"backlog,omitempty" jsonschema:"create on the shared backlog (no branch)"`
@@ -74,6 +75,8 @@ type taskEditArgs struct {
 	NoSprint   bool     `json:"no_sprint,omitempty" jsonschema:"clear the sprint"`
 	Project    string   `json:"project,omitempty" jsonschema:"new project id prefix"`
 	NoProject  bool     `json:"no_project,omitempty" jsonschema:"clear the project"`
+	Plan       string   `json:"plan,omitempty" jsonschema:"new plan id prefix this task executes"`
+	NoPlan     bool     `json:"no_plan,omitempty" jsonschema:"clear the plan"`
 	Branch     string   `json:"branch,omitempty" jsonschema:"reassign to this branch"`
 	Backlog    bool     `json:"backlog,omitempty" jsonschema:"move to the shared backlog (clear branch)"`
 	anchorEditArgs
@@ -160,6 +163,7 @@ func registerTask(ts *toolset, b *bridge) {
 			flags = optStr(flags, "--parent", in.Parent)
 			flags = optStr(flags, "--sprint", in.Sprint)
 			flags = optStr(flags, "--project", in.Project)
+			flags = optStr(flags, "--plan", in.Plan)
 			flags = optRepeated(flags, "--blocked-by", in.BlockedBy)
 			flags = optStr(flags, "--branch", in.Branch)
 			flags = optBool(flags, "--backlog", in.Backlog)
@@ -244,6 +248,8 @@ func registerTask(ts *toolset, b *bridge) {
 			flags = optBool(flags, "--no-sprint", in.NoSprint)
 			flags = optStr(flags, "--project", in.Project)
 			flags = optBool(flags, "--no-project", in.NoProject)
+			flags = optStr(flags, "--plan", in.Plan)
+			flags = optBool(flags, "--no-plan", in.NoPlan)
 			flags = optStr(flags, "--branch", in.Branch)
 			flags = optBool(flags, "--backlog", in.Backlog)
 			flags = anchorEditFlags(flags, in.anchorEditArgs)

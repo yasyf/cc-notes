@@ -335,6 +335,10 @@ func init() {
 	registerOp[RemoveFixCommit]()
 	registerOp[AddFollowUp]()
 	registerOp[RemoveFollowUp]()
+	registerOp[CreatePlan]()
+	registerOp[SetPlanStatus]()
+	registerOp[SetPlanOutcome]()
+	registerOp[SetPlan]()
 	opDecoders[Checkpoint{}.OpKind()] = decodeCheckpoint
 }
 

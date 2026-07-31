@@ -908,6 +908,72 @@ type RemoveFollowUp struct {
 // OpKind returns "remove_follow_up".
 func (RemoveFollowUp) OpKind() string { return "remove_follow_up" }
 
+// CreatePlan is the root operation of a plan chain. The nonce makes
+// otherwise-identical creates hash to distinct entity ids. Body is the plan
+// verbatim. Status is the born status and must be draft or approved — a plan is
+// never created already executing or closed — and it rides here rather than in a
+// second op because a create pack that dedupes against a live entity is
+// discarded whole, taking any trailing op with it.
+type CreatePlan struct {
+	Nonce   string     `json:"nonce"`
+	Title   string     `json:"title"`
+	Body    string     `json:"body"`
+	Status  PlanStatus `json:"status"`
+	Labels  []string   `json:"labels"`
+	Anchors []Anchor   `json:"anchors"`
+}
+
+// OpKind returns "create_plan".
+func (CreatePlan) OpKind() string { return "create_plan" }
+
+// CreateKind returns KindPlan.
+func (CreatePlan) CreateKind() Kind { return KindPlan }
+
+func (o CreatePlan) validate() error {
+	switch o.Status {
+	case PlanDraft, PlanApproved:
+	default:
+		return fmt.Errorf("%w: plan born status %q", ErrInvalidValue, o.Status)
+	}
+	for _, a := range o.Anchors {
+		if err := a.Kind.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetPlanStatus replaces the lifecycle status of a plan. Legality of the
+// transition is enforced by the client at op-build time; the fold applies it
+// last-write-wins and stays total.
+type SetPlanStatus struct {
+	Status PlanStatus `json:"status"`
+}
+
+// OpKind returns "set_plan_status".
+func (SetPlanStatus) OpKind() string { return "set_plan_status" }
+
+func (o SetPlanStatus) validate() error { return o.Status.validate() }
+
+// SetPlanOutcome replaces the outcome prose of a plan: what executing it
+// actually produced, as distinct from the approach Body records.
+type SetPlanOutcome struct {
+	Outcome string `json:"outcome"`
+}
+
+// OpKind returns "set_plan_outcome".
+func (SetPlanOutcome) OpKind() string { return "set_plan_outcome" }
+
+// SetPlan assigns a task to a plan; an empty plan clears the membership. Plan is
+// an LWW scalar resolved at fold time, and the only stored direction of the
+// edge — a plan's task roll-up is the reader's inversion of these pointers.
+type SetPlan struct {
+	Plan EntityID `json:"plan"`
+}
+
+// OpKind returns "set_plan".
+func (SetPlan) OpKind() string { return "set_plan" }
+
 // Checkpoint compacts an entity's history into a single seed. State is the
 // full folded snapshot of every commit in CoversShas, CoversLamport is the
 // lamport of the covered tip, and EntityID is the immutable root sha the
@@ -915,9 +981,9 @@ func (RemoveFollowUp) OpKind() string { return "remove_follow_up" }
 // never changes an entity id: a fold uses the newest seed-safe checkpoint as
 // its starting snapshot and treats every other checkpoint as a no-op. The pack
 // codec carries State kind-tagged (note, doc, log, task, sprint, project,
-// runbook, or investigation) so it decodes back to the concrete
-// model.Note/Doc/Log/Task/Sprint/Project/Runbook/Investigation; the snapshot's
-// kind drives fold dispatch.
+// runbook, investigation, or plan) so it decodes back to the concrete
+// model.Note/Doc/Log/Task/Sprint/Project/Runbook/Investigation/Plan; the
+// snapshot's kind drives fold dispatch.
 type Checkpoint struct {
 	EntityID      EntityID
 	State         Snapshot
