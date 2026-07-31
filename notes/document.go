@@ -909,13 +909,13 @@ func (c *Client) driftedOf(ctx context.Context, head model.SHA, fe freshDocument
 		switch a.Kind {
 		case model.AnchorPath, model.AnchorDir:
 			oid, err := c.liveAnchorOID(ctx, head, a, worktree)
-			if errors.Is(err, gitcmd.ErrPathNotFound) {
+			if errors.Is(err, model.ErrPathNotFound) {
 				return true, nil
 			}
 			if err != nil {
 				return false, err
 			}
-			if model.SHA(oid) != w.OID {
+			if oid != w.OID {
 				return true, nil
 			}
 		case model.AnchorCommit:
@@ -946,11 +946,12 @@ func (c *Client) driftedOf(ctx context.Context, head model.SHA, fe freshDocument
 // A path anchor under worktree mode reads the on-disk working-tree blob;
 // otherwise, and always for a directory anchor, it reads the committed object at
 // head.
-func (c *Client) liveAnchorOID(ctx context.Context, head model.SHA, a model.Anchor, worktree bool) (string, error) {
+func (c *Client) liveAnchorOID(ctx context.Context, head model.SHA, a model.Anchor, worktree bool) (model.SHA, error) {
 	if worktree && a.Kind == model.AnchorPath {
-		return c.s.Git.WorktreeBlobOID(ctx, a.Value)
+		oid, err := c.s.Git.WorktreeBlobOID(ctx, a.Value)
+		return model.SHA(oid), err
 	}
-	return c.s.Git.PathOID(ctx, string(head), a.Value)
+	return c.s.Repo.PathOID(ctx, head, a.Value)
 }
 
 // supersedeDangling reports whether any of the supersede targets has been

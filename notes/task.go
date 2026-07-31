@@ -351,7 +351,7 @@ func (c *Client) ClaimTaskSync(ctx context.Context, id model.EntityID) (model.Ta
 	if err != nil {
 		return model.Task{}, err
 	}
-	if _, err := ccsync.Sync(ctx, c.dir, remote, false); err != nil {
+	if _, err := ccsync.Sync(ctx, c.s, remote, false); err != nil {
 		return model.Task{}, err
 	}
 	task, err := c.Task(ctx, id)

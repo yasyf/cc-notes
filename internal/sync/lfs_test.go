@@ -314,7 +314,7 @@ func TestSyncUploadFailureBlocksPush(t *testing.T) {
 	att := attachFile(t, a, refs.For(model.KindNote, note.ID), "blocked.bin", []byte("payload"))
 
 	f.setFailBatch(http.StatusServiceUnavailable)
-	report, err := ccsync.Sync(t.Context(), a.Git.Dir, "origin", false)
+	report, err := ccsync.Sync(t.Context(), a, "origin", false)
 	if err == nil {
 		t.Fatal("sync with failing LFS server succeeded, want upload error")
 	}
@@ -379,7 +379,7 @@ func TestSyncInterruptedDownloadHealsNextSync(t *testing.T) {
 	sync(t, a)
 
 	f.setFailGet(http.StatusServiceUnavailable)
-	report, err := ccsync.Sync(t.Context(), b.Git.Dir, "origin", false)
+	report, err := ccsync.Sync(t.Context(), b, "origin", false)
 	if err == nil {
 		t.Fatal("sync with failing content GET succeeded, want download error")
 	}
@@ -411,7 +411,7 @@ func TestSyncRemoveLastAttachmentUnbricksLFSlessRemote(t *testing.T) {
 	noteRef := refs.For(model.KindNote, note.ID)
 	att := attachFile(t, a, noteRef, "brick.bin", []byte("no endpoint will take this"))
 
-	_, err := ccsync.Sync(t.Context(), a.Git.Dir, "origin", false)
+	_, err := ccsync.Sync(t.Context(), a, "origin", false)
 	if !errors.Is(err, lfs.ErrUnsupported) {
 		t.Fatalf("sync against LFS-less remote: err = %v, want lfs.ErrUnsupported", err)
 	}
@@ -456,7 +456,7 @@ func TestSyncDownloadMissingObjectNamesEntity(t *testing.T) {
 	f.remove(att.OID)
 
 	own := createNote(t, b, "b's own note")
-	report, err := ccsync.Sync(t.Context(), b.Git.Dir, "origin", false)
+	report, err := ccsync.Sync(t.Context(), b, "origin", false)
 	if err == nil {
 		t.Fatal("sync with server-lost object succeeded, want download error")
 	}

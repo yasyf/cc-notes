@@ -972,6 +972,93 @@ func TestConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
+// TestRepoConcurrentReads drives the reads that mutate Repo state — the
+// ancestry memo, the root-tree memo, and go-git's packfile descriptor ring —
+// from concurrent goroutines, so -race reports whether mu still covers
+// everything it now guards.
+func TestRepoConcurrentReads(t *testing.T) {
+	dir := initRepo(t)
+	repo := open(t, dir)
+	root := write(t, repo, nil, t0, createPack)
+	mid := write(t, repo, []model.SHA{root}, t1, retitlePack)
+	tip := write(t, repo, []model.SHA{mid}, t2, bodyPack)
+	sibling := write(t, repo, []model.SHA{root}, t3, tagPack)
+	files := commitFiles(t, dir, "files", map[string]string{"internal/fold/fold.go": "package fold\n"})
+
+	type lookup struct {
+		rev  model.SHA
+		path string
+		oid  model.SHA
+	}
+	probes := []lookup{
+		{rev: files, path: "internal/fold/fold.go"},
+		{rev: files, path: "internal/fold"},
+		{rev: tip, path: "ops.json"},
+	}
+	lookups := make([]lookup, 0, len(probes))
+	for _, l := range probes {
+		oid, verdict := gitPathOID(t, dir, l.rev, l.path)
+		if verdict != gitResolves {
+			t.Fatalf("fixture invalid: git cat-file %s:%s %s, want resolves", l.rev, l.path, verdict)
+		}
+		lookups = append(lookups, lookup{rev: l.rev, path: l.path, oid: oid})
+	}
+	ancestries := []struct {
+		a, b model.SHA
+		want bool
+	}{
+		{root, tip, true},
+		{sibling, tip, false},
+		{mid, sibling, false},
+		{tip, tip, true},
+	}
+
+	ctx := t.Context()
+	var wg sync.WaitGroup
+	for worker := range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for round := range 8 {
+				l := lookups[(worker+round)%len(lookups)]
+				oid, err := repo.PathOID(ctx, l.rev, l.path)
+				if err != nil {
+					t.Errorf("worker %d: PathOID(%s, %s): %v", worker, l.rev, l.path, err)
+					return
+				}
+				if oid != l.oid {
+					t.Errorf("worker %d: PathOID(%s, %s) = %s, want %s", worker, l.rev, l.path, oid, l.oid)
+					return
+				}
+				a := ancestries[(worker+round)%len(ancestries)]
+				reachable, err := repo.IsAncestor(ctx, a.a, a.b)
+				if err != nil {
+					t.Errorf("worker %d: IsAncestor(%s, %s): %v", worker, a.a, a.b, err)
+					return
+				}
+				if reachable != a.want {
+					t.Errorf("worker %d: IsAncestor(%s, %s) = %t, want %t", worker, a.a, a.b, reachable, a.want)
+					return
+				}
+				chain, err := repo.ReadChain(ctx, tip)
+				if err != nil {
+					t.Errorf("worker %d: ReadChain(%s): %v", worker, tip, err)
+					return
+				}
+				if len(chain) != 3 {
+					t.Errorf("worker %d: ReadChain(%s) = %d commits, want 3", worker, tip, len(chain))
+					return
+				}
+				if chain[0].SHA != tip || chain[2].SHA != root {
+					t.Errorf("worker %d: ReadChain(%s) = %s..%s, want %s..%s", worker, tip, chain[0].SHA, chain[2].SHA, tip, root)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func TestContextCancelled(t *testing.T) {
 	repo := open(t, initRepo(t))
 	sha := write(t, repo, nil, t0, createPack)

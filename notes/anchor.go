@@ -103,14 +103,14 @@ func (c *Client) buildWitness(ctx context.Context, head model.SHA, anchors []mod
 			if head == "" {
 				continue
 			}
-			oid, err := c.s.Git.PathOID(ctx, string(head), a.Value)
-			if errors.Is(err, gitcmd.ErrPathNotFound) {
+			oid, err := c.s.Repo.PathOID(ctx, head, a.Value)
+			if errors.Is(err, model.ErrPathNotFound) {
 				continue
 			}
 			if err != nil {
 				return nil, err
 			}
-			witness = append(witness, model.AnchorWitness{Anchor: a, OID: model.SHA(oid)})
+			witness = append(witness, model.AnchorWitness{Anchor: a, OID: oid})
 		case model.AnchorCommit:
 			witness = append(witness, model.AnchorWitness{Anchor: a, OID: model.SHA(a.Value)})
 		case model.AnchorBranch:

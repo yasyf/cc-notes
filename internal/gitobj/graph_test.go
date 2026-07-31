@@ -7,11 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -54,6 +56,25 @@ func mergeAt(t *testing.T, dir string, when time.Time, branch, msg string) model
 	t.Helper()
 	gitAt(t, dir, when, "merge", "--no-ff", "-q", "-m", msg, branch)
 	return model.SHA(git(t, dir, "rev-parse", "HEAD"))
+}
+
+func revList(t *testing.T, dir string, tip model.SHA, args ...string) []model.SHA {
+	t.Helper()
+	out := git(t, dir, append(append([]string{"rev-list"}, args...), string(tip))...)
+	lines := strings.Fields(out)
+	shas := make([]model.SHA, 0, len(lines))
+	for _, line := range lines {
+		shas = append(shas, model.SHA(line))
+	}
+	return shas
+}
+
+func walked(commits []gitobj.CodeCommit) []model.SHA {
+	shas := make([]model.SHA, 0, len(commits))
+	for _, c := range commits {
+		shas = append(shas, c.SHA)
+	}
+	return shas
 }
 
 // TestWalkCommits builds one diamond (c1 root; a and b both on c1; m merges b
@@ -269,4 +290,89 @@ func TestFirstParentMergesSinceSlopStops(t *testing.T) {
 	if len(got) != 0 {
 		t.Errorf("FirstParentMerges behind %d old commits = %+v, want none (walk must stop at the slop, not reach %s)", 100, got, m)
 	}
+}
+
+// TestWalkShallowGraft grafts a history that continues past the boundary with
+// every object still present — a shallow clone that later fetched more — so
+// only the graft, and not a missing object, can stop a walk. git rev-list is
+// the oracle for what a grafted handle may still reach, and the handle that
+// walked the whole history before the graft appeared has to reach exactly the
+// same: the boundary belongs to the repository, not to whichever handle
+// happened to open first.
+func TestWalkShallowGraft(t *testing.T) {
+	t4, t5, t6 := t0.Add(4*time.Minute), t0.Add(5*time.Minute), t0.Add(6*time.Minute)
+
+	dir := initRepo(t)
+	commitAt(t, dir, t0, "c1")
+	git(t, dir, "checkout", "-q", "-b", "early")
+	commitAt(t, dir, t1, "e1")
+	git(t, dir, "checkout", "-q", "main")
+	early := mergeAt(t, dir, t2, "early", "merge early")
+	boundary := commitAt(t, dir, t3, "boundary")
+	git(t, dir, "checkout", "-q", "-b", "late")
+	commitAt(t, dir, t4, "l1")
+	git(t, dir, "checkout", "-q", "main")
+	late := mergeAt(t, dir, t5, "late", "merge late")
+	tip := commitAt(t, dir, t6, "tip")
+
+	whole := open(t, dir)
+	full, truncated, err := whole.WalkCommits(t.Context(), []model.SHA{tip}, 0, 0)
+	if err != nil {
+		t.Fatalf("WalkCommits without the graft: %v", err)
+	}
+	if len(full) != 7 || truncated {
+		t.Fatalf("fixture invalid: ungrafted walk = %d commits, truncated %t, want 7 and false", len(full), truncated)
+	}
+	fullMerges, err := whole.FirstParentMerges(t.Context(), tip, 0, 0)
+	if err != nil {
+		t.Fatalf("FirstParentMerges without the graft: %v", err)
+	}
+	if !reflect.DeepEqual(walked(fullMerges), []model.SHA{late, early}) {
+		t.Fatalf("fixture invalid: ungrafted first-parent merges = %v, want [%s %s]", walked(fullMerges), late, early)
+	}
+
+	gittest.Shallow(t, dir, string(boundary))
+	handles := []struct {
+		name string
+		repo *gitobj.Repo
+	}{
+		{"opened under the graft", open(t, dir)},
+		{"opened before the graft", whole},
+	}
+
+	t.Run("WalkCommits", func(t *testing.T) {
+		want := revList(t, dir, tip)
+		slices.Sort(want)
+		for _, handle := range handles {
+			t.Run(handle.name, func(t *testing.T) {
+				got, truncated, err := handle.repo.WalkCommits(t.Context(), []model.SHA{tip}, 0, 0)
+				if err != nil {
+					t.Fatalf("WalkCommits: %v", err)
+				}
+				if !truncated {
+					t.Errorf("truncated = false, want true: history continues past the graft at %s", boundary)
+				}
+				reached := walked(got)
+				slices.Sort(reached)
+				if !slices.Equal(reached, want) {
+					t.Errorf("WalkCommits reached %v, git rev-list reached %v (merge %s lies past the graft)", reached, want, early)
+				}
+			})
+		}
+	})
+
+	t.Run("FirstParentMerges", func(t *testing.T) {
+		want := revList(t, dir, tip, "--first-parent", "--merges")
+		for _, handle := range handles {
+			t.Run(handle.name, func(t *testing.T) {
+				got, err := handle.repo.FirstParentMerges(t.Context(), tip, 0, 0)
+				if err != nil {
+					t.Fatalf("FirstParentMerges: %v", err)
+				}
+				if !reflect.DeepEqual(walked(got), want) {
+					t.Errorf("FirstParentMerges = %v, git rev-list --first-parent --merges = %v (merge %s lies past the graft)", walked(got), want, early)
+				}
+			})
+		}
+	})
 }

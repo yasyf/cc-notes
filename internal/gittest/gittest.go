@@ -1,7 +1,8 @@
-// Package gittest provides the shared real-git fixtures cc-notes tests build
-// on: an environment scrub, a git command runner, and repo bootstrappers.
-// Importing it has no side effects; the home isolation a test binary reaching
-// per-user state declares lives in internal/homeguard.
+// Package gittest provides the shared real-git fixtures cc-notes tests and
+// benchmarks build on: an environment scrub, a git command runner, repo
+// bootstrappers, and a shallow-clone graft. Importing it has no side effects;
+// the home isolation a test binary reaching per-user state declares lives in
+// internal/homeguard.
 package gittest
 
 import (
@@ -16,7 +17,7 @@ import (
 // a test, pins global/system config to /dev/null, and disables detached
 // maintenance so no Git process outlives its test repository. t.Setenv with
 // the original value registers the restore before os.Unsetenv removes the key.
-func ScrubEnv(t *testing.T) {
+func ScrubEnv(t testing.TB) {
 	t.Helper()
 	for _, key := range []string{
 		"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
@@ -41,7 +42,7 @@ func ScrubEnv(t *testing.T) {
 
 // Git runs a git command in dir and returns its trimmed combined output,
 // failing the test on error.
-func Git(t *testing.T, dir string, args ...string) string {
+func Git(t testing.TB, dir string, args ...string) string {
 	t.Helper()
 	//nolint:gosec // G204: test helper shells out to git with fixed argv[0] and test-controlled args.
 	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
@@ -52,7 +53,7 @@ func Git(t *testing.T, dir string, args ...string) string {
 }
 
 // Dirs returns the repository's per-worktree and shared git directories.
-func Dirs(t *testing.T, dir string) (gitDir, commonDir string) {
+func Dirs(t testing.TB, dir string) (gitDir, commonDir string) {
 	t.Helper()
 	lines := strings.Split(Git(t, dir, "rev-parse", "--absolute-git-dir", "--git-common-dir"), "\n")
 	if len(lines) != 2 {
@@ -69,7 +70,7 @@ func Dirs(t *testing.T, dir string) (gitDir, commonDir string) {
 // InitRepo scrubs the git environment and creates a repository on branch
 // main with a local "Test User <test@example.com>" identity, returning its
 // directory.
-func InitRepo(t *testing.T) string {
+func InitRepo(t testing.TB) string {
 	t.Helper()
 	ScrubEnv(t)
 	dir := t.TempDir()
@@ -79,9 +80,32 @@ func InitRepo(t *testing.T) string {
 	return dir
 }
 
+// Shallow grafts the repository at dir at boundary, writing that sha to the
+// shared git directory's shallow file in the one-commit-per-line format git
+// and go-git's ShallowStorage read. The objects behind boundary stay present,
+// which is what a shallow clone that later fetched more history looks like and
+// what discriminates a graft from a missing object.
+func Shallow(t testing.TB, dir, boundary string) {
+	t.Helper()
+	_, commonDir := Dirs(t, dir)
+	if err := os.WriteFile(filepath.Join(commonDir, "shallow"), []byte(boundary+"\n"), 0o600); err != nil {
+		t.Fatalf("write shallow file: %v", err)
+	}
+}
+
+// Unshallow removes the repository's graft, the way git fetch --unshallow
+// leaves it: every object stays, and the shallow file is gone.
+func Unshallow(t testing.TB, dir string) {
+	t.Helper()
+	_, commonDir := Dirs(t, dir)
+	if err := os.Remove(filepath.Join(commonDir, "shallow")); err != nil {
+		t.Fatalf("remove shallow file: %v", err)
+	}
+}
+
 // InitBare scrubs the git environment and creates a bare repository,
 // returning its directory.
-func InitBare(t *testing.T) string {
+func InitBare(t testing.TB) string {
 	t.Helper()
 	ScrubEnv(t)
 	dir := t.TempDir()

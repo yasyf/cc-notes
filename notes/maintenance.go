@@ -53,7 +53,7 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 	var report SyncReport
 	var syncErr error
 	for _, r := range remotes {
-		rep, err := ccsync.Sync(ctx, c.s.Git.Dir, r, opts.Full)
+		rep, err := ccsync.Sync(ctx, c.s, r, opts.Full)
 		report.Created += rep.Created
 		report.FastForwarded += rep.FastForwarded
 		report.Merged += rep.Merged

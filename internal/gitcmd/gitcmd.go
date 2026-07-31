@@ -34,8 +34,6 @@ var (
 	ErrNonFastForward = errors.New("non-fast-forward")
 	// ErrDetachedHead reports that HEAD is not a symbolic ref.
 	ErrDetachedHead = errors.New("detached HEAD")
-	// ErrPathNotFound reports a path absent at the requested rev.
-	ErrPathNotFound = errors.New("path not found at rev")
 	// ErrRevNotFound reports a rev that names no commit.
 	ErrRevNotFound = errors.New("rev not found")
 	// ErrNoDefaultBranch reports that origin/HEAD is unset, so the remote
@@ -207,29 +205,14 @@ func (g Git) DeleteRemoteRef(ctx context.Context, remote, ref string) error {
 	return nil
 }
 
-// PathOID returns the git object id of path's content at rev
-// (git rev-parse rev:path), for witnesses and drift detection. A path absent
-// at rev wraps ErrPathNotFound, which the reader treats as drift.
-func (g Git) PathOID(ctx context.Context, rev, path string) (string, error) {
-	out, err := g.run(ctx, "", "rev-parse", "--verify", "--quiet", rev+":"+path)
-	if err != nil {
-		var cmdErr *commandError
-		if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 {
-			// --quiet exits 1 with empty stdout when the object does not exist.
-			return "", fmt.Errorf("path %s at %s: %w", path, rev, ErrPathNotFound)
-		}
-		return "", fmt.Errorf("path oid %s:%s: %w", rev, path, err)
-	}
-	return strings.TrimSpace(out), nil
-}
-
 // WorktreeBlobOID returns the git blob object id that hashing the on-disk
 // working-tree file at path would yield (git hash-object), for checking drift
 // against uncommitted edits. A missing or unreadable file wraps
-// ErrPathNotFound.
+// model.ErrPathNotFound. The committed counterpart is a pure object database
+// read and belongs to gitobj.Repo.PathOID.
 func (g Git) WorktreeBlobOID(ctx context.Context, path string) (string, error) {
 	out, err := g.run(ctx, "", "hash-object", "--", path)
-	if err = classify(err, ErrPathNotFound, []string{"could not open"}); err != nil {
+	if err = classify(err, model.ErrPathNotFound, []string{"could not open"}); err != nil {
 		return "", fmt.Errorf("worktree blob oid %s: %w", path, err)
 	}
 	return strings.TrimSpace(out), nil

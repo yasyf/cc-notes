@@ -85,14 +85,14 @@ func buildWitness(ctx context.Context, s *store.Store, head model.SHA, anchors [
 			if head == "" {
 				continue
 			}
-			oid, err := s.Git.PathOID(ctx, string(head), a.Value)
-			if errors.Is(err, gitcmd.ErrPathNotFound) {
+			oid, err := s.Repo.PathOID(ctx, head, a.Value)
+			if errors.Is(err, model.ErrPathNotFound) {
 				continue
 			}
 			if err != nil {
 				return nil, err
 			}
-			witness = append(witness, model.AnchorWitness{Anchor: a, OID: model.SHA(oid)})
+			witness = append(witness, model.AnchorWitness{Anchor: a, OID: oid})
 		case model.AnchorCommit:
 			witness = append(witness, model.AnchorWitness{Anchor: a, OID: model.SHA(a.Value)})
 		case model.AnchorBranch:
@@ -158,13 +158,13 @@ func driftedOf(ctx context.Context, s *store.Store, head model.SHA, fe freshEnti
 		switch a.Kind {
 		case model.AnchorPath, model.AnchorDir:
 			oid, err := liveAnchorOID(ctx, s, head, a, worktree)
-			if errors.Is(err, gitcmd.ErrPathNotFound) {
+			if errors.Is(err, model.ErrPathNotFound) {
 				return true, nil
 			}
 			if err != nil {
 				return false, err
 			}
-			if model.SHA(oid) != w.OID {
+			if oid != w.OID {
 				return true, nil
 			}
 		case model.AnchorCommit:
@@ -208,10 +208,11 @@ func docVerdict(ctx context.Context, s *store.Store, head model.SHA, d model.Doc
 // A path anchor under worktree mode reads the on-disk working-tree blob
 // (WorktreeBlobOID), surfacing an uncommitted edit as drift; otherwise, and
 // always for a directory anchor, it reads the committed object at head
-// (PathOID). A missing path wraps gitcmd.ErrPathNotFound either way.
-func liveAnchorOID(ctx context.Context, s *store.Store, head model.SHA, a model.Anchor, worktree bool) (string, error) {
+// (PathOID). A missing path wraps model.ErrPathNotFound either way.
+func liveAnchorOID(ctx context.Context, s *store.Store, head model.SHA, a model.Anchor, worktree bool) (model.SHA, error) {
 	if worktree && a.Kind == model.AnchorPath {
-		return s.Git.WorktreeBlobOID(ctx, a.Value)
+		oid, err := s.Git.WorktreeBlobOID(ctx, a.Value)
+		return model.SHA(oid), err
 	}
-	return s.Git.PathOID(ctx, string(head), a.Value)
+	return s.Repo.PathOID(ctx, head, a.Value)
 }

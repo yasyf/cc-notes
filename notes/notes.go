@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
@@ -39,8 +38,7 @@ const (
 
 // Client drives one repository's cc-notes entities. Construct it with Open.
 type Client struct {
-	s   *store.Store
-	dir string
+	s *store.Store
 }
 
 // Open opens the cc-notes store for the git repository containing dir,
@@ -55,11 +53,7 @@ func Open(dir string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return nil, err
-	}
-	return &Client{s: s, dir: abs}, nil
+	return &Client{s: s}, nil
 }
 
 // HasNotes reports whether the repository holds any cc-notes entity — any ref

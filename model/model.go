@@ -7,10 +7,16 @@ package model
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 )
+
+// ErrPathNotFound reports a path with no content to read: absent at the
+// requested revision, absent from the working tree, or a name git would never
+// store. Anchor readers treat it as drift.
+var ErrPathNotFound = errors.New("path not found")
 
 // SHA is the full hex object id of a git commit.
 type SHA string

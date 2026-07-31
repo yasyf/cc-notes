@@ -127,11 +127,7 @@ type engine struct {
 // Referenced, locally-missing objects download once the push loop
 // converges; a failed download fails the sync while the returned Report
 // still carries everything the run pushed.
-func Sync(ctx context.Context, dir, remote string, full bool) (Report, error) {
-	s, err := store.OpenContext(ctx, dir)
-	if err != nil {
-		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
-	}
+func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report, error) {
 	if err := ensureRemote(ctx, s.Git, remote); err != nil {
 		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
 	}

@@ -23,13 +23,16 @@ type CodeCommit struct {
 	Summary    string
 }
 
-// WalkCommits walks the commit DAG from tips, newest-first by commit time, stopping at limit commits (limit <= 0 means unbounded) or at commits older than since (unix seconds, 0 = unbounded). A parent object missing from the ODB (shallow clone) truncates the walk at that edge rather than failing.
+// WalkCommits walks the commit DAG from tips, newest-first by commit time, stopping at limit commits (limit <= 0 means unbounded) or at commits older than since (unix seconds, 0 = unbounded). A shallow-clone graft boundary, or a parent object missing from the ODB, truncates the walk at that edge rather than failing.
 func (r *Repo) WalkCommits(ctx context.Context, tips []model.SHA, limit int, since int64) ([]CodeCommit, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := r.refreshGraft(); err != nil {
+		return nil, false, err
+	}
 	frontier := &commitHeap{}
 	seen := make(map[plumbing.Hash]bool)
 	for _, tip := range tips {
@@ -67,6 +70,10 @@ func (r *Repo) WalkCommits(ctx context.Context, tips []model.SHA, limit int, sin
 			break
 		}
 		out = append(out, newCodeCommit(commit))
+		if r.shallow[commit.Hash] {
+			truncated = true
+			continue
+		}
 		for _, parent := range commit.ParentHashes {
 			if seen[parent] {
 				continue
@@ -96,7 +103,8 @@ const sinceSlop = 100
 // FirstParentMerges returns the merge commits (more than one parent) on tip's
 // first-parent path, newest first, bounded by limit. Only merges committed at
 // or after since (unix seconds, 0 = unbounded) are collected, and the walk
-// stops once sinceSlop consecutive commits predate since.
+// stops once sinceSlop consecutive commits predate since, at a shallow-clone
+// graft boundary, or at a parent missing from the ODB.
 func (r *Repo) FirstParentMerges(ctx context.Context, tip model.SHA, limit int, since int64) ([]CodeCommit, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -106,6 +114,9 @@ func (r *Repo) FirstParentMerges(ctx context.Context, tip model.SHA, limit int, 
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := r.refreshGraft(); err != nil {
+		return nil, err
+	}
 	cur, err := r.lookupCommit(plumbing.NewHash(string(tip)))
 	if errors.Is(err, plumbing.ErrObjectNotFound) {
 		return nil, fmt.Errorf("%w: %s", ErrCommitNotFound, tip)
@@ -132,7 +143,7 @@ func (r *Repo) FirstParentMerges(ctx context.Context, tip model.SHA, limit int, 
 				}
 			}
 		}
-		if len(cur.ParentHashes) == 0 {
+		if len(cur.ParentHashes) == 0 || r.shallow[cur.Hash] {
 			break
 		}
 		first := cur.ParentHashes[0]

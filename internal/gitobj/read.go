@@ -23,6 +23,9 @@ func (r *Repo) ReadChain(ctx context.Context, tip model.SHA) ([]model.PackCommit
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := r.refreshGraft(); err != nil {
+		return nil, err
+	}
 	start := plumbing.NewHash(string(tip))
 	queue := []plumbing.Hash{start}
 	seen := map[plumbing.Hash]bool{start: true}
@@ -105,30 +108,6 @@ func (r *Repo) ListPrefix(ctx context.Context, prefix string) (map[string]model.
 	return tips, nil
 }
 
-// IsAncestor reports whether a is an ancestor of — or equal to — b.
-func (r *Repo) IsAncestor(ctx context.Context, a, b model.SHA) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	ancestor, err := r.commit(a)
-	if err != nil {
-		return false, err
-	}
-	descendant, err := r.commit(b)
-	if err != nil {
-		return false, err
-	}
-	ok, err := retry(r, func() (bool, error) {
-		return ancestor.IsAncestor(descendant)
-	})
-	if err != nil {
-		return false, fmt.Errorf("walk ancestry of %s: %w", b, err)
-	}
-	return ok, nil
-}
-
 func (r *Repo) lookupCommit(hash plumbing.Hash) (*object.Commit, error) {
 	return retry(r, func() (*object.Commit, error) {
 		return object.GetCommit(r.storage, hash)
@@ -150,8 +129,7 @@ func (r *Repo) commit(sha model.SHA) (*object.Commit, error) {
 }
 
 func (r *Repo) missingSuffix() string {
-	shallow, err := r.storage.Shallow()
-	if err == nil && len(shallow) > 0 {
+	if len(r.shallow) > 0 {
 		return "missing (shallow clone)"
 	}
 	return "missing from object database"

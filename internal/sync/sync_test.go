@@ -91,7 +91,7 @@ func syncFull(t *testing.T, s *store.Store) ccsync.Report {
 
 func syncScope(t *testing.T, s *store.Store, full bool) ccsync.Report {
 	t.Helper()
-	report, err := ccsync.Sync(t.Context(), s.Git.Dir, "origin", full)
+	report, err := ccsync.Sync(t.Context(), s, "origin", full)
 	if err != nil {
 		t.Fatalf("Sync(%s): %v", s.Git.Dir, err)
 	}
@@ -423,7 +423,7 @@ func TestPlainGitCarry(t *testing.T) {
 	}
 
 	// Sync folds the pre-populated tracking refs into canonical and loads them.
-	if _, err := ccsync.Sync(t.Context(), b.Git.Dir, "origin", false); err != nil {
+	if _, err := ccsync.Sync(t.Context(), b, "origin", false); err != nil {
 		t.Fatalf("Sync B: %v", err)
 	}
 	if got := gittest.Git(t, b.Git.Dir, "rev-parse", noteRef); got != string(note.Head) {
@@ -1020,7 +1020,11 @@ func TestSyncNoRemote(t *testing.T) {
 	gittest.ScrubEnv(t)
 	dir := t.TempDir()
 	gittest.Git(t, dir, "init", "-q", "-b", "main")
-	_, err := ccsync.Sync(t.Context(), dir, "origin", false)
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("Open(%s): %v", dir, err)
+	}
+	_, err = ccsync.Sync(t.Context(), s, "origin", false)
 	if !errors.Is(err, ccsync.ErrRemoteNotFound) {
 		t.Fatalf("Sync without remote: got %v, want ErrRemoteNotFound", err)
 	}
