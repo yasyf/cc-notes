@@ -59,9 +59,6 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := ccnhome.RecordWorktree(s.CommonDir(), root); err != nil {
-				return err
-			}
 			out := cmd.OutOrStdout()
 			if _, err := fmt.Fprintf(out, "initialized: refs/cc-notes/* refspecs installed for %s\n", remote); err != nil {
 				return err
@@ -88,6 +85,13 @@ func newInitCmd() *cobra.Command {
 				if _, err := fmt.Fprintf(out, "installed: post-merge hook at %s\n", path); err != nil {
 					return err
 				}
+			}
+			// Recording the per-user registry writes outside the repository, so it
+			// runs with the other out-of-repo step rather than ahead of the
+			// local-only ones: an unwritable ~/.cc-notes must not cost the caller
+			// the refspecs, plugin registration, CI workflow, or post-merge hook.
+			if _, err := ccnhome.RecordWorktree(s.CommonDir(), root); err != nil {
+				return err
 			}
 			if err := provisionRepository(ctx, root); err != nil {
 				return err

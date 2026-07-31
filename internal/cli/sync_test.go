@@ -434,6 +434,41 @@ func TestInitSkipsClaudeWiringWithoutClaude(t *testing.T) {
 	}
 }
 
+// TestInitCompletesLocalWiringWhenTheStateRootIsUnusable pins the ordering that
+// keeps a per-user write from costing the caller the local-only steps: recording
+// the registry writes outside the repository, so an unwritable ~/.cc-notes must
+// still leave the refspecs installed and the plugin registered. Registration ran
+// ahead of both before, so an unusable root aborted init with the refspecs
+// already written and nothing reported.
+func TestInitCompletesLocalWiringWhenTheStateRootIsUnusable(t *testing.T) {
+	dir, _ := initRepoWithRemote(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o750); err != nil {
+		t.Fatalf("mkdir .claude: %v", err)
+	}
+	stubUvx(t)
+
+	// After the fixture: initRepo points CC_NOTES_HOME at a usable temp root, so
+	// pointing it at a path under a regular file has to come last to survive.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write blocker: %v", err)
+	}
+	t.Setenv(ccnhome.Env, filepath.Join(blocker, "state"))
+
+	out, _, err := runCLI(t, dir, "init")
+	if err == nil {
+		t.Fatal("init succeeded with an unusable state root; the test no longer exercises the failure")
+	}
+	if !strings.Contains(out, "initialized: refs/cc-notes/* refspecs installed for origin") {
+		t.Errorf("init output %q lost the refspec line", out)
+	}
+	fetch := gittest.Git(t, dir, "config", "--get-all", "remote.origin.fetch")
+	if !strings.Contains(fetch, "+refs/cc-notes/*:refs/cc-notes-sync/origin/*") {
+		t.Errorf("fetch refspecs = %q, want the cc-notes tracking refspec", fetch)
+	}
+	assertCCNotesRegistered(t, filepath.Join(dir, ".claude", "settings.json"))
+}
+
 // stubUvx puts a no-op uvx on PATH so init's `capt-hook pack add` step runs
 // without the real uvx subprocess or network.
 func stubUvx(t *testing.T) {
