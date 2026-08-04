@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package helperdeployment owns cc-notes' signed fixed-helper deployment policy.
 package helperdeployment
 

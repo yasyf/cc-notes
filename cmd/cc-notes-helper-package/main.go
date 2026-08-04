@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Command cc-notes-helper-package embeds the reviewed FUSE-T bundle in CCNotesHelper.app.
 package main
 

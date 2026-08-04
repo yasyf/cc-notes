@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package helperclient invokes the fixed signed helper without linking its runtime.
 package helperclient
 

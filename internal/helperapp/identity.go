@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package helperapp composes cc-notes' fixed signed FuseKit helper.
 package helperapp
 
