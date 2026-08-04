@@ -1,6 +1,6 @@
 {
   "name": "cc-notes",
-  "version": "0.51.0",
+  "version": "0.51.1",
   "description": "Git-native notes, docs, logs, and tasks layer for AI agents — durable, synced work items, design decisions, append-only journals, runbooks, investigations, approved plans recorded verbatim, and a sprint/project grouping layer stored as objects in the git ODB on refs/cc-notes/*.",
   "author": {
     "name": "yasyf"
