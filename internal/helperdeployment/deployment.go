@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/cc-notes/internal/helpercontract"
@@ -26,6 +27,24 @@ import (
 
 // DeploymentServiceLabel is the exact helper launch-agent label.
 const DeploymentServiceLabel = helperclient.BundleID + ".fusekit"
+
+// Every daemonkit verb these entry points reach budgets itself from the
+// caller's context and refuses one carrying no deadline. The CLI's context
+// carries none, so each verb states the whole budget it is worth here.
+const (
+	applyPackageBudget      = 10 * time.Minute
+	activateServiceBudget   = 5 * time.Minute
+	deactivateServiceBudget = 2 * time.Minute
+	uninstallPackageBudget  = 5 * time.Minute
+	runtimePlanBudget       = 2 * time.Minute
+)
+
+func budgeted(ctx context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	if _, stated := ctx.Deadline(); stated {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, budget)
+}
 
 // helperDaemon mirrors what holder.New serves from the same plan: the label,
 // schema, and trust the launcher opens against must be the ones the runtime
@@ -98,6 +117,8 @@ func openDeployment(appPath string) (*deploy.Deployment, error) {
 
 // ApplyPackage installs and activates one exact delivered helper candidate.
 func ApplyPackage(ctx context.Context, source string) error {
+	ctx, cancel := budgeted(ctx, applyPackageBudget)
+	defer cancel()
 	target, err := helperclient.InstalledPath()
 	if err != nil {
 		return err
@@ -142,6 +163,8 @@ func ApplyPackage(ctx context.Context, source string) error {
 
 // ActivateService activates the exact installed helper generation.
 func ActivateService(ctx context.Context) error {
+	ctx, cancel := budgeted(ctx, activateServiceBudget)
+	defer cancel()
 	target, err := helperclient.InstalledPath()
 	if err != nil {
 		return err
@@ -166,6 +189,8 @@ func ActivateService(ctx context.Context) error {
 
 // DeactivateService drains the installed helper runtime and removes its agent.
 func DeactivateService(ctx context.Context) error {
+	ctx, cancel := budgeted(ctx, deactivateServiceBudget)
+	defer cancel()
 	client, err := daemonkit.Open(stopDaemon())
 	if err != nil {
 		return fmt.Errorf("cc-notes helper: open signed helper: %w", err)
@@ -178,6 +203,8 @@ func DeactivateService(ctx context.Context) error {
 
 // UninstallPackage deactivates and removes the controller-sealed helper generation.
 func UninstallPackage(ctx context.Context) error {
+	ctx, cancel := budgeted(ctx, uninstallPackageBudget)
+	defer cancel()
 	target, err := helperclient.InstalledPath()
 	if err != nil {
 		return err

@@ -3,7 +3,9 @@
 package helperdeployment
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/cc-notes/internal/helpercontract"
@@ -37,6 +39,29 @@ func TestHelperDaemonRestartsAlwaysAndTrustsOnlyTheSignedHelper(t *testing.T) {
 	}
 	if daemon.Trust.Serving == (daemonkit.Serving{}) {
 		t.Fatal("serving posture is unstated; Open would refuse the daemon")
+	}
+}
+
+func TestBudgetedAlwaysStatesADeadlineAndKeepsAStatedOne(t *testing.T) {
+	ctx, cancel := budgeted(context.Background(), applyPackageBudget)
+	defer cancel()
+	deadline, stated := ctx.Deadline()
+	if !stated {
+		t.Fatal("budgeted returned a deadline-less context; every daemonkit verb refuses one")
+	}
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > applyPackageBudget {
+		t.Fatalf("budget = %v, want (0, %v]", remaining, applyPackageBudget)
+	}
+
+	stricter := 5 * time.Second
+	outer, cancelOuter := context.WithTimeout(context.Background(), stricter)
+	defer cancelOuter()
+	inner, cancelInner := budgeted(outer, applyPackageBudget)
+	defer cancelInner()
+	got, _ := inner.Deadline()
+	want, _ := outer.Deadline()
+	if !got.Equal(want) {
+		t.Fatalf("budgeted widened a stated deadline to %v, want %v", got, want)
 	}
 }
 

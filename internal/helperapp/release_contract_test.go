@@ -171,6 +171,22 @@ func TestHelperDeploymentUsesDaemonkitSchemaOneState(t *testing.T) {
 		"verifyGenerationFUSE(ctx, generation)",
 		"validateActivation(activation, target, marketingVersion)",
 		"!removal.Runtime.Absent()",
+		// Every daemonkit verb below refuses a deadline-less context, and the
+		// CLI's carries none — no compiler or unit test catches a verb that
+		// forgets, only the real machine does.
+		"ctx, cancel := budgeted(ctx, applyPackageBudget)",
+		"ctx, cancel := budgeted(ctx, activateServiceBudget)",
+		"ctx, cancel := budgeted(ctx, deactivateServiceBudget)",
+		"ctx, cancel := budgeted(ctx, uninstallPackageBudget)",
+	)
+	assertFileContains(
+		t, filepath.Join(root, "internal", "helperdeployment", "plan.go"),
+		"ctx, cancel := budgeted(ctx, runtimePlanBudget)",
+	)
+	assertFileContains(
+		t, filepath.Join(root, "internal", "helperclient", "fuse_tools.go"),
+		"setupCtx, cancel := context.WithTimeout(ctx, fuseToolSetupTimeout)",
+		"fuset.NewToolPool(setupCtx",
 	)
 	assertFileExcludes(
 		t, deploymentSource,

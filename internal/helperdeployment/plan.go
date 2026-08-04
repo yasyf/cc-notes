@@ -61,6 +61,8 @@ func DeploymentPlanSpec(
 
 // NewRuntimePlan verifies one exact installed app generation and derives its runtime plan.
 func NewRuntimePlan(ctx context.Context, appPath, buildID string) (plan holder.RuntimePlan, resultErr error) {
+	ctx, cancel := budgeted(ctx, runtimePlanBudget)
+	defer cancel()
 	runner, err := helperclient.NewFUSEToolPool(ctx)
 	if err != nil {
 		return holder.RuntimePlan{}, err

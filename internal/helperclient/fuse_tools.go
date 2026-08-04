@@ -14,7 +14,11 @@ import (
 	"github.com/yasyf/fusekit/fuset"
 )
 
-const fuseToolLockTimeout = 30 * time.Second
+// fuseToolSetupTimeout bounds the durable lock and the ownership reclaim, the
+// two setup steps daemonkit budgets from the caller's context. Neither the
+// lock nor the pool retains it, so later tool runs are bounded by their own
+// callers.
+const fuseToolSetupTimeout = 30 * time.Second
 
 // FUSEToolPool owns one durable FuseKit packaging and verification worker generation.
 type FUSEToolPool struct {
@@ -28,13 +32,13 @@ func NewFUSEToolPool(ctx context.Context) (*FUSEToolPool, error) {
 	if err != nil {
 		return nil, err
 	}
-	lockCtx, cancel := context.WithTimeout(ctx, fuseToolLockTimeout)
+	setupCtx, cancel := context.WithTimeout(ctx, fuseToolSetupTimeout)
 	defer cancel()
-	lock, err := durable.AcquireLock(lockCtx, filepath.Join(directory, "owner.lock"))
+	lock, err := durable.AcquireLock(setupCtx, filepath.Join(directory, "owner.lock"))
 	if err != nil {
 		return nil, fmt.Errorf("cc-notes helper: acquire FUSE tool ownership: %w", err)
 	}
-	pool, err := fuset.NewToolPool(ctx, fuset.ToolPoolConfig{
+	pool, err := fuset.NewToolPool(setupCtx, fuset.ToolPoolConfig{
 		ProcessStorePath: filepath.Join(directory, "processes.db"),
 	})
 	if err != nil {
