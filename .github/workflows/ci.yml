@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
 
@@ -23,8 +23,8 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: Test
-        run: go test -race -count=1 ./...
+      - name: Test (race, via the process-cap harness)
+        run: ./scripts/test.sh -race -count=1 ./...
 
       - name: Build (default, pure Go)
         run: go build ./...
@@ -47,7 +47,7 @@ jobs:
       # The home-discipline pins scan the host's file set, so every _darwin.go
       # file is invisible to the ubuntu test job.
       - name: Home-discipline contract over the darwin file set
-        run: go test -race -count=1 ./internal/homeguard
+        run: ./scripts/test.sh -race -count=1 ./internal/homeguard
       - name: Prove the ordinary CLI has no FuseKit child dispatcher
         run: |
           CGO_ENABLED=0 go build -o /tmp/cc-notes ./cmd/cc-notes
@@ -57,8 +57,13 @@ jobs:
             exit 1
           fi
 
+  # Static analysis type-checks the tree, so it runs for darwin. GOOS/GOARCH
+  # keep it on a cheap linux runner instead of billing macOS minutes 10x.
   lint:
     runs-on: ubuntu-latest
+    env:
+      GOOS: darwin
+      GOARCH: arm64
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -69,12 +74,15 @@ jobs:
 
   vuln:
     runs-on: ubuntu-latest
+    env:
+      GOOS: darwin
+      GOARCH: arm64
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          GOOS= GOARCH= go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
   hook-tests:

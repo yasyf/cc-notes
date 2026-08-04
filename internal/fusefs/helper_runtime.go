@@ -1,3 +1,5 @@
+//go:build darwin
+
 package fusefs
 
 import (
@@ -8,8 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yasyf/daemonkit/proc"
-	"github.com/yasyf/daemonkit/wire"
+	"github.com/yasyf/daemonkit"
 	"github.com/yasyf/fusekit/catalog"
 	"github.com/yasyf/fusekit/catalogproto"
 	"github.com/yasyf/fusekit/catalogservice"
@@ -17,7 +18,6 @@ import (
 	"github.com/yasyf/fusekit/mountproto"
 	"github.com/yasyf/fusekit/mountservice"
 	"github.com/yasyf/fusekit/tenant"
-	"github.com/yasyf/fusekit/transportproto"
 )
 
 const helperOwner tenant.OwnerID = "cc-notes"
@@ -26,19 +26,17 @@ const helperOwner tenant.OwnerID = "cc-notes"
 type HelperRuntimeConfig struct {
 	Plan                    holder.RuntimePlan
 	Drivers                 holder.DriverFactories
-	TrustRequirements       holder.RuntimeTrustRequirements
-	StopControlStore        *proc.FileStore
+	Trust                   holder.RuntimeTrust
 	WorkerLimit             int
 	NativeOptions           []string
 	NativeReadinessTimeout  time.Duration
-	NativeStdout            io.Writer
 	NativeStderr            io.Writer
+	RuntimeStderr           io.Writer
 	SourceStderr            io.Writer
 	CatalogReadinessTimeout time.Duration
 	CatalogOperationTimeout time.Duration
 	CatalogStderr           io.Writer
 	ShutdownTimeout         time.Duration
-	Signals                 <-chan os.Signal
 }
 
 // NewHelperRuntime composes cc-notes policy with FuseKit's production runtime.
@@ -51,17 +49,17 @@ func newHolderConfig(config HelperRuntimeConfig) holder.Config {
 	return holder.Config{
 		Plan: config.Plan, RuntimeBuild: config.Plan.BuildID(),
 		Owner: catalog.SourceAuthorityFleetOwnerID(helperOwner), Drivers: config.Drivers,
-		TrustRequirements: config.TrustRequirements, StopControlStore: config.StopControlStore,
+		Trust:             config.Trust,
 		CatalogAuthorizer: catalogAuthorizer{policy}, Authorizer: mountAuthorizer{policy},
 		WorkerLimit: config.WorkerLimit, NativeOptions: config.NativeOptions,
 		NativeReadinessTimeout: config.NativeReadinessTimeout,
-		NativeStdout:           config.NativeStdout, NativeStderr: config.NativeStderr,
+		NativeStderr:           config.NativeStderr, RuntimeStderr: config.RuntimeStderr,
 		SourceStderr:            config.SourceStderr,
 		CatalogReadinessTimeout: config.CatalogReadinessTimeout,
 		CatalogOperationTimeout: config.CatalogOperationTimeout,
 		CatalogStderr:           config.CatalogStderr,
-		ShutdownTimeout:         config.ShutdownTimeout, Signals: config.Signals,
-		BusinessHandlers: BusinessHandlers(config.Plan),
+		ShutdownTimeout:         config.ShutdownTimeout,
+		BusinessHandlers:        BusinessHandlers(config.Plan),
 	}
 }
 
@@ -74,14 +72,17 @@ type helperSessionBinding struct {
 }
 
 type helperPolicy struct {
-	uid int
+	uid uint32
 
 	mu       sync.Mutex
-	bindings map[*wire.AcceptedSession]helperSessionBinding
+	bindings map[daemonkit.Session]helperSessionBinding
 }
 
 func newHelperPolicy() *helperPolicy {
-	return &helperPolicy{uid: os.Getuid(), bindings: make(map[*wire.AcceptedSession]helperSessionBinding)}
+	return &helperPolicy{
+		uid:      uint32(os.Getuid()), //nolint:gosec // kernel UIDs are non-negative
+		bindings: make(map[daemonkit.Session]helperSessionBinding),
+	}
 }
 
 func (p *helperPolicy) authorizeMount(
@@ -106,21 +107,7 @@ func (p *helperPolicy) authorizeNative(
 	if !nativeOperation(operation) {
 		return mountservice.ErrUnauthorized
 	}
-	return p.bind(identity.Peer, identity.Session, helperSessionBinding{role: helperSessionNative})
-}
-
-func (p *helperPolicy) authorizeObservation(
-	_ context.Context,
-	identity mountservice.ObservationIdentity,
-	operation mountproto.Operation,
-) error {
-	if operation != mountproto.OperationRuntimeHealth ||
-		identity.WireBuild != transportproto.WireBuild ||
-		identity.Peer.PID <= 1 ||
-		identity.Peer.UID != p.uid {
-		return mountservice.ErrUnauthorized
-	}
-	return nil
+	return p.bind(identity.Caller, identity.Session, helperSessionBinding{role: helperSessionNative})
 }
 
 func (p *helperPolicy) authorizeCatalog(
@@ -128,7 +115,7 @@ func (p *helperPolicy) authorizeCatalog(
 	operation catalogproto.Operation,
 	route catalogservice.Route,
 ) (catalogservice.Authorization, error) {
-	binding, err := p.bound(identity.Peer, identity.Session)
+	binding, err := p.bound(identity.Caller, identity.Session)
 	if err != nil {
 		return catalogservice.Authorization{}, err
 	}
@@ -146,14 +133,6 @@ func (p *helperPolicy) authorizeCatalog(
 }
 
 type mountAuthorizer struct{ policy *helperPolicy }
-
-func (a mountAuthorizer) AuthorizeObservation(
-	ctx context.Context,
-	identity mountservice.ObservationIdentity,
-	operation mountproto.Operation,
-) error {
-	return a.policy.authorizeObservation(ctx, identity, operation)
-}
 
 func (a mountAuthorizer) Authorize(
 	ctx context.Context,
@@ -184,8 +163,8 @@ func (a catalogAuthorizer) Authorize(
 	return a.policy.authorizeCatalog(identity, operation, route)
 }
 
-func (p *helperPolicy) bind(peer wire.Peer, session *wire.AcceptedSession, binding helperSessionBinding) error {
-	if session == nil || peer.UID != p.uid {
+func (p *helperPolicy) bind(caller daemonkit.Caller, session daemonkit.Session, binding helperSessionBinding) error {
+	if session == (daemonkit.Session{}) || caller.UID != p.uid {
 		return errors.New("FuseKit runtime: unauthenticated session")
 	}
 	p.mu.Lock()
@@ -203,8 +182,8 @@ func (p *helperPolicy) bind(peer wire.Peer, session *wire.AcceptedSession, bindi
 	return nil
 }
 
-func (p *helperPolicy) bound(peer wire.Peer, session *wire.AcceptedSession) (helperSessionBinding, error) {
-	if session == nil || peer.UID != p.uid {
+func (p *helperPolicy) bound(caller daemonkit.Caller, session daemonkit.Session) (helperSessionBinding, error) {
+	if session == (daemonkit.Session{}) || caller.UID != p.uid {
 		return helperSessionBinding{}, errors.New("FuseKit runtime: unauthenticated session")
 	}
 	p.mu.Lock()
@@ -216,7 +195,7 @@ func (p *helperPolicy) bound(peer wire.Peer, session *wire.AcceptedSession) (hel
 	return binding, nil
 }
 
-func (p *helperPolicy) releaseWhenDone(session *wire.AcceptedSession, binding helperSessionBinding) {
+func (p *helperPolicy) releaseWhenDone(session daemonkit.Session, binding helperSessionBinding) {
 	<-session.Done()
 	p.mu.Lock()
 	if current, ok := p.bindings[session]; ok && current == binding {
@@ -247,7 +226,7 @@ func catalogPresentationOperation(operation catalogproto.Operation) bool {
 	case catalogproto.OperationCatalogRoot, catalogproto.OperationCatalogHead,
 		catalogproto.OperationCatalogSnapshot, catalogproto.OperationCatalogChangesSince,
 		catalogproto.OperationCatalogLookup, catalogproto.OperationCatalogLookupName,
-		catalogproto.OperationCatalogOpenAt, catalogproto.OperationCatalogMutate:
+		catalogproto.OperationCatalogOpenAt, catalogproto.OperationCatalogMutateBegin:
 		return true
 	default:
 		return false

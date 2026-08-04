@@ -1,3 +1,5 @@
+//go:build darwin
+
 package fusefs
 
 import (
@@ -8,11 +10,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/yasyf/cc-notes/internal/helpercontract"
-	"github.com/yasyf/daemonkit/wire"
+	"github.com/yasyf/daemonkit"
 	"github.com/yasyf/fusekit/holder"
 	"github.com/yasyf/fusekit/transportproto"
+)
+
+const (
+	provisionCallTimeout = 2 * time.Minute
+	businessCloseTimeout = 10 * time.Second
 )
 
 // BusinessHandlers returns cc-notes' complete product operation set.
@@ -21,15 +29,14 @@ func BusinessHandlers(plan holder.RuntimePlan) []holder.BusinessHandlerSpec {
 		Op: helpercontract.ProvisionRepositoryOperation,
 		Handler: func(
 			ctx context.Context,
-			request wire.Request,
+			request daemonkit.Request,
 			controller *holder.LocalTenantController,
 		) (any, error) {
-			if request.Tenant != "" || request.Session == nil || request.Peer.UID != os.Getuid() ||
-				request.WireBuild != transportproto.WireBuild {
-				return nil, errors.New("cc-notes helper: repository provision peer or route is not exact")
+			if request.Session == (daemonkit.Session{}) || request.Caller.UID != uint32(os.Getuid()) { //nolint:gosec // kernel UIDs are non-negative
+				return nil, errors.New("cc-notes helper: repository provision peer is not exact")
 			}
 			var payload helpercontract.ProvisionRepositoryRequest
-			if err := decodeBusinessPayload(request.Payload, &payload); err != nil {
+			if err := decodeBusinessPayload(request.Body, &payload); err != nil {
 				return nil, fmt.Errorf("cc-notes helper: decode repository provision request: %w", err)
 			}
 			if err := payload.Validate(); err != nil {
@@ -47,19 +54,34 @@ func ProvisionRepository(ctx context.Context, plan holder.RuntimePlan, repoRoot 
 	if err != nil {
 		return err
 	}
-	client, err := wire.NewClient(ctx, wire.ClientConfig{
-		Dial: wire.UnixDialer(plan.Paths().Socket), WireBuild: transportproto.WireBuild,
-	})
+	client, err := daemonkit.Open(helperDaemon(plan))
 	if err != nil {
 		return fmt.Errorf("cc-notes helper: connect business session: %w", err)
 	}
-	defer func() { resultErr = errors.Join(resultErr, client.Close()) }()
-	return callProvisionRepository(ctx, client, expected)
+	business := client.Business()
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), businessCloseTimeout)
+		defer cancel()
+		resultErr = errors.Join(resultErr, business.Close(closeCtx))
+	}()
+	return callProvisionRepository(ctx, business, expected)
+}
+
+func helperDaemon(plan holder.RuntimePlan) daemonkit.Daemon {
+	return daemonkit.Daemon{
+		Label:   daemonkit.Label(plan.Deployment().Agent().Label),
+		Schemas: []daemonkit.Schema{daemonkit.Schema(transportproto.WireBuild)},
+		Trust:   daemonkit.Trust{Serving: daemonkit.ServingSigned(plan.RuntimeRequirement())},
+	}
+}
+
+type businessCaller interface {
+	Call(ctx context.Context, op string, body []byte) (daemonkit.Reply, error)
 }
 
 func callProvisionRepository(
 	ctx context.Context,
-	client wire.UnaryClient,
+	client businessCaller,
 	expected RepositoryProvision,
 ) error {
 	request := helpercontract.ProvisionRepositoryRequest{
@@ -72,19 +94,17 @@ func callProvisionRepository(
 	if err != nil {
 		return fmt.Errorf("cc-notes helper: encode repository provision request: %w", err)
 	}
-	result, err := client.Call(ctx, helpercontract.ProvisionRepositoryOperation, "", payload)
+	if _, stated := ctx.Deadline(); !stated {
+		bounded, cancel := context.WithTimeout(ctx, provisionCallTimeout)
+		defer cancel()
+		ctx = bounded
+	}
+	reply, err := client.Call(ctx, helpercontract.ProvisionRepositoryOperation, payload)
 	if err != nil {
-		return fmt.Errorf("cc-notes helper: repository provision %s: %w", result.Outcome, err)
-	}
-	if result.Outcome != wire.Delivered || !result.Response.Ack || result.Response.Rejected ||
-		result.Response.Code != "" || result.Response.Reason != "" {
-		return errors.New("cc-notes helper: repository provision did not return one exact delivered response")
-	}
-	if result.Response.Err != "" {
-		return fmt.Errorf("cc-notes helper: repository provision failed: %s", result.Response.Err)
+		return fmt.Errorf("cc-notes helper: repository provision: %w", err)
 	}
 	var response helpercontract.ProvisionRepositoryResponse
-	if err := decodeBusinessPayload(result.Response.Payload, &response); err != nil {
+	if err := decodeBusinessPayload(reply.Body, &response); err != nil {
 		return fmt.Errorf("cc-notes helper: decode repository provision response: %w", err)
 	}
 	if err := response.Validate(); err != nil {

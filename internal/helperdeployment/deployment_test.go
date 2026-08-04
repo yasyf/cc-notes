@@ -1,44 +1,45 @@
 package helperdeployment
 
 import (
-	"strings"
 	"testing"
 
-	"github.com/yasyf/cc-notes/internal/version"
+	"github.com/yasyf/cc-notes/internal/helperclient"
+	"github.com/yasyf/cc-notes/internal/helpercontract"
+	"github.com/yasyf/daemonkit"
 )
 
-func TestHelperMarketingVersionIsExactReleaseTag(t *testing.T) {
-	original := version.Version
-	t.Cleanup(func() { version.Version = original })
-	for tag, want := range map[string]string{
-		"v1.2.3":      "1.2.3",
-		"v1.2.3-rc.4": "1.2.3",
-	} {
-		version.Version = tag
-		got, err := helperMarketingVersion()
-		if err != nil || got != want {
-			t.Fatalf("helperMarketingVersion(%q) = (%q, %v), want %q", tag, got, err, want)
-		}
+func TestStopDaemonNamesNoProgram(t *testing.T) {
+	daemon := stopDaemon()
+	if daemon.Program != (daemonkit.Program{}) {
+		t.Fatal("stop daemon names a program; Stop would refuse a live pre-v0.21 runtime instead of removing it")
 	}
-	for _, tag := range []string{"dev", "1.2.3", "v01.2.3", "v1.2", "v1.2.3-rc..1"} {
-		version.Version = tag
-		if _, err := helperMarketingVersion(); err == nil {
-			t.Fatalf("helperMarketingVersion accepted %q", tag)
-		}
+	if daemon.Label != DeploymentServiceLabel {
+		t.Fatalf("stop daemon label = %q, want %q", daemon.Label, DeploymentServiceLabel)
+	}
+	if _, err := daemonkit.Open(daemon); err != nil {
+		t.Fatalf("stop daemon is not openable as a client: %v", err)
 	}
 }
 
-func TestValidDeploymentOperationIDRequiresFullNonzeroSHA256(t *testing.T) {
-	exact := strings.Repeat("ab", 32)
-	if !validDeploymentOperationID(exact) {
-		t.Fatal("valid operation ID was rejected")
+func TestHelperDaemonRestartsAlwaysAndTrustsOnlyTheSignedHelper(t *testing.T) {
+	daemon := stopDaemon()
+	if daemon.Restart != daemonkit.RestartAlways {
+		t.Fatalf("restart = %v, want RestartAlways", daemon.Restart)
 	}
-	for _, value := range []string{
-		"", strings.Repeat("ab", 16), strings.Repeat("AB", 32), strings.Repeat("0", 64),
-		strings.Repeat("gg", 32), exact + "00",
-	} {
-		if validDeploymentOperationID(value) {
-			t.Fatalf("invalid operation ID %q was accepted", value)
-		}
+	want := daemonkit.Requirement{
+		TeamID: helperclient.TeamID, SigningIdentifier: helperclient.BundleID,
+	}.Digest()
+	if daemon.Trust.Control == nil || daemon.Trust.Control.Digest() != want ||
+		len(daemon.Trust.Business) != 1 || daemon.Trust.Business[0].Digest() != want {
+		t.Fatalf("trust = %#v, want control and business pinned to the signed helper", daemon.Trust)
+	}
+	if daemon.Trust.Serving == (daemonkit.Serving{}) {
+		t.Fatal("serving posture is unstated; Open would refuse the daemon")
+	}
+}
+
+func TestHelperDaemonFrameCarriesTheProvisionPayload(t *testing.T) {
+	if got := daemonkit.MaxDetail(stopDaemon().MaxFrame); got < helpercontract.MaxProvisionPayload {
+		t.Fatalf("max detail = %d, want at least %d", got, helpercontract.MaxProvisionPayload)
 	}
 }

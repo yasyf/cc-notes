@@ -4,21 +4,38 @@ package helperclient
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/yasyf/cc-notes/internal/version"
+	"github.com/yasyf/daemonkit"
 	"github.com/yasyf/daemonkit/bundle"
-	"github.com/yasyf/daemonkit/codeidentity"
 )
 
 var releaseVersionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
 
-// CodeIdentity returns the only accepted signed helper identity.
-func CodeIdentity() codeidentity.CodeIdentity {
-	return codeidentity.CodeIdentity{TeamID: TeamID, SigningIdentifier: BundleID}
+// Requirement returns the only accepted signed helper identity.
+func Requirement() daemonkit.Requirement {
+	return daemonkit.Requirement{TeamID: TeamID, SigningIdentifier: BundleID}
+}
+
+// CanonicalExecutable returns the running executable's exact absolute link-free path.
+func CanonicalExecutable() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("cc-notes helper: resolve executable: %w", err)
+	}
+	executable, err = filepath.EvalSymlinks(executable)
+	if err != nil {
+		return "", fmt.Errorf("cc-notes helper: resolve executable links: %w", err)
+	}
+	if !filepath.IsAbs(executable) || filepath.Clean(executable) != executable {
+		return "", errors.New("cc-notes helper: executable is not an exact absolute path")
+	}
+	return executable, nil
 }
 
 // MarketingVersion returns the exact numeric helper bundle version for this release.

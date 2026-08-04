@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
-	"github.com/yasyf/daemonkit/codeidentity"
+	"github.com/yasyf/daemonkit"
 	"github.com/yasyf/fusekit/holder"
 )
 
@@ -92,7 +92,7 @@ func TestDeploymentPlanRejectsHiddenHelper(t *testing.T) {
 			PresentationRoot: filepath.Join(account.HomeDir, ".cc-notes", "plan-presentation"),
 		},
 		BuildID: "v0.41.0", Readiness: holder.StandardReadinessContract(),
-		RuntimePolicyDigest: codeidentity.PolicyDigest{1},
+		RuntimePolicyDigest: daemonkit.PolicyDigest("01"),
 	}
 	_, err = holder.NewDeploymentPlan(spec)
 	if err == nil || !strings.Contains(err.Error(), "not a fixed user application") {

@@ -7,9 +7,8 @@ import (
 	"fmt"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
-	"github.com/yasyf/daemonkit/codeidentity"
-	"github.com/yasyf/daemonkit/deployment"
-	"github.com/yasyf/daemonkit/trust"
+	"github.com/yasyf/daemonkit"
+	"github.com/yasyf/daemonkit/deploy"
 	"github.com/yasyf/fusekit/holder"
 )
 
@@ -48,7 +47,7 @@ func RuntimePlanSpec(
 // DeploymentPlanSpec returns the daemon-facing contract for one exact app generation.
 func DeploymentPlanSpec(
 	appPath, runtimeDirectory, presentationRoot, buildID string,
-	runtimePolicyDigest codeidentity.PolicyDigest,
+	runtimePolicyDigest daemonkit.PolicyDigest,
 ) holder.DeploymentPlanSpec {
 	return holder.DeploymentPlanSpec{
 		Application: Application(appPath), RuntimeDirectory: runtimeDirectory,
@@ -89,7 +88,7 @@ func NewRuntimePlan(ctx context.Context, appPath, buildID string) (plan holder.R
 func verifyPackagedFUSE(
 	ctx context.Context,
 	appPath string,
-	wantEntitlements deployment.SHA256,
+	wantEntitlements deploy.SHA256,
 ) (resultErr error) {
 	runner, err := helperclient.NewFUSEToolPool(ctx)
 	if err != nil {
@@ -104,7 +103,7 @@ func verifyPackagedFUSE(
 	if err != nil {
 		return fmt.Errorf("cc-notes helper: verify packaged FUSE bundle: %w", err)
 	}
-	gotEntitlements, err := deployment.ParseSHA256(manifest.OuterEntitlementsSHA256)
+	gotEntitlements, err := deploy.ParseSHA256(manifest.OuterEntitlementsSHA256)
 	if err != nil {
 		return fmt.Errorf("cc-notes helper: parse packaged FUSE entitlement digest: %w", err)
 	}
@@ -114,8 +113,6 @@ func verifyPackagedFUSE(
 	return nil
 }
 
-func runtimePolicyDigest() (codeidentity.PolicyDigest, error) {
-	return (trust.Requirement{
-		TeamID: helperclient.TeamID, SigningIdentifier: helperclient.BundleID,
-	}).ValidationDigest()
+func runtimePolicyDigest() daemonkit.PolicyDigest {
+	return helperclient.Requirement().Digest()
 }

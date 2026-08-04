@@ -4,15 +4,17 @@ package helpercontract
 import (
 	"errors"
 	"path/filepath"
-
-	"github.com/yasyf/daemonkit/wire"
 )
 
 const (
 	// ProvisionRepositoryOperation is the sole v1 repository provisioning operation.
-	ProvisionRepositoryOperation wire.Op = "product.cc-notes.repository.provision.v1"
+	ProvisionRepositoryOperation = "product.cc-notes.repository.provision.v1"
 	// ProvisionSchema is the hard-cut business payload schema.
 	ProvisionSchema uint16 = 1
+	// MaxProvisionPayload bounds either serialized provision message. A
+	// repository root is bounded by the platform path limit and the rest of
+	// each envelope is fixed, so this sits far above both.
+	MaxProvisionPayload = 64 << 10
 )
 
 // ProvisionRepositoryRequest identifies one canonical repository root.

@@ -46,6 +46,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Wrong names still fail — arguments are never rewritten.
 
 ### Changed
+- **The signed helper deploys through daemonkit v0.21's `deploy` package.**
+  cc-notes repins to daemonkit v0.21.3 and fusekit v1.16.0, which withdrew the
+  eight daemonkit packages the helper was built on (`service`, `daemon`,
+  `deployment`, `proc`, `worker`, `wire`, `trust`, and `codeidentity`). Install,
+  supersede, activate, and uninstall are now `deploy.Open` and four verbs
+  against a single `daemonkit.Daemon` declaration that the launcher and the
+  running helper both read, so the agent label, wire schema, and trust posture
+  cannot drift apart between the two halves.
+- **`service uninstall` takes the LaunchAgent down with the runtime.** One
+  `Client.Stop` drains the helper through its control lane and then removes its
+  agent, and it clears the markerless plist a pre-v0.21 install left behind,
+  which `launchd.Remove` refuses to touch. The daemon it stops names no program
+  on purpose. A stated one would add an executable inventory gate, and that gate
+  meets a live pre-v0.21 runtime and refuses the removal instead of doing it.
+- **Helper trust collapsed from three roles to one control lane.** FuseKit
+  retired `trustroles`, so the separate stop, receipt, and readiness controllers
+  became a single `Controller` requirement. The helper still serves under
+  `ServingSigned` against its own signing identity, and the mount presentation
+  is still the only business lane it admits.
+- **Deployment quiesce and readiness moved into daemonkit.** The product-hook
+  machinery that observed runtime health, settled the prior generation, and
+  minted proof digests has no successor, because `deploy` performs the whole
+  settlement itself and hands back the proofs. cc-notes now asserts on those
+  proofs instead of producing them.
 - **Listings and write acknowledgements return summaries.** Every MCP tool
   result is the CLI's `--json`, and a listing or ack used to ship every byte
   of body/entries/comments/steps/runs/findings — `log_append` echoed a whole

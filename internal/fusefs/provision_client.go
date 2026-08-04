@@ -1,3 +1,5 @@
+//go:build darwin
+
 package fusefs
 
 import (
@@ -6,7 +8,6 @@ import (
 	"fmt"
 
 	"github.com/yasyf/cc-notes/internal/helpercontract"
-	"github.com/yasyf/daemonkit/proc"
 	"github.com/yasyf/fusekit/catalog"
 	"github.com/yasyf/fusekit/catalogproto"
 	"github.com/yasyf/fusekit/holder"
@@ -27,7 +28,7 @@ func ProvisionRepositoryLocal(
 	if err != nil {
 		return helpercontract.ProvisionRepositoryResponse{}, fmt.Errorf("cc-notes provision: observe admitted runtime: %w", err)
 	}
-	if readiness.RuntimeBuild != plan.BuildID() || readiness.ProcessGeneration == (proc.OwnerGeneration{}) ||
+	if readiness.RuntimeBuild != plan.BuildID() || readiness.ProcessGeneration == (catalog.ProcessGeneration{}) ||
 		readiness.ActivationGeneration == "" {
 		return helpercontract.ProvisionRepositoryResponse{}, errors.New("cc-notes provision: admitted runtime identity is not exact")
 	}

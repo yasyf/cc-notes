@@ -47,7 +47,8 @@ const (
 
 var rootDeps = []string{
 	ccnhomePath,
-	"github.com/yasyf/daemonkit/service",
+	"github.com/yasyf/daemonkit/paths",
+	"github.com/yasyf/daemonkit/launchd",
 }
 
 var homeDerivers = map[string][]string{

@@ -2,25 +2,18 @@ package fusefs
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/helpercontract"
-	"github.com/yasyf/daemonkit/daemon"
-	"github.com/yasyf/daemonkit/proc"
-	"github.com/yasyf/daemonkit/trust"
-	"github.com/yasyf/daemonkit/wire"
-	"github.com/yasyf/daemonkit/worker"
+	"github.com/yasyf/daemonkit"
 	"github.com/yasyf/fusekit/catalog"
 	"github.com/yasyf/fusekit/catalogproto"
 	"github.com/yasyf/fusekit/catalogservice"
 	"github.com/yasyf/fusekit/mountproto"
 	"github.com/yasyf/fusekit/mountservice"
-	"github.com/yasyf/fusekit/transportproto"
 )
 
 func TestHolderConfigCarriesExactProductRuntimeBudgets(t *testing.T) {
@@ -40,42 +33,6 @@ func TestHolderConfigCarriesExactProductRuntimeBudgets(t *testing.T) {
 		t.Fatalf("holder runtime budgets = (%s, %s, %s, %s)",
 			config.NativeReadinessTimeout,
 			config.CatalogReadinessTimeout, config.CatalogOperationTimeout, config.ShutdownTimeout)
-	}
-}
-
-func TestHelperPolicyAuthorizesOnlyExactRuntimeHealthIdentity(t *testing.T) {
-	policy := newHelperPolicy()
-	identity := mountservice.ObservationIdentity{
-		Peer: wire.Peer{PID: os.Getpid(), UID: os.Getuid()}, WireBuild: transportproto.WireBuild,
-	}
-	if err := policy.authorizeObservation(t.Context(), identity, mountproto.OperationRuntimeHealth); err != nil {
-		t.Fatalf("authorize runtime health: %v", err)
-	}
-
-	tests := []struct {
-		name      string
-		identity  mountservice.ObservationIdentity
-		operation mountproto.Operation
-	}{
-		{name: "wrong operation", identity: identity, operation: mountproto.OperationNativeBind},
-		{name: "wrong uid", identity: mountservice.ObservationIdentity{
-			Peer:      wire.Peer{PID: identity.Peer.PID, UID: identity.Peer.UID + 1},
-			WireBuild: identity.WireBuild,
-		}, operation: mountproto.OperationRuntimeHealth},
-		{name: "invalid pid", identity: mountservice.ObservationIdentity{
-			Peer:      wire.Peer{PID: 1, UID: identity.Peer.UID},
-			WireBuild: identity.WireBuild,
-		}, operation: mountproto.OperationRuntimeHealth},
-		{name: "wrong build", identity: mountservice.ObservationIdentity{
-			Peer: identity.Peer, WireBuild: "wrong-build",
-		}, operation: mountproto.OperationRuntimeHealth},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if err := policy.authorizeObservation(t.Context(), test.identity, test.operation); !errors.Is(err, mountservice.ErrUnauthorized) {
-				t.Fatalf("authorize runtime = %v, want %v", err, mountservice.ErrUnauthorized)
-			}
-		})
 	}
 }
 
@@ -106,12 +63,46 @@ func TestNativeOperationAuthorizationCoversExactProtocolSurface(t *testing.T) {
 	}
 	for _, operation := range []mountproto.Operation{
 		"",
-		mountproto.OperationRuntimeHealth,
 		mountproto.OperationTenantProvision,
+		mountproto.OperationTenantReplace,
+		mountproto.OperationTenantRemove,
 		mountproto.OperationTenantState,
 	} {
 		if nativeOperation(operation) {
 			t.Errorf("non-native operation %q was allowed", operation)
+		}
+	}
+}
+
+func TestCatalogPresentationOperationCoversExactMountSurface(t *testing.T) {
+	allowed := []catalogproto.Operation{
+		catalogproto.OperationCatalogRoot,
+		catalogproto.OperationCatalogHead,
+		catalogproto.OperationCatalogSnapshot,
+		catalogproto.OperationCatalogChangesSince,
+		catalogproto.OperationCatalogLookup,
+		catalogproto.OperationCatalogLookupName,
+		catalogproto.OperationCatalogOpenAt,
+		catalogproto.OperationCatalogMutateBegin,
+	}
+	for _, operation := range allowed {
+		if !catalogPresentationOperation(operation) {
+			t.Errorf("mount presentation operation %q was denied", operation)
+		}
+	}
+	for _, operation := range []catalogproto.Operation{
+		"",
+		catalogproto.OperationCatalogLookupPrivate,
+		catalogproto.OperationCatalogOpenPrivate,
+		catalogproto.OperationActivationAck,
+		catalogproto.OperationActivationPoll,
+		catalogproto.OperationBrokerPoll,
+		catalogproto.OperationBrokerResult,
+		catalogproto.OperationTenantPrepare,
+		catalogproto.OperationSourceAuthorityReadDesiredFleet,
+	} {
+		if catalogPresentationOperation(operation) {
+			t.Errorf("non-presentation operation %q was allowed", operation)
 		}
 	}
 }
@@ -123,32 +114,29 @@ func TestHelperPolicyExposesOnlyNativePresentationSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	route := catalogservice.Route{Tenant: tenantID, Generation: 1}
+	sessions := startSessionDaemon(t)
 
-	productSession, productClient := openAcceptedSession(t)
-	productIdentity := mountservice.Identity{
-		Peer: productSession.Peer(), WireBuild: productSession.WireBuild(), Session: productSession,
-	}
+	product, closeProduct := sessions.accept(t)
+	productIdentity := mountservice.Identity{Caller: product.Caller, Session: product.Session}
 	if _, err := policy.authorizeMount(
 		t.Context(), productIdentity, mountproto.OperationTenantProvision, tenantID, 1,
 	); !errors.Is(err, mountservice.ErrUnauthorized) {
 		t.Fatalf("product tenant operation = %v, want unauthorized", err)
 	}
-	productCatalog := catalogservice.Identity{
-		Peer: productSession.Peer(), WireBuild: productSession.WireBuild(), Session: productSession,
-	}
+	productCatalog := catalogservice.Identity{Caller: product.Caller, Session: product.Session}
 	if _, err := policy.authorizeCatalog(
 		productCatalog, catalogproto.OperationSourceAuthorityReadDesiredFleet, catalogservice.Route{},
 	); err == nil {
 		t.Fatal("product source-fleet operation was exposed")
 	}
-	_ = productClient.Close()
+	closeProduct()
 
-	nativeSession, nativeClient := openAcceptedSession(t)
-	nativeIdentity := mountservice.Identity{Peer: nativeSession.Peer(), WireBuild: nativeSession.WireBuild(), Session: nativeSession}
+	native, closeNative := sessions.accept(t)
+	nativeIdentity := mountservice.Identity{Caller: native.Caller, Session: native.Session}
 	if err := policy.authorizeNative(t.Context(), nativeIdentity, mountproto.OperationNativeBind); err != nil {
 		t.Fatalf("authorize native: %v", err)
 	}
-	nativeCatalog := catalogservice.Identity{Peer: nativeSession.Peer(), WireBuild: nativeSession.WireBuild(), Session: nativeSession}
+	nativeCatalog := catalogservice.Identity{Caller: native.Caller, Session: native.Session}
 	authorization, err := policy.authorizeCatalog(nativeCatalog, catalogproto.OperationCatalogHead, route)
 	if err != nil || authorization.Role != catalogservice.RoleMount || authorization.Presentation != catalog.PresentationMount {
 		t.Fatalf("native catalog authorization = %+v err=%v", authorization, err)
@@ -157,122 +145,107 @@ func TestHelperPolicyExposesOnlyNativePresentationSessions(t *testing.T) {
 		t.Fatal("native session became a domain owner")
 	}
 
-	unboundSession, unboundClient := openAcceptedSession(t)
-	unboundIdentity := catalogservice.Identity{Peer: unboundSession.Peer(), WireBuild: unboundSession.WireBuild(), Session: unboundSession}
+	unbound, closeUnbound := sessions.accept(t)
+	unboundIdentity := catalogservice.Identity{Caller: unbound.Caller, Session: unbound.Session}
 	if _, err := policy.authorizeCatalog(unboundIdentity, catalogproto.OperationActivationAck, catalogservice.Route{}); err == nil {
 		t.Fatal("unbound session accessed a protected catalog operation")
 	}
 
-	_ = nativeClient.Close()
-	waitBindingReleased(t, policy, nativeSession)
-	_ = unboundClient.Close()
+	closeNative()
+	waitBindingReleased(t, policy, native.Session)
+	closeUnbound()
 }
 
-func openAcceptedSession(t *testing.T) (*wire.AcceptedSession, *wire.Client) {
+const sessionCaptureOp = "product.cc-notes.session.capture.v1"
+
+type sessionDaemon struct {
+	daemon   daemonkit.Daemon
+	accepted chan daemonkit.Request
+}
+
+func startSessionDaemon(t *testing.T) *sessionDaemon {
 	t.Helper()
-	directory, err := os.MkdirTemp("", "ccn-wire-")
+	// daemonkit derives its socket from the home root, and darwin's sun_path
+	// fits 103 bytes; homeguard's redirect root already spends 87 of them.
+	home, err := os.MkdirTemp("/tmp", "ccn")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(directory) })
-	const captureOp wire.Op = "capture"
-	ladder, err := wire.NewLadder(
-		map[wire.Op]time.Duration{captureOp: time.Second},
-		map[wire.Op]time.Duration{captureOp: 2 * time.Second},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &wire.Server{WireBuild: "cc-notes-policy-test", Ladder: ladder}
-	captured := make(chan *wire.AcceptedSession, 1)
-	server.Register(wire.HandlerSpec{
-		Op: captureOp, Concurrent: true,
-		Handler: func(_ context.Context, request wire.Request) (any, error) {
-			captured <- request.Session
-			return json.RawMessage(`{}`), nil
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	t.Setenv("DAEMONKIT_HOME", home)
+
+	sessions := &sessionDaemon{
+		daemon: daemonkit.Daemon{
+			Label:     "ccn-fusefs-policy",
+			Schemas:   []daemonkit.Schema{"cc-notes-policy-test"},
+			Trust:     daemonkit.Trust{Serving: daemonkit.ServingSameUser()},
+			Shutdown:  daemonkit.Grace(10 * time.Second),
+			Handshake: daemonkit.Grace(10 * time.Second),
 		},
-	})
-	generation, err := proc.ProcessGeneration()
-	if err != nil {
-		t.Fatal(err)
+		accepted: make(chan daemonkit.Request, 1),
 	}
-	reaper := func(name string) *proc.Reaper {
-		return &proc.Reaper{
-			Store: &proc.FileStore{Path: filepath.Join(directory, name+".db")}, Generation: generation,
-			Grace: 10 * time.Millisecond, Settlement: time.Second,
-		}
-	}
-	workers, err := worker.NewPool(worker.Config{
-		Capacity: 2, QueueCapacity: 2, MaxTotalRun: 5 * time.Second,
-		MaxStdinBytes: 4096, MaxStdoutBytes: 4096, MaxStderrBytes: 4096,
-	}, reaper("workers"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	children, err := proc.NewManager(2, reaper("children"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	trustPolicy, err := trust.NewTrustPolicy(trust.TrustPolicyConfig{
-		ExpectedUID: os.Geteuid(), AllowUnprotected: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	socket := filepath.Join(directory, "wire.sock")
-	runtime, err := wire.NewRuntime(wire.RuntimeConfig{
-		Socket: socket, RuntimeBuild: server.WireBuild, RuntimeProtocol: 1,
-		Wire: server, TrustPolicy: trustPolicy,
-		StopControlStore: &proc.FileStore{Path: filepath.Join(directory, "stop.db")},
-		Workers:          workers, Children: children, ShutdownTimeout: 2 * time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	slot := daemon.NewPublicationSlot[struct{}](runtime)
-	activation, err := runtime.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	publication, err := slot.Stage(activation, struct{}{})
-	if err != nil {
-		_ = activation.Fail(err)
-		t.Fatal(err)
-	}
-	if err := activation.CommitReady(publication); err != nil {
-		_ = activation.Fail(err)
-		t.Fatal(err)
-	}
-	client, err := wire.NewClient(t.Context(), wire.ClientConfig{
-		Dial: wire.UnixDialer(socket), WireBuild: server.WireBuild,
-		Role: trust.UnprotectedRole, Ladder: ladder,
-	})
-	if err != nil {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = runtime.Close(closeCtx)
-		t.Fatal(err)
-	}
-	if _, err := client.Call(t.Context(), captureOp, "", nil); err != nil {
-		_ = client.Close()
-		closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = runtime.Close(closeCtx)
-		t.Fatal(err)
-	}
-	session := <-captured
+	serveCtx, stopServing := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() {
+		_, err := daemonkit.Serve(serveCtx, sessions.daemon, func(daemonkit.Ctx) (daemonkit.Product, error) {
+			return sessions, nil
+		})
+		served <- err
+	}()
 	t.Cleanup(func() {
-		_ = client.Close()
-		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := runtime.Close(closeCtx); err != nil && !errors.Is(err, context.Canceled) {
-			t.Errorf("wire runtime: %v", err)
+		stopServing()
+		select {
+		case err := <-served:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Errorf("serve: %v", err)
+			}
+		case <-time.After(20 * time.Second):
+			t.Error("daemon did not return after drain")
 		}
 	})
-	return session, client
+	return sessions
 }
 
-func waitBindingReleased(t *testing.T, policy *helperPolicy, session *wire.AcceptedSession) {
+func (d *sessionDaemon) Handle(_ context.Context, request daemonkit.Request) (daemonkit.Reply, error) {
+	d.accepted <- request
+	return daemonkit.Reply{Body: []byte(`{}`)}, nil
+}
+
+func (*sessionDaemon) Drain(daemonkit.Budget) error { return nil }
+
+func (*sessionDaemon) Close(daemonkit.Budget) error { return nil }
+
+func (d *sessionDaemon) accept(t *testing.T) (daemonkit.Request, func()) {
+	t.Helper()
+	client, err := daemonkit.Open(d.daemon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	business := client.Business()
+	closeLane := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := business.Close(ctx); err != nil {
+			t.Errorf("close business lane: %v", err)
+		}
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		callCtx, cancel := context.WithTimeout(t.Context(), time.Second)
+		_, err := business.Call(callCtx, sessionCaptureOp, []byte(`{}`))
+		cancel()
+		if err == nil {
+			return <-d.accepted, closeLane
+		}
+		if time.Now().After(deadline) {
+			closeLane()
+			t.Fatalf("daemon did not admit a session: %v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func waitBindingReleased(t *testing.T, policy *helperPolicy, session daemonkit.Session) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

@@ -10,8 +10,6 @@ import (
 	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/cc-notes/internal/helperdeployment"
 	"github.com/yasyf/cc-notes/internal/version"
-	"github.com/yasyf/daemonkit/service"
-	"github.com/yasyf/daemonkit/trust"
 	"github.com/yasyf/fusekit/fuset"
 	"github.com/yasyf/fusekit/holder"
 )
@@ -25,12 +23,9 @@ const (
 	ExecutableName = helperclient.ExecutableName
 )
 
-// RuntimeTrustRequirements pins every protected lifecycle role to the sole fixed signed helper.
-func RuntimeTrustRequirements() holder.RuntimeTrustRequirements {
-	requirement := trust.Requirement{TeamID: TeamID, SigningIdentifier: BundleID}
-	return holder.RuntimeTrustRequirements{
-		StopController: requirement, ReceiptController: requirement, ReadinessController: requirement,
-	}
+// RuntimeTrust pins the protected control lane to the sole fixed signed helper.
+func RuntimeTrust() holder.RuntimeTrust {
+	return holder.RuntimeTrust{Controller: helperclient.Requirement()}
 }
 
 // Application returns cc-notes' fixed signed helper identity.
@@ -58,7 +53,7 @@ func RuntimePlanSpec(
 
 // NewRuntimePlan verifies the installed application and derives its runtime plan.
 func NewRuntimePlan(ctx context.Context) (holder.RuntimePlan, error) {
-	executable, err := service.CanonicalExecutable()
+	executable, err := helperclient.CanonicalExecutable()
 	if err != nil {
 		return holder.RuntimePlan{}, fmt.Errorf("FuseKit runtime: resolve canonical executable: %w", err)
 	}

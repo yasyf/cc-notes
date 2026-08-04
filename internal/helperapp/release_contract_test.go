@@ -8,14 +8,13 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/yasyf/daemonkit/trust"
 )
 
 func TestReleaseUsesPinnedReusableFixedHelperWorkflow(t *testing.T) {
 	root := filepath.Join("..", "..")
 	workflow := filepath.Join(root, ".github", "workflows", "release.yml")
-	assertFileContains(t, workflow,
+	assertFileContains(
+		t, workflow,
 		"uses: yasyf/homebrew-tap/.github/workflows/release-app.yml@41f8de6765b3b833ef333b0b98f5683f0e46685b",
 		"app_name: CCNotesHelper",
 		"asset_name: cc-notes-helper",
@@ -33,7 +32,8 @@ func TestReleaseUsesPinnedReusableFixedHelperWorkflow(t *testing.T) {
 		`helper="$(sha "cc-notes-helper-${RELEASE_TAG}-darwin.zip")"`,
 		"__SHA_HELPER__=${{ steps.shas.outputs.helper }}",
 	)
-	assertFileExcludes(t, workflow,
+	assertFileExcludes(
+		t, workflow,
 		"yasyf/homebrew-tap/.github/actions/sign-notarize-app@v2",
 		".daemonkit-fetch",
 		"github.com/yasyf/daemonkit/fetch",
@@ -60,7 +60,8 @@ func TestReleasePinsEveryExternalActionByCommit(t *testing.T) {
 		}
 	}
 
-	assertFileContains(t, workflow,
+	assertFileContains(
+		t, workflow,
 		"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
 		"actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
 		"actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
@@ -73,7 +74,8 @@ func TestReleasePinsEveryExternalActionByCommit(t *testing.T) {
 
 func TestReleasePublishesOnlyOneCompleteCallerOwnedDraft(t *testing.T) {
 	workflow := filepath.Join("..", "..", ".github", "workflows", "release.yml")
-	assertFileContains(t, workflow,
+	assertFileContains(
+		t, workflow,
 		"needs: [pure, smoke-linux, smoke-macos, helper-app]",
 		"  bump-formula:\n    runs-on: ubuntu-latest\n    needs: [release, helper-app]",
 		"name: ${{ needs.helper-app.outputs.artifact_name }}",
@@ -88,7 +90,8 @@ func TestReleasePublishesOnlyOneCompleteCallerOwnedDraft(t *testing.T) {
 		`make-latest: ${{ !contains(github.ref_name, '-') }}`,
 		"contents: read",
 	)
-	assertFileExcludes(t, workflow,
+	assertFileExcludes(
+		t, workflow,
 		"softprops/action-gh-release",
 		`releases/tags/$RELEASE_TAG`,
 		`gh release create`,
@@ -115,7 +118,8 @@ func TestReleasePublishesOnlyOneCompleteCallerOwnedDraft(t *testing.T) {
 func TestReleaseBuildsOneXcodeGenCCNotesHelper(t *testing.T) {
 	root := filepath.Join("..", "..")
 	project := filepath.Join(root, "helper-app", "project.yml")
-	assertFileContains(t, project,
+	assertFileContains(
+		t, project,
 		"name: CCNotesHelper",
 		"CCNotesHelper:",
 		"type: application",
@@ -126,10 +130,12 @@ func TestReleaseBuildsOneXcodeGenCCNotesHelper(t *testing.T) {
 		`lipo -create "$arm64" "$amd64" -output "$executable"`,
 		`commit="$GITHUB_SHA"`,
 	)
-	assertFileExcludes(t, project,
+	assertFileExcludes(
+		t, project,
 		"/"+"Applications/",
 	)
-	assertFileContains(t, filepath.Join(root, ".github", "scripts", "assert-helper-app.sh"),
+	assertFileContains(
+		t, filepath.Join(root, ".github", "scripts", "assert-helper-app.sh"),
 		"go run ./cmd/cc-notes-helper-package",
 		"Contents/Frameworks/libfuse-t.dylib",
 		`codesign -d --entitlements - --xml "$APP"`,
@@ -137,7 +143,8 @@ func TestReleaseBuildsOneXcodeGenCCNotesHelper(t *testing.T) {
 		"carries unexpected entitlements",
 		"disable-library-validation",
 	)
-	assertFileContains(t, filepath.Join(root, "cmd", "cc-notes-helper-package", "main.go"),
+	assertFileContains(
+		t, filepath.Join(root, "cmd", "cc-notes-helper-package", "main.go"),
 		"Command cc-notes-helper-package",
 		"helperapp.PackageFUSE",
 	)
@@ -146,30 +153,25 @@ func TestReleaseBuildsOneXcodeGenCCNotesHelper(t *testing.T) {
 func TestHelperDeploymentUsesDaemonkitSchemaOneState(t *testing.T) {
 	root := filepath.Join("..", "..")
 	deploymentSource := filepath.Join(root, "internal", "helperdeployment", "deployment.go")
-	assertFileContains(t, deploymentSource,
-		`"github.com/yasyf/daemonkit/deployment"`,
-		"AttestInstalled(context.Context, deployment.InstalledSpec)",
-		"ActivateInstalled(context.Context, deployment.ActivateInstalledConfig)",
-		"DeactivateCurrentInstalled(context.Context, deployment.DeactivateCurrentInstalledConfig)",
-		"ApplyInstalledCandidate(context.Context, deployment.ApplyInstalledCandidateConfig)",
-		"UninstallCurrentInstalled(context.Context, deployment.UninstallCurrentInstalledConfig)",
-		"newController = func() controller { return deployment.New() }",
-		"manager.AttestInstalled(ctx, candidateSpec)",
-		"holder.NewCandidatePlan(DeploymentPlanSpec(",
-		"verifyPackagedFUSE(ctx, candidate.Path(), candidate.EntitlementsDigest())",
-		"manager.ApplyInstalledCandidate(ctx, deployment.ApplyInstalledCandidateConfig{",
-		"Plan: candidatePlan",
-		"RuntimeQuiesce: hooks.runtimeQuiesce, Readiness: hooks.readiness",
-		"manager.ActivateInstalled(ctx, deployment.ActivateInstalledConfig{",
-		"Expected: attestation, ConsumerBuild: consumerBuild, PolicyDigest: policyDigest",
-		"Readiness: hooks.readiness",
-		"validateActivationReceipt(receipt, attestation, plan, hooks.buildID)",
-		"manager.DeactivateCurrentInstalled(ctx, deployment.DeactivateCurrentInstalledConfig{",
-		"manager.UninstallCurrentInstalled(ctx, deployment.UninstallCurrentInstalledConfig{",
-		"RuntimeQuiesce: hooks.runtimeQuiesce, Readiness: hooks.readiness",
-		"!validDeploymentOperationID(receipt.OperationID())",
+	assertFileContains(
+		t, deploymentSource,
+		`"github.com/yasyf/daemonkit/deploy"`,
+		`"github.com/yasyf/daemonkit/launchd"`,
+		"deploy.Open(deploy.Config{",
+		"App: appPath, Requirement: helperclient.Requirement(), Daemon: daemon, Agents: agents",
+		"[]launchd.Agent{plan.Agent()}",
+		"land := deployment.Install",
+		"land = deployment.Supersede",
+		"deploy.Candidate{",
+		"deployment.Activate(ctx)",
+		"deployment.Uninstall(ctx)",
+		"client.Stop(ctx)",
+		"verifyGenerationFUSE(ctx, generation)",
+		"validateActivation(activation, target, marketingVersion)",
+		"!removal.Runtime.Absent()",
 	)
-	assertFileExcludes(t, deploymentSource,
+	assertFileExcludes(
+		t, deploymentSource,
 		"daemonkit/fetch",
 		".daemonkit-fetch",
 		"reconcileHelper",
@@ -183,14 +185,10 @@ func TestHelperDeploymentUsesDaemonkitSchemaOneState(t *testing.T) {
 		"os.RemoveAll(",
 		"os.Rename(",
 	)
-	assertFileContains(t, filepath.Join(root, "internal", "helperdeployment", "deployment_identity.go"),
-		`deploymentPolicyIdentity = "cc-notes.deployment-callbacks.v1"`,
-		"Schema:   1",
-		"startupConsumerBuild, startupConsumerBuildErr = currentConsumerBuild()",
-	)
-	assertFileContains(t, filepath.Join(root, "cmd", "cc-notes-helper", "main.go"),
-		"deployment.RuntimeStopControlStore()",
+	assertFileContains(
+		t, filepath.Join(root, "cmd", "cc-notes-helper", "main.go"),
 		"holder.RunChild",
+		"Trust:                   helperapp.RuntimeTrust()",
 		"NativeReadinessTimeout:  helpercontract.RuntimeNativeReadinessTimeout",
 		"CatalogReadinessTimeout: helpercontract.RuntimeCatalogReadinessTimeout",
 		"CatalogOperationTimeout: helpercontract.RuntimeCatalogOperationTimeout",
@@ -201,11 +199,13 @@ func TestHelperDeploymentUsesDaemonkitSchemaOneState(t *testing.T) {
 func TestFixedHelperLivesOnlyInUserApplications(t *testing.T) {
 	root := filepath.Join("..", "..")
 	identity := filepath.Join(root, "internal", "helperclient", "identity.go")
-	assertFileContains(t, identity,
+	assertFileContains(
+		t, identity,
 		`return filepath.Join(home, "Applications"), nil`,
 		"return bundle.AppPath(dir, ExecutableName), nil",
 	)
-	assertFileExcludes(t, identity,
+	assertFileExcludes(
+		t, identity,
 		`filepath.Join("/`+`Applications"`,
 		`"/`+`Applications/CCNotesHelper.app"`,
 	)
@@ -213,17 +213,16 @@ func TestFixedHelperLivesOnlyInUserApplications(t *testing.T) {
 
 func TestReleasedNativePresentationRootIsUserVisible(t *testing.T) {
 	root := filepath.Join("..", "..")
-	assertFileContains(t, filepath.Join(root, "internal", "helperclient", "identity.go"),
+	assertFileContains(
+		t, filepath.Join(root, "internal", "helperclient", "identity.go"),
 		`return filepath.Join(home, "CCNotes"), nil`,
-	)
-	assertFileContains(t, filepath.Join(root, "internal", "helperdeployment", "deployment_identity.go"),
-		`PresentationRootHomeRelative: "CCNotes"`,
 	)
 }
 
 func TestServiceCommandsAreExplicitMachineOnlyOperations(t *testing.T) {
 	serviceSource := filepath.Join("..", "..", "internal", "cli", "service.go")
-	assertFileContains(t, serviceSource,
+	assertFileContains(
+		t, serviceSource,
 		`Use:   "install"`,
 		`Use:   "uninstall"`,
 		"Args:  exactArgs(0)",
@@ -231,7 +230,8 @@ func TestServiceCommandsAreExplicitMachineOnlyOperations(t *testing.T) {
 		`"uninstalled: CCNotesHelper service"`,
 		`errors.New("cc-notes service commands do not accept --repo")`,
 	)
-	assertFileExcludes(t, serviceSource,
+	assertFileExcludes(
+		t, serviceSource,
 		"provisionRepository",
 		"openStore",
 		"repoRoot",
@@ -239,18 +239,21 @@ func TestServiceCommandsAreExplicitMachineOnlyOperations(t *testing.T) {
 }
 
 func TestReleasePinsExactHelperDesignatedRequirement(t *testing.T) {
-	requirement, err := (trust.Requirement{
-		TeamID: "SXKCTF23Q2", SigningIdentifier: "com.yasyf.cc-notes.helper",
-	}).DRString()
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The root package exports only Digest, so the requirement daemonkit's
+	// deploy renders for this identity is pinned here as the literal it must
+	// keep matching byte for byte.
+	const requirement = `identifier "com.yasyf.cc-notes.helper" and anchor apple generic and ` +
+		`certificate leaf[subject.OU] = "SXKCTF23Q2" and ` +
+		`certificate 1[field.1.2.840.113635.100.6.2.6] exists and ` +
+		`certificate leaf[field.1.2.840.113635.100.6.1.13] exists`
 	root := filepath.Join("..", "..")
-	assertFileContains(t, filepath.Join(root, "helper-app", "prepare-release.sh"),
+	assertFileContains(
+		t, filepath.Join(root, "helper-app", "prepare-release.sh"),
 		"designated => "+requirement,
 		"DESIGNATED_REQUIREMENT_FILE",
 	)
-	assertFileContains(t, filepath.Join(root, ".github", "scripts", "assert-helper-app.sh"),
+	assertFileContains(
+		t, filepath.Join(root, ".github", "scripts", "assert-helper-app.sh"),
 		`codesign --verify --strict --verbose=2 -R "=$DESIGNATED_REQUIREMENT" "$APP"`,
 		`CODE_DETAILS="$(codesign -d --verbose=4 "$APP" 2>&1)"`,
 		`flags=.*\(([^,]+,)*runtime(,[^,]+)*\)`,
@@ -273,6 +276,15 @@ func TestActiveTreeHasNoRetiredHelperDeliverySurface(t *testing.T) {
 	root := filepath.Join("..", "..")
 	forbidden := []string{
 		"github.com/yasyf/daemonkit/" + "fetch",
+		"github.com/yasyf/daemonkit/" + "service",
+		"github.com/yasyf/daemonkit/" + "daemon",
+		"github.com/yasyf/daemonkit/" + "deployment",
+		"github.com/yasyf/daemonkit/" + "proc",
+		"github.com/yasyf/daemonkit/" + "worker",
+		"github.com/yasyf/daemonkit/" + "wire",
+		"github.com/yasyf/daemonkit/" + "trust",
+		"github.com/yasyf/daemonkit/" + "codeidentity",
+		"github.com/yasyf/fusekit/" + "trustroles",
 		".daemonkit-" + "fetch",
 		"cc-notes-" + "fuse-package",
 		"sign-notarize-app@" + "v2",
@@ -306,17 +318,20 @@ func TestActiveTreeHasNoRetiredHelperDeliverySurface(t *testing.T) {
 func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 	root := filepath.Join("..", "..")
 	workflow := filepath.Join(root, ".github", "workflows", "release.yml")
-	assertFileExcludes(t, workflow,
+	assertFileExcludes(
+		t, workflow,
 		"render-cask",
 		"Casks/",
 		"cc-notes-helper.rb",
 		"cc-notes-runtime",
 	)
-	assertFileContains(t, workflow,
+	assertFileContains(
+		t, workflow,
 		`test "$HELPER_ASSET_URL" = "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${HELPER_ASSET_FILENAME}"`,
 	)
 	formula := filepath.Join(root, ".github", "formula", "cc-notes.rb.tmpl")
-	assertFileContains(t, formula,
+	assertFileContains(
+		t, formula,
 		`resource "helper" do`,
 		`url "https://github.com/yasyf/cc-notes/releases/download/v__VERSION__/cc-notes-helper-v__VERSION__-darwin.zip", using: :nounzip`,
 		`sha256 "__SHA_HELPER__"`,
@@ -359,18 +374,21 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 	if linux < 0 || preserve <= linux || installMethod <= preserve {
 		t.Fatal("formula must preserve signed helper rpaths after platform declarations")
 	}
-	assertFileExcludes(t, formula,
+	assertFileExcludes(
+		t, formula,
 		"Casks/",
 		`/Applications`,
 		`FileUtils.cp_r`,
 	)
 	installer := filepath.Join(root, "scripts", "install.sh")
-	assertFileContains(t, installer,
+	assertFileContains(
+		t, installer,
 		`brew install yasyf/tap/cc-notes`,
 		`cc-notes package install`,
 		`macOS installs only the latest signed formula release`,
 	)
-	assertFileExcludes(t, installer,
+	assertFileExcludes(
+		t, installer,
 		"/"+"Applications/",
 		"helper_asset=",
 		"helper_zip",
@@ -378,7 +396,8 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 		"ditto -x",
 		"cc-notes-helper-${VERSION}",
 	)
-	assertFileExcludes(t, filepath.Join(root, "plugin", "hooks", "ensure-cc-notes.sh"),
+	assertFileExcludes(
+		t, filepath.Join(root, "plugin", "hooks", "ensure-cc-notes.sh"),
 		"CCNotesHelper.app", "cc-notes-helper-", "/"+"Applications/",
 	)
 	for _, path := range []string{
@@ -394,12 +413,14 @@ func TestPluginBootstrapEnforcesV046WithoutInstallingService(t *testing.T) {
 	hook := filepath.Join(root, "plugin", "hooks", "hooks.json")
 	script := filepath.Join(root, "plugin", "hooks", "ensure-cc-notes.sh")
 	assertFileContains(t, hook, `sh \"${CLAUDE_PLUGIN_ROOT}/hooks/ensure-cc-notes.sh\"`)
-	assertFileContains(t, script,
+	assertFileContains(
+		t, script,
 		`($2 + 0) >= 46`,
 		"https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh",
 	)
 	assertFileExcludes(t, script, "service install", "service uninstall", "cc-notes init")
-	assertFileContains(t, filepath.Join(root, "plugin", "capt-hook", "hooks", "bootstrap.py"),
+	assertFileContains(
+		t, filepath.Join(root, "plugin", "capt-hook", "hooks", "bootstrap.py"),
 		"MIN_VERSION = (0, 46, 0)",
 	)
 
@@ -410,7 +431,8 @@ func TestPluginBootstrapEnforcesV046WithoutInstallingService(t *testing.T) {
 	run := func(version string) {
 		t.Helper()
 		cmd := exec.Command("sh", script)
-		cmd.Env = append(os.Environ(),
+		cmd.Env = append(
+			os.Environ(),
 			"PATH="+bin+":/usr/bin:/bin",
 			"TEST_VERSION="+version,
 			"INSTALL_MARKER="+marker,
@@ -435,17 +457,20 @@ func TestPluginBootstrapEnforcesV046WithoutInstallingService(t *testing.T) {
 func TestHookCIUsesOneExactCaptainHookRelease(t *testing.T) {
 	root := filepath.Join("..", "..")
 	workflow := filepath.Join(root, ".github", "workflows", "ci.yml")
-	assertFileContains(t, workflow,
+	assertFileContains(
+		t, workflow,
 		`CAPT_HOOK_VERSION: "12.15.3"`,
 		`key: capt-hook-${{ env.CAPT_HOOK_VERSION }}-nlp-v5`,
 		`--with "capt-hook==$CAPT_HOOK_VERSION"`,
 		`uvx --isolated "capt-hook==$CAPT_HOOK_VERSION" pack test plugin`,
 	)
-	assertFileExcludes(t, workflow,
+	assertFileExcludes(
+		t, workflow,
 		"--with capt-hook ",
 		"capt-hook>=",
 	)
-	assertFileContains(t,
+	assertFileContains(
+		t,
 		filepath.Join(root, "plugin", "capt-hook", "hooks", "tests", "test_cc_notes.py"),
 		`# dependencies = ["capt-hook==12.15.3", "pydantic>=2"]`,
 	)

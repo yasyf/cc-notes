@@ -5,8 +5,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
-	"github.com/yasyf/daemonkit/codeidentity"
-	"github.com/yasyf/daemonkit/trust"
+	"github.com/yasyf/daemonkit"
 	"github.com/yasyf/fusekit/holder"
 )
 
@@ -15,7 +14,7 @@ func TestRuntimeAndDeploymentSpecsShareOneFixedContract(t *testing.T) {
 	runtime := RuntimePlanSpec(
 		filepath.Join("/Users/example", "Applications", "CCNotesHelper.app"), "/runtime", "/presentation", "v0.45.0", verifier,
 	)
-	digest := codeidentity.PolicyDigest{1}
+	digest := daemonkit.PolicyDigest("01")
 	deployment := DeploymentPlanSpec(
 		runtime.Application.AppPath, runtime.RuntimeDirectory, runtime.Native.PresentationRoot, runtime.BuildID, digest,
 	)
@@ -30,17 +29,10 @@ func TestRuntimeAndDeploymentSpecsShareOneFixedContract(t *testing.T) {
 }
 
 func TestRuntimePolicyDigestMatchesSignedHelperRequirement(t *testing.T) {
-	got, err := runtimePolicyDigest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := (trust.Requirement{
+	want := daemonkit.Requirement{
 		TeamID: helperclient.TeamID, SigningIdentifier: helperclient.BundleID,
-	}).ValidationDigest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Fatalf("runtime policy digest = %x, want %x", got, want)
+	}.Digest()
+	if got := runtimePolicyDigest(); got != want {
+		t.Fatalf("runtime policy digest = %q, want %q", got, want)
 	}
 }

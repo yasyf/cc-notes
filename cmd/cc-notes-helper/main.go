@@ -15,7 +15,6 @@ import (
 	"github.com/yasyf/cc-notes/internal/fusefs"
 	"github.com/yasyf/cc-notes/internal/helperapp"
 	"github.com/yasyf/cc-notes/internal/helpercontract"
-	"github.com/yasyf/daemonkit/deployment"
 	"github.com/yasyf/fusekit/holder"
 )
 
@@ -37,13 +36,9 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	stopControlStore, err := deployment.RuntimeStopControlStore()
-	if err != nil {
-		return fmt.Errorf("FuseKit runtime: resolve deployment stop authority: %w", err)
-	}
 	runtime, err := fusefs.NewHelperRuntime(ctx, fusefs.HelperRuntimeConfig{
 		Plan: plan, Drivers: drivers,
-		TrustRequirements: helperapp.RuntimeTrustRequirements(), StopControlStore: stopControlStore,
+		Trust:                   helperapp.RuntimeTrust(),
 		NativeReadinessTimeout:  helpercontract.RuntimeNativeReadinessTimeout,
 		CatalogReadinessTimeout: helpercontract.RuntimeCatalogReadinessTimeout,
 		CatalogOperationTimeout: helpercontract.RuntimeCatalogOperationTimeout,

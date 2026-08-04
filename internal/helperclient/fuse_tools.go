@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/yasyf/daemonkit/proc"
+	"github.com/yasyf/daemonkit/durable"
 	"github.com/yasyf/fusekit/fuset"
 )
 
@@ -17,7 +17,7 @@ const fuseToolLockTimeout = 30 * time.Second
 // FUSEToolPool owns one durable FuseKit packaging and verification worker generation.
 type FUSEToolPool struct {
 	pool *fuset.ToolPool
-	lock *proc.FileLockHandle
+	lock *durable.Lock
 }
 
 // NewFUSEToolPool constructs the exact FuseKit-owned tool runtime.
@@ -26,19 +26,14 @@ func NewFUSEToolPool(ctx context.Context) (*FUSEToolPool, error) {
 	if err != nil {
 		return nil, err
 	}
-	lock, err := (proc.FileLockSpec{
-		Path: filepath.Join(directory, "owner.lock"), Mode: proc.FileLockExclusive, Deadline: fuseToolLockTimeout,
-	}).Acquire(ctx)
+	lockCtx, cancel := context.WithTimeout(ctx, fuseToolLockTimeout)
+	defer cancel()
+	lock, err := durable.AcquireLock(lockCtx, filepath.Join(directory, "owner.lock"))
 	if err != nil {
 		return nil, fmt.Errorf("cc-notes helper: acquire FUSE tool ownership: %w", err)
 	}
-	generation, err := proc.ProcessGeneration()
-	if err != nil {
-		return nil, errors.Join(err, lock.Close())
-	}
 	pool, err := fuset.NewToolPool(ctx, fuset.ToolPoolConfig{
 		ProcessStorePath: filepath.Join(directory, "processes.db"),
-		Generation:       generation,
 	})
 	if err != nil {
 		return nil, errors.Join(err, lock.Close())

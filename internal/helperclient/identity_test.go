@@ -41,7 +41,7 @@ func TestPresentationRootUsesCanonicalAccountHome(t *testing.T) {
 }
 
 func TestHelperReleaseIdentityIsExact(t *testing.T) {
-	identity := CodeIdentity()
+	identity := Requirement()
 	if identity.TeamID != TeamID || identity.SigningIdentifier != BundleID {
 		t.Fatalf("identity = %#v", identity)
 	}
