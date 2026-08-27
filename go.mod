@@ -2,14 +2,16 @@ module github.com/yasyf/cc-notes
 
 go 1.26.5
 
+toolchain go1.26.6
+
 require (
 	github.com/go-git/go-billy/v5 v5.9.0
-	github.com/go-git/go-git/v5 v5.19.1
+	github.com/go-git/go-git/v5 v5.19.2
 	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
-	github.com/yasyf/daemonkit v0.21.3
+	github.com/yasyf/daemonkit v0.22.0
 	github.com/yasyf/fusekit v1.16.0
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/sync v0.22.0
