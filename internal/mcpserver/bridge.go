@@ -9,6 +9,7 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -24,14 +25,15 @@ type bridge struct {
 	newRoot func() *cobra.Command
 	label   func(error) string
 	message func(error) string
+	hint    func(error) string
 }
 
 // run executes argv in-process and returns the tool result: stdout (the JSON
-// DTO) with any stderr notices appended, or a `<label>: <message>` error the SDK
-// renders as an error result, matching the CLI's stderr line (message trims the
-// notes-layer program prefix so it is not doubled under the label). It never
-// touches os.Stdout — the stdio protocol owns it — and pins stdin to empty so no
-// command blocks on the protocol's own stdin.
+// DTO) with any stderr notices appended, or a `<label>: <message>` error — plus
+// the error's hint line, so a caller sees the same way forward the CLI prints —
+// that the SDK renders as an error result. It never touches os.Stdout — the stdio
+// protocol owns it — and pins stdin to empty so no command blocks on the
+// protocol's own stdin.
 func (b *bridge) run(ctx context.Context, argv ...string) (*mcp.CallToolResult, any, error) {
 	root := b.newRoot()
 	var out, errBuf bytes.Buffer
@@ -40,7 +42,11 @@ func (b *bridge) run(ctx context.Context, argv ...string) (*mcp.CallToolResult, 
 	root.SetIn(bytes.NewReader(nil))
 	root.SetArgs(argv)
 	if err := root.ExecuteContext(ctx); err != nil {
-		return nil, nil, fmt.Errorf("%s: %s", b.label(err), b.message(err))
+		text := fmt.Sprintf("%s: %s", b.label(err), b.message(err))
+		if hint := b.hint(err); hint != "" {
+			text += "\n" + hint
+		}
+		return nil, nil, errors.New(text)
 	}
 	// The JSON DTO is the primary block so it stays parseable; stderr notices
 	// (one-time git config installs, sync reports) ride as a separate block.

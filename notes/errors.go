@@ -21,7 +21,9 @@ var (
 	ErrCycle = errors.New("dependency cycle")
 	// ErrIllegalTransition reports an investigation or plan status transition the
 	// kind's lifecycle machine forbids from the current status. The wrapping error
-	// names the current and requested status.
+	// names the current and requested status; an investigation's is an
+	// *IllegalTransitionError carrying the statuses the current one can still
+	// reach.
 	ErrIllegalTransition = errors.New("illegal status transition")
 	// ErrMissingReason reports a verb that requires an evidence reason — a finding
 	// disposition's why, a transition's proof or reopen reason, or a fix carrying
@@ -109,6 +111,27 @@ type OpenFindingsError struct {
 func (e *OpenFindingsError) Error() string {
 	return fmt.Sprintf("cc-notes: %s has %d open finding/findings blocking %s", e.ID.Short(), len(e.Open), e.Target)
 }
+
+// IllegalTransitionError reports an investigation status transition the
+// lifecycle machine forbids. Legal carries every status From can still reach,
+// so the caller names each one and the verb that performs it itself. It matches
+// ErrIllegalTransition under errors.Is.
+type IllegalTransitionError struct {
+	ID    model.EntityID
+	From  model.InvestigationStatus
+	To    model.InvestigationStatus
+	Legal []model.InvestigationStatus
+}
+
+// Error names the investigation and the refused move; the legal moves and the
+// command reaching each are the caller's to render from Legal.
+func (e *IllegalTransitionError) Error() string {
+	return fmt.Sprintf("illegal status transition: %s cannot go %s→%s", e.ID.Short(), e.From, e.To)
+}
+
+// Is reports whether target is ErrIllegalTransition, so callers keep branching
+// on the sentinel.
+func (e *IllegalTransitionError) Is(target error) bool { return target == ErrIllegalTransition }
 
 // AttachmentExistsError reports an attach whose name collides with a live
 // attachment, which would orphan the old bytes behind the same name.

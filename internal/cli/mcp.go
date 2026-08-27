@@ -29,6 +29,7 @@ func newMCPCmd() *cobra.Command {
 				NewRoot: NewRootCmd,
 				Label:   Label,
 				Message: Message,
+				Hint:    Hint,
 			})
 		},
 	}

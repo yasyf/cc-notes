@@ -822,3 +822,66 @@ func TestInvestigationCommandErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestInvestigationStrandedVerdictSelfHeals walks the papercut that stranded an
+// open investigation: fix and confirm are both refused from open, each refusal
+// naming the legal moves and the command performing them, and following that
+// remediation carries the record to a confirmed verdict.
+func TestInvestigationStrandedVerdictSelfHeals(t *testing.T) {
+	dir := spInitRepo(t)
+	id := spID(t, spMust(t, dir, "investigation", "open", "Stranded", invPremise, "--json"))
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "the fix")
+	fixSHA := gittest.Git(t, dir, "rev-parse", "HEAD")
+	wantHint := "legal moves from open:" +
+		"\n  root_caused: cc-notes investigation root-cause ID TEXT" +
+		"\n  exonerated: cc-notes investigation exonerate ID TEXT" +
+		"\n  abandoned: cc-notes investigation abandon ID [TEXT]"
+	for _, args := range [][]string{
+		{"investigation", "fix", id, "--commit", fixSHA},
+		{"investigation", "confirm", id, invConfirmation},
+	} {
+		_, _, err := spRun(t, dir, "", args...)
+		if !errors.Is(err, notes.ErrIllegalTransition) {
+			t.Fatalf("%v = %v, want ErrIllegalTransition", args, err)
+		}
+		if got := Hint(err); got != wantHint {
+			t.Fatalf("%v hint =\n%s\nwant\n%s", args, got, wantHint)
+		}
+	}
+
+	spMust(t, dir, "investigation", "root-cause", id, invRootCause)
+	spMust(t, dir, "investigation", "fix", id, "--commit", fixSHA)
+	if got := spJSON[investigationSummaryDTO](t, spMust(t, dir, "investigation", "confirm", id, invConfirmation, "--json")); got.Status != "confirmed" {
+		t.Fatalf("confirm after the remediated arc = %+v, want confirmed", got)
+	}
+	if shown := invShow(t, dir, id); shown.RootCause != invRootCause {
+		t.Errorf("root cause = %q, want %q", shown.RootCause, invRootCause)
+	}
+
+	walked := spID(t, spMust(t, dir, "investigation", "open", "Falsified", invPremise, "--json"))
+	if got := spJSON[investigationSummaryDTO](t, spMust(t, dir, "investigation", "exonerate", walked, "premise was wrong", "--json")); got.Status != "exonerated" {
+		t.Fatalf("exonerate from open = %+v, want exonerated", got)
+	}
+}
+
+// TestInvestigationTransitionCommandsResolve pins every status the refusal hint
+// can name to a live subcommand, so the remediation cannot drift into naming a
+// command that does not exist.
+func TestInvestigationTransitionCommandsResolve(t *testing.T) {
+	root := NewRootCmd()
+	for status, invocation := range investigationTransitionCommands {
+		path := strings.Fields(invocation)
+		found, rest, err := root.Find(path[:2])
+		if err != nil || len(rest) > 0 || found.Name() != path[1] {
+			t.Errorf("status %q maps to %q, which names no command", status, invocation)
+		}
+	}
+	for _, status := range []model.InvestigationStatus{
+		model.InvestigationOpen, model.InvestigationRootCaused, model.InvestigationFixed,
+		model.InvestigationConfirmed, model.InvestigationExonerated, model.InvestigationAbandoned,
+	} {
+		if _, ok := investigationTransitionCommands[status]; !ok {
+			t.Errorf("status %q has no transition command for the refusal hint", status)
+		}
+	}
+}

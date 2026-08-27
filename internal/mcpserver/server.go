@@ -21,6 +21,9 @@ type Config struct {
 	// Message renders an error's body as the CLI does, trimming the notes-layer
 	// "cc-notes: " prefix so it is not doubled under the Label.
 	Message func(error) string
+	// Hint renders the remediation an error carries beyond its message, so a tool
+	// result carries the same way forward the CLI prints to stderr.
+	Hint func(error) string
 }
 
 // New builds the MCP server with every tool table registered.
@@ -29,7 +32,7 @@ func New(cfg Config) *mcp.Server {
 		&mcp.Implementation{Name: "cc-notes", Version: cfg.Version},
 		&mcp.ServerOptions{Instructions: instructions},
 	)
-	b := &bridge{newRoot: cfg.NewRoot, label: cfg.Label, message: cfg.Message}
+	b := &bridge{newRoot: cfg.NewRoot, label: cfg.Label, message: cfg.Message, hint: cfg.Hint}
 	ts := &toolset{srv: srv, props: map[string]toolProps{}}
 	registerAll(ts, b)
 	srv.AddReceivingMiddleware(didYouMeanMiddleware(ts.props))

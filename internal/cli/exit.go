@@ -115,12 +115,17 @@ func Message(err error) string {
 // to fetch the referenced-but-absent attachment bytes named in the message; a
 // *notes.AttachmentExistsError points at --replace to overwrite the name-colliding
 // attachment. A *notFoundHintError names the other kinds the missed id resolves to
-// and the kind-agnostic `cc-notes show`. Each renders on its own line under the
-// classify label.
+// and the kind-agnostic `cc-notes show`. A *notes.IllegalTransitionError lists the
+// statuses the investigation can still reach and the command reaching each, so a
+// refused verdict names its own way forward. Each renders under the classify label.
 func Hint(err error) string {
 	var missing *notes.MissingContentError
 	if errors.As(err, &missing) {
 		return "run `cc-notes sync` to download it"
+	}
+	var illegal *notes.IllegalTransitionError
+	if errors.As(err, &illegal) {
+		return illegalTransitionHint(illegal)
 	}
 	var exists *notes.AttachmentExistsError
 	if errors.As(err, &exists) {

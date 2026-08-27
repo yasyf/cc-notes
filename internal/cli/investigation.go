@@ -488,7 +488,31 @@ func newFindingListCmd() *cobra.Command {
 }
 
 func newInvestigationRootCauseCmd() *cobra.Command {
-	return investigationTextTransitionCmd("root-cause ID TEXT", "Record the root cause", true, (*notes.Client).RootCause)
+	return investigationTextTransitionCmd("root-cause ID TEXT", "Record the root cause and mark an investigation root-caused", true, (*notes.Client).RootCause)
+}
+
+// investigationTransitionCommands names the invocation that reaches each
+// investigation status, so a refused transition renders the command performing
+// every legal move instead of the refusal alone.
+var investigationTransitionCommands = map[model.InvestigationStatus]string{
+	model.InvestigationOpen:       "investigation reopen ID TEXT",
+	model.InvestigationRootCaused: "investigation root-cause ID TEXT",
+	model.InvestigationFixed:      "investigation fix ID --commit SHA [TEXT]",
+	model.InvestigationConfirmed:  "investigation confirm ID TEXT",
+	model.InvestigationExonerated: "investigation exonerate ID TEXT",
+	model.InvestigationAbandoned:  "investigation abandon ID [TEXT]",
+}
+
+// illegalTransitionHint renders the remediation an *IllegalTransitionError
+// carries: every status the investigation can still reach from where it stands,
+// each with the command that performs the move.
+func illegalTransitionHint(e *notes.IllegalTransitionError) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "legal moves from %s:", e.From)
+	for _, status := range e.Legal {
+		fmt.Fprintf(&b, "\n  %s: cc-notes %s", status, investigationTransitionCommands[status])
+	}
+	return b.String()
 }
 
 func newInvestigationConfirmCmd() *cobra.Command {

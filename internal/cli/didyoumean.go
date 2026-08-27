@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -316,34 +317,54 @@ var rootNounVerbs = map[string]bool{
 const rootNounVerbHint = `commands are noun-scoped: try "task list", "note list", … ("status" shows the board)`
 
 // subcommandHint returns guidance for a removed or misplaced subcommand token on
-// cmd, or "" when there is none. At the root it also recognizes bare noun verbs
-// and MCP-style underscore command names (task_list, runbook_step_add).
+// cmd, or "" when there is none. Every command group recognizes MCP-style
+// underscore names; the root also recognizes bare noun verbs.
 func subcommandHint(cmd *cobra.Command, arg string) string {
-	if cmd == cmd.Root() {
-		if rootNounVerbs[arg] {
-			return rootNounVerbHint
-		}
-		if hint := underscoreHint(cmd, arg); hint != "" {
-			return hint
-		}
+	if cmd == cmd.Root() && rootNounVerbs[arg] {
+		return rootNounVerbHint
+	}
+	if hint := underscoreHint(cmd, arg); hint != "" {
+		return hint
 	}
 	return subcommandHints[cmd.Name()][arg]
 }
 
-// underscoreHint resolves an MCP-style underscore command name against the live
-// tree by splitting on "_" and probing root.Find; cobra's longest-prefix match
-// handles multi-underscore nouns (runbook_step_add → runbook step add). It
-// returns 'did you mean "task list"?' when the split resolves to a real command
-// path, else "".
-func underscoreHint(root *cobra.Command, token string) string {
+// underscoreHint resolves an MCP-style underscore command name against the tree
+// under cmd, consuming at each step the longest hyphen-joined run of "_"-split
+// segments naming a child — so runbook_step_add and investigation_root_cause both
+// land. It returns 'did you mean "task list"?', or "" when the token does not
+// fully resolve.
+func underscoreHint(cmd *cobra.Command, token string) string {
 	if !strings.Contains(token, "_") {
 		return ""
 	}
-	cmd, rest, err := root.Find(strings.Split(token, "_"))
-	if err != nil || cmd == root || len(rest) > 0 {
+	segments := strings.Split(token, "_")
+	found := cmd
+	for len(segments) > 0 {
+		child, taken := longestHyphenChild(found, segments)
+		if child == nil {
+			return ""
+		}
+		found, segments = child, segments[taken:]
+	}
+	if found == cmd {
 		return ""
 	}
-	return fmt.Sprintf("did you mean %q?", commandPathNoRoot(cmd))
+	return fmt.Sprintf("did you mean %q?", commandPathNoRoot(found))
+}
+
+// longestHyphenChild returns the child of cmd named — or aliased — by the longest
+// hyphen-joined prefix of segments, with the count it consumed.
+func longestHyphenChild(cmd *cobra.Command, segments []string) (*cobra.Command, int) {
+	for n := len(segments); n > 0; n-- {
+		name := strings.Join(segments[:n], "-")
+		for _, child := range cmd.Commands() {
+			if child.Name() == name || slices.Contains(child.Aliases, name) {
+				return child, n
+			}
+		}
+	}
+	return nil, 0
 }
 
 // versionUnknownHint is the fallback for a root-level unknown command that

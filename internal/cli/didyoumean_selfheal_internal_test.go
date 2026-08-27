@@ -129,6 +129,9 @@ func TestUnderscoreHint(t *testing.T) {
 		{"task_list", `did you mean "task list"?`},
 		{"runbook_step_add", `did you mean "runbook step add"?`},
 		{"papercut_list", `did you mean "papercut list"?`},
+		{"investigation_root_cause", `did you mean "investigation root-cause"?`},
+		{"investigation_follow_up", `did you mean "investigation follow-up"?`},
+		{"investigation_finding_add", `did you mean "investigation finding add"?`},
 		{"task_frob", ""},
 		{"foo_bar", ""},
 		{"nounderscore", ""},
@@ -138,6 +141,30 @@ func TestUnderscoreHint(t *testing.T) {
 		t.Run(tc.token, func(t *testing.T) {
 			if got := underscoreHint(root, tc.token); got != tc.want {
 				t.Fatalf("underscoreHint(%q) = %q, want %q", tc.token, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnderscoreHintUnderACommandGroup: an underscore verb typed under its noun
+// group resolves against that group, so "investigation root_cause" — the MCP verb
+// an agent transcribes — names the hyphenated command instead of dead-ending.
+func TestUnderscoreHintUnderACommandGroup(t *testing.T) {
+	root := NewRootCmd()
+	investigation := mustFind(t, root, "investigation")
+	cases := []struct {
+		token string
+		want  string
+	}{
+		{"root_cause", `did you mean "investigation root-cause"?`},
+		{"follow_up", `did you mean "investigation follow-up"?`},
+		{"finding_add", `did you mean "investigation finding add"?`},
+		{"no_such_verb", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.token, func(t *testing.T) {
+			if got := subcommandHint(investigation, tc.token); got != tc.want {
+				t.Fatalf("subcommandHint(investigation, %q) = %q, want %q", tc.token, got, tc.want)
 			}
 		})
 	}

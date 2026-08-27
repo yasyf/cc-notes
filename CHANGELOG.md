@@ -121,6 +121,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hint naming `body`.
 
 ### Fixed
+- **A refused investigation transition now names its way forward.** `illegal
+  status transition` said only what was refused, so an investigation opened and
+  fed evidence had no reachable verdict: `open → fixed` and `open → confirmed`
+  are both illegal, and nothing in the refusal named `root-cause` as the step
+  between. The conflict now lists every status the record can still reach and
+  the command that performs each, and the MCP bridge carries that hint into the
+  tool result instead of dropping it.
+- **`investigation_root_cause` resolves as a CLI typo.** The MCP-style
+  did-you-mean split the token only on `_`, so a hyphenated leaf verb never
+  matched. `cc-notes investigation_root_cause` advised upgrading the binary for
+  a command it already had, and `cc-notes investigation root_cause` dead-ended
+  because the hint ran at the root alone. Both now name
+  `investigation root-cause`, as does `investigation_follow_up`.
 - **`attachment_get` rejects an empty `output`.** It previously dropped the
   `--output` flag when the value was `""`, which made the CLI stream raw
   attachment bytes into the tool result — the one thing its description
