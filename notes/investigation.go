@@ -441,13 +441,15 @@ var legalInvestigationTransitions = map[model.InvestigationStatus][]model.Invest
 	model.InvestigationAbandoned:  {model.InvestigationOpen},
 }
 
-// ensureInvestigationTransition reports an ErrIllegalTransition, naming the
-// current and requested status, unless the move is in the lifecycle machine, and
-// then — unless force is set — an *OpenFindingsError when a verdict target would
-// land on an investigation whose findings are not all dispositioned.
+// ensureInvestigationTransition reports an *IllegalTransitionError, naming the
+// current and requested status and carrying the statuses the current one can
+// still reach, unless the move is in the lifecycle machine, and then — unless
+// force is set — an *OpenFindingsError when a verdict target would land on an
+// investigation whose findings are not all dispositioned.
 func ensureInvestigationTransition(inv model.Investigation, target model.InvestigationStatus, force bool) error {
-	if !slices.Contains(legalInvestigationTransitions[inv.Status], target) {
-		return fmt.Errorf("%w: %s cannot go %s→%s", ErrIllegalTransition, inv.ID.Short(), inv.Status, target)
+	legal := legalInvestigationTransitions[inv.Status]
+	if !slices.Contains(legal, target) {
+		return &IllegalTransitionError{ID: inv.ID, From: inv.Status, To: target, Legal: legal}
 	}
 	if force || !verdictInvestigation(target) {
 		return nil

@@ -552,7 +552,7 @@ command: cc-notes investigation rm
 command: cc-notes investigation root-cause
   use: root-cause ID TEXT
   aliases: -
-  short: Record the root cause
+  short: Record the root cause and mark an investigation root-caused
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"

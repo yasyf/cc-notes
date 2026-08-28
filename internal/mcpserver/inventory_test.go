@@ -40,7 +40,7 @@ func stubRunE(cmd *cobra.Command) {
 func connectNeutered(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	ctx := t.Context()
-	srv := mcpserver.New(mcpserver.Config{Version: "test", NewRoot: neuteredRoot, Label: cli.Label, Message: cli.Message})
+	srv := mcpserver.New(mcpserver.Config{Version: "test", NewRoot: neuteredRoot, Label: cli.Label, Message: cli.Message, Hint: cli.Hint})
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(ctx, st, nil)
 	if err != nil {

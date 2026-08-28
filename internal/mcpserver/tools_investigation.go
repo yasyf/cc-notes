@@ -210,7 +210,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"investigation", "finding", "list"}, []string{"--json"}, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "investigation_root_cause", Description: "Record the root cause with supporting evidence."},
+	addTool(ts, &mcp.Tool{Name: "investigation_root_cause", Description: "Record the root cause with supporting evidence and mark an investigation root_caused — the step an open investigation takes before investigation_fix."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationTransitionArgs) (*mcp.CallToolResult, any, error) {
 			positionals, err := investigationTextPositionals(in.ID, in.Text, true)
 			if err != nil {

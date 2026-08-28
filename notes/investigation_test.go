@@ -490,6 +490,18 @@ func TestInvestigationExonerateAndAbandon(t *testing.T) {
 	}
 }
 
+// legalNextStatuses restates the lifecycle machine independently of the domain's
+// own map, so a refusal's Legal set is graded against the documented arc rather
+// than against itself.
+var legalNextStatuses = map[model.InvestigationStatus][]model.InvestigationStatus{
+	model.InvestigationOpen:       {model.InvestigationRootCaused, model.InvestigationExonerated, model.InvestigationAbandoned},
+	model.InvestigationRootCaused: {model.InvestigationFixed, model.InvestigationOpen, model.InvestigationExonerated, model.InvestigationAbandoned},
+	model.InvestigationFixed:      {model.InvestigationConfirmed, model.InvestigationRootCaused, model.InvestigationOpen, model.InvestigationAbandoned},
+	model.InvestigationConfirmed:  {model.InvestigationOpen},
+	model.InvestigationExonerated: {model.InvestigationOpen},
+	model.InvestigationAbandoned:  {model.InvestigationOpen},
+}
+
 func TestInvestigationIllegalTransitions(t *testing.T) {
 	rootCause := func(ctx context.Context, c *notes.Client, id model.EntityID) error {
 		_, e := c.RootCause(ctx, id, "x")
@@ -560,6 +572,19 @@ func TestInvestigationIllegalTransitions(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), string(tc.from)) {
 				t.Errorf("error %q does not name the current status %q", err, tc.from)
+			}
+			var illegal *notes.IllegalTransitionError
+			if !errors.As(err, &illegal) {
+				t.Fatalf("%s = %v, want an *IllegalTransitionError", tc.name, err)
+			}
+			if illegal.From != tc.from {
+				t.Errorf("From = %q, want %q", illegal.From, tc.from)
+			}
+			if want := legalNextStatuses[tc.from]; !slices.Equal(illegal.Legal, want) {
+				t.Errorf("Legal from %s = %v, want %v", tc.from, illegal.Legal, want)
+			}
+			if slices.Contains(illegal.Legal, illegal.To) {
+				t.Errorf("Legal from %s = %v, want it to exclude the refused %q", tc.from, illegal.Legal, illegal.To)
 			}
 			after, err := c.Investigation(ctx, id)
 			if err != nil {

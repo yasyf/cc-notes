@@ -162,13 +162,18 @@ func TestExitCodeMatrix(t *testing.T) {
 			wantCode: 4,
 		},
 		{
-			name: "illegal investigation transition exits 4",
+			name: "illegal investigation transition exits 4 naming the legal moves",
 			setup: func(t *testing.T, dir string) ([]string, string) {
 				inv := mustJSON[commonJSON](t, mustBin(t, dir, actorA, "investigation", "open", "Still open", "no fix yet", "--json"))
-				return []string{"investigation", "confirm", inv.ID, "not fixed"}, ""
+				return []string{"investigation", "confirm", inv.ID, "not fixed"},
+					fmt.Sprintf("conflict: illegal status transition: %s cannot go open→confirmed\n", inv.ID[:7]) +
+						"legal moves from open:\n" +
+						"  root_caused: cc-notes investigation root-cause ID TEXT\n" +
+						"  exonerated: cc-notes investigation exonerate ID TEXT\n" +
+						"  abandoned: cc-notes investigation abandon ID [TEXT]\n"
 			},
-			wantCode:   4,
-			wantPrefix: "conflict: illegal status transition",
+			wantCode:  4,
+			multiline: true,
 		},
 		{
 			name: "claim on done task exits 4",

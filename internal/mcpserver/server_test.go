@@ -41,7 +41,7 @@ func initRepo(t *testing.T) string {
 func connect(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	ctx := t.Context()
-	srv := mcpserver.New(mcpserver.Config{Version: "test", NewRoot: cli.NewRootCmd, Label: cli.Label, Message: cli.Message})
+	srv := mcpserver.New(mcpserver.Config{Version: "test", NewRoot: cli.NewRootCmd, Label: cli.Label, Message: cli.Message, Hint: cli.Hint})
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(ctx, st, nil)
 	if err != nil {
@@ -733,7 +733,7 @@ func TestServeSignalStopExitsClean(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- mcpserver.Serve(ctx, dir, mcpserver.Config{Version: "test", NewRoot: cli.NewRootCmd, Label: cli.Label, Message: cli.Message})
+		done <- mcpserver.Serve(ctx, dir, mcpserver.Config{Version: "test", NewRoot: cli.NewRootCmd, Label: cli.Label, Message: cli.Message, Hint: cli.Hint})
 	}()
 
 	marker := filepath.Join(dir, ".git", "cc-notes", "mcp", fmt.Sprintf("%d.json", os.Getpid()))

@@ -1718,7 +1718,9 @@ returns any terminal investigation to `open`, and the pre-terminal edges also wa
 (`fixed → root_caused`, `fixed → open`, `root_caused → open`) when a verdict unravels
 mid-flight. Every transition verb records its evidence as a timeline entry and flips the status
 in the same commit, so the record self-documents; an illegal transition is a conflict (exit 4)
-naming the current and requested status. Titles stay verdict-free — a title containing
+naming the current and requested status, then every status the record can still reach with the
+command that performs each — so a refused verdict states its own way forward. Titles stay
+verdict-free — a title containing
 RESOLVED, FIXED, FALSIFIED, or CONFIRMED draws a warning, since the status column already says
 it. Every command takes `--json`.
 
