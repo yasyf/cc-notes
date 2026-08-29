@@ -97,7 +97,7 @@ func (r *Repo) ListPrefix(ctx context.Context, prefix string) (map[string]model.
 			return nil
 		}
 		name := string(ref.Name())
-		if strings.HasPrefix(name, prefix) && !strings.HasSuffix(name, ".lock") {
+		if strings.HasPrefix(name, prefix) {
 			tips[name] = model.SHA(ref.Hash().String())
 		}
 		return nil

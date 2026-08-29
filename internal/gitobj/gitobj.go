@@ -95,7 +95,7 @@ type graftStamp struct {
 // Open opens filesystem storage at the discovered per-worktree and shared git
 // directories.
 func Open(gitDir, commonDir string) (*Repo, error) {
-	fs := dotgit.NewRepositoryFilesystem(osfs.New(gitDir), osfs.New(commonDir))
+	fs := dotgit.NewRepositoryFilesystem(unlockedFS{osfs.New(gitDir)}, unlockedFS{osfs.New(commonDir)})
 	storage := filesystem.NewStorageWithOptions(fs, cache.NewObjectLRUDefault(), filesystem.Options{MaxOpenDescriptors: openPacks})
 	if err := verifyLayout(storage); err != nil {
 		return nil, err
