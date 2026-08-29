@@ -593,52 +593,61 @@ func TestListPrefix(t *testing.T) {
 }
 
 func TestListPrefixSkipsLockFiles(t *testing.T) {
-	dir := initRepo(t)
-	repo := open(t, dir)
-	note := write(t, repo, nil, t0, createPack)
-	ref := "refs/cc-notes/notes/" + string(note)
-	git(t, dir, "update-ref", ref, string(note))
-
-	lock := filepath.Join(dir, ".git", "refs", "cc-notes", "notes", "other.lock")
-	if err := os.WriteFile(lock, []byte(note+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := repo.ListPrefix(t.Context(), "refs/cc-notes/")
-	if err != nil {
-		t.Fatalf("ListPrefix: %v", err)
-	}
-	want := map[string]model.SHA{ref: note}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ListPrefix = %v, want %v", got, want)
-	}
-}
-
-func TestListPrefixPersistentEmptyRefFile(t *testing.T) {
 	cases := []struct {
-		name string
-		file string
+		name    string
+		lock    string
+		content []byte
 	}{
-		{"empty lock file", "stuck.lock"},
-		{"empty ref file", "stuck"},
+		{"filled lock beside the ref", "cc-notes/notes/other.lock", []byte("\n")},
+		{"empty lock beside the ref", "cc-notes/notes/other.lock", nil},
+		{"empty lock in an unrelated ref tree", "remotes/prhead/999.lock", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := initRepo(t)
 			repo := open(t, dir)
 			note := write(t, repo, nil, t0, createPack)
-			git(t, dir, "update-ref", "refs/cc-notes/notes/"+string(note), string(note))
+			ref := "refs/cc-notes/notes/" + string(note)
+			git(t, dir, "update-ref", ref, string(note))
 
-			empty := filepath.Join(dir, ".git", "refs", "cc-notes", "notes", tc.file)
-			if err := os.WriteFile(empty, nil, 0o644); err != nil {
+			content := tc.content
+			if content != nil {
+				content = append([]byte(note), content...)
+			}
+			lock := filepath.Join(dir, ".git", "refs", filepath.FromSlash(tc.lock))
+			if err := os.MkdirAll(filepath.Dir(lock), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(lock, content, 0o644); err != nil {
 				t.Fatal(err)
 			}
 
-			_, err := repo.ListPrefix(t.Context(), "refs/cc-notes/")
-			if !errors.Is(err, dotgit.ErrEmptyRefFile) {
-				t.Errorf("ListPrefix = %v, want dotgit.ErrEmptyRefFile", err)
+			got, err := repo.ListPrefix(t.Context(), "refs/cc-notes/")
+			if err != nil {
+				t.Fatalf("ListPrefix: %v", err)
+			}
+			want := map[string]model.SHA{ref: note}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("ListPrefix = %v, want %v", got, want)
 			}
 		})
+	}
+}
+
+func TestListPrefixPersistentEmptyRefFile(t *testing.T) {
+	dir := initRepo(t)
+	repo := open(t, dir)
+	note := write(t, repo, nil, t0, createPack)
+	git(t, dir, "update-ref", "refs/cc-notes/notes/"+string(note), string(note))
+
+	empty := filepath.Join(dir, ".git", "refs", "cc-notes", "notes", "stuck")
+	if err := os.WriteFile(empty, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := repo.ListPrefix(t.Context(), "refs/cc-notes/")
+	if !errors.Is(err, dotgit.ErrEmptyRefFile) {
+		t.Errorf("ListPrefix = %v, want dotgit.ErrEmptyRefFile", err)
 	}
 }
 

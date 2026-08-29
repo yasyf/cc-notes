@@ -121,6 +121,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hint naming `body`.
 
 ### Fixed
+- **A ref lock file no longer takes down every command.** git writes a loose
+  ref by filling `<ref>.lock` and renaming it into place, so a repository under
+  concurrent git activity carries zero-byte `.lock` files a nontrivial fraction
+  of the time. go-git's loose-ref walk read them like any other ref and aborted
+  the entire enumeration on the first empty one, so an unrelated in-flight
+  `git fetch` reduced every `cc-notes` command to `error: list refs: ref file
+  is empty`. The ref tree's listings now withhold `.lock` entries, as git's own
+  enumeration does. A genuinely empty ref file, which the transient-empty retry
+  cannot outlast, still fails.
 - **A refused investigation transition now names its way forward.** `illegal
   status transition` said only what was refused, so an investigation opened and
   fed evidence had no reachable verdict: `open → fixed` and `open → confirmed`
