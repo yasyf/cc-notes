@@ -216,6 +216,18 @@ def json_field(out: str | None, key: str) -> str:
     return parsed.get(key, "") if isinstance(parsed, dict) else ""
 
 
+def tool_output(evt: BaseHookEvent) -> str:
+    """The tool's response as searchable text.
+
+    A structured response arrives as a dict, and every caller feeds this to a regex, so a
+    non-string is rendered as JSON rather than returned raw.
+    """
+    response = getattr(evt, "tool_response", None)
+    if not response:
+        return ""
+    return response if isinstance(response, str) else json.dumps(response, default=str)
+
+
 def clamp_title(title: str, max_bytes: int = MAX_TITLE_BYTES) -> str:
     """Clamp ``title`` to at most ``max_bytes`` UTF-8 bytes on a rune boundary.
 

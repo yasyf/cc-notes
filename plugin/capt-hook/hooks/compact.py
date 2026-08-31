@@ -38,6 +38,7 @@ from .common import (
     mcp_active,
     run_cc_notes,
     short_id,
+    tool_output,
 )
 
 # Entities restored fresh (full `cc-notes show` each) at or below this count; above it, lean pointers.
@@ -103,10 +104,6 @@ def _kind(name: str) -> str:
     if name == "papercut":
         return "papercut"
     return name.split("_", 1)[0]
-
-
-def _tool_output(evt: BaseHookEvent) -> str:
-    return getattr(evt, "tool_response", None) or ""
 
 
 def _ids_match(a: str, b: str) -> bool:
@@ -211,7 +208,7 @@ def _resolve(
 
 def _touches(evt: BaseHookEvent) -> list[_Touch]:
     name = evt.tool_name or ""
-    output = _tool_output(evt)
+    output = tool_output(evt)
     if name.startswith(MCP_TOOL_PREFIX):
         touch = _resolve(name[len(MCP_TOOL_PREFIX) :], "mcp", dict(evt._tool_input), [], output, can_mint=True, prefer_json=True)
         return [touch] if touch else []

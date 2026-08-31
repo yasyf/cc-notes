@@ -78,23 +78,28 @@ from hooks.memory import (
     parse_memory_file,
 )
 from hooks.record import (
-    durable_dest,
+    CiTriageMoment,
     DurableInternalWrite,
-    ephemeral_papercut,
-    ephemeral_record_refs,
     EphemeralRecordReference,
     EvidenceArchive,
+    InvestigationActivity,
+    InvestigationCloseLanguage,
+    MCP_RECORD_WRITE_NAMES,
+    McpEphemeralReference,
+    PLAN_TEACH_MCP,
+    PlanTask,
+    PlanTasks,
+    VERDICT_LANGUAGE_RE,
+    durable_dest,
+    ephemeral_papercut,
+    ephemeral_record_refs,
     evidence_payload_bytes,
     evidence_transfers,
     in_git_worktree,
-    CiTriageMoment,
-    InvestigationActivity,
-    InvestigationCloseLanguage,
     investigation_arc_lines,
     investigation_resolve_lines,
-    MCP_RECORD_WRITE_NAMES,
+    link_task_to_investigation,
     mcp_ephemeral_refs,
-    McpEphemeralReference,
     nudge_ci_triage_investigation,
     nudge_ephemeral_record_reference,
     nudge_investigation_close,
@@ -104,13 +109,9 @@ from hooks.record import (
     nudge_plan_capture,
     nudge_record_durable,
     nudge_record_evidence,
-    PLAN_TEACH_MCP,
-    PlanTask,
-    PlanTasks,
     plan_task_commands,
     plan_text,
     plan_title,
-    link_task_to_investigation,
     record_investigation_activity,
     record_mcp_active,
     transfer_operands,
@@ -277,6 +278,27 @@ def investigation_entry(investigation_id: str, *, title: str = "i", status: str 
         "score": 1,
         "reasons": ["dir"] if reasons is None else reasons,
     }
+
+
+def test_tool_output_renders_a_structured_response() -> None:
+    """Claude Code sends `tool_response` as a dict for structured tools, and every caller feeds
+    this to a regex — returning the dict raw raised `TypeError: expected string or bytes-like
+    object` and killed the handler (seen on both fleet hosts, 13 times across three hooks)."""
+    cases = [
+        ("string passes through", "root cause: unbuffered chan", "root cause: unbuffered chan"),
+        ("absent is empty", None, ""),
+        ("empty string is empty", "", ""),
+        ("empty dict is empty", {}, ""),
+    ]
+    for name, response, want in cases:
+        got = common.tool_output(SimpleNamespace(tool_response=response))
+        check(f"tool_output: {name}", got == want, f"got {got!r}, want {want!r}")
+
+    rendered = common.tool_output(SimpleNamespace(tool_response={"verdict": "root cause confirmed"}))
+    check("tool_output: dict renders as JSON", rendered == '{"verdict": "root cause confirmed"}', rendered)
+    check("tool_output: a regex can search the rendering", bool(VERDICT_LANGUAGE_RE.search(rendered)))
+    coerced = common.tool_output(SimpleNamespace(tool_response={"path": Path("/tmp/x")}))
+    check("tool_output: a non-serializable value coerces rather than raising", coerced == '{"path": "/tmp/x"}', coerced)
 
 
 def test_parse_relevant() -> None:

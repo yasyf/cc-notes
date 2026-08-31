@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A structured tool response no longer kills the hook handler reading it.**
+  `_tool_output` returned `evt.tool_response` raw despite its `-> str`
+  annotation, and Claude Code sends that field as a **dict** for structured
+  tools. Every caller feeds it to a regex, so the handler died on
+  `TypeError: expected string or bytes-like object, got 'dict'` — 13 times
+  across `nudge_multiagent_synthesis`, `nudge_ci_triage_investigation`, and
+  `announce_pr_status` on one fleet host alone, and a dying handler takes its
+  worker with it. A non-string response is now rendered as JSON, so the regexes
+  see the text they were written for. Absent, empty, and string responses are
+  unchanged.
+
+  The helper was duplicated verbatim in `record.py` and `compact.py`, so the
+  same bug existed twice; both copies are deleted in favour of one
+  `common.tool_output`.
+
 ### Added
 - **Four uncapped readers open the capped show histories.** `log entry list`
   (MCP: `log_entry_list`), `investigation entry list`

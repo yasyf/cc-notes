@@ -43,6 +43,7 @@ from .common import (
     record_command,
     run_cc_notes,
     short_id,
+    tool_output,
 )
 
 # DurableInternalWrite recall vocabulary: STRONG names look durable-internal on name
@@ -1064,10 +1065,6 @@ def _investigation_verb(evt: BaseHookEvent) -> str | None:
     return None
 
 
-def _tool_output(evt: BaseHookEvent) -> str:
-    return getattr(evt, "tool_response", None) or ""
-
-
 def _event_error(evt: BaseHookEvent) -> str:
     return getattr(evt, "error", None) or ""
 
@@ -1075,7 +1072,7 @@ def _event_error(evt: BaseHookEvent) -> str:
 def _minted_id(evt: BaseHookEvent) -> str | None:
     # A create mints an id in its output: MCP/--json leads with {"id":"..."}, the CLI lean line with
     # the short id as its first token.
-    text = _tool_output(evt) or _event_error(evt)
+    text = tool_output(evt) or _event_error(evt)
     if not text:
         return None
     if m := re.search(r'"id"\s*:\s*"([^"]+)"', text):
@@ -1145,7 +1142,7 @@ def _bump_subagents(evt: BaseHookEvent) -> int:
 
 
 def _run_url(evt: BaseHookEvent) -> str | None:
-    for text in (evt.cmd.raw, _tool_output(evt), _event_error(evt)):
+    for text in (evt.cmd.raw, tool_output(evt), _event_error(evt)):
         if m := RUN_URL_RE.search(text):
             return m.group(0)
     return None
@@ -1248,7 +1245,7 @@ def _ci_run_failed(evt: BaseHookEvent) -> bool:
     # failed conclusion — never on a job merely NAMED with "failure".
     if isinstance(evt, PostToolUseFailureEvent):
         return True
-    return bool(GH_FAILED_CONCLUSION_RE.search(_tool_output(evt)))
+    return bool(GH_FAILED_CONCLUSION_RE.search(tool_output(evt)))
 
 
 class CiTriageMoment(CustomCondition):
@@ -1322,7 +1319,7 @@ def nudge_multiagent_synthesis(evt: PostToolUseEvent) -> HookResult | None:
     n = _bump_subagents(evt)
     if investigation_touched(evt) or n < 2:
         return None
-    if not VERDICT_LANGUAGE_RE.search(_tool_output(evt)) or fired_this_turn(evt):
+    if not VERDICT_LANGUAGE_RE.search(tool_output(evt)) or fired_this_turn(evt):
         return None
     record_fire(evt)
     return evt.warn(
