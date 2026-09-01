@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The availability nudge stops spawning `cc-notes version` on every prompt.**
+  `announce_cc_notes_available` read the version before claiming its
+  once-per-session shot — deliberately, so an empty read doesn't burn the
+  announcement — which left the subprocess on every `UserPromptSubmit` for the
+  rest of the session, long after the line had been said. On a host whose EDR
+  charges ~265 ms per exec that is a standing per-prompt tax on the critical
+  path. The handler now peeks the claimed key before reading, and returns
+  before spawning anything once the announcement has landed. The claim still
+  happens after the read, so an empty read still preserves the shot.
 - **A structured tool response no longer kills the hook handler reading it.**
   `_tool_output` returned `evt.tool_response` raw despite its `-> str`
   annotation, and Claude Code sends that field as a **dict** for structured

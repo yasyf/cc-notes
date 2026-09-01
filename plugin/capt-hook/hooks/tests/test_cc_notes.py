@@ -1540,7 +1540,7 @@ def test_announce_available_gate(monkeypatch, tmp_path) -> None:
 
 
 def test_announce_available_fires_once(monkeypatch, tmp_path) -> None:
-    """First prompt warns the installed version + durable tooling line; the once-guard silences later prompts."""
+    """First prompt warns the installed version + durable tooling line; later prompts are silent AND spawn nothing."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     mapping = {("version",): "0.22.0 (abc123)"}
 
@@ -1553,9 +1553,16 @@ def test_announce_available_fires_once(monkeypatch, tmp_path) -> None:
         check("announce fires: names the installed version", "cc-notes 0.22.0 (abc123) is installed" in result.message, result.message)
         check("announce fires: names the durable tooling", "durable task, note, doc, log, papercut, runbook, investigation, and plan tooling is available" in result.message, result.message)
 
+    spawns: list[tuple[str, ...]] = []
+
+    def forbidden_cli(args, **kwargs):
+        spawns.append(tuple(args))
+        return mapping[tuple(args[1:])]
+
     second = mock_event("UserPromptSubmit", prompt="again", session_dir=tmp_path)
-    monkeypatch.setattr(second.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(second.ctx, "call_cli", forbidden_cli)
     check("announce fires: once-guard silences the second prompt", announce_cc_notes_available(second) is None)
+    check("announce fires: an announced session spawns no subprocess on the second prompt", spawns == [], repr(spawns))
 
 
 def test_announce_available_empty_version_preserves_shot(monkeypatch, tmp_path) -> None:
