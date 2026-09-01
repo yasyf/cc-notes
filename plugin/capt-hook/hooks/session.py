@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from captain_hook import Event, HookResult, UserPromptSubmitEvent, on
+from captain_hook.state import SeenKeys
 
 from .common import (
     SESSION_TASK_CAP,
@@ -18,6 +19,9 @@ from .common import (
     stale_leases,
     status_tasks,
 )
+
+ANNOUNCE_KEY = "announce"
+ANNOUNCE_SCOPE = "availability"
 
 
 @on(
@@ -72,11 +76,14 @@ def announce_cc_notes_available(evt: UserPromptSubmitEvent) -> HookResult | None
 
     The SessionStart bootstrap (bootstrap.py) does the install/upgrade under async dispatch, whose
     output the harness drops — so the version line the agent reads lands here on the first prompt.
-    ``ctx.s.once`` claims the shot only when the line actually emits, so a transient version read that
-    comes back empty doesn't burn the announcement.
+    The claim is peeked before the version read, so an announced session spawns no ``cc-notes
+    version`` subprocess on any later prompt, and taken through ``ctx.s.once`` only after it, so a
+    transient read that comes back empty doesn't burn the announcement.
     """
+    if ANNOUNCE_KEY in evt.ctx.s.load(SeenKeys).seen.get(ANNOUNCE_SCOPE, []):
+        return None
     version = (run_cc_notes(evt, "version") or "").strip()
-    if not version or not evt.ctx.s.once("announce", scope="availability"):
+    if not version or not evt.ctx.s.once(ANNOUNCE_KEY, scope=ANNOUNCE_SCOPE):
         return None
     if mcp_active(evt):
         return evt.warn(
