@@ -78,7 +78,15 @@ func TestReleasePublishesOnlyOneCompleteCallerOwnedDraft(t *testing.T) {
 	workflow := filepath.Join("..", "..", ".github", "workflows", "release.yml")
 	assertFileContains(
 		t, workflow,
-		"needs: [pure, smoke-linux, smoke-macos, helper-app]",
+		"needs: [pure, smoke-linux, smoke-macos, sign-darwin, helper-app]",
+		// Every darwin CLI asset reaches the release Developer ID signed, and
+		// only through sign-darwin — pure's unsigned darwin build is never
+		// downloaded by the release job.
+		"pattern: cc-notes_linux_*",
+		"pattern: cc-notes-signed_darwin_*",
+		"MACOS_CODESIGN_IDENTIFIER: com.yasyf.cc-notes.cli",
+		`bash "$MACOS_CODESIGN_SCRIPT" "$binary" "darwin_${{ matrix.goarch }}"`,
+		`test "${#cli_assets[@]}" = 4`,
 		"  bump-formula:\n    runs-on: ubuntu-latest\n    needs: [release, helper-app]",
 		"name: ${{ needs.helper-app.outputs.artifact_name }}",
 		`mv "$checksums" dist/SHA256SUMS.txt`,
@@ -360,6 +368,12 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 		`system "/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=2", libexec/"CCNotesHelper.app"`,
 		`system "/usr/bin/xcrun", "stapler", "validate", libexec/"CCNotesHelper.app"`,
 		`cc-notes package install`,
+		// The wrapper reaches the packaged helper through opt_libexec: the
+		// Cellar copy lands the deployment, and the keg the versioned path
+		// names is unlinked mid-upgrade.
+		`(bin/"cc-notes-host").write`,
+		`exec "#{opt_libexec}/CCNotesHelper.app/Contents/MacOS/CCNotesHelper" "$@"`,
+		`assert_match version.to_s, shell_output("#{bin}/cc-notes-host version")`,
 	)
 	formulaPayload, err := os.ReadFile(formula)
 	if err != nil {

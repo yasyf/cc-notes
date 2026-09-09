@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
-	"github.com/yasyf/cc-notes/internal/helperdeployment"
 )
 
 const packagedDirectory = "libexec"
@@ -26,8 +25,12 @@ type operations struct {
 var defaultOperations = operations{
 	packagedPath:  PackagedPath,
 	installedPath: helperclient.InstalledPath,
-	apply:         helperdeployment.ApplyPackage,
-	uninstall:     helperdeployment.UninstallPackage,
+	apply: func(ctx context.Context, source string) error {
+		return invokeAt(ctx, source, helperclient.VerbPackageInstall)
+	},
+	uninstall: func(ctx context.Context) error {
+		return Invoke(ctx, helperclient.VerbPackageUninstall)
+	},
 }
 
 // PackagedPath returns the helper bundled beside the resolved cc-notes executable.
@@ -64,7 +67,7 @@ func install(ctx context.Context, ops operations) error {
 	if source == target {
 		return errors.New("cc-notes package: packaged and installed helper paths are identical")
 	}
-	if err := ensureRealDirectory(filepath.Dir(target)); err != nil {
+	if err := helperclient.EnsureApplicationDirectory(filepath.Dir(target)); err != nil {
 		return err
 	}
 	return ops.apply(ctx, source)
@@ -77,28 +80,4 @@ func Uninstall(ctx context.Context) error {
 
 func uninstall(ctx context.Context, ops operations) error {
 	return ops.uninstall(ctx)
-}
-
-func ensureRealDirectory(path string) error {
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return errors.New("cc-notes package: application directory is not an exact absolute path")
-	}
-	if err := os.MkdirAll(path, 0o750); err != nil {
-		return fmt.Errorf("cc-notes package: create application directory: %w", err)
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("cc-notes package: inspect application directory: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("cc-notes package: application directory is not a real directory")
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return fmt.Errorf("cc-notes package: resolve application directory: %w", err)
-	}
-	if resolved != path {
-		return errors.New("cc-notes package: application directory is not a canonical real path")
-	}
-	return nil
 }

@@ -55,8 +55,15 @@ class CcNotes < Formula
       resource("helper").stage do
         system "/usr/bin/ditto", "-x", "-k", resource("helper").cached_download, "."
         system "/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "CCNotesHelper.app"
+        system "/usr/bin/xcrun", "stapler", "validate", "CCNotesHelper.app"
         libexec.install "CCNotesHelper.app"
       end
+      # opt_libexec, not libexec: Homebrew unlinks the active keg mid-upgrade,
+      # and the packaged copy is the one that lands the deployment.
+      (bin/"cc-notes-host").write <<~SH
+        #!/bin/bash
+        exec "#{opt_libexec}/CCNotesHelper.app/Contents/MacOS/CCNotesHelper" "$@"
+      SH
     end
     bin.install_symlink "cc-notes" => "ccn"
   end
@@ -76,6 +83,7 @@ class CcNotes < Formula
     if OS.mac?
       system "/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=2", libexec/"CCNotesHelper.app"
       system "/usr/bin/xcrun", "stapler", "validate", libexec/"CCNotesHelper.app"
+      assert_match version.to_s, shell_output("#{bin}/cc-notes-host version")
     end
   end
 end

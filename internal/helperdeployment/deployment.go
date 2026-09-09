@@ -101,6 +101,29 @@ func exactAgents(appPath string) ([]launchd.Agent, error) {
 	return []launchd.Agent{plan.Agent()}, nil
 }
 
+// candidateAgents derives the desired agent set from the packaged source rather
+// than the installed target. holder.NewDeploymentPlan validates the installed
+// runtime executable, so the strict constructor cannot plan the very install
+// that first creates it; NewCandidatePlan validates the source instead and
+// still programs every agent at the canonical installed path.
+func candidateAgents(appPath, source string) ([]launchd.Agent, error) {
+	runtimeDirectory, err := RuntimeDirectory()
+	if err != nil {
+		return nil, err
+	}
+	presentationRoot, err := PresentationRoot()
+	if err != nil {
+		return nil, err
+	}
+	plan, err := holder.NewCandidatePlan(DeploymentPlanSpec(
+		appPath, runtimeDirectory, presentationRoot, version.String(), runtimePolicyDigest(),
+	), source)
+	if err != nil {
+		return nil, fmt.Errorf("cc-notes helper: derive candidate plan: %w", err)
+	}
+	return plan.Agents(), nil
+}
+
 func openDeployment(appPath string) (*deploy.Deployment, error) {
 	agents, err := exactAgents(appPath)
 	if err != nil {
@@ -110,6 +133,24 @@ func openDeployment(appPath string) (*deploy.Deployment, error) {
 	if err != nil {
 		return nil, err
 	}
+	return openDeploymentWith(appPath, daemon, agents)
+}
+
+// openCandidateDeployment opens the deployment for a landing whose target may
+// not exist yet. It names the daemon by label alone for the reason stopDaemon
+// states: a program resolved inside the installed bundle refuses construction
+// on a machine where that bundle is exactly what has not been installed.
+func openCandidateDeployment(appPath, source string) (*deploy.Deployment, error) {
+	agents, err := candidateAgents(appPath, source)
+	if err != nil {
+		return nil, err
+	}
+	return openDeploymentWith(appPath, stopDaemon(), agents)
+}
+
+func openDeploymentWith(
+	appPath string, daemon daemonkit.Daemon, agents []launchd.Agent,
+) (*deploy.Deployment, error) {
 	return deploy.Open(deploy.Config{
 		App: appPath, Requirement: helperclient.Requirement(), Daemon: daemon, Agents: agents,
 	})
@@ -134,7 +175,7 @@ func ApplyPackage(ctx context.Context, source string) error {
 	if err != nil {
 		return err
 	}
-	deployment, err := openDeployment(target)
+	deployment, err := openCandidateDeployment(target, source)
 	if err != nil {
 		return fmt.Errorf("cc-notes package: open deployment: %w", err)
 	}

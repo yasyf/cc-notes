@@ -29,6 +29,11 @@ func run(ctx context.Context, arguments []string) error {
 	if recognized {
 		return err
 	}
+	// Deployment verbs answer here because the ad-hoc signed CLI is admitted
+	// on neither daemonkit lane.
+	if recognized, err := helperapp.RunVerb(ctx, arguments); recognized {
+		return err
+	}
 	if len(arguments) != 0 {
 		return errors.New("FuseKit runtime: unknown invocation")
 	}

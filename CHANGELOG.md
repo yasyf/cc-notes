@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`cc-notes package install` works on a clean machine.** It could not succeed
+  anywhere, for two independent reasons.
+
+  It opened the deployment against the installed target before landing
+  anything, so the `deployment.Install` branch guarded by `os.ErrNotExist` was
+  unreachable: `holder.NewDeploymentPlan` validates the installed runtime
+  executable and `daemonkit.InBundle` stats the program, and a first install
+  has neither. The install path now plans through `holder.NewCandidatePlan`,
+  which validates the packaged source while still programming every agent at
+  the canonical installed path, and names the daemon by label alone — the
+  reason `stopDaemon` already documents. `service install` and
+  `package uninstall` keep the strict path, where requiring the target is
+  correct.
+
+  And the Homebrew CLI is ad-hoc signed (`Identifier=a.out`, no
+  `TeamIdentifier`), so daemonkit refused it on both the control lane and the
+  business lane `init` provisioning uses — `wire: untrusted peer`. The
+  deployment verbs move onto the signed helper, which already carries the one
+  Developer ID identity both lanes name. They run from the packaged copy, never
+  the installed one: superseding a generation has to prove the installed
+  executables empty, which a controller inside them forbids.
+
 - **A structured tool response no longer kills the hook handler reading it.**
   `_tool_output` returned `evt.tool_response` raw despite its `-> str`
   annotation, and Claude Code sends that field as a **dict** for structured
@@ -23,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `common.tool_output`.
 
 ### Added
+- **`cc-notes-host` reaches the signed helper directly.** The formula installs a
+  wrapper that execs the packaged `CCNotesHelper`, which now answers `version`,
+  `package-install`, `package-uninstall`, `service-install`,
+  `service-uninstall`, and `provision-repository`. It resolves through
+  `opt_libexec`, so a `brew upgrade` unlinking the active keg cannot strand it.
+- **The darwin CLI assets are Developer ID signed and notarized.** They shipped
+  with whatever the cross-compiling Go linker emitted. A new `sign-darwin` job
+  signs them through the tap's canonical `macos-codesign.sh` under a dotted
+  identifier, so tccd keys granted permissions on the signature rather than the
+  Cellar path and a `brew upgrade` stops re-prompting. This is supply-chain
+  hygiene only — the helper's trust policy is unchanged, and the CLI still
+  reaches the runtime through the signed helper rather than on its own.
 - **Four uncapped readers open the capped show histories.** `log entry list`
   (MCP: `log_entry_list`), `investigation entry list`
   (`investigation_entry_list`), and `task comment list` (`task_comment_list`)

@@ -5,28 +5,18 @@ package cli
 import (
 	"context"
 
-	"github.com/yasyf/cc-notes/internal/fusefs"
 	"github.com/yasyf/cc-notes/internal/helperclient"
-	"github.com/yasyf/cc-notes/internal/helperdeployment"
-	"github.com/yasyf/cc-notes/internal/version"
+	"github.com/yasyf/cc-notes/internal/helperpackage"
 )
 
 func provisionRepositoryPlatform(ctx context.Context, root string) error {
-	appPath, err := helperclient.InstalledPath()
-	if err != nil {
-		return err
-	}
-	plan, err := helperdeployment.NewRuntimePlan(ctx, appPath, version.String())
-	if err != nil {
-		return err
-	}
-	return fusefs.ProvisionRepository(ctx, plan, root)
+	return helperpackage.Invoke(ctx, helperclient.VerbProvisionRepo, root)
 }
 
 func installServicePlatform(ctx context.Context) error {
-	return helperdeployment.ActivateService(ctx)
+	return helperpackage.Invoke(ctx, helperclient.VerbServiceInstall)
 }
 
 func uninstallServicePlatform(ctx context.Context) error {
-	return helperdeployment.DeactivateService(ctx)
+	return helperpackage.Invoke(ctx, helperclient.VerbServiceUninstall)
 }
