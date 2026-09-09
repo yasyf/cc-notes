@@ -33,6 +33,8 @@ func invokeAt(ctx context.Context, appPath, verb string, arguments ...string) er
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return errors.New("cc-notes package: signed helper is not a real executable file")
 	}
+	//nolint:gosec // G204: the bundle's own runtime binary, just proved a real
+	// regular file; verb is a constant and each argument is one argv element.
 	command := exec.CommandContext(ctx, executable, append([]string{verb}, arguments...)...)
 	command.Stdout, command.Stderr = os.Stdout, os.Stderr
 	if err := command.Run(); err != nil {
