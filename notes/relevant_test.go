@@ -60,6 +60,8 @@ func entryID(e notes.RelevantEntry) model.EntityID {
 		return e.Investigation.ID
 	case model.KindPlan:
 		return e.Plan.ID
+	case model.KindAnswer:
+		return e.Answer.ID
 	default:
 		return e.Note.ID
 	}
@@ -78,6 +80,8 @@ func entryUpdatedAt(e notes.RelevantEntry) int64 {
 		return e.Investigation.UpdatedAt
 	case model.KindPlan:
 		return e.Plan.UpdatedAt
+	case model.KindAnswer:
+		return e.Answer.UpdatedAt
 	default:
 		return e.Note.UpdatedAt
 	}
@@ -341,6 +345,33 @@ func TestRelevantSortTotalOrder(t *testing.T) {
 		if entryID(a) >= entryID(b) {
 			t.Fatalf("id order violated at %d: %s before %s (equal score+updatedAt)", i, entryID(a), entryID(b))
 		}
+	}
+}
+
+func TestRelevantSurfacesAnswersWithVerdict(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "cache/cache.go", "v1\n")
+
+	answer, _, err := c.CreateAnswer(t.Context(), notes.NoteSpec{
+		Title: "Which cache backend?", Body: "Redis", Tags: []string{"scope:durable"},
+		Anchors: notes.AnchorSpec{Paths: []string{"cache/cache.go"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateAnswer: %v", err)
+	}
+
+	fresh := findEntry(t, mustRelevant(t, c, dir, "cache/cache.go", notes.RelevantFilter{}), answer.ID)
+	if fresh.Kind != model.KindAnswer || fresh.Answer.Body != "Redis" || fresh.Verdict != "" {
+		t.Fatalf("fresh entry = kind %q body %q verdict %q, want answer/Redis/fresh", fresh.Kind, fresh.Answer.Body, fresh.Verdict)
+	}
+	if !slices.Equal(fresh.Reasons, []string{"path"}) {
+		t.Fatalf("reasons = %v, want [path]", fresh.Reasons)
+	}
+
+	commitFile(t, dir, "cache/cache.go", "v2\n")
+	drifted := findEntry(t, mustRelevant(t, c, dir, "cache/cache.go", notes.RelevantFilter{}), answer.ID)
+	if drifted.Verdict != notes.VerdictDrifted {
+		t.Fatalf("drifted answer verdict = %q, want %q", drifted.Verdict, notes.VerdictDrifted)
 	}
 }
 

@@ -29,11 +29,11 @@ func (c *Client) AttachFile(ctx context.Context, path string) (model.Attachment,
 }
 
 // ResolveAttachable expands an id prefix across the attachment-bearing kinds —
-// note, doc, and log — to its kind and full id. No match fails with ErrNotFound;
+// note, doc, log, and answer — to its kind and full id. No match fails with ErrNotFound;
 // a prefix matching more than one kind fails with an *AmbiguousKindsError.
 func (c *Client) ResolveAttachable(ctx context.Context, prefix string) (model.Kind, model.EntityID, error) {
-	matched := make([]string, 0, 3)
-	for _, kind := range []model.Kind{model.KindNote, model.KindDoc, model.KindLog} {
+	matched := make([]string, 0, 4)
+	for _, kind := range []model.Kind{model.KindNote, model.KindDoc, model.KindLog, model.KindAnswer} {
 		ref, err := c.s.Resolve(ctx, kind, prefix)
 		if errors.Is(err, ErrNotFound) {
 			continue
@@ -45,7 +45,7 @@ func (c *Client) ResolveAttachable(ctx context.Context, prefix string) (model.Ki
 	}
 	switch len(matched) {
 	case 0:
-		return "", "", fmt.Errorf("%w: no note, doc, or log matches %q", ErrNotFound, prefix)
+		return "", "", fmt.Errorf("%w: no note, doc, log, or answer matches %q", ErrNotFound, prefix)
 	case 1:
 		parsed, err := refs.Parse(matched[0])
 		if err != nil {

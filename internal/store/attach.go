@@ -118,7 +118,7 @@ func (s *Store) ensurePruneGuard(ctx context.Context) (bool, error) {
 	return wrote, nil
 }
 
-// ReferencedAttachments scans every local note, doc, and log ref and returns
+// ReferencedAttachments scans every local note, doc, log, and answer ref and returns
 // the LFS objects their live state references: the folded snapshot's
 // attachments plus the attachments of every checkpoint State in the chain —
 // checkpoints are fold seeds, so content they reference must stay
@@ -129,7 +129,7 @@ func (s *Store) ensurePruneGuard(ctx context.Context) (bool, error) {
 // sorted uses, so transfer errors name entities deterministically.
 func (s *Store) ReferencedAttachments(ctx context.Context) ([]ReferencedObject, error) {
 	var entries []tipEntry
-	for _, prefix := range []string{refs.Root(model.KindNote), refs.Root(model.KindDoc), refs.Root(model.KindLog)} {
+	for _, prefix := range []string{refs.Root(model.KindNote), refs.Root(model.KindDoc), refs.Root(model.KindLog), refs.Root(model.KindAnswer)} {
 		children, err := s.children(ctx, prefix)
 		if err != nil {
 			return nil, fmt.Errorf("referenced attachments: %w", err)

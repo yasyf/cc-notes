@@ -532,10 +532,9 @@ type Doc struct {
 // question an agent asked, recorded so later sessions reuse the decision
 // instead of asking again. Title is the question verbatim; Body is the chosen
 // answer, optionally followed by the offered options and the user's notes. It
-// carries the full Note freshness lifecycle (verify/witness/expire/supersede)
-// and shares Note's field set, so the two convert directly. Timestamps are unix
-// seconds; rendering to RFC3339 happens at output time. Tags is sorted; Head is
-// the chain tip the snapshot was folded from.
+// carries the full Note freshness lifecycle (verify/witness/expire/supersede).
+// Timestamps are unix seconds; rendering to RFC3339 happens at output time.
+// Tags is sorted; Head is the chain tip the snapshot was folded from.
 //
 // SkippedOps is the reader-local count of ops this binary's folder does not
 // apply to this kind; it never marshals (see Meta.SkippedOps).

@@ -224,13 +224,15 @@ func (c *Client) reVerify(ctx context.Context, snap model.Snapshot) (model.Snaps
 	return c.s.Append(ctx, refs.For(kind, snap.EntityID()), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}})
 }
 
-// documentAnchors reads a note or doc snapshot's kind and anchors.
+// documentAnchors reads a note, doc, or answer snapshot's kind and anchors.
 func documentAnchors(snap model.Snapshot) (model.Kind, []model.Anchor) {
 	switch e := snap.(type) {
 	case model.Note:
 		return model.KindNote, e.Anchors
 	case model.Doc:
 		return model.KindDoc, e.Anchors
+	case model.Answer:
+		return model.KindAnswer, e.Anchors
 	default:
 		panic("notes: reVerify on a non-document snapshot")
 	}

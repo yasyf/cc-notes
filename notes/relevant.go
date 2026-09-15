@@ -64,10 +64,10 @@ type RelevantFilter struct {
 }
 
 // RelevantEntry is one ranked entity surfaced by Relevant: a kind discriminator
-// and exactly one of the note, doc, log, runbook, investigation, or plan it
-// carries (the field matching Kind is set, the others zero), the summed
+// and exactly one of the note, doc, log, runbook, investigation, plan, or answer
+// it carries (the field matching Kind is set, the others zero), the summed
 // relevance Score, the matched Reasons in fixed priority order, and the drift
-// Verdict. Notes and docs carry their content verdict; a log, runbook,
+// Verdict. Notes, docs, and answers carry their content verdict; a log, runbook,
 // investigation, or plan never drifts, so its Verdict is empty. The full entity
 // is carried so a caller can build its own DTOs and lean lines.
 type RelevantEntry struct {
@@ -78,6 +78,7 @@ type RelevantEntry struct {
 	Runbook       model.Runbook
 	Investigation model.Investigation
 	Plan          model.Plan
+	Answer        model.Answer
 	Score         int
 	Reasons       []string
 	Verdict       Verdict
@@ -96,6 +97,8 @@ func (e RelevantEntry) id() model.EntityID {
 		return e.Investigation.ID
 	case model.KindPlan:
 		return e.Plan.ID
+	case model.KindAnswer:
+		return e.Answer.ID
 	default:
 		return e.Note.ID
 	}
@@ -114,6 +117,8 @@ func (e RelevantEntry) updatedAt() int64 {
 		return e.Investigation.UpdatedAt
 	case model.KindPlan:
 		return e.Plan.UpdatedAt
+	case model.KindAnswer:
+		return e.Answer.UpdatedAt
 	default:
 		return e.Note.UpdatedAt
 	}
@@ -126,8 +131,8 @@ type scoredNote struct {
 	reasons []string
 }
 
-// Relevant scores every live note, doc, log, active runbook, investigation, and
-// plan against target and returns those with a positive score, each carrying its
+// Relevant scores every live note, doc, log, active runbook, investigation,
+// plan, and answer against target and returns those with a positive score, each carrying its
 // drift verdict, sorted by score descending, then UpdatedAt descending, then id
 // ascending. filter.Branch and filter.Base override the resolved branch and
 // merge-base base (taken verbatim, assumed already validated); an empty Branch
@@ -195,6 +200,24 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 			continue
 		}
 		scored = append(scored, RelevantEntry{Kind: model.KindDoc, Doc: d, Score: score, Reasons: reasons})
+	}
+
+	answers, err := c.s.ListAnswers(ctx, false, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range answers {
+		score, reasons, err := c.scoreAnchors(ctx, a.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, err
+		}
+		if score == 0 {
+			continue
+		}
+		if filter.Attached && !anchoredNear(reasons) {
+			continue
+		}
+		scored = append(scored, RelevantEntry{Kind: model.KindAnswer, Answer: a, Score: score, Reasons: reasons})
 	}
 
 	logs, err := c.s.ListLogs(ctx, false)
@@ -300,13 +323,15 @@ func anchoredNear(reasons []string) bool {
 
 // entryVerdict computes the drift verdict for a kept entity against a single
 // head/now snapshot shared across the whole ranked batch, dispatching to the
-// note/doc verdict core by kind. A log, runbook, investigation, or plan never
+// note/doc/answer verdict core by kind. A log, runbook, investigation, or plan never
 // drifts — none has a freshness lifecycle — so each short-circuits to an empty
 // verdict.
 func (c *Client) entryVerdict(ctx context.Context, e RelevantEntry, head model.SHA, now time.Time, staleAfter time.Duration, worktree bool) (Verdict, error) {
 	switch e.Kind {
 	case model.KindDoc:
 		return c.verdictOf(ctx, head, freshFromDoc(e.Doc), now, staleAfter, worktree)
+	case model.KindAnswer:
+		return c.verdictOf(ctx, head, freshFromAnswer(e.Answer), now, staleAfter, worktree)
 	case model.KindLog, model.KindRunbook, model.KindInvestigation, model.KindPlan:
 		return "", nil
 	default:
