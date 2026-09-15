@@ -11,12 +11,16 @@ from pathlib import Path
 from typing import Any
 
 from captain_hook import BaseHookEvent, CommandLine, CustomCondition
-from pydantic import BaseModel
+from captain_hook.state import SeenKeys
+from pydantic import BaseModel, Field
 
 NATIVE_TASK_MIRROR_THRESHOLD = 5
 
 # Max durable tasks the session-start floater shows before a "+K more" tail.
 SESSION_TASK_CAP = 7
+SESSION_ANSWER_CAP = 8
+ANSWER_CANDIDATE_LIMIT = 50
+ANSWERS_SCOPE = "answers"
 # Per-session fire cap for advisories that aren't once-per-session and don't self-dedup.
 NUDGE_MAX_FIRES = 3
 # Cap on body/diff/plan text handed to a small-model classifier.
@@ -66,6 +70,12 @@ class McpActive(BaseModel):
     active: bool = False
 
 
+class SessionAnswers(BaseModel):
+    """Session-durable ledger of the answers this session captured or surfaced, id to rendered line, oldest first."""
+
+    lines: dict[str, str] = Field(default_factory=dict)
+
+
 def is_single_command(cl: CommandLine) -> bool:
     """Report whether the line is one command — no pipe, redirect, or ``&&``/``;`` chain."""
     return len(cl.parts) == 1 and not cl.q.uses_redirect()
@@ -110,6 +120,9 @@ CC_NOTES_TOOLS = frozenset(
         # doc
         "doc_add", "doc_edit", "doc_rm", "doc_show", "doc_list", "doc_search",
         "doc_review", "doc_verify", "doc_supersede", "doc_expire",
+        # answer
+        "answer_add", "answer_edit", "answer_rm", "answer_show", "answer_list", "answer_search",
+        "answer_review", "answer_verify", "answer_supersede", "answer_expire",
         # log
         "log_add", "log_append", "log_edit", "log_rm", "log_show", "log_list", "log_search",
         "log_entry_list",
@@ -255,7 +268,7 @@ def parse_relevant(out: str | None) -> list[dict[str, Any]]:
 
 def entry_kind(entry: dict[str, Any]) -> str:
     kind = entry.get("kind")
-    return kind if kind in ("doc", "log", "runbook", "investigation", "plan") else "note"
+    return kind if kind in ("doc", "log", "runbook", "investigation", "plan", "answer") else "note"
 
 
 def entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
@@ -337,6 +350,7 @@ def render_note_lines(entries: list[dict[str, Any]]) -> list[str]:
         "runbook": render_runbook_line,
         "investigation": render_investigation_line,
         "plan": render_plan_line,
+        "answer": render_answer_line,
     }
     return [dispatch.get(entry_kind(e), render_note_line)(e) for e in entries]
 
@@ -419,6 +433,48 @@ def render_plan_line(entry: dict[str, Any]) -> str:
         line += f" ({reasons})"
     line += f" — cc-notes plan show {short}"
     return line
+
+
+def answer_line(answer: dict[str, Any]) -> str:
+    """One answer as ``<short id> <question> → <answer>``, the answer being the body's first line."""
+    chosen = answer.get("body", "").partition("\n")[0]
+    return f"{short_id(answer.get('id', ''))} {answer.get('title', '')} → {chosen}"
+
+
+def render_answer_line(entry: dict[str, Any]) -> str:
+    answer = entry.get("answer", {})
+    line = answer_line(answer)
+    if drift := answer.get("drift"):
+        line += f" [{drift}]{drift_suffix(answer)}"
+    if reasons := ", ".join(entry.get("reasons", [])):
+        line += f" ({reasons})"
+    return line
+
+
+def parse_answers(out: str | None) -> list[dict[str, Any]]:
+    """Parse `cc-notes answer list --json` into its summary rows, id-less rows dropped."""
+    return [a for a in parse_tasks(out) if isinstance(a.get("id"), str) and a["id"]]
+
+
+def durable_answers(evt: BaseHookEvent) -> list[dict[str, Any]]:
+    """The most recently updated live ``scope:durable`` answers, newest first."""
+    out = run_cc_notes(evt, "answer", "list", "--json", "--label", "scope:durable", "--limit", str(ANSWER_CANDIDATE_LIMIT))
+    return parse_answers(out)
+
+
+def unseen_answers(evt: BaseHookEvent, answers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The answers not yet captured or surfaced this session, without marking any of them seen."""
+    seen = set(evt.ctx.s.load(SeenKeys).seen.get(ANSWERS_SCOPE, []))
+    return [a for a in answers if a["id"] not in seen]
+
+
+def remember_answers(evt: BaseHookEvent, answers: list[dict[str, Any]]) -> list[str]:
+    """Mark ``answers`` seen and ledger their lines for the compact restore; the rendered lines."""
+    lines = {a["id"]: answer_line(a) for a in answers}
+    evt.ctx.s.unseen(list(lines), scope=ANSWERS_SCOPE)
+    with evt.ctx.s[SessionAnswers].mutate() as state:
+        state.lines.update(lines)
+    return list(lines.values())
 
 
 def filter_drifted(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -580,6 +636,17 @@ class CcNotesMcpToolCall(CustomCondition):
 
     def check(self, evt: BaseHookEvent) -> bool:
         return bool(evt.tool_name) and evt.tool_name.startswith(MCP_TOOL_PREFIX)
+
+
+class AnswerFileSurfacing(CustomCondition):
+    """Matches when the repo opted into surfacing answers on file read/edit via ``cc-notes.answers.fileSurfacing``."""
+
+    def check(self, evt: BaseHookEvent) -> bool:
+        try:
+            value = evt.ctx.git("config", "--type=bool", "--get", "cc-notes.answers.fileSurfacing")
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return (value or "").strip() == "true"
 
 
 class CcNotesAvailable(CustomCondition):
