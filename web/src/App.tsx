@@ -149,6 +149,7 @@ function AppShell() {
         d.runbooks,
         d.investigations,
         d.plans,
+        d.answers,
       ]) {
         for (const s of bucket) if (s.title !== "") m.set(s.id, s.title);
       }

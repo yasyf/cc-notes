@@ -190,7 +190,7 @@ describe("normalizeEntities", () => {
     // An empty repo: the Go side marshals each nil kind slice as null.
     const state = normalizeEntities(
       JSON.parse(
-        `{"notes":null,"docs":null,"logs":null,"tasks":null,"sprints":null,"projects":null,"runbooks":null,"investigations":null,"plans":null}`,
+        `{"notes":null,"docs":null,"logs":null,"tasks":null,"sprints":null,"projects":null,"runbooks":null,"investigations":null,"plans":null,"answers":null}`,
       ),
     );
     expect(state.notes).toEqual([]);
@@ -202,6 +202,7 @@ describe("normalizeEntities", () => {
     expect(state.runbooks).toEqual([]);
     expect(state.investigations).toEqual([]);
     expect(state.plans).toEqual([]);
+    expect(state.answers).toEqual([]);
   });
 
   it("keeps present buckets and passes their snapshots through verbatim", () => {
