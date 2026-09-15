@@ -226,8 +226,6 @@ export interface NoteSnapshot {
   attachments?: Attachment[];
 }
 
-// AnswerSnapshot is the folded snapshot of an answer: the question as title and
-// the chosen answer as body, on a note's exact field set. Mirrors model.Answer.
 export type AnswerSnapshot = NoteSnapshot;
 
 // DocSnapshot is the folded snapshot of a doc: a Note plus the free-text `when`
