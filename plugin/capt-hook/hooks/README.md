@@ -275,8 +275,8 @@ keeps the teach.
 otherwise ask again. After every `AskUserQuestion` this handler pairs each question with its
 answer by exact question text (a multiSelect answer keeps its comma-joined labels, free
 "Other" text records verbatim) and records it with `cc-notes answer add`: the question as the
-title, clamped to the 256-byte title cap, and a body of the answer, an `Options:` line, and the user's
-`Notes:` annotation. One small-model call labels each answer `scope:durable` (a preference,
+title, clamped to the 256-byte title cap, and a body of the answer, a `Question:` line with the
+full text when the title was clamped, an `Options:` line, and the user's `Notes:` annotation. One small-model call labels each answer `scope:durable` (a preference,
 convention, or decision) or `scope:ephemeral` (a one-off pick), and names the earlier durable
 answer it replaces, which the handler then retires with `answer supersede <old> --by <new>`. A
 model error records every answer durable with no supersede. Each record is anchored to the

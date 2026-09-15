@@ -5242,6 +5242,27 @@ def test_record_user_answers_supersedes(monkeypatch, tmp_path) -> None:
     check("answer supersede: ledger swaps old for new", list(lines) == ["ans0001aaaa"] and lines["ans0001aaaa"] == "ans0001 Which language? → Go", repr(lines))
 
 
+def test_record_user_answers_long_question(monkeypatch, tmp_path) -> None:
+    """A question over the title cap records a clamped title plus the full text on a Question: line."""
+    long_q = "Which retry policy should the sync loop use when the remote rejects a push? " * 5
+    evt, calls = answer_event(monkeypatch, tmp_path, [question(long_q, labels=("Backoff", "Fail"))], {"answers": {long_q: "Backoff"}})
+    record_user_answers(evt)
+    adds = answer_adds(calls)
+    check("answer long: fixture exceeds the cap", len(long_q.encode()) > MAX_TITLE_BYTES)
+    check("answer long: title clamped", adds and adds[0][-1] == clamp_title(long_q) and adds[0][-1] != long_q, repr(adds))
+    check("answer long: Question: line after the answer", adds and f"--body=Backoff\nQuestion: {long_q}\nOptions: Backoff | Fail" in adds[0], repr(adds))
+    lines = evt.ctx.s.load(SessionAnswers).lines
+    check("answer long: ledger line renders the full question", lines.get("ans0001aaaa") == f"ans0001 {long_q} → Backoff", repr(lines))
+    record = durable_answer("ans0001aaaa", title=clamp_title(long_q), body=f"Backoff\nQuestion: {long_q}\nOptions: Backoff | Fail")
+    check("answer long: render_note_lines uses the full question", render_note_lines([{"kind": "answer", "answer": record}]) == [f"ans0001 {long_q} → Backoff"])
+
+    triage_prompts: list[str] = []
+    later, _ = answer_event(monkeypatch, tmp_path / "later", [question(long_q)], {"answers": {long_q: "Fail"}}, candidates=[record])
+    monkeypatch.setattr(later.ctx, "call_llm", lambda prompt, **kw: triage_prompts.append(str(prompt)) or AnswerTriage())
+    record_user_answers(later)
+    check("answer long: triage candidates carry the full question", triage_prompts and f"ans0001aaaa\tans0001 {long_q} → Backoff" in triage_prompts[0], repr(triage_prompts))
+
+
 def test_record_user_answers_unknown_supersede_ignored(monkeypatch, tmp_path) -> None:
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}},

@@ -135,6 +135,8 @@ def answered_questions(evt: PostToolUseEvent) -> list[AnsweredQuestion]:
 
 def answer_body(pair: AnsweredQuestion) -> str:
     lines = [pair.answer]
+    if clamp_title(pair.question) != pair.question:
+        lines.append(f"Question: {pair.question}")
     if pair.options:
         lines.append("Options: " + " | ".join(pair.options))
     if pair.notes:
@@ -148,7 +150,7 @@ def triage_answers(evt: PostToolUseEvent, pairs: list[AnsweredQuestion], candida
         Prompt()
         .system(ANSWER_TRIAGE_SYSTEM)
         .context("answers", "\n".join(f"{i}\t{p.question} → {p.answer}" for i, p in enumerate(pairs))[:LLM_INPUT_CAP])
-        .context("candidates", "\n".join(f"{a['id']}\t{a.get('title', '')} → {a.get('body', '')}" for a in candidates)[:LLM_INPUT_CAP])
+        .context("candidates", "\n".join(f"{a['id']}\t{answer_line(a)}" for a in candidates)[:LLM_INPUT_CAP])
         .ask("For each answer index: is it durable or ephemeral, and which candidate id, if any, does it supersede?")
     )
     try:
@@ -239,7 +241,7 @@ def record_user_answers(evt: PostToolUseEvent) -> HookResult | None:
             with evt.ctx.s[SessionAnswers].mutate() as state:
                 state.lines.pop(old, None)
         acks.append(ack + ")")
-        recorded.append({"id": answer_id, "title": pair.question, "body": pair.answer})
+        recorded.append({"id": answer_id, "title": clamp_title(pair.question), "body": answer_body(pair)})
     if not recorded:
         return None
     remember_answers(evt, recorded)

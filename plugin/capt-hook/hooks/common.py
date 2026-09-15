@@ -435,10 +435,18 @@ def render_plan_line(entry: dict[str, Any]) -> str:
     return line
 
 
+def answer_question(answer: dict[str, Any]) -> str:
+    """The full question text: the body's ``Question:`` line when the title was clamped, else the title."""
+    for line in answer.get("body", "").split("\n")[1:]:
+        if line.startswith("Question: "):
+            return line.removeprefix("Question: ")
+    return answer.get("title", "")
+
+
 def answer_line(answer: dict[str, Any]) -> str:
     """One answer as ``<short id> <question> → <answer>``, the answer being the body's first line."""
     chosen = answer.get("body", "").partition("\n")[0]
-    return f"{short_id(answer.get('id', ''))} {answer.get('title', '')} → {chosen}"
+    return f"{short_id(answer.get('id', ''))} {answer_question(answer)} → {chosen}"
 
 
 def render_answer_line(entry: dict[str, Any]) -> str:
