@@ -17,6 +17,7 @@ const (
 	entityRunbook       = "runbook"
 	entityInvestigation = "investigation"
 	entityPlan          = "plan"
+	entityAnswer        = "answer"
 )
 
 // statusDeleted is the Lane.Status of a synthesized deleted-branch lane.
