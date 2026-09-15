@@ -70,10 +70,15 @@ def float_session_tasks(evt: UserPromptSubmitEvent) -> HookResult | None:
 @on(
     Event.UserPromptSubmit,
     only_if=[CcNotesAvailable()],
-    max_fires=1,
 )
 def float_session_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
-    """Float the most recent durable answers the user gave in earlier sessions, once, at the first prompt."""
+    """Float the most recent durable answers the user gave in earlier sessions, once, at the first prompt.
+
+    The first prompt is claimed before listing, as float_prompt_answers claims it, so an empty listing
+    spends the digest instead of refunding a ``max_fires`` shot to a later prompt.
+    """
+    if not evt.ctx.s.once("first", scope="session-answers"):
+        return None
     fresh = unseen_answers(evt, durable_answers(evt))
     if not fresh:
         return None

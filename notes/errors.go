@@ -40,6 +40,9 @@ var (
 	// its body — the approved text carried verbatim — so an empty one records
 	// nothing, and blanking an approved plan is never a legal edit.
 	ErrEmptyBody = errors.New("body required")
+	// ErrSelfSupersede reports a supersede edge whose replacement is the entity
+	// itself, which would hide the entity behind its own edge.
+	ErrSelfSupersede = errors.New("an entity cannot supersede itself")
 )
 
 // AmbiguousError is the rich candidate set behind ErrAmbiguous, re-exported so

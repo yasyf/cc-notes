@@ -83,6 +83,9 @@ func (c *Client) VerifyAnswer(ctx context.Context, id model.EntityID) (model.Ans
 // SupersedeAnswer records that the answer by replaces id, mirroring
 // SupersedeNote.
 func (c *Client) SupersedeAnswer(ctx context.Context, id, by model.EntityID) (model.Answer, error) {
+	if id == by {
+		return model.Answer{}, ErrSelfSupersede
+	}
 	if _, err := c.Answer(ctx, by); err != nil {
 		return model.Answer{}, err
 	}

@@ -24,9 +24,12 @@ from .common import (
     filter_drifted,
     mcp_active,
     parse_relevant,
+    remember_answers,
     render_note_lines,
     run_cc_notes,
 )
+
+RELEVANT_LIMIT = 10
 
 SURFACE_FILTER_SYSTEM = (
     "You are a precision filter on the recall side. A cheap ranker has surfaced durable cc-notes "
@@ -53,11 +56,18 @@ def unseen_entries(evt: PostToolUseEvent, entries: list[dict[str, Any]], *, scop
     return [e for e in entries if entry_payload(e)["id"] in fresh]
 
 
-def file_surfaced(evt: PostToolUseEvent, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop answer entries unless the repo opted into file surfacing for answers."""
-    if not any(entry_kind(e) == "answer" for e in entries) or AnswerFileSurfacing().check(evt):
-        return entries
-    return [e for e in entries if entry_kind(e) != "answer"]
+def file_surfaced(evt: PostToolUseEvent, out: str | None) -> list[dict[str, Any]]:
+    """The top :data:`RELEVANT_LIMIT` of an uncapped ``relevant`` listing once answers are dropped: every answer unless the repo opted into file surfacing for them, and expired ones always."""
+    entries = parse_relevant(out)
+    if any(entry_kind(e) == "answer" for e in entries):
+        surfacing = AnswerFileSurfacing().check(evt)
+        entries = [e for e in entries if entry_kind(e) != "answer" or (surfacing and not entry_payload(e).get("stale_at"))]
+    return entries[:RELEVANT_LIMIT]
+
+
+def remember_surfaced_answers(evt: PostToolUseEvent, entries: list[dict[str, Any]]) -> None:
+    if answers := [entry_payload(e) for e in entries if entry_kind(e) == "answer"]:
+        remember_answers(evt, answers)
 
 
 def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touched: str) -> list[dict[str, Any]]:
@@ -95,13 +105,14 @@ def float_note_context(evt: PostToolUseEvent) -> HookResult | None:
     """Surface the durable records relevant to a freshly read file, once per id per session."""
     if not evt.file:
         return None
-    entries = file_surfaced(evt, parse_relevant(run_cc_notes(evt, "relevant", str(evt.file), "--json")))
+    entries = file_surfaced(evt, run_cc_notes(evt, "relevant", str(evt.file), "--limit", "0", "--json"))
     fresh = unseen_entries(evt, entries, scope="floated")
     if not fresh:
         return None
     picked = surface_filter(evt, fresh, touched="read")
     if not picked:
         return None
+    remember_surfaced_answers(evt, picked)
     return evt.warn(
         f"You read {evt.file} — durable cc-notes records you should know "
         "(git-synced context, never in the working tree):",
@@ -122,7 +133,7 @@ def check_note_staleness(evt: PostToolUseEvent) -> HookResult | None:
     """Surface drifted records anchored to a path an edit just touched, for reconciliation."""
     if not evt.file:
         return None
-    entries = file_surfaced(evt, parse_relevant(run_cc_notes(evt, "relevant", str(evt.file), "--attached", "--worktree", "--json")))
+    entries = file_surfaced(evt, run_cc_notes(evt, "relevant", str(evt.file), "--attached", "--worktree", "--limit", "0", "--json"))
     drifted = filter_drifted(entries)
     # Distinct `stale` dedup-scope (vs `floated`) so a read-time float never suppresses the
     # edit-time warning for the same id.
@@ -132,6 +143,7 @@ def check_note_staleness(evt: PostToolUseEvent) -> HookResult | None:
     picked = surface_filter(evt, fresh, touched="edited")
     if not picked:
         return None
+    remember_surfaced_answers(evt, picked)
     if mcp_active(evt):
         guidance = (
             f"You edited {evt.file} — durable cc-notes records anchored here look out of date. "

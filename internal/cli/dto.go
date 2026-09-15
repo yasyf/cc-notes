@@ -116,8 +116,9 @@ type docSummaryDTO struct {
 }
 
 // answerSummaryDTO is one answer in a listing or write acknowledgement: the
-// noteSummaryDTO shape plus the answer body and the supersede edge, because a
-// reader renders the question and its answer together straight from a listing.
+// noteSummaryDTO shape plus the answer body, the supersede edge, and the expiry
+// stamp, because a reader renders the question and its answer together straight
+// from a listing and must skip one flagged out-of-date.
 type answerSummaryDTO struct {
 	ID             string   `json:"id"`
 	Title          string   `json:"title"`
@@ -128,6 +129,7 @@ type answerSummaryDTO struct {
 	VerifiedCommit string   `json:"verified_commit,omitempty"`
 	SupersededBy   []string `json:"superseded_by,omitempty"`
 	Drift          string   `json:"drift,omitempty"`
+	StaleAt        string   `json:"stale_at,omitempty"`
 	StaleReason    string   `json:"stale_reason,omitempty"`
 }
 
@@ -624,6 +626,7 @@ func newAnswerSummaryDTO(a model.Answer, drift string) answerSummaryDTO {
 		VerifiedCommit: string(a.VerifiedCommit),
 		SupersededBy:   render.IDStrings(a.SupersededBy),
 		Drift:          drift,
+		StaleAt:        render.OptTimeString(a.StaleAt),
 		StaleReason:    a.StaleReason,
 	}
 }

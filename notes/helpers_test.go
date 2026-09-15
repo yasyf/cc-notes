@@ -121,6 +121,14 @@ func TestBuildWitness(t *testing.T) {
 	}
 }
 
+func TestSupersedeHeadsSelfLoopTerminates(t *testing.T) {
+	const self model.EntityID = "self"
+	all := []model.Note{{ID: self, SupersededBy: []model.EntityID{self}}}
+	if got := supersedeHeads(all, noteSupersedeEdge, self); got != nil {
+		t.Fatalf("supersedeHeads over a self edge = %v, want no head", got)
+	}
+}
+
 func TestDeriveRemote(t *testing.T) {
 	c, dir := newWBClient(t)
 	ctx := t.Context()

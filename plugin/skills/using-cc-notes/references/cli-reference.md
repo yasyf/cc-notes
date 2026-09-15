@@ -2873,11 +2873,12 @@ includes the question and reply together. Neither shape has a `when` property.
 Summary — `answer list`, `answer search`, `answer review`, the top-level `search` and `relevant`,
 and every answer mutation's acknowledgement:
 
-`{"id":string,"title":string,"body":string,"tags":[…],"author":string,"updated_at":rfc3339,"verified_commit":sha,"drift":string,"stale_reason":string}`.
+`{"id":string,"title":string,"body":string,"tags":[…],"author":string,"updated_at":rfc3339,"verified_commit":sha,"superseded_by":[id,…],"drift":string,"stale_at":rfc3339,"stale_reason":string}`.
 The summary keeps the chosen reply and any `Question:`, `Options:`, and `Notes:` lines in `body`.
 `id`, `title`, and `updated_at` are always present. `verified_commit`, `drift`, and `stale_reason`
 follow the note-summary rules: `answer list`, `answer search`, and the top-level `search` compute
 no drift verdict; `answer review`, `relevant`, and mutation acknowledgements do.
+`stale_at` is present on every summary of an expired answer, including `answer list` rows.
 
 Full — `answer show ID --json`:
 

@@ -58,10 +58,10 @@ func classify(err error) (int, string) {
 	// investigation verdict gate) from the notes layer are force-overridable
 	// refusals the CLI maps to a usage error (exit 2), the same code the CLI's own
 	// gates return. ErrEmptyEdit (a no-op edit mask), ErrEmptyBody (a plan edit
-	// blanking the approved text), and an attachment-name collision are likewise
+	// blanking the approved text), a self-supersede, and an attachment-name collision are likewise
 	// malformed invocations the caller fixes and retries — usage, like the CLI's
 	// own arity and mutual-exclusion guards.
-	case errors.As(err, &usage), errors.As(err, &unmet), errors.As(err, &openFindings), errors.Is(err, notes.ErrEmptyEdit), errors.Is(err, notes.ErrEmptyBody), errors.As(err, &attachExists), isFlagGroupError(err):
+	case errors.As(err, &usage), errors.As(err, &unmet), errors.As(err, &openFindings), errors.Is(err, notes.ErrEmptyEdit), errors.Is(err, notes.ErrEmptyBody), errors.Is(err, notes.ErrSelfSupersede), errors.As(err, &attachExists), isFlagGroupError(err):
 		return 2, "usage"
 	// A cross-kind prefix collision (*AmbiguousKindsError) already satisfies
 	// Is(ErrAmbiguous); the explicit type match holds the mapping under a future

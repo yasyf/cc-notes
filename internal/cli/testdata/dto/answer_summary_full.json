@@ -13,5 +13,6 @@
     "answer-newer-001"
   ],
   "drift": "DRIFTED",
+  "stale_at": "2023-11-15T01:13:20Z",
   "stale_reason": "user changed their mind"
 }

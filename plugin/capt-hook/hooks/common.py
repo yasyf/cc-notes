@@ -21,6 +21,7 @@ SESSION_TASK_CAP = 7
 SESSION_ANSWER_CAP = 8
 ANSWER_CANDIDATE_LIMIT = 50
 ANSWERS_SCOPE = "answers"
+ANSWER_METADATA_PREFIXES = ("Question: ", "Options: ", "Notes: ")
 # Per-session fire cap for advisories that aren't once-per-session and don't self-dedup.
 NUDGE_MAX_FIRES = 3
 # Cap on body/diff/plan text handed to a small-model classifier.
@@ -443,10 +444,19 @@ def answer_question(answer: dict[str, Any]) -> str:
     return answer.get("title", "")
 
 
+def answer_text(answer: dict[str, Any]) -> str:
+    """The chosen answer on one line: every body line before the first metadata line, joined by " / "."""
+    chosen: list[str] = []
+    for line in answer.get("body", "").split("\n"):
+        if line.startswith(ANSWER_METADATA_PREFIXES):
+            break
+        chosen.append(line)
+    return " / ".join(chosen)
+
+
 def answer_line(answer: dict[str, Any]) -> str:
-    """One answer as ``<short id> <question> → <answer>``, the answer being the body's first line."""
-    chosen = answer.get("body", "").partition("\n")[0]
-    return f"{short_id(answer.get('id', ''))} {answer_question(answer)} → {chosen}"
+    """One answer as ``<short id> <question> → <answer>``."""
+    return f"{short_id(answer.get('id', ''))} {answer_question(answer)} → {answer_text(answer)}"
 
 
 def render_answer_line(entry: dict[str, Any]) -> str:
@@ -465,9 +475,9 @@ def parse_answers(out: str | None) -> list[dict[str, Any]]:
 
 
 def durable_answers(evt: BaseHookEvent) -> list[dict[str, Any]]:
-    """The most recently updated live ``scope:durable`` answers, newest first."""
+    """The most recently updated live ``scope:durable`` answers not flagged expired, newest first."""
     out = run_cc_notes(evt, "answer", "list", "--json", "--label", "scope:durable", "--limit", str(ANSWER_CANDIDATE_LIMIT))
-    return parse_answers(out)
+    return [a for a in parse_answers(out) if not a.get("stale_at")]
 
 
 def unseen_answers(evt: BaseHookEvent, answers: list[dict[str, Any]]) -> list[dict[str, Any]]:

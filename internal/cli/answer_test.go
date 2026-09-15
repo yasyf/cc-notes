@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/yasyf/cc-notes/internal/cli"
 )
 
 type answerSummaryJSON struct {
@@ -17,6 +19,7 @@ type answerSummaryJSON struct {
 	VerifiedCommit string   `json:"verified_commit"`
 	SupersededBy   []string `json:"superseded_by"`
 	Drift          string   `json:"drift"`
+	StaleAt        string   `json:"stale_at"`
 }
 
 func answerSummaryIDs(answers []answerSummaryJSON) []string {
@@ -99,6 +102,40 @@ func TestAnswerHookContract(t *testing.T) {
 	}](t, mustRun(t, dir, "show", second.ID, "--json"))
 	if shown.Title != question || shown.Body != "Memcached" {
 		t.Fatalf("show = %+v, want the question and Memcached", shown)
+	}
+}
+
+func TestAnswerSupersedeBySelfIsUsage(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "a.go", "v1\n")
+	add := []string{"answer", "add", "--json", "--label", "scope:durable", "--body", "Redis", "--", "Which cache?"}
+	first := mustJSON[answerSummaryJSON](t, mustRun(t, dir, add...))
+	again := mustJSON[answerSummaryJSON](t, mustRun(t, dir, add...))
+	if again.ID != first.ID {
+		t.Fatalf("identical answer add id = %s, want the reused %s", again.ID, first.ID)
+	}
+	_, _, err := runCLI(t, dir, "answer", "supersede", first.ID, "--by", again.ID, "--json")
+	if cli.ExitCode(err) != 2 {
+		t.Fatalf("answer supersede by itself err = %v (exit %d), want usage exit 2", err, cli.ExitCode(err))
+	}
+	live := mustJSON[[]answerSummaryJSON](t, mustRun(t, dir, "answer", "list", "--json"))
+	if !slices.Equal(answerSummaryIDs(live), []string{first.ID}) {
+		t.Fatalf("live answers = %v, want %s still listed", answerSummaryIDs(live), first.ID)
+	}
+}
+
+func TestAnswerListCarriesExpiry(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "a.go", "v1\n")
+	fresh := mustJSON[answerSummaryJSON](t, mustRun(t, dir, "answer", "add", "--json", "--body", "Go", "--", "Which language?"))
+	expired := mustJSON[answerSummaryJSON](t, mustRun(t, dir, "answer", "add", "--json", "--body", "Tabs", "--", "Indent style?"))
+	mustRun(t, dir, "answer", "expire", expired.ID, "--json")
+	stamps := map[string]string{}
+	for _, a := range mustJSON[[]answerSummaryJSON](t, mustRun(t, dir, "answer", "list", "--json")) {
+		stamps[a.ID] = a.StaleAt
+	}
+	if stamps[fresh.ID] != "" || stamps[expired.ID] == "" {
+		t.Fatalf("list stale_at = %v, want empty for %s and set for the expired %s", stamps, fresh.ID, expired.ID)
 	}
 }
 

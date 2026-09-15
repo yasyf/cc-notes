@@ -408,6 +408,9 @@ func (c *Client) VerifyDoc(ctx context.Context, id model.EntityID) (model.Doc, e
 // SupersedeNote records that the note by replaces id. by must resolve to a live
 // note; it is loaded to validate before the edge is written.
 func (c *Client) SupersedeNote(ctx context.Context, id, by model.EntityID) (model.Note, error) {
+	if id == by {
+		return model.Note{}, ErrSelfSupersede
+	}
 	if _, err := c.Note(ctx, by); err != nil {
 		return model.Note{}, err
 	}
@@ -432,6 +435,9 @@ func (c *Client) UnsupersedeNote(ctx context.Context, id, by model.EntityID) (mo
 
 // SupersedeDoc records that the doc by replaces id, mirroring SupersedeNote.
 func (c *Client) SupersedeDoc(ctx context.Context, id, by model.EntityID) (model.Doc, error) {
+	if id == by {
+		return model.Doc{}, ErrSelfSupersede
+	}
 	if _, err := c.Doc(ctx, by); err != nil {
 		return model.Doc{}, err
 	}

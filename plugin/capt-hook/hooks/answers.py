@@ -28,9 +28,9 @@ from .common import (
     answer_line,
     clamp_title,
     durable_answers,
-    ids_match,
     json_field,
     mcp_active,
+    parse_answers,
     remember_answers,
     run_cc_notes,
     short_id,
@@ -161,10 +161,13 @@ def triage_answers(evt: PostToolUseEvent, pairs: list[AnsweredQuestion], candida
 
 
 def superseded_id(verdict: AnswerVerdict | None, candidates: list[dict[str, Any]]) -> str:
-    """The full id of the candidate the verdict names, "" when it names none of them."""
+    """The full id of the one candidate the verdict names exactly or by unique prefix, "" otherwise."""
     if verdict is None or not verdict.supersedes:
         return ""
-    return next((a["id"] for a in candidates if ids_match(a["id"], verdict.supersedes)), "")
+    matches = [a["id"] for a in candidates if a["id"].startswith(verdict.supersedes)]
+    if verdict.supersedes in matches:
+        return verdict.supersedes
+    return matches[0] if len(matches) == 1 else ""
 
 
 def session_paths(evt: PostToolUseEvent) -> list[str]:
@@ -236,7 +239,8 @@ def record_user_answers(evt: PostToolUseEvent) -> HookResult | None:
         if not (answer_id := add_answer(evt, pair, scope, anchors)):
             continue
         ack = f"{short_id(answer_id)} ({scope}"
-        if (old := superseded_id(verdict, candidates)) and run_cc_notes(evt, "answer", "supersede", old, "--by", answer_id, "--json") is not None:
+        old = superseded_id(verdict, candidates)
+        if old and old != answer_id and run_cc_notes(evt, "answer", "supersede", old, "--by", answer_id, "--json") is not None:
             ack += f", supersedes {short_id(old)}"
             with evt.ctx.s[SessionAnswers].mutate() as state:
                 state.lines.pop(old, None)
@@ -291,17 +295,40 @@ def float_prompt_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
     )
 
 
+def current_answers(evt: SessionStartEvent, ids: list[str]) -> list[dict[str, Any]]:
+    """The live, unexpired records ``ids`` resolve to now, following supersede edges, in ``ids`` order with the latest position winning."""
+    rows = {a["id"]: a for a in parse_answers(run_cc_notes(evt, "answer", "list", "--json", "--include-superseded"))}
+
+    def heads(answer_id: str, visited: set[str]) -> list[dict[str, Any]]:
+        if answer_id in visited or (row := rows.get(answer_id)) is None:
+            return []
+        visited.add(answer_id)
+        if replacements := row.get("superseded_by"):
+            return [head for by in replacements for head in heads(by, visited)]
+        return [] if row.get("stale_at") else [row]
+
+    current: dict[str, dict[str, Any]] = {}
+    for answer_id in ids:
+        for head in heads(answer_id, set()):
+            current.pop(head["id"], None)
+            current[head["id"]] = head
+    return list(current.values())
+
+
 @on(
     Event.SessionStart,
-    only_if=[CompactResume()],
+    only_if=[CompactResume(), CcNotesAvailable()],
     tests={
         Input(source="startup"): Allow(),
         Input(source="compact"): Allow(),
     },
 )
 def restore_answers_after_compact(evt: SessionStartEvent) -> HookResult | None:
-    """After a compaction, re-inject the answers this session captured or surfaced, most recent last."""
-    lines = list(evt.ctx.s.load(SessionAnswers).lines.values())[-RESTORE_ANSWER_CAP:]
-    if not lines:
+    """After a compaction, re-inject the current form of the answers this session captured or surfaced, most recent last."""
+    ids = list(evt.ctx.s.load(SessionAnswers).lines)
+    if not ids:
         return None
-    return evt.warn("Context was just compacted. Answers the user gave, captured or surfaced this session:", *lines)
+    answers = current_answers(evt, ids)[-RESTORE_ANSWER_CAP:]
+    if not answers:
+        return None
+    return evt.warn("Context was just compacted. Answers the user gave, captured or surfaced this session:", *(answer_line(a) for a in answers))
