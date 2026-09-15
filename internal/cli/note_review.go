@@ -23,11 +23,11 @@ const (
 	verdictStale      = string(notes.VerdictStale)
 )
 
-// freshEntity carries the freshness-relevant fields a Note and a Doc share —
-// anchors, content witness, last-verify time, the out-of-date flag, and
-// supersede edges — so one verdict/drift implementation serves both kinds.
-// model.Note and model.Doc both expose these as fields; the cli-local adapter
-// (freshFromNote/freshFromDoc) projects them without colliding with any method.
+// freshEntity carries the freshness-relevant fields a Note, Doc, and Answer
+// share — anchors, content witness, last-verify time, the out-of-date flag, and
+// supersede edges — so one verdict/drift implementation serves every such kind.
+// Each exposes these as fields; the cli-local adapters (freshFromNote,
+// freshFromDoc, freshFromAnswer) project them without colliding with any method.
 type freshEntity struct {
 	Anchors      []model.Anchor
 	Witness      []model.AnchorWitness
@@ -44,6 +44,17 @@ func freshFromNote(n model.Note) freshEntity {
 		VerifiedAt:   n.VerifiedAt,
 		StaleAt:      n.StaleAt,
 		SupersededBy: n.SupersededBy,
+	}
+}
+
+// freshFromAnswer projects an answer onto its freshness fields.
+func freshFromAnswer(a model.Answer) freshEntity {
+	return freshEntity{
+		Anchors:      a.Anchors,
+		Witness:      a.Witness,
+		VerifiedAt:   a.VerifiedAt,
+		StaleAt:      a.StaleAt,
+		SupersededBy: a.SupersededBy,
 	}
 }
 
@@ -202,6 +213,13 @@ func noteVerdict(ctx context.Context, s *store.Store, head model.SHA, n model.No
 // and precedence as a note. See verdictOf.
 func docVerdict(ctx context.Context, s *store.Store, head model.SHA, d model.Doc, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
 	return verdictOf(ctx, s, head, freshFromDoc(d), now, staleAfter, worktree)
+}
+
+// answerVerdict computes the single review verdict for a against live content
+// at head, returning "" when the answer is fresh. An answer carries the same
+// verdict set and precedence as a note. See verdictOf.
+func answerVerdict(ctx context.Context, s *store.Store, head model.SHA, a model.Answer, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
+	return verdictOf(ctx, s, head, freshFromAnswer(a), now, staleAfter, worktree)
 }
 
 // liveAnchorOID resolves the current content oid of a path or directory anchor.

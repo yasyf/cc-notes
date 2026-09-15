@@ -99,6 +99,10 @@ type (
 		planSummaryDTO
 		writeAck
 	}
+	answerAckDTO struct {
+		answerSummaryDTO
+		writeAck
+	}
 )
 
 // printNote writes n as its JSON summary DTO — carrying the drift verdict
@@ -139,6 +143,25 @@ func printDoc(cmd *cobra.Command, c *notes.Client, d model.Doc, jsonOut bool, ac
 		return err
 	}
 	return printJSON(cmd.OutOrStdout(), docAckDTO{docSummaryDTO: newDocSummaryDTO(d, string(verdict)), writeAck: ackOf(ack)})
+}
+
+// printAnswer writes a as its JSON summary DTO — carrying the answer body and
+// the drift verdict computed against live content — or its lean line.
+func printAnswer(cmd *cobra.Command, c *notes.Client, a model.Answer, jsonOut bool, ack ...writeAck) error {
+	if !jsonOut {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanAnswerLine(a))
+		return err
+	}
+	ctx := cmd.Context()
+	staleAfter, err := c.NoteStaleAfter(ctx)
+	if err != nil {
+		return err
+	}
+	verdict, err := c.AnswerVerdict(ctx, a, staleAfter, false)
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), answerAckDTO{answerSummaryDTO: newAnswerSummaryDTO(a, string(verdict)), writeAck: ackOf(ack)})
 }
 
 // printLog writes l as its JSON summary DTO — carrying the entry tally, not the

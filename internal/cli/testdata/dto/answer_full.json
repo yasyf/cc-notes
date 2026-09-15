@@ -1,0 +1,48 @@
+{
+  "id": "answer-full-00000000000000000000000000000",
+  "title": "Which cache backend?",
+  "body": "Redis\nOptions: Redis | Memcached\nNotes: already run for queues",
+  "tags": [
+    "header:Cache",
+    "scope:durable"
+  ],
+  "anchors": [
+    {
+      "kind": "dir",
+      "value": "internal/api",
+      "witness": "f00ba12"
+    },
+    {
+      "kind": "path",
+      "value": "internal/cli/output.go"
+    }
+  ],
+  "author": "ada \u003cada@example.com\u003e",
+  "created_at": "2023-11-14T22:13:20Z",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "verified_at": "2023-11-15T00:13:20Z",
+  "verified_by": "ada \u003cada@example.com\u003e",
+  "verified_commit": "c0ffee0000000000000000000000000000000000",
+  "superseded_by": [
+    "answer-newer-001"
+  ],
+  "supersedes": [
+    "answer-older-001"
+  ],
+  "live_head": [
+    "answer-head-0001"
+  ],
+  "drift": "DRIFTED",
+  "deleted": true,
+  "stale_at": "2023-11-15T01:13:20Z",
+  "stale_by": "bob \u003cbob@example.com\u003e",
+  "stale_reason": "user changed their mind",
+  "attachments": [
+    {
+      "name": "dump.log",
+      "oid": "abc123",
+      "size": 42,
+      "present": true
+    }
+  ]
+}

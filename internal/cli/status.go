@@ -62,6 +62,7 @@ func printStatusText(cmd *cobra.Command, report notes.StatusReport) error {
 	}
 	fmt.Fprintf(&b, "notes: %d total, %d need review\n", report.Notes.Total, report.Notes.NeedsReview)
 	fmt.Fprintf(&b, "docs: %d total, %d need review\n", report.Docs.Total, report.Docs.NeedsReview)
+	fmt.Fprintf(&b, "answers: %d total, %d need review\n", report.Answers.Total, report.Answers.NeedsReview)
 	fmt.Fprintf(&b, "logs: %d total\n", report.Logs)
 	fmt.Fprintf(&b, "papercuts: %d total\n", report.Papercuts)
 	fmt.Fprintf(&b, "investigations: %d open, %d awaiting confirmation, %d open findings\n",
@@ -103,6 +104,7 @@ func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusRep
 		Runs:       make([]statusRunDTO, 0, len(report.Runs)),
 		Notes:      statusNotesDTO{Total: report.Notes.Total, NeedsReview: report.Notes.NeedsReview},
 		Docs:       statusNotesDTO{Total: report.Docs.Total, NeedsReview: report.Docs.NeedsReview},
+		Answers:    statusNotesDTO{Total: report.Answers.Total, NeedsReview: report.Answers.NeedsReview},
 		Logs:       statusLogsDTO{Total: report.Logs},
 		Papercuts:  statusLogsDTO{Total: report.Papercuts},
 		Investigations: statusInvestigationsDTO{
@@ -155,7 +157,7 @@ func statusBacklogDTOs(backlog []notes.StatusBacklogTask, blocks map[model.Entit
 
 // statusDTO fixes the JSON field order for a status report: the current
 // branch, the backlog and your-branch task slices, the in-progress tasks
-// grouped by assignee, the runs in flight, the note, doc, log, papercut,
+// grouped by assignee, the runs in flight, the note, doc, answer, log, papercut,
 // and investigation summaries, and the skipped-op count.
 type statusDTO struct {
 	Branch         string                  `json:"branch"`
@@ -165,6 +167,7 @@ type statusDTO struct {
 	Runs           []statusRunDTO          `json:"runs,omitempty"`
 	Notes          statusNotesDTO          `json:"notes"`
 	Docs           statusNotesDTO          `json:"docs"`
+	Answers        statusNotesDTO          `json:"answers"`
 	Logs           statusLogsDTO           `json:"logs"`
 	Papercuts      statusLogsDTO           `json:"papercuts"`
 	Investigations statusInvestigationsDTO `json:"investigations"`
