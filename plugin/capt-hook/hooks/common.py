@@ -120,7 +120,6 @@ CC_NOTES_TOOLS = frozenset(
         # doc
         "doc_add", "doc_edit", "doc_rm", "doc_show", "doc_list", "doc_search",
         "doc_review", "doc_verify", "doc_supersede", "doc_expire",
-        # answer
         "answer_add", "answer_edit", "answer_rm", "answer_show", "answer_list", "answer_search",
         "answer_review", "answer_verify", "answer_supersede", "answer_expire",
         # log
