@@ -110,7 +110,7 @@ EVIDENCE_TRIPWIRE_BYTES = 1 << 20
 # "variant"; "scratchpad" is the very segment EXEMPT_DEST_SEGMENTS treats as a fine
 # landing tree, inverted here — pointing a durable record at one is the smell.
 EPHEMERAL_MARKERS = (*(p + "/" for p in RUN_OUTPUT_PREFIXES), "scratchpad")
-RECORD_SUBCOMMANDS = frozenset((noun, verb) for noun in ("note", "doc", "log") for verb in ("add", "edit", "append"))
+RECORD_SUBCOMMANDS = frozenset((noun, verb) for noun in ("note", "doc", "log", "answer") for verb in ("add", "edit", "append"))
 # Noun-only record writes: a top-level noun that takes its prose as a bare positional, no verb
 # (`cc-notes papercut "TEXT"`), mapped to its READ verbs — a first operand in that set (`papercut
 # list`) is a read, not a record write. Consulted by the same record-command scanner as
@@ -135,9 +135,9 @@ SKIPPED_VALUE_FLAGS = frozenset({
 # The MCP analog of the Bash ephemeral vocabulary: the record-write tools whose args carry
 # prose, and the tool_input fields that prose flows through. The Bash-only condition above
 # can't see MCP writes, so a sibling condition scans these fields instead.
-MCP_RECORD_WRITE_TOOLS = ("note_add", "doc_add", "log_add", "log_append", "note_edit", "doc_edit", "papercut")
+MCP_RECORD_WRITE_TOOLS = ("note_add", "doc_add", "answer_add", "log_add", "log_append", "note_edit", "doc_edit", "answer_edit", "papercut")
 MCP_RECORD_WRITE_NAMES = tuple(MCP_TOOL_PREFIX + t for t in MCP_RECORD_WRITE_TOOLS)
-# The prose-bearing input fields across those tools, per internal/mcpserver/tools_*.go: note/doc
+# The prose-bearing input fields across those tools, per internal/mcpserver/tools_*.go: note/doc/answer
 # carry `body`, while log_add and log_append both carry `entry`. No write tool
 # has a `message` field.
 MCP_CONTENT_FIELDS = ("title", "body", "entry")
@@ -637,7 +637,7 @@ def ephemeral_papercut(line: CommandLine) -> bool:
 
 
 class EphemeralRecordReference(CustomCondition):
-    """Matches a cc-notes note/doc/log/papercut record whose title or body text points at a purge-bound path (/tmp, /var, a session scratchpad)."""
+    """Matches a cc-notes note/doc/answer/log/papercut record whose title or body text points at a purge-bound path (/tmp, /var, a session scratchpad)."""
 
     def check(self, evt: BaseHookEvent) -> bool:
         line = evt.cmd.line
@@ -720,7 +720,7 @@ def mcp_ephemeral_refs(evt: PostToolUseEvent) -> list[str]:
 
 
 class McpEphemeralReference(CustomCondition):
-    """Matches an MCP note/doc/log/papercut record write whose title or body text points at a purge-bound path."""
+    """Matches an MCP note/doc/answer/log/papercut record write whose title or body text points at a purge-bound path."""
 
     def check(self, evt: BaseHookEvent) -> bool:
         return bool(mcp_ephemeral_refs(evt))

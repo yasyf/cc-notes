@@ -17,7 +17,9 @@ from captain_hook import (
 from pydantic import BaseModel
 
 from .common import (
+    AnswerFileSurfacing,
     CcNotesAvailable,
+    entry_kind,
     entry_payload,
     filter_drifted,
     mcp_active,
@@ -28,7 +30,7 @@ from .common import (
 
 SURFACE_FILTER_SYSTEM = (
     "You are a precision filter on the recall side. A cheap ranker has surfaced durable cc-notes "
-    "records (notes, docs, logs, runbooks, investigations, plans) anchored to a file the agent just touched. The ranker over-selects "
+    "records (notes, docs, logs, runbooks, investigations, plans, answers) anchored to a file the agent just touched. The ranker over-selects "
     "on purpose; your job is to keep the ones worth putting in front of the agent right now and drop "
     "only the clearly irrelevant.\n"
     "\n"
@@ -49,6 +51,13 @@ class SurfacePick(BaseModel):
 def unseen_entries(evt: PostToolUseEvent, entries: list[dict[str, Any]], *, scope: str) -> list[dict[str, Any]]:
     fresh = set(evt.ctx.s.unseen([entry_payload(e)["id"] for e in entries], scope=scope))
     return [e for e in entries if entry_payload(e)["id"] in fresh]
+
+
+def file_surfaced(evt: PostToolUseEvent, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop answer entries unless the repo opted into file surfacing for answers."""
+    if not any(entry_kind(e) == "answer" for e in entries) or AnswerFileSurfacing().check(evt):
+        return entries
+    return [e for e in entries if entry_kind(e) != "answer"]
 
 
 def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touched: str) -> list[dict[str, Any]]:
@@ -86,7 +95,7 @@ def float_note_context(evt: PostToolUseEvent) -> HookResult | None:
     """Surface the durable records relevant to a freshly read file, once per id per session."""
     if not evt.file:
         return None
-    entries = parse_relevant(run_cc_notes(evt, "relevant", str(evt.file), "--json"))
+    entries = file_surfaced(evt, parse_relevant(run_cc_notes(evt, "relevant", str(evt.file), "--json")))
     fresh = unseen_entries(evt, entries, scope="floated")
     if not fresh:
         return None
@@ -113,7 +122,7 @@ def check_note_staleness(evt: PostToolUseEvent) -> HookResult | None:
     """Surface drifted records anchored to a path an edit just touched, for reconciliation."""
     if not evt.file:
         return None
-    entries = parse_relevant(run_cc_notes(evt, "relevant", str(evt.file), "--attached", "--worktree", "--json"))
+    entries = file_surfaced(evt, parse_relevant(run_cc_notes(evt, "relevant", str(evt.file), "--attached", "--worktree", "--json")))
     drifted = filter_drifted(entries)
     # Distinct `stale` dedup-scope (vs `floated`) so a read-time float never suppresses the
     # edit-time warning for the same id.
@@ -127,9 +136,9 @@ def check_note_staleness(evt: PostToolUseEvent) -> HookResult | None:
         guidance = (
             f"You edited {evt.file} — durable cc-notes records anchored here look out of date. "
             "Reconcile each against its kind with the MCP tools: re-confirm it against HEAD "
-            "(note_verify / doc_verify), revise it (note_edit / doc_edit — pass the full new text "
-            "as the body param), replace it (note_supersede / doc_supersede), or flag it out-of-date "
-            "(note_expire / doc_expire)."
+            "(note_verify / doc_verify / answer_verify), revise it (note_edit / doc_edit / answer_edit — "
+            "pass the full new text as the body param), replace it (note_supersede / doc_supersede / "
+            "answer_supersede), or flag it out-of-date (note_expire / doc_expire / answer_expire)."
         )
     else:
         guidance = (
@@ -137,7 +146,8 @@ def check_note_staleness(evt: PostToolUseEvent) -> HookResult | None:
             "Reconcile each against its kind — `verify <id>` to re-confirm it against HEAD, `edit <id>` "
             "to revise it, `supersede <old> --by <new>` to replace it, or `expire <id>` to flag it "
             "out-of-date: for a note use `cc-notes note verify/edit/supersede/expire`, "
-            "for a doc use `cc-notes doc verify/edit/supersede/expire`. To revise a long "
+            "for a doc use `cc-notes doc verify/edit/supersede/expire`, for an answer use "
+            "`cc-notes answer verify/edit/supersede/expire`. To revise a long "
             "record with your file tools, `edit <id> --checkout` writes it to a file and "
             "`--apply` commits the change."
         )
