@@ -144,6 +144,7 @@ cc-notes plan done 8d2ed23 --outcome "status 19.8s -> 2.1s on the monorepo"
 | `cc-notes task validate` | Run a task's stored criterion scripts and record each as met or failed; `task done` gates on the criteria |
 | `cc-notes note add` | Add a note, optionally anchored to a path, directory, commit, or branch |
 | `cc-notes note review` | Flag notes as `DRIFTED`, `STALE`, or `UNVERIFIED` |
+| `cc-notes answer add` | Record a user's reply with its verbatim question; the capt-hook pack captures `AskUserQuestion` replies and recalls durable answers |
 | `cc-notes doc add` | Store a long-form handoff with a `--when` trigger, surfaced to the next agent by `cc-notes relevant` |
 | `cc-notes log add` | Start an append-only journal, surfaced by `cc-notes relevant`; logs skip the review lifecycle since they never drift |
 | `cc-notes papercut` | File a one-paragraph friction complaint to the repo-wide papercuts journal (`papercut list` reads it back) |
@@ -151,7 +152,7 @@ cc-notes plan done 8d2ed23 --outcome "status 19.8s -> 2.1s on the monorepo"
 | `cc-notes runbook add` | Store a repeatable procedure as ordered steps; `runbook run start` tracks each execution with per-step outcomes |
 | `cc-notes plan add` | Record an approved plan verbatim; status tracks it from draft through execution to an outcome, and `task add --plan` links the work |
 | `cc-notes sprint` / `project` | Roll tasks up into the optional grouping layer: time-boxed sprints, long-lived projects |
-| `cc-notes relevant` | Rank the anchored records — notes, docs, logs, runbooks, investigations, plans — most relevant to a path, with the reasons each matched |
+| `cc-notes relevant` | Rank the anchored records — notes, answers, docs, logs, runbooks, investigations, plans — most relevant to a path, with the reasons each matched |
 | `cc-notes reconcile` | Carry merged branches' open tasks onto a target branch |
 | `cc-notes blame` | Name the task(s) a commit implemented |
 | `cc-notes attachment get` | Stream an attachment's content from the local LFS store (`path` prints its object path) |
@@ -162,7 +163,7 @@ Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and t
 
 ## MCP server
 
-`cc-notes mcp` runs a stdio [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that mirrors the CLI surface: one `noun_verb` tool per agent-facing command across all nine entity kinds — `doc_add`, `note_edit`, `task_claim`, `task_criterion_met`, `investigation_open`, `runbook_run_done`, `plan_approve`, `sprint_add`, and the rest — with parity tests guarding both directions. Each tool drives the real CLI in-process, so it validates and returns exactly what the command does — a tool result is the command's `--json`, a summary from a listing or a write, the whole record from a `*_show`. A long doc or note body rides the `body` parameter, so an agent records a handoff in one call, no scratch file and no stdin.
+`cc-notes mcp` runs a stdio [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that mirrors the CLI surface: one `noun_verb` tool per agent-facing command across all ten entity kinds — `doc_add`, `note_edit`, `answer_add`, `task_claim`, `task_criterion_met`, `investigation_open`, `runbook_run_done`, `plan_approve`, `sprint_add`, and the rest — with parity tests guarding both directions. Each tool drives the real CLI in-process, so it validates and returns exactly what the command does — a tool result is the command's `--json`, a summary from a listing or a write, the whole record from a `*_show`. A long doc or note body rides the `body` parameter, so an agent records a handoff in one call, no scratch file and no stdin.
 
 The Claude Code plugin wires the server for you: it ships a bundled `.mcp.json` pointed at the `cc-notes` on your `PATH`, and the tools surface as `mcp__plugin_cc-notes_cc-notes__<tool>`. Nothing to install or configure. The plugin also auto-approves cc-notes CLI and MCP calls, so agents are never permission-prompted for them. Recording a handoff is one tool call:
 
@@ -202,7 +203,7 @@ Attachment content lives on your git host's LFS endpoint and counts against its 
 
 ## Visualize
 
-`cc-notes viz` opens a live web view of the current repo. Every branch draws as a swimlane with its fork and merge points, and every entity's lifecycle events — across all nine kinds, investigations, runbooks, and plans included — pin to the commits that produced them. Three tabs: the swimlane timeline, a commit DAG, and Browse — a faceted entity table with a task kanban, global search, and a markdown detail sidebar. All of them stream updates over SSE, so the view moves as agents claim, edit, and close work.
+`cc-notes viz` opens a live web view of the current repo. Every branch draws as a swimlane with its fork and merge points, and every entity's lifecycle events — including investigations, runbooks, and plans — pin to the commits that produced them. Three tabs: the swimlane timeline, a commit DAG, and Browse — a faceted entity table with a task kanban, global search, and a markdown detail sidebar. All of them stream updates over SSE, so the view moves as agents claim, edit, and close work.
 
 ```bash
 cc-notes viz
