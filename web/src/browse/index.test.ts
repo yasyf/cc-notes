@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type {
+  AnswerSnapshot,
   InvestigationSnapshot,
   PlanSnapshot,
   RunbookSnapshot,
@@ -18,6 +19,31 @@ function emptyState(over: Partial<StateResponse> = {}): StateResponse {
     runbooks: [],
     investigations: [],
     plans: [],
+    answers: [],
+    ...over,
+  };
+}
+
+function answer(over: Partial<AnswerSnapshot> = {}): AnswerSnapshot {
+  return {
+    id: "a1",
+    title: "Which cache backend?",
+    body: "Redis\nOptions: Redis | Memcached",
+    tags: ["scope:durable"],
+    anchors: [{ kind: "branch", value: "main" }],
+    author: "ann",
+    created_at: 1,
+    updated_at: 44,
+    deleted: false,
+    verified_at: 2,
+    verified_by: "ann",
+    verified_commit: "",
+    witness: [],
+    superseded_by: [],
+    stale_at: 0,
+    stale_by: "",
+    stale_reason: "",
+    head: "",
     ...over,
   };
 }
@@ -194,6 +220,20 @@ describe("investigationRow", () => {
   it("places investigations after logs and before runbooks in buildIndex order", () => {
     const state = emptyState({ investigations: [investigation()], runbooks: [runbook()] });
     expect(buildIndex(state).map((r) => r.kind)).toEqual(["investigation", "runbook"]);
+  });
+});
+
+describe("answer rows", () => {
+  it("projects an answer into a verifiable row searchable by its answer", () => {
+    const rows = buildIndex(emptyState({ answers: [answer({ superseded_by: ["a2"] })] }));
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("expected a row");
+    expect(row.kind).toBe("answer");
+    expect(row.verifiable).toBe(true);
+    expect(row.superseded).toBe(true);
+    expect(row.updated).toBe(44);
+    expect(row.bodyLower).toContain("memcached");
   });
 });
 

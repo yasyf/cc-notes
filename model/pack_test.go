@@ -184,6 +184,16 @@ var everyOpSample = []opSample{
 	{"set_plan_status", SetPlanStatus{Status: PlanExecuting}},
 	{"set_plan_outcome", SetPlanOutcome{Outcome: "Shipped in v0.51.0; gc.go collapsed onto Kinds()."}},
 	{"set_plan", SetPlan{Plan: testID}},
+	{"create_answer", CreateAnswer{
+		Nonce: testNonce,
+		Title: "Which cache backend?",
+		Body:  "Redis\nOptions: Redis | Memcached",
+		Tags:  []string{"header:Cache", "scope:durable"},
+		Anchors: []Anchor{
+			{Kind: AnchorPath, Value: "internal/cache/cache.go"},
+			{Kind: AnchorBranch, Value: "main"},
+		},
+	}},
 	{"checkpoint", Checkpoint{
 		EntityID: testID,
 		State: Note{
@@ -989,7 +999,7 @@ func TestOpKindCharset(t *testing.T) {
 // TestNoOpOrSnapshotHasCustomJSON reflects over; the same test asserts every
 // entry is a checkpoint state the codec recognizes, catching a stale entry.
 // Add a new Snapshot type here when you define one.
-var everySnapshot = []Snapshot{Note{}, Doc{}, Log{}, Task{}, Sprint{}, Project{}, Runbook{}, Investigation{}, Plan{}}
+var everySnapshot = []Snapshot{Note{}, Doc{}, Log{}, Task{}, Sprint{}, Project{}, Runbook{}, Investigation{}, Plan{}, Answer{}}
 
 // TestNoOpOrSnapshotHasCustomJSON asserts no op type and no snapshot type
 // implements json.Marshaler or json.Unmarshaler. The byte-splicing codec that

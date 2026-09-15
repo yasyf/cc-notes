@@ -460,7 +460,7 @@ func TestAPIEntityBadKind(t *testing.T) {
 	if code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (%s)", code, body)
 	}
-	if got, want := string(body), `{"error":"unknown kind \"widget\": want note|doc|log|task|sprint|project|runbook|investigation"}`; got != want {
+	if got, want := string(body), `{"error":"unknown kind \"widget\": want note|doc|log|task|sprint|project|runbook|investigation|plan|answer"}`; got != want {
 		t.Errorf("body = %q, want %q", got, want)
 	}
 }

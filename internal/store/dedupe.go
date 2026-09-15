@@ -60,6 +60,11 @@ var dupCheckers = map[model.Kind]dupChecker{
 			func() ([]model.Plan, error) { return s.ListPlans(ctx) },
 			livePlan, samePlanContent)
 	},
+	model.KindAnswer: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
+		return scanDup(candidate, fold.Answer,
+			func() ([]model.Answer, error) { return s.ListAnswers(ctx, false, false) },
+			func(a model.Answer) bool { return a.StaleAt == 0 }, sameAnswerContent)
+	},
 }
 
 // liveRunbook reports whether rb is a valid dedupe target: active and not
@@ -143,6 +148,7 @@ func dedupeCovered(ops []model.Op) bool {
 		case model.CreateNote, model.CreateDoc, model.CreateLog,
 			model.CreateTask, model.CreateSprint, model.CreateProject,
 			model.CreateRunbook, model.CreateInvestigation, model.CreatePlan,
+			model.CreateAnswer,
 			model.AddStep,
 			model.AddAttachment,
 			model.SetSprint, model.SetProject, model.SetPlan,
@@ -167,6 +173,14 @@ func sameDocContent(a, b model.Doc) bool {
 	return a.Title == b.Title &&
 		a.Body == b.Body &&
 		a.When == b.When &&
+		slices.Equal(a.Tags, b.Tags) &&
+		slices.Equal(a.Anchors, b.Anchors) &&
+		slices.Equal(a.Attachments, b.Attachments)
+}
+
+func sameAnswerContent(a, b model.Answer) bool {
+	return a.Title == b.Title &&
+		a.Body == b.Body &&
 		slices.Equal(a.Tags, b.Tags) &&
 		slices.Equal(a.Anchors, b.Anchors) &&
 		slices.Equal(a.Attachments, b.Attachments)

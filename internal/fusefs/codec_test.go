@@ -118,6 +118,8 @@ func createOpFor(kind model.Kind) model.Op {
 		return model.CreateInvestigation{Nonce: nonce, Title: "investigation", Premise: "premise"}
 	case model.KindPlan:
 		return model.CreatePlan{Nonce: nonce, Title: "plan", Body: "body", Status: model.PlanDraft}
+	case model.KindAnswer:
+		return model.CreateAnswer{Nonce: nonce, Title: "answer", Body: "body"}
 	}
 	panic("fusefs: no create op for kind " + string(kind))
 }

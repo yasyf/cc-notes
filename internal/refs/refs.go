@@ -3,10 +3,10 @@
 // at refs/cc-notes/tasks/<id>, sprints at refs/cc-notes/sprints/<id>, projects
 // at refs/cc-notes/projects/<id>, docs at refs/cc-notes/docs/<id>, logs at
 // refs/cc-notes/logs/<id>, runbooks at refs/cc-notes/runbooks/<id>,
-// investigations at refs/cc-notes/investigations/<id>, and plans at
-// refs/cc-notes/plans/<id>, all flat — the entity id is the only component
-// after the namespace, and a task's branch is a folded attribute, not part of
-// its ref name. Sync-tracking refs shadow the namespace under
+// investigations at refs/cc-notes/investigations/<id>, plans at
+// refs/cc-notes/plans/<id>, and answers at refs/cc-notes/answers/<id>, all flat
+// — the entity id is the only component after the namespace, and a task's
+// branch is a folded attribute, not part of its ref name. Sync-tracking refs shadow the namespace under
 // refs/cc-notes-sync/<remote>/, outside refs/cc-notes/ so the wildcard push
 // refspec never republishes them.
 package refs
@@ -25,7 +25,7 @@ const (
 )
 
 // Namespace is the ref prefix holding every cc-notes entity — notes, tasks,
-// sprints, projects, docs, logs, runbooks, investigations, and plans —
+// sprints, projects, docs, logs, runbooks, investigations, plans, and answers —
 // including the trailing slash. Listing it enumerates the whole entity set; it
 // never matches the refs/cc-notes-sync/ tracking refs.
 const Namespace = namespace
@@ -54,6 +54,7 @@ var roots = map[model.Kind]string{
 	model.KindRunbook:       namespace + "runbooks/",
 	model.KindInvestigation: namespace + "investigations/",
 	model.KindPlan:          namespace + "plans/",
+	model.KindAnswer:        namespace + "answers/",
 }
 
 // kindBySegment reverses roots by ref path segment (the plural namespace token,
@@ -91,7 +92,7 @@ func For(kind model.Kind, id model.EntityID) string {
 
 // Parse decodes a cc-notes ref name. The id is the only component after the
 // notes/, tasks/, sprints/, projects/, docs/, logs/, runbooks/,
-// investigations/, or plans/ namespace. It returns ErrNotCCNotes for refs
+// investigations/, plans/, or answers/ namespace. It returns ErrNotCCNotes for refs
 // outside refs/cc-notes/ and ErrMalformed for anything that does not match the
 // scheme, including ids that are not 40 or 64 lowercase hex characters.
 func Parse(ref string) (Ref, error) {

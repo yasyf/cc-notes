@@ -729,6 +729,114 @@ func NewDoc(p ParsedDoc) ([]model.Op, error) {
 	}}, nil
 }
 
+// answerKeys mirrors noteKeys field for field: an answer's frontmatter is a
+// note's, with the question as title and the chosen answer as body.
+var answerKeys = slices.Concat(
+	[]fmKey[model.Answer]{
+		{key: "id", node: func(a model.Answer) *yaml.Node { return scalarNode(string(a.ID)) }},
+		{key: "title", node: func(a model.Answer) *yaml.Node { return scalarNode(a.Title) }},
+		{key: "tags", node: func(a model.Answer) *yaml.Node { return flowNode(a.Tags) }},
+	},
+	anchorKeys(func(a model.Answer) []model.Anchor { return a.Anchors }),
+	[]fmKey[model.Answer]{
+		{key: "author", node: func(a model.Answer) *yaml.Node { return scalarNode(string(a.Author)) }},
+		{key: "created", node: func(a model.Answer) *yaml.Node { return scalarNode(render.RFC3339(a.CreatedAt)) }},
+		{key: "updated", node: func(a model.Answer) *yaml.Node { return scalarNode(render.RFC3339(a.UpdatedAt)) }},
+		{key: "verified_at", keep: func(a model.Answer) bool { return a.VerifiedAt != 0 }, node: func(a model.Answer) *yaml.Node { return scalarNode(render.RFC3339(a.VerifiedAt)) }},
+		{key: "verified_by", keep: func(a model.Answer) bool { return a.VerifiedBy != "" }, node: func(a model.Answer) *yaml.Node { return scalarNode(string(a.VerifiedBy)) }},
+		{key: "verified_commit", keep: func(a model.Answer) bool { return a.VerifiedCommit != "" }, node: func(a model.Answer) *yaml.Node { return scalarNode(string(a.VerifiedCommit)) }},
+		{key: "witness", keep: func(a model.Answer) bool { return len(a.Witness) > 0 }, node: func(a model.Answer) *yaml.Node { return witnessNode(a.Witness) }},
+		{key: "superseded_by", keep: func(a model.Answer) bool { return len(a.SupersededBy) > 0 }, node: func(a model.Answer) *yaml.Node { return flowNode(render.IDStrings(a.SupersededBy)) }},
+		{key: "stale_at", keep: func(a model.Answer) bool { return a.StaleAt != 0 }, node: func(a model.Answer) *yaml.Node { return scalarNode(render.RFC3339(a.StaleAt)) }},
+		{key: "stale_by", keep: func(a model.Answer) bool { return a.StaleBy != "" }, node: func(a model.Answer) *yaml.Node { return scalarNode(string(a.StaleBy)) }},
+		{key: "stale_reason", keep: func(a model.Answer) bool { return a.StaleReason != "" }, node: func(a model.Answer) *yaml.Node { return scalarNode(a.StaleReason) }},
+	},
+)
+
+// RenderAnswer renders a as markdown: the answerKeys YAML frontmatter, then the
+// body verbatim below the closing delimiter. The output is deterministic byte
+// for byte.
+func RenderAnswer(a model.Answer) []byte {
+	buf := renderFrontmatter(a, answerKeys)
+	buf.WriteString(a.Body)
+	return buf.Bytes()
+}
+
+// NewAnswerTemplate renders the prefilled buffer `answer add --checkout`
+// writes, byte-identical to NewNoteTemplate.
+func NewAnswerTemplate(title string, tags []string, anchors []model.Anchor) []byte {
+	return NewNoteTemplate(title, tags, anchors)
+}
+
+// ParseAnswer decodes an answer file into the shared ParsedDoc, rejecting the
+// doc-only when field exactly as ParseNote does.
+func ParseAnswer(data []byte) (ParsedDoc, error) {
+	p, err := parseFrontmatterDoc(data)
+	if err != nil {
+		return ParsedDoc{}, err
+	}
+	if p.When.Set {
+		return ParsedDoc{}, fmt.Errorf("%w: answers have no when field", ErrParse)
+	}
+	return p, nil
+}
+
+// DiffAnswer compares an edited answer document against the snapshot it was
+// rendered from and returns the ops that reproduce the edit, with DiffNote's
+// editable and immutable field split and op order.
+func DiffAnswer(base model.Answer, p ParsedDoc) ([]model.Op, error) {
+	return diffWith(
+		[]check{
+			pin("id", p.ID, string(base.ID)),
+			pin("author", p.Author, string(base.Author)),
+			pin("created", p.Created, render.RFC3339(base.CreatedAt)),
+			pin("verified_at", p.VerifiedAt, render.OptTimeString(base.VerifiedAt)),
+			pin("verified_by", p.VerifiedBy, string(base.VerifiedBy)),
+			pin("verified_commit", p.VerifiedCommit, string(base.VerifiedCommit)),
+			pinStrings("superseded_by", p.SupersededBy, render.IDStrings(base.SupersededBy)),
+			pinWitness(p.Witness, base.Witness),
+			pin("stale_at", p.StaleAt, render.OptTimeString(base.StaleAt)),
+			pin("stale_by", p.StaleBy, string(base.StaleBy)),
+			pin("stale_reason", p.StaleReason, base.StaleReason),
+		},
+		[]fieldDiff{
+			scalar(p.Title, base.Title, setTitle),
+			body(p.Body, base.Body),
+			stringSet(p.Tags, base.Tags, addTag, removeTag),
+			anchorSet(p.anchors, base.Anchors),
+		},
+	)
+}
+
+// NewAnswer builds the create op for a brand-new answer file. The question
+// comes from the title, falling back to the first "# " heading in the body; a
+// new file claiming an id fails.
+func NewAnswer(p ParsedDoc) ([]model.Op, error) {
+	if p.ID.Set {
+		return nil, fmt.Errorf("%w: id on a new answer", ErrParse)
+	}
+	title := stringValue(p.Title)
+	if title == "" {
+		title = firstHeading(p.Body)
+	}
+	if title == "" {
+		return nil, fmt.Errorf("%w: new answer needs a title or a # heading", ErrParse)
+	}
+	var anchors []model.Anchor
+	for _, ak := range anchorKinds {
+		for _, value := range sortedSet(stringsValue(p.anchors(ak.kind))) {
+			anchors = append(anchors, model.Anchor{Kind: ak.kind, Value: value})
+		}
+	}
+	return []model.Op{model.CreateAnswer{
+		Nonce:   model.NewNonce(),
+		Title:   title,
+		Body:    p.Body,
+		Tags:    sortedSet(stringsValue(p.Tags)),
+		Anchors: anchors,
+	}}, nil
+}
+
 // logEntryFencePrefix opens the viewer-invisible HTML comment that fences one
 // log entry, carrying the entry's author and timestamp. Entry text that itself
 // contains this prefix is rejected at parse time — the fence is the split key,

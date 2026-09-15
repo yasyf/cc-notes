@@ -30,7 +30,7 @@ func (s *Store) GCLocal(ctx context.Context) (int, error) {
 }
 
 // PruneTombstones physically deletes tombstoned note, doc, log, runbook,
-// investigation, and plan refs — those folded to Deleted — locally and on
+// investigation, plan, and answer refs — those folded to Deleted — locally and on
 // remote via git push --delete, then drops
 // their now-orphaned cache entries. Superseded notes and docs and all tasks are
 // never pruned: a superseded entity keeps its supersede pointer and history, and
@@ -153,6 +153,26 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 			continue
 		}
 		s.cache.delete(p.Head)
+		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+			failed++
+			continue
+		}
+		pruned++
+	}
+	answers, err := s.ListAnswers(ctx, true, true)
+	if err != nil {
+		return pruned, failed, err
+	}
+	for _, a := range answers {
+		if !a.Deleted {
+			continue
+		}
+		ref := refs.For(model.KindAnswer, a.ID)
+		if err := s.Git.DeleteRef(ctx, ref, a.Head); err != nil {
+			failed++
+			continue
+		}
+		s.cache.delete(a.Head)
 		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
 			failed++
 			continue

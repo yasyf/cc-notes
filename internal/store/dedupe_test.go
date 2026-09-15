@@ -89,6 +89,11 @@ func TestDedupePerKind(t *testing.T) {
 			diff: []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: "T", Body: "B", When: "later", Tags: []string{"a"}}},
 		},
 		{
+			name: "answer",
+			base: []model.Op{model.CreateAnswer{Nonce: model.NewNonce(), Title: "Q", Body: "Redis", Tags: []string{"scope:durable"}}},
+			diff: []model.Op{model.CreateAnswer{Nonce: model.NewNonce(), Title: "Q", Body: "Memcached", Tags: []string{"scope:durable"}}},
+		},
+		{
 			name: "log",
 			base: []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "T", Tags: []string{"a"}}},
 			diff: []model.Op{model.CreateLog{Nonce: model.NewNonce(), Title: "T2", Tags: []string{"a"}}},
@@ -409,6 +414,13 @@ func TestDedupeSkipsStale(t *testing.T) {
 				return []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: "fact", Body: "B"}}
 			},
 			kind: model.KindDoc,
+		},
+		{
+			name: "answer",
+			mk: func() []model.Op {
+				return []model.Op{model.CreateAnswer{Nonce: model.NewNonce(), Title: "Q", Body: "Redis"}}
+			},
+			kind: model.KindAnswer,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -48,7 +48,7 @@ func (b *Builder) entities(ctx context.Context) ([]EntitySummary, error) {
 // tombstoned entities.
 func summaryListOpts(kind model.Kind) store.ListOpts {
 	switch kind {
-	case model.KindNote, model.KindDoc:
+	case model.KindNote, model.KindDoc, model.KindAnswer:
 		return store.ListOpts{IncludeSuperseded: true}
 	default:
 		return store.ListOpts{}

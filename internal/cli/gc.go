@@ -12,7 +12,7 @@ import (
 // state only — pruning fold-cache entries whose tip is no longer any entity ref
 // tip, orphaned by appends, compaction, and merges — and touches no remote.
 // With --prune-remote it additionally physically deletes tombstoned note, doc,
-// log, runbook, investigation, and plan refs locally and on the default remote
+// log, runbook, investigation, plan, and answer refs locally and on the default remote
 // via `git push --delete`. Physical prune is best-effort and non-convergent — a
 // stale clone that never saw the delete re-advertises the ref on its next push —
 // which is why it is opt-in and never part of normal sync.
@@ -25,7 +25,7 @@ func newGCCmd() *cobra.Command {
 		Long: "Local maintenance. By default it tidies local state only, pruning fold-cache\n" +
 			"entries whose tip is no longer any entity ref tip; no network.\n\n" +
 			"--prune-remote additionally deletes tombstoned note, doc, log, runbook,\n" +
-			"investigation, and plan refs locally and on the default remote via\n" +
+			"investigation, plan, and answer refs locally and on the default remote via\n" +
 			"`git push --delete`. This is best-effort and non-convergent:\n" +
 			"a stale clone that never saw the delete re-advertises the ref on its next push.\n" +
 			"That is why it is opt-in and never part of normal sync.",

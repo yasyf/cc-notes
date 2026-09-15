@@ -272,6 +272,47 @@ func TestDocAddShowRoundTrip(t *testing.T) {
 	}
 }
 
+type answerSummaryOut struct {
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Body         string   `json:"body"`
+	Tags         []string `json:"tags"`
+	SupersededBy []string `json:"superseded_by"`
+}
+
+// TestAnswerLifecycle drives add → list → supersede → list through the MCP
+// tools, proving list rows carry the answer body, --limit keeps the newest, and
+// a superseded answer leaves the default listing.
+func TestAnswerLifecycle(t *testing.T) {
+	initRepo(t)
+	cs := connect(t)
+
+	first := decode[answerSummaryOut](t, call(t, cs, "answer_add", map[string]any{
+		"title":  "Which cache backend?",
+		"body":   "Redis",
+		"labels": []string{"scope:durable", "header:Cache"},
+	}))
+	if first.Body != "Redis" || first.Title != "Which cache backend?" {
+		t.Fatalf("answer_add ack = %+v, want the question and its answer", first)
+	}
+	second := decode[answerSummaryOut](t, call(t, cs, "answer_add", map[string]any{
+		"title":  "Which cache backend?",
+		"body":   "Memcached",
+		"labels": []string{"scope:durable"},
+	}))
+
+	listed := decode[[]answerSummaryOut](t, call(t, cs, "answer_list", map[string]any{"labels": []string{"scope:durable"}, "limit": 1}))
+	if len(listed) != 1 || listed[0].Body == "" {
+		t.Fatalf("answer_list limit 1 = %+v, want one row carrying its body", listed)
+	}
+
+	call(t, cs, "answer_supersede", map[string]any{"id": first.ID, "by": second.ID})
+	live := decode[[]answerSummaryOut](t, call(t, cs, "answer_list", map[string]any{"labels": []string{"scope:durable"}}))
+	if len(live) != 1 || live[0].ID != second.ID || live[0].Body != "Memcached" {
+		t.Fatalf("live answers = %+v, want only the replacement", live)
+	}
+}
+
 func TestNoteAddVerify(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
@@ -645,7 +686,7 @@ func TestListToolsInventory(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	const wantCount = 141
+	const wantCount = 151
 	if len(names) != wantCount {
 		t.Errorf("tool count = %d, want %d; got %v", len(names), wantCount, sortedKeys(names))
 	}
@@ -662,6 +703,7 @@ func TestListToolsInventory(t *testing.T) {
 		"investigation_finding_add", "investigation_finding_edit", "investigation_finding_clear", "investigation_finding_confirm", "investigation_finding_rm", "investigation_finding_list",
 		"investigation_root_cause", "investigation_fix", "investigation_confirm", "investigation_exonerate", "investigation_reopen", "investigation_abandon", "investigation_edit", "investigation_search", "investigation_rm",
 		"plan_add", "plan_list", "plan_show", "plan_edit", "plan_approve", "plan_start", "plan_reopen", "plan_done", "plan_abandon", "plan_comment", "plan_supersede", "plan_search", "plan_rm",
+		"answer_add", "answer_show", "answer_list", "answer_search", "answer_edit", "answer_verify", "answer_supersede", "answer_expire", "answer_review", "answer_rm",
 		"attachment_path", "attachment_get",
 	} {
 		if !names[want] {

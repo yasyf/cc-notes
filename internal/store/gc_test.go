@@ -121,6 +121,33 @@ func TestPruneTombstonesDeletesDocRefLocalAndRemote(t *testing.T) {
 	}
 }
 
+func TestPruneTombstonesDeletesAnswerRefLocalAndRemote(t *testing.T) {
+	s := initStore(t)
+	ctx := t.Context()
+	bare := initBareRemote(t, s)
+
+	answer := create(t, s, answerOps("doomed")).(model.Answer)
+	ref := refs.For(model.KindAnswer, answer.ID)
+	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+	gittest.Git(t, s.Git.Dir, "push", "origin", ref+":"+ref)
+
+	pruned, failed, err := s.PruneTombstones(ctx, "origin")
+	if err != nil {
+		t.Fatalf("PruneTombstones: %v", err)
+	}
+	if pruned != 1 || failed != 0 {
+		t.Fatalf("pruned/failed = %d/%d, want 1/0", pruned, failed)
+	}
+	if _, err := s.Repo.Tip(ctx, ref); !errors.Is(err, gitobj.ErrRefNotFound) {
+		t.Fatalf("local answer ref still present: %v", err)
+	}
+	if got := gittest.Git(t, bare, "for-each-ref", "--format=%(refname)", ref); got != "" {
+		t.Fatalf("remote answer ref still present after prune: %q", got)
+	}
+}
+
 func TestPruneTombstonesDeletesLogRefLocalAndRemote(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
@@ -317,6 +344,7 @@ func TestGCLocalKeepsEveryKindsLiveEntry(t *testing.T) {
 		model.KindRunbook:       runbookOps("rb"),
 		model.KindInvestigation: investigationOps("iv"),
 		model.KindPlan:          planOps("pl"),
+		model.KindAnswer:        answerOps("an"),
 	}
 	tips := make(map[model.Kind]model.SHA, len(byKind))
 	for _, kind := range model.Kinds() {

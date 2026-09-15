@@ -25,6 +25,7 @@ type searchDTO struct {
 	Runbook       *runbookSummaryDTO       `json:"runbook,omitempty"`
 	Investigation *investigationSummaryDTO `json:"investigation,omitempty"`
 	Plan          *planSummaryDTO          `json:"plan,omitempty"`
+	Answer        *answerSummaryDTO        `json:"answer,omitempty"`
 }
 
 // searchHit pairs one matched entity with its kind's own rank tier, so the
@@ -46,7 +47,7 @@ func newSearchCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
-		Short: "Ranked search across every note, doc, log, task, runbook, investigation, and plan",
+		Short: "Ranked search across every note, doc, log, task, runbook, investigation, plan, and answer",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openClient(cmd)
@@ -154,6 +155,14 @@ func searchAllKinds(ctx context.Context, c *notes.Client, query string, f notes.
 		hits = append(hits, searchHit{snap: p, tier: textTier(p.Title, p.Labels, []string{p.Body, p.Outcome}, q)})
 	}
 
+	answers, err := c.SearchAnswers(ctx, query, f)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range answers {
+		hits = append(hits, searchHit{snap: a, tier: textTier(a.Title, a.Tags, []string{a.Body}, q)})
+	}
+
 	slices.SortFunc(hits, compareSearchHits)
 	return hits, nil
 }
@@ -203,6 +212,9 @@ func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, json
 			case model.Plan:
 				p := newPlanSummaryDTO(v)
 				dto.Plan = &p
+			case model.Answer:
+				a := newAnswerSummaryDTO(v, "")
+				dto.Answer = &a
 			default:
 				panic(fmt.Sprintf("searchAllKinds returned unknown snapshot %T", h.snap))
 			}
@@ -227,6 +239,8 @@ func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, json
 			lean = leanInvestigationLine(v)
 		case model.Plan:
 			lean = leanPlanLine(v)
+		case model.Answer:
+			lean = leanAnswerLine(v)
 		default:
 			panic(fmt.Sprintf("searchAllKinds returned unknown snapshot %T", h.snap))
 		}

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -48,7 +49,7 @@ func registerNote(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"note", "edit"}, flags, in.ID)...)
 		})
 
-	registerNoteDocShared(ts, b, "note")
+	registerNoteDocShared(ts, b, "note", "Returns summaries without the body; note_show reads one back in full.")
 }
 
 // noteDocEditFlags builds the shared edit flags (including --json) for a note;
@@ -85,6 +86,7 @@ type entityListArgs struct {
 	Commit            string   `json:"commit,omitempty" jsonschema:"require commit anchor"`
 	Dir               string   `json:"dir,omitempty" jsonschema:"require directory anchor"`
 	Branch            string   `json:"branch,omitempty" jsonschema:"require branch anchor"`
+	Limit             *int     `json:"limit,omitempty" jsonschema:"keep the N most recently updated (0 = all)"`
 	All               bool     `json:"all,omitempty" jsonschema:"include tombstoned entities"`
 	IncludeSuperseded bool     `json:"include_superseded,omitempty" jsonschema:"include superseded entities"`
 }
@@ -120,11 +122,12 @@ type reviewArgs struct {
 }
 
 // registerNoteDocShared registers the rm/list/show/search/verify/supersede/
-// expire/review tools common to note and doc under the given noun.
-func registerNoteDocShared(ts *toolset, b *bridge, noun string) {
-	idTool(ts, b, noun+"_rm", "Tombstone a "+noun+".", noun, "rm")
+// expire/review tools common to note, doc, and answer under the given noun.
+// summaries tells the agent what the kind's list, search, and review rows carry.
+func registerNoteDocShared(ts *toolset, b *bridge, noun, summaries string) {
+	idTool(ts, b, noun+"_rm", "Tombstone "+withArticle(noun)+".", noun, "rm")
 
-	addTool(ts, &mcp.Tool{Name: noun + "_list", Description: "List " + noun + "s, optionally filtered by label and anchors. Returns summaries without the body; " + noun + "_show reads one back in full."},
+	addTool(ts, &mcp.Tool{Name: noun + "_list", Description: "List " + noun + "s, optionally filtered by label and anchors, newest first. " + summaries},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entityListArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -132,6 +135,7 @@ func registerNoteDocShared(ts *toolset, b *bridge, noun string) {
 			flags = optStr(flags, "--commit", in.Commit)
 			flags = optStr(flags, "--dir", in.Dir)
 			flags = optStr(flags, "--branch", in.Branch)
+			flags = optInt(flags, "--limit", in.Limit)
 			flags = optBool(flags, "--all", in.All)
 			flags = optBool(flags, "--include-superseded", in.IncludeSuperseded)
 			return b.run(ctx, argvFor([]string{noun, "list"}, flags)...)
@@ -139,7 +143,7 @@ func registerNoteDocShared(ts *toolset, b *bridge, noun string) {
 
 	idTool(ts, b, noun+"_show", "Show one "+noun+" with its verdict and attachments.", noun, "show")
 
-	addTool(ts, &mcp.Tool{Name: noun + "_search", Description: "Ranked search across " + noun + " titles, labels, and bodies. Returns summaries without the body; " + noun + "_show reads one back in full."},
+	addTool(ts, &mcp.Tool{Name: noun + "_search", Description: "Ranked search across " + noun + " titles, labels, and bodies. " + summaries},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in entitySearchArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optRepeated(flags, "--label", in.Labels)
@@ -152,7 +156,7 @@ func registerNoteDocShared(ts *toolset, b *bridge, noun string) {
 			return b.run(ctx, argvFor([]string{noun, "search"}, flags, in.Query)...)
 		})
 
-	idTool(ts, b, noun+"_verify", "Re-verify a "+noun+", refreshing its witness against current HEAD.", noun, "verify")
+	idTool(ts, b, noun+"_verify", "Re-verify "+withArticle(noun)+", refreshing its witness against current HEAD.", noun, "verify")
 
 	addTool(ts, &mcp.Tool{Name: noun + "_supersede", Description: "Record that a NEW " + noun + " replaces an OLD one (or remove the edge)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in supersedeArgs) (*mcp.CallToolResult, any, error) {
@@ -161,7 +165,7 @@ func registerNoteDocShared(ts *toolset, b *bridge, noun string) {
 			return b.run(ctx, argvFor([]string{noun, "supersede"}, flags, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: noun + "_expire", Description: "Flag a " + noun + " as out of date (or clear the flag)."},
+	addTool(ts, &mcp.Tool{Name: noun + "_expire", Description: "Flag " + withArticle(noun) + " as out of date (or clear the flag)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in expireArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--reason", in.Reason)
@@ -169,7 +173,7 @@ func registerNoteDocShared(ts *toolset, b *bridge, noun string) {
 			return b.run(ctx, argvFor([]string{noun, "expire"}, flags, in.ID)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: noun + "_review", Description: "Surface " + noun + "s needing attention (drifted, never-verified, or expired), each with a verdict. Returns summaries without the body; " + noun + "_show reads one back in full."},
+	addTool(ts, &mcp.Tool{Name: noun + "_review", Description: "Surface " + noun + "s needing attention (drifted, never-verified, or expired), each with a verdict. " + summaries},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in reviewArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--stale-after", in.StaleAfter)
@@ -178,4 +182,12 @@ func registerNoteDocShared(ts *toolset, b *bridge, noun string) {
 			flags = optBool(flags, "--expired", in.Expired)
 			return b.run(ctx, argvFor([]string{noun, "review"}, flags)...)
 		})
+}
+
+// withArticle prefixes noun with its indefinite article: "a note", "an answer".
+func withArticle(noun string) string {
+	if strings.ContainsRune("aeiou", rune(noun[0])) {
+		return "an " + noun
+	}
+	return "a " + noun
 }

@@ -115,6 +115,22 @@ type docSummaryDTO struct {
 	StaleReason    string   `json:"stale_reason,omitempty"`
 }
 
+// answerSummaryDTO is one answer in a listing or write acknowledgement: the
+// noteSummaryDTO shape plus the answer body and the supersede edge, because a
+// reader renders the question and its answer together straight from a listing.
+type answerSummaryDTO struct {
+	ID             string   `json:"id"`
+	Title          string   `json:"title"`
+	Body           string   `json:"body,omitempty"`
+	Tags           []string `json:"tags,omitempty"`
+	Author         string   `json:"author,omitempty"`
+	UpdatedAt      string   `json:"updated_at"`
+	VerifiedCommit string   `json:"verified_commit,omitempty"`
+	SupersededBy   []string `json:"superseded_by,omitempty"`
+	Drift          string   `json:"drift,omitempty"`
+	StaleReason    string   `json:"stale_reason,omitempty"`
+}
+
 // logEntryDTO is one append-only log entry with its timestamp rendered RFC3339
 // UTC and the optional model identity (omitted when unset).
 type logEntryDTO struct {
@@ -586,6 +602,29 @@ func newDocSummaryDTO(d model.Doc, drift string) docSummaryDTO {
 		VerifiedCommit: string(d.VerifiedCommit),
 		Drift:          drift,
 		StaleReason:    d.StaleReason,
+	}
+}
+
+// newAnswerDTO renders an answer snapshot into its full DTO. An answer carries
+// exactly a note's fields, so it shares noteDTO's shape and conversion.
+func newAnswerDTO(a model.Answer, drift string, supersedes, liveHead []model.EntityID, atts []attachmentDTO) noteDTO {
+	return newNoteDTO(model.Note(a), drift, supersedes, liveHead, atts)
+}
+
+// newAnswerSummaryDTO renders an answer snapshot and its drift verdict into the
+// listing projection, keeping the body a reader pairs with the question.
+func newAnswerSummaryDTO(a model.Answer, drift string) answerSummaryDTO {
+	return answerSummaryDTO{
+		ID:             string(a.ID),
+		Title:          a.Title,
+		Body:           a.Body,
+		Tags:           a.Tags,
+		Author:         string(a.Author),
+		UpdatedAt:      render.RFC3339(a.UpdatedAt),
+		VerifiedCommit: string(a.VerifiedCommit),
+		SupersededBy:   render.IDStrings(a.SupersededBy),
+		Drift:          drift,
+		StaleReason:    a.StaleReason,
 	}
 }
 

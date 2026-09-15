@@ -132,6 +132,65 @@ func TestFoldDoc(t *testing.T) {
 	}
 }
 
+func TestFoldAnswer(t *testing.T) {
+	witness := []model.AnchorWitness{
+		{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "cache.go"}, OID: "0011"},
+	}
+	chain := []model.PackCommit{
+		mk("aaa", nil, "alice", 100, 1, model.CreateAnswer{
+			Nonce:   "n",
+			Title:   "Which cache backend?",
+			Body:    "Redis",
+			Tags:    []string{"scope:ephemeral", "header:Cache"},
+			Anchors: []model.Anchor{{Kind: model.AnchorBranch, Value: "main"}},
+		}),
+		mk("bbb", []string{"aaa"}, "bob", 200, 2,
+			model.SetBody{Body: "Memcached"},
+			model.AddTag{Tag: "scope:durable"},
+			model.RemoveTag{Tag: "scope:ephemeral"},
+			model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "cache.go"}},
+			model.AddSupersededBy{ID: "ddd"},
+		),
+		mk("ccc", []string{"bbb"}, "carol", 300, 3,
+			model.MarkStale{Reason: "outdated"},
+			model.VerifyNote{Witness: witness, VerifiedCommit: "headsha"},
+		),
+	}
+	want := model.Answer{
+		ID:             "aaa",
+		Title:          "Which cache backend?",
+		Body:           "Memcached",
+		Tags:           []string{"header:Cache", "scope:durable"},
+		Anchors:        []model.Anchor{{Kind: model.AnchorBranch, Value: "main"}, {Kind: model.AnchorPath, Value: "cache.go"}},
+		Author:         "alice",
+		CreatedAt:      100,
+		UpdatedAt:      300,
+		VerifiedAt:     300,
+		VerifiedBy:     "carol",
+		VerifiedCommit: "headsha",
+		Witness:        witness,
+		SupersededBy:   []model.EntityID{"ddd"},
+		Head:           "ccc",
+	}
+	got, err := fold.Answer(chain)
+	if err != nil {
+		t.Fatalf("Answer() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Answer() = %+v, want %+v", got, want)
+	}
+	snap, err := fold.Fold(chain)
+	if err != nil {
+		t.Fatalf("Fold() error = %v", err)
+	}
+	if dispatched, ok := snap.(model.Answer); !ok || !reflect.DeepEqual(dispatched, want) {
+		t.Fatalf("Fold() = %#v, want %+v", snap, want)
+	}
+	if _, err := fold.Note(chain); !errors.Is(err, fold.ErrKindMismatch) {
+		t.Fatalf("Note() over an answer chain error = %v, want ErrKindMismatch", err)
+	}
+}
+
 func TestFoldDocWhenLWW(t *testing.T) {
 	cases := []struct {
 		name         string

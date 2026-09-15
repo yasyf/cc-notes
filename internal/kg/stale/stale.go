@@ -1,7 +1,7 @@
 // Package stale computes the staleness signals a knowledge-graph ranker gates
 // and demotes cc-notes records with. It builds on the freshness verdict the
 // notes client already computes — EXPIRED / UNVERIFIED / DRIFTED / STALE /
-// DANGLING, via ReviewNotes and ReviewDocs — rather than recomputing it, and
+// DANGLING, via ReviewNotes, ReviewDocs, and ReviewAnswers — rather than recomputing it, and
 // adds what that verdict lacks: lifecycle terminality, branch reconciliation,
 // path churn, dead code references, and time decay.
 //
@@ -84,7 +84,7 @@ type Policy struct {
 // threshold S1/S3 flag a record stale after, so one cc-notes.noteStaleAfter
 // value tunes review and decay together. Kinds absent from the map never decay.
 func decayHalfLives(staleAfter time.Duration) map[model.Kind]time.Duration {
-	return map[model.Kind]time.Duration{model.KindNote: staleAfter, model.KindDoc: staleAfter}
+	return map[model.Kind]time.Duration{model.KindNote: staleAfter, model.KindDoc: staleAfter, model.KindAnswer: staleAfter}
 }
 
 // DefaultPolicy builds the policy from the repository's own configured

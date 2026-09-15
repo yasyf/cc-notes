@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/model"
@@ -18,6 +19,14 @@ func leanNoteLine(n model.Note) string {
 // The trailing field carries the free-text When trigger verbatim.
 func leanDocLine(d model.Doc) string {
 	return fmt.Sprintf("%s\t%s\t%s\t%s\t%s", d.ID.Short(), dateUTC(d.UpdatedAt), csvOrDash(d.Tags), d.Title, orDash(d.When))
+}
+
+// leanAnswerLine renders the tab-separated answer line:
+// <short7>\t<YYYY-MM-DD of updated_at UTC>\t<tags csv|->\t<question>\t<answer|->.
+// The answer field is the body's first line, the chosen answer itself.
+func leanAnswerLine(a model.Answer) string {
+	answer, _, _ := strings.Cut(a.Body, "\n")
+	return fmt.Sprintf("%s\t%s\t%s\t%s\t%s", a.ID.Short(), dateUTC(a.UpdatedAt), csvOrDash(a.Tags), a.Title, orDash(answer))
 }
 
 // leanLogLine renders the tab-separated log line:

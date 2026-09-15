@@ -27,6 +27,7 @@ export function SnapshotView({ kind, snapshot }: { kind: string; snapshot: Snaps
   switch (kind) {
     case "note":
     case "doc":
+    case "answer":
       return <NoteDocView snap={snapshot as NoteSnapshot | DocSnapshot} kind={kind} />;
     case "log":
       return <LogView snap={snapshot as LogSnapshot} />;

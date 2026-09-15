@@ -48,4 +48,5 @@ var (
 	}}
 	investigationSpec = kindSpec[model.Investigation]{kind: model.KindInvestigation, print: printInvestigation}
 	planSpec          = kindSpec[model.Plan]{kind: model.KindPlan, print: printPlan}
+	answerSpec        = kindSpec[model.Answer]{kind: model.KindAnswer, print: printAnswer}
 )

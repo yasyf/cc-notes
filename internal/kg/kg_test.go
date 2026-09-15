@@ -204,6 +204,23 @@ func TestBuildPlanTextSpansOutcomeAndComments(t *testing.T) {
 	requireEdge(t, g, self, kg.ConceptNode("plan_comment_backfill"), kg.EdgeConcept)
 }
 
+// TestBuildAnswerNode proves an answer joins the graph as its own node kind,
+// linked to its anchor and to the concept its answer body carries.
+func TestBuildAnswerNode(t *testing.T) {
+	f := newFixture(t)
+	f.commit(t, "base", "internal/kg/build.go")
+	answer := f.create(t, model.CreateAnswer{
+		Nonce: model.NewNonce(), Title: "which cache backend?", Body: "use `RedisSessionStore`",
+		Anchors: []model.Anchor{pathAnchor("internal/kg/build.go")},
+	}).EntityID()
+	f.create(t, model.CreateNote{Nonce: model.NewNonce(), Title: "sessions", Body: "`RedisSessionStore` holds them"})
+
+	g := f.build(t)
+	self := kg.EntityNode(model.KindAnswer, answer)
+	requireEdge(t, g, self, kg.PathNode("internal/kg/build.go"), kg.EdgeAnchor)
+	requireEdge(t, g, self, kg.ConceptNode("redissessionstore"), kg.EdgeConcept)
+}
+
 func TestBuildAnchorCarriesWitnessOID(t *testing.T) {
 	f := newFixture(t)
 	f.commit(t, "base", "internal/kg/build.go")

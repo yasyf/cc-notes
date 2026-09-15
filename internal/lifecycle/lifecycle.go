@@ -46,7 +46,7 @@ func Classify(entry trail.Entry) []Event {
 	switch entry.Snapshot.(type) {
 	case model.Task:
 		return taskEvents(entry)
-	case model.Note, model.Doc:
+	case model.Note, model.Doc, model.Answer:
 		return noteEvents(entry)
 	case model.Log:
 		return logEvents(entry)
@@ -392,6 +392,8 @@ func Branch(snap model.Snapshot) string {
 	case model.Note:
 		return firstBranchAnchor(s.Anchors)
 	case model.Doc:
+		return firstBranchAnchor(s.Anchors)
+	case model.Answer:
 		return firstBranchAnchor(s.Anchors)
 	case model.Log:
 		return firstBranchAnchor(s.Anchors)

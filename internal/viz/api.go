@@ -129,7 +129,7 @@ func (s *Server) handleEntity(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	kind, ok := entityKind(r.PathValue("kind"))
 	if !ok {
-		s.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("unknown kind %q: want note|doc|log|task|sprint|project|runbook|investigation", r.PathValue("kind")))
+		s.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("unknown kind %q: want note|doc|log|task|sprint|project|runbook|investigation|plan|answer", r.PathValue("kind")))
 		return
 	}
 	ref, err := s.store.Resolve(ctx, kind, r.PathValue("id"))
@@ -197,6 +197,8 @@ func summaryOf(snap model.Snapshot) EntitySummary {
 	case model.Note:
 		s.VerifiedAt, s.Stale, s.Superseded = v.VerifiedAt, v.StaleAt != 0, len(v.SupersededBy) > 0
 	case model.Doc:
+		s.VerifiedAt, s.Stale, s.Superseded = v.VerifiedAt, v.StaleAt != 0, len(v.SupersededBy) > 0
+	case model.Answer:
 		s.VerifiedAt, s.Stale, s.Superseded = v.VerifiedAt, v.StaleAt != 0, len(v.SupersededBy) > 0
 	case model.Log:
 		// logs carry no summary extras.

@@ -35,8 +35,8 @@ type branches struct {
 }
 
 // load folds the corpus and joins each entity with its lifecycle fields. The
-// freshness verdicts come from ReviewNotes and ReviewDocs — one shared HEAD and
-// clock for the batch — rather than a per-entity verdict call.
+// freshness verdicts come from ReviewNotes, ReviewDocs, and ReviewAnswers — one
+// shared HEAD and clock for the batch — rather than a per-entity verdict call.
 func (e *Evaluator) load(ctx context.Context) ([]record, error) {
 	corpus, err := eval.LoadCorpus(ctx, e.c)
 	if err != nil {
@@ -53,6 +53,10 @@ func (e *Evaluator) load(ctx context.Context) ([]record, error) {
 	docs, err := e.c.Docs(ctx, notes.DocumentFilter{IncludeSuperseded: true})
 	if err != nil {
 		return nil, fmt.Errorf("list docs: %w", err)
+	}
+	answers, err := e.c.Answers(ctx, notes.DocumentFilter{IncludeSuperseded: true})
+	if err != nil {
+		return nil, fmt.Errorf("list answers: %w", err)
 	}
 	logs, err := e.c.Logs(ctx, notes.LogFilter{})
 	if err != nil {
@@ -85,6 +89,7 @@ func (e *Evaluator) load(ctx context.Context) ([]record, error) {
 
 	noteByID := byID(ns, func(n model.Note) model.EntityID { return n.ID })
 	docByID := byID(docs, func(d model.Doc) model.EntityID { return d.ID })
+	answerByID := byID(answers, func(a model.Answer) model.EntityID { return a.ID })
 	logByID := byID(logs, func(l model.Log) model.EntityID { return l.ID })
 	runbookByID := byID(runbooks, func(rb model.Runbook) model.EntityID { return rb.ID })
 	invByID := byID(invs, func(iv model.Investigation) model.EntityID { return iv.ID })
@@ -101,6 +106,9 @@ func (e *Evaluator) load(ctx context.Context) ([]record, error) {
 		case model.KindDoc:
 			d := docByID[ent.ID]
 			r.Anchors, r.Attested = d.Anchors, max(d.CreatedAt, d.VerifiedAt)
+		case model.KindAnswer:
+			a := answerByID[ent.ID]
+			r.Anchors, r.Attested = a.Anchors, max(a.CreatedAt, a.VerifiedAt)
 		case model.KindLog:
 			l := logByID[ent.ID]
 			r.Anchors, r.Attested = l.Anchors, l.CreatedAt
@@ -128,8 +136,8 @@ func (e *Evaluator) load(ctx context.Context) ([]record, error) {
 	return recs, nil
 }
 
-// verdicts collects the note and doc freshness verdicts in two batched review
-// passes. A record absent from the map is fresh by the notes-side definition.
+// verdicts collects the note, doc, and answer freshness verdicts in batched
+// review passes. A record absent from the map is fresh by the notes-side definition.
 func (e *Evaluator) verdicts(ctx context.Context) (map[model.EntityID]notes.Verdict, error) {
 	noteReviews, err := e.c.ReviewNotes(ctx, e.policy.StaleAfter)
 	if err != nil {
@@ -139,12 +147,19 @@ func (e *Evaluator) verdicts(ctx context.Context) (map[model.EntityID]notes.Verd
 	if err != nil {
 		return nil, fmt.Errorf("review docs: %w", err)
 	}
-	out := make(map[model.EntityID]notes.Verdict, len(noteReviews)+len(docReviews))
+	answerReviews, err := e.c.ReviewAnswers(ctx, e.policy.StaleAfter)
+	if err != nil {
+		return nil, fmt.Errorf("review answers: %w", err)
+	}
+	out := make(map[model.EntityID]notes.Verdict, len(noteReviews)+len(docReviews)+len(answerReviews))
 	for _, r := range noteReviews {
 		out[r.Note.ID] = r.Verdict
 	}
 	for _, r := range docReviews {
 		out[r.Doc.ID] = r.Verdict
+	}
+	for _, r := range answerReviews {
+		out[r.Answer.ID] = r.Verdict
 	}
 	return out, nil
 }
@@ -164,7 +179,7 @@ func (e *Evaluator) leaseExpired(ctx context.Context) (map[model.EntityID]bool, 
 }
 
 // successors resolves what a reader of a superseded record should read instead.
-// Notes and docs go through the client's cycle-safe transitive walkers; no
+// Notes, docs, and answers go through the client's cycle-safe transitive walkers; no
 // other kind has a supersede verb, so its edge is surfaced verbatim.
 func (e *Evaluator) successors(ctx context.Context, ent eval.Entity) ([]model.EntityID, error) {
 	switch ent.Kind {
@@ -178,6 +193,12 @@ func (e *Evaluator) successors(ctx context.Context, ent eval.Entity) ([]model.En
 		heads, err := e.c.DocSupersedeHeads(ctx, ent.ID)
 		if err != nil {
 			return nil, fmt.Errorf("doc supersede heads %s: %w", ent.ID.Short(), err)
+		}
+		return heads, nil
+	case model.KindAnswer:
+		heads, err := e.c.AnswerSupersedeHeads(ctx, ent.ID)
+		if err != nil {
+			return nil, fmt.Errorf("answer supersede heads %s: %w", ent.ID.Short(), err)
 		}
 		return heads, nil
 	}

@@ -339,6 +339,7 @@ func init() {
 	registerOp[SetPlanStatus]()
 	registerOp[SetPlanOutcome]()
 	registerOp[SetPlan]()
+	registerOp[CreateAnswer]()
 	opDecoders[Checkpoint{}.OpKind()] = decodeCheckpoint
 }
 

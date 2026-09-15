@@ -84,6 +84,29 @@ func TestDTOGoldens(t *testing.T) {
 	docLiveHead := []model.EntityID{"doc-head-000001"}
 	docMin := model.Doc{ID: "doc-min-00000000000000000000000000000000", Title: "bare", Author: ada, CreatedAt: dtoCreated, UpdatedAt: dtoUpdated}
 
+	answerFull := model.Answer{
+		ID:             "answer-full-00000000000000000000000000000",
+		Title:          "Which cache backend?",
+		Body:           "Redis\nOptions: Redis | Memcached\nNotes: already run for queues",
+		Tags:           []string{"header:Cache", "scope:durable"},
+		Anchors:        []model.Anchor{fullAnchor, bareAnchor},
+		Author:         ada,
+		CreatedAt:      dtoCreated,
+		UpdatedAt:      dtoUpdated,
+		Deleted:        true,
+		VerifiedAt:     dtoVerified,
+		VerifiedBy:     ada,
+		VerifiedCommit: "c0ffee0000000000000000000000000000000000",
+		Witness:        []model.AnchorWitness{{Anchor: fullAnchor, OID: "f00ba12"}},
+		SupersededBy:   []model.EntityID{"answer-newer-001"},
+		StaleAt:        dtoStale,
+		StaleBy:        bob,
+		StaleReason:    "user changed their mind",
+	}
+	answerSupersedes := []model.EntityID{"answer-older-001"}
+	answerLiveHead := []model.EntityID{"answer-head-0001"}
+	answerMin := model.Answer{ID: "answer-min-000000000000000000000000000000", Title: "bare", Author: ada, CreatedAt: dtoCreated, UpdatedAt: dtoUpdated}
+
 	logFull := model.Log{
 		ID:    "log-full-0000000000000000000000000000000",
 		Title: "rollout log",
@@ -287,6 +310,8 @@ func TestDTOGoldens(t *testing.T) {
 		{"investigation_empty", newInvestigationDTO(invMin, []attachmentDTO{})},
 		{"plan_full", newPlanDTO(planFull, planTasks)},
 		{"plan_empty", newPlanDTO(planMin, nil)},
+		{"answer_full", newAnswerDTO(answerFull, "DRIFTED", answerSupersedes, answerLiveHead, noteAtts)},
+		{"answer_empty", newAnswerDTO(answerMin, "", nil, nil, []attachmentDTO{})},
 		{"note_summary_full", newNoteSummaryDTO(noteFull, "DRIFTED")},
 		{"note_summary_empty", newNoteSummaryDTO(noteMin, "")},
 		{"doc_summary_full", newDocSummaryDTO(docFull, "DRIFTED")},
@@ -307,6 +332,8 @@ func TestDTOGoldens(t *testing.T) {
 		{"investigation_summary_empty", newInvestigationSummaryDTO(invMin)},
 		{"plan_summary_full", newPlanSummaryDTO(planFull)},
 		{"plan_summary_empty", newPlanSummaryDTO(planMin)},
+		{"answer_summary_full", newAnswerSummaryDTO(answerFull, "DRIFTED")},
+		{"answer_summary_empty", newAnswerSummaryDTO(answerMin, "")},
 	}
 
 	for _, tc := range cases {
