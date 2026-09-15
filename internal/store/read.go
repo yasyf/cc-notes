@@ -302,6 +302,12 @@ func (s *Store) ListPlans(ctx context.Context) ([]model.Plan, error) {
 	return listOf(ctx, s, model.KindPlan, fold.Plan, ListOpts{})
 }
 
+// ListAnswers folds every answer in the repository, ordered by creation time
+// then id. Same tombstone and supersede filters as ListNotes.
+func (s *Store) ListAnswers(ctx context.Context, includeDeleted, includeSuperseded bool) ([]model.Answer, error) {
+	return listOf(ctx, s, model.KindAnswer, fold.Answer, ListOpts{IncludeDeleted: includeDeleted, IncludeSuperseded: includeSuperseded})
+}
+
 // children lists the refs that are immediate children of prefix, excluding
 // nested namespaces.
 func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error) {

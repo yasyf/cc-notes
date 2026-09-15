@@ -1151,6 +1151,75 @@ func TestPackGoldenBytesPlanOps(t *testing.T) {
 	}
 }
 
+// TestPackGoldenBytesAnswerOps pins the v1 wire bytes of the answer create op
+// and of a checkpoint carrying an answer state. These bytes are storage format —
+// entity ids derive from them — so any marshal-layout drift fails here.
+func TestPackGoldenBytesAnswerOps(t *testing.T) {
+	cases := []struct {
+		kind string
+		op   Op
+		want string
+	}{
+		{
+			"create_answer",
+			CreateAnswer{
+				Nonce: testNonce, Title: "Which cache backend?",
+				Body: "Redis\nOptions: Redis | Memcached", Tags: []string{"header:Cache", "scope:durable"},
+				Anchors: []Anchor{{Kind: AnchorPath, Value: "internal/cache/cache.go"}, {Kind: AnchorBranch, Value: "main"}},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"create_answer","nonce":"0123456789abcdef0123456789abcdef","title":"Which cache backend?","body":"Redis\nOptions: Redis | Memcached","tags":["header:Cache","scope:durable"],"anchors":[{"kind":"path","value":"internal/cache/cache.go"},{"kind":"branch","value":"main"}]}]}`,
+		},
+		{
+			"create_answer_minimal",
+			CreateAnswer{Nonce: testNonce, Title: "Which cache backend?", Body: "Redis"},
+			`{"v":1,"lamport":42,"ops":[{"kind":"create_answer","nonce":"0123456789abcdef0123456789abcdef","title":"Which cache backend?","body":"Redis","tags":null,"anchors":null}]}`,
+		},
+		{
+			"checkpoint_answer",
+			Checkpoint{
+				EntityID:      testID,
+				State:         answerGoldenSnap(),
+				CoversLamport: 3,
+				CoversShas:    []SHA{testParent, testID},
+			},
+			`{"v":1,"lamport":42,"ops":[{"kind":"checkpoint","entity_id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","state_kind":"answer","state":` + answerGoldenSnapJSON + `,"covers_lamport":3,"covers_shas":["00112233445566778899aabbccddeeff00112233","a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"]}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			pack := Pack{Lamport: 42, Ops: []Op{tc.op}}
+			got, err := json.Marshal(pack)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("marshal =\n%s\nwant\n%s", got, tc.want)
+			}
+			back, err := DecodePack([]byte(tc.want))
+			if err != nil {
+				t.Fatalf("decode golden: %v", err)
+			}
+			if !reflect.DeepEqual(back, pack) {
+				t.Fatalf("decode = %#v, want %#v", back, pack)
+			}
+		})
+	}
+}
+
+// answerGoldenSnap is a verified, superseded answer snapshot whose bytes
+// TestPackGoldenBytesAnswerOps pins as a checkpoint state.
+func answerGoldenSnap() Answer {
+	return Answer{
+		ID: testID, Title: "Which cache backend?", Body: "Redis",
+		Tags: []string{"scope:durable"}, Anchors: []Anchor{{Kind: AnchorBranch, Value: "main"}},
+		Author: "ada", CreatedAt: 100, UpdatedAt: 200,
+		VerifiedAt: 150, VerifiedBy: "ada", VerifiedCommit: testParent, Witness: []AnchorWitness{},
+		SupersededBy: []EntityID{testParent}, Head: testParent,
+	}
+}
+
+const answerGoldenSnapJSON = `{"id":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0","title":"Which cache backend?","body":"Redis","tags":["scope:durable"],"anchors":[{"kind":"branch","value":"main"}],"author":"ada","created_at":100,"updated_at":200,"deleted":false,"verified_at":150,"verified_by":"ada","verified_commit":"00112233445566778899aabbccddeeff00112233","witness":[],"superseded_by":["00112233445566778899aabbccddeeff00112233"],"stale_at":0,"stale_by":"","stale_reason":"","head":"00112233445566778899aabbccddeeff00112233"}`
+
 // planGoldenSnap is a fully-populated plan snapshot: every field non-zero,
 // including a comment, the sorted anchor and supersede sets, both close stamps,
 // and the outcome. TestSnapshotGoldenBytesPlan pins its bytes and

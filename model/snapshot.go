@@ -3,7 +3,7 @@ package model
 import "time"
 
 // Snapshot is the folded state of one entity chain: a Note, Doc, Log, Task,
-// Sprint, Project, Runbook, Investigation, or Plan. The concrete type
+// Sprint, Project, Runbook, Investigation, Plan, or Answer. The concrete type
 // discriminates the entity kind.
 type Snapshot interface {
 	// EntityID returns the entity id: the full oid of the chain's root commit.
@@ -59,6 +59,9 @@ func (i Investigation) EntityID() EntityID { return i.ID }
 
 // EntityID returns the plan's entity id.
 func (p Plan) EntityID() EntityID { return p.ID }
+
+// EntityID returns the answer's entity id.
+func (a Answer) EntityID() EntityID { return a.ID }
 
 // Meta returns the note's header.
 func (n Note) Meta() Meta {
@@ -182,5 +185,20 @@ func (p Plan) Meta() Meta {
 		Deleted:    p.Deleted,
 		Superseded: len(p.SupersededBy) > 0,
 		SkippedOps: p.SkippedOps,
+	}
+}
+
+// Meta returns the answer's header.
+func (a Answer) Meta() Meta {
+	return Meta{
+		Kind:        KindAnswer,
+		Title:       a.Title,
+		Head:        a.Head,
+		CreatedAt:   metaTime(a.CreatedAt),
+		UpdatedAt:   metaTime(a.UpdatedAt),
+		Deleted:     a.Deleted,
+		Superseded:  len(a.SupersededBy) > 0,
+		Attachments: a.Attachments,
+		SkippedOps:  a.SkippedOps,
 	}
 }
