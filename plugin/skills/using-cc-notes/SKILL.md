@@ -105,8 +105,8 @@ operates on exactly like a note:
 The same shape covers the rest: `doc_add` takes a `when` read-trigger and the full
 markdown in `body`; `answer_add` takes the question as `title` and the reply as `body`, with
 no `when`; `log_append` takes `entry` plus `attach` paths; `search` ranks across
-every kind. `references/answers.md` covers answers; `references/cli-reference.md` documents
-the shared surfaces — every command block
+every kind. `references/cli-reference.md` documents both surfaces for every kind, answers
+included — every command block
 opens with an `MCP:` line naming the tool and its properties. Operator commands (`init`,
 `gc`, `compact`, `viz`, `version`, the installers) are CLI-only on purpose. Where
 the server is active, cc-notes' own capt-hook nudges name the tools; the CLI forms below
@@ -128,7 +128,7 @@ executes.
 | `task_*` / `cc-notes task` | Durable — git ODB, synced across machines and agents | Global: one flat ref per task, with a mutable `branch` attribute and a shared backlog every agent sees | Work that outlives the session or coordinates agents: claim, lease, deps, comments, priority, lifecycle |
 | `plan_*` / `cc-notes plan` | Durable — git ODB, synced | Repo-global, anchored like a note | An approved plan held verbatim — context, approach, pitfalls, verification — with a typed status (`draft → approved → executing → done`/`abandoned`) and a derived roll-up of the tasks pointing at it |
 | `note_*` / `cc-notes note` | Durable — git ODB, synced | Repo-global, optionally anchored to a commit, path, or branch | Design decisions and durable facts, verified and searchable |
-| `answer_*` / `cc-notes answer` | Durable — git ODB, synced | Repo-global, anchored like a note | A user's reply kept with the verbatim question, captured from `AskUserQuestion`; scope labels distinguish durable choices from ephemeral ones |
+| `answer_*` / `cc-notes answer` | Durable — git ODB, synced | Repo-global, anchored like a note | A user's reply kept with the question as `title`, clamped to the CLI title cap, with the full text on a `Question:` body line when clamped; captured from `AskUserQuestion`; scope labels distinguish durable choices from ephemeral ones |
 | `doc_*` / `cc-notes doc` | Durable — git ODB, synced | Repo-global, anchored like a note, plus a `when` read-trigger | Multi-paragraph guidance written *for the next agent*, verified and floated on read |
 | `log_*` / `cc-notes log` | Durable — git ODB, synced | Repo-global, anchored like a doc | An append-only chronological journal — a rollout log, a migration diary — whose entries are never edited or reordered, with no verify/drift/supersede lifecycle and no verdict |
 | `investigation_*` / `cc-notes investigation` | Durable — git ODB, synced | Repo-global, anchored like a note | A debugging arc: an immutable premise, an append-only evidence timeline, findings with per-finding dispositions, and a typed status that carries the verdict (`open → root_caused → fixed → confirmed`, plus `exonerated`/`abandoned`) |
@@ -158,9 +158,11 @@ it in place on every later round, and nudges the task links.
 A note records when it was last **verified** true; superseding a note points it at its
 replacement and drops it from default listings.
 
-An **answer** holds a user's reply to a question: the question verbatim in `title`, the chosen
-answer on the first line of `body`, optional `Options:` and `Notes:` lines after it. It carries
-exactly one `scope:durable` or `scope:ephemeral` label, a `header:<text>` label when present,
+An **answer** holds a user's reply to a question. The title is the question, clamped to the CLI
+title cap, with the full text on a `Question:` body line when clamped. The chosen answer goes on
+the first line of `body`, with optional `Options:` and `Notes:` lines after it.
+
+It carries exactly one `scope:durable` or `scope:ephemeral` label, a `header:<text>` label when present,
 and branch/path anchors. The capt-hook pack records `AskUserQuestion` replies automatically.
 Use `answer_add` by hand for a durable answer given in plain chat that should bind future
 sessions; use `answer_supersede` when the user changes their answer, or `answer_expire` when
@@ -347,7 +349,7 @@ physically reclaims tombstoned refs.
 
 The verbs reached for most: the MCP tool with its key properties, then the CLI fallback.
 The full surface — every flag, property, default, and output shape — is in
-`references/cli-reference.md`, with answers in `references/answers.md`.
+`references/cli-reference.md`, answers included.
 
 | Purpose | MCP tool (key properties) | CLI fallback |
 |---------|---------------------------|--------------|
@@ -583,7 +585,7 @@ See `references/runbooks.md`.
 
 ## References
 
-- `references/cli-reference.md` — the shared command surface: MCP tools and their
+- `references/cli-reference.md` — the complete command surface: every MCP tool and its
   properties, every flag and default, and the lean-line output plus both `--json` shapes — the
   listing summary and the full `show` record — for each command.
 - `references/coordination.md` — how agents coordinate over time: the backlog and the branch
