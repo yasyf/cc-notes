@@ -3781,7 +3781,7 @@ def redirect_event(tmp_path, command: str, error: str, *, mcp: bool):
 
 def test_redirect_mapped_tool() -> None:
     """mapped_tool resolves each command shape to its MCP tool by longest-prefix match; operator/unknown -> None."""
-    check("map: inventory is the full 151-tool set", len(CC_NOTES_TOOLS) == 151, str(len(CC_NOTES_TOOLS)))
+    check("map: inventory is the full 164-tool set", len(CC_NOTES_TOOLS) == 164, str(len(CC_NOTES_TOOLS)))
     check("map: plan add drops the title positional -> plan_add", mapped_tool(["plan", "add", "Ship it", "--approved"]) == "plan_add", repr(mapped_tool(["plan", "add", "Ship it", "--approved"])))
     check("map: plan root verbs -> plan_<verb>", mapped_tool(["plan", "start", "abc"]) == "plan_start" and mapped_tool(["plan", "supersede", "abc", "--by", "def"]) == "plan_supersede")
     check("map: runbook add drops the title positional -> runbook_add", mapped_tool(["runbook", "add", "Deploy", "--branch", "main"]) == "runbook_add", repr(mapped_tool(["runbook", "add", "Deploy", "--branch", "main"])))
