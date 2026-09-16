@@ -34,6 +34,7 @@ const (
 	NodeInvestigation = NodeKind(model.KindInvestigation)
 	NodePlan          = NodeKind(model.KindPlan)
 	NodeAnswer        = NodeKind(model.KindAnswer)
+	NodeLedger        = NodeKind(model.KindLedger)
 
 	NodePath   = NodeKind(model.AnchorPath)
 	NodeDir    = NodeKind(model.AnchorDir)

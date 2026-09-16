@@ -1,6 +1,7 @@
 package kg
 
 import (
+	"maps"
 	"slices"
 	"strings"
 
@@ -41,6 +42,17 @@ func findingText(findings []model.Finding) string {
 	texts := make([]string, 0, 2*len(findings))
 	for _, f := range findings {
 		texts = append(texts, f.Text, f.Note)
+	}
+	return join(texts...)
+}
+
+func rowText(rows []model.LedgerRow) string {
+	texts := make([]string, 0, 2*len(rows))
+	for _, r := range rows {
+		texts = append(texts, r.Key)
+		for _, name := range slices.Sorted(maps.Keys(r.Fields)) {
+			texts = append(texts, r.Fields[name])
+		}
 	}
 	return join(texts...)
 }

@@ -194,6 +194,26 @@ var everyOpSample = []opSample{
 			{Kind: AnchorBranch, Value: "main"},
 		},
 	}},
+	{"create_ledger", CreateLedger{
+		Nonce:       testNonce,
+		Title:       "Open PR ledger",
+		Description: "one row per open pull request, refreshed every twenty minutes",
+		Columns:     []string{"head", "test_state", "hold_reason"},
+		Labels:      []string{"landing"},
+		Anchors: []Anchor{
+			{Kind: AnchorCommit, Value: testID},
+			{Kind: AnchorDir, Value: "internal/fold"},
+		},
+	}},
+	{"set_columns", SetColumns{Columns: []string{"head", "test_state"}}},
+	{"upsert_row", UpsertRow{
+		Key:      "21052",
+		Fields:   map[string]string{"head": "e8ad886", "test_state": "failure"},
+		Position: "v",
+		Replace:  true,
+	}},
+	{"remove_row", RemoveRow{Key: "21052"}},
+	{"set_ledger_status", SetLedgerStatus{Status: LedgerArchived}},
 	{"checkpoint", Checkpoint{
 		EntityID: testID,
 		State: Note{

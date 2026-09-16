@@ -6,6 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The `ledger` entity kind: a keyed row set refreshed in place from an external
+  system.** The ten existing kinds all model one thing an agent wrote down. None
+  of them models the many like units a long drive is actually tracking — ninety open pull
+  requests, a package per migration wave, a stack per apply — where the state lives
+  somewhere else and an agent's job is to keep a register of it current and to
+  remember, per unit, what only the agent knows. Spelled as tasks that register
+  churns a hundred entities per refresh; spelled as a doc it is a markdown table
+  nothing can query.
+
+  A ledger carries rows keyed by a string the external system already owns, each a
+  flat map of string fields resolved field by field last-write-wins. `ledger sync`
+  writes a whole row set in one commit and merges each row's named fields into the
+  row already keyed by it, so a field the refresh does not name keeps its value —
+  which is what lets a hand-set hold reason and the head sha a triage pass last
+  graded survive a twenty-minute cadence that rewrites everything the external
+  system reports. `--prune` removes the rows the set omits, which is how a unit that
+  left the external system leaves the register, and a pass that would change nothing
+  writes nothing. Field-wise merging is also what lets a refresh lane and a triage
+  lane write one row concurrently and converge on the union instead of clobbering
+  each other.
+
+  Rows order by a fractional index like runbook steps, so inserting never renumbers
+  neighbors; `--where NAME=VALUE` narrows both `ledger show` and `ledger row list`.
+  Ledgers carry the same anchors, labels, comments, and active/archived lifecycle as
+  a runbook, project in the FUSE tree read-only, and rank in `relevant` and `search`
+  over their row keys and field values. Thirteen MCP tools cover the surface.
+
 ### Fixed
 - **`cc-notes package install` works on a clean machine.** It could not succeed
   anywhere, for two independent reasons.

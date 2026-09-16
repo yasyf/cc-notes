@@ -39,6 +39,16 @@ func (c *Client) Log(ctx context.Context, id model.EntityID) (model.Log, error) 
 	return snapshot.(model.Log), nil
 }
 
+// Ledger loads the ledger with the given id and folds it. A missing entity
+// fails with ErrRefNotFound.
+func (c *Client) Ledger(ctx context.Context, id model.EntityID) (model.Ledger, error) {
+	snapshot, err := c.s.Load(ctx, refs.For(model.KindLedger, id))
+	if err != nil {
+		return model.Ledger{}, err
+	}
+	return snapshot.(model.Ledger), nil
+}
+
 // Runbook loads the runbook with the given id and folds it. A missing entity
 // fails with ErrRefNotFound.
 func (c *Client) Runbook(ctx context.Context, id model.EntityID) (model.Runbook, error) {
@@ -143,6 +153,12 @@ func (c *Client) ResolveDoc(ctx context.Context, prefix string) (model.EntityID,
 // ErrNotFound; an ambiguous prefix fails with ErrAmbiguous.
 func (c *Client) ResolveLog(ctx context.Context, prefix string) (model.EntityID, error) {
 	return c.resolve(ctx, model.KindLog, prefix)
+}
+
+// ResolveLedger expands a ledger id prefix to its full EntityID. No match
+// fails with ErrNotFound; several matches fail with ErrAmbiguous.
+func (c *Client) ResolveLedger(ctx context.Context, prefix string) (model.EntityID, error) {
+	return c.resolve(ctx, model.KindLedger, prefix)
 }
 
 // ResolveRunbook expands a runbook id prefix to its full EntityID. No match

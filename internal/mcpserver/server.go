@@ -46,11 +46,13 @@ func registerAll(ts *toolset, b *bridge) {
 	registerNote(ts, b)
 	registerDoc(ts, b)
 	registerAnswer(ts, b)
+	registerLedger(ts, b)
 	registerLog(ts, b)
 	registerPapercut(ts, b)
 	registerTask(ts, b)
 	registerPlanning(ts, b)
 	registerRunbook(ts, b)
+	registerLedger(ts, b)
 	registerInvestigation(ts, b)
 	registerPlan(ts, b)
 }

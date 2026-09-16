@@ -2097,3 +2097,64 @@ func witnessNode(witness []model.AnchorWitness) *yaml.Node {
 	}
 	return n
 }
+
+// ledgerKeys is the ledger frontmatter contract: id, title, status, labels,
+// the non-empty anchor kinds, created, updated.
+var ledgerKeys = slices.Concat(
+	[]fmKey[model.Ledger]{
+		{key: "id", node: func(l model.Ledger) *yaml.Node { return scalarNode(string(l.ID)) }},
+		{key: "title", node: func(l model.Ledger) *yaml.Node { return scalarNode(l.Title) }},
+		{key: "status", node: func(l model.Ledger) *yaml.Node { return scalarNode(string(l.Status)) }},
+		{key: "labels", node: func(l model.Ledger) *yaml.Node { return flowNode(l.Labels) }},
+	},
+	anchorKeys(func(l model.Ledger) []model.Anchor { return l.Anchors }),
+	[]fmKey[model.Ledger]{
+		{key: "created", node: func(l model.Ledger) *yaml.Node { return scalarNode(render.RFC3339(l.CreatedAt)) }},
+		{key: "updated", node: func(l model.Ledger) *yaml.Node { return scalarNode(render.RFC3339(l.UpdatedAt)) }},
+	},
+)
+
+// RenderLedger renders l as read-only markdown: the ledgerKeys frontmatter, the
+// description, then a "## Rows" table of one row per key over LedgerColumns.
+// The file is read-only — no ParseLedger or DiffLedger — so it carries no
+// round-trip obligation. Output is deterministic byte for byte.
+func RenderLedger(l model.Ledger) []byte {
+	buf := renderFrontmatter(l, ledgerKeys)
+
+	if l.Description != "" {
+		buf.WriteString(ensureTrailingNewline(l.Description))
+		buf.WriteString("\n")
+	}
+
+	buf.WriteString("## Rows\n\n")
+	if len(l.Rows) == 0 {
+		buf.WriteString("_No rows._\n")
+		return buf.Bytes()
+	}
+	columns := model.LedgerColumns(l)
+	buf.WriteString(ledgerTableRow(append([]string{"key"}, columns...)))
+	rule := make([]string, 1+len(columns))
+	for i := range rule {
+		rule[i] = "---"
+	}
+	buf.WriteString(ledgerTableRow(rule))
+	for _, row := range l.Rows {
+		cells := make([]string, 0, 1+len(columns))
+		cells = append(cells, row.Key)
+		for _, c := range columns {
+			cells = append(cells, row.Fields[c])
+		}
+		buf.WriteString(ledgerTableRow(cells))
+	}
+	return buf.Bytes()
+}
+
+func ledgerTableRow(cells []string) string {
+	escaped := make([]string, len(cells))
+	for i, c := range cells {
+		escaped[i] = ledgerCellReplacer.Replace(c)
+	}
+	return "| " + strings.Join(escaped, " | ") + " |\n"
+}
+
+var ledgerCellReplacer = strings.NewReplacer("|", "\\|", "\n", " ", "\r", "")

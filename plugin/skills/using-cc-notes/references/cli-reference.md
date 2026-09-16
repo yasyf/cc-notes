@@ -2350,6 +2350,194 @@ entry into `executing`, and `closed_at`/`closed_by` are set only while the plan 
 terminal status. A plan anchor never carries a `witness` — a plan goes out of date through its
 status machine, not a freshness lifecycle.
 
+## Ledger commands
+
+A ledger is a keyed row set an agent refreshes in place from an external system: one row per
+tracked unit, keyed by a string the external system already owns — a pull-request number, a
+package name, a stack slug. Each row carries a flat map of string fields, resolved field by field
+last-write-wins, so two agents writing different fields of one row converge on the union instead
+of clobbering each other. Columns are the advisory display order; a row may carry a field no
+column names. Ledgers are repo-wide and resolve by id prefix like runbooks, carry the same
+optional anchors as a note with no witness and no freshness lifecycle, and are born `active`;
+`archive` retires one and every mutating verb on an archived ledger is a conflict (exit 4) until
+`activate` restores it. Every command takes `--json`.
+
+`sync` is the refresh path and the reason the kind exists: it writes a whole row set in one
+commit, merging each row's named fields into the row already keyed by it, so a field the refresh
+does not name — a hold reason an operator typed, the head sha a triage pass last graded — keeps
+its value across every refresh that follows. `--prune` removes the rows the set omits, which is
+how a unit that left the external system leaves the ledger.
+
+### `cc-notes ledger add TITLE [BODY]`
+
+MCP: ledger_add (title, body, columns, labels, commits, paths, dirs, branches)
+
+Create a ledger. `--column` repeats, in display order; the anchor flags point it at the code it
+tracks, exactly as on `note add`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
+| `--column <name>` | none | Field name in display order; repeatable |
+| `--label <label>` | none | Label; repeatable |
+| `--commit <sha>` | none | Commit anchor; repeatable |
+| `--path <path>` | none | Path anchor; repeatable |
+| `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
+| `--branch <branch>` | none | Branch anchor; repeatable |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes ledger add "Open PR ledger" --column head --column test_state --column hold_reason
+4f1c9ad	active	0	Open PR ledger
+```
+
+### `cc-notes ledger list`
+
+MCP: ledger_list (labels, path, commit, dir, branch, all)
+
+List ledgers, one lean line each: short id, status, row count, title. Default hides archived.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--label <label>` | none | Require label; repeatable, ANDed |
+| `--commit <sha>` | none | Require commit anchor |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--all` | off | Include archived ledgers |
+| `--json` | off | Emit JSON |
+
+### `cc-notes ledger show ID`
+
+MCP: ledger_show (id)
+
+Show one ledger: a fixed-order header block (id, title, status, row count, labels, the four anchor
+kinds, created, updated, archived), the description, then the rows as a column-aligned table under
+the effective column order. `--where` narrows the table to the rows whose fields hold every pair.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--where <name>=<value>` | none | Keep only rows holding the pair; repeatable, ANDed |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes ledger show 4f1c9ad --where test_state=failure
+id: 4f1c9ad4e21b3373fe7e9927a3146dacb4ff7334
+title: Open PR ledger
+status: active
+rows: 1
+labels: landing
+commits: -
+paths: -
+dirs: -
+branches: -
+created: 2026-09-16T05:39:12Z
+updated: 2026-09-16T05:59:40Z
+archived: -
+
+rows:
+  key    head       test_state  hold_reason
+  21052  e8ad88696  failure     -
+```
+
+### `cc-notes ledger activate ID` · `archive ID`
+
+MCP: ledger_activate (id)
+
+MCP: ledger_archive (id)
+
+Move a ledger between `active` and `archived`. Archiving a completed drive's ledger keeps the
+record without leaving it in the active listing. Re-running either verb on a ledger already in
+that status is a conflict (exit 4).
+
+### `cc-notes ledger edit ID`
+
+MCP: ledger_edit (id, title, body, columns, add_labels, rm_labels, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches)
+
+Edit a ledger's title, description, column order, labels, or anchors. `--column` replaces the
+whole column list. At least one flag is required.
+
+### `cc-notes ledger rm ID`
+
+MCP: ledger_rm (id)
+
+Tombstone a ledger.
+
+### `cc-notes ledger search QUERY`
+
+MCP: ledger_search (query, labels, limit, author, path, commit, dir, branch)
+
+Ranked search across ledger titles, labels, descriptions, row keys, and field values. Returns one
+lean line per ledger, same flags as `runbook search`.
+
+### `cc-notes ledger comment ID [BODY]`
+
+MCP: ledger_comment (id, body)
+
+Append a comment to a ledger — the place a hold decision or a routing ruling goes when it is about
+the whole register rather than one row.
+
+### `cc-notes ledger history ID`
+
+The op-log of one ledger, newest first, exactly as `runbook history`.
+
+### `cc-notes ledger sync ID`
+
+MCP: ledger_sync (id, rows, prune)
+
+Write a whole row set in one commit. `--file` reads a JSON array of `{"key":string,"fields":{name:
+value}}`; `-` reads stdin. Each row's fields merge into the row already keyed by it, so the fields
+the call omits keep their value; rows the ledger has never seen are appended in slice order. A
+pass that would change nothing writes nothing. A key repeated within one set is refused before
+anything is written.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--file <path>` | `-` | JSON row array; `-` reads stdin |
+| `--prune` | off | Remove every row the set omits |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes ledger refresh-rows | cc-notes ledger sync 4f1c9ad --prune
+4f1c9ad	+3 ~11 -2	92 rows
+```
+
+### `cc-notes ledger row set ID` · `row rm ID` · `row list ID`
+
+MCP: ledger_row_set (id, key, fields, replace)
+
+MCP: ledger_row_rm (id, key)
+
+MCP: ledger_row_list (id, where)
+
+The one-row verbs. `row set` writes `--field NAME=VALUE` pairs into the row `--key` names,
+inserting the row when the ledger has none; `--replace` drops the fields the call omits instead of
+leaving them standing. `row rm` removes one row, and a key the ledger does not carry is not-found
+(exit 3). `row list` prints one tab-separated line per row — the key then one cell per column —
+narrowed by repeatable `--where NAME=VALUE`.
+
+```console
+$ cc-notes ledger row set 4f1c9ad --key 21052 --field hold_reason="waiting on #21020" --field hold_since=2026-09-16T04:10:00Z
+4f1c9ad	active	92	Open PR ledger
+```
+
+### JSON ledger shapes
+
+Summary — `ledger add`, `ledger edit`, `ledger row set`, and every `ledger list` element:
+
+`{"id":string,"title":string,"status":string,"updated_at":rfc3339,"row_count":int}`.
+
+`ledger sync --json` adds `"added":int,"updated":int,"removed":int` to that summary, so one call
+reports what the pass moved without diffing the rows.
+
+Full — `ledger show ID --json`:
+
+`{"id":string,"title":string,"description":string,"status":string,"columns":[string…],"rows":[{"key":string,"fields":{name:value},"position":string,"updated_at":rfc3339,"updated_by":string}],"labels":[…],"anchors":[{"kind":string,"value":string}],"comments":[{"author":string,"ts":rfc3339,"body":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"archived_at":rfc3339,"deleted":bool}`.
+`columns` is the effective order — the declared list, or the sorted union of the field names the
+rows carry when none was declared. `position` is the fractional index rows sort by; `updated_at`
+and `updated_by` on a row are the stamp of that row's most recent write, which is how a row on
+hold since a named time is read back. A ledger anchor never carries a `witness`.
+
 ## Note commands
 
 Notes are repo-global with optional commit, path, directory, and branch anchors. The `*-label` and

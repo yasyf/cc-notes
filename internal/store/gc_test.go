@@ -345,6 +345,7 @@ func TestGCLocalKeepsEveryKindsLiveEntry(t *testing.T) {
 		model.KindInvestigation: investigationOps("iv"),
 		model.KindPlan:          planOps("pl"),
 		model.KindAnswer:        answerOps("an"),
+		model.KindLedger:        ledgerOps("lg"),
 	}
 	tips := make(map[model.Kind]model.SHA, len(byKind))
 	for _, kind := range model.Kinds() {

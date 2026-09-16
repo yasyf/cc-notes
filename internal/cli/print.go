@@ -235,3 +235,13 @@ func printPlan(cmd *cobra.Command, _ *notes.Client, plan model.Plan, jsonOut boo
 	}
 	return printJSON(cmd.OutOrStdout(), planAckDTO{planSummaryDTO: newPlanSummaryDTO(plan), writeAck: ackOf(ack)})
 }
+
+// printLedger writes ledger as its JSON summary DTO — carrying the row count,
+// not the rows — or as its lean line.
+func printLedger(cmd *cobra.Command, l model.Ledger, jsonOut bool, ack ...writeAck) error {
+	if !jsonOut {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), leanLedgerLine(l))
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), ledgerAckDTO{ledgerSummaryDTO: newLedgerSummaryDTO(l), writeAck: ackOf(ack)})
+}

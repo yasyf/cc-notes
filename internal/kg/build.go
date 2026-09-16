@@ -222,6 +222,9 @@ func newRecord(snap model.Snapshot, events []Event) record {
 	case model.Plan:
 		r.text, r.tags = join(s.Body, s.Outcome, commentText(s.Comments)), s.Labels
 		r.anchors, r.superseded = s.Anchors, s.SupersededBy
+	case model.Ledger:
+		r.text, r.tags = join(s.Description, rowText(s.Rows), commentText(s.Comments)), s.Labels
+		r.anchors = s.Anchors
 	case model.Answer:
 		r.text, r.tags = s.Body, s.Tags
 		r.anchors, r.witness, r.superseded = s.Anchors, s.Witness, s.SupersededBy

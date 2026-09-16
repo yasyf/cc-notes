@@ -62,6 +62,10 @@ func planOps(title string) []model.Op {
 	return []model.Op{model.CreatePlan{Nonce: model.NewNonce(), Title: title, Body: "## Approach\nstep one", Status: model.PlanApproved}}
 }
 
+func ledgerOps(title string) []model.Op {
+	return []model.Op{model.CreateLedger{Nonce: model.NewNonce(), Title: title, Columns: []string{"state"}}}
+}
+
 func answerOps(title string) []model.Op {
 	return []model.Op{model.CreateAnswer{Nonce: model.NewNonce(), Title: title, Body: "Redis"}}
 }

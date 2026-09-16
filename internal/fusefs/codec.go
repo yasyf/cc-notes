@@ -63,6 +63,7 @@ var codecs = map[model.Kind]entityCodec{
 	model.KindInvestigation: codec[model.Investigation, struct{}]{kind: model.KindInvestigation, readOnly: true, render: RenderInvestigation},
 	model.KindPlan:          codec[model.Plan, struct{}]{kind: model.KindPlan, readOnly: true, render: RenderPlan},
 	model.KindAnswer:        codec[model.Answer, ParsedDoc]{kind: model.KindAnswer, render: RenderAnswer, parse: ParseAnswer, diff: DiffAnswer, create: NewAnswer},
+	model.KindLedger:        codec[model.Ledger, struct{}]{kind: model.KindLedger, readOnly: true, render: RenderLedger},
 }
 
 // codecOf returns the codec for kind, panicking on an unregistered kind.

@@ -1018,3 +1018,104 @@ type Checkpoint struct {
 
 // OpKind returns "checkpoint".
 func (Checkpoint) OpKind() string { return "checkpoint" }
+
+// CreateLedger is the root operation of a ledger chain. The nonce makes
+// otherwise-identical creates hash to distinct entity ids. Initial rows ride in
+// the same create pack as UpsertRow ops.
+type CreateLedger struct {
+	Nonce       string   `json:"nonce"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Columns     []string `json:"columns"`
+	Labels      []string `json:"labels"`
+	Anchors     []Anchor `json:"anchors"`
+}
+
+// OpKind returns "create_ledger".
+func (CreateLedger) OpKind() string { return "create_ledger" }
+
+// CreateKind returns KindLedger.
+func (CreateLedger) CreateKind() Kind { return KindLedger }
+
+func (o CreateLedger) validate() error {
+	for _, a := range o.Anchors {
+		if err := a.Kind.validate(); err != nil {
+			return err
+		}
+	}
+	return validateColumns(o.Columns)
+}
+
+// SetColumns replaces a ledger's advisory column order.
+type SetColumns struct {
+	Columns []string `json:"columns"`
+}
+
+// OpKind returns "set_columns".
+func (SetColumns) OpKind() string { return "set_columns" }
+
+func (o SetColumns) validate() error { return validateColumns(o.Columns) }
+
+// UpsertRow writes the row keyed by Key. Fields merge into the row's existing
+// fields, each resolved last-write-wins, so a refresh that names a subset of
+// the columns leaves the rest standing; Replace drops the fields Fields omits.
+// A new row lands at Position, which an existing row keeps unless Position is
+// set.
+type UpsertRow struct {
+	Key      string            `json:"key"`
+	Fields   map[string]string `json:"fields"`
+	Position string            `json:"position"`
+	Replace  bool              `json:"replace,omitempty"`
+}
+
+// OpKind returns "upsert_row".
+func (UpsertRow) OpKind() string { return "upsert_row" }
+
+func (o UpsertRow) validate() error {
+	if o.Key == "" {
+		return fmt.Errorf("%w: upsert_row key is empty", ErrInvalidValue)
+	}
+	for name := range o.Fields {
+		if name == "" {
+			return fmt.Errorf("%w: upsert_row field name is empty", ErrInvalidValue)
+		}
+	}
+	if o.Position == "" {
+		return nil
+	}
+	return validatePosition(o.Position)
+}
+
+// RemoveRow removes the row with the given key.
+type RemoveRow struct {
+	Key string `json:"key"`
+}
+
+// OpKind returns "remove_row".
+func (RemoveRow) OpKind() string { return "remove_row" }
+
+func (o RemoveRow) validate() error {
+	if o.Key == "" {
+		return fmt.Errorf("%w: remove_row key is empty", ErrInvalidValue)
+	}
+	return nil
+}
+
+// SetLedgerStatus moves a ledger between active and archived.
+type SetLedgerStatus struct {
+	Status LedgerStatus `json:"status"`
+}
+
+// OpKind returns "set_ledger_status".
+func (SetLedgerStatus) OpKind() string { return "set_ledger_status" }
+
+func (o SetLedgerStatus) validate() error { return o.Status.validate() }
+
+func validateColumns(columns []string) error {
+	for _, c := range columns {
+		if c == "" {
+			return fmt.Errorf("%w: ledger column name is empty", ErrInvalidValue)
+		}
+	}
+	return nil
+}

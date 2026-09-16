@@ -44,6 +44,7 @@ var folders = map[model.Kind]func([]model.PackCommit, mode) (model.Snapshot, err
 	model.KindInvestigation: func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldInvestigation(o, m) },
 	model.KindPlan:          func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldPlan(o, m) },
 	model.KindAnswer:        func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldAnswer(o, m) },
+	model.KindLedger:        func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldLedger(o, m) },
 }
 
 // Fold linearizes the chain and replays its operation packs into a snapshot,
@@ -219,4 +220,14 @@ func firstOp(ordered []model.PackCommit) model.Op {
 		}
 	}
 	return nil
+}
+
+// Ledger linearizes the chain and folds it as a ledger. It fails with
+// ErrKindMismatch when the chain was created as a different kind.
+func Ledger(commits []model.PackCommit) (model.Ledger, error) {
+	ordered, err := Linearize(commits)
+	if err != nil {
+		return model.Ledger{}, err
+	}
+	return foldLedger(ordered, tolerant)
 }

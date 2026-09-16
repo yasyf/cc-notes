@@ -27,6 +27,7 @@ type relevantDTO struct {
 	Doc           *docSummaryDTO           `json:"doc,omitempty"`
 	Log           *logSummaryDTO           `json:"log,omitempty"`
 	Runbook       *runbookSummaryDTO       `json:"runbook,omitempty"`
+	Ledger        *ledgerSummaryDTO        `json:"ledger,omitempty"`
 	Investigation *investigationSummaryDTO `json:"investigation,omitempty"`
 	Plan          *planSummaryDTO          `json:"plan,omitempty"`
 	Answer        *answerSummaryDTO        `json:"answer,omitempty"`
@@ -98,6 +99,9 @@ func printRelevant(cmd *cobra.Command, entries []notes.RelevantEntry, jsonOut bo
 			case model.KindRunbook:
 				rb := newRunbookSummaryDTO(e.Runbook)
 				dto.Runbook = &rb
+			case model.KindLedger:
+				l := newLedgerSummaryDTO(e.Ledger)
+				dto.Ledger = &l
 			case model.KindInvestigation:
 				inv := newInvestigationSummaryDTO(e.Investigation)
 				dto.Investigation = &inv
@@ -128,6 +132,8 @@ func printRelevant(cmd *cobra.Command, entries []notes.RelevantEntry, jsonOut bo
 			line = leanLogLine(e.Log) + "\t" + csvOrDash(e.Reasons) + "\tlog show " + e.Log.ID.Short()
 		case model.KindRunbook:
 			line = leanRunbookLine(e.Runbook) + "\t" + csvOrDash(e.Reasons) + "\trunbook show " + e.Runbook.ID.Short()
+		case model.KindLedger:
+			line = leanLedgerLine(e.Ledger) + "\t" + csvOrDash(e.Reasons) + "\tledger show " + e.Ledger.ID.Short()
 		case model.KindInvestigation:
 			line = leanInvestigationLine(e.Investigation) + "\t" + csvOrDash(e.Reasons) + "\tinvestigation show " + e.Investigation.ID.Short()
 		case model.KindPlan:

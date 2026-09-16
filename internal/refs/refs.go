@@ -55,6 +55,7 @@ var roots = map[model.Kind]string{
 	model.KindInvestigation: namespace + "investigations/",
 	model.KindPlan:          namespace + "plans/",
 	model.KindAnswer:        namespace + "answers/",
+	model.KindLedger:        namespace + "ledgers/",
 }
 
 // kindBySegment reverses roots by ref path segment (the plural namespace token,

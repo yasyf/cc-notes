@@ -20,6 +20,7 @@ type stateResponse struct {
 	Investigations []model.Investigation `json:"investigations"`
 	Plans          []model.Plan          `json:"plans"`
 	Answers        []model.Answer        `json:"answers"`
+	Ledgers        []model.Ledger        `json:"ledgers"`
 }
 
 func (s *Server) handleEntities(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +75,11 @@ func (s *Server) handleEntities(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
+	ledgers, err := s.store.ListLedgers(ctx)
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, stateResponse{
 		Notes:          notes,
 		Docs:           docs,
@@ -85,5 +91,6 @@ func (s *Server) handleEntities(w http.ResponseWriter, r *http.Request) {
 		Investigations: investigations,
 		Plans:          plans,
 		Answers:        answers,
+		Ledgers:        ledgers,
 	})
 }

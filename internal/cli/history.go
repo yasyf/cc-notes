@@ -70,6 +70,8 @@ func resolveInKind(ctx context.Context, c *notes.Client, kind model.Kind, prefix
 		return c.ResolveProject(ctx, prefix)
 	case model.KindRunbook:
 		return c.ResolveRunbook(ctx, prefix)
+	case model.KindLedger:
+		return c.ResolveLedger(ctx, prefix)
 	case model.KindInvestigation:
 		return c.ResolveInvestigation(ctx, prefix)
 	case model.KindPlan:

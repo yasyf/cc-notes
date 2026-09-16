@@ -24,6 +24,7 @@ const (
 	KindInvestigation Kind = "investigation"
 	KindPlan          Kind = "plan"
 	KindAnswer        Kind = "answer"
+	KindLedger        Kind = "ledger"
 )
 
 // kindInfo binds a Kind to its zero snapshot and snapshot decoder. kindInfos is
@@ -45,6 +46,7 @@ var kindInfos = []kindInfo{
 	{KindInvestigation, zeroSnapshot[Investigation], decodeSnapshot[Investigation]},
 	{KindPlan, zeroSnapshot[Plan], decodeSnapshot[Plan]},
 	{KindAnswer, zeroSnapshot[Answer], decodeSnapshot[Answer]},
+	{KindLedger, zeroSnapshot[Ledger], decodeSnapshot[Ledger]},
 }
 
 func zeroSnapshot[T Snapshot]() Snapshot {

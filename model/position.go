@@ -5,17 +5,17 @@ import (
 	"strings"
 )
 
-// positionDigits is the base-36 alphabet step positions are written in. Byte
+// positionDigits is the base-36 alphabet positions are written in. Byte
 // order equals digit order, so positions compare with plain string comparison.
 const positionDigits = "0123456789abcdefghijklmnopqrstuvwxyz"
 
-// PositionBetween returns a step position strictly between before and after. An
+// PositionBetween returns a position strictly between before and after. An
 // empty before means the start of the position space and an empty after the
-// end, so PositionBetween("", "") seeds the first step and
+// end, so PositionBetween("", "") seeds the first element and
 // PositionBetween(last, "") appends. Both bounds must be valid positions with
 // before strictly less than after; a violation is programmer error and panics.
 // A result always exists — positions are fractions in base 36 with no trailing
-// zero digit — so inserting between adjacent steps never renumbers neighbors.
+// zero digit — so inserting between neighbors never renumbers them.
 func PositionBetween(before, after string) string {
 	if before != "" {
 		mustValidPosition(before)
@@ -72,15 +72,15 @@ func positionTail(s string, n int) string {
 
 func validatePosition(p string) error {
 	if p == "" {
-		return fmt.Errorf("%w: empty step position", ErrInvalidValue)
+		return fmt.Errorf("%w: empty position", ErrInvalidValue)
 	}
 	for i := range len(p) {
 		if strings.IndexByte(positionDigits, p[i]) < 0 {
-			return fmt.Errorf("%w: step position %q", ErrInvalidValue, p)
+			return fmt.Errorf("%w: position %q", ErrInvalidValue, p)
 		}
 	}
 	if p[len(p)-1] == positionDigits[0] {
-		return fmt.Errorf("%w: step position %q ends in %q", ErrInvalidValue, p, positionDigits[0])
+		return fmt.Errorf("%w: position %q ends in %q", ErrInvalidValue, p, positionDigits[0])
 	}
 	return nil
 }

@@ -28,6 +28,7 @@ var relevantAccessorCases = []struct {
 	},
 	{"plan", RelevantEntry{Kind: model.KindPlan, Plan: model.Plan{ID: "planid", UpdatedAt: 66}}, "planid", 66},
 	{"answer", RelevantEntry{Kind: model.KindAnswer, Answer: model.Answer{ID: "answerid", UpdatedAt: 77}}, "answerid", 77},
+	{"ledger", RelevantEntry{Kind: model.KindLedger, Ledger: model.Ledger{ID: "lgid", UpdatedAt: 88}}, "lgid", 88},
 }
 
 // TestRelevantEntryAccessorsPerKind pins that every carried kind reports its own

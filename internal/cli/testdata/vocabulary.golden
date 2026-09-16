@@ -828,6 +828,211 @@ command: cc-notes kg stat
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
+command: cc-notes ledger
+  use: ledger
+  aliases: -
+  short: Ledgers: keyed row sets an agent refreshes in place from an external system
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger activate
+  use: activate ID
+  aliases: -
+  short: Mark a ledger active
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger add
+  use: add TITLE [BODY]
+  aliases: -
+  short: Create a ledger, optionally declaring its column order
+  hidden: false
+  flags:
+    --body shorthand=none type=string default="" usage="ledger description; - reads stdin"
+    --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
+    --column shorthand=none type=stringArray default="[]" usage="column name, in display order (repeatable)"
+    --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
+    --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger archive
+  use: archive ID
+  aliases: -
+  short: Mark a ledger archived
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger comment
+  use: comment ID [BODY]
+  aliases: -
+  short: Append a comment (positional BODY, --body, or - for stdin)
+  hidden: false
+  flags:
+    --body shorthand=none type=string default="" usage="comment body; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger edit
+  use: edit ID
+  aliases: -
+  short: Edit a ledger's title, description, columns, labels, or anchors
+  hidden: false
+  flags:
+    --add-branch shorthand=none type=stringArray default="[]" usage="add branch anchor (repeatable)"
+    --add-commit shorthand=none type=stringArray default="[]" usage="add commit anchor (repeatable)"
+    --add-dir shorthand=none type=stringArray default="[]" usage="add directory anchor (repeatable)"
+    --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
+    --body shorthand=none type=string default="" usage="new description; - reads stdin"
+    --column shorthand=none type=stringArray default="[]" usage="column name, in display order (repeatable)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
+    --rm-commit shorthand=none type=stringArray default="[]" usage="remove commit anchor (repeatable)"
+    --rm-dir shorthand=none type=stringArray default="[]" usage="remove directory anchor (repeatable)"
+    --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
+    --title shorthand=none type=string default="" usage="new title"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger history
+  use: history ID
+  aliases: -
+  short: Show this ledger's edit history
+  hidden: false
+  flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger list
+  use: list
+  aliases: -
+  short: List ledgers (active only unless --all)
+  hidden: false
+  flags:
+    --all shorthand=none type=bool default="false" usage="include archived ledgers"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger rm
+  use: rm ID
+  aliases: -
+  short: Tombstone a ledger
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger row
+  use: row
+  aliases: -
+  short: Write and read the rows of a ledger one at a time
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger row list
+  use: list ID
+  aliases: -
+  short: List a ledger's rows, narrowed by --where
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --where shorthand=none type=stringArray default="[]" usage="keep only rows whose NAME=VALUE (repeatable, ANDed)"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger row rm
+  use: rm ID --key KEY
+  aliases: -
+  short: Remove one row
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --key shorthand=none type=string default="" usage="row key"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger row set
+  use: set ID --key KEY --field NAME=VALUE
+  aliases: -
+  short: Write fields into one row, inserting it when the ledger has none
+  hidden: false
+  flags:
+    --field shorthand=none type=stringArray default="[]" usage="NAME=VALUE field to write (repeatable)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --key shorthand=none type=string default="" usage="row key"
+    --replace shorthand=none type=bool default="false" usage="drop the fields --field omits instead of leaving them standing"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger search
+  use: search QUERY
+  aliases: -
+  short: Ranked search across ledger titles, labels, descriptions, and row content
+  hidden: false
+  flags:
+    --author shorthand=none type=string default="" usage="require author"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger show
+  use: show ID
+  aliases: -
+  short: Show one ledger with its rows
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --where shorthand=none type=stringArray default="[]" usage="keep only rows whose NAME=VALUE (repeatable, ANDed)"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes ledger sync
+  use: sync ID
+  aliases: -
+  short: Write a whole row set from JSON, merging fields into the rows already there
+  hidden: false
+  flags:
+    --file shorthand=none type=string default="-" usage="JSON row array to write; - reads stdin"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --prune shorthand=none type=bool default="false" usage="remove every row the set omits"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
 command: cc-notes log
   use: log
   aliases: -

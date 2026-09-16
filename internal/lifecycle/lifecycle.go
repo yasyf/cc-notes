@@ -1,9 +1,11 @@
 // Package lifecycle turns an entity's change trail into its lifecycle events:
-// the sixteen verbs naming what a commit did to the entity. Every consumer of
+// the seventeen verbs naming what a commit did to the entity. Every consumer of
 // an entity's episodic history reads this one vocabulary.
 package lifecycle
 
 import (
+	"strconv"
+
 	"github.com/yasyf/cc-notes/internal/trail"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -30,6 +32,7 @@ const (
 	TypeRunFinished      = "run_finished"
 	TypeFindingCleared   = "finding_cleared"
 	TypeFindingConfirmed = "finding_confirmed"
+	TypeRowsSynced       = "rows_synced"
 )
 
 // Event is one classified event before it is stamped with the entity, time,
@@ -54,6 +57,8 @@ func Classify(entry trail.Entry) []Event {
 		return groupEvents(entry)
 	case model.Runbook:
 		return runbookEvents(entry)
+	case model.Ledger:
+		return ledgerEvents(entry)
 	case model.Investigation:
 		return investigationEvents(entry)
 	case model.Plan:
@@ -164,6 +169,27 @@ func runbookEvents(entry trail.Entry) []Event {
 	}
 	if ch, ok := changeFor(entry.Changes, "runs"); ok {
 		specs = append(specs, runEvents(ch)...)
+	}
+	if len(specs) == 0 {
+		specs = append(specs, Event{Type: TypeEdited})
+	}
+	return specs
+}
+
+// ledgerEvents classifies a ledger entry: create, a refresh that moved the row
+// set, a lifecycle status change, or a plain edit. The row count rides on the
+// sync event so a reader sees the ledger's size without folding it.
+func ledgerEvents(entry trail.Entry) []Event {
+	if entry.Kind == trailCreate {
+		return []Event{{Type: TypeCreated}}
+	}
+	var specs []Event
+	if _, ok := changeFor(entry.Changes, "rows"); ok {
+		rows := entry.Snapshot.(model.Ledger).Rows
+		specs = append(specs, Event{Type: TypeRowsSynced, Detail: map[string]string{"rows": strconv.Itoa(len(rows))}})
+	}
+	if _, ok := changeFor(entry.Changes, "status"); ok {
+		specs = append(specs, Event{Type: TypeStatus})
 	}
 	if len(specs) == 0 {
 		specs = append(specs, Event{Type: TypeEdited})
@@ -392,6 +418,8 @@ func Branch(snap model.Snapshot) string {
 	case model.Note:
 		return firstBranchAnchor(s.Anchors)
 	case model.Doc:
+		return firstBranchAnchor(s.Anchors)
+	case model.Ledger:
 		return firstBranchAnchor(s.Anchors)
 	case model.Answer:
 		return firstBranchAnchor(s.Anchors)

@@ -1092,3 +1092,122 @@ func printJSON(w io.Writer, v any) error {
 	_, err = fmt.Fprintln(w, string(data))
 	return err
 }
+
+// ledgerRowDTO fixes the JSON field order for one ledger row: the key, the
+// field map, the fractional position, and the RFC3339 UTC stamp and actor of
+// the row's most recent write.
+type ledgerRowDTO struct {
+	Key       string            `json:"key"`
+	Fields    map[string]string `json:"fields"`
+	Position  string            `json:"position"`
+	UpdatedAt string            `json:"updated_at"`
+	UpdatedBy string            `json:"updated_by,omitempty"`
+}
+
+// ledgerDTO fixes the JSON field order and formats for ledger output: full hex
+// ids, RFC3339 UTC timestamps, the effective column order, and every row in
+// folded order. A ledger anchor carries no witness, so every anchor omits it.
+type ledgerDTO struct {
+	ID          string         `json:"id"`
+	Title       string         `json:"title"`
+	Description string         `json:"description,omitempty"`
+	Status      string         `json:"status"`
+	Columns     []string       `json:"columns"`
+	Rows        []ledgerRowDTO `json:"rows"`
+	Labels      []string       `json:"labels,omitempty"`
+	Anchors     []anchorDTO    `json:"anchors,omitempty"`
+	Comments    []commentDTO   `json:"comments,omitempty"`
+	Author      string         `json:"author,omitempty"`
+	CreatedAt   string         `json:"created_at"`
+	UpdatedAt   string         `json:"updated_at"`
+	ArchivedAt  *string        `json:"archived_at,omitempty"`
+	Deleted     bool           `json:"deleted,omitempty"`
+}
+
+// ledgerSummaryDTO is one ledger in a listing or write acknowledgement: the
+// identity, the lifecycle status, and the row tally, without the rows.
+type ledgerSummaryDTO struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`
+	UpdatedAt string `json:"updated_at"`
+	RowCount  int    `json:"row_count,omitempty"`
+}
+
+// ledgerSyncDTO acknowledges one sync pass: the ledger summary plus what the
+// pass changed, so a caller sees whether a refresh moved anything without
+// diffing the rows itself.
+type ledgerSyncDTO struct {
+	ledgerSummaryDTO
+	Added   int `json:"added"`
+	Updated int `json:"updated"`
+	Removed int `json:"removed"`
+}
+
+// ledgerAckDTO is a ledger summary carrying a write acknowledgement.
+type ledgerAckDTO struct {
+	ledgerSummaryDTO
+	writeAck
+}
+
+// ledgerRowDTOs renders a folded row slice into its DTO form.
+func ledgerRowDTOs(rows []model.LedgerRow) []ledgerRowDTO {
+	out := make([]ledgerRowDTO, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ledgerRowDTO{
+			Key:       row.Key,
+			Fields:    row.Fields,
+			Position:  row.Position,
+			UpdatedAt: render.RFC3339(row.UpdatedAt),
+			UpdatedBy: string(row.UpdatedBy),
+		})
+	}
+	return out
+}
+
+// newLedgerDTO renders a ledger snapshot into its DTO, projecting the effective
+// column order so a reader sees the same columns the rendered table uses.
+func newLedgerDTO(l model.Ledger) ledgerDTO {
+	anchors := make([]anchorDTO, 0, len(l.Anchors))
+	for _, a := range l.Anchors {
+		anchors = append(anchors, anchorDTO{Kind: string(a.Kind), Value: a.Value, Witness: nil})
+	}
+	return ledgerDTO{
+		ID:          string(l.ID),
+		Title:       l.Title,
+		Description: l.Description,
+		Status:      string(l.Status),
+		Columns:     model.LedgerColumns(l),
+		Rows:        ledgerRowDTOs(l.Rows),
+		Labels:      l.Labels,
+		Anchors:     anchors,
+		Comments:    commentDTOs(l.Comments),
+		Author:      string(l.Author),
+		CreatedAt:   render.RFC3339(l.CreatedAt),
+		UpdatedAt:   render.RFC3339(l.UpdatedAt),
+		ArchivedAt:  render.OptTime(l.ArchivedAt),
+		Deleted:     l.Deleted,
+	}
+}
+
+// newLedgerSummaryDTO renders a ledger snapshot into the listing projection,
+// trading the rows for their count.
+func newLedgerSummaryDTO(l model.Ledger) ledgerSummaryDTO {
+	return ledgerSummaryDTO{
+		ID:        string(l.ID),
+		Title:     l.Title,
+		Status:    string(l.Status),
+		UpdatedAt: render.RFC3339(l.UpdatedAt),
+		RowCount:  len(l.Rows),
+	}
+}
+
+// newLedgerSyncDTO renders one sync pass's acknowledgement.
+func newLedgerSyncDTO(l model.Ledger, r notes.SyncResult) ledgerSyncDTO {
+	return ledgerSyncDTO{
+		ledgerSummaryDTO: newLedgerSummaryDTO(l),
+		Added:            r.Added,
+		Updated:          r.Updated,
+		Removed:          r.Removed,
+	}
+}

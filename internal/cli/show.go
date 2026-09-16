@@ -53,6 +53,8 @@ func newShowCmd() *cobra.Command {
 				return showProject(cmd, s, c, id, jsonOut)
 			case model.KindRunbook:
 				return showRunbook(cmd, s, c, id, jsonOut)
+			case model.KindLedger:
+				return showLedger(cmd, s, c, id, jsonOut)
 			case model.KindInvestigation:
 				return showInvestigation(cmd, s, c, id, jsonOut)
 			case model.KindPlan:
@@ -269,6 +271,18 @@ func showRunbook(cmd *cobra.Command, s *store.Store, _ *notes.Client, prefix str
 		return printJSON(cmd.OutOrStdout(), newRunbookShowDTO(rb))
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), renderRunbookShow(rb))
+	return err
+}
+
+func showLedger(cmd *cobra.Command, s *store.Store, _ *notes.Client, prefix string, jsonOut bool) error {
+	_, l, err := ledgerSpec.load(cmd.Context(), s, prefix)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), newLedgerDTO(l))
+	}
+	_, err = fmt.Fprint(cmd.OutOrStdout(), renderLedgerShow(l))
 	return err
 }
 

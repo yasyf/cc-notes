@@ -212,6 +212,8 @@ func summaryOf(snap model.Snapshot) EntitySummary {
 		s.Status = string(v.Status)
 	case model.Runbook:
 		s.Status = string(v.Status)
+	case model.Ledger:
+		s.Status = string(v.Status)
 	case model.Investigation:
 		s.Status, s.ClosedAt = string(v.Status), v.ClosedAt
 	case model.Plan:
