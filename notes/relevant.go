@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"path"
+	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -146,7 +148,10 @@ type scoredNote struct {
 // filter.Worktree threads through to each entity's verdict. A log, runbook,
 // investigation, or plan never drifts, so its verdict is empty.
 func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFilter) ([]RelevantEntry, error) {
-	p := path.Clean(target)
+	p, err := c.relevantPath(ctx, target)
+	if err != nil {
+		return nil, err
+	}
 
 	branch, err := c.resolveRelevantBranch(ctx, filter.Branch)
 	if err != nil {
@@ -338,6 +343,28 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 func anchorsNear(anchors []model.Anchor, p string) bool {
 	return hasAnchorIn(anchors, model.AnchorPath, p) || deepestDirAnchor(anchors, p) != ""
+}
+
+func (c *Client) relevantPath(ctx context.Context, target string) (string, error) {
+	if !filepath.IsAbs(target) {
+		return path.Clean(target), nil
+	}
+	root, err := c.s.Git.Root(ctx)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(resolveSymlinks(root), resolveSymlinks(target))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+		return path.Clean(target), nil
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+func resolveSymlinks(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return filepath.Join(resolveSymlinks(filepath.Dir(p)), filepath.Base(p))
 }
 
 // anchoredNear reports whether reasons include a path or dir match, which gates

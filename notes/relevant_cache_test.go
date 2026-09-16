@@ -63,7 +63,7 @@ func TestRelevantCachedMatchesFreshAcrossInputs(t *testing.T) {
 	pathNote := makeNote(t, c, "exact path", notes.AnchorSpec{Paths: []string{"internal/auth/login.go"}})
 	makeNote(t, c, "feature branch", notes.AnchorSpec{Branches: []string{"feature"}, Dirs: []string{"internal"}})
 
-	p := &relevantProbe{t: t, c: c, dir: dir, target: "internal/auth/login.go"}
+	p := &relevantProbe{t: t, c: c, dir: dir, target: filepath.Join(dir, "internal/auth/login.go")}
 	filters := []notes.RelevantFilter{{}, {Attached: true, Worktree: true}}
 	each := func(step string, recompute bool) {
 		t.Helper()

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -49,7 +48,10 @@ type fileStamp struct {
 // anchors whose drift was checked. A file modified within the racy window of
 // the computation is never cached.
 func (c *Client) RelevantCached(ctx context.Context, target string, filter RelevantFilter, variant string, render func([]RelevantEntry) ([]byte, error)) ([]byte, error) {
-	p := path.Clean(target)
+	p, err := c.relevantPath(ctx, target)
+	if err != nil {
+		return nil, err
+	}
 	key, staleAfter, err := c.relevantCacheKey(ctx, p, filter, variant)
 	if err != nil {
 		return nil, err

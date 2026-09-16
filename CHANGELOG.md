@@ -86,6 +86,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first, so the edit-time staleness hook's call drops from 1.94s to 0.27s with
   identical output.
 
+- **The file surface hooks match file anchors.** Claude Code sends absolute
+  paths, and `float_note_context` and `check_note_staleness` passed them to
+  `cc-notes relevant` unchanged. Anchors are stored repo-relative, so no path,
+  dir, or sibling anchor ever matched: the edit-time staleness warning never
+  fired, and the read-time float surfaced only branch- and commit-matched
+  records, for any file, including ones under `/tmp`. `relevant` now makes an
+  absolute path inside the worktree relative to its root, resolving symlinks on
+  both sides, and both hooks query the repo-relative path and skip the call
+  entirely for a file outside the repository.
+
 - **The availability announcement no longer runs `cc-notes version` on every
   prompt.** `announce_cc_notes_available` read the version before checking
   whether the session had already announced, so every later prompt spawned the

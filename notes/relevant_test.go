@@ -3,6 +3,7 @@ package notes_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -540,3 +541,32 @@ const (
 	scorePathTest      = 100
 	scoreOpenBoostTest = 50
 )
+
+func TestRelevantAbsolutePathMatchesRelative(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "internal/auth/login.go", "v1\n")
+	makeNote(t, c, "exact path", notes.AnchorSpec{Paths: []string{"internal/auth/login.go"}})
+	makeNote(t, c, "dir", notes.AnchorSpec{Dirs: []string{"internal/auth"}})
+	makeNote(t, c, "sibling", notes.AnchorSpec{Paths: []string{"internal/auth/logout.go"}})
+	makeNote(t, c, "branch only", notes.AnchorSpec{Branches: []string{"main"}})
+
+	link := filepath.Join(t.TempDir(), "linked-worktree")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	want := mustRelevant(t, c, dir, "internal/auth/login.go", notes.RelevantFilter{})
+	for _, target := range []string{
+		filepath.Join(dir, "internal/auth/login.go"),
+		filepath.Join(link, "internal/auth/login.go"),
+	} {
+		got := mustRelevant(t, c, dir, target, notes.RelevantFilter{})
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("relevant(%s) = %v, want the relative answer %v", target, scoredIDs(got), scoredIDs(want))
+		}
+	}
+
+	outside := mustRelevant(t, c, dir, filepath.Join(t.TempDir(), "internal/auth/login.go"), notes.RelevantFilter{Attached: true})
+	if len(outside) != 0 {
+		t.Fatalf("a path outside the worktree matched anchors: %v", scoredIDs(outside))
+	}
+}
