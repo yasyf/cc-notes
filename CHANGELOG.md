@@ -35,6 +35,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over their row keys and field values. Thirteen MCP tools cover the surface.
 
 ### Fixed
+- **Reads stop re-folding a large repository on every call.** The fold cache
+  held at most 1024 entries, so a repository with more live entities thrashed:
+  every full listing evicted entries it had just written and folded them again
+  on the next call, and concurrent sessions evicted each other's. A repository
+  with 1586 entities missed about 560 entries on every `status`, `relevant`,
+  `note list`, and `show`. The cap is now 16384. On a copy of that repository's
+  refs, `status` drops from 2.97s to 0.93s, `relevant` from 1.92s to 1.05s,
+  and `note list` from 0.50s to 0.11s.
+
+- **`relevant --attached` skips entities it is about to drop.** It scored every
+  entity, including ancestry checks on commit and branch anchors, then dropped
+  those with no path or dir anchor on the target. The anchor test now runs
+  first, so the edit-time staleness hook's call drops from 1.94s to 0.27s with
+  identical output.
+
+- **The availability announcement no longer runs `cc-notes version` on every
+  prompt.** `announce_cc_notes_available` read the version before checking
+  whether the session had already announced, so every later prompt spawned the
+  binary to throw the answer away. It now checks first.
 - **`cc-notes package install` works on a clean machine.** It could not succeed
   anywhere, for two independent reasons.
 

@@ -1565,8 +1565,10 @@ def test_announce_available_fires_once(monkeypatch, tmp_path) -> None:
         check("announce fires: names the durable tooling", "durable task, note, doc, log, papercut, runbook, investigation, plan, and answer tooling is available" in result.message, result.message)
 
     second = mock_event("UserPromptSubmit", prompt="again", session_dir=tmp_path)
-    monkeypatch.setattr(second.ctx, "call_cli", stub_cli(mapping))
+    cli, calls = recording_cli(mapping)
+    monkeypatch.setattr(second.ctx, "call_cli", cli)
     check("announce fires: once-guard silences the second prompt", announce_cc_notes_available(second) is None)
+    check("announce fires: an announced session spawns no version read", calls == [], repr(calls))
 
 
 def test_announce_available_empty_version_preserves_shot(monkeypatch, tmp_path) -> None:

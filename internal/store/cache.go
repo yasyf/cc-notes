@@ -19,8 +19,9 @@ const (
 	// foldCacheVersion is the single hard-cut cache format.
 	foldCacheVersion = 1
 	// foldCacheCap bounds the number of on-disk entries; the least-recently
-	// used are evicted past it.
-	foldCacheCap = 1024
+	// used are evicted past it. Below a repository's live entity count every
+	// full listing evicts what it just wrote and re-folds it on the next call.
+	foldCacheCap = 1 << 14
 	// foldCacheSubdir is the path under the git common dir where entries live;
 	// it is never a ref, so it is never pushed or synced.
 	foldCacheSubdir = "cc-notes/folds-v1"

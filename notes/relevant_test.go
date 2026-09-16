@@ -271,6 +271,7 @@ func TestRelevantAttachedDropsLooseSignals(t *testing.T) {
 	dirNote := makeNote(t, c, "dir", notes.AnchorSpec{Dirs: []string{"internal/auth"}})
 	makeNote(t, c, "sibling", notes.AnchorSpec{Paths: []string{"internal/auth/logout.go"}})
 	makeNote(t, c, "branch only", notes.AnchorSpec{Branches: []string{"main"}})
+	makeNote(t, c, "merged commit only", notes.AnchorSpec{Commits: []string{"HEAD"}})
 
 	scored := mustRelevant(t, c, dir, "internal/auth/login.go", notes.RelevantFilter{Attached: true})
 	if got := scoredIDs(scored); !slices.Equal(got, []model.EntityID{pathNote, dirNote}) {

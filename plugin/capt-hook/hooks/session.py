@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from captain_hook import Event, HookResult, UserPromptSubmitEvent, on
+from captain_hook.state import SeenKeys
 
 from .common import (
     SESSION_ANSWER_CAP,
@@ -106,6 +107,8 @@ def announce_cc_notes_available(evt: UserPromptSubmitEvent) -> HookResult | None
     ``ctx.s.once`` claims the shot only when the line actually emits, so a transient version read that
     comes back empty doesn't burn the announcement.
     """
+    if "announce" in evt.ctx.s.load(SeenKeys).seen.get("availability", []):
+        return None
     version = (run_cc_notes(evt, "version") or "").strip()
     if not version or not evt.ctx.s.once("announce", scope="availability"):
         return None
