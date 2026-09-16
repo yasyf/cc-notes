@@ -57,6 +57,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refs, `status` drops from 2.97s to 0.93s, `relevant` from 1.92s to 1.05s,
   and `note list` from 0.50s to 0.11s.
 
+- **A repeated `relevant` answers from a cache.** The read- and edit-time
+  surface hooks run `relevant` on every Read and every Edit. The result is now
+  cached per worktree, target, filter, and output shape under
+  `.git/cc-notes/relevant-v1`, keyed on every input it reads: the binary, HEAD
+  and the symbolic refs behind the branch and default-branch lookups, every ref
+  tip outside the sync tracking namespace, the shallow boundary, the author
+  identity, and the staleness threshold. A hit is revalidated against the clock,
+  since a fresh verdict turns stale at a known instant, and, under `--worktree`,
+  against the stat of every path anchor whose drift was checked; a file changed
+  within two seconds of the computation is never cached. On the monorepo a
+  repeated call drops from 2.1–2.5s to 0.07–0.09s.
+
 - **`relevant --attached` skips entities it is about to drop.** It scored every
   entity, including ancestry checks on commit and branch anchors, then dropped
   those with no path or dir anchor on the target. The anchor test now runs
