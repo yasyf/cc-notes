@@ -523,11 +523,10 @@ own — you no longer run `cc-notes sync` by hand after routine actions. After a
 commit`, `jj commit`, `jj describe`, `ccx vcs ship`), a push (`git push`, `jj git push` — jj's git
 bridge never carries the cc-notes refs, so this sync is what moves them), a `cc-notes task
 claim`/`task start`, a `git merge`/`git pull`/`jj git fetch`, or any cc-notes write — a mutating
-CLI subcommand or MCP tool; reads never trigger — a `PostToolUse` hook runs `cc-notes sync`
-itself, covering every cc-notes-wired remote, at most once per target repo per turn — a commit
-and a claim in the same turn sync once. A CLI write behind a `cd` into another repo
-(`cd /other/repo && cc-notes note add …`) syncs *that* repo, confirmed as "Synced cc-notes refs
-in <dir>."; a `cd` the hook can't resolve structurally (`cd -`, a `$var`, a `~`, backticks) falls
+CLI subcommand or MCP tool; reads never trigger — an async `PostToolUse` hook runs `cc-notes sync`
+in the background, covering every cc-notes-wired remote, at most once per target repo per turn — a
+commit and a claim in the same turn sync once. A CLI write behind a `cd` into another repo
+(`cd /other/repo && cc-notes note add …`) syncs *that* repo; a `cd` the hook can't resolve structurally (`cd -`, a `$var`, a `~`, backticks) falls
 back to the session repo, and only record writes go cross-repo — a push, merge, or claim
 elsewhere and every MCP write stay with the session repo. After a `git
 merge`/`git pull`/`jj git fetch` it first runs `cc-notes reconcile --into <current branch>`,
@@ -535,8 +534,9 @@ carrying the merged branch's still-open tasks onto your branch, then syncs; on a
 (the colocated-jj norm) or a failed reconcile it falls back to a plain sync, so the fetched refs
 still ship. Only a jj merge or rebase still calls for a by-hand `cc-notes reconcile`.
 
-Both are idempotent and fail-closed: a repo with no remote or an offline box stays silent, while a
-genuine sync failure — say a rejected non-fast-forward push — surfaces a short retry hint. A
+Both are idempotent and fail-closed: a successful sync, a repo with no remote, and an offline box
+all stay silent, while a genuine sync failure — say a rejected non-fast-forward push — surfaces a
+short retry hint once, on your next tool call or prompt. A
 SessionEnd backstop covers whatever slips through: at session exit an async hook compares your
 local `refs/cc-notes/*` tips against every wired remote's fetched tracking copies — zero network —
 and syncs only when something is unpushed (needs capt-hook >= 9.2). Note the contrast with the

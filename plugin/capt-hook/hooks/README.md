@@ -95,7 +95,7 @@ empty), and only ever suggests — it never blocks.
 
 | Trigger | Reminder |
 |---------|----------|
-| `git merge` / `git pull` / `jj git fetch` (PostToolUse) | the pack auto-runs `cc-notes reconcile --into <current branch>` (carrying the merged branch's still-open tasks onto your branch) then syncs, confirming "Reconciled merged tasks onto <branch>. Synced cc-notes refs." (a failed push surfaces the retry hint instead; a detached HEAD — the colocated-jj norm — or a failed reconcile falls back to a plain sync, so the fetched refs still ship) |
+| `git merge` / `git pull` / `jj git fetch` (PostToolUse) | the pack runs `cc-notes reconcile --into <current branch>` in the background (carrying the merged branch's still-open tasks onto your branch), then syncs; a failed push surfaces its retry hint on your next event, and a detached HEAD (the colocated-jj norm) or a failed reconcile still syncs, so the fetched refs ship |
 | `git push` / `jj git push` (PostToolUse) | the pack runs `cc-notes sync` so the cc-notes refs follow the branch push — jj's git bridge carries only `refs/heads/*`, so under jj this sync is the only thing that moves them |
 | a cc-notes write — any mutating CLI subcommand or MCP tool (PostToolUse) | the pack syncs the fresh refs to the remote; reads (`list`, `show`, `search`, `status`, …) never trigger |
 | `cc-notes task claim` / `task start` (PostToolUse) | you hold a lease — `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold (sync is automatic now) |
@@ -139,9 +139,9 @@ dormant without the captain-hook dispatcher plugin.
 One cap by class. Every Record router and teach-carrying Workflow reminder is capped at
 `NUDGE_MAX_FIRES` (three) per session as a backstop, and additionally deduped by its own
 key — the turn, the HEAD sha, or the plan text's digest — so it speaks once per real event rather
-than on every fire. The pure sync actions (after a merge/pull/fetch, a push, or a cc-notes
-write) carry no session cap: their only output is the sync confirm, and the per-turn dedup
-already bounds them. The auto-sync action deduplicates per target repo per turn across all of
+than on every fire. The sync actions (after a commit, a claim, a merge/pull/fetch, a push, or a
+cc-notes write) carry no session cap: they run in the background with no output of their own,
+and the per-turn dedup already bounds them. The auto-sync action deduplicates per target repo per turn across all of
 its triggers — a commit (`git commit` / `jj commit` / `jj describe` / `ccx vcs ship`), a
 claim/start, a merge/pull/fetch, a push (`git push` / `jj git push`), and every cc-notes
 write (CLI or MCP) — so the several events of one turn drive a single sync per repo they
@@ -160,16 +160,18 @@ dropped, since it publishes or runs nothing.
 ### The action hooks — side-effecting handlers
 
 A handful of handlers *do* something rather than nudge, all deterministic, idempotent, and
-fail-closed. The auto-sync triggers dedup to **at most one sync per target repo per turn** —
-a commit and a claim in the same turn sync once. The failure policy is uniform: a repo with
-no remote or an offline box is a legitimate state, so the handler is silent (no nag); a
-genuine sync failure — a non-fast-forward push rejection, say — surfaces a short "cc-notes
-sync failed for <remotes> — run `cc-notes sync --remote <name>` to retry.", naming each failed
-wired remote and its own `--remote` retry, or naming the
-directory ("cc-notes sync failed in <dir> — run `cc-notes sync` there to retry.") when the
-write landed in another repo; and a detached HEAD or a reconcile
-error downgrades to a plain sync rather than going silent, since the refs can still ship
-even when reconcile can't run.
+fail-closed. Every sync runs as an async hook, so a network round trip never holds up the tool
+call that triggered it. The auto-sync triggers dedup to **at most one sync per target repo per
+turn** — a commit and a claim in the same turn sync once. A successful sync says nothing. A repo
+with no remote or an offline box is a legitimate state, so nothing surfaces. A genuine sync
+failure, such as a non-fast-forward push rejection, is recorded in session state, and
+`surface_sync_failures` shows it once, on your next tool call or prompt, unless a later sync
+of the same repo succeeds first and clears it. The hint names each
+failed wired remote with its own retry ("cc-notes sync failed for <remotes> — run `cc-notes
+sync --remote <name>` to retry."), or the directory when the write landed in another repo
+("cc-notes sync failed in <dir> — run `cc-notes sync` there to retry.").
+A detached HEAD or a reconcile error still syncs, since the refs can ship even when reconcile
+can't run.
 
 **Auto-sync.** After a commit (`git commit`, `jj commit`, `jj describe`, `ccx vcs ship`), a
 `cc-notes task claim` / `task start`, a `git merge` / `git pull` / `jj git fetch`, a push
@@ -178,8 +180,7 @@ refs), or any cc-notes write — a mutating CLI subcommand (every noun's write v
 `reconcile`, and the two-level `task criterion` / `runbook step` / `runbook run` mutations)
 or an MCP tool that isn't a known reader (a deny-list of the read tools, so the matcher
 fails open: an unlisted future tool costs one harmless idempotent sync) — the pack runs
-`cc-notes sync` itself and confirms with
-"Synced cc-notes refs." — once per turn across every trigger. The sync covers every
+`cc-notes sync` itself in the background — once per turn across every trigger. The sync covers every
 cc-notes-wired remote — each remote whose fetch refspec in git config tracks
 `refs/cc-notes/*` — via `cc-notes sync --remote <name>`, falling back to one bare
 `cc-notes sync` when none is wired. Reads never sync. This replaces the old
@@ -187,9 +188,8 @@ cc-notes-wired remote — each remote whose fetch refspec in git config tracks
 
 A CLI write can land outside the session repo — `cd /other/repo && cc-notes note add …`
 writes the *other* repo's refs. The handler walks the parsed command legs, tracking every
-literal `cd` to resolve the directory each write leg runs in, and syncs the written repo,
-confirming "Synced cc-notes refs in <dir>." — once per target repo per turn, targets deduped
-by realpath. A `cd` it can't resolve structurally — `cd -`, a `$var`, a `~`, a backtick
+literal `cd` to resolve the directory each write leg runs in, and syncs the written repo —
+once per target repo per turn, targets deduped by realpath. A `cd` it can't resolve structurally — `cd -`, a `$var`, a `~`, a backtick
 substitution — falls back to the session repo, and pushd, subshells, and pipeline grouping
 are ignored the same way. The cross-repo path covers record writes only: a push, merge, or
 claim in another repo keeps session semantics, and an MCP write always targets the session
@@ -197,11 +197,10 @@ repo.
 
 **Auto-reconcile.** After a `git merge` / `git pull` / `jj git fetch`, the pack runs
 `cc-notes reconcile --into <current branch>` — carrying the merged branch's still-open tasks
-onto your branch — then syncs, confirming "Reconciled merged tasks onto <branch>. Synced
-cc-notes refs.". The push outcome rides along, so a failed push surfaces the same retry hint
-rather than reading as synced. On a detached HEAD (the colocated-jj norm — exactly where
-`jj git fetch` runs) or a failed reconcile it falls back to a plain sync — the
-fetched refs still ship; the tasks stay put. This replaces the old reconcile-then-sync
+onto your branch — then syncs, both in the background. A failed push surfaces the same retry
+hint on your next event. On a detached HEAD (the colocated-jj norm — exactly where
+`jj git fetch` runs) or a failed reconcile it only syncs — the fetched refs still ship; the
+tasks stay put. This replaces the old reconcile-then-sync
 nudge. jj merges and rebases match no trigger, so after one of those you still run
 `cc-notes reconcile` yourself.
 
