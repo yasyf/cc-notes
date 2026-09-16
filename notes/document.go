@@ -224,13 +224,15 @@ func (c *Client) reVerify(ctx context.Context, snap model.Snapshot) (model.Snaps
 	return c.s.Append(ctx, refs.For(kind, snap.EntityID()), []model.Op{model.VerifyNote{Witness: witness, VerifiedCommit: head}})
 }
 
-// documentAnchors reads a note or doc snapshot's kind and anchors.
+// documentAnchors reads a note, doc, or answer snapshot's kind and anchors.
 func documentAnchors(snap model.Snapshot) (model.Kind, []model.Anchor) {
 	switch e := snap.(type) {
 	case model.Note:
 		return model.KindNote, e.Anchors
 	case model.Doc:
 		return model.KindDoc, e.Anchors
+	case model.Answer:
+		return model.KindAnswer, e.Anchors
 	default:
 		panic("notes: reVerify on a non-document snapshot")
 	}
@@ -406,6 +408,9 @@ func (c *Client) VerifyDoc(ctx context.Context, id model.EntityID) (model.Doc, e
 // SupersedeNote records that the note by replaces id. by must resolve to a live
 // note; it is loaded to validate before the edge is written.
 func (c *Client) SupersedeNote(ctx context.Context, id, by model.EntityID) (model.Note, error) {
+	if id == by {
+		return model.Note{}, ErrSelfSupersede
+	}
 	if _, err := c.Note(ctx, by); err != nil {
 		return model.Note{}, err
 	}
@@ -430,6 +435,9 @@ func (c *Client) UnsupersedeNote(ctx context.Context, id, by model.EntityID) (mo
 
 // SupersedeDoc records that the doc by replaces id, mirroring SupersedeNote.
 func (c *Client) SupersedeDoc(ctx context.Context, id, by model.EntityID) (model.Doc, error) {
+	if id == by {
+		return model.Doc{}, ErrSelfSupersede
+	}
 	if _, err := c.Doc(ctx, by); err != nil {
 		return model.Doc{}, err
 	}

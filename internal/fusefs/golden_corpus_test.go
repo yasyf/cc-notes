@@ -53,7 +53,7 @@ type corpusEntry struct {
 // corpus returns every fixture in the frozen corpus, rebuilt fresh on each call
 // so no test can mutate another's snapshot.
 func corpus() []corpusEntry {
-	return concat(noteCorpus(), docCorpus(), logCorpus(), taskCorpus(), sprintCorpus(), projectCorpus(), runbookCorpus(), investigationCorpus(), planCorpus())
+	return concat(noteCorpus(), docCorpus(), logCorpus(), taskCorpus(), sprintCorpus(), projectCorpus(), runbookCorpus(), investigationCorpus(), planCorpus(), answerCorpus())
 }
 
 func concat(groups ...[]corpusEntry) []corpusEntry {
@@ -810,6 +810,42 @@ func planCorpus() []corpusEntry {
 	}
 }
 
+func answerCorpus() []corpusEntry {
+	return []corpusEntry{
+		{"answer_durable", model.Answer{
+			ID:    "aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000",
+			Title: "Which cache backend should the session store use?",
+			Body:  "Redis\nOptions: Redis | Memcached | In-process LRU\nNotes: we already run Redis for queues",
+			Tags:  []string{"header:Cache", "scope:durable"},
+			Anchors: []model.Anchor{
+				{Kind: model.AnchorPath, Value: "internal/session/store.go"},
+				{Kind: model.AnchorBranch, Value: "feature/sessions"},
+			},
+			Author:         "Agent A <a@example.com>",
+			CreatedAt:      cCreated,
+			UpdatedAt:      cVerified,
+			VerifiedAt:     cVerified,
+			VerifiedBy:     "Agent A <a@example.com>",
+			VerifiedCommit: "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+			Witness: []model.AnchorWitness{
+				{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "internal/session/store.go"}, OID: "1234567890abcdef1234567890abcdef12345678"},
+			},
+			Head: "aaaa2222aaaa2222aaaa2222aaaa2222aaaa2222",
+		}},
+		{"answer_superseded", model.Answer{
+			ID:           "bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000",
+			Title:        "Which cache backend should the session store use?",
+			Body:         "Memcached",
+			Tags:         []string{"scope:durable"},
+			SupersededBy: []model.EntityID{"aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000"},
+			Author:       "Agent A <a@example.com>",
+			CreatedAt:    cCreated,
+			UpdatedAt:    cUpdated,
+			Head:         "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
+		}},
+	}
+}
+
 // renderSnapshot dispatches to the concrete render function for snap's kind.
 func renderSnapshot(snap model.Snapshot) []byte {
 	switch v := snap.(type) {
@@ -831,6 +867,8 @@ func renderSnapshot(snap model.Snapshot) []byte {
 		return fusefs.RenderInvestigation(v)
 	case model.Plan:
 		return fusefs.RenderPlan(v)
+	case model.Answer:
+		return fusefs.RenderAnswer(v)
 	}
 	panic("golden corpus: unknown snapshot kind")
 }
@@ -913,6 +951,16 @@ func diffSnapshot(t *testing.T, snap model.Snapshot, edited []byte) (ops []model
 		ops, err = fusefs.DiffProject(v, p)
 		if err != nil {
 			t.Fatalf("DiffProject: %v", err)
+		}
+		return ops, true
+	case model.Answer:
+		p, err := fusefs.ParseAnswer(edited)
+		if err != nil {
+			t.Fatalf("ParseAnswer: %v", err)
+		}
+		ops, err = fusefs.DiffAnswer(v, p)
+		if err != nil {
+			t.Fatalf("DiffAnswer: %v", err)
 		}
 		return ops, true
 	case model.Runbook, model.Investigation, model.Plan:
@@ -1012,6 +1060,16 @@ var goldenEdits = map[string][]goldenEdit{
 		{
 			"when", "when: before touching the auth flow", "when: after the migration",
 			[]model.Op{model.SetWhen{When: "after the migration"}},
+		},
+	},
+	"answer_durable": {
+		{
+			"body", "Redis\nOptions:", "Memcached\nOptions:",
+			[]model.Op{model.SetBody{Body: "Memcached\nOptions: Redis | Memcached | In-process LRU\nNotes: we already run Redis for queues"}},
+		},
+		{
+			"retag scope", "tags: ['header:Cache', 'scope:durable']", "tags: ['header:Cache', 'scope:ephemeral']",
+			[]model.Op{model.AddTag{Tag: "scope:ephemeral"}, model.RemoveTag{Tag: "scope:durable"}},
 		},
 	},
 	"log_rich": {

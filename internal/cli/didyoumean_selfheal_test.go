@@ -28,7 +28,7 @@ func TestSelfHealingErrors(t *testing.T) {
 			contains: []string{
 				"unknown flag: --attach",
 				"runbook add takes: ", "--body", "--branch", "--step",
-				"--attach exists on:", `"doc add"`, `"log add"`, `"note add"`,
+				"--attach exists on:", `"answer add"`, `"doc add"`, `"log add"`,
 			},
 			absent: []string{`"note edit"`, `"doc edit"`, `"log append"`},
 		},
@@ -179,7 +179,7 @@ func TestSelfHealingErrorExactShapes(t *testing.T) {
 			args: []string{"runbook", "add", "Deploy", "--attach"},
 			want: "unknown flag: --attach\n" +
 				"runbook add takes: --body --branch --commit --dir --json --label --path --step\n" +
-				`--attach exists on: "doc add" (` + attachUsage + `), "log add" (` + attachUsage + `), "note add" (` + attachUsage + `)`,
+				`--attach exists on: "answer add" (` + attachUsage + `), "doc add" (` + attachUsage + `), "log add" (` + attachUsage + `)`,
 		},
 	}
 	for _, tc := range cases {

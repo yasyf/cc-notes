@@ -1,8 +1,8 @@
 ---
 name: using-cc-notes
 description: >-
-  Use cc-notes to record durable tasks and notes that outlive a session, stored as
-  git objects on refs/cc-notes/*. Triggers when an agent records a task or note for
+  Use cc-notes to record durable tasks, notes, and answers that outlive a session, stored as
+  git objects on refs/cc-notes/*. Triggers when an agent records a task, note, or answer for
   later; stores an artifact, evidence file, or dump — a VM or CI run log, a panic or
   crash dump, a repro archive — durably as a log attachment instead of committing it
   to the repo tree; adopts cc-notes in a repo that has not run init yet; runs status to orient on
@@ -10,7 +10,8 @@ description: >-
   task; coordinates work across branches and multiple agents; manages leases and
   reclaims stale claims; verifies or supersedes a durable fact; records or executes a
   repeatable procedure as a runbook with per-run step tracking; records an approved
-  plan verbatim and tracks its execution to an outcome; syncs tasks and notes
+  plan verbatim and tracks its execution to an outcome; recalls a user's answer or replaces
+  it when the user changes their choice; syncs tasks, notes, and answers
   with a remote; reconciles tasks after merging a branch; or links commits to the task
   they implemented.
 allowed-tools: Bash(cc-notes:*), Read
@@ -18,7 +19,7 @@ allowed-tools: Bash(cc-notes:*), Read
 
 # Using cc-notes
 
-cc-notes is a git-native notes and tasks layer for agents. Every entity — a note or a
+cc-notes is a git-native notes and tasks layer for agents. Every entity — a note, answer, or
 task — is an event-log CRDT: an append-only log of operation packs, one per git commit,
 on hidden `refs/cc-notes/*` refs inside the repo's object database. The data is versioned
 and invisible in checkouts and diffs. Plain `git push` publishes your refs; a plain `git
@@ -35,7 +36,7 @@ todo tool.
 ## MCP tools — the primary interface
 
 Where the Claude Code plugin is enabled (or any MCP client points at `cc-notes mcp`), the
-agent-facing command surface is MCP tools — one `noun_verb` tool per command (`note_add`,
+agent-facing command surface is MCP tools — one `noun_verb` tool per command (`note_add`, `answer_add`,
 `task_start`, `runbook_run_done`, …), surfaced as `mcp__plugin_cc-notes_cc-notes__<tool>`.
 **Call the tool; shell out only when no server is live.** The schemas structurally prevent
 the flag-spelling errors that dog the CLI path — repeatable flags are arrays, toggles are
@@ -45,8 +46,9 @@ result is the command's `--json`.
 
 That result comes in two shapes. A listing or a write acknowledgement returns a *summary* — the
 identity, the lifecycle status, and a tally where the entity carries an append-only history — and
-never the body, entries, comments, criteria, steps, or runs. The `*_show` tools return the record
-whole: `note_show`, `doc_show`, `log_show`, `task_show`, `sprint_show`, `project_show`,
+omits bodies, entries, comments, criteria, steps, and runs. Answer summaries include the body
+so the question and reply can surface together. The `*_show` tools return the record
+whole: `note_show`, `answer_show`, `doc_show`, `log_show`, `task_show`, `sprint_show`, `project_show`,
 `runbook_show`, `investigation_show`, `plan_show`, or the kind-agnostic `show`. So `note_add` hands back the id,
 not the body you just wrote, and `log_append` hands back an entry tally, not the entry. Fetch a
 body only to read one you did not write. An acknowledgement also carries up to two per-write
@@ -54,7 +56,7 @@ facts, both absent ordinarily: `reused: true` when the duplicate guard returned 
 entity instead of creating one, and `branch_set: false` when `task_start` claimed a task from a
 detached HEAD without setting a branch.
 
-Property names mirror the flags. The anchored kinds — note, doc, log, runbook, investigation,
+Property names mirror the flags. The anchored kinds — note, answer, doc, log, runbook, investigation,
 plan — take anchor arrays (commits, paths, dirs, branches) on their add tools and the add_*/rm_*
 octet
 on their edit tools; sprint, project, and the criterion/step tools do not carry anchors
@@ -101,19 +103,21 @@ operates on exactly like a note:
 ```
 
 The same shape covers the rest: `doc_add` takes a `when` read-trigger and the full
-markdown in `body`; `log_append` takes `entry` plus `attach` paths; `search` ranks across
-every kind. `references/cli-reference.md` documents both surfaces — every command block
+markdown in `body`; `answer_add` takes the question as `title` and the reply as `body`, with
+no `when`; `log_append` takes `entry` plus `attach` paths; `search` ranks across
+every kind. `references/cli-reference.md` documents both surfaces for every kind, answers
+included — every command block
 opens with an `MCP:` line naming the tool and its properties. Operator commands (`init`,
 `gc`, `compact`, `viz`, `version`, the installers) are CLI-only on purpose. Where
 the server is active, cc-notes' own capt-hook nudges name the tools; the CLI forms below
 are the fallback for sessions without it.
 
-## Eight tools, eight jobs
+## Nine tools, nine jobs
 
 Get this distinction right first. Native todos, cc-notes tasks, cc-notes plans, cc-notes notes,
-cc-notes docs, cc-notes logs, cc-notes investigations, and cc-notes papercuts differ along two
+cc-notes answers, cc-notes docs, cc-notes logs, cc-notes investigations, and cc-notes papercuts differ along two
 axes — how long
-the record lives and who can see it — and the five durable knowledge records, a note, a doc, a
+the record lives and who can see it — and the six durable knowledge records, a note, an answer, a doc, a
 log, an investigation, and a papercut, split once more by form. Tasks and plans are the two
 work-shaped records: a task is a unit of work, a plan the approved approach a set of tasks
 executes.
@@ -124,6 +128,7 @@ executes.
 | `task_*` / `cc-notes task` | Durable — git ODB, synced across machines and agents | Global: one flat ref per task, with a mutable `branch` attribute and a shared backlog every agent sees | Work that outlives the session or coordinates agents: claim, lease, deps, comments, priority, lifecycle |
 | `plan_*` / `cc-notes plan` | Durable — git ODB, synced | Repo-global, anchored like a note | An approved plan held verbatim — context, approach, pitfalls, verification — with a typed status (`draft → approved → executing → done`/`abandoned`) and a derived roll-up of the tasks pointing at it |
 | `note_*` / `cc-notes note` | Durable — git ODB, synced | Repo-global, optionally anchored to a commit, path, or branch | Design decisions and durable facts, verified and searchable |
+| `answer_*` / `cc-notes answer` | Durable — git ODB, synced | Repo-global, anchored like a note | A user's reply kept with the question as `title`, clamped to the CLI title cap, with the full text on a `Question:` body line when clamped; captured from `AskUserQuestion`; scope labels distinguish durable choices from ephemeral ones |
 | `doc_*` / `cc-notes doc` | Durable — git ODB, synced | Repo-global, anchored like a note, plus a `when` read-trigger | Multi-paragraph guidance written *for the next agent*, verified and floated on read |
 | `log_*` / `cc-notes log` | Durable — git ODB, synced | Repo-global, anchored like a doc | An append-only chronological journal — a rollout log, a migration diary — whose entries are never edited or reordered, with no verify/drift/supersede lifecycle and no verdict |
 | `investigation_*` / `cc-notes investigation` | Durable — git ODB, synced | Repo-global, anchored like a note | A debugging arc: an immutable premise, an append-only evidence timeline, findings with per-finding dispositions, and a typed status that carries the verdict (`open → root_caused → fixed → confirmed`, plus `exonerated`/`abandoned`) |
@@ -152,6 +157,17 @@ it in place on every later round, and nudges the task links.
 
 A note records when it was last **verified** true; superseding a note points it at its
 replacement and drops it from default listings.
+
+An **answer** holds a user's reply to a question. The title is the question, clamped to the CLI
+title cap, with the full text on a `Question:` body line when clamped. The chosen answer goes on
+the first line of `body`, with optional `Options:` and `Notes:` lines after it.
+
+It carries exactly one `scope:durable` or `scope:ephemeral` label, a `header:<text>` label when present,
+and branch/path anchors. The capt-hook pack records `AskUserQuestion` replies automatically.
+Use `answer_add` by hand for a durable answer given in plain chat that should bind future
+sessions; use `answer_supersede` when the user changes their answer, or `answer_expire` when
+its premise stops holding without a replacement. Verification and review follow notes and
+docs. See `references/answers.md`.
 
 A **doc** is the long-form sibling of a note — the same durable, repo-global, born-verified
 lifecycle (`doc_verify`/`doc_expire`/`doc_supersede`), but it holds multi-paragraph guidance
@@ -201,7 +217,8 @@ the friction.
 The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, else your git
 `user.name`/`user.email`. Claims and leases key on that actor.
 
-See `references/tasks-vs-notes.md` for worked examples of choosing among the eight.
+See `references/tasks-vs-notes.md` and `references/answers.md` for worked examples of choosing
+among the nine.
 
 ## Canonical agent flow
 
@@ -323,7 +340,8 @@ pushed: 2
 rounds: 1
 ```
 
-**10. Maintain.** `note_review` surfaces drifted, stale, and unverified facts; `task_archived`
+**10. Maintain.** `note_review`, `doc_review`, and `answer_review` surface drifted, stale, and
+unverified records; `task_archived`
 hides long-closed work; `cc-notes gc --prune-remote` (CLI-only, opt-in, best-effort)
 physically reclaims tombstoned refs.
 
@@ -331,7 +349,7 @@ physically reclaims tombstoned refs.
 
 The verbs reached for most: the MCP tool with its key properties, then the CLI fallback.
 The full surface — every flag, property, default, and output shape — is in
-`references/cli-reference.md`.
+`references/cli-reference.md`, answers included.
 
 | Purpose | MCP tool (key properties) | CLI fallback |
 |---------|---------------------------|--------------|
@@ -361,9 +379,13 @@ The full surface — every flag, property, default, and output shape — is in
 | Revise a plan re-approved before work starts | `plan_edit` (`id`, `body`) | `cc-notes plan edit <id> --body -` |
 | Replace a plan after a genuine replan | `plan_supersede` (`id`, `by`) | `cc-notes plan supersede <old> --by <new>` |
 | Record a durable fact | `note_add` (`title`, `body`, `paths`) | `cc-notes note add "<title>" --path <path>` |
+| Record a durable answer given in plain chat | `answer_add` (`title`, `body`, `labels`, `branches`, `paths`) | `cc-notes answer add --label scope:durable --body "<reply>" -- "<question>"` |
+| Recall recent durable answers | `answer_list` (`labels`, `limit`) | `cc-notes answer list --label scope:durable --limit 8` |
+| Replace a user's earlier answer | `answer_supersede` (`id`, `by`) | `cc-notes answer supersede <old> --by <new>` |
+| Flag an answer whose premise stopped holding | `answer_expire` (`id`, `reason`) | `cc-notes answer expire <id> --reason "<reason>"` |
 | Re-confirm a fact | `note_verify` (`id`) | `cc-notes note verify <id>` |
 | Flag a fact out-of-date | `note_expire` (`id`, `reason`) | `cc-notes note expire <id>` |
-| Review drifted/stale/unverified | `note_review` / `doc_review` | `cc-notes note review` |
+| Review drifted/stale/unverified | `note_review` / `doc_review` / `answer_review` | `cc-notes note review` |
 | Search one kind | `note_search` (`query`) | `cc-notes note search "<query>"` |
 | Guidance for the next agent | `doc_add` (`title`, `when`, `body`) | `cc-notes doc add "<title>" --when "<trigger>" --body -` |
 | Revise a doc's body | `doc_edit` (`id`, `body`) | `cc-notes doc edit <id> --checkout` … `--apply` |
@@ -387,7 +409,7 @@ The full surface — every flag, property, default, and output shape — is in
 | Record a step outcome | `runbook_run_done`/`_skip`/`_fail` (`id`, `step`, `note`) | `cc-notes runbook run done <id> <step>` |
 | Close the run | `runbook_run_finish` (`id`, `failed`, `abandoned`) | `cc-notes runbook run finish <id>` |
 
-A tool result is the command's `--json`; on the CLI, append `--json` to any note, doc, log,
+A tool result is the command's `--json`; on the CLI, append `--json` to any note, answer, doc, log,
 investigation, plan, papercut, task, sync, reconcile, or status command for the same
 machine-readable record instead of the lean line. Listings and write acknowledgements come back as summaries; a
 `show` returns the record whole, capping exactly five collections at their 20 most recent members
@@ -424,14 +446,14 @@ verdict in the entry text, evidence attached to the entity:
 CLI: `cc-notes log add "<title>" --dir <dir> --label evidence`, then
 `cc-notes log append <id> --entry "<verdict>" --attach results/scenario.log`.
 
-The `attach` array (CLI `--attach`, repeatable) works the same on `note_add`, `doc_add`, and
-`log_add`; on `note_edit`/`doc_edit` it attaches to an entity that already exists, and a log
+The `attach` array (CLI `--attach`, repeatable) works the same on `note_add`, `answer_add`,
+`doc_add`, and `log_add`; on `note_edit`/`answer_edit`/`doc_edit` it attaches to an entity that already exists, and a log
 grows the same way through `log_append`. (The CLI's `--checkout` buffer carries attachments
 through at apply time — `cc-notes doc add --apply <path> --attach <file>` ingests them in the
 same create transaction.) It is fully offline: the file is hashed into the local LFS store at
 write time, no network. Names are unique per entity — an attach that reuses a live name fails
 unless you pass `replace: true` (a re-run superseding the last run's `scenario.log`), and
-`rm_attachments` on `note_edit`/`doc_edit`/`log_edit` drops names from the live set.
+`rm_attachments` on `note_edit`/`answer_edit`/`doc_edit`/`log_edit` drops names from the live set.
 
 The sharp edges:
 
@@ -449,6 +471,16 @@ bytes there, never inline (CLI: `cc-notes attachment get <id> <name> -o <path>`,
 with no `-o`) — or `attachment_path`, which prints the local store path for a zero-copy
 read. `show` on the entity lists its attachments and flags any not yet downloaded with a
 sync hint.
+
+## Answers (automatic)
+
+Where the capt-hook pack is enabled, `record_user_answers` captures replies after every
+`AskUserQuestion`. On the first prompt, `float_session_answers` supplies the 8 most recent
+live durable answers; on later prompts, `float_prompt_answers` filters unseen durable answers
+against the prompt with a small LLM. `restore_answers_after_compact` restores answers captured
+or surfaced this session after compaction, capped at 30. File surfacing through `relevant`
+is opt-in: `git config cc-notes.answers.fileSurfacing true`. The `answers` seen-set tracks
+what has surfaced. See `references/answers.md` for the record shape and lifecycle.
 
 ## Memory mirror (automatic)
 
@@ -559,15 +591,17 @@ See `references/runbooks.md`.
 - `references/coordination.md` — how agents coordinate over time: the backlog and the branch
   attribute, claims and leases, stale-claim recovery, deps and blocking, reconcile-on-merge,
   and union-merge sync across a shared remote.
-- `references/tasks-vs-notes.md` — the eight-way distinction with worked examples of choosing
+- `references/tasks-vs-notes.md` and `references/answers.md` — the nine-way distinction with worked examples of choosing
   native todo vs cc-notes task vs cc-notes plan vs cc-notes note vs cc-notes doc vs cc-notes log
-  vs cc-notes investigation vs cc-notes papercut.
+  vs cc-notes answer vs cc-notes investigation vs cc-notes papercut.
 - `references/investigations.md` — the investigation record: premise, timeline, findings, and
   the status machine; the log-vs-investigation call; and the multi-agent forensics flow.
 - `references/lifecycle-and-hygiene.md` — keeping the record honest: task leases and
   staleness, note verification, drift, and supersession, and the maintenance verbs.
 - `references/plans.md` — the plan record: the verbatim body, the status machine, the task
   roll-up, supersession as an edge, and the plan-vs-runbook-vs-doc call.
+- `references/answers.md` — the user's question and reply, automatic capture and recall,
+  scope labels, and the verify/supersede/expire/review lifecycle.
 - `references/sprints-and-projects.md` — the optional grouping layer: tasks rolling up into
   sprints and projects, the repo-wide upward pointers, and the derived reverse indexes.
 - `references/runbooks.md` — repeatable procedures: the runbook-vs-doc call, authoring

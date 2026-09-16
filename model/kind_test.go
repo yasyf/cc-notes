@@ -9,7 +9,7 @@ import (
 )
 
 func TestKindsCanonicalOrder(t *testing.T) {
-	want := []Kind{KindNote, KindDoc, KindLog, KindTask, KindSprint, KindProject, KindRunbook, KindInvestigation, KindPlan}
+	want := []Kind{KindNote, KindDoc, KindLog, KindTask, KindSprint, KindProject, KindRunbook, KindInvestigation, KindPlan, KindAnswer}
 	if got := Kinds(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Kinds() = %v, want %v", got, want)
 	}
@@ -190,6 +190,20 @@ var metaCases = []struct {
 			Deleted: true, Superseded: true,
 		},
 	},
+	{
+		snap: Answer{
+			ID: testID, Title: "Which cache backend?", Body: "Redis\nOptions: Redis | Memcached",
+			Tags: []string{"scope:durable"}, Author: "ada", CreatedAt: 1900, UpdatedAt: 2000,
+			SupersededBy: []EntityID{testParent}, Head: testParent,
+			Attachments: []Attachment{{Name: "context.txt", OID: testOID, Size: 128}},
+		},
+		want: Meta{
+			Kind: KindAnswer, Title: "Which cache backend?", Head: testParent,
+			CreatedAt: time.Unix(1900, 0).UTC(), UpdatedAt: time.Unix(2000, 0).UTC(),
+			Superseded:  true,
+			Attachments: []Attachment{{Name: "context.txt", OID: testOID, Size: 128}},
+		},
+	},
 }
 
 func TestSnapshotMeta(t *testing.T) {
@@ -221,6 +235,7 @@ func TestCreateOpExhaustive(t *testing.T) {
 		"create_runbook":       KindRunbook,
 		"create_investigation": KindInvestigation,
 		"create_plan":          KindPlan,
+		"create_answer":        KindAnswer,
 	}
 	got := map[string]Kind{}
 	for _, s := range everyOpSample {

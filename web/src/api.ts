@@ -226,6 +226,8 @@ export interface NoteSnapshot {
   attachments?: Attachment[];
 }
 
+export type AnswerSnapshot = NoteSnapshot;
+
 // DocSnapshot is the folded snapshot of a doc: a Note plus the free-text `when`
 // trigger. Mirrors model.Doc.
 export interface DocSnapshot {
@@ -462,7 +464,7 @@ export function projectRunSteps(
 // Snapshot is the full folded entity carried on an EntityDetail and in the
 // /api/entities buckets. Discriminate it by the summary.kind the caller already
 // holds (note | doc | log | task | sprint | project | runbook | investigation |
-// plan) — the snapshots carry no intrinsic tag. Mirrors model.Snapshot.
+// plan | answer) — the snapshots carry no intrinsic tag. Mirrors model.Snapshot.
 export type Snapshot =
   | NoteSnapshot
   | DocSnapshot
@@ -472,7 +474,8 @@ export type Snapshot =
   | ProjectSnapshot
   | RunbookSnapshot
   | InvestigationSnapshot
-  | PlanSnapshot;
+  | PlanSnapshot
+  | AnswerSnapshot;
 
 // EntityDetail is the /api/entity/{kind}/{id} payload: the legend summary, the
 // full folded snapshot, and the change trail, oldest first. Mirrors
@@ -497,6 +500,7 @@ export interface StateResponse {
   runbooks: RunbookSnapshot[];
   investigations: InvestigationSnapshot[];
   plans: PlanSnapshot[];
+  answers: AnswerSnapshot[];
 }
 
 // RawEvent is Event as it arrives on the wire: detail is a Go map that marshals
@@ -566,6 +570,7 @@ interface RawStateResponse {
   runbooks: RunbookSnapshot[] | null;
   investigations: InvestigationSnapshot[] | null;
   plans: PlanSnapshot[] | null;
+  answers: AnswerSnapshot[] | null;
 }
 
 // normalizeGraph fills every nil slice with [] and every nil detail map with {},
@@ -626,6 +631,7 @@ export function normalizeEntities(raw: RawStateResponse): StateResponse {
     runbooks: raw.runbooks ?? [],
     investigations: raw.investigations ?? [],
     plans: raw.plans ?? [],
+    answers: raw.answers ?? [],
   };
 }
 

@@ -28,6 +28,7 @@ type StatusReport struct {
 	Runs           []StatusRun
 	Notes          SummaryCount
 	Docs           SummaryCount
+	Answers        SummaryCount
 	Logs           int
 	Papercuts      int
 	Investigations InvestigationSummary
@@ -81,7 +82,7 @@ type StatusRun struct {
 	Stale   bool
 }
 
-// SummaryCount summarizes a note or doc set: the total live entities and the
+// SummaryCount summarizes a note, doc, or answer set: the total live entities and the
 // count needing review.
 type SummaryCount struct {
 	Total       int
@@ -122,6 +123,10 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	if err != nil {
 		return StatusReport{}, err
 	}
+	answerList, err := c.s.ListAnswers(ctx, false, false)
+	if err != nil {
+		return StatusReport{}, err
+	}
 	logList, err := c.s.ListLogs(ctx, false)
 	if err != nil {
 		return StatusReport{}, err
@@ -151,6 +156,10 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		return StatusReport{}, err
 	}
 	docReviews, err := c.ReviewDocs(ctx, staleAfter)
+	if err != nil {
+		return StatusReport{}, err
+	}
+	answerReviews, err := c.ReviewAnswers(ctx, staleAfter)
 	if err != nil {
 		return StatusReport{}, err
 	}
@@ -228,13 +237,15 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		Runs:           inFlightRuns(runbooks, now, ttl),
 		Notes:          SummaryCount{Total: len(noteList), NeedsReview: len(noteReviews)},
 		Docs:           SummaryCount{Total: len(docList), NeedsReview: len(docReviews)},
+		Answers:        SummaryCount{Total: len(answerList), NeedsReview: len(answerReviews)},
 		Logs:           len(logList),
 		Papercuts:      papercuts,
 		Investigations: invSummary,
 		Plans:          inFlightPlans,
 		SkippedOps: sumSkipped(tasks) + sumSkipped(runbooks) + sumSkipped(noteList) +
 			sumSkipped(docList) + sumSkipped(logList) + sumSkipped(invList) +
-			sumSkipped(sprintList) + sumSkipped(projectList) + sumSkipped(planList),
+			sumSkipped(sprintList) + sumSkipped(projectList) + sumSkipped(planList) +
+			sumSkipped(answerList),
 	}
 	for i, t := range backlog {
 		report.Backlog[i] = StatusBacklogTask{Task: t, Ready: readySet[t.ID]}

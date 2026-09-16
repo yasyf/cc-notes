@@ -32,8 +32,8 @@ func (e Entity) Text() string {
 }
 
 // LoadCorpus folds every cc-notes entity in the repository the client is open
-// over into a scoring corpus, sorted by id. Superseded notes and docs and
-// archived runbooks are included: a retriever that surfaces them is what the
+// over into a scoring corpus, sorted by id. Superseded notes, docs, and
+// answers and archived runbooks are included: a retriever that surfaces them is what the
 // superseded-leak metric measures. Tombstoned records are not.
 func LoadCorpus(ctx context.Context, c *notes.Client) ([]Entity, error) {
 	var out []Entity
@@ -57,6 +57,17 @@ func LoadCorpus(ctx context.Context, c *notes.Client) ([]Entity, error) {
 		out = append(out, Entity{
 			ID: d.ID, Kind: model.KindDoc, Title: d.Title, Body: join(d.When, d.Body),
 			Tags: d.Tags, UpdatedAt: d.UpdatedAt, SupersededBy: d.SupersededBy,
+		})
+	}
+
+	answers, err := c.Answers(ctx, notes.DocumentFilter{IncludeSuperseded: true})
+	if err != nil {
+		return nil, fmt.Errorf("list answers: %w", err)
+	}
+	for _, a := range answers {
+		out = append(out, Entity{
+			ID: a.ID, Kind: model.KindAnswer, Title: a.Title, Body: a.Body,
+			Tags: a.Tags, UpdatedAt: a.UpdatedAt, SupersededBy: a.SupersededBy,
 		})
 	}
 

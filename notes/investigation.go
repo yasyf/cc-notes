@@ -388,6 +388,9 @@ func (c *Client) RemoveFollowUp(ctx context.Context, id, followUp model.EntityID
 // mirroring SupersedeNote: by must resolve to a live investigation and is
 // loaded to validate before the edge is written.
 func (c *Client) SupersedeInvestigation(ctx context.Context, id, by model.EntityID) (model.Investigation, error) {
+	if id == by {
+		return model.Investigation{}, ErrSelfSupersede
+	}
 	if _, err := c.Investigation(ctx, by); err != nil {
 		return model.Investigation{}, err
 	}

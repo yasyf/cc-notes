@@ -117,6 +117,18 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 		t.Fatalf("start plan: %v", err)
 	}
 
+	oldAnswer, err := s.Create(ctx, []model.Op{model.CreateAnswer{Nonce: model.NewNonce(), Title: "which cache?", Body: "Redis"}})
+	if err != nil {
+		t.Fatalf("create answer: %v", err)
+	}
+	newAnswer, err := s.Create(ctx, []model.Op{model.CreateAnswer{Nonce: model.NewNonce(), Title: "which cache?", Body: "Memcached"}})
+	if err != nil {
+		t.Fatalf("create replacement answer: %v", err)
+	}
+	if _, err := s.Append(ctx, refs.For(model.KindAnswer, oldAnswer.EntityID()), []model.Op{model.AddSupersededBy{ID: newAnswer.EntityID()}}); err != nil {
+		t.Fatalf("supersede answer: %v", err)
+	}
+
 	ts, _, _ := newVizServer(t, r)
 	code, body := getBody(t, ts.URL+"/api/entities")
 	if code != http.StatusOK {
@@ -153,6 +165,9 @@ func TestAPIEntitiesAllKinds(t *testing.T) {
 	}
 	if len(resp.Plans) != 1 {
 		t.Errorf("plans = %d, want 1", len(resp.Plans))
+	}
+	if len(resp.Answers) != 2 {
+		t.Errorf("answers = %d, want 2 (replacement + superseded old); got %+v", len(resp.Answers), resp.Answers)
 	}
 
 	byID := make(map[model.EntityID]model.Note, len(resp.Notes))

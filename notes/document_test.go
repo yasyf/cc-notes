@@ -285,6 +285,65 @@ func TestSupersedeValidatesTarget(t *testing.T) {
 	}
 }
 
+func TestSupersedeRejectsSelf(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	commitFile(t, dir, "a.go", "v1\n")
+	note, _, err := c.CreateNote(ctx, notes.NoteSpec{Title: "note", Body: "b"})
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	doc, _, err := c.CreateDoc(ctx, notes.DocSpec{Title: "doc", Body: "b", When: "w"})
+	if err != nil {
+		t.Fatalf("CreateDoc: %v", err)
+	}
+	answer, _, err := c.CreateAnswer(ctx, notes.NoteSpec{Title: "question?", Body: "yes"})
+	if err != nil {
+		t.Fatalf("CreateAnswer: %v", err)
+	}
+	plan, _, err := c.CreatePlan(ctx, notes.PlanSpec{Title: "plan", Body: "## Context\n\nx\n"})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	inv, _, err := c.CreateInvestigation(ctx, notes.InvestigationSpec{Title: "inv", Premise: "p"})
+	if err != nil {
+		t.Fatalf("CreateInvestigation: %v", err)
+	}
+	for name, supersede := range map[string]func() error{
+		"note": func() error {
+			_, err := c.SupersedeNote(ctx, note.ID, note.ID)
+			return err
+		},
+		"doc": func() error {
+			_, err := c.SupersedeDoc(ctx, doc.ID, doc.ID)
+			return err
+		},
+		"answer": func() error {
+			_, err := c.SupersedeAnswer(ctx, answer.ID, answer.ID)
+			return err
+		},
+		"plan": func() error {
+			_, err := c.SupersedePlan(ctx, plan.ID, plan.ID)
+			return err
+		},
+		"investigation": func() error {
+			_, err := c.SupersedeInvestigation(ctx, inv.ID, inv.ID)
+			return err
+		},
+	} {
+		if err := supersede(); !errors.Is(err, notes.ErrSelfSupersede) {
+			t.Errorf("%s supersede by itself err = %v, want ErrSelfSupersede", name, err)
+		}
+	}
+	reloaded, err := c.Answer(ctx, answer.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(reloaded.SupersededBy) != 0 {
+		t.Errorf("SupersededBy = %v after a rejected self-supersede, want none", reloaded.SupersededBy)
+	}
+}
+
 func TestSearchAndFilterNotes(t *testing.T) {
 	c, dir := newClient(t)
 	ctx := t.Context()
@@ -418,7 +477,6 @@ func TestNoteSupersedeHeads(t *testing.T) {
 	v1, v2a, v2b, v3 := mk("v1"), mk("v2a"), mk("v2b"), mk("v3")
 	d1, d2, d3 := mk("d1"), mk("d2"), mk("d3")
 	y1, y2 := mk("y1"), mk("y2")
-	self := mk("self")
 	g1, g2 := mk("g1"), mk("g2")
 	live := mk("live")
 
@@ -432,7 +490,6 @@ func TestNoteSupersedeHeads(t *testing.T) {
 	link(d1, d3)
 	link(y1, y2)
 	link(y2, y1)
-	link(self, self)
 	link(g1, g2)
 	if _, err := c.RemoveNote(ctx, g2); err != nil {
 		t.Fatalf("RemoveNote(%s): %v", g2, err)
@@ -450,7 +507,6 @@ func TestNoteSupersedeHeads(t *testing.T) {
 		{"converging branches yield one head", v1, []model.EntityID{v3}},
 		{"diverging branches yield both heads", d1, diverged},
 		{"two-note cycle terminates headless", y1, nil},
-		{"self-supersede terminates headless", self, nil},
 		{"tombstoned target dangles headless", g1, nil},
 		{"unsuperseded note has no head", live, nil},
 		{"unknown id has no head", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", nil},

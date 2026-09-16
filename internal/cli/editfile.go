@@ -112,6 +112,57 @@ func docAdapter() editAdapter {
 	}
 }
 
+func answerAdapter() editAdapter {
+	return editAdapter{
+		kind: model.KindAnswer,
+		load: func(ctx context.Context, s *store.Store, prefix string) (model.Snapshot, model.SHA, error) {
+			_, a, err := answerSpec.load(ctx, s, prefix)
+			if err != nil {
+				return nil, "", err
+			}
+			return a, a.Head, nil
+		},
+		render: func(snap model.Snapshot) []byte { return fusefs.RenderAnswer(snap.(model.Answer)) },
+		template: func(p prefill) []byte {
+			return fusefs.NewAnswerTemplate(p.title, p.tags, buildAnchors(p.commits, p.paths, p.dirs, p.branches))
+		},
+		diffOps: func(base model.Snapshot, data []byte) ([]model.Op, error) {
+			p, err := fusefs.ParseAnswer(data)
+			if err != nil {
+				return nil, err
+			}
+			ops, err := fusefs.DiffAnswer(base.(model.Answer), p)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateOpTitles(ops); err != nil {
+				return nil, err
+			}
+			return ops, nil
+		},
+		createOps: func(data []byte) ([]model.Op, error) {
+			p, err := fusefs.ParseAnswer(data)
+			if err != nil {
+				return nil, err
+			}
+			ops, err := fusefs.NewAnswer(p)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateOpTitles(ops); err != nil {
+				return nil, err
+			}
+			return ops, nil
+		},
+		bornVerify: func(ctx context.Context, s *store.Store, snap model.Snapshot) (model.Snapshot, error) {
+			return bornVerify(ctx, s, refs.For(model.KindAnswer, snap.EntityID()), snap.(model.Answer).Anchors)
+		},
+		print: func(cmd *cobra.Command, c *notes.Client, snap model.Snapshot, jsonOut bool, ack ...writeAck) error {
+			return printAnswer(cmd, c, snap.(model.Answer), jsonOut, ack...)
+		},
+	}
+}
+
 func noteAdapter() editAdapter {
 	return editAdapter{
 		kind: model.KindNote,
@@ -172,6 +223,8 @@ func validateOpTitles(ops []model.Op) error {
 		case model.CreateNote:
 			title = o.Title
 		case model.CreateDoc:
+			title = o.Title
+		case model.CreateAnswer:
 			title = o.Title
 		case model.SetTitle:
 			title = o.Title
@@ -575,6 +628,10 @@ func resolveOpCommitAnchors(ctx context.Context, g gitcmd.Git, ops []model.Op) (
 				return nil, err
 			}
 		case model.CreateNote:
+			if err := resolveAnchorsInPlace(o.Anchors, resolve); err != nil {
+				return nil, err
+			}
+		case model.CreateAnswer:
 			if err := resolveAnchorsInPlace(o.Anchors, resolve); err != nil {
 				return nil, err
 			}

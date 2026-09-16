@@ -43,6 +43,7 @@ var folders = map[model.Kind]func([]model.PackCommit, mode) (model.Snapshot, err
 	model.KindRunbook:       func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldRunbook(o, m) },
 	model.KindInvestigation: func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldInvestigation(o, m) },
 	model.KindPlan:          func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldPlan(o, m) },
+	model.KindAnswer:        func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldAnswer(o, m) },
 }
 
 // Fold linearizes the chain and replays its operation packs into a snapshot,
@@ -50,8 +51,8 @@ var folders = map[model.Kind]func([]model.PackCommit, mode) (model.Snapshot, err
 // create_doc chain to model.Doc, a create_log chain to model.Log, a create_task
 // chain to model.Task, a create_sprint chain to model.Sprint, a create_project
 // chain to model.Project, a create_runbook chain to model.Runbook, a
-// create_investigation chain to model.Investigation, and a create_plan chain to
-// model.Plan. Set-valued snapshot fields come back as non-nil sorted slices;
+// create_investigation chain to model.Investigation, a create_plan chain to
+// model.Plan, and a create_answer chain to model.Answer. Set-valued snapshot fields come back as non-nil sorted slices;
 // anchors sort by (kind, value). The one exception is Attachments (LWW by
 // name), which sorts by name and comes back nil when empty — the field marshals
 // omitempty, so attachment-less snapshots keep their pre-attachment bytes.
@@ -178,6 +179,16 @@ func Plan(commits []model.PackCommit) (model.Plan, error) {
 		return model.Plan{}, err
 	}
 	return foldPlan(ordered, tolerant)
+}
+
+// Answer linearizes the chain and folds it as an answer. It fails with
+// ErrKindMismatch when the chain was created as a different kind.
+func Answer(commits []model.PackCommit) (model.Answer, error) {
+	ordered, err := Linearize(commits)
+	if err != nil {
+		return model.Answer{}, err
+	}
+	return foldAnswer(ordered, tolerant)
 }
 
 // dispatch returns the boxing fold for an already-linearized chain whose first

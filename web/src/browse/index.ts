@@ -49,7 +49,7 @@ function haystack(parts: string[]): string {
     .toLowerCase();
 }
 
-function noteDocRow(kind: "note" | "doc", s: NoteSnapshot | DocSnapshot): Row {
+function noteDocRow(kind: "note" | "doc" | "answer", s: NoteSnapshot | DocSnapshot): Row {
   const when = kind === "doc" ? (s as DocSnapshot).when : "";
   const verifiedAt = s.verified_at;
   return {
@@ -288,6 +288,7 @@ export function buildIndex(state: StateResponse): Row[] {
     ...state.tasks.map(taskRow),
     ...state.notes.map((n) => noteDocRow("note", n)),
     ...state.docs.map((d) => noteDocRow("doc", d)),
+    ...state.answers.map((a) => noteDocRow("answer", a)),
     ...state.logs.map(logRow),
     ...state.plans.map(planRow),
     ...state.investigations.map(investigationRow),

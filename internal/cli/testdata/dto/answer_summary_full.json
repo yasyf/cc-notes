@@ -1,0 +1,18 @@
+{
+  "id": "answer-full-00000000000000000000000000000",
+  "title": "Which cache backend?",
+  "body": "Redis\nOptions: Redis | Memcached\nNotes: already run for queues",
+  "tags": [
+    "header:Cache",
+    "scope:durable"
+  ],
+  "author": "ada \u003cada@example.com\u003e",
+  "updated_at": "2023-11-14T23:13:20Z",
+  "verified_commit": "c0ffee0000000000000000000000000000000000",
+  "superseded_by": [
+    "answer-newer-001"
+  ],
+  "drift": "DRIFTED",
+  "stale_at": "2023-11-15T01:13:20Z",
+  "stale_reason": "user changed their mind"
+}

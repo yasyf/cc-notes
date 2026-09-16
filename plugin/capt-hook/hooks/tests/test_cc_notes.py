@@ -38,6 +38,13 @@ from types import SimpleNamespace
 # sys.path so its modules' ``from .common import ...`` resolves.
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
+from hooks.answers import (
+    AnswerTriage,
+    AnswerVerdict,
+    float_prompt_answers,
+    record_user_answers,
+    restore_answers_after_compact,
+)
 from hooks.approval import CcNotesCli, CcNotesMcp, cc_notes_mcp_tool
 import hooks.common as common
 from hooks.common import (
@@ -59,6 +66,7 @@ from hooks.common import (
     parse_tasks,
     record_command,
     RecordVerdict,
+    render_answer_line,
     render_doc_line,
     render_investigation_line,
     render_log_line,
@@ -69,6 +77,7 @@ from hooks.common import (
     render_steal_line,
     render_task_line,
     run_cc_notes,
+    SessionAnswers,
     stale_leases,
     status_tasks,
 )
@@ -119,6 +128,7 @@ from hooks.record import (
 )
 from hooks.session import (
     announce_cc_notes_available,
+    float_session_answers,
     float_session_tasks,
     prompt_install_cc_notes,
 )
@@ -155,6 +165,7 @@ from hooks.workflow import (
     write_targets,
 )
 import hooks.workflow as workflow
+import hooks.surface as surface_module
 from hooks.redirect import (
     CC_NOTES_TOOLS,
     mapped_tool,
@@ -1551,7 +1562,7 @@ def test_announce_available_fires_once(monkeypatch, tmp_path) -> None:
     check("announce fires: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("announce fires: names the installed version", "cc-notes 0.22.0 (abc123) is installed" in result.message, result.message)
-        check("announce fires: names the durable tooling", "durable task, note, doc, log, papercut, runbook, investigation, and plan tooling is available" in result.message, result.message)
+        check("announce fires: names the durable tooling", "durable task, note, doc, log, papercut, runbook, investigation, plan, and answer tooling is available" in result.message, result.message)
 
     second = mock_event("UserPromptSubmit", prompt="again", session_dir=tmp_path)
     monkeypatch.setattr(second.ctx, "call_cli", stub_cli(mapping))
@@ -1576,7 +1587,7 @@ def test_float_note_context_dedup(monkeypatch, tmp_path) -> None:
     """First read floats the note; a second read of the same note is deduped to silence."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     payload = json.dumps([note_entry("deadbeef000", drift=None, title="Schema", reasons=["dir"])])
-    mapping = {("relevant", "internal/store/store.go", "--json"): payload}
+    mapping = {("relevant", "internal/store/store.go", "--limit", "0", "--json"): payload}
 
     evt = mock_event("PostToolUse", tool="Read", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
@@ -1599,7 +1610,7 @@ def test_check_note_staleness_drift_only(monkeypatch, tmp_path) -> None:
             note_entry("stale000bbb", drift="STALE", title="Stale fact", reasons=["path"]),
         ]
     )
-    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--json"): payload}
+    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload}
 
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
@@ -1621,7 +1632,7 @@ def test_check_note_staleness_all_fresh_silent(monkeypatch, tmp_path) -> None:
     """An edit near only-fresh notes prompts nothing."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     payload = json.dumps([note_entry("fresh000aaa", drift=None)])
-    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--json"): payload}
+    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload}
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
     check("staleness: all fresh -> None", check_note_staleness(evt) is None)
@@ -1639,7 +1650,7 @@ def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
     payload = json.dumps(
         [doc_entry("drifteddoc01", when="before touching the parser", drift="DRIFTED", title="Parser handoff", reasons=["path"])]
     )
-    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--json"): payload}
+    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload}
 
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
@@ -1677,7 +1688,7 @@ def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path
             note_entry("drf0003ccc", drift="EXPIRED", title="Keep2"),
         ]
     )
-    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--json"): payload}
+    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload}
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
     monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["drf0001aaa", "drf0003ccc"])))
@@ -1706,13 +1717,13 @@ def test_float_and_staleness_scopes_are_isolated(monkeypatch, tmp_path) -> None:
     edit_payload = json.dumps([note_entry(note_id, drift="STALE", title="Shared fact", reasons=["path"])])
 
     read_evt = mock_event("PostToolUse", tool="Read", file="internal/store/store.go", session_dir=tmp_path)
-    monkeypatch.setattr(read_evt.ctx, "call_cli", stub_cli({("relevant", "internal/store/store.go", "--json"): read_payload}))
+    monkeypatch.setattr(read_evt.ctx, "call_cli", stub_cli({("relevant", "internal/store/store.go", "--limit", "0", "--json"): read_payload}))
     read_result = float_note_context(read_evt)
     check("scope isolation: read floats the shared note", read_result is not None and note_id[:7] in (read_result.message or ""), repr(read_result))
 
     edit_evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(
-        edit_evt.ctx, "call_cli", stub_cli({("relevant", "internal/store/store.go", "--attached", "--worktree", "--json"): edit_payload})
+        edit_evt.ctx, "call_cli", stub_cli({("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): edit_payload})
     )
     edit_result = check_note_staleness(edit_evt)
     check(
@@ -1749,8 +1760,8 @@ def test_handlers_silent_on_malformed_array(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     junk = '["x", 1, null, {"note": "oops"}, {"note": {"id": ""}}, {"score": 1}]'
 
-    read_map = {("relevant", "x.go", "--json"): junk}
-    edit_map = {("relevant", "x.go", "--attached", "--worktree", "--json"): junk}
+    read_map = {("relevant", "x.go", "--limit", "0", "--json"): junk}
+    edit_map = {("relevant", "x.go", "--attached", "--worktree", "--limit", "0", "--json"): junk}
 
     def silent_or_fail(label: str, handler, evt) -> None:
         """Record a clean FAIL (not an aborting traceback) if a handler raises on junk."""
@@ -2217,7 +2228,7 @@ def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
     payload = json.dumps(
         [doc_entry("d0cd0c00111", when="before touching the auth flow", drift="DRIFTED", title="Auth handoff", reasons=["dir"])]
     )
-    mapping = {("relevant", "internal/api/auth.go", "--json"): payload}
+    mapping = {("relevant", "internal/api/auth.go", "--limit", "0", "--json"): payload}
     evt = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
 
@@ -2247,7 +2258,7 @@ def test_float_note_context_floats_log(monkeypatch, tmp_path) -> None:
     """
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     payload = json.dumps([log_entry("105f00ba9c1", title="Auth rollout", reasons=["dir"])])
-    mapping = {("relevant", "internal/api/auth.go", "--json"): payload}
+    mapping = {("relevant", "internal/api/auth.go", "--limit", "0", "--json"): payload}
     evt = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
 
@@ -2314,7 +2325,7 @@ def test_float_note_context_multi_filters_but_judges_all(monkeypatch, tmp_path) 
     payload = json.dumps(
         [note_entry("aaa0001xxx", title="Keep"), note_entry("bbb0002xxx", title="Drop"), note_entry("ccc0003xxx", title="Keep2")]
     )
-    mapping = {("relevant", "x.go", "--json"): payload}
+    mapping = {("relevant", "x.go", "--limit", "0", "--json"): payload}
     evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
     monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["aaa0001xxx", "ccc0003xxx"])))
@@ -3681,7 +3692,7 @@ def test_staleness_mcp_wording(monkeypatch, tmp_path) -> None:
     """With the MCP server active, the staleness nudge names the verify/edit/supersede/expire tools."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     payload = json.dumps([note_entry("stale00aaaa", drift="STALE", title="Retry ceiling")])
-    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--json"): payload}
+    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload}
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     evt.ctx.s[McpActive].set(McpActive(active=True))
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
@@ -3770,7 +3781,7 @@ def redirect_event(tmp_path, command: str, error: str, *, mcp: bool):
 
 def test_redirect_mapped_tool() -> None:
     """mapped_tool resolves each command shape to its MCP tool by longest-prefix match; operator/unknown -> None."""
-    check("map: inventory is the full 141-tool set", len(CC_NOTES_TOOLS) == 141, str(len(CC_NOTES_TOOLS)))
+    check("map: inventory is the full 151-tool set", len(CC_NOTES_TOOLS) == 151, str(len(CC_NOTES_TOOLS)))
     check("map: plan add drops the title positional -> plan_add", mapped_tool(["plan", "add", "Ship it", "--approved"]) == "plan_add", repr(mapped_tool(["plan", "add", "Ship it", "--approved"])))
     check("map: plan root verbs -> plan_<verb>", mapped_tool(["plan", "start", "abc"]) == "plan_start" and mapped_tool(["plan", "supersede", "abc", "--by", "def"]) == "plan_supersede")
     check("map: runbook add drops the title positional -> runbook_add", mapped_tool(["runbook", "add", "Deploy", "--branch", "main"]) == "runbook_add", repr(mapped_tool(["runbook", "add", "Deploy", "--branch", "main"])))
@@ -5100,6 +5111,402 @@ def test_compact_restore_boundary_eight_vs_nine(monkeypatch, tmp_path) -> None:
     msg9 = restore_after_compact(e9).message
     check("compact boundary: one past the cap tips into pointer mode (no shows)", not any(c[:2] == ("cc-notes", "show") for c in calls), repr(calls))
     check("compact boundary: pointer mode renders every entry", msg9.count("(read)") == FULL_SHOW_CAP + 1, str(msg9.count("(read)")))
+
+
+ANSWER_ROOT = "/repo"
+ANSWER_LIST = ("answer", "list", "--json", "--label", "scope:durable", "--limit", "50")
+ANSWER_GIT = {("rev-parse", "--show-toplevel"): f"{ANSWER_ROOT}\n", ("rev-parse", "--abbrev-ref", "HEAD"): "feat/x\n"}
+
+
+def question(text: str, header: str = "", labels: tuple[str, ...] = ("A", "B"), multi: bool = False) -> dict:
+    return {"question": text, "header": header, "multiSelect": multi, "options": [{"label": l, "description": ""} for l in labels]}
+
+
+def durable_answer(answer_id: str, title: str = "Q?", body: str = "A") -> dict:
+    return {"id": answer_id, "title": title, "body": body, "tags": ["scope:durable"], "updated_at": "2026-09-15T00:00:00Z"}
+
+
+def touched_transcript(*paths: str):
+    return fixture_session(
+        [
+            {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "go"}]}},
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": f"tu-{i}", "name": "Read", "input": {"file_path": p}} for i, p in enumerate(paths)],
+                },
+            },
+        ]
+    )
+
+
+def answer_event(monkeypatch, tmp_path, questions: list[dict], response, *, candidates: list[dict] | None = None, triage=None, added: tuple[str, ...] = ("ans0001aaaa",), paths: tuple[str, ...] = ()):
+    """An AskUserQuestion PostToolUse with the answer CLI, git, and triage stubbed; returns (evt, calls)."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_tool_event(
+        tool="AskUserQuestion", event=Event.PostToolUse, tool_input={"questions": questions},
+        transcript=touched_transcript(*paths), session_dir=tmp_path,
+    )
+    evt._raw["tool_response"] = response
+    ids = iter(added)
+    calls: list[tuple[str, ...]] = []
+
+    def _call(args, *, input=None, timeout=30, env=None, throw=True):
+        calls.append(tuple(args[1:]))
+        if tuple(args[1:]) == ANSWER_LIST:
+            return json.dumps(candidates or [])
+        if args[1:3] == ["answer", "add"]:
+            return json.dumps({"id": next(ids)})
+        if args[1:3] == ["answer", "supersede"]:
+            return "{}"
+        return None
+
+    monkeypatch.setattr(evt.ctx, "call_cli", _call)
+    monkeypatch.setattr(evt.ctx, "git", stub_git(ANSWER_GIT))
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(triage) if triage is not None else _llm_boom)
+    return evt, calls
+
+
+def answer_adds(calls: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    return [c for c in calls if c[:2] == ("answer", "add")]
+
+
+def test_record_user_answers_single(monkeypatch, tmp_path) -> None:
+    """One answered question lands verbatim with its scope, header, branch, and in-repo session paths."""
+    evt, calls = answer_event(
+        monkeypatch, tmp_path, [question("Which language?", header="Lang", labels=("Go", "Rust"))],
+        {"questions": [], "answers": {"Which language?": "Go"}, "annotations": {}},
+        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, scope="ephemeral")]),
+        paths=(f"{ANSWER_ROOT}/src/a.go", "/elsewhere/x.go", f"{ANSWER_ROOT}/src/b.go", f"{ANSWER_ROOT}/src/a.go"),
+    )
+    result = record_user_answers(evt)
+    check("answer single: warns", result is not None and result.action is Action.warn, repr(result))
+    expected = (
+        "answer", "add", "--json", "--label", "scope:ephemeral", "--label", "header:Lang",
+        "--branch", "feat/x", "--path", "src/a.go", "--path", "src/b.go",
+        "--body=Go\nOptions: Go | Rust", "--", "Which language?",
+    )
+    check("answer single: exact add argv", answer_adds(calls) == [expected], repr(answer_adds(calls)))
+    if result and result.message:
+        check("answer single: ack names the short id and scope", "ans0001 (ephemeral)" in result.message, result.message)
+
+
+def test_record_user_answers_multiselect_defaults_durable(monkeypatch, tmp_path) -> None:
+    """A multiSelect answer keeps its comma-joined labels; a failed triage records it durable."""
+    evt, calls = answer_event(
+        monkeypatch, tmp_path, [question("Which checks?", labels=("lint", "test", "fmt"), multi=True)],
+        json.dumps({"answers": {"Which checks?": "lint, test"}}),
+    )
+    result = record_user_answers(evt)
+    adds = answer_adds(calls)
+    check("answer multi: one add", len(adds) == 1, repr(adds))
+    check("answer multi: string tool_response parsed, labels joined", adds and "--body=lint, test\nOptions: lint | test | fmt" in adds[0], repr(adds))
+    check("answer multi: LLM failure -> durable", adds and "scope:durable" in adds[0], repr(adds))
+    check("answer multi: no header label without a header", adds and not any(a.startswith("header:") for a in adds[0]), repr(adds))
+    check("answer multi: warns", result is not None and "(durable)" in (result.message or ""), repr(result))
+
+
+def test_record_user_answers_free_text_and_notes(monkeypatch, tmp_path) -> None:
+    """Free "Other" text records verbatim, notes ride a Notes line, and secret-looking text never records."""
+    evt, calls = answer_event(
+        monkeypatch, tmp_path,
+        [question("Indent style?"), question("Deploy key?"), question("Branch name?")],
+        {
+            "answers": {"Indent style?": "tabs, width 4", "Deploy key?": "ghp_" + "a" * 36, "Branch name?": "B", "Unasked?": "A"},
+            "annotations": {"Indent style?": {"notes": "matches the go fmt default", "preview": "x"}, "Branch name?": {"notes": "token: hunter2hunter2"}},
+        },
+        added=("ans0001aaaa", "ans0002bbbb"),
+    )
+    record_user_answers(evt)
+    adds = answer_adds(calls)
+    check("answer free: secret answer and unasked key skipped", [a[-1] for a in adds] == ["Indent style?", "Branch name?"], repr(adds))
+    check("answer free: free text + notes body", adds and "--body=tabs, width 4\nOptions: A | B\nNotes: matches the go fmt default" in adds[0], repr(adds))
+    check("answer free: secret-looking notes dropped", len(adds) == 2 and "--body=B\nOptions: A | B" in adds[1], repr(adds))
+
+
+def test_record_user_answers_supersedes(monkeypatch, tmp_path) -> None:
+    """A triage naming a candidate supersedes it by full id, and the old line leaves the session ledger."""
+    old = durable_answer("old0001cccc", title="Which language?", body="Rust")
+    evt, calls = answer_event(
+        monkeypatch, tmp_path, [question("Which language?", labels=("Go", "Rust"))],
+        {"answers": {"Which language?": "Go"}},
+        candidates=[old],
+        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="old0001")]),
+    )
+    evt.ctx.s[SessionAnswers].set(SessionAnswers(lines={"old0001cccc": "old0001 Which language? → Rust"}))
+    result = record_user_answers(evt)
+    check("answer supersede: supersede argv", ("answer", "supersede", "old0001cccc", "--by", "ans0001aaaa", "--json") in calls, repr(calls))
+    check("answer supersede: ack names it", result is not None and "supersedes old0001" in (result.message or ""), repr(result))
+    lines = evt.ctx.s.load(SessionAnswers).lines
+    check("answer supersede: ledger swaps old for new", list(lines) == ["ans0001aaaa"] and lines["ans0001aaaa"] == "ans0001 Which language? → Go", repr(lines))
+
+
+def test_record_user_answers_long_question(monkeypatch, tmp_path) -> None:
+    """A question over the title cap records a clamped title plus the full text on a Question: line."""
+    long_q = "Which retry policy should the sync loop use when the remote rejects a push? " * 5
+    evt, calls = answer_event(monkeypatch, tmp_path, [question(long_q, labels=("Backoff", "Fail"))], {"answers": {long_q: "Backoff"}})
+    record_user_answers(evt)
+    adds = answer_adds(calls)
+    check("answer long: fixture exceeds the cap", len(long_q.encode()) > MAX_TITLE_BYTES)
+    check("answer long: title clamped", adds and adds[0][-1] == clamp_title(long_q) and adds[0][-1] != long_q, repr(adds))
+    check("answer long: Question: line after the answer", adds and f"--body=Backoff\nQuestion: {long_q}\nOptions: Backoff | Fail" in adds[0], repr(adds))
+    lines = evt.ctx.s.load(SessionAnswers).lines
+    check("answer long: ledger line renders the full question", lines.get("ans0001aaaa") == f"ans0001 {long_q} → Backoff", repr(lines))
+    record = durable_answer("ans0001aaaa", title=clamp_title(long_q), body=f"Backoff\nQuestion: {long_q}\nOptions: Backoff | Fail")
+    check("answer long: render_note_lines uses the full question", render_note_lines([{"kind": "answer", "answer": record}]) == [f"ans0001 {long_q} → Backoff"])
+
+    triage_prompts: list[str] = []
+    later, _ = answer_event(monkeypatch, tmp_path / "later", [question(long_q)], {"answers": {long_q: "Fail"}}, candidates=[record])
+    monkeypatch.setattr(later.ctx, "call_llm", lambda prompt, **kw: triage_prompts.append(str(prompt)) or AnswerTriage())
+    record_user_answers(later)
+    check("answer long: triage candidates carry the full question", triage_prompts and f"ans0001aaaa\tans0001 {long_q} → Backoff" in triage_prompts[0], repr(triage_prompts))
+
+
+def test_record_user_answers_reused_id_never_self_supersedes(monkeypatch, tmp_path) -> None:
+    """An identical answer add reuses the candidate's id, so a triage naming it must not supersede it with itself."""
+    same = durable_answer("old0001cccc", title="Which language?", body="Go")
+    evt, calls = answer_event(
+        monkeypatch, tmp_path, [question("Which language?", labels=("Go", "Rust"))],
+        {"answers": {"Which language?": "Go"}},
+        candidates=[same], added=("old0001cccc",),
+        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="old0001")]),
+    )
+    result = record_user_answers(evt)
+    check("answer reuse: no supersede call", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
+    check("answer reuse: ack claims no supersede", result is not None and "supersedes" not in (result.message or ""), repr(result))
+
+
+def test_record_user_answers_supersede_needs_unique_prefix(monkeypatch, tmp_path) -> None:
+    """A triage id supersedes only a candidate it names exactly or as a unique prefix, never one it merely extends."""
+    candidates = [durable_answer("old0001cccc"), durable_answer("old0001dddd"), durable_answer("old0002eeee")]
+    for named, want in (("old0001", None), ("old0002eeeeffff", None), ("old0001dddd", "old0001dddd"), ("old0002", "old0002eeee")):
+        evt, calls = answer_event(
+            monkeypatch, tmp_path / named, [question("Q?")], {"answers": {"Q?": "A"}},
+            candidates=candidates, triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes=named)]),
+        )
+        record_user_answers(evt)
+        supersedes = [c[2] for c in calls if c[:2] == ("answer", "supersede")]
+        check(f"answer prefix: {named} supersedes {want}", supersedes == ([want] if want else []), repr(supersedes))
+
+
+def test_record_user_answers_unknown_supersede_ignored(monkeypatch, tmp_path) -> None:
+    evt, calls = answer_event(
+        monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}},
+        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="nope123")]),
+    )
+    record_user_answers(evt)
+    check("answer supersede: a non-candidate id never supersedes", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
+
+
+def test_record_user_answers_silent_without_answers(monkeypatch, tmp_path) -> None:
+    evt, calls = answer_event(monkeypatch, tmp_path, [question("Q?")], None)
+    check("answer none: silent", record_user_answers(evt) is None)
+    check("answer none: no CLI calls", calls == [], repr(calls))
+
+
+def prompt_event(monkeypatch, tmp_path, candidates: list[dict], prompt: str = "work on auth"):
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("UserPromptSubmit", prompt=prompt, session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli({ANSWER_LIST: json.dumps(candidates)}))
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)
+    return evt
+
+
+def test_float_session_answers_digest(monkeypatch, tmp_path) -> None:
+    """The digest renders Q → A for the 8 most recent unseen durable answers and marks only those seen."""
+    rows = [durable_answer(f"ans{i:04d}xxxx", title=f"Q{i}?", body=f"A{i}\nOptions: A{i} | B") for i in range(10)]
+    result = float_session_answers(prompt_event(monkeypatch, tmp_path, rows))
+    check("digest: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("digest: Q → A with the first body line only", "ans0000 Q0? → A0\n" in result.message, result.message)
+        check("digest: caps at 8", "ans0007" in result.message and "ans0008" not in result.message, result.message)
+        check("digest: +2 more tail", "+2 more — run `cc-notes answer list --label scope:durable`" in result.message, result.message)
+    check("digest: a later prompt never refires", float_session_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
+
+
+def test_float_session_answers_empty_first_prompt_spends_digest(monkeypatch, tmp_path) -> None:
+    """An empty first listing still claims the first prompt, so a later prompt gets no unfiltered digest."""
+    check("digest empty: silent when nothing is listed", float_session_answers(prompt_event(monkeypatch, tmp_path, [])) is None)
+    later = float_session_answers(prompt_event(monkeypatch, tmp_path, [durable_answer("ans0001aaaa")]))
+    check("digest empty: a later prompt stays silent", later is None, repr(later))
+
+
+def test_durable_answers_skip_expired(monkeypatch, tmp_path) -> None:
+    """An expired answer never reaches the digest or the per-prompt filter."""
+    rows = [durable_answer("live001aaaa", title="Tabs?", body="yes"), durable_answer("gone001bbbb", title="Spaces?", body="yes") | {"stale_at": "2026-09-15T00:00:00Z"}]
+    digest = float_session_answers(prompt_event(monkeypatch, tmp_path, rows))
+    check("expired: digest keeps the live answer", digest is not None and "live001" in (digest.message or ""), repr(digest))
+    check("expired: digest drops the expired answer", digest is not None and "gone001" not in (digest.message or ""), repr(digest))
+    evt = prompt_event(monkeypatch, tmp_path / "prompt", rows)
+    offered: list[str] = []
+    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: offered.append(str(prompt)) or SurfacePick())
+    evt.ctx.s.once("first", scope="prompt-answers")
+    float_prompt_answers(evt)
+    check("expired: prompt filter never sees the expired answer", offered and "live001" in offered[0] and "gone001" not in offered[0], repr(offered))
+
+
+def test_float_prompt_answers_filters(monkeypatch, tmp_path) -> None:
+    """The first prompt belongs to the digest; later prompts surface only LLM-picked unseen answers, once."""
+    rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis"), durable_answer("ui00001bbbb", title="Button color?", body="Blue")]
+    first = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(first.ctx, "call_llm", _llm_boom)
+    check("prompt answers: first prompt skipped", float_prompt_answers(first) is None)
+
+    evt = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa", "unknown"])))
+    result = float_prompt_answers(evt)
+    check("prompt answers: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("prompt answers: only the picked answer", "auth001 Session store? → Redis" in result.message and "ui00001" not in result.message, result.message)
+
+    later = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(later.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa", "ui00001bbbb"])))
+    result = float_prompt_answers(later)
+    check("prompt answers: a surfaced answer never repeats", result is not None and "auth001" not in (result.message or "") and "ui00001" in (result.message or ""), repr(result))
+
+    llm_calls: list[object] = []
+    quiet = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(quiet.ctx, "call_llm", lambda *a, **k: llm_calls.append(a))
+    check("prompt answers: all seen -> silent", float_prompt_answers(quiet) is None)
+    check("prompt answers: all seen -> the LLM never runs", llm_calls == [], repr(llm_calls))
+
+
+def test_float_prompt_answers_fails_closed(monkeypatch, tmp_path) -> None:
+    rows = [durable_answer("auth001aaaa")]
+    float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows))
+    evt = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
+    check("prompt answers: LLM failure -> silent", float_prompt_answers(evt) is None)
+    retry = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(retry.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa"])))
+    check("prompt answers: an unsurfaced answer stays a candidate", float_prompt_answers(retry) is not None)
+
+
+RESTORE_LIST = ("answer", "list", "--json", "--include-superseded")
+
+
+def restore_event(monkeypatch, tmp_path, rows: list[dict]):
+    evt = mock_event("SessionStart", source="compact", session_dir=tmp_path)
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli({RESTORE_LIST: json.dumps(rows)}))
+    return evt
+
+
+def test_restore_answers_after_compact(monkeypatch, tmp_path) -> None:
+    """A compaction re-injects every captured and surfaced answer, capped at the 30 most recent."""
+    evt, _ = answer_event(monkeypatch, tmp_path, [question("Which language?")], {"answers": {"Which language?": "Go"}})
+    record_user_answers(evt)
+    float_session_answers(prompt_event(monkeypatch, tmp_path, [durable_answer("dig0001aaaa", title="Tabs?", body="yes")]))
+    rows = [durable_answer("ans0001aaaa", title="Which language?", body="Go\nOptions: A | B"), durable_answer("dig0001aaaa", title="Tabs?", body="yes")]
+    result = restore_answers_after_compact(restore_event(monkeypatch, tmp_path, rows))
+    check("answer restore: warns", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("answer restore: captured and surfaced lines", "ans0001 Which language? → Go" in result.message and "dig0001 Tabs? → yes" in result.message, result.message)
+    check("answer restore: empty session silent", restore_answers_after_compact(restore_event(monkeypatch, tmp_path / "none", rows)) is None)
+
+    restore = restore_event(monkeypatch, tmp_path, [durable_answer(f"id{i:05d}", title=f"Q{i}?") for i in range(40)])
+    with restore.ctx.s[SessionAnswers].mutate() as state:
+        state.lines = {f"id{i:05d}": f"line {i}" for i in range(40)}
+    capped = restore_answers_after_compact(restore).message
+    check("answer restore: caps at the 30 most recent", "Q10?" in capped and "Q9?" not in capped and "Q39?" in capped, capped)
+
+
+def test_restore_answers_after_compact_refreshes_ledger(monkeypatch, tmp_path) -> None:
+    """The restore renders each ledgered answer's current record: superseded ones as their live replacement, removed and expired ones not at all."""
+    restore = restore_event(
+        monkeypatch, tmp_path,
+        [
+            durable_answer("old0001aaaa", title="Which language?", body="Rust") | {"superseded_by": ["mid0001bbbb"]},
+            durable_answer("mid0001bbbb", title="Which language?", body="Go") | {"superseded_by": ["new0001cccc"]},
+            durable_answer("new0001cccc", title="Which language?", body="Zig"),
+            durable_answer("exp0001dddd", title="Tabs?", body="yes") | {"stale_at": "2026-09-15T00:00:00Z"},
+            durable_answer("kep0001eeee", title="Deploy on Fridays?", body="No, never"),
+        ],
+    )
+    with restore.ctx.s[SessionAnswers].mutate() as state:
+        state.lines = {
+            "old0001aaaa": "old0001 Which language? → Rust",
+            "rmd0001ffff": "rmd0001 Removed? → gone",
+            "exp0001dddd": "exp0001 Tabs? → yes",
+            "kep0001eeee": "kep0001 Deploy on Fridays? → No",
+        }
+    message = (restore_answers_after_compact(restore) or SimpleNamespace(message="")).message or ""
+    check("answer refresh: superseded answer restores as its live head", "new0001 Which language? → Zig" in message and "Rust" not in message and "mid0001" not in message, message)
+    check("answer refresh: removed and expired answers dropped", "rmd0001" not in message and "exp0001" not in message, message)
+    check("answer refresh: current text replaces the ledgered line", "kep0001 Deploy on Fridays? → No, never" in message, message)
+
+
+def test_render_answer_line_multiline_answer(monkeypatch, tmp_path) -> None:
+    """Every body line before the first metadata line is the answer, rendered on one line, in recall and triage alike."""
+    record = durable_answer("ans0001aaaa", title="Rollout plan?", body="Canary first\nthen 10%\nOptions: A | B\nNotes: slow")
+    entry = {"kind": "answer", "answer": record, "reasons": []}
+    check("multiline: recall line joins the answer lines", render_note_lines([entry]) == ["ans0001 Rollout plan? → Canary first / then 10%"], repr(render_note_lines([entry])))
+    triage_prompts: list[str] = []
+    evt, _ = answer_event(monkeypatch, tmp_path, [question("Rollout plan?")], {"answers": {"Rollout plan?": "B"}}, candidates=[record])
+    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: triage_prompts.append(str(prompt)) or AnswerTriage())
+    record_user_answers(evt)
+    check("multiline: triage candidate carries the whole answer", triage_prompts and "ans0001aaaa\tans0001 Rollout plan? → Canary first / then 10%" in triage_prompts[0], repr(triage_prompts))
+
+
+def test_render_answer_line() -> None:
+    entry = {"kind": "answer", "answer": durable_answer("ans0001aaaa", title="Q?", body="Go\nOptions: Go | Rust") | {"drift": "stale"}, "reasons": ["path"]}
+    check("render answer: Q → A, drift, reasons", render_answer_line(entry) == "ans0001 Q? → Go [stale] (path)", render_answer_line(entry))
+    check("render answer: parse_relevant keeps answer entries", parse_relevant(json.dumps([entry])) == [entry])
+    check("render answer: dispatch", render_note_lines([entry]) == [render_answer_line(entry)])
+
+
+def test_answer_file_surfacing_toggle(monkeypatch, tmp_path) -> None:
+    """Answers anchored to a read file surface only once `cc-notes.answers.fileSurfacing` is true."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    entries = [{"kind": "answer", "answer": durable_answer("ans0001aaaa", title="Q?", body="Go"), "reasons": ["path"]}, note_entry("note001aaaa")]
+    mapping = {("relevant", "src/a.go", "--limit", "0", "--json"): json.dumps(entries)}
+    toggle = ("config", "--type=bool", "--get", "cc-notes.answers.fileSurfacing")
+    monkeypatch.setattr(surface_module, "surface_filter", lambda evt, fresh, *, touched: fresh)
+
+    off = mock_event("PostToolUse", tool="Read", file="src/a.go", session_dir=tmp_path / "off")
+    monkeypatch.setattr(off.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(off.ctx, "git", stub_git({toggle: None}))
+    result = float_note_context(off)
+    check("toggle off: the note floats", result is not None and "note001" in (result.message or ""), repr(result))
+    check("toggle off: the answer is dropped", result is not None and "ans0001" not in (result.message or ""), repr(result))
+
+    on = mock_event("PostToolUse", tool="Read", file="src/a.go", session_dir=tmp_path / "on")
+    monkeypatch.setattr(on.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(on.ctx, "git", stub_git({toggle: "true\n"}))
+    result = float_note_context(on)
+    check("toggle on: the answer floats as Q → A", result is not None and "ans0001 Q? → Go (path)" in (result.message or ""), repr(result))
+
+
+def test_answer_file_surfacing_bookkeeping(monkeypatch, tmp_path) -> None:
+    """File-surfaced answers skip expired records, cap after filtering, and enter the answers seen scope and ledger."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(surface_module, "surface_filter", lambda evt, fresh, *, touched: fresh)
+    toggle = ("config", "--type=bool", "--get", "cc-notes.answers.fileSurfacing")
+    answers = [{"kind": "answer", "answer": durable_answer(f"ans{i:04d}xxxx", title=f"Q{i}?"), "reasons": ["path"]} for i in range(12)]
+    expired = {"kind": "answer", "answer": durable_answer("exp0001aaaa", title="Old?") | {"drift": "EXPIRED", "stale_at": "2026-09-15T00:00:00Z"}, "reasons": ["path"]}
+    payload = json.dumps([expired, *answers, note_entry("note001aaaa")])
+    mapping = {("relevant", "src/a.go", "--limit", "0", "--json"): payload}
+
+    off = mock_event("PostToolUse", tool="Read", file="src/a.go", session_dir=tmp_path / "off")
+    monkeypatch.setattr(off.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(off.ctx, "git", stub_git({toggle: None}))
+    result = float_note_context(off)
+    check("file answers: dropped answers never starve the note", result is not None and "note001" in (result.message or ""), repr(result))
+
+    on = mock_event("PostToolUse", tool="Read", file="src/a.go", session_dir=tmp_path / "on")
+    monkeypatch.setattr(on.ctx, "call_cli", stub_cli(mapping))
+    monkeypatch.setattr(on.ctx, "git", stub_git({toggle: "true\n"}))
+    message = (float_note_context(on) or SimpleNamespace(message="")).message or ""
+    check("file answers: expired answer dropped", "exp0001" not in message, message)
+    check("file answers: capped at ten after filtering", "ans0009" in message and "ans0010" not in message and "note001" not in message, message)
+    ledger = on.ctx.s.load(SessionAnswers).lines
+    check("file answers: surfaced answers ledgered", list(ledger) == [f"ans{i:04d}xxxx" for i in range(10)], repr(ledger))
+    prompt = prompt_event(monkeypatch, tmp_path / "on", [durable_answer("ans0000xxxx", title="Q0?")])
+    prompt.ctx.s.once("first", scope="prompt-answers")
+    llm_calls: list[object] = []
+    monkeypatch.setattr(prompt.ctx, "call_llm", lambda *a, **k: llm_calls.append(a) or SurfacePick())
+    float_prompt_answers(prompt)
+    check("file answers: prompt recall never re-offers a file-surfaced answer", llm_calls == [], repr(llm_calls))
 
 
 class MonkeyPatch:

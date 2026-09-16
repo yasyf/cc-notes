@@ -213,6 +213,9 @@ func (c *Client) AbandonPlan(ctx context.Context, id model.EntityID, outcome str
 // superseded plan keeps whatever lifecycle status it closed in. by must resolve
 // to a live plan and is loaded to validate before the edge is written.
 func (c *Client) SupersedePlan(ctx context.Context, id, by model.EntityID) (model.Plan, error) {
+	if id == by {
+		return model.Plan{}, ErrSelfSupersede
+	}
 	if _, err := c.Plan(ctx, by); err != nil {
 		return model.Plan{}, err
 	}

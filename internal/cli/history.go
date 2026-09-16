@@ -29,7 +29,7 @@ func newHistoryCmd() *cobra.Command {
 	resolve := func(ctx context.Context, c *notes.Client, prefix string) (model.Kind, model.EntityID, error) {
 		return c.ResolveEntity(ctx, prefix)
 	}
-	return historyCmd("history ID", "Show the edit history of any note, doc, log, task, sprint, project, runbook, or investigation", resolve)
+	return historyCmd("history ID", "Show the edit history of any note, doc, log, task, sprint, project, runbook, investigation, plan, or answer", resolve)
 }
 
 func newNoteHistoryCmd() *cobra.Command    { return kindHistoryCmd(model.KindNote, "note") }
@@ -38,6 +38,7 @@ func newLogHistoryCmd() *cobra.Command     { return kindHistoryCmd(model.KindLog
 func newTaskHistoryCmd() *cobra.Command    { return kindHistoryCmd(model.KindTask, "task") }
 func newSprintHistoryCmd() *cobra.Command  { return kindHistoryCmd(model.KindSprint, "sprint") }
 func newProjectHistoryCmd() *cobra.Command { return kindHistoryCmd(model.KindProject, "project") }
+func newAnswerHistoryCmd() *cobra.Command  { return kindHistoryCmd(model.KindAnswer, "answer") }
 
 // kindHistoryCmd builds a noun-scoped "history ID" subcommand that resolves the
 // id within a single kind, so a wrong-kind id fails cleanly rather than
@@ -73,6 +74,8 @@ func resolveInKind(ctx context.Context, c *notes.Client, kind model.Kind, prefix
 		return c.ResolveInvestigation(ctx, prefix)
 	case model.KindPlan:
 		return c.ResolvePlan(ctx, prefix)
+	case model.KindAnswer:
+		return c.ResolveAnswer(ctx, prefix)
 	default:
 		panic(fmt.Sprintf("history: unknown kind %q", kind))
 	}

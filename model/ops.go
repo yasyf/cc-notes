@@ -264,6 +264,31 @@ func (o CreateDoc) validate() error {
 	return nil
 }
 
+// CreateAnswer is the root operation of an answer chain. The nonce makes
+// otherwise-identical creates hash to distinct entity ids.
+type CreateAnswer struct {
+	Nonce   string   `json:"nonce"`
+	Title   string   `json:"title"`
+	Body    string   `json:"body"`
+	Tags    []string `json:"tags"`
+	Anchors []Anchor `json:"anchors"`
+}
+
+// OpKind returns "create_answer".
+func (CreateAnswer) OpKind() string { return "create_answer" }
+
+// CreateKind returns KindAnswer.
+func (CreateAnswer) CreateKind() Kind { return KindAnswer }
+
+func (o CreateAnswer) validate() error {
+	for _, a := range o.Anchors {
+		if err := a.Kind.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // CreateLog is the root operation of a log chain. The nonce makes
 // otherwise-identical creates hash to distinct entity ids.
 type CreateLog struct {
@@ -981,8 +1006,8 @@ func (SetPlan) OpKind() string { return "set_plan" }
 // never changes an entity id: a fold uses the newest seed-safe checkpoint as
 // its starting snapshot and treats every other checkpoint as a no-op. The pack
 // codec carries State kind-tagged (note, doc, log, task, sprint, project,
-// runbook, investigation, or plan) so it decodes back to the concrete
-// model.Note/Doc/Log/Task/Sprint/Project/Runbook/Investigation/Plan; the
+// runbook, investigation, plan, or answer) so it decodes back to the concrete
+// model.Note/Doc/Log/Task/Sprint/Project/Runbook/Investigation/Plan/Answer; the
 // snapshot's kind drives fold dispatch.
 type Checkpoint struct {
 	EntityID      EntityID

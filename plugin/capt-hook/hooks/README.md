@@ -29,6 +29,7 @@ native task tracking versus durable, git-synced cc-notes entities.
 | `cc-notes runbook add` | Durable, git-synced | Repo-global, anchored like a note | A repeatable procedure as ordered steps, each optionally carrying a command; every execution is a tracked run with per-step outcomes |
 | `cc-notes investigation open` | Durable, git-synced | Repo-global, anchored like a note | One debugging arc: an immutable premise, findings with dispositions, an append-only evidence timeline, and a status that holds the verdict |
 | `cc-notes plan add` | Durable, git-synced | Repo-global, anchored like a note | One approved plan held verbatim — context, approach, pitfalls, verification — moving draft → approved → executing → done/abandoned, with tasks pointing back at it via `task add --plan <id>`. The pack records this one for you on `ExitPlanMode` |
+| `cc-notes answer add` | Durable, git-synced | Repo-global, anchored to the branch and the files the session touched | One answer the user gave to an `AskUserQuestion`: the question as title, the chosen answer as body, labeled `scope:durable` or `scope:ephemeral`. The pack records every answer for you |
 
 Tasks are global. The id addresses a task no matter which branch it lives on, and
 its branch is a mutable attribute. `cc-notes task add --backlog` parks work in the
@@ -59,10 +60,13 @@ where the action is fixed.
 
 | Trigger | Recall | The LLM picks |
 |---------|--------|---------------|
-| `Read` a file (PostToolUse) | the notes, docs, logs, runbooks, and investigations `cc-notes relevant <path>` ranks | which are worth surfacing now — a lone candidate surfaces directly, two or more are filtered |
+| `Read` a file (PostToolUse) | the notes, docs, logs, runbooks, and investigations `cc-notes relevant <path>` ranks, plus answers once `git config cc-notes.answers.fileSurfacing true` is set (answers are dropped from both file triggers while it is unset or false) | which are worth surfacing now — a lone candidate surfaces directly, two or more are filtered |
 | `Edit` / `Write` / `MultiEdit` a file (PostToolUse) | anchored records with a non-null drift verdict (`relevant --attached --worktree`) | which drift actually warrants a `verify` / `edit` / `supersede` / `expire`, named per kind |
 | Session start, first `UserPromptSubmit` (once) | your branch's open/in-progress tasks topped up from the backlog | nothing — rendered straight as orientation, capped at seven with a `+K more` → `cc-notes status` |
+| Session start, first `UserPromptSubmit` (once) | the most recently updated live `scope:durable` answers not yet captured or surfaced this session | nothing — rendered as `<short id> <question> → <answer>`, capped at eight with a `+K more` → `cc-notes answer list --label scope:durable` |
+| Every later `UserPromptSubmit` | the unseen live `scope:durable` answers (no model call when there are none) | which bear on the prompt; only the picked ones are marked seen, so the rest stay candidates for later prompts, and a model error surfaces nothing |
 | Compaction (`SessionStart`, source `compact`) | the cc-notes entities this session created, edited, or explicitly showed — tracked silently at every cc-notes call, MCP or CLI | nothing — deterministic: eight or fewer restore as full `show` output, more become lean pointer lines (kind · short id · title · how touched), newest first, capped at 30 with a `+N more` → `cc-notes status` |
+| Compaction (`SessionStart`, source `compact`) | the answers this session captured or surfaced | nothing — the `<short id> <question> → <answer>` lines again, the 30 most recent |
 
 Each record is LLM-judged at most once per session: a Read floats it as context once, an
 edit asks about its staleness once, tracked in two separate per-session sets. The filter
@@ -142,8 +146,9 @@ its triggers — a commit (`git commit` / `jj commit` / `jj describe` / `ccx vcs
 claim/start, a merge/pull/fetch, a push (`git push` / `jj git push`), and every cc-notes
 write (CLI or MCP) — so the several events of one turn drive a single sync per repo they
 touched: the session repo, plus any foreign repo a `cd`-prefixed write landed in. The
-Surface floaters carry no cap: their per-record session dedup already bounds them. The two once-per-session
-orientations (the session-start task float and the install hint) fire exactly once.
+Surface floaters carry no cap: their per-record session dedup already bounds them. The once-per-session
+orientations (the session-start task and answer floats and the install hint) fire exactly once. The
+answer capture is uncapped: a cap would silently drop every answer past it.
 
 Command triggers match on structured argv-prefix conditions, not regexes: any leg of a
 compound line matches (`git commit -m x && git push`), a quoted mention (`echo "jj commit
@@ -265,6 +270,20 @@ carrying the id the capture just returned (a placeholder to substitute when the 
 failed, since a warn cannot write), fire at most `NUDGE_MAX_FIRES` times a session. Like every
 other cc-notes call in the pack it fails closed — a failed capture drops the confirmation and
 keeps the teach.
+
+**The answer capture.** An answer to `AskUserQuestion` is a decision the next session would
+otherwise ask again. After every `AskUserQuestion` this handler pairs each question with its
+answer by exact question text (a multiSelect answer keeps its comma-joined labels, free
+"Other" text records verbatim) and records it with `cc-notes answer add`: the question as the
+title, clamped to the 256-byte title cap, and a body of the answer, a `Question:` line with the
+full text when the title was clamped, an `Options:` line, and the user's `Notes:` annotation. One small-model call labels each answer `scope:durable` (a preference,
+convention, or decision) or `scope:ephemeral` (a one-off pick), and names the earlier durable
+answer it replaces, which the handler then retires with `answer supersede <old> --by <new>`. A
+model error records every answer durable with no supersede. Each record is anchored to the
+current branch and up to ten repo-relative files the session touched, and carries a
+`header:<chip>` label when the question has a header. An answer or note that looks like a
+secret never records, because the refs sync to the remote. Like the plan capture it is
+uncapped and fails closed to silence.
 
 **The compact tracker.** Compaction wipes the window; the entities the session touched should
 not vanish with it. Every cc-notes entity call — an MCP tool or a `cc-notes`/`ccn` leg of any

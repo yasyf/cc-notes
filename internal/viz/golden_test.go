@@ -148,7 +148,8 @@ func buildGoldenRepo(t *testing.T) *gitRepo {
 // both, a full-lifecycle task linking a real commit, a task stranded on the
 // deleted feature/gone branch, a runbook run through start, a step mark, and
 // finish, an investigation carried from evidence gathering through a confirmed
-// fix, and a branch-anchored plan run from approved through done and reopened.
+// fix, a branch-anchored plan run from approved through done and reopened, and a
+// branch-anchored answer verified then superseded.
 func buildGoldenEntities(t *testing.T, s *store.Store, c1, c2, c4 commitInfo) {
 	t.Helper()
 	ctx := t.Context()
@@ -217,6 +218,18 @@ func buildGoldenEntities(t *testing.T, s *store.Store, c1, c2, c4 commitInfo) {
 	appendOps(t, s, planRef, model.SetPlanStatus{Status: model.PlanExecuting})
 	appendOps(t, s, planRef, model.SetPlanStatus{Status: model.PlanDone}, model.SetPlanOutcome{Outcome: "the buffered send fixed the hang"})
 	appendOps(t, s, planRef, model.SetPlanStatus{Status: model.PlanExecuting})
+
+	answer, err := s.Create(ctx, []model.Op{model.CreateAnswer{
+		Nonce: model.NewNonce(), Title: "which cache backend?", Body: "Redis",
+		Tags:    []string{"scope:durable"},
+		Anchors: []model.Anchor{{Kind: model.AnchorBranch, Value: "feature/parent"}},
+	}})
+	if err != nil {
+		t.Fatalf("create answer: %v", err)
+	}
+	answerRef := refs.For(model.KindAnswer, answer.EntityID())
+	appendOps(t, s, answerRef, model.VerifyNote{VerifiedCommit: c2.sha})
+	appendOps(t, s, answerRef, model.AddSupersededBy{ID: model.EntityID("0123456789abcdef0123456789abcdef01234567")})
 }
 
 // createPlan creates an approved plan anchored to a branch, returning its id.

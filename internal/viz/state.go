@@ -7,7 +7,7 @@ import (
 )
 
 // stateResponse is the /api/entities payload: the full folded snapshot of every
-// live entity, grouped by kind. Superseded notes and docs stay in (the snapshot
+// live entity, grouped by kind. Superseded notes, docs, and answers stay in (the snapshot
 // flags them), matching the legend; tombstoned entities drop out.
 type stateResponse struct {
 	Notes          []model.Note          `json:"notes"`
@@ -19,6 +19,7 @@ type stateResponse struct {
 	Runbooks       []model.Runbook       `json:"runbooks"`
 	Investigations []model.Investigation `json:"investigations"`
 	Plans          []model.Plan          `json:"plans"`
+	Answers        []model.Answer        `json:"answers"`
 }
 
 func (s *Server) handleEntities(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +69,11 @@ func (s *Server) handleEntities(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
+	answers, err := s.store.ListAnswers(ctx, false, true)
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, stateResponse{
 		Notes:          notes,
 		Docs:           docs,
@@ -78,5 +84,6 @@ func (s *Server) handleEntities(w http.ResponseWriter, r *http.Request) {
 		Runbooks:       runbooks,
 		Investigations: investigations,
 		Plans:          plans,
+		Answers:        answers,
 	})
 }

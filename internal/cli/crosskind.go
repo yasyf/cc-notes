@@ -62,12 +62,20 @@ func crossKindHint(ctx context.Context, s *store.Store, missed model.Kind, prefi
 	return &notFoundHintError{err: notFound, prefix: prefix, kinds: kinds}
 }
 
+// withArticle prefixes noun with its indefinite article: "a note", "an answer".
+func withArticle(noun string) string {
+	if strings.ContainsRune("aeiou", rune(noun[0])) {
+		return "an " + noun
+	}
+	return "a " + noun
+}
+
 // joinKinds renders a list of two or more kinds as "a note and a task" or
 // "a note, a doc, and a task".
 func joinKinds(kinds []model.Kind) string {
 	names := make([]string, len(kinds))
 	for i, k := range kinds {
-		names[i] = "a " + string(k)
+		names[i] = withArticle(string(k))
 	}
 	if len(names) == 2 {
 		return names[0] + " and " + names[1]

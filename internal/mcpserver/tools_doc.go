@@ -40,5 +40,5 @@ func registerDoc(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"doc", "edit"}, flags, in.ID)...)
 		})
 
-	registerNoteDocShared(ts, b, "doc")
+	registerNoteDocShared(ts, b, "doc", "Returns summaries without the body; doc_show reads one back in full.")
 }

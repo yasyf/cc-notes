@@ -292,7 +292,7 @@ func (b *projectionBuilder) buildAttachments() error {
 	root := "attachments"
 	b.dir(root, "", "attachments")
 	byShort := make(map[string][]model.Snapshot)
-	for _, kind := range []model.Kind{model.KindNote, model.KindDoc, model.KindLog, model.KindInvestigation} {
+	for _, kind := range []model.Kind{model.KindNote, model.KindDoc, model.KindLog, model.KindInvestigation, model.KindAnswer} {
 		for _, snapshot := range b.snaps[kind] {
 			if len(snapshot.Meta().Attachments) != 0 {
 				byShort[snapshot.EntityID().Short()] = append(byShort[snapshot.EntityID().Short()], snapshot)

@@ -43,6 +43,7 @@ var layouts = map[model.Kind]flatLayout{
 	model.KindRunbook:       {dir: "/runbooks", ext: ".md", slugged: true},
 	model.KindInvestigation: {dir: "/investigations", ext: ".md", slugged: true},
 	model.KindPlan:          {dir: "/plans", ext: ".md", slugged: true},
+	model.KindAnswer:        {dir: "/answers", ext: ".md", slugged: true},
 	model.KindTask:          {dir: "/tasks", ext: ".json"},
 	model.KindSprint:        {dir: "/sprints", ext: ".json"},
 	model.KindProject:       {dir: "/projects", ext: ".json"},

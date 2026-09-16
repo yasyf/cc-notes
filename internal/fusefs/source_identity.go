@@ -41,6 +41,9 @@ func setCreateNonce(operation model.Op, nonce string) (model.Op, error) {
 	case model.CreateInvestigation:
 		value.Nonce = nonce
 		return value, nil
+	case model.CreateAnswer:
+		value.Nonce = nonce
+		return value, nil
 	default:
 		return nil, fmt.Errorf("operation %q is not a create", operation.OpKind())
 	}

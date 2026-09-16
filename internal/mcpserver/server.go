@@ -45,6 +45,7 @@ func registerAll(ts *toolset, b *bridge) {
 	registerRepo(ts, b)
 	registerNote(ts, b)
 	registerDoc(ts, b)
+	registerAnswer(ts, b)
 	registerLog(ts, b)
 	registerPapercut(ts, b)
 	registerTask(ts, b)

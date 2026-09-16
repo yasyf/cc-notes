@@ -25,7 +25,7 @@ func newShowCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "show ID",
-		Short: "Show any note, doc, log, task, sprint, project, runbook, investigation, or plan by id",
+		Short: "Show any note, doc, log, task, sprint, project, runbook, investigation, plan, or answer by id",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -57,6 +57,8 @@ func newShowCmd() *cobra.Command {
 				return showInvestigation(cmd, s, c, id, jsonOut)
 			case model.KindPlan:
 				return showPlan(cmd, s, c, id, jsonOut)
+			case model.KindAnswer:
+				return showAnswer(cmd, s, c, id, jsonOut)
 			default:
 				panic(fmt.Sprintf("ResolveEntity returned unknown kind %q", kind))
 			}
@@ -137,6 +139,43 @@ func showDoc(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string,
 		return printJSON(cmd.OutOrStdout(), newDocDTO(doc, verdict, supersedes, liveHead, atts))
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), renderDocShow(doc, verdict, supersedes, atts))
+	return err
+}
+
+func showAnswer(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string, jsonOut bool) error {
+	ctx := cmd.Context()
+	_, answer, err := answerSpec.load(ctx, s, prefix)
+	if err != nil {
+		return err
+	}
+	head, err := resolveHead(ctx, s)
+	if err != nil {
+		return err
+	}
+	staleAfter, err := noteStaleAfter(ctx, s.Git)
+	if err != nil {
+		return err
+	}
+	verdict, err := answerVerdict(ctx, s, head, answer, time.Now(), staleAfter, false)
+	if err != nil {
+		return err
+	}
+	supersedes, err := c.AnswerSuperseders(ctx, answer.ID)
+	if err != nil {
+		return err
+	}
+	liveHead, err := c.AnswerSupersedeHeads(ctx, answer.ID)
+	if err != nil {
+		return err
+	}
+	atts, err := entityAttachments(ctx, c, answer.Attachments)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), newAnswerDTO(answer, verdict, supersedes, liveHead, atts))
+	}
+	_, err = fmt.Fprint(cmd.OutOrStdout(), renderNoteShow(model.Note(answer), verdict, supersedes, atts))
 	return err
 }
 

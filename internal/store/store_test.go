@@ -62,6 +62,10 @@ func planOps(title string) []model.Op {
 	return []model.Op{model.CreatePlan{Nonce: model.NewNonce(), Title: title, Body: "## Approach\nstep one", Status: model.PlanApproved}}
 }
 
+func answerOps(title string) []model.Op {
+	return []model.Op{model.CreateAnswer{Nonce: model.NewNonce(), Title: title, Body: "Redis"}}
+}
+
 func create(t *testing.T, s *Store, ops []model.Op) model.Snapshot {
 	t.Helper()
 	snapshot, err := s.Create(t.Context(), ops)

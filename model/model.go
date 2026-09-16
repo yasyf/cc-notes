@@ -528,6 +528,39 @@ type Doc struct {
 	SkippedOps     int             `json:"-"`
 }
 
+// Answer is the folded snapshot of an answer entity: a user's answer to a
+// question an agent asked, recorded so later sessions reuse the decision
+// instead of asking again. Title is the question verbatim; Body is the chosen
+// answer, optionally followed by the offered options and the user's notes. It
+// carries the full Note freshness lifecycle (verify/witness/expire/supersede).
+// Timestamps are unix seconds; rendering to RFC3339 happens at output time.
+// Tags is sorted; Head is the chain tip the snapshot was folded from.
+//
+// SkippedOps is the reader-local count of ops this binary's folder does not
+// apply to this kind; it never marshals (see Meta.SkippedOps).
+type Answer struct {
+	ID             EntityID        `json:"id"`
+	Title          string          `json:"title"`
+	Body           string          `json:"body"`
+	Tags           []string        `json:"tags"`
+	Anchors        []Anchor        `json:"anchors"`
+	Author         Actor           `json:"author"`
+	CreatedAt      int64           `json:"created_at"`
+	UpdatedAt      int64           `json:"updated_at"`
+	Deleted        bool            `json:"deleted"`
+	VerifiedAt     int64           `json:"verified_at"`
+	VerifiedBy     Actor           `json:"verified_by"`
+	VerifiedCommit SHA             `json:"verified_commit"`
+	Witness        []AnchorWitness `json:"witness"`
+	SupersededBy   []EntityID      `json:"superseded_by"`
+	StaleAt        int64           `json:"stale_at"`
+	StaleBy        Actor           `json:"stale_by"`
+	StaleReason    string          `json:"stale_reason"`
+	Head           SHA             `json:"head"`
+	Attachments    []Attachment    `json:"attachments,omitempty"`
+	SkippedOps     int             `json:"-"`
+}
+
 // Log is the folded snapshot of a log entity: an append-only journal — an
 // incident timeline, a rollout log, a debugging-session record — written for
 // future agents. Each entry, once written, never moves or changes; the only

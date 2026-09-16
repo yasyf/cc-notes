@@ -1,22 +1,26 @@
-"""Session-start floaters: durable tasks at first prompt, and the missing-binary install nudge."""
+"""Session-start floaters: durable tasks and answers at first prompt, and the missing-binary install nudge."""
 
 from __future__ import annotations
 
 from captain_hook import Event, HookResult, UserPromptSubmitEvent, on
 
 from .common import (
+    SESSION_ANSWER_CAP,
     SESSION_TASK_CAP,
     CcNotesAvailable,
     CcNotesMissing,
     cap_lines,
     dedup_tasks,
+    durable_answers,
     mcp_active,
     parse_status,
+    remember_answers,
     render_steal_line,
     render_task_line,
     run_cc_notes,
     stale_leases,
     status_tasks,
+    unseen_answers,
 )
 
 
@@ -67,6 +71,33 @@ def float_session_tasks(evt: UserPromptSubmitEvent) -> HookResult | None:
     Event.UserPromptSubmit,
     only_if=[CcNotesAvailable()],
 )
+def float_session_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
+    """Float the most recent durable answers the user gave in earlier sessions, once, at the first prompt.
+
+    The first prompt is claimed before listing, as float_prompt_answers claims it, so an empty listing
+    spends the digest instead of refunding a ``max_fires`` shot to a later prompt.
+    """
+    if not evt.ctx.s.once("first", scope="session-answers"):
+        return None
+    fresh = unseen_answers(evt, durable_answers(evt))
+    if not fresh:
+        return None
+    lines = remember_answers(evt, fresh[:SESSION_ANSWER_CAP])
+    if mcp_active(evt):
+        lede = "Durable answers the user gave to earlier questions — honor them instead of asking again (the answer_show tool has the full record):"
+        tail = "the answer_list tool with label scope:durable"
+    else:
+        lede = "Durable answers the user gave to earlier questions — honor them instead of asking again (`cc-notes answer show <id>` has the full record):"
+        tail = "run `cc-notes answer list --label scope:durable`"
+    if (extra := len(fresh) - SESSION_ANSWER_CAP) > 0:
+        lines.append(f"+{extra} more — {tail}")
+    return evt.warn(lede, *lines)
+
+
+@on(
+    Event.UserPromptSubmit,
+    only_if=[CcNotesAvailable()],
+)
 def announce_cc_notes_available(evt: UserPromptSubmitEvent) -> HookResult | None:
     """Once per session, surface that cc-notes is installed and its durable tooling is available.
 
@@ -82,12 +113,12 @@ def announce_cc_notes_available(evt: UserPromptSubmitEvent) -> HookResult | None
         return evt.warn(
             f"cc-notes {version} is installed and its MCP server is active — record durable work with the "
             "cc-notes tools (task_add, note_add, doc_add, log_add, papercut, runbook_add, investigation_open, "
-            "plan_add; orient with status), each with a typed schema, rather than shelling out. On macOS, a "
+            "plan_add, answer_add; orient with status), each with a typed schema, rather than shelling out. On macOS, a "
             "human must run `cc-notes package install` before repository provisioning."
         )
     return evt.warn(
         f"cc-notes {version} is installed; its durable task, note, doc, log, papercut, runbook, "
-        "investigation, and plan tooling is available. On macOS, a human must run `cc-notes package install` "
+        "investigation, plan, and answer tooling is available. On macOS, a human must run `cc-notes package install` "
         "before repository provisioning."
     )
 

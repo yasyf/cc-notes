@@ -83,10 +83,10 @@ func TestSiblingFlagScan(t *testing.T) {
 		want string
 	}{
 		{
-			name: "attach names note/doc/log add, edit/append capped out",
+			name: "attach names answer/doc/log add, edit/append capped out",
 			path: []string{"runbook", "add"},
 			flag: "attach",
-			want: `--attach exists on: "doc add" (` + attachUsage + `), "log add" (` + attachUsage + `), "note add" (` + attachUsage + `)`,
+			want: `--attach exists on: "answer add" (` + attachUsage + `), "doc add" (` + attachUsage + `), "log add" (` + attachUsage + `)`,
 		},
 		{
 			name: "branch prefers the failing command's own noun group",

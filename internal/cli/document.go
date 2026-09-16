@@ -16,8 +16,8 @@ import (
 	"github.com/yasyf/cc-notes/notes"
 )
 
-// documentSpec is the presentation vocabulary the note and doc noun groups share
-// for the freshness lifecycle. It binds the load/print kind, the display noun,
+// documentSpec is the presentation vocabulary the note, doc, and answer noun
+// groups share for the freshness lifecycle. It binds the load/print kind, the display noun,
 // the file-mode adapter, the summary DTO/lean projections, and the notes.Client
 // methods that own the domain logic — the verb methods parse flags, validate,
 // call the bound notes method, and render; they hold no store writes of their
@@ -83,7 +83,7 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 	var jsonOut, checkout, apply, abort bool
 	cmd := &cobra.Command{
 		Use:   "add TITLE [BODY]",
-		Short: "Create a " + spec.noun,
+		Short: "Create " + withArticle(spec.noun),
 		Long:  spec.addLong,
 		Args: func(cmd *cobra.Command, args []string) error {
 			switch {
@@ -158,7 +158,7 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 	bindLabels(flags, &labels, "label (repeatable)")
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
-	flags.BoolVar(&checkout, "checkout", false, "write a "+spec.noun+" template (prefilled from TITLE and anchor/label flags) to an editable file and print its path")
+	flags.BoolVar(&checkout, "checkout", false, "write "+withArticle(spec.noun)+" template (prefilled from TITLE and anchor/label flags) to an editable file and print its path")
 	flags.BoolVar(&apply, "apply", false, "create the "+spec.noun+" from the checked-out file (add --apply PATH); may carry --attach")
 	flags.BoolVar(&abort, "abort", false, "discard the checked-out file (add --abort PATH)")
 	return cmd
@@ -174,7 +174,7 @@ func (spec documentSpec[T]) editVerb() *cobra.Command {
 	var jsonOut, checkout, apply, abort, replace bool
 	cmd := &cobra.Command{
 		Use:   "edit ID",
-		Short: "Edit a " + spec.noun,
+		Short: "Edit " + withArticle(spec.noun),
 		Long:  spec.editLong,
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -262,7 +262,7 @@ func (spec documentSpec[T]) verifyVerb() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "verify ID",
-		Short: "Re-verify a " + spec.noun + ", refreshing its witness against current HEAD",
+		Short: "Re-verify " + withArticle(spec.noun) + ", refreshing its witness against current HEAD",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -337,7 +337,7 @@ func (spec documentSpec[T]) expireVerb() *cobra.Command {
 	var clearFlag, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "expire ID",
-		Short: "Flag a " + spec.noun + " as out-of-date (agent-asserted), or --clear to remove the flag",
+		Short: "Flag " + withArticle(spec.noun) + " as out-of-date (agent-asserted), or --clear to remove the flag",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -402,11 +402,13 @@ func (spec documentSpec[T]) reviewVerb() *cobra.Command {
 	return cmd
 }
 
-// listVerb builds "list": filter by labels and anchors, order by UpdatedAt, and
-// print. Note and doc are supersedable, so --include-superseded is always bound.
+// listVerb builds "list": filter by labels and anchors, order by UpdatedAt, keep
+// the --limit most recently updated, and print. Every document kind is
+// supersedable, so --include-superseded is always bound.
 func (spec documentSpec[T]) listVerb() *cobra.Command {
 	var labels []string
 	var filters anchorFilters
+	var limit int
 	var all, includeSuperseded, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -426,11 +428,15 @@ func (spec documentSpec[T]) listVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if limit > 0 && len(items) > limit {
+				items = items[:limit]
+			}
 			return printEntityList(cmd, items, jsonOut, spec.listDTO, spec.lean)
 		},
 	}
 	flags := cmd.Flags()
 	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
+	bindLimit(flags, &limit, 0)
 	filters.bind(flags)
 	flags.BoolVar(&all, "all", false, "include tombstoned "+spec.noun+"s")
 	flags.BoolVar(&includeSuperseded, "include-superseded", false, "include superseded "+spec.noun+"s")

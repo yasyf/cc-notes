@@ -55,7 +55,7 @@ func halve(x, h float64) float64 { return math.Exp2(-x / h) }
 // HEAD lacks.
 func deadRefs(r record, tree *Tree) []string {
 	switch r.Kind {
-	case model.KindNote, model.KindDoc, model.KindRunbook, model.KindInvestigation:
+	case model.KindNote, model.KindDoc, model.KindAnswer, model.KindRunbook, model.KindInvestigation:
 		return tree.DeadRefs(r.Text())
 	}
 	return nil

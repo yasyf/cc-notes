@@ -8,6 +8,180 @@ command: cc-notes
   inherited:
     (none)
 
+command: cc-notes answer
+  use: answer
+  aliases: -
+  short: Questions a user answered, recorded verbatim with the full note freshness lifecycle
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes answer add
+  use: add TITLE [BODY]
+  aliases: -
+  short: Create an answer
+  hidden: false
+  flags:
+    --abort shorthand=none type=bool default="false" usage="discard the checked-out file (add --abort PATH)"
+    --apply shorthand=none type=bool default="false" usage="create the answer from the checked-out file (add --apply PATH); may carry --attach"
+    --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
+    --body shorthand=none type=string default="" usage="answer body; - reads stdin"
+    --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
+    --checkout shorthand=none type=bool default="false" usage="write an answer template (prefilled from TITLE and anchor/label flags) to an editable file and print its path"
+    --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
+    --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes answer edit
+  use: edit ID
+  aliases: -
+  short: Edit an answer
+  hidden: false
+  flags:
+    --abort shorthand=none type=bool default="false" usage="discard the checked-out file"
+    --add-branch shorthand=none type=stringArray default="[]" usage="add branch anchor (repeatable)"
+    --add-commit shorthand=none type=stringArray default="[]" usage="add commit anchor (repeatable)"
+    --add-dir shorthand=none type=stringArray default="[]" usage="add directory anchor (repeatable)"
+    --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
+    --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
+    --apply shorthand=none type=bool default="false" usage="apply edits from the checked-out file"
+    --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
+    --body shorthand=none type=string default="" usage="new body; - reads stdin"
+    --checkout shorthand=none type=bool default="false" usage="write the answer to an editable file and print its path"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --replace shorthand=none type=bool default="false" usage="allow --attach to overwrite a live attachment with the same name"
+    --rm-attachment shorthand=none type=stringArray default="[]" usage="remove attachment by name (repeatable)"
+    --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
+    --rm-commit shorthand=none type=stringArray default="[]" usage="remove commit anchor (repeatable)"
+    --rm-dir shorthand=none type=stringArray default="[]" usage="remove directory anchor (repeatable)"
+    --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
+    --rm-path shorthand=none type=stringArray default="[]" usage="remove path anchor (repeatable)"
+    --title shorthand=none type=string default="" usage="new title"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes answer expire
+  use: expire ID
+  aliases: -
+  short: Flag an answer as out-of-date (agent-asserted), or --clear to remove the flag
+  hidden: false
+  flags:
+    --clear shorthand=none type=bool default="false" usage="remove the out-of-date flag"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --reason shorthand=none type=string default="" usage="why the answer is out-of-date"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes answer history
+  use: history ID
+  aliases: -
+  short: Show this answer's edit history
+  hidden: false
+  flags:
+    --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
+    --reverse shorthand=none type=bool default="false" usage="oldest first (chronological); default is newest first"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes answer list
+  use: list
+  aliases: -
+  short: List answers
+  hidden: false
+  flags:
+    --all shorthand=none type=bool default="false" usage="include tombstoned answers"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --include-superseded shorthand=none type=bool default="false" usage="include superseded answers"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes answer review
+  use: review
+  aliases: -
+  short: Surface answers needing attention, each with a verdict
+  hidden: false
+  flags:
+    --drift shorthand=none type=bool default="false" usage="limit to drifted answers"
+    --expired shorthand=none type=bool default="false" usage="limit to expired answers"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --stale-after shorthand=none type=string default="" usage="staleness threshold (Go duration)"
+    --unverified shorthand=none type=bool default="false" usage="limit to never-verified answers"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes answer rm
+  use: rm ID
+  aliases: -
+  short: Tombstone an answer
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes answer search
+  use: search QUERY
+  aliases: -
+  short: Ranked search across answer questions, labels, and answers
+  hidden: false
+  flags:
+    --author shorthand=none type=string default="" usage="require author"
+    --branch shorthand=none type=string default="" usage="require branch anchor"
+    --commit shorthand=none type=string default="" usage="require commit anchor"
+    --dir shorthand=none type=string default="" usage="require directory anchor"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="20" usage="maximum results (0 = all)"
+    --path shorthand=none type=string default="" usage="require path anchor"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes answer show
+  use: show ID
+  aliases: -
+  short: Show one answer
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes answer supersede
+  use: supersede OLD --by NEW
+  aliases: -
+  short: Record that NEW replaces OLD (--clear undoes the edge)
+  hidden: false
+  flags:
+    --by shorthand=none type=string default="" usage="the replacement answer (required)"
+    --clear shorthand=none type=bool default="false" usage="remove the supersede edge"
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes answer verify
+  use: verify ID
+  aliases: -
+  short: Re-verify an answer, refreshing its witness against current HEAD
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
 command: cc-notes attachment
   use: attachment
   aliases: -
@@ -156,6 +330,7 @@ command: cc-notes doc list
     --include-superseded shorthand=none type=bool default="false" usage="include superseded docs"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -247,7 +422,7 @@ command: cc-notes gc
 command: cc-notes history
   use: history ID
   aliases: -
-  short: Show the edit history of any note, doc, log, task, sprint, project, runbook, or investigation
+  short: Show the edit history of any note, doc, log, task, sprint, project, runbook, investigation, plan, or answer
   hidden: false
   flags:
     --full shorthand=none type=bool default="false" usage="emit untruncated change values in --json (default: clipped at 300 chars)"
@@ -907,6 +1082,7 @@ command: cc-notes note list
     --include-superseded shorthand=none type=bool default="false" usage="include superseded notes"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="0" usage="maximum results (0 = all)"
     --path shorthand=none type=string default="" usage="require path anchor"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -1378,7 +1554,7 @@ command: cc-notes reconcile
 command: cc-notes relevant
   use: relevant PATH
   aliases: -
-  short: Surface the notes, docs, logs, runbooks, investigations, and plans most relevant to a path, ranked with reasons
+  short: Surface the notes, docs, logs, runbooks, investigations, plans, and answers most relevant to a path, ranked with reasons
   hidden: false
   flags:
     --attached shorthand=none type=bool default="false" usage="keep only entities anchored to the path or a parent directory"
@@ -1702,7 +1878,7 @@ command: cc-notes runbook step rm
 command: cc-notes search
   use: search QUERY
   aliases: -
-  short: Ranked search across every note, doc, log, task, runbook, investigation, and plan
+  short: Ranked search across every note, doc, log, task, runbook, investigation, plan, and answer
   hidden: false
   flags:
     --branch shorthand=none type=string default="" usage="require branch anchor"
@@ -1748,7 +1924,7 @@ command: cc-notes service uninstall
 command: cc-notes show
   use: show ID
   aliases: -
-  short: Show any note, doc, log, task, sprint, project, runbook, investigation, or plan by id
+  short: Show any note, doc, log, task, sprint, project, runbook, investigation, plan, or answer by id
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"

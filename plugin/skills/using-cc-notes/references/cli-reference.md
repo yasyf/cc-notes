@@ -1,17 +1,17 @@
 # cc-notes CLI reference
 
 The command surface, grouped by noun: package, service, repo, task, sprint, project, runbook, investigation, plan,
-note, doc, log, papercut, kg. Every command takes `-h`/`--help`. Commands outside the `service` group also accept
+note, answer, doc, log, papercut, kg. Every command takes `-h`/`--help`. Commands outside the `service` group also accept
 a global `--repo PATH` (`-R`) that targets another repository's store from any cwd — pass any path
 inside it, while file-path arguments still resolve against the invocation cwd. Cobra displays the
 inherited repository flag in package and service help, but those machine operations reject it before doing work.
-Every note, doc, log, papercut, task, sprint, project,
+Every note, answer, doc, log, papercut, task, sprint, project,
 runbook, investigation, plan, sync, and reconcile command takes `--json` for a machine-readable record; without it,
 mutations echo a lean tab-separated line and listings print one lean line per entity.
 
 `--json` speaks two shapes. A listing or a mutation acknowledgement returns a *summary* — the
 identity, the lifecycle status, and a count wherever the entity carries an append-only history —
-never the body, entries, comments, criteria, steps, or runs. Those live behind `show`:
+with `body` included for answers. Other bodies, entries, comments, criteria, steps, and runs live behind `show`:
 `cc-notes <noun> show <id> --json`, or the kind-agnostic `cc-notes show <id> --json`. Sub-entity
 listings are their own payload and return every member — `task criterion list`,
 `runbook step list`, `runbook run list`, `investigation finding list`, and the uncapped history
@@ -115,6 +115,10 @@ uninstalled: CCNotesHelper service
   the code they describe. A directory anchor covers a subtree and drifts on any change beneath it. A
   note records when it was last verified true; a superseded note points at its replacement and drops
   out of default listings.
+- **Answers are repo-global.** An answer keeps a user's reply with its question under
+  `refs/cc-notes/answers/<id>`. It has a note's fields, anchors, and freshness lifecycle. The
+  title is the question, clamped to 256 bytes; the body keeps the full question on a `Question:`
+  line when clamped, after the chosen reply on the first line.
 - **Identity.** Writes are signed by `CC_NOTES_ACTOR` (`"Name <email>"`) when set, else by git
   `user.name`/`user.email`. The claim and lease primitives key on this actor.
 - **Sprints and projects are repo-wide.** A task carries an independent sprint pointer and
@@ -150,7 +154,7 @@ This reference describes cc-notes v0.22.0 and later — one flag vocabulary acro
 `--body` for the long text, `--label` for labels. An unknown or renamed flag exits 2 with a hint
 naming the replacement (`unknown flag: --desc (did you mean --body?)`), as does a removed command
 (`task move` points to `task edit --branch`). Output speaks the storage schema: `--body` on a task,
-sprint, or project writes the `description` field, and `--label` on a note, doc, or log writes
+sprint, or project writes the `description` field, and `--label` on a note, answer, doc, or log writes
 the `tags` field — in `--json` and in `show` headers alike.
 
 ## Output formats
@@ -164,6 +168,7 @@ the `tags` field — in `--json` and in `show` headers alike.
 | Investigation | `<short7-id>` `<status>` `<title>` |
 | Plan | `<short7-id>` `<status>` `<title>` |
 | Note | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` |
+| Answer | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` |
 | Doc | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` `<when trigger\|->` |
 | Log | `<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv\|->` `<title>` |
 
@@ -173,7 +178,7 @@ the first 7 hex chars of its 32-hex nonce; `task criterion list` and the validat
 form: `runbook step list` prints `<short7-step-id>` `<n>` `<text>` `<command|->` (n is the
 1-based position), and `runbook run list` prints `<short7-run-id>` `<status>` `<runner>`
 `<YYYY-MM-DD started>` `<done+skipped>/<total>` (steps progressed over the step count). `task stale` appends a trailing idle marker to the task
-line; `note review` and `doc review` append a verdict to the note or doc line. `cc-notes papercut` echoes
+line; `note review`, `answer review`, and `doc review` append a verdict to the entity's line. `cc-notes papercut` echoes
 the Log line of the journal it appended to — a papercut is a log entry, not its own entity.
 
 JSON output uses full 40-hex ids, RFC3339 UTC timestamps, and sorted set slices. A field at its
@@ -280,8 +285,8 @@ A sectioned, read-only view to orient before picking up work:
    `STALE` by its lease,
 4. every runbook run still in flight, with the same lease-style flag measured from its last
    recorded step,
-5. the note, doc, log, papercut, investigation, and plan counts, including how many notes need
-   review, how many investigation findings are still undecided, and how many plans are in
+5. the note, answer, doc, log, papercut, investigation, and plan counts, including how many notes,
+   answers, and docs need review, how many investigation findings are still undecided, and how many plans are in
    flight (draft, approved, or executing).
 
 | Flag | Default | Meaning |
@@ -301,6 +306,7 @@ in progress across branches
 runs in flight
   4f2a91c	a3d1	Deploy the gateway	ada <ada@example.com>	fresh
 notes: 14 total, 3 need review
+answers: 8 total, 0 need review
 docs: 6 total, 0 need review
 logs: 2 total
 papercuts: 5 total
@@ -313,7 +319,7 @@ an expired lease with `task claim <id> --steal`; the run rows are the runbook's,
 `runbook run show <runbook> <run>`.
 
 JSON shape:
-`{"branch":string,"backlog":[<task summary>+"ready":bool,…],"your_branch":[<task summary>,…],"in_progress":[{"assignee":string,"tasks":[<task summary>+"stale":bool,…]}],"runs":[{"runbook":id,"title":string,"run":string,"runner":string,"started_at":rfc3339,"stale":bool}],"notes":{"total":int,"needs_review":int},"docs":{"total":int,"needs_review":int},"logs":{"total":int},"papercuts":{"total":int},"investigations":{"open":int,"awaiting_confirm":int,"open_findings":int},"plans":{"in_flight":int}}`.
+`{"branch":string,"backlog":[<task summary>+"ready":bool,…],"your_branch":[<task summary>,…],"in_progress":[{"assignee":string,"tasks":[<task summary>+"stale":bool,…]}],"runs":[{"runbook":id,"title":string,"run":string,"runner":string,"started_at":rfc3339,"stale":bool}],"notes":{"total":int,"needs_review":int},"answers":{"total":int,"needs_review":int},"docs":{"total":int,"needs_review":int},"logs":{"total":int},"papercuts":{"total":int},"investigations":{"open":int,"awaiting_confirm":int,"open_findings":int},"plans":{"in_flight":int}}`.
 `papercuts` counts complaint entries, not journals, and the journal counts under `logs` too.
 Every task is a summary; `task show` reads one back in full.
 
@@ -370,18 +376,21 @@ descending, then id ascending. The lean line is the note line followed by a tab,
 reasons as a comma-separated list, and — when the note has a verdict — a final tab and the drift
 verdict.
 
-Docs, logs, runbooks, investigations, and plans rank in the same pass: `relevant` scores each
+Answers, docs, logs, runbooks, investigations, and plans rank in the same pass: `relevant` scores each
 against `PATH` by the same path, directory, and branch anchor signals as a note and floats the
-matches inline. A doc line
+matches inline. An answer line carries the note's fields and a drift verdict when present.
+
+A doc line
 carries its free-text `when` trigger as the final lean field, then a bracketed drift verdict (e.g.
 `[drifted]`) when the doc is not fresh, and a trailing `doc show <short-id>` hint in place of the
 long body. A log, runbook, investigation, or plan line carries no `when` and no drift verdict —
 none of them ever drifts — and ends with that kind's `show <short-id>` hint in place of its
-content. The
-`--json` form tags each entry with a `kind` discriminator (`note`, `doc`, `log`, `runbook`,
+content.
+
+The `--json` form tags each entry with a `kind` discriminator (`note`, `answer`, `doc`, `log`, `runbook`,
 `investigation`, or `plan`) and nests that kind's *summary* under the matching key, beside the
-`score` and the `reasons`. A body never rides a `relevant` result — the hint in the lean line is the JSON contract
-too: read the match back with that kind's `show`.
+`score` and the `reasons`. Answer summaries include `body`, keeping the question and reply
+together. Other bodies require that kind's `show`.
 
 | Signal | Reason | Fires when |
 |--------|--------|------------|
@@ -412,12 +421,13 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes	path,branch	DRIFTE
 ```
 
 JSON shape:
-`[{"kind":string,"note":{<note summary>},"doc":{<doc summary>},"log":{<log summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>},"plan":{<plan summary>},"score":int,"reasons":[string,…]}]`.
-`kind` is `note`, `doc`, `log`, `runbook`, `investigation`, or `plan` and selects which entity key
-is present (the others are omitted); the present value is that kind's summary, carrying its
-`drift`
-verdict for a note or doc, and, for a doc, its `when` trigger (a log, runbook, investigation, or
-plan carries neither — none of them ever drifts). `score` is the summed signal weight; `reasons` are the
+`[{"kind":string,"note":{<note summary>},"answer":{<answer summary>},"doc":{<doc summary>},"log":{<log summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>},"plan":{<plan summary>},"score":int,"reasons":[string,…]}]`.
+`kind` is `note`, `answer`, `doc`, `log`, `runbook`, `investigation`, or `plan` and selects which entity key
+is present (the others are omitted). The value is that kind's summary, with a computed `drift`
+verdict for a note, answer, or doc. Answers also carry `body`; docs carry their `when` trigger.
+Logs, runbooks, investigations, and plans carry no drift verdict or `when` trigger.
+
+`score` is the summed signal weight; `reasons` are the
 matched reason labels in fixed priority order. Read a match back in full with its kind's `show`.
 
 ### `cc-notes blame <sha>`
@@ -444,7 +454,7 @@ JSON shape:
 
 MCP: show (id)
 
-Show any entity by id — note, doc, log, task, sprint, project, runbook, investigation, or plan.
+Show any entity by id — note, answer, doc, log, task, sprint, project, runbook, investigation, or plan.
 The id resolves across every kind, and the output is exactly what the entity's noun-scoped `show`
 prints. The id-addressed read verbs are kind-agnostic: `show`, `history`, and `compact` take any
 entity id with no noun (`blame` does the same for a commit sha).
@@ -493,17 +503,17 @@ $ cc-notes history 0914cfb
 
 MCP: search (query, labels, limit, path, commit, dir, branch)
 
-One ranked search fanned out across every note, doc, log, task, runbook, investigation, and plan,
+One ranked search fanned out across every note, answer, doc, log, task, runbook, investigation, and plan,
 merged kind-tagged — the kind-agnostic sibling of the per-noun `search` commands, which remain for
 a
 single-kind search with that kind's full filter set (e.g. `--author`). Each lean line is the
 entity's own lean line prefixed with a kind tag column.
 
-Each kind matches on its title, its labels, and its own body text: a note's or doc's body (a doc's
-`when` trigger reads as body text too), a task's description, a log's entries, a runbook's
-description and steps, an investigation's premise, body, root cause, entries, and findings, a
-plan's recorded text and outcome. A title match outranks a label match, which outranks a body
-match.
+Each kind matches on its title, its labels, and its own body text. Notes, answers, and docs
+search their bodies; docs also search their `when` triggers. Tasks search their descriptions,
+logs their entries, and runbooks their descriptions and steps. Investigations search their
+premises, bodies, root causes, entries, and findings; plans search their recorded text and
+outcomes. A title match outranks a label match, which outranks a body match.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -522,17 +532,17 @@ task	d82c087	open	P1	-	Deploy the gateway behind a flag
 ```
 
 JSON shape:
-`[{"kind":string,"note":{<note summary>},"doc":{<doc summary>},"log":{<log summary>},"task":{<task summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>},"plan":{<plan summary>}}]`.
+`[{"kind":string,"note":{<note summary>},"answer":{<answer summary>},"doc":{<doc summary>},"log":{<log summary>},"task":{<task summary>},"runbook":{<runbook summary>},"investigation":{<investigation summary>},"plan":{<plan summary>}}]`.
 `kind` selects which entity key is present per hit; the others are omitted. A hit is a summary, and
-`search` computes no drift verdict, so no hit carries `drift`. Read the match back with its kind's
-`show`.
+`search` computes no drift verdict, so no hit carries `drift`. Answer hits include `body`; read
+any match back in full with its kind's `show`.
 
 ### `cc-notes attachment get ID NAME`
 
 MCP: attachment_get (id, name, output)
 
 Stream an attachment's bytes from the local git-lfs store to stdout, or write them to a file with
-`-o PATH`. `ID` is the owning note, doc, or log; `NAME` is the attachment's per-entity name, as
+`-o PATH`. `ID` is the owning note, answer, doc, or log; `NAME` is the attachment's per-entity name, as
 listed by `show`. Content not yet downloaded arrives with the next `cc-notes sync`. Over MCP the
 `output` path is required — binary never flows through the tool result.
 
@@ -551,7 +561,7 @@ file tools. Takes no flags.
 
 MCP: — (CLI-only: op-log checkpoint maintenance, an operator task)
 
-Collapse any entity's op-log — note, doc, log, task, sprint, project, runbook, investigation, or
+Collapse any entity's op-log — note, answer, doc, log, task, sprint, project, runbook, investigation, or
 plan — into a checkpoint so future folds are cheap; the id and the full folded state are preserved
 and objects stay in the ODB.
 
@@ -577,15 +587,15 @@ normal sync.
 
 MCP: — (CLI-only: launches a local visualization web server)
 
-Serve a live localhost web view of branch flow and note/task/doc lifecycles (`--port`, `--no-open`, `--poll`); it is a human-facing visualization, so tell the user about it or open it for them rather than running it headless in a session.
+Serve a live localhost web view of branch flow and note, answer, task, and doc lifecycles (`--port`, `--no-open`, `--poll`); it is a human-facing visualization, so tell the user about it or open it for them.
 
 ### `cc-notes mcp [--dir <path>]`
 
 MCP: — (CLI-only: the MCP server's own launch command)
 
 Run the stdio [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the
-agent-facing command surface as MCP tools — one `noun_verb` tool per command (`doc_add`,
-`note_edit`, `task_claim`, `runbook_run_done`, …), with the kind-agnostic `show`, `history`, and
+agent-facing command surface across all ten entity kinds as MCP tools — one `noun_verb` tool per
+command (`doc_add`, `answer_add`, `note_edit`, `task_claim`, `runbook_run_done`, …), with the kind-agnostic `show`, `history`, and
 `search` standing in for per-kind wrappers. Every command block in this reference names its tool
 on the `MCP:` line. Each tool drives the CLI in-process, so a call validates and behaves
 exactly like the command; the result carries the command's `--json` as its primary content block,
@@ -671,7 +681,7 @@ sets it explicitly. The default resolves jj-aware on a detached HEAD; when no br
 the task lands on the backlog and a stderr note says so — pass `--branch` to place it. An
 explicit empty `--branch=` is a usage error, rejected before anything is written.
 
-Tasks carry anchors like notes and docs do, so `--path internal/sync` says where the work lives
+Tasks carry anchors like notes, answers, and docs do, so `--path internal/sync` says where the work lives
 and `cc-notes relevant` style path queries have something to match on. A task spends `--branch` on
 its branch attribute, so the add verb takes only `--commit`, `--path`, and `--dir`; branch anchors
 go through `task edit --add-branch`.
@@ -2499,9 +2509,9 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes	DRIFTED
 
 ### `cc-notes note list`
 
-MCP: note_list (labels, path, commit, dir, branch, all, include_superseded)
+MCP: note_list (labels, path, commit, dir, branch, all, include_superseded, limit)
 
-List notes. Default drops superseded and tombstoned notes.
+List notes, most recently updated first. Default drops superseded and tombstoned notes.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -2512,6 +2522,7 @@ List notes. Default drops superseded and tombstoned notes.
 | `--branch <branch>` | none | Require branch anchor |
 | `--all` | off | Include tombstoned notes |
 | `--include-superseded` | off | Include superseded notes |
+| `--limit N` | `0` (all) | Keep the N most recently updated matches |
 | `--json` | off | Emit JSON |
 
 ### `cc-notes note search QUERY`
@@ -2587,6 +2598,294 @@ be superseded by more than one — `supersedes` is its reverse index, and `live_
 chain transitively to the notes that terminate it, which is what a reader of a superseded note
 should read instead. `live_head` is absent when the note is current, and also when the chain
 cycles or ends at a tombstone, which `drift` reports as `DANGLING`.
+
+## Answer commands
+
+An answer keeps a user's reply with its question. It carries the same optional commit, path,
+directory, and branch anchors as a note, with the same drift, verification, supersession, and
+expiry lifecycle. The `--label` and anchor flags are repeatable arrays.
+
+The title is the question, clamped to the CLI's 256-byte title cap. The body holds the chosen
+reply on its first line; for `multiSelect`, join the selected labels with `, `. If the title was
+clamped, add `Question: <full question text>` on a later body line. Optional `Options: a | b | c`
+and `Notes: <user annotation text>` lines preserve the offered labels and annotation. Supply
+exactly one `scope:durable` or `scope:ephemeral` label, plus `header:<text>` when present. Capture
+anchors include the current branch and up to 10 repo-relative paths the session read or edited.
+
+A directory anchor covers a subtree exactly as it does for a note. It matches `PATH` in
+`relevant` for the directory or any file under it. Its witness is the directory's git tree oid,
+so it drifts when anything beneath it changes. The lean line has the note's fields:
+`<short7-id>` `<YYYY-MM-DD updated, UTC>` `<labels csv|->` `<title>`, tab-separated.
+
+### `cc-notes answer add TITLE [BODY]`
+
+MCP: answer_add (title, body, labels, commits, paths, dirs, branches, attach)
+
+Create an answer. Like a note, an answer is born verified against `HEAD`: its anchors get a
+content witness at creation. Use the question as `TITLE`, clamped to 256 bytes, and retain its
+full text on a `Question:` body line when clamped. The same cap applies to `edit --title`.
+
+A long body is easier to write as a file than to pass through `--body`. `--checkout` writes a
+prefilled frontmatter buffer under `<git-common-dir>/cc-notes/edit/`, seeded with the `TITLE`
+and the anchor flags you pass alongside it (commit anchors resolved to full SHAs), and prints
+its path. Write the body into that buffer below the frontmatter, then `--apply <path>` creates
+the answer, born verified. `TITLE` is optional with `--checkout`; the buffer's `title` field or
+a leading `# ` heading supplies it. `--body` and `--attach` are rejected with `--checkout`
+(the buffer is the body), but `--apply` takes `--attach <file>` to attach artifacts in the same
+create transaction.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--body <text>` | empty | Answer body; positional `BODY` and `-` (stdin) are equivalent |
+| `--label <label>` | none | Label; repeatable |
+| `--commit <sha>` | none | Commit anchor; repeatable |
+| `--path <path>` | none | Path anchor; repeatable |
+| `--dir <dir>` | none | Directory anchor covering a subtree; repeatable |
+| `--branch <branch>` | none | Branch anchor; repeatable |
+| `--attach <file>` | none | Attach a file (git-lfs); repeatable; valid in flag mode and with `--apply`, rejected with `--checkout` |
+| `--checkout` | off | Write a prefilled answer buffer (from `TITLE` and anchor flags) to an editable file and print its path |
+| `--apply <path>` | off | Create the answer from the checked-out file; takes `--attach` |
+| `--abort <path>` | off | Discard the checked-out file |
+| `--json` | off | Emit JSON |
+
+Check out an answer, write its body, and apply it, attaching an artifact in the same step:
+
+```console
+$ p=$(cc-notes answer add "Which callers must future changes support?" --checkout \
+    --branch main --path internal/api/client.go --label scope:durable)
+$ $EDITOR "$p"
+$ cc-notes answer add --apply "$p" --attach caller-inventory.txt
+8d2ed23	2026-06-23	scope:durable	Which callers must future changes support?
+```
+
+A short body goes inline instead, straight through `--body` (`-` reads stdin):
+
+```console
+$ cc-notes answer add --branch main --path internal/api/client.go --label scope:durable \
+    --body "Current callers only" -- "Which callers must future changes support?"
+8d2ed23	2026-06-23	scope:durable	Which callers must future changes support?
+```
+
+### `cc-notes answer edit ID`
+
+MCP: answer_edit (id, title, body, add_labels, rm_labels, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches, attach, replace, rm_attachments)
+
+Edit an answer; at least one flag is required. Title and body replace; anchors, labels, and
+attachments add or remove individually. The 256-byte title cap applies to `--title`. Use `edit`
+to correct the record; a changed user choice gets a new answer and a supersession edge.
+
+| Flag | Meaning |
+|------|---------|
+| `--title <text>` | New title |
+| `--body <text>` | New body; `-` reads stdin |
+| `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
+| `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
+| `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
+| `--add-dir` / `--rm-dir <dir>` | Add or remove a directory anchor; repeatable |
+| `--add-branch` / `--rm-branch <branch>` | Add or remove a branch anchor; repeatable |
+| `--attach <file>` | Attach a file to the existing answer (git-lfs); repeatable |
+| `--replace` | Allow `--attach` to overwrite a live attachment of the same name |
+| `--rm-attachment <name>` | Drop an attachment by name; repeatable |
+| `--checkout` | Write the answer to an editable Markdown file and print its path |
+| `--apply` | Apply the edits from the checked-out file |
+| `--abort` | Discard the checked-out file |
+| `--json` | Emit JSON |
+
+For file-based edits, `--checkout` renders the answer to a Markdown+frontmatter file and prints
+its path. Edit that file with your normal tools, then `--apply` diffs it against the checked-out
+version and commits only what changed, including concurrent edits to fields you left alone.
+`--checkout` / `--apply` / `--abort` are mutually exclusive and cannot be combined with the
+content flags above. `--attach` attaches to an answer that already exists; a name that collides
+with a live attachment needs `--replace`.
+
+```console
+$ answer_path=$(cc-notes answer edit 8d2ed23 --checkout)
+$ $EDITOR "$answer_path"
+$ cc-notes answer edit 8d2ed23 --apply
+```
+
+### `cc-notes answer verify ID`
+
+MCP: answer_verify (id)
+
+Record that the answer still holds, refreshing the witness against the current content of its
+anchors at `HEAD`. This restores freshness after `answer review` flags it.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes answer verify 8d2ed23
+8d2ed23	2026-06-23	scope:durable	Which callers must future changes support?
+```
+
+### `cc-notes answer supersede OLD --by NEW`
+
+MCP: answer_supersede (id, by, clear)
+
+Record that `NEW` replaces `OLD`. `OLD` drops from default listings and points at `NEW`; history
+is preserved. `--clear` undoes the edge.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--by <id>` | (required) | The replacement answer |
+| `--clear` | off | Remove the supersede edge |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes answer supersede 8d2ed23 --by 357f361
+8d2ed23	2026-06-23	scope:durable	Which callers must future changes support?
+```
+
+### `cc-notes answer expire ID`
+
+MCP: answer_expire (id, reason, clear)
+
+Flag an answer out-of-date by hand when its premise fails and no replacement exists.
+The answer surfaces in `answer review` as `EXPIRED`, which takes precedence over every computed
+verdict. It stays in `answer list`; clear the flag with `answer verify` (which re-confirms it)
+or `answer expire --clear`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--reason <text>` | empty | Why it is out-of-date |
+| `--clear` | off | Remove the expired flag |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes answer expire 8d2ed23 --reason "The caller set has changed"
+8d2ed23	2026-06-23	scope:durable	Which callers must future changes support?
+```
+
+### `cc-notes answer review`
+
+MCP: answer_review (stale_after, drift, unverified, expired)
+
+Surface answers needing attention, each with a verdict appended to the lean line: `EXPIRED`
+(an agent flagged it out-of-date with `answer expire`; top precedence), `DRIFTED` (an anchored
+path, directory, or commit changed since the answer was verified), `STALE` (verified too long
+ago), `UNVERIFIED` (never verified), and dangling supersede edges.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--stale-after <dur>` | (config default) | Staleness threshold |
+| `--drift` | off | Limit to drifted answers |
+| `--unverified` | off | Limit to never-verified answers |
+| `--expired` | off | Limit to expired answers |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes answer review
+8d2ed23	2026-06-23	scope:durable	Which callers must future changes support?	DRIFTED
+```
+
+### `cc-notes answer list`
+
+MCP: answer_list (labels, path, commit, dir, branch, all, include_superseded, limit)
+
+List answers, most recently updated first. Default drops superseded and tombstoned answers.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--label <label>` | none | Require label; repeatable, ANDed |
+| `--commit <sha>` | none | Require commit anchor |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--all` | off | Include tombstoned answers |
+| `--include-superseded` | off | Include superseded answers |
+| `--limit N` | `0` (all) | Keep the N most recently updated matches |
+| `--json` | off | Emit JSON |
+
+### `cc-notes answer search QUERY`
+
+MCP: answer_search (query, labels, limit, author, path, dir, branch, commit)
+
+Ranked search across answer titles, labels, and bodies (title > labels > body, ties broken by
+recency). The flags below set the scope and result limit.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--label <label>` | none | Require label; repeatable, ANDed |
+| `--limit <N>` | `20` | Maximum results; 0 = all |
+| `--author <user>` | none | Require author |
+| `--path <path>` | none | Require path anchor |
+| `--dir <dir>` | none | Require directory anchor |
+| `--branch <branch>` | none | Require branch anchor |
+| `--commit <sha>` | none | Require commit anchor |
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes answer search "callers" --label scope:durable
+8d2ed23	2026-06-23	scope:durable	Which callers must future changes support?
+```
+
+### `cc-notes answer show ID`
+
+MCP: answer_show (id)
+
+Show one answer: a fixed-order header block (id, title, tags, anchors, author, created, updated,
+`verified_at`/`verified_by`, `superseded_by`, `supersedes`, drift verdict) then the body after a blank line.
+`supersedes` is the computed reverse index of `superseded_by`; `--json` carries it too, alongside
+`live_head`, the transitive end of the supersede chain.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+```console
+$ cc-notes answer show 8d2ed23
+id: 8d2ed236cdfff653f6879fb31183f53087457120
+title: Which callers must future changes support?
+tags: scope:durable
+commits: -
+paths: internal/api/client.go
+dirs: -
+branches: main
+author: ada <ada@example.com>
+created: 2026-06-23T09:48:55Z
+updated: 2026-06-23T09:48:55Z
+verified_at: 2026-06-23T09:48:55Z
+verified_by: ada <ada@example.com>
+superseded_by: -
+supersedes: -
+drift: -
+
+Current callers only
+```
+
+### `cc-notes answer rm ID`
+
+MCP: answer_rm (id)
+
+Tombstone an answer. It drops out of listings; history survives.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--json` | off | Emit JSON |
+
+### JSON answer shapes
+
+The full record has the note's shape. The summary adds `body` after `title`, so a listing
+includes the question and reply together. Neither shape has a `when` property.
+
+Summary — `answer list`, `answer search`, `answer review`, the top-level `search` and `relevant`,
+and every answer mutation's acknowledgement:
+
+`{"id":string,"title":string,"body":string,"tags":[…],"author":string,"updated_at":rfc3339,"verified_commit":sha,"superseded_by":[id,…],"drift":string,"stale_at":rfc3339,"stale_reason":string}`.
+The summary keeps the chosen reply and any `Question:`, `Options:`, and `Notes:` lines in `body`.
+`id`, `title`, and `updated_at` are always present. `verified_commit`, `drift`, and `stale_reason`
+follow the note-summary rules: `answer list`, `answer search`, and the top-level `search` compute
+no drift verdict; `answer review`, `relevant`, and mutation acknowledgements do.
+`stale_at` is present on every summary of an expired answer, including `answer list` rows.
+
+Full — `answer show ID --json`:
+
+`{"id":string,"title":string,"body":string,"tags":[…],"anchors":[{"kind":string,"value":string,"witness":string}],"author":string,"created_at":rfc3339,"updated_at":rfc3339,"verified_at":rfc3339,"verified_by":string,"verified_commit":sha,"superseded_by":[id,…],"supersedes":[id,…],"live_head":[id,…],"drift":string,"deleted":bool,"stale_at":rfc3339,"stale_by":string,"stale_reason":string,"attachments":[{"name":string,"oid":string,"size":int,"present":bool}]}`.
+The always-present fields, the `drift` rules, the `witness` rule, and the three supersede arrays
+match the note shape. The expiry fields `stale_at`/`stale_by`/`stale_reason` stay absent until
+`answer expire` sets them, and `answer verify` or `answer expire --clear` clears them again.
 
 ## Doc commands
 
@@ -2773,9 +3072,9 @@ $ cc-notes doc review
 
 ### `cc-notes doc list`
 
-MCP: doc_list (labels, path, commit, dir, branch, all, include_superseded)
+MCP: doc_list (labels, path, commit, dir, branch, all, include_superseded, limit)
 
-List docs. Default drops superseded and tombstoned docs.
+List docs, most recently updated first. Default drops superseded and tombstoned docs.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -2786,6 +3085,7 @@ List docs. Default drops superseded and tombstoned docs.
 | `--branch <branch>` | none | Require branch anchor |
 | `--all` | off | Include tombstoned docs |
 | `--include-superseded` | off | Include superseded docs |
+| `--limit N` | `0` (all) | Keep the N most recently updated matches |
 | `--json` | off | Emit JSON |
 
 ### `cc-notes doc search QUERY`
@@ -2888,7 +3188,7 @@ record never claims current truth, so it never drifts. Each entry is appended on
 immutable — its author and timestamp come from the carrying commit, and nothing ever edits or
 reorders it. The `--label` and anchor flags are repeatable arrays.
 
-A directory anchor covers a subtree exactly as it does for a note or doc: it matches `PATH` in
+A directory anchor covers a subtree exactly as it does for a note, answer, or doc: it matches `PATH` in
 `relevant` for the directory or any file under it.
 
 ### `cc-notes log add TITLE [BODY]`
@@ -3303,7 +3603,7 @@ report the distribution: per kind how many records are gated, fresh, penalized, 
 re-verification, or promoted, plus each signal's count and its role. A `gate` signal (`DRIFT`,
 `SUPERSEDED`, `EXPIRED`, `EXONERATED`, `CLOSED`, `RECONCILED`) withholds a record from injection
 outright at weight zero; a `penalty` signal (`CHURN`, `DEAD_REF`, `DECAY`) only costs it rank. The
-verdict composes the notes-side freshness verdict `note review` and `doc review` already compute
+verdict composes the freshness verdict `note review`, `answer review`, and `doc review` already compute
 rather than recomputing it.
 
 `--explain` adds one row per record a signal fired on —
