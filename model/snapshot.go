@@ -202,3 +202,19 @@ func (a Answer) Meta() Meta {
 		SkippedOps:  a.SkippedOps,
 	}
 }
+
+// EntityID returns the ledger's entity id.
+func (l Ledger) EntityID() EntityID { return l.ID }
+
+// Meta returns the ledger's header.
+func (l Ledger) Meta() Meta {
+	return Meta{
+		Kind:       KindLedger,
+		Title:      l.Title,
+		Head:       l.Head,
+		CreatedAt:  metaTime(l.CreatedAt),
+		UpdatedAt:  metaTime(l.UpdatedAt),
+		Deleted:    l.Deleted,
+		SkippedOps: l.SkippedOps,
+	}
+}

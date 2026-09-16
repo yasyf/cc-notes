@@ -60,6 +60,11 @@ var dupCheckers = map[model.Kind]dupChecker{
 			func() ([]model.Plan, error) { return s.ListPlans(ctx) },
 			livePlan, samePlanContent)
 	},
+	model.KindLedger: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
+		return scanDup(candidate, fold.Ledger,
+			func() ([]model.Ledger, error) { return s.ListLedgers(ctx) },
+			liveLedger, sameLedgerContent)
+	},
 	model.KindAnswer: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Answer,
 			func() ([]model.Answer, error) { return s.ListAnswers(ctx, false, false) },
@@ -148,7 +153,8 @@ func dedupeCovered(ops []model.Op) bool {
 		case model.CreateNote, model.CreateDoc, model.CreateLog,
 			model.CreateTask, model.CreateSprint, model.CreateProject,
 			model.CreateRunbook, model.CreateInvestigation, model.CreatePlan,
-			model.CreateAnswer,
+			model.CreateAnswer, model.CreateLedger,
+			model.UpsertRow,
 			model.AddStep,
 			model.AddAttachment,
 			model.SetSprint, model.SetProject, model.SetPlan,
@@ -176,6 +182,24 @@ func sameDocContent(a, b model.Doc) bool {
 		slices.Equal(a.Tags, b.Tags) &&
 		slices.Equal(a.Anchors, b.Anchors) &&
 		slices.Equal(a.Attachments, b.Attachments)
+}
+
+// liveLedger reports whether l is a valid dedupe target: active and not
+// tombstoned.
+func liveLedger(l model.Ledger) bool {
+	return l.ArchivedAt == 0 && !l.Deleted
+}
+
+// sameLedgerContent compares ledgers by the fields a create pack can carry.
+// The rows are excluded: a ledger is refreshed in place, so two creates of the
+// same titled register are the duplicate a scan-before-create should collapse
+// however far their row sets have already diverged.
+func sameLedgerContent(a, b model.Ledger) bool {
+	return a.Title == b.Title &&
+		a.Description == b.Description &&
+		slices.Equal(a.Columns, b.Columns) &&
+		slices.Equal(a.Labels, b.Labels) &&
+		slices.Equal(a.Anchors, b.Anchors)
 }
 
 func sameAnswerContent(a, b model.Answer) bool {

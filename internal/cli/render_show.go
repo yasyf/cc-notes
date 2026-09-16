@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -589,4 +590,69 @@ func shortSHAs(shas []model.SHA) []string {
 		out[i] = string(s)[:7]
 	}
 	return out
+}
+
+// renderLedgerShow renders the lean show view of a ledger: the fixed-order
+// header block, the description separated by a blank line, then the rows as a
+// column-aligned table under the effective column order.
+func renderLedgerShow(l model.Ledger) string {
+	var b strings.Builder
+	header(&b, "id", string(l.ID))
+	header(&b, "title", l.Title)
+	header(&b, "status", string(l.Status))
+	header(&b, "rows", strconv.Itoa(len(l.Rows)))
+	header(&b, "labels", csvOrDash(l.Labels))
+	header(&b, "commits", csvOrDash(render.AnchorValues(l.Anchors, model.AnchorCommit)))
+	header(&b, "paths", csvOrDash(render.AnchorValues(l.Anchors, model.AnchorPath)))
+	header(&b, "dirs", csvOrDash(render.AnchorValues(l.Anchors, model.AnchorDir)))
+	header(&b, "branches", csvOrDash(render.AnchorValues(l.Anchors, model.AnchorBranch)))
+	header(&b, "created", render.RFC3339(l.CreatedAt))
+	header(&b, "updated", render.RFC3339(l.UpdatedAt))
+	header(&b, "archived", orDash(render.OptTimeString(l.ArchivedAt)))
+	if l.Description != "" {
+		b.WriteByte('\n')
+		b.WriteString(l.Description)
+		b.WriteByte('\n')
+	}
+	for _, c := range l.Comments {
+		fmt.Fprintf(&b, "\n-- %s %s\n%s\n", c.Author, render.RFC3339(c.TS), c.Body)
+	}
+	b.WriteString("\nrows:\n")
+	b.WriteString(ledgerTable(l))
+	return b.String()
+}
+
+// ledgerTable renders a ledger's rows as space-padded columns under a key
+// header, each column as wide as its widest cell.
+func ledgerTable(l model.Ledger) string {
+	columns := model.LedgerColumns(l)
+	grid := make([][]string, 0, 1+len(l.Rows))
+	grid = append(grid, append([]string{"key"}, columns...))
+	for _, row := range l.Rows {
+		cells := make([]string, 0, 1+len(columns))
+		cells = append(cells, row.Key)
+		for _, c := range columns {
+			cells = append(cells, orDash(row.Fields[c]))
+		}
+		grid = append(grid, cells)
+	}
+	widths := make([]int, len(grid[0]))
+	for _, cells := range grid {
+		for i, cell := range cells {
+			widths[i] = max(widths[i], len([]rune(cell)))
+		}
+	}
+	var b strings.Builder
+	for _, cells := range grid {
+		b.WriteString("  ")
+		for i, cell := range cells {
+			if i == len(cells)-1 {
+				b.WriteString(cell)
+				break
+			}
+			fmt.Fprintf(&b, "%-*s  ", widths[i], cell)
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
 }

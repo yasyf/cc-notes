@@ -150,6 +150,11 @@ CC_NOTES_TOOLS = frozenset(
         # runbook run
         "runbook_run_start", "runbook_run_list", "runbook_run_show", "runbook_run_done",
         "runbook_run_skip", "runbook_run_fail", "runbook_run_finish",
+        # ledger
+        "ledger_add", "ledger_edit", "ledger_rm", "ledger_show", "ledger_list",
+        "ledger_search", "ledger_activate", "ledger_archive", "ledger_comment", "ledger_sync",
+        # ledger row
+        "ledger_row_set", "ledger_row_rm", "ledger_row_list",
         # investigation
         "investigation_open", "investigation_list", "investigation_show", "investigation_append",
         "investigation_entry_list",

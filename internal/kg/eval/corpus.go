@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"unicode"
@@ -130,6 +131,18 @@ func LoadCorpus(ctx context.Context, c *notes.Client) ([]Entity, error) {
 		})
 	}
 
+	ledgers, err := c.Ledgers(ctx, notes.LedgerFilter{IncludeArchived: true})
+	if err != nil {
+		return nil, fmt.Errorf("list ledgers: %w", err)
+	}
+	for _, l := range ledgers {
+		out = append(out, Entity{
+			ID: l.ID, Kind: model.KindLedger, Title: l.Title,
+			Body: join(l.Description, rowText(l.Rows), commentText(l.Comments)),
+			Tags: l.Labels, UpdatedAt: l.UpdatedAt,
+		})
+	}
+
 	invs, err := c.Investigations(ctx, notes.InvestigationFilter{})
 	if err != nil {
 		return nil, fmt.Errorf("list investigations: %w", err)
@@ -191,6 +204,17 @@ func findingText(findings []model.Finding) string {
 	texts := make([]string, 0, 2*len(findings))
 	for _, f := range findings {
 		texts = append(texts, f.Text, f.Note)
+	}
+	return join(texts...)
+}
+
+func rowText(rows []model.LedgerRow) string {
+	texts := make([]string, 0, 2*len(rows))
+	for _, r := range rows {
+		texts = append(texts, r.Key)
+		for _, name := range slices.Sorted(maps.Keys(r.Fields)) {
+			texts = append(texts, r.Fields[name])
+		}
 	}
 	return join(texts...)
 }

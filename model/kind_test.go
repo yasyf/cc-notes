@@ -9,7 +9,7 @@ import (
 )
 
 func TestKindsCanonicalOrder(t *testing.T) {
-	want := []Kind{KindNote, KindDoc, KindLog, KindTask, KindSprint, KindProject, KindRunbook, KindInvestigation, KindPlan, KindAnswer}
+	want := []Kind{KindNote, KindDoc, KindLog, KindTask, KindSprint, KindProject, KindRunbook, KindInvestigation, KindPlan, KindAnswer, KindLedger}
 	if got := Kinds(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Kinds() = %v, want %v", got, want)
 	}
@@ -204,6 +204,23 @@ var metaCases = []struct {
 			Attachments: []Attachment{{Name: "context.txt", OID: testOID, Size: 128}},
 		},
 	},
+	{
+		snap: Ledger{
+			ID: testID, Title: "Open PR ledger", Description: "one row per open pull request",
+			Status: LedgerArchived, Columns: []string{"head", "test_state"},
+			Rows: []LedgerRow{{
+				Key: "21052", Fields: map[string]string{"head": "e8ad886", "test_state": "failure"},
+				Position: "v", UpdatedAt: 1950, UpdatedBy: "ada",
+			}},
+			Author: "ada", CreatedAt: 1900, UpdatedAt: 2000, ArchivedAt: 2000,
+			Deleted: true, Head: testParent,
+		},
+		want: Meta{
+			Kind: KindLedger, Title: "Open PR ledger", Head: testParent,
+			CreatedAt: time.Unix(1900, 0).UTC(), UpdatedAt: time.Unix(2000, 0).UTC(),
+			Deleted: true,
+		},
+	},
 }
 
 func TestSnapshotMeta(t *testing.T) {
@@ -236,6 +253,7 @@ func TestCreateOpExhaustive(t *testing.T) {
 		"create_investigation": KindInvestigation,
 		"create_plan":          KindPlan,
 		"create_answer":        KindAnswer,
+		"create_ledger":        KindLedger,
 	}
 	got := map[string]Kind{}
 	for _, s := range everyOpSample {

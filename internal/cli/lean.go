@@ -78,3 +78,21 @@ func leanRunLine(rb model.Runbook, run model.RunbookRun) string {
 	done, _, _ := runStepCounts(rb, run)
 	return fmt.Sprintf("%s\t%s\t%s\t%s\t%d/%d", render.ShortWireID(run.ID), run.Status, run.Runner, dateUTC(run.StartedAt), done, len(rb.Steps))
 }
+
+// leanLedgerLine renders the tab-separated ledger line:
+// <short7>\t<status>\t<rows>\t<title>.
+func leanLedgerLine(l model.Ledger) string {
+	return fmt.Sprintf("%s\t%s\t%d\t%s", l.ID.Short(), l.Status, len(l.Rows), l.Title)
+}
+
+// leanRowLine renders the tab-separated row line: the key, then one cell per
+// effective column in order.
+func leanRowLine(l model.Ledger, row model.LedgerRow) string {
+	columns := model.LedgerColumns(l)
+	cells := make([]string, 0, 1+len(columns))
+	cells = append(cells, row.Key)
+	for _, c := range columns {
+		cells = append(cells, row.Fields[c])
+	}
+	return strings.Join(cells, "\t")
+}

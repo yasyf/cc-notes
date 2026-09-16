@@ -79,6 +79,7 @@ type RelevantEntry struct {
 	Investigation model.Investigation
 	Plan          model.Plan
 	Answer        model.Answer
+	Ledger        model.Ledger
 	Score         int
 	Reasons       []string
 	Verdict       Verdict
@@ -99,6 +100,8 @@ func (e RelevantEntry) id() model.EntityID {
 		return e.Plan.ID
 	case model.KindAnswer:
 		return e.Answer.ID
+	case model.KindLedger:
+		return e.Ledger.ID
 	default:
 		return e.Note.ID
 	}
@@ -119,6 +122,8 @@ func (e RelevantEntry) updatedAt() int64 {
 		return e.Plan.UpdatedAt
 	case model.KindAnswer:
 		return e.Answer.UpdatedAt
+	case model.KindLedger:
+		return e.Ledger.UpdatedAt
 	default:
 		return e.Note.UpdatedAt
 	}
@@ -218,6 +223,24 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 			continue
 		}
 		scored = append(scored, RelevantEntry{Kind: model.KindAnswer, Answer: a, Score: score, Reasons: reasons})
+	}
+
+	ledgers, err := c.Ledgers(ctx, LedgerFilter{})
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range ledgers {
+		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, err
+		}
+		if score == 0 {
+			continue
+		}
+		if filter.Attached && !anchoredNear(reasons) {
+			continue
+		}
+		scored = append(scored, RelevantEntry{Kind: model.KindLedger, Ledger: l, Score: score, Reasons: reasons})
 	}
 
 	logs, err := c.s.ListLogs(ctx, false)
@@ -332,7 +355,7 @@ func (c *Client) entryVerdict(ctx context.Context, e RelevantEntry, head model.S
 		return c.verdictOf(ctx, head, freshFromDoc(e.Doc), now, staleAfter, worktree)
 	case model.KindAnswer:
 		return c.verdictOf(ctx, head, freshFromAnswer(e.Answer), now, staleAfter, worktree)
-	case model.KindLog, model.KindRunbook, model.KindInvestigation, model.KindPlan:
+	case model.KindLog, model.KindRunbook, model.KindInvestigation, model.KindPlan, model.KindLedger:
 		return "", nil
 	default:
 		return c.verdictOf(ctx, head, freshFromNote(e.Note), now, staleAfter, worktree)

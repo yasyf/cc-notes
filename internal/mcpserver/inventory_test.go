@@ -66,7 +66,10 @@ func synthesizeArgs(t *testing.T, name string, schema any) map[string]any {
 	}
 	var doc struct {
 		Properties map[string]struct {
-			Type json.RawMessage `json:"type"`
+			Type  json.RawMessage `json:"type"`
+			Items *struct {
+				Type json.RawMessage `json:"type"`
+			} `json:"items"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
@@ -82,12 +85,29 @@ func synthesizeArgs(t *testing.T, name string, schema any) map[string]any {
 		case "integer", "number":
 			args[prop] = 1
 		case "array":
-			args[prop] = []any{"x"}
+			args[prop] = []any{arrayItem(t, name, prop, def.Items)}
+		case "object":
+			args[prop] = map[string]any{"x": "y"}
 		default:
 			t.Fatalf("tool %q property %q: unhandled schema type %q", name, prop, typ)
 		}
 	}
 	return args
+}
+
+// arrayItem synthesizes one element of an array property. An array of objects
+// gets a filled object rather than the string an array of strings gets, so a
+// tool whose handler decodes structured elements reaches its argv instead of
+// failing to decode and emitting none.
+func arrayItem(t *testing.T, name, prop string, items *struct {
+	Type json.RawMessage `json:"type"`
+},
+) any {
+	t.Helper()
+	if items == nil || schemaType(t, name, prop, items.Type) != "object" {
+		return "x"
+	}
+	return map[string]any{"key": "x", "fields": map[string]any{"x": "y"}}
 }
 
 // schemaType returns the concrete JSON type from a schema "type" keyword, which

@@ -52,6 +52,7 @@ func TestListSnapshotsMatchesTyped(t *testing.T) {
 	create(t, s, planOps("pl1"))
 	aKeep := create(t, s, answerOps("a-keep")).(model.Answer)
 	aSup := create(t, s, answerOps("a-sup")).(model.Answer)
+	create(t, s, ledgerOps("lg1"))
 	if _, err := s.Append(ctx, refs.For(model.KindAnswer, aSup.ID), []model.Op{model.AddSupersededBy{ID: aKeep.ID}}); err != nil {
 		t.Fatalf("supersede answer: %v", err)
 	}
@@ -74,6 +75,7 @@ func TestListSnapshotsMatchesTyped(t *testing.T) {
 		{model.KindPlan, ListOpts{}, func() ([]model.Snapshot, error) { return asSnapshots(s.ListPlans(ctx)) }},
 		{model.KindAnswer, ListOpts{}, func() ([]model.Snapshot, error) { return asSnapshots(s.ListAnswers(ctx, false, false)) }},
 		{model.KindAnswer, ListOpts{IncludeSuperseded: true}, func() ([]model.Snapshot, error) { return asSnapshots(s.ListAnswers(ctx, false, true)) }},
+		{model.KindLedger, ListOpts{}, func() ([]model.Snapshot, error) { return asSnapshots(s.ListLedgers(ctx)) }},
 	}
 	seen := map[model.Kind]bool{}
 	for _, tc := range cases {

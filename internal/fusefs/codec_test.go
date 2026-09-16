@@ -33,6 +33,7 @@ var readOnlyKinds = map[model.Kind]bool{
 	model.KindRunbook:       true,
 	model.KindInvestigation: true,
 	model.KindPlan:          true,
+	model.KindLedger:        true,
 }
 
 // TestCodecReadOnlyGovernsProjectedModeAndWriteRejection pins both things the
@@ -120,6 +121,8 @@ func createOpFor(kind model.Kind) model.Op {
 		return model.CreatePlan{Nonce: nonce, Title: "plan", Body: "body", Status: model.PlanDraft}
 	case model.KindAnswer:
 		return model.CreateAnswer{Nonce: nonce, Title: "answer", Body: "body"}
+	case model.KindLedger:
+		return model.CreateLedger{Nonce: nonce, Title: "ledger", Description: "description", Columns: []string{"state"}}
 	}
 	panic("fusefs: no create op for kind " + string(kind))
 }

@@ -9,7 +9,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -141,6 +143,23 @@ func (s RunbookStatus) validate() error {
 		return nil
 	}
 	return fmt.Errorf("%w: runbook status %q", ErrInvalidValue, s)
+}
+
+// LedgerStatus is the lifecycle state of a ledger.
+type LedgerStatus string
+
+// Ledger lifecycle states.
+const (
+	LedgerActive   LedgerStatus = "active"
+	LedgerArchived LedgerStatus = "archived"
+)
+
+func (s LedgerStatus) validate() error {
+	switch s {
+	case LedgerActive, LedgerArchived:
+		return nil
+	}
+	return fmt.Errorf("%w: ledger status %q", ErrInvalidValue, s)
 }
 
 // RunStatus is the lifecycle state of one tracked runbook run. A run is running
@@ -770,6 +789,44 @@ type Runbook struct {
 	SkippedOps  int           `json:"-"`
 }
 
+// LedgerRow is one record of a ledger, keyed by Key. Fields resolves
+// field-by-field last-write-wins, so replicas that set different fields of one
+// row converge on the union. Position is a fractional index (see
+// PositionBetween); rows sort by (Position, Key). UpdatedAt and UpdatedBy come
+// from the commit carrying the row's most recent write.
+type LedgerRow struct {
+	Key       string            `json:"key"`
+	Fields    map[string]string `json:"fields"`
+	Position  string            `json:"position"`
+	UpdatedAt int64             `json:"updated_at"`
+	UpdatedBy Actor             `json:"updated_by"`
+}
+
+// Ledger is the folded state of a ledger chain: a keyed row set an agent
+// refreshes in place from an external system, one row per tracked unit.
+// Columns is the advisory display order of row field names — a row may carry a
+// field no column names, and the reverse.
+//
+// Anchors, Deleted, and SkippedOps behave as they do on Runbook.
+type Ledger struct {
+	ID          EntityID     `json:"id"`
+	Title       string       `json:"title"`
+	Description string       `json:"description"`
+	Status      LedgerStatus `json:"status"`
+	Columns     []string     `json:"columns"`
+	Rows        []LedgerRow  `json:"rows"`
+	Labels      []string     `json:"labels"`
+	Comments    []Comment    `json:"comments"`
+	Author      Actor        `json:"author"`
+	CreatedAt   int64        `json:"created_at"`
+	UpdatedAt   int64        `json:"updated_at"`
+	ArchivedAt  int64        `json:"archived_at"`
+	Head        SHA          `json:"head"`
+	Anchors     []Anchor     `json:"anchors,omitempty"`
+	Deleted     bool         `json:"deleted,omitempty"`
+	SkippedOps  int          `json:"-"`
+}
+
 // Investigation is the folded snapshot of an investigation entity: a durable
 // record that opens on a suspicion, accumulates an append-only evidence
 // timeline, and closes with a verdict. Timestamps are unix seconds; zero means
@@ -872,4 +929,19 @@ func NewNonce() string {
 	b := make([]byte, 16)
 	rand.Read(b) // never fails: crypto/rand.Read panics internally instead of returning an error
 	return hex.EncodeToString(b)
+}
+
+// LedgerColumns is a ledger's effective column order: its declared Columns when
+// it names any, else the sorted union of the field names its rows carry.
+func LedgerColumns(l Ledger) []string {
+	if len(l.Columns) > 0 {
+		return l.Columns
+	}
+	names := map[string]bool{}
+	for _, row := range l.Rows {
+		for name := range row.Fields {
+			names[name] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(names))
 }

@@ -23,6 +23,7 @@ type searchDTO struct {
 	Log           *logSummaryDTO           `json:"log,omitempty"`
 	Task          *taskSummaryDTO          `json:"task,omitempty"`
 	Runbook       *runbookSummaryDTO       `json:"runbook,omitempty"`
+	Ledger        *ledgerSummaryDTO        `json:"ledger,omitempty"`
 	Investigation *investigationSummaryDTO `json:"investigation,omitempty"`
 	Plan          *planSummaryDTO          `json:"plan,omitempty"`
 	Answer        *answerSummaryDTO        `json:"answer,omitempty"`
@@ -206,6 +207,9 @@ func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, json
 			case model.Runbook:
 				rb := newRunbookSummaryDTO(v)
 				dto.Runbook = &rb
+			case model.Ledger:
+				l := newLedgerSummaryDTO(v)
+				dto.Ledger = &l
 			case model.Investigation:
 				inv := newInvestigationSummaryDTO(v)
 				dto.Investigation = &inv
@@ -235,6 +239,8 @@ func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, json
 			lean = leanTaskLine(v)
 		case model.Runbook:
 			lean = leanRunbookLine(v)
+		case model.Ledger:
+			lean = leanLedgerLine(v)
 		case model.Investigation:
 			lean = leanInvestigationLine(v)
 		case model.Plan:

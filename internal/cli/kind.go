@@ -49,4 +49,7 @@ var (
 	investigationSpec = kindSpec[model.Investigation]{kind: model.KindInvestigation, print: printInvestigation}
 	planSpec          = kindSpec[model.Plan]{kind: model.KindPlan, print: printPlan}
 	answerSpec        = kindSpec[model.Answer]{kind: model.KindAnswer, print: printAnswer}
+	ledgerSpec        = kindSpec[model.Ledger]{kind: model.KindLedger, print: func(cmd *cobra.Command, _ *notes.Client, l model.Ledger, jsonOut bool, ack ...writeAck) error {
+		return printLedger(cmd, l, jsonOut, ack...)
+	}}
 )

@@ -288,6 +288,12 @@ func (s *Store) ListRunbooks(ctx context.Context) ([]model.Runbook, error) {
 	return listOf(ctx, s, model.KindRunbook, fold.Runbook, ListOpts{})
 }
 
+// ListLedgers folds every ledger in the repository, ordered by creation time
+// then id. Tombstoned ledgers are skipped.
+func (s *Store) ListLedgers(ctx context.Context) ([]model.Ledger, error) {
+	return listOf(ctx, s, model.KindLedger, fold.Ledger, ListOpts{})
+}
+
 // ListInvestigations folds every investigation in the repository, ordered by
 // creation time then id. The default filter hides tombstoned and superseded
 // records, matching the other durable kinds.

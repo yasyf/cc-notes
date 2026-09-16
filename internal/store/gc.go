@@ -119,6 +119,26 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 		}
 		pruned++
 	}
+	ledgers, err := listOf(ctx, s, model.KindLedger, fold.Ledger, ListOpts{IncludeDeleted: true})
+	if err != nil {
+		return pruned, failed, err
+	}
+	for _, l := range ledgers {
+		if !l.Deleted {
+			continue
+		}
+		ref := refs.For(model.KindLedger, l.ID)
+		if err := s.Git.DeleteRef(ctx, ref, l.Head); err != nil {
+			failed++
+			continue
+		}
+		s.cache.delete(l.Head)
+		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+			failed++
+			continue
+		}
+		pruned++
+	}
 	investigations, err := listOf(ctx, s, model.KindInvestigation, fold.Investigation, ListOpts{IncludeDeleted: true})
 	if err != nil {
 		return pruned, failed, err

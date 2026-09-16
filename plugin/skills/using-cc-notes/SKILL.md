@@ -9,7 +9,9 @@ description: >-
   the backlog and who holds what; claims or starts a
   task; coordinates work across branches and multiple agents; manages leases and
   reclaims stale claims; verifies or supersedes a durable fact; records or executes a
-  repeatable procedure as a runbook with per-run step tracking; records an approved
+  repeatable procedure as a runbook with per-run step tracking; tracks many like units
+  at once — open pull requests, migrating packages, stacks awaiting apply — as a ledger
+  refreshed in place from the external system that owns them; records an approved
   plan verbatim and tracks its execution to an outcome; recalls a user's answer or replaces
   it when the user changes their choice; syncs tasks, notes, and answers
   with a remote; reconciles tasks after merging a branch; or links commits to the task
@@ -87,6 +89,20 @@ omitting both fails at call time, not schema time:
   "criteria": ["backoff caps at 30s", "go test ./... passes"],
   "backlog": true,
   "priority": 1
+}
+```
+
+Track many like units at once with `ledger_add` and refresh them with `ledger_sync`. A ledger
+holds one row per unit, keyed by whatever the external system already calls it, and a sync merges
+each row's named fields into the row already there — so the columns an operator typed by hand, a
+hold reason and the time it started, survive every refresh that follows, and `prune` drops the
+rows the pass no longer sees:
+
+```json
+{
+  "id": "4f1c9ad",
+  "rows": [{"key": "21052", "fields": {"head": "e8ad886", "test_state": "failure"}}],
+  "prune": true
 }
 ```
 
@@ -403,6 +419,10 @@ The full surface — every flag, property, default, and output shape — is in
 | Skim recent complaints, newest first | `papercut_list` (`limit`) | `cc-notes papercut list` |
 | Read one complaint in full | `papercut_show` (`log_id`, `index`) | `cc-notes papercut show <log-id> <index>` |
 | Retrieve an attachment | `attachment_get` (`id`, `name`, `output`) | `cc-notes attachment get <id> <name> -o <path>` |
+| Open a tracking register | `ledger_add` (`title`, `columns`) | `cc-notes ledger add "<title>" --column <name>` |
+| Refresh a whole row set | `ledger_sync` (`id`, `rows`, `prune`) | `cc-notes ledger sync <id> --file rows.json --prune` |
+| Write one row's fields | `ledger_row_set` (`id`, `key`, `fields`) | `cc-notes ledger row set <id> --key <k> --field n=v` |
+| Read the rows that match | `ledger_row_list` (`id`, `where`) | `cc-notes ledger row list <id> --where n=v` |
 | Store a procedure | `runbook_add` (`title`, `steps`, `paths`) | `cc-notes runbook add "<title>" --step "<text>"` |
 | Add a positioned step | `runbook_step_add` (`id`, `text`, `command`, `after`) | `cc-notes runbook step add <id> "<text>"` |
 | Begin a tracked run | `runbook_run_start` (`id`, `task`) | `cc-notes runbook run start <id>` |
