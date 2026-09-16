@@ -366,7 +366,6 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 		`libexec.install "CCNotesHelper.app"`,
 		`preserve_rpath`,
 		`system "/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=2", libexec/"CCNotesHelper.app"`,
-		`system "/usr/bin/xcrun", "stapler", "validate", libexec/"CCNotesHelper.app"`,
 		`cc-notes package install`,
 		// The wrapper reaches the packaged helper through opt_libexec: the
 		// Cellar copy lands the deployment, and the keg the versioned path
@@ -375,6 +374,7 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 		`exec "#{opt_libexec}/CCNotesHelper.app/Contents/MacOS/CCNotesHelper" "$@"`,
 		`assert_match version.to_s, shell_output("#{bin}/cc-notes-host version")`,
 	)
+	assertFileExcludes(t, formula, "stapler")
 	formulaPayload, err := os.ReadFile(formula)
 	if err != nil {
 		t.Fatal(err)
