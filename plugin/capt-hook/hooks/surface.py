@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from captain_hook import (
@@ -49,6 +50,20 @@ class SurfacePick(BaseModel):
     """The surface filter's verdict: which candidate record ids are worth surfacing now."""
 
     ids: list[str] = []
+
+
+def repo_path(evt: PostToolUseEvent) -> str | None:
+    if not evt.file:
+        return None
+    path = Path(evt.file.path)
+    if not path.is_absolute():
+        return path.as_posix()
+    if (root := evt.ctx.repo_root) is None:
+        return None
+    try:
+        return path.resolve().relative_to(root).as_posix()
+    except ValueError:
+        return None
 
 
 def unseen_entries(evt: PostToolUseEvent, entries: list[dict[str, Any]], *, scope: str) -> list[dict[str, Any]]:
@@ -103,9 +118,9 @@ def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touche
 )
 def float_note_context(evt: PostToolUseEvent) -> HookResult | None:
     """Surface the durable records relevant to a freshly read file, once per id per session."""
-    if not evt.file:
+    if not (path := repo_path(evt)):
         return None
-    entries = file_surfaced(evt, run_cc_notes(evt, "relevant", str(evt.file), "--limit", "0", "--json"))
+    entries = file_surfaced(evt, run_cc_notes(evt, "relevant", path, "--limit", "0", "--json"))
     fresh = unseen_entries(evt, entries, scope="floated")
     if not fresh:
         return None
@@ -131,9 +146,9 @@ def float_note_context(evt: PostToolUseEvent) -> HookResult | None:
 )
 def check_note_staleness(evt: PostToolUseEvent) -> HookResult | None:
     """Surface drifted records anchored to a path an edit just touched, for reconciliation."""
-    if not evt.file:
+    if not (path := repo_path(evt)):
         return None
-    entries = file_surfaced(evt, run_cc_notes(evt, "relevant", str(evt.file), "--attached", "--worktree", "--limit", "0", "--json"))
+    entries = file_surfaced(evt, run_cc_notes(evt, "relevant", path, "--attached", "--worktree", "--limit", "0", "--json"))
     drifted = filter_drifted(entries)
     # Distinct `stale` dedup-scope (vs `floated`) so a read-time float never suppresses the
     # edit-time warning for the same id.

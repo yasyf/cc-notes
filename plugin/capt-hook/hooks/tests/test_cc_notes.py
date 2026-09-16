@@ -1605,6 +1605,55 @@ def test_float_note_context_dedup(monkeypatch, tmp_path) -> None:
     check("note floater: second read deduped -> None", float_note_context(evt2) is None)
 
 
+def test_surface_hooks_query_repo_relative_paths(monkeypatch, tmp_path) -> None:
+    """Claude Code sends absolute paths; anchors are repo-relative, so both surface hooks relativize before `relevant`."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    root = tmp_path / "repo"
+    (root / "internal" / "store").mkdir(parents=True)
+    absolute = str(root / "internal" / "store" / "store.go")
+    payload = json.dumps([note_entry("stale000bbb", drift="STALE", title="Stale fact", reasons=["path"])])
+
+    read = mock_event("PostToolUse", tool="Read", file=absolute, session_dir=tmp_path / "s1")
+    monkeypatch.setattr(read.ctx, "project_root", root)
+    cli, calls = recording_cli({("relevant", "internal/store/store.go", "--limit", "0", "--json"): payload})
+    monkeypatch.setattr(read.ctx, "call_cli", cli)
+    result = float_note_context(read)
+    check("repo-relative: read queries the relative path", calls == [("cc-notes", "relevant", "internal/store/store.go", "--limit", "0", "--json")], repr(calls))
+    check("repo-relative: read floats the anchored note", result is not None and result.action is Action.warn, repr(result))
+
+    edit = mock_event("PostToolUse", tool="Edit", file=absolute, session_dir=tmp_path / "s2")
+    monkeypatch.setattr(edit.ctx, "project_root", root)
+    cli, calls = recording_cli({("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload})
+    monkeypatch.setattr(edit.ctx, "call_cli", cli)
+    monkeypatch.setattr(edit.ctx, "git", lambda *a: None)
+    result = check_note_staleness(edit)
+    check("repo-relative: edit queries the relative path", calls == [("cc-notes", "relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json")], repr(calls))
+    check("repo-relative: edit warns on the drifted note", result is not None and result.action is Action.warn, repr(result))
+
+    link = tmp_path / "linked-worktree"
+    link.symlink_to(root)
+    linked = mock_event("PostToolUse", tool="Read", file=str(link / "internal" / "store" / "store.go"), session_dir=tmp_path / "s3")
+    monkeypatch.setattr(linked.ctx, "project_root", root)
+    cli, calls = recording_cli()
+    monkeypatch.setattr(linked.ctx, "call_cli", cli)
+    float_note_context(linked)
+    check("repo-relative: a symlinked worktree path resolves in-repo", calls == [("cc-notes", "relevant", "internal/store/store.go", "--limit", "0", "--json")], repr(calls))
+
+
+def test_surface_hooks_skip_files_outside_the_repo(monkeypatch, tmp_path) -> None:
+    """A file outside the repository has no anchors to match, so neither surface hook spawns `relevant`."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    root = tmp_path / "repo"
+    root.mkdir()
+    for handler, tool in ((float_note_context, "Read"), (check_note_staleness, "Edit")):
+        evt = mock_event("PostToolUse", tool=tool, file=str(tmp_path / "elsewhere" / "out.log"), session_dir=tmp_path / tool)
+        monkeypatch.setattr(evt.ctx, "project_root", root)
+        cli, calls = recording_cli()
+        monkeypatch.setattr(evt.ctx, "call_cli", cli)
+        check(f"outside repo: {handler.__name__} stays silent", handler(evt) is None)
+        check(f"outside repo: {handler.__name__} spawns nothing", calls == [], repr(calls))
+
+
 def test_check_note_staleness_drift_only(monkeypatch, tmp_path) -> None:
     """Only drifted notes prompt reconciliation; fresh ones are ignored; dedup holds."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
