@@ -45,6 +45,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `common.tool_output`.
 
 ### Added
+- **The `answer` kind preserves a user's reply with its question.** The
+  question becomes the title, clamped to the CLI's 256-byte cap; a `Question:`
+  body line preserves the full text when clamped. The body starts with the
+  chosen answer, joining multiple selections with commas, then carries
+  `Options:` for offered labels and `Notes:` for user annotations when present.
+  Labels carry `scope:durable` or `scope:ephemeral`, plus `header:<chip text>`
+  when supplied. Capture anchors the record to the current branch and up to
+  ten repository-relative paths the session read or edited, preserving the
+  context in which the user answered.
+- **Answers use the note freshness lifecycle across the CLI and MCP.**
+  The CLI's `answer` noun and MCP `answer_*` verbs expose `verify`, `supersede`,
+  `expire`, `review`, and `rm`. A shared `--limit` on `note list`, `doc list`,
+  and `answer list`, also exposed by their MCP tools, caps results to the most
+  recently updated matches; zero leaves the list uncapped. Default lists
+  exclude tombstoned and superseded records. Superseding a record with itself
+  is now a usage error for every kind, so a record cannot hide behind its own
+  replacement edge. Answers also participate in cross-kind search, `fusefs`'s
+  editable Markdown projection under `/answers`, `kg` graph construction and
+  stale scoring, `viz` state and events, and the web UI's browse index, kind
+  facet, and detail panel.
+- **The capt-hook pack captures replies and recalls durable answers.**
+  `record_user_answers` runs after `AskUserQuestion` through an uncapped
+  `PostToolUse` hook, using a small LLM to classify each reply as durable or
+  ephemeral and match an earlier durable answer to supersede.
+  `float_session_answers` digests the eight most recent live durable answers
+  on the first prompt. On later prompts, `float_prompt_answers` filters unseen
+  durable answers through an LLM for relevance, marking only surfaced answers
+  seen so the rest remain candidates. `restore_answers_after_compact` runs on
+  `SessionStart` with `source=compact`, restoring up to thirty answers captured
+  or surfaced during the session. It re-reads the records before rendering:
+  superseded answers restore as their live replacements, and removed or
+  expired answers drop out. File read/edit surfacing through `relevant` is
+  opt-in with `git config cc-notes.answers.fileSurfacing true`.
 - **`cc-notes-host` reaches the signed helper directly.** The formula installs a
   wrapper that execs the packaged `CCNotesHelper`, which now answers `version`,
   `package-install`, `package-uninstall`, `service-install`,
