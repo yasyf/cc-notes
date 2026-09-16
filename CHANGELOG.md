@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   capped at the nudges' three fires per session.
 
 ### Fixed
+- **The session-start task float reads `status --tasks`.** `float_session_tasks`
+  ran a full `status` on the first prompt and read only its task buckets. It
+  needs a cc-notes binary that has `--tasks`; an older one fails the call and
+  the float stays silent.
+
 - **Reads stop re-folding a large repository on every call.** The fold cache
   held at most 1024 entries, so a repository with more live entities thrashed:
   every full listing evicted entries it had just written and folded them again

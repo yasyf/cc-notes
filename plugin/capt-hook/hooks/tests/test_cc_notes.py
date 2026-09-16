@@ -1390,7 +1390,7 @@ def _spec_for(handler):
 
 
 def _status_evt(monkeypatch, tmp_path, report: dict, prompt: str = "let's start"):
-    """A UserPromptSubmit event whose only stubbed CLI call is `status --json`.
+    """A UserPromptSubmit event whose only stubbed CLI call is `status --json --tasks`.
 
     stub_cli raises FileNotFoundError on an unmapped key under throw=True and returns None
     under throw=False, so mapping ONLY the status read is the regression guard: a floater
@@ -1398,7 +1398,7 @@ def _status_evt(monkeypatch, tmp_path, report: dict, prompt: str = "let's start"
     """
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     evt = mock_event("UserPromptSubmit", prompt=prompt, session_dir=tmp_path)
-    cli, calls = recording_cli({("status", "--json"): json.dumps(report)})
+    cli, calls = recording_cli({("status", "--json", "--tasks"): json.dumps(report)})
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no MCP marker -> CLI wording is deterministic
     evt._cli_calls = calls  # type: ignore[attr-defined]
@@ -1406,7 +1406,7 @@ def _status_evt(monkeypatch, tmp_path, report: dict, prompt: str = "let's start"
 
 
 def test_float_session_tasks_fires(monkeypatch, tmp_path) -> None:
-    """One `status --json` read carries every bucket; the floater warns with capped lines."""
+    """One `status --json --tasks` read carries every bucket; the floater warns with capped lines."""
     report = {
         "your_branch": [{"id": f"branch{i:02d}aaa", "status": "in_progress", "title": f"b{i}", "assignee": "me"} for i in range(3)],
         "backlog": [{"id": f"backlog{i:02d}b", "status": "open", "title": f"k{i}", "ready": True} for i in range(6)],
@@ -1791,7 +1791,7 @@ def test_handlers_silent_on_malformed_array(monkeypatch, tmp_path) -> None:
         ("non-dict rows", '{"backlog": ["junk", 5, null, {}], "your_branch": 7, "in_progress": ["nope", {"tasks": 3}]}'),
     ):
         prompt_evt = mock_event("UserPromptSubmit", prompt="hi", session_dir=tmp_path)
-        monkeypatch.setattr(prompt_evt.ctx, "call_cli", stub_cli({("status", "--json"): payload}))
+        monkeypatch.setattr(prompt_evt.ctx, "call_cli", stub_cli({("status", "--json", "--tasks"): payload}))
         try:
             float_session_tasks(prompt_evt)
             check(f"malformed status ({label}): float_session_tasks does not crash", True)

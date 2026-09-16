@@ -33,11 +33,11 @@ from .common import (
 def float_session_tasks(evt: UserPromptSubmitEvent) -> HookResult | None:
     """Float this session's durable tasks once, at the first prompt.
 
-    One `status --json` carries every bucket the floater needs — the current branch's
+    One `status --json --tasks` carries every bucket the floater needs — the current branch's
     tasks, the shared backlog with each row's ready-to-claim verdict, and the in-progress
-    leases — so session start costs one fold, not one per bucket.
+    leases — and folds only tasks, skipping the record counts and their drift review.
     """
-    report = parse_status(run_cc_notes(evt, "status", "--json"))
+    report = parse_status(run_cc_notes(evt, "status", "--json", "--tasks"))
     active = mcp_active(evt)
     # An expired lease is the most actionable row on the board: work nobody is driving.
     # It leads, and its id wins the dedup so the steal hint survives.
