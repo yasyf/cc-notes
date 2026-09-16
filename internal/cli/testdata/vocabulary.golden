@@ -2284,6 +2284,7 @@ command: cc-notes status
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
+    --tasks shorthand=none type=bool default="false" usage="report only the task buckets — backlog, your branch, in-progress leases — skipping the record counts and their drift review"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 

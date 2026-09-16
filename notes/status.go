@@ -164,6 +164,55 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		return StatusReport{}, err
 	}
 
+	report := StatusReport{
+		Branch:         branch,
+		Runs:           inFlightRuns(runbooks, now, ttl),
+		Notes:          SummaryCount{Total: len(noteList), NeedsReview: len(noteReviews)},
+		Docs:           SummaryCount{Total: len(docList), NeedsReview: len(docReviews)},
+		Answers:        SummaryCount{Total: len(answerList), NeedsReview: len(answerReviews)},
+		Logs:           len(logList),
+		Papercuts:      papercutCount(logList),
+		Investigations: investigationSummary(invList),
+		Plans:          inFlightPlans(planList),
+		SkippedOps: sumSkipped(tasks) + sumSkipped(runbooks) + sumSkipped(noteList) +
+			sumSkipped(docList) + sumSkipped(logList) + sumSkipped(invList) +
+			sumSkipped(sprintList) + sumSkipped(projectList) + sumSkipped(planList) +
+			sumSkipped(answerList),
+	}
+	fillTaskBuckets(&report, tasks, ready, now, ttl)
+	return report, nil
+}
+
+// TaskStatus is the task half of Status: the current branch, the backlog with
+// each row's readiness, the branch's own tasks, and the in-progress leases with
+// their stale verdicts, folding only tasks. It skips every other kind and the
+// drift review behind the record counts, so every count and Runs stay zero and
+// SkippedOps covers tasks alone.
+func (c *Client) TaskStatus(ctx context.Context) (StatusReport, error) {
+	now := time.Now()
+	ttl, err := c.LeaseTTL(ctx)
+	if err != nil {
+		return StatusReport{}, err
+	}
+	branch, _, err := c.currentBranchOrBacklog(ctx)
+	if err != nil {
+		return StatusReport{}, err
+	}
+	tasks, err := c.s.ListTasks(ctx)
+	if err != nil {
+		return StatusReport{}, err
+	}
+	ready, err := c.ReadyTasks(ctx, ScopeBacklog, "")
+	if err != nil {
+		return StatusReport{}, err
+	}
+	report := StatusReport{Branch: branch, SkippedOps: sumSkipped(tasks)}
+	fillTaskBuckets(&report, tasks, ready, now, ttl)
+	return report, nil
+}
+
+func fillTaskBuckets(report *StatusReport, tasks, ready []model.Task, now time.Time, ttl time.Duration) {
+	branch := report.Branch
 	var backlog, yourBranch, inProgress []model.Task
 	for _, t := range tasks {
 		if t.Branch == "" && (t.Status == model.StatusOpen || t.Status == model.StatusInProgress) {
@@ -197,56 +246,9 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		sortTasks(groups[a])
 	}
 
-	var invSummary InvestigationSummary
-	for _, inv := range invList {
-		if !nonTerminalInvestigation(inv.Status) {
-			continue
-		}
-		switch inv.Status {
-		case model.InvestigationFixed:
-			invSummary.AwaitingConfirm++
-		default:
-			invSummary.Open++
-		}
-		for _, f := range inv.Findings {
-			if f.Status == model.FindingOpen {
-				invSummary.OpenFindings++
-			}
-		}
-	}
-
-	inFlightPlans := 0
-	for _, p := range planList {
-		if nonTerminalPlan(p.Status) {
-			inFlightPlans++
-		}
-	}
-
-	papercuts := 0
-	for _, l := range logList {
-		if slices.Contains(l.Tags, PapercutTag) {
-			papercuts += len(l.Entries)
-		}
-	}
-
-	report := StatusReport{
-		Branch:         branch,
-		Backlog:        make([]StatusBacklogTask, len(backlog)),
-		YourBranch:     yourBranch,
-		InProgress:     make([]StatusAssignee, 0, len(assignees)),
-		Runs:           inFlightRuns(runbooks, now, ttl),
-		Notes:          SummaryCount{Total: len(noteList), NeedsReview: len(noteReviews)},
-		Docs:           SummaryCount{Total: len(docList), NeedsReview: len(docReviews)},
-		Answers:        SummaryCount{Total: len(answerList), NeedsReview: len(answerReviews)},
-		Logs:           len(logList),
-		Papercuts:      papercuts,
-		Investigations: invSummary,
-		Plans:          inFlightPlans,
-		SkippedOps: sumSkipped(tasks) + sumSkipped(runbooks) + sumSkipped(noteList) +
-			sumSkipped(docList) + sumSkipped(logList) + sumSkipped(invList) +
-			sumSkipped(sprintList) + sumSkipped(projectList) + sumSkipped(planList) +
-			sumSkipped(answerList),
-	}
+	report.Backlog = make([]StatusBacklogTask, len(backlog))
+	report.YourBranch = yourBranch
+	report.InProgress = make([]StatusAssignee, 0, len(assignees))
 	for i, t := range backlog {
 		report.Backlog[i] = StatusBacklogTask{Task: t, Ready: readySet[t.ID]}
 	}
@@ -258,7 +260,47 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 		}
 		report.InProgress = append(report.InProgress, StatusAssignee{Assignee: a, Tasks: staleTasks})
 	}
-	return report, nil
+}
+
+func investigationSummary(invList []model.Investigation) InvestigationSummary {
+	var summary InvestigationSummary
+	for _, inv := range invList {
+		if !nonTerminalInvestigation(inv.Status) {
+			continue
+		}
+		switch inv.Status {
+		case model.InvestigationFixed:
+			summary.AwaitingConfirm++
+		default:
+			summary.Open++
+		}
+		for _, f := range inv.Findings {
+			if f.Status == model.FindingOpen {
+				summary.OpenFindings++
+			}
+		}
+	}
+	return summary
+}
+
+func inFlightPlans(planList []model.Plan) int {
+	count := 0
+	for _, p := range planList {
+		if nonTerminalPlan(p.Status) {
+			count++
+		}
+	}
+	return count
+}
+
+func papercutCount(logList []model.Log) int {
+	count := 0
+	for _, l := range logList {
+		if slices.Contains(l.Tags, PapercutTag) {
+			count += len(l.Entries)
+		}
+	}
+	return count
 }
 
 // sumSkipped totals the ops the fold skipped across snaps.

@@ -12,7 +12,7 @@ import (
 )
 
 func newStatusCmd() *cobra.Command {
-	var jsonOut bool
+	var jsonOut, tasksOnly bool
 	cmd := &cobra.Command{
 		Use:     "status",
 		Aliases: []string{"board"},
@@ -23,6 +23,16 @@ func newStatusCmd() *cobra.Command {
 			c, err := openClient(cmd)
 			if err != nil {
 				return err
+			}
+			if tasksOnly {
+				report, err := c.TaskStatus(ctx)
+				if err != nil {
+					return err
+				}
+				if jsonOut {
+					return printTaskStatusJSON(cmd, c, report)
+				}
+				return printTaskStatusText(cmd, report)
 			}
 			report, err := c.Status(ctx)
 			if err != nil {
@@ -35,27 +45,13 @@ func newStatusCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON")
+	cmd.Flags().BoolVar(&tasksOnly, "tasks", false, "report only the task buckets — backlog, your branch, in-progress leases — skipping the record counts and their drift review")
 	return cmd
 }
 
 func printStatusText(cmd *cobra.Command, report notes.StatusReport) error {
 	var b strings.Builder
-	b.WriteString("backlog\n")
-	for _, bt := range report.Backlog {
-		fmt.Fprintf(&b, "  %s\t%s\n", leanTaskLine(bt.Task), readyFlag(bt.Ready))
-	}
-	if report.Branch != "" {
-		fmt.Fprintf(&b, "your branch (%s)\n", report.Branch)
-		for _, t := range report.YourBranch {
-			fmt.Fprintf(&b, "  %s\n", leanTaskLine(t))
-		}
-	}
-	b.WriteString("in progress across branches\n")
-	for _, grp := range report.InProgress {
-		for _, st := range grp.Tasks {
-			fmt.Fprintf(&b, "  %s\t%s\t%s\n", grp.Assignee, st.Task.ID.Short(), staleFlag(st.Stale))
-		}
-	}
+	writeTaskBuckets(&b, report)
 	b.WriteString("runs in flight\n")
 	for _, r := range report.Runs {
 		fmt.Fprintf(&b, "  %s\t%s\t%s\t%s\t%s\n", r.Runbook.Short(), render.ShortWireID(r.Run.ID), r.Title, r.Run.Runner, staleFlag(r.Stale))
@@ -75,6 +71,32 @@ func printStatusText(cmd *cobra.Command, report notes.StatusReport) error {
 	return err
 }
 
+func printTaskStatusText(cmd *cobra.Command, report notes.StatusReport) error {
+	var b strings.Builder
+	writeTaskBuckets(&b, report)
+	_, err := fmt.Fprint(cmd.OutOrStdout(), b.String())
+	return err
+}
+
+func writeTaskBuckets(b *strings.Builder, report notes.StatusReport) {
+	b.WriteString("backlog\n")
+	for _, bt := range report.Backlog {
+		fmt.Fprintf(b, "  %s\t%s\n", leanTaskLine(bt.Task), readyFlag(bt.Ready))
+	}
+	if report.Branch != "" {
+		fmt.Fprintf(b, "your branch (%s)\n", report.Branch)
+		for _, t := range report.YourBranch {
+			fmt.Fprintf(b, "  %s\n", leanTaskLine(t))
+		}
+	}
+	b.WriteString("in progress across branches\n")
+	for _, grp := range report.InProgress {
+		for _, st := range grp.Tasks {
+			fmt.Fprintf(b, "  %s\t%s\t%s\n", grp.Assignee, st.Task.ID.Short(), staleFlag(st.Stale))
+		}
+	}
+}
+
 // readyFlag renders a backlog task's dependency verdict as the board's
 // ready/blocked column.
 func readyFlag(ready bool) string {
@@ -92,6 +114,20 @@ func staleFlag(stale bool) string {
 	return "fresh"
 }
 
+func printTaskStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusReport) error {
+	blocks, err := c.TasksBlockingIndex(cmd.Context())
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), statusTasksDTO{
+		Branch:     string(report.Branch),
+		Backlog:    statusBacklogDTOs(report.Backlog, blocks),
+		YourBranch: taskSummaryDTOs(report.YourBranch, blocks),
+		InProgress: statusAssigneeDTOs(report.InProgress, blocks),
+		SkippedOps: report.SkippedOps,
+	})
+}
+
 func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusReport) error {
 	blocks, err := c.TasksBlockingIndex(cmd.Context())
 	if err != nil {
@@ -101,6 +137,7 @@ func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusRep
 		Branch:     string(report.Branch),
 		Backlog:    statusBacklogDTOs(report.Backlog, blocks),
 		YourBranch: taskSummaryDTOs(report.YourBranch, blocks),
+		InProgress: statusAssigneeDTOs(report.InProgress, blocks),
 		Runs:       make([]statusRunDTO, 0, len(report.Runs)),
 		Notes:      statusNotesDTO{Total: report.Notes.Total, NeedsReview: report.Notes.NeedsReview},
 		Docs:       statusNotesDTO{Total: report.Docs.Total, NeedsReview: report.Docs.NeedsReview},
@@ -115,13 +152,6 @@ func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusRep
 		Plans:      statusPlansDTO{InFlight: report.Plans},
 		SkippedOps: report.SkippedOps,
 	}
-	for _, grp := range report.InProgress {
-		staleDTOs := make([]statusStaleDTO, len(grp.Tasks))
-		for i, st := range grp.Tasks {
-			staleDTOs[i] = statusStaleDTO{taskSummaryDTO: newTaskSummaryDTO(st.Task, blocks[st.Task.ID]), Stale: st.Stale}
-		}
-		dto.InProgress = append(dto.InProgress, statusAssigneeDTO{Assignee: string(grp.Assignee), Tasks: staleDTOs})
-	}
 	for _, r := range report.Runs {
 		dto.Runs = append(dto.Runs, statusRunDTO{
 			Runbook:   string(r.Runbook),
@@ -133,6 +163,18 @@ func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusRep
 		})
 	}
 	return printJSON(cmd.OutOrStdout(), dto)
+}
+
+func statusAssigneeDTOs(groups []notes.StatusAssignee, blocks map[model.EntityID][]model.EntityID) []statusAssigneeDTO {
+	var dtos []statusAssigneeDTO
+	for _, grp := range groups {
+		staleDTOs := make([]statusStaleDTO, len(grp.Tasks))
+		for i, st := range grp.Tasks {
+			staleDTOs[i] = statusStaleDTO{taskSummaryDTO: newTaskSummaryDTO(st.Task, blocks[st.Task.ID]), Stale: st.Stale}
+		}
+		dtos = append(dtos, statusAssigneeDTO{Assignee: string(grp.Assignee), Tasks: staleDTOs})
+	}
+	return dtos
 }
 
 // taskSummaryDTOs maps tasks to their JSON summary DTOs against one
@@ -173,6 +215,17 @@ type statusDTO struct {
 	Investigations statusInvestigationsDTO `json:"investigations"`
 	Plans          statusPlansDTO          `json:"plans"`
 	SkippedOps     int                     `json:"skipped_ops"`
+}
+
+// statusTasksDTO is the task-buckets-only status report: the same branch,
+// backlog, your-branch, and in-progress fields as statusDTO, and the skipped-op
+// count over tasks alone.
+type statusTasksDTO struct {
+	Branch     string              `json:"branch"`
+	Backlog    []statusBacklogDTO  `json:"backlog,omitempty"`
+	YourBranch []taskSummaryDTO    `json:"your_branch,omitempty"`
+	InProgress []statusAssigneeDTO `json:"in_progress,omitempty"`
+	SkippedOps int                 `json:"skipped_ops"`
 }
 
 // statusBacklogDTO embeds a taskSummaryDTO, inlining its fields, plus the

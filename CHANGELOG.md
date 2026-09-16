@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a runbook, project in the FUSE tree read-only, and rank in `relevant` and `search`
   over their row keys and field values. Thirteen MCP tools cover the surface.
 
+- **`cc-notes status --tasks` reports only the task buckets.** It returns the
+  branch, the backlog with readiness, your branch's tasks, and the in-progress
+  leases, the same rows `status` prints, without folding the other kinds or
+  running the note, doc, and answer drift review behind the counts. The MCP
+  `status` tool takes a matching `tasks` argument.
+
 ### Changed
 - **Auto-sync runs in the background.** Every hook that runs `cc-notes sync`
   (after a commit, a task claim, a push, a merge or fetch, or a cc-notes write)
