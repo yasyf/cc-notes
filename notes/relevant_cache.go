@@ -202,7 +202,9 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 	}
 	vars := make(map[string]string)
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\n%s %d %d\n%s\nbase %s\n%s\n", relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, variant), version.Version, exeInfo.Size(), exeInfo.ModTime().UnixNano(), head, base, staleAfter)
+	if _, err := fmt.Fprintf(h, "%s\n%s %d %d\n%s\nbase %s\n%s\n", relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, variant), version.Version, exeInfo.Size(), exeInfo.ModTime().UnixNano(), head, base, staleAfter); err != nil {
+		return "", 0, nil, err
+	}
 	for _, line := range strings.Split(varList, "\n") {
 		name, value, _ := strings.Cut(line, "=")
 		if name == "GIT_AUTHOR_IDENT" || name == "GIT_COMMITTER_IDENT" {
@@ -211,13 +213,18 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 		if _, seen := vars[name]; !seen {
 			vars[name] = value
 		}
-		fmt.Fprintf(h, "var %s=%q\n", name, value)
+		if _, err := fmt.Fprintf(h, "var %s=%q\n", name, value); err != nil {
+			return "", 0, nil, err
+		}
 	}
 	env := os.Environ()
 	slices.Sort(env)
 	for _, kv := range env {
-		if strings.HasPrefix(kv, "GIT_") {
-			fmt.Fprintf(h, "env %q\n", kv)
+		if !strings.HasPrefix(kv, "GIT_") {
+			continue
+		}
+		if _, err := fmt.Fprintf(h, "env %q\n", kv); err != nil {
+			return "", 0, nil, err
 		}
 	}
 	for _, file := range []string{
@@ -226,7 +233,9 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 		filepath.Join(c.s.CommonDir(), "shallow"),
 	} {
 		data, _ := os.ReadFile(file) //nolint:gosec // G304: fixed paths inside this repository's git directories.
-		fmt.Fprintf(h, "%s %q\n", file, data)
+		if _, err := fmt.Fprintf(h, "%s %q\n", file, data); err != nil {
+			return "", 0, nil, err
+		}
 	}
 	names := make([]string, 0, len(refs))
 	for ref := range refs {
@@ -236,7 +245,9 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 	}
 	slices.Sort(names)
 	for _, ref := range names {
-		fmt.Fprintf(h, "%s %s\n", ref, refs[ref])
+		if _, err := fmt.Fprintf(h, "%s %s\n", ref, refs[ref]); err != nil {
+			return "", 0, nil, err
+		}
 	}
 	links := make([]string, 0, len(symbolic))
 	for ref := range symbolic {
@@ -244,7 +255,9 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 	}
 	slices.Sort(links)
 	for _, ref := range links {
-		fmt.Fprintf(h, "%s -> %s\n", ref, symbolic[ref])
+		if _, err := fmt.Fprintf(h, "%s -> %s\n", ref, symbolic[ref]); err != nil {
+			return "", 0, nil, err
+		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), staleAfter, vars, nil
 }

@@ -166,7 +166,7 @@ func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusRep
 }
 
 func statusAssigneeDTOs(groups []notes.StatusAssignee, blocks map[model.EntityID][]model.EntityID) []statusAssigneeDTO {
-	var dtos []statusAssigneeDTO
+	dtos := make([]statusAssigneeDTO, 0, len(groups))
 	for _, grp := range groups {
 		staleDTOs := make([]statusStaleDTO, len(grp.Tasks))
 		for i, st := range grp.Tasks {

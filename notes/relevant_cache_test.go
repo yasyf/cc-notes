@@ -118,7 +118,6 @@ func TestRelevantCachedRevalidatesWorktreeAndClock(t *testing.T) {
 	settle(t, dir, "svc/handler.go")
 	p.expect("settled uncommitted edit", worktree, true)
 	p.expect("settled uncommitted edit, warm", worktree, false)
-
 }
 
 func TestRelevantCachedExpiresAtTheStalenessDeadline(t *testing.T) {
