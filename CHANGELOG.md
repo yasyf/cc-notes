@@ -60,6 +60,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   capped at the nudges' three fires per session.
 
 ### Fixed
+- **Sync and reconcile act on the repository the command ran in.** The
+  merge, push, commit, and claim hooks always reconciled and synced the
+  session's repository, so a `cd /other && git merge` in one repository
+  reconciled tasks in another. Every sync and reconcile hook now resolves the
+  target from the command's `cd` prefixes and its own repository option
+  (`git -C`, `jj -R`, `cc-notes -R`), syncs that repository, and does nothing
+  outside a git repository or in one with no cc-notes refs.
+
 - **The session-start task float reads `status --tasks`.** `float_session_tasks`
   ran a full `status` on the first prompt and read only its task buckets. It
   needs a cc-notes binary that has `--tasks`; an older one fails the call and

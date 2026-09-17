@@ -552,6 +552,12 @@ def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int, more_tail: str) 
     return cap_lines([render_task_line(t) for t in tasks], cap, more_tail)
 
 
+def repo_root(path: str) -> str | None:
+    """The nearest ancestor of ``path`` holding a ``.git`` dir or file, found by stat alone; None outside any repository."""
+    resolved = Path(path).expanduser().resolve()
+    return next((str(d) for d in (resolved, *resolved.parents) if (d / ".git").exists()), None)
+
+
 def in_cc_pool_memory(path: Path) -> bool:
     # The mirror owns the cc-pool memory tree, so the advisory record-router excludes it.
     # Deliberately broader than MemoryWrite: the whole tree is the mirror's domain.

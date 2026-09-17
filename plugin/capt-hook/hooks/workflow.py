@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
+from collections.abc import Callable
 from typing import NamedTuple
 
 from captain_hook import (
@@ -37,6 +37,7 @@ from .common import (
     ids_match,
     mcp_active,
     record_command,
+    repo_root,
     run_cc_notes,
 )
 
@@ -47,6 +48,41 @@ DRY_RUN_FLAGS = frozenset({"--dry-run"})
 PUSH_DRY_RUN_FLAGS = DRY_RUN_FLAGS | {"-n"}
 HELP_FLAGS = frozenset({"--help", "-h"})
 _NULLIFYING_FLAGS = HELP_FLAGS | DRY_RUN_FLAGS
+
+# The options that point a command at another repository. git only takes `-C` before its subcommand
+# (`git commit -C <rev>` reuses a message), so its scan stops at the first other token; jj and
+# cc-notes accept theirs anywhere.
+REPO_OPTIONS: dict[str, frozenset[str]] = {
+    "git": frozenset({"-C"}),
+    "jj": frozenset({"-R", "--repository"}),
+    "cc-notes": frozenset({"-R", "--repo"}),
+    "ccn": frozenset({"-R", "--repo"}),
+}
+
+
+def repo_argv(cmd: Command) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The leg's argv with its repository options removed, and the directories those options named, in order."""
+    argv = cmd.argv
+    if not argv or (options := REPO_OPTIONS.get(argv[0])) is None:
+        return argv, ()
+    rest: list[str] = [argv[0]]
+    dirs: list[str] = []
+    i = 1
+    while i < len(argv):
+        name, eq, value = argv[i].partition("=")
+        if argv[i] in options and i + 1 < len(argv):
+            dirs.append(argv[i + 1])
+            i += 2
+        elif eq and name.startswith("--") and name in options:
+            dirs.append(value)
+            i += 1
+        elif argv[0] == "git":
+            rest.extend(argv[i:])
+            break
+        else:
+            rest.append(argv[i])
+            i += 1
+    return tuple(rest), tuple(dirs)
 
 
 class CommandFamily(CustomCondition):
@@ -65,10 +101,10 @@ class CommandFamily(CustomCondition):
 
     def check(self, evt: BaseHookEvent) -> bool:
         line = evt.cmd.line
-        return bool(line) and any(self._fires(cmd) for cmd in line.commands)
+        return bool(line) and any(self.fires(cmd) for cmd in line.commands)
 
-    def _fires(self, cmd: Command) -> bool:
-        argv = cmd.argv
+    def fires(self, cmd: Command) -> bool:
+        argv, _dirs = repo_argv(cmd)
         return any(argv[: len(p)] == p for p in self.prefixes) and self.exclude.isdisjoint(argv)
 
 
@@ -167,17 +203,18 @@ def is_cc_notes_write(cmd: Command) -> bool:
     # A parsed cc-notes / `ccn` leg that mutates state: a bare-noun write (`reconcile`, `papercut TEXT`),
     # a (noun, verb) in the write table, or a subgroup sub that isn't a read. A help or dry-run leg
     # writes nothing.
-    if cmd.program not in ("cc-notes", "ccn") or not cmd.args:
+    args = repo_argv(cmd)[0][1:]
+    if cmd.program not in ("cc-notes", "ccn") or not args:
         return False
-    if not _NULLIFYING_FLAGS.isdisjoint(cmd.args):
+    if not _NULLIFYING_FLAGS.isdisjoint(args):
         return False
-    noun = cmd.args[0]
-    verb = cmd.args[1] if len(cmd.args) > 1 else ""
+    noun = args[0]
+    verb = args[1] if len(args) > 1 else ""
     if (bare_reads := CC_NOTES_BARE_NOUN_READS.get(noun)) is not None:
         # Resolve the verb flags-first (cobra allows `papercut --json list`), not positionally.
-        return _first_non_flag(cmd.args[1:]) not in bare_reads
+        return _first_non_flag(args[1:]) not in bare_reads
     if (reads := CC_NOTES_WRITE_SUBGROUP_READS.get((noun, verb))) is not None:
-        sub = cmd.args[2] if len(cmd.args) > 2 else ""
+        sub = args[2] if len(args) > 2 else ""
         return bool(sub) and sub not in reads
     return verb in CC_NOTES_WRITE_VERBS.get(noun, frozenset())
 
@@ -320,16 +357,10 @@ def record_sync(evt: BaseHookEvent, target: str, outcome: SyncOutcome | None) ->
             state.by_target.pop(target, None)
 
 
-def _apply_cd(cwd: str | None, cmd: Command) -> str | None:
-    # A literal `cd` leg's new working directory. A leading `--` (end-of-options) is dropped first, so
-    # `cd -- /x` resolves to /x and a lone `cd --` stays unresolvable. Only an exactly-one-arg literal
-    # path resolves: `cd -`, a `$var`, a `~` expansion, or a backtick substitution is unresolvable
-    # (None); an absolute path replaces the walk (recovering a previously-lost one); a relative path
-    # joins the running cwd, or is unresolvable when there is no base to join onto.
-    args = cmd.args[1:] if cmd.args and cmd.args[0] == "--" else cmd.args
-    if len(args) != 1:
-        return None
-    arg = args[0]
+def _resolve_dir(cwd: str | None, arg: str) -> str | None:
+    # A literal directory argument against the running cwd: `-`, a `$var`, a `~` expansion, or a backtick
+    # substitution is unresolvable (None); an absolute path replaces the walk (recovering a previously-lost
+    # one); a relative path joins the running cwd, or is unresolvable when there is no base to join onto.
     if arg == "-" or arg.startswith("~") or "$" in arg or "`" in arg:
         return None
     if os.path.isabs(arg):
@@ -337,18 +368,80 @@ def _apply_cd(cwd: str | None, cmd: Command) -> str | None:
     return os.path.normpath(os.path.join(cwd, arg)) if cwd is not None else None
 
 
-def write_targets(line: CommandLine, base: str | None) -> list[str | None]:
-    # One entry per cc-notes write leg: the directory that leg runs in (None when unresolvable). A single
-    # pass tracks a running cwd from `base`, advanced by each literal `cd`. pushd, subshells, and pipeline
-    # grouping are ignored — a documented structural approximation, never regex.
+def _apply_cd(cwd: str | None, cmd: Command) -> str | None:
+    # A literal `cd` leg's new working directory. A leading `--` (end-of-options) is dropped first, so
+    # `cd -- /x` resolves to /x and a lone `cd --` stays unresolvable. Only an exactly-one-arg path resolves.
+    args = cmd.args[1:] if cmd.args and cmd.args[0] == "--" else cmd.args
+    return _resolve_dir(cwd, args[0]) if len(args) == 1 else None
+
+
+def leg_dirs(line: CommandLine, base: str | None, matches: Callable[[Command], bool]) -> list[str | None]:
+    # One entry per matching leg: the directory it runs against (None when unresolvable). A single pass
+    # tracks a running cwd from `base`, advanced by each literal `cd`, then applies the leg's own repository
+    # options (`git -C`, `jj -R`, `cc-notes -R`). pushd, subshells, and pipeline grouping are ignored — a
+    # documented structural approximation, never regex.
     cwd = base
     targets: list[str | None] = []
     for cmd in line.commands:
         if cmd.executable == "cd":
             cwd = _apply_cd(cwd, cmd)
-        elif is_cc_notes_write(cmd):
-            targets.append(cwd)
+        elif matches(cmd):
+            target = cwd
+            for arg in repo_argv(cmd)[1]:
+                target = _resolve_dir(target, arg)
+            targets.append(target)
     return targets
+
+
+def write_targets(line: CommandLine, base: str | None) -> list[str | None]:
+    return leg_dirs(line, base, is_cc_notes_write)
+
+
+def target_repos(evt: PostToolUseEvent, matches: Callable[[Command], bool]) -> list[str]:
+    # The repositories the matching legs ran against, deduped in order. A leg whose directory is unresolvable
+    # or missing (a failed `cd`) ran in the event's cwd. A tool call with no command line (an MCP write)
+    # targets the event's cwd. Nothing outside a git repository is a target, found by stat alone.
+    base = str(evt.cwd) if evt.cwd else resolve_project_dir()
+    line = evt.cmd.line
+    dirs = leg_dirs(line, base, matches) if line else [base]
+    roots: list[str] = []
+    for target in dirs:
+        start = target if target is not None and os.path.isdir(target) else base
+        if start is not None and (root := repo_root(start)) is not None and root not in roots:
+            roots.append(root)
+    return roots
+
+
+def cc_notes_repo(evt: BaseHookEvent, root: str) -> bool:
+    try:
+        out = evt.ctx.git("-C", root, "for-each-ref", "--count=1", "--format=%(refname)", "refs/cc-notes/")
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(out and out.strip())
+
+
+def session_root() -> str | None:
+    base = resolve_project_dir()
+    return repo_root(base) if base is not None else None
+
+
+def sync_targets(evt: PostToolUseEvent, matches: Callable[[Command], bool], *, reconcile: bool = False) -> None:
+    # Sync every cc-notes repository the command touched, and nothing else. The session repo syncs through
+    # the session's own wired remotes; any other repo syncs bare in its own directory. Each target claims
+    # its own per-turn slot and keeps its own pending failure.
+    session = session_root()
+    for root in target_repos(evt, matches):
+        if not cc_notes_repo(evt, root):
+            continue
+        if root == session:
+            record_sync(evt, "", auto_reconcile(evt) if reconcile else auto_sync(evt))
+            continue
+        if reconcile:
+            branch = (evt.ctx.git("-C", root, "rev-parse", "--abbrev-ref", "HEAD") or "").strip()
+            if branch and branch != "HEAD":
+                run_cc_notes(evt, "-R", root, "reconcile", "--into", branch)
+        if should_autosync(evt, target=root):
+            record_sync(evt, root, cross_sync(evt, root))
 
 
 def auto_reconcile(evt: PostToolUseEvent) -> SyncOutcome | None:
@@ -552,8 +645,8 @@ def nudge_commit_record(evt: PostToolUseEvent) -> HookResult | None:
     },
 )
 def reconcile_after_merge(evt: PostToolUseEvent) -> None:
-    """After a merge/pull, carry the merged branch's open tasks onto this branch and sync, in the background."""
-    record_sync(evt, "", auto_reconcile(evt))
+    """After a merge/pull/fetch, carry the merged branch's open tasks onto the branch of the repo it ran in, and sync that repo, in the background."""
+    sync_targets(evt, FETCH_MERGE_COMMANDS.fires, reconcile=True)
 
 
 @on(
@@ -600,8 +693,8 @@ def nudge_claim(evt: PostToolUseEvent) -> HookResult | None:
     },
 )
 def sync_after_ref_move(evt: PostToolUseEvent) -> None:
-    """After a commit, a task claim, or a git/jj push (which moves only refs/heads/*), sync cc-notes refs in the background."""
-    record_sync(evt, "", auto_sync(evt))
+    """After a commit, a task claim, or a git/jj push (which moves only refs/heads/*), sync the cc-notes refs of the repo it ran in, in the background."""
+    sync_targets(evt, lambda cmd: COMMIT_COMMANDS.fires(cmd) or CLAIM_COMMANDS.fires(cmd) or PUSH_COMMANDS.fires(cmd))
 
 
 @on(
@@ -628,39 +721,13 @@ def sync_after_ref_move(evt: PostToolUseEvent) -> None:
     },
 )
 def sync_after_record_write(evt: PostToolUseEvent) -> None:
-    """After a cc-notes write (CLI subcommand or MCP tool), sync in the background so the new refs reach the remote.
+    """After a cc-notes write (CLI subcommand or MCP tool), sync the repo it wrote in the background so the new refs reach the remote.
 
-    An MCP write always targets the session repo. A Bash write leg runs wherever its ``cd`` prefix
-    lands: a target inside the session repo (the repo itself, or an unresolvable one) syncs the session
-    repo; a foreign target syncs THAT repo directly, named in any failure.
+    An MCP write targets the event's working repo. A Bash write leg runs wherever its ``cd`` prefix and
+    ``-R`` option land; the session repo syncs through its wired remotes, any other repo syncs directly,
+    named in any failure.
     """
-    line = evt.cmd.line
-    if not line:
-        record_sync(evt, "", auto_sync(evt))
-        return
-    base = resolve_project_dir()
-    base_real = os.path.realpath(base) if base is not None else None
-    seen: set[str] = set()
-    for target in write_targets(line, base):
-        real = os.path.realpath(target) if target is not None else None
-        # An unresolvable target syncs the session repo; a target inside a known session base does too.
-        # Otherwise the write landed elsewhere (base unknown, or resolved outside the session repo) — a
-        # cross sync, but only when the resolved path is a real directory. A resolved-but-missing dir
-        # (a failed `cd /missing`, whose write actually ran in the session repo) falls back to session.
-        if real is None:
-            session = True
-        elif base_real is not None and (real == base_real or Path(real).is_relative_to(base_real)):
-            session = True
-        else:
-            session = not os.path.isdir(real)
-        key = "" if session else real
-        if key in seen:
-            continue
-        seen.add(key)
-        if session:
-            record_sync(evt, key, auto_sync(evt))
-        elif should_autosync(evt, target=key):
-            record_sync(evt, key, cross_sync(evt, target))
+    sync_targets(evt, is_cc_notes_write)
 
 
 @on(

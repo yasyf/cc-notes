@@ -1251,6 +1251,35 @@ def _calls_of(calls: list[tuple[str, ...]], *suffix: str) -> list[int]:
 # test off the real repo's origin wiring (which would otherwise drift the recorded argv to ``sync
 # --remote origin``). Map it to ``None`` for a bare fallback, or to ``_wired(*names)`` to wire remotes.
 _CONFIG_KEY = ("config", "--get-regexp", r"^remote\..*\.fetch$")
+_INIT_TAIL = ("for-each-ref", "--count=1", "--format=%(refname)", "refs/cc-notes/")
+
+
+def _repo(path: Path) -> Path:
+    """Make ``path`` a repository to the stat-only repo walk: a directory holding ``.git``."""
+    (path / ".git").mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def repo_git(mapping: dict[tuple[str, ...], str | None], *, uninitialized: tuple[Path, ...] = (), calls: list | None = None):
+    """A ``stub_git`` that also answers the cc-notes-initialized probe: every repo holds refs except ``uninitialized``."""
+    plain = stub_git(mapping)
+    cold = {str(p.resolve()) for p in uninitialized}
+
+    def _git(*args: str):
+        if calls is not None:
+            calls.append(args)
+        if len(args) == 2 + len(_INIT_TAIL) and args[0] == "-C" and args[2:] == _INIT_TAIL:
+            return None if args[1] in cold else "refs/cc-notes/notes/x"
+        return plain(*args)
+
+    return _git
+
+
+def _session_repo(monkeypatch, tmp_path) -> Path:
+    """A cc-notes session repo under ``tmp_path``, installed as the project dir."""
+    root = _repo(tmp_path / "session-repo")
+    monkeypatch.setattr(workflow, "resolve_project_dir", lambda: str(root))
+    return root
 
 
 def _wired(*names: str) -> str:
@@ -2416,7 +2445,8 @@ def commit_event(tmp_path, monkeypatch, *, sha="deadsha000", verdict=None, diff=
     with success and is exposed on ``evt._sync_calls`` so a test can assert which handler spawned it.
     """
     evt = mock_event("PostToolUse", tool="Bash", command=command, session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "git", stub_git({("rev-parse", "HEAD"): sha, _CONFIG_KEY: None}))
+    _session_repo(monkeypatch, tmp_path)
+    monkeypatch.setattr(evt.ctx, "git", repo_git({("rev-parse", "HEAD"): sha, _CONFIG_KEY: None}))
     monkeypatch.setattr(evt.ctx, "diff", lambda *a, **k: diff)
     monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict if verdict is not None else RecordVerdict(record=False)))
     call, calls = recording_cli({("sync",): "ok"})
@@ -3070,7 +3100,8 @@ def merge_event(tmp_path, monkeypatch, *, branch="feature/x", cli=None):
     on ``evt._cli_calls`` for order assertions.
     """
     evt = mock_event("PostToolUse", tool="Bash", command="git merge feature/x", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "git", stub_git({("rev-parse", "--abbrev-ref", "HEAD"): branch, _CONFIG_KEY: None}))
+    _session_repo(monkeypatch, tmp_path)
+    monkeypatch.setattr(evt.ctx, "git", repo_git({("rev-parse", "--abbrev-ref", "HEAD"): branch, _CONFIG_KEY: None}))
     if cli is None:
         cli, calls = recording_cli({("reconcile", "--into", branch): "ok", ("sync",): "ok"})
     else:
@@ -3083,7 +3114,8 @@ def merge_event(tmp_path, monkeypatch, *, branch="feature/x", cli=None):
 def claim_event(tmp_path, monkeypatch, *, cli=None, mcp=False):
     """A `cc-notes task claim` event with a recording sync CLI; exposes ``evt._cli_calls``."""
     evt = mock_event("PostToolUse", tool="Bash", command="cc-notes task claim abc1234", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "git", stub_git({_CONFIG_KEY: None}))
+    _session_repo(monkeypatch, tmp_path)
+    monkeypatch.setattr(evt.ctx, "git", repo_git({_CONFIG_KEY: None}))
     if cli is None:
         cli, calls = recording_cli({("sync",): "ok"})
     else:
@@ -4032,6 +4064,9 @@ def test_fetch_merge_commands_match_structurally(monkeypatch) -> None:
         "git pull": True,
         "jj git fetch": True,
         "cd x && jj git fetch": True,
+        "git -C ../other merge feature": True,
+        "jj -R ../other git fetch": True,
+        "git -C ../other log --no-merges": False,
         "git log --no-merges": False,
         "jj git remote list": False,
         "echo 'git merge'": False,
@@ -4192,7 +4227,8 @@ def test_sync_after_push_syncs_silently(monkeypatch, tmp_path) -> None:
     """A jj/git push funnels through auto_sync: exactly one cc-notes sync, and no confirmation."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = mock_event("PostToolUse", tool="Bash", command="jj git push", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "git", stub_git({_CONFIG_KEY: None}))
+    _session_repo(monkeypatch, tmp_path)
+    monkeypatch.setattr(evt.ctx, "git", repo_git({_CONFIG_KEY: None}))
     cli, calls = recording_cli({("sync",): "ok"})
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     check("push-sync: returns nothing", sync_after_ref_move(evt) is None)
@@ -4208,7 +4244,8 @@ def test_mcp_write_triggers_sync(monkeypatch, tmp_path) -> None:
     """
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = mock_tool_event(tool=MCP_TOOL_PREFIX + "note_add", event=Event.PostToolUse, tool_input={"title": "x"}, session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "git", stub_git({_CONFIG_KEY: None}))
+    _session_repo(monkeypatch, tmp_path)
+    monkeypatch.setattr(evt.ctx, "git", repo_git({_CONFIG_KEY: None}))
     cli, calls = recording_cli({("sync",): "ok"})
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     check("mcp-write sync: returns nothing", sync_after_record_write(evt) is None)
@@ -4237,7 +4274,7 @@ def test_write_sync_still_once_per_turn(monkeypatch, tmp_path) -> None:
     sync_after_ref_move(commit)
     write = mock_tool_event(tool=MCP_TOOL_PREFIX + "note_add", event=Event.PostToolUse, tool_input={"title": "x"}, session_dir=tmp_path)
     monkeypatch.setattr(write.ctx, "call_cli", cli)
-    monkeypatch.setattr(write.ctx, "git", stub_git({_CONFIG_KEY: None}))
+    monkeypatch.setattr(write.ctx, "git", repo_git({_CONFIG_KEY: None}))
     sync_after_record_write(write)
     check("write-once: exactly one sync across the turn", len(_calls_of(calls, "sync")) == 1, repr(calls))
 
@@ -4507,6 +4544,12 @@ def _targets(cmd: str, base: str | None) -> list[str | None]:
     return write_targets(parse_command_line(cmd), base)
 
 
+def test_write_targets_repo_option(monkeypatch) -> None:
+    check("targets: an absolute -R replaces the dir", _targets("cc-notes -R /other note add x", "/session") == ["/other"])
+    check("targets: a relative --repo joins the cd walk", _targets("cd /a && cc-notes note add x --repo=b", "/session") == ["/a/b"])
+    check("targets: a -R read is not a write", _targets("cc-notes -R /other note list", "/session") == [])
+
+
 def test_write_targets_no_cd_is_session_dir(monkeypatch) -> None:
     check("targets: no cd -> base", _targets("cc-notes note add x", "/session") == ["/session"])
 
@@ -4585,7 +4628,7 @@ def _cross_event(tmp_path, monkeypatch, *, command, base, run_raises=None):
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = mock_event("PostToolUse", tool="Bash", command=command, session_dir=tmp_path)
     monkeypatch.setattr(workflow, "resolve_project_dir", lambda: None if base is None else str(base))
-    monkeypatch.setattr(evt.ctx, "git", stub_git({_CONFIG_KEY: None}))
+    monkeypatch.setattr(evt.ctx, "git", repo_git({_CONFIG_KEY: None}))
     cli, cli_calls = recording_cli({("sync",): "ok"})
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     run, run_calls = recording_run(raises=run_raises)
@@ -4598,13 +4641,13 @@ def _cross_event(tmp_path, monkeypatch, *, command, base, run_raises=None):
 def test_cross_repo_write_syncs_target_dir(monkeypatch, tmp_path) -> None:
     """A `cd <other> && cc-notes note add` syncs the OTHER repo via subprocess.run in that dir, not the session repo."""
     base, other = tmp_path / "session", tmp_path / "other"
-    base.mkdir(); other.mkdir()
+    _repo(base); _repo(other)
     evt = _cross_event(tmp_path, monkeypatch, command=f"cd {other} && cc-notes note add x", base=base)
     sync_after_record_write(evt)
     check("cross write: exactly one cross subprocess.run", len(evt._run_calls) == 1, repr(evt._run_calls))
     argv, kw = evt._run_calls[0]
     check("cross write: bare `cc-notes sync` argv", argv == ("cc-notes", "sync"), repr(argv))
-    check("cross write: ran in the target dir", kw["cwd"] == str(other), repr(kw))
+    check("cross write: ran in the target dir", kw["cwd"] == str(other.resolve()), repr(kw))
     check(
         "cross write: production kwargs are exact",
         (kw["check"], kw["capture_output"], kw["text"], kw["timeout"]) == (True, True, True, 15),
@@ -4618,41 +4661,41 @@ def test_cross_repo_investigation_write_syncs_target_dir(monkeypatch, tmp_path) 
     """refA#1: a `cd <other> && cc-notes investigation open` is classified as a write, so the FOREIGN repo
     is synced in that dir — the case the session-end backstop (session repo only) can't cover."""
     base, other = tmp_path / "session", tmp_path / "other"
-    base.mkdir(); other.mkdir()
+    _repo(base); _repo(other)
     evt = _cross_event(tmp_path, monkeypatch, command=f"cd {other} && cc-notes investigation open Deadlock premise", base=base)
     sync_after_record_write(evt)
     check("cross investigation: exactly one cross subprocess.run", len(evt._run_calls) == 1, repr(evt._run_calls))
     argv, kw = evt._run_calls[0]
     check("cross investigation: bare `cc-notes sync` argv", argv == ("cc-notes", "sync"), repr(argv))
-    check("cross investigation: ran in the target dir", kw["cwd"] == str(other), repr(kw))
+    check("cross investigation: ran in the target dir", kw["cwd"] == str(other.resolve()), repr(kw))
     check("cross investigation: the session repo was not synced", _calls_of(evt._cli_calls, "sync") == [], repr(evt._cli_calls))
 
 
 def test_cross_repo_failure_names_dir(monkeypatch, tmp_path) -> None:
     """A genuine failure in the foreign repo surfaces a dir-named retry hint on the next event."""
     base, other = tmp_path / "session", tmp_path / "other"
-    base.mkdir(); other.mkdir()
+    _repo(base); _repo(other)
     evt = _cross_event(tmp_path, monkeypatch, command=f"cd {other} && cc-notes note add x", base=base, run_raises=_rejected("! [rejected] non-fast-forward\n"))
     sync_after_record_write(evt)
     result = surface_sync_failures(_next_event(tmp_path))
-    check("cross fail: names the dir in the retry hint", result is not None and f"cc-notes sync failed in {other}" in (result.message or ""), repr(result))
+    check("cross fail: names the dir in the retry hint", result is not None and f"cc-notes sync failed in {other.resolve()}" in (result.message or ""), repr(result))
 
 
 def test_cross_repo_remote_not_configured_silent(monkeypatch, tmp_path) -> None:
     """A foreign repo with no remote is benign — the sync was attempted but no line surfaces."""
     base, other = tmp_path / "session", tmp_path / "other"
-    base.mkdir(); other.mkdir()
+    _repo(base); _repo(other)
     err = subprocess.CalledProcessError(1, ["cc-notes", "sync"], stderr="remote not configured\n")
     evt = _cross_event(tmp_path, monkeypatch, command=f"cd {other} && cc-notes note add x", base=base, run_raises=err)
     sync_after_record_write(evt)
     check("cross no-remote: silent (no warn)", surface_sync_failures(_next_event(tmp_path)) is None)
-    check("cross no-remote: the sync was attempted in the dir", _run_dirs(evt._run_calls) == [str(other)], repr(evt._run_calls))
+    check("cross no-remote: the sync was attempted in the dir", _run_dirs(evt._run_calls) == [str(other.resolve())], repr(evt._run_calls))
 
 
 def test_cross_repo_timeout_silent(monkeypatch, tmp_path) -> None:
     """A foreign sync that times out is silent — no fabricated failure line."""
     base, other = tmp_path / "session", tmp_path / "other"
-    base.mkdir(); other.mkdir()
+    _repo(base); _repo(other)
     evt = _cross_event(tmp_path, monkeypatch, command=f"cd {other} && cc-notes note add x", base=base, run_raises=subprocess.TimeoutExpired(cmd="cc-notes sync", timeout=15))
     sync_after_record_write(evt)
     check("cross timeout: silent", surface_sync_failures(_next_event(tmp_path)) is None)
@@ -4663,6 +4706,7 @@ def test_cross_repo_subdir_of_session_uses_session_path(monkeypatch, tmp_path) -
     base = tmp_path / "session"
     sub = base / "sub"
     sub.mkdir(parents=True)
+    _repo(base)
     evt = _cross_event(tmp_path, monkeypatch, command=f"cd {sub} && cc-notes note add x", base=base)
     sync_after_record_write(evt)
     check("subdir: session sync via call_cli", _calls_of(evt._cli_calls, "sync") == [0], repr(evt._cli_calls))
@@ -4672,7 +4716,7 @@ def test_cross_repo_subdir_of_session_uses_session_path(monkeypatch, tmp_path) -
 def test_cross_repo_unresolvable_falls_back_to_session(monkeypatch, tmp_path) -> None:
     """An unresolvable cd target (a $var) falls back to syncing the session repo."""
     base = tmp_path / "session"
-    base.mkdir()
+    _repo(base)
     evt = _cross_event(tmp_path, monkeypatch, command="cd $HOME && cc-notes note add x", base=base)
     sync_after_record_write(evt)
     check("unresolvable: session sync ran", _calls_of(evt._cli_calls, "sync") == [0], repr(evt._cli_calls))
@@ -4683,10 +4727,10 @@ def test_cross_repo_none_base_absolute_cd_is_cross(monkeypatch, tmp_path) -> Non
     """An unknown session base (resolve_project_dir None) + an absolute cd to a real dir is a CROSS sync:
     the write's directory is known exactly, so it syncs THAT repo, not the session repo."""
     other = tmp_path / "other"
-    other.mkdir()
+    _repo(other)
     evt = _cross_event(tmp_path, monkeypatch, command=f"cd {other} && cc-notes note add x", base=None)
     sync_after_record_write(evt)
-    check("none-base absolute cd: cross sync in the target dir", _run_dirs(evt._run_calls) == [str(other)], repr(evt._run_calls))
+    check("none-base absolute cd: cross sync in the target dir", _run_dirs(evt._run_calls) == [str(other.resolve())], repr(evt._run_calls))
     check("none-base absolute cd: session repo not synced", _calls_of(evt._cli_calls, "sync") == [], repr(evt._cli_calls))
 
 
@@ -4694,7 +4738,7 @@ def test_cross_repo_nonexistent_dir_falls_back_to_session(monkeypatch, tmp_path)
     """A cd target that resolves but is not a real directory (a failed `cd /missing`) falls back to a
     session sync — the write actually landed in the session repo."""
     base = tmp_path / "session"
-    base.mkdir()
+    _repo(base)
     missing = tmp_path / "missing"  # never created
     evt = _cross_event(tmp_path, monkeypatch, command=f"cd {missing} && cc-notes note add x", base=base)
     sync_after_record_write(evt)
@@ -4705,45 +4749,98 @@ def test_cross_repo_nonexistent_dir_falls_back_to_session(monkeypatch, tmp_path)
 def test_cross_repo_and_session_write_same_turn_syncs_both(monkeypatch, tmp_path) -> None:
     """A session write and a foreign write in ONE command sync BOTH repos (distinct once slots)."""
     base, other = tmp_path / "session", tmp_path / "other"
-    base.mkdir(); other.mkdir()
+    _repo(base); _repo(other)
     evt = _cross_event(tmp_path, monkeypatch, command=f"cc-notes note add a ; cd {other} && cc-notes note add b", base=base)
     sync_after_record_write(evt)
     check("both: session sync via call_cli", _calls_of(evt._cli_calls, "sync") == [0], repr(evt._cli_calls))
-    check("both: cross sync via subprocess.run in the target dir", _run_dirs(evt._run_calls) == [str(other)], repr(evt._run_calls))
+    check("both: cross sync via subprocess.run in the target dir", _run_dirs(evt._run_calls) == [str(other.resolve())], repr(evt._run_calls))
 
 
 def test_cross_repo_once_per_turn_per_target(monkeypatch, tmp_path) -> None:
     """Two writes to the SAME foreign repo in one turn sync it exactly once (its own once slot)."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     base, other = tmp_path / "session", tmp_path / "other"
-    base.mkdir(); other.mkdir()
+    _repo(base); _repo(other)
     cli, _cli_calls = recording_cli({("sync",): "ok"})
     run, run_calls = recording_run()
     monkeypatch.setattr(workflow, "resolve_project_dir", lambda: str(base))
     for _ in range(2):
         evt = mock_event("PostToolUse", tool="Bash", command=f"cd {other} && cc-notes note add x", session_dir=tmp_path)
-        monkeypatch.setattr(evt.ctx, "git", stub_git({_CONFIG_KEY: None}))
+        monkeypatch.setattr(evt.ctx, "git", repo_git({_CONFIG_KEY: None}))
         monkeypatch.setattr(evt.ctx, "call_cli", cli)
         monkeypatch.setattr(workflow.subprocess, "run", run)
         sync_after_record_write(evt)
     check("once-per-target: exactly one cross sync across the turn", len(run_calls) == 1, repr(run_calls))
 
 
-def test_push_in_other_repo_still_syncs_session_repo(monkeypatch, tmp_path) -> None:
-    """A `cd <other> && git push` keeps session semantics: sync_after_ref_move syncs the SESSION repo, never the foreign one."""
+def test_push_in_other_repo_syncs_that_repo(monkeypatch, tmp_path) -> None:
+    """A `cd <other> && git push` syncs the repo the push ran in, never the session repo."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     base, other = tmp_path / "session", tmp_path / "other"
-    base.mkdir(); other.mkdir()
+    _repo(base); _repo(other)
     evt = mock_event("PostToolUse", tool="Bash", command=f"cd {other} && git push", session_dir=tmp_path)
     monkeypatch.setattr(workflow, "resolve_project_dir", lambda: str(base))
-    monkeypatch.setattr(evt.ctx, "git", stub_git({_CONFIG_KEY: None}))
+    monkeypatch.setattr(evt.ctx, "git", repo_git({_CONFIG_KEY: None}))
     cli, cli_calls = recording_cli({("sync",): "ok"})
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     run, run_calls = recording_run()
     monkeypatch.setattr(workflow.subprocess, "run", run)
     sync_after_ref_move(evt)
-    check("push scope: session sync via call_cli", _calls_of(cli_calls, "sync") == [0], repr(cli_calls))
-    check("push scope: no cross subprocess.run", run_calls == [], repr(run_calls))
+    check("push scope: no session sync", _calls_of(cli_calls, "sync") == [], repr(cli_calls))
+    check("push scope: the other repo synced in its dir", _run_dirs(run_calls) == [str(other.resolve())], repr(run_calls))
+
+
+def test_merge_in_other_repo_reconciles_and_syncs_that_repo(monkeypatch, tmp_path) -> None:
+    """A merge behind `cd <other> &&`, `git -C <other>`, or `jj -R <other>` reconciles onto that repo's branch and syncs that repo."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    base, other = tmp_path / "session", tmp_path / "other"
+    _repo(base); _repo(other)
+    real = str(other.resolve())
+    monkeypatch.setattr(workflow, "resolve_project_dir", lambda: str(base))
+    for i, command in enumerate((f"cd {other} && git merge feature/x", f"git -C {other} merge feature/x", f"jj -R {other} git fetch")):
+        session = tmp_path / f"state{i}"
+        session.mkdir()
+        evt = mock_event("PostToolUse", tool="Bash", command=command, session_dir=session)
+        monkeypatch.setattr(evt.ctx, "git", repo_git({("-C", real, "rev-parse", "--abbrev-ref", "HEAD"): "topic", _CONFIG_KEY: None}))
+        cli, cli_calls = recording_cli({("-R", real, "reconcile", "--into", "topic"): "ok", ("sync",): "ok"})
+        monkeypatch.setattr(evt.ctx, "call_cli", cli)
+        run, run_calls = recording_run()
+        monkeypatch.setattr(workflow.subprocess, "run", run)
+        reconcile_after_merge(evt)
+        check(f"merge target {command!r}: reconciled the other repo's branch", ("cc-notes", "-R", real, "reconcile", "--into", "topic") in cli_calls, repr(cli_calls))
+        check(f"merge target {command!r}: no session sync", _calls_of(cli_calls, "sync") == [], repr(cli_calls))
+        check(f"merge target {command!r}: synced the other repo in its dir", _run_dirs(run_calls) == [real], repr(run_calls))
+
+
+def test_sync_hooks_outside_any_repo_spawn_nothing(monkeypatch, tmp_path) -> None:
+    """Outside any git repository nothing spawns at all; in a repo with no cc-notes refs only the refs probe runs."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    cold = _repo(tmp_path / "cold")
+    monkeypatch.setattr(workflow, "resolve_project_dir", lambda: str(plain))
+    cases = (
+        (sync_after_ref_move, "git push", False),
+        (reconcile_after_merge, "git merge feature/x", False),
+        (sync_after_record_write, "cc-notes note add x", False),
+        (sync_after_ref_move, f"cd {cold} && git push", True),
+        (reconcile_after_merge, f"git -C {cold} merge feature/x", True),
+        (sync_after_record_write, f"cc-notes -R {cold} note add x", True),
+    )
+    for i, (handler, command, in_repo) in enumerate(cases):
+        session = tmp_path / f"state{i}"
+        session.mkdir()
+        evt = mock_event("PostToolUse", tool="Bash", command=command, session_dir=session)
+        git_calls: list[tuple[str, ...]] = []
+        monkeypatch.setattr(evt.ctx, "git", repo_git({}, uninitialized=(cold,), calls=git_calls))
+        cli, cli_calls = recording_cli()
+        monkeypatch.setattr(evt.ctx, "call_cli", cli)
+        run, run_calls = recording_run()
+        monkeypatch.setattr(workflow.subprocess, "run", run)
+        handler(evt)
+        probes = [("-C", str(cold.resolve()), *_INIT_TAIL)] if in_repo else []
+        check(f"no target {command!r}: only the refs probe ran", git_calls == probes, repr(git_calls))
+        check(f"no target {command!r}: no cc-notes call", cli_calls == [] and run_calls == [], repr((cli_calls, run_calls)))
 
 
 def test_bootstrap_parse_version(monkeypatch) -> None:

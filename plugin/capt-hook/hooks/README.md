@@ -147,7 +147,7 @@ and the per-turn dedup already bounds them. The auto-sync action deduplicates pe
 its triggers — a commit (`git commit` / `jj commit` / `jj describe` / `ccx vcs ship`), a
 claim/start, a merge/pull/fetch, a push (`git push` / `jj git push`), and every cc-notes
 write (CLI or MCP) — so the several events of one turn drive a single sync per repo they
-touched: the session repo, plus any foreign repo a `cd`-prefixed write landed in. The
+touched, whichever repositories the commands ran in. The
 Surface floaters carry no cap: their per-record session dedup already bounds them. The once-per-session
 orientations (the session-start task and answer floats and the install hint) fire exactly once. The
 answer capture is uncapped: a cap would silently drop every answer past it.
@@ -188,14 +188,17 @@ cc-notes-wired remote — each remote whose fetch refspec in git config tracks
 `cc-notes sync` when none is wired. Reads never sync. This replaces the old
 "run cc-notes sync" nudge.
 
-A CLI write can land outside the session repo — `cd /other/repo && cc-notes note add …`
-writes the *other* repo's refs. The handler walks the parsed command legs, tracking every
-literal `cd` to resolve the directory each write leg runs in, and syncs the written repo —
-once per target repo per turn, targets deduped by realpath. A `cd` it can't resolve structurally — `cd -`, a `$var`, a `~`, a backtick
-substitution — falls back to the session repo, and pushd, subshells, and pipeline grouping
-are ignored the same way. The cross-repo path covers record writes only: a push, merge, or
-claim in another repo keeps session semantics, and an MCP write always targets the session
-repo.
+A command can run outside the session repo: `cd /other/repo && git push`,
+`git -C /other/repo merge topic`, `jj -R /other/repo git fetch`, and
+`cc-notes -R /other/repo note add …` all act on the *other* repo. Each sync and reconcile
+handler walks the parsed command legs, tracking every literal `cd` and each leg's own
+repository option, and acts on the repository the leg ran in, found by walking up to its
+`.git`. The session repo syncs through its wired remotes; any other repo syncs bare in its own
+directory, once per repo per turn. A `cd` it can't resolve structurally (`cd -`, a `$var`, a
+`~`, a backtick substitution) falls back to the event's working directory, and pushd,
+subshells, and pipeline grouping are ignored the same way. An MCP write targets the event's
+working directory. A command outside any git repository spawns nothing, and a repository with
+no `refs/cc-notes/*` costs one ref probe and nothing else.
 
 **Auto-reconcile.** After a `git merge` / `git pull` / `jj git fetch`, the pack runs
 `cc-notes reconcile --into <current branch>` — carrying the merged branch's still-open tasks
