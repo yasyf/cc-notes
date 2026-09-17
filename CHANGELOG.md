@@ -91,23 +91,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refs, `status` drops from 2.97s to 0.93s, `relevant` from 1.92s to 1.05s,
   and `note list` from 0.50s to 0.11s.
 
-- **A repeated `relevant` answers from a cache.** The read- and edit-time
-  surface hooks run `relevant` on every Read and every Edit. The result is now
-  cached per worktree, target, filter, and output shape under
-  `.git/cc-notes/relevant-v1`, keyed on every input it reads: the binary, HEAD,
-  the commit a `--base` revision resolves to, every symbolic ref's target, every
-  ref tip outside the sync tracking namespace, the shallow boundary, the staleness
-  threshold, the `GIT_*` environment, and `git var -l`, which carries the
-  author identity, the config and attribute file locations, and the effective
-  configuration of every scope with its includes resolved. Under `--worktree`
-  the gitattributes files that shape how git hashes an anchored file are
-  fingerprinted with it. A hit is revalidated against the clock,
-  since a fresh verdict turns stale at a known instant, and, under `--worktree`,
-  against a fingerprint (existence, size, mtime, ctime, inode, mode) of every
-  path anchor whose drift was checked. That fingerprint is taken before and
-  after the drift check reads the file, and a result is cached only when the
-  two agree and no mtime falls within two seconds of the computation. On the monorepo a
-  repeated call drops from 2.1–2.5s to 0.07–0.09s.
+- **A repeated `relevant` answers from a cache.** The surface hooks run
+  `relevant` on every `Read` and every `Edit`. The result is cached per
+  worktree, target, filter, and output shape under `.git/cc-notes/relevant-v1`.
+  On the monorepo, a repeated call drops from 2.1–2.5s to 0.07–0.09s.
+
+  The key covers every input. It includes the binary, `HEAD`, and the commit
+  a `--base` revision resolves to. It also covers every symbolic ref's target,
+  every ref tip outside the sync tracking namespace, and the shallow boundary.
+  The staleness threshold, the `GIT_*` environment, and `git var -l` complete
+  the key. `git var -l` carries the author identity and the config and
+  attribute file locations. It also carries the effective configuration of
+  every scope, with includes resolved.
+
+  A hit is revalidated against the clock because a fresh verdict turns stale
+  at a known instant. Under `--worktree`, it is also revalidated against file
+  fingerprints. These cover every drift-checked path anchor and the
+  `gitattributes` files that shape how `git` hashes it.
+
+  The fingerprints record existence, size, mtime, ctime, inode, and mode.
+  The drift check takes them before and after reading the files. A result
+  is cached only when the two fingerprints agree and no mtime falls within
+  two seconds of the computation.
 
 - **`relevant --attached` skips entities it is about to drop.** It scored every
   entity, including ancestry checks on commit and branch anchors, then dropped

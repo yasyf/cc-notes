@@ -168,10 +168,10 @@ with no remote or an offline box is a legitimate state, so nothing surfaces. A g
 failure, such as a non-fast-forward push rejection, is recorded in session state, and
 `surface_sync_failures` shows it once, on your next tool call or prompt, unless a later sync
 of the same repo and remote succeeds first and clears it. Each wired remote keeps its own
-warning, so a success on one never clears another's. The hint names the failed remote and its
-own retry ("cc-notes sync failed for <remote> — run `cc-notes sync --remote <remote>` to
-retry."), or the directory when the write landed in another repo ("cc-notes sync failed in
-<dir> — run `cc-notes sync` there to retry.").
+warning, so a success on one never clears another's. For a failed wired remote, the hint says:
+"cc-notes sync failed for <remote> — run `cc-notes sync --remote <remote>` to retry."
+When the write landed in another repo, it names the directory:
+"cc-notes sync failed in <dir> — run `cc-notes sync` there to retry."
 A detached HEAD or a reconcile error still syncs, since the refs can ship even when reconcile
 can't run.
 
