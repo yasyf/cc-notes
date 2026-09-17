@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `status` tool takes a matching `tasks` argument.
 
 ### Changed
+- **The plugin reinstalls cc-notes older than 0.54.0.** The session-start
+  task float reads `status --tasks`, which older binaries reject, so the
+  install floors in `bootstrap.py` and `hooks/ensure-cc-notes.sh` move from
+  0.46.0 to 0.54.0. That also carries the fold cache, relevance cache, and
+  `--attached` fixes to machines already on 0.46–0.53.
+
 - **Auto-sync runs in the background.** Every hook that runs `cc-notes sync`
   (after a commit, a task claim, a push, a merge or fetch, or a cc-notes write)
   is an async hook, so the fetch and push round trips no longer hold a

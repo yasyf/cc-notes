@@ -440,20 +440,20 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 	}
 }
 
-func TestPluginBootstrapEnforcesV046WithoutInstallingService(t *testing.T) {
+func TestPluginBootstrapEnforcesV054WithoutInstallingService(t *testing.T) {
 	root := filepath.Join("..", "..")
 	hook := filepath.Join(root, "plugin", "hooks", "hooks.json")
 	script := filepath.Join(root, "plugin", "hooks", "ensure-cc-notes.sh")
 	assertFileContains(t, hook, `sh \"${CLAUDE_PLUGIN_ROOT}/hooks/ensure-cc-notes.sh\"`)
 	assertFileContains(
 		t, script,
-		`($2 + 0) >= 46`,
+		`($2 + 0) >= 54`,
 		"https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh",
 	)
 	assertFileExcludes(t, script, "service install", "service uninstall", "cc-notes init")
 	assertFileContains(
 		t, filepath.Join(root, "plugin", "capt-hook", "hooks", "bootstrap.py"),
-		"MIN_VERSION = (0, 46, 0)",
+		"MIN_VERSION = (0, 54, 0)",
 	)
 
 	bin := t.TempDir()
@@ -473,16 +473,16 @@ func TestPluginBootstrapEnforcesV046WithoutInstallingService(t *testing.T) {
 			t.Fatalf("bootstrap %s: %v: %s", version, err, output)
 		}
 	}
-	run("v0.45.0")
+	run("v0.53.1")
 	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("v0.45 did not trigger binary upgrade: %v", err)
+		t.Fatalf("v0.53.1 did not trigger binary upgrade: %v", err)
 	}
 	if err := os.Remove(marker); err != nil {
 		t.Fatal(err)
 	}
-	run("v0.46.0")
+	run("v0.54.0")
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("v0.46 unexpectedly triggered binary upgrade: %v", err)
+		t.Fatalf("v0.54.0 unexpectedly triggered binary upgrade: %v", err)
 	}
 }
 
