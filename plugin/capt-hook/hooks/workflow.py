@@ -535,20 +535,45 @@ def record_task_claims(evt: PostToolUseEvent) -> HookResult | None:
     return None
 
 
+def held_task(evt: BaseHookEvent) -> str | None:
+    """The one task this session holds a lease on, or None when it holds none or several."""
+    held = evt.ctx.s.load(ClaimedTasks).ids
+    return held[0] if len(held) == 1 else None
+
+
+def commits_to_session_repo(evt: PostToolUseEvent) -> bool:
+    return (session := session_root()) is not None and session in target_repos(evt, COMMIT_COMMANDS.fires)
+
+
 def link_claimed_task(evt: PostToolUseEvent, *, mcp: bool) -> list[str]:
-    """Attribute the commit just landed to the one task this session holds, as a `task link` edge."""
+    """The line announcing the `task link` edge the background sync writes for the one task this session holds."""
     try:
-        held = evt.ctx.s.load(ClaimedTasks).ids
-        if len(held) != 1:
+        if not commits_to_session_repo(evt) or (task := held_task(evt)) is None:
             return []
-        if run_cc_notes(evt, "task", "link", held[0], "HEAD") is None:
-            return []
-        undo = f"the task_unlink tool with id={held[0]}" if mcp else f"`cc-notes task unlink {held[0]}`"
-        return [f"Linked this commit onto task {held[0]}, the one you hold — undo with {undo}."]
     except Exception:
-        # Fail closed on everything — an unreadable session slot, a cc-notes error, a missing binary,
-        # a timeout. A missing edge costs a graph hop; a raised hook costs the agent a landed commit.
+        # Fail closed on an unreadable session slot: a raised hook costs the agent a landed commit.
         return []
+    undo = f"the task_unlink tool with id={task}" if mcp else f"`cc-notes task unlink {task}`"
+    return [f"Linking this commit onto task {task}, the one you hold, before it syncs — undo with {undo}."]
+
+
+def link_commit(evt: PostToolUseEvent) -> None:
+    # Runs ahead of the sync in the same background hook, so the pushed refs carry the edge. Each HEAD
+    # links once; a failed write queues its retry like a failed sync.
+    try:
+        if (task := held_task(evt)) is None:
+            return
+        sha = (evt.ctx.git("rev-parse", "HEAD") or "").strip()
+    except Exception:
+        return
+    if sha and not evt.ctx.s.once(sha, scope="commit-link"):
+        return
+    try:
+        linked = run_cc_notes(evt, "task", "link", task, "HEAD") is not None
+    except Exception:
+        linked = False
+    if not linked:
+        record_sync(evt, f"link:{sha}", SyncOutcome(False, f"cc-notes could not link commit {sha[:7] or 'HEAD'} onto task {task} — run `cc-notes task link {task} {sha or 'HEAD'}` to retry."))
 
 
 COMMIT_DECISION_SYSTEM = (
@@ -693,7 +718,13 @@ def nudge_claim(evt: PostToolUseEvent) -> HookResult | None:
     },
 )
 def sync_after_ref_move(evt: PostToolUseEvent) -> None:
-    """After a commit, a task claim, or a git/jj push (which moves only refs/heads/*), sync the cc-notes refs of the repo it ran in, in the background."""
+    """After a commit, a task claim, or a git/jj push (which moves only refs/heads/*), sync the cc-notes refs of the repo it ran in, in the background.
+
+    A commit to the session repo first writes the `task link` edge onto the one task the session holds,
+    so the sync that follows carries it.
+    """
+    if commits_to_session_repo(evt):
+        link_commit(evt)
     sync_targets(evt, lambda cmd: COMMIT_COMMANDS.fires(cmd) or CLAIM_COMMANDS.fires(cmd) or PUSH_COMMANDS.fires(cmd))
 
 

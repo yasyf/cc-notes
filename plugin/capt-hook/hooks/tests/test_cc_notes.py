@@ -3328,8 +3328,9 @@ def task_call(tmp_path, command=None, *, tool=None, tool_input=None, output=None
 def commit_after_claims(tmp_path, monkeypatch, *calls, cli=None, mcp=False):
     """Replay ``calls`` (cc-notes task command lines) through the claim recorder, then commit.
 
-    Returns ``(result, calls_recorded)``. The commit shares tmp_path's session, so the claims the
-    recorder armed are exactly what the commit handler reads.
+    Returns ``(result, calls_recorded)``: the commit nudge's result, and every CLI call the nudge and the
+    background ``sync_after_ref_move`` made for the same event, in order. The commit shares tmp_path's
+    session, so the claims the recorder armed are exactly what both handlers read.
     """
     for command in calls:
         record_task_claims(task_call(tmp_path, command))
@@ -3339,7 +3340,9 @@ def commit_after_claims(tmp_path, monkeypatch, *calls, cli=None, mcp=False):
     else:
         recorded = []
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
-    return nudge_commit_record(evt), recorded
+    result = nudge_commit_record(evt)
+    sync_after_ref_move(evt)
+    return result, recorded
 
 
 def test_commit_links_the_single_claimed_task(monkeypatch, tmp_path) -> None:
@@ -3351,11 +3354,29 @@ def test_commit_links_the_single_claimed_task(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     result, calls = commit_after_claims(tmp_path, monkeypatch, "cc-notes task claim abc1234")
     check("link: the task link ran with HEAD", LINKED in calls, repr(calls))
+    check("link: the link is written before the sync", LINKED in calls and ("cc-notes", "sync") in calls and calls.index(LINKED) < calls.index(("cc-notes", "sync")), repr(calls))
     check("link: warns, never blocks", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("link: names the linked task", "Linked this commit onto task abc1234" in result.message, result.message)
+        check("link: names the linked task", "Linking this commit onto task abc1234" in result.message, result.message)
         check("link: names the CLI undo", "cc-notes task unlink abc1234" in result.message, result.message)
         check("link: keeps the cc-task trailer teach", "cc-task: <id>" in result.message, result.message)
+
+
+def test_background_sync_links_the_commit_before_syncing(monkeypatch, tmp_path) -> None:
+    """The background sync alone writes the `task link` edge and then syncs, so the push carries it.
+
+    The commit nudge and the background sync run as separate dispatches with no order between them, so
+    the edge must not depend on the nudge: this drives only ``sync_after_ref_move``.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    record_task_claims(task_call(tmp_path, "cc-notes task claim abc1234"))
+    evt = commit_event(tmp_path, monkeypatch)
+    cli, calls = recording_cli({("sync",): "ok", LINKED[1:]: "abc1234\tin_progress\tP2\t-\tt"})
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    sync_after_ref_move(evt)
+    check("background link: ordered link then sync", calls == [LINKED, ("cc-notes", "sync")], repr(calls))
+    sync_after_ref_move(commit_event(tmp_path, monkeypatch))
+    check("background link: the same HEAD links once", calls.count(LINKED) == 1, repr(calls))
 
 
 def test_commit_link_mcp_wording(monkeypatch, tmp_path) -> None:
@@ -3389,7 +3410,7 @@ def test_commit_writes_no_link_without_exactly_one_claim(monkeypatch, tmp_path) 
         check(f"no-link [{name}]: link calls are {want}", linked == want, repr(calls))
         check(f"no-link [{name}]: still warns the commit reminder", result is not None and result.action is Action.warn, repr(result))
         if result and result.message and not relink:
-            check(f"no-link [{name}]: no link line", "Linked this commit" not in result.message, result.message)
+            check(f"no-link [{name}]: no link line", "Linking this commit" not in result.message, result.message)
 
 
 def test_claim_recorder_ignores_the_lines_that_move_no_lease(tmp_path) -> None:
@@ -3401,11 +3422,12 @@ def test_claim_recorder_ignores_the_lines_that_move_no_lease(tmp_path) -> None:
 
 
 def test_commit_link_failure_never_costs_the_commit(monkeypatch, tmp_path) -> None:
-    """A failing `task link` must never turn a landed commit into a hook failure.
+    """A failing `task link` must never turn a landed commit into a hook failure, nor skip the sync.
 
     PostToolUse fires after the commit exists, so a raised handler or a block action leaves the
-    agent unpicking work that already succeeded. For each failure class the handler must still
-    return a plain warn carrying the commit reminder, drop only the link line, and raise nothing.
+    agent unpicking work that already succeeded. For each failure class both handlers must raise
+    nothing, the commit reminder still warns, the sync still runs, and the failed link surfaces its
+    retry on the next event.
     """
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     for name, exc in CLI_FAILURES.items():
@@ -3418,10 +3440,12 @@ def test_commit_link_failure_never_costs_the_commit(monkeypatch, tmp_path) -> No
             check(f"commit link [{name}]: handler did not raise", False, f"{type(e).__name__}: {e}")
             continue
         check(f"commit link [{name}]: it really attempted the link", LINKED in calls, repr(calls))
+        check(f"commit link [{name}]: the sync still ran after it", ("cc-notes", "sync") in calls, repr(calls))
         check(f"commit link [{name}]: warns, never blocks", result is not None and result.action is Action.warn, repr(result))
         if result and result.message:
             check(f"commit link [{name}]: keeps the commit reminder", "Commit landed." in result.message, result.message)
-            check(f"commit link [{name}]: claims no link it did not write", "Linked this commit" not in result.message, result.message)
+        surfaced = surface_sync_failures(_next_event(session))
+        check(f"commit link [{name}]: the failed link surfaces its retry next", surfaced is not None and "cc-notes task link abc1234" in (surfaced.message or ""), repr(surfaced))
 
 
 def investigation_task_add(tmp_path, monkeypatch, *, unresolved, cli, output="abc1234\topen\tP2\t-\tship the fix"):

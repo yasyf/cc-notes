@@ -57,7 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retry hint once, on the next tool call or prompt; a later successful sync of
   the same repo clears it first. The per-turn dedup and the
   SessionEnd backstop are unchanged. Commit and claim syncs are no longer
-  capped at the nudges' three fires per session.
+  capped at the nudges' three fires per session. After a commit, the
+  background hook writes the `task link` edge onto the task the session holds
+  before it syncs, so the push carries the edge; a failed link surfaces its
+  retry the same way.
 
 ### Fixed
 - **Sync and reconcile act on the repository the command ran in.** The
