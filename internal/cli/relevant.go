@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
@@ -51,12 +52,16 @@ func newRelevantCmd() *cobra.Command {
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient(cmd)
+			dir, err := repoDir(cmd)
+			if err != nil {
+				return err
+			}
+			c, err := notes.Open(dir)
 			if err != nil {
 				return err
 			}
 			if branchFlag != "" {
-				if err := s.Git.CheckRefFormat(ctx, branchFlag); err != nil {
+				if err := (gitcmd.Git{Dir: dir}).CheckRefFormat(ctx, branchFlag); err != nil {
 					return &UsageError{Err: err}
 				}
 			}
