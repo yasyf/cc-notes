@@ -96,6 +96,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both sides, and both hooks query the repo-relative path and skip the call
   entirely for a file outside the repository.
 
+- **A Read surfaces records without a model call.** `float_note_context` sent
+  two or more fresh records to a small-model filter, a synchronous `claude -p`
+  spawn. Once file anchors match, that fires on reads that surface new
+  file-anchored records, and it took 7.6–26.7s per call on a loaded machine. A
+  Read now surfaces the top `RELEVANT_LIMIT` (ten) by rank directly, the set the
+  filter's fail-open path already showed. The edit-time staleness check keeps
+  the filter, where candidates are few.
+
 - **The availability announcement no longer runs `cc-notes version` on every
   prompt.** `announce_cc_notes_available` read the version before checking
   whether the session had already announced, so every later prompt spawned the

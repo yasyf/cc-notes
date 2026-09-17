@@ -117,21 +117,18 @@ def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touche
     },
 )
 def float_note_context(evt: PostToolUseEvent) -> HookResult | None:
-    """Surface the durable records relevant to a freshly read file, once per id per session."""
+    """Surface the top-ranked durable records relevant to a freshly read file, once per id per session, with no model call."""
     if not (path := repo_path(evt)):
         return None
     entries = file_surfaced(evt, run_cc_notes(evt, "relevant", path, "--limit", "0", "--json"))
     fresh = unseen_entries(evt, entries, scope="floated")
     if not fresh:
         return None
-    picked = surface_filter(evt, fresh, touched="read")
-    if not picked:
-        return None
-    remember_surfaced_answers(evt, picked)
+    remember_surfaced_answers(evt, fresh)
     return evt.warn(
         f"You read {evt.file} — durable cc-notes records you should know "
         "(git-synced context, never in the working tree):",
-        *render_note_lines(picked),
+        *render_note_lines(fresh),
     )
 
 

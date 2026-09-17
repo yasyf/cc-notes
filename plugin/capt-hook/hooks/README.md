@@ -40,9 +40,11 @@ shared queue; `cc-notes task start <id>` claims it and pulls it onto your branch
 Every nudge is one shape — **static recall → LLM precision → act** — running in one of
 two directions.
 
-**Surface (pull)** takes a file you just touched, recalls the durable records anchored
-to it, and a small LLM keeps the subset worth your attention. It fails *open*: if the
-model call errors, every recalled record is shown rather than hide context by breaking.
+**Surface (pull)** takes a file you just touched and recalls the durable records anchored
+to it. On a Read the top-ranked records surface directly, with no model call, so a read
+never waits on one. On an edit a small LLM keeps the drift worth acting on. It fails
+*open*: if the model call errors, every recalled record is shown rather than hide context
+by breaking.
 
 **Record (push)** takes a write, a copy, or a commit, recalls a candidate
 over a cheap glob or diff, and a small LLM confirms the content is durable and routes it to
@@ -60,7 +62,7 @@ where the action is fixed.
 
 | Trigger | Recall | The LLM picks |
 |---------|--------|---------------|
-| `Read` a file (PostToolUse) | the notes, docs, logs, runbooks, and investigations `cc-notes relevant <path>` ranks, plus answers once `git config cc-notes.answers.fileSurfacing true` is set (answers are dropped from both file triggers while it is unset or false) | which are worth surfacing now — a lone candidate surfaces directly, two or more are filtered |
+| `Read` a file (PostToolUse) | the notes, docs, logs, runbooks, and investigations `cc-notes relevant <path>` ranks, plus answers once `git config cc-notes.answers.fileSurfacing true` is set (answers are dropped from both file triggers while it is unset or false) | nothing — the top ten by rank surface directly, with no model call |
 | `Edit` / `Write` / `MultiEdit` a file (PostToolUse) | anchored records with a non-null drift verdict (`relevant --attached --worktree`) | which drift actually warrants a `verify` / `edit` / `supersede` / `expire`, named per kind |
 | Session start, first `UserPromptSubmit` (once) | your branch's open/in-progress tasks topped up from the backlog | nothing — rendered straight as orientation, capped at seven with a `+K more` → `cc-notes status` |
 | Session start, first `UserPromptSubmit` (once) | the most recently updated live `scope:durable` answers not yet captured or surfaced this session | nothing — rendered as `<short id> <question> → <answer>`, capped at eight with a `+K more` → `cc-notes answer list --label scope:durable` |
@@ -68,10 +70,10 @@ where the action is fixed.
 | Compaction (`SessionStart`, source `compact`) | the cc-notes entities this session created, edited, or explicitly showed — tracked silently at every cc-notes call, MCP or CLI | nothing — deterministic: eight or fewer restore as full `show` output, more become lean pointer lines (kind · short id · title · how touched), newest first, capped at 30 with a `+N more` → `cc-notes status` |
 | Compaction (`SessionStart`, source `compact`) | the answers this session captured or surfaced | nothing — the `<short id> <question> → <answer>` lines again, the 30 most recent |
 
-Each record is LLM-judged at most once per session: a Read floats it as context once, an
-edit asks about its staleness once, tracked in two separate per-session sets. The filter
-marks every recalled record judged before it picks, so an unpicked one is not re-weighed
-later. The session-start float is deterministic orientation, not a filtered surface.
+Each record surfaces at most once per session per trigger: a Read floats it as context once,
+an edit asks about its staleness once, tracked in two separate per-session sets. The edit
+filter marks every recalled record judged before it picks, so an unpicked one is not
+re-weighed later. The session-start float is deterministic orientation, not a filtered surface.
 
 ### Record — route new durable content to a primitive
 

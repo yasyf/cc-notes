@@ -135,6 +135,7 @@ from hooks.session import (
 from hooks.surface import (
     check_note_staleness,
     float_note_context,
+    RELEVANT_LIMIT,
     surface_filter,
     SurfacePick,
 )
@@ -1727,9 +1728,8 @@ def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
 def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path) -> None:
     """With 2+ drifted records the filter surfaces only the LLM's pick, yet marks ALL drifted judged once/session.
 
-    Mirrors test_float_note_context_multi_filters_but_judges_all for the edit-time path:
-    check_note_staleness drives the same mark-all-before-filter ordering, so it needs its
-    own multi-candidate litmus. The re-edit fires a fail-OPEN LLM stub: if the unpicked
+    check_note_staleness marks every drifted record judged before the filter picks, so it
+    needs its own multi-candidate litmus. The re-edit fires a fail-OPEN LLM stub: if the unpicked
     drf0002bbb were not marked judged on the first pass, it would resurface here, so the
     silent second call is the behavioral proof that ALL drifted ids were marked.
     """
@@ -1744,8 +1744,15 @@ def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path
     mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload}
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["drf0001aaa", "drf0003ccc"])))
+    llm_calls: list[object] = []
+
+    def pick(*a, **k):
+        llm_calls.append(a)
+        return SurfacePick(ids=["drf0001aaa", "drf0003ccc"])
+
+    monkeypatch.setattr(evt.ctx, "call_llm", pick)
     result = check_note_staleness(evt)
+    check("staleness multi: the edit path still calls the model filter once", len(llm_calls) == 1, repr(llm_calls))
     check("staleness multi: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("staleness multi: surfaces picked", "drf0001" in result.message and "drf0003" in result.message, result.message)
@@ -2367,30 +2374,30 @@ def test_surface_filter_fails_open(monkeypatch, tmp_path) -> None:
     check("surface filter: fails open to all candidates", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx", "bbb0002xxx"], repr(kept))
 
 
-def test_float_note_context_multi_filters_but_judges_all(monkeypatch, tmp_path) -> None:
-    """float_note_context surfaces only the LLM's pick, yet marks ALL fresh ids judged once/session.
-
-    The re-read fires a fail-OPEN LLM stub: were the unpicked bbb0002xxx not marked judged on
-    the first pass, it would resurface here, so the silent second call proves all fresh ids
-    were marked before the filter ran.
-    """
+def test_float_note_context_surfaces_top_ranked_without_a_model(monkeypatch, tmp_path) -> None:
+    """A Read with more fresh candidates than RELEVANT_LIMIT surfaces the top-ranked RELEVANT_LIMIT, in rank order, and never calls the model."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    payload = json.dumps(
-        [note_entry("aaa0001xxx", title="Keep"), note_entry("bbb0002xxx", title="Drop"), note_entry("ccc0003xxx", title="Keep2")]
-    )
+    ids = [f"r{i:02d}0000xxx" for i in range(RELEVANT_LIMIT + 3)]
+    payload = json.dumps([note_entry(nid, title=f"Rank {i}") for i, nid in enumerate(ids)])
     mapping = {("relevant", "x.go", "--limit", "0", "--json"): payload}
+    llm_calls: list[object] = []
     evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["aaa0001xxx", "ccc0003xxx"])))
+    monkeypatch.setattr(evt.ctx, "call_llm", lambda *a, **k: llm_calls.append(a))
     result = float_note_context(evt)
-    check("multi float: warns", result is not None and result.action is Action.warn, repr(result))
+    check("top-ranked float: no model call", llm_calls == [], repr(llm_calls))
+    check("top-ranked float: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("multi float: surfaces picked", "aaa0001" in result.message and "ccc0003" in result.message, result.message)
-        check("multi float: drops unpicked", "bbb0002" not in result.message, result.message)
+        shown = [nid[:7] for nid in ids if nid[:7] in result.message]
+        check("top-ranked float: surfaces exactly the top RELEVANT_LIMIT in rank order", shown == [nid[:7] for nid in ids[:RELEVANT_LIMIT]], result.message)
+        check(
+            "top-ranked float: rank order kept",
+            [result.message.index(nid[:7]) for nid in ids[:RELEVANT_LIMIT]] == sorted(result.message.index(nid[:7]) for nid in ids[:RELEVANT_LIMIT]),
+            result.message,
+        )
     evt2 = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
-    monkeypatch.setattr(evt2.ctx, "call_llm", _llm_boom)
-    check("multi float: re-read fully deduped to silence (unpicked bbb0002 was marked)", float_note_context(evt2) is None)
+    check("top-ranked float: re-read deduped to silence", float_note_context(evt2) is None)
 
 
 COMMIT_DIFF = (
