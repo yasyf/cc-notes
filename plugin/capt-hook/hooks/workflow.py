@@ -1,10 +1,11 @@
-"""Commit/claim/merge workflow nudges with auto-sync and auto-reconcile side-effects."""
+"""Commit/claim/merge workflow nudges, with auto-sync and auto-reconcile run in the background."""
 
 from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
+from collections.abc import Callable
+from typing import NamedTuple
 
 from captain_hook import (
     Allow,
@@ -36,6 +37,7 @@ from .common import (
     ids_match,
     mcp_active,
     record_command,
+    repo_root,
     run_cc_notes,
 )
 
@@ -46,6 +48,41 @@ DRY_RUN_FLAGS = frozenset({"--dry-run"})
 PUSH_DRY_RUN_FLAGS = DRY_RUN_FLAGS | {"-n"}
 HELP_FLAGS = frozenset({"--help", "-h"})
 _NULLIFYING_FLAGS = HELP_FLAGS | DRY_RUN_FLAGS
+
+# The options that point a command at another repository. git only takes `-C` before its subcommand
+# (`git commit -C <rev>` reuses a message), so its scan stops at the first other token; jj and
+# cc-notes accept theirs anywhere.
+REPO_OPTIONS: dict[str, frozenset[str]] = {
+    "git": frozenset({"-C"}),
+    "jj": frozenset({"-R", "--repository"}),
+    "cc-notes": frozenset({"-R", "--repo"}),
+    "ccn": frozenset({"-R", "--repo"}),
+}
+
+
+def repo_argv(cmd: Command) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The leg's argv with its repository options removed, and the directories those options named, in order."""
+    argv = cmd.argv
+    if not argv or (options := REPO_OPTIONS.get(argv[0])) is None:
+        return argv, ()
+    rest: list[str] = [argv[0]]
+    dirs: list[str] = []
+    i = 1
+    while i < len(argv):
+        name, eq, value = argv[i].partition("=")
+        if argv[i] in options and i + 1 < len(argv):
+            dirs.append(argv[i + 1])
+            i += 2
+        elif eq and name.startswith("--") and name in options:
+            dirs.append(value)
+            i += 1
+        elif argv[0] == "git":
+            rest.extend(argv[i:])
+            break
+        else:
+            rest.append(argv[i])
+            i += 1
+    return tuple(rest), tuple(dirs)
 
 
 class CommandFamily(CustomCondition):
@@ -64,10 +101,10 @@ class CommandFamily(CustomCondition):
 
     def check(self, evt: BaseHookEvent) -> bool:
         line = evt.cmd.line
-        return bool(line) and any(self._fires(cmd) for cmd in line.commands)
+        return bool(line) and any(self.fires(cmd) for cmd in line.commands)
 
-    def _fires(self, cmd: Command) -> bool:
-        argv = cmd.argv
+    def fires(self, cmd: Command) -> bool:
+        argv, _dirs = repo_argv(cmd)
         return any(argv[: len(p)] == p for p in self.prefixes) and self.exclude.isdisjoint(argv)
 
 
@@ -101,6 +138,7 @@ CC_NOTES_WRITE_VERBS: dict[str, frozenset[str]] = {
     "project": frozenset({"add", "edit", "comment", "complete", "cancel", "archive"}),
     "sprint": frozenset({"add", "edit", "comment", "complete", "cancel", "activate"}),
     "runbook": frozenset({"add", "edit", "comment", "activate", "archive"}),
+    "ledger": frozenset({"add", "edit", "rm", "comment", "activate", "archive", "sync"}),
     # investigation `add` is the `open` alias; `root-cause` keeps its argv hyphen.
     "investigation": frozenset(
         {"open", "add", "append", "root-cause", "fix", "confirm", "exonerate", "abandon", "reopen", "edit", "rm"}
@@ -117,6 +155,7 @@ CC_NOTES_WRITE_SUBGROUP_READS: dict[tuple[str, str], frozenset[str]] = {
     ("task", "criterion"): frozenset({"list"}),
     ("runbook", "step"): frozenset({"list"}),
     ("runbook", "run"): frozenset({"list", "show"}),
+    ("ledger", "row"): frozenset({"list"}),
     ("investigation", "finding"): frozenset({"list"}),
 }
 
@@ -143,6 +182,7 @@ MCP_READ_TOOLS = frozenset(
         "runbook_list", "runbook_show",
         "investigation_list", "investigation_show", "investigation_search", "investigation_finding_list",
         "plan_list", "plan_show", "plan_search",
+        "ledger_list", "ledger_show", "ledger_search", "ledger_row_list",
         "papercut_list",
         "status", "blame", "history", "relevant", "attachment_get", "attachment_path", "sync",
     }
@@ -166,17 +206,18 @@ def is_cc_notes_write(cmd: Command) -> bool:
     # A parsed cc-notes / `ccn` leg that mutates state: a bare-noun write (`reconcile`, `papercut TEXT`),
     # a (noun, verb) in the write table, or a subgroup sub that isn't a read. A help or dry-run leg
     # writes nothing.
-    if cmd.program not in ("cc-notes", "ccn") or not cmd.args:
+    args = repo_argv(cmd)[0][1:]
+    if cmd.program not in ("cc-notes", "ccn") or not args:
         return False
-    if not _NULLIFYING_FLAGS.isdisjoint(cmd.args):
+    if not _NULLIFYING_FLAGS.isdisjoint(args):
         return False
-    noun = cmd.args[0]
-    verb = cmd.args[1] if len(cmd.args) > 1 else ""
+    noun = args[0]
+    verb = args[1] if len(args) > 1 else ""
     if (bare_reads := CC_NOTES_BARE_NOUN_READS.get(noun)) is not None:
         # Resolve the verb flags-first (cobra allows `papercut --json list`), not positionally.
-        return _first_non_flag(cmd.args[1:]) not in bare_reads
+        return _first_non_flag(args[1:]) not in bare_reads
     if (reads := CC_NOTES_WRITE_SUBGROUP_READS.get((noun, verb))) is not None:
-        sub = cmd.args[2] if len(cmd.args) > 2 else ""
+        sub = args[2] if len(args) > 2 else ""
         return bool(sub) and sub not in reads
     return verb in CC_NOTES_WRITE_VERBS.get(noun, frozenset())
 
@@ -269,48 +310,61 @@ def run_sync(evt: BaseHookEvent, *, remote: str | None = None, cwd: str | None =
     return True
 
 
-def do_sync(evt: BaseHookEvent) -> str | None:
-    # Sync the session repo to every cc-notes-wired remote (bare when none is wired). Success confirms
-    # with the byte-identical `Synced cc-notes refs.`; a genuine failure surfaces so the agent retries,
-    # naming the failed remote(s) under a multi-remote fan-out (a partial failure prefers the warn).
+class SyncOutcome(NamedTuple):
+    remote: str
+    synced: bool
+    failure: str | None
+
+
+def do_sync(evt: BaseHookEvent) -> list[SyncOutcome]:
+    # Sync the session repo to every cc-notes-wired remote (bare when none is wired), one outcome per remote.
+    # A genuine failure names its own retry: a bare `cc-notes sync` on an older binary derives origin and may
+    # never re-attempt the failed remote, so each failed remote gets its own `--remote <name>`.
     remotes = wired_remotes(evt)
     if not remotes:
         ok = run_sync(evt)
-        if ok is True:
-            return "Synced cc-notes refs."
-        return "cc-notes sync failed — run `cc-notes sync` to retry." if ok is False else None
-    results = {r: run_sync(evt, remote=r) for r in remotes}
-    if failed := [r for r, ok in results.items() if ok is False]:
-        # Name the exact per-remote retry: a bare `cc-notes sync` on an older binary derives origin and
-        # may never re-attempt the failed remote, so each failed remote gets its own `--remote <name>`.
-        retries = ", ".join(f"`cc-notes sync --remote {r}`" for r in failed)
-        return f"cc-notes sync failed for {', '.join(failed)} — run {retries} to retry."
-    return "Synced cc-notes refs." if any(ok is True for ok in results.values()) else None
+        return [SyncOutcome("", ok is True, "cc-notes sync failed — run `cc-notes sync` to retry." if ok is False else None)]
+    outcomes = []
+    for r in remotes:
+        ok = run_sync(evt, remote=r)
+        outcomes.append(SyncOutcome(r, ok is True, f"cc-notes sync failed for {r} — run `cc-notes sync --remote {r}` to retry." if ok is False else None))
+    return outcomes
 
 
-def cross_sync(evt: BaseHookEvent, cwd: str) -> str | None:
+def cross_sync(evt: BaseHookEvent, cwd: str) -> list[SyncOutcome]:
     # A cc-notes write in a foreign repo (a resolved `cd` target) syncs THAT repo, bare — its own remote
-    # derivation applies, never the session repo's wired remotes. Confirms/fails naming the directory.
+    # derivation applies, never the session repo's wired remotes. A failure names the directory.
     ok = run_sync(evt, cwd=cwd)
-    if ok is True:
-        return f"Synced cc-notes refs in {cwd}."
-    return f"cc-notes sync failed in {cwd} — run `cc-notes sync` there to retry." if ok is False else None
+    return [SyncOutcome("", ok is True, f"cc-notes sync failed in {cwd} — run `cc-notes sync` there to retry." if ok is False else None)]
 
 
-def auto_sync(evt: PostToolUseEvent) -> str | None:
-    return do_sync(evt) if should_autosync(evt) else None
+def auto_sync(evt: PostToolUseEvent) -> list[SyncOutcome]:
+    return do_sync(evt) if should_autosync(evt) else []
 
 
-def _apply_cd(cwd: str | None, cmd: Command) -> str | None:
-    # A literal `cd` leg's new working directory. A leading `--` (end-of-options) is dropped first, so
-    # `cd -- /x` resolves to /x and a lone `cd --` stays unresolvable. Only an exactly-one-arg literal
-    # path resolves: `cd -`, a `$var`, a `~` expansion, or a backtick substitution is unresolvable
-    # (None); an absolute path replaces the walk (recovering a previously-lost one); a relative path
-    # joins the running cwd, or is unresolvable when there is no base to join onto.
-    args = cmd.args[1:] if cmd.args and cmd.args[0] == "--" else cmd.args
-    if len(args) != 1:
-        return None
-    arg = args[0]
+class SyncFailures(BaseModel):
+    by_target: dict[str, str] = Field(default_factory=dict)
+
+
+def record_sync(evt: BaseHookEvent, target: str, outcomes: list[SyncOutcome]) -> None:
+    # Pending warnings are kept per target repo and remote: a failure replaces that remote's warning, a
+    # success clears only that remote's, and a benign outcome (no remote, a timeout) leaves it standing.
+    pending = evt.ctx.s.load(SyncFailures).by_target
+    changes = [(f"{target}#{o.remote}", o) for o in outcomes if o.failure or (o.synced and f"{target}#{o.remote}" in pending)]
+    if not changes:
+        return
+    with evt.ctx.s[SyncFailures].mutate() as state:
+        for key, outcome in changes:
+            if outcome.failure:
+                state.by_target[key] = outcome.failure
+            else:
+                state.by_target.pop(key, None)
+
+
+def _resolve_dir(cwd: str | None, arg: str) -> str | None:
+    # A literal directory argument against the running cwd: `-`, a `$var`, a `~` expansion, or a backtick
+    # substitution is unresolvable (None); an absolute path replaces the walk (recovering a previously-lost
+    # one); a relative path joins the running cwd, or is unresolvable when there is no base to join onto.
     if arg == "-" or arg.startswith("~") or "$" in arg or "`" in arg:
         return None
     if os.path.isabs(arg):
@@ -318,32 +372,91 @@ def _apply_cd(cwd: str | None, cmd: Command) -> str | None:
     return os.path.normpath(os.path.join(cwd, arg)) if cwd is not None else None
 
 
-def write_targets(line: CommandLine, base: str | None) -> list[str | None]:
-    # One entry per cc-notes write leg: the directory that leg runs in (None when unresolvable). A single
-    # pass tracks a running cwd from `base`, advanced by each literal `cd`. pushd, subshells, and pipeline
-    # grouping are ignored — a documented structural approximation, never regex.
+def _apply_cd(cwd: str | None, cmd: Command) -> str | None:
+    # A literal `cd` leg's new working directory. A leading `--` (end-of-options) is dropped first, so
+    # `cd -- /x` resolves to /x and a lone `cd --` stays unresolvable. Only an exactly-one-arg path resolves.
+    args = cmd.args[1:] if cmd.args and cmd.args[0] == "--" else cmd.args
+    return _resolve_dir(cwd, args[0]) if len(args) == 1 else None
+
+
+def leg_dirs(line: CommandLine, base: str | None, matches: Callable[[Command], bool]) -> list[str | None]:
+    # One entry per matching leg: the directory it runs against (None when unresolvable). A single pass
+    # tracks a running cwd from `base`, advanced by each literal `cd`, then applies the leg's own repository
+    # options (`git -C`, `jj -R`, `cc-notes -R`). pushd, subshells, and pipeline grouping are ignored — a
+    # documented structural approximation, never regex.
     cwd = base
     targets: list[str | None] = []
     for cmd in line.commands:
         if cmd.executable == "cd":
             cwd = _apply_cd(cwd, cmd)
-        elif is_cc_notes_write(cmd):
-            targets.append(cwd)
+        elif matches(cmd):
+            target = cwd
+            for arg in repo_argv(cmd)[1]:
+                target = _resolve_dir(target, arg)
+            targets.append(target)
     return targets
 
 
-def auto_reconcile(evt: PostToolUseEvent) -> str | None:
-    # Reconcile is local + idempotent (run_cc_notes is fail-closed). A detached HEAD (the colocated-jj
-    # norm, exactly the state `jj git fetch` targets) or a fail-closed reconcile can't carry tasks onto a
-    # branch, so it falls back to a plain auto_sync — the fetched refs still ship. On success the sync
-    # rides the same per-turn token as every other trigger (via auto_sync), so a commit-then-merge turn
-    # syncs once; the reconcile still ran, and do_sync's own line (success confirm or fail-closed retry
-    # warn) rides along, so a failed push is never swallowed as "synced".
+def write_targets(line: CommandLine, base: str | None) -> list[str | None]:
+    return leg_dirs(line, base, is_cc_notes_write)
+
+
+def target_repos(evt: PostToolUseEvent, matches: Callable[[Command], bool]) -> list[str]:
+    # The repositories the matching legs ran against, deduped in order. A leg whose directory is unresolvable
+    # or missing (a failed `cd`) ran in the event's cwd. A tool call with no command line (an MCP write)
+    # targets the event's cwd. Nothing outside a git repository is a target, found by stat alone.
+    base = str(evt.cwd) if evt.cwd else resolve_project_dir()
+    line = evt.cmd.line
+    dirs = leg_dirs(line, base, matches) if line else [base]
+    roots: list[str] = []
+    for target in dirs:
+        start = target if target is not None and os.path.isdir(target) else base
+        if start is not None and (root := repo_root(start)) is not None and root not in roots:
+            roots.append(root)
+    return roots
+
+
+def cc_notes_repo(evt: BaseHookEvent, root: str) -> bool:
+    try:
+        out = evt.ctx.git("-C", root, "for-each-ref", "--count=1", "--format=%(refname)", "refs/cc-notes/")
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(out and out.strip())
+
+
+def session_root() -> str | None:
+    base = resolve_project_dir()
+    return repo_root(base) if base is not None else None
+
+
+def sync_targets(evt: PostToolUseEvent, matches: Callable[[Command], bool], *, reconcile: bool = False) -> None:
+    # Sync every cc-notes repository the command touched, and nothing else. The session repo syncs through
+    # the session's own wired remotes; any other repo syncs bare in its own directory. Each target claims
+    # its own per-turn slot and keeps its own pending failure.
+    session = session_root()
+    for root in target_repos(evt, matches):
+        if not cc_notes_repo(evt, root):
+            continue
+        if root == session:
+            record_sync(evt, "", auto_reconcile(evt) if reconcile else auto_sync(evt))
+            continue
+        if reconcile:
+            branch = (evt.ctx.git("-C", root, "rev-parse", "--abbrev-ref", "HEAD") or "").strip()
+            if branch and branch != "HEAD":
+                run_cc_notes(evt, "-R", root, "reconcile", "--into", branch)
+        if should_autosync(evt, target=root):
+            record_sync(evt, root, cross_sync(evt, root))
+
+
+def auto_reconcile(evt: PostToolUseEvent) -> list[SyncOutcome]:
+    # Reconcile is local + idempotent (run_cc_notes is fail-closed) and runs before the sync so the
+    # carried tasks ship with it. A detached HEAD (the colocated-jj norm, exactly the state `jj git fetch`
+    # targets) has no branch to reconcile onto, so only the fetched refs ship. The sync rides the shared
+    # per-turn token, so a commit-then-merge turn syncs once.
     branch = (evt.ctx.git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
-    if not branch or branch == "HEAD" or run_cc_notes(evt, "reconcile", "--into", branch) is None:
-        return auto_sync(evt)
-    reconciled = f"Reconciled merged tasks onto {branch}."
-    return f"{reconciled} {synced}" if (synced := auto_sync(evt)) else reconciled
+    if branch and branch != "HEAD":
+        run_cc_notes(evt, "reconcile", "--into", branch)
+    return auto_sync(evt)
 
 
 TASK_MCP_PREFIX = MCP_TOOL_PREFIX + "task_"
@@ -426,20 +539,45 @@ def record_task_claims(evt: PostToolUseEvent) -> HookResult | None:
     return None
 
 
+def held_task(evt: BaseHookEvent) -> str | None:
+    """The one task this session holds a lease on, or None when it holds none or several."""
+    held = evt.ctx.s.load(ClaimedTasks).ids
+    return held[0] if len(held) == 1 else None
+
+
+def commits_to_session_repo(evt: PostToolUseEvent) -> bool:
+    return (session := session_root()) is not None and session in target_repos(evt, COMMIT_COMMANDS.fires)
+
+
 def link_claimed_task(evt: PostToolUseEvent, *, mcp: bool) -> list[str]:
-    """Attribute the commit just landed to the one task this session holds, as a `task link` edge."""
+    """The line announcing the `task link` edge the background sync writes for the one task this session holds."""
     try:
-        held = evt.ctx.s.load(ClaimedTasks).ids
-        if len(held) != 1:
+        if not commits_to_session_repo(evt) or (task := held_task(evt)) is None:
             return []
-        if run_cc_notes(evt, "task", "link", held[0], "HEAD") is None:
-            return []
-        undo = f"the task_unlink tool with id={held[0]}" if mcp else f"`cc-notes task unlink {held[0]}`"
-        return [f"Linked this commit onto task {held[0]}, the one you hold — undo with {undo}."]
     except Exception:
-        # Fail closed on everything — an unreadable session slot, a cc-notes error, a missing binary,
-        # a timeout. A missing edge costs a graph hop; a raised hook costs the agent a landed commit.
+        # Fail closed on an unreadable session slot: a raised hook costs the agent a landed commit.
         return []
+    undo = f"the task_unlink tool with id={task}" if mcp else f"`cc-notes task unlink {task}`"
+    return [f"Linking this commit onto task {task}, the one you hold, before it syncs — undo with {undo}."]
+
+
+def link_commit(evt: PostToolUseEvent) -> None:
+    # Runs ahead of the sync in the same background hook, so the pushed refs carry the edge. Each HEAD
+    # links once; a failed write queues its retry like a failed sync.
+    try:
+        if (task := held_task(evt)) is None:
+            return
+        sha = (evt.ctx.git("rev-parse", "HEAD") or "").strip()
+    except Exception:
+        return
+    if sha and not evt.ctx.s.once(sha, scope="commit-link"):
+        return
+    try:
+        linked = run_cc_notes(evt, "task", "link", task, "HEAD") is not None
+    except Exception:
+        linked = False
+    if not linked:
+        record_sync(evt, f"link:{sha}", [SyncOutcome("", False, f"cc-notes could not link commit {sha[:7] or 'HEAD'} onto task {task} — run `cc-notes task link {task} {sha or 'HEAD'}` to retry.")])
 
 
 COMMIT_DECISION_SYSTEM = (
@@ -495,7 +633,7 @@ def commit_decision(evt: PostToolUseEvent) -> list[str]:
     },
 )
 def nudge_commit_record(evt: PostToolUseEvent) -> HookResult | None:
-    """After a commit, remind to link to its task, route any durable decision, and sync the new refs."""
+    """After a commit, remind to link to its task and route any durable decision."""
     # Per-HEAD-sha dedup BEFORE any side-effect: each commit is judged once, an amend
     # (new sha) gets a fresh look, a sha-less git failure still fires the reminder.
     try:
@@ -519,7 +657,6 @@ def nudge_commit_record(evt: PostToolUseEvent) -> HookResult | None:
         trailer,
         *link_claimed_task(evt, mcp=mcp),
         *commit_decision(evt),
-        *([line] if (line := auto_sync(evt)) else []),
     )
 
 
@@ -529,15 +666,16 @@ def nudge_commit_record(evt: PostToolUseEvent) -> HookResult | None:
     # Uncapped like every other pure side-effect: reconcile+sync must run after every merge/fetch,
     # not just the first three of a session. The per-turn token still bounds the sync itself.
     max_fires=None,
+    async_=True,
     tests={
         Input(command="git status"): Allow(),
         Input(command="git log --no-merges"): Allow(),
         Input(command="jj git remote list"): Allow(),
     },
 )
-def reconcile_after_merge(evt: PostToolUseEvent) -> HookResult | None:
-    """After a merge/pull, carry the merged branch's open tasks onto this branch and sync."""
-    return evt.warn(line) if (line := auto_reconcile(evt)) else None
+def reconcile_after_merge(evt: PostToolUseEvent) -> None:
+    """After a merge/pull/fetch, carry the merged branch's open tasks onto the branch of the repo it ran in, and sync that repo, in the background."""
+    sync_targets(evt, FETCH_MERGE_COMMANDS.fires, reconcile=True)
 
 
 @on(
@@ -551,7 +689,7 @@ def reconcile_after_merge(evt: PostToolUseEvent) -> HookResult | None:
     },
 )
 def nudge_claim(evt: PostToolUseEvent) -> HookResult | None:
-    """After claiming/starting a task, teach lease upkeep and sync the new claim."""
+    """After claiming/starting a task, teach lease upkeep."""
     if mcp_active(evt):
         lease = (
             "You hold a lease now. Call the task_renew tool on long silent stretches, and the "
@@ -564,16 +702,14 @@ def nudge_claim(evt: PostToolUseEvent) -> HookResult | None:
             "`cc-notes task done <id>` when finished. A crashed hold whose lease expired is "
             "reclaimable with `cc-notes task claim <id> --steal`."
         )
-    return evt.warn(
-        lease,
-        *([line] if (line := auto_sync(evt)) else []),
-    )
+    return evt.warn(lease)
 
 
 @on(
     Event.PostToolUse,
-    only_if=[PUSH_COMMANDS, CcNotesAvailable()],
+    only_if=[Or(COMMIT_COMMANDS, CLAIM_COMMANDS, PUSH_COMMANDS), CcNotesAvailable()],
     max_fires=None,
+    async_=True,
     tests={
         Input(command="git status"): Allow(),
         Input(command="git log --grep 'git push'"): Allow(),
@@ -581,17 +717,26 @@ def nudge_claim(evt: PostToolUseEvent) -> HookResult | None:
         Input(command="jj rebase -d main"): Allow(),
         Input(command="git push --dry-run"): Allow(),
         Input(command="git push -n"): Allow(),
+        Input(command="git commit --dry-run"): Allow(),
+        Input(command="cc-notes task claim abc --help"): Allow(),
     },
 )
-def sync_after_push(evt: PostToolUseEvent) -> HookResult | None:
-    """After a git/jj push — which moves only refs/heads/* — sync cc-notes refs and attachment content."""
-    return evt.warn(line) if (line := auto_sync(evt)) else None
+def sync_after_ref_move(evt: PostToolUseEvent) -> None:
+    """After a commit, a task claim, or a git/jj push (which moves only refs/heads/*), sync the cc-notes refs of the repo it ran in, in the background.
+
+    A commit to the session repo first writes the `task link` edge onto the one task the session holds,
+    so the sync that follows carries it.
+    """
+    if commits_to_session_repo(evt):
+        link_commit(evt)
+    sync_targets(evt, lambda cmd: COMMIT_COMMANDS.fires(cmd) or CLAIM_COMMANDS.fires(cmd) or PUSH_COMMANDS.fires(cmd))
 
 
 @on(
     Event.PostToolUse,
     only_if=[Or(CcNotesCliWrite(), CcNotesMcpWrite()), CcNotesAvailable()],
     max_fires=None,
+    async_=True,
     tests={
         Input(command="cc-notes note list --json"): Allow(),
         Input(command="cc-notes task criterion list abc"): Allow(),
@@ -610,42 +755,31 @@ def sync_after_push(evt: PostToolUseEvent) -> HookResult | None:
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
-def sync_after_record_write(evt: PostToolUseEvent) -> HookResult | None:
-    """After a cc-notes write (CLI subcommand or MCP tool), sync so the new refs reach the remote.
+def sync_after_record_write(evt: PostToolUseEvent) -> None:
+    """After a cc-notes write (CLI subcommand or MCP tool), sync the repo it wrote in the background so the new refs reach the remote.
 
-    An MCP write always targets the session repo. A Bash write leg runs wherever its ``cd`` prefix
-    lands: a target inside the session repo (the repo itself, or an unresolvable one) syncs the session
-    repo; a foreign target syncs THAT repo directly, named in the confirmation.
+    An MCP write targets the event's working repo. A Bash write leg runs wherever its ``cd`` prefix and
+    ``-R`` option land; the session repo syncs through its wired remotes, any other repo syncs directly,
+    named in any failure.
     """
-    line = evt.cmd.line
-    if not line:
-        return evt.warn(msg) if (msg := auto_sync(evt)) else None
-    base = resolve_project_dir()
-    base_real = os.path.realpath(base) if base is not None else None
-    lines: list[str] = []
-    seen: set[str] = set()
-    for target in write_targets(line, base):
-        real = os.path.realpath(target) if target is not None else None
-        # An unresolvable target syncs the session repo; a target inside a known session base does too.
-        # Otherwise the write landed elsewhere (base unknown, or resolved outside the session repo) — a
-        # cross sync, but only when the resolved path is a real directory. A resolved-but-missing dir
-        # (a failed `cd /missing`, whose write actually ran in the session repo) falls back to session.
-        if real is None:
-            session = True
-        elif base_real is not None and (real == base_real or Path(real).is_relative_to(base_real)):
-            session = True
-        else:
-            session = not os.path.isdir(real)
-        key = "" if session else real
-        if key in seen:
-            continue
-        seen.add(key)
-        if session:
-            if msg := auto_sync(evt):
-                lines.append(msg)
-        elif should_autosync(evt, target=key) and (msg := cross_sync(evt, target)):
-            lines.append(msg)
-    return evt.warn(*lines) if lines else None
+    sync_targets(evt, is_cc_notes_write)
+
+
+@on(
+    Event.PostToolUse | Event.PostToolUseFailure | Event.UserPromptSubmit,
+    max_fires=None,
+    tests={
+        Input(command="git status"): Allow(),
+        Input(prompt="keep going"): Allow(),
+    },
+)
+def surface_sync_failures(evt: BaseHookEvent) -> HookResult | None:
+    """Surface, once, each background sync failure recorded since the last event."""
+    if not evt.ctx.s.load(SyncFailures).by_target:
+        return None
+    with evt.ctx.s[SyncFailures].mutate() as state:
+        failed, state.by_target = list(state.by_target.values()), {}
+    return evt.warn(*failed) if failed else None
 
 
 def cc_notes_refs_dirty(evt: BaseHookEvent) -> bool:
@@ -683,7 +817,7 @@ def cc_notes_refs_dirty(evt: BaseHookEvent) -> bool:
 def sync_at_session_end(evt: SessionEndEvent) -> None:
     """SessionEnd backstop: push cc-notes refs a write-only session never synced, when local diverges from tracking."""
     if cc_notes_refs_dirty(evt):
-        do_sync(evt)  # output ignored by the harness; do_sync's silent-vs-warn taxonomy is already correct
+        do_sync(evt)
 
 
 @on(

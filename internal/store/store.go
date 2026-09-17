@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -113,7 +114,13 @@ type Store struct {
 	// cache is the local, tip-keyed fold accelerator. It lives outside
 	// refs/cc-notes/* and is never pushed.
 	cache     *foldCache
+	relevant  *lruDir
+	gitDir    string
 	commonDir string
+
+	rootOnce sync.Once
+	root     string
+	rootErr  error
 }
 
 // Open opens the git repository containing dir, following worktree and
@@ -143,12 +150,24 @@ func OpenContext(ctx context.Context, dir string) (*Store, error) {
 		Git:       git,
 		now:       time.Now,
 		cache:     newFoldCache(filepath.Join(commonDir, foldCacheSubdir), foldCacheCap),
+		relevant:  &lruDir{capacity: relevantCacheCap, dir: filepath.Join(commonDir, relevantCacheSubdir)},
+		gitDir:    gitDir,
 		commonDir: commonDir,
 	}, nil
 }
 
 // CommonDir returns the repository's absolute shared git directory.
 func (s *Store) CommonDir() string { return s.commonDir }
+
+// GitDir returns the absolute per-worktree git directory, the one holding this
+// worktree's HEAD.
+func (s *Store) GitDir() string { return s.gitDir }
+
+// Root returns the absolute worktree root, resolved once per store.
+func (s *Store) Root(ctx context.Context) (string, error) {
+	s.rootOnce.Do(func() { s.root, s.rootErr = s.Git.Root(ctx) })
+	return s.root, s.rootErr
+}
 
 func (s *Store) signature(ctx context.Context) (gitobj.Signature, model.Actor, error) {
 	name, email, err := s.actor(ctx)

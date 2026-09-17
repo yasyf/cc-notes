@@ -272,18 +272,17 @@ func (g Git) MergeBase(ctx context.Context, a, b string) (model.SHA, error) {
 // of each record as the email and the remaining non-empty lines as paths
 // avoids the brittle interleaving of -z with --name-only.
 func (g Git) RevRangeFileAuthors(ctx context.Context, base, head string) (map[string][]string, error) {
-	out, err := g.run(ctx, "", "log", base+".."+head, "--no-merges", "--no-renames", "--name-only", "--pretty=format:%x00%ae")
+	out, err := g.run(ctx, "", "log", "-z", base+".."+head, "--no-merges", "--no-renames", "--name-only", "--pretty=format:%x01%ae")
 	if err != nil {
 		return nil, fmt.Errorf("rev range file authors %s..%s: %w", base, head, err)
 	}
 	sets := make(map[string]map[string]struct{})
-	for _, record := range strings.Split(out, "\x00") {
-		lines := strings.Split(record, "\n")
-		if len(lines) == 0 || lines[0] == "" {
+	for _, record := range strings.Split(out, "\x01") {
+		email, names, _ := strings.Cut(record, "\n")
+		if email == "" {
 			continue
 		}
-		email := lines[0]
-		for _, path := range lines[1:] {
+		for _, path := range strings.Split(names, "\x00") {
 			if path == "" {
 				continue
 			}
@@ -633,6 +632,17 @@ func (g Git) RemoteURL(ctx context.Context, remote string) (string, error) {
 		return "", fmt.Errorf("remote url %s: %w", remote, err)
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// VarList returns `git var -l`: git's logical variables (the author and
+// committer identities, the resolved config and attribute file locations)
+// followed by the effective configuration from every scope, includes resolved.
+func (g Git) VarList(ctx context.Context) (string, error) {
+	out, err := g.run(ctx, "", "var", "-l")
+	if err != nil {
+		return "", fmt.Errorf("git var: %w", err)
+	}
+	return out, nil
 }
 
 // Root returns the absolute path of the worktree root.

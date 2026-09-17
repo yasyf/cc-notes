@@ -1,6 +1,7 @@
 package notes_test
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 
@@ -351,5 +352,43 @@ func TestStatusReviewCounts(t *testing.T) {
 	}
 	if rep.Logs != 1 {
 		t.Errorf("Logs = %d, want 1", rep.Logs)
+	}
+}
+
+func TestTaskStatusMatchesStatusBuckets(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	t.Setenv("CC_NOTES_LEASE_TTL", "1ns")
+
+	blocker := mustTask(t, c, notes.TaskSpec{Title: "blocker", Backlog: true, Priority: 1})
+	blocked := mustTask(t, c, notes.TaskSpec{Title: "blocked", Backlog: true, Priority: 0})
+	if _, err := c.AddDep(ctx, blocked.ID, blocker.ID); err != nil {
+		t.Fatalf("AddDep: %v", err)
+	}
+	mustTask(t, c, notes.TaskSpec{Title: "main-open", Branch: "main"})
+	mustTask(t, c, notes.TaskSpec{Title: "feature", Branch: "feature/x"})
+	held := mustTask(t, c, notes.TaskSpec{Title: "held", Branch: "feature/x"})
+	if _, err := c.ClaimTask(ctx, held.ID); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	makeNote(t, c, "a note with a review verdict", notes.AnchorSpec{Paths: []string{"missing.go"}})
+
+	full := mustStatus(t, c)
+	tasks, err := c.TaskStatus(ctx)
+	if err != nil {
+		t.Fatalf("TaskStatus: %v", err)
+	}
+	if tasks.Branch != full.Branch {
+		t.Errorf("Branch = %q, want %q", tasks.Branch, full.Branch)
+	}
+	if !reflect.DeepEqual(tasks.Backlog, full.Backlog) || !reflect.DeepEqual(tasks.YourBranch, full.YourBranch) || !reflect.DeepEqual(tasks.InProgress, full.InProgress) {
+		t.Errorf("task buckets differ\ntasks %+v\nfull  %+v", tasks, full)
+	}
+	if len(tasks.InProgress) == 0 || !tasks.InProgress[0].Tasks[0].Stale {
+		t.Errorf("InProgress = %+v, want the held task with a stale lease", tasks.InProgress)
+	}
+	if tasks.Notes != (notes.SummaryCount{}) || tasks.Runs != nil {
+		t.Errorf("TaskStatus filled record counts: notes %+v runs %+v", tasks.Notes, tasks.Runs)
 	}
 }

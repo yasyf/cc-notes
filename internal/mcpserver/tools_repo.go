@@ -14,7 +14,9 @@ import (
 // result text — the inline binary the tool promises never to return.
 var errEmptyOutput = errors.New("a destination file path is required; without one the CLI streams the attachment to stdout and the bytes would come back inline")
 
-type statusArgs struct{}
+type statusArgs struct {
+	Tasks bool `json:"tasks,omitempty" jsonschema:"report only the task buckets (backlog, your branch, in-progress leases), skipping the record counts and their drift review"`
+}
 
 type relevantArgs struct {
 	Path     string `json:"path" jsonschema:"repository path to weigh notes, docs, logs, runbooks, and investigations against"`
@@ -71,8 +73,8 @@ type attachmentGetArgs struct {
 
 func registerRepo(ts *toolset, b *bridge) {
 	addTool(ts, &mcp.Tool{Name: "status", Description: "Orient on the backlog: tasks in flight, who holds what, and notes and docs needing attention. Tasks come back as summaries; task_show reads one back in full."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ statusArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, "status", "--json")
+		func(ctx context.Context, _ *mcp.CallToolRequest, in statusArgs) (*mcp.CallToolResult, any, error) {
+			return b.run(ctx, optBool([]string{"status", "--json"}, "--tasks", in.Tasks)...)
 		})
 
 	addTool(ts, &mcp.Tool{Name: "relevant", Description: "Surface the notes, docs, logs, runbooks, and investigations anchored to a repository path — run before editing unfamiliar code. Each hit is a summary under its kind key; that kind's show tool (note_show, doc_show, log_show, runbook_show, investigation_show) reads one back in full."},

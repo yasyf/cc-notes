@@ -41,6 +41,7 @@ from .common import (
     json_field,
     mcp_active,
     record_command,
+    repo_root,
     run_cc_notes,
     short_id,
     tool_output,
@@ -422,8 +423,7 @@ def in_git_worktree(path: str) -> bool:
     # (a worktree/submodule `.git` is a file); a not-yet-created dest just contributes a
     # miss and the walk continues to its nearest existing ancestor. os.path stat walk only,
     # no subprocess — `~` is expanded so `~/Downloads` resolves to the real home path.
-    resolved = Path(path).expanduser().resolve()
-    return any((d / ".git").exists() for d in (resolved, *resolved.parents))
+    return repo_root(path) is not None
 
 
 def transfer_operands(cmd: Command) -> list[str]:

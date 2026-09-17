@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -146,44 +148,64 @@ type scoredNote struct {
 // filter.Worktree threads through to each entity's verdict. A log, runbook,
 // investigation, or plan never drifts, so its verdict is empty.
 func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFilter) ([]RelevantEntry, error) {
-	p := path.Clean(target)
+	scored, clock, err := c.relevantScored(ctx, target, filter)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.relevantVerdicts(ctx, scored, clock, filter.Worktree); err != nil {
+		return nil, err
+	}
+	return scored, nil
+}
+
+type relevantClock struct {
+	head       model.SHA
+	now        time.Time
+	staleAfter time.Duration
+}
+
+func (c *Client) relevantScored(ctx context.Context, target string, filter RelevantFilter) ([]RelevantEntry, relevantClock, error) {
+	p, err := c.relevantPath(ctx, target)
+	if err != nil {
+		return nil, relevantClock{}, err
+	}
 
 	branch, err := c.resolveRelevantBranch(ctx, filter.Branch)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	head, err := c.head(ctx)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	_, me, err := c.s.Git.AuthorIdent(ctx)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	crossAuthorPaths, err := c.crossAuthorSet(ctx, filter.Base, head, me)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	staleAfter, err := c.NoteStaleAfter(ctx)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	now := time.Now()
 
 	all, err := c.s.ListNotes(ctx, false, false)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	var scored []RelevantEntry
 	for _, n := range all {
-		match, err := c.scoreNote(ctx, n, p, branch, head, crossAuthorPaths)
-		if err != nil {
-			return nil, err
-		}
-		if match.score == 0 {
+		if filter.Attached && !anchorsNear(n.Anchors, p) {
 			continue
 		}
-		if filter.Attached && !anchoredNear(match.reasons) {
+		match, err := c.scoreNote(ctx, n, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, relevantClock{}, err
+		}
+		if match.score == 0 {
 			continue
 		}
 		scored = append(scored, RelevantEntry{Kind: model.KindNote, Note: match.note, Score: match.score, Reasons: match.reasons})
@@ -191,17 +213,17 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	docs, err := c.s.ListDocs(ctx, false, false)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, d := range docs {
-		score, reasons, err := c.scoreAnchors(ctx, d.Anchors, p, branch, head, crossAuthorPaths)
-		if err != nil {
-			return nil, err
-		}
-		if score == 0 {
+		if filter.Attached && !anchorsNear(d.Anchors, p) {
 			continue
 		}
-		if filter.Attached && !anchoredNear(reasons) {
+		score, reasons, err := c.scoreAnchors(ctx, d.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, relevantClock{}, err
+		}
+		if score == 0 {
 			continue
 		}
 		scored = append(scored, RelevantEntry{Kind: model.KindDoc, Doc: d, Score: score, Reasons: reasons})
@@ -209,17 +231,17 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	answers, err := c.s.ListAnswers(ctx, false, false)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, a := range answers {
-		score, reasons, err := c.scoreAnchors(ctx, a.Anchors, p, branch, head, crossAuthorPaths)
-		if err != nil {
-			return nil, err
-		}
-		if score == 0 {
+		if filter.Attached && !anchorsNear(a.Anchors, p) {
 			continue
 		}
-		if filter.Attached && !anchoredNear(reasons) {
+		score, reasons, err := c.scoreAnchors(ctx, a.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, relevantClock{}, err
+		}
+		if score == 0 {
 			continue
 		}
 		scored = append(scored, RelevantEntry{Kind: model.KindAnswer, Answer: a, Score: score, Reasons: reasons})
@@ -227,17 +249,17 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	ledgers, err := c.Ledgers(ctx, LedgerFilter{})
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, l := range ledgers {
-		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths)
-		if err != nil {
-			return nil, err
-		}
-		if score == 0 {
+		if filter.Attached && !anchorsNear(l.Anchors, p) {
 			continue
 		}
-		if filter.Attached && !anchoredNear(reasons) {
+		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, relevantClock{}, err
+		}
+		if score == 0 {
 			continue
 		}
 		scored = append(scored, RelevantEntry{Kind: model.KindLedger, Ledger: l, Score: score, Reasons: reasons})
@@ -245,17 +267,17 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	logs, err := c.s.ListLogs(ctx, false)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, l := range logs {
-		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths)
-		if err != nil {
-			return nil, err
-		}
-		if score == 0 {
+		if filter.Attached && !anchorsNear(l.Anchors, p) {
 			continue
 		}
-		if filter.Attached && !anchoredNear(reasons) {
+		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, relevantClock{}, err
+		}
+		if score == 0 {
 			continue
 		}
 		scored = append(scored, RelevantEntry{Kind: model.KindLog, Log: l, Score: score, Reasons: reasons})
@@ -263,17 +285,17 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	runbooks, err := c.Runbooks(ctx, RunbookFilter{})
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, rb := range runbooks {
-		score, reasons, err := c.scoreAnchors(ctx, rb.Anchors, p, branch, head, crossAuthorPaths)
-		if err != nil {
-			return nil, err
-		}
-		if score == 0 {
+		if filter.Attached && !anchorsNear(rb.Anchors, p) {
 			continue
 		}
-		if filter.Attached && !anchoredNear(reasons) {
+		score, reasons, err := c.scoreAnchors(ctx, rb.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, relevantClock{}, err
+		}
+		if score == 0 {
 			continue
 		}
 		scored = append(scored, RelevantEntry{Kind: model.KindRunbook, Runbook: rb, Score: score, Reasons: reasons})
@@ -281,17 +303,17 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	investigations, err := c.s.ListInvestigations(ctx)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, inv := range investigations {
-		score, reasons, err := c.scoreAnchors(ctx, inv.Anchors, p, branch, head, crossAuthorPaths)
-		if err != nil {
-			return nil, err
-		}
-		if score == 0 {
+		if filter.Attached && !anchorsNear(inv.Anchors, p) {
 			continue
 		}
-		if filter.Attached && !anchoredNear(reasons) {
+		score, reasons, err := c.scoreAnchors(ctx, inv.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, relevantClock{}, err
+		}
+		if score == 0 {
 			continue
 		}
 		if nonTerminalInvestigation(inv.Status) && anchoredNear(reasons) {
@@ -304,17 +326,17 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	plans, err := c.Plans(ctx, PlanFilter{})
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, plan := range plans {
-		score, reasons, err := c.scoreAnchors(ctx, plan.Anchors, p, branch, head, crossAuthorPaths)
-		if err != nil {
-			return nil, err
-		}
-		if score == 0 {
+		if filter.Attached && !anchorsNear(plan.Anchors, p) {
 			continue
 		}
-		if filter.Attached && !anchoredNear(reasons) {
+		score, reasons, err := c.scoreAnchors(ctx, plan.Anchors, p, branch, head, crossAuthorPaths)
+		if err != nil {
+			return nil, relevantClock{}, err
+		}
+		if score == 0 {
 			continue
 		}
 		if plan.Status == model.PlanExecuting && anchoredNear(reasons) {
@@ -325,19 +347,94 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		scored = append(scored, RelevantEntry{Kind: model.KindPlan, Plan: plan, Score: score, Reasons: reasons})
 	}
 
+	slices.SortFunc(scored, compareScored)
+	return scored, relevantClock{head: head, now: now, staleAfter: staleAfter}, nil
+}
+
+func (c *Client) relevantVerdicts(ctx context.Context, scored []RelevantEntry, clock relevantClock, worktree bool) error {
 	for i := range scored {
-		verdict, err := c.entryVerdict(ctx, scored[i], head, now, staleAfter, filter.Worktree)
+		verdict, err := c.entryVerdict(ctx, scored[i], clock.head, clock.now, clock.staleAfter, worktree)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		scored[i].Verdict = verdict
 	}
-	slices.SortFunc(scored, compareScored)
-	return scored, nil
+	return nil
 }
 
-// anchoredNear reports whether reasons include a path or dir match — the test
-// --attached applies to drop entities matched only by looser signals.
+func anchorsNear(anchors []model.Anchor, p string) bool {
+	return hasAnchorIn(anchors, model.AnchorPath, p) || deepestDirAnchor(anchors, p) != ""
+}
+
+func (c *Client) relevantPath(ctx context.Context, target string) (string, error) {
+	if !filepath.IsAbs(target) {
+		return path.Clean(target), nil
+	}
+	root, err := c.s.Root(ctx)
+	if err != nil {
+		return "", err
+	}
+	if rel, ok := gitRelative(target, root); ok {
+		return rel, nil
+	}
+	return path.Clean(target), nil
+}
+
+// gitRelative spells an absolute target as the worktree-relative path git
+// records for it: symlinks resolved in the directories above it but never in
+// its own name, containment decided by file identity rather than spelling,
+// and each component in its directory entry's own case. ok is false when the
+// target's directory is missing or outside root. The capt-hook pack's
+// common.git_relative implements the same contract.
+func gitRelative(target, root string) (string, bool) {
+	parent, err := filepath.EvalSymlinks(filepath.Dir(target))
+	if err != nil {
+		return "", false
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return "", false
+	}
+	var parts []string
+	for here := parent; ; {
+		if info, err := os.Stat(here); err == nil && os.SameFile(info, rootInfo) {
+			break
+		}
+		up := filepath.Dir(here)
+		if up == here {
+			return "", false
+		}
+		parts = append(parts, entryName(up, filepath.Base(here)))
+		here = up
+	}
+	slices.Reverse(parts)
+	return path.Join(append(parts, entryName(parent, filepath.Base(target)))...), true
+}
+
+func entryName(dir, name string) string {
+	want, err := os.Lstat(filepath.Join(dir, name))
+	if err != nil {
+		return name
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return name
+	}
+	for _, e := range entries {
+		if e.Name() == name {
+			return name
+		}
+	}
+	for _, e := range entries {
+		if info, err := os.Lstat(filepath.Join(dir, e.Name())); err == nil && os.SameFile(info, want) {
+			return e.Name()
+		}
+	}
+	return name
+}
+
+// anchoredNear reports whether reasons include a path or dir match, which gates
+// the open-investigation and executing-plan boosts.
 func anchoredNear(reasons []string) bool {
 	return slices.ContainsFunc(reasons, func(r string) bool {
 		return r == reasonPath || r == reasonDir

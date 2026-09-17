@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/yasyf/cc-notes/model"
 )
@@ -19,8 +17,9 @@ const (
 	// foldCacheVersion is the single hard-cut cache format.
 	foldCacheVersion = 1
 	// foldCacheCap bounds the number of on-disk entries; the least-recently
-	// used are evicted past it.
-	foldCacheCap = 1024
+	// used are evicted past it. Below a repository's live entity count every
+	// full listing evicts what it just wrote and re-folds it on the next call.
+	foldCacheCap = 1 << 14
 	// foldCacheSubdir is the path under the git common dir where entries live;
 	// it is never a ref, so it is never pushed or synced.
 	foldCacheSubdir = "cc-notes/folds-v1"
@@ -53,36 +52,28 @@ func foldGeneration(opKinds []string) string {
 // the cache is a derived artifact, rebuildable by deleting the directory, not
 // state whose loss is a failure.
 type foldCache struct {
-	capacity int
-	dir      string
-
-	mu     sync.Mutex
-	seeded bool
-	// order is the in-process LRU index, oldest first, seeded from the
-	// directory's modification times on first use.
-	order []model.SHA
+	lruDir
 }
 
 // newFoldCache returns a cache rooted at non-empty dir and bounded at capacity
 // entries.
 func newFoldCache(dir string, capacity int) *foldCache {
-	return &foldCache{capacity: capacity, dir: dir}
+	return &foldCache{lruDir{capacity: capacity, dir: dir}}
 }
 
 // get returns the cached snapshot for tip, or ok=false on any miss: an absent
 // entry, an unreadable or corrupt file, a version mismatch, or an entry a
 // binary with a different op vocabulary wrote.
 func (c *foldCache) get(tip model.SHA) (model.Snapshot, bool) {
-	//nolint:gosec // G304: dir is this store's own fold-cache directory and tip is a validated SHA key, not external input.
-	data, err := os.ReadFile(filepath.Join(c.dir, string(tip)))
-	if err != nil {
+	data, ok := c.read(string(tip))
+	if !ok {
 		return nil, false
 	}
 	snap, ok := decodeFoldEntry(data)
 	if !ok {
 		return nil, false
 	}
-	c.touch(tip)
+	c.touch(string(tip))
 	return snap, true
 }
 
@@ -102,117 +93,17 @@ func (c *foldCache) put(tip model.SHA, snap model.Snapshot) {
 	if !ok {
 		return
 	}
-	if err := os.MkdirAll(c.dir, 0o750); err != nil {
-		return
-	}
-	if !writeFileAtomic(c.dir, string(tip), data) {
-		return
-	}
-	c.record(c.dir, tip)
-}
-
-// touch moves an already-present tip to the most-recently-used end.
-func (c *foldCache) touch(tip model.SHA) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.seeded {
-		return
-	}
-	if i := slices.Index(c.order, tip); i >= 0 {
-		c.order = append(slices.Delete(c.order, i, i+1), tip)
-	}
-}
-
-// record marks tip as most-recently-used and evicts the oldest entries past the
-// capacity bound. Disk I/O stays outside the lock: the first-use directory scan
-// that seeds the LRU index and the per-eviction os.Remove both run unlocked, so
-// the listConcurrency fan-out never serializes a cache put behind a filesystem
-// call. The lock covers only the slice bookkeeping and the eviction-set
-// computation. A racing first put may scan the directory redundantly; promote
-// keeps the first seed and discards the rest, so the index stays consistent.
-func (c *foldCache) record(dir string, tip model.SHA) {
-	var seed []model.SHA
-	if !c.isSeeded() {
-		seed = seedOrder(dir)
-	}
-	for _, oldest := range c.promote(seed, tip) {
-		_ = os.Remove(filepath.Join(dir, string(oldest)))
-	}
-}
-
-// isSeeded reports whether the LRU index has been seeded from disk.
-func (c *foldCache) isSeeded() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.seeded
-}
-
-// promote applies the first-use seed when the index is unseeded, moves tip to
-// the most-recently-used end, and returns the entries evicted past the capacity
-// bound for the caller to delete outside the lock.
-func (c *foldCache) promote(seed []model.SHA, tip model.SHA) []model.SHA {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.seeded {
-		c.order = seed
-		c.seeded = true
-	}
-	if i := slices.Index(c.order, tip); i >= 0 {
-		c.order = slices.Delete(c.order, i, i+1)
-	}
-	c.order = append(c.order, tip)
-	var evict []model.SHA
-	for len(c.order) > c.capacity {
-		evict = append(evict, c.order[0])
-		c.order = c.order[1:]
-	}
-	return evict
-}
-
-// seedOrder lists the cache directory's entries oldest-first by modification
-// time, seeding the in-process LRU index from disk.
-func seedOrder(dir string) []model.SHA {
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	type entry struct {
-		sha   model.SHA
-		mtime int64
-	}
-	entries := make([]entry, 0, len(ents))
-	for _, e := range ents {
-		if e.IsDir() {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		entries = append(entries, entry{sha: model.SHA(e.Name()), mtime: info.ModTime().UnixNano()})
-	}
-	slices.SortFunc(entries, func(a, b entry) int { return cmp.Compare(a.mtime, b.mtime) })
-	order := make([]model.SHA, len(entries))
-	for i, e := range entries {
-		order[i] = e.sha
-	}
-	return order
+	c.write(string(tip), data)
 }
 
 // tips lists the chain tips currently cached on disk, best-effort: an
 // unreadable directory yields an empty slice. GCLocal walks it to find entries
 // orphaned by appends, compaction, and merges.
 func (c *foldCache) tips() []model.SHA {
-	ents, err := os.ReadDir(c.dir)
-	if err != nil {
-		return nil
-	}
-	tips := make([]model.SHA, 0, len(ents))
-	for _, e := range ents {
-		if e.IsDir() {
-			continue
-		}
-		tips = append(tips, model.SHA(e.Name()))
+	names := c.names()
+	tips := make([]model.SHA, len(names))
+	for i, name := range names {
+		tips[i] = model.SHA(name)
 	}
 	return tips
 }
@@ -221,12 +112,7 @@ func (c *foldCache) tips() []model.SHA {
 // best-effort: a missing file is a no-op. GCLocal and physical prune call it to
 // evict entries orphaned by appends, compaction, merges, and tombstone removal.
 func (c *foldCache) delete(tip model.SHA) {
-	_ = os.Remove(filepath.Join(c.dir, string(tip)))
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if i := slices.Index(c.order, tip); i >= 0 {
-		c.order = slices.Delete(c.order, i, i+1)
-	}
+	c.remove(string(tip))
 }
 
 // encodeFoldEntry serializes a snapshot as a version, fold-generation, and kind

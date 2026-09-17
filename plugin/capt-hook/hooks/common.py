@@ -552,6 +552,48 @@ def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int, more_tail: str) 
     return cap_lines([render_task_line(t) for t in tasks], cap, more_tail)
 
 
+def repo_root(path: str) -> str | None:
+    """The nearest ancestor of ``path`` holding a ``.git`` dir or file, found by stat alone; None outside any repository."""
+    resolved = Path(path).expanduser().resolve()
+    return next((str(d) for d in (resolved, *resolved.parents) if (d / ".git").exists()), None)
+
+
+def git_relative(target: str, root: str) -> str | None:
+    """``target`` spelled as the root-relative path git records, or None when its directory is missing or outside ``root``.
+
+    Symlinks resolve in the directories above the target but never in its own name, containment is
+    decided by file identity rather than spelling, and each component takes its directory entry's own
+    case. The Go ``gitRelative`` in notes/relevant.go implements the same contract.
+    """
+    parent = os.path.realpath(os.path.dirname(target))
+    if not os.path.isdir(parent):
+        return None
+    parts: list[str] = []
+    here = parent
+    while not os.path.samefile(here, root):
+        up = os.path.dirname(here)
+        if up == here:
+            return None
+        parts.append(_entry_name(up, os.path.basename(here)))
+        here = up
+    return "/".join([*reversed(parts), _entry_name(parent, os.path.basename(target))])
+
+
+def _entry_name(directory: str, name: str) -> str:
+    try:
+        want = os.lstat(os.path.join(directory, name))
+        entries = os.listdir(directory)
+    except OSError:
+        return name
+    if name in entries:
+        return name
+    for entry in entries:
+        found = os.lstat(os.path.join(directory, entry))
+        if (found.st_dev, found.st_ino) == (want.st_dev, want.st_ino):
+            return entry
+    return name
+
+
 def in_cc_pool_memory(path: Path) -> bool:
     # The mirror owns the cc-pool memory tree, so the advisory record-router excludes it.
     # Deliberately broader than MemoryWrite: the whole tree is the mirror's domain.

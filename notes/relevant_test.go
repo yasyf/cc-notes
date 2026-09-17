@@ -3,7 +3,9 @@ package notes_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gittest"
@@ -271,6 +273,7 @@ func TestRelevantAttachedDropsLooseSignals(t *testing.T) {
 	dirNote := makeNote(t, c, "dir", notes.AnchorSpec{Dirs: []string{"internal/auth"}})
 	makeNote(t, c, "sibling", notes.AnchorSpec{Paths: []string{"internal/auth/logout.go"}})
 	makeNote(t, c, "branch only", notes.AnchorSpec{Branches: []string{"main"}})
+	makeNote(t, c, "merged commit only", notes.AnchorSpec{Commits: []string{"HEAD"}})
 
 	scored := mustRelevant(t, c, dir, "internal/auth/login.go", notes.RelevantFilter{Attached: true})
 	if got := scoredIDs(scored); !slices.Equal(got, []model.EntityID{pathNote, dirNote}) {
@@ -539,3 +542,95 @@ const (
 	scorePathTest      = 100
 	scoreOpenBoostTest = 50
 )
+
+func TestRelevantAbsolutePathMatchesRelative(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "internal/auth/login.go", "v1\n")
+	makeNote(t, c, "exact path", notes.AnchorSpec{Paths: []string{"internal/auth/login.go"}})
+	makeNote(t, c, "dir", notes.AnchorSpec{Dirs: []string{"internal/auth"}})
+	makeNote(t, c, "sibling", notes.AnchorSpec{Paths: []string{"internal/auth/logout.go"}})
+	makeNote(t, c, "branch only", notes.AnchorSpec{Branches: []string{"main"}})
+
+	link := filepath.Join(t.TempDir(), "linked-worktree")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	want := mustRelevant(t, c, dir, "internal/auth/login.go", notes.RelevantFilter{})
+	for _, target := range []string{
+		filepath.Join(dir, "internal/auth/login.go"),
+		filepath.Join(link, "internal/auth/login.go"),
+	} {
+		got := mustRelevant(t, c, dir, target, notes.RelevantFilter{})
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("relevant(%s) = %v, want the relative answer %v", target, scoredIDs(got), scoredIDs(want))
+		}
+	}
+
+	outside := mustRelevant(t, c, dir, filepath.Join(t.TempDir(), "internal/auth/login.go"), notes.RelevantFilter{Attached: true})
+	if len(outside) != 0 {
+		t.Fatalf("a path outside the worktree matched anchors: %v", scoredIDs(outside))
+	}
+}
+
+func TestRelevantCrossAuthorMatchesUnicodePathsUnderAnyQuotePath(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "base.go", "v1\n")
+	gittest.Git(t, dir, "branch", "feat-base")
+	commitFileAs(t, dir, relevantOther, "pkg/café.go", "theirs\n")
+	id := makeNote(t, c, "café", notes.AnchorSpec{Paths: []string{"pkg/café.go"}})
+
+	for _, quote := range []string{"true", "false"} {
+		gittest.Git(t, dir, "config", "core.quotePath", quote)
+		e := findEntry(t, mustRelevant(t, c, dir, "pkg/café.go", notes.RelevantFilter{Base: "feat-base"}), id)
+		if !slices.Contains(e.Reasons, "cross-author") {
+			t.Errorf("core.quotePath=%s: reasons = %v, want cross-author for a teammate-touched unicode path", quote, e.Reasons)
+		}
+	}
+}
+
+func TestRelevantFromAProjectSubdirectory(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "api/entry.go", "v1\n")
+	id := makeNote(t, c, "entry", notes.AnchorSpec{Paths: []string{"api/entry.go"}})
+	sub, err := notes.Open(filepath.Join(dir, "api"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := findEntry(t, mustRelevant(t, sub, dir, filepath.Join(dir, "api", "entry.go"), notes.RelevantFilter{}), id)
+	if !slices.Contains(e.Reasons, "path") {
+		t.Fatalf("reasons = %v, want path: the target is relative to the git root, not the working directory", e.Reasons)
+	}
+	e = findEntry(t, mustRelevant(t, sub, dir, filepath.Join(dir, "api", "entry.go"), notes.RelevantFilter{Attached: true, Worktree: true}), id)
+	if e.Verdict != "" {
+		t.Fatalf("verdict = %q, want fresh: the worktree drift check reads the anchor from the git root", e.Verdict)
+	}
+}
+
+func TestRelevantCanonicalizesCaseOnACaseInsensitiveFilesystem(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "Pkg/Target.go", "v1\n")
+	id := makeNote(t, c, "target", notes.AnchorSpec{Paths: []string{"Pkg/Target.go"}})
+	folded := strings.ToLower(filepath.Join(dir, "Pkg", "Target.go"))
+	if _, err := os.Stat(folded); err != nil {
+		t.Skip("case-sensitive filesystem")
+	}
+	e := findEntry(t, mustRelevant(t, c, dir, folded, notes.RelevantFilter{}), id)
+	if !slices.Contains(e.Reasons, "path") {
+		t.Fatalf("relevant(%s) reasons = %v, want path under the entries' own casing", folded, e.Reasons)
+	}
+}
+
+func TestRelevantKeepsADanglingSymlinksOwnPath(t *testing.T) {
+	c, dir := newClient(t)
+	if err := os.Symlink("missing.go", filepath.Join(dir, "broken.go")); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Git(t, dir, "add", "broken.go")
+	gittest.Git(t, dir, "commit", "-q", "-m", "a dangling link")
+	id := makeNote(t, c, "broken link", notes.AnchorSpec{Paths: []string{"broken.go"}})
+	e := findEntry(t, mustRelevant(t, c, dir, filepath.Join(dir, "broken.go"), notes.RelevantFilter{}), id)
+	if !slices.Contains(e.Reasons, "path") {
+		t.Fatalf("reasons = %v, want path: a symlink's own tracked path, never its target's", e.Reasons)
+	}
+}

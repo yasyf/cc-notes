@@ -34,7 +34,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a runbook, project in the FUSE tree read-only, and rank in `relevant` and `search`
   over their row keys and field values. Thirteen MCP tools cover the surface.
 
+- **`cc-notes status --tasks` reports only the task buckets.** It returns the
+  branch, the backlog with readiness, your branch's tasks, and the in-progress
+  leases, the same rows `status` prints, without folding the other kinds or
+  running the note, doc, and answer drift review behind the counts. The MCP
+  `status` tool takes a matching `tasks` argument.
+
+### Changed
+- **The plugin reinstalls cc-notes older than 0.55.0.** The session-start
+  task float reads `status --tasks`, which 0.54.0 and older binaries reject, so
+  the install floors in `bootstrap.py` and `hooks/ensure-cc-notes.sh` move from
+  0.46.0 to 0.55.0. That also carries the fold cache, relevance cache, and
+  `--attached` fixes to machines already on 0.46–0.54.
+
+- **Auto-sync runs in the background.** Every hook that runs `cc-notes sync`
+  (after a commit, a task claim, a push, a merge or fetch, or a cc-notes write)
+  is an async hook, so the fetch and push round trips no longer hold a
+  worker thread while the tool call waits. A successful sync, a reconcile, and
+  a benign outcome (no remote, a timeout) say nothing; the "Synced cc-notes
+  refs." and "Reconciled merged tasks onto <branch>." lines are gone. A genuine
+  failure is recorded in session state, and `surface_sync_failures` shows its
+  retry hint once, on the next tool call or prompt. Warnings are kept per repo
+  and wired remote, and a later successful sync of that same remote clears
+  its warning first. The per-turn dedup and the
+  SessionEnd backstop are unchanged. Commit and claim syncs are no longer
+  capped at the nudges' three fires per session. After a commit, the
+  background hook writes the `task link` edge onto the task the session holds
+  before it syncs, so the push carries the edge; a failed link surfaces its
+  retry the same way.
+
 ### Fixed
+- **Sync and reconcile act on the repository the command ran in.** The
+  merge, push, commit, and claim hooks always reconciled and synced the
+  session's repository, so a `cd /other && git merge` in one repository
+  reconciled tasks in another. Every sync and reconcile hook now resolves the
+  target from the command's `cd` prefixes and its `git -C`, `jj -R`, or
+  `cc-notes -R` option. It syncs that repository and does nothing outside a git
+  repository or in one with no cc-notes refs.
+
+- **The session-start task float reads `status --tasks`.** `float_session_tasks`
+  ran a full `status` on the first prompt and read only its task buckets. It
+  needs a cc-notes binary that has `--tasks`; an older one fails the call and
+  the float stays silent.
+
+- **The cross-author signal matches non-ASCII paths.** `relevant` parsed
+  `git log --name-only`, which quotes a non-ASCII path under the default
+  `core.quotePath`, so a teammate's change to such a file never matched its
+  anchor. It now reads `git log -z`, whose names are never quoted.
+
+- **Reads stop re-folding a large repository on every call.** The fold cache
+  held at most 1024 entries, so a repository with more live entities thrashed:
+  every full listing evicted entries it had just written and folded them again
+  on the next call, and concurrent sessions evicted each other's. A repository
+  with 1586 entities missed about 560 entries on every `status`, `relevant`,
+  `note list`, and `show`. The cap is now 16384. On a copy of that repository's
+  refs, `status` drops from 2.97s to 0.93s, `relevant` from 1.92s to 1.05s,
+  and `note list` from 0.50s to 0.11s.
+
+- **A repeated `relevant` answers from a cache.** The surface hooks run
+  `relevant` on every `Read` and every `Edit`. The result is cached per
+  worktree, target, filter, and output shape under `.git/cc-notes/relevant-v1`.
+  On the monorepo, a repeated call drops from 2.1–2.5s to 0.07–0.09s.
+
+  The key covers every input. It includes the binary, `HEAD`, and the commit
+  a `--base` revision resolves to. It also covers every symbolic ref's target,
+  every ref tip outside the sync tracking namespace, and the shallow boundary.
+  The staleness threshold, the `GIT_*` environment, and `git var -l` complete
+  the key. `git var -l` carries the author identity and the config and
+  attribute file locations. It also carries the effective configuration of
+  every scope, with includes resolved.
+
+  A hit is revalidated against the clock because a fresh verdict turns stale
+  at a known instant. Under `--worktree`, it is also revalidated against file
+  fingerprints. These cover every drift-checked path anchor and the
+  `gitattributes` files that shape how `git` hashes it.
+
+  The fingerprints record existence, size, mtime, ctime, inode, and mode.
+  The drift check takes them before and after reading the files. A result
+  is cached only when the two fingerprints agree and no mtime falls within
+  two seconds of the computation.
+
+- **`relevant --attached` skips entities it is about to drop.** It scored every
+  entity, including ancestry checks on commit and branch anchors, then dropped
+  those with no path or dir anchor on the target. The anchor test now runs
+  first, so the edit-time staleness hook's call drops from 1.94s to 0.27s with
+  identical output.
+
+- **The file surface hooks match file anchors.** Claude Code sends absolute
+  paths, and `float_note_context` and `check_note_staleness` passed them to
+  `cc-notes relevant` unchanged. Anchors are stored repo-relative, so no path,
+  dir, or sibling anchor ever matched: the edit-time staleness warning never
+  fired, and the read-time float surfaced only branch- and commit-matched
+  records, for any file, including ones under `/tmp`. `relevant` and both hooks
+  now spell an absolute path the way git records it, relative to the git root
+  even when the project is opened in a subdirectory. Symlinks resolve in the
+  directories above the file but never in its own name, so a dangling link
+  keeps its tracked path. Containment is decided by file identity, and each
+  component takes its directory entry's case, so a differently cased path on a
+  case-insensitive filesystem still matches. A file outside the repository
+  skips the call entirely.
+
+- **The worktree drift check reads anchors from the git root.** Under
+  `--worktree`, `relevant` and `note review` hashed a path anchor relative to
+  the working directory, so a command run from a subdirectory reported every
+  path anchor as drifted.
+
+- **A Read surfaces records without a model call.** `float_note_context` sent
+  two or more fresh records to a small-model filter, a synchronous `claude -p`
+  spawn. Once file anchors match, the filter runs on reads that surface new
+  file-anchored records. Each call took 7.6–26.7s on a loaded machine. A Read
+  now surfaces the top `RELEVANT_LIMIT` (ten) records by rank directly, the same
+  set the filter's fail-open path already showed. The edit-time staleness
+  check keeps the filter, where candidates are few.
+
+- **The availability announcement no longer runs `cc-notes version` on every
+  prompt.** `announce_cc_notes_available` read the version before checking
+  whether the session had already announced, so every later prompt spawned the
+  binary to throw the answer away. It now checks first.
 - **`cc-notes package install` works on a clean machine.** It could not succeed
   anywhere, for two independent reasons.
 

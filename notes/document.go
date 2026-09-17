@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -956,7 +957,11 @@ func (c *Client) driftedOf(ctx context.Context, head model.SHA, fe freshDocument
 // head.
 func (c *Client) liveAnchorOID(ctx context.Context, head model.SHA, a model.Anchor, worktree bool) (model.SHA, error) {
 	if worktree && a.Kind == model.AnchorPath {
-		oid, err := c.s.Git.WorktreeBlobOID(ctx, a.Value)
+		root, err := c.s.Root(ctx)
+		if err != nil {
+			return "", err
+		}
+		oid, err := c.s.Git.WorktreeBlobOID(ctx, filepath.Join(root, a.Value))
 		return model.SHA(oid), err
 	}
 	return c.s.Repo.PathOID(ctx, head, a.Value)

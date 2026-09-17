@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -370,5 +371,33 @@ func TestStatusAmbiguousHead(t *testing.T) {
 	}
 	if len(st.YourBranch) != 0 {
 		t.Fatalf("your_branch = %+v, want empty on an unresolvable HEAD", st.YourBranch)
+	}
+}
+
+func TestStatusTasksOnly(t *testing.T) {
+	dir := initRepo(t)
+	addTask(t, dir, "Backlog item", "--backlog")
+	addTask(t, dir, "Open on branch")
+	claimed := addTask(t, dir, "Claimed work")
+	mustRun(t, dir, "task", "claim", claimed.ID)
+	mustRun(t, dir, "note", "add", "A note")
+	t.Setenv("CC_NOTES_LEASE_TTL", "8760h")
+
+	fullOut := mustRun(t, dir, "status", "--json")
+	tasksOut := mustRun(t, dir, "status", "--json", "--tasks")
+	full := mustJSON[statusJSONShape](t, fullOut)
+	tasks := mustJSON[statusJSONShape](t, tasksOut)
+	if !reflect.DeepEqual([]any{tasks.Branch, tasks.Backlog, tasks.YourBranch, tasks.InProgress}, []any{full.Branch, full.Backlog, full.YourBranch, full.InProgress}) {
+		t.Fatalf("--tasks buckets differ from status\n--tasks %s\nstatus  %s", tasksOut, fullOut)
+	}
+	for _, key := range []string{`"notes"`, `"docs"`, `"runs"`, `"investigations"`} {
+		if strings.Contains(tasksOut, key) {
+			t.Fatalf("--tasks output carries %s:\n%s", key, tasksOut)
+		}
+	}
+
+	text := mustRun(t, dir, "status", "--tasks")
+	if !strings.Contains(text, "backlog\n") || !strings.Contains(text, "in progress across branches\n") || strings.Contains(text, "notes:") {
+		t.Fatalf("--tasks text = %q, want only the task sections", text)
 	}
 }

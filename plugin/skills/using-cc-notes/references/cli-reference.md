@@ -292,6 +292,7 @@ A sectioned, read-only view to orient before picking up work:
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--json` | off | Emit JSON |
+| `--tasks` | off | Report only sections 1–3, skipping the other folds and the review behind the counts; the JSON keeps `branch`, `backlog`, `your_branch`, `in_progress`, and a `skipped_ops` over tasks alone |
 
 ```console
 $ cc-notes status

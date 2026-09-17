@@ -9,9 +9,9 @@ from captain_hook import Event, SessionStartEvent, on
 
 from .common import run_cc_notes
 
-# v0.46.0 is the packaged-helper hard cut. Older binaries carry retired helper and
-# protocol semantics, so anything older is reinstalled.
-MIN_VERSION = (0, 46, 0)
+# v0.55.0 is the first binary with `status --tasks`, which float_session_tasks reads;
+# it also postdates the v0.46.0 packaged-helper hard cut. Anything older is reinstalled.
+MIN_VERSION = (0, 55, 0)
 INSTALL_URL = "https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh"
 _VERSION_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
 

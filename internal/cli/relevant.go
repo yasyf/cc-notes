@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
@@ -49,23 +52,34 @@ func newRelevantCmd() *cobra.Command {
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			s, c, err := openStoreClient(cmd)
+			dir, err := repoDir(cmd)
+			if err != nil {
+				return err
+			}
+			c, err := notes.Open(dir)
 			if err != nil {
 				return err
 			}
 			if branchFlag != "" {
-				if err := s.Git.CheckRefFormat(ctx, branchFlag); err != nil {
+				if err := (gitcmd.Git{Dir: dir}).CheckRefFormat(ctx, branchFlag); err != nil {
 					return &UsageError{Err: err}
 				}
 			}
-			entries, err := c.Relevant(ctx, args[0], notes.RelevantFilter{Branch: branchFlag, Base: baseFlag, Attached: attached, Worktree: worktree})
+			filter := notes.RelevantFilter{Branch: branchFlag, Base: baseFlag, Attached: attached, Worktree: worktree}
+			variant := fmt.Sprintf("json=%t limit=%d", jsonOut, limit)
+			out, err := c.RelevantCached(ctx, args[0], filter, variant, func(entries []notes.RelevantEntry) ([]byte, error) {
+				if limit > 0 && len(entries) > limit {
+					entries = entries[:limit]
+				}
+				var buf bytes.Buffer
+				err := printRelevant(&buf, entries, jsonOut)
+				return buf.Bytes(), err
+			})
 			if err != nil {
 				return err
 			}
-			if limit > 0 && len(entries) > limit {
-				entries = entries[:limit]
-			}
-			return printRelevant(cmd, entries, jsonOut)
+			_, err = cmd.OutOrStdout().Write(out)
+			return err
 		},
 	}
 	flags := cmd.Flags()
@@ -83,8 +97,7 @@ func newRelevantCmd() *cobra.Command {
 // A doc line additionally carries a bracketed verdict flag and a "doc show
 // <short-id>" hint, and never the long body. Each entry carries its own drift
 // verdict; a log never drifts, so its verdict is empty.
-func printRelevant(cmd *cobra.Command, entries []notes.RelevantEntry, jsonOut bool) error {
-	out := cmd.OutOrStdout()
+func printRelevant(out io.Writer, entries []notes.RelevantEntry, jsonOut bool) error {
 	if jsonOut {
 		dtos := make([]relevantDTO, len(entries))
 		for i, e := range entries {
