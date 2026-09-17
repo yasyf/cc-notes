@@ -31,6 +31,7 @@ from .common import (
     json_field,
     mcp_active,
     parse_answers,
+    remember_answer_lines,
     remember_answers,
     run_cc_notes,
     short_id,
@@ -97,6 +98,12 @@ class AnswerTriage(BaseModel):
     """The triage's verdicts; an answer with no verdict records as durable with no supersede."""
 
     verdicts: list[AnswerVerdict] = []
+
+
+class PromptAnswerPicks(BaseModel):
+    """The answers a prompt's background pick staged for the next prompt to float, id to rendered line."""
+
+    lines: dict[str, str] = {}
 
 
 def answered_questions(evt: PostToolUseEvent) -> list[AnsweredQuestion]:
@@ -252,8 +259,13 @@ def record_user_answers(evt: PostToolUseEvent) -> HookResult | None:
     return evt.warn(f"Recorded the user's answers in cc-notes: {', '.join(acks)}.")
 
 
-def pick_prompt_answers(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The unseen durable answers that bear on the prompt; none when the filter fails."""
+def pick_prompt_answers(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> dict[str, str]:
+    """The unseen durable answers that bear on the prompt, id to rendered line.
+
+    Raises whatever the model call raises: this runs in the background, where captain-hook logs
+    the failure and records a fault the next session start tells the user, so a dead backend is
+    visible instead of costing a silent pick on every prompt.
+    """
     lines = {a["id"]: answer_line(a) for a in fresh}
     prompt = (
         Prompt()
@@ -262,12 +274,31 @@ def pick_prompt_answers(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]])
         .context("candidates", "\n".join(f"{aid}\t{line}" for aid, line in lines.items()))
         .ask("Which candidate ids should the agent honor while acting on this prompt?")
     )
-    try:
-        pick = evt.ctx.call_llm(prompt, response_model=SurfacePick, model="small", agent=False, transcript=False)
-    except Exception:
-        return []
-    chosen = set(pick.ids) & set(lines)
-    return [a for a in fresh if a["id"] in chosen]
+    pick = evt.ctx.call_llm(prompt, response_model=SurfacePick, model="small", agent=False, transcript=False)
+    chosen = set(pick.ids)
+    return {aid: line for aid, line in lines.items() if aid in chosen}
+
+
+@on(
+    Event.UserPromptSubmit,
+    only_if=[CcNotesAvailable()],
+    max_fires=None,
+    async_=True,
+)
+def stage_prompt_answers(evt: UserPromptSubmitEvent) -> None:
+    """Pick the unseen durable answers that bear on this prompt, in the background, for the next prompt to float.
+
+    A UserPromptSubmit hook holds the prompt until it returns, and the pick costs a candidate
+    listing plus a model call, so both run after the reply has gone back. What this stages
+    reaches the agent on the first prompt after the pick lands — the next one, unless the model
+    call outlives it.
+    """
+    if not (fresh := unseen_answers(evt, durable_answers(evt))):
+        return
+    if not (picked := pick_prompt_answers(evt, fresh)):
+        return
+    with evt.ctx.s[PromptAnswerPicks].mutate() as state:
+        state.lines.update(picked)
 
 
 @on(
@@ -275,23 +306,23 @@ def pick_prompt_answers(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]])
     only_if=[CcNotesAvailable()],
 )
 def float_prompt_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
-    """Surface the unseen durable answers relevant to this prompt, each once per session.
+    """Float what the previous prompt's background pick staged, each answer once per session.
 
-    The session's first prompt belongs to the digest in session.py. Only surfaced answers are
-    marked seen, so an answer unrelated to this prompt stays a candidate for a later one.
+    Reads session state and nothing else — no model call, no cc-notes call — so the prompt never
+    waits. The session's first prompt belongs to the digest in session.py, which it reaches for
+    free: :func:`stage_prompt_answers` first runs after that prompt's reply, so there is nothing
+    staged until the second. Only floated answers are marked seen, so an answer unrelated to this
+    prompt stays a candidate for a later one, and a staged answer another trigger surfaced
+    meanwhile drops out rather than repeating.
     """
-    if evt.ctx.s.once("first", scope="prompt-answers"):
-        return None
-    fresh = unseen_answers(evt, durable_answers(evt))
-    if not fresh:
-        return None
-    picked = pick_prompt_answers(evt, fresh)
-    if not picked:
+    with evt.ctx.s[PromptAnswerPicks].mutate() as state:
+        staged, state.lines = state.lines, {}
+    if not (lines := remember_answer_lines(evt, staged)):
         return None
     show = "the answer_show tool" if mcp_active(evt) else "`cc-notes answer show <id>`"
     return evt.warn(
         f"Durable answers the user gave that bear on this prompt — honor them ({show} has the full record):",
-        *remember_answers(evt, picked),
+        *lines,
     )
 
 

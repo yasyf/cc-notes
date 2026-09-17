@@ -82,12 +82,13 @@ supersession edge.
 
 ## Where answers surface
 
-The capt-hook pack recalls answers at three points:
+The capt-hook pack recalls answers at four points:
 
 | Hook | Event | What surfaces |
 |---|---|---|
 | `float_session_answers` | First `UserPromptSubmit`, `max_fires=1` | A digest of the 8 most recently updated live `scope:durable` answers |
-| `float_prompt_answers` | Every later `UserPromptSubmit` | Unseen durable answers, filtered against the prompt by a small LLM |
+| `stage_prompt_answers` | Every `UserPromptSubmit`, in the background | Nothing directly — it filters unseen durable answers against the prompt with a small LLM and stages the pick |
+| `float_prompt_answers` | Every `UserPromptSubmit` | The pick the previous prompt staged, read from session state with no model call |
 | `restore_answers_after_compact` | `SessionStart` with source `compact` | Answers captured or surfaced this session, capped at 30 |
 
 The seen-set scope is `answers`. File surfacing through `relevant` is off by default; enable

@@ -492,11 +492,21 @@ def unseen_answers(evt: BaseHookEvent, answers: list[dict[str, Any]]) -> list[di
 
 def remember_answers(evt: BaseHookEvent, answers: list[dict[str, Any]]) -> list[str]:
     """Mark ``answers`` seen and ledger their lines for the compact restore; the rendered lines."""
-    lines = {a["id"]: answer_line(a) for a in answers}
-    evt.ctx.s.unseen(list(lines), scope=ANSWERS_SCOPE)
+    return remember_answer_lines(evt, {a["id"]: answer_line(a) for a in answers})
+
+
+def remember_answer_lines(evt: BaseHookEvent, lines: dict[str, str]) -> list[str]:
+    """Mark the answers ``lines`` renders seen and ledger them for the compact restore; the newly marked lines.
+
+    The line-keyed door in, for a caller holding rendered lines rather than the records behind
+    them — the prompt float, which reads what a background pick staged and can hold an answer
+    another trigger surfaced in the meantime. Only what this call marks comes back, so no caller
+    renders an answer twice.
+    """
+    fresh = {aid: lines[aid] for aid in evt.ctx.s.unseen(list(lines), scope=ANSWERS_SCOPE)}
     with evt.ctx.s[SessionAnswers].mutate() as state:
-        state.lines.update(lines)
-    return list(lines.values())
+        state.lines.update(fresh)
+    return list(fresh.values())
 
 
 def filter_drifted(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
