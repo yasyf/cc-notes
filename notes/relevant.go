@@ -4,10 +4,10 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"os"
 	"path"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -370,22 +370,67 @@ func (c *Client) relevantPath(ctx context.Context, target string) (string, error
 	if !filepath.IsAbs(target) {
 		return path.Clean(target), nil
 	}
-	root, err := c.s.Git.Root(ctx)
+	root, err := c.s.Root(ctx)
 	if err != nil {
 		return "", err
 	}
-	rel, err := filepath.Rel(resolveSymlinks(root), resolveSymlinks(target))
-	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
-		return path.Clean(target), nil
+	if rel, ok := gitRelative(target, root); ok {
+		return rel, nil
 	}
-	return filepath.ToSlash(rel), nil
+	return path.Clean(target), nil
 }
 
-func resolveSymlinks(p string) string {
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		return resolved
+// gitRelative spells an absolute target as the worktree-relative path git
+// records for it: symlinks resolved in the directories above it but never in
+// its own name, containment decided by file identity rather than spelling,
+// and each component in its directory entry's own case. ok is false when the
+// target's directory is missing or outside root. The capt-hook pack's
+// common.git_relative implements the same contract.
+func gitRelative(target, root string) (string, bool) {
+	parent, err := filepath.EvalSymlinks(filepath.Dir(target))
+	if err != nil {
+		return "", false
 	}
-	return filepath.Join(resolveSymlinks(filepath.Dir(p)), filepath.Base(p))
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return "", false
+	}
+	var parts []string
+	for here := parent; ; {
+		if info, err := os.Stat(here); err == nil && os.SameFile(info, rootInfo) {
+			break
+		}
+		up := filepath.Dir(here)
+		if up == here {
+			return "", false
+		}
+		parts = append(parts, entryName(up, filepath.Base(here)))
+		here = up
+	}
+	slices.Reverse(parts)
+	return path.Join(append(parts, entryName(parent, filepath.Base(target)))...), true
+}
+
+func entryName(dir, name string) string {
+	want, err := os.Lstat(filepath.Join(dir, name))
+	if err != nil {
+		return name
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return name
+	}
+	for _, e := range entries {
+		if e.Name() == name {
+			return name
+		}
+	}
+	for _, e := range entries {
+		if info, err := os.Lstat(filepath.Join(dir, e.Name())); err == nil && os.SameFile(info, want) {
+			return e.Name()
+		}
+	}
+	return name
 }
 
 // anchoredNear reports whether reasons include a path or dir match, which gates

@@ -120,10 +120,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cc-notes relevant` unchanged. Anchors are stored repo-relative, so no path,
   dir, or sibling anchor ever matched: the edit-time staleness warning never
   fired, and the read-time float surfaced only branch- and commit-matched
-  records, for any file, including ones under `/tmp`. `relevant` now makes an
-  absolute path inside the worktree relative to its root, resolving symlinks on
-  both sides, and both hooks query the repo-relative path and skip the call
-  entirely for a file outside the repository.
+  records, for any file, including ones under `/tmp`. `relevant` and both hooks
+  now spell an absolute path the way git records it, relative to the git root
+  even when the project is opened in a subdirectory. Symlinks resolve in the
+  directories above the file but never in its own name, so a dangling link
+  keeps its tracked path. Containment is decided by file identity, and each
+  component takes its directory entry's case, so a differently cased path on a
+  case-insensitive filesystem still matches. A file outside the repository
+  skips the call entirely.
+
+- **The worktree drift check reads anchors from the git root.** Under
+  `--worktree`, `relevant` and `note review` hashed a path anchor relative to
+  the working directory, so a command run from a subdirectory reported every
+  path anchor as drifted.
 
 - **A Read surfaces records without a model call.** `float_note_context` sent
   two or more fresh records to a small-model filter, a synchronous `claude -p`

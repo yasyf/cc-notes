@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -229,7 +230,11 @@ func answerVerdict(ctx context.Context, s *store.Store, head model.SHA, a model.
 // (PathOID). A missing path wraps model.ErrPathNotFound either way.
 func liveAnchorOID(ctx context.Context, s *store.Store, head model.SHA, a model.Anchor, worktree bool) (model.SHA, error) {
 	if worktree && a.Kind == model.AnchorPath {
-		oid, err := s.Git.WorktreeBlobOID(ctx, a.Value)
+		root, err := s.Root(ctx)
+		if err != nil {
+			return "", err
+		}
+		oid, err := s.Git.WorktreeBlobOID(ctx, filepath.Join(root, a.Value))
 		return model.SHA(oid), err
 	}
 	return s.Repo.PathOID(ctx, head, a.Value)

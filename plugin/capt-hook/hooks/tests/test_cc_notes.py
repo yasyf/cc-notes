@@ -1638,7 +1638,7 @@ def test_float_note_context_dedup(monkeypatch, tmp_path) -> None:
 def test_surface_hooks_query_repo_relative_paths(monkeypatch, tmp_path) -> None:
     """Claude Code sends absolute paths; anchors are repo-relative, so both surface hooks relativize before `relevant`."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    root = tmp_path / "repo"
+    root = _repo(tmp_path / "repo")
     (root / "internal" / "store").mkdir(parents=True)
     absolute = str(root / "internal" / "store" / "store.go")
     payload = json.dumps([note_entry("stale000bbb", drift="STALE", title="Stale fact", reasons=["path"])])
@@ -1670,11 +1670,51 @@ def test_surface_hooks_query_repo_relative_paths(monkeypatch, tmp_path) -> None:
     check("repo-relative: a symlinked worktree path resolves in-repo", calls == [("cc-notes", "relevant", "internal/store/store.go", "--limit", "0", "--json")], repr(calls))
 
 
+def _read_path(monkeypatch, tmp_path, *, project: Path, file: str) -> list[tuple[str, ...]]:
+    """The `relevant` argv a Read of ``file`` spawns with the Claude project dir at ``project``."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    evt = mock_event("PostToolUse", tool="Read", file=file, session_dir=tmp_path / "state")
+    monkeypatch.setattr(evt.ctx, "project_root", project)
+    cli, calls = recording_cli()
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    float_note_context(evt)
+    return [c[2] for c in calls if c[:2] == ("cc-notes", "relevant")]
+
+
+def test_repo_path_is_relative_to_the_git_root_not_the_project_dir(monkeypatch, tmp_path) -> None:
+    """A Claude project opened in a subdirectory still sends the git-root-relative path."""
+    root = _repo(tmp_path / "repo")
+    (root / "api").mkdir()
+    sent = _read_path(monkeypatch, tmp_path, project=root / "api", file=str(root / "api" / "entry.go"))
+    check("project subdir: the git-root-relative path", sent == ["api/entry.go"], repr(sent))
+
+
+def test_repo_path_canonicalizes_case_on_a_case_insensitive_filesystem(monkeypatch, tmp_path) -> None:
+    """A path spelled in another case still resolves inside the repo, sent in the entries' own casing."""
+    root = _repo(tmp_path / "RepoCase")
+    (root / "Pkg").mkdir()
+    (root / "Pkg" / "Target.go").write_text("x\n")
+    folded = str(root / "Pkg" / "Target.go").lower()
+    if not os.path.exists(folded):
+        check("case: skipped on a case-sensitive filesystem", True)
+        return
+    sent = _read_path(monkeypatch, tmp_path, project=root, file=folded)
+    check("case: in-repo under another spelling, sent in canonical case", sent == ["Pkg/Target.go"], repr(sent))
+
+
+def test_repo_path_keeps_a_dangling_symlinks_own_path(monkeypatch, tmp_path) -> None:
+    """A tracked `broken.go -> missing.go` is sent as `broken.go`, the path git records, exactly as the Go CLI spells it."""
+    root = _repo(tmp_path / "repo")
+    (root / "broken.go").symlink_to("missing.go")
+    sent = _read_path(monkeypatch, tmp_path, project=root, file=str(root / "broken.go"))
+    check("dangling symlink: the link's own path", sent == ["broken.go"], repr(sent))
+
+
 def test_surface_hooks_skip_files_outside_the_repo(monkeypatch, tmp_path) -> None:
     """A file outside the repository has no anchors to match, so neither surface hook spawns `relevant`."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    root = tmp_path / "repo"
-    root.mkdir()
+    root = _repo(tmp_path / "repo")
+    (tmp_path / "elsewhere").mkdir()
     for handler, tool in ((float_note_context, "Read"), (check_note_staleness, "Edit")):
         evt = mock_event("PostToolUse", tool=tool, file=str(tmp_path / "elsewhere" / "out.log"), session_dir=tmp_path / tool)
         monkeypatch.setattr(evt.ctx, "project_root", root)

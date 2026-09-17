@@ -23,10 +23,12 @@ from .common import (
     entry_kind,
     entry_payload,
     filter_drifted,
+    git_relative,
     mcp_active,
     parse_relevant,
     remember_answers,
     render_note_lines,
+    repo_root,
     run_cc_notes,
 )
 
@@ -58,12 +60,9 @@ def repo_path(evt: PostToolUseEvent) -> str | None:
     path = Path(evt.file.path)
     if not path.is_absolute():
         return path.as_posix()
-    if (root := evt.ctx.repo_root) is None:
+    if (project := evt.ctx.repo_root) is None or (root := repo_root(str(project))) is None:
         return None
-    try:
-        return path.resolve().relative_to(root).as_posix()
-    except ValueError:
-        return None
+    return git_relative(str(path), root)
 
 
 def unseen_entries(evt: PostToolUseEvent, entries: list[dict[str, Any]], *, scope: str) -> list[dict[str, Any]]:

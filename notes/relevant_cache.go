@@ -130,7 +130,7 @@ func (c *Client) driftInputs(ctx context.Context, entries []RelevantEntry, vars 
 			if a.Kind != model.AnchorPath {
 				continue
 			}
-			file := filepath.Join(c.s.Git.Dir, a.Value)
+			file := filepath.Join(root, a.Value)
 			add(file)
 			for dir := filepath.Dir(file); ; dir = filepath.Dir(dir) {
 				add(filepath.Join(dir, ".gitattributes"))
