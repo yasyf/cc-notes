@@ -192,3 +192,28 @@ func TestRelevantCachedRejectsASameSizeRewriteThatKeepsMtime(t *testing.T) {
 	}
 	p.expect("same size, same mtime and mode, new content", worktree, true)
 }
+
+func TestRelevantCachedInvalidatesOnContentConversionConfig(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "svc/handler.go", "one\r\ntwo\r\n")
+	settle(t, dir, "svc/handler.go")
+	makeNote(t, c, "handler", notes.AnchorSpec{Paths: []string{"svc/handler.go"}})
+
+	p := &relevantProbe{t: t, c: c, dir: dir, target: "svc/handler.go"}
+	worktree := notes.RelevantFilter{Attached: true, Worktree: true}
+	p.expect("cold", worktree, true)
+	p.expect("warm", worktree, false)
+
+	gittest.Git(t, dir, "config", "core.autocrlf", "true")
+	p.expect("core.autocrlf turned on", worktree, true)
+	p.expect("core.autocrlf on, warm", worktree, false)
+	gittest.Git(t, dir, "config", "--unset", "core.autocrlf")
+	p.expect("core.autocrlf unset again", worktree, true)
+	p.expect("core.autocrlf unset, warm", worktree, false)
+
+	if err := os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte("*.go text\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, dir, ".gitattributes")
+	p.expect(".gitattributes marks the file as text", worktree, true)
+}

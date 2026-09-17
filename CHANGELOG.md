@@ -73,6 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs a cc-notes binary that has `--tasks`; an older one fails the call and
   the float stays silent.
 
+- **The cross-author signal matches non-ASCII paths.** `relevant` parsed
+  `git log --name-only`, which quotes a non-ASCII path under the default
+  `core.quotePath`, so a teammate's change to such a file never matched its
+  anchor. It now reads `git log -z`, whose names are never quoted.
+
 - **Reads stop re-folding a large repository on every call.** The fold cache
   held at most 1024 entries, so a repository with more live entities thrashed:
   every full listing evicted entries it had just written and folded them again
@@ -87,8 +92,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cached per worktree, target, filter, and output shape under
   `.git/cc-notes/relevant-v1`, keyed on every input it reads: the binary, HEAD
   and the symbolic refs behind the branch and default-branch lookups, every ref
-  tip outside the sync tracking namespace, the shallow boundary, the author
-  identity, and the staleness threshold. A hit is revalidated against the clock,
+  tip outside the sync tracking namespace, the shallow boundary, the staleness
+  threshold, the `GIT_*` environment, and `git var -l`, which carries the
+  author identity, the config and attribute file locations, and the effective
+  configuration of every scope with its includes resolved. Under `--worktree`
+  the gitattributes files that shape how git hashes an anchored file are
+  fingerprinted with it. A hit is revalidated against the clock,
   since a fresh verdict turns stale at a known instant, and, under `--worktree`,
   against a fingerprint (existence, size, mtime, ctime, inode, mode) of every
   path anchor whose drift was checked. That fingerprint is taken before and

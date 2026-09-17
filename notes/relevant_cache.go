@@ -43,12 +43,15 @@ type fileStamp struct {
 // An entry is keyed on every input Relevant reads: this binary, the worktree
 // and working directory, the target and filter, HEAD and the symbolic refs
 // behind the branch and default-branch lookups, every ref tip except the sync
-// tracking namespace, the shallow boundary, the author identity, and the
-// staleness threshold. Two inputs change without touching any of those and are
+// tracking namespace, the shallow boundary, the staleness threshold, the
+// GIT_* environment, and `git var -l`, which carries the author identity, the
+// config and attribute file locations, and the effective configuration of
+// every scope with its includes resolved. Two inputs change without touching any of those and are
 // validated at read time instead: the clock, which turns a fresh verdict stale
 // at a known instant, and, under Worktree, the on-disk content of the path
-// anchors whose drift was checked. Each such file is fingerprinted (existence,
-// size, mtime, ctime, inode, mode) before and after the drift check reads it,
+// anchors whose drift was checked, with the gitattributes files that shape how
+// git hashes them. Each such file is fingerprinted (existence, size, mtime,
+// ctime, inode, mode) before and after the drift check reads it,
 // and the result is cached only when both fingerprints agree and no mtime falls
 // within the racy window of the computation.
 func (c *Client) RelevantCached(ctx context.Context, target string, filter RelevantFilter, variant string, render func([]RelevantEntry) ([]byte, error)) ([]byte, error) {
@@ -56,7 +59,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if err != nil {
 		return nil, err
 	}
-	key, staleAfter, err := c.relevantCacheKey(ctx, p, filter, variant)
+	key, staleAfter, vars, err := c.relevantCacheKey(ctx, p, filter, variant)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +67,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	start := time.Now()
 	if data, ok := c.s.ReadRelevantCache(name); ok {
 		var entry relevantCacheEntry
-		if json.Unmarshal(data, &entry) == nil && entry.Key == key && entry.valid(c.s.Git.Dir, start) {
+		if json.Unmarshal(data, &entry) == nil && entry.Key == key && entry.valid(start) {
 			return []byte(entry.Output), nil
 		}
 	}
@@ -74,9 +77,11 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	}
 	var paths []string
 	if filter.Worktree {
-		paths = driftCheckedPaths(entries)
+		if paths, err = c.driftInputs(ctx, entries, vars); err != nil {
+			return nil, err
+		}
 	}
-	before := stampsOf(c.s.Git.Dir, paths)
+	before := stampsOf(paths)
 	if err := c.relevantVerdicts(ctx, entries, clock, filter.Worktree); err != nil {
 		return nil, err
 	}
@@ -84,7 +89,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if err != nil {
 		return nil, err
 	}
-	after := stampsOf(c.s.Git.Dir, paths)
+	after := stampsOf(paths)
 	if !slices.Equal(before, after) || slices.ContainsFunc(after, func(f fileStamp) bool { return f.racy(start) }) {
 		return out, nil
 	}
@@ -103,26 +108,52 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	return out, nil
 }
 
-func driftCheckedPaths(entries []RelevantEntry) []string {
+func (c *Client) driftInputs(ctx context.Context, entries []RelevantEntry, vars map[string]string) ([]string, error) {
 	var paths []string
+	add := func(p string) {
+		if !slices.Contains(paths, p) {
+			paths = append(paths, p)
+		}
+	}
+	root, err := c.s.Root(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, e := range entries {
 		fe, ok := freshOf(e)
 		if !ok || fe.StaleAt != 0 || fe.VerifiedAt == 0 {
 			continue
 		}
 		for _, a := range fe.Anchors {
-			if a.Kind == model.AnchorPath && !slices.Contains(paths, a.Value) {
-				paths = append(paths, a.Value)
+			if a.Kind != model.AnchorPath {
+				continue
+			}
+			file := filepath.Join(c.s.Git.Dir, a.Value)
+			add(file)
+			for dir := filepath.Dir(file); ; dir = filepath.Dir(dir) {
+				add(filepath.Join(dir, ".gitattributes"))
+				if dir == root || dir == filepath.Dir(dir) {
+					break
+				}
 			}
 		}
 	}
-	return paths
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	add(filepath.Join(c.s.CommonDir(), "info", "attributes"))
+	for _, v := range []string{"GIT_ATTR_GLOBAL", "GIT_ATTR_SYSTEM"} {
+		if p := vars[v]; p != "" {
+			add(p)
+		}
+	}
+	return paths, nil
 }
 
-func stampsOf(dir string, paths []string) []fileStamp {
+func stampsOf(paths []string) []fileStamp {
 	stamps := make([]fileStamp, len(paths))
 	for i, p := range paths {
-		stamps[i] = stampOf(dir, p)
+		stamps[i] = stampOf(p)
 	}
 	return stamps
 }
@@ -131,33 +162,51 @@ func (f fileStamp) racy(start time.Time) bool {
 	return !f.Missing && time.Unix(0, f.ModTime).After(start.Add(-relevantRacyWindow))
 }
 
-func (c *Client) relevantCacheKey(ctx context.Context, p string, filter RelevantFilter, variant string) (string, time.Duration, error) {
+func (c *Client) relevantCacheKey(ctx context.Context, p string, filter RelevantFilter, variant string) (string, time.Duration, map[string]string, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 	exeInfo, err := os.Stat(exe)
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 	head, err := c.head(ctx)
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 	refs, err := c.s.Repo.ListPrefix(ctx, "refs/")
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
-	authorName, authorEmail, err := c.s.Git.AuthorIdent(ctx)
+	varList, err := c.s.Git.VarList(ctx)
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 	staleAfter, err := c.NoteStaleAfter(ctx)
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
+	vars := make(map[string]string)
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\n%s %d %d\n%s\n%s %s\n%s\n", relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, variant), version.Version, exeInfo.Size(), exeInfo.ModTime().UnixNano(), head, authorName, authorEmail, staleAfter)
+	fmt.Fprintf(h, "%s\n%s %d %d\n%s\n%s\n", relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, variant), version.Version, exeInfo.Size(), exeInfo.ModTime().UnixNano(), head, staleAfter)
+	for _, line := range strings.Split(varList, "\n") {
+		name, value, _ := strings.Cut(line, "=")
+		if name == "GIT_AUTHOR_IDENT" || name == "GIT_COMMITTER_IDENT" {
+			value = value[:strings.LastIndexByte(value, '>')+1]
+		}
+		if _, seen := vars[name]; !seen {
+			vars[name] = value
+		}
+		fmt.Fprintf(h, "var %s=%q\n", name, value)
+	}
+	env := os.Environ()
+	slices.Sort(env)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "GIT_") {
+			fmt.Fprintf(h, "env %q\n", kv)
+		}
+	}
 	for _, file := range []string{
 		filepath.Join(c.s.GitDir(), "HEAD"),
 		filepath.Join(c.s.CommonDir(), "refs", "remotes", "origin", "HEAD"),
@@ -176,7 +225,7 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 	for _, ref := range names {
 		fmt.Fprintf(h, "%s %s\n", ref, refs[ref])
 	}
-	return hex.EncodeToString(h.Sum(nil)), staleAfter, nil
+	return hex.EncodeToString(h.Sum(nil)), staleAfter, vars, nil
 }
 
 func relevantCacheName(gitDir, dir, p string, filter RelevantFilter, variant string) string {
@@ -184,20 +233,20 @@ func relevantCacheName(gitDir, dir, p string, filter RelevantFilter, variant str
 	return hex.EncodeToString(sum[:])
 }
 
-func (e relevantCacheEntry) valid(dir string, now time.Time) bool {
+func (e relevantCacheEntry) valid(now time.Time) bool {
 	if e.Deadline != 0 && now.UnixNano() > e.Deadline {
 		return false
 	}
 	for _, f := range e.Files {
-		if stampOf(dir, f.Path) != f {
+		if stampOf(f.Path) != f {
 			return false
 		}
 	}
 	return true
 }
 
-func stampOf(dir, path string) fileStamp {
-	info, err := os.Stat(filepath.Join(dir, path))
+func stampOf(path string) fileStamp {
+	info, err := os.Stat(path)
 	if err != nil {
 		return fileStamp{Path: path, Missing: true}
 	}

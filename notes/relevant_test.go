@@ -570,3 +570,19 @@ func TestRelevantAbsolutePathMatchesRelative(t *testing.T) {
 		t.Fatalf("a path outside the worktree matched anchors: %v", scoredIDs(outside))
 	}
 }
+
+func TestRelevantCrossAuthorMatchesUnicodePathsUnderAnyQuotePath(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "base.go", "v1\n")
+	gittest.Git(t, dir, "branch", "feat-base")
+	commitFileAs(t, dir, relevantOther, "pkg/café.go", "theirs\n")
+	id := makeNote(t, c, "café", notes.AnchorSpec{Paths: []string{"pkg/café.go"}})
+
+	for _, quote := range []string{"true", "false"} {
+		gittest.Git(t, dir, "config", "core.quotePath", quote)
+		e := findEntry(t, mustRelevant(t, c, dir, "pkg/café.go", notes.RelevantFilter{Base: "feat-base"}), id)
+		if !slices.Contains(e.Reasons, "cross-author") {
+			t.Errorf("core.quotePath=%s: reasons = %v, want cross-author for a teammate-touched unicode path", quote, e.Reasons)
+		}
+	}
+}

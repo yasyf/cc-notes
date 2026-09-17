@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -116,6 +117,10 @@ type Store struct {
 	relevant  *lruDir
 	gitDir    string
 	commonDir string
+
+	rootOnce sync.Once
+	root     string
+	rootErr  error
 }
 
 // Open opens the git repository containing dir, following worktree and
@@ -157,6 +162,12 @@ func (s *Store) CommonDir() string { return s.commonDir }
 // GitDir returns the absolute per-worktree git directory, the one holding this
 // worktree's HEAD.
 func (s *Store) GitDir() string { return s.gitDir }
+
+// Root returns the absolute worktree root, resolved once per store.
+func (s *Store) Root(ctx context.Context) (string, error) {
+	s.rootOnce.Do(func() { s.root, s.rootErr = s.Git.Root(ctx) })
+	return s.root, s.rootErr
+}
 
 func (s *Store) signature(ctx context.Context) (gitobj.Signature, model.Actor, error) {
 	name, email, err := s.actor(ctx)
