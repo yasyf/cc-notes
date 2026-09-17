@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -133,4 +134,61 @@ func TestRelevantCachedExpiresAtTheStalenessDeadline(t *testing.T) {
 	time.Sleep(9 * time.Second)
 	p.expect("fresh verdict past its staleness deadline", clean, true)
 	p.expect("stale verdict warm", clean, false)
+}
+
+func TestRelevantCachedNeverPinsAFileDeletedDuringTheDriftCheck(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "svc/handler.go", "v1\n")
+	settle(t, dir, "svc/handler.go")
+	makeNote(t, c, "handler", notes.AnchorSpec{Paths: []string{"svc/handler.go"}})
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := t.TempDir()
+	script := "#!/bin/sh\n\"$REAL_GIT\" \"$@\"\nrc=$?\nfor a in \"$@\"; do [ \"$a\" = hash-object ] && rm -f \"$DELETE_AFTER_HASH\"; done\nexit $rc\n"
+	if err := os.WriteFile(filepath.Join(wrapper, "git"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := os.Getenv("PATH")
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("DELETE_AFTER_HASH", filepath.Join(dir, "svc/handler.go"))
+	t.Setenv("PATH", wrapper+string(os.PathListSeparator)+path)
+
+	p := &relevantProbe{t: t, c: c, dir: dir, target: "svc/handler.go"}
+	worktree := notes.RelevantFilter{Attached: true, Worktree: true}
+	if _, err := c.RelevantCached(t.Context(), p.target, worktree, "json", p.render); err != nil {
+		t.Fatalf("RelevantCached: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "svc/handler.go")); !os.IsNotExist(err) {
+		t.Fatalf("the wrapper did not delete the file after hashing it: %v", err)
+	}
+	t.Setenv("PATH", path)
+	p.expect("after a deletion that raced the drift check", worktree, true)
+}
+
+func TestRelevantCachedRejectsASameSizeRewriteThatKeepsMtime(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "svc/handler.go", "v1\n")
+	settle(t, dir, "svc/handler.go")
+	makeNote(t, c, "handler", notes.AnchorSpec{Paths: []string{"svc/handler.go"}})
+
+	p := &relevantProbe{t: t, c: c, dir: dir, target: "svc/handler.go"}
+	worktree := notes.RelevantFilter{Attached: true, Worktree: true}
+	p.expect("cold", worktree, true)
+	p.expect("warm", worktree, false)
+
+	file := filepath.Join(dir, "svc/handler.go")
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("v2\n"), info.Mode()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(file, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	p.expect("same size, same mtime and mode, new content", worktree, true)
 }

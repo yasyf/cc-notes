@@ -148,36 +148,53 @@ type scoredNote struct {
 // filter.Worktree threads through to each entity's verdict. A log, runbook,
 // investigation, or plan never drifts, so its verdict is empty.
 func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFilter) ([]RelevantEntry, error) {
-	p, err := c.relevantPath(ctx, target)
+	scored, clock, err := c.relevantScored(ctx, target, filter)
 	if err != nil {
 		return nil, err
+	}
+	if err := c.relevantVerdicts(ctx, scored, clock, filter.Worktree); err != nil {
+		return nil, err
+	}
+	return scored, nil
+}
+
+type relevantClock struct {
+	head       model.SHA
+	now        time.Time
+	staleAfter time.Duration
+}
+
+func (c *Client) relevantScored(ctx context.Context, target string, filter RelevantFilter) ([]RelevantEntry, relevantClock, error) {
+	p, err := c.relevantPath(ctx, target)
+	if err != nil {
+		return nil, relevantClock{}, err
 	}
 
 	branch, err := c.resolveRelevantBranch(ctx, filter.Branch)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	head, err := c.head(ctx)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	_, me, err := c.s.Git.AuthorIdent(ctx)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	crossAuthorPaths, err := c.crossAuthorSet(ctx, filter.Base, head, me)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	staleAfter, err := c.NoteStaleAfter(ctx)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	now := time.Now()
 
 	all, err := c.s.ListNotes(ctx, false, false)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	var scored []RelevantEntry
 	for _, n := range all {
@@ -186,7 +203,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		}
 		match, err := c.scoreNote(ctx, n, p, branch, head, crossAuthorPaths)
 		if err != nil {
-			return nil, err
+			return nil, relevantClock{}, err
 		}
 		if match.score == 0 {
 			continue
@@ -196,7 +213,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	docs, err := c.s.ListDocs(ctx, false, false)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, d := range docs {
 		if filter.Attached && !anchorsNear(d.Anchors, p) {
@@ -204,7 +221,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		}
 		score, reasons, err := c.scoreAnchors(ctx, d.Anchors, p, branch, head, crossAuthorPaths)
 		if err != nil {
-			return nil, err
+			return nil, relevantClock{}, err
 		}
 		if score == 0 {
 			continue
@@ -214,7 +231,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	answers, err := c.s.ListAnswers(ctx, false, false)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, a := range answers {
 		if filter.Attached && !anchorsNear(a.Anchors, p) {
@@ -222,7 +239,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		}
 		score, reasons, err := c.scoreAnchors(ctx, a.Anchors, p, branch, head, crossAuthorPaths)
 		if err != nil {
-			return nil, err
+			return nil, relevantClock{}, err
 		}
 		if score == 0 {
 			continue
@@ -232,7 +249,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	ledgers, err := c.Ledgers(ctx, LedgerFilter{})
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, l := range ledgers {
 		if filter.Attached && !anchorsNear(l.Anchors, p) {
@@ -240,7 +257,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		}
 		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths)
 		if err != nil {
-			return nil, err
+			return nil, relevantClock{}, err
 		}
 		if score == 0 {
 			continue
@@ -250,7 +267,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	logs, err := c.s.ListLogs(ctx, false)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, l := range logs {
 		if filter.Attached && !anchorsNear(l.Anchors, p) {
@@ -258,7 +275,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		}
 		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths)
 		if err != nil {
-			return nil, err
+			return nil, relevantClock{}, err
 		}
 		if score == 0 {
 			continue
@@ -268,7 +285,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	runbooks, err := c.Runbooks(ctx, RunbookFilter{})
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, rb := range runbooks {
 		if filter.Attached && !anchorsNear(rb.Anchors, p) {
@@ -276,7 +293,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		}
 		score, reasons, err := c.scoreAnchors(ctx, rb.Anchors, p, branch, head, crossAuthorPaths)
 		if err != nil {
-			return nil, err
+			return nil, relevantClock{}, err
 		}
 		if score == 0 {
 			continue
@@ -286,7 +303,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	investigations, err := c.s.ListInvestigations(ctx)
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, inv := range investigations {
 		if filter.Attached && !anchorsNear(inv.Anchors, p) {
@@ -294,7 +311,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		}
 		score, reasons, err := c.scoreAnchors(ctx, inv.Anchors, p, branch, head, crossAuthorPaths)
 		if err != nil {
-			return nil, err
+			return nil, relevantClock{}, err
 		}
 		if score == 0 {
 			continue
@@ -309,7 +326,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 
 	plans, err := c.Plans(ctx, PlanFilter{})
 	if err != nil {
-		return nil, err
+		return nil, relevantClock{}, err
 	}
 	for _, plan := range plans {
 		if filter.Attached && !anchorsNear(plan.Anchors, p) {
@@ -317,7 +334,7 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		}
 		score, reasons, err := c.scoreAnchors(ctx, plan.Anchors, p, branch, head, crossAuthorPaths)
 		if err != nil {
-			return nil, err
+			return nil, relevantClock{}, err
 		}
 		if score == 0 {
 			continue
@@ -330,15 +347,19 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 		scored = append(scored, RelevantEntry{Kind: model.KindPlan, Plan: plan, Score: score, Reasons: reasons})
 	}
 
+	slices.SortFunc(scored, compareScored)
+	return scored, relevantClock{head: head, now: now, staleAfter: staleAfter}, nil
+}
+
+func (c *Client) relevantVerdicts(ctx context.Context, scored []RelevantEntry, clock relevantClock, worktree bool) error {
 	for i := range scored {
-		verdict, err := c.entryVerdict(ctx, scored[i], head, now, staleAfter, filter.Worktree)
+		verdict, err := c.entryVerdict(ctx, scored[i], clock.head, clock.now, clock.staleAfter, worktree)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		scored[i].Verdict = verdict
 	}
-	slices.SortFunc(scored, compareScored)
-	return scored, nil
+	return nil
 }
 
 func anchorsNear(anchors []model.Anchor, p string) bool {

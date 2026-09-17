@@ -90,8 +90,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tip outside the sync tracking namespace, the shallow boundary, the author
   identity, and the staleness threshold. A hit is revalidated against the clock,
   since a fresh verdict turns stale at a known instant, and, under `--worktree`,
-  against the stat of every path anchor whose drift was checked; a file changed
-  within two seconds of the computation is never cached. On the monorepo a
+  against a fingerprint (existence, size, mtime, ctime, inode, mode) of every
+  path anchor whose drift was checked. That fingerprint is taken before and
+  after the drift check reads the file, and a result is cached only when the
+  two agree and no mtime falls within two seconds of the computation. On the monorepo a
   repeated call drops from 2.1–2.5s to 0.07–0.09s.
 
 - **`relevant --attached` skips entities it is about to drop.** It scored every
