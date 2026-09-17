@@ -4205,6 +4205,22 @@ def test_cli_write_matcher(monkeypatch) -> None:
         "cc-notes runbook run start abc": True,
         "cc-notes runbook run done abc s1": True,
         "cc-notes runbook run finish abc": True,
+        # ledger: every lifecycle verb, the refresh, and row mutations write; list/show/search/history and
+        # `row list` read.
+        "cc-notes ledger add Stack": True,
+        "cc-notes ledger edit abc --title y": True,
+        "cc-notes ledger rm abc": True,
+        "cc-notes ledger comment abc 'held'": True,
+        "cc-notes ledger activate abc": True,
+        "cc-notes ledger archive abc": True,
+        "cc-notes ledger sync abc --file rows.json --prune": True,
+        "cc-notes ledger row set abc --key pr-1 --field state=open": True,
+        "cc-notes ledger row rm abc --key pr-1": True,
+        "cc-notes ledger list": False,
+        "cc-notes ledger show abc": False,
+        "cc-notes ledger search stack": False,
+        "cc-notes ledger history abc": False,
+        "cc-notes ledger row list abc": False,
         # investigation: open (and its `add` alias), timeline growth, verdicts, and finding mutations write;
         # list/show/search/history and `finding list` read.
         "cc-notes investigation open Deadlock premise": True,
@@ -4271,6 +4287,19 @@ def test_mcp_write_matcher(monkeypatch) -> None:
         P + "runbook_run_start": True,
         P + "runbook_run_done": True,
         P + "runbook_run_finish": True,
+        P + "ledger_add": True,
+        P + "ledger_edit": True,
+        P + "ledger_rm": True,
+        P + "ledger_comment": True,
+        P + "ledger_activate": True,
+        P + "ledger_archive": True,
+        P + "ledger_sync": True,
+        P + "ledger_row_set": True,
+        P + "ledger_row_rm": True,
+        P + "ledger_list": False,
+        P + "ledger_show": False,
+        P + "ledger_search": False,
+        P + "ledger_row_list": False,
         P + "investigation_open": True,
         P + "investigation_append": True,
         P + "investigation_finding_add": True,
@@ -4322,6 +4351,30 @@ def test_sync_after_push_syncs_silently(monkeypatch, tmp_path) -> None:
     check("push-sync: returns nothing", sync_after_ref_move(evt) is None)
     check("push-sync: exactly one sync ran", _calls_of(calls, "sync") == [0], repr(calls))
     check("push-sync: the next event is silent", surface_sync_failures(_next_event(tmp_path)) is None)
+
+
+def test_ledger_writes_sync_and_ledger_reads_do_not(monkeypatch, tmp_path) -> None:
+    """A CLI or MCP ledger write runs the background sync; a ledger MCP read never matches the sync hook."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    from captain_hook.conditions import matches_conditions
+
+    for i, command in enumerate(("cc-notes ledger sync abc --file rows.json", "cc-notes ledger row set abc --key pr-1 --field state=open")):
+        session = tmp_path / f"cli{i}"
+        session.mkdir()
+        evt = mock_event("PostToolUse", tool="Bash", command=command, session_dir=session)
+        _session_repo(monkeypatch, session)
+        monkeypatch.setattr(evt.ctx, "git", repo_git({_CONFIG_KEY: None}))
+        cli, calls = recording_cli({("sync",): "ok"})
+        monkeypatch.setattr(evt.ctx, "call_cli", cli)
+        check(f"ledger write {command!r}: the sync hook matches", matches_conditions(_spec_for(sync_after_record_write), evt))
+        sync_after_record_write(evt)
+        check(f"ledger write {command!r}: a sync ran", _calls_of(calls, "sync") == [0], repr(calls))
+
+    for tool in ("ledger_list", "ledger_show", "ledger_search", "ledger_row_list"):
+        evt = mock_tool_event(tool=MCP_TOOL_PREFIX + tool, event=Event.PostToolUse, tool_input={"id": "abc"}, session_dir=tmp_path / "reads")
+        check(f"ledger read {tool}: the sync hook does not match", not matches_conditions(_spec_for(sync_after_record_write), evt))
+    write = mock_tool_event(tool=MCP_TOOL_PREFIX + "ledger_sync", event=Event.PostToolUse, tool_input={"id": "abc"}, session_dir=tmp_path / "mcp")
+    check("ledger write ledger_sync: the sync hook matches", matches_conditions(_spec_for(sync_after_record_write), write))
 
 
 def test_mcp_write_triggers_sync(monkeypatch, tmp_path) -> None:

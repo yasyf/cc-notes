@@ -138,6 +138,7 @@ CC_NOTES_WRITE_VERBS: dict[str, frozenset[str]] = {
     "project": frozenset({"add", "edit", "comment", "complete", "cancel", "archive"}),
     "sprint": frozenset({"add", "edit", "comment", "complete", "cancel", "activate"}),
     "runbook": frozenset({"add", "edit", "comment", "activate", "archive"}),
+    "ledger": frozenset({"add", "edit", "rm", "comment", "activate", "archive", "sync"}),
     # investigation `add` is the `open` alias; `root-cause` keeps its argv hyphen.
     "investigation": frozenset(
         {"open", "add", "append", "root-cause", "fix", "confirm", "exonerate", "abandon", "reopen", "edit", "rm"}
@@ -154,6 +155,7 @@ CC_NOTES_WRITE_SUBGROUP_READS: dict[tuple[str, str], frozenset[str]] = {
     ("task", "criterion"): frozenset({"list"}),
     ("runbook", "step"): frozenset({"list"}),
     ("runbook", "run"): frozenset({"list", "show"}),
+    ("ledger", "row"): frozenset({"list"}),
     ("investigation", "finding"): frozenset({"list"}),
 }
 
@@ -180,6 +182,7 @@ MCP_READ_TOOLS = frozenset(
         "runbook_list", "runbook_show",
         "investigation_list", "investigation_show", "investigation_search", "investigation_finding_list",
         "plan_list", "plan_show", "plan_search",
+        "ledger_list", "ledger_show", "ledger_search", "ledger_row_list",
         "papercut_list",
         "status", "blame", "history", "relevant", "attachment_get", "attachment_path", "sync",
     }
