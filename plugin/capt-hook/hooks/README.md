@@ -41,10 +41,9 @@ Every nudge is one shape — **static recall → LLM precision → act** — run
 two directions.
 
 **Surface (pull)** takes a file you just touched and recalls the durable records anchored
-to it. On a Read the top-ranked records surface directly, with no model call, so a read
-never waits on one. On an edit a small LLM keeps the drift worth acting on. It fails
-*open*: if the model call errors, every recalled record is shown rather than hide context
-by breaking.
+to it. On a Read the top-ranked records surface directly without a model call, so a read
+never waits on a model. On an edit a small LLM keeps the drift worth acting on. The filter
+fails *open* and shows every recalled record if the model call errors.
 
 **Record (push)** takes a write, a copy, or a commit, recalls a candidate
 over a cheap glob or diff, and a small LLM confirms the content is durable and routes it to
@@ -188,17 +187,19 @@ cc-notes-wired remote — each remote whose fetch refspec in git config tracks
 `cc-notes sync` when none is wired. Reads never sync. This replaces the old
 "run cc-notes sync" nudge.
 
-A command can run outside the session repo: `cd /other/repo && git push`,
+The commands `cd /other/repo && git push`,
 `git -C /other/repo merge topic`, `jj -R /other/repo git fetch`, and
-`cc-notes -R /other/repo note add …` all act on the *other* repo. Each sync and reconcile
-handler walks the parsed command legs, tracking every literal `cd` and each leg's own
-repository option, and acts on the repository the leg ran in, found by walking up to its
-`.git`. The session repo syncs through its wired remotes; any other repo syncs bare in its own
-directory, once per repo per turn. A `cd` it can't resolve structurally (`cd -`, a `$var`, a
-`~`, a backtick substitution) falls back to the event's working directory, and pushd,
-subshells, and pipeline grouping are ignored the same way. An MCP write targets the event's
-working directory. A command outside any git repository spawns nothing, and a repository with
-no `refs/cc-notes/*` costs one ref probe and nothing else.
+`cc-notes -R /other/repo note add …` all act on `/other/repo`, outside the session repo.
+Each sync and reconcile handler walks the parsed command legs, tracking every literal `cd`
+and each leg's repository option. It walks up to `.git` to find the repository the leg ran
+in and acts on that repository. The session repo syncs through its wired remotes. Any other
+repo syncs bare in its own directory, once per repo per turn.
+
+If a handler can't resolve a `cd`, it falls back to the event's working directory.
+Unresolvable forms include `cd -`, a `$var`, a `~`, and a backtick substitution.
+The handlers ignore `pushd`, subshells, and pipeline grouping. An MCP tool write targets the
+event's working directory. A command outside any git repository spawns nothing. A repository
+with no `refs/cc-notes/*` costs one ref probe and nothing else.
 
 **Auto-reconcile.** After a `git merge` / `git pull` / `jj git fetch`, the pack runs
 `cc-notes reconcile --into <current branch>` — carrying the merged branch's still-open tasks

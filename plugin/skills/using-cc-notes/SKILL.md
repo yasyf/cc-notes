@@ -525,10 +525,11 @@ bridge never carries the cc-notes refs, so this sync is what moves them), a `cc-
 claim`/`task start`, a `git merge`/`git pull`/`jj git fetch`, or any cc-notes write — a mutating
 CLI subcommand or MCP tool; reads never trigger — an async `PostToolUse` hook runs `cc-notes sync`
 in the background, covering every cc-notes-wired remote, at most once per target repo per turn — a
-commit and a claim in the same turn sync once. A command aimed at another repo, through a `cd`
-(`cd /other/repo && git push`) or its own option (`git -C`, `jj -R`, `cc-notes -R`), syncs and
-reconciles *that* repo; a `cd` the hook can't resolve structurally (`cd -`, a `$var`, a `~`,
-backticks) falls back to the working directory, and a command outside any cc-notes repository
+commit and a claim in the same turn sync once. A command aimed at another repo through a `cd`,
+such as `cd /other/repo && git push`, syncs and reconciles that repo. Commands using their own
+`git -C`, `jj -R`, or `cc-notes -R` option do the same. If the hook can't resolve a `cd`
+structurally, it falls back to the working directory. Unresolvable forms include `cd -`, a
+`$var`, a `~`, and backticks. A command outside any cc-notes repository
 triggers nothing. After a `git
 merge`/`git pull`/`jj git fetch` it first runs `cc-notes reconcile --into <current branch>`,
 carrying the merged branch's still-open tasks onto your branch, then syncs; on a detached HEAD

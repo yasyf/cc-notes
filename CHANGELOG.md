@@ -64,9 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   merge, push, commit, and claim hooks always reconciled and synced the
   session's repository, so a `cd /other && git merge` in one repository
   reconciled tasks in another. Every sync and reconcile hook now resolves the
-  target from the command's `cd` prefixes and its own repository option
-  (`git -C`, `jj -R`, `cc-notes -R`), syncs that repository, and does nothing
-  outside a git repository or in one with no cc-notes refs.
+  target from the command's `cd` prefixes and its `git -C`, `jj -R`, or
+  `cc-notes -R` option. It syncs that repository and does nothing outside a git
+  repository or in one with no cc-notes refs.
 
 - **The session-start task float reads `status --tasks`.** `float_session_tasks`
   ran a full `status` on the first prompt and read only its task buckets. It
@@ -112,11 +112,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Read surfaces records without a model call.** `float_note_context` sent
   two or more fresh records to a small-model filter, a synchronous `claude -p`
-  spawn. Once file anchors match, that fires on reads that surface new
-  file-anchored records, and it took 7.6–26.7s per call on a loaded machine. A
-  Read now surfaces the top `RELEVANT_LIMIT` (ten) by rank directly, the set the
-  filter's fail-open path already showed. The edit-time staleness check keeps
-  the filter, where candidates are few.
+  spawn. Once file anchors match, the filter runs on reads that surface new
+  file-anchored records. Each call took 7.6–26.7s on a loaded machine. A Read
+  now surfaces the top `RELEVANT_LIMIT` (ten) records by rank directly, the same
+  set the filter's fail-open path already showed. The edit-time staleness
+  check keeps the filter, where candidates are few.
 
 - **The availability announcement no longer runs `cc-notes version` on every
   prompt.** `announce_cc_notes_available` read the version before checking
