@@ -4968,7 +4968,7 @@ def test_bootstrap_upgrades_when_stale(monkeypatch, tmp_path) -> None:
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
         calls.append(tuple(args))
-        return "0.53.1 (old)" if args == ["cc-notes", "version"] else ""
+        return "0.54.0 (old)" if args == ["cc-notes", "version"] else ""
 
     evt = mock_event("SessionStart", source="startup", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
@@ -4989,7 +4989,7 @@ def test_bootstrap_noop_when_current(monkeypatch, tmp_path) -> None:
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
         calls.append(tuple(args))
-        return "0.54.0 (cur)" if args == ["cc-notes", "version"] else ""
+        return "0.55.0 (cur)" if args == ["cc-notes", "version"] else ""
 
     evt = mock_event("SessionStart", source="startup", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
