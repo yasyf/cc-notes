@@ -76,6 +76,31 @@ func (r *Repo) Tip(ctx context.Context, ref string) (model.SHA, error) {
 	return model.SHA(resolved.Hash().String()), nil
 }
 
+// ListSymbolic returns every symbolic ref whose full name starts with prefix,
+// mapped to the name of the ref it points at.
+func (r *Repo) ListSymbolic(ctx context.Context, prefix string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	iter, err := retryEmptyRef(ctx, r.storage.IterReferences)
+	if err != nil {
+		return nil, fmt.Errorf("list refs: %w", err)
+	}
+	targets := make(map[string]string)
+	err = iter.ForEach(func(ref *plumbing.Reference) error {
+		if ref.Type() == plumbing.SymbolicReference && strings.HasPrefix(string(ref.Name()), prefix) {
+			targets[string(ref.Name())] = string(ref.Target())
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list symbolic refs with prefix %s: %w", prefix, err)
+	}
+	return targets, nil
+}
+
 // ListPrefix returns every hash ref — loose and packed — whose full name
 // starts with prefix, mapped to the commit it points at.
 func (r *Repo) ListPrefix(ctx context.Context, prefix string) (map[string]model.SHA, error) {

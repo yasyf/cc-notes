@@ -217,3 +217,30 @@ func TestRelevantCachedInvalidatesOnContentConversionConfig(t *testing.T) {
 	settle(t, dir, ".gitattributes")
 	p.expect(".gitattributes marks the file as text", worktree, true)
 }
+
+func TestRelevantCachedFollowsSymbolicRefsAndResolvedBase(t *testing.T) {
+	c, dir := newClient(t)
+	root := commitFile(t, dir, "svc/handler.go", "v1\n")
+	gittest.Git(t, dir, "branch", "merged")
+	gittest.Git(t, dir, "checkout", "-q", "-b", "unmerged")
+	commitFile(t, dir, "side.go", "side\n")
+	gittest.Git(t, dir, "checkout", "-q", "main")
+	commitFileAs(t, dir, relevantOther, "svc/handler.go", "theirs\n")
+	settle(t, dir, "svc/handler.go")
+	gittest.Git(t, dir, "symbolic-ref", "refs/heads/alias", "refs/heads/unmerged")
+	makeNote(t, c, "handler", notes.AnchorSpec{Paths: []string{"svc/handler.go"}, Branches: []string{"alias"}})
+
+	p := &relevantProbe{t: t, c: c, dir: dir, target: "svc/handler.go"}
+	clean := notes.RelevantFilter{}
+	p.expect("alias -> unmerged", clean, true)
+	p.expect("alias -> unmerged, warm", clean, false)
+	gittest.Git(t, dir, "symbolic-ref", "refs/heads/alias", "refs/heads/merged")
+	p.expect("alias retargeted to a merged branch", clean, true)
+
+	gittest.Git(t, dir, "update-ref", "ORIG_HEAD", string(root))
+	base := notes.RelevantFilter{Base: "ORIG_HEAD"}
+	p.expect("ORIG_HEAD at the root", base, true)
+	p.expect("ORIG_HEAD at the root, warm", base, false)
+	gittest.Git(t, dir, "update-ref", "ORIG_HEAD", "HEAD")
+	p.expect("ORIG_HEAD moved to HEAD", base, true)
+}

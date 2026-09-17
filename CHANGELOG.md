@@ -90,9 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A repeated `relevant` answers from a cache.** The read- and edit-time
   surface hooks run `relevant` on every Read and every Edit. The result is now
   cached per worktree, target, filter, and output shape under
-  `.git/cc-notes/relevant-v1`, keyed on every input it reads: the binary, HEAD
-  and the symbolic refs behind the branch and default-branch lookups, every ref
-  tip outside the sync tracking namespace, the shallow boundary, the staleness
+  `.git/cc-notes/relevant-v1`, keyed on every input it reads: the binary, HEAD,
+  the commit a `--base` revision resolves to, every symbolic ref's target, every
+  ref tip outside the sync tracking namespace, the shallow boundary, the staleness
   threshold, the `GIT_*` environment, and `git var -l`, which carries the
   author identity, the config and attribute file locations, and the effective
   configuration of every scope with its includes resolved. Under `--worktree`

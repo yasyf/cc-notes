@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -41,8 +43,8 @@ type fileStamp struct {
 // output (format, limit), so two renderings never share an entry.
 //
 // An entry is keyed on every input Relevant reads: this binary, the worktree
-// and working directory, the target and filter, HEAD and the symbolic refs
-// behind the branch and default-branch lookups, every ref tip except the sync
+// and working directory, the target and filter, the commit a --base revision
+// resolves to, HEAD, every symbolic ref's target, every ref tip except the sync
 // tracking namespace, the shallow boundary, the staleness threshold, the
 // GIT_* environment, and `git var -l`, which carries the author identity, the
 // config and attribute file locations, and the effective configuration of
@@ -179,6 +181,17 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 	if err != nil {
 		return "", 0, nil, err
 	}
+	symbolic, err := c.s.Repo.ListSymbolic(ctx, "refs/")
+	if err != nil {
+		return "", 0, nil, err
+	}
+	var base model.SHA
+	if filter.Base != "" {
+		base, err = c.s.Git.CommitSHA(ctx, filter.Base)
+		if err != nil && !errors.Is(err, gitcmd.ErrRevNotFound) {
+			return "", 0, nil, err
+		}
+	}
 	varList, err := c.s.Git.VarList(ctx)
 	if err != nil {
 		return "", 0, nil, err
@@ -189,7 +202,7 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 	}
 	vars := make(map[string]string)
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\n%s %d %d\n%s\n%s\n", relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, variant), version.Version, exeInfo.Size(), exeInfo.ModTime().UnixNano(), head, staleAfter)
+	fmt.Fprintf(h, "%s\n%s %d %d\n%s\nbase %s\n%s\n", relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, variant), version.Version, exeInfo.Size(), exeInfo.ModTime().UnixNano(), head, base, staleAfter)
 	for _, line := range strings.Split(varList, "\n") {
 		name, value, _ := strings.Cut(line, "=")
 		if name == "GIT_AUTHOR_IDENT" || name == "GIT_COMMITTER_IDENT" {
@@ -224,6 +237,14 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 	slices.Sort(names)
 	for _, ref := range names {
 		fmt.Fprintf(h, "%s %s\n", ref, refs[ref])
+	}
+	links := make([]string, 0, len(symbolic))
+	for ref := range symbolic {
+		links = append(links, ref)
+	}
+	slices.Sort(links)
+	for _, ref := range links {
+		fmt.Fprintf(h, "%s -> %s\n", ref, symbolic[ref])
 	}
 	return hex.EncodeToString(h.Sum(nil)), staleAfter, vars, nil
 }
