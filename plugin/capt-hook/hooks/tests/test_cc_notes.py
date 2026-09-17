@@ -3183,7 +3183,7 @@ def test_auto_sync_failure_warns_on_next_event_once(monkeypatch, tmp_path) -> No
         sync_after_ref_move(claim_event(tmp_path / "prompt", monkeypatch, cli=cli)) is None
         and surface_sync_failures(mock_event("UserPromptSubmit", prompt="next", session_dir=tmp_path / "prompt")) is not None,
     )
-    outcome = do_sync(claim_event(tmp_path, monkeypatch, cli=cli))
+    [outcome] = do_sync(claim_event(tmp_path, monkeypatch, cli=cli))
     check("sync failure: do_sync carries the failure line", not outcome.synced and outcome.failure is not None and "cc-notes sync failed" in outcome.failure, repr(outcome))
 
 
@@ -3208,6 +3208,30 @@ def _pending_sync_failures(tmp_path) -> dict[str, str]:
     return _next_event(tmp_path).ctx.s.load(SyncFailures).by_target
 
 
+def test_partial_success_keeps_the_other_remotes_pending_failure(monkeypatch, tmp_path) -> None:
+    """With two wired remotes, a success on one clears only that remote's warning; the other's failure still surfaces."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(workflow, "should_autosync", lambda *_a, **_k: True)
+    wired = {_CONFIG_KEY: _wired("origin", "upstream")}
+
+    def sync(cli):
+        evt = claim_event(tmp_path, monkeypatch, cli=cli)
+        monkeypatch.setattr(evt.ctx, "git", repo_git(wired))
+        sync_after_ref_move(evt)
+
+    both_fail, _ = recording_cli(raises={("sync", "--remote", "origin"): _rejected("! [rejected]\n"), ("sync", "--remote", "upstream"): _rejected("! [rejected]\n")})
+    sync(both_fail)
+    upstream_times_out, _ = recording_cli(
+        {("sync", "--remote", "origin"): "ok"},
+        raises={("sync", "--remote", "upstream"): subprocess.TimeoutExpired(cmd="cc-notes sync", timeout=15)},
+    )
+    sync(upstream_times_out)
+    surfaced = surface_sync_failures(_next_event(tmp_path))
+    message = surfaced.message if surfaced else ""
+    check("partial success: the still-failing remote surfaces", "--remote upstream" in (message or ""), repr(message))
+    check("partial success: the remote that synced does not", "--remote origin" not in (message or ""), repr(message))
+
+
 def test_auto_sync_benign_outcomes_queue_nothing(monkeypatch, tmp_path) -> None:
     """No remote, a timeout, and a vanished binary are benign: nothing queues and nothing surfaces."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
@@ -3223,7 +3247,7 @@ def test_auto_sync_benign_outcomes_queue_nothing(monkeypatch, tmp_path) -> None:
         sync_after_ref_move(evt)
         check(f"{name}: the sync was attempted", _calls_of(calls, "sync") == [0], repr(calls))
         check(f"{name}: nothing surfaces on the next event", surface_sync_failures(_next_event(session)) is None)
-        check(f"{name}: do_sync is neither synced nor failed", do_sync(claim_event(session, monkeypatch, cli=cli)) == (False, None))
+        check(f"{name}: do_sync is neither synced nor failed", do_sync(claim_event(session, monkeypatch, cli=cli)) == [("", False, None)])
 
 
 def test_reconcile_after_merge(monkeypatch, tmp_path) -> None:
@@ -4475,7 +4499,7 @@ def test_do_sync_syncs_each_wired_remote(monkeypatch, tmp_path) -> None:
     outcome = do_sync(evt)
     check("do_sync: origin then upstream via --remote",
           _calls_of(calls, "sync", "--remote", "origin") == [0] and _calls_of(calls, "sync", "--remote", "upstream") == [1], repr(calls))
-    check("do_sync: multi-remote success is synced with no line", outcome == (True, None), repr(outcome))
+    check("do_sync: multi-remote success is synced with no line", outcome == [("origin", True, None), ("upstream", True, None)], repr(outcome))
 
 
 def test_do_sync_zero_wired_falls_back_bare(monkeypatch, tmp_path) -> None:
@@ -4484,7 +4508,7 @@ def test_do_sync_zero_wired_falls_back_bare(monkeypatch, tmp_path) -> None:
     evt, calls = _do_sync_event(monkeypatch, tmp_path, wired=(), mapping={("sync",): "ok"})
     outcome = do_sync(evt)
     check("do_sync: bare sync when zero wired", calls == [("cc-notes", "sync")], repr(calls))
-    check("do_sync: bare success is synced with no line", outcome == (True, None), repr(outcome))
+    check("do_sync: bare success is synced with no line", outcome == [("", True, None)], repr(outcome))
 
 
 def test_do_sync_single_wired_uses_remote(monkeypatch, tmp_path) -> None:
@@ -4493,7 +4517,7 @@ def test_do_sync_single_wired_uses_remote(monkeypatch, tmp_path) -> None:
     evt, calls = _do_sync_event(monkeypatch, tmp_path, wired=("origin",), mapping={("sync", "--remote", "origin"): "ok"})
     outcome = do_sync(evt)
     check("do_sync: single wired uses --remote", calls == [("cc-notes", "sync", "--remote", "origin")], repr(calls))
-    check("do_sync: success is synced with no line", outcome == (True, None), repr(outcome))
+    check("do_sync: success is synced with no line", outcome == [("origin", True, None)], repr(outcome))
 
 
 def test_do_sync_multi_remote_failure_names_remote(monkeypatch, tmp_path) -> None:
@@ -4504,7 +4528,7 @@ def test_do_sync_multi_remote_failure_names_remote(monkeypatch, tmp_path) -> Non
         mapping={("sync", "--remote", "origin"): "ok"},
         raises={("sync", "--remote", "upstream"): _rejected("! [rejected] non-fast-forward\n")},
     )
-    line = do_sync(evt).failure
+    line = next(o.failure for o in do_sync(evt) if o.failure)
     check(
         "do_sync: failure names the exact per-remote retry",
         line is not None and "cc-notes sync failed" in line and "`cc-notes sync --remote upstream`" in line,
@@ -4520,7 +4544,7 @@ def test_do_sync_partial_failure_warns(monkeypatch, tmp_path) -> None:
         mapping={("sync", "--remote", "origin"): "ok"},
         raises={("sync", "--remote", "upstream"): _rejected("! [rejected] non-fast-forward\n")},
     )
-    line = do_sync(evt).failure
+    line = next(o.failure for o in do_sync(evt) if o.failure)
     check("do_sync: partial failure warns", line is not None and "cc-notes sync failed" in line and "Synced cc-notes refs." not in line, repr(line))
     check("do_sync: both remotes were attempted", len(_sync_runs(calls)) == 2, repr(calls))
 

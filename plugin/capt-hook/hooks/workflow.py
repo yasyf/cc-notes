@@ -308,53 +308,54 @@ def run_sync(evt: BaseHookEvent, *, remote: str | None = None, cwd: str | None =
 
 
 class SyncOutcome(NamedTuple):
+    remote: str
     synced: bool
     failure: str | None
 
 
-def do_sync(evt: BaseHookEvent) -> SyncOutcome:
-    # Sync the session repo to every cc-notes-wired remote (bare when none is wired). A genuine failure
-    # carries a line naming the failed remote(s) under a multi-remote fan-out.
+def do_sync(evt: BaseHookEvent) -> list[SyncOutcome]:
+    # Sync the session repo to every cc-notes-wired remote (bare when none is wired), one outcome per remote.
+    # A genuine failure names its own retry: a bare `cc-notes sync` on an older binary derives origin and may
+    # never re-attempt the failed remote, so each failed remote gets its own `--remote <name>`.
     remotes = wired_remotes(evt)
     if not remotes:
         ok = run_sync(evt)
-        return SyncOutcome(ok is True, "cc-notes sync failed — run `cc-notes sync` to retry." if ok is False else None)
-    results = {r: run_sync(evt, remote=r) for r in remotes}
-    if failed := [r for r, ok in results.items() if ok is False]:
-        # Name the exact per-remote retry: a bare `cc-notes sync` on an older binary derives origin and
-        # may never re-attempt the failed remote, so each failed remote gets its own `--remote <name>`.
-        retries = ", ".join(f"`cc-notes sync --remote {r}`" for r in failed)
-        return SyncOutcome(False, f"cc-notes sync failed for {', '.join(failed)} — run {retries} to retry.")
-    return SyncOutcome(any(ok is True for ok in results.values()), None)
+        return [SyncOutcome("", ok is True, "cc-notes sync failed — run `cc-notes sync` to retry." if ok is False else None)]
+    outcomes = []
+    for r in remotes:
+        ok = run_sync(evt, remote=r)
+        outcomes.append(SyncOutcome(r, ok is True, f"cc-notes sync failed for {r} — run `cc-notes sync --remote {r}` to retry." if ok is False else None))
+    return outcomes
 
 
-def cross_sync(evt: BaseHookEvent, cwd: str) -> SyncOutcome:
+def cross_sync(evt: BaseHookEvent, cwd: str) -> list[SyncOutcome]:
     # A cc-notes write in a foreign repo (a resolved `cd` target) syncs THAT repo, bare — its own remote
     # derivation applies, never the session repo's wired remotes. A failure names the directory.
     ok = run_sync(evt, cwd=cwd)
-    return SyncOutcome(ok is True, f"cc-notes sync failed in {cwd} — run `cc-notes sync` there to retry." if ok is False else None)
+    return [SyncOutcome("", ok is True, f"cc-notes sync failed in {cwd} — run `cc-notes sync` there to retry." if ok is False else None)]
 
 
-def auto_sync(evt: PostToolUseEvent) -> SyncOutcome | None:
-    return do_sync(evt) if should_autosync(evt) else None
+def auto_sync(evt: PostToolUseEvent) -> list[SyncOutcome]:
+    return do_sync(evt) if should_autosync(evt) else []
 
 
 class SyncFailures(BaseModel):
     by_target: dict[str, str] = Field(default_factory=dict)
 
 
-def record_sync(evt: BaseHookEvent, target: str, outcome: SyncOutcome | None) -> None:
-    # A failure replaces the target's pending warning, a success clears it, and a benign outcome (no
-    # remote, a timeout) leaves it standing.
-    if outcome is None or not (outcome.failure or outcome.synced):
-        return
-    if not outcome.failure and target not in evt.ctx.s.load(SyncFailures).by_target:
+def record_sync(evt: BaseHookEvent, target: str, outcomes: list[SyncOutcome]) -> None:
+    # Pending warnings are kept per target repo and remote: a failure replaces that remote's warning, a
+    # success clears only that remote's, and a benign outcome (no remote, a timeout) leaves it standing.
+    pending = evt.ctx.s.load(SyncFailures).by_target
+    changes = [(f"{target}#{o.remote}", o) for o in outcomes if o.failure or (o.synced and f"{target}#{o.remote}" in pending)]
+    if not changes:
         return
     with evt.ctx.s[SyncFailures].mutate() as state:
-        if outcome.failure:
-            state.by_target[target] = outcome.failure
-        else:
-            state.by_target.pop(target, None)
+        for key, outcome in changes:
+            if outcome.failure:
+                state.by_target[key] = outcome.failure
+            else:
+                state.by_target.pop(key, None)
 
 
 def _resolve_dir(cwd: str | None, arg: str) -> str | None:
@@ -444,7 +445,7 @@ def sync_targets(evt: PostToolUseEvent, matches: Callable[[Command], bool], *, r
             record_sync(evt, root, cross_sync(evt, root))
 
 
-def auto_reconcile(evt: PostToolUseEvent) -> SyncOutcome | None:
+def auto_reconcile(evt: PostToolUseEvent) -> list[SyncOutcome]:
     # Reconcile is local + idempotent (run_cc_notes is fail-closed) and runs before the sync so the
     # carried tasks ship with it. A detached HEAD (the colocated-jj norm, exactly the state `jj git fetch`
     # targets) has no branch to reconcile onto, so only the fetched refs ship. The sync rides the shared
@@ -573,7 +574,7 @@ def link_commit(evt: PostToolUseEvent) -> None:
     except Exception:
         linked = False
     if not linked:
-        record_sync(evt, f"link:{sha}", SyncOutcome(False, f"cc-notes could not link commit {sha[:7] or 'HEAD'} onto task {task} — run `cc-notes task link {task} {sha or 'HEAD'}` to retry."))
+        record_sync(evt, f"link:{sha}", [SyncOutcome("", False, f"cc-notes could not link commit {sha[:7] or 'HEAD'} onto task {task} — run `cc-notes task link {task} {sha or 'HEAD'}` to retry.")])
 
 
 COMMIT_DECISION_SYSTEM = (

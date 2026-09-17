@@ -54,8 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a benign outcome (no remote, a timeout) say nothing; the "Synced cc-notes
   refs." and "Reconciled merged tasks onto <branch>." lines are gone. A genuine
   failure is recorded in session state, and `surface_sync_failures` shows its
-  retry hint once, on the next tool call or prompt; a later successful sync of
-  the same repo clears it first. The per-turn dedup and the
+  retry hint once, on the next tool call or prompt. Warnings are kept per repo
+  and wired remote, and a later successful sync of that same remote clears
+  its warning first. The per-turn dedup and the
   SessionEnd backstop are unchanged. Commit and claim syncs are no longer
   capped at the nudges' three fires per session. After a commit, the
   background hook writes the `task link` edge onto the task the session holds
