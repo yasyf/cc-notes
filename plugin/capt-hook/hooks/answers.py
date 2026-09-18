@@ -38,6 +38,7 @@ from .common import (
     unseen_answers,
 )
 from .compact import CompactResume
+from .deferred import defer
 from .surface import SurfacePick
 
 MAX_ANSWER_PATHS = 10
@@ -98,6 +99,17 @@ class AnswerTriage(BaseModel):
     """The triage's verdicts; an answer with no verdict records as durable with no supersede."""
 
     verdicts: list[AnswerVerdict] = []
+
+
+class AnswerCaptureLock(BaseModel):
+    """Empty state whose file lock serializes one session's background answer captures.
+
+    A capture lists the durable candidates, triages against them, records, and retires the
+    candidate its verdict supersedes. Two captures overlapping would both list candidates before
+    either recorded, so the second would supersede an answer the first had already replaced and
+    both would stay live. Running on the reply's thread made that window small; running in the
+    background makes it the whole capture.
+    """
 
 
 class PromptAnswerPicks(BaseModel):
@@ -218,20 +230,8 @@ def add_answer(evt: PostToolUseEvent, pair: AnsweredQuestion, scope: str, anchor
     return json_field(out, "id")
 
 
-@on(
-    Event.PostToolUse,
-    only_if=[Tool("AskUserQuestion"), CcNotesAvailable()],
-    max_fires=None,
-    tests={
-        Input(tool="AskUserQuestion", tool_input={"questions": [{"question": "Q?", "header": "h", "multiSelect": False, "options": [{"label": "A"}]}]}): Allow(),
-        Input(tool="Edit", file="m.py"): Allow(),
-    },
-)
-def record_user_answers(evt: PostToolUseEvent) -> HookResult | None:
-    """Record every answer the user gave to an AskUserQuestion as a cc-notes answer.
-
-    Uncapped, like the plan capture: ``max_fires`` would silently drop every answer past the cap.
-    """
+def capture_user_answers(evt: PostToolUseEvent) -> HookResult | None:
+    """Record every answer the user gave to an AskUserQuestion as a cc-notes answer; the acknowledgement."""
     pairs = answered_questions(evt)
     if not pairs:
         return None
@@ -257,6 +257,29 @@ def record_user_answers(evt: PostToolUseEvent) -> HookResult | None:
         return None
     remember_answers(evt, recorded)
     return evt.warn(f"Recorded the user's answers in cc-notes: {', '.join(acks)}.")
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[Tool("AskUserQuestion"), CcNotesAvailable()],
+    max_fires=None,
+    async_=True,
+    tests={
+        Input(tool="AskUserQuestion", tool_input={"questions": [{"question": "Q?", "header": "h", "multiSelect": False, "options": [{"label": "A"}]}]}): Allow(),
+        Input(tool="Edit", file="m.py"): Allow(),
+    },
+)
+def record_user_answers(evt: PostToolUseEvent) -> None:
+    """Capture the user's answers in the background; the next event floats the acknowledgement.
+
+    The capture is a triage model call plus one ``answer add`` subprocess per answer, all of which
+    a PostToolUse hook would hold the tool result through. Uncapped, like the plan capture:
+    ``max_fires`` would silently drop every answer past the cap. It holds
+    :class:`AnswerCaptureLock` so the session's captures stay serial.
+    """
+    with evt.ctx.s[AnswerCaptureLock].mutate():
+        ack = capture_user_answers(evt)
+    defer(evt, ack)
 
 
 def pick_prompt_answers(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> dict[str, str]:

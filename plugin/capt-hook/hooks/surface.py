@@ -31,6 +31,7 @@ from .common import (
     repo_root,
     run_cc_notes,
 )
+from .deferred import defer
 
 RELEVANT_LIMIT = 10
 
@@ -106,17 +107,8 @@ def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touche
     return [e for e in fresh if entry_payload(e)["id"] in chosen]
 
 
-@on(
-    Event.PostToolUse,
-    only_if=[Tool("Read"), CcNotesAvailable()],
-    tests={
-        # A non-Read tool never matches the Tool gate. The firing path needs a stubbed
-        # CLI, so it lives in tests/test_cc_notes.py.
-        Input(tool="Edit", file="m.py"): Allow(),
-    },
-)
-def float_note_context(evt: PostToolUseEvent) -> HookResult | None:
-    """Surface the top-ranked durable records relevant to a freshly read file, once per id per session, with no model call."""
+def recall_note_context(evt: PostToolUseEvent) -> HookResult | None:
+    """The top-ranked durable records relevant to a freshly read file, once per id per session, with no model call."""
     if not (path := repo_path(evt)):
         return None
     entries = file_surfaced(evt, run_cc_notes(evt, "relevant", path, "--limit", "0", "--json"))
@@ -133,15 +125,25 @@ def float_note_context(evt: PostToolUseEvent) -> HookResult | None:
 
 @on(
     Event.PostToolUse,
-    only_if=[Tool("Edit|Write|MultiEdit"), CcNotesAvailable()],
+    only_if=[Tool("Read"), CcNotesAvailable()],
+    async_=True,
     tests={
-        # A Read never matches the Edit|Write|MultiEdit gate. The firing path needs a
-        # stubbed CLI, so it lives in tests/test_cc_notes.py.
-        Input(tool="Read", file="m.py"): Allow(),
+        # A non-Read tool never matches the Tool gate. The firing path needs a stubbed
+        # CLI, so it lives in tests/test_cc_notes.py.
+        Input(tool="Edit", file="m.py"): Allow(),
     },
 )
-def check_note_staleness(evt: PostToolUseEvent) -> HookResult | None:
-    """Surface drifted records anchored to a path an edit just touched, for reconciliation."""
+def float_note_context(evt: PostToolUseEvent) -> None:
+    """Recall the records anchored to a freshly read file in the background; the next event floats them.
+
+    ``cc-notes relevant`` is a subprocess, and a PostToolUse hook holds the tool result until it
+    returns, so the recall runs after that result has gone back.
+    """
+    defer(evt, recall_note_context(evt))
+
+
+def recall_stale_notes(evt: PostToolUseEvent) -> HookResult | None:
+    """The drifted records anchored to a path an edit just touched, for reconciliation."""
     if not (path := repo_path(evt)):
         return None
     entries = file_surfaced(evt, run_cc_notes(evt, "relevant", path, "--attached", "--worktree", "--limit", "0", "--json"))
@@ -175,3 +177,22 @@ def check_note_staleness(evt: PostToolUseEvent) -> HookResult | None:
             "`--apply` commits the change."
         )
     return evt.warn(guidance, *render_note_lines(picked))
+
+
+@on(
+    Event.PostToolUse,
+    only_if=[Tool("Edit|Write|MultiEdit"), CcNotesAvailable()],
+    async_=True,
+    tests={
+        # A Read never matches the Edit|Write|MultiEdit gate. The firing path needs a
+        # stubbed CLI, so it lives in tests/test_cc_notes.py.
+        Input(tool="Read", file="m.py"): Allow(),
+    },
+)
+def check_note_staleness(evt: PostToolUseEvent) -> None:
+    """Recall the drifted records anchored to a freshly edited file in the background; the next event floats them.
+
+    The recall is a ``cc-notes relevant`` subprocess and the filter over it is a small-model call,
+    both of which a PostToolUse hook would otherwise hold the tool result through.
+    """
+    defer(evt, recall_stale_notes(evt))

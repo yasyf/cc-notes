@@ -41,6 +41,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `status` tool takes a matching `tasks` argument.
 
 ### Changed
+- **No hook holds a tool result while it recalls or classifies.** The prompt
+  float moved off the synchronous path; the `PostToolUse` handlers that cost the
+  most had not. Over 6,769 `PostToolUse` dispatches on one machine, 383 took more
+  than 5 s and the slowest took 26.4 s, with `record_user_answers` abandoned 14
+  times at captain-hook's collection cutoff and `float_note_context` 9. Each was
+  a `cc-notes relevant` subprocess, a small-model filter, or a triage call plus
+  one `answer add` per answer, all of it between the tool finishing and the agent
+  seeing its result.
+
+  `float_note_context`, `check_note_staleness`, and `record_user_answers` now run
+  `async_=True`, after the result has gone back. Claude Code never reads a
+  background hook's output, so each stages its advisory through the new
+  `deferred.defer` and `float_deferred_notices` floats the queue on the next
+  `PostToolUse`, `PostToolUseFailure`, or `UserPromptSubmit`. An advisory now
+  arrives one event after the event that earned it; the records it describes are
+  written on the same schedule as before. The answer capture holds a
+  session-scoped lock across list, triage, record, and supersede, so two
+  background captures cannot both read the candidates before either records and
+  leave a superseded answer live.
+
+  `nudge_record_durable` keeps its synchronous model call. A `max_fires`-capped
+  hook cannot make this move: captain-hook reserves a fire before the handler
+  runs and releases it unless the handler returns a result, so a capped hook that
+  defers instead of returning would never consume its cap.
+
 - **The per-prompt answer filter considers 12 candidates, not 50.** Moving the
   pick into the background stopped it costing the prompt, but at 50 candidates
   it still did not finish inside captain-hook's 180 s async budget, so no answer

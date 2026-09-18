@@ -50,6 +50,27 @@ over a cheap glob or diff, and a small LLM confirms the content is durable and r
 exactly one primitive — note, doc, log, task, papercut, runbook, investigation, or plan — or to nothing. It fails *closed* to
 silence.
 
+**Neither direction holds a tool call.** A recall is a `cc-notes` subprocess and a precision
+gate is a model call, and captain-hook holds the tool result or the prompt until a synchronous
+hook returns — which is how a slow model route turned into seconds of latency on every event,
+and then into nothing at all once the hook was abandoned at the collection cutoff. Every one of
+these handlers is registered `async_=True` and runs after that result has gone back. Because
+Claude Code never reads a background hook's output, each stages its advisory in session state
+through `deferred.defer`, and `float_deferred_notices` — the one hook still on the synchronous
+path — floats the queue on the next `PostToolUse`, `PostToolUseFailure`, or `UserPromptSubmit`
+and clears it. Every staged advisory floats: each deferring hook already dedups its own subject
+through the `unseen` scopes below, so a second fire about the same file carries only what was
+new. So an advisory arrives one event after the event that earned it, and a hook that is still
+thinking costs that event nothing.
+
+Two things do not travel this way. A `max_fires`-capped hook cannot: captain-hook reserves a
+fire before the handler runs and releases it unless the handler returns a result, so a capped
+hook that defers instead of returning would never consume its cap — which is why the
+internal-write router still runs synchronously. And a capture that reads shared state before
+writing it needs its own serialization: the answer capture holds a session-scoped lock across
+list-triage-record-supersede, because two background captures interleaving there would each
+list candidates before either recorded and leave a superseded answer live.
+
 The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
 on purpose; the LLM is the precision gate in both directions. The only deterministic hooks
 are the ones with no "which" to pick: the memory mirror, where the file already declares
@@ -61,8 +82,8 @@ where the action is fixed.
 
 | Trigger | Recall | The LLM picks |
 |---------|--------|---------------|
-| `Read` a file (PostToolUse) | the notes, docs, logs, runbooks, and investigations `cc-notes relevant <path>` ranks, plus answers once `git config cc-notes.answers.fileSurfacing true` is set (answers are dropped from both file triggers while it is unset or false) | nothing — the top ten by rank surface directly, with no model call |
-| `Edit` / `Write` / `MultiEdit` a file (PostToolUse) | anchored records with a non-null drift verdict (`relevant --attached --worktree`) | which drift actually warrants a `verify` / `edit` / `supersede` / `expire`, named per kind |
+| `Read` a file (PostToolUse), in the background | the notes, docs, logs, runbooks, and investigations `cc-notes relevant <path>` ranks, plus answers once `git config cc-notes.answers.fileSurfacing true` is set (answers are dropped from both file triggers while it is unset or false) | nothing — the top ten by rank, with no model call, staged for the next event to float |
+| `Edit` / `Write` / `MultiEdit` a file (PostToolUse), in the background | anchored records with a non-null drift verdict (`relevant --attached --worktree`) | which drift actually warrants a `verify` / `edit` / `supersede` / `expire`, named per kind, staged for the next event to float |
 | Session start, first `UserPromptSubmit` (once) | your branch's open/in-progress tasks topped up from the backlog | nothing — rendered straight as orientation, capped at seven with a `+K more` → `cc-notes status` |
 | Session start, first `UserPromptSubmit` (once) | the most recently updated live `scope:durable` answers not yet captured or surfaced this session | nothing — rendered as `<short id> <question> → <answer>`, capped at eight with a `+K more` → `cc-notes answer list --label scope:durable` |
 | Every `UserPromptSubmit`, in the background | the unseen live `scope:durable` answers (no model call when there are none) | which bear on the prompt; the pick is staged in session state and floats on the first prompt after it lands, so the prompt itself never waits on the model. Only floated answers are marked seen, so the rest stay candidates for later prompts, one another trigger surfaced meanwhile drops out of the float, and a failed pick stages nothing and records a captain-hook fault |
@@ -289,7 +310,9 @@ model error records every answer durable with no supersede. Each record is ancho
 current branch and up to ten repo-relative files the session touched, and carries a
 `header:<chip>` label when the question has a header. An answer or note that looks like a
 secret never records, because the refs sync to the remote. Like the plan capture it is
-uncapped and fails closed to silence.
+uncapped and fails closed to silence. The whole capture runs in the background and the next
+event floats its acknowledgement, so the triage call and the `answer add` writes never hold
+the `AskUserQuestion` result.
 
 **The compact tracker.** Compaction wipes the window; the entities the session touched should
 not vanish with it. Every cc-notes entity call — an MCP tool or a `cc-notes`/`ccn` leg of any

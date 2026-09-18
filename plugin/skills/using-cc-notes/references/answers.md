@@ -1,8 +1,9 @@
 # Answers: the user's reply kept with its question
 
 An answer records a user's reply to an `AskUserQuestion` question. With the cc-notes
-capt-hook pack enabled, `record_user_answers` captures it automatically: a `PostToolUse`
-hook on `AskUserQuestion`, with no fire cap. Durable answers carry the user's choices into
+capt-hook pack enabled, `record_user_answers` captures it automatically: a background
+`PostToolUse` hook on `AskUserQuestion`, with no fire cap, whose acknowledgement floats on
+the next event rather than holding the tool result. Durable answers carry the user's choices into
 later sessions so the next agent can follow them without asking the same question again.
 
 Like every cc-notes entity, an answer is an event-log CRDT (conflict-free replicated data
@@ -82,7 +83,7 @@ supersession edge.
 
 ## Where answers surface
 
-The capt-hook pack recalls answers at four points:
+The capt-hook pack recalls answers at five points:
 
 | Hook | Event | What surfaces |
 |---|---|---|
@@ -90,6 +91,7 @@ The capt-hook pack recalls answers at four points:
 | `stage_prompt_answers` | Every `UserPromptSubmit`, in the background | Nothing directly — it filters unseen durable answers against the prompt with a small LLM and stages the pick |
 | `float_prompt_answers` | Every `UserPromptSubmit` | The pick the previous prompt staged, read from session state with no model call |
 | `restore_answers_after_compact` | `SessionStart` with source `compact` | Answers captured or surfaced this session, capped at 30 |
+| `float_deferred_notices` | Every `PostToolUse`, `PostToolUseFailure`, and `UserPromptSubmit` | Whatever a background hook staged since the last event, including the `record_user_answers` acknowledgement |
 
 The seen-set scope is `answers`. File surfacing through `relevant` is off by default; enable
 it for the repo with:
