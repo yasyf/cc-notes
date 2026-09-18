@@ -44,6 +44,7 @@ from hooks.answers import (
     float_prompt_answers,
     record_user_answers,
     restore_answers_after_compact,
+    stage_prompt_answers,
 )
 from hooks.approval import CcNotesCli, CcNotesMcp, cc_notes_mcp_tool
 import hooks.common as common
@@ -5599,46 +5600,89 @@ def test_durable_answers_skip_expired(monkeypatch, tmp_path) -> None:
     evt = prompt_event(monkeypatch, tmp_path / "prompt", rows)
     offered: list[str] = []
     monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: offered.append(str(prompt)) or SurfacePick())
-    evt.ctx.s.once("first", scope="prompt-answers")
-    float_prompt_answers(evt)
+    stage_prompt_answers(evt)
     check("expired: prompt filter never sees the expired answer", offered and "live001" in offered[0] and "gone001" not in offered[0], repr(offered))
 
 
-def test_float_prompt_answers_filters(monkeypatch, tmp_path) -> None:
-    """The first prompt belongs to the digest; later prompts surface only LLM-picked unseen answers, once."""
+def test_stage_prompt_answers_floats_on_the_next_prompt(monkeypatch, tmp_path) -> None:
+    """A prompt's background pick floats on the next prompt, once, and never on the prompt that picked it."""
     rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis"), durable_answer("ui00001bbbb", title="Button color?", body="Blue")]
     first = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(first.ctx, "call_llm", _llm_boom)
-    check("prompt answers: first prompt skipped", float_prompt_answers(first) is None)
+    monkeypatch.setattr(first.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa", "unknown"])))
+    check("prompt answers: nothing staged yet, so the first prompt floats nothing", float_prompt_answers(first) is None)
+    stage_prompt_answers(first)
 
     evt = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa", "unknown"])))
     result = float_prompt_answers(evt)
     check("prompt answers: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("prompt answers: only the picked answer", "auth001 Session store? → Redis" in result.message and "ui00001" not in result.message, result.message)
+    check("prompt answers: a staged pick floats once", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
     later = prompt_event(monkeypatch, tmp_path, rows)
     monkeypatch.setattr(later.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa", "ui00001bbbb"])))
-    result = float_prompt_answers(later)
-    check("prompt answers: a surfaced answer never repeats", result is not None and "auth001" not in (result.message or "") and "ui00001" in (result.message or ""), repr(result))
+    stage_prompt_answers(later)
+    result = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows))
+    check("prompt answers: a floated answer never repeats", result is not None and "auth001" not in (result.message or "") and "ui00001" in (result.message or ""), repr(result))
 
     llm_calls: list[object] = []
     quiet = prompt_event(monkeypatch, tmp_path, rows)
     monkeypatch.setattr(quiet.ctx, "call_llm", lambda *a, **k: llm_calls.append(a))
-    check("prompt answers: all seen -> silent", float_prompt_answers(quiet) is None)
+    stage_prompt_answers(quiet)
     check("prompt answers: all seen -> the LLM never runs", llm_calls == [], repr(llm_calls))
+    check("prompt answers: all seen -> silent", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
 
-def test_float_prompt_answers_fails_closed(monkeypatch, tmp_path) -> None:
+def test_float_prompt_answers_drops_an_answer_surfaced_meanwhile(monkeypatch, tmp_path) -> None:
+    """An answer marked seen between the pick and the float is dropped, not repeated."""
+    rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis"), durable_answer("ui00001bbbb", title="Button color?", body="Blue")]
+    staged = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa", "ui00001bbbb"])))
+    stage_prompt_answers(staged)
+
+    meanwhile = prompt_event(monkeypatch, tmp_path, rows)
+    common.remember_answers(meanwhile, [rows[0]])
+    result = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows))
+    check("prompt answers: the answer surfaced meanwhile is dropped", result is not None and "auth001" not in (result.message or "") and "ui00001" in (result.message or ""), repr(result))
+
+    lone = prompt_event(monkeypatch, tmp_path / "lone", rows[:1])
+    monkeypatch.setattr(lone.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa"])))
+    stage_prompt_answers(lone)
+    common.remember_answers(prompt_event(monkeypatch, tmp_path / "lone", rows[:1]), rows[:1])
+    check("prompt answers: a wholly stale pick floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "lone", rows[:1])) is None)
+
+
+def test_float_prompt_answers_never_calls_out(monkeypatch, tmp_path) -> None:
+    """The prompt path reads session state only: no model call, no cc-notes call, staged or not."""
+    rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis")]
+    staged = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa"])))
+    stage_prompt_answers(staged)
+
+    for label, evt in (("staged", prompt_event(monkeypatch, tmp_path, rows)), ("empty", prompt_event(monkeypatch, tmp_path, rows))):
+        cli_calls: list[object] = []
+        monkeypatch.setattr(evt.ctx, "call_cli", lambda *a, **k: cli_calls.append(a))
+        monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
+        float_prompt_answers(evt)
+        check(f"prompt answers: {label} float runs no cc-notes CLI", cli_calls == [], repr(cli_calls))
+
+
+def test_stage_prompt_answers_surfaces_a_broken_backend(monkeypatch, tmp_path) -> None:
+    """A failed pick stages nothing and raises, so captain-hook records the fault instead of swallowing it."""
     rows = [durable_answer("auth001aaaa")]
-    float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows))
     evt = prompt_event(monkeypatch, tmp_path, rows)
     monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
-    check("prompt answers: LLM failure -> silent", float_prompt_answers(evt) is None)
+    try:
+        stage_prompt_answers(evt)
+        check("prompt answers: a model failure raises", False, "no exception")
+    except RuntimeError:
+        check("prompt answers: a model failure raises", True)
+    check("prompt answers: a failed pick floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
+
     retry = prompt_event(monkeypatch, tmp_path, rows)
     monkeypatch.setattr(retry.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa"])))
-    check("prompt answers: an unsurfaced answer stays a candidate", float_prompt_answers(retry) is not None)
+    stage_prompt_answers(retry)
+    check("prompt answers: an unfloated answer stays a candidate", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is not None)
 
 
 RESTORE_LIST = ("answer", "list", "--json", "--include-superseded")
@@ -5760,10 +5804,9 @@ def test_answer_file_surfacing_bookkeeping(monkeypatch, tmp_path) -> None:
     ledger = on.ctx.s.load(SessionAnswers).lines
     check("file answers: surfaced answers ledgered", list(ledger) == [f"ans{i:04d}xxxx" for i in range(10)], repr(ledger))
     prompt = prompt_event(monkeypatch, tmp_path / "on", [durable_answer("ans0000xxxx", title="Q0?")])
-    prompt.ctx.s.once("first", scope="prompt-answers")
     llm_calls: list[object] = []
     monkeypatch.setattr(prompt.ctx, "call_llm", lambda *a, **k: llm_calls.append(a) or SurfacePick())
-    float_prompt_answers(prompt)
+    stage_prompt_answers(prompt)
     check("file answers: prompt recall never re-offers a file-surfaced answer", llm_calls == [], repr(llm_calls))
 
 

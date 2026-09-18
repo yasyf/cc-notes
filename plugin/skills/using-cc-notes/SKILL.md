@@ -496,8 +496,9 @@ sync hint.
 
 Where the capt-hook pack is enabled, `record_user_answers` captures replies after every
 `AskUserQuestion`. On the first prompt, `float_session_answers` supplies the 8 most recent
-live durable answers; on later prompts, `float_prompt_answers` filters unseen durable answers
-against the prompt with a small LLM. `restore_answers_after_compact` restores answers captured
+live durable answers; from then on `stage_prompt_answers` filters unseen durable answers against
+the prompt with a small LLM in the background, and `float_prompt_answers` floats that pick on the
+next prompt without a model call. `restore_answers_after_compact` restores answers captured
 or surfaced this session after compaction, capped at 30. File surfacing through `relevant`
 is opt-in: `git config cc-notes.answers.fileSurfacing true`. The `answers` seen-set tracks
 what has surfaced. See `references/answers.md` for the record shape and lifecycle.

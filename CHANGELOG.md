@@ -64,6 +64,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retry the same way.
 
 ### Fixed
+- **A prompt no longer waits on the durable-answer pick.** `float_prompt_answers`
+  ran `cc-notes answer list` and a small-model filter inline on `UserPromptSubmit`,
+  so every prompt after the first paid the whole pick before the agent saw the
+  prompt. On one machine that was 25 s per prompt, captain-hook's collection
+  cutoff, after which the verdict was abandoned and nothing surfaced at all — the
+  cost was paid for no answers. The pick moves to `stage_prompt_answers`, an
+  `async_=True` hook that runs after the reply has gone back and stages its result
+  in session state; `float_prompt_answers` now reads that state and nothing else,
+  so the prompt path makes no model call and no cc-notes call. A pick floats on
+  the first prompt after it lands, and an answer another trigger surfaced in the
+  meantime drops out of the float. A failed pick no longer swallows its
+  exception: it stages nothing and records a captain-hook fault, so a dead backend
+  is told to the user at the next session start instead of costing a silent call
+  on every prompt.
+
 - **Sync and reconcile act on the repository the command ran in.** The
   merge, push, commit, and claim hooks always reconciled and synced the
   session's repository, so a `cd /other && git merge` in one repository
