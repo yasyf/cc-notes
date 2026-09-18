@@ -495,7 +495,8 @@ sync hint.
 ## Answers (automatic)
 
 Where the capt-hook pack is enabled, `record_user_answers` captures replies after every
-`AskUserQuestion`. On the first prompt, `float_session_answers` supplies the 8 most recent
+`AskUserQuestion`, in the background, and `float_deferred_notices` acknowledges the capture on
+the next event. On the first prompt, `float_session_answers` supplies the 8 most recent
 live durable answers; from then on `stage_prompt_answers` filters unseen durable answers against
 the prompt with a small LLM in the background, and `float_prompt_answers` floats that pick on the
 next prompt without a model call. `restore_answers_after_compact` restores answers captured

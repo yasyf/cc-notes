@@ -47,6 +47,7 @@ from hooks.answers import (
     stage_prompt_answers,
 )
 from hooks.approval import CcNotesCli, CcNotesMcp, cc_notes_mcp_tool
+from hooks.deferred import float_deferred_notices
 import hooks.common as common
 from hooks.common import (
     cap_and_render_tasks,
@@ -198,6 +199,12 @@ from captain_hook.testing.helpers import fixture_session, mock_event, mock_tool_
 from captain_hook.types import Action, Event
 
 FAILURES: list[str] = []
+
+
+def floated(hook, evt):
+    """Fire a background hook and drain what it staged, as the next event's float does."""
+    hook(evt)
+    return float_deferred_notices(evt)
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
@@ -1618,6 +1625,65 @@ def test_announce_available_empty_version_preserves_shot(monkeypatch, tmp_path) 
     check("announce empty: later good read still announces (shot not burned)", result is not None and result.action is Action.warn, repr(result))
 
 
+def test_deferred_notices_float_on_the_next_event(monkeypatch, tmp_path) -> None:
+    """A background hook's advisory floats on the next event, exactly once, and the event that staged it floats nothing."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    payload = json.dumps([note_entry("deadbeef000", drift=None, title="Schema", reasons=["dir"])])
+    mapping = {("relevant", "internal/store/store.go", "--limit", "0", "--json"): payload}
+
+    staging = mock_event("PostToolUse", tool="Read", file="internal/store/store.go", session_dir=tmp_path)
+    monkeypatch.setattr(staging.ctx, "call_cli", stub_cli(mapping))
+    check("deferred: the staging event floats nothing", float_deferred_notices(staging) is None)
+    float_note_context(staging)
+    check("deferred: the background hook returns nothing", float_note_context(staging) is None)
+
+    nxt = mock_event("PostToolUse", tool="Bash", command="git status", session_dir=tmp_path)
+    result = float_deferred_notices(nxt)
+    check("deferred: the next event floats it", result is not None and result.action is Action.warn, repr(result))
+    if result and result.message:
+        check("deferred: carries the staged advisory", "deadbee Schema" in result.message, result.message)
+    after = mock_event("PostToolUse", tool="Bash", command="git log", session_dir=tmp_path)
+    check("deferred: a floated advisory never repeats", float_deferred_notices(after) is None)
+
+
+def test_deferred_notices_keep_every_staged_advisory(monkeypatch, tmp_path) -> None:
+    """Advisories staged about different files before one drain all float, and so does a second advisory about the same file."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+
+    def read(path: str, entries: list[dict]) -> None:
+        evt = mock_event("PostToolUse", tool="Read", file=path, session_dir=tmp_path)
+        monkeypatch.setattr(evt.ctx, "call_cli", stub_cli({("relevant", path, "--limit", "0", "--json"): json.dumps(entries)}))
+        float_note_context(evt)
+
+    alpha = note_entry("aaa0001aaaa", drift=None, title="Alpha")
+    read("a.go", [alpha])
+    # The second read of a.go recalls Alpha again plus a newly anchored Gamma: Alpha dedups away
+    # and Gamma is what the advisory carries, so keying the queue by file would drop Alpha's.
+    read("a.go", [alpha, note_entry("ccc0003cccc", drift=None, title="Gamma")])
+    read("b.go", [note_entry("bbb0002bbbb", drift=None, title="Beta")])
+    read("b.go", [note_entry("bbb0002bbbb", drift=None, title="Beta")])
+
+    message = (float_deferred_notices(mock_event("PostToolUse", tool="Bash", command="git status", session_dir=tmp_path)) or SimpleNamespace(message="")).message or ""
+    check("deferred: every staged advisory floats", all(t in message for t in ("Alpha", "Beta", "Gamma")), message)
+    check("deferred: a re-recalled record stages nothing the second time", message.count("Alpha") == 1 and message.count("Beta") == 1, message)
+
+
+def test_surface_hooks_run_nothing_on_the_synchronous_path(monkeypatch, tmp_path) -> None:
+    """The drain reads session state only: no cc-notes CLI call and no model call, staged or empty."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    staging = mock_event("PostToolUse", tool="Read", file="m.go", session_dir=tmp_path)
+    monkeypatch.setattr(staging.ctx, "call_cli", stub_cli({("relevant", "m.go", "--limit", "0", "--json"): json.dumps([note_entry("ccc0003cccc", drift=None, title="Gamma")])}))
+    float_note_context(staging)
+
+    for label in ("staged", "empty"):
+        evt = mock_event("PostToolUse", tool="Bash", command="git status", session_dir=tmp_path)
+        cli_calls: list[object] = []
+        monkeypatch.setattr(evt.ctx, "call_cli", lambda *a, **k: cli_calls.append(a))
+        monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
+        float_deferred_notices(evt)
+        check(f"deferred: the {label} drain runs no cc-notes CLI", cli_calls == [], repr(cli_calls))
+
+
 def test_float_note_context_dedup(monkeypatch, tmp_path) -> None:
     """First read floats the note; a second read of the same note is deduped to silence."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
@@ -1626,14 +1692,14 @@ def test_float_note_context_dedup(monkeypatch, tmp_path) -> None:
 
     evt = mock_event("PostToolUse", tool="Read", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    first = float_note_context(evt)
+    first = floated(float_note_context, evt)
     check("note floater: first read warns", first is not None and first.action is Action.warn, repr(first))
     if first and first.message:
         check("note floater: surfaces the note", "deadbee Schema" in first.message, first.message)
 
     evt2 = mock_event("PostToolUse", tool="Read", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
-    check("note floater: second read deduped -> None", float_note_context(evt2) is None)
+    check("note floater: second read deduped -> None", floated(float_note_context, evt2) is None)
 
 
 def test_surface_hooks_query_repo_relative_paths(monkeypatch, tmp_path) -> None:
@@ -1648,7 +1714,7 @@ def test_surface_hooks_query_repo_relative_paths(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(read.ctx, "project_root", root)
     cli, calls = recording_cli({("relevant", "internal/store/store.go", "--limit", "0", "--json"): payload})
     monkeypatch.setattr(read.ctx, "call_cli", cli)
-    result = float_note_context(read)
+    result = floated(float_note_context, read)
     check("repo-relative: read queries the relative path", calls == [("cc-notes", "relevant", "internal/store/store.go", "--limit", "0", "--json")], repr(calls))
     check("repo-relative: read floats the anchored note", result is not None and result.action is Action.warn, repr(result))
 
@@ -1657,7 +1723,7 @@ def test_surface_hooks_query_repo_relative_paths(monkeypatch, tmp_path) -> None:
     cli, calls = recording_cli({("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload})
     monkeypatch.setattr(edit.ctx, "call_cli", cli)
     monkeypatch.setattr(edit.ctx, "git", lambda *a: None)
-    result = check_note_staleness(edit)
+    result = floated(check_note_staleness, edit)
     check("repo-relative: edit queries the relative path", calls == [("cc-notes", "relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json")], repr(calls))
     check("repo-relative: edit warns on the drifted note", result is not None and result.action is Action.warn, repr(result))
 
@@ -1667,7 +1733,7 @@ def test_surface_hooks_query_repo_relative_paths(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(linked.ctx, "project_root", root)
     cli, calls = recording_cli()
     monkeypatch.setattr(linked.ctx, "call_cli", cli)
-    float_note_context(linked)
+    floated(float_note_context, linked)
     check("repo-relative: a symlinked worktree path resolves in-repo", calls == [("cc-notes", "relevant", "internal/store/store.go", "--limit", "0", "--json")], repr(calls))
 
 
@@ -1678,7 +1744,7 @@ def _read_path(monkeypatch, tmp_path, *, project: Path, file: str) -> list[tuple
     monkeypatch.setattr(evt.ctx, "project_root", project)
     cli, calls = recording_cli()
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
-    float_note_context(evt)
+    floated(float_note_context, evt)
     return [c[2] for c in calls if c[:2] == ("cc-notes", "relevant")]
 
 
@@ -1738,7 +1804,7 @@ def test_check_note_staleness_drift_only(monkeypatch, tmp_path) -> None:
 
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    result = check_note_staleness(evt)
+    result = floated(check_note_staleness, evt)
     check("staleness: warns on drifted", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("staleness: names the file", "internal/store/store.go" in result.message)
@@ -1749,7 +1815,7 @@ def test_check_note_staleness_drift_only(monkeypatch, tmp_path) -> None:
 
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
-    check("staleness: re-edit deduped -> None", check_note_staleness(evt2) is None)
+    check("staleness: re-edit deduped -> None", floated(check_note_staleness, evt2) is None)
 
 
 def test_check_note_staleness_all_fresh_silent(monkeypatch, tmp_path) -> None:
@@ -1759,7 +1825,7 @@ def test_check_note_staleness_all_fresh_silent(monkeypatch, tmp_path) -> None:
     mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload}
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    check("staleness: all fresh -> None", check_note_staleness(evt) is None)
+    check("staleness: all fresh -> None", floated(check_note_staleness, evt) is None)
 
 
 def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
@@ -1778,7 +1844,7 @@ def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
 
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    result = check_note_staleness(evt)
+    result = floated(check_note_staleness, evt)
     check("staleness doc: warns on drifted doc", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("staleness doc: renders doc pointer", "Parser handoff" in result.message and "cc-notes doc show drifted" in result.message, result.message)
@@ -1792,7 +1858,7 @@ def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
 
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
-    check("staleness doc: re-edit deduped -> None", check_note_staleness(evt2) is None)
+    check("staleness doc: re-edit deduped -> None", floated(check_note_staleness, evt2) is None)
 
 
 def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path) -> None:
@@ -1821,7 +1887,7 @@ def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path
         return SurfacePick(ids=["drf0001aaa", "drf0003ccc"])
 
     monkeypatch.setattr(evt.ctx, "call_llm", pick)
-    result = check_note_staleness(evt)
+    result = floated(check_note_staleness, evt)
     check("staleness multi: the edit path still calls the model filter once", len(llm_calls) == 1, repr(llm_calls))
     check("staleness multi: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
@@ -1830,7 +1896,7 @@ def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
     monkeypatch.setattr(evt2.ctx, "call_llm", _llm_boom)
-    check("staleness multi: re-edit fully deduped to silence (unpicked drf0002 was marked)", check_note_staleness(evt2) is None)
+    check("staleness multi: re-edit fully deduped to silence (unpicked drf0002 was marked)", floated(check_note_staleness, evt2) is None)
 
 
 def test_float_and_staleness_scopes_are_isolated(monkeypatch, tmp_path) -> None:
@@ -1848,14 +1914,14 @@ def test_float_and_staleness_scopes_are_isolated(monkeypatch, tmp_path) -> None:
 
     read_evt = mock_event("PostToolUse", tool="Read", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(read_evt.ctx, "call_cli", stub_cli({("relevant", "internal/store/store.go", "--limit", "0", "--json"): read_payload}))
-    read_result = float_note_context(read_evt)
+    read_result = floated(float_note_context, read_evt)
     check("scope isolation: read floats the shared note", read_result is not None and note_id[:7] in (read_result.message or ""), repr(read_result))
 
     edit_evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(
         edit_evt.ctx, "call_cli", stub_cli({("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): edit_payload})
     )
-    edit_result = check_note_staleness(edit_evt)
+    edit_result = floated(check_note_staleness, edit_evt)
     check(
         "scope isolation: a read-time float does NOT suppress the edit-time staleness warning for the same id",
         edit_result is not None and note_id[:7] in (edit_result.message or ""),
@@ -2362,7 +2428,7 @@ def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
     evt = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
 
-    result = float_note_context(evt)
+    result = floated(float_note_context, evt)
     check("doc float: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("doc float: renders when trigger", "before touching the auth flow" in result.message, result.message)
@@ -2376,7 +2442,7 @@ def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
 
     evt2 = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
-    check("doc float: re-read deduped by doc id -> None", float_note_context(evt2) is None)
+    check("doc float: re-read deduped by doc id -> None", floated(float_note_context, evt2) is None)
 
 
 def test_float_note_context_floats_log(monkeypatch, tmp_path) -> None:
@@ -2392,7 +2458,7 @@ def test_float_note_context_floats_log(monkeypatch, tmp_path) -> None:
     evt = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
 
-    result = float_note_context(evt)
+    result = floated(float_note_context, evt)
     check("log float: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("log float: renders title", "Auth rollout" in result.message, result.message)
@@ -2406,7 +2472,7 @@ def test_float_note_context_floats_log(monkeypatch, tmp_path) -> None:
 
     evt2 = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
-    check("log float: re-read deduped by log id -> None", float_note_context(evt2) is None)
+    check("log float: re-read deduped by log id -> None", floated(float_note_context, evt2) is None)
 
 
 def test_surface_filter_single_skips_llm(monkeypatch, tmp_path) -> None:
@@ -2454,7 +2520,7 @@ def test_float_note_context_surfaces_top_ranked_without_a_model(monkeypatch, tmp
     evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
     monkeypatch.setattr(evt.ctx, "call_llm", lambda *a, **k: llm_calls.append(a))
-    result = float_note_context(evt)
+    result = floated(float_note_context, evt)
     check("top-ranked float: no model call", llm_calls == [], repr(llm_calls))
     check("top-ranked float: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
@@ -2467,7 +2533,7 @@ def test_float_note_context_surfaces_top_ranked_without_a_model(monkeypatch, tmp
         )
     evt2 = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
-    check("top-ranked float: re-read deduped to silence", float_note_context(evt2) is None)
+    check("top-ranked float: re-read deduped to silence", floated(float_note_context, evt2) is None)
 
 
 COMMIT_DIFF = (
@@ -3851,7 +3917,7 @@ def test_staleness_mcp_wording(monkeypatch, tmp_path) -> None:
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     evt.ctx.s[McpActive].set(McpActive(active=True))
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    result = check_note_staleness(evt)
+    result = floated(check_note_staleness, evt)
     check("staleness mcp: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("staleness mcp: names the verify tools", "note_verify" in result.message and "doc_verify" in result.message, result.message)
@@ -5431,6 +5497,19 @@ def answer_adds(calls: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
     return [c for c in calls if c[:2] == ("answer", "add")]
 
 
+def test_record_user_answers_acks_survive_a_second_capture(monkeypatch, tmp_path) -> None:
+    """Two AskUserQuestion captures before a drain each keep their acknowledgement."""
+    for text, answer_id in (("Which language?", "ans0001aaaa"), ("Which database?", "ans0002bbbb")):
+        evt, _ = answer_event(
+            monkeypatch, tmp_path, [question(text)], {"answers": {text: "Go"}},
+            triage=AnswerTriage(verdicts=[AnswerVerdict(index=0)]), added=(answer_id,),
+        )
+        record_user_answers(evt)
+
+    message = (float_deferred_notices(mock_event("PostToolUse", tool="Bash", command="git status", session_dir=tmp_path)) or SimpleNamespace(message="")).message or ""
+    check("answer acks: both captures acknowledged", "ans0001" in message and "ans0002" in message, message)
+
+
 def test_record_user_answers_single(monkeypatch, tmp_path) -> None:
     """One answered question lands verbatim with its scope, header, branch, and in-repo session paths."""
     evt, calls = answer_event(
@@ -5439,7 +5518,7 @@ def test_record_user_answers_single(monkeypatch, tmp_path) -> None:
         triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, scope="ephemeral")]),
         paths=(f"{ANSWER_ROOT}/src/a.go", "/elsewhere/x.go", f"{ANSWER_ROOT}/src/b.go", f"{ANSWER_ROOT}/src/a.go"),
     )
-    result = record_user_answers(evt)
+    result = floated(record_user_answers, evt)
     check("answer single: warns", result is not None and result.action is Action.warn, repr(result))
     expected = (
         "answer", "add", "--json", "--label", "scope:ephemeral", "--label", "header:Lang",
@@ -5457,7 +5536,7 @@ def test_record_user_answers_multiselect_defaults_durable(monkeypatch, tmp_path)
         monkeypatch, tmp_path, [question("Which checks?", labels=("lint", "test", "fmt"), multi=True)],
         json.dumps({"answers": {"Which checks?": "lint, test"}}),
     )
-    result = record_user_answers(evt)
+    result = floated(record_user_answers, evt)
     adds = answer_adds(calls)
     check("answer multi: one add", len(adds) == 1, repr(adds))
     check("answer multi: string tool_response parsed, labels joined", adds and "--body=lint, test\nOptions: lint | test | fmt" in adds[0], repr(adds))
@@ -5477,7 +5556,7 @@ def test_record_user_answers_free_text_and_notes(monkeypatch, tmp_path) -> None:
         },
         added=("ans0001aaaa", "ans0002bbbb"),
     )
-    record_user_answers(evt)
+    floated(record_user_answers, evt)
     adds = answer_adds(calls)
     check("answer free: secret answer and unasked key skipped", [a[-1] for a in adds] == ["Indent style?", "Branch name?"], repr(adds))
     check("answer free: free text + notes body", adds and "--body=tabs, width 4\nOptions: A | B\nNotes: matches the go fmt default" in adds[0], repr(adds))
@@ -5494,7 +5573,7 @@ def test_record_user_answers_supersedes(monkeypatch, tmp_path) -> None:
         triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="old0001")]),
     )
     evt.ctx.s[SessionAnswers].set(SessionAnswers(lines={"old0001cccc": "old0001 Which language? → Rust"}))
-    result = record_user_answers(evt)
+    result = floated(record_user_answers, evt)
     check("answer supersede: supersede argv", ("answer", "supersede", "old0001cccc", "--by", "ans0001aaaa", "--json") in calls, repr(calls))
     check("answer supersede: ack names it", result is not None and "supersedes old0001" in (result.message or ""), repr(result))
     lines = evt.ctx.s.load(SessionAnswers).lines
@@ -5505,7 +5584,7 @@ def test_record_user_answers_long_question(monkeypatch, tmp_path) -> None:
     """A question over the title cap records a clamped title plus the full text on a Question: line."""
     long_q = "Which retry policy should the sync loop use when the remote rejects a push? " * 5
     evt, calls = answer_event(monkeypatch, tmp_path, [question(long_q, labels=("Backoff", "Fail"))], {"answers": {long_q: "Backoff"}})
-    record_user_answers(evt)
+    floated(record_user_answers, evt)
     adds = answer_adds(calls)
     check("answer long: fixture exceeds the cap", len(long_q.encode()) > MAX_TITLE_BYTES)
     check("answer long: title clamped", adds and adds[0][-1] == clamp_title(long_q) and adds[0][-1] != long_q, repr(adds))
@@ -5518,7 +5597,7 @@ def test_record_user_answers_long_question(monkeypatch, tmp_path) -> None:
     triage_prompts: list[str] = []
     later, _ = answer_event(monkeypatch, tmp_path / "later", [question(long_q)], {"answers": {long_q: "Fail"}}, candidates=[record])
     monkeypatch.setattr(later.ctx, "call_llm", lambda prompt, **kw: triage_prompts.append(str(prompt)) or AnswerTriage())
-    record_user_answers(later)
+    floated(record_user_answers, later)
     check("answer long: triage candidates carry the full question", triage_prompts and f"ans0001aaaa\tans0001 {long_q} → Backoff" in triage_prompts[0], repr(triage_prompts))
 
 
@@ -5531,7 +5610,7 @@ def test_record_user_answers_reused_id_never_self_supersedes(monkeypatch, tmp_pa
         candidates=[same], added=("old0001cccc",),
         triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="old0001")]),
     )
-    result = record_user_answers(evt)
+    result = floated(record_user_answers, evt)
     check("answer reuse: no supersede call", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
     check("answer reuse: ack claims no supersede", result is not None and "supersedes" not in (result.message or ""), repr(result))
 
@@ -5544,7 +5623,7 @@ def test_record_user_answers_supersede_needs_unique_prefix(monkeypatch, tmp_path
             monkeypatch, tmp_path / named, [question("Q?")], {"answers": {"Q?": "A"}},
             candidates=candidates, triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes=named)]),
         )
-        record_user_answers(evt)
+        floated(record_user_answers, evt)
         supersedes = [c[2] for c in calls if c[:2] == ("answer", "supersede")]
         check(f"answer prefix: {named} supersedes {want}", supersedes == ([want] if want else []), repr(supersedes))
 
@@ -5554,13 +5633,13 @@ def test_record_user_answers_unknown_supersede_ignored(monkeypatch, tmp_path) ->
         monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}},
         triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="nope123")]),
     )
-    record_user_answers(evt)
+    floated(record_user_answers, evt)
     check("answer supersede: a non-candidate id never supersedes", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
 
 
 def test_record_user_answers_silent_without_answers(monkeypatch, tmp_path) -> None:
     evt, calls = answer_event(monkeypatch, tmp_path, [question("Q?")], None)
-    check("answer none: silent", record_user_answers(evt) is None)
+    check("answer none: silent", floated(record_user_answers, evt) is None)
     check("answer none: no CLI calls", calls == [], repr(calls))
 
 
@@ -5697,7 +5776,7 @@ def restore_event(monkeypatch, tmp_path, rows: list[dict]):
 def test_restore_answers_after_compact(monkeypatch, tmp_path) -> None:
     """A compaction re-injects every captured and surfaced answer, capped at the 30 most recent."""
     evt, _ = answer_event(monkeypatch, tmp_path, [question("Which language?")], {"answers": {"Which language?": "Go"}})
-    record_user_answers(evt)
+    floated(record_user_answers, evt)
     float_session_answers(prompt_event(monkeypatch, tmp_path, [durable_answer("dig0001aaaa", title="Tabs?", body="yes")]))
     rows = [durable_answer("ans0001aaaa", title="Which language?", body="Go\nOptions: A | B"), durable_answer("dig0001aaaa", title="Tabs?", body="yes")]
     result = restore_answers_after_compact(restore_event(monkeypatch, tmp_path, rows))
@@ -5746,7 +5825,7 @@ def test_render_answer_line_multiline_answer(monkeypatch, tmp_path) -> None:
     triage_prompts: list[str] = []
     evt, _ = answer_event(monkeypatch, tmp_path, [question("Rollout plan?")], {"answers": {"Rollout plan?": "B"}}, candidates=[record])
     monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: triage_prompts.append(str(prompt)) or AnswerTriage())
-    record_user_answers(evt)
+    floated(record_user_answers, evt)
     check("multiline: triage candidate carries the whole answer", triage_prompts and "ans0001aaaa\tans0001 Rollout plan? → Canary first / then 10%" in triage_prompts[0], repr(triage_prompts))
 
 
@@ -5768,14 +5847,14 @@ def test_answer_file_surfacing_toggle(monkeypatch, tmp_path) -> None:
     off = mock_event("PostToolUse", tool="Read", file="src/a.go", session_dir=tmp_path / "off")
     monkeypatch.setattr(off.ctx, "call_cli", stub_cli(mapping))
     monkeypatch.setattr(off.ctx, "git", stub_git({toggle: None}))
-    result = float_note_context(off)
+    result = floated(float_note_context, off)
     check("toggle off: the note floats", result is not None and "note001" in (result.message or ""), repr(result))
     check("toggle off: the answer is dropped", result is not None and "ans0001" not in (result.message or ""), repr(result))
 
     on = mock_event("PostToolUse", tool="Read", file="src/a.go", session_dir=tmp_path / "on")
     monkeypatch.setattr(on.ctx, "call_cli", stub_cli(mapping))
     monkeypatch.setattr(on.ctx, "git", stub_git({toggle: "true\n"}))
-    result = float_note_context(on)
+    result = floated(float_note_context, on)
     check("toggle on: the answer floats as Q → A", result is not None and "ans0001 Q? → Go (path)" in (result.message or ""), repr(result))
 
 
@@ -5792,13 +5871,13 @@ def test_answer_file_surfacing_bookkeeping(monkeypatch, tmp_path) -> None:
     off = mock_event("PostToolUse", tool="Read", file="src/a.go", session_dir=tmp_path / "off")
     monkeypatch.setattr(off.ctx, "call_cli", stub_cli(mapping))
     monkeypatch.setattr(off.ctx, "git", stub_git({toggle: None}))
-    result = float_note_context(off)
+    result = floated(float_note_context, off)
     check("file answers: dropped answers never starve the note", result is not None and "note001" in (result.message or ""), repr(result))
 
     on = mock_event("PostToolUse", tool="Read", file="src/a.go", session_dir=tmp_path / "on")
     monkeypatch.setattr(on.ctx, "call_cli", stub_cli(mapping))
     monkeypatch.setattr(on.ctx, "git", stub_git({toggle: "true\n"}))
-    message = (float_note_context(on) or SimpleNamespace(message="")).message or ""
+    message = (floated(float_note_context, on) or SimpleNamespace(message="")).message or ""
     check("file answers: expired answer dropped", "exp0001" not in message, message)
     check("file answers: capped at ten after filtering", "ans0009" in message and "ans0010" not in message and "note001" not in message, message)
     ledger = on.ctx.s.load(SessionAnswers).lines
