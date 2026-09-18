@@ -41,6 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `status` tool takes a matching `tasks` argument.
 
 ### Changed
+- **The per-prompt answer filter considers 12 candidates, not 50.** Moving the
+  pick into the background stopped it costing the prompt, but at 50 candidates
+  it still did not finish inside captain-hook's 180 s async budget, so no answer
+  ever floated. The pick is a structured small-model call whose prompt is the
+  candidate list: 50 candidates render 15.3 KB and timed out at 180 s, while 10
+  to 12 render 3.0-3.7 KB and returned in every run measured, the slowest at
+  105.7 s. `ANSWER_CANDIDATE_LIMIT` drops to 12, the largest list measured that
+  lands. Answers past the cap are not lost, only deferred: they stay unseen and
+  become candidates on a later prompt.
+
 - **The plugin reinstalls cc-notes older than 0.55.0.** The session-start
   task float reads `status --tasks`, which 0.54.0 and older binaries reject, so
   the install floors in `bootstrap.py` and `hooks/ensure-cc-notes.sh` move from

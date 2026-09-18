@@ -5373,7 +5373,7 @@ def test_compact_restore_boundary_eight_vs_nine(monkeypatch, tmp_path) -> None:
 
 
 ANSWER_ROOT = "/repo"
-ANSWER_LIST = ("answer", "list", "--json", "--label", "scope:durable", "--limit", "50")
+ANSWER_LIST = ("answer", "list", "--json", "--label", "scope:durable", "--limit", str(common.ANSWER_CANDIDATE_LIMIT))
 ANSWER_GIT = {("rev-parse", "--show-toplevel"): f"{ANSWER_ROOT}\n", ("rev-parse", "--abbrev-ref", "HEAD"): "feat/x\n"}
 
 

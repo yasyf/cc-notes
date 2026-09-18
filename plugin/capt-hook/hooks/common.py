@@ -19,7 +19,9 @@ NATIVE_TASK_MIRROR_THRESHOLD = 5
 # Max durable tasks the session-start floater shows before a "+K more" tail.
 SESSION_TASK_CAP = 7
 SESSION_ANSWER_CAP = 8
-ANSWER_CANDIDATE_LIMIT = 50
+# The pick is a structured small-model call, and its latency tracks the candidate list: 10
+# candidates answer in ~22s, 50 never answer at all inside captain-hook's 180s async budget.
+ANSWER_CANDIDATE_LIMIT = 12
 ANSWERS_SCOPE = "answers"
 ANSWER_METADATA_PREFIXES = ("Question: ", "Options: ", "Notes: ")
 # Per-session fire cap for advisories that aren't once-per-session and don't self-dedup.
