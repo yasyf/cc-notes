@@ -5764,6 +5764,34 @@ def test_stage_prompt_answers_surfaces_a_broken_backend(monkeypatch, tmp_path) -
     check("prompt answers: an unfloated answer stays a candidate", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is not None)
 
 
+def stub_llm_reply(value: object):
+    """Build a call_llm stub that validates a raw model reply through ``response_model``, as spawnllm's backends do."""
+
+    def _call(template, *args, response_model, **kwargs):
+        return response_model.model_validate(value)
+
+    return _call
+
+
+def test_stage_prompt_answers_accepts_a_bare_list_reply(monkeypatch, tmp_path) -> None:
+    """A small-model reply of a bare JSON array coerces into SurfacePick instead of faulting the pick."""
+    rows = [durable_answer("auth001aaaa"), durable_answer("ui00001bbbb")]
+    check("surface pick: a bare empty list validates", SurfacePick.model_validate([]).ids == [])
+    check("surface pick: a bare id list validates", SurfacePick.model_validate(["auth001aaaa"]).ids == ["auth001aaaa"])
+    check("surface pick: the object shape still validates", SurfacePick.model_validate({"ids": ["ui00001bbbb"]}).ids == ["ui00001bbbb"])
+
+    empty = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(empty.ctx, "call_llm", stub_llm_reply([]))
+    stage_prompt_answers(empty)
+    check("surface pick: a bare empty list stages nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
+
+    picked = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(picked.ctx, "call_llm", stub_llm_reply(["auth001aaaa"]))
+    stage_prompt_answers(picked)
+    result = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows))
+    check("surface pick: a bare id list picks that id", result is not None and "auth001" in (result.message or "") and "ui00001" not in (result.message or ""), repr(result))
+
+
 RESTORE_LIST = ("answer", "list", "--json", "--include-superseded")
 
 

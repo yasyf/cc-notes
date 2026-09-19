@@ -71,9 +71,9 @@ PROMPT_ANSWERS_SYSTEM = (
     "You are a precision filter. The user just sent a coding agent a prompt. The candidates are durable "
     "answers the user gave to earlier questions: preferences, conventions, and decisions. Keep only the "
     "answers the agent should honor while acting on this prompt, and drop the ones unrelated to it. "
-    "Return an empty list when none bear on the prompt.\n"
     "\n"
-    "Return the ids to surface, as a subset of the candidate ids given."
+    "Return an object with one field, ids: the candidate ids to surface, as a subset of those given. "
+    "When none bear on the prompt, ids is an empty array."
 )
 
 

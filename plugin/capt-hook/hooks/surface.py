@@ -15,7 +15,7 @@ from captain_hook import (
     Tool,
     on,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from .common import (
     AnswerFileSurfacing,
@@ -45,7 +45,8 @@ SURFACE_FILTER_SYSTEM = (
     "line the agent skims past. Drop a record only when its title and match reasons make it plainly "
     "unrelated to this file. When in doubt, keep it.\n"
     "\n"
-    "Return the ids to surface, as a subset of the candidate ids given."
+    "Return an object with one field, ids: the candidate ids to surface, as a subset of those given. "
+    "When none qualify, ids is an empty array."
 )
 
 
@@ -53,6 +54,11 @@ class SurfacePick(BaseModel):
     """The surface filter's verdict: which candidate record ids are worth surfacing now."""
 
     ids: list[str] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def wrap_bare_list(cls, value: object) -> object:
+        return {"ids": value} if isinstance(value, list) else value
 
 
 def repo_path(evt: PostToolUseEvent) -> str | None:
