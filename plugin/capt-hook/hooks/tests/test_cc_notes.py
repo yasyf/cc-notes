@@ -2304,6 +2304,54 @@ def test_ci_triage_failure_envelope_and_ship(monkeypatch, tmp_path) -> None:
     check("ci-triage: green run naming a failure job does NOT match", not check_condition(CiTriageMoment(), green))
 
 
+def test_ci_triage_needs_a_reported_failure_and_a_bound_flag(monkeypatch, tmp_path) -> None:
+    """A red CI run is evidenced by a reported failed conclusion on a `gh run watch` / `ccx vcs ship`
+    invocation, never by a non-zero exit alone, and `--log-failed` counts only as the `gh run` call's own flag."""
+    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    rejected = mock_tool_event(
+        tool="Bash", event=Event.PostToolUseFailure,
+        command='git commit -m "wip: ccx vcs ship keeps failing"',
+        error="Exit code 1\nhusky > pre-commit hook failed (add --no-verify to bypass)",
+        session_dir=tmp_path / "rejected",
+    )
+    check("ci-triage: a pre-commit rejection mentioning ship is not a CI run", not check_condition(CiTriageMoment(), rejected))
+    ship_no_ci = mock_tool_event(
+        tool="Bash", event=Event.PostToolUseFailure,
+        command="ccx vcs ship -m fix",
+        error="Exit code 1\n! [rejected] main -> main (stale info)",
+        session_dir=tmp_path / "stale",
+    )
+    check("ci-triage: a ship that never reached CI is not a red run", not check_condition(CiTriageMoment(), ship_no_ci))
+    watch_no_conclusion = mock_tool_event(
+        tool="Bash", event=Event.PostToolUseFailure,
+        command="gh run watch 99 --exit-status",
+        error="Exit code 4\ncould not find any workflow runs",
+        session_dir=tmp_path / "nowatch",
+    )
+    check("ci-triage: a watch that found no run is not a red run", not check_condition(CiTriageMoment(), watch_no_conclusion))
+    neighbour_flag = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse,
+        command="gh run list && rg -- --log-failed scripts/",
+        output="completed success",
+        session_dir=tmp_path / "neighbour",
+    )
+    check("ci-triage: a --log-failed on a neighbouring leg is not the gh call's flag", not check_condition(CiTriageMoment(), neighbour_flag))
+    quoted = mock_tool_event(
+        tool="Bash", event=Event.PostToolUseFailure,
+        command="echo 'gh run watch 12'",
+        error="Exit code 1\nX CI · main completed with 'failure'",
+        session_dir=tmp_path / "quoted",
+    )
+    check("ci-triage: a quoted mention of the watch is not a watch", not check_condition(CiTriageMoment(), quoted))
+    with_repo = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse,
+        command="gh run view --repo o/r 42 --log-failed",
+        output="FAIL build",
+        session_dir=tmp_path / "repo",
+    )
+    check("ci-triage: --log-failed binds past gh's own --repo option", check_condition(CiTriageMoment(), with_repo))
+
+
 def test_ci_triage_read_verb_does_not_suppress(monkeypatch, tmp_path) -> None:
     """refB#2: an investigation READ (`list`) is state-neutral, so a later red CI still nudges."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
@@ -4170,7 +4218,7 @@ def _matches(cond, command: str) -> bool:
 
 
 def test_push_commands_match_structurally(monkeypatch) -> None:
-    """PUSH_COMMANDS matches git/jj push argv prefixes (incl. compound), not quoted or unrelated commands."""
+    """PUSH_COMMANDS matches git/jj push verb-argv prefixes (incl. compound and global-option-led), not quoted or unrelated commands."""
     truth = {
         "git push": True,
         "jj git push": True,
@@ -4180,10 +4228,15 @@ def test_push_commands_match_structurally(monkeypatch) -> None:
         "echo 'jj git push'": False,
         "git log --grep 'git push'": False,
         "jj rebase -d main": False,
+        "git -c push.default=current push": True,
+        "git --no-pager push": True,
+        "git -C ../other push": True,
+        "jj --no-pager git push": True,
         # A dry-run push publishes nothing, so it must not trigger a cc-notes sync.
         "git push --dry-run": False,
         "git push -n": False,
         "git push -n origin main": False,
+        "git -c push.default=current push --dry-run": False,
         "jj git push --dry-run": False,
     }
     for cmd, want in truth.items():
@@ -4191,7 +4244,7 @@ def test_push_commands_match_structurally(monkeypatch) -> None:
 
 
 def test_commit_commands_match_structurally(monkeypatch) -> None:
-    """COMMIT_COMMANDS matches git/jj commit, jj describe, and ccx vcs ship — never a quoted or unrelated line."""
+    """COMMIT_COMMANDS matches git/jj commit, jj describe, and ccx vcs ship, global options before the verb included — never a quoted line, an unrelated one, or a `--help`."""
     truth = {
         "git commit -m x": True,
         "jj commit -m x": True,
@@ -4202,18 +4255,24 @@ def test_commit_commands_match_structurally(monkeypatch) -> None:
         "git log": False,
         "echo 'jj commit now'": False,
         "ccx vcs diff": False,
+        "git -C ../other commit -m x": True,
+        "git --no-pager commit -m x": True,
+        "git -c user.name=x commit -m x": True,
+        "git -c user.name=x --no-pager commit -m x": True,
+        "git --help commit": False,
         # A dry-run commit writes nothing, but `git commit -n` is --no-verify (a real commit),
         # NOT dry-run — only push treats -n as dry-run.
         "git commit --dry-run": False,
         "git commit -n": True,
         "git commit -n -m x": True,
+        "git -c user.name=x commit --dry-run": False,
     }
     for cmd, want in truth.items():
         check(f"COMMIT_COMMANDS[{cmd!r}] == {want}", _matches(COMMIT_COMMANDS, cmd) == want, f"got {_matches(COMMIT_COMMANDS, cmd)}")
 
 
 def test_fetch_merge_commands_match_structurally(monkeypatch) -> None:
-    """FETCH_MERGE_COMMANDS matches git merge/pull and jj git fetch, not their read-only or quoted neighbors."""
+    """FETCH_MERGE_COMMANDS matches git merge/pull and jj git fetch, global options before the verb included, not their read-only or quoted neighbors."""
     truth = {
         "git merge feature": True,
         "git pull": True,
@@ -4221,6 +4280,8 @@ def test_fetch_merge_commands_match_structurally(monkeypatch) -> None:
         "cd x && jj git fetch": True,
         "git -C ../other merge feature": True,
         "jj -R ../other git fetch": True,
+        "git --no-pager merge feature": True,
+        "git -c merge.ff=false merge feature": True,
         "git -C ../other log --no-merges": False,
         "git log --no-merges": False,
         "jj git remote list": False,
@@ -4232,7 +4293,7 @@ def test_fetch_merge_commands_match_structurally(monkeypatch) -> None:
 
 
 def test_claim_commands_match_structurally(monkeypatch) -> None:
-    """CLAIM_COMMANDS fires on cc-notes/ccn task claim|start, never on a read or a --help/-h invocation."""
+    """CLAIM_COMMANDS fires on cc-notes/ccn task claim|start, global options before the noun included, never on a read or a --help/-h invocation."""
     truth = {
         "cc-notes task claim abc": True,
         "cc-notes task start abc": True,
@@ -4245,6 +4306,8 @@ def test_claim_commands_match_structurally(monkeypatch) -> None:
         "cc-notes task claim abc --help": False,
         "cc-notes task claim abc -h": False,
         "ccn task start abc --help": False,
+        "cc-notes --json task claim abc": True,
+        "cc-notes -R ../other task claim abc": True,
     }
     for cmd, want in truth.items():
         check(f"CLAIM_COMMANDS[{cmd!r}] == {want}", _matches(CLAIM_COMMANDS, cmd) == want, f"got {_matches(CLAIM_COMMANDS, cmd)}")
