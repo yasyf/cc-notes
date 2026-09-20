@@ -491,7 +491,7 @@ func TestHookCIUsesOneExactCaptainHookRelease(t *testing.T) {
 	workflow := filepath.Join(root, ".github", "workflows", "ci.yml")
 	assertFileContains(
 		t, workflow,
-		`CAPT_HOOK_VERSION: "12.15.3"`,
+		`CAPT_HOOK_VERSION: "12.46.1"`,
 		`key: capt-hook-${{ env.CAPT_HOOK_VERSION }}-nlp-v5`,
 		`--with "capt-hook==$CAPT_HOOK_VERSION"`,
 		`uvx --isolated "capt-hook==$CAPT_HOOK_VERSION" pack test plugin`,
@@ -504,7 +504,7 @@ func TestHookCIUsesOneExactCaptainHookRelease(t *testing.T) {
 	assertFileContains(
 		t,
 		filepath.Join(root, "plugin", "capt-hook", "hooks", "tests", "test_cc_notes.py"),
-		`# dependencies = ["capt-hook==12.15.3", "pydantic>=2"]`,
+		`# dependencies = ["capt-hook==12.46.1", "pydantic>=2"]`,
 	)
 }
 

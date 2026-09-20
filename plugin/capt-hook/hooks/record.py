@@ -8,20 +8,26 @@ from pathlib import Path, PurePosixPath
 
 from captain_hook import (
     Allow,
+    Arguments,
     BaseHookEvent,
+    CommandMatches,
+    CommandSchema,
     CustomCondition,
     Event,
     HookResult,
     Input,
+    Operand,
+    Option,
     PostToolUseEvent,
-    PostToolUseFailureEvent,
     Prompt,
+    Runs,
     StopEvent,
     Tool,
     Warn,
     on,
 )
 from cc_transcript.command import Command, CommandLine
+from captain_hook.conditions import check_condition
 from captain_hook.state import fired_this_turn, record_fire
 from pydantic import BaseModel, Field
 
@@ -994,11 +1000,26 @@ INVESTIGATION_OPEN_VERBS = frozenset({"open", "add"})
 INVESTIGATION_TERMINAL_VERBS = frozenset({"confirm", "exonerate", "abandon"})
 INVESTIGATION_UNRESOLVED_VERBS = INVESTIGATION_OPEN_VERBS | frozenset({"append", "root_cause", "fix", "reopen"})
 
-# --log-failed prints only failures; a gh run watch / ccx vcs ship is red on a failed exit or conclusion.
-GH_RUN_RE = re.compile(r"\bgh\s+run\b")
-GH_LOG_FAILED_RE = re.compile(r"--log-failed\b")
-GH_WATCH_RE = re.compile(r"\bgh\s+run\s+watch\b")
-SHIP_RE = re.compile(r"\bccx\s+vcs\s+ship\b")
+GH_SCHEMA = CommandSchema(
+    "gh",
+    operands=(Operand("noun"),),
+    options=(Option("repo", ("--repo", "-R")), Option("log_failed", ("--log-failed",), type=bool)),
+)
+
+
+def reads_failed_logs(args: Arguments) -> bool:
+    """Whether this ``gh`` invocation is the ``gh run … --log-failed`` that prints only a run's failures.
+
+    Both halves bind to the one invocation, so a ``--log-failed`` belonging to a neighbouring leg
+    (``gh run list && rg -- --log-failed scripts/``) is not this call's flag.
+    """
+    noun = args.words.get("noun", ())
+    return bool(noun) and noun[0].value == "run" and True in args.values.get("log_failed", ())
+
+
+GH_RUN_LOG_FAILED = CommandMatches(GH_SCHEMA, only_if=(reads_failed_logs,))
+GH_RUN_WATCH = Runs("gh", "run", "watch")
+CCX_VCS_SHIP = Runs("ccx", "vcs", "ship")
 # A real failed conclusion (status glyph or "completed with 'failure'"), never the bare word "failure".
 GH_FAILED_CONCLUSION_RE = re.compile(
     r"(?im)^\s*[X✗✘](?:\s|$)"
@@ -1240,26 +1261,26 @@ def link_task_to_investigation(evt: PostToolUseEvent) -> HookResult | None:
         return None
 
 
-def _ci_run_failed(evt: BaseHookEvent) -> bool:
-    # A watch/ship is red when its exit failed (the PostToolUseFailure envelope) or its output reports a
-    # failed conclusion — never on a job merely NAMED with "failure".
-    if isinstance(evt, PostToolUseFailureEvent):
-        return True
-    return bool(GH_FAILED_CONCLUSION_RE.search(tool_output(evt)))
+def _ci_run_reported_failure(evt: BaseHookEvent) -> bool:
+    """Whether the run report names a failed conclusion — in ``tool_response``, or in ``error`` on the
+    PostToolUseFailure envelope.
+
+    A non-zero exit on its own is not that evidence: a ``ccx vcs ship`` a pre-commit hook rejected, or a
+    ``gh`` call that failed to authenticate, never reached a CI run at all.
+    """
+    return bool(GH_FAILED_CONCLUSION_RE.search(f"{tool_output(evt)}\n{_event_error(evt)}"))
 
 
 class CiTriageMoment(CustomCondition):
-    """Matches a red-CI triage moment: a `gh run … --log-failed`, a failed `gh run watch` / `ccx vcs ship`, or a ci-triage subagent spawn."""
+    """Matches a red-CI triage moment: a `gh run … --log-failed`, a `gh run watch` / `ccx vcs ship` whose report names a failed conclusion, or a ci-triage subagent spawn."""
 
     def check(self, evt: BaseHookEvent) -> bool:
         if any(m in (evt.agent_type or "") for m in CI_TRIAGE_AGENT_MARKERS):
             return True
-        cmd = evt.cmd.raw
-        if GH_RUN_RE.search(cmd) and GH_LOG_FAILED_RE.search(cmd):
+        if check_condition(GH_RUN_LOG_FAILED, evt):
             return True
-        if GH_WATCH_RE.search(cmd) or SHIP_RE.search(cmd):
-            return _ci_run_failed(evt)
-        return False
+        watched = check_condition(GH_RUN_WATCH, evt) or check_condition(CCX_VCS_SHIP, evt)
+        return watched and _ci_run_reported_failure(evt)
 
 
 @on(

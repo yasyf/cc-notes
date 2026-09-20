@@ -22,6 +22,7 @@ from captain_hook import (
     Warn,
     on,
 )
+from captain_hook.cmd import COMMAND_VALUE_FLAGS, INFO_OPTIONS
 from captain_hook.util.paths import resolve_project_dir
 from cc_transcript.command import Command, CommandLine
 from pydantic import BaseModel, Field
@@ -85,14 +86,34 @@ def repo_argv(cmd: Command) -> tuple[tuple[str, ...], tuple[str, ...]]:
     return tuple(rest), tuple(dirs)
 
 
+def verb_argv(cmd: Command) -> tuple[str, ...]:
+    """The leg's program plus its arguments from the verb on, every global option before the verb dropped.
+
+    Mirrors ``Call.verb_argv`` over the same ``COMMAND_VALUE_FLAGS`` table — the fallback ``Runs`` itself
+    takes for an option-led call — so ``git -C ../repo commit``, ``git --no-pager commit`` and
+    ``git -c x=y push`` all read as their verb. An informational option ends the run, leaving
+    ``git --help commit`` reading as a ``--help``, never as a ``commit``.
+    """
+    argv = repo_argv(cmd)[0]
+    if not argv:
+        return argv
+    value_flags = COMMAND_VALUE_FLAGS.get(argv[0], ())
+    args = argv[1:]
+    taken = 0
+    while taken < len(args) and args[taken].startswith("-") and args[taken] not in INFO_OPTIONS:
+        taken += 2 if args[taken] in value_flags and taken + 1 < len(args) else 1
+    return (argv[0], *args[taken:])
+
+
 class CommandFamily(CustomCondition):
-    """Matches when any leg of the command line runs one of ``prefixes`` as a raw-argv prefix and that
+    """Matches when any leg of the command line runs one of ``prefixes`` as a verb-argv prefix and that
     leg carries no effect-nullifying flag.
 
-    Mirrors ``Runs`` — a literal argv prefix, matched against any leg of a compound line, so a quoted
-    mention (``echo "git push"``) and a wrapper/flag-interleaved form (``git --no-pager commit``,
-    ``sudo git push``) both miss — then drops a matched leg whose argv carries an ``exclude`` flag (a
-    ``--dry-run`` push publishes nothing; a ``--help`` invocation runs nothing). Never widen to regex.
+    Mirrors ``Runs`` — a literal prefix over the leg's :func:`verb_argv`, matched against any leg of a
+    compound line, so a global option before the verb (``git --no-pager commit``, ``git -c x=y push``)
+    still matches while a quoted mention (``echo "git push"``) and a wrapper (``sudo git push``) miss —
+    then drops a matched leg whose argv carries an ``exclude`` flag (a ``--dry-run`` push publishes
+    nothing; a ``--help`` invocation runs nothing). Never widen to regex.
     """
 
     def __init__(self, prefixes: tuple[tuple[str, ...], ...], exclude: frozenset[str] = frozenset()) -> None:
@@ -104,7 +125,7 @@ class CommandFamily(CustomCondition):
         return bool(line) and any(self.fires(cmd) for cmd in line.commands)
 
     def fires(self, cmd: Command) -> bool:
-        argv, _dirs = repo_argv(cmd)
+        argv = verb_argv(cmd)
         return any(argv[: len(p)] == p for p in self.prefixes) and self.exclude.isdisjoint(argv)
 
 
