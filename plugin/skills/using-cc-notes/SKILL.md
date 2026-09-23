@@ -326,7 +326,7 @@ d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 **7. Chase a suspicion.** The moment work turns into debugging with a falsifiable premise —
 a red CI run, a bug hunt, an anomaly — `investigation_open` records that premise immutably.
 `investigation_append` logs evidence per triage step, `investigation_finding_add` then
-`_clear`/`_confirm` (with `why`) gives each suspect an explicit disposition, and the arc
+`_clear`/`_confirm` (with `text`) gives each suspect an explicit disposition, and the arc
 closes through the transition verbs — `investigation_root_cause`, `investigation_fix`,
 `investigation_confirm`, or `investigation_exonerate` when the premise falls. Those last two
 are gated. A verdict lists the findings still `open` and refuses unless you pass `force`;
@@ -411,7 +411,7 @@ The full surface — every flag, property, default, and output shape — is in
 | Read a capped history whole | `log_entry_list` / `investigation_entry_list` (`id`) / `task_comment_list` (`task`) | `cc-notes log entry list <id>` |
 | Open an investigation on a suspicion | `investigation_open` (`title`, `premise`, `findings`) | `cc-notes investigation open "<title>" "<premise>"` |
 | Append evidence per triage step | `investigation_append` (`id`, `text`, `attach`) | `cc-notes investigation append <id> "<text>"` |
-| Rule a suspect out / in, which every verdict requires | `investigation_finding_clear` / `_confirm` (`id`, `finding`, `why`) | `cc-notes investigation finding clear <id> <finding> --why "<evidence>"` |
+| Rule a suspect out / in, which every verdict requires | `investigation_finding_clear` / `_confirm` (`id`, `finding`, `text`) | `cc-notes investigation finding clear <id> <finding> --why "<evidence>"` |
 | Record the root cause | `investigation_root_cause` (`id`, `text`) | `cc-notes investigation root-cause <id> "<cause>"` |
 | Record the fixing commits | `investigation_fix` (`id`, `commits`) | `cc-notes investigation fix <id> --commit <sha>` |
 | Close with proof, or reopen on regression | `investigation_confirm` (`id`, `text`, `force`) / `investigation_reopen` (`id`, `text`) | `cc-notes investigation confirm <id> "<proof>"` |

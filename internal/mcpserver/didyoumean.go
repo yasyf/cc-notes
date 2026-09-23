@@ -30,12 +30,14 @@ func didYouMeanMiddleware(props map[string]toolProps) mcp.Middleware {
 			}
 			call := req.(*mcp.CallToolRequest)
 			tool, ok := props[call.Params.Name]
-			if !ok || len(call.Params.Arguments) == 0 {
+			if !ok {
 				return next(ctx, method, req)
 			}
 			var arguments map[string]json.RawMessage
-			if err := json.Unmarshal(call.Params.Arguments, &arguments); err != nil || len(arguments) == 0 {
-				return next(ctx, method, req)
+			if len(call.Params.Arguments) > 0 {
+				if err := json.Unmarshal(call.Params.Arguments, &arguments); err != nil {
+					return next(ctx, method, req)
+				}
 			}
 			accepted := make(map[string]bool, len(tool.accepted))
 			for _, name := range tool.accepted {
@@ -54,11 +56,19 @@ func didYouMeanMiddleware(props map[string]toolProps) mcp.Middleware {
 					unknown = append(unknown, name)
 				}
 			}
+			var missing []string
 			if len(unknown) == 0 {
+				for _, name := range tool.accepted {
+					if _, sent := arguments[name]; tool.required[name] && !sent {
+						missing = append(missing, name)
+					}
+				}
+			}
+			if len(unknown) == 0 && len(missing) == 0 {
 				return next(ctx, method, req)
 			}
 			sort.Strings(unknown)
-			message := unknownPropertyMessage(call.Params.Name, tool, accepted, unknown)
+			message := argumentErrorMessage(call.Params.Name, tool, accepted, unknown, missing)
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: message}},
 				IsError: true,
@@ -81,8 +91,8 @@ func rewriteAliases(arguments map[string]json.RawMessage, accepted map[string]bo
 	return rewrote
 }
 
-func unknownPropertyMessage(toolName string, tool toolProps, acceptedSet map[string]bool, unknown []string) string {
-	parts := make([]string, 0, len(unknown))
+func argumentErrorMessage(toolName string, tool toolProps, acceptedSet map[string]bool, unknown, missing []string) string {
+	parts := make([]string, 0, len(unknown)+len(missing))
 	for _, name := range unknown {
 		part := fmt.Sprintf("unknown property %q", name)
 		for _, candidate := range argSynonyms[name] {
@@ -92,6 +102,9 @@ func unknownPropertyMessage(toolName string, tool toolProps, acceptedSet map[str
 			}
 		}
 		parts = append(parts, part)
+	}
+	for _, name := range missing {
+		parts = append(parts, fmt.Sprintf("missing required property %q", name))
 	}
 	accepted := make([]string, len(tool.accepted))
 	hasRequired := false

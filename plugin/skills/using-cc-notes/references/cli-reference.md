@@ -1898,9 +1898,9 @@ nonces that resolve by prefix within their investigation, like criterion ids.
 
 ### `cc-notes investigation finding clear INVESTIGATION FINDING` · `confirm`
 
-MCP: investigation_finding_clear (id, finding, why)
+MCP: investigation_finding_clear (id, finding, text)
 
-MCP: investigation_finding_confirm (id, finding, why)
+MCP: investigation_finding_confirm (id, finding, text)
 
 Record a finding's disposition: `clear` rules it out (the exoneration move), `confirm` marks it
 as the cause. `--why` is required — the disposition carries its evidence.

@@ -147,22 +147,50 @@ func TestInputSchemasClosed(t *testing.T) {
 	}
 }
 
-// TestMCPMissingRequiredPassesThrough proves the pre-check hints only on unknown
-// keys: a call whose keys are all accepted but omits a required property reaches
-// the SDK's own validation, which rejects it as an error result.
-func TestMCPMissingRequiredPassesThrough(t *testing.T) {
+// TestMCPMissingRequiredNamed pins the pre-check message for a call whose keys
+// are all accepted but omit a required property, including an empty call.
+func TestMCPMissingRequiredNamed(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
 
-	out, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "task_comment", Arguments: map[string]any{"id": "abc"}})
-	if err != nil {
-		t.Fatalf("call task_comment: %v", err)
+	tests := []struct {
+		name string
+		tool string
+		args map[string]any
+		want string
+	}{
+		{
+			name: "task_comment without body",
+			tool: "task_comment",
+			args: map[string]any{"id": "abc"},
+			want: `task_comment: missing required property "body"; accepted: id*, body* (* = required)`,
+		},
+		{
+			name: "task_comment with no arguments",
+			tool: "task_comment",
+			args: map[string]any{},
+			want: `task_comment: missing required property "id"; missing required property "body"; accepted: id*, body* (* = required)`,
+		},
+		{
+			name: "investigation_fix without commits",
+			tool: "investigation_fix",
+			args: map[string]any{"id": "abc", "text": "fixed in the open PR"},
+			want: `investigation_fix: missing required property "commits"; accepted: id*, commits*, text (* = required)`,
+		},
 	}
-	if !out.IsError {
-		t.Fatalf("task_comment missing the required body did not return an error result: %s", toolText(out))
-	}
-	if text := toolText(out); strings.Contains(text, "unknown property") {
-		t.Fatalf("pre-check middleware intercepted a missing-required call meant for SDK validation: %s", text)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
+			if err != nil {
+				t.Fatalf("call %s: %v", tc.tool, err)
+			}
+			if !out.IsError {
+				t.Fatalf("tool %s did not return an error result: %s", tc.tool, toolText(out))
+			}
+			if got := toolText(out); got != tc.want {
+				t.Fatalf("error text =\n  %q\nwant\n  %q", got, tc.want)
+			}
+		})
 	}
 }
 
