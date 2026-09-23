@@ -468,7 +468,7 @@ func TestInvestigationLifecycle(t *testing.T) {
 	call(t, cs, "investigation_finding_clear", map[string]any{
 		"id":      id,
 		"finding": opened.Findings[0].ID,
-		"why":     "the fixture was malformed",
+		"text":    "the fixture was malformed",
 	})
 	cleared := show[investigationOut](t, cs, "investigation_show", id)
 	if cleared.Findings[0].Status != "cleared" || cleared.Findings[0].Note != "the fixture was malformed" {

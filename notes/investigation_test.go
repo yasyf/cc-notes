@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
@@ -683,8 +684,18 @@ func TestResolveFinding(t *testing.T) {
 	if got, err := notes.ResolveFinding(inv, f0.ID[:6]); err != nil || got.ID != f0.ID {
 		t.Errorf("ResolveFinding(prefix) = %s/%v, want %s", got.ID, err, f0.ID)
 	}
-	if _, err := notes.ResolveFinding(inv, "zzzzzz"); !errors.Is(err, notes.ErrNotFound) {
+	_, err := notes.ResolveFinding(inv, "zzzzzz")
+	if !errors.Is(err, notes.ErrNotFound) {
 		t.Errorf("ResolveFinding(unknown) = %v, want ErrNotFound", err)
+	}
+	for _, f := range inv.Findings {
+		if want := render.ShortWireID(f.ID) + " " + f.Text; !strings.Contains(err.Error(), want) {
+			t.Errorf("not-found error %q must list candidate %q", err, want)
+		}
+	}
+	bare := mustInvestigation(t, c, notes.InvestigationSpec{Title: "t3", Premise: "p3"})
+	if _, err := notes.ResolveFinding(bare, "1"); err == nil || !strings.Contains(err.Error(), "has no findings") {
+		t.Errorf("ResolveFinding(no findings, \"1\") = %v, want an error saying the investigation has no findings", err)
 	}
 	// An empty prefix is refused outright, never silently resolved.
 	if _, err := notes.ResolveFinding(inv, ""); !errors.Is(err, notes.ErrNotFound) {

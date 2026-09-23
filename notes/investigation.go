@@ -494,8 +494,9 @@ func nonTerminalInvestigation(status model.InvestigationStatus) bool {
 
 // ResolveFinding expands a finding id prefix — matched case-insensitively —
 // against an investigation's findings. An empty prefix is refused with ErrNotFound
-// rather than silently matching a sole finding. No match fails with ErrNotFound;
-// several matches fail with ErrAmbiguous listing each candidate's short id and text.
+// rather than silently matching a sole finding. No match fails with ErrNotFound
+// and several matches with ErrAmbiguous, each listing the candidates' short ids
+// and texts.
 func ResolveFinding(inv model.Investigation, prefix string) (model.Finding, error) {
 	if prefix == "" {
 		return model.Finding{}, fmt.Errorf("%w: a finding id is required", ErrNotFound)
@@ -509,19 +510,26 @@ func ResolveFinding(inv model.Investigation, prefix string) (model.Finding, erro
 	}
 	switch len(matches) {
 	case 0:
-		return model.Finding{}, fmt.Errorf("%w: no finding matches %q", ErrNotFound, prefix)
+		if len(inv.Findings) == 0 {
+			return model.Finding{}, fmt.Errorf("%w: no finding matches %q; the investigation has no findings", ErrNotFound, prefix)
+		}
+		return model.Finding{}, fmt.Errorf("%w: no finding matches %q; findings: %s", ErrNotFound, prefix, findingCandidates(inv.Findings))
 	case 1:
 		return matches[0], nil
 	default:
-		var b strings.Builder
-		for i, f := range matches {
-			if i > 0 {
-				b.WriteString("; ")
-			}
-			fmt.Fprintf(&b, "%s %s", render.ShortWireID(f.ID), f.Text)
-		}
-		return model.Finding{}, fmt.Errorf("%w: finding prefix %q matches %d: %s", ErrAmbiguous, prefix, len(matches), b.String())
+		return model.Finding{}, fmt.Errorf("%w: finding prefix %q matches %d: %s", ErrAmbiguous, prefix, len(matches), findingCandidates(matches))
 	}
+}
+
+func findingCandidates(findings []model.Finding) string {
+	var b strings.Builder
+	for i, f := range findings {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		fmt.Fprintf(&b, "%s %s", render.ShortWireID(f.ID), f.Text)
+	}
+	return b.String()
 }
 
 // resolveFinding loads the investigation and resolves a finding id prefix against

@@ -45,7 +45,7 @@ type investigationFindingEditArgs struct {
 type investigationFindingDispositionArgs struct {
 	ID      string `json:"id" jsonschema:"investigation id prefix"`
 	Finding string `json:"finding" jsonschema:"finding id prefix"`
-	Why     string `json:"why" jsonschema:"evidence supporting the finding disposition"`
+	Text    string `json:"text" jsonschema:"evidence supporting the finding disposition"`
 }
 
 type investigationFindingRefArgs struct {
@@ -75,7 +75,7 @@ type investigationVerdictArgs struct {
 type investigationFixArgs struct {
 	ID      string   `json:"id" jsonschema:"investigation id prefix"`
 	Text    string   `json:"text,omitempty" jsonschema:"fix summary"`
-	Commits []string `json:"commits" jsonschema:"fixing commits (at least one required)"`
+	Commits []string `json:"commits" jsonschema:"fixing commit shas (at least one); an unmerged PR's head sha counts"`
 }
 
 type investigationAbandonArgs struct {
@@ -190,13 +190,13 @@ func registerInvestigation(ts *toolset, b *bridge) {
 
 	addTool(ts, &mcp.Tool{Name: "investigation_finding_clear", Description: "Clear a finding with supporting evidence. The ack is a summary carrying the finding tally; investigation_finding_list reads the findings back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationFindingDispositionArgs) (*mcp.CallToolResult, any, error) {
-			flags := optStr([]string{"--json"}, "--why", in.Why)
+			flags := optStr([]string{"--json"}, "--why", in.Text)
 			return b.run(ctx, argvFor([]string{"investigation", "finding", "clear"}, flags, in.ID, in.Finding)...)
 		})
 
 	addTool(ts, &mcp.Tool{Name: "investigation_finding_confirm", Description: "Confirm a finding with supporting evidence. The ack is a summary carrying the finding tally; investigation_finding_list reads the findings back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationFindingDispositionArgs) (*mcp.CallToolResult, any, error) {
-			flags := optStr([]string{"--json"}, "--why", in.Why)
+			flags := optStr([]string{"--json"}, "--why", in.Text)
 			return b.run(ctx, argvFor([]string{"investigation", "finding", "confirm"}, flags, in.ID, in.Finding)...)
 		})
 

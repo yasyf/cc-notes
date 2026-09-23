@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `status` tool takes a matching `tasks` argument.
 
 ### Changed
+- **`investigation_finding_clear` and `_confirm` take their evidence as `text`.**
+  Every other investigation tool names its evidence field `text`. These two used
+  `why`, so an agent reaching for `text` got an unknown-property error. The CLI
+  keeps `--why`.
 - **No hook holds a tool result while it recalls or classifies.** The prompt
   float moved off the synchronous path; the `PostToolUse` handlers that cost the
   most had not. Over 6,769 `PostToolUse` dispatches on one machine, 383 took more
@@ -99,6 +103,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retry the same way.
 
 ### Fixed
+- **A finding id that matches nothing lists the investigation's findings.** The
+  not-found error names each finding's short id and text, as the ambiguous-prefix
+  error already did. An agent that guessed an id like `1` can retry with the
+  right one directly, without calling `investigation_finding_list` first.
+- **An MCP call missing a required argument names it and the accepted set.** The
+  argument pre-check now reports `missing required property "commits"; accepted:
+  id*, commits*, text (* = required)` in place of the SDK's raw schema-validation
+  error. `investigation_fix`'s `commits` schema also says that an unmerged PR's
+  head sha counts.
 - **A prompt no longer waits on the durable-answer pick.** `float_prompt_answers`
   ran `cc-notes answer list` and a small-model filter inline on `UserPromptSubmit`,
   so every prompt after the first paid the whole pick before the agent saw the
