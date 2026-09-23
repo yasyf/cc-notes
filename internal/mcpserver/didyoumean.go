@@ -18,6 +18,10 @@ var argSynonyms = map[string][]string{
 	"tags":      {"labels"},
 }
 
+var argAliases = map[string]string{
+	"description": "body",
+}
+
 func didYouMeanMiddleware(props map[string]toolProps) mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -37,6 +41,13 @@ func didYouMeanMiddleware(props map[string]toolProps) mcp.Middleware {
 			for _, name := range tool.accepted {
 				accepted[name] = true
 			}
+			if rewriteAliases(arguments, accepted) {
+				raw, err := json.Marshal(arguments)
+				if err != nil {
+					return nil, err
+				}
+				call.Params.Arguments = raw
+			}
 			var unknown []string
 			for name := range arguments {
 				if !accepted[name] {
@@ -54,6 +65,20 @@ func didYouMeanMiddleware(props map[string]toolProps) mcp.Middleware {
 			}, nil
 		}
 	}
+}
+
+func rewriteAliases(arguments map[string]json.RawMessage, accepted map[string]bool) bool {
+	rewrote := false
+	for alias, canonical := range argAliases {
+		value, sent := arguments[alias]
+		if _, taken := arguments[canonical]; !sent || taken || accepted[alias] || !accepted[canonical] {
+			continue
+		}
+		arguments[canonical] = value
+		delete(arguments, alias)
+		rewrote = true
+	}
+	return rewrote
 }
 
 func unknownPropertyMessage(toolName string, tool toolProps, acceptedSet map[string]bool, unknown []string) string {
