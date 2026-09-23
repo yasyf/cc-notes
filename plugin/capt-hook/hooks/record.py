@@ -52,6 +52,7 @@ from .common import (
     short_id,
     tool_output,
 )
+from .surface import repo_path
 
 # DurableInternalWrite recall vocabulary: STRONG names look durable-internal on name
 # alone; WEAK names only qualify when the body carries an internal signal. PUBLISHED/
@@ -170,9 +171,12 @@ def record_mcp_active(evt: PostToolUseEvent) -> HookResult | None:
 
 
 class DurableInternalWrite(CustomCondition):
-    """Matches a write of durable INTERNAL knowledge that belongs out of the public tree."""
+    """Matches a write of durable INTERNAL knowledge that belongs out of the session repo's working tree."""
 
     def check(self, evt: BaseHookEvent) -> bool:
+        return self.durable_shape(evt) and repo_path(evt) is not None
+
+    def durable_shape(self, evt: BaseHookEvent) -> bool:
         file = evt.file
         if file is None:
             return False
@@ -314,9 +318,7 @@ def investigation_resolve_lines(mcp: bool) -> list[str]:
     only_if=[Tool("Write|Edit|MultiEdit"), DurableInternalWrite(), CcNotesAvailable()],
     max_fires=NUDGE_MAX_FIRES,
     tests={
-        # Each case is silent under the default call_llm stub (record=False): a rejected
-        # path never reaches the LLM, a matched path's stubbed verdict doesn't record. The
-        # firing / kind-routing split needs a record=True stub, in tests/test_cc_notes.py.
+        # Without llm=, the default stub verdict is record=False; kind routing lives in tests/test_cc_notes.py.
         Input(tool="Write", file="HANDOFF.md", content="## Status\nHandoff\n## Remaining\n- [ ] x\n"): Allow(),
         Input(tool="Write", file="README.md", content="# Readme\nsome prose\n"): Allow(),
         Input(tool="Write", file="src/foo.ts", content="export const x = 1\n"): Allow(),
@@ -325,6 +327,24 @@ def investigation_resolve_lines(mcp: bool) -> list[str]:
         Input(tool="Write", file="experiments/e0-gate-memo.md", content="a plan sketch, nothing durable\n"): Allow(),
         Input(tool="Write", file="docs/design-memo.md", content="## Decision\n- [ ] x\n"): Allow(),
         Input(tool="Read", file="HANDOFF.md"): Allow(),
+        Input(
+            tool="Write",
+            file="STATUS.md",
+            content="## Status\nHandoff\n## Remaining\n- [ ] x\n",
+            llm={"record": True, "kind": "doc", "title": "Status", "when": "resuming"},
+        ): Warn(pattern="not a loose file in the working tree"),
+        Input(
+            tool="Write",
+            file="/Users/yasyf/.claude/projects/-Users-yasyf-Code-monorepo-old/memory/when-the-owner-says-it-exists-find-it.md",
+            content="---\nname: when the owner says it exists, find it\ndescription: search before denying\nmetadata:\n  type: feedback\n---\nbody\n",
+            llm={"record": True, "kind": "doc", "title": "Memory", "when": "resuming"},
+        ): Allow(),
+        Input(
+            tool="Write",
+            file="/Users/yasyf/.claude/plans/gateway-plan-memo.md",
+            content="## Decision\n## Approach\n1. do it\n",
+            llm={"record": True, "kind": "plan", "title": "Gateway cutover"},
+        ): Allow(),
     },
 )
 def nudge_record_durable(evt: PostToolUseEvent) -> HookResult | None:
