@@ -478,20 +478,31 @@ def evidence_transfers(line: CommandLine) -> list[str]:
     ``results`` segment) or when any path carries an evidence suffix or a dump-dir segment.
     Bulk (``-R``) and multi-source no longer qualify on their own — copying a bulk of source
     files is not evidence. A same-parent rename/move (``mv app.log app.log.1``) lands no new
-    evidence and is exempt, as is any leg whose destination isn't a durable tracked tree.
+    evidence and is exempt, as is any leg whose destination isn't a durable tracked tree. A
+    run-output-looking source is also exempt when an earlier leg of the *same* command line
+    staged it there from a durable path — that's a tracked file round-tripped through a temp
+    root to move it between checkouts, not run output landing for the first time.
     """
     dests: list[str] = []
+    staged_from_durable: set[str] = set()
     for cmd in line.commands:
         if cmd.program not in TRANSFER_PROGRAMS:
             continue
         paths = transfer_operands(cmd)
-        if len(paths) < 2 or not durable_dest(paths[-1]):
+        if len(paths) < 2:
             continue
         sources, dest = paths[:-1], paths[-1]
+        if len(sources) == 1 and durable_dest(sources[0]):
+            staged_from_durable.add(dest)
+        if not durable_dest(dest):
+            continue
         dest_parent = PurePosixPath(dest).parent
         if all(PurePosixPath(s).parent == dest_parent for s in sources):
             continue
-        if any(run_output_source(s) for s in sources) or any(evidence_path(p) for p in paths):
+        if (
+            any(run_output_source(s) and s not in staged_from_durable for s in sources)
+            or any(evidence_path(p) for p in paths)
+        ):
             dests.append(dest)
     return dests
 
@@ -546,8 +557,16 @@ def evidence_payload_bytes(evt: PostToolUseEvent) -> int:
         Input(command="mv crash-4821.panic docs/reports/crash-4821.panic"): Warn(pattern="Record a cc-notes log entry"),
         Input(command="rsync -av /var/log/fusekit/ evidence/latest/"): Warn(pattern="cc-notes sync"),
         Input(tool="Write", file="docs/reports/soak-test.log", content="I0621 vm boot ok\n"): Warn(pattern="Record a cc-notes log entry"),
+        # A run-output-shaped source that a genuine other leg never staged still fires, even
+        # with no bulk/mkdir framing around it — the round-trip carve-out below must not
+        # swallow this.
+        Input(command="cp /tmp/run-99/output.log docs/reports/output.log"): Warn(pattern="Record a cc-notes log entry"),
         # Benign neighbors that must stay silent.
         Input(command="cp /tmp/run/out.log /tmp/keep/out.log"): Allow(),  # entirely inside /tmp
+        # Regression: a tracked file staged out to /tmp then copied back into a tracked path,
+        # to move it between two checkouts — not evidence, the temp leg only ever held a copy
+        # of a durable file.
+        Input(command="cp README.md /tmp/civ2-stack-yaml.tmp && cp /tmp/civ2-stack-yaml.tmp docs/config/committed.yaml"): Allow(),
         Input(command="cp fixtures/batch.json internal/lfs/testdata/batch.json"): Allow(),  # fixture into testdata/
         Input(command="mv .git/objects/tmp_pack .git/objects/pack/pack-1.pack"): Allow(),  # git internals
         Input(command="cp README.md docs/index.md"): Allow(),  # no run-output or evidence signal
