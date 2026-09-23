@@ -608,6 +608,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   90s with a reload hint, and the serving terminal logs 5xx responses and
   slow builds.
 
+## [0.60.0] - 2026-09-23
+
+### Fixed
+
+- **The record router no longer tells an agent to delete a durable memory
+  file outside its own working tree.** `DurableInternalWrite` matched
+  `/memory/` anywhere in an absolute path, so a write to
+  `~/.claude/projects/*/memory/` — Claude Code's own auto-memory, outside
+  every working tree — drew the same "delete the loose file" advice a real
+  in-repo leftover earns. The check now requires the path to sit inside the
+  session's own working tree, reusing the relevance surface's `repo_path`
+  and deciding containment by file identity; a session outside any git
+  repository no longer fires the nudge at all.
+
+- **`nudge_record_evidence` no longer misfires on a tracked file staged
+  through `/tmp` and copied back.** Moving a tracked YAML config between two
+  checkouts via `cp` to `/tmp` and back read as run output landing in the
+  durable tree, because the check saw only the second leg's `/tmp` source.
+  It now tracks, per command line, which `/tmp` paths an earlier leg
+  populated from an already-tracked source, and exempts those paths from the
+  run-output check on a later leg; a genuine untracked run-output copy still
+  fires.
+
 ## [0.27.0] - 2026-07-12
 
 Shared runtime v2: cc-notes becomes a plain tenant of the shared FuseKit runtime.
