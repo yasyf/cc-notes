@@ -165,3 +165,66 @@ func TestMCPMissingRequiredPassesThrough(t *testing.T) {
 		t.Fatalf("pre-check middleware intercepted a missing-required call meant for SDK validation: %s", text)
 	}
 }
+
+// TestMCPDescriptionAliasesBody proves a record tool accepts the DTO's own
+// field name, description, as its body.
+func TestMCPDescriptionAliasesBody(t *testing.T) {
+	initRepo(t)
+	cs := connect(t)
+
+	type described struct {
+		Description string `json:"description"`
+	}
+
+	runbookID := ackID(t, call(t, cs, "runbook_add", map[string]any{"title": "Deploy", "description": "ship it"}))
+	if got := show[described](t, cs, "runbook_show", runbookID).Description; got != "ship it" {
+		t.Fatalf("runbook description = %q, want %q", got, "ship it")
+	}
+
+	taskID := ackID(t, call(t, cs, "task_add", map[string]any{
+		"title":                  "Wire the layer",
+		"description":            "through the middleware",
+		"no_validation_criteria": true,
+	}))
+	if got := show[described](t, cs, "task_show", taskID).Description; got != "through the middleware" {
+		t.Fatalf("task description = %q, want %q", got, "through the middleware")
+	}
+}
+
+// TestMCPDescriptionAliasRejected pins where the alias does not apply: beside
+// an explicit body, and on a tool with no body.
+func TestMCPDescriptionAliasRejected(t *testing.T) {
+	initRepo(t)
+	cs := connect(t)
+
+	tests := []struct {
+		name string
+		tool string
+		args map[string]any
+	}{
+		{
+			name: "body and description",
+			tool: "runbook_add",
+			args: map[string]any{"title": "Deploy", "body": "ship it", "description": "ship it too"},
+		},
+		{
+			name: "tool without body",
+			tool: "task_claim",
+			args: map[string]any{"id": "abc", "description": "mine"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
+			if err != nil {
+				t.Fatalf("call %s: %v", tc.tool, err)
+			}
+			if !out.IsError {
+				t.Fatalf("tool %s accepted description: %s", tc.tool, toolText(out))
+			}
+			if text := toolText(out); !strings.Contains(text, `unknown property "description"`) {
+				t.Fatalf("error text does not name description: %s", text)
+			}
+		})
+	}
+}
