@@ -2116,6 +2116,50 @@ def test_durable_internal_write_investigation_globs() -> None:
     check("investigation glob, no body signal stays silent", not DurableInternalWrite().check(quiet), repr(quiet.file))
 
 
+def test_durable_internal_write_scoped_to_session_worktree(tmp_path) -> None:
+    """Only a write inside the session repo's working tree is a loose file to record and delete.
+
+    The misfire: a Write to Claude Code's auto-memory under ~/.claude/projects/*/memory/, from a
+    session rooted in a repo, fired the doc route and told the agent to delete its own memory. The
+    same body written inside the session repo still fires; a memory/ path, a plans/ memo, a
+    STRONG-named file outside any repo, and one in another repo stay silent.
+    """
+    import shutil
+    import tempfile
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "memory").mkdir()
+    loose = Path(tempfile.mkdtemp())
+    other = Path(tempfile.mkdtemp())
+    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    memory_body = "---\nname: when the owner says it exists, find it\ndescription: search before denying\nmetadata:\n  type: feedback\n---\nbody\n"
+    old = os.environ.get("CLAUDE_PROJECT_DIR")
+    os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+    try:
+        def fires(file: Path | str, content: str) -> bool:
+            return DurableInternalWrite().check(mock_tool_event(tool="Write", event=Event.PostToolUse, file=str(file), content=content))
+
+        check("session tree: in-repo HANDOFF.md fires", fires(tmp_path / "HANDOFF.md", HANDOFF_BODY))
+        check("session tree: in-repo memory/ slug fires", fires(tmp_path / "memory" / "x.md", memory_body))
+        check(
+            "session tree: Claude Code auto-memory outside the repo is silent",
+            not fires(
+                "/Users/yasyf/.claude/projects/-Users-yasyf-Code-monorepo-old/memory/when-the-owner-says-it-exists-find-it.md",
+                memory_body,
+            ),
+        )
+        check("session tree: ~/.claude/plans memo is silent", not fires(Path.home() / ".claude" / "plans" / "gateway-plan-memo.md", GATE_MEMO_BODY))
+        check("session tree: STRONG name outside any repo is silent", not fires(loose / "HANDOFF.md", HANDOFF_BODY))
+        check("session tree: STRONG name in another repo is silent", not fires(other / "HANDOFF.md", HANDOFF_BODY))
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        else:
+            os.environ["CLAUDE_PROJECT_DIR"] = old
+        shutil.rmtree(loose, ignore_errors=True)
+        shutil.rmtree(other, ignore_errors=True)
+
+
 def test_record_router_routes_investigation(monkeypatch, tmp_path) -> None:
     """kind=investigation routes to the investigation primitive — open + append + verdict, never doc/log add."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
