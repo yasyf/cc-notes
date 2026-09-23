@@ -608,6 +608,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   90s with a reload hint, and the serving terminal logs 5xx responses and
   slow builds.
 
+## [0.61.0] - 2026-09-23
+
+### Fixed
+
+- **MCP tools now accept `description` as an alias for `body`.** Task,
+  runbook, sprint, project, and ledger DTOs echo `body` back as
+  `description`, so agents reusing that field on `runbook_add` or
+  `task_add` hit `unknown property "description"`. The did-you-mean
+  middleware now rewrites `description` to `body` before the unknown-key
+  check, only when the tool accepts `body`, does not declare
+  `description`, and the call sends no `body`. Sending both keys, or
+  sending `description` to a tool without `body` such as `task_claim`,
+  still errors; input schemas stay closed.
+
 ## [0.60.0] - 2026-09-23
 
 ### Fixed
