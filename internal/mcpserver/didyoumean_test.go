@@ -81,10 +81,10 @@ func TestMCPWrongKeyHints(t *testing.T) {
 		want string
 	}{
 		{
-			name: "task_comment text->body",
+			name: "task_comment comment->body",
 			tool: "task_comment",
-			args: map[string]any{"id": "abc", "text": "hi"},
-			want: `task_comment: unknown property "text" (did you mean "body"?); accepted: id*, body* (* = required)`,
+			args: map[string]any{"id": "abc", "comment": "hi"},
+			want: `task_comment: unknown property "comment" (did you mean "body"?); accepted: id*, body* (* = required)`,
 		},
 		{
 			name: "papercut complaint->body",
@@ -93,16 +93,16 @@ func TestMCPWrongKeyHints(t *testing.T) {
 			want: `papercut: unknown property "complaint" (did you mean "body"?); accepted: body*, model (* = required)`,
 		},
 		{
-			name: "sprint_comment text->body",
+			name: "sprint_comment comment->body",
 			tool: "sprint_comment",
-			args: map[string]any{"id": "abc", "text": "hi"},
-			want: `sprint_comment: unknown property "text" (did you mean "body"?); accepted: id*, body* (* = required)`,
+			args: map[string]any{"id": "abc", "comment": "hi"},
+			want: `sprint_comment: unknown property "comment" (did you mean "body"?); accepted: id*, body* (* = required)`,
 		},
 		{
-			name: "project_comment text->body",
+			name: "project_comment comment->body",
 			tool: "project_comment",
-			args: map[string]any{"id": "abc", "text": "hi"},
-			want: `project_comment: unknown property "text" (did you mean "body"?); accepted: id*, body* (* = required)`,
+			args: map[string]any{"id": "abc", "comment": "hi"},
+			want: `project_comment: unknown property "comment" (did you mean "body"?); accepted: id*, body* (* = required)`,
 		},
 	}
 	for _, tc := range tests {
@@ -254,5 +254,60 @@ func TestMCPDescriptionAliasRejected(t *testing.T) {
 				t.Fatalf("error text does not name description: %s", text)
 			}
 		})
+	}
+}
+
+func TestMCPContentAliases(t *testing.T) {
+	for _, field := range []string{"body", "description", "entry", "text"} {
+		t.Run(field, func(t *testing.T) {
+			initRepo(t)
+			cs := connect(t)
+			const content = "first line\nsecond line — verbatim"
+			noteID := ackID(t, call(t, cs, "note_add", map[string]any{"title": "Note", field: content}))
+			if got := show[noteOut](t, cs, "note_show", noteID).Body; got != content {
+				t.Fatalf("note body = %q, want %q", got, content)
+			}
+
+			logID := ackID(t, call(t, cs, "log_add", map[string]any{"title": "Log", field: content}))
+			call(t, cs, "log_append", map[string]any{"id": logID, field: content})
+			logged := show[investigationOut](t, cs, "log_show", logID)
+			if len(logged.Entries) != 2 || logged.Entries[0].Text != content || logged.Entries[1].Text != content {
+				t.Fatalf("log entries = %+v, want two entries containing %q", logged.Entries, content)
+			}
+
+			investigationID := ackID(t, call(t, cs, "investigation_open", map[string]any{
+				"title": "Investigation", "premise": "the parser drops text",
+			}))
+			call(t, cs, "investigation_append", map[string]any{"id": investigationID, field: content})
+			investigated := show[investigationOut](t, cs, "investigation_show", investigationID)
+			if len(investigated.Entries) != 1 || investigated.Entries[0].Text != content {
+				t.Fatalf("investigation entries = %+v, want one entry containing %q", investigated.Entries, content)
+			}
+		})
+	}
+}
+
+func TestMCPContentAliasCollisions(t *testing.T) {
+	initRepo(t)
+	cs := connect(t)
+	logID := ackID(t, call(t, cs, "log_add", map[string]any{"title": "Unchanged log"}))
+	fields := []string{"body", "description", "entry", "text"}
+	for i, first := range fields {
+		for _, second := range fields[i+1:] {
+			t.Run(first+" and "+second, func(t *testing.T) {
+				out, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
+					Name: "log_append", Arguments: map[string]any{"id": logID, first: "one", second: "two"},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !out.IsError || !strings.Contains(toolText(out), "unknown property") {
+					t.Fatalf("conflicting fields were not rejected: %s", toolText(out))
+				}
+			})
+		}
+	}
+	if got := show[investigationOut](t, cs, "log_show", logID); len(got.Entries) != 0 {
+		t.Fatalf("rejected calls wrote entries: %+v", got.Entries)
 	}
 }
