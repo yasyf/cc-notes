@@ -608,6 +608,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   90s with a reload hint, and the serving terminal logs 5xx responses and
   slow builds.
 
+## [0.63.1] - 2026-09-24
+
+### Fixed
+
+- **MCP tools accept equivalent content field names.** `log_add` and
+  `log_append` accept `body`, `description`, or `text` for `entry`. Tools
+  whose content field is `body` or `text` accept the other names too.
+  Supplying multiple names for the same field still fails without writing
+  anything. Unrelated arguments retain their existing validation.
+
 ## [0.63.0] - 2026-09-23
 
 ### Fixed

@@ -18,8 +18,10 @@ var argSynonyms = map[string][]string{
 	"tags":      {"labels"},
 }
 
-var argAliases = map[string]string{
-	"description": "body",
+var argAliases = map[string][]string{
+	"body":  {"description", "entry", "text"},
+	"entry": {"body", "description", "text"},
+	"text":  {"body", "description", "entry"},
 }
 
 func didYouMeanMiddleware(props map[string]toolProps) mcp.Middleware {
@@ -79,12 +81,21 @@ func didYouMeanMiddleware(props map[string]toolProps) mcp.Middleware {
 
 func rewriteAliases(arguments map[string]json.RawMessage, accepted map[string]bool) bool {
 	rewrote := false
-	for alias, canonical := range argAliases {
-		value, sent := arguments[alias]
-		if _, taken := arguments[canonical]; !sent || taken || accepted[alias] || !accepted[canonical] {
+	for canonical, aliases := range argAliases {
+		if _, taken := arguments[canonical]; taken || !accepted[canonical] {
 			continue
 		}
-		arguments[canonical] = value
+		var candidates []string
+		for _, alias := range aliases {
+			if _, sent := arguments[alias]; sent && !accepted[alias] {
+				candidates = append(candidates, alias)
+			}
+		}
+		if len(candidates) != 1 {
+			continue
+		}
+		alias := candidates[0]
+		arguments[canonical] = arguments[alias]
 		delete(arguments, alias)
 		rewrote = true
 	}
