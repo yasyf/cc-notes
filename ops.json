@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_criterion_status","id":"ca6bc749eeff86f1d4c210e5e82b5392","status":"met","note":"v0.63.1 release workflow green; Homebrew CLI, signed helper, user plugin, and redhorse local plugin verified at 0.63.1."}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_status","status":"done"},{"kind":"link_commit","sha":"0f23e311ea0f665ecdedccfb4878e78ec2c56c72"}]}
