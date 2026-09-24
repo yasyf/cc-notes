@@ -11,8 +11,8 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
-	github.com/yasyf/daemonkit v0.23.0
-	github.com/yasyf/fusekit v1.16.0
+	github.com/yasyf/daemonkit v0.31.1
+	github.com/yasyf/fusekit v1.20.0
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
