@@ -99,17 +99,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retry the same way.
 
 ### Fixed
-- **Upgrading an installed helper survives a launchd relaunch of the
-  incumbent.** cc-notes repins to daemonkit v0.31.1 and fusekit v1.20.0.
-  `package install` superseding a running helper drained it, and when its
-  FuseKit shutdown stage failed the helper exited 1; the LaunchAgent's
-  `KeepAlive` relaunched it in the same second, and daemonkit v0.23.0's
-  `Quiesce` then refused the swap with `live processes remain on the
-  deployment's executables`, leaving no helper serving. `Quiesce` now
-  terminates what still runs from the bundle's executables at its pinned
-  identity before it proves the inventory empty, escalates an incumbent that
-  will not leave, and `Supersede` restores the incumbent on any abort before
-  the swap commits.
 - **A prompt no longer waits on the durable-answer pick.** `float_prompt_answers`
   ran `cc-notes answer list` and a small-model filter inline on `UserPromptSubmit`,
   so every prompt after the first paid the whole pick before the agent saw the
@@ -618,6 +607,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   descriptive 504 the UI renders, the browser aborts a wedged request after
   90s with a reload hint, and the serving terminal logs 5xx responses and
   slow builds.
+
+## [0.63.0] - 2026-09-23
+
+### Fixed
+
+- **Upgrading an installed helper survives a launchd relaunch of the
+  incumbent.** cc-notes repins to daemonkit v0.31.1 and fusekit v1.20.0.
+  `package install` superseding a running helper drained it, and when its
+  FuseKit shutdown stage failed the helper exited 1; the LaunchAgent's
+  `KeepAlive` relaunched it in the same second, and daemonkit v0.23.0's
+  `Quiesce` then refused the swap with `live processes remain on the
+  deployment's executables`. `Quiesce` now
+  terminates what still runs from the bundle's executables at its pinned
+  identity before it proves the inventory empty, escalates an incumbent that
+  will not leave, and `Supersede` restores the incumbent on any abort before
+  the swap commits.
 
 ## [0.62.1] - 2026-09-23
 
