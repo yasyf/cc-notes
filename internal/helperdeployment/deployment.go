@@ -19,6 +19,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/helpercontract"
 	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/daemonkit"
+	"github.com/yasyf/daemonkit/bundle"
 	"github.com/yasyf/daemonkit/deploy"
 	"github.com/yasyf/daemonkit/launchd"
 	"github.com/yasyf/fusekit/holder"
@@ -271,11 +272,28 @@ func validateActivation(activation deploy.Activation, appPath, marketingVersion 
 	if err := validateGeneration(activation.Generation, appPath, marketingVersion); err != nil {
 		return err
 	}
-	if activation.Readiness.Build() != version.String() || activation.Readiness.Generation() == 0 ||
-		activation.Readiness.Digest() == (deploy.SHA256{}) {
-		return errors.New("cc-notes helper: daemonkit returned an inexact readiness proof")
+	readiness := activation.Readiness
+	return validateReadiness(readiness.Build(), readiness.Generation(), readiness.Digest(), appPath)
+}
+
+func validateReadiness(build string, generation uint64, digest deploy.SHA256, appPath string) error {
+	want, err := executableDigest(appPath)
+	if err != nil {
+		return err
+	}
+	if build != want || generation == 0 || digest == (deploy.SHA256{}) {
+		return fmt.Errorf("cc-notes helper: daemonkit returned an inexact readiness proof (build %q, want executable digest %q)", build, want)
 	}
 	return nil
+}
+
+func executableDigest(appPath string) (string, error) {
+	data, err := os.ReadFile(bundle.ExePath(appPath, helperclient.ExecutableName))
+	if err != nil {
+		return "", fmt.Errorf("cc-notes helper: read installed executable: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func validateGeneration(generation deploy.Generation, appPath, marketingVersion string) error {

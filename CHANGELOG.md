@@ -99,6 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retry the same way.
 
 ### Fixed
+- **`cc-notes package install` accepts the helper's readiness proof.** daemonkit
+  reports a ready daemon's build as the SHA-256 of its executable. The activation
+  check compared that digest with the version string (`v0.62.0 (<commit>)`), so it
+  could never match. Every package install and service activation failed with
+  `daemonkit returned an inexact readiness proof`, even though the helper was
+  running. The check now hashes the installed executable and compares the digests.
 - **A prompt no longer waits on the durable-answer pick.** `float_prompt_answers`
   ran `cc-notes answer list` and a small-model filter inline on `UserPromptSubmit`,
   so every prompt after the first paid the whole pick before the agent saw the
