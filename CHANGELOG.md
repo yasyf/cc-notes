@@ -608,6 +608,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   90s with a reload hint, and the serving terminal logs 5xx responses and
   slow builds.
 
+## [0.63.2] - 2026-09-28
+
+### Fixed
+
+- **Ref lookup no longer walks every repository ref.** ID resolution, entity
+  listings, sync, source indexing, and visualization now ask Git only for the
+  namespaces they consume. History also reuses the kind and full ID its command
+  already resolved. A full 56-commit history read in a repository with 63,251
+  packed refs now completes in 16.29 seconds with two Go threads.
+
 ## [0.63.1] - 2026-09-24
 
 ### Fixed
