@@ -207,7 +207,7 @@ func (e *engine) report(rounds, pushed int) Report {
 // per-remote view a round fetched; foldTracking reads a remote's whole view to
 // fold a plain fetch's tracking refs locally.
 func trackingView(ctx context.Context, s *store.Store, trackingPrefix string) (map[string]model.SHA, error) {
-	tracking, err := s.Repo.ListPrefix(ctx, trackingPrefix)
+	tracking, err := s.Git.Refs(ctx, trackingPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +250,7 @@ func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) erro
 // remote tip the local chain does not contain is always in scope, however
 // quiet the tracking delta: correctness over speed.
 func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA) (map[string]model.SHA, error) {
-	local, err := e.store.Repo.ListPrefix(ctx, namespace)
+	local, err := e.store.Git.Refs(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +279,7 @@ func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA
 // pending counts local refs that differ from the remote view: the refs the
 // upcoming push would create or update.
 func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (int, error) {
-	local, err := e.store.Repo.ListPrefix(ctx, namespace)
+	local, err := e.store.Git.Refs(ctx, namespace)
 	if err != nil {
 		return 0, err
 	}

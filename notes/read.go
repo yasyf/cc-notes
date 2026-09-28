@@ -2,8 +2,8 @@ package notes
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
@@ -192,15 +192,29 @@ func (c *Client) ResolveAnswer(ctx context.Context, prefix string) (model.Entity
 // single kind surfaces that kind's *AmbiguousError. No match fails with
 // ErrNotFound.
 func (c *Client) ResolveEntity(ctx context.Context, prefix string) (model.Kind, model.EntityID, error) {
+	tips, err := c.s.Git.Refs(ctx, refs.Namespace)
+	if err != nil {
+		return "", "", err
+	}
+	lowered := strings.ToLower(prefix)
+	byKind := make(map[model.Kind][]string, len(model.Kinds()))
+	for ref := range tips {
+		parsed, err := refs.Parse(ref)
+		if err != nil {
+			return "", "", err
+		}
+		if strings.HasPrefix(string(parsed.ID), lowered) {
+			byKind[parsed.Kind] = append(byKind[parsed.Kind], ref)
+		}
+	}
 	matched := make([]string, 0, len(model.Kinds()))
 	for _, kind := range model.Kinds() {
-		ref, err := c.s.Resolve(ctx, kind, prefix)
-		switch {
-		case err == nil:
-			matched = append(matched, ref)
-		case errors.Is(err, ErrNotFound):
-			continue
+		switch matches := byKind[kind]; len(matches) {
+		case 0:
+		case 1:
+			matched = append(matched, matches[0])
 		default:
+			_, err := c.s.Resolve(ctx, kind, prefix)
 			return "", "", err
 		}
 	}

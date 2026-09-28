@@ -131,15 +131,9 @@ func (w *Watcher) scan(ctx context.Context) error {
 // snapshot builds the current ref→tip map over watchPrefixes plus the headKey
 // tip, and resolves the branch HEAD points at (empty when detached).
 func (w *Watcher) snapshot(ctx context.Context) (map[string]model.SHA, string, error) {
-	tips := make(map[string]model.SHA)
-	for _, prefix := range watchPrefixes {
-		refTips, err := w.repo.ListPrefix(ctx, prefix)
-		if err != nil {
-			return nil, "", fmt.Errorf("list %s: %w", prefix, err)
-		}
-		for name, tip := range refTips {
-			tips[name] = tip
-		}
+	tips, err := w.git.Refs(ctx, watchPrefixes...)
+	if err != nil {
+		return nil, "", fmt.Errorf("list watched refs: %w", err)
 	}
 	tip, err := w.repo.Tip(ctx, headKey)
 	switch {

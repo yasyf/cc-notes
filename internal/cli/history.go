@@ -107,7 +107,7 @@ func historyCmd(use, short string, resolve func(context.Context, *notes.Client, 
 			if err != nil {
 				return err
 			}
-			entries, err := c.History(ctx, id)
+			entries, err := c.HistoryByKind(ctx, kind, id)
 			if err != nil {
 				return err
 			}

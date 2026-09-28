@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -129,6 +132,52 @@ func TestResolveEntityCrossKind(t *testing.T) {
 	}
 	if !kinds[model.KindNote] || !kinds[model.KindTask] || !kinds[model.KindInvestigation] {
 		t.Errorf("Matches kinds = %v, want note, task, and investigation", kinds)
+	}
+}
+
+func TestResolveEntityScopesGitRefQuery(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	note := storeCreate(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "N"}).(model.Note)
+	updates := make([]gitcmd.RefUpdate, 128)
+	for i := range updates {
+		updates[i] = gitcmd.RefUpdate{Ref: fmt.Sprintf("refs/heads/unrelated-%03d", i), New: note.Head}
+	}
+	if err := (gitcmd.Git{Dir: dir}).UpdateRefs(ctx, updates); err != nil {
+		t.Fatalf("UpdateRefs: %v", err)
+	}
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("LookPath git: %v", err)
+	}
+	bin := t.TempDir()
+	trace := filepath.Join(t.TempDir(), "git.log")
+	shim := "#!/bin/sh\nprintf '%s\\037' \"$@\" >> \"$CC_NOTES_GIT_TRACE\"\nprintf '\\n' >> \"$CC_NOTES_GIT_TRACE\"\nexec \"$CC_NOTES_REAL_GIT\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(shim), 0o700); err != nil {
+		t.Fatalf("write git shim: %v", err)
+	}
+	t.Setenv("CC_NOTES_GIT_TRACE", trace)
+	t.Setenv("CC_NOTES_REAL_GIT", realGit)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	kind, id, err := c.ResolveEntity(ctx, string(note.ID[:7]))
+	if err != nil {
+		t.Fatalf("ResolveEntity: %v", err)
+	}
+	if kind != model.KindNote || id != note.ID {
+		t.Fatalf("ResolveEntity = %s/%s, want note/%s", kind, id, note.ID)
+	}
+	data, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatalf("read git trace: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("git invocations = %d, want 1: %q", len(lines), data)
+	}
+	if !strings.Contains(lines[0], "\x1ffor-each-ref\x1f") || !strings.Contains(lines[0], "\x1frefs/cc-notes/\x1f") {
+		t.Fatalf("git invocation is not one scoped for-each-ref: %q", lines[0])
 	}
 }
 

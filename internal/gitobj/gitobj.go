@@ -1,8 +1,8 @@
-// Package gitobj owns object writes and all reads through go-git's filesystem
-// ODB storage. Repository discovery belongs to the caller, which uses real git
+// Package gitobj owns object writes and reads through go-git's filesystem ODB
+// storage. Repository discovery belongs to the caller, which uses real git
 // rev-parse. This bypasses go-git's repository open, whose extension allowlist
-// rejects extensions.worktreeConfig repositories. Ref writes, fetch/push, and
-// config live outside this package.
+// rejects extensions.worktreeConfig repositories. Ref writes, prefix-scoped
+// ref enumeration, fetch/push, and config live outside this package.
 package gitobj
 
 import (

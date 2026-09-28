@@ -302,15 +302,13 @@ func isBranchRef(ref string) bool {
 // HEAD to another branch without moving a tip, or a different window.
 func (b *Builder) digest(ctx context.Context, since int64) (string, error) {
 	prefixes := []string{"refs/heads/", "refs/remotes/origin/", refs.Namespace}
-	var lines []string
-	for _, prefix := range prefixes {
-		tips, err := b.store.Repo.ListPrefix(ctx, prefix)
-		if err != nil {
-			return "", fmt.Errorf("list %s: %w", prefix, err)
-		}
-		for ref, tip := range tips {
-			lines = append(lines, ref+"\x00"+string(tip))
-		}
+	tips, err := b.store.Git.Refs(ctx, prefixes...)
+	if err != nil {
+		return "", fmt.Errorf("list graph refs: %w", err)
+	}
+	lines := make([]string, 0, len(tips))
+	for ref, tip := range tips {
+		lines = append(lines, ref+"\x00"+string(tip))
 	}
 	sort.Strings(lines)
 	head, err := b.head(ctx)
@@ -354,7 +352,7 @@ func (b *Builder) head(ctx context.Context) (string, error) {
 
 // entityRefs lists every cc-notes entity ref, sorted, paired with its tip.
 func (b *Builder) entityRefs(ctx context.Context) ([]refTip, error) {
-	tips, err := b.store.Repo.ListPrefix(ctx, refs.Namespace)
+	tips, err := b.store.Git.Refs(ctx, refs.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("list entity refs: %w", err)
 	}

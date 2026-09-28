@@ -1,6 +1,7 @@
 package notes_test
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -82,6 +83,20 @@ func TestHistoryNoteLifecycle(t *testing.T) {
 	entries, err := c.History(ctx, note.ID)
 	if err != nil {
 		t.Fatalf("History: %v", err)
+	}
+	byKind, err := c.HistoryByKind(ctx, model.KindNote, note.ID)
+	if err != nil {
+		t.Fatalf("HistoryByKind: %v", err)
+	}
+	if !reflect.DeepEqual(byKind, entries) {
+		t.Fatalf("HistoryByKind = %+v, want %+v", byKind, entries)
+	}
+	prefixEntries, err := c.History(ctx, note.ID[:7])
+	if err != nil {
+		t.Fatalf("History(prefix): %v", err)
+	}
+	if !reflect.DeepEqual(prefixEntries, entries) {
+		t.Fatalf("History(prefix) = %+v, want %+v", prefixEntries, entries)
 	}
 
 	if len(entries) != 5 {

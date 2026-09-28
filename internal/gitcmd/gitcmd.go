@@ -1,11 +1,11 @@
 // Package gitcmd execs the system git binary for the operations that need
 // it: ref writes under real ref locks with reflog coverage (update-ref
-// --stdin), fetch and push with the user's credential and SSH handling,
-// config, identity, and the credential store (fill/approve/reject) for the
-// LFS client. Object writes and all reads belong to internal/gitobj;
-// neither package imports the other. Output parsing sticks to plumbing
-// commands, with one exception: `git remote`, whose name-per-line listing
-// and get-url output have no plumbing equivalent and have been stable
+// --stdin), prefix-scoped ref enumeration, fetch and push with the user's
+// credential and SSH handling, config, identity, and the credential store
+// (fill/approve/reject) for the LFS client. Object reads and writes belong to
+// internal/gitobj; neither package imports the other. Output parsing sticks to
+// plumbing commands, with one exception: `git remote`, whose name-per-line
+// listing and get-url output have no plumbing equivalent and have been stable
 // since their introduction.
 package gitcmd
 

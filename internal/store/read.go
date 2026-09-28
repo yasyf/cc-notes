@@ -90,9 +90,9 @@ func (s *Store) LoadRootedAt(ctx context.Context, head model.SHA) (RootedSnapsho
 }
 
 // HasNotes reports whether the repository holds any cc-notes entity: any ref
-// under refs/cc-notes/, scanned in-process from the open storage.
+// under refs/cc-notes/.
 func (s *Store) HasNotes(ctx context.Context) (bool, error) {
-	tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
+	tips, err := s.Git.Refs(ctx, refs.Namespace)
 	if err != nil {
 		return false, err
 	}
@@ -317,7 +317,7 @@ func (s *Store) ListAnswers(ctx context.Context, includeDeleted, includeSupersed
 // children lists the refs that are immediate children of prefix, excluding
 // nested namespaces.
 func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error) {
-	tips, err := s.Repo.ListPrefix(ctx, prefix)
+	tips, err := s.Git.Refs(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
