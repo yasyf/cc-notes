@@ -21,6 +21,31 @@ type RefTip struct {
 	Time int64
 }
 
+// Refs lists every hash ref under the given patterns in one git for-each-ref
+// invocation.
+func (g Git) Refs(ctx context.Context, patterns ...string) (map[string]model.SHA, error) {
+	out, err := g.run(ctx, "", append([]string{"for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)"}, patterns...)...)
+	if err != nil {
+		return nil, fmt.Errorf("refs: %w", err)
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) == 0 {
+		return nil, nil
+	}
+	refs := make(map[string]model.SHA, len(lines))
+	for _, line := range lines {
+		fields := strings.Split(line, "\x00")
+		if len(fields) != 3 || fields[0] == "" || fields[1] == "" {
+			return nil, fmt.Errorf("refs: malformed line %q", line)
+		}
+		if fields[2] != "" {
+			continue
+		}
+		refs[fields[0]] = model.SHA(fields[1])
+	}
+	return refs, nil
+}
+
 // TrunkBranch resolves the repository's trunk: the remote default branch
 // (origin/HEAD) when set, else a probe of local main then master. It wraps
 // ErrNoTrunk when none of those resolve.

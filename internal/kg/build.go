@@ -52,7 +52,7 @@ const (
 // lands a linked commit moves no entity tip, so without this the graph would
 // stay short those anchors and every read would report a hit.
 func SourceDigest(ctx context.Context, s *store.Store) (string, error) {
-	tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
+	tips, err := s.Git.Refs(ctx, refs.Namespace)
 	if err != nil {
 		return "", fmt.Errorf("list entity refs: %w", err)
 	}
@@ -90,7 +90,7 @@ func taskTips(tips map[string]model.SHA) map[string]model.SHA {
 // Tombstoned entities are dropped; superseded ones are kept, since the
 // supersede edge is the whole point of keeping them.
 func Build(ctx context.Context, s *store.Store) (*Graph, error) {
-	tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
+	tips, err := s.Git.Refs(ctx, refs.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("list entity refs: %w", err)
 	}

@@ -3,6 +3,7 @@ package gitcmd_test
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"testing"
 
@@ -247,6 +248,38 @@ func TestRefTips(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("RefTips no match = %+v, want nil", got)
+	}
+}
+
+func TestRefs(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+
+	c1 := commitAt(t, g, "c1", 1700000000)
+	gittest.Git(t, g.Dir, "checkout", "-q", "-b", "feat")
+	c2 := commitAt(t, g, "c2", 1700000100)
+	gittest.Git(t, g.Dir, "update-ref", "refs/remotes/origin/release", string(c1))
+	gittest.Git(t, g.Dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/release")
+
+	got, err := g.Refs(ctx, "refs/heads/", "refs/remotes/origin/")
+	if err != nil {
+		t.Fatalf("Refs: %v", err)
+	}
+	want := map[string]model.SHA{
+		"refs/heads/feat":             c2,
+		"refs/heads/main":             c1,
+		"refs/remotes/origin/release": c1,
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("Refs() = %+v, want %+v", got, want)
+	}
+
+	got, err = g.Refs(ctx, "refs/does-not-exist/")
+	if err != nil {
+		t.Fatalf("Refs no match: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("Refs no match = %+v, want nil", got)
 	}
 }
 

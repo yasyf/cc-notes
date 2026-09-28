@@ -470,7 +470,7 @@ func (i Index) retainedLFS(ctx context.Context, manifest gitobj.SourceManifest) 
 }
 
 func (i Index) liveManifest(ctx context.Context) (gitobj.SourceManifest, error) {
-	tips, err := i.Repo.ListPrefix(ctx, refs.Namespace)
+	tips, err := i.Git.Refs(ctx, refs.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("list source refs: %w", err)
 	}

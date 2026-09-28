@@ -51,10 +51,16 @@ type FieldChange struct {
 // across kinds fails with *AmbiguousKindsError. Bookkeeping-only and idempotent
 // commits are dropped from the trail. The caller applies any reverse or limit.
 func (c *Client) History(ctx context.Context, id model.EntityID) ([]HistoryEntry, error) {
-	kind, _, err := c.ResolveEntity(ctx, string(id))
+	kind, resolved, err := c.ResolveEntity(ctx, string(id))
 	if err != nil {
 		return nil, err
 	}
+	return c.HistoryByKind(ctx, kind, resolved)
+}
+
+// HistoryByKind returns the edit trail for a resolved entity id whose kind is
+// already known.
+func (c *Client) HistoryByKind(ctx context.Context, kind model.Kind, id model.EntityID) ([]HistoryEntry, error) {
 	steps, err := c.s.History(ctx, refs.For(kind, id))
 	if err != nil {
 		return nil, err
