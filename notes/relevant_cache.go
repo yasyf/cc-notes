@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -21,10 +22,22 @@ import (
 const relevantRacyWindow = 2 * time.Second
 
 type relevantCacheEntry struct {
-	Key      string      `json:"key"`
-	Deadline int64       `json:"deadline,omitempty"`
-	Files    []fileStamp `json:"files,omitempty"`
-	Output   string      `json:"output"`
+	Key        string      `json:"key"`
+	Deadline   int64       `json:"deadline,omitempty"`
+	Files      []fileStamp `json:"files,omitempty"`
+	BranchRefs []string    `json:"branch_refs,omitempty"`
+	Output     string      `json:"output"`
+}
+
+var relevantRefRoots = []string{
+	refs.Root(model.KindNote),
+	refs.Root(model.KindDoc),
+	refs.Root(model.KindAnswer),
+	refs.Root(model.KindLedger),
+	refs.Root(model.KindLog),
+	refs.Root(model.KindRunbook),
+	refs.Root(model.KindInvestigation),
+	refs.Root(model.KindPlan),
 }
 
 type fileStamp struct {
@@ -61,21 +74,34 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if err != nil {
 		return nil, err
 	}
-	key, staleAfter, vars, err := c.relevantCacheKey(ctx, p, filter, variant)
-	if err != nil {
-		return nil, err
-	}
 	name := relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, variant)
 	start := time.Now()
+	var cached relevantCacheEntry
+	var cachedOK bool
 	if data, ok := c.s.ReadRelevantCache(name); ok {
-		var entry relevantCacheEntry
-		if json.Unmarshal(data, &entry) == nil && entry.Key == key && entry.valid(start) {
-			return []byte(entry.Output), nil
+		cachedOK = json.Unmarshal(data, &cached) == nil
+	}
+	var key string
+	var staleAfter time.Duration
+	var vars map[string]string
+	if cachedOK {
+		key, staleAfter, vars, err = c.relevantCacheKey(ctx, p, filter, variant, cached.BranchRefs)
+		if err != nil {
+			return nil, err
+		}
+		if cached.Key == key && cached.valid(start) {
+			return []byte(cached.Output), nil
 		}
 	}
 	entries, clock, err := c.relevantScored(ctx, p, filter)
 	if err != nil {
 		return nil, err
+	}
+	if !cachedOK || !slices.Equal(cached.BranchRefs, clock.branchRefs) {
+		key, staleAfter, vars, err = c.relevantCacheKey(ctx, p, filter, variant, clock.branchRefs)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var paths []string
 	if filter.Worktree {
@@ -95,7 +121,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if !slices.Equal(before, after) || slices.ContainsFunc(after, func(f fileStamp) bool { return f.racy(start) }) {
 		return out, nil
 	}
-	entry := relevantCacheEntry{Key: key, Files: after, Output: string(out)}
+	entry := relevantCacheEntry{Key: key, Files: after, BranchRefs: clock.branchRefs, Output: string(out)}
 	for _, e := range entries {
 		if fe, ok := freshOf(e); ok && e.Verdict == "" && fe.StaleAt == 0 && fe.VerifiedAt != 0 {
 			deadline := time.Unix(fe.VerifiedAt, 0).Add(staleAfter).UnixNano()
@@ -164,7 +190,7 @@ func (f fileStamp) racy(start time.Time) bool {
 	return !f.Missing && time.Unix(0, f.ModTime).After(start.Add(-relevantRacyWindow))
 }
 
-func (c *Client) relevantCacheKey(ctx context.Context, p string, filter RelevantFilter, variant string) (string, time.Duration, map[string]string, error) {
+func (c *Client) relevantCacheKey(ctx context.Context, p string, filter RelevantFilter, variant string, branchRefs []string) (string, time.Duration, map[string]string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", 0, nil, err
@@ -177,20 +203,18 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 	if err != nil {
 		return "", 0, nil, err
 	}
-	refs, err := c.s.Repo.ListPrefix(ctx, "refs/")
+	patterns := append(slices.Clone(relevantRefRoots), branchRefs...)
+	refTips, err := c.s.Git.ResolvedRefs(ctx, patterns...)
 	if err != nil {
 		return "", 0, nil, err
 	}
-	symbolic, err := c.s.Repo.ListSymbolic(ctx, "refs/")
+	baseRef, err := c.resolveRelevantBase(ctx, filter.Base)
 	if err != nil {
 		return "", 0, nil, err
 	}
-	var base model.SHA
-	if filter.Base != "" {
-		base, err = c.s.Git.CommitSHA(ctx, filter.Base)
-		if err != nil && !errors.Is(err, gitcmd.ErrRevNotFound) {
-			return "", 0, nil, err
-		}
+	base, err := c.s.Git.CommitSHA(ctx, string(baseRef))
+	if err != nil && !errors.Is(err, gitcmd.ErrRevNotFound) {
+		return "", 0, nil, err
 	}
 	varList, err := c.s.Git.VarList(ctx)
 	if err != nil {
@@ -202,7 +226,7 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 	}
 	vars := make(map[string]string)
 	h := sha256.New()
-	if _, err := fmt.Fprintf(h, "%s\n%s %d %d\n%s\nbase %s\n%s\n", relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, variant), version.Version, exeInfo.Size(), exeInfo.ModTime().UnixNano(), head, base, staleAfter); err != nil {
+	if _, err := fmt.Fprintf(h, "%s\n%s %d %d\n%s\nbase %s %s\n%s\n", relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, variant), version.Version, exeInfo.Size(), exeInfo.ModTime().UnixNano(), head, baseRef, base, staleAfter); err != nil {
 		return "", 0, nil, err
 	}
 	for _, line := range strings.Split(varList, "\n") {
@@ -237,25 +261,21 @@ func (c *Client) relevantCacheKey(ctx context.Context, p string, filter Relevant
 			return "", 0, nil, err
 		}
 	}
-	names := make([]string, 0, len(refs))
-	for ref := range refs {
-		if !strings.HasPrefix(ref, "refs/cc-notes-sync/") {
-			names = append(names, ref)
+	names := make([]string, 0, len(refTips))
+	for ref := range refTips {
+		if strings.HasPrefix(ref, "refs/heads/") && !slices.Contains(branchRefs, ref) {
+			continue
 		}
+		names = append(names, ref)
 	}
 	slices.Sort(names)
 	for _, ref := range names {
-		if _, err := fmt.Fprintf(h, "%s %s\n", ref, refs[ref]); err != nil {
+		if _, err := fmt.Fprintf(h, "%s %s\n", ref, refTips[ref]); err != nil {
 			return "", 0, nil, err
 		}
 	}
-	links := make([]string, 0, len(symbolic))
-	for ref := range symbolic {
-		links = append(links, ref)
-	}
-	slices.Sort(links)
-	for _, ref := range links {
-		if _, err := fmt.Fprintf(h, "%s -> %s\n", ref, symbolic[ref]); err != nil {
+	for _, ref := range branchRefs {
+		if _, err := fmt.Fprintf(h, "branch %s %s\n", ref, refTips[ref]); err != nil {
 			return "", 0, nil, err
 		}
 	}

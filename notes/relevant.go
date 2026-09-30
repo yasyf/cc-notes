@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
-	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -138,6 +138,60 @@ type scoredNote struct {
 	reasons []string
 }
 
+type relevantReachability struct {
+	client      *Client
+	head        model.SHA
+	loaded      bool
+	ancestors   map[model.SHA]struct{}
+	branchTips  map[string]model.SHA
+	missingRefs map[string]struct{}
+}
+
+func (r *relevantReachability) contains(ctx context.Context, sha model.SHA) (bool, error) {
+	if !r.loaded {
+		ancestors, err := r.client.s.Git.AncestorSet(ctx, r.head)
+		if err != nil {
+			return false, err
+		}
+		r.ancestors = ancestors
+		r.loaded = true
+	}
+	_, ok := r.ancestors[sha]
+	return ok, nil
+}
+
+func (r *relevantReachability) commitMerged(ctx context.Context, rev string) (bool, error) {
+	sha, err := r.client.s.Git.ResolveCommit(ctx, rev)
+	if errors.Is(err, gitcmd.ErrRevNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return r.contains(ctx, sha)
+}
+
+func (r *relevantReachability) branchMerged(ctx context.Context, name string) (bool, error) {
+	ref := "refs/heads/" + name
+	if _, missing := r.missingRefs[ref]; missing {
+		return false, nil
+	}
+	tip, ok := r.branchTips[ref]
+	if !ok {
+		var err error
+		tip, err = r.client.s.Git.CommitSHA(ctx, ref)
+		if errors.Is(err, gitcmd.ErrRevNotFound) {
+			r.missingRefs[ref] = struct{}{}
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		r.branchTips[ref] = tip
+	}
+	return r.contains(ctx, tip)
+}
+
 // Relevant scores every live note, doc, log, active runbook, investigation,
 // plan, and answer against target and returns those with a positive score, each carrying its
 // drift verdict, sorted by score descending, then UpdatedAt descending, then id
@@ -162,6 +216,7 @@ type relevantClock struct {
 	head       model.SHA
 	now        time.Time
 	staleAfter time.Duration
+	branchRefs []string
 }
 
 func (c *Client) relevantScored(ctx context.Context, target string, filter RelevantFilter) ([]RelevantEntry, relevantClock, error) {
@@ -191,6 +246,20 @@ func (c *Client) relevantScored(ctx context.Context, target string, filter Relev
 		return nil, relevantClock{}, err
 	}
 	now := time.Now()
+	reachability := &relevantReachability{
+		client:      c,
+		head:        head,
+		branchTips:  make(map[string]model.SHA),
+		missingRefs: make(map[string]struct{}),
+	}
+	branchRefSet := make(map[string]struct{})
+	addBranchRefs := func(anchors []model.Anchor) {
+		for _, anchor := range anchors {
+			if anchor.Kind == model.AnchorBranch {
+				branchRefSet["refs/heads/"+anchor.Value] = struct{}{}
+			}
+		}
+	}
 
 	all, err := c.s.ListNotes(ctx, false, false)
 	if err != nil {
@@ -201,7 +270,8 @@ func (c *Client) relevantScored(ctx context.Context, target string, filter Relev
 		if filter.Attached && !anchorsNear(n.Anchors, p) {
 			continue
 		}
-		match, err := c.scoreNote(ctx, n, p, branch, head, crossAuthorPaths)
+		addBranchRefs(n.Anchors)
+		match, err := c.scoreNote(ctx, n, p, branch, head, crossAuthorPaths, reachability)
 		if err != nil {
 			return nil, relevantClock{}, err
 		}
@@ -219,7 +289,8 @@ func (c *Client) relevantScored(ctx context.Context, target string, filter Relev
 		if filter.Attached && !anchorsNear(d.Anchors, p) {
 			continue
 		}
-		score, reasons, err := c.scoreAnchors(ctx, d.Anchors, p, branch, head, crossAuthorPaths)
+		addBranchRefs(d.Anchors)
+		score, reasons, err := c.scoreAnchors(ctx, d.Anchors, p, branch, head, crossAuthorPaths, reachability)
 		if err != nil {
 			return nil, relevantClock{}, err
 		}
@@ -237,7 +308,8 @@ func (c *Client) relevantScored(ctx context.Context, target string, filter Relev
 		if filter.Attached && !anchorsNear(a.Anchors, p) {
 			continue
 		}
-		score, reasons, err := c.scoreAnchors(ctx, a.Anchors, p, branch, head, crossAuthorPaths)
+		addBranchRefs(a.Anchors)
+		score, reasons, err := c.scoreAnchors(ctx, a.Anchors, p, branch, head, crossAuthorPaths, reachability)
 		if err != nil {
 			return nil, relevantClock{}, err
 		}
@@ -255,7 +327,8 @@ func (c *Client) relevantScored(ctx context.Context, target string, filter Relev
 		if filter.Attached && !anchorsNear(l.Anchors, p) {
 			continue
 		}
-		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths)
+		addBranchRefs(l.Anchors)
+		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths, reachability)
 		if err != nil {
 			return nil, relevantClock{}, err
 		}
@@ -273,7 +346,8 @@ func (c *Client) relevantScored(ctx context.Context, target string, filter Relev
 		if filter.Attached && !anchorsNear(l.Anchors, p) {
 			continue
 		}
-		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths)
+		addBranchRefs(l.Anchors)
+		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths, reachability)
 		if err != nil {
 			return nil, relevantClock{}, err
 		}
@@ -291,7 +365,8 @@ func (c *Client) relevantScored(ctx context.Context, target string, filter Relev
 		if filter.Attached && !anchorsNear(rb.Anchors, p) {
 			continue
 		}
-		score, reasons, err := c.scoreAnchors(ctx, rb.Anchors, p, branch, head, crossAuthorPaths)
+		addBranchRefs(rb.Anchors)
+		score, reasons, err := c.scoreAnchors(ctx, rb.Anchors, p, branch, head, crossAuthorPaths, reachability)
 		if err != nil {
 			return nil, relevantClock{}, err
 		}
@@ -309,7 +384,8 @@ func (c *Client) relevantScored(ctx context.Context, target string, filter Relev
 		if filter.Attached && !anchorsNear(inv.Anchors, p) {
 			continue
 		}
-		score, reasons, err := c.scoreAnchors(ctx, inv.Anchors, p, branch, head, crossAuthorPaths)
+		addBranchRefs(inv.Anchors)
+		score, reasons, err := c.scoreAnchors(ctx, inv.Anchors, p, branch, head, crossAuthorPaths, reachability)
 		if err != nil {
 			return nil, relevantClock{}, err
 		}
@@ -332,7 +408,8 @@ func (c *Client) relevantScored(ctx context.Context, target string, filter Relev
 		if filter.Attached && !anchorsNear(plan.Anchors, p) {
 			continue
 		}
-		score, reasons, err := c.scoreAnchors(ctx, plan.Anchors, p, branch, head, crossAuthorPaths)
+		addBranchRefs(plan.Anchors)
+		score, reasons, err := c.scoreAnchors(ctx, plan.Anchors, p, branch, head, crossAuthorPaths, reachability)
 		if err != nil {
 			return nil, relevantClock{}, err
 		}
@@ -348,7 +425,8 @@ func (c *Client) relevantScored(ctx context.Context, target string, filter Relev
 	}
 
 	slices.SortFunc(scored, compareScored)
-	return scored, relevantClock{head: head, now: now, staleAfter: staleAfter}, nil
+	branchRefs := slices.Sorted(maps.Keys(branchRefSet))
+	return scored, relevantClock{head: head, now: now, staleAfter: staleAfter, branchRefs: branchRefs}, nil
 }
 
 func (c *Client) relevantVerdicts(ctx context.Context, scored []RelevantEntry, clock relevantClock, worktree bool) error {
@@ -554,8 +632,8 @@ func (c *Client) resolveRelevantBase(ctx context.Context, flag string) (model.Br
 // p, the branch, and head, returning a scoredNote with the summed score and
 // reasons in fixed priority order. It is a thin projection over n.Anchors onto
 // the shared scoreAnchors core, so notes and docs score identically.
-func (c *Client) scoreNote(ctx context.Context, n model.Note, p string, branch model.Branch, head model.SHA, crossAuthorPaths map[string]struct{}) (scoredNote, error) {
-	score, reasons, err := c.scoreAnchors(ctx, n.Anchors, p, branch, head, crossAuthorPaths)
+func (c *Client) scoreNote(ctx context.Context, n model.Note, p string, branch model.Branch, head model.SHA, crossAuthorPaths map[string]struct{}, reachability *relevantReachability) (scoredNote, error) {
+	score, reasons, err := c.scoreAnchors(ctx, n.Anchors, p, branch, head, crossAuthorPaths, reachability)
 	if err != nil {
 		return scoredNote{}, err
 	}
@@ -568,7 +646,7 @@ func (c *Client) scoreNote(ctx context.Context, n model.Note, p string, branch m
 // strings are reused verbatim across both kinds. The cross-author boost only
 // fires on anchors already matched near p (via a path, dir, or sibling anchor
 // whose value a teammate touched); it never creates a match on its own.
-func (c *Client) scoreAnchors(ctx context.Context, anchors []model.Anchor, p string, branch model.Branch, head model.SHA, crossAuthorPaths map[string]struct{}) (int, []string, error) {
+func (c *Client) scoreAnchors(ctx context.Context, anchors []model.Anchor, p string, branch model.Branch, head model.SHA, crossAuthorPaths map[string]struct{}, reachability *relevantReachability) (int, []string, error) {
 	var score int
 	var reasons []string
 	var nearPaths []string
@@ -589,19 +667,31 @@ func (c *Client) scoreAnchors(ctx context.Context, anchors []model.Anchor, p str
 		add(scoreBranch, reasonBranch)
 	}
 	if head != "" {
-		merged, err := c.commitAnchorMerged(ctx, anchors, head)
-		if err != nil {
-			return 0, nil, err
+		for _, anchor := range anchors {
+			if anchor.Kind != model.AnchorCommit {
+				continue
+			}
+			merged, err := reachability.commitMerged(ctx, anchor.Value)
+			if err != nil {
+				return 0, nil, err
+			}
+			if merged {
+				add(scoreMergedCommit, reasonMergedCommit)
+				break
+			}
 		}
-		if merged {
-			add(scoreMergedCommit, reasonMergedCommit)
-		}
-		mergedBranch, err := c.branchAnchorMerged(ctx, anchors, branch, head)
-		if err != nil {
-			return 0, nil, err
-		}
-		if mergedBranch {
-			add(scoreMergedBranch, reasonMergedBranch)
+		for _, anchor := range anchors {
+			if anchor.Kind != model.AnchorBranch || model.Branch(anchor.Value) == branch {
+				continue
+			}
+			merged, err := reachability.branchMerged(ctx, anchor.Value)
+			if err != nil {
+				return 0, nil, err
+			}
+			if merged {
+				add(scoreMergedBranch, reasonMergedBranch)
+				break
+			}
 		}
 	}
 	if sib := siblingAnchors(anchors, p); len(sib) > 0 {
@@ -674,63 +764,6 @@ func siblingAnchors(anchors []model.Anchor, p string) []string {
 		}
 	}
 	return out
-}
-
-// commitAnchorMerged reports whether any commit anchor in anchors is an ancestor
-// of (or equal to) head — its work has merged into the current line of history.
-func (c *Client) commitAnchorMerged(ctx context.Context, anchors []model.Anchor, head model.SHA) (bool, error) {
-	for _, a := range anchors {
-		if a.Kind != model.AnchorCommit {
-			continue
-		}
-		sha, err := c.s.Git.ResolveCommit(ctx, a.Value)
-		if errors.Is(err, gitcmd.ErrRevNotFound) {
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		reachable, err := c.s.Repo.IsAncestor(ctx, sha, head)
-		if errors.Is(err, gitobj.ErrCommitNotFound) {
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		if reachable {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// branchAnchorMerged reports whether any branch anchor in anchors names a branch
-// other than the target branch whose tip has merged into head. A branch whose
-// ref is gone is skipped, not an error.
-func (c *Client) branchAnchorMerged(ctx context.Context, anchors []model.Anchor, branch model.Branch, head model.SHA) (bool, error) {
-	for _, a := range anchors {
-		if a.Kind != model.AnchorBranch || model.Branch(a.Value) == branch {
-			continue
-		}
-		tip, err := c.s.Repo.Tip(ctx, "refs/heads/"+a.Value)
-		if errors.Is(err, gitobj.ErrRefNotFound) {
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		reachable, err := c.s.Repo.IsAncestor(ctx, tip, head)
-		if errors.Is(err, gitobj.ErrCommitNotFound) {
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		if reachable {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // anyCrossAuthor reports whether any of paths is in the cross-author set.

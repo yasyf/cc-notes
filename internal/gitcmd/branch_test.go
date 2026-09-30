@@ -274,12 +274,47 @@ func TestRefs(t *testing.T) {
 		t.Fatalf("Refs() = %+v, want %+v", got, want)
 	}
 
+	resolved, err := g.ResolvedRefs(ctx, "refs/heads/", "refs/remotes/origin/")
+	if err != nil {
+		t.Fatalf("ResolvedRefs: %v", err)
+	}
+	resolvedWant := maps.Clone(want)
+	resolvedWant["refs/remotes/origin/HEAD"] = c1
+	if !maps.Equal(resolved, resolvedWant) {
+		t.Fatalf("ResolvedRefs() = %+v, want %+v", resolved, resolvedWant)
+	}
+
 	got, err = g.Refs(ctx, "refs/does-not-exist/")
 	if err != nil {
 		t.Fatalf("Refs no match: %v", err)
 	}
 	if got != nil {
 		t.Fatalf("Refs no match = %+v, want nil", got)
+	}
+	resolved, err = g.ResolvedRefs(ctx, "refs/does-not-exist/")
+	if err != nil {
+		t.Fatalf("ResolvedRefs no match: %v", err)
+	}
+	if resolved != nil {
+		t.Fatalf("ResolvedRefs no match = %+v, want nil", resolved)
+	}
+}
+
+func TestAncestorSet(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	c1 := commitAt(t, g, "c1", 1700000000)
+	c2 := commitAt(t, g, "c2", 1700000100)
+	gittest.Git(t, g.Dir, "checkout", "-q", "-b", "side", string(c1))
+	c3 := commitAt(t, g, "c3", 1700000200)
+
+	got, err := g.AncestorSet(ctx, c2)
+	if err != nil {
+		t.Fatalf("AncestorSet: %v", err)
+	}
+	want := map[model.SHA]struct{}{c1: {}, c2: {}}
+	if !maps.Equal(got, want) {
+		t.Fatalf("AncestorSet() = %+v, want %+v; side commit %s must be absent", got, want, c3)
 	}
 }
 
