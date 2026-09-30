@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.3] - 2026-09-29
+
 ### Added
 - **The `ledger` entity kind: a keyed row set refreshed in place from an external
   system.** The ten existing kinds all model one thing an agent wrote down. None
@@ -41,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `status` tool takes a matching `tasks` argument.
 
 ### Changed
+- **`relevant` scopes cache dependencies and batches ancestry.** Cache lookups
+  hash only the entity namespaces the command reads, the resolved base, HEAD,
+  and branch refs named by those entities. Commit and branch anchor scoring now
+  reuses one native Git ancestry walk instead of repeatedly decoding pack
+  indexes through go-git. Unrelated refs no longer invalidate cached results.
+
 - **No hook holds a tool result while it recalls or classifies.** The prompt
   float moved off the synchronous path; the `PostToolUse` handlers that cost the
   most had not. Over 6,769 `PostToolUse` dispatches on one machine, 383 took more
