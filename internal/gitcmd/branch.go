@@ -46,6 +46,42 @@ func (g Git) Refs(ctx context.Context, patterns ...string) (map[string]model.SHA
 	return refs, nil
 }
 
+// ResolvedRefs lists every ref under the given patterns in one git
+// for-each-ref invocation, resolving symbolic refs to their current tips.
+func (g Git) ResolvedRefs(ctx context.Context, patterns ...string) (map[string]model.SHA, error) {
+	out, err := g.run(ctx, "", append([]string{"for-each-ref", "--format=%(refname)%00%(objectname)"}, patterns...)...)
+	if err != nil {
+		return nil, fmt.Errorf("resolved refs: %w", err)
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) == 0 {
+		return nil, nil
+	}
+	refs := make(map[string]model.SHA, len(lines))
+	for _, line := range lines {
+		fields := strings.Split(line, "\x00")
+		if len(fields) != 2 || fields[0] == "" || fields[1] == "" {
+			return nil, fmt.Errorf("resolved refs: malformed line %q", line)
+		}
+		refs[fields[0]] = model.SHA(fields[1])
+	}
+	return refs, nil
+}
+
+// AncestorSet returns every commit reachable from commit, including commit.
+func (g Git) AncestorSet(ctx context.Context, commit model.SHA) (map[model.SHA]struct{}, error) {
+	out, err := g.run(ctx, "", "rev-list", string(commit))
+	if err != nil {
+		return nil, fmt.Errorf("ancestor set %s: %w", commit, err)
+	}
+	lines := nonEmptyLines(out)
+	ancestors := make(map[model.SHA]struct{}, len(lines))
+	for _, line := range lines {
+		ancestors[model.SHA(line)] = struct{}{}
+	}
+	return ancestors, nil
+}
+
 // TrunkBranch resolves the repository's trunk: the remote default branch
 // (origin/HEAD) when set, else a probe of local main then master. It wraps
 // ErrNoTrunk when none of those resolve.

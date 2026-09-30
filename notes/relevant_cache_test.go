@@ -3,9 +3,12 @@ package notes_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -242,4 +245,72 @@ func TestRelevantCachedFollowsSymbolicRefsAndResolvedBase(t *testing.T) {
 	p.expect("ORIG_HEAD at the root, warm", base, false)
 	gittest.Git(t, dir, "update-ref", "ORIG_HEAD", "HEAD")
 	p.expect("ORIG_HEAD moved to HEAD", base, true)
+}
+
+func TestRelevantCachedScopesRefLookupToDependencies(t *testing.T) {
+	c, dir := newClient(t)
+	root := commitFile(t, dir, "svc/handler.go", "v1\n")
+	makeNote(t, c, "handler", notes.AnchorSpec{Paths: []string{"svc/handler.go"}, Branches: []string{"future"}})
+
+	p := &relevantProbe{t: t, c: c, dir: dir, target: "svc/handler.go"}
+	clean := notes.RelevantFilter{}
+	p.expect("cold", clean, true)
+	p.expect("warm", clean, false)
+
+	var updates strings.Builder
+	for i := range 128 {
+		fmt.Fprintf(&updates, "update refs/heads/unrelated-%03d %s\n", i, root)
+	}
+	cmd := exec.CommandContext(t.Context(), "git", "-C", dir, "update-ref", "--stdin")
+	cmd.Stdin = strings.NewReader(updates.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create unrelated refs: %v\n%s", err, out)
+	}
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := t.TempDir()
+	logPath := filepath.Join(wrapper, "git.log")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$RELEVANT_TEST_LOG\"\nexec \"$REAL_GIT\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(wrapper, "git"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("RELEVANT_TEST_LOG", logPath)
+	t.Setenv("PATH", wrapper+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	before := p.renders
+	if _, err := c.RelevantCached(t.Context(), p.target, clean, "json", p.render); err != nil {
+		t.Fatalf("RelevantCached: %v", err)
+	}
+	if p.renders != before {
+		t.Fatalf("unrelated refs recomputed the cache: renders = %d, want %d", p.renders, before)
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lookups [][]string
+	for line := range strings.Lines(string(log)) {
+		fields := strings.Fields(line)
+		if i := slices.Index(fields, "for-each-ref"); i >= 0 {
+			lookups = append(lookups, fields[i+2:])
+		}
+	}
+	want := []string{
+		"refs/cc-notes/notes/",
+		"refs/cc-notes/docs/",
+		"refs/cc-notes/answers/",
+		"refs/cc-notes/ledgers/",
+		"refs/cc-notes/logs/",
+		"refs/cc-notes/runbooks/",
+		"refs/cc-notes/investigations/",
+		"refs/cc-notes/plans/",
+		"refs/heads/future",
+	}
+	if len(lookups) != 1 || !slices.Equal(lookups[0], want) {
+		t.Fatalf("for-each-ref lookups = %v, want [%v]", lookups, want)
+	}
 }
