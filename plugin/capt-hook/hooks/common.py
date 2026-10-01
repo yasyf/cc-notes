@@ -30,8 +30,9 @@ NUDGE_MAX_FIRES = 3
 LLM_INPUT_CAP = 6000
 # Claude Code moves SessionStart context past 10,000 characters to a file and injects a ~2 KB
 # preview, so the two compact restores split a budget that leaves the other packs room.
-COMPACT_ANSWER_BUDGET = 4500
+COMPACT_RESTORE_BUDGET = 7500
 COMPACT_DIGEST_BUDGET = 3000
+COMPACT_ANSWER_BUDGET = COMPACT_RESTORE_BUDGET - COMPACT_DIGEST_BUDGET - 2
 
 # The Go CLI hard-rejects a title over 256 UTF-8 bytes (exit 2), and run_cc_notes fails
 # closed, so an over-long title would silently stop a capture without a clamp.

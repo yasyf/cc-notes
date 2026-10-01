@@ -389,33 +389,44 @@ def excerpt(answer: dict[str, Any]) -> str:
     return f" → {clip(answer_text(answer), RESTORE_EXCERPT_CHARS)}"
 
 
-def restore_digest(answers: list[dict[str, Any]], show: str) -> list[str]:
-    """The restore's lines, durable answers first and newest first.
+def restore_digest(answers: list[dict[str, Any]], show: str, recall: str) -> list[str]:
+    """The restore's lines within :data:`COMPACT_ANSWER_BUDGET`, durable answers first and newest first.
 
-    Every durable answer's id and full title always print, even past
-    :data:`COMPACT_ANSWER_BUDGET`; only excerpts and other answers spend the budget. Excerpts
-    attach in rank order until one no longer fits, other answers then print as title lines
-    while room lasts, and the rest are counted.
+    Durable answers' ids and full titles claim the budget first, then excerpts in rank order
+    until one no longer fits, then other answers' title lines once every durable title is in.
+    Titles are never clipped: a durable answer past the budget is counted behind a pointer to
+    ``recall``, any other one is counted alone.
     """
     ranked = sorted(answers, key=restore_rank, reverse=True)
     durable = [a for a in ranked if is_durable(a)]
-    lines = [f"Context was just compacted. Answers the user gave, captured or surfaced this session — honor them, durable first; read any in full with {show}:"]
-    room = COMPACT_ANSWER_BUDGET - sum(utf8_len(line) + 1 for line in [lines[0], *map(title_line, durable), f"+{len(ranked)} more answers"])
+    header = f"Context was just compacted. Answers the user gave, captured or surfaced this session — honor them, durable first; read any in full with {show}:"
+    reserved = [header, f"+{len(ranked)} more durable answers: {recall}", f"+{len(ranked)} more answers"]
+    room = COMPACT_ANSWER_BUDGET - sum(utf8_len(line) + 1 for line in reserved)
+    kept: list[dict[str, Any]] = []
+    for answer in durable:
+        if utf8_len(title_line(answer)) + 1 > room:
+            break
+        kept.append(answer)
+        room -= utf8_len(title_line(answer)) + 1
+    lines = [header]
     excerpts = True
-    counted = 0
-    for answer in ranked:
+    for answer in kept:
         line = title_line(answer)
-        if not is_durable(answer):
-            if utf8_len(line) + 1 > room:
-                counted += 1
-                continue
-            room -= utf8_len(line) + 1
         if excerpts and utf8_len(tail := excerpt(answer)) <= room:
             line += tail
             room -= utf8_len(tail)
         else:
             excerpts = False
         lines.append(line)
+    if len(kept) < len(durable):
+        lines.append(f"+{len(durable) - len(kept)} more durable answers: {recall}")
+    counted = 0
+    for answer in ranked[len(durable) :]:
+        if len(kept) < len(durable) or utf8_len(line := title_line(answer)) + 1 > room:
+            counted += 1
+            continue
+        lines.append(line)
+        room -= utf8_len(line) + 1
     if counted:
         lines.append(f"+{counted} more answers")
     return lines
@@ -437,5 +448,8 @@ def restore_answers_after_compact(evt: SessionStartEvent) -> HookResult | None:
     answers = current_answers(evt, ids)
     if not answers:
         return None
-    show = "answer_show" if mcp_active(evt) else "`cc-notes answer show <id>`"
-    return evt.warn(*restore_digest(answers, show))
+    if mcp_active(evt):
+        show, recall = "answer_show", "answer_list with label scope:durable, or the drive's handoff doc"
+    else:
+        show, recall = "`cc-notes answer show <id>`", "`cc-notes answer list --label scope:durable`, or the drive's handoff doc"
+    return evt.warn(*restore_digest(answers, show, recall))

@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.8] - 2026-10-01
+
+### Fixed
+- **The compact restores never pass 7,500 bytes together.** In 0.63.6 the
+  answer restore printed every durable title even past its budget, so a session
+  with many durable answers pushed the SessionStart total back over Claude
+  Code's 10,000-character limit and cut the last pack's output from the
+  preview. The answer restore now stays under `COMPACT_RESTORE_BUDGET` (7,500)
+  less the 3,000-byte digest. Durable titles still claim the budget first and
+  are never clipped. The ones that do not fit are counted as `+N more durable
+  answers` with a pointer to `answer list --label scope:durable` and the
+  drive's handoff doc. Other answers print only after every durable title is
+  in.
+
 ## [0.63.6] - 2026-10-01
 
 ### Changed
