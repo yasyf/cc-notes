@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -198,7 +199,7 @@ func freshRelevantJSON(t *testing.T, dir string, filter notes.RelevantFilter) []
 	return out
 }
 
-func seedNotes(tb testing.TB, dir string, n, relevant int, branches []string) {
+func seedNotes(tb testing.TB, dir string, n, relevant int, branch func(i int) string) {
 	tb.Helper()
 	s, err := store.Open(dir)
 	if err != nil {
@@ -209,9 +210,9 @@ func seedNotes(tb testing.TB, dir string, n, relevant int, branches []string) {
 		anchors := []model.Anchor{{Kind: model.AnchorPath, Value: unrelatedTarget}}
 		if i < relevant {
 			anchors = []model.Anchor{{Kind: model.AnchorPath, Value: matrixTarget}}
-			if len(branches) > 0 {
-				anchors = append(anchors, model.Anchor{Kind: model.AnchorBranch, Value: branches[i%len(branches)]})
-			}
+		}
+		if b := branch(i); b != "" {
+			anchors = append(anchors, model.Anchor{Kind: model.AnchorBranch, Value: b})
 		}
 		prepared, err := s.PrepareCreateExact(tb.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: fmt.Sprintf("note %04d", i), Anchors: anchors}})
 		if err != nil {
@@ -222,6 +223,44 @@ func seedNotes(tb testing.TB, dir string, n, relevant int, branches []string) {
 	if err := s.Git.UpdateRefs(tb.Context(), updates); err != nil {
 		tb.Fatalf("UpdateRefs: %v", err)
 	}
+}
+
+type warmLayout func(tb testing.TB, dir string, root model.SHA, n, relevant int) (anchored []string)
+
+func cyclingLayout(anchors, extra []string) warmLayout {
+	return func(tb testing.TB, dir string, root model.SHA, n, relevant int) []string {
+		tb.Helper()
+		createBranches(tb, dir, root, slices.Concat(anchors, extra))
+		seedNotes(tb, dir, n, relevant, func(i int) string {
+			if i >= relevant {
+				return ""
+			}
+			return anchors[i%len(anchors)]
+		})
+		return anchors[:min(len(anchors), relevant)]
+	}
+}
+
+func diverseLayout(prefixes []string) warmLayout {
+	return func(tb testing.TB, dir string, root model.SHA, n, relevant int) []string {
+		tb.Helper()
+		names := make([]string, n)
+		for i := range names {
+			names[i] = fmt.Sprintf("d%04d", i)
+			if len(prefixes) > 0 {
+				names[i] = prefixes[i%len(prefixes)] + "/" + names[i]
+			}
+		}
+		createBranches(tb, dir, root, names[:relevant])
+		createBranches(tb, dir, orphanCommit(tb, dir, root), names[relevant:])
+		seedNotes(tb, dir, n, relevant, func(i int) string { return names[i] })
+		return names
+	}
+}
+
+func orphanCommit(tb testing.TB, dir string, tree model.SHA) model.SHA {
+	tb.Helper()
+	return model.SHA(gittest.Git(tb, dir, "commit-tree", string(tree)+"^{tree}", "-m", "orphan"))
 }
 
 func createBranches(tb testing.TB, dir string, at model.SHA, names []string) {
@@ -656,24 +695,24 @@ func invalidationCases() []matrixCase {
 
 func TestRelevantCachedWarmHitIsConstantWork(t *testing.T) {
 	layouts := []struct {
-		name     string
-		branches []string
-		under    []string
+		name   string
+		layout warmLayout
+		under  []string
 	}{
-		{name: "flat", branches: []string{"alpha", "beta", "gamma"}, under: []string{"main"}},
-		{name: "nested", branches: []string{"team-a/alpha", "team-b/beta", "team-c/gamma"}, under: []string{"main", "team-a", "team-b", "team-c"}},
+		{name: "flat", layout: cyclingLayout([]string{"alpha", "beta", "gamma"}, nil), under: []string{"main"}},
+		{name: "nested", layout: cyclingLayout([]string{"team-a/alpha", "team-b/beta", "team-c/gamma"}, nil), under: []string{"main", "team-a", "team-b", "team-c"}},
+		{name: "diverse", layout: diverseLayout(nil), under: []string{"main"}},
 	}
 	sizes := []struct{ n, relevant int }{{8, 8}, {512, 8}, {512, 512}}
 	for _, layout := range layouts {
 		t.Run(layout.name, func(t *testing.T) {
-			stamps := make(map[int]int)
+			probes := make([]notes.RelevantCacheProbe, len(sizes))
 			for i, size := range sizes {
-				t.Run(fmt.Sprintf("N=%d/relevant=%d", size.n, size.relevant), func(t *testing.T) {
+				t.Run(fmt.Sprintf("N=%04d/relevant=%04d", size.n, size.relevant), func(t *testing.T) {
 					t.Cleanup(notes.SetRelevantRacyWindow(0))
 					dir := newRepo(t)
 					root := commitFile(t, dir, matrixTarget, "v1\n")
-					createBranches(t, dir, root, layout.branches)
-					seedNotes(t, dir, size.n, size.relevant, layout.branches)
+					anchored := layout.layout(t, dir, root, size.n, size.relevant)
 					c, err := notes.Open(dir)
 					if err != nil {
 						t.Fatalf("Open: %v", err)
@@ -704,15 +743,56 @@ func TestRelevantCachedWarmHitIsConstantWork(t *testing.T) {
 					if err := json.Unmarshal(p.last, &served); err != nil || len(served) != size.relevant {
 						t.Fatalf("warm hit served %d entries (%v), want the %d relevant ones", len(served), err, size.relevant)
 					}
-					stamps[i] = len(probe.Stamps)
+					if probe.DepBranches != len(anchored) || probe.DepCommits != 0 {
+						t.Fatalf("deps = %d branches, %d commits; want the %d distinct branch anchors and no commits (header %d bytes)", probe.DepBranches, probe.DepCommits, len(anchored), probe.HeaderBytes)
+					}
+					probes[i] = probe
 				})
 			}
 			for i, size := range sizes {
-				if stamps[i] != stamps[0] {
-					t.Fatalf("warm-hit stamps vary with entity count: %d at N=%d/relevant=%d, %d at N=%d/relevant=%d", stamps[i], size.n, size.relevant, stamps[0], sizes[0].n, sizes[0].relevant)
+				if got, want := probes[i], probes[0]; len(got.Stamps) != len(want.Stamps) || got.Files != want.Files {
+					t.Fatalf("warm-hit work varies with entity count: %d stamps, %d files, header %d bytes at N=%d/relevant=%d; %d stamps, %d files, header %d bytes at N=%d/relevant=%d", len(got.Stamps), got.Files, got.HeaderBytes, size.n, size.relevant, len(want.Stamps), want.Files, want.HeaderBytes, sizes[0].n, sizes[0].relevant)
 				}
 			}
 		})
+	}
+}
+
+func TestRelevantCachedWarmHitNeverDecodesDeps(t *testing.T) {
+	const garbage, allocBound = 8 << 20, 1 << 20
+	t.Cleanup(notes.SetRelevantRacyWindow(0))
+	fx := newMatrixFixture(t)
+	fx.anchored(t, "on main", "main")
+	p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: installCountingGit(t, countingGitScript)}
+	p.expect("cold", tierRebuild)
+	p.promoteThen("warm hit", tierHit)
+	if probe := p.entry("warm hit"); probe.DepBranches != 1 {
+		t.Fatalf("settled entry carries %d branch deps (%d bytes), want the one anchored branch", probe.DepBranches, probe.DepsBytes)
+	}
+	served := p.last
+
+	if err := notes.CorruptRelevantCacheDeps(fx.c, matrixTarget, p.filter, "json", garbage); err != nil {
+		t.Fatalf("CorruptRelevantCacheDeps: %v", err)
+	}
+	if _, _, err := notes.RelevantCacheProbeOf(fx.c, matrixTarget, p.filter, "json"); err == nil {
+		t.Fatal("the deps section still decodes after being overwritten")
+	}
+	var tier cacheTier
+	allocated := totalAllocated(func() { tier = p.call("warm hit over garbage deps") })
+	if tier != tierHit {
+		t.Fatalf("warm hit over garbage deps: served by %v, want %v", tier, tierHit)
+	}
+	if !bytes.Equal(p.last, served) {
+		t.Fatalf("hit over garbage deps served\n%s\nwant the settled answer\n%s", p.last, served)
+	}
+	if allocated >= allocBound {
+		t.Fatalf("hit over %d bytes of garbage deps allocated %d bytes, want under %d: the hit read past its output", garbage, allocated, allocBound)
+	}
+
+	fx.run(t, "update-ref", "refs/heads/unrelated", string(fx.root))
+	p.expect("moved stamp over garbage deps", tierRebuild)
+	if probe := p.entry("rebuilt"); probe.DepBranches != 1 {
+		t.Fatalf("rebuilt entry carries %d branch deps, want the one anchored branch", probe.DepBranches)
 	}
 }
 
@@ -801,6 +881,15 @@ func raceNeverPins(t *testing.T, next string, endsRaced bool) {
 		t.Fatalf("answer after the race carries the raced title = %t, want %t: %s", raced, endsRaced, p.last)
 	}
 	p.promoteThen("settled after the race", tierHit)
+}
+
+func totalAllocated(fn func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	fn()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
 }
 
 func stampTime(t *testing.T, path string) time.Time {

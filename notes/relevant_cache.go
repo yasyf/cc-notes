@@ -1,12 +1,13 @@
 package notes
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,8 +30,13 @@ type relevantCacheEntry struct {
 	Revalidate bool         `json:"revalidate,omitempty"`
 	Stamps     []fileStamp  `json:"stamps,omitempty"`
 	Files      []fileStamp  `json:"files,omitempty"`
-	Deps       relevantDeps `json:"deps"`
+	Deps       relevantDeps `json:"-"`
 	Output     []byte       `json:"-"`
+}
+
+type relevantCacheHeader struct {
+	relevantCacheEntry
+	OutputLen int `json:"output_len"`
 }
 
 var relevantRefRoots = []string{
@@ -72,14 +78,14 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	now := time.Now()
 	var cached relevantCacheEntry
 	var cachedOK bool
-	if data, ok := c.s.ReadRelevantCache(name); ok {
-		cached, cachedOK = parseRelevantCacheEntry(data)
-	}
-	// Lock-and-rename publishes (git, libgit2, gix, JGit, cc-notes) move a
-	// stamp; a foreign in-place rewrite of an existing loose ref under a
-	// directory stamp (go-git setRef) is not covered.
-	if cachedOK && cached.hit(now) {
-		return cached.Output, nil
+	if f, ok := c.s.OpenRelevantCache(name); ok {
+		var hit bool
+		// Lock-and-rename publishes (git, libgit2, gix, JGit, cc-notes) move a
+		// stamp; a foreign in-place rewrite of an existing loose ref under a
+		// directory stamp (go-git setRef) is not covered.
+		if cached, hit, cachedOK = readRelevantCacheEntry(f, now); hit {
+			return cached.Output, nil
+		}
 	}
 	var deps relevantDeps
 	if cachedOK {
@@ -142,25 +148,62 @@ func (c *Client) writeRelevantCache(name string, entry relevantCacheEntry) {
 	}
 }
 
-// encode writes the JSON header, a newline, then the raw output, so a hit
-// decodes only the header. json.Marshal escapes every newline, so the first
-// one ends the header.
+// encode writes the JSON header, a newline, exactly output_len bytes of raw
+// output, then the deps JSON, so a hit decodes the header alone and reads the
+// output by length, never the deps. json.Marshal escapes every newline, so
+// the first one ends the header.
 func (e relevantCacheEntry) encode() ([]byte, error) {
-	header, err := json.Marshal(e)
+	header, err := json.Marshal(relevantCacheHeader{relevantCacheEntry: e, OutputLen: len(e.Output)})
 	if err != nil {
 		return nil, err
 	}
-	return slices.Concat(header, []byte{'\n'}, e.Output), nil
+	deps, err := json.Marshal(e.Deps)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Concat(header, []byte{'\n'}, e.Output, deps), nil
 }
 
-func parseRelevantCacheEntry(data []byte) (relevantCacheEntry, bool) {
-	header, output, ok := bytes.Cut(data, []byte{'\n'})
-	var e relevantCacheEntry
-	if !ok || json.Unmarshal(header, &e) != nil {
-		return relevantCacheEntry{}, false
+func readRelevantCacheEntry(f *os.File, now time.Time) (e relevantCacheEntry, hit, ok bool) {
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return relevantCacheEntry{}, false, false
 	}
-	e.Output = output
-	return e, true
+	r := bufio.NewReader(f)
+	h, n, ok := readRelevantCacheHeader(r)
+	if !ok || !h.readOutput(r, info.Size()-int64(n)) {
+		return relevantCacheEntry{}, false, false
+	}
+	if h.hit(now) {
+		return h.relevantCacheEntry, true, true
+	}
+	if !h.readDeps(r) {
+		return relevantCacheEntry{}, false, false
+	}
+	return h.relevantCacheEntry, false, true
+}
+
+func readRelevantCacheHeader(r *bufio.Reader) (h relevantCacheHeader, n int, ok bool) {
+	line, err := r.ReadBytes('\n')
+	if err != nil || json.Unmarshal(line, &h) != nil {
+		return relevantCacheHeader{}, 0, false
+	}
+	return h, len(line), true
+}
+
+func (h *relevantCacheHeader) readOutput(r io.Reader, remaining int64) bool {
+	if h.OutputLen < 0 || int64(h.OutputLen) > remaining {
+		return false
+	}
+	h.Output = make([]byte, h.OutputLen)
+	_, err := io.ReadFull(r, h.Output)
+	return err == nil
+}
+
+func (h *relevantCacheHeader) readDeps(r io.Reader) bool {
+	data, err := io.ReadAll(r)
+	return err == nil && json.Unmarshal(data, &h.Deps) == nil
 }
 
 func (c *Client) driftInputs(ctx context.Context, entries []RelevantEntry, vars map[string]string) (paths, anchors []string, err error) {

@@ -30,6 +30,15 @@ func (l *lruDir) read(name string) ([]byte, bool) {
 	return data, true
 }
 
+func (l *lruDir) open(name string) (*os.File, bool) {
+	//nolint:gosec // G304: dir is this store's own cache directory and name is a derived key, not external input.
+	f, err := os.Open(filepath.Join(l.dir, name))
+	if err != nil {
+		return nil, false
+	}
+	return f, true
+}
+
 func (l *lruDir) ensure() bool {
 	return os.MkdirAll(l.dir, 0o750) == nil
 }

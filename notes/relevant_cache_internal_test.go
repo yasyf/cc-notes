@@ -1,12 +1,14 @@
 package notes
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,13 +17,12 @@ import (
 	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
-func relevantEntryOf(ctx context.Context, t *testing.T, c *Client, target string, filter RelevantFilter) (relevantCacheEntry, bool) {
+func relevantEntryOf(t *testing.T, c *Client, target string, filter RelevantFilter) (relevantCacheEntry, bool) {
 	t.Helper()
-	p, err := c.relevantPath(ctx, target)
+	_, data, ok, err := relevantCacheBytes(c, target, filter, "json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, ok := c.s.ReadRelevantCache(relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, "json"))
 	if !ok {
 		return relevantCacheEntry{}, false
 	}
@@ -33,28 +34,64 @@ func relevantEntryOf(ctx context.Context, t *testing.T, c *Client, target string
 }
 
 func TestRelevantCacheEntryRoundTrip(t *testing.T) {
-	entry := relevantCacheEntry{
-		Key:    "key\nwith a newline",
-		Built:  1,
-		Stamps: []fileStamp{{Path: "/repo/.git/refs/heads", ModTime: 2, Inode: 3}},
-		Deps:   relevantDeps{Branches: []string{"refs/heads/main"}},
-		Output: []byte("note one\nnote two\n"),
+	stamps := []fileStamp{{Path: "/repo/.git/refs/heads", ModTime: 2, Inode: 3}}
+	for _, tc := range []struct {
+		name  string
+		entry relevantCacheEntry
+	}{
+		{"newlines in the header and the output", relevantCacheEntry{
+			Key:    "key\nwith a newline",
+			Built:  1,
+			Stamps: stamps,
+			Deps:   relevantDeps{Branches: []string{"refs/heads/main", "refs/heads/work"}, Commits: []string{"v1.0"}, Config: []string{"/home/me/.gitconfig"}},
+			Output: []byte("note one\nnote two\n"),
+		}},
+		{"empty output", relevantCacheEntry{Key: "k", Built: 1, Stamps: stamps, Output: []byte{}}},
+		{"output that is itself JSON", relevantCacheEntry{Key: "k", Built: 1, Deps: relevantDeps{Branches: []string{"refs/heads/main"}}, Output: []byte(`{"branches":["refs/heads/other"]}`)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := tc.entry.encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := parseRelevantCacheEntry(data); !ok || !reflect.DeepEqual(got, tc.entry) {
+				t.Fatalf("round trip = %+v, %t; want %+v\nencoded %q", got, ok, tc.entry, data)
+			}
+		})
 	}
-	data, err := entry.encode()
+
+	valid, err := relevantCacheEntry{Key: "k", Output: []byte("out\n"), Deps: relevantDeps{Branches: []string{"refs/heads/main"}}}.encode()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := parseRelevantCacheEntry(data); !ok || !reflect.DeepEqual(got, entry) {
-		t.Fatalf("round trip = %+v, %t; want %+v", got, ok, entry)
-	}
-	for _, tc := range []struct{ name, data string }{
-		{"header without output separator", `{"key":"k"}`},
-		{"header not JSON", "not json\nnote one\n"},
-		{"empty", ""},
-	} {
-		if got, ok := parseRelevantCacheEntry([]byte(tc.data)); ok {
-			t.Errorf("%s: parseRelevantCacheEntry(%q) = %+v, want undecodable", tc.name, tc.data, got)
+	header := bytes.IndexByte(valid, '\n') + 1
+	output := header + len("out\n")
+	withOutputLen := func(n int64) []byte {
+		reheaded := bytes.Replace(valid[:header], []byte(`"output_len":4}`), fmt.Appendf(nil, `"output_len":%d}`, n), 1)
+		if bytes.Equal(reheaded, valid[:header]) {
+			t.Fatalf("header %q carries no output_len to rewrite", valid[:header])
 		}
+		return slices.Concat(reheaded, valid[header:])
+	}
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"truncated output", valid[:output-1]},
+		{"header without its newline", valid[:header-1]},
+		{"header not JSON", slices.Concat([]byte("not json\n"), valid[header:])},
+		{"deps missing", valid[:output]},
+		{"deps not JSON", slices.Concat(valid[:output], []byte("not json"))},
+		{"empty", nil},
+		{"output_len negative", withOutputLen(-1)},
+		{"output_len one past the end of the file", withOutputLen(int64(len(valid)-header) + 1)},
+		{"output_len far larger than the file", withOutputLen(1 << 40)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, ok := parseRelevantCacheEntry(tc.data); ok {
+				t.Fatalf("parseRelevantCacheEntry(%q) = %+v, want undecodable", tc.data, got)
+			}
+		})
 	}
 }
 
@@ -82,7 +119,7 @@ func TestRelevantCachedRacyEntryWaitsOutTheWindow(t *testing.T) {
 		if renders != wantRenders {
 			t.Fatalf("%s: renders = %d, want %d", step, renders, wantRenders)
 		}
-		entry, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{})
+		entry, ok := relevantEntryOf(t, c, "svc/handler.go", RelevantFilter{})
 		if !ok {
 			t.Fatalf("%s: no cache entry was written", step)
 		}
@@ -249,14 +286,14 @@ func TestRelevantCachedRefusesACaptureWhoseGuardMoved(t *testing.T) {
 	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil {
 		t.Fatalf("RelevantCached: %v", err)
 	}
-	if entry, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{}); ok {
+	if entry, ok := relevantEntryOf(t, c, "svc/handler.go", RelevantFilter{}); ok {
 		t.Fatalf("an include target created and deleted during capture left no trace on its stamp, yet the entry was written: %+v", entry.Stamps)
 	}
 	t.Setenv("RELEVANT_GUARD_TOUCH", "")
 	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil {
 		t.Fatalf("RelevantCached: %v", err)
 	}
-	if _, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{}); !ok {
+	if _, ok := relevantEntryOf(t, c, "svc/handler.go", RelevantFilter{}); !ok {
 		t.Fatal("a quiet capture must write the entry")
 	}
 }
@@ -276,7 +313,7 @@ func TestRelevantCachedPersistsAColdBuildInAnUnfoldedRepository(t *testing.T) {
 	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil {
 		t.Fatalf("RelevantCached: %v", err)
 	}
-	entry, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{})
+	entry, ok := relevantEntryOf(t, c, "svc/handler.go", RelevantFilter{})
 	if !ok {
 		t.Fatal("a cold build that had to create the cache directories wrote no entry")
 	}

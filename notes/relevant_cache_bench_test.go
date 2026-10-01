@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -16,21 +17,24 @@ import (
 func BenchmarkRelevantCachedWarmHit(b *testing.B) {
 	flat := []string{"alpha", "beta", "gamma"}
 	nested := make([]string, 64)
+	prefixes := make([]string, 64)
 	for i := range nested {
-		nested[i] = fmt.Sprintf("p%02d/topic", i)
+		prefixes[i] = fmt.Sprintf("p%02d", i)
+		nested[i] = prefixes[i] + "/topic"
 	}
 	unrelated := make([]string, 1000)
 	for i := range unrelated {
 		unrelated[i] = fmt.Sprintf("unrelated-%04d", i)
 	}
 	layouts := []struct {
-		name    string
-		anchors []string
-		extra   []string
+		name   string
+		layout warmLayout
 	}{
-		{name: "flat", anchors: flat},
-		{name: "nested64", anchors: nested},
-		{name: "unrelated1000", anchors: flat, extra: unrelated},
+		{name: "flat", layout: cyclingLayout(flat, nil)},
+		{name: "nested64", layout: cyclingLayout(nested, nil)},
+		{name: "unrelated1000", layout: cyclingLayout(flat, unrelated)},
+		{name: "diverse", layout: diverseLayout(nil)},
+		{name: "diverse-nested64", layout: diverseLayout(prefixes)},
 	}
 	const relevant = 8
 	for _, n := range []int{8, 512, 4096} {
@@ -41,25 +45,24 @@ func BenchmarkRelevantCachedWarmHit(b *testing.B) {
 					head = "detached"
 				}
 				b.Run(fmt.Sprintf("N=%d/relevant=%d/refs=%s/head=%s", n, relevant, layout.name, head), func(b *testing.B) {
-					benchWarmHit(b, n, relevant, layout.anchors, layout.extra, detached)
+					benchWarmHit(b, n, relevant, layout.layout, detached)
 				})
 			}
 		}
 		if n > relevant {
 			b.Run(fmt.Sprintf("N=%d/relevant=%d/refs=flat/head=attached", n, n), func(b *testing.B) {
-				benchWarmHit(b, n, n, flat, nil, false)
+				benchWarmHit(b, n, n, cyclingLayout(flat, nil), false)
 			})
 		}
 	}
 }
 
-func benchWarmHit(b *testing.B, n, relevant int, anchors, extra []string, detached bool) {
+func benchWarmHit(b *testing.B, n, relevant int, layout warmLayout, detached bool) {
 	b.Cleanup(notes.SetRelevantRacyWindow(0))
 	dir := gittest.InitRepo(b)
 	b.Setenv("CC_NOTES_ACTOR", testActor)
 	root := commitTB(b, dir, matrixTarget, "v1\n")
-	createBranches(b, dir, root, append(slices.Clone(anchors), extra...))
-	seedNotes(b, dir, n, relevant, anchors)
+	layout(b, dir, root, n, relevant)
 	if detached {
 		gittest.Git(b, dir, "checkout", "-q", "--detach")
 	}
@@ -82,6 +85,7 @@ func benchWarmHit(b *testing.B, n, relevant int, anchors, extra []string, detach
 	if err != nil || !ok || probe.Racy || probe.Revalidate {
 		b.Fatalf("warm entry = %+v, ok=%t, err=%v; want a persisted, settled entry", probe, ok, err)
 	}
+	pathProbes := gitPathProbes(b)
 	warm := renders
 	var out []byte
 	for b.Loop() {
@@ -93,7 +97,28 @@ func benchWarmHit(b *testing.B, n, relevant int, anchors, extra []string, detach
 		b.Fatalf("warm loop re-rendered %d times", renders-warm)
 	}
 	b.ReportMetric(float64(len(probe.Stamps)), "stamps/op")
+	b.ReportMetric(float64(probe.Files), "files/op")
+	b.ReportMetric(float64(probe.HeaderBytes), "headerbytes/op")
+	b.ReportMetric(float64(probe.HeaderBytes+probe.OutputBytes), "readbytes/op")
 	b.ReportMetric(float64(len(out)), "outbytes/op")
+	b.ReportMetric(float64(probe.DepsBytes), "depsbytes")
+	b.ReportMetric(float64(probe.DepBranches+probe.DepCommits), "deps")
+	b.ReportMetric(float64(probe.EntryBytes), "entrybytes")
+	b.ReportMetric(float64(pathProbes), "pathprobes/op")
+}
+
+func gitPathProbes(tb testing.TB) int {
+	tb.Helper()
+	git, err := exec.LookPath("git")
+	if err != nil {
+		tb.Fatalf("LookPath git: %v", err)
+	}
+	dirs := filepath.SplitList(os.Getenv("PATH"))
+	i := slices.IndexFunc(dirs, func(dir string) bool { return filepath.Join(dir, "git") == git })
+	if i < 0 {
+		tb.Fatalf("git %s is outside PATH %q", git, dirs)
+	}
+	return i + 1
 }
 
 func commitTB(tb testing.TB, dir, path, content string) model.SHA {
