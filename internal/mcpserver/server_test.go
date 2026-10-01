@@ -686,7 +686,7 @@ func TestListToolsInventory(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	const wantCount = 164
+	const wantCount = 167
 	if len(names) != wantCount {
 		t.Errorf("tool count = %d, want %d; got %v", len(names), wantCount, sortedKeys(names))
 	}

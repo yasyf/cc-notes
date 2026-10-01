@@ -62,7 +62,11 @@ func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (m
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
-	if err := s.Git.UpdateRef(ctx, refs.For(kind, model.EntityID(sha)), sha, ""); err != nil {
+	ref := refs.For(kind, model.EntityID(sha))
+	if err := s.track(ctx, ref, snapshot); err != nil {
+		return nil, fmt.Errorf("create %s: %w", kind, err)
+	}
+	if err := s.Git.UpdateRef(ctx, ref, sha, ""); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	s.cache.put(sha, snapshot)
@@ -114,6 +118,9 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 		commit := model.PackCommit{SHA: sha, Parents: []model.SHA{tip}, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack}
 		snapshot, err := fold.Strict(append(chain, commit))
 		if err != nil {
+			return nil, fmt.Errorf("append to %s: %w", ref, err)
+		}
+		if err := s.track(ctx, ref, snapshot); err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
 		switch err := s.Git.UpdateRef(ctx, ref, sha, tip); {

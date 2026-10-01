@@ -21,7 +21,8 @@ type SyncOptions struct {
 // and union merge; Pushed counts the refs the final push created or updated;
 // Reconciled counts the refs handed to the fold across every round; Rounds
 // counts fetch-reconcile-push rounds run, 1 being a clean pass; Uploaded and
-// Downloaded count attachment objects moved to and from the remote LFS endpoint.
+// Downloaded count attachment objects moved to and from the remote LFS endpoint;
+// Withheld counts the local entity refs kept off the remote.
 // When Sync fans out over several remotes, every field is the sum across them.
 type SyncReport struct {
 	Created       int
@@ -32,6 +33,7 @@ type SyncReport struct {
 	Rounds        int
 	Uploaded      int
 	Downloaded    int
+	Withheld      int
 }
 
 // Sync converges the repository's refs/cc-notes/* namespace with one or more
@@ -62,6 +64,7 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 		report.Rounds += rep.Rounds
 		report.Uploaded += rep.Uploaded
 		report.Downloaded += rep.Downloaded
+		report.Withheld += rep.Withheld
 		if err != nil && syncErr == nil {
 			syncErr = err
 		}

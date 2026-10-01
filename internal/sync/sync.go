@@ -78,6 +78,9 @@ type Report struct {
 	// Downloaded counts attachment objects fetched from the remote LFS
 	// endpoint after the push loop converged.
 	Downloaded int
+	// Withheld counts the local entity refs the final round kept off the
+	// remote.
+	Withheld int
 }
 
 // outcome reports what one advance attempt did to a ref.
@@ -110,6 +113,7 @@ type engine struct {
 	clients    map[string]*lfs.Client
 	uploaded   int
 	downloaded int
+	withheld   int
 }
 
 // Sync converges the local refs/cc-notes/ namespace with remote and pushes
@@ -156,17 +160,18 @@ func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report
 		if err := e.reconcile(ctx, scope); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		if err := e.uploadAttachments(ctx); err != nil {
+		pending, secluded, err := e.pending(ctx, after)
+		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		pending, err := e.pending(ctx, after)
-		if err != nil {
+		e.withheld = len(secluded)
+		if err := e.uploadAttachments(ctx, secluded); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
 		if pending == 0 {
 			return e.finish(ctx, round, 0)
 		}
-		switch err := s.Git.Push(ctx, remote, pushRefspec); {
+		switch err := s.Git.Push(ctx, remote, pushArgs(secluded)...); {
 		case err == nil:
 			return e.finish(ctx, round, pending)
 		case errors.Is(err, gitcmd.ErrNonFastForward):
@@ -198,6 +203,7 @@ func (e *engine) report(rounds, pushed int) Report {
 		Rounds:        rounds,
 		Uploaded:      e.uploaded,
 		Downloaded:    e.downloaded,
+		Withheld:      e.withheld,
 	}
 }
 
@@ -276,20 +282,57 @@ func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA
 	return scope, nil
 }
 
-// pending counts local refs that differ from the remote view: the refs the
-// upcoming push would create or update.
-func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (int, error) {
-	local, err := e.store.Git.Refs(ctx, namespace)
+// pending counts the local refs the upcoming push would create or update,
+// leaving out every local entity, and returns the full secluded set the push
+// excludes. A pending ref the local policy keeps on this clone joins the set
+// before anything is pushed, so an entity written by a cc-notes predating the
+// policy never leaves on its first sync.
+func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (int, map[string]bool, error) {
+	local, err := e.store.Repo.ListPrefix(ctx, namespace)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
+	secluded, err := e.store.Secluded()
+	if err != nil {
+		return 0, nil, err
+	}
+	var add []string
 	count := 0
 	for ref, tip := range local {
-		if remoteView[ref] != tip {
-			count++
+		if remoteView[ref] == tip || secluded[ref] {
+			continue
+		}
+		reason, err := e.store.LocalReason(ctx, ref)
+		if err != nil {
+			return 0, nil, err
+		}
+		if _, published := remoteView[ref]; published && store.Defaulted(reason) {
+			reason = ""
+		}
+		if reason != "" {
+			add = append(add, ref)
+			secluded[ref] = true
+			continue
+		}
+		count++
+	}
+	if len(add) > 0 {
+		if err := e.store.Seclude(ctx, add, nil); err != nil {
+			return 0, nil, err
 		}
 	}
-	return count, nil
+	return count, secluded, nil
+}
+
+// pushArgs is the wildcard entity refspec plus one negative refspec per
+// secluded ref, sorted so the push argv is deterministic.
+func pushArgs(secluded map[string]bool) []string {
+	negatives := make([]string, 0, len(secluded))
+	for ref := range secluded {
+		negatives = append(negatives, "^"+ref)
+	}
+	slices.Sort(negatives)
+	return append([]string{pushRefspec}, negatives...)
 }
 
 // ensure folds tip into ref and tallies what it took.
