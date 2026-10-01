@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.63.7] - 2026-10-01
+## [0.63.8] - 2026-10-01
 
 ### Fixed
 - **The compact restores never pass 7,500 bytes together.** In 0.63.6 the
