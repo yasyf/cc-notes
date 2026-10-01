@@ -152,16 +152,20 @@ func (s *Store) Secluded() (map[string]bool, error) {
 // Seclude adds refs to and removes release from the local push include,
 // rewriting it whole under an exclusive lock, and makes sure .git/config
 // includes it.
-func (s *Store) Seclude(ctx context.Context, add, release []string) error {
+func (s *Store) Seclude(ctx context.Context, add, release []string) (err error) {
 	dir := filepath.Join(s.commonDir, filepath.Dir(LocalPushInclude))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("seclude: %w", err)
 	}
-	lock, err := os.OpenFile(filepath.Join(s.commonDir, LocalPushInclude+".lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	lock, err := os.OpenFile(filepath.Join(s.commonDir, LocalPushInclude+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return fmt.Errorf("seclude: %w", err)
 	}
-	defer lock.Close()
+	defer func() {
+		if closeErr := lock.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("seclude: %w", closeErr)
+		}
+	}()
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("seclude: %w", err)
 	}
@@ -223,7 +227,7 @@ func writeLocalPush(file string, remotes []string, secluded map[string]bool) err
 		}
 	}
 	staged := file + ".tmp"
-	if err := os.WriteFile(staged, []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(staged, []byte(b.String()), 0o600); err != nil {
 		return err
 	}
 	return os.Rename(staged, file)
