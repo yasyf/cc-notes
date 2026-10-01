@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -24,11 +25,37 @@ func relevantEntryOf(ctx context.Context, t *testing.T, c *Client, target string
 	if !ok {
 		return relevantCacheEntry{}, false
 	}
-	var entry relevantCacheEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
-		t.Fatalf("decode cache entry: %v", err)
+	entry, ok := parseRelevantCacheEntry(data)
+	if !ok {
+		t.Fatalf("undecodable relevance cache entry %q", data)
 	}
 	return entry, true
+}
+
+func TestRelevantCacheEntryRoundTrip(t *testing.T) {
+	entry := relevantCacheEntry{
+		Key:    "key\nwith a newline",
+		Built:  1,
+		Stamps: []fileStamp{{Path: "/repo/.git/refs/heads", ModTime: 2, Inode: 3}},
+		Deps:   relevantDeps{Branches: []string{"refs/heads/main"}},
+		Output: []byte("note one\nnote two\n"),
+	}
+	data, err := entry.encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := parseRelevantCacheEntry(data); !ok || !reflect.DeepEqual(got, entry) {
+		t.Fatalf("round trip = %+v, %t; want %+v", got, ok, entry)
+	}
+	for _, tc := range []struct{ name, data string }{
+		{"header without output separator", `{"key":"k"}`},
+		{"header not JSON", "not json\nnote one\n"},
+		{"empty", ""},
+	} {
+		if got, ok := parseRelevantCacheEntry([]byte(tc.data)); ok {
+			t.Errorf("%s: parseRelevantCacheEntry(%q) = %+v, want undecodable", tc.name, tc.data, got)
+		}
+	}
 }
 
 func TestRelevantCachedRacyEntryWaitsOutTheWindow(t *testing.T) {

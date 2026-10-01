@@ -32,6 +32,7 @@ func BenchmarkRelevantCachedWarmHit(b *testing.B) {
 		{name: "nested64", anchors: nested},
 		{name: "unrelated1000", anchors: flat, extra: unrelated},
 	}
+	const relevant = 8
 	for _, n := range []int{8, 512, 4096} {
 		for _, layout := range layouts {
 			for _, detached := range []bool{false, true} {
@@ -39,21 +40,26 @@ func BenchmarkRelevantCachedWarmHit(b *testing.B) {
 				if detached {
 					head = "detached"
 				}
-				b.Run(fmt.Sprintf("N=%d/refs=%s/head=%s", n, layout.name, head), func(b *testing.B) {
-					benchWarmHit(b, n, layout.anchors, layout.extra, detached)
+				b.Run(fmt.Sprintf("N=%d/relevant=%d/refs=%s/head=%s", n, relevant, layout.name, head), func(b *testing.B) {
+					benchWarmHit(b, n, relevant, layout.anchors, layout.extra, detached)
 				})
 			}
+		}
+		if n > relevant {
+			b.Run(fmt.Sprintf("N=%d/relevant=%d/refs=flat/head=attached", n, n), func(b *testing.B) {
+				benchWarmHit(b, n, n, flat, nil, false)
+			})
 		}
 	}
 }
 
-func benchWarmHit(b *testing.B, n int, anchors, extra []string, detached bool) {
+func benchWarmHit(b *testing.B, n, relevant int, anchors, extra []string, detached bool) {
 	b.Cleanup(notes.SetRelevantRacyWindow(0))
 	dir := gittest.InitRepo(b)
 	b.Setenv("CC_NOTES_ACTOR", testActor)
 	root := commitTB(b, dir, matrixTarget, "v1\n")
 	createBranches(b, dir, root, append(slices.Clone(anchors), extra...))
-	seedNotes(b, dir, n, anchors)
+	seedNotes(b, dir, n, relevant, anchors)
 	if detached {
 		gittest.Git(b, dir, "checkout", "-q", "--detach")
 	}
@@ -77,8 +83,9 @@ func benchWarmHit(b *testing.B, n int, anchors, extra []string, detached bool) {
 		b.Fatalf("warm entry = %+v, ok=%t, err=%v; want a persisted, settled entry", probe, ok, err)
 	}
 	warm := renders
+	var out []byte
 	for b.Loop() {
-		if _, err := c.RelevantCached(b.Context(), matrixTarget, filter, "json", render); err != nil {
+		if out, err = c.RelevantCached(b.Context(), matrixTarget, filter, "json", render); err != nil {
 			b.Fatalf("RelevantCached: %v", err)
 		}
 	}
@@ -86,6 +93,7 @@ func benchWarmHit(b *testing.B, n int, anchors, extra []string, detached bool) {
 		b.Fatalf("warm loop re-rendered %d times", renders-warm)
 	}
 	b.ReportMetric(float64(len(probe.Stamps)), "stamps/op")
+	b.ReportMetric(float64(len(out)), "outbytes/op")
 }
 
 func commitTB(tb testing.TB, dir, path, content string) model.SHA {

@@ -24,7 +24,10 @@ import (
 	"github.com/yasyf/cc-notes/notes"
 )
 
-const matrixTarget = "svc/handler.go"
+const (
+	matrixTarget    = "svc/handler.go"
+	unrelatedTarget = "elsewhere/unrelated.go"
+)
 
 const countingGitScript = "#!/bin/sh\nprintf '%s\\037' \"$@\" >> \"$CC_NOTES_GIT_TRACE\"\nprintf '\\n' >> \"$CC_NOTES_GIT_TRACE\"\nexec \"$CC_NOTES_REAL_GIT\" \"$@\"\n"
 
@@ -195,7 +198,7 @@ func freshRelevantJSON(t *testing.T, dir string, filter notes.RelevantFilter) []
 	return out
 }
 
-func seedNotes(tb testing.TB, dir string, n int, branches []string) {
+func seedNotes(tb testing.TB, dir string, n, relevant int, branches []string) {
 	tb.Helper()
 	s, err := store.Open(dir)
 	if err != nil {
@@ -203,9 +206,12 @@ func seedNotes(tb testing.TB, dir string, n int, branches []string) {
 	}
 	updates := make([]gitcmd.RefUpdate, n)
 	for i := range n {
-		anchors := []model.Anchor{{Kind: model.AnchorPath, Value: matrixTarget}}
-		if len(branches) > 0 {
-			anchors = append(anchors, model.Anchor{Kind: model.AnchorBranch, Value: branches[i%len(branches)]})
+		anchors := []model.Anchor{{Kind: model.AnchorPath, Value: unrelatedTarget}}
+		if i < relevant {
+			anchors = []model.Anchor{{Kind: model.AnchorPath, Value: matrixTarget}}
+			if len(branches) > 0 {
+				anchors = append(anchors, model.Anchor{Kind: model.AnchorBranch, Value: branches[i%len(branches)]})
+			}
 		}
 		prepared, err := s.PrepareCreateExact(tb.Context(), []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: fmt.Sprintf("note %04d", i), Anchors: anchors}})
 		if err != nil {
@@ -657,16 +663,17 @@ func TestRelevantCachedWarmHitIsConstantWork(t *testing.T) {
 		{name: "flat", branches: []string{"alpha", "beta", "gamma"}, under: []string{"main"}},
 		{name: "nested", branches: []string{"team-a/alpha", "team-b/beta", "team-c/gamma"}, under: []string{"main", "team-a", "team-b", "team-c"}},
 	}
+	sizes := []struct{ n, relevant int }{{8, 8}, {512, 8}, {512, 512}}
 	for _, layout := range layouts {
 		t.Run(layout.name, func(t *testing.T) {
 			stamps := make(map[int]int)
-			for _, n := range []int{8, 512} {
-				t.Run(fmt.Sprintf("N=%d", n), func(t *testing.T) {
+			for i, size := range sizes {
+				t.Run(fmt.Sprintf("N=%d/relevant=%d", size.n, size.relevant), func(t *testing.T) {
 					t.Cleanup(notes.SetRelevantRacyWindow(0))
 					dir := newRepo(t)
 					root := commitFile(t, dir, matrixTarget, "v1\n")
 					createBranches(t, dir, root, layout.branches)
-					seedNotes(t, dir, n, layout.branches)
+					seedNotes(t, dir, size.n, size.relevant, layout.branches)
 					c, err := notes.Open(dir)
 					if err != nil {
 						t.Fatalf("Open: %v", err)
@@ -693,11 +700,17 @@ func TestRelevantCachedWarmHitIsConstantWork(t *testing.T) {
 					if headsDir != 1 || !slices.Equal(under, layout.under) {
 						t.Fatalf("refs/heads stamps: directory %d times, below it %q; want the directory once and %q\nall stamps %q", headsDir, under, layout.under, probe.Stamps)
 					}
-					stamps[n] = len(probe.Stamps)
+					var served []json.RawMessage
+					if err := json.Unmarshal(p.last, &served); err != nil || len(served) != size.relevant {
+						t.Fatalf("warm hit served %d entries (%v), want the %d relevant ones", len(served), err, size.relevant)
+					}
+					stamps[i] = len(probe.Stamps)
 				})
 			}
-			if stamps[8] != stamps[512] {
-				t.Fatalf("warm-hit stamps grew with entity count: %d at N=8, %d at N=512", stamps[8], stamps[512])
+			for i, size := range sizes {
+				if stamps[i] != stamps[0] {
+					t.Fatalf("warm-hit stamps vary with entity count: %d at N=%d/relevant=%d, %d at N=%d/relevant=%d", stamps[i], size.n, size.relevant, stamps[0], sizes[0].n, sizes[0].relevant)
+				}
 			}
 		})
 	}

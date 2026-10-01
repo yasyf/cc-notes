@@ -2,7 +2,7 @@ package notes
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -34,9 +34,9 @@ func RelevantCacheProbeOf(c *Client, target string, filter RelevantFilter, varia
 	if !ok {
 		return RelevantCacheProbe{}, false, nil
 	}
-	var entry relevantCacheEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
-		return RelevantCacheProbe{}, false, err
+	entry, ok := parseRelevantCacheEntry(data)
+	if !ok {
+		return RelevantCacheProbe{}, false, fmt.Errorf("undecodable relevance cache entry %q", data)
 	}
 	probe := RelevantCacheProbe{Racy: entry.Racy, Revalidate: entry.Revalidate}
 	for _, s := range entry.Stamps {

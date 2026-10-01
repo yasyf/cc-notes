@@ -1,6 +1,7 @@
 package notes
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -29,7 +30,7 @@ type relevantCacheEntry struct {
 	Stamps     []fileStamp  `json:"stamps,omitempty"`
 	Files      []fileStamp  `json:"files,omitempty"`
 	Deps       relevantDeps `json:"deps"`
-	Output     string       `json:"output"`
+	Output     []byte       `json:"-"`
 }
 
 var relevantRefRoots = []string{
@@ -72,13 +73,13 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	var cached relevantCacheEntry
 	var cachedOK bool
 	if data, ok := c.s.ReadRelevantCache(name); ok {
-		cachedOK = json.Unmarshal(data, &cached) == nil
+		cached, cachedOK = parseRelevantCacheEntry(data)
 	}
 	// Lock-and-rename publishes (git, libgit2, gix, JGit, cc-notes) move a
 	// stamp; a foreign in-place rewrite of an existing loose ref under a
 	// directory stamp (go-git setRef) is not covered.
 	if cachedOK && cached.hit(now) {
-		return []byte(cached.Output), nil
+		return cached.Output, nil
 	}
 	var deps relevantDeps
 	if cachedOK {
@@ -94,7 +95,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 			in.fill(&cached)
 			c.writeRelevantCache(name, cached)
 		}
-		return []byte(cached.Output), nil
+		return cached.Output, nil
 	}
 	entries, err := c.relevantScored(ctx, in, filter)
 	if err != nil {
@@ -121,7 +122,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if !slices.Equal(before, after) || slices.ContainsFunc(after, func(f fileStamp) bool { return f.racyMtime(in.start) }) || in.noCache || !in.close() {
 		return out, nil
 	}
-	entry := relevantCacheEntry{Key: in.key(), Files: after, Output: string(out)}
+	entry := relevantCacheEntry{Key: in.key(), Files: after, Output: out}
 	in.fill(&entry)
 	for _, e := range entries {
 		if fe, ok := freshOf(e); ok && e.Verdict == "" && fe.StaleAt == 0 && fe.VerifiedAt != 0 {
@@ -136,9 +137,30 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 }
 
 func (c *Client) writeRelevantCache(name string, entry relevantCacheEntry) {
-	if data, err := json.Marshal(entry); err == nil {
+	if data, err := entry.encode(); err == nil {
 		c.s.WriteRelevantCache(name, data)
 	}
+}
+
+// encode writes the JSON header, a newline, then the raw output, so a hit
+// decodes only the header. json.Marshal escapes every newline, so the first
+// one ends the header.
+func (e relevantCacheEntry) encode() ([]byte, error) {
+	header, err := json.Marshal(e)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Concat(header, []byte{'\n'}, e.Output), nil
+}
+
+func parseRelevantCacheEntry(data []byte) (relevantCacheEntry, bool) {
+	header, output, ok := bytes.Cut(data, []byte{'\n'})
+	var e relevantCacheEntry
+	if !ok || json.Unmarshal(header, &e) != nil {
+		return relevantCacheEntry{}, false
+	}
+	e.Output = output
+	return e, true
 }
 
 func (c *Client) driftInputs(ctx context.Context, entries []RelevantEntry, vars map[string]string) (paths, anchors []string, err error) {
