@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.6] - 2026-10-01
+
+### Changed
+- **The compact restore prints every durable answer's title.** Each
+  `scope:durable` answer the session captured or surfaced gets its own line
+  with its id and full title, even when the titles alone pass the 4.5 KB
+  budget. The budget now governs only excerpts and other answers. Excerpts
+  attach in rank order until one does not fit. Other answers then print as
+  title lines while room lasts, and the rest are counted. The
+  `also (read with answer_show):` overflow line, which clipped titles to 60
+  characters, is gone.
+
 ## [0.63.5] - 2026-10-01
 
 ### Fixed

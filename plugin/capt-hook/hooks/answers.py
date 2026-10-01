@@ -47,8 +47,6 @@ from .surface import SurfacePick
 
 MAX_ANSWER_PATHS = 10
 RESTORE_EXCERPT_CHARS = 160
-RESTORE_OVERFLOW_TITLE_CHARS = 60
-RESTORE_OVERFLOW_BUDGET = 1500
 
 SECRET_RE = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----"
@@ -375,48 +373,52 @@ def current_answers(evt: SessionStartEvent, ids: list[str]) -> list[dict[str, An
     return list(current.values())
 
 
+def is_durable(answer: dict[str, Any]) -> bool:
+    return "scope:durable" in (answer.get("tags") or [])
+
+
 def restore_rank(answer: dict[str, Any]) -> tuple[bool, str]:
-    return "scope:durable" in (answer.get("tags") or []), answer.get("updated_at", "")
+    return is_durable(answer), answer.get("updated_at", "")
 
 
-def restore_line(answer: dict[str, Any]) -> str:
-    return f"{short_id(answer['id'])} {answer.get('title', '')} → {clip(answer_text(answer), RESTORE_EXCERPT_CHARS)}"
+def title_line(answer: dict[str, Any]) -> str:
+    return f"{short_id(answer['id'])} {answer.get('title', '')}"
 
 
-def overflow_entry(answer: dict[str, Any]) -> str:
-    return f"{short_id(answer['id'])} {clip(answer.get('title', ''), RESTORE_OVERFLOW_TITLE_CHARS)}"
+def excerpt(answer: dict[str, Any]) -> str:
+    return f" → {clip(answer_text(answer), RESTORE_EXCERPT_CHARS)}"
 
 
 def restore_digest(answers: list[dict[str, Any]], show: str) -> list[str]:
-    """The restore's lines within :data:`COMPACT_ANSWER_BUDGET`: durable answers first, newest first.
+    """The restore's lines, durable answers first and newest first.
 
-    Each answer gets one excerpted line while the budget less :data:`RESTORE_OVERFLOW_BUDGET`
-    lasts; the rest are named by id and title on one overflow line, and whatever outruns that
-    is counted, so no answer drops out unannounced.
+    Every durable answer's id and full title always print, even past
+    :data:`COMPACT_ANSWER_BUDGET`; only excerpts and other answers spend the budget. Excerpts
+    attach in rank order until one no longer fits, other answers then print as title lines
+    while room lasts, and the rest are counted.
     """
-    lines = ["Context was just compacted. Answers the user gave, captured or surfaced this session — honor them, durable first:"]
-    used = utf8_len(lines[0]) + 1
-    ranked = iter(sorted(answers, key=restore_rank, reverse=True))
+    ranked = sorted(answers, key=restore_rank, reverse=True)
+    durable = [a for a in ranked if is_durable(a)]
+    lines = [f"Context was just compacted. Answers the user gave, captured or surfaced this session — honor them, durable first; read any in full with {show}:"]
+    room = COMPACT_ANSWER_BUDGET - sum(utf8_len(line) + 1 for line in [lines[0], *map(title_line, durable), f"+{len(ranked)} more answers"])
+    excerpts = True
+    counted = 0
     for answer in ranked:
-        line = restore_line(answer)
-        if used + utf8_len(line) + 1 > COMPACT_ANSWER_BUDGET - RESTORE_OVERFLOW_BUDGET:
-            rest = [answer, *ranked]
-            break
+        line = title_line(answer)
+        if not is_durable(answer):
+            if utf8_len(line) + 1 > room:
+                counted += 1
+                continue
+            room -= utf8_len(line) + 1
+        if excerpts and utf8_len(tail := excerpt(answer)) <= room:
+            line += tail
+            room -= utf8_len(tail)
+        else:
+            excerpts = False
         lines.append(line)
-        used += utf8_len(line) + 1
-    else:
-        return lines
-    prefix = f"also (read with {show}):"
-    room = COMPACT_ANSWER_BUDGET - used - utf8_len(prefix) - len(f" +{len(rest)} more")
-    entries: list[str] = []
-    for answer in rest:
-        entry = overflow_entry(answer)
-        if utf8_len(entry) + 2 > room:
-            break
-        entries.append(entry)
-        room -= utf8_len(entry) + 2
-    tail = f" +{len(rest) - len(entries)} more" if len(entries) < len(rest) else ""
-    return [*lines, f"{prefix} {'; '.join(entries)}{tail}"]
+    if counted:
+        lines.append(f"+{counted} more answers")
+    return lines
 
 
 @on(
