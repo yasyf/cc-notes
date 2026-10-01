@@ -317,9 +317,12 @@ func (s *Store) ListAnswers(ctx context.Context, includeDeleted, includeSupersed
 // children lists the refs that are immediate children of prefix, excluding
 // nested namespaces.
 func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error) {
-	tips, err := s.Git.Refs(ctx, prefix)
-	if err != nil {
-		return nil, err
+	tips := s.pins
+	if tips == nil {
+		var err error
+		if tips, err = s.Git.Refs(ctx, prefix); err != nil {
+			return nil, err
+		}
 	}
 	entries := make([]tipEntry, 0, len(tips))
 	for ref, tip := range tips {

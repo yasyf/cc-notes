@@ -170,7 +170,7 @@ func (c *Client) ReviewAnswers(ctx context.Context, staleAfter time.Duration) ([
 			}
 			continue
 		}
-		verdict, err := c.verdictOf(ctx, head, freshFromAnswer(a), now, staleAfter, false)
+		verdict, err := c.verdictOf(ctx, head, freshFromAnswer(a), now, staleAfter, false, c.s.Git.ResolveCommit)
 		if err != nil {
 			return nil, err
 		}
@@ -188,7 +188,7 @@ func (c *Client) AnswerVerdict(ctx context.Context, a model.Answer, staleAfter t
 	if err != nil {
 		return "", err
 	}
-	return c.verdictOf(ctx, head, freshFromAnswer(a), time.Now(), staleAfter, worktree)
+	return c.verdictOf(ctx, head, freshFromAnswer(a), time.Now(), staleAfter, worktree, c.s.Git.ResolveCommit)
 }
 
 // AnswerSuperseders returns the ids of answers that supersede id, sorted.

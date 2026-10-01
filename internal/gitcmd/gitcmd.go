@@ -86,8 +86,13 @@ func (e *commandError) exitCode() int {
 }
 
 func (g Git) run(ctx context.Context, stdin string, args ...string) (string, error) {
+	return g.runEnv(ctx, nil, stdin, args...)
+}
+
+func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...string) (string, error) {
 	//nolint:gosec // G204: git is a fixed argv[0]; args are internal git subcommands, not user-shell input, in this CLI's own repo.
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", g.Dir}, args...)...)
+	cmd.Env = env
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
@@ -216,6 +221,47 @@ func (g Git) WorktreeBlobOID(ctx context.Context, path string) (string, error) {
 		return "", fmt.Errorf("worktree blob oid %s: %w", path, err)
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// ResolveRevs resolves every revision expression to the full sha of the object
+// it names in one git cat-file invocation, keyed by the expression. An
+// expression naming no object, or an ambiguous one, maps to the empty sha.
+func (g Git) ResolveRevs(ctx context.Context, revs []string) (map[string]model.SHA, error) {
+	out, err := g.run(ctx, strings.Join(revs, "\n")+"\n", "cat-file", "--batch-check=%(objectname)")
+	if err != nil {
+		return nil, fmt.Errorf("resolve revs: %w", err)
+	}
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(lines) != len(revs) {
+		return nil, fmt.Errorf("resolve revs: %d answers for %d revisions", len(lines), len(revs))
+	}
+	resolved := make(map[string]model.SHA, len(revs))
+	for i, rev := range revs {
+		if strings.ContainsRune(lines[i], ' ') {
+			resolved[rev] = ""
+			continue
+		}
+		resolved[rev] = model.SHA(lines[i])
+	}
+	return resolved, nil
+}
+
+// CheckAttr reports attr for each path as git check-attr resolves it:
+// "unspecified", "unset", "set", or the attribute's value.
+func (g Git) CheckAttr(ctx context.Context, attr string, paths []string) (map[string]string, error) {
+	out, err := g.run(ctx, "", append([]string{"check-attr", attr, "-z", "--"}, paths...)...)
+	if err != nil {
+		return nil, fmt.Errorf("check attr %s: %w", attr, err)
+	}
+	fields := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
+	if len(fields) != 3*len(paths) {
+		return nil, fmt.Errorf("check attr %s: malformed output %q", attr, out)
+	}
+	values := make(map[string]string, len(paths))
+	for i := 0; i < len(fields); i += 3 {
+		values[fields[i]] = fields[i+2]
+	}
+	return values, nil
 }
 
 // CommitSHA resolves rev to the full hex sha of the commit it names, for
@@ -503,10 +549,52 @@ func (g Git) ConfigURLMatch(ctx context.Context, name, key, url string) (bool, e
 	return true, nil
 }
 
+// ConfigEntry is one effective configuration entry with the origin git read
+// it from, as `git config --show-origin` spells it ("file:<path>",
+// "command line:"). HasValue is false for a bare "[section] key" line.
+type ConfigEntry struct {
+	Origin   string
+	Key      string
+	Value    string
+	HasValue bool
+}
+
+// ConfigOrigins lists the effective configuration of every scope, includes
+// resolved, with the origin of each entry, in read order. A GIT_CONFIG
+// override is dropped from the environment so the listing covers the chain
+// every other git command reads rather than the one file `git config` would
+// be pointed at.
+func (g Git) ConfigOrigins(ctx context.Context) ([]ConfigEntry, error) {
+	out, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--list", "--show-origin", "--includes", "-z")
+	if err != nil {
+		return nil, fmt.Errorf("config origins: %w", err)
+	}
+	tokens := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
+	if out == "" {
+		return nil, nil
+	}
+	if len(tokens)%2 != 0 {
+		return nil, fmt.Errorf("config origins: malformed output %q", out)
+	}
+	entries := make([]ConfigEntry, 0, len(tokens)/2)
+	for i := 0; i < len(tokens); i += 2 {
+		key, value, hasValue := strings.Cut(tokens[i+1], "\n")
+		entries = append(entries, ConfigEntry{Origin: tokens[i], Key: key, Value: value, HasValue: hasValue})
+	}
+	return entries, nil
+}
+
+// envWithoutGitConfig is the process environment minus GIT_CONFIG, which
+// `git config` alone honors as an exclusive --file and so rejects alongside
+// --local.
+func envWithoutGitConfig() []string {
+	return slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "GIT_CONFIG=") })
+}
+
 // ConfigGetAll returns every value of key in the repository-local config,
 // in order, or an empty slice when the key is unset.
 func (g Git) ConfigGetAll(ctx context.Context, key string) ([]string, error) {
-	out, err := g.run(ctx, "", "config", "--local", "--get-all", "-z", key)
+	out, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", "--get-all", "-z", key)
 	var cmdErr *commandError
 	if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 && cmdErr.stderr == "" {
 		return nil, nil
@@ -523,7 +611,7 @@ func (g Git) ConfigGetAll(ctx context.Context, key string) ([]string, error) {
 // ConfigAdd appends value as a new line for key in the repository-local
 // config, keeping any existing values.
 func (g Git) ConfigAdd(ctx context.Context, key, value string) error {
-	if _, err := g.run(ctx, "", "config", "--local", "--add", key, value); err != nil {
+	if _, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", "--add", key, value); err != nil {
 		return fmt.Errorf("config add %s: %w", key, err)
 	}
 	return nil
@@ -532,7 +620,7 @@ func (g Git) ConfigAdd(ctx context.Context, key, value string) error {
 // ConfigSet sets key to value in the repository-local config, replacing a
 // single existing value. Setting a multi-valued key fails.
 func (g Git) ConfigSet(ctx context.Context, key, value string) error {
-	if _, err := g.run(ctx, "", "config", "--local", key, value); err != nil {
+	if _, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", key, value); err != nil {
 		return fmt.Errorf("config set %s: %w", key, err)
 	}
 	return nil
@@ -543,7 +631,7 @@ func (g Git) ConfigSet(ctx context.Context, key, value string) error {
 // place. oldValue is matched literally (--fixed-value), so refspec
 // metacharacters are not interpreted as a regexp.
 func (g Git) ConfigReplaceValue(ctx context.Context, key, oldValue, newValue string) error {
-	if _, err := g.run(ctx, "", "config", "--local", "--replace-all", "--fixed-value", key, newValue, oldValue); err != nil {
+	if _, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", "--replace-all", "--fixed-value", key, newValue, oldValue); err != nil {
 		return fmt.Errorf("config replace %s value %q: %w", key, oldValue, err)
 	}
 	return nil
@@ -554,7 +642,7 @@ func (g Git) ConfigReplaceValue(ctx context.Context, key, oldValue, newValue str
 // no line matches — the value was already unset — it wraps ErrConfigNoMatch, so
 // a caller racing a concurrent unset can treat it as already done.
 func (g Git) ConfigUnsetValue(ctx context.Context, key, value string) error {
-	_, err := g.run(ctx, "", "config", "--local", "--unset-all", "--fixed-value", key, value)
+	_, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", "--unset-all", "--fixed-value", key, value)
 	var cmdErr *commandError
 	if errors.As(err, &cmdErr) && cmdErr.exitCode() == 5 {
 		return fmt.Errorf("config unset %s value %q: %w", key, value, ErrConfigNoMatch)

@@ -4,12 +4,13 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"maps"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
-	"time"
+
+	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/model"
@@ -131,25 +132,38 @@ func (e RelevantEntry) updatedAt() int64 {
 	}
 }
 
-// scoredNote pairs a kept note with its summed score and matched reasons.
-type scoredNote struct {
-	note    model.Note
-	score   int
-	reasons []string
+// anchors returns the entry's anchors, regardless of kind.
+func (e RelevantEntry) anchors() []model.Anchor {
+	switch e.Kind {
+	case model.KindDoc:
+		return e.Doc.Anchors
+	case model.KindLog:
+		return e.Log.Anchors
+	case model.KindRunbook:
+		return e.Runbook.Anchors
+	case model.KindInvestigation:
+		return e.Investigation.Anchors
+	case model.KindPlan:
+		return e.Plan.Anchors
+	case model.KindAnswer:
+		return e.Answer.Anchors
+	case model.KindLedger:
+		return e.Ledger.Anchors
+	default:
+		return e.Note.Anchors
+	}
 }
 
 type relevantReachability struct {
-	client      *Client
-	head        model.SHA
-	loaded      bool
-	ancestors   map[model.SHA]struct{}
-	branchTips  map[string]model.SHA
-	missingRefs map[string]struct{}
+	client    *Client
+	in        *relevantInputs
+	loaded    bool
+	ancestors map[model.SHA]struct{}
 }
 
 func (r *relevantReachability) contains(ctx context.Context, sha model.SHA) (bool, error) {
 	if !r.loaded {
-		ancestors, err := r.client.s.Git.AncestorSet(ctx, r.head)
+		ancestors, err := r.client.s.Git.AncestorSet(ctx, r.in.head)
 		if err != nil {
 			return false, err
 		}
@@ -161,7 +175,7 @@ func (r *relevantReachability) contains(ctx context.Context, sha model.SHA) (boo
 }
 
 func (r *relevantReachability) commitMerged(ctx context.Context, rev string) (bool, error) {
-	sha, err := r.client.s.Git.ResolveCommit(ctx, rev)
+	sha, err := r.in.resolveCommit(ctx, rev)
 	if errors.Is(err, gitcmd.ErrRevNotFound) {
 		return false, nil
 	}
@@ -172,24 +186,7 @@ func (r *relevantReachability) commitMerged(ctx context.Context, rev string) (bo
 }
 
 func (r *relevantReachability) branchMerged(ctx context.Context, name string) (bool, error) {
-	ref := "refs/heads/" + name
-	if _, missing := r.missingRefs[ref]; missing {
-		return false, nil
-	}
-	tip, ok := r.branchTips[ref]
-	if !ok {
-		var err error
-		tip, err = r.client.s.Git.CommitSHA(ctx, ref)
-		if errors.Is(err, gitcmd.ErrRevNotFound) {
-			r.missingRefs[ref] = struct{}{}
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		r.branchTips[ref] = tip
-	}
-	return r.contains(ctx, tip)
+	return r.commitMerged(ctx, "refs/heads/"+name)
 }
 
 // Relevant scores every live note, doc, log, active runbook, investigation,
@@ -202,236 +199,145 @@ func (r *relevantReachability) branchMerged(ctx context.Context, name string) (b
 // filter.Worktree threads through to each entity's verdict. A log, runbook,
 // investigation, or plan never drifts, so its verdict is empty.
 func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFilter) ([]RelevantEntry, error) {
-	scored, clock, err := c.relevantScored(ctx, target, filter)
+	p, err := c.relevantPath(ctx, target)
 	if err != nil {
 		return nil, err
 	}
-	if err := c.relevantVerdicts(ctx, scored, clock, filter.Worktree); err != nil {
+	in, err := c.relevantInputs(ctx, p, filter, "", relevantDeps{})
+	if err != nil {
+		return nil, err
+	}
+	scored, err := c.relevantScored(ctx, in, filter)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.relevantVerdicts(ctx, scored, in, filter.Worktree); err != nil {
 		return nil, err
 	}
 	return scored, nil
 }
 
-type relevantClock struct {
-	head       model.SHA
-	now        time.Time
-	staleAfter time.Duration
-	branchRefs []string
-}
-
-func (c *Client) relevantScored(ctx context.Context, target string, filter RelevantFilter) ([]RelevantEntry, relevantClock, error) {
-	p, err := c.relevantPath(ctx, target)
-	if err != nil {
-		return nil, relevantClock{}, err
+// relevantScored folds the entities named by the captured ref tips, keeps
+// the ones filter admits, captures the branch refs and revisions they anchor
+// to, and scores them against the captured branch, head, and author.
+func (c *Client) relevantScored(ctx context.Context, in *relevantInputs, filter RelevantFilter) ([]RelevantEntry, error) {
+	p := in.path
+	pinned := &Client{s: c.s.Pinned(in.tips)}
+	var candidates []RelevantEntry
+	keep := func(e RelevantEntry) {
+		if filter.Attached && !anchorsNear(e.anchors(), p) {
+			return
+		}
+		candidates = append(candidates, e)
 	}
 
-	branch, err := c.resolveRelevantBranch(ctx, filter.Branch)
+	notes, err := pinned.s.ListNotes(ctx, false, false)
 	if err != nil {
-		return nil, relevantClock{}, err
+		return nil, err
 	}
-	head, err := c.head(ctx)
+	for _, n := range notes {
+		keep(RelevantEntry{Kind: model.KindNote, Note: n})
+	}
+	docs, err := pinned.s.ListDocs(ctx, false, false)
 	if err != nil {
-		return nil, relevantClock{}, err
+		return nil, err
 	}
-	_, me, err := c.s.Git.AuthorIdent(ctx)
+	for _, d := range docs {
+		keep(RelevantEntry{Kind: model.KindDoc, Doc: d})
+	}
+	answers, err := pinned.s.ListAnswers(ctx, false, false)
 	if err != nil {
-		return nil, relevantClock{}, err
+		return nil, err
 	}
-	crossAuthorPaths, err := c.crossAuthorSet(ctx, filter.Base, head, me)
+	for _, a := range answers {
+		keep(RelevantEntry{Kind: model.KindAnswer, Answer: a})
+	}
+	ledgers, err := pinned.Ledgers(ctx, LedgerFilter{})
 	if err != nil {
-		return nil, relevantClock{}, err
+		return nil, err
 	}
-	staleAfter, err := c.NoteStaleAfter(ctx)
+	for _, l := range ledgers {
+		keep(RelevantEntry{Kind: model.KindLedger, Ledger: l})
+	}
+	logs, err := pinned.s.ListLogs(ctx, false)
 	if err != nil {
-		return nil, relevantClock{}, err
+		return nil, err
 	}
-	now := time.Now()
-	reachability := &relevantReachability{
-		client:      c,
-		head:        head,
-		branchTips:  make(map[string]model.SHA),
-		missingRefs: make(map[string]struct{}),
+	for _, l := range logs {
+		keep(RelevantEntry{Kind: model.KindLog, Log: l})
 	}
-	branchRefSet := make(map[string]struct{})
-	addBranchRefs := func(anchors []model.Anchor) {
-		for _, anchor := range anchors {
-			if anchor.Kind == model.AnchorBranch {
-				branchRefSet["refs/heads/"+anchor.Value] = struct{}{}
+	runbooks, err := pinned.Runbooks(ctx, RunbookFilter{})
+	if err != nil {
+		return nil, err
+	}
+	for _, rb := range runbooks {
+		keep(RelevantEntry{Kind: model.KindRunbook, Runbook: rb})
+	}
+	investigations, err := pinned.s.ListInvestigations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, inv := range investigations {
+		keep(RelevantEntry{Kind: model.KindInvestigation, Investigation: inv})
+	}
+	plans, err := pinned.Plans(ctx, PlanFilter{})
+	if err != nil {
+		return nil, err
+	}
+	for _, plan := range plans {
+		keep(RelevantEntry{Kind: model.KindPlan, Plan: plan})
+	}
+
+	var branches, commits []string
+	for _, e := range candidates {
+		for _, anchor := range e.anchors() {
+			switch anchor.Kind {
+			case model.AnchorBranch:
+				branches = append(branches, "refs/heads/"+anchor.Value)
+			case model.AnchorCommit:
+				if !plumbing.IsHash(anchor.Value) {
+					commits = append(commits, anchor.Value)
+				}
 			}
 		}
 	}
-
-	all, err := c.s.ListNotes(ctx, false, false)
+	if err := in.setDeps(ctx, branches, commits); err != nil {
+		return nil, err
+	}
+	crossAuthorPaths, err := c.crossAuthorSet(ctx, in)
 	if err != nil {
-		return nil, relevantClock{}, err
+		return nil, err
 	}
-	var scored []RelevantEntry
-	for _, n := range all {
-		if filter.Attached && !anchorsNear(n.Anchors, p) {
-			continue
-		}
-		addBranchRefs(n.Anchors)
-		match, err := c.scoreNote(ctx, n, p, branch, head, crossAuthorPaths, reachability)
+	reachability := &relevantReachability{client: c, in: in}
+	scored := make([]RelevantEntry, 0, len(candidates))
+	for _, e := range candidates {
+		score, reasons, err := c.scoreAnchors(ctx, e.anchors(), p, in.branch, in.head, crossAuthorPaths, reachability)
 		if err != nil {
-			return nil, relevantClock{}, err
-		}
-		if match.score == 0 {
-			continue
-		}
-		scored = append(scored, RelevantEntry{Kind: model.KindNote, Note: match.note, Score: match.score, Reasons: match.reasons})
-	}
-
-	docs, err := c.s.ListDocs(ctx, false, false)
-	if err != nil {
-		return nil, relevantClock{}, err
-	}
-	for _, d := range docs {
-		if filter.Attached && !anchorsNear(d.Anchors, p) {
-			continue
-		}
-		addBranchRefs(d.Anchors)
-		score, reasons, err := c.scoreAnchors(ctx, d.Anchors, p, branch, head, crossAuthorPaths, reachability)
-		if err != nil {
-			return nil, relevantClock{}, err
+			return nil, err
 		}
 		if score == 0 {
 			continue
 		}
-		scored = append(scored, RelevantEntry{Kind: model.KindDoc, Doc: d, Score: score, Reasons: reasons})
-	}
-
-	answers, err := c.s.ListAnswers(ctx, false, false)
-	if err != nil {
-		return nil, relevantClock{}, err
-	}
-	for _, a := range answers {
-		if filter.Attached && !anchorsNear(a.Anchors, p) {
-			continue
-		}
-		addBranchRefs(a.Anchors)
-		score, reasons, err := c.scoreAnchors(ctx, a.Anchors, p, branch, head, crossAuthorPaths, reachability)
-		if err != nil {
-			return nil, relevantClock{}, err
-		}
-		if score == 0 {
-			continue
-		}
-		scored = append(scored, RelevantEntry{Kind: model.KindAnswer, Answer: a, Score: score, Reasons: reasons})
-	}
-
-	ledgers, err := c.Ledgers(ctx, LedgerFilter{})
-	if err != nil {
-		return nil, relevantClock{}, err
-	}
-	for _, l := range ledgers {
-		if filter.Attached && !anchorsNear(l.Anchors, p) {
-			continue
-		}
-		addBranchRefs(l.Anchors)
-		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths, reachability)
-		if err != nil {
-			return nil, relevantClock{}, err
-		}
-		if score == 0 {
-			continue
-		}
-		scored = append(scored, RelevantEntry{Kind: model.KindLedger, Ledger: l, Score: score, Reasons: reasons})
-	}
-
-	logs, err := c.s.ListLogs(ctx, false)
-	if err != nil {
-		return nil, relevantClock{}, err
-	}
-	for _, l := range logs {
-		if filter.Attached && !anchorsNear(l.Anchors, p) {
-			continue
-		}
-		addBranchRefs(l.Anchors)
-		score, reasons, err := c.scoreAnchors(ctx, l.Anchors, p, branch, head, crossAuthorPaths, reachability)
-		if err != nil {
-			return nil, relevantClock{}, err
-		}
-		if score == 0 {
-			continue
-		}
-		scored = append(scored, RelevantEntry{Kind: model.KindLog, Log: l, Score: score, Reasons: reasons})
-	}
-
-	runbooks, err := c.Runbooks(ctx, RunbookFilter{})
-	if err != nil {
-		return nil, relevantClock{}, err
-	}
-	for _, rb := range runbooks {
-		if filter.Attached && !anchorsNear(rb.Anchors, p) {
-			continue
-		}
-		addBranchRefs(rb.Anchors)
-		score, reasons, err := c.scoreAnchors(ctx, rb.Anchors, p, branch, head, crossAuthorPaths, reachability)
-		if err != nil {
-			return nil, relevantClock{}, err
-		}
-		if score == 0 {
-			continue
-		}
-		scored = append(scored, RelevantEntry{Kind: model.KindRunbook, Runbook: rb, Score: score, Reasons: reasons})
-	}
-
-	investigations, err := c.s.ListInvestigations(ctx)
-	if err != nil {
-		return nil, relevantClock{}, err
-	}
-	for _, inv := range investigations {
-		if filter.Attached && !anchorsNear(inv.Anchors, p) {
-			continue
-		}
-		addBranchRefs(inv.Anchors)
-		score, reasons, err := c.scoreAnchors(ctx, inv.Anchors, p, branch, head, crossAuthorPaths, reachability)
-		if err != nil {
-			return nil, relevantClock{}, err
-		}
-		if score == 0 {
-			continue
-		}
-		if nonTerminalInvestigation(inv.Status) && anchoredNear(reasons) {
+		switch {
+		case e.Kind == model.KindInvestigation && nonTerminalInvestigation(e.Investigation.Status) && anchoredNear(reasons):
 			score += scoreInvestigationOpen
 			reasons = append(reasons, reasonInvestigationOpen)
 			sortReasons(reasons)
-		}
-		scored = append(scored, RelevantEntry{Kind: model.KindInvestigation, Investigation: inv, Score: score, Reasons: reasons})
-	}
-
-	plans, err := c.Plans(ctx, PlanFilter{})
-	if err != nil {
-		return nil, relevantClock{}, err
-	}
-	for _, plan := range plans {
-		if filter.Attached && !anchorsNear(plan.Anchors, p) {
-			continue
-		}
-		addBranchRefs(plan.Anchors)
-		score, reasons, err := c.scoreAnchors(ctx, plan.Anchors, p, branch, head, crossAuthorPaths, reachability)
-		if err != nil {
-			return nil, relevantClock{}, err
-		}
-		if score == 0 {
-			continue
-		}
-		if plan.Status == model.PlanExecuting && anchoredNear(reasons) {
+		case e.Kind == model.KindPlan && e.Plan.Status == model.PlanExecuting && anchoredNear(reasons):
 			score += scorePlanExecuting
 			reasons = append(reasons, reasonPlanExecuting)
 			sortReasons(reasons)
 		}
-		scored = append(scored, RelevantEntry{Kind: model.KindPlan, Plan: plan, Score: score, Reasons: reasons})
+		e.Score, e.Reasons = score, reasons
+		scored = append(scored, e)
 	}
-
 	slices.SortFunc(scored, compareScored)
-	branchRefs := slices.Sorted(maps.Keys(branchRefSet))
-	return scored, relevantClock{head: head, now: now, staleAfter: staleAfter, branchRefs: branchRefs}, nil
+	return scored, nil
 }
 
-func (c *Client) relevantVerdicts(ctx context.Context, scored []RelevantEntry, clock relevantClock, worktree bool) error {
+func (c *Client) relevantVerdicts(ctx context.Context, scored []RelevantEntry, in *relevantInputs, worktree bool) error {
 	for i := range scored {
-		verdict, err := c.entryVerdict(ctx, scored[i], clock.head, clock.now, clock.staleAfter, worktree)
+		verdict, err := c.entryVerdict(ctx, scored[i], in, worktree)
 		if err != nil {
 			return err
 		}
@@ -519,21 +425,20 @@ func anchoredNear(reasons []string) bool {
 	})
 }
 
-// entryVerdict computes the drift verdict for a kept entity against a single
-// head/now snapshot shared across the whole ranked batch, dispatching to the
-// note/doc/answer verdict core by kind. A log, runbook, investigation, or plan never
-// drifts — none has a freshness lifecycle — so each short-circuits to an empty
-// verdict.
-func (c *Client) entryVerdict(ctx context.Context, e RelevantEntry, head model.SHA, now time.Time, staleAfter time.Duration, worktree bool) (Verdict, error) {
+// entryVerdict computes the drift verdict for a kept entity against the
+// captured head and clock, dispatching to the note/doc/answer verdict core by
+// kind. A log, runbook, investigation, or plan never drifts — none has a
+// freshness lifecycle — so each short-circuits to an empty verdict.
+func (c *Client) entryVerdict(ctx context.Context, e RelevantEntry, in *relevantInputs, worktree bool) (Verdict, error) {
 	switch e.Kind {
 	case model.KindDoc:
-		return c.verdictOf(ctx, head, freshFromDoc(e.Doc), now, staleAfter, worktree)
+		return c.verdictOf(ctx, in.head, freshFromDoc(e.Doc), in.start, in.staleAfter, worktree, in.resolveCommit)
 	case model.KindAnswer:
-		return c.verdictOf(ctx, head, freshFromAnswer(e.Answer), now, staleAfter, worktree)
+		return c.verdictOf(ctx, in.head, freshFromAnswer(e.Answer), in.start, in.staleAfter, worktree, in.resolveCommit)
 	case model.KindLog, model.KindRunbook, model.KindInvestigation, model.KindPlan, model.KindLedger:
 		return "", nil
 	default:
-		return c.verdictOf(ctx, head, freshFromNote(e.Note), now, staleAfter, worktree)
+		return c.verdictOf(ctx, in.head, freshFromNote(e.Note), in.start, in.staleAfter, worktree, in.resolveCommit)
 	}
 }
 
@@ -569,32 +474,31 @@ func (c *Client) resolveRelevantBranch(ctx context.Context, flag string) (model.
 	return branch, nil
 }
 
-// crossAuthorSet returns the set of paths in the range base..HEAD touched by a
+// crossAuthorSet returns the set of paths in the range base..head touched by a
 // teammate but never by me — the files whose recent changes I have not seen. It
-// is empty when HEAD is unborn or no merge-base resolves. base defaults to the
-// remote default branch, falling back to "main".
-func (c *Client) crossAuthorSet(ctx context.Context, baseFlag string, head model.SHA, me string) (map[string]struct{}, error) {
-	if head == "" {
+// is empty when head is unborn or the two share no merge base, and an error
+// when the base revision names no commit.
+func (c *Client) crossAuthorSet(ctx context.Context, in *relevantInputs) (map[string]struct{}, error) {
+	if in.head == "" {
 		return nil, nil
 	}
-	base, err := c.resolveRelevantBase(ctx, baseFlag)
-	if err != nil {
-		return nil, err
+	if in.base == "" {
+		return nil, fmt.Errorf("merge base %s %s: %w", in.baseRef, in.head, gitcmd.ErrRevNotFound)
 	}
-	mergeBase, err := c.s.Git.MergeBase(ctx, string(base), "HEAD")
+	mergeBase, err := c.s.Git.MergeBase(ctx, string(in.base), string(in.head))
 	if errors.Is(err, gitcmd.ErrRevNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	authors, err := c.s.Git.RevRangeFileAuthors(ctx, string(mergeBase), "HEAD")
+	authors, err := c.s.Git.RevRangeFileAuthors(ctx, string(mergeBase), string(in.head))
 	if err != nil {
 		return nil, err
 	}
 	cross := make(map[string]struct{})
 	for p, emails := range authors {
-		if !slices.Contains(emails, me) && hasOther(emails, me) {
+		if !slices.Contains(emails, in.me) && hasOther(emails, in.me) {
 			cross[p] = struct{}{}
 		}
 	}
@@ -626,18 +530,6 @@ func (c *Client) resolveRelevantBase(ctx context.Context, flag string) (model.Br
 		return "", err
 	}
 	return base, nil
-}
-
-// scoreNote sums every relevance signal note n matches against the target path
-// p, the branch, and head, returning a scoredNote with the summed score and
-// reasons in fixed priority order. It is a thin projection over n.Anchors onto
-// the shared scoreAnchors core, so notes and docs score identically.
-func (c *Client) scoreNote(ctx context.Context, n model.Note, p string, branch model.Branch, head model.SHA, crossAuthorPaths map[string]struct{}, reachability *relevantReachability) (scoredNote, error) {
-	score, reasons, err := c.scoreAnchors(ctx, n.Anchors, p, branch, head, crossAuthorPaths, reachability)
-	if err != nil {
-		return scoredNote{}, err
-	}
-	return scoredNote{note: n, score: score, reasons: reasons}, nil
 }
 
 // scoreAnchors sums every relevance signal the anchors match against the target

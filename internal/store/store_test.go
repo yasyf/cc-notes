@@ -464,7 +464,7 @@ func TestAppendContended(t *testing.T) {
 	}
 	gittest.Git(t, blocked, "update-ref", ref, string(decoy.ID))
 
-	doctored := &Store{Repo: s.Repo, Git: gitcmd.Git{Dir: blocked}, now: time.Now}
+	doctored := &Store{Repo: s.Repo, Git: gitcmd.Git{Dir: blocked}, now: time.Now, root: &rootMemo{}, policy: &policyMemo{}}
 	_, err := doctored.Append(t.Context(), ref, []model.Op{model.AddTag{Tag: "x"}})
 	if !errors.Is(err, ErrContended) {
 		t.Fatalf("Append = %v, want ErrContended", err)
