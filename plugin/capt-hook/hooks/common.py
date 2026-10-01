@@ -1,12 +1,12 @@
-"""Shared helpers, conditions, and record vocabulary for the cc-notes hook pack."""
 
 from __future__ import annotations
 
 import json
 import os
-import shlex
 import shutil
 import subprocess
+from collections.abc import Sequence
+from itertools import takewhile
 from pathlib import Path
 from typing import Any
 
@@ -16,153 +16,73 @@ from pydantic import BaseModel, Field
 
 NATIVE_TASK_MIRROR_THRESHOLD = 5
 
-# Max durable tasks the session-start floater shows before a "+K more" tail.
 SESSION_TASK_CAP = 7
 SESSION_ANSWER_CAP = 8
-# The pick is a structured small-model call, and its latency tracks the candidate list: 10
-# candidates answer in ~22s, 50 never answer at all inside captain-hook's 180s async budget.
 ANSWER_CANDIDATE_LIMIT = 12
 ANSWERS_SCOPE = "answers"
 ANSWER_METADATA_PREFIXES = ("Question: ", "Options: ", "Notes: ")
-# Per-session fire cap for advisories that aren't once-per-session and don't self-dedup.
 NUDGE_MAX_FIRES = 3
-# Cap on body/diff/plan text handed to a small-model classifier.
 LLM_INPUT_CAP = 6000
-# Claude Code moves SessionStart context past 10,000 characters to a file and injects a ~2 KB
-# preview, so the two compact restores split a budget that leaves the other packs room.
 COMPACT_RESTORE_BUDGET = 7500
 COMPACT_DIGEST_BUDGET = 3000
 COMPACT_ANSWER_BUDGET = COMPACT_RESTORE_BUDGET - COMPACT_DIGEST_BUDGET - 2
 
-# The Go CLI hard-rejects a title over 256 UTF-8 bytes (exit 2), and run_cc_notes fails
-# closed, so an over-long title would silently stop a capture without a clamp.
 MAX_TITLE_BYTES = 256
 
-# The generic record_command() path only — record.py special-cases runbook/investigation/plan; sprint/project never route here.
 RECORD_KINDS = ("note", "doc", "log", "task", "papercut")
 
-# The Claude Code plugin surfaces the cc-notes MCP server's tools under this name prefix.
 MCP_TOOL_PREFIX = "mcp__plugin_cc-notes_cc-notes__"
-
-# Shell words the parser accepts as an executable but that bash treats as a keyword
-# or builtin (`time`, `exec`, `eval`, …). A line headed by one is not a plain argv:
-# what runs is not the word the parser reports, so the approval bails.
-SHELL_WORD_EXECUTABLES = frozenset({"time", "command", "builtin", "exec", "eval", "source", "."})
 
 
 class RecordVerdict(BaseModel):
-    """The router's verdict: whether a freshly written file is durable cc-notes content, as which kind.
-
-    ``record`` defaults False so a degenerate or empty model parse fails closed to
-    silence. ``kind`` is one of :data:`RECORD_KINDS`; the remaining fields seed the
-    suggested ``cc-notes <kind> add`` command and are only meaningful when ``record``
-    is true.
-    """
+    """The router's verdict: whether a freshly written file is durable cc-notes content, and of which kind (one of RECORD_KINDS)."""
 
     record: bool = False
     kind: str = ""
-    title: str = ""
-    when: str = ""
-    area: str = ""
-    reasoning: str = ""
-
-
-class McpActive(BaseModel):
-    """Session-durable flag: a cc-notes MCP tool has fired this session.
-
-    The fast path for :func:`mcp_active` — flipped once by the MCP-tool recorder in
-    ``record.py`` and read on every later hook fire, so once the server is known
-    active the marker scan is skipped.
-    """
-
-    active: bool = False
 
 
 class SessionAnswers(BaseModel):
-    """Session-durable ledger of the answers this session captured or surfaced, id to rendered line, oldest first."""
-
     lines: dict[str, str] = Field(default_factory=dict)
 
 
 def is_single_command(cl: CommandLine) -> bool:
-    """Report whether the line is one command — no pipe, redirect, or ``&&``/``;`` chain."""
     return len(cl.parts) == 1 and not cl.q.uses_redirect()
 
 
-def is_plain_argv(cl: CommandLine) -> bool:
-    """Report whether the raw line is exactly the primary command's argv.
-
-    The cc-notes approval trusts the parsed executable only when the raw text *is*
-    that argv: no env-assignment prefix (what runs is not the parsed word), no
-    shell-keyword head (:data:`SHELL_WORD_EXECUTABLES`), and the raw text
-    word-splits to exactly the parsed executable + args. Structure the parser
-    folded out of the argv (a bare command substitution, a redirect) fails that
-    comparison and bails to the dialog.
-    """
-    if cl.primary.env or cl.primary.executable in SHELL_WORD_EXECUTABLES:
-        return False
-    try:
-        words = shlex.split(cl.raw)
-    except ValueError:
-        return False
-    return words == [cl.primary.executable, *cl.primary.args]
-
-
-# `ccn` is the shorthand symlink; a path-qualified head (`/usr/bin/cc-notes`, `./cc-notes`)
-# matches by basename.
 CC_NOTES_EXECUTABLES = frozenset({"cc-notes", "ccn"})
 
-# Leading wrapper tokens skipped (with env's VAR=val assignments) to reach the cc-notes
-# token; shell-word heads (`command`/`exec`/…) are rejected upstream by is_plain_argv.
-WRAPPER_EXECUTABLES = frozenset({"env", "command"})
 
-# The MCP tool names (internal/mcpserver); a mapped argv resolves only when it lands in this set.
 CC_NOTES_TOOLS = frozenset(
     {
-        # top-level commands that are themselves tools
         "status", "relevant", "sync", "reconcile", "history", "search", "show", "blame",
         "attachment_get", "attachment_path",
-        # note
         "note_add", "note_edit", "note_rm", "note_show", "note_list", "note_search",
         "note_review", "note_verify", "note_supersede", "note_expire",
-        # doc
         "doc_add", "doc_edit", "doc_rm", "doc_show", "doc_list", "doc_search",
         "doc_review", "doc_verify", "doc_supersede", "doc_expire",
         "answer_add", "answer_edit", "answer_rm", "answer_show", "answer_list", "answer_search",
         "answer_review", "answer_verify", "answer_supersede", "answer_expire",
-        # log
         "log_add", "log_append", "log_edit", "log_rm", "log_show", "log_list", "log_search",
         "log_entry_list",
-        # papercut
         "papercut", "papercut_list", "papercut_show",
-        # task
         "task_add", "task_edit", "task_show", "task_list", "task_claim", "task_start",
         "task_done", "task_cancel", "task_comment", "task_dep", "task_undep", "task_ready",
         "task_stale", "task_backlog", "task_archived", "task_renew", "task_validate",
         "task_comment_list", "task_link", "task_unlink",
-        # task criterion
         "task_criterion_add", "task_criterion_rm", "task_criterion_list", "task_criterion_met",
         "task_criterion_failed", "task_criterion_pending", "task_criterion_script",
-        # sprint
         "sprint_add", "sprint_edit", "sprint_show", "sprint_list", "sprint_activate",
         "sprint_cancel", "sprint_comment", "sprint_complete",
-        # project
         "project_add", "project_edit", "project_show", "project_list", "project_activate",
         "project_archive", "project_cancel", "project_comment", "project_complete",
-        # runbook
         "runbook_add", "runbook_edit", "runbook_rm", "runbook_show", "runbook_list",
         "runbook_search", "runbook_activate", "runbook_archive", "runbook_comment",
-        # runbook step
         "runbook_step_add", "runbook_step_edit", "runbook_step_rm", "runbook_step_move", "runbook_step_list",
-        # runbook run
         "runbook_run_start", "runbook_run_list", "runbook_run_show", "runbook_run_done",
         "runbook_run_skip", "runbook_run_fail", "runbook_run_finish",
-        # ledger
         "ledger_add", "ledger_edit", "ledger_rm", "ledger_show", "ledger_list",
         "ledger_search", "ledger_activate", "ledger_archive", "ledger_comment", "ledger_sync",
-        # ledger row
         "ledger_row_set", "ledger_row_rm", "ledger_row_list",
-        # investigation
         "investigation_open", "investigation_list", "investigation_show", "investigation_append",
         "investigation_entry_list",
         "investigation_finding_add", "investigation_finding_edit", "investigation_finding_clear",
@@ -171,67 +91,51 @@ CC_NOTES_TOOLS = frozenset(
         "investigation_exonerate", "investigation_abandon", "investigation_reopen",
         "investigation_edit", "investigation_search", "investigation_rm",
         "investigation_follow_up", "investigation_supersede",
-        # plan
         "plan_add", "plan_edit", "plan_rm", "plan_show", "plan_list", "plan_search",
         "plan_approve", "plan_start", "plan_reopen", "plan_done", "plan_abandon",
         "plan_comment", "plan_supersede",
     }
 )
 
-# The deepest CLI command path is three tokens (e.g. task criterion met, runbook run start).
 _MAX_DEPTH = 3
 
-# CLI paths whose MCP tool name is not the underscore-join of the argv: an alias verb, or a
-# noun-scoped verb mapping to a global tool. Applied after hyphen canonicalization.
 _TOOL_PATH_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
     ("investigation", "add"): ("investigation", "open"),
     ("investigation", "history"): ("history",),
 }
 
 
-def _strip_wrappers(tokens: list[str]) -> list[str]:
-    """Drop leading env/command wrapper tokens (and env's VAR=val assignments) to reach the command."""
-    i = 0
-    while i < len(tokens) and os.path.basename(tokens[i]) in WRAPPER_EXECUTABLES:
-        i += 1
-        while i < len(tokens) and "=" in tokens[i] and not tokens[i].startswith("-"):
-            i += 1
-    return tokens[i:]
-
-
-def _canonical_tokens(tokens: list[str]) -> list[str]:
-    """Rewrite an argv token path to its MCP command path: hyphens to underscores (`root-cause` ->
-    `root_cause`), then an alias/global substitution on the leading tokens."""
+def _tool_name(tokens: list[str]) -> str:
     canon = [tok.replace("-", "_") for tok in tokens]
     for src, dst in _TOOL_PATH_ALIASES.items():
         if tuple(canon[: len(src)]) == src:
-            return [*dst, *canon[len(src) :]]
-    return canon
-
-
-def mapped_tool(args: list[str]) -> str | None:
-    """The MCP tool name for a cc-notes subcommand argv, by longest-prefix match of its leading tokens."""
-    tokens: list[str] = []
-    for arg in args:
-        if arg.startswith("-"):
+            canon = [*dst, *canon[len(src) :]]
             break
-        tokens.append(arg)
-    tokens = _canonical_tokens(tokens)
-    for depth in range(min(len(tokens), _MAX_DEPTH), 0, -1):
-        name = "_".join(tokens[:depth])
-        if name in CC_NOTES_TOOLS:
-            return name
-    return None
+    return "_".join(canon)
+
+
+def resolve_cli_tool(args: Sequence[str]) -> tuple[str, int] | None:
+    tokens = list(takewhile(lambda arg: not arg.startswith("-"), args))
+    return next(
+        (
+            (name, depth)
+            for depth in range(min(len(tokens), _MAX_DEPTH), 0, -1)
+            if (name := _tool_name(tokens[:depth])) in CC_NOTES_TOOLS
+        ),
+        None,
+    )
+
+
+def mapped_tool(args: Sequence[str]) -> str | None:
+    resolved = resolve_cli_tool(args)
+    return resolved[0] if resolved else None
 
 
 def run_cc_notes(evt: BaseHookEvent, *args: str) -> str | None:
-    # Fails closed to None (throw=False) on any subprocess failure so a handler stays
-    # silent rather than crashing the hook fire.
     return evt.ctx.call_cli(["cc-notes", *args], timeout=10, throw=False)
 
 
 def json_field(out: str | None, key: str) -> str:
-    """Read one string field off a ``--json`` object payload, "" when absent or unparseable."""
     if not out or not out.strip():
         return ""
     try:
@@ -242,11 +146,6 @@ def json_field(out: str | None, key: str) -> str:
 
 
 def tool_output(evt: BaseHookEvent) -> str:
-    """The tool's response as searchable text.
-
-    A structured response arrives as a dict, and every caller feeds this to a regex, so a
-    non-string is rendered as JSON rather than returned raw.
-    """
     response = getattr(evt, "tool_response", None)
     if not response:
         return ""
@@ -254,12 +153,6 @@ def tool_output(evt: BaseHookEvent) -> str:
 
 
 def clamp_title(title: str, max_bytes: int = MAX_TITLE_BYTES) -> str:
-    """Clamp ``title`` to at most ``max_bytes`` UTF-8 bytes on a rune boundary.
-
-    Truncating the encoded bytes then decoding with ``errors="ignore"`` drops a
-    partial trailing rune, so the result never exceeds the cap and never splits a
-    character.
-    """
     encoded = title.encode()
     if len(encoded) <= max_bytes:
         return title
@@ -308,7 +201,6 @@ def parse_tasks(out: str | None) -> list[dict[str, Any]]:
 
 
 def parse_status(out: str | None) -> dict[str, Any]:
-    """Parse `cc-notes status --json` into its mapping, or {} when absent or malformed."""
     if not out or not out.strip():
         return {}
     try:
@@ -319,7 +211,6 @@ def parse_status(out: str | None) -> dict[str, Any]:
 
 
 def status_tasks(report: dict[str, Any], key: str) -> list[dict[str, Any]]:
-    """The task rows under one status bucket (``backlog``, ``your_branch``), ill-shaped rows dropped."""
     rows = report.get(key)
     if not isinstance(rows, list):
         return []
@@ -327,7 +218,6 @@ def status_tasks(report: dict[str, Any], key: str) -> list[dict[str, Any]]:
 
 
 def stale_leases(report: dict[str, Any]) -> list[dict[str, Any]]:
-    """The in-progress tasks across every assignee whose lease has expired — stealable work."""
     leases: list[dict[str, Any]] = []
     groups = report.get("in_progress")
     if not isinstance(groups, list):
@@ -347,7 +237,6 @@ def short_id(full: str) -> str:
 
 
 def clip(text: str, limit: int) -> str:
-    """``text`` cut to at most ``limit`` characters, an ellipsis marking the cut."""
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
@@ -356,11 +245,6 @@ def utf8_len(text: str) -> int:
 
 
 def ids_match(a: str, b: str) -> bool:
-    """Whether two cc-notes id spellings name the same entity.
-
-    Ids resolve by unique prefix, so a stored full id and a short prefix (or the
-    reverse) are the same record.
-    """
     return a == b or a.startswith(b) or b.startswith(a)
 
 
@@ -377,8 +261,6 @@ def render_note_lines(entries: list[dict[str, Any]]) -> list[str]:
 
 
 def drift_suffix(payload: dict[str, Any]) -> str:
-    """The reconciliation context behind a drift verdict: why it was retired, and the
-    commit it was last checked against — the diff base for what changed under it."""
     parts = []
     if reason := payload.get("stale_reason"):
         parts.append(f"reason: {reason}")
@@ -457,7 +339,6 @@ def render_plan_line(entry: dict[str, Any]) -> str:
 
 
 def answer_question(answer: dict[str, Any]) -> str:
-    """The full question text: the body's ``Question:`` line when the title was clamped, else the title."""
     for line in answer.get("body", "").split("\n")[1:]:
         if line.startswith("Question: "):
             return line.removeprefix("Question: ")
@@ -465,7 +346,6 @@ def answer_question(answer: dict[str, Any]) -> str:
 
 
 def answer_text(answer: dict[str, Any]) -> str:
-    """The chosen answer on one line: every body line before the first metadata line, joined by " / "."""
     chosen: list[str] = []
     for line in answer.get("body", "").split("\n"):
         if line.startswith(ANSWER_METADATA_PREFIXES):
@@ -475,7 +355,6 @@ def answer_text(answer: dict[str, Any]) -> str:
 
 
 def answer_line(answer: dict[str, Any]) -> str:
-    """One answer as ``<short id> <question> → <answer>``."""
     return f"{short_id(answer.get('id', ''))} {answer_question(answer)} → {answer_text(answer)}"
 
 
@@ -490,35 +369,24 @@ def render_answer_line(entry: dict[str, Any]) -> str:
 
 
 def parse_answers(out: str | None) -> list[dict[str, Any]]:
-    """Parse `cc-notes answer list --json` into its summary rows, id-less rows dropped."""
     return [a for a in parse_tasks(out) if isinstance(a.get("id"), str) and a["id"]]
 
 
 def durable_answers(evt: BaseHookEvent) -> list[dict[str, Any]]:
-    """The most recently updated live ``scope:durable`` answers not flagged expired, newest first."""
     out = run_cc_notes(evt, "answer", "list", "--json", "--label", "scope:durable", "--limit", str(ANSWER_CANDIDATE_LIMIT))
     return [a for a in parse_answers(out) if not a.get("stale_at")]
 
 
 def unseen_answers(evt: BaseHookEvent, answers: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The answers not yet captured or surfaced this session, without marking any of them seen."""
     seen = set(evt.ctx.s.load(SeenKeys).seen.get(ANSWERS_SCOPE, []))
     return [a for a in answers if a["id"] not in seen]
 
 
 def remember_answers(evt: BaseHookEvent, answers: list[dict[str, Any]]) -> list[str]:
-    """Mark ``answers`` seen and ledger their lines for the compact restore; the rendered lines."""
     return remember_answer_lines(evt, {a["id"]: answer_line(a) for a in answers})
 
 
 def remember_answer_lines(evt: BaseHookEvent, lines: dict[str, str]) -> list[str]:
-    """Mark the answers ``lines`` renders seen and ledger them for the compact restore; the newly marked lines.
-
-    The line-keyed door in, for a caller holding rendered lines rather than the records behind
-    them — the prompt float, which reads what a background pick staged and can hold an answer
-    another trigger surfaced in the meantime. Only what this call marks comes back, so no caller
-    renders an answer twice.
-    """
     fresh = {aid: lines[aid] for aid in evt.ctx.s.unseen(list(lines), scope=ANSWERS_SCOPE)}
     with evt.ctx.s[SessionAnswers].mutate() as state:
         state.lines.update(fresh)
@@ -536,21 +404,7 @@ def render_task_line(task: dict[str, Any]) -> str:
     return line
 
 
-def render_steal_line(task: dict[str, Any], *, mcp: bool) -> str:
-    """Render one expired lease as a summary line ending in the reclaim call."""
-    short = short_id(task.get("id", ""))
-    reclaim = f"task_claim tool with id={short}, steal=true" if mcp else f"cc-notes task claim {short} --steal"
-    return f"{render_task_line(task)} — lease expired, {reclaim}"
-
-
 def dedup_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop tasks whose id already appeared, keeping the first occurrence in order.
-
-    The session floater concatenates the status report's buckets, and a task can sit in
-    more than one — an expired lease on the current branch is both a stale lease and a
-    your-branch row. First occurrence wins, so the steal-hinted rendering survives. Tasks
-    carrying no id are never collapsed.
-    """
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     for task in tasks:
@@ -564,8 +418,6 @@ def dedup_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def cap_lines(lines: list[str], cap: int, more_tail: str) -> list[str]:
-    # more_tail follows the caller's branch (MCP tool vs CLI wording) so the "+N more"
-    # overflow line steers to the same surface as the lede, not always `cc-notes status`.
     if not lines:
         return []
     capped = lines[:cap]
@@ -574,23 +426,12 @@ def cap_lines(lines: list[str], cap: int, more_tail: str) -> list[str]:
     return capped
 
 
-def cap_and_render_tasks(tasks: list[dict[str, Any]], cap: int, more_tail: str) -> list[str]:
-    return cap_lines([render_task_line(t) for t in tasks], cap, more_tail)
-
-
 def repo_root(path: str) -> str | None:
-    """The nearest ancestor of ``path`` holding a ``.git`` dir or file, found by stat alone; None outside any repository."""
     resolved = Path(path).expanduser().resolve()
     return next((str(d) for d in (resolved, *resolved.parents) if (d / ".git").exists()), None)
 
 
 def git_relative(target: str, root: str) -> str | None:
-    """``target`` spelled as the root-relative path git records, or None when its directory is missing or outside ``root``.
-
-    Symlinks resolve in the directories above the target but never in its own name, containment is
-    decided by file identity rather than spelling, and each component takes its directory entry's own
-    case. The Go ``gitRelative`` in notes/relevant.go implements the same contract.
-    """
     parent = os.path.realpath(os.path.dirname(target))
     if not os.path.isdir(parent):
         return None
@@ -621,115 +462,19 @@ def _entry_name(directory: str, name: str) -> str:
 
 
 def in_cc_pool_memory(path: Path) -> bool:
-    # The mirror owns the cc-pool memory tree, so the advisory record-router excludes it.
-    # Deliberately broader than MemoryWrite: the whole tree is the mirror's domain.
     return ".cc-pool" in path.parts and path.parent.name == "memory"
 
 
-def record_command(kind: str, title: str, when: str, area: str, *, mcp: bool = False) -> list[str]:
-    # A log takes no body at creation — `log add` opens the journal and `log append`
-    # grows it — so it renders as two lines; the others are a single `add`. With the MCP
-    # server active, the whole surface is tool calls: the body param carries the content,
-    # so there is no checkout buffer or stdin.
-    if mcp:
-        dir_arg = f', dirs=["{area}"]' if area and area != "." else ""
-        if kind == "doc":
-            return [
-                f'call the doc_add tool: title="{title}", when="{when}"{dir_arg}, and the FULL markdown guidance as the body param (no scratch file — the body lives in the record; use the attach param for artifact files).'
-            ]
-        if kind == "log":
-            return [
-                f'call the log_add tool (title="{title}"{dir_arg}) to open the journal, then the log_append tool once per entry.'
-            ]
-        if kind == "task":
-            return [
-                f'call the task_add tool: title="{title}", criteria=["<how to verify it is done>"] (backlog=true if any agent should be able to claim it; no_validation_criteria=true only when acceptance genuinely cannot be stated).'
-            ]
-        if kind == "papercut":
-            return ['call the papercut tool: body="<one-paragraph complaint>".']
-        return [f'call the note_add tool: title="{title}"{dir_arg}, with the fact as the body param.']
-    dir_flag = f" --dir {area}" if area and area != "." else ""
-    if kind == "doc":
-        return [
-            f'p=$(cc-notes doc add "{title}" --checkout --when "{when}"{dir_flag})   # a prefilled buffer to write the body into',
-            'cc-notes doc add --apply "$p"   # after writing the full body into $p, below the frontmatter',
-            f'# short body? cc-notes doc add "{title}" --when "{when}"{dir_flag} --body - reads it from stdin',
-        ]
-    if kind == "log":
-        return [
-            f'cc-notes log add "{title}"{dir_flag}',
-            "cc-notes log append <id>   # then add the chronology one entry at a time",
-        ]
-    if kind == "task":
-        return [
-            f'cc-notes task add "{title}" --criterion "<how to verify it is done>"   # --backlog if shared; --no-validation-criteria only when acceptance cannot be stated'
-        ]
-    if kind == "papercut":
-        return ['cc-notes papercut "<one-paragraph complaint>"']
-    return [f'cc-notes note add "{title}"{dir_flag} --body -']
+def record_command(kind: str) -> str:
+    return "cc-notes papercut" if kind == "papercut" else f"cc-notes {kind} add"
 
 
-def mcp_active(evt: BaseHookEvent) -> bool:
-    """Whether the cc-notes MCP server is serving this repo — for nudge WORDING only.
-
-    Best-effort and a pure function of the event's real session/marker state. A wrong
-    answer only mis-words a teaching hint and never changes whether a handler fires, so
-    this is called inside handler bodies, never in a condition. True when a cc-notes MCP
-    tool call flipped the session flag this session, or when a live liveness marker sits
-    under the repo's git common dir; outside a git repo, False.
-    """
-    return _mcp_session_flag(evt) or _mcp_marker_live(evt)
-
-
-def _mcp_session_flag(evt: BaseHookEvent) -> bool:
-    try:
-        return evt.ctx.s.load(McpActive).active
-    except Exception:
-        return False
-
-
-def _mcp_marker_live(evt: BaseHookEvent) -> bool:
-    try:
-        common_dir = evt.ctx.git("rev-parse", "--path-format=absolute", "--git-common-dir")
-    except (subprocess.SubprocessError, OSError):
-        return False  # git hung or errored — the best-effort probe degrades to inactive
-    if not common_dir or not common_dir.strip():
-        return False
-    mcp_dir = Path(common_dir.strip()) / "cc-notes" / "mcp"
-    try:
-        markers = list(mcp_dir.glob("*.json"))
-    except OSError:
-        return False
-    return any(_marker_pid_alive(m) for m in markers)
-
-
-def _marker_pid_alive(marker: Path) -> bool:
-    try:
-        pid = json.loads(marker.read_text(encoding="utf-8")).get("pid")
-    except (OSError, ValueError, AttributeError, RecursionError):
-        return False  # a foreign/corrupt marker skips this one, never aborting the sibling scan
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)  # signal 0 probes liveness only — it never signals the process
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # a live process we do not own (EPERM)
-    except (OSError, OverflowError):
-        return False  # OverflowError: a foreign marker's out-of-range pid — never crash the probe
-    return True
-
-
-class CcNotesMcpToolCall(CustomCondition):
-    """Matches a PostToolUse for any cc-notes MCP server tool, by name prefix."""
-
-    def check(self, evt: BaseHookEvent) -> bool:
-        return bool(evt.tool_name) and evt.tool_name.startswith(MCP_TOOL_PREFIX)
+def render_steal_line(task: dict[str, Any]) -> str:
+    reclaim = f"cc-notes task claim {short_id(task.get('id', ''))} --steal"
+    return f"{render_task_line(task)} — lease expired, {reclaim}"
 
 
 class AnswerFileSurfacing(CustomCondition):
-    """Matches when the repo opted into surfacing answers on file read/edit via ``cc-notes.answers.fileSurfacing``."""
 
     def check(self, evt: BaseHookEvent) -> bool:
         try:
@@ -740,21 +485,18 @@ class AnswerFileSurfacing(CustomCondition):
 
 
 class CcNotesAvailable(CustomCondition):
-    """Matches whenever the ``cc-notes`` binary resolves on PATH."""
 
     def check(self, evt: BaseHookEvent) -> bool:
         return shutil.which("cc-notes") is not None
 
 
 class CcNotesMissing(CustomCondition):
-    """Matches whenever the ``cc-notes`` binary does NOT resolve on PATH."""
 
     def check(self, evt: BaseHookEvent) -> bool:
         return shutil.which("cc-notes") is None
 
 
 class ManyNativeTasks(CustomCondition):
-    """Matches when the session is carrying enough open native tasks to look durable."""
 
     def check(self, evt: BaseHookEvent) -> bool:
         return len(evt.tasks.open) >= NATIVE_TASK_MIRROR_THRESHOLD

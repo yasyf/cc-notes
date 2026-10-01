@@ -1,4 +1,3 @@
-"""Surface (pull) direction: recall durable records anchored to a touched file, LLM-filter, float."""
 
 from __future__ import annotations
 
@@ -24,7 +23,6 @@ from .common import (
     entry_payload,
     filter_drifted,
     git_relative,
-    mcp_active,
     parse_relevant,
     remember_answers,
     render_note_lines,
@@ -78,7 +76,6 @@ def unseen_entries(evt: PostToolUseEvent, entries: list[dict[str, Any]], *, scop
 
 
 def file_surfaced(evt: PostToolUseEvent, out: str | None) -> list[dict[str, Any]]:
-    """The top :data:`RELEVANT_LIMIT` of an uncapped ``relevant`` listing once answers are dropped: every answer unless the repo opted into file surfacing for them, and expired ones always."""
     entries = parse_relevant(out)
     if any(entry_kind(e) == "answer" for e in entries):
         surfacing = AnswerFileSurfacing().check(evt)
@@ -92,7 +89,6 @@ def remember_surfaced_answers(evt: PostToolUseEvent, entries: list[dict[str, Any
 
 
 def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touched: str) -> list[dict[str, Any]]:
-    """Pick which freshly-recalled records to surface, biased toward surfacing."""
     if len(fresh) <= 1:
         return fresh
     lines = {entry_payload(e)["id"]: render_note_lines([e])[0] for e in fresh}
@@ -104,17 +100,12 @@ def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touche
         .context("candidates", "\n".join(f"{eid}\t{line}" for eid, line in lines.items()))
         .ask("Which candidate ids are worth surfacing now? Keep all but the clearly irrelevant.")
     )
-    try:
-        pick = evt.ctx.call_llm(prompt, response_model=SurfacePick, model="small", agent=False, transcript=False)
-    except Exception:
-        # Fail OPEN: a recall-side filter that errors must show everything, never hide context.
-        return fresh
+    pick = evt.ctx.call_llm(prompt, response_model=SurfacePick, model="small", agent=False, transcript=False)
     chosen = set(pick.ids) & set(lines)
     return [e for e in fresh if entry_payload(e)["id"] in chosen]
 
 
 def recall_note_context(evt: PostToolUseEvent) -> HookResult | None:
-    """The top-ranked durable records relevant to a freshly read file, once per id per session, with no model call."""
     if not (path := repo_path(evt)):
         return None
     entries = file_surfaced(evt, run_cc_notes(evt, "relevant", path, "--limit", "0", "--json"))
@@ -123,8 +114,7 @@ def recall_note_context(evt: PostToolUseEvent) -> HookResult | None:
         return None
     remember_surfaced_answers(evt, fresh)
     return evt.warn(
-        f"You read {evt.file} — durable cc-notes records you should know "
-        "(git-synced context, never in the working tree):",
+        f"Durable cc-notes records anchored to {evt.file}; read them before relying on it:",
         *render_note_lines(fresh),
     )
 
@@ -134,28 +124,18 @@ def recall_note_context(evt: PostToolUseEvent) -> HookResult | None:
     only_if=[Tool("Read"), CcNotesAvailable()],
     async_=True,
     tests={
-        # A non-Read tool never matches the Tool gate. The firing path needs a stubbed
-        # CLI, so it lives in tests/test_cc_notes.py.
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
 def float_note_context(evt: PostToolUseEvent) -> None:
-    """Recall the records anchored to a freshly read file in the background; the next event floats them.
-
-    ``cc-notes relevant`` is a subprocess, and a PostToolUse hook holds the tool result until it
-    returns, so the recall runs after that result has gone back.
-    """
     defer(evt, recall_note_context(evt))
 
 
 def recall_stale_notes(evt: PostToolUseEvent) -> HookResult | None:
-    """The drifted records anchored to a path an edit just touched, for reconciliation."""
     if not (path := repo_path(evt)):
         return None
     entries = file_surfaced(evt, run_cc_notes(evt, "relevant", path, "--attached", "--worktree", "--limit", "0", "--json"))
     drifted = filter_drifted(entries)
-    # Distinct `stale` dedup-scope (vs `floated`) so a read-time float never suppresses the
-    # edit-time warning for the same id.
     fresh = unseen_entries(evt, drifted, scope="stale")
     if not fresh:
         return None
@@ -163,25 +143,10 @@ def recall_stale_notes(evt: PostToolUseEvent) -> HookResult | None:
     if not picked:
         return None
     remember_surfaced_answers(evt, picked)
-    if mcp_active(evt):
-        guidance = (
-            f"You edited {evt.file} — durable cc-notes records anchored here look out of date. "
-            "Reconcile each against its kind with the MCP tools: re-confirm it against HEAD "
-            "(note_verify / doc_verify / answer_verify), revise it (note_edit / doc_edit / answer_edit — "
-            "pass the full new text as the body param), replace it (note_supersede / doc_supersede / "
-            "answer_supersede), or flag it out-of-date (note_expire / doc_expire / answer_expire)."
-        )
-    else:
-        guidance = (
-            f"You edited {evt.file} — durable cc-notes records anchored here look out of date. "
-            "Reconcile each against its kind — `verify <id>` to re-confirm it against HEAD, `edit <id>` "
-            "to revise it, `supersede <old> --by <new>` to replace it, or `expire <id>` to flag it "
-            "out-of-date: for a note use `cc-notes note verify/edit/supersede/expire`, "
-            "for a doc use `cc-notes doc verify/edit/supersede/expire`, for an answer use "
-            "`cc-notes answer verify/edit/supersede/expire`. To revise a long "
-            "record with your file tools, `edit <id> --checkout` writes it to a file and "
-            "`--apply` commits the change."
-        )
+    guidance = (
+        f"You edited {evt.file}; the cc-notes records below look out of date. "
+        "Reconcile each with `cc-notes <kind> verify <id>`, or `edit <id>` it if it changed."
+    )
     return evt.warn(guidance, *render_note_lines(picked))
 
 
@@ -190,15 +155,8 @@ def recall_stale_notes(evt: PostToolUseEvent) -> HookResult | None:
     only_if=[Tool("Edit|Write|MultiEdit"), CcNotesAvailable()],
     async_=True,
     tests={
-        # A Read never matches the Edit|Write|MultiEdit gate. The firing path needs a
-        # stubbed CLI, so it lives in tests/test_cc_notes.py.
         Input(tool="Read", file="m.py"): Allow(),
     },
 )
 def check_note_staleness(evt: PostToolUseEvent) -> None:
-    """Recall the drifted records anchored to a freshly edited file in the background; the next event floats them.
-
-    The recall is a ``cc-notes relevant`` subprocess and the filter over it is a small-model call,
-    both of which a PostToolUse hook would otherwise hold the tool result through.
-    """
     defer(evt, recall_stale_notes(evt))

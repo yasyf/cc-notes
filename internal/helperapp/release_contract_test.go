@@ -5,7 +5,6 @@ package helperapp
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -429,7 +428,7 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 		"cc-notes-helper-${VERSION}",
 	)
 	assertFileExcludes(
-		t, filepath.Join(root, "plugin", "hooks", "ensure-cc-notes.sh"),
+		t, filepath.Join(root, "plugin", "capt-hook", "hooks", "bootstrap.py"),
 		"CCNotesHelper.app", "cc-notes-helper-", "/"+"Applications/",
 	)
 	for _, path := range []string{
@@ -442,48 +441,14 @@ func TestReleasePackagesHelperWithoutPublishingRuntimeCask(t *testing.T) {
 
 func TestPluginBootstrapEnforcesV055WithoutInstallingService(t *testing.T) {
 	root := filepath.Join("..", "..")
-	hook := filepath.Join(root, "plugin", "hooks", "hooks.json")
-	script := filepath.Join(root, "plugin", "hooks", "ensure-cc-notes.sh")
-	assertFileContains(t, hook, `sh \"${CLAUDE_PLUGIN_ROOT}/hooks/ensure-cc-notes.sh\"`)
+	assertPathAbsent(t, filepath.Join(root, "plugin", "hooks"))
+	bootstrap := filepath.Join(root, "plugin", "capt-hook", "hooks", "bootstrap.py")
 	assertFileContains(
-		t, script,
-		`($2 + 0) >= 55`,
+		t, bootstrap,
+		"MIN_VERSION = (0, 55, 0)",
 		"https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh",
 	)
-	assertFileExcludes(t, script, "service install", "service uninstall", "cc-notes init")
-	assertFileContains(
-		t, filepath.Join(root, "plugin", "capt-hook", "hooks", "bootstrap.py"),
-		"MIN_VERSION = (0, 55, 0)",
-	)
-
-	bin := t.TempDir()
-	marker := filepath.Join(t.TempDir(), "installed")
-	writeExecutable(t, filepath.Join(bin, "cc-notes"), "#!/bin/sh\nprintf '%s\\n' \"$TEST_VERSION\"\n")
-	writeExecutable(t, filepath.Join(bin, "curl"), "#!/bin/sh\n: > \"$INSTALL_MARKER\"\nprintf ':\\n'\n")
-	run := func(version string) {
-		t.Helper()
-		cmd := exec.Command("sh", script)
-		cmd.Env = append(
-			os.Environ(),
-			"PATH="+bin+":/usr/bin:/bin",
-			"TEST_VERSION="+version,
-			"INSTALL_MARKER="+marker,
-		)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("bootstrap %s: %v: %s", version, err, output)
-		}
-	}
-	run("v0.54.0")
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("v0.54.0 did not trigger binary upgrade: %v", err)
-	}
-	if err := os.Remove(marker); err != nil {
-		t.Fatal(err)
-	}
-	run("v0.55.0")
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("v0.55.0 unexpectedly triggered binary upgrade: %v", err)
-	}
+	assertFileExcludes(t, bootstrap, "service install", "service uninstall", "cc-notes init")
 }
 
 func TestHookCIUsesOneExactCaptainHookRelease(t *testing.T) {
@@ -506,13 +471,6 @@ func TestHookCIUsesOneExactCaptainHookRelease(t *testing.T) {
 		filepath.Join(root, "plugin", "capt-hook", "hooks", "tests", "test_cc_notes.py"),
 		`# dependencies = ["capt-hook==12.46.1", "pydantic>=2"]`,
 	)
-}
-
-func writeExecutable(t *testing.T, path, body string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func assertFileContains(t *testing.T, path string, fragments ...string) {
