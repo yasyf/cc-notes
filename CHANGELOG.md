@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.4] - 2026-10-01
+
+### Fixed
+- **A repository provision reports why the helper's source fleet is stuck.**
+  cc-notes repins to fusekit v1.20.1. When the helper had published a desired
+  source fleet that its topology controller never applied, every later
+  `cc-notes init` failed its provisioning with `desired source fleet changed
+  during every bounded CAS attempt`, although nothing had changed. Provisioning
+  now waits up to 30 seconds for the pending fleet to apply. If it does not, it
+  fails with `desired source fleet generation N is not applied` and the
+  controller's own error. The helper also writes that error to `holder.log`
+  when the controller fails.
+
 ## [0.63.3] - 2026-09-29
 
 ### Added
