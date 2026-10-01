@@ -55,6 +55,7 @@ from hooks.common import (
     clamp_title,
     COMPACT_ANSWER_BUDGET,
     COMPACT_DIGEST_BUDGET,
+    COMPACT_RESTORE_BUDGET,
     dedup_tasks,
     drift_suffix,
     entry_payload,
@@ -5975,11 +5976,11 @@ def test_restore_answers_after_compact(monkeypatch, tmp_path) -> None:
     check("answer restore: forty short answers all fit as full lines", all(f"Q{i}? → A" in listed for i in range(40)), listed)
 
 
-def budget_rows(title: str) -> list[dict]:
+def budget_rows(title: str, durable: int = 50) -> list[dict]:
     long_body = "release everything as it merges " * 40
     return [
-        durable_answer(f"dur{i:04d}aaaa", title=f"Durable question {i}? {title}", body=long_body) | {"updated_at": f"2026-09-{1 + i % 28:02d}T{i % 24:02d}:{i:02d}:00Z"}
-        for i in range(50)
+        durable_answer(f"dur{i:04d}aaaa", title=f"Durable question {i}? {title}", body=long_body) | {"updated_at": f"2026-09-{1 + i % 28:02d}T{i % 24:02d}:{i % 60:02d}:{i // 60:02d}Z"}
+        for i in range(durable)
     ] + [
         durable_answer(f"eph{i:04d}bbbb", title=f"Ephemeral pick {i}?", body="now") | {"tags": ["scope:ephemeral"], "updated_at": "2026-09-30T23:59:59Z"}
         for i in range(10)
@@ -6010,14 +6011,23 @@ def test_restore_answers_after_compact_fits_the_budget(monkeypatch, tmp_path) ->
     check("answer budget: nothing silently dropped", len(named) + tail == len(rows), f"{len(named)} named + {tail} counted")
 
 
-def test_restore_answers_after_compact_never_drops_durable_titles(monkeypatch, tmp_path) -> None:
-    """Durable titles past the budget all still print, unclipped and without excerpts; ephemeral answers are only counted."""
-    rows = budget_rows("y" * 200)
-    lines = restored_lines(monkeypatch, tmp_path, rows)
-    message = "\n".join(lines)
-    check("durable titles: past the budget", len(message.encode()) > COMPACT_ANSWER_BUDGET, str(len(message.encode())))
-    check("durable titles: every durable title in full", all(f"{r['id'][:7]} {r['title']}" in lines for r in rows[:50]), message)
-    check("durable titles: ephemeral answers counted", "eph" not in message and lines[-1] == "+10 more answers", lines[-1])
+def test_compact_restores_stay_inside_the_total_budget(monkeypatch, tmp_path) -> None:
+    """At 120 long durable titles both compact restores together stay inside COMPACT_RESTORE_BUDGET; unfit titles are counted, never clipped."""
+    rows = budget_rows("y" * 200, durable=120)
+    evt = restore_event(monkeypatch, tmp_path, rows)
+    with evt.ctx.s[SessionAnswers].mutate() as state:
+        state.lines = {row["id"]: "stale" for row in rows}
+    _seed_touched(evt, [TouchedEntity(id=f"id{i:05d}", kind="note", title="t" * 250, verbs=["read"], seq=i) for i in range(POINTER_CAP)])
+    monkeypatch.setattr(compact.shutil, "which", lambda _n: None)
+    answers = restore_answers_after_compact(evt).message
+    total = "\n\n".join([answers, restore_after_compact(evt).message])
+    lines = answers.split("\n")
+    durable = sorted(rows[:120], key=lambda r: r["updated_at"], reverse=True)
+    shown = [line for line in lines[1:] if line.startswith("dur")]
+    check("total budget: both restores inside COMPACT_RESTORE_BUDGET", len(total.encode()) <= COMPACT_RESTORE_BUDGET, str(len(total.encode())))
+    check("total budget: kept titles are the newest, in full", 0 < len(shown) < 120 and all(line == f"{r['id'][:7]} {r['title']}" for line, r in zip(shown, durable)), answers)
+    check("total budget: unfit durable titles counted with a pointer", f"+{120 - len(shown)} more durable answers: `cc-notes answer list --label scope:durable`, or the drive's handoff doc" in lines, answers)
+    check("total budget: ephemeral answers counted", "eph" not in answers and lines[-1] == "+10 more answers", lines[-1])
 
 
 def test_restore_answers_after_compact_refreshes_ledger(monkeypatch, tmp_path) -> None:
