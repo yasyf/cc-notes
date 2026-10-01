@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,8 +193,11 @@ func TestRelevantInputsAuditConfig(t *testing.T) {
 func TestRelevantCachedRefusesACaptureWhoseGuardMoved(t *testing.T) {
 	c, dir := newWBClient(t)
 	ctx := t.Context()
-	gittest.Git(t, dir, "config", "include.path", "extra.inc")
+	gittest.Git(t, dir, "config", "include.path", "inc/extra.inc")
 	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	if err := os.Mkdir(filepath.Join(c.s.CommonDir(), "inc"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}}}); err != nil {
 		t.Fatalf("CreateNote: %v", err)
 	}
@@ -208,7 +212,7 @@ func TestRelevantCachedRefusesACaptureWhoseGuardMoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("REAL_GIT", realGit)
-	t.Setenv("RELEVANT_GUARD_TOUCH", filepath.Join(c.s.CommonDir(), "extra.inc"))
+	t.Setenv("RELEVANT_GUARD_TOUCH", filepath.Join(c.s.CommonDir(), "inc", "extra.inc"))
 	t.Setenv("PATH", wrapper+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	render := func(entries []RelevantEntry) ([]byte, error) { return json.Marshal(entries) }
@@ -288,4 +292,98 @@ func TestRelevantCachedIgnoresAGitConfigOverride(t *testing.T) {
 	if string(got) != string(want) {
 		t.Fatalf("cached answer differs from a fresh one\ncached %s\nfresh  %s", got, want)
 	}
+}
+
+func TestRelevantCachedDetachedHeadKeysOnTheResolvedBranch(t *testing.T) {
+	defer SetRelevantRacyWindow(0)()
+	c, dir := newWBClient(t)
+	ctx := t.Context()
+	emptyCommit := func(message string) string {
+		t.Helper()
+		gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", message)
+		return gittest.Git(t, dir, "rev-parse", "HEAD")
+	}
+	root := emptyCommit("root")
+	gittest.Git(t, dir, "checkout", "-q", "-b", "feat")
+	feat := emptyCommit("feat")
+	gittest.Git(t, dir, "update-ref", "refs/remotes/origin/main", root)
+	gittest.Git(t, dir, "update-ref", "refs/remotes/origin/other", root)
+	gittest.Git(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	gittest.Git(t, dir, "checkout", "-q", "--detach", "feat")
+	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}, Branches: []string{"feat"}}}); err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := t.TempDir()
+	logPath := filepath.Join(wrapper, "git.log")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$RELEVANT_DETACHED_LOG\"\nexec \"$REAL_GIT\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(wrapper, "git"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("RELEVANT_DETACHED_LOG", logPath)
+	t.Setenv("PATH", wrapper+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	renders := 0
+	render := func(entries []RelevantEntry) ([]byte, error) {
+		renders++
+		return json.Marshal(entries)
+	}
+	step := func(name, want string) {
+		t.Helper()
+		if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before := renders
+		got, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render)
+		if err != nil {
+			t.Fatalf("%s: RelevantCached: %v", name, err)
+		}
+		log, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls := strings.Count(string(log), "\n")
+		tier := "tier2"
+		switch {
+		case renders > before:
+			tier = "tier3"
+		case calls == 0:
+			tier = "tier1"
+		}
+		if tier != want {
+			t.Fatalf("%s: %s (git calls %d, rendered %t), want %s\n%s", name, tier, calls, renders > before, want, log)
+		}
+		fresh, err := c.Relevant(ctx, "svc/handler.go", RelevantFilter{})
+		if err != nil {
+			t.Fatalf("%s: Relevant: %v", name, err)
+		}
+		wantOut, err := json.Marshal(fresh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(wantOut) {
+			t.Fatalf("%s: cached answer differs from a fresh one\ncached %s\nfresh  %s", name, got, wantOut)
+		}
+	}
+
+	step("cold", "tier3")
+	step("warm", "tier1")
+	gittest.Git(t, dir, "update-ref", "refs/heads/unrelated", root)
+	step("an unrelated bookmark moved while detached", "tier2")
+	step("warm after the unrelated bookmark", "tier1")
+	gittest.Git(t, dir, "update-ref", "refs/remotes/origin/other", feat)
+	step("a fetch that moved only a non-trunk remote branch", "tier1")
+	gittest.Git(t, dir, "update-ref", "refs/heads/main", feat)
+	step("trunk moved onto the bookmark", "tier3")
+	step("warm after the trunk move", "tier1")
+	gittest.Git(t, dir, "update-ref", "refs/heads/main", root)
+	step("trunk moved back", "tier3")
+	gittest.Git(t, dir, "update-ref", "refs/heads/feat2", feat)
+	step("a second bookmark made the nearest one ambiguous", "tier3")
+	step("warm after the ambiguity", "tier1")
 }

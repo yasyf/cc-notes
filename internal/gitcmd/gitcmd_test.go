@@ -964,7 +964,7 @@ func TestDirs(t *testing.T) {
 	}
 	wantCommon := filepath.Join(normalize(g.Dir), ".git")
 
-	gitDir, commonDir, err := g.Dirs(ctx)
+	gitDir, commonDir, _, err := g.Dirs(ctx)
 	if err != nil {
 		t.Fatalf("dirs: %v", err)
 	}
@@ -980,7 +980,7 @@ func TestDirs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("relative repo path: %v", err)
 	}
-	relativeGitDir, relativeCommonDir, err := (gitcmd.Git{Dir: relative}).Dirs(ctx)
+	relativeGitDir, relativeCommonDir, _, err := (gitcmd.Git{Dir: relative}).Dirs(ctx)
 	if err != nil {
 		t.Fatalf("relative repo dirs: %v", err)
 	}
@@ -993,7 +993,7 @@ func TestDirs(t *testing.T) {
 
 	linked := t.TempDir()
 	gittest.Git(t, g.Dir, "worktree", "add", "-q", linked)
-	linkedGitDir, linkedCommonDir, err := (gitcmd.Git{Dir: linked}).Dirs(ctx)
+	linkedGitDir, linkedCommonDir, _, err := (gitcmd.Git{Dir: linked}).Dirs(ctx)
 	if err != nil {
 		t.Fatalf("linked worktree dirs: %v", err)
 	}
@@ -1007,7 +1007,7 @@ func TestDirs(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	subGitDir, subCommonDir, err := (gitcmd.Git{Dir: sub}).Dirs(ctx)
+	subGitDir, subCommonDir, _, err := (gitcmd.Git{Dir: sub}).Dirs(ctx)
 	if err != nil {
 		t.Fatalf("subdirectory dirs: %v", err)
 	}

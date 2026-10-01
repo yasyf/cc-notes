@@ -92,7 +92,7 @@ func TestDirsRepositoryLayouts(t *testing.T) {
 	commonDirs := make(map[string]string, len(cases))
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gitDir, commonDir, err := (gitcmd.Git{Dir: tc.dir}).Dirs(t.Context())
+			gitDir, commonDir, _, err := (gitcmd.Git{Dir: tc.dir}).Dirs(t.Context())
 			if err != nil {
 				t.Fatalf("Dirs(%q): %v", tc.dir, err)
 			}

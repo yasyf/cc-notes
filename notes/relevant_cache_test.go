@@ -340,3 +340,31 @@ func TestRelevantCachedScopesRefLookupToDependencies(t *testing.T) {
 		t.Fatalf("warm hit after the key tier ran git: %v", calls)
 	}
 }
+
+func TestRelevantCachedServesABareRepository(t *testing.T) {
+	defer notes.SetRelevantRacyWindow(0)()
+	bare := gittest.InitBare(t)
+	gittest.Git(t, bare, "config", "user.name", "Test User")
+	gittest.Git(t, bare, "config", "user.email", "test@example.com")
+	t.Setenv("CC_NOTES_ACTOR", testActor)
+	c, err := notes.Open(bare)
+	if err != nil {
+		t.Fatalf("Open(%s): %v", bare, err)
+	}
+	makeNote(t, c, "handler", notes.AnchorSpec{Paths: []string{"svc/handler.go"}, Dirs: []string{"svc"}})
+	makeNote(t, c, "service", notes.AnchorSpec{Dirs: []string{"svc"}})
+
+	p := &relevantProbe{t: t, c: c, dir: bare, target: "svc/handler.go"}
+	p.expect("cold", notes.RelevantFilter{}, true)
+	p.expect("warm", notes.RelevantFilter{}, false)
+	if _, err := c.RelevantCached(t.Context(), p.target, notes.RelevantFilter{}, "json", p.render); err != nil {
+		t.Fatalf("RelevantCached: %v", err)
+	}
+	probe, ok, err := notes.RelevantCacheProbeOf(c, p.target, notes.RelevantFilter{}, "json")
+	if err != nil || !ok {
+		t.Fatalf("RelevantCacheProbeOf = %+v, %t, %v; want an entry", probe, ok, err)
+	}
+	if probe.Racy || probe.Revalidate {
+		t.Fatalf("entry racy = %t revalidate = %t; want a warm-path entry", probe.Racy, probe.Revalidate)
+	}
+}

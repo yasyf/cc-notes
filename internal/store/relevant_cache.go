@@ -21,11 +21,3 @@ func (s *Store) ReadRelevantCache(name string) ([]byte, bool) {
 func (s *Store) WriteRelevantCache(name string, data []byte) {
 	s.relevant.write(name, data)
 }
-
-// EnsureCaches creates the fold and relevance cache directories when they are
-// missing, best-effort like the cache writes, so a later write inside them
-// moves no directory a relevance capture fingerprints.
-func (s *Store) EnsureCaches() {
-	s.cache.ensure()
-	s.relevant.ensure()
-}

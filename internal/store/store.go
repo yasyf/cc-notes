@@ -117,6 +117,7 @@ type Store struct {
 	relevant  *lruDir
 	gitDir    string
 	commonDir string
+	bare      bool
 	root      *rootMemo
 	policy    *policyMemo
 	// pins, when set, is the exact set of entity refs every listing serves
@@ -155,7 +156,7 @@ func Open(dir string) (*Store, error) {
 // OpenContext is Open with an explicit context for repository discovery.
 func OpenContext(ctx context.Context, dir string) (*Store, error) {
 	git := gitcmd.Git{Dir: dir}
-	gitDir, commonDir, err := git.Dirs(ctx)
+	gitDir, commonDir, bare, err := git.Dirs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("open git repository at %s: %w", dir, err)
 	}
@@ -171,6 +172,7 @@ func OpenContext(ctx context.Context, dir string) (*Store, error) {
 		relevant:  &lruDir{capacity: relevantCacheCap, dir: filepath.Join(commonDir, relevantCacheSubdir)},
 		gitDir:    gitDir,
 		commonDir: commonDir,
+		bare:      bare,
 		root:      &rootMemo{},
 		policy:    &policyMemo{},
 	}, nil
@@ -188,6 +190,7 @@ func (s *Store) Pinned(tips map[string]model.SHA) *Store {
 		relevant:  s.relevant,
 		gitDir:    s.gitDir,
 		commonDir: s.commonDir,
+		bare:      s.bare,
 		root:      s.root,
 		policy:    s.policy,
 		pins:      tips,
@@ -200,6 +203,9 @@ func (s *Store) CommonDir() string { return s.commonDir }
 // GitDir returns the absolute per-worktree git directory, the one holding this
 // worktree's HEAD.
 func (s *Store) GitDir() string { return s.gitDir }
+
+// Bare reports whether the repository has no worktree.
+func (s *Store) Bare() bool { return s.bare }
 
 // Root returns the absolute worktree root, resolved once per store.
 func (s *Store) Root(ctx context.Context) (string, error) {

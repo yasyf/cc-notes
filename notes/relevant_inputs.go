@@ -144,8 +144,11 @@ func (in *relevantInputs) keep(s fileStamp) fileStamp {
 	}
 	in.watched[s.Path] = s
 	in.stamps = append(in.stamps, s)
-	if s.Missing {
-		in.guard(filepath.Dir(s.Path))
+	// A missing file directly in the git dir (packed-refs, shallow, a root
+	// pseudoref) goes unguarded: git never creates and deletes one within a
+	// capture, and guarding the dir would trip on every index write.
+	if dir := filepath.Dir(s.Path); s.Missing && dir != in.gitDir && dir != in.commonDir {
+		in.guard(dir)
 	}
 	return s
 }
@@ -492,11 +495,13 @@ func (in *relevantInputs) configFiles(ctx context.Context, entries []gitcmd.Conf
 			continue
 		}
 		if !filepath.IsAbs(origin) {
-			root, err := in.client.s.Root(ctx)
-			if err != nil {
-				return nil, nil, fmt.Errorf("config origin %s: %w", origin, err)
+			base := in.gitDir
+			if !in.client.s.Bare() {
+				if base, err = in.client.s.Root(ctx); err != nil {
+					return nil, nil, fmt.Errorf("config origin %s: %w", origin, err)
+				}
 			}
-			origin = filepath.Join(root, origin)
+			origin = filepath.Join(base, origin)
 		}
 		origin = filepath.Clean(origin)
 		origins[origin] = true
@@ -657,7 +662,6 @@ func (in *relevantInputs) watchBranch(ctx context.Context) error {
 	if in.detached() {
 		in.watchDirs(filepath.Join(in.commonDir, "refs", "heads"))
 		in.watchRef("refs/remotes/origin/HEAD", 0)
-		in.watch(nearestExisting(filepath.Join(in.commonDir, "refs", "remotes", "origin")))
 	}
 	branch, err := in.client.resolveRelevantBranch(ctx, in.filter.Branch)
 	if err != nil {
@@ -692,11 +696,7 @@ func (in *relevantInputs) watchEntities(ctx context.Context) error {
 	for _, root := range relevantRefRoots {
 		in.watch(filepath.Join(in.commonDir, filepath.FromSlash(strings.TrimSuffix(root, "/"))))
 	}
-	patterns := append(slices.Clone(relevantRefRoots), replaceRefBase())
-	if in.detached() {
-		patterns = append(patterns, "refs/heads/", "refs/remotes/origin/")
-	}
-	entries, err := in.client.s.Git.RefEntries(ctx, patterns...)
+	entries, err := in.client.s.Git.RefEntries(ctx, append(slices.Clone(relevantRefRoots), replaceRefBase())...)
 	if err != nil {
 		return err
 	}

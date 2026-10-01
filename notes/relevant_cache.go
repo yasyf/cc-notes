@@ -84,7 +84,6 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if cachedOK {
 		deps = cached.Deps
 	}
-	c.s.EnsureCaches()
 	in, err := c.relevantInputs(ctx, p, filter, variant, deps)
 	if err != nil {
 		return nil, err

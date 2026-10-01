@@ -675,11 +675,11 @@ func TestDirsFeedsRepoKey(t *testing.T) {
 	layouts := initLayouts(t)
 	ctx := t.Context()
 
-	_, mainCommon, err := (gitcmd.Git{Dir: layouts["normal"]}).Dirs(ctx)
+	_, mainCommon, _, err := (gitcmd.Git{Dir: layouts["normal"]}).Dirs(ctx)
 	if err != nil {
 		t.Fatalf("Dirs(normal): %v", err)
 	}
-	_, linkedCommon, err := (gitcmd.Git{Dir: layouts["linked"]}).Dirs(ctx)
+	_, linkedCommon, _, err := (gitcmd.Git{Dir: layouts["linked"]}).Dirs(ctx)
 	if err != nil {
 		t.Fatalf("Dirs(linked): %v", err)
 	}

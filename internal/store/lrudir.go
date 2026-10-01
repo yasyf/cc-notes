@@ -30,12 +30,8 @@ func (l *lruDir) read(name string) ([]byte, bool) {
 	return data, true
 }
 
-func (l *lruDir) ensure() bool {
-	return os.MkdirAll(l.dir, 0o750) == nil
-}
-
 func (l *lruDir) write(name string, data []byte) {
-	if !l.ensure() {
+	if err := os.MkdirAll(l.dir, 0o750); err != nil {
 		return
 	}
 	if !writeFileAtomic(l.dir, name, data) {
