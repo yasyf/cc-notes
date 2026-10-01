@@ -32,13 +32,16 @@ func relevantEntryOf(ctx context.Context, t *testing.T, c *Client, target string
 }
 
 func TestRelevantCachedRacyEntryWaitsOutTheWindow(t *testing.T) {
+	const window = 6 * time.Second
+	defer SetRelevantRacyWindow(window)()
 	c, dir := newWBClient(t)
 	ctx := t.Context()
 	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
-	written := time.Now()
 	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}}}); err != nil {
 		t.Fatalf("CreateNote: %v", err)
 	}
+	notesDir := lstampOf(filepath.Join(c.s.CommonDir(), "refs", "cc-notes", "notes"))
+	written := time.Unix(0, max(notesDir.ModTime, notesDir.Ctime))
 	renders := 0
 	render := func(entries []RelevantEntry) ([]byte, error) {
 		renders++
@@ -67,7 +70,7 @@ func TestRelevantCachedRacyEntryWaitsOutTheWindow(t *testing.T) {
 	if !inside.Racy || inside.Built <= cold.Built {
 		t.Fatalf("inside the window: racy = %t built %d (cold %d); want a racy rewrite by the key tier", inside.Racy, inside.Built, cold.Built)
 	}
-	time.Sleep(time.Until(written.Add(relevantRacyWindow + 200*time.Millisecond)))
+	time.Sleep(time.Until(written.Add(window + 500*time.Millisecond)))
 	promoted := call("after the window", 1)
 	if promoted.Racy || promoted.Built <= inside.Built {
 		t.Fatalf("after the window: racy = %t built %d (inside %d); want a settled rewrite", promoted.Racy, promoted.Built, inside.Built)
@@ -386,4 +389,183 @@ func TestRelevantCachedDetachedHeadKeysOnTheResolvedBranch(t *testing.T) {
 	gittest.Git(t, dir, "update-ref", "refs/heads/feat2", feat)
 	step("a second bookmark made the nearest one ambiguous", "tier3")
 	step("warm after the ambiguity", "tier1")
+}
+
+func TestRelevantCachedFollowsWorktreeQualifiedBases(t *testing.T) {
+	defer SetRelevantRacyWindow(0)()
+	cases := []struct {
+		name       string
+		base       string
+		fromLinked bool
+		linkedAt   string
+		setup      func(t *testing.T, main, linked, a string)
+		move       func(t *testing.T, main, linked, b string)
+	}{
+		{"linked HEAD", "worktrees/linked/HEAD", false, "a", nil, func(t *testing.T, _, linked, b string) {
+			gittest.Git(t, linked, "switch", "-q", "--detach", b)
+		}},
+		{"main HEAD", "main-worktree/HEAD", true, "b", nil, func(t *testing.T, main, _, _ string) {
+			gittest.Git(t, main, "switch", "-q", "--detach", "HEAD~1")
+		}},
+		{"linked worktree ref", "worktrees/linked/refs/worktree/base", false, "b", func(t *testing.T, _, linked, a string) {
+			gittest.Git(t, linked, "update-ref", "refs/worktree/base", a)
+		}, func(t *testing.T, _, linked, b string) {
+			gittest.Git(t, linked, "update-ref", "refs/worktree/base", b)
+		}},
+		{"main worktree ref", "main-worktree/refs/worktree/base", true, "b", func(t *testing.T, main, _, a string) {
+			gittest.Git(t, main, "update-ref", "refs/worktree/base", a)
+		}, func(t *testing.T, main, _, b string) {
+			gittest.Git(t, main, "update-ref", "refs/worktree/base", b)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, main := newWBClient(t)
+			ctx := t.Context()
+			write := func(content string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Join(main, "svc"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(main, "svc", "handler.go"), []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				gittest.Git(t, main, "add", "-A")
+			}
+			write("v1\n")
+			gittest.Git(t, main, "commit", "-q", "-m", "a")
+			a := gittest.Git(t, main, "rev-parse", "HEAD")
+			write("v2\n")
+			gittest.Git(t, main, "-c", "user.name=Other", "-c", "user.email=other@example.com", "commit", "-q", "-m", "b")
+			b := gittest.Git(t, main, "rev-parse", "HEAD")
+			linked := filepath.Join(t.TempDir(), "linked")
+			at := map[string]string{"a": a, "b": b}[tc.linkedAt]
+			gittest.Git(t, main, "worktree", "add", "-q", "--detach", linked, at)
+			if tc.setup != nil {
+				tc.setup(t, main, linked, a)
+			}
+			if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}}}); err != nil {
+				t.Fatalf("CreateNote: %v", err)
+			}
+			client := c
+			if tc.fromLinked {
+				var err error
+				if client, err = Open(linked); err != nil {
+					t.Fatalf("Open(%s): %v", linked, err)
+				}
+			}
+			filter := RelevantFilter{Base: tc.base}
+			renders := 0
+			render := func(entries []RelevantEntry) ([]byte, error) {
+				renders++
+				return json.Marshal(entries)
+			}
+			call := func(step string, recompute bool) []byte {
+				t.Helper()
+				before := renders
+				got, err := client.RelevantCached(ctx, "svc/handler.go", filter, "json", render)
+				if err != nil {
+					t.Fatalf("%s: RelevantCached: %v", step, err)
+				}
+				if recomputed := renders > before; recomputed != recompute {
+					t.Fatalf("%s: recomputed = %t, want %t", step, recomputed, recompute)
+				}
+				fresh, err := client.Relevant(ctx, "svc/handler.go", filter)
+				if err != nil {
+					t.Fatalf("%s: Relevant: %v", step, err)
+				}
+				want, err := json.Marshal(fresh)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(got) != string(want) {
+					t.Fatalf("%s: cached answer differs from a fresh one\ncached %s\nfresh  %s", step, got, want)
+				}
+				return got
+			}
+			before := call("cold", true)
+			call("warm", false)
+			tc.move(t, main, linked, b)
+			after := call("base moved in the other worktree", true)
+			if string(before) == string(after) {
+				t.Fatalf("moving the base changed nothing; the fixture carries no base-dependent signal: %s", after)
+			}
+		})
+	}
+}
+
+func TestRelevantCachedUseConfigOnlyWithoutIdentityErrors(t *testing.T) {
+	c, dir := newWBClient(t)
+	ctx := t.Context()
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}}}); err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	gittest.Git(t, dir, "config", "user.useConfigOnly", "true")
+	gittest.Git(t, dir, "config", "--unset", "user.email")
+	gittest.Git(t, dir, "config", "--unset", "user.name")
+	render := func(entries []RelevantEntry) ([]byte, error) { return json.Marshal(entries) }
+	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err == nil {
+		t.Fatal("RelevantCached succeeded without an author identity under user.useConfigOnly; want git's identity error")
+	}
+}
+
+func TestRelevantCachedTreatsAnInvalidBranchAnchorAsMissing(t *testing.T) {
+	defer SetRelevantRacyWindow(0)()
+	c, dir := newWBClient(t)
+	ctx := t.Context()
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}, Branches: []string{"bad\nname"}}}); err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	renders := 0
+	render := func(entries []RelevantEntry) ([]byte, error) {
+		renders++
+		return json.Marshal(entries)
+	}
+	got, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render)
+	if err != nil {
+		t.Fatalf("RelevantCached: %v", err)
+	}
+	fresh, err := c.Relevant(ctx, "svc/handler.go", RelevantFilter{})
+	if err != nil {
+		t.Fatalf("Relevant: %v", err)
+	}
+	want, err := json.Marshal(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("cached answer differs from a fresh one\ncached %s\nfresh  %s", got, want)
+	}
+	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil || renders != 1 {
+		t.Fatalf("warm call: err %v renders %d, want a served entry", err, renders)
+	}
+}
+
+func TestConfigTrue(t *testing.T) {
+	cases := []struct {
+		value    string
+		hasValue bool
+		want     bool
+	}{
+		{"", false, true},
+		{"", true, false},
+		{"true", true, true},
+		{"Yes", true, true},
+		{"on", true, true},
+		{"1", true, true},
+		{"-7", true, true},
+		{"0", true, false},
+		{"false", true, false},
+		{"off", true, false},
+		{"maybe", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.value, func(t *testing.T) {
+			if got := configTrue(gitcmd.ConfigEntry{Value: tc.value, HasValue: tc.hasValue}); got != tc.want {
+				t.Fatalf("configTrue(%q, %t) = %t, want %t", tc.value, tc.hasValue, got, tc.want)
+			}
+		})
+	}
 }

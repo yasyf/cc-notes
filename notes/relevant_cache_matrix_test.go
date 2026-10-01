@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -27,9 +28,6 @@ const matrixTarget = "svc/handler.go"
 
 const countingGitScript = "#!/bin/sh\nprintf '%s\\037' \"$@\" >> \"$CC_NOTES_GIT_TRACE\"\nprintf '\\n' >> \"$CC_NOTES_GIT_TRACE\"\nexec \"$CC_NOTES_REAL_GIT\" \"$@\"\n"
 
-// racingGitScript counts like countingGitScript, moves one entity ref A to B
-// right after the first refs/cc-notes enumeration, and with NEXT=scoring moves
-// it back right after the scorer's cross-author `git log`.
 const racingGitScript = `#!/bin/sh
 printf '%s\037' "$@" >> "$CC_NOTES_GIT_TRACE"
 printf '\n' >> "$CC_NOTES_GIT_TRACE"
@@ -276,9 +274,6 @@ func (fx *matrixFixture) second(t *testing.T) *notes.Client {
 	return c
 }
 
-// crossAuthor puts HEAD on work one teammate commit past main, so the target
-// carries a cross-author reason only while the identity is not the teammate's
-// and the merge base with the base revision stays at root.
 func (fx *matrixFixture) crossAuthor(t *testing.T) {
 	t.Helper()
 	fx.run(t, "checkout", "-q", "-b", "work")
@@ -546,12 +541,10 @@ func invalidationCases() []matrixCase {
 			setup: func(t *testing.T, fx *matrixFixture) {
 				fx.crossAuthor(t)
 				fx.includeExtra(t, relevantMe)
-				// git config --local refuses to run under GIT_CONFIG, so the
-				// threshold comes from the environment instead.
 				t.Setenv("CC_NOTES_NOTE_STALE_AFTER", "2160h")
 			},
 			writes: []matrixWrite{
-				{name: "GIT_CONFIG names a decoy file", want: tierRebuild, do: func(t *testing.T, fx *matrixFixture) {
+				{name: "GIT_CONFIG names a decoy file", want: tierRebuild, do: func(t *testing.T, _ *matrixFixture) {
 					decoy := filepath.Join(t.TempDir(), "decoy.config")
 					if err := os.WriteFile(decoy, []byte("[user]\n\temail = decoy@example.com\n"), 0o600); err != nil {
 						t.Fatal(err)
@@ -716,16 +709,15 @@ func TestRelevantCachedRacyWindowSteadyState(t *testing.T) {
 	p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: fx.counter}
 	p.call("cold")
 
-	written := time.Now()
+	const window = 6 * time.Second
+	t.Cleanup(notes.SetRelevantRacyWindow(window))
 	if _, _, err := fx.second(t).CreateNote(t.Context(), notes.NoteSpec{Title: "fresh write", Anchors: notes.AnchorSpec{Paths: []string{matrixTarget}}}); err != nil {
 		t.Fatalf("CreateNote: %v", err)
 	}
+	written := stampTime(t, filepath.Join(fx.repo, ".git", "refs", "cc-notes", "notes"))
 	inWindow := func(step string, want cacheTier) {
 		t.Helper()
 		p.expect(step, want)
-		if elapsed := time.Since(written); elapsed >= 2*time.Second {
-			t.Fatalf("%s: reached after %v, past the 2s racy window", step, elapsed)
-		}
 		if !p.entry(step).Racy {
 			t.Fatalf("%s: entry captured inside the racy window is not marked racy", step)
 		}
@@ -733,7 +725,7 @@ func TestRelevantCachedRacyWindowSteadyState(t *testing.T) {
 	inWindow("right after an entity write", tierRebuild)
 	inWindow("still inside the racy window", tierRevalidate)
 
-	time.Sleep(time.Until(written.Add(2*time.Second + 500*time.Millisecond)))
+	time.Sleep(time.Until(written.Add(window + 500*time.Millisecond)))
 	p.expect("after quiescence", tierRevalidate)
 	if p.entry("after quiescence").Racy {
 		t.Fatal("a revalidation after quiescence left the entry racy")
@@ -782,6 +774,9 @@ func raceNeverPins(t *testing.T, next string, endsRaced bool) {
 	if got := p.call("cold build raced by an entity write"); got != tierRebuild {
 		t.Fatalf("racing cold build served by %v, want %v", got, tierRebuild)
 	}
+	if strings.Contains(string(p.last), "handler, raced") {
+		t.Fatalf("racing build folded the live tip instead of the enumeration it captured: %s", p.last)
+	}
 	if got, err := os.ReadFile(state); err != nil || string(got) != "done" {
 		t.Fatalf("race state = %q, %v; want done (the shim never saw both trigger points)", got, err)
 	}
@@ -793,4 +788,17 @@ func raceNeverPins(t *testing.T, next string, endsRaced bool) {
 		t.Fatalf("answer after the race carries the raced title = %t, want %t: %s", raced, endsRaced, p.last)
 	}
 	p.promoteThen("settled after the race", tierHit)
+}
+
+func stampTime(t *testing.T, path string) time.Time {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := info.Sys().(*syscall.Stat_t)
+	if ctime := time.Unix(0, st.Ctimespec.Nano()); ctime.After(info.ModTime()) {
+		return ctime
+	}
+	return info.ModTime()
 }

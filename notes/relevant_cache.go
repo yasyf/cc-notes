@@ -84,6 +84,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if cachedOK {
 		deps = cached.Deps
 	}
+	c.s.EnsureCaches()
 	in, err := c.relevantInputs(ctx, p, filter, variant, deps)
 	if err != nil {
 		return nil, err
@@ -99,17 +100,16 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if err != nil {
 		return nil, err
 	}
-	var paths []string
+	var paths, anchors []string
 	if filter.Worktree {
-		var anchors []string
 		if paths, anchors, err = c.driftInputs(ctx, entries, in.vars); err != nil {
-			return nil, err
-		}
-		if err := in.auditWorktree(ctx, anchors); err != nil {
 			return nil, err
 		}
 	}
 	before := stampsOf(paths)
+	if err := in.auditWorktree(ctx, anchors); err != nil {
+		return nil, err
+	}
 	if err := c.relevantVerdicts(ctx, entries, in, filter.Worktree); err != nil {
 		return nil, err
 	}
@@ -251,12 +251,12 @@ func restamp(s fileStamp) fileStamp {
 }
 
 func stampOf(path string) fileStamp {
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) //nolint:gosec // G703: stats only paths this process recorded in its own cache entry.
 	return stampFrom(path, info, err, false)
 }
 
 func lstampOf(path string) fileStamp {
-	info, err := os.Lstat(path)
+	info, err := os.Lstat(path) //nolint:gosec // G703: stats only paths this process recorded in its own cache entry.
 	return stampFrom(path, info, err, true)
 }
 

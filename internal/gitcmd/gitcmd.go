@@ -584,9 +584,6 @@ func (g Git) ConfigOrigins(ctx context.Context) ([]ConfigEntry, error) {
 	return entries, nil
 }
 
-// envWithoutGitConfig is the process environment minus GIT_CONFIG, which
-// `git config` alone honors as an exclusive --file and so rejects alongside
-// --local.
 func envWithoutGitConfig() []string {
 	return slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "GIT_CONFIG=") })
 }

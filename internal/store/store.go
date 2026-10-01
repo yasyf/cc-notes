@@ -120,22 +120,15 @@ type Store struct {
 	bare      bool
 	root      *rootMemo
 	policy    *policyMemo
-	// pins, when set, is the exact set of entity refs every listing serves
-	// in place of enumerating the repository, so a caller that already read
-	// the ref tips folds exactly those.
-	pins map[string]model.SHA
+	pins      map[string]model.SHA
 }
 
-// rootMemo resolves the worktree root once and is shared by every view of one
-// opened store.
 type rootMemo struct {
 	once sync.Once
 	path string
 	err  error
 }
 
-// policyMemo reads the local policy once and is shared by every view of one
-// opened store.
 type policyMemo struct {
 	once  sync.Once
 	value LocalPolicy

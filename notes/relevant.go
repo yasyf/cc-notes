@@ -132,7 +132,6 @@ func (e RelevantEntry) updatedAt() int64 {
 	}
 }
 
-// anchors returns the entry's anchors, regardless of kind.
 func (e RelevantEntry) anchors() []model.Anchor {
 	switch e.Kind {
 	case model.KindDoc:
@@ -217,9 +216,6 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 	return scored, nil
 }
 
-// relevantScored folds the entities named by the captured ref tips, keeps
-// the ones filter admits, captures the branch refs and revisions they anchor
-// to, and scores them against the captured branch, head, and author.
 func (c *Client) relevantScored(ctx context.Context, in *relevantInputs, filter RelevantFilter) ([]RelevantEntry, error) {
 	p := in.path
 	pinned := &Client{s: c.s.Pinned(in.tips)}

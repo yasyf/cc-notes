@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -193,7 +194,7 @@ func (in *relevantInputs) watchExecutables() error {
 	if err != nil {
 		return fmt.Errorf("locate executable: %w", err)
 	}
-	in.watch(exe)
+	exeStamp := in.watch(exe)
 	revision := ""
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range info.Settings {
@@ -202,13 +203,13 @@ func (in *relevantInputs) watchExecutables() error {
 			}
 		}
 	}
-	in.record("exe %s %s %s", exe, version.Version, revision)
+	in.record("exe %s %s %s %d %d %d %d", exe, version.Version, revision, exeStamp.Size, exeStamp.ModTime, exeStamp.Ctime, exeStamp.Inode)
 	git, err := exec.LookPath("git")
 	if err != nil {
 		return fmt.Errorf("locate git: %w", err)
 	}
-	in.watch(git)
-	in.record("git %s", git)
+	gitStamp := in.watch(git)
+	in.record("git %s %d %d %d %d", git, gitStamp.Size, gitStamp.ModTime, gitStamp.Ctime, gitStamp.Inode)
 	in.exe, in.git = exe, git
 	return nil
 }
@@ -339,8 +340,17 @@ func (in *relevantInputs) watchDirs(dir string) {
 	}
 }
 
+func cleanRevName(rev string) bool {
+	for i := 0; i < len(rev); i++ {
+		if rev[i] < 0x20 || rev[i] == 0x7f {
+			return false
+		}
+	}
+	return rev != ""
+}
+
 func (in *relevantInputs) watchDep(name string, depth int) {
-	if in.depSeen[name] {
+	if in.depSeen[name] || !cleanRevName(name) {
 		return
 	}
 	in.depSeen[name] = true
@@ -366,9 +376,12 @@ func (in *relevantInputs) watchDep(name string, depth int) {
 
 func (in *relevantInputs) watchRev(rev string) {
 	switch {
-	case plumbing.IsHash(rev):
+	case plumbing.IsHash(rev), !cleanRevName(rev):
 		return
-	case strings.ContainsAny(rev, "~^:@{} \t\n") || strings.Contains(rev, ".."), hexAbbreviation(rev):
+	case strings.HasPrefix(rev, "main-worktree/"), strings.HasPrefix(rev, "worktrees/"):
+		in.watchRef(rev, 0)
+		return
+	case strings.ContainsAny(rev, "~^:@{} \t") || strings.Contains(rev, ".."), hexAbbreviation(rev):
 		in.revalidate = true
 		return
 	}
@@ -448,7 +461,9 @@ func (in *relevantInputs) watchConfig(ctx context.Context) error {
 	}
 	in.auditConfig(entries, files, origins, dump)
 	in.deps.Config = slices.Sorted(maps.Keys(in.configStamped()))
-	in.me = emailOf(in.vars["GIT_AUTHOR_IDENT"])
+	if _, in.me, err = git.AuthorIdent(ctx); err != nil {
+		return err
+	}
 	if !in.explicitEmail() {
 		in.revalidate = true
 	}
@@ -480,9 +495,14 @@ func (in *relevantInputs) configFiles(ctx context.Context, entries []gitcmd.Conf
 	vars, _ := splitVarList(varList)
 	for _, line := range vars {
 		name, value, _ := strings.Cut(line, "=")
-		if name == "GIT_CONFIG_SYSTEM" || name == "GIT_CONFIG_GLOBAL" {
-			add(value)
+		if name != "GIT_CONFIG_SYSTEM" && name != "GIT_CONFIG_GLOBAL" {
+			continue
 		}
+		if !filepath.IsAbs(value) {
+			in.revalidate = true
+			continue
+		}
+		add(value)
 	}
 	home := os.Getenv("HOME")
 	worktreeConfig := false
@@ -490,27 +510,31 @@ func (in *relevantInputs) configFiles(ctx context.Context, entries []gitcmd.Conf
 		if e.Key == "extensions.worktreeconfig" {
 			worktreeConfig = configTrue(e)
 		}
-		origin, ok := strings.CutPrefix(e.Origin, "file:")
-		if !ok {
-			continue
-		}
-		if !filepath.IsAbs(origin) {
-			base := in.gitDir
-			if !in.client.s.Bare() {
-				if base, err = in.client.s.Root(ctx); err != nil {
-					return nil, nil, fmt.Errorf("config origin %s: %w", origin, err)
+		origin, fromFile := strings.CutPrefix(e.Origin, "file:")
+		if fromFile {
+			if !filepath.IsAbs(origin) {
+				base := in.gitDir
+				if !in.client.s.Bare() {
+					if base, err = in.client.s.Root(ctx); err != nil {
+						return nil, nil, fmt.Errorf("config origin %s: %w", origin, err)
+					}
 				}
+				origin = filepath.Join(base, origin)
 			}
-			origin = filepath.Join(base, origin)
+			origin = filepath.Clean(origin)
+			origins[origin] = true
+			add(origin)
 		}
-		origin = filepath.Clean(origin)
-		origins[origin] = true
-		add(origin)
 		if !includeKey(e.Key) {
 			continue
 		}
-		if target, ok := in.includeTarget(e.Value, filepath.Dir(origin), home); ok {
+		target, ok := in.includeTarget(e.Value, filepath.Dir(origin), home)
+		switch {
+		case !ok:
+		case fromFile || filepath.IsAbs(target):
 			add(target)
+		default:
+			in.revalidate = true
 		}
 	}
 	if worktreeConfig {
@@ -524,10 +548,13 @@ func configTrue(e gitcmd.ConfigEntry) bool {
 		return true
 	}
 	switch strings.ToLower(e.Value) {
-	case "true", "yes", "on", "1":
+	case "true", "yes", "on":
 		return true
+	case "false", "no", "off", "":
+		return false
 	}
-	return false
+	n, err := strconv.ParseInt(e.Value, 10, 64)
+	return err == nil && n != 0
 }
 
 func includeKey(key string) bool {
@@ -580,13 +607,23 @@ func configText(entries []gitcmd.ConfigEntry) string {
 func splitVarList(varList string) (vars []string, dump string) {
 	lines := strings.Split(strings.TrimSuffix(varList, "\n"), "\n")
 	first := len(lines)
-	for first > 0 && varLine(lines[first-1]) {
-		first--
+	for i, line := range lines {
+		if strings.HasPrefix(line, "GIT_COMMITTER_IDENT=") {
+			first = i
+			break
+		}
 	}
 	if first > 0 {
 		dump = strings.Join(lines[:first], "\n") + "\n"
 	}
-	return lines[first:], dump
+	for _, line := range lines[first:] {
+		if varLine(line) || len(vars) == 0 {
+			vars = append(vars, line)
+			continue
+		}
+		vars[len(vars)-1] += "\n" + line
+	}
+	return vars, dump
 }
 
 func varLine(line string) bool {
@@ -600,15 +637,6 @@ func varLine(line string) bool {
 		}
 	}
 	return true
-}
-
-func emailOf(ident string) string {
-	i := strings.LastIndexByte(ident, '<')
-	j := strings.LastIndexByte(ident, '>')
-	if i < 0 || j < i {
-		return ""
-	}
-	return ident[i+1 : j]
 }
 
 func (in *relevantInputs) explicitEmail() bool {
@@ -727,9 +755,14 @@ func (in *relevantInputs) setDeps(ctx context.Context, branches, commits []strin
 	}
 	var pending []string
 	for _, expr := range in.depExprs() {
-		if _, ok := in.values[expr]; !ok {
-			pending = append(pending, expr)
+		if _, ok := in.values[expr]; ok {
+			continue
 		}
+		if !cleanRevName(expr) {
+			in.values[expr] = ""
+			continue
+		}
+		pending = append(pending, expr)
 	}
 	if len(pending) == 0 {
 		return nil
@@ -781,10 +814,6 @@ func (in *relevantInputs) auditWorktree(ctx context.Context, anchors []string) e
 		return err
 	}
 	for _, driver := range drivers {
-		switch driver {
-		case "unspecified", "unset", "set":
-			continue
-		}
 		if in.configured("filter."+driver+".clean") || in.configured("filter."+driver+".process") {
 			in.noCache = true
 		}
@@ -793,20 +822,18 @@ func (in *relevantInputs) auditWorktree(ctx context.Context, anchors []string) e
 }
 
 func (in *relevantInputs) key() string {
-	lines := slices.Clone(in.lines)
+	var digest strings.Builder
+	digest.WriteString(relevantCacheName(in.gitDir, in.client.s.Git.Dir, in.path, in.filter, in.variant))
+	for _, line := range in.lines {
+		digest.WriteByte('\n')
+		digest.WriteString(line)
+	}
 	for _, expr := range in.depExprs() {
 		value := string(in.values[expr])
 		if value == "" {
 			value = relevantMissing
 		}
-		lines = append(lines, "dep "+expr+" "+value)
-	}
-	slices.Sort(lines)
-	var digest strings.Builder
-	digest.WriteString(relevantCacheName(in.gitDir, in.client.s.Git.Dir, in.path, in.filter, in.variant))
-	for _, line := range lines {
-		digest.WriteByte('\n')
-		digest.WriteString(line)
+		digest.WriteString("\ndep " + expr + " " + value)
 	}
 	sum := sha256.Sum256([]byte(digest.String()))
 	return hex.EncodeToString(sum[:])
