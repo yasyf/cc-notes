@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.5] - 2026-10-01
+
+### Fixed
+- **The compact restores fit in the context Claude Code injects.** Claude Code
+  writes SessionStart context over 10,000 characters to a file and injects only
+  a 2 KB preview. The answer restore printed every answer's full body, so a
+  long session's 30 answers came to 19 KB and the agent saw three of them. The
+  restore now stays under 4.5 KB: durable answers first, newest first, one line
+  each with a 160-character excerpt. The answers that do not fit are listed by
+  id and title on an `also (read with answer_show):` line, and any left after
+  that are counted. The touched-records digest stays under 3 KB the same way: a
+  `show` body too large for the budget prints as its pointer line.
+- **The touched-records digest names real ids.** A tracked MCP create recorded
+  the start of the response JSON (`[{"type`) as its id, and a Bash `cc-notes`
+  call recorded `{"stdou`. The tracker now reads the MCP text blocks and the
+  Bash stdout.
+
 ## [0.63.4] - 2026-10-01
 
 ### Fixed
