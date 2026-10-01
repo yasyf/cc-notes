@@ -12,11 +12,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
@@ -796,8 +796,8 @@ func stampTime(t *testing.T, path string) time.Time {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := info.Sys().(*syscall.Stat_t)
-	if ctime := time.Unix(0, st.Ctimespec.Nano()); ctime.After(info.ModTime()) {
+	ctimeNanos, _ := gitobj.StatIdentity(info)
+	if ctime := time.Unix(0, ctimeNanos); ctime.After(info.ModTime()) {
 		return ctime
 	}
 	return info.ModTime()
