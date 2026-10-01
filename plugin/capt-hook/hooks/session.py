@@ -1,9 +1,7 @@
-"""Session-start floaters: durable tasks and answers at first prompt, and the missing-binary install nudge."""
 
 from __future__ import annotations
 
-from captain_hook import Event, HookResult, UserPromptSubmitEvent, on
-from captain_hook.state import SeenKeys
+from captain_hook import Event, HookResult, Input, UserPromptSubmitEvent, Warn, nudge, on
 
 from .common import (
     SESSION_ANSWER_CAP,
@@ -13,7 +11,6 @@ from .common import (
     cap_lines,
     dedup_tasks,
     durable_answers,
-    mcp_active,
     parse_status,
     remember_answers,
     render_steal_line,
@@ -31,41 +28,16 @@ from .common import (
     max_fires=1,
 )
 def float_session_tasks(evt: UserPromptSubmitEvent) -> HookResult | None:
-    """Float this session's durable tasks once, at the first prompt.
-
-    One `status --json --tasks` carries every bucket the floater needs — the current branch's
-    tasks, the shared backlog with each row's ready-to-claim verdict, and the in-progress
-    leases — and folds only tasks, skipping the record counts and their drift review.
-    """
     report = parse_status(run_cc_notes(evt, "status", "--json", "--tasks"))
-    active = mcp_active(evt)
-    # An expired lease is the most actionable row on the board: work nobody is driving.
-    # It leads, and its id wins the dedup so the steal hint survives.
     stealable = stale_leases(report)
-    # sorted() is stable, so ready backlog rows lead in priority order, blocked ones trail.
     backlog = sorted(status_tasks(report, "backlog"), key=lambda t: not t.get("ready"))
     tasks = dedup_tasks(stealable + status_tasks(report, "your_branch") + backlog)
     if not tasks:
         return None
     stale_ids = {t["id"] for t in stealable if t.get("id")}
-    lines = [
-        render_steal_line(t, mcp=active) if t.get("id") in stale_ids else render_task_line(t)
-        for t in tasks
-    ]
-    if active:
-        lede = (
-            "Durable cc-notes tasks in play — orient with the status tool "
-            "(backlog by readiness, your branch's tasks, expired leases you can steal), "
-            "then claim one with the task_claim tool:"
-        )
-        tail = "orient with the status tool"
-    else:
-        lede = (
-            "Durable cc-notes tasks in play — run `cc-notes status` to orient "
-            "(backlog by readiness, your branch's tasks, expired leases you can steal):"
-        )
-        tail = "run `cc-notes status`"
-    return evt.warn(lede, *cap_lines(lines, SESSION_TASK_CAP, tail))
+    lines = [render_steal_line(t) if t.get("id") in stale_ids else render_task_line(t) for t in tasks]
+    lede = "Durable cc-notes tasks are in play. Run `cc-notes status` to orient, then `cc-notes task claim <id>` to take one:"
+    return evt.warn(lede, *cap_lines(lines, SESSION_TASK_CAP, "run `cc-notes status`"))
 
 
 @on(
@@ -73,70 +45,32 @@ def float_session_tasks(evt: UserPromptSubmitEvent) -> HookResult | None:
     only_if=[CcNotesAvailable()],
 )
 def float_session_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
-    """Float the most recent durable answers the user gave in earlier sessions, once, at the first prompt.
-
-    The first prompt is claimed before listing, as float_prompt_answers claims it, so an empty listing
-    spends the digest instead of refunding a ``max_fires`` shot to a later prompt.
-    """
     if not evt.ctx.s.once("first", scope="session-answers"):
         return None
     fresh = unseen_answers(evt, durable_answers(evt))
     if not fresh:
         return None
     lines = remember_answers(evt, fresh[:SESSION_ANSWER_CAP])
-    if mcp_active(evt):
-        lede = "Durable answers the user gave to earlier questions — honor them instead of asking again (the answer_show tool has the full record):"
-        tail = "the answer_list tool with label scope:durable"
-    else:
-        lede = "Durable answers the user gave to earlier questions — honor them instead of asking again (`cc-notes answer show <id>` has the full record):"
-        tail = "run `cc-notes answer list --label scope:durable`"
+    lede = "Durable answers already given; honor them instead of asking again. `cc-notes answer show <id>` has the full record:"
     if (extra := len(fresh) - SESSION_ANSWER_CAP) > 0:
-        lines.append(f"+{extra} more — {tail}")
+        lines.append(f"+{extra} more — run `cc-notes answer list --label scope:durable`")
     return evt.warn(lede, *lines)
 
 
-@on(
-    Event.UserPromptSubmit,
+nudge(
+    "cc-notes is installed. Record durable work with `cc-notes task add`, `cc-notes note add`, or `cc-notes doc add`.",
+    events=Event.UserPromptSubmit,
     only_if=[CcNotesAvailable()],
+    max_fires=1,
+    tests={
+        Input(prompt="keep going"): Warn(pattern="cc-notes task add"),
+    },
 )
-def announce_cc_notes_available(evt: UserPromptSubmitEvent) -> HookResult | None:
-    """Once per session, surface that cc-notes is installed and its durable tooling is available.
-
-    The SessionStart bootstrap (bootstrap.py) does the install/upgrade under async dispatch, whose
-    output the harness drops — so the version line the agent reads lands here on the first prompt.
-    ``ctx.s.once`` claims the shot only when the line actually emits, so a transient version read that
-    comes back empty doesn't burn the announcement.
-    """
-    if "announce" in evt.ctx.s.load(SeenKeys).seen.get("availability", []):
-        return None
-    version = (run_cc_notes(evt, "version") or "").strip()
-    if not version or not evt.ctx.s.once("announce", scope="availability"):
-        return None
-    if mcp_active(evt):
-        return evt.warn(
-            f"cc-notes {version} is installed and its MCP server is active — record durable work with the "
-            "cc-notes tools (task_add, note_add, doc_add, log_add, papercut, runbook_add, investigation_open, "
-            "plan_add, answer_add; orient with status), each with a typed schema, rather than shelling out. On macOS, a "
-            "human must run `cc-notes package install` before repository provisioning."
-        )
-    return evt.warn(
-        f"cc-notes {version} is installed; its durable task, note, doc, log, papercut, runbook, "
-        "investigation, plan, and answer tooling is available. On macOS, a human must run `cc-notes package install` "
-        "before repository provisioning."
-    )
 
 
-@on(
-    Event.UserPromptSubmit,
+nudge(
+    "The `cc-notes` binary is not on PATH, so every cc-notes nudge stays silent. Run `brew install yasyf/tap/cc-notes`.",
+    events=Event.UserPromptSubmit,
     only_if=[CcNotesMissing()],
     max_fires=1,
 )
-def prompt_install_cc_notes(evt: UserPromptSubmitEvent) -> HookResult | None:
-    """Once per session, surface that the cc-notes binary is missing and how to install it."""
-    return evt.warn(
-        "cc-notes hooks are enabled in this repo but the `cc-notes` binary isn't on "
-        "PATH, so every cc-notes nudge stays silent (the plugin's auto-install didn't "
-        "land one). Install it to enable them:",
-        "brew install yasyf/tap/cc-notes",
-        "# or: curl -fsSL https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh | sh",
-    )

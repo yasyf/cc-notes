@@ -1,4 +1,3 @@
-"""The answer mirror: capture every AskUserQuestion answer as a cc-notes answer, and resurface the durable ones."""
 
 from __future__ import annotations
 
@@ -32,7 +31,6 @@ from .common import (
     clip,
     durable_answers,
     json_field,
-    mcp_active,
     parse_answers,
     remember_answer_lines,
     remember_answers,
@@ -82,7 +80,6 @@ PROMPT_ANSWERS_SYSTEM = (
 
 
 class AnsweredQuestion(NamedTuple):
-    """One AskUserQuestion question paired with the user's answer."""
 
     question: str
     header: str
@@ -123,23 +120,14 @@ class PromptAnswerPicks(BaseModel):
 
 
 def answered_questions(evt: PostToolUseEvent) -> list[AnsweredQuestion]:
-    """The questions the user answered, matched to their answers by exact question text.
-
-    The result carries ``answers`` keyed by question text (a multiSelect answer joins its labels
-    with ", ") and ``annotations`` holding the user's ``notes``. An answer or note that looks like
-    a secret never records, because the refs sync to the remote.
-    """
     response = evt.tool_response
     if isinstance(response, str):
-        try:
-            response = json.loads(response)
-        except json.JSONDecodeError:
-            return []
+        response = json.loads(response)
     if not isinstance(response, dict) or not isinstance(answers := response.get("answers"), dict):
         return []
     annotations = response.get("annotations") or {}
     pairs = []
-    for q in evt._tool_input.get("questions", []):
+    for q in evt.input.raw.get("questions", []):
         answer = answers.get(q["question"])
         if not isinstance(answer, str) or SECRET_RE.search(answer):
             continue
@@ -168,7 +156,6 @@ def answer_body(pair: AnsweredQuestion) -> str:
 
 
 def triage_answers(evt: PostToolUseEvent, pairs: list[AnsweredQuestion], candidates: list[dict[str, Any]]) -> dict[int, AnswerVerdict]:
-    """Classify each answer's scope and name the candidate it replaces; every answer durable on LLM failure."""
     prompt = (
         Prompt()
         .system(ANSWER_TRIAGE_SYSTEM)
@@ -176,15 +163,11 @@ def triage_answers(evt: PostToolUseEvent, pairs: list[AnsweredQuestion], candida
         .context("candidates", "\n".join(f"{a['id']}\t{answer_line(a)}" for a in candidates)[:LLM_INPUT_CAP])
         .ask("For each answer index: is it durable or ephemeral, and which candidate id, if any, does it supersede?")
     )
-    try:
-        triage = evt.ctx.call_llm(prompt, response_model=AnswerTriage, model="small", agent=False, transcript=False)
-    except Exception:
-        return {}
+    triage = evt.ctx.call_llm(prompt, response_model=AnswerTriage, model="small", agent=False, transcript=False)
     return {v.index: v for v in triage.verdicts}
 
 
 def superseded_id(verdict: AnswerVerdict | None, candidates: list[dict[str, Any]]) -> str:
-    """The full id of the one candidate the verdict names exactly or by unique prefix, "" otherwise."""
     if verdict is None or not verdict.supersedes:
         return ""
     matches = [a["id"] for a in candidates if a["id"].startswith(verdict.supersedes)]
@@ -194,7 +177,6 @@ def superseded_id(verdict: AnswerVerdict | None, candidates: list[dict[str, Any]
 
 
 def session_paths(evt: PostToolUseEvent) -> list[str]:
-    """Up to :data:`MAX_ANSWER_PATHS` repo-relative paths this session touched, most recent first."""
     root = (evt.ctx.git("rev-parse", "--show-toplevel") or "").strip()
     if not root:
         return []
@@ -226,7 +208,6 @@ def anchor_args(evt: PostToolUseEvent) -> list[str]:
 
 
 def add_answer(evt: PostToolUseEvent, pair: AnsweredQuestion, scope: str, anchors: list[str]) -> str:
-    """Record one answer; its id, or "" if the write failed."""
     labels = ["--label", f"scope:{scope}"]
     if pair.header:
         labels += ["--label", f"header:{pair.header}"]
@@ -235,7 +216,6 @@ def add_answer(evt: PostToolUseEvent, pair: AnsweredQuestion, scope: str, anchor
 
 
 def capture_user_answers(evt: PostToolUseEvent) -> HookResult | None:
-    """Record every answer the user gave to an AskUserQuestion as a cc-notes answer; the acknowledgement."""
     pairs = answered_questions(evt)
     if not pairs:
         return None
@@ -243,24 +223,20 @@ def capture_user_answers(evt: PostToolUseEvent) -> HookResult | None:
     verdicts = triage_answers(evt, pairs, candidates)
     anchors = anchor_args(evt)
     recorded: list[dict[str, Any]] = []
-    acks: list[str] = []
     for i, pair in enumerate(pairs):
         verdict = verdicts.get(i)
         scope = verdict.scope if verdict else "durable"
         if not (answer_id := add_answer(evt, pair, scope, anchors)):
             continue
-        ack = f"{short_id(answer_id)} ({scope}"
         old = superseded_id(verdict, candidates)
         if old and old != answer_id and run_cc_notes(evt, "answer", "supersede", old, "--by", answer_id, "--json") is not None:
-            ack += f", supersedes {short_id(old)}"
             with evt.ctx.s[SessionAnswers].mutate() as state:
                 state.lines.pop(old, None)
-        acks.append(ack + ")")
         recorded.append({"id": answer_id, "title": clamp_title(pair.question), "body": answer_body(pair)})
     if not recorded:
         return None
     remember_answers(evt, recorded)
-    return evt.warn(f"Recorded the user's answers in cc-notes: {', '.join(acks)}.")
+    return evt.warn("Recorded answers in cc-notes. Review them with `cc-notes answer list`.")
 
 
 @on(
@@ -274,25 +250,12 @@ def capture_user_answers(evt: PostToolUseEvent) -> HookResult | None:
     },
 )
 def record_user_answers(evt: PostToolUseEvent) -> None:
-    """Capture the user's answers in the background; the next event floats the acknowledgement.
-
-    The capture is a triage model call plus one ``answer add`` subprocess per answer, all of which
-    a PostToolUse hook would hold the tool result through. Uncapped, like the plan capture:
-    ``max_fires`` would silently drop every answer past the cap. It holds
-    :class:`AnswerCaptureLock` so the session's captures stay serial.
-    """
     with evt.ctx.s[AnswerCaptureLock].mutate():
         ack = capture_user_answers(evt)
     defer(evt, ack)
 
 
 def pick_prompt_answers(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> dict[str, str]:
-    """The unseen durable answers that bear on the prompt, id to rendered line.
-
-    Raises whatever the model call raises: this runs in the background, where captain-hook logs
-    the failure and records a fault the next session start tells the user, so a dead backend is
-    visible instead of costing a silent pick on every prompt.
-    """
     lines = {a["id"]: answer_line(a) for a in fresh}
     prompt = (
         Prompt()
@@ -313,13 +276,6 @@ def pick_prompt_answers(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]])
     async_=True,
 )
 def stage_prompt_answers(evt: UserPromptSubmitEvent) -> None:
-    """Pick the unseen durable answers that bear on this prompt, in the background, for the next prompt to float.
-
-    A UserPromptSubmit hook holds the prompt until it returns, and the pick costs a candidate
-    listing plus a model call, so both run after the reply has gone back. What this stages
-    reaches the agent on the first prompt after the pick lands — the next one, unless the model
-    call outlives it.
-    """
     if not (fresh := unseen_answers(evt, durable_answers(evt))):
         return
     if not (picked := pick_prompt_answers(evt, fresh)):
@@ -333,28 +289,17 @@ def stage_prompt_answers(evt: UserPromptSubmitEvent) -> None:
     only_if=[CcNotesAvailable()],
 )
 def float_prompt_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
-    """Float what the previous prompt's background pick staged, each answer once per session.
-
-    Reads session state and nothing else — no model call, no cc-notes call — so the prompt never
-    waits. The session's first prompt belongs to the digest in session.py, which it reaches for
-    free: :func:`stage_prompt_answers` first runs after that prompt's reply, so there is nothing
-    staged until the second. Only floated answers are marked seen, so an answer unrelated to this
-    prompt stays a candidate for a later one, and a staged answer another trigger surfaced
-    meanwhile drops out rather than repeating.
-    """
     with evt.ctx.s[PromptAnswerPicks].mutate() as state:
         staged, state.lines = state.lines, {}
     if not (lines := remember_answer_lines(evt, staged)):
         return None
-    show = "the answer_show tool" if mcp_active(evt) else "`cc-notes answer show <id>`"
     return evt.warn(
-        f"Durable answers the user gave that bear on this prompt — honor them ({show} has the full record):",
+        "Durable answers already given bear on this prompt; honor them. `cc-notes answer show <id>` has the full record:",
         *lines,
     )
 
 
 def current_answers(evt: SessionStartEvent, ids: list[str]) -> list[dict[str, Any]]:
-    """The live, unexpired records ``ids`` resolve to now, following supersede edges, in ``ids`` order with the latest position winning."""
     rows = {a["id"]: a for a in parse_answers(run_cc_notes(evt, "answer", "list", "--json", "--include-superseded"))}
 
     def heads(answer_id: str, visited: set[str]) -> list[dict[str, Any]]:
@@ -390,16 +335,9 @@ def excerpt(answer: dict[str, Any]) -> str:
 
 
 def restore_digest(answers: list[dict[str, Any]], show: str, recall: str) -> list[str]:
-    """The restore's lines within :data:`COMPACT_ANSWER_BUDGET`, durable answers first and newest first.
-
-    Durable answers' ids and full titles claim the budget first, then excerpts in rank order
-    until one no longer fits, then other answers' title lines once every durable title is in.
-    Titles are never clipped: a durable answer past the budget is counted behind a pointer to
-    ``recall``, any other one is counted alone.
-    """
     ranked = sorted(answers, key=restore_rank, reverse=True)
     durable = [a for a in ranked if is_durable(a)]
-    header = f"Context was just compacted. Answers the user gave, captured or surfaced this session — honor them, durable first; read any in full with {show}:"
+    header = f"Honor these answers captured this session, durable first. {show} reads one in full:"
     reserved = [header, f"+{len(ranked)} more durable answers: {recall}", f"+{len(ranked)} more answers"]
     room = COMPACT_ANSWER_BUDGET - sum(utf8_len(line) + 1 for line in reserved)
     kept: list[dict[str, Any]] = []
@@ -441,15 +379,10 @@ def restore_digest(answers: list[dict[str, Any]], show: str, recall: str) -> lis
     },
 )
 def restore_answers_after_compact(evt: SessionStartEvent) -> HookResult | None:
-    """After a compaction, re-inject the current form of the answers this session captured or surfaced."""
     ids = list(evt.ctx.s.load(SessionAnswers).lines)
     if not ids:
         return None
     answers = current_answers(evt, ids)
     if not answers:
         return None
-    if mcp_active(evt):
-        show, recall = "answer_show", "answer_list with label scope:durable, or the drive's handoff doc"
-    else:
-        show, recall = "`cc-notes answer show <id>`", "`cc-notes answer list --label scope:durable`, or the drive's handoff doc"
-    return evt.warn(*restore_digest(answers, show, recall))
+    return evt.warn(*restore_digest(answers, "`cc-notes answer show <id>`", "`cc-notes answer list --label scope:durable`"))

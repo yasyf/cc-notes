@@ -1,18 +1,10 @@
-"""Compact-survival capture and restore for cc-notes entities.
-
-A silent PostToolUse tracker records every cc-notes entity a session touches — creates,
-edits/transitions, and explicit shows — into session state as it happens. A SessionStart
-restorer, firing only on a compaction (`source == "compact"`), reads that state back and
-injects a digest into the fresh window: fresh full ``cc-notes show`` output per entity when
-few were touched, otherwise one recency-ordered pointer line each. Search/list/status result
-ids never count as a touch.
-"""
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
+from collections.abc import Sequence
+from itertools import takewhile
 
 from captain_hook import (
     Allow,
@@ -25,33 +17,30 @@ from captain_hook import (
     SessionStartEvent,
     on,
 )
+from captain_hook.cmd import Call
 from pydantic import BaseModel, Field
 
 from .common import (
     CC_NOTES_EXECUTABLES,
     COMPACT_DIGEST_BUDGET,
     MCP_TOOL_PREFIX,
-    _MAX_DEPTH,
-    _canonical_tokens,
-    _strip_wrappers,
+    ids_match,
     is_single_command,
-    mapped_tool,
-    mcp_active,
+    resolve_cli_tool,
     run_cc_notes,
     short_id,
     tool_output,
     utf8_len,
 )
 
-# Entities restored fresh (full `cc-notes show` each) at or below this count; above it, lean pointers.
+def cli_calls(evt: BaseHookEvent) -> list[Call]:
+    return [call for call in evt.cmd.calls() if call.name in CC_NOTES_EXECUTABLES]
+
+
 FULL_SHOW_CAP = 8
-# Pointer-mode digest caps the list, then a "+N more" tail steers to `cc-notes status`.
 POINTER_CAP = 30
-# Session-state ceiling; oldest pure-read entries evict first, then oldest overall.
 MAX_ENTRIES = 100
 
-# Verb-token vocabularies the classifier derives create/read/remove/ignored/edit from — never a
-# hand-enumerated per-tool list, so a new cc-notes command classifies itself by its name shape.
 _CREATE_VERBS = frozenset({"add", "open"})
 _LIST_VERBS = frozenset({"list", "search", "review", "ready", "stale", "backlog", "archived"})
 _TOPLEVEL_IGNORED = frozenset({"status", "relevant", "sync", "reconcile", "history", "blame", "search"})
@@ -61,8 +50,6 @@ _SHOW_TITLE_RE = re.compile(r"(?m)^title:\s*(.*)$")
 
 
 class TouchedEntity(BaseModel):
-    """One cc-notes entity this session touched: its id, kind, best-known title, verbs, and recency seq."""
-
     id: str
     kind: str
     title: str = ""
@@ -71,21 +58,11 @@ class TouchedEntity(BaseModel):
 
 
 class TouchedEntities(BaseModel):
-    """Session-durable set of touched entities, plus the monotonically increasing recency counter."""
-
     entries: list[TouchedEntity] = Field(default_factory=list)
     next_seq: int = 0
 
 
 def _classify(name: str) -> str:
-    """The touch class of an MCP tool name: create, read, remove, ignored, or edit.
-
-    Structural, not enumerated: a two-token ``*_add``/``*_open`` (or bare ``papercut``) creates; a
-    trailing ``show`` reads; a two-token ``*_rm`` removes; a list-family verb, a top-level non-entity
-    op, or any ``attachment_*`` is ignored; everything else in the tool set mutates an entity (edit).
-    Three-token adds/rms (``task_criterion_add``, ``investigation_finding_rm``) fall through to edit —
-    they mutate a parent entity rather than birthing or deleting a top-level one.
-    """
     tokens = name.split("_")
     last = tokens[-1]
     if name == "papercut" or (last in _CREATE_VERBS and len(tokens) == 2):
@@ -100,7 +77,6 @@ def _classify(name: str) -> str:
 
 
 def _kind(name: str) -> str:
-    """The entity kind an MCP tool name touches — its noun prefix, ``entity`` for bare ``show``."""
     if name == "show":
         return "entity"
     if name == "papercut":
@@ -108,15 +84,7 @@ def _kind(name: str) -> str:
     return name.split("_", 1)[0]
 
 
-def _ids_match(a: str, b: str) -> bool:
-    # cc-notes ids resolve by unique prefix, so a stored full id and a short prefix (or the reverse)
-    # name the same entity.
-    return a == b or a.startswith(b) or b.startswith(a)
-
-
 def _minted_id(output: str, *, prefer_json: bool) -> str | None:
-    # A lean CLI line's title may hold a `{"id":"..."}` fragment, so only MCP/`--json` output runs the
-    # regex; a lean line takes its first whitespace token.
     if not output:
         return None
     if prefer_json and (m := _MINTED_ID_RE.search(output)):
@@ -125,36 +93,14 @@ def _minted_id(output: str, *, prefer_json: bool) -> str | None:
     return stripped.split()[0] if stripped else None
 
 
-def _cli_command(rest: list[str]) -> tuple[str, list[str]] | None:
-    """The MCP tool a cc-notes CLI argv (sans the ``cc-notes`` head) maps to, plus its leading positionals.
-
-    Positionals run from the command path to the first flag, so a value-flag's argument
-    (``log append -m "x" abc``) never leaks in as the id.
-    """
-    name = mapped_tool(rest)
-    if name is None:
+def _cli_command(args: Sequence[str]) -> tuple[str, list[str]] | None:
+    if (resolved := resolve_cli_tool(args)) is None:
         return None
-    tokens: list[str] = []
-    for arg in rest:
-        if arg.startswith("-"):
-            break
-        tokens.append(arg)
-    # Depth in RAW argv tokens: canonicalize each prefix so a length-changing alias
-    # (`investigation history` -> `history`) can't misalign the positionals.
-    depth = next(
-        (d for d in range(min(len(tokens), _MAX_DEPTH), 0, -1) if "_".join(_canonical_tokens(tokens[:d])) == name),
-        len(tokens),
-    )
-    positionals: list[str] = []
-    for arg in rest[depth:]:
-        if arg.startswith("-"):
-            break
-        positionals.append(arg)
-    return name, positionals
+    name, depth = resolved
+    return name, list(takewhile(lambda arg: not arg.startswith("-"), args[depth:]))
 
 
 def _mcp_id(raw: dict[str, object]) -> str | None:
-    # Most tools carry the id under `id`; task_criterion_* and task_validate carry it under `task`.
     for key in ("id", "task"):
         value = raw.get(key)
         if isinstance(value, str) and value:
@@ -179,13 +125,10 @@ def _resolve_title(verb: str, surface: str, raw: dict[str, object], positionals:
     if surface == "mcp":
         title = raw.get("title")
         return title if isinstance(title, str) else ""
-    # A CLI create's first positional is its title; a CLI edit/remove's first positional is the id, so
-    # they contribute no title and lean on a create/show touch (or a prior title) via the merge below.
     return positionals[0] if verb == "create" and positionals else ""
 
 
 class _Touch:
-    """A single resolved touch: the class, entity id, kind, and best title from this one tool call."""
 
     __slots__ = ("verb", "id", "kind", "title")
 
@@ -209,7 +152,6 @@ def _resolve(
 
 
 def _response_text(evt: BaseHookEvent) -> str:
-    """The tool's printed output: a Bash response's stdout, an MCP response's text blocks, else :func:`tool_output`."""
     response = getattr(evt, "tool_response", None)
     if isinstance(response, dict) and isinstance(response.get("stdout"), str):
         return response["stdout"]
@@ -222,24 +164,16 @@ def _touches(evt: BaseHookEvent) -> list[_Touch]:
     name = evt.tool_name or ""
     output = _response_text(evt)
     if name.startswith(MCP_TOOL_PREFIX):
-        touch = _resolve(name[len(MCP_TOOL_PREFIX) :], "mcp", dict(evt._tool_input), [], output, can_mint=True, prefer_json=True)
+        touch = _resolve(name[len(MCP_TOOL_PREFIX) :], "mcp", dict(evt.input.raw), [], output, can_mint=True, prefer_json=True)
         return [touch] if touch else []
-    line = evt.cmd.line
-    if not line:
-        return []
-    single = is_single_command(line)
+    single = is_single_command(evt.cmd.line)
     out: list[_Touch] = []
-    for cmd in line.commands:
-        argv = _strip_wrappers([cmd.executable, *cmd.args])
-        if not argv or os.path.basename(argv[0]) not in CC_NOTES_EXECUTABLES:
-            continue
-        if (parsed := _cli_command(argv[1:])) is None:
+    for call in cli_calls(evt):
+        if (parsed := _cli_command(call.args)) is None:
             continue
         tool, positionals = parsed
-        # A create id is minted from the shared tool_response, so only a single-command line can attribute
-        # it; `--checkout` merely writes a template and prints its PATH (the entity is born at `--apply`).
-        can_mint = single and "--checkout" not in argv
-        if touch := _resolve(tool, "cli", {}, positionals, output, can_mint=can_mint, prefer_json="--json" in argv):
+        can_mint = single and "--checkout" not in call.args
+        if touch := _resolve(tool, "cli", {}, positionals, output, can_mint=can_mint, prefer_json="--json" in call.args):
             out.append(touch)
     return out
 
@@ -255,7 +189,7 @@ def _evict(state: TouchedEntities) -> None:
 
 
 def _apply(state: TouchedEntities, touch: _Touch) -> None:
-    existing = next((e for e in state.entries if _ids_match(e.id, touch.id)), None)
+    existing = next((e for e in state.entries if ids_match(e.id, touch.id)), None)
     if touch.verb == "remove":
         if existing is not None:
             state.entries.remove(existing)
@@ -266,7 +200,7 @@ def _apply(state: TouchedEntities, touch: _Touch) -> None:
         if len(touch.id) > len(existing.id):
             existing.id = touch.id
         if existing.kind == "entity" and touch.kind != "entity":
-            existing.kind = touch.kind  # a bare-`show` placeholder upgrades to a per-kind touch's concrete kind
+            existing.kind = touch.kind
         if touch.title:
             existing.title = touch.title
         if touch.verb not in existing.verbs:
@@ -277,19 +211,8 @@ def _apply(state: TouchedEntities, touch: _Touch) -> None:
 
 
 class CcNotesEntityCall(CustomCondition):
-    """Matches a cc-notes entity call — an MCP cc-notes tool, or a ``cc-notes``/``ccn`` leg of any Bash command line."""
-
     def check(self, evt: BaseHookEvent) -> bool:
-        name = evt.tool_name or ""
-        if name.startswith(MCP_TOOL_PREFIX):
-            return True
-        line = evt.cmd.line
-        if not line:
-            return False
-        return any(
-            (argv := _strip_wrappers([cmd.executable, *cmd.args])) and os.path.basename(argv[0]) in CC_NOTES_EXECUTABLES
-            for cmd in line.commands
-        )
+        return (evt.tool_name or "").startswith(MCP_TOOL_PREFIX) or bool(cli_calls(evt))
 
 
 @on(
@@ -297,34 +220,21 @@ class CcNotesEntityCall(CustomCondition):
     only_if=[CcNotesEntityCall()],
     tests={
         Input(tool="mcp__plugin_cc-notes_cc-notes__note_add", tool_input={"title": "x"}): Allow(),
-        Input(tool="Edit", file="m.py"): Allow(),  # not a cc-notes call — the condition misses
-        Input(command="cc-notes note list"): Allow(),  # a list read records nothing
+        Input(tool="Edit", file="m.py"): Allow(),
+        Input(command="cc-notes note list"): Allow(),
     },
 )
 def record_touched_entities(evt: PostToolUseEvent) -> HookResult | None:
-    """Record every cc-notes entity a tool call touched into session state — silent, never blocks."""
-    try:
-        with evt.ctx.s[TouchedEntities].mutate() as state:
-            for touch in _touches(evt):
-                _apply(state, touch)
-    except Exception:
-        # A store or parse error must never disturb the tool call (record_mcp_active precedent).
-        pass
+    with evt.ctx.s[TouchedEntities].mutate() as state:
+        for touch in _touches(evt):
+            _apply(state, touch)
     return None
 
 
 class CompactResume(CustomCondition):
-    """Matches a SessionStart fired by a compaction — the only source whose digest is injected."""
 
     def check(self, evt: BaseHookEvent) -> bool:
         return isinstance(evt, SessionStartEvent) and evt.source == "compact"
-
-
-def _load(evt: BaseHookEvent) -> TouchedEntities:
-    try:
-        return evt.ctx.s.load(TouchedEntities)
-    except Exception:
-        return TouchedEntities()
 
 
 def _touch_label(verbs: list[str]) -> str:
@@ -340,25 +250,14 @@ def _pointer_line(entry: TouchedEntity) -> str:
     return f"{entry.kind} {short_id(entry.id)}{title} ({_touch_label(entry.verbs)})"
 
 
-def _closing_hint(evt: BaseHookEvent) -> str:
-    if mcp_active(evt):
-        return "Re-open any of these with the note_show/task_show/… tools, or the show tool."
-    return "Re-open any of these with `cc-notes show <id>`."
-
-
 def _full_part(evt: BaseHookEvent, entry: TouchedEntity) -> str:
     body = (run_cc_notes(evt, "show", entry.id) or "").strip()
     return f"[{entry.kind} {short_id(entry.id)} · {_touch_label(entry.verbs)}]\n{body}" if body else _pointer_line(entry)
 
 
 def _digest(evt: BaseHookEvent, entries: list[TouchedEntity]) -> list[str]:
-    """The digest's parts within :data:`COMPACT_DIGEST_BUDGET`.
-
-    A full ``show`` body that would outrun the budget degrades to its pointer line, and pointer
-    lines stop at :data:`POINTER_CAP` or the budget, whichever comes first, behind a count.
-    """
     parts = ["Context was just compacted. Durable cc-notes records this session touched:"]
-    closing = _closing_hint(evt)
+    closing = "Re-open any of these with `cc-notes show <id>`."
     room = COMPACT_DIGEST_BUDGET - utf8_len(parts[0]) - utf8_len(closing) - len(f"+{len(entries)} more — cc-notes status to orient") - 3
     full = len(entries) <= FULL_SHOW_CAP and shutil.which("cc-notes") is not None
     shown = 0
@@ -381,13 +280,12 @@ def _digest(evt: BaseHookEvent, entries: list[TouchedEntity]) -> list[str]:
     Event.SessionStart,
     only_if=[CompactResume()],
     tests={
-        Input(source="startup"): Allow(),  # only a compaction injects
-        Input(source="compact"): Allow(),  # null store -> empty state -> silent
+        Input(source="startup"): Allow(),
+        Input(source="compact"): Allow(),
     },
 )
 def restore_after_compact(evt: SessionStartEvent) -> HookResult | None:
-    """After a compaction, inject a digest of the cc-notes entities this session touched."""
-    state = _load(evt)
+    state = evt.ctx.s.load(TouchedEntities)
     if not state.entries:
         return None
     entries = sorted(state.entries, key=lambda e: e.seq, reverse=True)

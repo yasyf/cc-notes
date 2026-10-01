@@ -50,8 +50,9 @@ from hooks.approval import CcNotesCli, CcNotesMcp, cc_notes_mcp_tool
 from hooks.deferred import float_deferred_notices
 import hooks.common as common
 from hooks.common import (
-    cap_and_render_tasks,
-    CcNotesMcpToolCall,
+    CC_NOTES_TOOLS,
+    mapped_tool,
+    CC_NOTES_EXECUTABLES,
     clamp_title,
     COMPACT_ANSWER_BUDGET,
     COMPACT_DIGEST_BUDGET,
@@ -61,8 +62,6 @@ from hooks.common import (
     entry_payload,
     filter_drifted,
     in_cc_pool_memory,
-    mcp_active,
-    McpActive,
     MAX_TITLE_BYTES,
     MCP_TOOL_PREFIX,
     NUDGE_MAX_FIRES,
@@ -98,20 +97,11 @@ from hooks.record import (
     EvidenceArchive,
     InvestigationActivity,
     InvestigationCloseLanguage,
-    MCP_RECORD_WRITE_NAMES,
-    McpEphemeralReference,
-    PLAN_TEACH_MCP,
-    PlanTask,
-    PlanTasks,
     VERDICT_LANGUAGE_RE,
     durable_dest,
-    ephemeral_papercut,
-    ephemeral_record_refs,
-    evidence_payload_bytes,
+    ephemeral_refs,
     evidence_transfers,
     in_git_worktree,
-    investigation_arc_lines,
-    investigation_resolve_lines,
     link_task_to_investigation,
     mcp_ephemeral_refs,
     nudge_ci_triage_investigation,
@@ -123,19 +113,13 @@ from hooks.record import (
     nudge_plan_capture,
     nudge_record_durable,
     nudge_record_evidence,
-    plan_task_commands,
     plan_text,
     plan_title,
     record_investigation_activity,
-    record_mcp_active,
-    transfer_operands,
-    tree_bytes,
 )
 from hooks.session import (
-    announce_cc_notes_available,
     float_session_answers,
     float_session_tasks,
-    prompt_install_cc_notes,
 )
 from hooks.surface import (
     check_note_staleness,
@@ -145,22 +129,18 @@ from hooks.surface import (
     SurfacePick,
 )
 from hooks.workflow import (
-    auto_reconcile,
-    auto_sync,
     cc_notes_refs_dirty,
     CcNotesCliWrite,
     CcNotesMcpWrite,
     CLAIM_COMMANDS,
+    command_dirs,
     ClaimedTasks,
     COMMIT_COMMANDS,
-    commit_decision,
     do_sync,
     FETCH_MERGE_COMMANDS,
     is_cc_notes_write,
-    link_claimed_task,
-    nudge_claim,
-    nudge_commit_record,
-    nudge_mirror_native_tasks,
+    nudge_commit_decision,
+    nudge_commit_task_link,
     PUSH_COMMANDS,
     reconcile_after_merge,
     record_task_claims,
@@ -170,13 +150,10 @@ from hooks.workflow import (
     sync_at_session_end,
     SyncFailures,
     wired_remotes,
-    write_targets,
 )
 import hooks.workflow as workflow
 import hooks.surface as surface_module
 from hooks.redirect import (
-    CC_NOTES_TOOLS,
-    mapped_tool,
     param_hint,
     redirect_failed_cc_notes,
     redirect_target,
@@ -196,7 +173,7 @@ from hooks.compact import (
 from cc_transcript.command import parse_command_line
 import hooks.bootstrap as bootstrap
 from hooks.bootstrap import ensure_cc_notes_binary
-from captain_hook import CommandLine
+from captain_hook.cmd import Cmd
 from captain_hook.conditions import check_condition
 from captain_hook.testing.helpers import fixture_session, mock_event, mock_tool_event
 from captain_hook.types import Action, Event
@@ -499,28 +476,6 @@ def test_render_task_line() -> None:
     )
 
 
-def test_cap_and_render_tasks() -> None:
-    cli_tail = "run `cc-notes status`"
-    mcp_tail = "orient with the status tool"
-    check("cap_and_render_tasks: empty -> []", cap_and_render_tasks([], 7, cli_tail) == [])
-    tasks = [{"id": f"{i:07d}xyz", "status": "open", "title": f"t{i}"} for i in range(10)]
-    capped = cap_and_render_tasks(tasks, 7, cli_tail)
-    check("cap_and_render_tasks: caps to 7 + CLI tail", len(capped) == 8 and capped[-1] == "+3 more — run `cc-notes status`", repr(capped[-1]))
-    check("cap_and_render_tasks: renders first 7", capped[0] == "0000000 open t0", repr(capped[0]))
-    # The overflow tail follows the caller's branch: MCP wording when passed.
-    mcp_capped = cap_and_render_tasks(tasks, 7, mcp_tail)
-    check("cap_and_render_tasks: tail is parameterized (MCP wording)", mcp_capped[-1] == "+3 more — orient with the status tool", repr(mcp_capped[-1]))
-    exact = cap_and_render_tasks(tasks[:7], 7, cli_tail)
-    check("cap_and_render_tasks: exactly cap -> no tail", len(exact) == 7 and not exact[-1].startswith("+"), repr(exact))
-    # cap+1 is the off-by-one boundary: 7 rendered + a "+1 more" tail (8 lines total).
-    over_by_one = cap_and_render_tasks(tasks[:8], 7, cli_tail)
-    check(
-        "cap_and_render_tasks: cap+1 -> 7 lines + '+1 more' tail",
-        len(over_by_one) == 8 and over_by_one[-1] == "+1 more — run `cc-notes status`",
-        repr(over_by_one),
-    )
-    under = cap_and_render_tasks(tasks[:3], 7, cli_tail)
-    check("cap_and_render_tasks: under cap -> no tail", len(under) == 3 and not under[-1].startswith("+"))
 
 
 def test_dedup_tasks() -> None:
@@ -569,13 +524,8 @@ def test_render_steal_line() -> None:
     task = {"id": "104c728ea14", "status": "in_progress", "title": "T", "assignee": "alice"}
     check(
         "render_steal_line: CLI reclaim call",
-        render_steal_line(task, mcp=False) == "104c728 in_progress T @alice — lease expired, cc-notes task claim 104c728 --steal",
-        render_steal_line(task, mcp=False),
-    )
-    check(
-        "render_steal_line: MCP reclaim call",
-        render_steal_line(task, mcp=True) == "104c728 in_progress T @alice — lease expired, task_claim tool with id=104c728, steal=true",
-        render_steal_line(task, mcp=True),
+        render_steal_line(task) == "104c728 in_progress T @alice — lease expired, cc-notes task claim 104c728 --steal",
+        render_steal_line(task),
     )
 
 
@@ -642,8 +592,7 @@ def test_approval_cli_condition() -> None:
         ("ccn status", True),
         ('cc-notes task add "fix the flaky test" --criterion "suite green"', True),
         ("cc-notes note list --json", True),
-        # quoted command substitution survives is_single_command + is_plain_argv (shlex
-        # and the parser both dequote); only the raw UNSAFE_EXPANSION scan rejects it
+        # a quoted command substitution is not a literal word
         ('cc-notes note add "$(whoami)"', False),
         # heredoc-fed `--body -` is a multi-part / redirecting line
         ("cc-notes note add t --body - <<'EOF'\nbody\nEOF", False),
@@ -687,6 +636,9 @@ def test_approval_cli_condition() -> None:
         ("cc-notes workflows install --dest ../../../tmp/evil", False),  # out-of-tree write
         ("cc-notes mcp --dir /some/repo", False),  # mcp --dir selects an arbitrary repo to serve
         ("cc-notes mcp --dir=/some/repo", False),  # same, glued form
+        ("cc-notes --unknown task validate a1b2", False),  # a leading unknown option cannot hide the verb
+        ("time cc-notes status", False),  # a shell keyword head is not a plain argv
+        ("(cc-notes status)", False),  # a subshell is not a plain argv
         # safe neighbors — the carve-out is by dangerous flag/verb, not by noun
         ("cc-notes attachment get a1b2 secret", True),  # stdout read of stored bytes
         ("cc-notes task criterion met a1b2 check", True),  # sibling criterion verb, no script
@@ -695,7 +647,7 @@ def test_approval_cli_condition() -> None:
         ("cc-notes log list --dir internal/sync", True),  # record-anchor --dir on log list
     ]
     for command, expected in cases:
-        got = cond.check_command_line(SimpleNamespace(), CommandLine.parse(command))
+        got = cond.check(mock_tool_event(tool="Bash", event=Event.PreToolUse, command=command))
         check(f"cli-condition: {command!r} -> {expected}", got == expected, repr(got))
 
 
@@ -843,24 +795,27 @@ def test_evidence_archive_condition() -> None:
     fires("no-command no-file Bash event silent", command=None, expected=False)
 
 
+def transfers(command: str) -> list[str]:
+    return evidence_transfers(mock_event("PostToolUse", tool="Bash", command=command))
+
+
+def ephemeral(command: str) -> list[str]:
+    return [ref for call in Cmd.parse(command).calls() if call.name in CC_NOTES_EXECUTABLES for ref in ephemeral_refs(call)]
+
+
 def test_evidence_transfers_parsing() -> None:
     """The transfer parser walks compound commands, skips flags, consumes rsync value flags, applies the rules."""
-    from cc_transcript.command import Command, CommandLine
-
-    compound = evidence_transfers(CommandLine.parse("mkdir -p docs/x && cp -R /tmp/r/results/run-1 docs/x/run-1"))
+    compound = transfers("mkdir -p docs/x && cp -R /tmp/r/results/run-1 docs/x/run-1")
     check("transfers: compound picks the cp leg", compound == ["docs/x/run-1"], repr(compound))
-    check("transfers: flags are not paths", evidence_transfers(CommandLine.parse("cp -v /tmp/a.log docs/a.log")) == ["docs/a.log"])
-    check("transfers: single-path cp ignored", evidence_transfers(CommandLine.parse("cp -R lone-arg")) == [])
+    check("transfers: flags are not paths", transfers("cp -v /tmp/a.log docs/a.log") == ["docs/a.log"])
+    check("transfers: single-path cp ignored", transfers("cp -R lone-arg") == [])
     # Finding 1: a multi-source absolute mv is NOT run-output on bulkness alone -> silent.
-    check("transfers: multi-source absolute mv no longer bulk-fires", evidence_transfers(CommandLine.parse("mv /out/a.bin /out/b.bin evidence/")) == [], repr(evidence_transfers(CommandLine.parse("mv /out/a.bin /out/b.bin evidence/"))))
-    check("transfers: multi-source relative mv is not", evidence_transfers(CommandLine.parse("mv a.bin b.bin evidence/")) == [])
-    check("transfers: remote rsync dest exempt", evidence_transfers(CommandLine.parse("rsync -av results/ backup:archive/")) == [])
-    # Finding 2: rsync value-flag tokens are consumed, not counted as operands.
-    check("transfer_operands: cp keeps every non-flag token", transfer_operands(Command.parse("cp -R /tmp/a /b/")) == ["/tmp/a", "/b/"], repr(transfer_operands(Command.parse("cp -R /tmp/a /b/"))))
-    check("transfer_operands: rsync consumes --exclude's value token", transfer_operands(Command.parse("rsync -av --exclude '*.log' src/ dest/")) == ["src/", "dest/"], repr(transfer_operands(Command.parse("rsync -av --exclude '*.log' src/ dest/"))))
-    check("transfers: rsync exclude glob is not read as a source", evidence_transfers(CommandLine.parse("rsync -av --exclude '*.log' src/ docs/x/")) == [], repr(evidence_transfers(CommandLine.parse("rsync -av --exclude '*.log' src/ docs/x/"))))
-    check("transfers: rsync exclude 'results' value is not read as run-output", evidence_transfers(CommandLine.parse("rsync -av --exclude results src/ docs/x/")) == [], repr(evidence_transfers(CommandLine.parse("rsync -av --exclude results src/ docs/x/"))))
-    check("transfers: rsync still sees the real /tmp/results source past a consumed flag", evidence_transfers(CommandLine.parse("rsync -av --exclude '*.tmp' /tmp/run/results/ docs/x/")) == ["docs/x/"], repr(evidence_transfers(CommandLine.parse("rsync -av --exclude '*.tmp' /tmp/run/results/ docs/x/"))))
+    check("transfers: multi-source absolute mv no longer bulk-fires", transfers("mv /out/a.bin /out/b.bin evidence/") == [], repr(transfers("mv /out/a.bin /out/b.bin evidence/")))
+    check("transfers: multi-source relative mv is not", transfers("mv a.bin b.bin evidence/") == [])
+    check("transfers: remote rsync dest exempt", transfers("rsync -av results/ backup:archive/") == [])
+    check("transfers: rsync exclude glob is not read as a source", transfers("rsync -av --exclude '*.log' src/ docs/x/") == [], repr(transfers("rsync -av --exclude '*.log' src/ docs/x/")))
+    check("transfers: rsync exclude 'results' value is not read as run-output", transfers("rsync -av --exclude results src/ docs/x/") == [], repr(transfers("rsync -av --exclude results src/ docs/x/")))
+    check("transfers: rsync still sees the real /tmp/results source past a consumed flag", transfers("rsync -av --exclude '*.tmp' /tmp/run/results/ docs/x/") == ["docs/x/"], repr(transfers("rsync -av --exclude '*.tmp' /tmp/run/results/ docs/x/")))
 
 
 def test_evidence_router_tool_gate(monkeypatch) -> None:
@@ -875,7 +830,7 @@ def test_evidence_router_tool_gate(monkeypatch) -> None:
 
 
 def test_evidence_router_fires(monkeypatch, tmp_path) -> None:
-    """The Bash firing path warns with the log+attach recipe, the sync-only transfer rule, and the push hole."""
+    """The Bash firing path warns with the single log-append-attach verb."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = mock_event(
         "PostToolUse",
@@ -886,55 +841,7 @@ def test_evidence_router_fires(monkeypatch, tmp_path) -> None:
     result = nudge_record_evidence(evt)
     check("evidence router: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("evidence router: cites log add", "cc-notes log add" in result.message, result.message)
-        check("evidence router: cites log append --attach", 'log append <id> --entry "<verdict>" --attach <file>' in result.message, result.message)
-        check("evidence router: names the sync-only transfer", "only `cc-notes sync` uploads" in result.message, result.message)
-        check("evidence router: names the plain git push hole", "`git push` moves refs without it" in result.message, result.message)
-        check("evidence router: no tripwire wording for an unstatable dest", "LFS attachment is one flag" not in result.message, result.message)
-
-
-def test_evidence_router_size_tripwire(monkeypatch, tmp_path) -> None:
-    """A single Write landing >1MB of evidence strengthens the wording; a small one keeps the plain nudge."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    big = mock_event("PostToolUse", tool="Write", file="docs/reports/soak.log", content="x" * ((1 << 20) + 1), session_dir=tmp_path)
-    result = nudge_record_evidence(big)
-    check("tripwire: big write warns", result is not None, repr(result))
-    if result and result.message:
-        check("tripwire: strengthened wording", "git history is forever; an LFS attachment is one flag" in result.message, result.message)
-    small = mock_event("PostToolUse", tool="Write", file="docs/reports/tiny.log", content="one line\n", session_dir=tmp_path)
-    result2 = nudge_record_evidence(small)
-    check(
-        "tripwire: small write warns without the strengthened wording",
-        result2 is not None and "LFS attachment is one flag" not in (result2.message or ""),
-        repr(result2),
-    )
-
-
-def test_evidence_payload_bytes(tmp_path) -> None:
-    """tree_bytes stats what actually landed; the Bash payload resolves the destination against cwd."""
-    single = tmp_path / "one.log"
-    single.write_bytes(b"x" * 1234)
-    check("tree_bytes: single file size", tree_bytes(single) == 1234)
-    run_dir = tmp_path / "run"
-    (run_dir / "sub").mkdir(parents=True)
-    (run_dir / "a.log").write_bytes(b"a" * 100)
-    (run_dir / "sub" / "b.panic").write_bytes(b"b" * 200)
-    check("tree_bytes: directory sums recursively", tree_bytes(run_dir) == 300)
-    check("tree_bytes: missing path is 0", tree_bytes(tmp_path / "nope") == 0)
-
-    # The Bash payload resolves the relative dest against cwd; durable_dest now requires that
-    # tree to be a git worktree, so init one (mirrors how real evidence lands in a repo).
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    dest = tmp_path / "vm-repro"
-    dest.mkdir()
-    (dest / "boot.log").write_bytes(b"z" * ((1 << 20) + 1))
-    evt = mock_event("PostToolUse", tool="Bash", command="cp -R /tmp/run/results vm-repro")
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        check("payload bytes: Bash sums the landed relative dest", evidence_payload_bytes(evt) > 1 << 20)
-    finally:
-        os.chdir(old_cwd)
+        check("evidence router: names log append --attach", "`cc-notes log append <id> --attach <file>`" in result.message, result.message)
 
 
 def test_in_git_worktree_expands_home(tmp_path) -> None:
@@ -964,7 +871,6 @@ def test_evidence_dest_requires_worktree(tmp_path) -> None:
     """
     import shutil
     import tempfile
-    from cc_transcript.command import CommandLine
 
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)  # the "other repo" — has .git
     loose = Path(tempfile.mkdtemp())  # a tree outside any repo
@@ -972,12 +878,12 @@ def test_evidence_dest_requires_worktree(tmp_path) -> None:
     old = os.getcwd()
     try:
         os.chdir(tmp_path)
-        fired = evidence_transfers(CommandLine.parse(fusekit))
+        fired = transfers(fusekit)
         check("worktree: run-output cp into a repo's docs/ fires", fired == ["docs/reports/assets/vm-repro/phase2"], repr(fired))
         check("worktree: durable_dest True inside a repo", durable_dest("docs/reports/run-1"))
         check("worktree: in_git_worktree True inside a repo", in_git_worktree("docs/reports/run-1"))
         os.chdir(loose)
-        silent = evidence_transfers(CommandLine.parse(fusekit))
+        silent = transfers(fusekit)
         check("worktree: identical cp outside any repo is silent", silent == [], repr(silent))
         check("worktree: durable_dest False outside any repo", not durable_dest("docs/reports/run-1"))
         check("worktree: in_git_worktree False outside any repo", not in_git_worktree("docs/reports/run-1"))
@@ -993,8 +899,6 @@ def test_evidence_bulk_not_standalone_trigger(tmp_path) -> None:
     multi-source copy of a plain (absolute) source tree is silent, while the same shape from a
     /tmp results dir still fires.
     """
-    from cc_transcript.command import CommandLine
-
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     old = os.getcwd()
     try:
@@ -1002,9 +906,9 @@ def test_evidence_bulk_not_standalone_trigger(tmp_path) -> None:
         bulk_src = "cp -R /abs/pkg/internal/store internal/store.bak"
         multi_src = "cp /abs/a.go /abs/b.go pkg/"
         run_out = "cp -R /tmp/run/results/run-1 internal/archive"
-        check("bulk: -R of a plain source tree is silent", evidence_transfers(CommandLine.parse(bulk_src)) == [], repr(evidence_transfers(CommandLine.parse(bulk_src))))
-        check("bulk: multi-source absolute copy is silent", evidence_transfers(CommandLine.parse(multi_src)) == [], repr(evidence_transfers(CommandLine.parse(multi_src))))
-        check("bulk: -R from a /tmp results source still fires", evidence_transfers(CommandLine.parse(run_out)) == ["internal/archive"], repr(evidence_transfers(CommandLine.parse(run_out))))
+        check("bulk: -R of a plain source tree is silent", transfers(bulk_src) == [], repr(transfers(bulk_src)))
+        check("bulk: multi-source absolute copy is silent", transfers(multi_src) == [], repr(transfers(multi_src)))
+        check("bulk: -R from a /tmp results source still fires", transfers(run_out) == ["internal/archive"], repr(transfers(run_out)))
     finally:
         os.chdir(old)
 
@@ -1039,50 +943,50 @@ def test_ephemeral_record_reference_condition() -> None:
 
 def test_ephemeral_record_refs_parsing() -> None:
     """ephemeral_record_refs collects marker-bearing tokens of record legs, skips --attach values, walks compounds."""
-    from cc_transcript.command import CommandLine
-
-    compound = ephemeral_record_refs(CommandLine.parse('mkdir -p /tmp/x && cc-notes doc add "see scratchpad note.md" --when w'))
+    compound = ephemeral('mkdir -p /tmp/x && cc-notes doc add "see scratchpad note.md" --when w')
     check("refs: compound picks the cc-notes leg's title, ignores the mkdir /tmp arg", compound == ["see scratchpad note.md"], repr(compound))
-    body = ephemeral_record_refs(CommandLine.parse('cc-notes note add "Fact" --body "detail in /tmp/x.md"'))
+    body = ephemeral('cc-notes note add "Fact" --body "detail in /tmp/x.md"')
     check("refs: collects an ephemeral --body value", body == ["detail in /tmp/x.md"], repr(body))
-    both = ephemeral_record_refs(CommandLine.parse('cc-notes doc add "in /tmp/a" --body "in /private/var/b/"'))
+    both = ephemeral('cc-notes doc add "in /tmp/a" --body "in /private/var/b/"')
     check("refs: collects title and body in order", both == ["in /tmp/a", "in /private/var/b/"], repr(both))
-    attach2 = ephemeral_record_refs(CommandLine.parse("cc-notes log append abc --attach /tmp/out.log"))
+    attach2 = ephemeral("cc-notes log append abc --attach /tmp/out.log")
     check("refs: --attach two-token value skipped", attach2 == [], repr(attach2))
-    attach_eq = ephemeral_record_refs(CommandLine.parse("cc-notes log append abc --attach=/tmp/out.log"))
+    attach_eq = ephemeral("cc-notes log append abc --attach=/tmp/out.log")
     check("refs: --attach=equals value skipped", attach_eq == [], repr(attach_eq))
-    mixed = ephemeral_record_refs(CommandLine.parse('cc-notes log append abc "see scratchpad" --attach /tmp/out.log'))
+    mixed = ephemeral('cc-notes log append abc "see scratchpad" --attach /tmp/out.log')
     check("refs: skips only the attach value, keeps a scratchpad title", mixed == ["see scratchpad"], repr(mixed))
-    non_record = ephemeral_record_refs(CommandLine.parse("cc-notes doc show /tmp/whatever"))
+    non_record = ephemeral("cc-notes doc show /tmp/whatever")
     check("refs: a non-record subcommand yields nothing", non_record == [], repr(non_record))
-    label_skip = ephemeral_record_refs(CommandLine.parse('cc-notes note add "Fact" --body "content inline" --label scratchpad'))
+    label_skip = ephemeral('cc-notes note add "Fact" --body "content inline" --label scratchpad')
     check("refs: --label scratchpad value is skipped, clean body kept out", label_skip == [], repr(label_skip))
-    branch_skip = ephemeral_record_refs(CommandLine.parse('cc-notes note add "Fact" --body "inline" --branch eng/var/cleanup'))
+    branch_skip = ephemeral('cc-notes note add "Fact" --body "inline" --branch eng/var/cleanup')
     check("refs: --branch eng/var/cleanup value is skipped", branch_skip == [], repr(branch_skip))
-    body_eq = ephemeral_record_refs(CommandLine.parse("cc-notes note add Fact --body=/private/tmp/c-1/scratch.md"))
+    body_eq = ephemeral("cc-notes note add Fact --body=/private/tmp/c-1/scratch.md")
     check("refs: collects an ephemeral --body=equals value", body_eq == ["/private/tmp/c-1/scratch.md"], repr(body_eq))
     # The verb-less `papercut TEXT` shape: the bare complaint is one leading token in, so its lone
     # positional is the operand scanned for markers — not a (noun, verb) pair.
-    paper = ephemeral_record_refs(CommandLine.parse('cc-notes papercut "full repro at /tmp/repro.md"'))
+    paper = ephemeral('cc-notes papercut "full repro at /tmp/repro.md"')
     check("refs: papercut's bare complaint token is scanned", paper == ["full repro at /tmp/repro.md"], repr(paper))
-    paper_clean = ephemeral_record_refs(CommandLine.parse('cc-notes papercut "the docs were misleading"'))
+    paper_clean = ephemeral('cc-notes papercut "the docs were misleading"')
     check("refs: a clean papercut complaint yields nothing", paper_clean == [], repr(paper_clean))
-    paper_list = ephemeral_record_refs(CommandLine.parse("cc-notes papercut list"))
+    paper_list = ephemeral("cc-notes papercut list")
     check("refs: `papercut list` operand carries no purge marker", paper_list == [], repr(paper_list))
     # F1: `papercut list` is a READ, so even a purge-bound arg on it is never scanned.
-    paper_list_arg = ephemeral_record_refs(CommandLine.parse("cc-notes papercut list /tmp/repro.md"))
+    paper_list_arg = ephemeral("cc-notes papercut list /tmp/repro.md")
     check("refs: `papercut list <purge>` is a read, not scanned", paper_list_arg == [], repr(paper_list_arg))
     # F2: `--model`'s value is a model id (even a path), never complaint prose — both flag forms skip it.
-    model_val = ephemeral_record_refs(CommandLine.parse('cc-notes papercut --model /tmp/local.gguf "clean text"'))
+    model_val = ephemeral('cc-notes papercut --model /tmp/local.gguf "clean text"')
     check("refs: `--model` two-token value is skipped", model_val == [], repr(model_val))
-    model_eq = ephemeral_record_refs(CommandLine.parse('cc-notes papercut --model=/tmp/local.gguf "clean text"'))
+    model_eq = ephemeral('cc-notes papercut --model=/tmp/local.gguf "clean text"')
     check("refs: `--model=` equals value is skipped", model_eq == [], repr(model_eq))
-    model_dirty = ephemeral_record_refs(CommandLine.parse('cc-notes papercut --model gpt "repro at /tmp/repro.md"'))
+    model_dirty = ephemeral('cc-notes papercut --model gpt "repro at /tmp/repro.md"')
     check("refs: real complaint prose still fires past a clean --model", model_dirty == ["repro at /tmp/repro.md"], repr(model_dirty))
+    ccn = ephemeral('ccn note add "Fact" --body "detail in /tmp/x.md"')
+    check("refs: the ccn alias head is scanned", ccn == ["detail in /tmp/x.md"], repr(ccn))
 
 
 def test_ephemeral_record_reference_fires(monkeypatch, tmp_path) -> None:
-    """The firing handler warns and teaches --checkout file mode, --body -, and --attach as the durable fix."""
+    """The firing handler warns on the purge-bound path and names the log-append-attach verb."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = mock_event(
         "PostToolUse",
@@ -1093,46 +997,31 @@ def test_ephemeral_record_reference_fires(monkeypatch, tmp_path) -> None:
     result = nudge_ephemeral_record_reference(evt)
     check("ephemeral nudge: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("ephemeral nudge: leads with --checkout file mode", "--checkout" in result.message, result.message)
-        check("ephemeral nudge: teaches --attach", "--attach" in result.message, result.message)
-        check("ephemeral nudge: teaches --body", "--body" in result.message, result.message)
         check("ephemeral nudge: names a purge-bound path", "purge-bound" in result.message, result.message)
+        check("ephemeral nudge: names log append --attach", "cc-notes log append <id> --attach <file>" in result.message, result.message)
 
 
-def test_ephemeral_papercut_fix_lines(monkeypatch, tmp_path) -> None:
-    """A papercut record that leans on a purge-bound path gets papercut-shaped fixes: inline the detail or
-    route the artifact to the papercuts journal — never the --checkout/--body flags papercut lacks."""
-    from cc_transcript.command import CommandLine
-
-    check("papercut detection: a firing papercut leg is flagged", ephemeral_papercut(CommandLine.parse('cc-notes papercut "repro at /tmp/repro.md"')))
-    check("papercut detection: a doc leg is not a papercut", not ephemeral_papercut(CommandLine.parse('cc-notes doc add "see /tmp/x.md" --when w')))
-    check("papercut detection: a clean papercut does not flag", not ephemeral_papercut(CommandLine.parse('cc-notes papercut "the docs were misleading"')))
-
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Bash", command='cc-notes papercut "full repro saved at /tmp/repro.md"', session_dir=tmp_path)
-    result = nudge_ephemeral_record_reference(evt)
-    check("papercut nudge: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("papercut nudge: routes the artifact to the papercuts journal", "papercuts journal" in result.message, result.message)
-        check("papercut nudge: names a purge-bound path", "purge-bound" in result.message, result.message)
-        check("papercut nudge: no --checkout (papercut has no prefilled buffer)", "--checkout" not in result.message, result.message)
-        check("papercut nudge: no --body (papercut has no body flag)", "--body" not in result.message, result.message)
+def test_ephemeral_record_reference_matches_the_ccn_alias() -> None:
+    """The shorthand `ccn` head fires the same as `cc-notes`."""
+    cond = EphemeralRecordReference()
+    for head in ("cc-notes", "ccn", "/usr/local/bin/ccn"):
+        evt = mock_event("PostToolUse", tool="Bash", command=f'{head} note add "Fact" --body "see /tmp/c-1/scratch.md"')
+        check(f"ephemeral alias: {head} fires", cond.check(evt))
+    clean = mock_event("PostToolUse", tool="Bash", command='ccn note add "Fact" --body "inline"')
+    check("ephemeral alias: a clean ccn record is silent", not cond.check(clean))
 
 
 def test_is_cc_notes_write_papercut_verb_resolution() -> None:
-    """The bare-noun verb resolves flags-first: `papercut --json list` is a read, `papercut -- list` a write."""
-    from cc_transcript.command import CommandLine
-
     def wr(command: str) -> bool:
-        return any(is_cc_notes_write(cmd) for cmd in CommandLine.parse(command).commands)
+        return any(is_cc_notes_write(call) for call in Cmd.parse(command).calls())
 
     check("write: papercut list is a read", not wr("cc-notes papercut list"))
     check("write: papercut --json list resolves the verb past the flag (read)", not wr("cc-notes papercut --json list"))
-    check("write: papercut -- list — the -- ends the search, list is positional text (write)", wr("cc-notes papercut -- list"))
     check("write: papercut positional complaint is a write", wr('cc-notes papercut "the tool broke"'))
     check("write: reconcile always writes", wr("cc-notes reconcile"))
     check("write: papercut --help writes nothing", not wr("cc-notes papercut --help"))
     check("write: ccn papercut --json list is a read on the shorthand too", not wr("ccn papercut --json list"))
+    check("write: -R before the noun still resolves the verb", wr("cc-notes -R /other note add x"))
 
 
 def test_in_cc_pool_memory() -> None:
@@ -1144,22 +1033,12 @@ def test_in_cc_pool_memory() -> None:
 
 
 def test_record_command_per_kind() -> None:
-    """Each kind renders the right cc-notes command; log is two lines (add + append), no --when."""
-    check("note: add --body -", record_command("note", "Retry cap", "", "internal/api") == ['cc-notes note add "Retry cap" --dir internal/api --body -'], repr(record_command("note", "Retry cap", "", "internal/api")))
-    check("note: '.' area drops --dir", "--dir" not in record_command("note", "T", "", ".")[0])
-    doc_lines = record_command("doc", "T", "read me when X", ".")
-    # A doc leads with the --checkout/--apply file-mode flow for the long body, and keeps a
-    # short-body --body - line last; the first (checkout) line carries the --when trigger.
-    check("doc: leads with --checkout, carries --when", "--checkout" in doc_lines[0] and '--when "read me when X"' in doc_lines[0], repr(doc_lines))
-    check("doc: applies the buffer", any("doc add --apply" in ln for ln in doc_lines), repr(doc_lines))
-    check("doc: keeps a short-body --body - fallback", any("--body -" in ln for ln in doc_lines), repr(doc_lines))
-    log_lines = record_command("log", "Outage timeline", "", "ops")
-    check("log: two lines, add then append", len(log_lines) == 2 and log_lines[0].startswith('cc-notes log add "Outage timeline"') and "log append" in log_lines[1], repr(log_lines))
-    check("log: no --when", all("--when" not in ln for ln in log_lines))
-    task_line = record_command("task", "Do it", "", ".")[0]
-    check("task: task add carries a --criterion (task add is rejected without one)", task_line.startswith('cc-notes task add "Do it"') and "--criterion" in task_line, repr(task_line))
-    paper = record_command("papercut", "ignored title", "", "internal/api")
-    check("papercut: a single bare `cc-notes papercut` line with a complaint placeholder, no title or --dir", paper == ['cc-notes papercut "<one-paragraph complaint>"'], repr(paper))
+    """record_command names one bare verb per kind: `<kind> add`, except the verb-less papercut."""
+    check("note: note add", record_command("note") == "cc-notes note add", record_command("note"))
+    check("doc: doc add", record_command("doc") == "cc-notes doc add", record_command("doc"))
+    check("log: log add", record_command("log") == "cc-notes log add", record_command("log"))
+    check("task: task add", record_command("task") == "cc-notes task add", record_command("task"))
+    check("papercut: bare papercut", record_command("papercut") == "cc-notes papercut", record_command("papercut"))
 
 
 def stub_cli(mapping: dict[tuple[str, ...], str]):
@@ -1190,7 +1069,7 @@ def stub_llm(verdict: object):
     Mirrors stub_cli: the test monkeypatches it onto ``evt.ctx.call_llm``. Each handler
     passes ``response_model=<Model>`` and the real backend parses the reply into that
     model, so the stub just returns an already-built instance — a RecordVerdict for the
-    record routers, a PlanTasks for the plan handler, a SurfacePick for the filter.
+    record routers, a SurfacePick for the filter.
     """
 
     def _call(template, *args, **kwargs):
@@ -1420,6 +1299,12 @@ def test_gate_open_when_cc_notes_present(monkeypatch) -> None:
         check(f"gate-present: {handler.__name__} condition opens with no refs", gated)
 
 
+def _session_nudge_specs():
+    from captain_hook.app import _state
+
+    return [entry.spec for entry in _state.hooks if entry.name.startswith("hooks.session:nudge_")]
+
+
 def _spec_for(handler):
     """Return the registered hook spec whose handler is ``handler``."""
     from captain_hook.app import _state
@@ -1514,19 +1399,6 @@ def test_float_session_tasks_renders_stealable_lease(monkeypatch, tmp_path) -> N
         check("float steal: a live lease is not offered", "live000" not in result.message, result.message)
 
 
-def test_float_session_tasks_steal_hint_follows_mcp_wording(monkeypatch, tmp_path) -> None:
-    """With the MCP server active the reclaim hint is a tool call, never a shell line."""
-    report = {"in_progress": [{"assignee": "ben", "tasks": [{"id": "dead0001abc", "status": "in_progress", "title": "abandoned", "stale": True}]}]}
-    evt = _status_evt(monkeypatch, tmp_path, report)
-    evt.ctx.s[McpActive].set(McpActive(active=True))
-
-    result = float_session_tasks(evt)
-    check("float steal mcp: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("float steal mcp: tool-call hint", "task_claim tool with id=dead000, steal=true" in result.message, result.message)
-        check("float steal mcp: no shell line", "cc-notes task claim" not in result.message, result.message)
-
-
 def test_float_session_tasks_silent_no_tasks(monkeypatch, tmp_path) -> None:
     """Gate open but an empty board -> the floater stays silent."""
     check("float silent: no tasks -> None", float_session_tasks(_status_evt(monkeypatch, tmp_path, {}, prompt="hi")) is None)
@@ -1556,76 +1428,19 @@ def test_float_session_tasks_dedup_overlapping_buckets(monkeypatch, tmp_path) ->
         check("float dedup: 2 unique tasks fit under cap -> no '+K more' tail", "more — run `cc-notes status`" not in result.message, result.message)
 
 
-def test_install_nudge_gate(monkeypatch, tmp_path) -> None:
-    """CcNotesMissing inverts the gate: OPEN when the binary is absent, CLOSED when present."""
+def test_session_nudges_gate_on_the_binary(monkeypatch, tmp_path) -> None:
     from captain_hook.conditions import matches_conditions
 
+    specs = _session_nudge_specs()
     evt = mock_event("UserPromptSubmit", prompt="start work", session_dir=tmp_path)
+    check("session nudges: the install and announce nudges are registered", len(specs) == 2, repr(specs))
+    check("session nudges: each fires at most once", all(spec.max_fires == 1 for spec in specs), repr([spec.max_fires for spec in specs]))
 
     monkeypatch.setattr(common.shutil, "which", lambda _name: None)
-    check("install nudge: gate opens when binary absent", matches_conditions(_spec_for(prompt_install_cc_notes), evt))
+    check("session nudges: only the install nudge opens when the binary is absent", sum(matches_conditions(spec, evt) for spec in specs) == 1)
 
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    check("install nudge: gate closes when binary present", not matches_conditions(_spec_for(prompt_install_cc_notes), evt))
-
-
-def test_install_nudge_message(monkeypatch, tmp_path) -> None:
-    """The body is unconditional (the gate lives in the decorator) and names both install paths."""
-    evt = mock_event("UserPromptSubmit", prompt="start work", session_dir=tmp_path)
-    result = prompt_install_cc_notes(evt)
-    check("install nudge: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("install nudge: brew path present", "brew install yasyf/tap/cc-notes" in result.message, result.message)
-        check("install nudge: install.sh path present", "scripts/install.sh" in result.message, result.message)
-        check("install nudge: mentions PATH", "PATH" in result.message, result.message)
-
-
-def test_announce_available_gate(monkeypatch, tmp_path) -> None:
-    """CcNotesAvailable gates the availability nudge: OPEN when the binary is present, CLOSED when absent."""
-    from captain_hook.conditions import matches_conditions
-
-    evt = mock_event("UserPromptSubmit", prompt="start work", session_dir=tmp_path)
-
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    check("announce nudge: gate opens when binary present", matches_conditions(_spec_for(announce_cc_notes_available), evt))
-
-    monkeypatch.setattr(common.shutil, "which", lambda _name: None)
-    check("announce nudge: gate closes when binary absent", not matches_conditions(_spec_for(announce_cc_notes_available), evt))
-
-
-def test_announce_available_fires_once(monkeypatch, tmp_path) -> None:
-    """First prompt warns the installed version + durable tooling line; the once-guard silences later prompts."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    mapping = {("version",): "0.22.0 (abc123)"}
-
-    first = mock_event("UserPromptSubmit", prompt="hello", session_dir=tmp_path)
-    monkeypatch.setattr(first.ctx, "call_cli", stub_cli(mapping))
-    monkeypatch.setattr(first.ctx, "git", lambda *a: None)  # no MCP marker -> CLI wording is deterministic
-    result = announce_cc_notes_available(first)
-    check("announce fires: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("announce fires: names the installed version", "cc-notes 0.22.0 (abc123) is installed" in result.message, result.message)
-        check("announce fires: names the durable tooling", "durable task, note, doc, log, papercut, runbook, investigation, plan, and answer tooling is available" in result.message, result.message)
-
-    second = mock_event("UserPromptSubmit", prompt="again", session_dir=tmp_path)
-    cli, calls = recording_cli(mapping)
-    monkeypatch.setattr(second.ctx, "call_cli", cli)
-    check("announce fires: once-guard silences the second prompt", announce_cc_notes_available(second) is None)
-    check("announce fires: an announced session spawns no version read", calls == [], repr(calls))
-
-
-def test_announce_available_empty_version_preserves_shot(monkeypatch, tmp_path) -> None:
-    """An empty version read stays silent WITHOUT claiming the once-shot, so a later good read still announces."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-
-    empty = mock_event("UserPromptSubmit", prompt="hello", session_dir=tmp_path)
-    monkeypatch.setattr(empty.ctx, "call_cli", stub_cli({}))  # ("version",) absent -> run_cc_notes returns None
-    check("announce empty: silent when version read comes back empty", announce_cc_notes_available(empty) is None)
-
-    good = mock_event("UserPromptSubmit", prompt="again", session_dir=tmp_path)
-    monkeypatch.setattr(good.ctx, "call_cli", stub_cli({("version",): "0.22.0 (x)"}))
-    result = announce_cc_notes_available(good)
-    check("announce empty: later good read still announces (shot not burned)", result is not None and result.action is Action.warn, repr(result))
+    check("session nudges: only the announce nudge opens when the binary is present", sum(matches_conditions(spec, evt) for spec in specs) == 1)
 
 
 def test_deferred_notices_float_on_the_next_event(monkeypatch, tmp_path) -> None:
@@ -1812,9 +1627,7 @@ def test_check_note_staleness_drift_only(monkeypatch, tmp_path) -> None:
     if result and result.message:
         check("staleness: names the file", "internal/store/store.go" in result.message)
         check("staleness: lists only drifted note", "stale00" in result.message and "fresh00" not in result.message, result.message)
-        check("staleness: names note reconciliation commands", "cc-notes note verify/edit/supersede/expire" in result.message, result.message)
-        check("staleness: names doc reconciliation commands", "cc-notes doc verify/edit/supersede/expire" in result.message, result.message)
-        check("staleness: points at the file-edit workflow", "--checkout" in result.message and "--apply" in result.message, result.message)
+        check("staleness: names the one reconcile verb", "`cc-notes <kind> verify <id>`" in result.message, result.message)
 
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
@@ -1857,7 +1670,7 @@ def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
             result.message.count("drifted Parser handoff — when: before touching the parser [drifted] (path) — cc-notes doc show drifted") == 1,
             result.message,
         )
-        check("staleness doc: names doc reconciliation commands", "cc-notes doc verify/edit/supersede/expire" in result.message, result.message)
+        check("staleness doc: names the one reconcile verb", "`cc-notes <kind> verify <id>`" in result.message, result.message)
 
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
@@ -1994,76 +1807,29 @@ def test_handlers_silent_on_malformed_array(monkeypatch, tmp_path) -> None:
             check(f"malformed status ({label}): float_session_tasks does not crash", False, f"{type(raised).__name__}: {raised}")
 
 
-def test_record_router_routes_doc(monkeypatch, tmp_path) -> None:
-    """A gated write the LLM marks record=True, kind=doc warns with `cc-notes doc add … --when …`."""
+def test_record_router_routes_each_kind(monkeypatch, tmp_path) -> None:
+    """Each routed kind warns with its one cc-notes verb and never echoes the verdict's title, area, or reasoning."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="HANDOFF.md", content=HANDOFF_BODY, session_dir=tmp_path)
-    verdict = RecordVerdict(record=True, kind="doc", title="Auth cutover", when="resuming the auth cutover", area="internal/api", reasoning="in-flight handoff")
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
-
-    result = nudge_record_durable(evt)
-    check("router doc: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("router doc: names cc-notes doc add", "cc-notes doc add" in result.message, result.message)
-        check("router doc: carries --when", '--when "resuming the auth cutover"' in result.message, result.message)
-        check("router doc: uses title", '"Auth cutover"' in result.message, result.message)
-        check("router doc: uses dir", "--dir internal/api" in result.message, result.message)
-        check("router doc: cites reasoning", "in-flight handoff" in result.message, result.message)
-
-
-def test_record_router_routes_log(monkeypatch, tmp_path) -> None:
-    """kind=log renders the two-step `log add` + `log append`, and never a --when (a log never drifts)."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="incident-notes.md", content="14:02 paged\n14:10 rolled back\n", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="log", title="Outage timeline", reasoning="a chronology")))
-    result = nudge_record_durable(evt)
-    check("router log: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("router log: add + append", "cc-notes log add" in result.message and "cc-notes log append" in result.message, result.message)
-        check("router log: no --when on a log", "--when" not in result.message, result.message)
-
-
-def test_record_router_routes_papercut(monkeypatch, tmp_path) -> None:
-    """kind=papercut routes to the bare `cc-notes papercut` command — never `note add`, never a --when."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="friction.md", content="the doc link 404s and the search tool returns nothing\n", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="papercut", title="broken doc link", reasoning="a one-off friction gripe")))
-    result = nudge_record_durable(evt)
-    check("router papercut: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("router papercut: names cc-notes papercut", "cc-notes papercut" in result.message, result.message)
-        check("router papercut: not routed to note add", "note add" not in result.message, result.message)
-        check("router papercut: no --when (a papercut never drifts)", "--when" not in result.message, result.message)
-        check("router papercut: cites reasoning", "a one-off friction gripe" in result.message, result.message)
-
-
-def test_record_router_routes_runbook(monkeypatch, tmp_path) -> None:
-    """kind=runbook routes to the runbook primitive — `runbook add` + `step add`, never `doc add`."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="runbook-deploy.md", content="## Steps\n1. drain\n2. deploy\n", session_dir=tmp_path)
-    verdict = RecordVerdict(record=True, kind="runbook", title="Deploy hotfix", reasoning="a re-executed procedure")
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
-    result = nudge_record_durable(evt)
-    check("router runbook: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("router runbook: names runbook add", "cc-notes runbook add" in result.message, result.message)
-        check("router runbook: names step add", "cc-notes runbook step add" in result.message, result.message)
-        check("router runbook: never doc add", "doc add" not in result.message, result.message)
-        check("router runbook: uses title", '"Deploy hotfix"' in result.message, result.message)
-
-
-def test_record_router_runbook_mcp_wording(monkeypatch, tmp_path) -> None:
-    """With the MCP server active, the runbook route names the tools, not the CLI."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="runbook-deploy.md", content="## Steps\n1. drain\n", session_dir=tmp_path)
-    evt.ctx.s[McpActive].set(McpActive(active=True))
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="runbook", title="Deploy hotfix", reasoning="a procedure")))
-    result = nudge_record_durable(evt)
-    check("router runbook mcp: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("router runbook mcp: names runbook_add", "runbook_add" in result.message, result.message)
-        check("router runbook mcp: names runbook_step_add", "runbook_step_add" in result.message, result.message)
-        check("router runbook mcp: no CLI spelling", "cc-notes runbook add" not in result.message, result.message)
+    verbs = {
+        "doc": "cc-notes doc add",
+        "log": "cc-notes log add",
+        "note": "cc-notes note add",
+        "task": "cc-notes task add",
+        "papercut": "cc-notes papercut",
+        "runbook": "cc-notes runbook add",
+        "investigation": "cc-notes investigation open",
+        "plan": "cc-notes plan add",
+    }
+    for kind, verb in verbs.items():
+        evt = mock_event("PostToolUse", tool="Write", file="HANDOFF.md", content=HANDOFF_BODY, session_dir=tmp_path)
+        verdict = RecordVerdict(record=True, kind=kind)
+        monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
+        result = nudge_record_durable(evt)
+        check(f"router {kind}: warns", result is not None and result.action is Action.warn, repr(result))
+        if result and result.message:
+            m = result.message
+            check(f"router {kind}: names `{verb}`", f"`{verb}`" in m, m)
+            check(f"router {kind}: states the rule only", all(leak not in m for leak in ("Auth cutover", "internal/api", "in-flight handoff", "--when")), m)
 
 
 def test_record_router_silent_when_not_recorded(monkeypatch, tmp_path) -> None:
@@ -2077,14 +1843,6 @@ def test_record_router_silent_when_not_recorded(monkeypatch, tmp_path) -> None:
     check("router: silent on empty/unknown kind", nudge_record_durable(evt2) is None)
 
 
-def test_record_router_fails_closed_on_llm_error(monkeypatch, tmp_path) -> None:
-    """A classifier error never crashes the nudge — it falls closed to silence."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="HANDOFF.md", content=HANDOFF_BODY, session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
-    check("router: fails closed on LLM error", nudge_record_durable(evt) is None)
-
-
 def test_record_router_routes_decision_memo(monkeypatch, tmp_path) -> None:
     """Golden regression: a gate-decision memo fires DurableInternalWrite and routes as a doc.
 
@@ -2095,16 +1853,14 @@ def test_record_router_routes_decision_memo(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     evt = mock_event("PostToolUse", tool="Write", file="experiments/e0-gate-memo.md", content=GATE_MEMO_BODY, session_dir=tmp_path)
     check("decision memo: DurableInternalWrite fires", DurableInternalWrite().check(evt), repr(evt.file))
-    verdict = RecordVerdict(record=True, kind="doc", title="E0 gate decision", when="building the D/E/F arms", area="experiments", reasoning="a binding gate decision")
+    verdict = RecordVerdict(record=True, kind="doc")
     monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
     result = nudge_record_durable(evt)
     check("decision memo: warns", result is not None and result.action is Action.warn, repr(result))
     message = result.message if result and result.message else ""
     check("decision memo: has message", bool(message), repr(result))
     check("decision memo: names cc-notes doc add", "cc-notes doc add" in message, message)
-    check("decision memo: carries --when", '--when "building the D/E/F arms"' in message, message)
-    check("decision memo: uses title", '"E0 gate decision"' in message, message)
-    check("decision memo: uses dir", "--dir experiments" in message, message)
+    check("decision memo: states the rule only", all(leak not in message for leak in ("E0 gate decision", "experiments", "binding gate decision")), message)
 
 
 def test_durable_internal_write_investigation_globs() -> None:
@@ -2161,84 +1917,6 @@ def test_durable_internal_write_scoped_to_session_worktree(tmp_path) -> None:
             os.environ["CLAUDE_PROJECT_DIR"] = old
         shutil.rmtree(loose, ignore_errors=True)
         shutil.rmtree(other, ignore_errors=True)
-
-
-def test_record_router_routes_investigation(monkeypatch, tmp_path) -> None:
-    """kind=investigation routes to the investigation primitive — open + append + verdict, never doc/log add."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="deadlock-postmortem.md", content="Bisect: suspect the pool rewrite; root cause TBD\n", session_dir=tmp_path)
-    verdict = RecordVerdict(record=True, kind="investigation", title="TestPool deadlock", reasoning="a root-cause arc")
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
-    result = nudge_record_durable(evt)
-    check("router investigation: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        m = result.message
-        check("router investigation: names investigation open", "cc-notes investigation open" in m, m)
-        check("router investigation: names append", "cc-notes investigation append" in m, m)
-        check("router investigation: names a verdict verb", "root-cause" in m, m)
-        check("router investigation: uses title", '"TestPool deadlock"' in m, m)
-        check("router investigation: cites reasoning", "a root-cause arc" in m, m)
-        check("router investigation: never doc/log add", "doc add" not in m and "log add" not in m, m)
-
-
-def test_record_router_investigation_mcp_wording(monkeypatch, tmp_path) -> None:
-    """With the MCP server active, the investigation route names the tools, not the CLI."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="deadlock-postmortem.md", content="bisect: suspect the pool rewrite\n", session_dir=tmp_path)
-    evt.ctx.s[McpActive].set(McpActive(active=True))
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="investigation", title="Deadlock", reasoning="an arc")))
-    result = nudge_record_durable(evt)
-    check("investigation mcp: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("investigation mcp: names investigation_open tool", "investigation_open" in result.message, result.message)
-        check("investigation mcp: no CLI spelling", "cc-notes investigation open" not in result.message, result.message)
-
-
-def test_record_router_routes_plan(monkeypatch, tmp_path) -> None:
-    """kind=plan routes to the plan primitive — plan add + the lifecycle verbs, never `doc add`."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="gateway-plan-memo.md", content="## Decision\n## Approach\n1. do it\n", session_dir=tmp_path)
-    verdict = RecordVerdict(record=True, kind="plan", title="Gateway cutover", reasoning="an approved approach to execute")
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
-    result = nudge_record_durable(evt)
-    check("router plan: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        m = result.message
-        check("router plan: names cc-notes plan add", "cc-notes plan add" in m, m)
-        check("router plan: names the lifecycle verbs", "cc-notes plan start" in m and "plan done" in m, m)
-        check("router plan: links tasks back with --plan", "--plan <id>" in m, m)
-        check("router plan: uses title", '"Gateway cutover"' in m, m)
-        check("router plan: cites reasoning", "an approved approach to execute" in m, m)
-        check("router plan: never doc/log add", "doc add" not in m and "log add" not in m, m)
-
-
-def test_record_router_plan_mcp_wording(monkeypatch, tmp_path) -> None:
-    """With the MCP server active, the plan route names the tools, not the CLI."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="gateway-plan-memo.md", content="## Approach\n1. do it\n", session_dir=tmp_path)
-    evt.ctx.s[McpActive].set(McpActive(active=True))
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="plan", title="Gateway cutover", reasoning="a plan")))
-    result = nudge_record_durable(evt)
-    check("plan mcp: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("plan mcp: names plan_add with approved=true", "plan_add" in result.message and '"approved": true' in result.message, result.message)
-        check("plan mcp: names plan_start / plan_done", "plan_start" in result.message and "plan_done" in result.message, result.message)
-        check("plan mcp: no CLI spelling", "cc-notes plan add" not in result.message, result.message)
-
-
-def test_investigation_arc_and_resolve_lines() -> None:
-    """The shared authoring helpers render the open→append→verdict arc and the resolve verbs, CLI and MCP."""
-    cli = investigation_arc_lines(False, "T", "P", first_evidence="run 42")
-    check("arc CLI: open with title+premise", cli[0] == 'cc-notes investigation open "T" "P"', repr(cli))
-    check("arc CLI: append carries first evidence", "run 42" in cli[1], repr(cli))
-    check("arc CLI: verdict line, no title mutation", "root-cause" in cli[2] and "RESOLVED" not in cli[2], repr(cli))
-    mcp = investigation_arc_lines(True, "T", "P")
-    check("arc MCP: investigation_open tool", mcp[0].startswith("investigation_open"), repr(mcp))
-    check("arc MCP: append tool", mcp[1].startswith("investigation_append"), repr(mcp))
-    res_cli = investigation_resolve_lines(False)
-    check("resolve CLI: names root-cause + confirm", any("root-cause" in ln for ln in res_cli) and any("confirm" in ln for ln in res_cli), repr(res_cli))
-    res_mcp = investigation_resolve_lines(True)
-    check("resolve MCP: names the verdict tools", any("investigation_root_cause" in ln for ln in res_mcp), repr(res_mcp))
 
 
 def test_record_investigation_activity_flags(tmp_path) -> None:
@@ -2306,7 +1984,6 @@ def test_ci_triage_investigation_stateful(monkeypatch, tmp_path) -> None:
     r = nudge_ci_triage_investigation(ev)
     check("ci-triage: fires when untouched", r is not None and r.action is Action.warn, repr(r))
     if r and r.message:
-        check("ci-triage: cites the run URL as first evidence", "https://github.com/o/r/actions/runs/42" in r.message, r.message)
         check("ci-triage: names investigation open", "cc-notes investigation open" in r.message, r.message)
     ev2 = mock_tool_event(tool="Bash", event=Event.PostToolUse, command="gh run view 42 --log-failed", output="x failed", session_dir=tmp_path)
     ev2.ctx.s[InvestigationActivity].set(InvestigationActivity(written=True))
@@ -2327,8 +2004,6 @@ def test_ci_triage_failure_envelope_and_ship(monkeypatch, tmp_path) -> None:
     check("ci-triage: failed watch condition matches", check_condition(CiTriageMoment(), failed))
     r = nudge_ci_triage_investigation(failed)
     check("ci-triage: failed watch fires", r is not None and r.action is Action.warn, repr(r))
-    if r and r.message:
-        check("ci-triage: cites the failing run URL from error", "actions/runs/99" in r.message, r.message)
     # DISPATCH-LEVEL proof (fresh session so the direct fire above doesn't throttle it): reverting the
     # PostToolUseFailure registration makes dispatch skip this hook entirely, turning this red.
     from captain_hook.dispatch import dispatch
@@ -2487,7 +2162,7 @@ def test_investigation_close_stateful(monkeypatch, tmp_path) -> None:
     r = nudge_investigation_close(ev)
     check("close: fires while an investigation is unresolved", r is not None and r.action is Action.warn, repr(r))
     if r and r.message:
-        check("close: names the resolve verbs", "root-cause" in r.message and "confirm" in r.message, r.message)
+        check("close: names the root-cause verb", "root-cause" in r.message, r.message)
         check("close: not an open (the investigation already exists)", "investigation open" not in r.message, r.message)
     ev2 = w(tmp_path)
     ev2.ctx.s[InvestigationActivity].set(InvestigationActivity(written=True, unresolved=[]))
@@ -2596,15 +2271,6 @@ def test_surface_filter_ignores_unknown_ids(monkeypatch, tmp_path) -> None:
     check("surface filter: drops ids not in the candidate set", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx"], repr(kept))
 
 
-def test_surface_filter_fails_open(monkeypatch, tmp_path) -> None:
-    """A classifier error surfaces EVERY candidate — the recall filter must never hide context."""
-    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
-    fresh = [note_entry("aaa0001xxx"), note_entry("bbb0002xxx")]
-    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
-    kept = surface_filter(evt, fresh, touched="read")
-    check("surface filter: fails open to all candidates", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx", "bbb0002xxx"], repr(kept))
-
-
 def test_float_note_context_surfaces_top_ranked_without_a_model(monkeypatch, tmp_path) -> None:
     """A Read with more fresh candidates than RELEVANT_LIMIT surfaces the top-ranked RELEVANT_LIMIT, in rank order, and never calls the model."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
@@ -2637,15 +2303,7 @@ COMMIT_DIFF = (
 )
 
 
-def commit_event(tmp_path, monkeypatch, *, sha="deadsha000", verdict=None, diff=COMMIT_DIFF, command="git commit -m x", mcp=False):
-    """A commit event with rev-parse (git), the commit diff primitive, call_llm, and a sync CLI stubbed.
-
-    The nudge reads the sha via ``evt.ctx.git("rev-parse", "HEAD")`` for per-sha dedup and the patch
-    via ``evt.ctx.diff(commit="HEAD")`` for the record-router; the background ``sync_after_ref_move``
-    runs ``evt.ctx.call_cli(["cc-notes", "sync"])``. ``command`` parameterizes the driving Bash line so
-    the jj/ccx commit variants reuse this builder. The recording ``call_cli`` answers ``cc-notes sync``
-    with success and is exposed on ``evt._sync_calls`` so a test can assert which handler spawned it.
-    """
+def commit_event(tmp_path, monkeypatch, *, sha="deadsha000", verdict=None, diff=COMMIT_DIFF, command="git commit -m x"):
     evt = mock_event("PostToolUse", tool="Bash", command=command, session_dir=tmp_path)
     _session_repo(monkeypatch, tmp_path)
     monkeypatch.setattr(evt.ctx, "git", repo_git({("rev-parse", "HEAD"): sha, _CONFIG_KEY: None}))
@@ -2654,100 +2312,52 @@ def commit_event(tmp_path, monkeypatch, *, sha="deadsha000", verdict=None, diff=
     call, calls = recording_cli({("sync",): "ok"})
     monkeypatch.setattr(evt.ctx, "call_cli", call)
     evt._sync_calls = calls  # type: ignore[attr-defined]
-    if mcp:
-        evt.ctx.s[McpActive].set(McpActive(active=True))
     return evt
 
 
-def test_commit_no_longer_says_run_sync(monkeypatch, tmp_path) -> None:
-    """The commit reminder names the `cc-task:` trailer and leaves the sync to the background hook.
-
-    The nudge itself spawns no ``cc-notes sync`` and says nothing about syncing; ``sync_after_ref_move``
-    on the same event runs the sync.
-    """
+def test_commit_decision_silent_without_a_durable_verdict(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = commit_event(tmp_path, monkeypatch)
-    result = nudge_commit_record(evt)
-    check("commit: warns the reminder", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("commit: no longer says 'cc-notes sync to share your refs'", "cc-notes sync to share your refs" not in result.message, result.message)
-        check("commit: names cc-task trailer", "cc-task:" in result.message, result.message)
-        check("commit: no sync confirmation", "Synced cc-notes refs." not in result.message, result.message)
-        check("commit: no decision line when record=False", "capture it" not in result.message, result.message)
+    check("commit: no decision line when record=False", nudge_commit_decision(evt) is None)
     check("commit: the nudge spawns no sync", _calls_of(evt._sync_calls, "sync") == [], repr(evt._sync_calls))
     check("commit: the background hook syncs", sync_after_ref_move(evt) is None and _calls_of(evt._sync_calls, "sync") == [0], repr(evt._sync_calls))
 
 
 def test_commit_routes_decision(monkeypatch, tmp_path) -> None:
-    """A durable-decision verdict folds a `cc-notes note add` into the reminder, keeping the trailer line and the sync."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    verdict = RecordVerdict(record=True, kind="note", title="Backoff caps at 30s", area="internal/api", reasoning="server drops past 30s")
+    verdict = RecordVerdict(record=True, kind="note")
     evt = commit_event(tmp_path, monkeypatch, verdict=verdict)
-    result = nudge_commit_record(evt)
+    result = nudge_commit_decision(evt)
     check("commit decision: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("commit decision: keeps the trailer reminder", "cc-task:" in result.message, result.message)
-        check("commit decision: routes a note", "cc-notes note add" in result.message and '"Backoff caps at 30s"' in result.message, result.message)
-        check("commit decision: cites reasoning", "server drops past 30s" in result.message, result.message)
+        check("commit decision: routes a note", "`cc-notes note add`" in result.message, result.message)
+        check("commit decision: states the rule, never the verdict's title or reasoning", "Backoff caps" not in result.message and "server drops" not in result.message, result.message)
     check("commit decision: the nudge spawns no sync", _calls_of(evt._sync_calls, "sync") == [], repr(evt._sync_calls))
 
 
 def test_commit_only_routes_note_or_doc(monkeypatch, tmp_path) -> None:
-    """A commit captures a decision, never a log or task — a log/task verdict drops to reminder only."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    result = nudge_commit_record(commit_event(tmp_path, monkeypatch, verdict=RecordVerdict(record=True, kind="log", title="x")))
-    check("commit: log verdict yields no record line", result is not None and "capture it" not in (result.message or ""), repr(result))
+    result = nudge_commit_decision(commit_event(tmp_path, monkeypatch, verdict=RecordVerdict(record=True, kind="log")))
+    check("commit: a log verdict is silent", result is None, repr(result))
 
 
 def test_commit_dedup_per_sha(monkeypatch, tmp_path) -> None:
-    """The same HEAD sha is judged once; a re-fire on that sha is silent, a new sha (amend) fires."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    first = commit_event(tmp_path, monkeypatch, sha="sha111")
-    check("commit dedup: first fire warns", nudge_commit_record(first) is not None)
-    check("commit dedup: same sha silent", nudge_commit_record(commit_event(tmp_path, monkeypatch, sha="sha111")) is None)
-    check("commit dedup: a new sha fires", nudge_commit_record(commit_event(tmp_path, monkeypatch, sha="sha222")) is not None)
+    verdict = RecordVerdict(record=True, kind="note")
+    check("commit dedup: first fire warns", nudge_commit_decision(commit_event(tmp_path, monkeypatch, sha="sha111", verdict=verdict)) is not None)
+    check("commit dedup: same sha silent", nudge_commit_decision(commit_event(tmp_path, monkeypatch, sha="sha111", verdict=verdict)) is None)
+    check("commit dedup: a new sha fires", nudge_commit_decision(commit_event(tmp_path, monkeypatch, sha="sha222", verdict=verdict)) is not None)
 
 
-def test_commit_fails_safe_without_git(monkeypatch, tmp_path) -> None:
-    """git unavailable (no sha, no diff) still fires the base reminder — only the suggestion drops."""
+def test_commit_without_a_diff_is_silent(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = mock_event("PostToolUse", tool="Bash", command="git commit -m x", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "git", stub_git({}))  # rev-parse -> None (sha-less, dedup skipped, reminder fires)
-    monkeypatch.setattr(evt.ctx, "diff", lambda *a, **k: None)  # no diff -> the classifier is never reached
-    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # unreachable: no diff means no classifier call
+    monkeypatch.setattr(evt.ctx, "git", stub_git({}))
+    monkeypatch.setattr(evt.ctx, "diff", lambda *a, **k: None)
+    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
     call, _calls = recording_cli({("sync",): "ok"})
     monkeypatch.setattr(evt.ctx, "call_cli", call)
-    result = nudge_commit_record(evt)
-    check("commit fail-safe: still warns the reminder", result is not None and "cc-task:" in (result.message or ""), repr(result))
-
-
-def test_commit_decision_llm_error_keeps_reminder(monkeypatch, tmp_path) -> None:
-    """A diff is fetched but the classifier raises: the suggestion drops, the reminder stays."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    evt = commit_event(tmp_path, monkeypatch)  # diff stub returns COMMIT_DIFF + a real sha
-    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # classifier raises AFTER the diff is fetched
-    result = nudge_commit_record(evt)
-    check("commit llm-error: still warns the reminder", result is not None and "cc-task:" in (result.message or ""), repr(result))
-    check("commit llm-error: drops the decision line", result is not None and "capture it" not in (result.message or ""), repr(result))
-
-
-def test_commit_fails_safe_on_git_timeout(monkeypatch, tmp_path) -> None:
-    """A git timeout (which evt.ctx.git/diff don't swallow) still fires the reminder — only the suggestion drops."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-
-    def boom(*_a, **_k):
-        raise subprocess.TimeoutExpired(cmd="git", timeout=5)
-
-    evt = commit_event(tmp_path, monkeypatch)  # the commit diff fetch times out (the jj-colocated git-fallback case)
-    monkeypatch.setattr(evt.ctx, "diff", boom)
-    result = nudge_commit_record(evt)
-    check("commit diff-timeout: still warns the reminder", result is not None and "cc-task:" in (result.message or ""), repr(result))
-    check("commit diff-timeout: drops the decision line", result is not None and "capture it" not in (result.message or ""), repr(result))
-
-    evt2 = commit_event(tmp_path, monkeypatch)  # the rev-parse for per-sha dedup times out -> sha-less, reminder still fires
-    monkeypatch.setattr(evt2.ctx, "git", boom)
-    result2 = nudge_commit_record(evt2)
-    check("commit rev-parse-timeout: still warns the reminder", result2 is not None and "cc-task:" in (result2.message or ""), repr(result2))
+    check("commit without a diff: no classifier call, silent", nudge_commit_decision(evt) is None)
 
 
 SAMPLE_PLAN = "# Plan\n\n## Approach\n1. Add the widget\n2. Wire it up\n\n## Tasks\n- build the gateway client\n"
@@ -2801,7 +2411,7 @@ def plan_edits(calls: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
     return [c for c in calls if c[1:3] == ("plan", "edit")]
 
 
-def plan_event(tmp_path, monkeypatch, *, plan_path=None, inline=None, tasks=None, mcp=False, cli=None):
+def plan_event(tmp_path, monkeypatch, *, plan_path=None, inline=None, cli=None):
     """An ExitPlanMode event with planFilePath/plan in tool_input, and the LLM + capture CLI stubbed."""
     evt = mock_event("PostToolUse", tool="ExitPlanMode", session_dir=tmp_path)
     ti: dict = {}
@@ -2810,10 +2420,7 @@ def plan_event(tmp_path, monkeypatch, *, plan_path=None, inline=None, tasks=None
     if inline is not None:
         ti["plan"] = inline
     evt._raw["tool_input"] = ti
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(PlanTasks(tasks=tasks if tasks is not None else [])))
     monkeypatch.setattr(evt.ctx, "call_cli", cli if cli is not None else stub_plan_cli()[0])
-    if mcp:
-        evt.ctx.s[McpActive].set(McpActive(active=True))
     return evt
 
 
@@ -2822,14 +2429,13 @@ def test_plan_teach_always_fires(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     cli, calls = stub_plan_cli()
     evt = plan_event(tmp_path, monkeypatch, cli=cli)
-    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # no plan text -> the extractor is never reached
     result = nudge_plan_capture(evt)
     check("plan teach: warns", result is not None and result.action is Action.warn, repr(result))
     check("plan teach: no text -> nothing captured", calls == [], repr(calls))
     if result and result.message:
-        check("plan teach: native-vs-durable line", "Native TaskCreate" in result.message, result.message)
+        check("plan teach: native-vs-durable line", "Native tasks vanish at session end" in result.message, result.message)
         check("plan teach: names cc-notes task add", "cc-notes task add" in result.message, result.message)
-        check("plan teach: no extracted header when none", "look like durable work" not in result.message, result.message)
+        check("plan teach: no plan link without a recorded plan", "--plan" not in result.message, result.message)
 
 
 def test_plan_captures_body_verbatim(monkeypatch, tmp_path) -> None:
@@ -2844,7 +2450,7 @@ def test_plan_captures_body_verbatim(monkeypatch, tmp_path) -> None:
     check("plan capture: cc-notes plan add --json --approved", argv[:5] == ("cc-notes", "plan", "add", "--json", "--approved"), repr(argv))
     check("plan capture: body carries the plan verbatim", f"--body={SAMPLE_PLAN.strip()}" in argv, repr(argv))
     check("plan capture: title is the H1, passed after --", argv[-2:] == ("--", "Plan"), repr(argv))
-    check("plan capture: warn names the recorded plan", result is not None and "cc-notes plan a1b2c3d" in (result.message or ""), repr(result))
+    check("plan capture: warn names the recorded plan", result is not None and "Plan recorded as a cc-notes plan" in (result.message or ""), repr(result))
 
 
 def test_plan_capture_failure_still_teaches(monkeypatch, tmp_path) -> None:
@@ -2853,12 +2459,11 @@ def test_plan_capture_failure_still_teaches(monkeypatch, tmp_path) -> None:
     plan_path = tmp_path / "plan.md"
     plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
     cli, _ = stub_plan_cli(plan_id="")
-    result = nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")], cli=cli))
-    check("plan capture fail: still warns the teach", result is not None and "Native TaskCreate" in (result.message or ""), repr(result))
+    result = nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli))
+    check("plan capture fail: still warns the teach", result is not None and "Native tasks vanish at session end" in (result.message or ""), repr(result))
     if result and result.message:
-        check("plan capture fail: claims no recorded plan", "Plan recorded verbatim" not in result.message, result.message)
-        check("plan capture fail: task line carries the substitutable placeholder", "--plan <plan id>" in result.message, result.message)
-        check("plan capture fail: says to substitute the id", "substitute its id" in result.message, result.message)
+        check("plan capture fail: claims no recorded plan", "Plan recorded" not in result.message, result.message)
+        check("plan capture fail: no plan link without an id", "--plan" not in result.message, result.message)
 
 
 def test_plan_title_prefers_h1(tmp_path) -> None:
@@ -2886,27 +2491,27 @@ def test_plan_dedup_per_content(monkeypatch, tmp_path) -> None:
     cli, calls = stub_plan_cli()
 
     plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
-    first = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")], cli=cli)
+    first = plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli)
     check("plan dedup: first body fires", nudge_plan_capture(first) is not None)
     plan_path.write_text(REVISED_PLAN, encoding="utf-8")
-    revised = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")], cli=cli)
+    revised = plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli)
     check("plan dedup: same path, revised body re-fires", nudge_plan_capture(revised) is not None)
     check("plan dedup: both bodies reached cc-notes", len(calls) == 2, repr(calls))
     check("plan dedup: the second call carries the revised text", len(calls) == 2 and f"--body={REVISED_PLAN.strip()}" in calls[1], repr(calls))
     check("plan dedup: the revision landed on the record already held", len(calls) == 2 and calls[1][1:3] == ("plan", "edit"), repr(calls))
 
-    again = plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="X")], cli=cli)
+    again = plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli)
     check("plan dedup: same path, identical body silent", nudge_plan_capture(again) is None)
     check("plan dedup: the silent re-approval captured nothing more", len(calls) == 2, repr(calls))
 
     other_path = tmp_path / "plan2.md"
     other_path.write_text(SAMPLE_PLAN, encoding="utf-8")
-    third = plan_event(tmp_path, monkeypatch, plan_path=other_path, tasks=[PlanTask(title="X")], cli=cli)
+    third = plan_event(tmp_path, monkeypatch, plan_path=other_path, cli=cli)
     check("plan dedup: a new plan path re-fires", nudge_plan_capture(third) is not None)
 
-    inline = plan_event(tmp_path, monkeypatch, inline=SAMPLE_PLAN, tasks=[PlanTask(title="X")], cli=cli)
+    inline = plan_event(tmp_path, monkeypatch, inline=SAMPLE_PLAN, cli=cli)
     check("plan dedup: a path-less inline plan fires", nudge_plan_capture(inline) is not None)
-    inline_again = plan_event(tmp_path, monkeypatch, inline=SAMPLE_PLAN, tasks=[PlanTask(title="X")], cli=cli)
+    inline_again = plan_event(tmp_path, monkeypatch, inline=SAMPLE_PLAN, cli=cli)
     check("plan dedup: the same inline plan is silent", nudge_plan_capture(inline_again) is None)
 
 
@@ -2953,7 +2558,7 @@ def test_plan_capture_outlives_the_nudge_budget(monkeypatch, tmp_path) -> None:
     check("plan budget: every fire named the plan it wrote", all("cc-notes plan" in m for m in messages), repr(messages))
     check(
         "plan budget: the teach stops nagging after the nudge cap",
-        [("Native TaskCreate" in m) for m in messages] == [True] * NUDGE_MAX_FIRES + [False] * (6 - NUDGE_MAX_FIRES),
+        [("Native tasks vanish" in m) for m in messages] == [True] * NUDGE_MAX_FIRES + [False] * (6 - NUDGE_MAX_FIRES),
         repr(messages),
     )
 
@@ -2977,8 +2582,7 @@ def test_plan_revision_edits_the_record_in_place(monkeypatch, tmp_path) -> None:
         plan_edits(calls) == [("cc-notes", "plan", "edit", PLAN_ID, "--json", f"--body={REVISED_PLAN.strip()}")],
         repr(plan_edits(calls)),
     )
-    check("plan revision: the warn names the revised plan", result is not None and f"cc-notes plan {PLAN_ID[:7]}" in (result.message or ""), repr(result))
-    check("plan revision: the warn points at history for the drafts", result is not None and f"cc-notes history {PLAN_ID[:7]}" in (result.message or ""), repr(result))
+    check("plan revision: the warn says the revision landed in place", result is not None and "revision written to its cc-notes plan in place" in (result.message or ""), repr(result))
 
 
 def test_plan_retitle_mints_an_unrelated_plan(monkeypatch, tmp_path) -> None:
@@ -2996,7 +2600,7 @@ def test_plan_retitle_mints_an_unrelated_plan(monkeypatch, tmp_path) -> None:
     check("plan retitle: two plans recorded", [c[-1] for c in plan_adds(calls)] == ["Plan", "Rewrite the gateway"], repr(plan_adds(calls)))
     check("plan retitle: the second body was not edited into the first", plan_edits(calls) == [], repr(calls))
     check("plan retitle: no supersede edge joins them", not [c for c in calls if "supersede" in c], repr(calls))
-    check("plan retitle: the warn names the new plan", result is not None and f"cc-notes plan {PLAN_IDS[1][:7]}" in (result.message or ""), repr(result))
+    check("plan retitle: the warn says a new plan was recorded", result is not None and "Plan recorded as a cc-notes plan" in (result.message or ""), repr(result))
 
 
 def test_plan_identical_body_captures_once(monkeypatch, tmp_path) -> None:
@@ -3008,24 +2612,6 @@ def test_plan_identical_body_captures_once(monkeypatch, tmp_path) -> None:
     check("plan digest: the first approval captures", nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli)) is not None)
     check("plan digest: re-approving the same text is silent", nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, cli=cli)) is None)
     check("plan digest: one capture, no re-edit", len(plan_adds(calls)) == 1 and plan_edits(calls) == [], repr(calls))
-
-
-def test_plan_extracts_tasks_from_file(monkeypatch, tmp_path) -> None:
-    """A plan file is read and the LLM's durable items render as `cc-notes task add` lines, linked to the plan."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    plan_path = tmp_path / "plan.md"
-    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
-    tasks = [PlanTask(title="Build the gateway client", shared=True), PlanTask(title="Wire the widget", shared=False)]
-    result = nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=tasks))
-    check("plan extract: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("plan extract: shared item gets --criterion, --plan, and --backlog", f'cc-notes task add "Build the gateway client" --criterion "<how to verify it is done>" --plan {PLAN_ID} --backlog' in result.message, result.message)
-        check(
-            "plan extract: branch item has no --backlog",
-            'cc-notes task add "Wire the widget"' in result.message and 'cc-notes task add "Wire the widget" --criterion "<how to verify it is done>" --plan a1b2c3d4e5f67890 --backlog' not in result.message,
-            result.message,
-        )
-        check("plan extract: the teach is still present", "Native TaskCreate" in result.message, result.message)
 
 
 def test_plan_text_prefers_file_over_inline(tmp_path) -> None:
@@ -3041,18 +2627,6 @@ def test_plan_text_prefers_file_over_inline(tmp_path) -> None:
     none_evt = mock_event("PostToolUse", tool="ExitPlanMode")
     none_evt._raw["tool_input"] = {}
     check("plan_text: None when neither present", plan_text(none_evt) is None)
-
-
-def test_plan_task_commands_caps_and_skips_blank(monkeypatch, tmp_path) -> None:
-    """Extraction caps at five items, drops blank titles; no plan text -> []."""
-    evt = mock_event("PostToolUse", tool="ExitPlanMode", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(PlanTasks(tasks=[PlanTask(title=f"t{i}") for i in range(8)])))
-    check("plan cmds: caps at five", len(plan_task_commands(evt, "plan")) == 5)
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(PlanTasks(tasks=[PlanTask(title="real"), PlanTask(title="   "), PlanTask(title="real2")])))
-    cmds = plan_task_commands(evt, "plan", plan="abc1234")
-    check("plan cmds: drops blank titles", cmds == ['cc-notes task add "real" --criterion "<how to verify it is done>" --plan abc1234', 'cc-notes task add "real2" --criterion "<how to verify it is done>" --plan abc1234'], repr(cmds))
-    check("plan cmds: no plan id -> a substitutable placeholder", plan_task_commands(evt, "plan")[0].endswith("--plan <plan id>"), repr(plan_task_commands(evt, "plan")))
-    check("plan cmds: empty text -> []", plan_task_commands(evt, None) == [])
 
 
 def write_memory(tmp_path: Path, slug: str, mtype: str, description: str, body: str) -> Path:
@@ -3134,7 +2708,6 @@ def test_parse_memory_file(tmp_path) -> None:
         check("parse_memory: type from metadata, not node_type", parsed.type == "project", parsed.type)
         check("parse_memory: description unquoted", parsed.title == "Quoted: with colon", parsed.title)
         check("parse_memory: body stripped, internals kept", parsed.body == "Body line one.\n\nBody line two.", repr(parsed.body))
-    check("parse_memory: missing file -> None", parse_memory_file(tmp_path / "nope.md") is None)
     nofront = tmp_path / "plain.md"
     nofront.write_text("# Just markdown\nno frontmatter\n", encoding="utf-8")
     check("parse_memory: no frontmatter -> None", parse_memory_file(nofront) is None)
@@ -3313,8 +2886,7 @@ def merge_event(tmp_path, monkeypatch, *, branch="feature/x", cli=None):
     return evt
 
 
-def claim_event(tmp_path, monkeypatch, *, cli=None, mcp=False):
-    """A `cc-notes task claim` event with a recording sync CLI; exposes ``evt._cli_calls``."""
+def claim_event(tmp_path, monkeypatch, *, cli=None):
     evt = mock_event("PostToolUse", tool="Bash", command="cc-notes task claim abc1234", session_dir=tmp_path)
     _session_repo(monkeypatch, tmp_path)
     monkeypatch.setattr(evt.ctx, "git", repo_git({_CONFIG_KEY: None}))
@@ -3324,8 +2896,6 @@ def claim_event(tmp_path, monkeypatch, *, cli=None, mcp=False):
         calls = []
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
     evt._cli_calls = calls  # type: ignore[attr-defined]
-    if mcp:
-        evt.ctx.s[McpActive].set(McpActive(active=True))
     return evt
 
 
@@ -3513,17 +3083,10 @@ def test_reconcile_respects_turn_token(monkeypatch, tmp_path) -> None:
     check("reconcile-token: the reconcile still ran", _calls_of(calls, "reconcile", "--into", "feature/x") != [], repr(calls))
 
 
-def test_claim_keeps_renew_teach_without_spawning(monkeypatch, tmp_path) -> None:
-    """The claim nudge keeps its lease-upkeep teaching (renew, --steal) and leaves the sync to the background hook."""
+def test_claim_spawns_nothing(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = claim_event(tmp_path, monkeypatch)
-    result = nudge_claim(evt)
-    check("claim: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("claim: teaches renew", "renew" in result.message, result.message)
-        check("claim: teaches --steal for an expired hold", "--steal" in result.message, result.message)
-        check("claim: no sync confirmation", "Synced cc-notes refs." not in result.message, result.message)
-    check("claim: the nudge spawns nothing", evt._cli_calls == [], repr(evt._cli_calls))
+    check("claim: the nudge registers no spawn", evt._cli_calls == [], repr(evt._cli_calls))
 
 
 def test_sync_hooks_run_in_the_background(monkeypatch) -> None:
@@ -3551,41 +3114,29 @@ def task_call(tmp_path, command=None, *, tool=None, tool_input=None, output=None
     return mock_tool_event(tool="Bash", event=Event.PostToolUse, command=command, output=output, session_dir=tmp_path)
 
 
-def commit_after_claims(tmp_path, monkeypatch, *calls, cli=None, mcp=False):
-    """Replay ``calls`` (cc-notes task command lines) through the claim recorder, then commit.
-
-    Returns ``(result, calls_recorded)``: the commit nudge's result, and every CLI call the nudge and the
-    background ``sync_after_ref_move`` made for the same event, in order. The commit shares tmp_path's
-    session, so the claims the recorder armed are exactly what both handlers read.
-    """
+def commit_after_claims(tmp_path, monkeypatch, *calls, cli=None):
     for command in calls:
         record_task_claims(task_call(tmp_path, command))
-    evt = commit_event(tmp_path, monkeypatch, mcp=mcp)
+    evt = commit_event(tmp_path, monkeypatch)
     if cli is None:
         cli, recorded = recording_cli({("sync",): "ok", LINKED[1:]: "abc1234\tin_progress\tP2\t-\tt"})
     else:
         recorded = []
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
-    result = nudge_commit_record(evt)
+    result = nudge_commit_task_link(evt)
     sync_after_ref_move(evt)
     return result, recorded
 
 
 def test_commit_links_the_single_claimed_task(monkeypatch, tmp_path) -> None:
-    """One held claim makes the commit's task unambiguous, so the hook writes the `task link` edge.
-
-    End to end: the claim recorder arms the id from a real `cc-notes task claim` line, and the
-    commit handler in the same session turns that into `cc-notes task link <id> HEAD`.
-    """
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     result, calls = commit_after_claims(tmp_path, monkeypatch, "cc-notes task claim abc1234")
     check("link: the task link ran with HEAD", LINKED in calls, repr(calls))
     check("link: the link is written before the sync", LINKED in calls and ("cc-notes", "sync") in calls and calls.index(LINKED) < calls.index(("cc-notes", "sync")), repr(calls))
     check("link: warns, never blocks", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("link: names the linked task", "Linking this commit onto task abc1234" in result.message, result.message)
+        check("link: names the linked task", "`abc1234`" in result.message, result.message)
         check("link: names the CLI undo", "cc-notes task unlink abc1234" in result.message, result.message)
-        check("link: keeps the cc-task trailer teach", "cc-task: <id>" in result.message, result.message)
 
 
 def test_background_sync_links_the_commit_before_syncing(monkeypatch, tmp_path) -> None:
@@ -3603,17 +3154,6 @@ def test_background_sync_links_the_commit_before_syncing(monkeypatch, tmp_path) 
     check("background link: ordered link then sync", calls == [LINKED, ("cc-notes", "sync")], repr(calls))
     sync_after_ref_move(commit_event(tmp_path, monkeypatch))
     check("background link: the same HEAD links once", calls.count(LINKED) == 1, repr(calls))
-
-
-def test_commit_link_mcp_wording(monkeypatch, tmp_path) -> None:
-    """With the MCP server active the undo is a tool call, and an MCP claim arms the same id."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    record_task_claims(task_call(tmp_path, tool="mcp__plugin_cc-notes_cc-notes__task_claim", tool_input={"id": "abc1234"}))
-    result, calls = commit_after_claims(tmp_path, monkeypatch, mcp=True)
-    check("link mcp: the task link ran", LINKED in calls, repr(calls))
-    if result and result.message:
-        check("link mcp: names the task_unlink tool", "task_unlink tool with id=abc1234" in result.message, result.message)
-        check("link mcp: drops the CLI undo line", "cc-notes task unlink" not in result.message, result.message)
 
 
 def test_commit_writes_no_link_without_exactly_one_claim(monkeypatch, tmp_path) -> None:
@@ -3634,9 +3174,8 @@ def test_commit_writes_no_link_without_exactly_one_claim(monkeypatch, tmp_path) 
         linked = [c for c in calls if c[:3] == ("cc-notes", "task", "link")]
         want = [("cc-notes", "task", "link", tid, "HEAD") for tid in relink]
         check(f"no-link [{name}]: link calls are {want}", linked == want, repr(calls))
-        check(f"no-link [{name}]: still warns the commit reminder", result is not None and result.action is Action.warn, repr(result))
-        if result and result.message and not relink:
-            check(f"no-link [{name}]: no link line", "Linking this commit" not in result.message, result.message)
+        if not relink:
+            check(f"no-link [{name}]: no link notice", result is None, repr(result))
 
 
 def test_claim_recorder_ignores_the_lines_that_move_no_lease(tmp_path) -> None:
@@ -3648,30 +3187,14 @@ def test_claim_recorder_ignores_the_lines_that_move_no_lease(tmp_path) -> None:
 
 
 def test_commit_link_failure_never_costs_the_commit(monkeypatch, tmp_path) -> None:
-    """A failing `task link` must never turn a landed commit into a hook failure, nor skip the sync.
-
-    PostToolUse fires after the commit exists, so a raised handler or a block action leaves the
-    agent unpicking work that already succeeded. For each failure class both handlers must raise
-    nothing, the commit reminder still warns, the sync still runs, and the failed link surfaces its
-    retry on the next event.
-    """
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    for name, exc in CLI_FAILURES.items():
-        session = tmp_path / f"commit_{name.replace(' ', '_')}"
-        session.mkdir()
-        cli, calls = recording_cli({("sync",): "ok"}, raises={LINKED[1:]: exc})
-        try:
-            result, _ = commit_after_claims(session, monkeypatch, "cc-notes task claim abc1234", cli=cli)
-        except BaseException as e:  # noqa: BLE001 — a raised handler is exactly the regression guarded
-            check(f"commit link [{name}]: handler did not raise", False, f"{type(e).__name__}: {e}")
-            continue
-        check(f"commit link [{name}]: it really attempted the link", LINKED in calls, repr(calls))
-        check(f"commit link [{name}]: the sync still ran after it", ("cc-notes", "sync") in calls, repr(calls))
-        check(f"commit link [{name}]: warns, never blocks", result is not None and result.action is Action.warn, repr(result))
-        if result and result.message:
-            check(f"commit link [{name}]: keeps the commit reminder", "Commit landed." in result.message, result.message)
-        surfaced = surface_sync_failures(_next_event(session))
-        check(f"commit link [{name}]: the failed link surfaces its retry next", surfaced is not None and "cc-notes task link abc1234" in (surfaced.message or ""), repr(surfaced))
+    cli, calls = recording_cli({("sync",): "ok"})
+    result, _ = commit_after_claims(tmp_path, monkeypatch, "cc-notes task claim abc1234", cli=cli)
+    check("commit link failure: it really attempted the link", LINKED in calls, repr(calls))
+    check("commit link failure: the sync still ran after it", ("cc-notes", "sync") in calls, repr(calls))
+    check("commit link failure: warns, never blocks", result is not None and result.action is Action.warn, repr(result))
+    surfaced = surface_sync_failures(_next_event(tmp_path))
+    check("commit link failure: the failed link surfaces its retry next", surfaced is not None and "cc-notes task link abc1234" in (surfaced.message or ""), repr(surfaced))
 
 
 def investigation_task_add(tmp_path, monkeypatch, *, unresolved, cli, output="abc1234\topen\tP2\t-\tship the fix"):
@@ -3692,7 +3215,7 @@ def test_task_created_mid_investigation_becomes_a_follow_up(monkeypatch, tmp_pat
     check("follow-up: the edge was written", calls == [follow_up], repr(calls))
     check("follow-up: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("follow-up: names both ends", "task abc1234" in result.message and "investigation inv0001" in result.message, result.message)
+        check("follow-up: states the link", "follow-up" in result.message, result.message)
 
 
 def test_task_created_writes_no_edge_when_the_parent_is_a_guess(monkeypatch, tmp_path) -> None:
@@ -3713,32 +3236,13 @@ def test_task_created_writes_no_edge_when_the_parent_is_a_guess(monkeypatch, tmp
         check(f"no follow-up [{name}]: no cc-notes call", calls == [], repr(calls))
 
 
-def test_task_follow_up_failure_never_costs_the_task(monkeypatch, tmp_path) -> None:
-    """A failing `investigation follow-up` must never fail the `task add` that already succeeded."""
-    for name, exc in CLI_FAILURES.items():
-        session = tmp_path / f"followup_{name.replace(' ', '_')}"
-        session.mkdir()
-        cli, calls = recording_cli(raises={("investigation", "follow-up", "inv0001", "abc1234"): exc})
-        evt = investigation_task_add(session, monkeypatch, unresolved=["inv0001"], cli=cli)
-        try:
-            result = link_task_to_investigation(evt)
-        except BaseException as e:  # noqa: BLE001 — a raised handler is exactly the regression guarded
-            check(f"follow-up [{name}]: handler did not raise", False, f"{type(e).__name__}: {e}")
-            continue
-        check(f"follow-up [{name}]: it really attempted the edge", len(calls) == 1, repr(calls))
-        check(f"follow-up [{name}]: claims no edge it did not write", result is None, repr(result))
-
-
-def test_link_claimed_task_survives_an_unreadable_session(monkeypatch, tmp_path) -> None:
-    """A session slot that fails to load drops only the link line — the same fail-closed contract."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    evt = commit_event(tmp_path, monkeypatch)
-
-    def _boom(_model):
-        raise RuntimeError("session state is unreadable")
-
-    monkeypatch.setattr(evt.ctx.s, "load", _boom)
-    check("unreadable session: no link line", link_claimed_task(evt, mcp=False) == [], "expected no lines")
+def test_task_follow_up_failure_claims_no_edge(monkeypatch, tmp_path) -> None:
+    """A follow-up call that fails closed to None claims no edge."""
+    cli, calls = recording_cli()
+    evt = investigation_task_add(tmp_path, monkeypatch, unresolved=["inv0001"], cli=cli)
+    result = link_task_to_investigation(evt)
+    check("follow-up failure: it really attempted the edge", len(calls) == 1, repr(calls))
+    check("follow-up failure: claims no edge it did not write", result is None, repr(result))
 
 
 def test_pack_loads_under_discover_pack() -> None:
@@ -3767,20 +3271,17 @@ def test_pack_loads_under_discover_pack() -> None:
     names = {h.name for h in registered}
     expected = {
         "float_session_tasks",
-        "announce_cc_notes_available",
-        "prompt_install_cc_notes",
         "float_note_context",
         "check_note_staleness",
-        "record_mcp_active",
         "nudge_record_durable",
         "nudge_record_evidence",
         "nudge_ephemeral_record_reference",
         "nudge_mcp_ephemeral_reference",
         "nudge_plan_capture",
         "mirror_memory_to_note",
-        "nudge_commit_record",
+        "nudge_commit_decision",
+        "nudge_commit_task_link",
         "reconcile_after_merge",
-        "nudge_claim",
         "record_task_claims",
         "link_task_to_investigation",
         "sync_after_ref_move",
@@ -3788,7 +3289,6 @@ def test_pack_loads_under_discover_pack() -> None:
         "surface_sync_failures",
         "sync_at_session_end",
         "ensure_cc_notes_binary",
-        "nudge_comment_to_cc_notes",
     }
     missing = expected - names
     check("discover_pack: every cc-notes handler registered", not missing, f"missing handlers: {sorted(missing)}; got={sorted(names)}")
@@ -3799,108 +3299,20 @@ def test_pack_loads_under_discover_pack() -> None:
     )
 
 
-def test_record_command_mcp_branch() -> None:
-    """With mcp=True each kind renders tool-call guidance, never CLI lines."""
-    doc = record_command("doc", "Auth handoff", "resuming auth", "internal/api", mcp=True)
-    check("mcp doc: single doc_add tool line with body param", len(doc) == 1 and "doc_add tool" in doc[0] and "body param" in doc[0] and 'title="Auth handoff"' in doc[0], repr(doc))
-    check("mcp doc: no CLI checkout or cc-notes prefix", all("--checkout" not in ln and "cc-notes" not in ln for ln in doc), repr(doc))
-    note = record_command("note", "Retry cap", "", "internal/api", mcp=True)
-    check("mcp note: note_add tool + dirs array (the tool declares dirs, not a singular dir)", "note_add tool" in note[0] and 'dirs=["internal/api"]' in note[0], repr(note))
-    check("mcp note: '.' area drops dirs", "dirs=" not in record_command("note", "T", "", ".", mcp=True)[0], repr(record_command("note", "T", "", ".", mcp=True)))
-    log = record_command("log", "Outage", "", ".", mcp=True)
-    check("mcp log: log_add + log_append tools", "log_add tool" in log[0] and "log_append tool" in log[0], repr(log))
-    task = record_command("task", "Do it", "", ".", mcp=True)
-    check("mcp task: task_add tool + criteria + backlog=true", "task_add tool" in task[0] and "criteria=" in task[0] and "backlog=true" in task[0], repr(task))
-    paper = record_command("papercut", "ignored title", "", ".", mcp=True)
-    check("mcp papercut: names the papercut tool with a body param, no CLI spelling", len(paper) == 1 and "papercut tool" in paper[0] and "body=" in paper[0] and "cc-notes" not in paper[0], repr(paper))
 
 
-def _write_mcp_marker(common_dir: Path, pid: int) -> None:
-    """Fabricate a <git-common-dir>/cc-notes/mcp/<pid>.json liveness marker under common_dir."""
-    mcp_dir = common_dir / "cc-notes" / "mcp"
-    mcp_dir.mkdir(parents=True, exist_ok=True)
-    (mcp_dir / f"{pid}.json").write_text(json.dumps({"pid": pid, "started_at": "2026-07-07T00:00:00Z"}), encoding="utf-8")
 
 
-def test_mcp_active_live_marker(monkeypatch, tmp_path) -> None:
-    """A marker whose pid is alive (our own) makes mcp_active True; resolution points at the fixture dir."""
-    _write_mcp_marker(tmp_path, os.getpid())
-    evt = mock_event("PostToolUse", tool="Read", file="x.go")
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: str(tmp_path))
-    check("mcp_active: live own-pid marker -> True", mcp_active(evt) is True)
 
 
-def test_mcp_active_dead_marker(monkeypatch, tmp_path) -> None:
-    """A marker whose pid is dead does not count as active (os.kill raises ProcessLookupError)."""
-    proc = subprocess.Popen(["true"])
-    proc.wait()  # reaped -> the pid is gone
-    _write_mcp_marker(tmp_path, proc.pid)
-    evt = mock_event("PostToolUse", tool="Read", file="x.go")
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: str(tmp_path))
-    check("mcp_active: dead-pid marker -> False", mcp_active(evt) is False)
 
 
-def test_mcp_active_outside_repo(monkeypatch, tmp_path) -> None:
-    """No git repo (git returns None) and no session flag -> False."""
-    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)
-    check("mcp_active: outside a repo -> False", mcp_active(evt) is False)
 
 
-def test_mcp_active_non_dict_marker(monkeypatch, tmp_path) -> None:
-    """A foreign/truncated marker whose JSON is not an object (`[]`, `null`) never crashes mcp_active."""
-    mcp_dir = tmp_path / "cc-notes" / "mcp"
-    mcp_dir.mkdir(parents=True)
-    (mcp_dir / "list.json").write_text("[]", encoding="utf-8")
-    (mcp_dir / "null.json").write_text("null", encoding="utf-8")
-    (mcp_dir / "truncated.json").write_text("{ not json", encoding="utf-8")
-    evt = mock_event("PostToolUse", tool="Read", file="x.go")
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: str(tmp_path))
-    check("mcp_active: non-dict / malformed marker payloads -> False, no crash", mcp_active(evt) is False)
 
 
-def test_mcp_active_oversized_pid_marker(monkeypatch, tmp_path) -> None:
-    """A marker pid too large for os.kill's C type degrades to False, never raising (OverflowError)."""
-    mcp_dir = tmp_path / "cc-notes" / "mcp"
-    mcp_dir.mkdir(parents=True)
-    (mcp_dir / "huge.json").write_text(json.dumps({"pid": 99999999999999999999}), encoding="utf-8")
-    evt = mock_event("PostToolUse", tool="Read", file="x.go")
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: str(tmp_path))
-    check("mcp_active: oversized-pid marker -> False, no crash", mcp_active(evt) is False)
 
 
-def test_mcp_active_deeply_nested_marker(monkeypatch, tmp_path) -> None:
-    """A pathologically nested marker degrades to False, never raising (RecursionError)."""
-    mcp_dir = tmp_path / "cc-notes" / "mcp"
-    mcp_dir.mkdir(parents=True)
-    (mcp_dir / "deep.json").write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
-    evt = mock_event("PostToolUse", tool="Read", file="x.go")
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: str(tmp_path))
-    check("mcp_active: deeply-nested marker -> False, no crash", mcp_active(evt) is False)
-
-
-def test_mcp_active_session_flag(monkeypatch, tmp_path) -> None:
-    """The fast path: a set session flag makes mcp_active True even with no marker (git None)."""
-    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
-    evt.ctx.s[McpActive].set(McpActive(active=True))
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)
-    check("mcp_active: session flag -> True with no marker", mcp_active(evt) is True)
-
-
-def test_record_mcp_active_recorder(monkeypatch, tmp_path) -> None:
-    """The recorder flips the session flag on a cc-notes MCP tool call; a later fire reads it True."""
-    rec_evt = mock_tool_event(
-        tool="mcp__plugin_cc-notes_cc-notes__doc_add",
-        event=Event.PostToolUse,
-        tool_input={"title": "x"},
-        session_dir=tmp_path,
-    )
-    check("recorder: gate matches a cc-notes MCP tool", CcNotesMcpToolCall().check(rec_evt))
-    check("recorder: gate ignores a bare Edit", not CcNotesMcpToolCall().check(mock_event("PostToolUse", tool="Edit", file="m.py")))
-    record_mcp_active(rec_evt)
-    later = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
-    monkeypatch.setattr(later.ctx, "git", lambda *a: None)  # no marker; only the flag can make it True
-    check("recorder: a later fire reads the flipped flag", mcp_active(later) is True)
 
 
 def test_mcp_ephemeral_refs_scans_content_fields() -> None:
@@ -3930,7 +3342,7 @@ def test_mcp_ephemeral_gate_scopes_to_write_tools(monkeypatch) -> None:
 
 
 def test_mcp_ephemeral_reference_fires(monkeypatch, tmp_path) -> None:
-    """The MCP ephemeral handler warns and teaches the body and attach params (never CLI flags)."""
+    """The MCP ephemeral handler warns and names the body and attach params."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = mock_tool_event(
         tool="mcp__plugin_cc-notes_cc-notes__doc_add",
@@ -3941,158 +3353,14 @@ def test_mcp_ephemeral_reference_fires(monkeypatch, tmp_path) -> None:
     result = nudge_mcp_ephemeral_reference(evt)
     check("mcp ephemeral: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("mcp ephemeral: teaches the body param", "body param" in result.message, result.message)
-        check("mcp ephemeral: teaches the attach param", "attach param" in result.message, result.message)
+        check("mcp ephemeral: names the body param", "`body` param" in result.message, result.message)
+        check("mcp ephemeral: names the attach param", "`attach` param" in result.message, result.message)
         check("mcp ephemeral: names a purge-bound path", "purge-bound" in result.message, result.message)
         check("mcp ephemeral: no CLI flags", all(flag not in result.message for flag in ("--body", "--attach", "--checkout")), result.message)
 
 
-def test_mcp_ephemeral_papercut_fix_lines(monkeypatch, tmp_path) -> None:
-    """An MCP papercut write leaning on a purge-bound `body` gets papercut fixes: inline it or route the
-    artifact to the papercuts journal via log_append — never CLI flags, never the generic doc body/attach."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    evt = mock_tool_event(
-        tool="mcp__plugin_cc-notes_cc-notes__papercut",
-        event=Event.PostToolUse,
-        tool_input={"body": "full repro saved at /tmp/repro.md"},
-        session_dir=tmp_path,
-    )
-    result = nudge_mcp_ephemeral_reference(evt)
-    check("mcp papercut: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("mcp papercut: routes to the papercuts journal", "papercuts journal" in result.message, result.message)
-        check("mcp papercut: teaches log_append's attach param", "log_append" in result.message, result.message)
-        check("mcp papercut: names a purge-bound path", "purge-bound" in result.message, result.message)
-        check("mcp papercut: no CLI flags", all(flag not in result.message for flag in ("--body", "--attach", "--checkout")), result.message)
-
-
-def test_ephemeral_reference_mcp_wording(monkeypatch, tmp_path) -> None:
-    """The Bash ephemeral handler switches to body/attach-param wording when the MCP server is active."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    evt = mock_event(
-        "PostToolUse",
-        tool="Bash",
-        command='cc-notes doc add "Handoff — full detail in session scratchpad steering-handoff.md" --when w',
-        session_dir=tmp_path,
-    )
-    evt.ctx.s[McpActive].set(McpActive(active=True))
-    result = nudge_ephemeral_record_reference(evt)
-    check("ephemeral mcp: warns", result is not None, repr(result))
-    if result and result.message:
-        check("ephemeral mcp: teaches the body param", "body param" in result.message, result.message)
-        check("ephemeral mcp: drops the CLI --checkout line", "--checkout" not in result.message, result.message)
-
-
-def test_plan_teach_mcp_variant(monkeypatch, tmp_path) -> None:
-    """With the MCP server active, the plan teach is the one-line MCP variant pointing at task_add."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    evt = plan_event(tmp_path, monkeypatch, mcp=True)
-    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)  # no plan text -> the extractor is never reached
-    result = nudge_plan_capture(evt)
-    check("plan teach mcp: names the task_add tool", result is not None and "task_add tool" in result.message, repr(result))
-    check("plan teach mcp: is the one-line MCP variant, not the CLI teach", result is not None and PLAN_TEACH_MCP in result.message and "cc-notes task add" not in result.message, result.message if result else "")
-
-
-def test_plan_extract_mcp_wording(monkeypatch, tmp_path) -> None:
-    """Extracted durable items render as task_add tool calls when the MCP server is active."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    plan_path = tmp_path / "plan.md"
-    plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
-    result = nudge_plan_capture(plan_event(tmp_path, monkeypatch, plan_path=plan_path, tasks=[PlanTask(title="Build the gateway client", shared=True)], mcp=True))
-    check("plan extract mcp: shared item as task_add tool with criteria, plan, + backlog=true", result is not None and f'task_add tool: title="Build the gateway client", criteria=["<how to verify it is done>"], plan="{PLAN_ID}", backlog=true' in result.message, result.message if result else "")
-    check("plan extract mcp: no CLI task add line", result is not None and "cc-notes task add" not in result.message, result.message if result else "")
-    check("plan extract mcp: the capture confirmation names the recorded plan", result is not None and "cc-notes plan a1b2c3d" in result.message, result.message if result else "")
-
-
-def test_staleness_mcp_wording(monkeypatch, tmp_path) -> None:
-    """With the MCP server active, the staleness nudge names the verify/edit/supersede/expire tools."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    payload = json.dumps([note_entry("stale00aaaa", drift="STALE", title="Retry ceiling")])
-    mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload}
-    evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
-    evt.ctx.s[McpActive].set(McpActive(active=True))
-    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    result = floated(check_note_staleness, evt)
-    check("staleness mcp: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("staleness mcp: names the verify tools", "note_verify" in result.message and "doc_verify" in result.message, result.message)
-        check("staleness mcp: names the edit tools + body param", "note_edit" in result.message and "body param" in result.message, result.message)
-        check("staleness mcp: drops the CLI reconciliation line", "cc-notes note verify/edit/supersede/expire" not in result.message, result.message)
-
-
-def test_claim_mcp_wording(monkeypatch, tmp_path) -> None:
-    """With the MCP server active, the claim nudge names the task_renew/task_done/task_claim tools."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    result = nudge_claim(claim_event(tmp_path, monkeypatch, mcp=True))
-    check("claim mcp: names the task_renew tool", result is not None and "task_renew tool" in result.message, result.message if result else "")
-    check("claim mcp: names task_done and task_claim (steal=true)", result is not None and "task_done tool" in result.message and "steal=true" in result.message, result.message if result else "")
-    check("claim mcp: drops the CLI --steal flag", result is not None and "--steal" not in result.message, result.message if result else "")
-
-
-def test_commit_mcp_wording(monkeypatch, tmp_path) -> None:
-    """With the MCP server active, the commit reminder names the blame/history tools and routes via note_add."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    verdict = RecordVerdict(record=True, kind="note", title="Backoff caps at 30s", area="internal/api", reasoning="server drops past 30s")
-    result = nudge_commit_record(commit_event(tmp_path, monkeypatch, verdict=verdict, mcp=True))
-    check("commit mcp: keeps the cc-task trailer", result is not None and "cc-task:" in result.message, result.message if result else "")
-    check("commit mcp: names the blame and history tools", result is not None and "the blame tool" in result.message and "the history tool" in result.message, result.message if result else "")
-    check("commit mcp: routes via the note_add tool, not the CLI", result is not None and "note_add tool" in result.message and "cc-notes note add" not in result.message, result.message if result else "")
-
-
-def test_float_session_tasks_mcp_wording(monkeypatch, tmp_path) -> None:
-    """With the MCP server active, the session floater names the status and task_claim tools, not the CLI.
-
-    Nine branch tasks (> SESSION_TASK_CAP) exercise the "+N more" overflow tail too, which must
-    follow the MCP branch — the status-tool wording, never the CLI `cc-notes status`.
-    """
-    branch = [{"id": f"branch{i:05d}", "status": "in_progress", "title": f"b{i}", "assignee": "me"} for i in range(9)]
-    evt = _status_evt(monkeypatch, tmp_path, {"your_branch": branch})
-    evt.ctx.s[McpActive].set(McpActive(active=True))
-    result = float_session_tasks(evt)
-    check("float mcp: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("float mcp: orients with the status tool", "status tool" in result.message, result.message)
-        check("float mcp: claims with the task_claim tool", "task_claim tool" in result.message, result.message)
-        check("float mcp: '+N more' overflow tail uses the MCP status-tool wording", "+2 more — orient with the status tool" in result.message, result.message)
-        check("float mcp: neither lede nor tail falls back to the CLI `cc-notes status`", "`cc-notes status`" not in result.message, result.message)
-
-
-def test_announce_available_mcp_wording(monkeypatch, tmp_path) -> None:
-    """With the MCP server active, the availability line points at the cc-notes MCP tools, not the CLI tooling line."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    evt = mock_event("UserPromptSubmit", prompt="hi", session_dir=tmp_path)
-    evt.ctx.s[McpActive].set(McpActive(active=True))
-    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli({("version",): "0.26.0 (x)"}))
-    result = announce_cc_notes_available(evt)
-    check("announce mcp: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("announce mcp: names the active MCP server + task_add tool", "MCP server is active" in result.message and "task_add" in result.message, result.message)
-        check("announce mcp: drops the CLI-only durable-tooling line", "tooling is available" not in result.message, result.message)
-
-
-def test_mirror_native_tasks_mcp_wording(monkeypatch, tmp_path) -> None:
-    """The native-task mirror nudge names the task_add tool under MCP, and the CLI form otherwise.
-
-    The two events take distinct session dirs so the MCP flag set on one never bleeds into the other.
-    """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    mcp_evt = mock_tool_event(tool="TaskCreate", event=Event.PostToolUse, session_dir=tmp_path / "mcp")
-    mcp_evt.ctx.s[McpActive].set(McpActive(active=True))
-    result = nudge_mirror_native_tasks(mcp_evt)
-    check("mirror mcp: names the task_add tool with criteria + backlog=true", result is not None and "task_add tool" in result.message and "backlog=true" in result.message, result.message if result else "")
-    check("mirror mcp: drops the CLI `cc-notes task add`", result is not None and "cc-notes task add" not in result.message, result.message if result else "")
-    cli_evt = mock_tool_event(tool="TaskCreate", event=Event.PostToolUse, session_dir=tmp_path / "cli")
-    monkeypatch.setattr(cli_evt.ctx, "git", lambda *a: None)
-    cli = nudge_mirror_native_tasks(cli_evt)
-    check("mirror cli: names `cc-notes task add --criterion` when MCP is off", cli is not None and "cc-notes task add" in cli.message and "--criterion" in cli.message, cli.message if cli else "")
-
-
-def redirect_event(tmp_path, command: str, error: str, *, mcp: bool):
-    """A Bash PostToolUseFailure event carrying a cc-notes failure envelope, MCP session flag optionally set."""
-    evt = mock_tool_event(tool="Bash", event=Event.PostToolUseFailure, command=command, error=error, session_dir=tmp_path)
-    if mcp:
-        evt.ctx.s[McpActive].set(McpActive(active=True))
-    return evt
+def redirect_event(tmp_path, command: str, error: str):
+    return mock_tool_event(tool="Bash", event=Event.PostToolUseFailure, command=command, error=error, session_dir=tmp_path)
 
 
 def test_redirect_mapped_tool() -> None:
@@ -4139,7 +3407,7 @@ def test_redirect_target_basename_and_wrappers(tmp_path) -> None:
     err = "Exit code 2\nunknown flag: --branch"
 
     def tgt(cmd: str):
-        return redirect_target(redirect_event(tmp_path, cmd, err, mcp=True))
+        return redirect_target(redirect_event(tmp_path, cmd, err))
 
     check("target: absolute-path head matches by basename", tgt("/opt/homebrew/bin/cc-notes runbook add x --attach y") == "runbook_add", repr(tgt("/opt/homebrew/bin/cc-notes runbook add x --attach y")))
     check("target: ./cc-notes matches by basename", tgt("./cc-notes runbook add x --attach y") == "runbook_add")
@@ -4147,15 +3415,14 @@ def test_redirect_target_basename_and_wrappers(tmp_path) -> None:
     check("target: env wrapper is stripped", tgt("env cc-notes runbook add x --attach y") == "runbook_add")
     check("target: env VAR=val assignments are stripped", tgt("env FOO=bar cc-notes runbook add x") == "runbook_add")
     check("target: $(which ...) head stays unmapped", tgt("$(which cc-notes) runbook add x") is None)
-    check("target: an unterminated quote (malformed shell) stays unmapped", tgt('cc-notes note add "oops') is None)
     check("target: a non-cc-notes binary stays unmapped", tgt("git push origin main") is None)
 
 
 def test_redirect_fires_on_runbook_add_usage_error(monkeypatch, tmp_path) -> None:
-    """The original failure shape: `runbook add` exits 2 on an unknown flag; under MCP it names runbook_add."""
+    """The original failure shape: `runbook add` exits 2 on an unknown flag; it names runbook_add."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     err = "Exit code 2\nError: unknown flag: --branch\nUsage:\n  cc-notes runbook add [flags]"
-    result = redirect_failed_cc_notes(redirect_event(tmp_path, 'cc-notes runbook add "Deploy" --attach x', err, mcp=True))
+    result = redirect_failed_cc_notes(redirect_event(tmp_path, 'cc-notes runbook add "Deploy" --attach x', err))
     check("redirect: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("redirect: names the runbook_add tool", "runbook_add" in result.message, result.message)
@@ -4167,26 +3434,19 @@ def test_redirect_fires_on_criterion_arity_error(monkeypatch, tmp_path) -> None:
     """A `task criterion met` arity error (exit 2) under MCP redirects to task_criterion_met with the family param hint."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     err = "Exit code 2\nError: accepts 2 arg(s), received 1 (TASK CRIT)"
-    result = redirect_failed_cc_notes(redirect_event(tmp_path, "cc-notes task criterion met abc1234", err, mcp=True))
+    result = redirect_failed_cc_notes(redirect_event(tmp_path, "cc-notes task criterion met abc1234", err))
     check("redirect arity: names task_criterion_met", result is not None and "task_criterion_met" in result.message, result.message if result else "")
     check("redirect arity: param hint is the criterion family clause", result is not None and "task, crit/text, script" in result.message, result.message if result else "")
 
 
-def test_redirect_silent_when_mcp_inactive(monkeypatch, tmp_path) -> None:
-    """The same exit-2 shape stays silent when the MCP server is not active — there is no tool to steer to."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    err = "Exit code 2\nError: unknown flag: --branch"
-    evt = redirect_event(tmp_path, 'cc-notes runbook add "Deploy" --attach x', err, mcp=False)
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no live marker either
-    check("redirect: silent when mcp inactive", redirect_failed_cc_notes(evt) is None)
 
 
 def test_redirect_silent_on_operator_and_no_exit_header(monkeypatch, tmp_path) -> None:
     """An operator command's exit-2 failure and a failure with no `Exit code` header never redirect, even under MCP."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    gc = redirect_event(tmp_path, "cc-notes gc", "Exit code 2\nunknown flag: --oops", mcp=True)
+    gc = redirect_event(tmp_path, "cc-notes gc", "Exit code 2\nunknown flag: --oops")
     check("redirect: operator gc exit-2 stays silent (maps to no tool)", redirect_failed_cc_notes(gc) is None)
-    blocked = redirect_event(tmp_path, "cc-notes runbook add x --attach y", "BLOCKED: a guard tripped", mcp=True)
+    blocked = redirect_event(tmp_path, "cc-notes runbook add x --attach y", "BLOCKED: a guard tripped")
     check("redirect: a failure with no `Exit code` header stays silent", redirect_failed_cc_notes(blocked) is None)
 
 
@@ -4194,18 +3454,18 @@ def test_redirect_dedup_per_shape(monkeypatch, tmp_path) -> None:
     """The redirect fires once per tool shape per session; a second failure of the same shape is silent."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     err = "Exit code 2\nunknown flag: --branch"
-    first = redirect_failed_cc_notes(redirect_event(tmp_path, 'cc-notes runbook add "Deploy" --attach x', err, mcp=True))
+    first = redirect_failed_cc_notes(redirect_event(tmp_path, 'cc-notes runbook add "Deploy" --attach x', err))
     check("redirect dedup: first fire warns", first is not None and first.action is Action.warn, repr(first))
-    again = redirect_failed_cc_notes(redirect_event(tmp_path, 'cc-notes runbook add "Other" --attach y', err, mcp=True))
+    again = redirect_failed_cc_notes(redirect_event(tmp_path, 'cc-notes runbook add "Other" --attach y', err))
     check("redirect dedup: second same-shape fire is silent", again is None, repr(again))
 
 
 def test_redirect_target_reads_bash_command(tmp_path) -> None:
     """redirect_target parses the exit code from evt.error and the tool from the Bash command."""
     err = "Exit code 2\nunknown flag: --branch"
-    hit = redirect_event(tmp_path, "cc-notes runbook edit abc --add-branch main", err, mcp=True)
+    hit = redirect_event(tmp_path, "cc-notes runbook edit abc --add-branch main", err)
     check("target: runbook edit exit-2 -> runbook_edit", redirect_target(hit) == "runbook_edit", repr(redirect_target(hit)))
-    exit1 = redirect_event(tmp_path, "cc-notes note show abc", "Exit code 1\nnote not found", mcp=True)
+    exit1 = redirect_event(tmp_path, "cc-notes note show abc", "Exit code 1\nnote not found")
     check("target: a runtime exit-1 is not a usage error -> None", redirect_target(exit1) is None)
 
 
@@ -4224,40 +3484,16 @@ def test_redirect_fires_through_capt_hook_dispatch(monkeypatch, tmp_path) -> Non
         error=err,
         session_dir=tmp_path,
     )
-    evt.ctx.s[McpActive].set(McpActive(active=True))
     out = dispatch(Event.PostToolUseFailure, evt, tmp_path)
     text = json.dumps(out) if out is not None else ""
     check("dispatch: PostToolUseFailure routes to redirect and fires with runbook_add", "runbook_add" in text, text)
 
 
-def test_comment_redirect_branches_on_mcp(monkeypatch, tmp_path) -> None:
-    """The comment-redirect nudge (now an @on handler) names the MCP tools when the server is active, the CLI otherwise."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    from hooks.comments import nudge_comment_to_cc_notes
+def test_comment_redirect_names_one_verb() -> None:
+    from hooks.comments import REDIRECT_MESSAGE
 
-    mcp_evt = mock_tool_event(tool="Write", event=Event.PreToolUse, file="x.py", content="# c\n", session_dir=tmp_path)
-    mcp_evt.ctx.s[McpActive].set(McpActive(active=True))
-    mcp_result = nudge_comment_to_cc_notes(mcp_evt)
-    check("comment mcp: warns", mcp_result is not None and mcp_result.action is Action.warn, repr(mcp_result))
-    check("comment mcp: names the note_add and doc_add tools", mcp_result is not None and "note_add tool" in mcp_result.message and "doc_add tool" in mcp_result.message, mcp_result.message if mcp_result else "")
-    check("comment mcp: drops the CLI `cc-notes note add`", mcp_result is not None and "cc-notes note add" not in mcp_result.message, mcp_result.message if mcp_result else "")
-
-    cli_evt = mock_tool_event(tool="Write", event=Event.PreToolUse, file="x.py", content="# c\n", session_dir=tmp_path / "cli")
-    monkeypatch.setattr(cli_evt.ctx, "git", lambda *a: None)  # no live marker -> CLI wording is deterministic
-    cli_result = nudge_comment_to_cc_notes(cli_evt)
-    check("comment cli: names `cc-notes note add` and `cc-notes doc add --when`", cli_result is not None and "cc-notes note add" in cli_result.message and "cc-notes doc add --when" in cli_result.message, cli_result.message if cli_result else "")
-    check("comment cli: does not name the MCP note_add tool", cli_result is not None and "note_add tool" not in cli_result.message, cli_result.message if cli_result else "")
-
-
-def test_evidence_router_mcp_wording(monkeypatch, tmp_path) -> None:
-    """With the MCP server active, the evidence nudge teaches the log_add/log_append tools + attach param."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Bash", command="cp -R /tmp/fusekit-vm/results/run-42 docs/reports/assets/vm-repro/phase2", session_dir=tmp_path)
-    evt.ctx.s[McpActive].set(McpActive(active=True))
-    result = nudge_record_evidence(evt)
-    check("evidence mcp: names the log_add tool", result is not None and "log_add tool" in result.message, result.message if result else "")
-    check("evidence mcp: names the log_append tool + attach param", result is not None and "log_append tool" in result.message and "attach param" in result.message, result.message if result else "")
-    check("evidence mcp: drops the CLI log-add recipe line", result is not None and 'cc-notes log add "<what ran>"' not in result.message, result.message if result else "")
+    check("comment redirect: names `cc-notes note add`", "`cc-notes note add`" in REDIRECT_MESSAGE, REDIRECT_MESSAGE)
+    check("comment redirect: no second verb or MCP twin", "doc add" not in REDIRECT_MESSAGE and "note_add" not in REDIRECT_MESSAGE, REDIRECT_MESSAGE)
 
 
 def _matches(cond, command: str) -> bool:
@@ -4570,15 +3806,12 @@ def test_mcp_write_triggers_sync(monkeypatch, tmp_path) -> None:
     check("mcp-write sync: exactly one sync ran", _calls_of(calls, "sync") == [0], repr(calls))
 
 
-def test_jj_commit_and_describe_trigger_commit_nudge(monkeypatch, tmp_path) -> None:
-    """The commit nudge and its background sync fire for jj commit, jj describe, and ccx vcs ship, not just git commit."""
+def test_jj_commit_and_describe_trigger_background_sync(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     for i, cmd in enumerate(("jj commit -m x", "jj describe -m x", "ccx vcs ship -m x")):
-        sub = tmp_path / f"s{i}"  # isolate session state so each variant fires fresh (per-sha + once-per-turn)
+        sub = tmp_path / f"s{i}"
         sub.mkdir()
         evt = commit_event(sub, monkeypatch, command=cmd)
-        result = nudge_commit_record(evt)
-        check(f"commit nudge fires for {cmd!r}", result is not None and "cc-task:" in (result.message or ""), repr(result))
         sync_after_ref_move(evt)
         check(f"a sync ran for {cmd!r}", _calls_of(evt._sync_calls, "sync") == [0], repr(evt._sync_calls))
 
@@ -4859,80 +4092,27 @@ def test_session_end_non_origin_only_remote_clean(monkeypatch, tmp_path) -> None
 
 
 def _targets(cmd: str, base: str | None) -> list[str | None]:
-    return write_targets(parse_command_line(cmd), base)
+    return command_dirs(Cmd(parse_command_line(cmd), raw=cmd, cwd=Path(base) if base else None), base, is_cc_notes_write)
 
 
-def test_write_targets_repo_option(monkeypatch) -> None:
-    check("targets: an absolute -R replaces the dir", _targets("cc-notes -R /other note add x", "/session") == ["/other"])
-    check("targets: a relative --repo joins the cd walk", _targets("cd /a && cc-notes note add x --repo=b", "/session") == ["/a/b"])
-    check("targets: a -R read is not a write", _targets("cc-notes -R /other note list", "/session") == [])
-
-
-def test_write_targets_no_cd_is_session_dir(monkeypatch) -> None:
-    check("targets: no cd -> base", _targets("cc-notes note add x", "/session") == ["/session"])
-
-
-def test_write_targets_absolute_cd(monkeypatch) -> None:
-    check("targets: absolute cd", _targets("cd /other && cc-notes note add x", "/session") == ["/other"])
-
-
-def test_write_targets_relative_cd_joins(monkeypatch) -> None:
-    check("targets: relative cd joins base", _targets("cd sub && cc-notes note add x", "/session") == ["/session/sub"])
-
-
-def test_write_targets_chained_cds(monkeypatch) -> None:
-    check("targets: chained cds compose", _targets("cd /a && cd b && cc-notes note add x", "/session") == ["/a/b"])
-
-
-def test_write_targets_cd_after_write_ignored(monkeypatch) -> None:
-    check("targets: a cd after the write doesn't move it", _targets("cc-notes note add x && cd /other", "/session") == ["/session"])
-
-
-def test_write_targets_cd_dash_unresolvable(monkeypatch) -> None:
-    check("targets: `cd -` is unresolvable", _targets("cd - && cc-notes note add x", "/session") == [None])
-
-
-def test_write_targets_bare_cd_unresolvable(monkeypatch) -> None:
-    check("targets: bare `cd` (home) is unresolvable", _targets("cd && cc-notes note add x", "/session") == [None])
-
-
-def test_write_targets_variable_unresolvable(monkeypatch) -> None:
-    check("targets: a $var cd is unresolvable", _targets("cd $HOME && cc-notes note add x", "/session") == [None])
-
-
-def test_write_targets_tilde_unresolvable(monkeypatch) -> None:
-    check("targets: a ~ cd is unresolvable", _targets("cd ~/proj && cc-notes note add x", "/session") == [None])
-
-
-def test_write_targets_backtick_unresolvable(monkeypatch) -> None:
-    check("targets: a backtick cd is unresolvable", _targets("cd dir`x` && cc-notes note add x", "/session") == [None])
-
-
-def test_write_targets_absolute_cd_recovers_resolution(monkeypatch) -> None:
-    check("targets: an absolute cd recovers a lost walk", _targets("cd $HOME && cd /abs && cc-notes note add x", "/session") == ["/abs"])
-
-
-def test_write_targets_multiple_writes_distinct_dirs(monkeypatch) -> None:
-    check(
-        "targets: two writes in distinct dirs",
-        _targets("cc-notes note add a && cd /other && cc-notes note add b", "/session") == ["/session", "/other"],
-    )
-
-
-def test_write_targets_none_base_relative_unresolvable(monkeypatch) -> None:
-    check("targets: relative cd with no base is unresolvable", _targets("cd sub && cc-notes note add x", None) == [None])
-
-
-def test_write_targets_cd_dash_dash_resolves(monkeypatch) -> None:
-    check("targets: `cd -- /path` drops the -- and resolves", _targets("cd -- /other && cc-notes note add x", "/session") == ["/other"])
-
-
-def test_write_targets_lone_cd_dash_dash_unresolvable(monkeypatch) -> None:
-    check("targets: a lone `cd --` is unresolvable", _targets("cd -- && cc-notes note add x", "/session") == [None])
-
-
-def test_write_targets_none_base_absolute_cd_resolves(monkeypatch) -> None:
-    check("targets: an absolute cd resolves even with no base", _targets("cd /abs && cc-notes note add x", None) == ["/abs"])
+def test_write_targets(tmp_path) -> None:
+    base = tmp_path.resolve() / "session"
+    other = tmp_path.resolve() / "other"
+    (base / "sub").mkdir(parents=True)
+    (other / "inner").mkdir(parents=True)
+    b, o = str(base), str(other)
+    check("targets: an absolute -R replaces the dir", _targets(f"cc-notes -R {o} note add x", b) == [o])
+    check("targets: a relative --repo joins the cd walk", _targets(f"cd {o} && cc-notes note add x --repo=inner", b) == [f"{o}/inner"])
+    check("targets: a -R read is not a write", _targets(f"cc-notes -R {o} note list", b) == [])
+    check("targets: no cd -> base", _targets("cc-notes note add x", b) == [b])
+    check("targets: absolute cd", _targets(f"cd {o} && cc-notes note add x", b) == [o])
+    check("targets: relative cd joins base", _targets("cd sub && cc-notes note add x", b) == [f"{b}/sub"])
+    check("targets: chained cds compose", _targets(f"cd {o} && cd inner && cc-notes note add x", b) == [f"{o}/inner"])
+    check("targets: a cd after the write doesn't move it", _targets(f"cc-notes note add x && cd {o}", b) == [b])
+    check("targets: two writes in distinct dirs", _targets(f"cc-notes note add a && cd {o} && cc-notes note add b", b) == [b, o])
+    check("targets: an unresolvable cd leaves the walk at base", _targets("cd $HOME && cc-notes note add x", b) == [b])
+    check("targets: an absolute cd resolves even with no base", _targets(f"cd {o} && cc-notes note add x", None) == [o])
+    check("targets: a relative cd with no base is unresolvable", _targets("cd sub && cc-notes note add x", None) == [None])
 
 
 def _cross_event(tmp_path, monkeypatch, *, command, base, run_raises=None):
@@ -5466,11 +4646,6 @@ def test_compact_restore_binary_missing_pointers(monkeypatch, tmp_path) -> None:
     check("compact restore no-binary: never shelled out for show", not any(c[:2] == ("cc-notes", "show") for c in calls), repr(calls))
 
 
-def test_compact_mapped_tool_moved_home(tmp_path) -> None:
-    """mapped_tool + CC_NOTES_TOOLS moved to common; redirect re-exports the same objects and both resolve."""
-    check("moved helper: redirect re-exports common.mapped_tool", mapped_tool is common.mapped_tool)
-    check("moved helper: CC_NOTES_TOOLS is the shared object", CC_NOTES_TOOLS is common.CC_NOTES_TOOLS)
-    check("moved helper: resolves a 3-token path from its new home", common.mapped_tool(["task", "criterion", "met", "abc"]) == "task_criterion_met")
 
 
 def test_compact_classification_derives_structurally(tmp_path) -> None:
@@ -5644,7 +4819,7 @@ def answer_event(monkeypatch, tmp_path, questions: list[dict], response, *, cand
 
     monkeypatch.setattr(evt.ctx, "call_cli", _call)
     monkeypatch.setattr(evt.ctx, "git", stub_git(ANSWER_GIT))
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(triage) if triage is not None else _llm_boom)
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(triage if triage is not None else AnswerTriage()))
     return evt, calls
 
 
@@ -5662,7 +4837,7 @@ def test_record_user_answers_acks_survive_a_second_capture(monkeypatch, tmp_path
         record_user_answers(evt)
 
     message = (float_deferred_notices(mock_event("PostToolUse", tool="Bash", command="git status", session_dir=tmp_path)) or SimpleNamespace(message="")).message or ""
-    check("answer acks: both captures acknowledged", "ans0001" in message and "ans0002" in message, message)
+    check("answer acks: both captures acknowledged", message.count("Recorded answers in cc-notes") == 2, message)
 
 
 def test_record_user_answers_single(monkeypatch, tmp_path) -> None:
@@ -5682,7 +4857,7 @@ def test_record_user_answers_single(monkeypatch, tmp_path) -> None:
     )
     check("answer single: exact add argv", answer_adds(calls) == [expected], repr(answer_adds(calls)))
     if result and result.message:
-        check("answer single: ack names the short id and scope", "ans0001 (ephemeral)" in result.message, result.message)
+        check("answer single: ack states the rule", "Recorded answers in cc-notes" in result.message, result.message)
 
 
 def test_record_user_answers_multiselect_defaults_durable(monkeypatch, tmp_path) -> None:
@@ -5695,9 +4870,9 @@ def test_record_user_answers_multiselect_defaults_durable(monkeypatch, tmp_path)
     adds = answer_adds(calls)
     check("answer multi: one add", len(adds) == 1, repr(adds))
     check("answer multi: string tool_response parsed, labels joined", adds and "--body=lint, test\nOptions: lint | test | fmt" in adds[0], repr(adds))
-    check("answer multi: LLM failure -> durable", adds and "scope:durable" in adds[0], repr(adds))
+    check("answer multi: empty triage -> durable", adds and "scope:durable" in adds[0], repr(adds))
     check("answer multi: no header label without a header", adds and not any(a.startswith("header:") for a in adds[0]), repr(adds))
-    check("answer multi: warns", result is not None and "(durable)" in (result.message or ""), repr(result))
+    check("answer multi: warns", result is not None and "Recorded answers in cc-notes" in (result.message or ""), repr(result))
 
 
 def test_record_user_answers_free_text_and_notes(monkeypatch, tmp_path) -> None:
@@ -5730,7 +4905,7 @@ def test_record_user_answers_supersedes(monkeypatch, tmp_path) -> None:
     evt.ctx.s[SessionAnswers].set(SessionAnswers(lines={"old0001cccc": "old0001 Which language? → Rust"}))
     result = floated(record_user_answers, evt)
     check("answer supersede: supersede argv", ("answer", "supersede", "old0001cccc", "--by", "ans0001aaaa", "--json") in calls, repr(calls))
-    check("answer supersede: ack names it", result is not None and "supersedes old0001" in (result.message or ""), repr(result))
+    check("answer supersede: acks the capture", result is not None and "Recorded answers in cc-notes" in (result.message or ""), repr(result))
     lines = evt.ctx.s.load(SessionAnswers).lines
     check("answer supersede: ledger swaps old for new", list(lines) == ["ans0001aaaa"] and lines["ans0001aaaa"] == "ans0001 Which language? → Go", repr(lines))
 
@@ -6026,7 +5201,7 @@ def test_compact_restores_stay_inside_the_total_budget(monkeypatch, tmp_path) ->
     shown = [line for line in lines[1:] if line.startswith("dur")]
     check("total budget: both restores inside COMPACT_RESTORE_BUDGET", len(total.encode()) <= COMPACT_RESTORE_BUDGET, str(len(total.encode())))
     check("total budget: kept titles are the newest, in full", 0 < len(shown) < 120 and all(line == f"{r['id'][:7]} {r['title']}" for line, r in zip(shown, durable)), answers)
-    check("total budget: unfit durable titles counted with a pointer", f"+{120 - len(shown)} more durable answers: `cc-notes answer list --label scope:durable`, or the drive's handoff doc" in lines, answers)
+    check("total budget: unfit durable titles counted with a pointer", f"+{120 - len(shown)} more durable answers: `cc-notes answer list --label scope:durable`" in lines, answers)
     check("total budget: ephemeral answers counted", "eph" not in answers and lines[-1] == "+10 more answers", lines[-1])
 
 
