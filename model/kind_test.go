@@ -90,6 +90,7 @@ var metaCases = []struct {
 		},
 		want: Meta{
 			Kind: KindNote, Title: "Deploy runbook", Head: testParent,
+			Labels:    []string{"ops"},
 			CreatedAt: time.Unix(100, 0).UTC(), UpdatedAt: time.Unix(200, 0).UTC(),
 			Deleted: true, Superseded: true,
 			Attachments: []Attachment{{Name: "trace.png", OID: testOID, Size: 2048}},
@@ -118,6 +119,7 @@ var metaCases = []struct {
 		},
 		want: Meta{
 			Kind: KindLog, Title: "Auth rollout", Head: testParent,
+			Labels:    []string{"ops"},
 			CreatedAt: time.Unix(500, 0).UTC(), UpdatedAt: time.Unix(600, 0).UTC(),
 			Deleted: true, Superseded: false,
 			Attachments: []Attachment{{Name: "run.log", OID: testOID, Size: 512}},
@@ -199,6 +201,7 @@ var metaCases = []struct {
 		},
 		want: Meta{
 			Kind: KindAnswer, Title: "Which cache backend?", Head: testParent,
+			Labels:    []string{"scope:durable"},
 			CreatedAt: time.Unix(1900, 0).UTC(), UpdatedAt: time.Unix(2000, 0).UTC(),
 			Superseded:  true,
 			Attachments: []Attachment{{Name: "context.txt", OID: testOID, Size: 128}},
