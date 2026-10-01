@@ -1033,6 +1033,46 @@ command: cc-notes ledger sync
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
+command: cc-notes local
+  use: local
+  aliases: -
+  short: Keep entities on this clone: never synced, never pushed by a plain git push
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes local list
+  use: list
+  aliases: -
+  short: List the entities kept on this clone and why
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes local mark
+  use: mark ID...
+  aliases: -
+  short: Keep entities on this clone (adds the local label)
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes local unmark
+  use: unmark ID...
+  aliases: -
+  short: Publish entities again (removes the local label, adds synced)
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
 command: cc-notes log
   use: log
   aliases: -

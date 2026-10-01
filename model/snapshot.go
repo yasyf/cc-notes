@@ -27,6 +27,7 @@ type Meta struct {
 	UpdatedAt   time.Time
 	Deleted     bool
 	Superseded  bool
+	Labels      []string
 	Attachments []Attachment
 	SkippedOps  int
 }
@@ -74,6 +75,7 @@ func (n Note) Meta() Meta {
 		Deleted:     n.Deleted,
 		Superseded:  len(n.SupersededBy) > 0,
 		Attachments: n.Attachments,
+		Labels:      n.Tags,
 		SkippedOps:  n.SkippedOps,
 	}
 }
@@ -89,6 +91,7 @@ func (d Doc) Meta() Meta {
 		Deleted:     d.Deleted,
 		Superseded:  len(d.SupersededBy) > 0,
 		Attachments: d.Attachments,
+		Labels:      d.Tags,
 		SkippedOps:  d.SkippedOps,
 	}
 }
@@ -103,6 +106,7 @@ func (l Log) Meta() Meta {
 		UpdatedAt:   metaTime(l.UpdatedAt),
 		Deleted:     l.Deleted,
 		Attachments: l.Attachments,
+		Labels:      l.Tags,
 		SkippedOps:  l.SkippedOps,
 	}
 }
@@ -116,6 +120,7 @@ func (t Task) Meta() Meta {
 		CreatedAt:  metaTime(t.CreatedAt),
 		UpdatedAt:  metaTime(t.UpdatedAt),
 		Deleted:    t.Deleted,
+		Labels:     t.Labels,
 		SkippedOps: t.SkippedOps,
 	}
 }
@@ -129,6 +134,7 @@ func (s Sprint) Meta() Meta {
 		CreatedAt:  metaTime(s.CreatedAt),
 		UpdatedAt:  metaTime(s.UpdatedAt),
 		Deleted:    s.Deleted,
+		Labels:     s.Labels,
 		SkippedOps: s.SkippedOps,
 	}
 }
@@ -142,6 +148,7 @@ func (p Project) Meta() Meta {
 		CreatedAt:  metaTime(p.CreatedAt),
 		UpdatedAt:  metaTime(p.UpdatedAt),
 		Deleted:    p.Deleted,
+		Labels:     p.Labels,
 		SkippedOps: p.SkippedOps,
 	}
 }
@@ -155,6 +162,7 @@ func (r Runbook) Meta() Meta {
 		CreatedAt:  metaTime(r.CreatedAt),
 		UpdatedAt:  metaTime(r.UpdatedAt),
 		Deleted:    r.Deleted,
+		Labels:     r.Labels,
 		SkippedOps: r.SkippedOps,
 	}
 }
@@ -170,6 +178,7 @@ func (i Investigation) Meta() Meta {
 		Deleted:     i.Deleted,
 		Superseded:  len(i.SupersededBy) > 0,
 		Attachments: i.Attachments,
+		Labels:      i.Tags,
 		SkippedOps:  i.SkippedOps,
 	}
 }
@@ -184,6 +193,7 @@ func (p Plan) Meta() Meta {
 		UpdatedAt:  metaTime(p.UpdatedAt),
 		Deleted:    p.Deleted,
 		Superseded: len(p.SupersededBy) > 0,
+		Labels:     p.Labels,
 		SkippedOps: p.SkippedOps,
 	}
 }
@@ -199,6 +209,7 @@ func (a Answer) Meta() Meta {
 		Deleted:     a.Deleted,
 		Superseded:  len(a.SupersededBy) > 0,
 		Attachments: a.Attachments,
+		Labels:      a.Tags,
 		SkippedOps:  a.SkippedOps,
 	}
 }
@@ -215,6 +226,7 @@ func (l Ledger) Meta() Meta {
 		CreatedAt:  metaTime(l.CreatedAt),
 		UpdatedAt:  metaTime(l.UpdatedAt),
 		Deleted:    l.Deleted,
+		Labels:     l.Labels,
 		SkippedOps: l.SkippedOps,
 	}
 }

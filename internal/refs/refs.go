@@ -30,6 +30,11 @@ const (
 // never matches the refs/cc-notes-sync/ tracking refs.
 const Namespace = namespace
 
+// PushRefspec is the plain-push refspec cc-notes installs on a wired remote:
+// every entity ref, never forced, so a diverged ref resolves through sync's
+// union merge instead of a clobber.
+const PushRefspec = namespace + "*:" + namespace + "*"
+
 var (
 	// ErrNotCCNotes reports a ref outside the cc-notes namespaces.
 	ErrNotCCNotes = errors.New("not a cc-notes ref")

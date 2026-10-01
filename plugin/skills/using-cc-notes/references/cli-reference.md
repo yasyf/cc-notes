@@ -558,6 +558,35 @@ MCP: attachment_path (id, name)
 Print the attachment's absolute object path in the local store, for a zero-copy read with your
 file tools. Takes no flags.
 
+### `cc-notes local list`
+
+MCP: local_list ()
+
+List every entity this clone keeps to itself, with the reason: the `local` label, a label in
+`cc-notes.localLabel` (default `lane-brief`, `raw-capture`), or an attachment over
+`cc-notes.localAttachBytes` (default 10485760) or matching a `cc-notes.localAttachGlob` (default
+`*.log`, `*.out`, `*.jsonl`). The `synced` label overrides every default; `local` overrides
+`synced`. Sync withholds local entities and the attachment content only they reference, and every
+write records a negative push refspec for each in `.git/cc-notes/local-push.config`, which
+`.git/config` includes, so a plain `git push` withholds them too.
+
+JSON shape: `[{"id":string,"kind":string,"title":string,"reason":string,"secluded":bool}]`.
+`secluded` is false for an entity a default covers that no write or sync has guarded yet.
+
+### `cc-notes local mark ID...`
+
+MCP: local_mark (ids)
+
+Add the `local` label to each entity, of any kind, and print `<id7> <kind> local: <reason>`.
+Takes no flags.
+
+### `cc-notes local unmark ID...`
+
+MCP: local_unmark (ids)
+
+Remove the `local` label from each entity and add `synced`, so the next sync publishes it even when
+a default would keep it local. Prints `<id7> <kind> synced`. Takes no flags.
+
 ### `cc-notes compact <id>`
 
 MCP: — (CLI-only: op-log checkpoint maintenance, an operator task)

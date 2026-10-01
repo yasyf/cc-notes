@@ -60,6 +60,12 @@ type blameArgs struct {
 	SHA string `json:"sha" jsonschema:"commit sha (or prefix) to find the tasks that produced it"`
 }
 
+type localListArgs struct{}
+
+type localMarkArgs struct {
+	IDs []string `json:"ids" jsonschema:"entity id prefixes of any kind"`
+}
+
 type attachmentPathArgs struct {
 	ID   string `json:"id" jsonschema:"owning note, doc, or log id prefix"`
 	Name string `json:"name" jsonschema:"attachment file name"`
@@ -132,6 +138,21 @@ func registerRepo(ts *toolset, b *bridge) {
 	addTool(ts, &mcp.Tool{Name: "blame", Description: "Find the tasks that produced a commit, via its recorded commit links and task trailers. Returns task and investigation summaries; task_show or investigation_show reads one back in full."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in blameArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"blame"}, []string{"--json"}, in.SHA)...)
+		})
+
+	addTool(ts, &mcp.Tool{Name: "local_list", Description: "List the entities kept on this clone (never synced, never pushed by a plain git push) and why each is local."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, _ localListArgs) (*mcp.CallToolResult, any, error) {
+			return b.run(ctx, argvFor([]string{"local", "list"}, []string{"--json"})...)
+		})
+
+	addTool(ts, &mcp.Tool{Name: "local_mark", Description: "Keep entities on this clone: adds the local label, so sync and a plain git push withhold them and their attachment content."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in localMarkArgs) (*mcp.CallToolResult, any, error) {
+			return b.run(ctx, argvFor([]string{"local", "mark"}, nil, in.IDs...)...)
+		})
+
+	addTool(ts, &mcp.Tool{Name: "local_unmark", Description: "Publish entities again: removes the local label and adds synced, overriding the label and attachment defaults."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in localMarkArgs) (*mcp.CallToolResult, any, error) {
+			return b.run(ctx, argvFor([]string{"local", "unmark"}, nil, in.IDs...)...)
 		})
 
 	addTool(ts, &mcp.Tool{Name: "attachment_path", Description: "Print the local filesystem path of an entity's attachment object."},

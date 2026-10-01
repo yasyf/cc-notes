@@ -55,7 +55,7 @@ CC_NOTES_EXECUTABLES = frozenset({"cc-notes", "ccn"})
 CC_NOTES_TOOLS = frozenset(
     {
         "status", "relevant", "sync", "reconcile", "history", "search", "show", "blame",
-        "attachment_get", "attachment_path",
+        "attachment_get", "attachment_path", "local_list", "local_mark", "local_unmark",
         "note_add", "note_edit", "note_rm", "note_show", "note_list", "note_search",
         "note_review", "note_verify", "note_supersede", "note_expire",
         "doc_add", "doc_edit", "doc_rm", "doc_show", "doc_list", "doc_search",

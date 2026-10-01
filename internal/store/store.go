@@ -121,6 +121,10 @@ type Store struct {
 	rootOnce sync.Once
 	root     string
 	rootErr  error
+
+	policyOnce sync.Once
+	policy     LocalPolicy
+	policyErr  error
 }
 
 // Open opens the git repository containing dir, following worktree and

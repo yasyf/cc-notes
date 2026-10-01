@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/yasyf/cc-notes/internal/lfs"
+	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 )
 
@@ -41,10 +42,11 @@ func (e *engine) client(ctx context.Context, operation string) (*lfs.Client, err
 // visible on the remote never references content the server lacks. The
 // batch reply decides what the server already has, so re-upload is a
 // natural no-op, and the referenced-∧-present intersection keeps merged-in
-// remote refs whose content was never downloaded out of the upload set. Any
-// failure — including an LFS-less remote — blocks the push. A repository
-// referencing no attachments makes no LFS request at all.
-func (e *engine) uploadAttachments(ctx context.Context) error {
+// remote refs whose content was never downloaded out of the upload set. An
+// object only secluded entities reference never uploads. Any failure —
+// including an LFS-less remote — blocks the push. A repository referencing
+// no attachments makes no LFS request at all.
+func (e *engine) uploadAttachments(ctx context.Context, secluded map[string]bool) error {
 	referenced, err := e.store.ReferencedAttachments(ctx)
 	if err != nil {
 		return fmt.Errorf("upload attachments: %w", err)
@@ -55,7 +57,7 @@ func (e *engine) uploadAttachments(ctx context.Context) error {
 	content := e.store.LFS()
 	present := make([]store.ReferencedObject, 0, len(referenced))
 	for _, obj := range referenced {
-		if content.Has(obj.OID) {
+		if content.Has(obj.OID) && !onlySecluded(obj, secluded) {
 			present = append(present, obj)
 		}
 	}
@@ -108,6 +110,15 @@ func (e *engine) downloadAttachments(ctx context.Context) error {
 		return transferError("download", err, missing)
 	}
 	return nil
+}
+
+func onlySecluded(obj store.ReferencedObject, secluded map[string]bool) bool {
+	for _, use := range obj.Uses {
+		if !secluded[refs.For(use.Kind, use.Entity)] {
+			return false
+		}
+	}
+	return true
 }
 
 // transferObjects projects the scan result onto the batch API's object list.

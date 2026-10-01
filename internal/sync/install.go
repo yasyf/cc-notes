@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/refs"
 )
 
 const (
@@ -15,9 +16,7 @@ const (
 	// ref and to prune a locally-created, not-yet-synced one; Install rewrites
 	// it to fetchRefspec so a plain fetch touches only the tracking namespace.
 	oldFetchRefspec = "+" + namespace + "*:" + namespace + "*"
-	// pushRefspec carries entity refs on plain git push, never forced: a
-	// diverged ref must resolve through Sync's union merge, never a clobber.
-	pushRefspec = namespace + "*:" + namespace + "*"
+	pushRefspec     = refs.PushRefspec
 	// headRefspec keeps plain git push pushing the current branch: any
 	// remote.<r>.push entry overrides push.default, so installing a push
 	// refspec into a remote that had none must restore the default first.
