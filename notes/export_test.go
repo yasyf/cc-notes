@@ -40,7 +40,7 @@ type RelevantCacheProbe struct {
 // RelevantCacheProbeOf reads the cache entry RelevantCached keeps for target
 // under filter and variant; ok is false when there is none.
 func RelevantCacheProbeOf(c *Client, target string, filter RelevantFilter, variant string) (RelevantCacheProbe, bool, error) {
-	_, data, ok, err := relevantCacheBytes(c, target, filter, variant)
+	_, data, ok, err := relevantCacheBytes(context.Background(), c, target, filter, variant)
 	if err != nil || !ok {
 		return RelevantCacheProbe{}, false, err
 	}
@@ -71,7 +71,7 @@ func RelevantCacheProbeOf(c *Client, target string, filter RelevantFilter, varia
 // for target under filter and variant with its deps section replaced by
 // garbage bytes that are not JSON, header and output intact.
 func CorruptRelevantCacheDeps(c *Client, target string, filter RelevantFilter, variant string, garbage int) error {
-	name, data, ok, err := relevantCacheBytes(c, target, filter, variant)
+	name, data, ok, err := relevantCacheBytes(context.Background(), c, target, filter, variant)
 	if err != nil {
 		return err
 	}
@@ -87,8 +87,8 @@ func CorruptRelevantCacheDeps(c *Client, target string, filter RelevantFilter, v
 	return nil
 }
 
-func relevantCacheBytes(c *Client, target string, filter RelevantFilter, variant string) (name string, data []byte, ok bool, err error) {
-	p, err := c.relevantPath(context.Background(), target)
+func relevantCacheBytes(ctx context.Context, c *Client, target string, filter RelevantFilter, variant string) (name string, data []byte, ok bool, err error) {
+	p, err := c.relevantPath(ctx, target)
 	if err != nil {
 		return "", nil, false, err
 	}

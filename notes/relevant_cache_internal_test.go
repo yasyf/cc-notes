@@ -2,6 +2,7 @@ package notes
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,9 +18,9 @@ import (
 	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
-func relevantEntryOf(t *testing.T, c *Client, target string, filter RelevantFilter) (relevantCacheEntry, bool) {
+func relevantEntryOf(ctx context.Context, t *testing.T, c *Client, target string, filter RelevantFilter) (relevantCacheEntry, bool) {
 	t.Helper()
-	_, data, ok, err := relevantCacheBytes(c, target, filter, "json")
+	_, data, ok, err := relevantCacheBytes(ctx, c, target, filter, "json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +120,7 @@ func TestRelevantCachedRacyEntryWaitsOutTheWindow(t *testing.T) {
 		if renders != wantRenders {
 			t.Fatalf("%s: renders = %d, want %d", step, renders, wantRenders)
 		}
-		entry, ok := relevantEntryOf(t, c, "svc/handler.go", RelevantFilter{})
+		entry, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{})
 		if !ok {
 			t.Fatalf("%s: no cache entry was written", step)
 		}
@@ -286,14 +287,14 @@ func TestRelevantCachedRefusesACaptureWhoseGuardMoved(t *testing.T) {
 	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil {
 		t.Fatalf("RelevantCached: %v", err)
 	}
-	if entry, ok := relevantEntryOf(t, c, "svc/handler.go", RelevantFilter{}); ok {
+	if entry, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{}); ok {
 		t.Fatalf("an include target created and deleted during capture left no trace on its stamp, yet the entry was written: %+v", entry.Stamps)
 	}
 	t.Setenv("RELEVANT_GUARD_TOUCH", "")
 	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil {
 		t.Fatalf("RelevantCached: %v", err)
 	}
-	if _, ok := relevantEntryOf(t, c, "svc/handler.go", RelevantFilter{}); !ok {
+	if _, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{}); !ok {
 		t.Fatal("a quiet capture must write the entry")
 	}
 }
@@ -313,7 +314,7 @@ func TestRelevantCachedPersistsAColdBuildInAnUnfoldedRepository(t *testing.T) {
 	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil {
 		t.Fatalf("RelevantCached: %v", err)
 	}
-	entry, ok := relevantEntryOf(t, c, "svc/handler.go", RelevantFilter{})
+	entry, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{})
 	if !ok {
 		t.Fatal("a cold build that had to create the cache directories wrote no entry")
 	}
