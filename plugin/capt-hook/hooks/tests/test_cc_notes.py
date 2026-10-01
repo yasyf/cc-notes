@@ -5972,33 +5972,52 @@ def test_restore_answers_after_compact(monkeypatch, tmp_path) -> None:
     with restore.ctx.s[SessionAnswers].mutate() as state:
         state.lines = {f"id{i:05d}": f"line {i}" for i in range(40)}
     listed = restore_answers_after_compact(restore).message
-    check("answer restore: forty short answers all fit as full lines", all(f"Q{i}? → A" in listed for i in range(40)) and "also (" not in listed, listed)
+    check("answer restore: forty short answers all fit as full lines", all(f"Q{i}? → A" in listed for i in range(40)), listed)
 
 
-def test_restore_answers_after_compact_fits_the_budget(monkeypatch, tmp_path) -> None:
-    """Sixty long answers restore inside the budget: durable first, newest first, excerpted, the rest named on the overflow line."""
+def budget_rows(title: str) -> list[dict]:
     long_body = "release everything as it merges " * 40
-    rows = [
-        durable_answer(f"dur{i:04d}aaaa", title=f"Durable question {i}? " + "x" * 120, body=long_body) | {"updated_at": f"2026-09-{1 + i % 28:02d}T{i % 24:02d}:00:00Z"}
+    return [
+        durable_answer(f"dur{i:04d}aaaa", title=f"Durable question {i}? {title}", body=long_body) | {"updated_at": f"2026-09-{1 + i % 28:02d}T{i % 24:02d}:{i:02d}:00Z"}
         for i in range(50)
     ] + [
         durable_answer(f"eph{i:04d}bbbb", title=f"Ephemeral pick {i}?", body="now") | {"tags": ["scope:ephemeral"], "updated_at": "2026-09-30T23:59:59Z"}
         for i in range(10)
     ]
+
+
+def restored_lines(monkeypatch, tmp_path, rows: list[dict]) -> list[str]:
     restore = restore_event(monkeypatch, tmp_path, rows)
     with restore.ctx.s[SessionAnswers].mutate() as state:
         state.lines = {row["id"]: "stale" for row in rows}
-    message = restore_answers_after_compact(restore).message
-    lines = message.split("\n")
-    full = [line for line in lines[1:] if " → " in line]
-    newest = sorted(rows[:50], key=lambda r: r["updated_at"], reverse=True)
+    return restore_answers_after_compact(restore).message.split("\n")
+
+
+def test_restore_answers_after_compact_fits_the_budget(monkeypatch, tmp_path) -> None:
+    """Sixty answers restore inside the budget: every durable title, excerpts in rank order, ephemeral ones listed or counted."""
+    rows = budget_rows("x" * 20)
+    lines = restored_lines(monkeypatch, tmp_path, rows)
+    message = "\n".join(lines)
+    durable = sorted(rows[:50], key=lambda r: r["updated_at"], reverse=True)
+    body = lines[1:51]
+    excerpted = [" → " in line for line in body]
     check("answer budget: inside COMPACT_ANSWER_BUDGET", len(message.encode()) <= COMPACT_ANSWER_BUDGET, str(len(message.encode())))
-    check("answer budget: durable answers outrank newer ephemeral ones", lines[1].startswith(newest[0]["id"][:7]) and "eph" not in "".join(full), message)
-    check("answer budget: every excerpt at most 160 characters", all(len(line.split(" → ", 1)[1]) <= 160 for line in full), message)
-    check("answer budget: the rest land on one overflow line", lines[-1].startswith("also (read with `cc-notes answer show <id>`):"), lines[-1])
-    named = [row["id"][:7] for row in rows if row["id"][:7] in message]
-    tail = int(lines[-1].rsplit("+", 1)[1].split()[0]) if " more" in lines[-1] else 0
+    check("answer budget: every durable title in full, newest first", all(line.startswith(f"{r['id'][:7]} {r['title']}") for line, r in zip(body, durable)), message)
+    check("answer budget: excerpts fill a rank prefix", any(excerpted) and not all(excerpted) and excerpted == sorted(excerpted, reverse=True), message)
+    check("answer budget: every excerpt at most 160 characters", all(len(line.split(" → ", 1)[1]) <= 160 for line in body if " → " in line), message)
+    named = [row for row in rows if row["id"][:7] in message]
+    tail = int(lines[-1].split()[0].lstrip("+")) if lines[-1].endswith("more answers") else 0
     check("answer budget: nothing silently dropped", len(named) + tail == len(rows), f"{len(named)} named + {tail} counted")
+
+
+def test_restore_answers_after_compact_never_drops_durable_titles(monkeypatch, tmp_path) -> None:
+    """Durable titles past the budget all still print, unclipped and without excerpts; ephemeral answers are only counted."""
+    rows = budget_rows("y" * 200)
+    lines = restored_lines(monkeypatch, tmp_path, rows)
+    message = "\n".join(lines)
+    check("durable titles: past the budget", len(message.encode()) > COMPACT_ANSWER_BUDGET, str(len(message.encode())))
+    check("durable titles: every durable title in full", all(f"{r['id'][:7]} {r['title']}" in lines for r in rows[:50]), message)
+    check("durable titles: ephemeral answers counted", "eph" not in message and lines[-1] == "+10 more answers", lines[-1])
 
 
 def test_restore_answers_after_compact_refreshes_ledger(monkeypatch, tmp_path) -> None:
