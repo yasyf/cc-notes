@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from .common import (
     CC_NOTES_EXECUTABLES,
+    COMPACT_DIGEST_BUDGET,
     MCP_TOOL_PREFIX,
     _MAX_DEPTH,
     _canonical_tokens,
@@ -39,6 +40,7 @@ from .common import (
     run_cc_notes,
     short_id,
     tool_output,
+    utf8_len,
 )
 
 # Entities restored fresh (full `cc-notes show` each) at or below this count; above it, lean pointers.
@@ -206,9 +208,19 @@ def _resolve(
     return _Touch(verb, ident, _kind(tool), _resolve_title(verb, surface, raw, positionals, output))
 
 
+def _response_text(evt: BaseHookEvent) -> str:
+    """The tool's printed output: a Bash response's stdout, an MCP response's text blocks, else :func:`tool_output`."""
+    response = getattr(evt, "tool_response", None)
+    if isinstance(response, dict) and isinstance(response.get("stdout"), str):
+        return response["stdout"]
+    if isinstance(response, list):
+        return "\n".join(block["text"] for block in response if isinstance(block, dict) and isinstance(block.get("text"), str))
+    return tool_output(evt)
+
+
 def _touches(evt: BaseHookEvent) -> list[_Touch]:
     name = evt.tool_name or ""
-    output = tool_output(evt)
+    output = _response_text(evt)
     if name.startswith(MCP_TOOL_PREFIX):
         touch = _resolve(name[len(MCP_TOOL_PREFIX) :], "mcp", dict(evt._tool_input), [], output, can_mint=True, prefer_json=True)
         return [touch] if touch else []
@@ -334,20 +346,34 @@ def _closing_hint(evt: BaseHookEvent) -> str:
     return "Re-open any of these with `cc-notes show <id>`."
 
 
+def _full_part(evt: BaseHookEvent, entry: TouchedEntity) -> str:
+    body = (run_cc_notes(evt, "show", entry.id) or "").strip()
+    return f"[{entry.kind} {short_id(entry.id)} · {_touch_label(entry.verbs)}]\n{body}" if body else _pointer_line(entry)
+
+
 def _digest(evt: BaseHookEvent, entries: list[TouchedEntity]) -> list[str]:
+    """The digest's parts within :data:`COMPACT_DIGEST_BUDGET`.
+
+    A full ``show`` body that would outrun the budget degrades to its pointer line, and pointer
+    lines stop at :data:`POINTER_CAP` or the budget, whichever comes first, behind a count.
+    """
     parts = ["Context was just compacted. Durable cc-notes records this session touched:"]
-    if len(entries) <= FULL_SHOW_CAP and shutil.which("cc-notes") is not None:
-        for entry in entries:
-            body = run_cc_notes(evt, "show", entry.id)
-            if body and body.strip():
-                parts.append(f"[{entry.kind} {short_id(entry.id)} · {_touch_label(entry.verbs)}]\n{body.strip()}")
-            else:
-                parts.append(_pointer_line(entry))
-    else:
-        parts.extend(_pointer_line(entry) for entry in entries[:POINTER_CAP])
-        if (extra := len(entries) - POINTER_CAP) > 0:
-            parts.append(f"+{extra} more — cc-notes status to orient")
-    parts.append(_closing_hint(evt))
+    closing = _closing_hint(evt)
+    room = COMPACT_DIGEST_BUDGET - utf8_len(parts[0]) - utf8_len(closing) - len(f"+{len(entries)} more — cc-notes status to orient") - 3
+    full = len(entries) <= FULL_SHOW_CAP and shutil.which("cc-notes") is not None
+    shown = 0
+    for entry in entries[:POINTER_CAP]:
+        part = _full_part(evt, entry) if full else _pointer_line(entry)
+        if utf8_len(part) + 1 > room:
+            part = _pointer_line(entry)
+        if utf8_len(part) + 1 > room:
+            break
+        parts.append(part)
+        room -= utf8_len(part) + 1
+        shown += 1
+    if (extra := len(entries) - shown) > 0:
+        parts.append(f"+{extra} more — cc-notes status to orient")
+    parts.append(closing)
     return parts
 
 

@@ -28,6 +28,10 @@ ANSWER_METADATA_PREFIXES = ("Question: ", "Options: ", "Notes: ")
 NUDGE_MAX_FIRES = 3
 # Cap on body/diff/plan text handed to a small-model classifier.
 LLM_INPUT_CAP = 6000
+# Claude Code moves SessionStart context past 10,000 characters to a file and injects a ~2 KB
+# preview, so the two compact restores split a budget that leaves the other packs room.
+COMPACT_ANSWER_BUDGET = 4500
+COMPACT_DIGEST_BUDGET = 3000
 
 # The Go CLI hard-rejects a title over 256 UTF-8 bytes (exit 2), and run_cc_notes fails
 # closed, so an over-long title would silently stop a capture without a clamp.
@@ -339,6 +343,15 @@ def stale_leases(report: dict[str, Any]) -> list[dict[str, Any]]:
 
 def short_id(full: str) -> str:
     return full[:7]
+
+
+def clip(text: str, limit: int) -> str:
+    """``text`` cut to at most ``limit`` characters, an ellipsis marking the cut."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def utf8_len(text: str) -> int:
+    return len(text.encode())
 
 
 def ids_match(a: str, b: str) -> bool:

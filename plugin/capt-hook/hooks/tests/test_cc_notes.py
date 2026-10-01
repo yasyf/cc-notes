@@ -53,6 +53,8 @@ from hooks.common import (
     cap_and_render_tasks,
     CcNotesMcpToolCall,
     clamp_title,
+    COMPACT_ANSWER_BUDGET,
+    COMPACT_DIGEST_BUDGET,
     dedup_tasks,
     drift_suffix,
     entry_payload,
@@ -5405,6 +5407,51 @@ def test_compact_restore_silent_empty(tmp_path) -> None:
     check("compact restore empty: silent", restore_after_compact(mock_event("SessionStart", source="compact", session_dir=tmp_path)) is None)
 
 
+def test_compact_restore_fits_the_budget(monkeypatch, tmp_path) -> None:
+    """Full bodies past the budget degrade to pointer lines, and long-titled pointers stop at the budget behind a count."""
+    monkeypatch.setattr(compact.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    small = mock_event("SessionStart", source="compact", session_dir=tmp_path / "small")
+    _seed_touched(small, [TouchedEntity(id=f"id{i:05d}", kind="doc", title=f"D{i}", verbs=["edit"], seq=i) for i in range(FULL_SHOW_CAP)])
+    monkeypatch.setattr(small.ctx, "git", lambda *a: None)
+    monkeypatch.setattr(small.ctx, "call_cli", stub_cli({("show", f"id{i:05d}"): f"id: id{i:05d}\nbody: " + "y" * 2000 for i in range(FULL_SHOW_CAP)}))
+    msg = restore_after_compact(small).message
+    check("compact budget full: inside COMPACT_DIGEST_BUDGET", len(msg.encode()) <= COMPACT_DIGEST_BUDGET, str(len(msg.encode())))
+    check("compact budget full: one body fits, the rest are pointers", msg.count("y" * 2000) == 1 and msg.count("(edited)") == FULL_SHOW_CAP - 1, msg)
+
+    large = mock_event("SessionStart", source="compact", session_dir=tmp_path / "large")
+    _seed_touched(large, [TouchedEntity(id=f"id{i:05d}", kind="note", title="t" * 250, verbs=["read"], seq=i) for i in range(POINTER_CAP)])
+    monkeypatch.setattr(large.ctx, "git", lambda *a: None)
+    msg = restore_after_compact(large).message
+    shown = msg.count("(read)")
+    check("compact budget pointers: inside COMPACT_DIGEST_BUDGET", len(msg.encode()) <= COMPACT_DIGEST_BUDGET, str(len(msg.encode())))
+    check("compact budget pointers: the rest counted", 0 < shown < POINTER_CAP and f"+{POINTER_CAP - shown} more" in msg, msg)
+
+
+def test_compact_tracker_reads_wrapped_responses(tmp_path) -> None:
+    """An MCP content-block response and a Bash stdout dict yield the real id and title, not their JSON wrapping."""
+    full = "bf40c631d8c16a6351ef71d6b0b7417bfd503c53"
+    mcp = mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__doc_add", event=Event.PostToolUse,
+        tool_input={"title": "Wrapped"}, output=[{"type": "text", "text": json.dumps({"id": full, "title": "Wrapped"})}], session_dir=tmp_path / "mcp",
+    )
+    record_touched_entities(mcp)
+    check("compact wrapped mcp: id from the text block", [e.id for e in mcp.ctx.s.load(TouchedEntities).entries] == [full], repr(mcp.ctx.s.load(TouchedEntities)))
+
+    cli = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse, command='cc-notes note add "Lean"',
+        output={"stdout": "2c93472\t2026-07-19\t-\tLean\n", "stderr": "", "interrupted": False}, session_dir=tmp_path / "cli",
+    )
+    record_touched_entities(cli)
+    check("compact wrapped bash: id from stdout", [e.id for e in cli.ctx.s.load(TouchedEntities).entries] == ["2c93472"], repr(cli.ctx.s.load(TouchedEntities)))
+
+    show = mock_tool_event(
+        tool="Bash", event=Event.PostToolUse, command="cc-notes note show 8acb2a0",
+        output={"stdout": "id: 8acb2a0\ntitle: Shown Note\n", "stderr": ""}, session_dir=tmp_path / "show",
+    )
+    record_touched_entities(show)
+    check("compact wrapped bash: show title from stdout", [e.title for e in show.ctx.s.load(TouchedEntities).entries] == ["Shown Note"], repr(show.ctx.s.load(TouchedEntities)))
+
+
 def test_compact_restore_binary_missing_pointers(monkeypatch, tmp_path) -> None:
     """<=8 entities but no binary on PATH falls back to pointer lines without shelling out."""
     monkeypatch.setattr(compact.shutil, "which", lambda _n: None)
@@ -5905,6 +5952,7 @@ RESTORE_LIST = ("answer", "list", "--json", "--include-superseded")
 def restore_event(monkeypatch, tmp_path, rows: list[dict]):
     evt = mock_event("SessionStart", source="compact", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli({RESTORE_LIST: json.dumps(rows)}))
+    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)
     return evt
 
 
@@ -5923,8 +5971,34 @@ def test_restore_answers_after_compact(monkeypatch, tmp_path) -> None:
     restore = restore_event(monkeypatch, tmp_path, [durable_answer(f"id{i:05d}", title=f"Q{i}?") for i in range(40)])
     with restore.ctx.s[SessionAnswers].mutate() as state:
         state.lines = {f"id{i:05d}": f"line {i}" for i in range(40)}
-    capped = restore_answers_after_compact(restore).message
-    check("answer restore: caps at the 30 most recent", "Q10?" in capped and "Q9?" not in capped and "Q39?" in capped, capped)
+    listed = restore_answers_after_compact(restore).message
+    check("answer restore: forty short answers all fit as full lines", all(f"Q{i}? → A" in listed for i in range(40)) and "also (" not in listed, listed)
+
+
+def test_restore_answers_after_compact_fits_the_budget(monkeypatch, tmp_path) -> None:
+    """Sixty long answers restore inside the budget: durable first, newest first, excerpted, the rest named on the overflow line."""
+    long_body = "release everything as it merges " * 40
+    rows = [
+        durable_answer(f"dur{i:04d}aaaa", title=f"Durable question {i}? " + "x" * 120, body=long_body) | {"updated_at": f"2026-09-{1 + i % 28:02d}T{i % 24:02d}:00:00Z"}
+        for i in range(50)
+    ] + [
+        durable_answer(f"eph{i:04d}bbbb", title=f"Ephemeral pick {i}?", body="now") | {"tags": ["scope:ephemeral"], "updated_at": "2026-09-30T23:59:59Z"}
+        for i in range(10)
+    ]
+    restore = restore_event(monkeypatch, tmp_path, rows)
+    with restore.ctx.s[SessionAnswers].mutate() as state:
+        state.lines = {row["id"]: "stale" for row in rows}
+    message = restore_answers_after_compact(restore).message
+    lines = message.split("\n")
+    full = [line for line in lines[1:] if " → " in line]
+    newest = sorted(rows[:50], key=lambda r: r["updated_at"], reverse=True)
+    check("answer budget: inside COMPACT_ANSWER_BUDGET", len(message.encode()) <= COMPACT_ANSWER_BUDGET, str(len(message.encode())))
+    check("answer budget: durable answers outrank newer ephemeral ones", lines[1].startswith(newest[0]["id"][:7]) and "eph" not in "".join(full), message)
+    check("answer budget: every excerpt at most 160 characters", all(len(line.split(" → ", 1)[1]) <= 160 for line in full), message)
+    check("answer budget: the rest land on one overflow line", lines[-1].startswith("also (read with `cc-notes answer show <id>`):"), lines[-1])
+    named = [row["id"][:7] for row in rows if row["id"][:7] in message]
+    tail = int(lines[-1].rsplit("+", 1)[1].split()[0]) if " more" in lines[-1] else 0
+    check("answer budget: nothing silently dropped", len(named) + tail == len(rows), f"{len(named)} named + {tail} counted")
 
 
 def test_restore_answers_after_compact_refreshes_ledger(monkeypatch, tmp_path) -> None:
