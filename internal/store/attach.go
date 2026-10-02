@@ -80,11 +80,13 @@ type useKey struct {
 	use AttachmentUse
 }
 
-// LFS returns the repository's local LFS content store, rooted at
-// <git-common-dir>/lfs so linked worktrees share one store and the git-lfs
-// CLI reads and writes the same objects.
+// LFS returns the records repository's local LFS content store, rooted at
+// <records-common-dir>/lfs so linked worktrees and bound contexts share one
+// store and the git-lfs CLI reads and writes the same objects. It performs no
+// backend recheck of its own: callers reach it after a records operation that
+// already passed CheckRecords.
 func (s *Store) LFS() lfs.Store {
-	return lfs.Store{Dir: filepath.Join(s.commonDir, "lfs")}
+	return lfs.Store{Dir: filepath.Join(s.recordsCommonDir, "lfs")}
 }
 
 // AttachFile hashes path's content into the local LFS store and returns the
@@ -97,6 +99,9 @@ func (s *Store) LFS() lfs.Store {
 func (s *Store) AttachFile(ctx context.Context, path string) (att model.Attachment, guarded bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return model.Attachment{}, false, err
+	}
+	if err := s.CheckRecords(); err != nil {
+		return model.Attachment{}, false, fmt.Errorf("attach %s: %w", path, err)
 	}
 	content := s.LFS()
 	oid, size, err := content.PutFile(path)
@@ -115,21 +120,21 @@ func (s *Store) AttachFile(ctx context.Context, path string) (att model.Attachme
 	return att, guarded, nil
 }
 
-// ensurePruneGuard installs each PruneGuardConfigs line in the
-// repository-local config unless that key is already set in any scope,
+// ensurePruneGuard installs each PruneGuardConfigs line in the records
+// repository's local config unless that key is already set in any scope,
 // reporting whether this call wrote any of them.
 func (s *Store) ensurePruneGuard(ctx context.Context) (bool, error) {
 	wrote := false
 	for _, line := range PruneGuardConfigs {
 		key, value, _ := strings.Cut(line, "=")
-		current, err := s.Git.ConfigGet(ctx, key)
+		current, err := s.RecordsGit.ConfigGet(ctx, key)
 		if err != nil {
 			return wrote, err
 		}
 		if current != "" {
 			continue
 		}
-		if err := s.Git.ConfigSet(ctx, key, value); err != nil {
+		if err := s.RecordsGit.ConfigSet(ctx, key, value); err != nil {
 			return wrote, err
 		}
 		wrote = true

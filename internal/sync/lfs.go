@@ -20,13 +20,13 @@ func (e *engine) client(ctx context.Context, operation string) (*lfs.Client, err
 		return c, nil
 	}
 	if !e.endpointSet {
-		ep, err := lfs.Discover(ctx, e.store.Git, e.remote)
+		ep, err := lfs.Discover(ctx, e.store.RecordsGit, e.remote)
 		if err != nil {
 			return nil, err
 		}
 		e.endpoint, e.endpointSet = ep, true
 	}
-	c, err := lfs.NewClient(ctx, e.store.Git, e.endpoint, operation)
+	c, err := lfs.NewClient(ctx, e.store.RecordsGit, e.endpoint, operation)
 	if err != nil {
 		return nil, err
 	}

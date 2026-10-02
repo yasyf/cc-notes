@@ -23,7 +23,7 @@ func TestPrepareCreateExactDoesNotPublishRef(t *testing.T) {
 	if _, err := s.Repo.Tip(t.Context(), prepared.Ref); !errors.Is(err, gitobj.ErrRefNotFound) {
 		t.Fatalf("prepared ref resolved before commit: %v", err)
 	}
-	if err := s.Git.UpdateRefs(t.Context(), []gitcmd.RefUpdate{prepared.RefUpdate()}); err != nil {
+	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{prepared.RefUpdate()}); err != nil {
 		t.Fatalf("publish prepared ref: %v", err)
 	}
 	s.RememberPrepared(prepared)
@@ -59,7 +59,7 @@ func TestPrepareAppendAtPinsExpectedTipWithoutPublishing(t *testing.T) {
 	if prepared.Snapshot.(model.Note).Title != "after" {
 		t.Fatalf("prepared title = %q, want after", prepared.Snapshot.(model.Note).Title)
 	}
-	if err := s.Git.UpdateRefs(t.Context(), []gitcmd.RefUpdate{prepared.RefUpdate()}); err != nil {
+	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{prepared.RefUpdate()}); err != nil {
 		t.Fatalf("publish prepared append: %v", err)
 	}
 	if applied, err := s.HasSession(t.Context(), ref, "operation-append"); err != nil || !applied {
@@ -86,7 +86,7 @@ func TestPreparedAppendStaleCASLeavesCurrentRefUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tip winner: %v", err)
 	}
-	if err := s.Git.UpdateRefs(t.Context(), []gitcmd.RefUpdate{prepared.RefUpdate()}); !errors.Is(err, gitcmd.ErrCASMismatch) {
+	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{prepared.RefUpdate()}); !errors.Is(err, gitcmd.ErrCASMismatch) {
 		t.Fatalf("stale publish = %v, want ErrCASMismatch", err)
 	}
 	if got, err := s.Repo.Tip(t.Context(), ref); err != nil || got != winner {

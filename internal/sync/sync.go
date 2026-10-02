@@ -133,7 +133,10 @@ type engine struct {
 // converges; a failed download fails the sync while the returned Report
 // still carries everything the run pushed.
 func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report, error) {
-	if err := ensureRemote(ctx, s.Git, remote); err != nil {
+	if err := s.CheckRecords(); err != nil {
+		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
+	}
+	if err := ensureRemote(ctx, s.RecordsGit, remote); err != nil {
 		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
 	}
 	e := &engine{store: s, remote: remote}
@@ -144,7 +147,7 @@ func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		if err := s.Git.Fetch(ctx, remote, fetchSpec); err != nil {
+		if err := s.RecordsGit.Fetch(ctx, remote, fetchSpec); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
 		after, err := trackingView(ctx, s, trackingPrefix)
@@ -211,7 +214,7 @@ func (e *engine) report(rounds, pushed int) Report {
 // per-remote view a round fetched; foldTracking reads a remote's whole view to
 // fold a plain fetch's tracking refs locally.
 func trackingView(ctx context.Context, s *store.Store, trackingPrefix string) (map[string]model.SHA, error) {
-	tracking, err := s.Git.Refs(ctx, trackingPrefix)
+	tracking, err := s.RecordsGit.Refs(ctx, trackingPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +257,7 @@ func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) erro
 // remote tip the local chain does not contain is always in scope, however
 // quiet the tracking delta: correctness over speed.
 func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA) (map[string]model.SHA, error) {
-	local, err := e.store.Git.Refs(ctx, namespace)
+	local, err := e.store.RecordsGit.Refs(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +292,7 @@ func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA
 // set before anything is pushed, so an entity written by a cc-notes predating
 // the policy never leaves on its first sync.
 func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) ([]string, map[string]bool, error) {
-	local, err := e.store.Git.Refs(ctx, namespace)
+	local, err := e.store.RecordsGit.Refs(ctx, namespace)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -327,7 +330,7 @@ func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (
 
 func (e *engine) push(ctx context.Context, pending []string) error {
 	for _, batch := range pushBatches(pending) {
-		if err := e.store.Git.Push(ctx, e.remote, batch...); err != nil {
+		if err := e.store.RecordsGit.Push(ctx, e.remote, batch...); err != nil {
 			return err
 		}
 	}
@@ -399,7 +402,7 @@ func ensureContains(ctx context.Context, s *store.Store, ref string, tip model.S
 func advance(ctx context.Context, s *store.Store, ref string, tip model.SHA) (outcome, error) {
 	current, err := s.Repo.Tip(ctx, ref)
 	if errors.Is(err, gitobj.ErrRefNotFound) {
-		if err := s.Git.UpdateRef(ctx, ref, tip, ""); err != nil {
+		if err := s.RecordsGit.UpdateRef(ctx, ref, tip, ""); err != nil {
 			return refKept, err
 		}
 		return refCreated, nil
@@ -422,7 +425,7 @@ func advance(ctx context.Context, s *store.Store, ref string, tip model.SHA) (ou
 		return refKept, err
 	}
 	if behind {
-		if err := s.Git.UpdateRef(ctx, ref, tip, current); err != nil {
+		if err := s.RecordsGit.UpdateRef(ctx, ref, tip, current); err != nil {
 			return refKept, err
 		}
 		return refFastForwarded, nil

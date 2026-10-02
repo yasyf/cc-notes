@@ -75,7 +75,7 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 // syncTargets is the remote set a bare Sync converges: every cc-notes-wired
 // remote in git-config order, or the default remote when none is wired.
 func (c *Client) syncTargets(ctx context.Context) ([]string, error) {
-	wired, err := ccsync.WiredRemotes(ctx, c.s.Git)
+	wired, err := ccsync.WiredRemotes(ctx, c.s.RecordsGit)
 	if err != nil {
 		return nil, err
 	}

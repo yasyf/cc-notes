@@ -48,12 +48,12 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 			continue
 		}
 		ref := refs.For(model.KindNote, n.ID)
-		if err := s.Git.DeleteRef(ctx, ref, n.Head); err != nil {
+		if err := s.RecordsGit.DeleteRef(ctx, ref, n.Head); err != nil {
 			failed++
 			continue
 		}
 		s.cache.delete(n.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+		if err := s.RecordsGit.DeleteRemoteRef(ctx, remote, ref); err != nil {
 			failed++
 			continue
 		}
@@ -68,12 +68,12 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 			continue
 		}
 		ref := refs.For(model.KindDoc, d.ID)
-		if err := s.Git.DeleteRef(ctx, ref, d.Head); err != nil {
+		if err := s.RecordsGit.DeleteRef(ctx, ref, d.Head); err != nil {
 			failed++
 			continue
 		}
 		s.cache.delete(d.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+		if err := s.RecordsGit.DeleteRemoteRef(ctx, remote, ref); err != nil {
 			failed++
 			continue
 		}
@@ -88,12 +88,12 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 			continue
 		}
 		ref := refs.For(model.KindLog, l.ID)
-		if err := s.Git.DeleteRef(ctx, ref, l.Head); err != nil {
+		if err := s.RecordsGit.DeleteRef(ctx, ref, l.Head); err != nil {
 			failed++
 			continue
 		}
 		s.cache.delete(l.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+		if err := s.RecordsGit.DeleteRemoteRef(ctx, remote, ref); err != nil {
 			failed++
 			continue
 		}
@@ -108,12 +108,12 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 			continue
 		}
 		ref := refs.For(model.KindRunbook, rb.ID)
-		if err := s.Git.DeleteRef(ctx, ref, rb.Head); err != nil {
+		if err := s.RecordsGit.DeleteRef(ctx, ref, rb.Head); err != nil {
 			failed++
 			continue
 		}
 		s.cache.delete(rb.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+		if err := s.RecordsGit.DeleteRemoteRef(ctx, remote, ref); err != nil {
 			failed++
 			continue
 		}
@@ -128,12 +128,12 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 			continue
 		}
 		ref := refs.For(model.KindLedger, l.ID)
-		if err := s.Git.DeleteRef(ctx, ref, l.Head); err != nil {
+		if err := s.RecordsGit.DeleteRef(ctx, ref, l.Head); err != nil {
 			failed++
 			continue
 		}
 		s.cache.delete(l.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+		if err := s.RecordsGit.DeleteRemoteRef(ctx, remote, ref); err != nil {
 			failed++
 			continue
 		}
@@ -148,12 +148,12 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 			continue
 		}
 		ref := refs.For(model.KindInvestigation, inv.ID)
-		if err := s.Git.DeleteRef(ctx, ref, inv.Head); err != nil {
+		if err := s.RecordsGit.DeleteRef(ctx, ref, inv.Head); err != nil {
 			failed++
 			continue
 		}
 		s.cache.delete(inv.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+		if err := s.RecordsGit.DeleteRemoteRef(ctx, remote, ref); err != nil {
 			failed++
 			continue
 		}
@@ -168,12 +168,12 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 			continue
 		}
 		ref := refs.For(model.KindPlan, p.ID)
-		if err := s.Git.DeleteRef(ctx, ref, p.Head); err != nil {
+		if err := s.RecordsGit.DeleteRef(ctx, ref, p.Head); err != nil {
 			failed++
 			continue
 		}
 		s.cache.delete(p.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+		if err := s.RecordsGit.DeleteRemoteRef(ctx, remote, ref); err != nil {
 			failed++
 			continue
 		}
@@ -188,12 +188,12 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 			continue
 		}
 		ref := refs.For(model.KindAnswer, a.ID)
-		if err := s.Git.DeleteRef(ctx, ref, a.Head); err != nil {
+		if err := s.RecordsGit.DeleteRef(ctx, ref, a.Head); err != nil {
 			failed++
 			continue
 		}
 		s.cache.delete(a.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
+		if err := s.RecordsGit.DeleteRemoteRef(ctx, remote, ref); err != nil {
 			failed++
 			continue
 		}

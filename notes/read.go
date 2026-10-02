@@ -192,7 +192,10 @@ func (c *Client) ResolveAnswer(ctx context.Context, prefix string) (model.Entity
 // single kind surfaces that kind's *AmbiguousError. No match fails with
 // ErrNotFound.
 func (c *Client) ResolveEntity(ctx context.Context, prefix string) (model.Kind, model.EntityID, error) {
-	tips, err := c.s.Git.Refs(ctx, refs.Namespace)
+	if err := c.s.CheckRecords(); err != nil {
+		return "", "", err
+	}
+	tips, err := c.s.RecordsGit.Refs(ctx, refs.Namespace)
 	if err != nil {
 		return "", "", err
 	}

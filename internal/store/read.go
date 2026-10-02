@@ -30,6 +30,9 @@ type RootedSnapshot struct {
 // Load resolves ref and folds its chain into a snapshot. A missing ref
 // fails with gitobj.ErrRefNotFound.
 func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
+	if err := s.CheckRecords(); err != nil {
+		return nil, fmt.Errorf("load %s: %w", ref, err)
+	}
 	tip, err := s.Repo.Tip(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
@@ -55,6 +58,9 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 // the base a file-edit buffer was rendered from — can reconstruct that exact
 // snapshot to diff an edit against. A head whose chain is unreadable fails.
 func (s *Store) LoadAt(ctx context.Context, head model.SHA) (model.Snapshot, error) {
+	if err := s.CheckRecords(); err != nil {
+		return nil, fmt.Errorf("load at %s: %w", head, err)
+	}
 	if snap, ok := s.cache.get(head); ok {
 		return snap, nil
 	}
@@ -73,6 +79,9 @@ func (s *Store) LoadAt(ctx context.Context, head model.SHA) (model.Snapshot, err
 // LoadRootedAt folds the immutable chain ending at head and returns both its
 // snapshot and unique create commit. It never resolves a mutable ref.
 func (s *Store) LoadRootedAt(ctx context.Context, head model.SHA) (RootedSnapshot, error) {
+	if err := s.CheckRecords(); err != nil {
+		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
+	}
 	chain, err := s.Repo.ReadChain(ctx, head)
 	if err != nil {
 		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
@@ -89,14 +98,18 @@ func (s *Store) LoadRootedAt(ctx context.Context, head model.SHA) (RootedSnapsho
 	return RootedSnapshot{Snapshot: snapshot, Root: root}, nil
 }
 
-// HasNotes reports whether the repository holds any cc-notes entity: any ref
-// under refs/cc-notes/.
+// HasNotes reports whether the records repository holds any cc-notes entity:
+// any ref under refs/cc-notes/, found by one bounded existence query rather
+// than an enumeration.
 func (s *Store) HasNotes(ctx context.Context) (bool, error) {
-	tips, err := s.Git.Refs(ctx, refs.Namespace)
+	if err := s.CheckRecords(); err != nil {
+		return false, err
+	}
+	ref, err := s.RecordsGit.FirstRef(ctx, refs.Namespace)
 	if err != nil {
 		return false, err
 	}
-	return len(tips) > 0, nil
+	return ref != "", nil
 }
 
 // ListOpts are the inclusion knobs the List methods honor. A kind that does not
@@ -228,6 +241,9 @@ func uniqueRootCommit(chain []model.PackCommit) (model.PackCommit, error) {
 // HasSession reports whether ref already contains an operation pack from the
 // exact idempotency session.
 func (s *Store) HasSession(ctx context.Context, ref, sessionID string) (bool, error) {
+	if err := s.CheckRecords(); err != nil {
+		return false, err
+	}
 	tip, err := s.Repo.Tip(ctx, ref)
 	if err != nil {
 		return false, err
@@ -317,10 +333,13 @@ func (s *Store) ListAnswers(ctx context.Context, includeDeleted, includeSupersed
 // children lists the refs that are immediate children of prefix, excluding
 // nested namespaces.
 func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error) {
+	if err := s.CheckRecords(); err != nil {
+		return nil, err
+	}
 	tips := s.pins
 	if tips == nil {
 		var err error
-		if tips, err = s.Git.Refs(ctx, prefix); err != nil {
+		if tips, err = s.RecordsGit.Refs(ctx, prefix); err != nil {
 			return nil, err
 		}
 	}
