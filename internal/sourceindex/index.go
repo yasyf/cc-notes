@@ -41,10 +41,12 @@ var (
 	ErrOperationState = errors.New("source operation state conflict")
 )
 
-// Index binds immutable object access to real-Git atomic ref transactions.
+// Index binds immutable object access to real-Git atomic ref transactions:
+// Git reads refs, Publish applies every ref transaction the index makes.
 type Index struct {
-	Repo *gitobj.Repo
-	Git  gitcmd.Git
+	Repo    *gitobj.Repo
+	Git     gitcmd.Git
+	Publish func(ctx context.Context, updates []gitcmd.RefUpdate) error
 }
 
 // Changes is the exact logical ref-tip delta between two source revisions.
@@ -101,7 +103,7 @@ func (i Index) Refresh(ctx context.Context) (model.SHA, error) {
 		if err != nil {
 			return "", err
 		}
-		if err := i.Git.UpdateRef(ctx, Ref, next, head); err != nil {
+		if err := i.Publish(ctx, []gitcmd.RefUpdate{{Ref: Ref, New: next, Old: head}}); err != nil {
 			if errors.Is(err, gitcmd.ErrCASMismatch) {
 				runtime.Gosched()
 				continue
@@ -264,7 +266,7 @@ func (i Index) CommitOperation(
 		gitcmd.RefUpdate{Ref: operationRef, New: proof},
 		gitcmd.RefUpdate{Ref: operationPinRef(operationID), New: proof},
 	)
-	if err := i.Git.UpdateRefs(ctx, transaction); err != nil {
+	if err := i.Publish(ctx, transaction); err != nil {
 		return "", fmt.Errorf("source index commit: %w", err)
 	}
 	return i.Refresh(ctx)
@@ -339,7 +341,7 @@ func (i Index) SettleOperation(
 			}
 			updates = append(updates, gitcmd.RefUpdate{Ref: operationPinRef(operationID), Old: operation.Proof})
 		}
-		if err := i.Git.UpdateRefs(ctx, updates); err != nil {
+		if err := i.Publish(ctx, updates); err != nil {
 			if errors.Is(err, gitcmd.ErrCASMismatch) {
 				runtime.Gosched()
 				continue
@@ -501,6 +503,9 @@ func (i Index) validate() error {
 	}
 	if i.Git.Dir == "" {
 		return errors.New("source index: git command directory is required")
+	}
+	if i.Publish == nil {
+		return errors.New("source index: ref publication is required")
 	}
 	return nil
 }

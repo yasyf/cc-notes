@@ -14,7 +14,10 @@ import (
 	"github.com/yasyf/cc-notes/internal/refs"
 )
 
-var errBindingPresent = errors.New("binding already present")
+var (
+	errBindingPresent    = errors.New("binding already present")
+	errBindingSuperseded = errors.New("binding replaced meanwhile and left in place")
+)
 
 // BindResult reports one Bind: the context's common directory, the binding it
 // now carries, and whether this call published it.
@@ -31,7 +34,8 @@ type BindResult struct {
 // the published binding is always direct: bindings never chain. The backend
 // is validated before an identical existing binding is accepted, and a record
 // that lands in the context while the binding is being published rolls the
-// binding back.
+// binding back, unless another writer has already replaced it, in which case
+// the newer binding stays.
 func Bind(ctx context.Context, contextDir, sourceDir string) (BindResult, error) {
 	_, ctxCommon, _, err := gitcmd.Git{Dir: contextDir}.Dirs(ctx)
 	if err != nil {
@@ -118,8 +122,22 @@ func Bind(ctx context.Context, contextDir, sourceDir string) (BindResult, error)
 	if held == "" {
 		return BindResult{Context: ctxCommon, Binding: want, Changed: true}, nil
 	}
-	unpublish := func(lock string) error { return records.ConfigFileUnset(ctx, lock, bindingKey) }
-	if err := replaceConfig(config, info.Mode().Perm(), unpublish); err != nil {
+	unpublish := func(lock string) error {
+		current, bound, err := readBinding(lock)
+		switch {
+		case err != nil:
+			return err
+		case !bound:
+			return fmt.Errorf("%w: already removed", errBindingSuperseded)
+		case current != want:
+			return fmt.Errorf("%w: now bound to %s", errBindingSuperseded, current.CommonDir)
+		}
+		return records.ConfigFileUnset(ctx, lock, bindingKey)
+	}
+	switch err := replaceConfig(config, info.Mode().Perm(), unpublish); {
+	case errors.Is(err, errBindingSuperseded):
+		return BindResult{}, fail(fmt.Errorf("%w: %s appeared while binding; %v", ErrContextHasRecords, held, err))
+	case err != nil:
 		return BindResult{}, fail(fmt.Errorf("%w: %s appeared while binding, and removing the binding failed: %v", ErrContextHasRecords, held, err))
 	}
 	return BindResult{}, fail(fmt.Errorf("%w: %s", ErrContextHasRecords, held))

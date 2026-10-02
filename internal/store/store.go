@@ -258,19 +258,26 @@ func (s *Store) Binding() (Binding, bool) { return s.storage.binding, s.storage.
 // Every failure is a *BindingError. It never spawns git.
 func (s *Store) CheckRecords() error { return s.storage.check() }
 
-// PublishRef is the one path every records ref publication takes: the exact
-// compare-and-swap through RecordsGit, then CheckRecords again, so a binding
-// that changed while the ref was being written surfaces as a *BindingError
-// naming the published ref instead of a record silently hidden behind a new
-// binding. A failed compare-and-swap returns gitcmd's error unchanged.
-func (s *Store) PublishRef(ctx context.Context, ref string, newSHA, old model.SHA) error {
-	if err := s.RecordsGit.UpdateRef(ctx, ref, newSHA, old); err != nil {
+// PublishRefs runs one exact ref transaction through RecordsGit, then
+// CheckRecords, so a binding moved meanwhile fails naming the published refs.
+// A failed compare-and-swap returns gitcmd's error unchanged.
+func (s *Store) PublishRefs(ctx context.Context, updates []gitcmd.RefUpdate) error {
+	if err := s.RecordsGit.UpdateRefs(ctx, updates); err != nil {
 		return err
 	}
 	if err := s.CheckRecords(); err != nil {
-		return fmt.Errorf("published %s: %w", ref, err)
+		names := make([]string, len(updates))
+		for i, update := range updates {
+			names[i] = update.Ref
+		}
+		return fmt.Errorf("published %s: %w", strings.Join(names, ", "), err)
 	}
 	return nil
+}
+
+// PublishRef publishes one ref through PublishRefs.
+func (s *Store) PublishRef(ctx context.Context, ref string, newSHA, old model.SHA) error {
+	return s.PublishRefs(ctx, []gitcmd.RefUpdate{{Ref: ref, New: newSHA, Old: old}})
 }
 
 // GitDir returns the absolute per-worktree git directory, the one holding this

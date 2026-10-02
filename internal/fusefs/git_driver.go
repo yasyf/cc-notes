@@ -344,7 +344,7 @@ func (d *GitDriver) open(
 	if err != nil {
 		return nil, sourceindex.Index{}, fmt.Errorf("cc-notes source: open repository: %w", err)
 	}
-	return source, sourceindex.Index{Repo: source.Repo, Git: source.RecordsGit}, nil
+	return source, sourceindex.Index{Repo: source.Repo, Git: source.RecordsGit, Publish: source.PublishRefs}, nil
 }
 
 func (d *GitDriver) requestTargets(

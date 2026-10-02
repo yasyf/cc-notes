@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -9,31 +10,53 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/internal/sourceindex"
 )
 
-// shimGit puts a git wrapper first on PATH: when "$*" matches pattern (an sh
-// case glob) it runs interleave through the real git first, then execs the
-// real git with the original argv. Tests use it to land a concurrent write
-// between two steps of one operation.
-func shimGit(t *testing.T, pattern string, interleave ...string) {
+// gitShim is a git wrapper put first on PATH: when "$*" matches Pattern (an
+// sh case glob) for the Nth time (every time when N is 0) it runs each
+// Interleave argv through the real git first, then execs the real git with the
+// original argv. Tests use it to land a concurrent write between two steps of
+// one operation.
+type gitShim struct {
+	Pattern    string
+	N          int
+	Interleave [][]string
+}
+
+func (sh gitShim) install(t *testing.T) {
 	t.Helper()
 	real, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatalf("find git: %v", err)
 	}
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-	var b strings.Builder
-	fmt.Fprintf(&b, "#!/bin/sh\ncase \"$*\" in\n%s) %s", pattern, quote(real))
-	for _, arg := range interleave {
-		b.WriteString(" " + quote(arg))
-	}
-	fmt.Fprintf(&b, " ;;\nesac\nexec %s \"$@\"\n", quote(real))
 	dir := t.TempDir()
+	var b strings.Builder
+	fmt.Fprintf(&b, "#!/bin/sh\ncase \"$*\" in\n%s)\n", sh.Pattern)
+	if sh.N > 0 {
+		count := quote(filepath.Join(dir, "count"))
+		fmt.Fprintf(&b, "\tn=$(($(cat %s 2>/dev/null || echo 0) + 1))\n\techo \"$n\" >%s\n\t[ \"$n\" -eq %d ] || exec %s \"$@\"\n", count, count, sh.N, quote(real))
+	}
+	for _, argv := range sh.Interleave {
+		b.WriteString("\t" + quote(real))
+		for _, arg := range argv {
+			b.WriteString(" " + quote(arg))
+		}
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(&b, "\t;;\nesac\nexec %s \"$@\"\n", quote(real))
 	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(b.String()), 0o700); err != nil {
 		t.Fatalf("write git shim: %v", err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func shimGit(t *testing.T, pattern string, interleave ...string) {
+	t.Helper()
+	gitShim{Pattern: pattern, Interleave: [][]string{interleave}}.install(t)
 }
 
 func symlinkOver(t *testing.T, path, target string) {
@@ -326,6 +349,97 @@ func TestPublishRefRechecksBinding(t *testing.T) {
 	if !strings.Contains(err.Error(), refs) {
 		t.Fatalf("error %q does not name the published ref %s", err, refs)
 	}
+}
+
+// TestSourceIndexPublishRechecksBinding pins S5(c) for the source index: a
+// binding published while an index transaction was being written fails the
+// commit visibly, naming every written ref, instead of leaving the records in
+// the old backend behind the new binding.
+func TestSourceIndexPublishRechecksBinding(t *testing.T) {
+	f := newSharedFixture(t)
+	f.bind(t)
+	s, err := Open(f.thin)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	index := sourceindex.Index{Repo: s.Repo, Git: s.RecordsGit, Publish: s.PublishRefs}
+	head, err := index.Refresh(t.Context())
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	prepared, err := s.PrepareCreateExact(t.Context(), noteOps("raced"))
+	if err != nil {
+		t.Fatalf("PrepareCreateExact: %v", err)
+	}
+	other := bindingFor(t, filepath.Join(initSourceRepo(t), ".git"))
+	shimGit(t, `*"update-ref --stdin"*`, "config", "--file", f.config(), bindingKey, other.String())
+
+	operationID := strings.Repeat("1", 64)
+	_, err = index.CommitOperation(t.Context(), head, operationID, "created", sha256.Sum256([]byte("request")), []gitcmd.RefUpdate{prepared.RefUpdate()})
+	assertBindingError(t, err, ErrBindingChanged, f.config(), f.sourceCommon)
+	for _, ref := range []string{prepared.Ref, sourceindex.Ref, "refs/cc-notes-source-v1/operations/" + operationID} {
+		if !strings.Contains(err.Error(), ref) {
+			t.Fatalf("error %q does not name the published ref %s", err, ref)
+		}
+	}
+	if got := gittest.Git(t, f.source, "rev-parse", prepared.Ref); got != string(prepared.New) {
+		t.Fatalf("backend %s = %s, want %s", prepared.Ref, got, prepared.New)
+	}
+	f.assertNoRecords(t)
+}
+
+// TestBindRollbackPreservesNewerBinding pins the scope of the S5(b) rollback:
+// when a record appears while binding and another writer has already replaced
+// the binding, Bind refuses with ErrContextHasRecords naming both and leaves
+// the newer binding in place instead of unbinding a context it no longer owns.
+func TestBindRollbackPreservesNewerBinding(t *testing.T) {
+	f := newSharedFixture(t)
+	other := bindingFor(t, filepath.Join(initSourceRepo(t), ".git"))
+	const raced = "refs/cc-notes/notes/raced"
+	gitShim{Pattern: `*"for-each-ref --count=1"*`, N: 2, Interleave: [][]string{
+		{"config", "--file", f.config(), bindingKey, other.String()},
+		{"-C", f.thin, "update-ref", raced, "HEAD"},
+	}}.install(t)
+
+	_, err := Bind(t.Context(), f.thin, f.source)
+	be := assertBindingError(t, err, ErrContextHasRecords, f.config(), f.sourceCommon)
+	if !strings.Contains(be.Error(), raced) || !strings.Contains(be.Error(), other.CommonDir) {
+		t.Fatalf("refusal %q does not name %s and %s", be, raced, other.CommonDir)
+	}
+	if got, bound, err := readBinding(f.config()); err != nil || !bound || got != other {
+		t.Fatalf("binding after the rollback = %+v (bound %v, %v), want %+v", got, bound, err, other)
+	}
+	if _, err := os.Lstat(f.config() + ".lock"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a lock was left behind: %v", err)
+	}
+	if got := gittest.Git(t, f.thin, "for-each-ref", "--format=%(refname)", "refs/cc-notes/"); got != raced {
+		t.Fatalf("context refs = %q, want exactly %s", got, raced)
+	}
+}
+
+// TestBindRereadsBindingUnderLock pins the S5(a) locked reread: binder B
+// publishes a different binding after A's unbound read of the config but
+// before A takes config.lock; A refuses with ErrBindingConflict and B's binding
+// survives.
+func TestBindRereadsBindingUnderLock(t *testing.T) {
+	f := newSharedFixture(t)
+	other := bindingFor(t, filepath.Join(initSourceRepo(t), ".git"))
+	gitShim{Pattern: `*"for-each-ref --count=1"*`, N: 1, Interleave: [][]string{
+		{"config", "--file", f.config(), bindingKey, other.String()},
+	}}.install(t)
+
+	_, err := Bind(t.Context(), f.thin, f.source)
+	be := assertBindingError(t, err, ErrBindingConflict, f.config(), other.CommonDir)
+	if !strings.Contains(be.Error(), f.sourceCommon) {
+		t.Fatalf("refusal %q does not name the requested source %s", be, f.sourceCommon)
+	}
+	if got, bound, err := readBinding(f.config()); err != nil || !bound || got != other {
+		t.Fatalf("binding after the conflict = %+v (bound %v, %v), want %+v", got, bound, err, other)
+	}
+	if _, err := os.Lstat(f.config() + ".lock"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a lock was left behind: %v", err)
+	}
+	f.assertNoRecords(t)
 }
 
 func TestReplaceConfig(t *testing.T) {
