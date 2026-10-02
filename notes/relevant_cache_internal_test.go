@@ -253,7 +253,7 @@ func TestRelevantInputsAuditConfig(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			in := &relevantInputs{watched: tc.watched, guarded: make(map[string]bool)}
+			in := &relevantInputs{watched: tc.watched, guarded: make(map[string]fileStamp)}
 			in.auditConfig(entries, tc.files, origins, tc.dump)
 			if in.untrusted != tc.untrusted {
 				t.Fatalf("untrusted = %t, want %t", in.untrusted, tc.untrusted)
@@ -492,9 +492,6 @@ func TestRelevantInputsDistrustAStampTheWalkContradicts(t *testing.T) {
 				t.Fatalf("relevantInputs: %v", err)
 			}
 			real := realPath(t, gitDir)
-			if guards(in, real) {
-				t.Fatalf("fixture: the git dir is guarded before ORIG_HEAD is stamped: %+v", in.guards)
-			}
 			s := lstampOf(orig)
 			if s.Missing == tc.present {
 				t.Fatalf("stamp missing = %t, want %t", s.Missing, !tc.present)
@@ -529,8 +526,146 @@ func TestRelevantInputsDistrustAStampTheWalkContradicts(t *testing.T) {
 	}
 }
 
+func TestRelevantInputsDistrustAGuardNotObservedExisting(t *testing.T) {
+	defer SetRelevantRacyWindow(0)()
+	const keep, tip = "refs/remotes/upstream/nested/keep", "refs/remotes/upstream/nested/tip"
+	fixture := func(t *testing.T) (*Client, string, model.SHA, *relevantInputs, string) {
+		t.Helper()
+		c, dir := newWBClient(t)
+		gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+		root := model.SHA(strings.TrimSpace(gittest.Git(t, dir, "rev-parse", "HEAD")))
+		gittest.Git(t, dir, "pack-refs", "--all")
+		gittest.Git(t, dir, "update-ref", "refs/remotes/upstream/other", string(root))
+		gittest.Git(t, dir, "update-ref", keep, string(root))
+		in, err := c.relevantInputs(t.Context(), "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
+		if err != nil {
+			t.Fatalf("relevantInputs: %v", err)
+		}
+		nested := realPath(t, filepath.Join(c.s.CommonDir(), "refs", "remotes", "upstream", "nested"))
+		if guards(in, nested) || guards(in, parentPath(nested)) {
+			t.Fatalf("fixture: the capture guards the schedule's directories on its own: %+v", in.guards)
+		}
+		return c, dir, root, in, nested
+	}
+
+	prune := func(t *testing.T, nested, name string) {
+		t.Helper()
+		for _, path := range []string{filepath.Join(nested, name), nested} {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	t.Run("the directory is pruned between the walk's observation and the guard", func(t *testing.T) {
+		c, dir, root, in, nested := fixture(t)
+		seen := stampOf(nested)
+		prune(t, nested, "keep")
+		in.guard(nested, seen)
+		if g := in.guarded[nested]; !g.Missing {
+			t.Fatalf("guard %+v, want the pruned directory stamped missing", g)
+		}
+		if !in.untrusted {
+			t.Fatal("a guard stamped missing on a directory the walk saw existing left the capture trusted")
+		}
+		gittest.Git(t, dir, "update-ref", tip, string(root))
+		resolved, err := c.s.Git.ResolveRevs(t.Context(), []string{tip + "^{commit}"})
+		if err != nil {
+			t.Fatalf("ResolveRevs: %v", err)
+		}
+		if got := resolved[tip+"^{commit}"]; got != root {
+			t.Fatalf("the capture's read resolved the transient ref to %q, want %q", got, root)
+		}
+		prune(t, nested, "tip")
+		if !in.close() {
+			t.Fatalf("fixture: close refused the capture through a stamp or guard other than the missing one: %+v", moved(in))
+		}
+		if !in.racy() {
+			t.Fatal("racy accepted a capture whose only evidence of the transient ref's directory was a missing guard")
+		}
+	})
+
+	t.Run("the directory is replaced between the walk's observation and the guard", func(t *testing.T) {
+		_, dir, root, in, nested := fixture(t)
+		seen := stampOf(nested)
+		gittest.Git(t, dir, "update-ref", "-d", keep)
+		gittest.Git(t, dir, "update-ref", tip, string(root))
+		in.guard(nested, seen)
+		if g := in.guarded[nested]; g.Missing || g == seen {
+			t.Fatalf("guard %+v, want the replacement directory's own stamp, not %+v", g, seen)
+		}
+		if !in.untrusted {
+			t.Fatal("a guard whose stamp contradicts what the walk saw left the capture trusted")
+		}
+	})
+}
+
+func TestRelevantInputsRefuseACaptureWhoseRefDirectoryWasSwappedAway(t *testing.T) {
+	defer SetRelevantRacyWindow(0)()
+	c, dir := newWBClient(t)
+	ctx := t.Context()
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	root := model.SHA(strings.TrimSpace(gittest.Git(t, dir, "rev-parse", "HEAD")))
+	common := c.s.CommonDir()
+	for _, ref := range append(slices.Clone(relevantRefRoots), replaceRefBase()) {
+		if err := os.MkdirAll(filepath.Join(common, filepath.FromSlash(strings.TrimSuffix(ref, "/"))), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const tip = "refs/remotes/upstream/tip"
+	gittest.Git(t, dir, "update-ref", "refs/remotes/upstream/keep", string(root))
+	gittest.Git(t, dir, "symbolic-ref", "ORIG_HEAD", tip)
+	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{Base: "main-worktree/ORIG_HEAD"}, "json", relevantDeps{})
+	if err != nil {
+		t.Fatalf("relevantInputs: %v", err)
+	}
+	if in.base != "" {
+		t.Fatalf("fixture: the base resolved to %s while its ref is absent", in.base)
+	}
+	refs := filepath.Join(common, "refs")
+	remotes := filepath.Join(refs, "remotes")
+	away := remotes + ".away"
+	if err := os.Rename(remotes, away); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Git(t, dir, "update-ref", tip, string(root))
+	resolved, err := c.s.Git.ResolveRevs(ctx, []string{"main-worktree/ORIG_HEAD^{commit}"})
+	if err != nil {
+		t.Fatalf("ResolveRevs: %v", err)
+	}
+	if got := resolved["main-worktree/ORIG_HEAD^{commit}"]; got != root {
+		t.Fatalf("the capture's read resolved the base through the stand-in directory to %q, want %q", got, root)
+	}
+	for _, path := range []string{filepath.Join(remotes, "upstream", "tip"), filepath.Join(remotes, "upstream"), remotes} {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Rename(away, remotes); err != nil {
+		t.Fatal(err)
+	}
+	if in.close() {
+		t.Fatal("close accepted a capture whose ref directory was swapped for a stand-in and back")
+	}
+	for _, d := range []string{refs, remotes} {
+		if !guards(in, realPath(t, d)) {
+			t.Fatalf("the walk to a missing ref left %s unguarded: %+v", d, in.guards)
+		}
+	}
+}
+
 func guards(in *relevantInputs, path string) bool {
 	return slices.ContainsFunc(in.guards, func(g fileStamp) bool { return g.Path == path })
+}
+
+func moved(in *relevantInputs) []fileStamp {
+	var out []fileStamp
+	for _, s := range slices.Concat(in.stamps, in.guards) {
+		if restamp(s) != s {
+			out = append(out, s, restamp(s))
+		}
+	}
+	return out
 }
 
 func realPath(t *testing.T, path string) string {

@@ -54,7 +54,8 @@ type relevantInputs struct {
 	stamps     []fileStamp
 	guards     []fileStamp
 	watched    map[string]fileStamp
-	guarded    map[string]bool
+	guarded    map[string]fileStamp
+	roots      []string
 	depSeen    map[string]int
 	lines      []string
 	revalidate bool
@@ -89,7 +90,7 @@ func (c *Client) relevantInputs(ctx context.Context, p string, filter RelevantFi
 		commonDir: c.s.CommonDir(),
 		start:     time.Now(),
 		watched:   make(map[string]fileStamp),
-		guarded:   make(map[string]bool),
+		guarded:   make(map[string]fileStamp),
 		depSeen:   make(map[string]int),
 		symrefs:   make(map[string]string),
 		vars:      make(map[string]string),
@@ -97,6 +98,7 @@ func (c *Client) relevantInputs(ctx context.Context, p string, filter RelevantFi
 		deps:      relevantDeps{Config: deps.Config},
 		values:    make(map[string]model.SHA),
 	}
+	in.roots = in.rootDirs()
 	if err := in.watchExecutables(); err != nil {
 		return nil, err
 	}
@@ -150,7 +152,7 @@ func (in *relevantInputs) keep(s fileStamp) fileStamp {
 	return s
 }
 
-func (in *relevantInputs) resolve(s fileStamp) {
+func (in *relevantInputs) resolve(s fileStamp) (string, bool) {
 	// Walked as the kernel opens it: ".." after a symlink climbs out of its
 	// target. The stamp, not the walk, decides the guard: a file that
 	// appeared since the stamp can vanish again before close.
@@ -159,12 +161,13 @@ func (in *relevantInputs) resolve(s fileStamp) {
 		cwd, err := os.Getwd()
 		if err != nil {
 			in.revalidate = true
-			return
+			return "", false
 		}
 		path = joinPath(cwd, path)
 	}
 	root, rest := splitAbs(path)
 	cur := root
+	seen := make(map[string]fileStamp)
 	linked, hops := 0, 0
 	for len(rest) > 0 {
 		name := rest[0]
@@ -188,27 +191,31 @@ func (in *relevantInputs) resolve(s fileStamp) {
 			if fromLink || slices.Contains(rest, "..") {
 				in.revalidate = true
 			} else {
-				in.guard(cur)
+				in.guard(cur, seen[cur])
 			}
 			if !s.Missing {
 				in.untrusted = true
 			}
-			return
+			return "", false
 		}
 		if info.Mode()&os.ModeSymlink == 0 || (len(rest) == 0 && s.Link) {
 			cur = next
+			seen[cur] = stampFrom(cur, info, nil, false)
+			if info.IsDir() && in.underRoot(cur) {
+				in.guard(cur, seen[cur])
+			}
 			continue
 		}
-		in.guard(cur)
+		in.guard(cur, seen[cur])
 		hops++
 		if hops > relevantLinkHops {
 			in.revalidate = true
-			return
+			return "", false
 		}
 		target, err := os.Readlink(next)
 		if err != nil {
 			in.untrusted = true
-			return
+			return "", false
 		}
 		var hop []string
 		if filepath.IsAbs(target) {
@@ -221,9 +228,27 @@ func (in *relevantInputs) resolve(s fileStamp) {
 		linked += len(hop)
 	}
 	if s.Missing {
-		in.guard(parentPath(cur))
+		parent := parentPath(cur)
+		in.guard(parent, seen[parent])
 		in.untrusted = true
 	}
+	return cur, true
+}
+
+func (in *relevantInputs) rootDirs() []string {
+	var roots []string
+	for _, dir := range []string{in.commonDir, in.gitDir} {
+		if real, ok := in.resolve(fileStamp{Path: dir}); ok && !slices.Contains(roots, real) {
+			roots = append(roots, real)
+		}
+	}
+	return roots
+}
+
+func (in *relevantInputs) underRoot(dir string) bool {
+	return slices.ContainsFunc(in.roots, func(root string) bool {
+		return dir == root || strings.HasPrefix(dir, joinPath(root, ""))
+	})
 }
 
 func splitAbs(path string) (root string, rest []string) {
@@ -246,12 +271,16 @@ func parentPath(path string) string {
 	return path[:i]
 }
 
-func (in *relevantInputs) guard(dir string) {
-	if in.guarded[dir] {
-		return
+func (in *relevantInputs) guard(dir string, seen fileStamp) {
+	g, ok := in.guarded[dir]
+	if !ok {
+		g = stampOf(dir)
+		in.guarded[dir] = g
+		in.guards = append(in.guards, g)
 	}
-	in.guarded[dir] = true
-	in.guards = append(in.guards, stampOf(dir))
+	if g.Missing || (seen.Path != "" && g != seen) {
+		in.untrusted = true
+	}
 }
 
 func nearestExisting(dir string) string {
