@@ -69,7 +69,7 @@ func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (m
 	if err := s.track(ctx, ref, snapshot, nil); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
-	if err := s.RecordsGit.UpdateRef(ctx, ref, sha, ""); err != nil {
+	if err := s.PublishRef(ctx, ref, sha, ""); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	s.cache.put(sha, snapshot)
@@ -129,7 +129,7 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 		if err := s.track(ctx, ref, snapshot, addedAttachments(ops)); err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
-		switch err := s.RecordsGit.UpdateRef(ctx, ref, sha, tip); {
+		switch err := s.PublishRef(ctx, ref, sha, tip); {
 		case err == nil:
 			s.cache.put(sha, snapshot)
 			return snapshot, nil
@@ -197,7 +197,7 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 		if err != nil {
 			return nil, fmt.Errorf("compact %s: %w", ref, err)
 		}
-		switch err := s.RecordsGit.UpdateRef(ctx, ref, sha, tip); {
+		switch err := s.PublishRef(ctx, ref, sha, tip); {
 		case err == nil:
 			s.cache.put(sha, snapshot)
 			return snapshot, nil
@@ -250,7 +250,7 @@ func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (
 	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
-	if err := s.RecordsGit.UpdateRef(ctx, ref, sha, ours); err != nil {
+	if err := s.PublishRef(ctx, ref, sha, ours); err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
 	s.cache.put(sha, merged)

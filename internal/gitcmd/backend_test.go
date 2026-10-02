@@ -54,10 +54,6 @@ func TestBackendIgnoresInheritedRouting(t *testing.T) {
 	source := gittest.InitRepo(t)
 	gittest.Git(t, source, "commit", "-q", "--allow-empty", "-m", "s1")
 	sourceHead := resolve(t, source, "HEAD")
-	sub := filepath.Join(source, "sub")
-	if err := os.Mkdir(sub, 0o750); err != nil {
-		t.Fatalf("mkdir sub: %v", err)
-	}
 	upstream := t.TempDir()
 	gittest.Git(t, upstream, "init", "-q", "-b", "main")
 	gittest.Git(t, upstream, "config", "user.name", "Upstream User")
@@ -80,29 +76,29 @@ func TestBackendIgnoresInheritedRouting(t *testing.T) {
 	thinLog := verbLogHelper(t, gitcmd.Git{Dir: thin}, "bob", "hunter2")
 	thinGit := filepath.Join(thin, ".git")
 
-	wantCommon := canonicalPath(t, filepath.Join(source, ".git"))
-	wantRoot := canonicalPath(t, source)
+	sourceGit := filepath.Join(source, ".git")
+	wantCommon := canonicalPath(t, sourceGit)
 
 	rows := []struct {
-		key, value, dir string
+		key, value string
 	}{
-		{"GIT_DIR", thinGit, source},
-		{"GIT_COMMON_DIR", thinGit, source},
-		{"GIT_OBJECT_DIRECTORY", filepath.Join(thinGit, "objects"), source},
-		{"GIT_ALTERNATE_OBJECT_DIRECTORIES", filepath.Join(thinGit, "objects"), source},
-		{"GIT_WORK_TREE", thin, source},
-		{"GIT_INDEX_FILE", filepath.Join(thinGit, "index"), source},
-		{"GIT_CONFIG", filepath.Join(thinGit, "config"), source},
-		{"GIT_REFERENCE_BACKEND", "reftable", source},
-		{"GIT_NAMESPACE", "elsewhere", source},
-		{"GIT_CEILING_DIRECTORIES", source, sub},
+		{"GIT_DIR", thinGit},
+		{"GIT_COMMON_DIR", thinGit},
+		{"GIT_OBJECT_DIRECTORY", filepath.Join(thinGit, "objects")},
+		{"GIT_ALTERNATE_OBJECT_DIRECTORIES", filepath.Join(thinGit, "objects")},
+		{"GIT_WORK_TREE", thin},
+		{"GIT_INDEX_FILE", filepath.Join(thinGit, "index")},
+		{"GIT_CONFIG", filepath.Join(thinGit, "config")},
+		{"GIT_REFERENCE_BACKEND", "reftable"},
+		{"GIT_NAMESPACE", "elsewhere"},
+		{"GIT_CEILING_DIRECTORIES", source},
 	}
 	for _, row := range rows {
 		t.Run(row.key, func(t *testing.T) {
 			before := censusOf(t, thin)
 			t.Setenv(row.key, row.value)
 			ctx := t.Context()
-			g := gitcmd.Backend(row.dir)
+			g := gitcmd.Backend(sourceGit)
 			ref := "refs/cc-notes/notes/" + strings.ToLower(row.key)
 
 			_, commonDir, _, err := g.Dirs(ctx)
@@ -112,12 +108,8 @@ func TestBackendIgnoresInheritedRouting(t *testing.T) {
 			if got := canonicalPath(t, commonDir); got != wantCommon {
 				t.Fatalf("Dirs common dir = %q, want the source %q", got, wantCommon)
 			}
-			root, err := g.Root(ctx)
-			if err != nil {
-				t.Fatalf("Root: %v", err)
-			}
-			if got := canonicalPath(t, root); got != wantRoot {
-				t.Fatalf("Root = %q, want the source %q", got, wantRoot)
+			if _, discovered, _, err := gitcmd.Discover(ctx, source); err != nil || canonicalPath(t, discovered) != wantCommon {
+				t.Fatalf("Discover(source) = %q, %v; want the source %q", discovered, err, wantCommon)
 			}
 			if err := g.UpdateRefs(ctx, []gitcmd.RefUpdate{{Ref: ref, New: sourceHead}}); err != nil {
 				t.Fatalf("UpdateRefs in the source: %v", err)
@@ -228,7 +220,7 @@ func TestConfigFileSetExactFile(t *testing.T) {
 		g    gitcmd.Git
 		key  string
 	}{
-		{"backend handle", gitcmd.Backend(repo), "cc-notes.storage"},
+		{"backend handle", gitcmd.Backend(filepath.Join(repo, ".git")), "cc-notes.storage"},
 		{"checkout handle", gitcmd.Git{Dir: repo}, "cc-notes.checkout"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -247,6 +239,59 @@ func TestConfigFileSetExactFile(t *testing.T) {
 	}
 	if string(otherAfter) != string(otherBefore) {
 		t.Fatalf("ConfigFileSet wrote into GIT_CONFIG's file:\n%s", otherAfter)
+	}
+}
+
+// TestBackendNeverDiscovers pins S1: a Backend handle opens exactly the git
+// directory it was given. A nested .git file inside that directory redirects
+// discovery from there to another repository; it moves neither the ref
+// transaction nor the credential helper off the source.
+func TestBackendNeverDiscovers(t *testing.T) {
+	source := gittest.InitRepo(t)
+	gittest.Git(t, source, "commit", "-q", "--allow-empty", "-m", "s1")
+	sourceHead := resolve(t, source, "HEAD")
+	sourceGit := filepath.Join(source, ".git")
+	sourceLog := verbLogHelper(t, gitcmd.Git{Dir: source}, "alice", "s3cret")
+	victim := gittest.InitRepo(t)
+	gittest.Git(t, victim, "commit", "-q", "--allow-empty", "-m", "v1")
+	victimGit := filepath.Join(victim, ".git")
+	victimLog := verbLogHelper(t, gitcmd.Git{Dir: victim}, "mallory", "pwned")
+	if err := os.WriteFile(filepath.Join(sourceGit, ".git"), []byte("gitdir: "+victimGit+"\n"), 0o600); err != nil {
+		t.Fatalf("plant nested .git file: %v", err)
+	}
+	ctx := t.Context()
+	if _, common, _, err := (gitcmd.Git{Dir: sourceGit}).Dirs(ctx); err != nil || canonicalPath(t, common) != canonicalPath(t, victimGit) {
+		t.Skipf("discovery from inside %s is not redirected by the nested .git file (common %q, %v): the fixture is inert on this git", sourceGit, common, err)
+	}
+	before := censusOf(t, victim)
+
+	g := gitcmd.Backend(sourceGit)
+	_, common, _, err := g.Dirs(ctx)
+	if err != nil {
+		t.Fatalf("Dirs: %v", err)
+	}
+	if canonicalPath(t, common) != canonicalPath(t, sourceGit) {
+		t.Fatalf("Dirs common dir = %q, want %q", common, sourceGit)
+	}
+	const ref = "refs/cc-notes/notes/pinned"
+	if err := g.UpdateRef(ctx, ref, sourceHead, ""); err != nil {
+		t.Fatalf("UpdateRef: %v", err)
+	}
+	if got := resolve(t, source, ref); got != sourceHead {
+		t.Fatalf("source %s = %s, want %s", ref, got, sourceHead)
+	}
+	cred := gitcmd.Credential{Username: "alice", Password: "s3cret"}
+	if err := g.CredentialApprove(ctx, lfsURL, cred); err != nil {
+		t.Fatalf("CredentialApprove: %v", err)
+	}
+	if after := censusOf(t, victim); after != before {
+		t.Fatalf("victim repository changed:\nbefore %+v\nafter  %+v", before, after)
+	}
+	if verbs := loggedVerbs(t, victimLog); verbs != nil {
+		t.Fatalf("victim credential helper ran %q", verbs)
+	}
+	if verbs := loggedVerbs(t, sourceLog); !slices.Equal(verbs, []string{"store"}) {
+		t.Fatalf("source credential helper ran %q, want [store]", verbs)
 	}
 }
 

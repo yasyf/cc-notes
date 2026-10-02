@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,37 +148,57 @@ func readBinding(configPath string) (Binding, bool, error) {
 
 // validateBackend proves the bound backend is still the repository that was
 // bound: present, the recorded device/inode, not the context itself, a git
-// common directory rather than a linked worktree's git directory, and not
-// bound onward.
-func validateBackend(b Binding, context fileID) error {
+// common directory rather than a linked worktree's git directory, holding its
+// own refs, objects and HEAD rather than symlinks into another repository, and
+// not bound onward. It returns the stamp of the backend config it read the
+// binding from, taken before the read.
+func validateBackend(b Binding, context fileID) (configStamp, error) {
 	info, err := os.Stat(b.CommonDir)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrBackendUnavailable, err)
+		return configStamp{}, fmt.Errorf("%w: %v", ErrBackendUnavailable, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("%w: %s is not a directory", ErrBackendUnavailable, b.CommonDir)
+		return configStamp{}, fmt.Errorf("%w: %s is not a directory", ErrBackendUnavailable, b.CommonDir)
 	}
 	device, inode := gitobj.FileID(info)
 	if device != b.Device || inode != b.Inode {
-		return fmt.Errorf("%w: bound device %d inode %d, found device %d inode %d", ErrBackendReplaced, b.Device, b.Inode, device, inode)
+		return configStamp{}, fmt.Errorf("%w: bound device %d inode %d, found device %d inode %d", ErrBackendReplaced, b.Device, b.Inode, device, inode)
 	}
 	if b.id() == context {
-		return fmt.Errorf("%w: binding points at the context itself", ErrBindingCycle)
+		return configStamp{}, fmt.Errorf("%w: binding points at the context itself", ErrBindingCycle)
 	}
 	if _, err := os.Lstat(filepath.Join(b.CommonDir, "commondir")); err == nil {
-		return fmt.Errorf("%w: %s is a linked worktree's git directory, not a git common directory", ErrBackendUnavailable, b.CommonDir)
+		return configStamp{}, fmt.Errorf("%w: %s is a linked worktree's git directory, not a git common directory", ErrBackendUnavailable, b.CommonDir)
 	}
 	for _, entry := range []string{"objects", "refs", "HEAD"} {
-		if _, err := os.Stat(filepath.Join(b.CommonDir, entry)); err != nil {
-			return fmt.Errorf("%w: %s is not a git common directory: %v", ErrBackendUnavailable, b.CommonDir, err)
+		path := filepath.Join(b.CommonDir, entry)
+		info, err := os.Lstat(path)
+		if err != nil {
+			return configStamp{}, fmt.Errorf("%w: %s is not a git common directory: %v", ErrBackendUnavailable, b.CommonDir, err)
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return configStamp{}, fmt.Errorf("%w: %s is a symlink", ErrBackendRedirects, path)
 		}
 	}
-	target, bound, err := readBinding(filepath.Join(b.CommonDir, "config"))
+	config, err := os.Stat(filepath.Join(b.CommonDir, "config"))
 	if err != nil {
-		return fmt.Errorf("%w: %s carries a %s value that does not parse: %v", ErrBackendRedirects, b.CommonDir, bindingKey, err)
+		return configStamp{}, fmt.Errorf("%w: %v", ErrBackendUnavailable, err)
+	}
+	if err := backendRedirects(b.CommonDir); err != nil {
+		return configStamp{}, err
+	}
+	return stampOf(config), nil
+}
+
+// backendRedirects refuses a backend whose own config carries a binding, or a
+// binding value that does not parse: bindings never chain.
+func backendRedirects(commonDir string) error {
+	target, bound, err := readBinding(filepath.Join(commonDir, "config"))
+	if err != nil {
+		return fmt.Errorf("%w: %s carries a %s value that does not parse: %v", ErrBackendRedirects, commonDir, bindingKey, err)
 	}
 	if bound {
-		return fmt.Errorf("%w: %s is bound to %s", ErrBackendRedirects, b.CommonDir, target.CommonDir)
+		return fmt.Errorf("%w: %s is bound to %s", ErrBackendRedirects, commonDir, target.CommonDir)
 	}
 	return nil
 }
@@ -207,15 +228,17 @@ func stampOf(info os.FileInfo) configStamp {
 
 // storageBinding is what a store knows about its context's cc-notes.storage
 // value: the config file it was read from, the validated binding when one was
-// set, and the stamp that read was taken under. mu guards stamp; the rest is
-// immutable after open, and Pinned views share the whole record.
+// set, and the stamps the context config and the backend config were read
+// under. mu guards the stamps; the rest is immutable after open, and Pinned
+// views share the whole record.
 type storageBinding struct {
 	config  string
 	binding Binding
 	bound   bool
 
-	mu    sync.Mutex
-	stamp configStamp
+	mu           sync.Mutex
+	stamp        configStamp
+	backendStamp configStamp
 }
 
 // openBinding reads and validates the context's binding. The config is
@@ -239,9 +262,11 @@ func openBinding(commonDir string) (*storageBinding, error) {
 	if err != nil {
 		return nil, w.fail(fmt.Errorf("%w: cannot stat the context common directory: %v", ErrBackendUnavailable, err))
 	}
-	if err := validateBackend(b, context); err != nil {
+	backendStamp, err := validateBackend(b, context)
+	if err != nil {
 		return nil, w.fail(err)
 	}
+	w.backendStamp = backendStamp
 	return w, nil
 }
 
@@ -253,36 +278,58 @@ func (w *storageBinding) fail(err error) error {
 	return e
 }
 
-// check is CheckRecords: one stat of the context config, a re-read of the
-// binding only when that stat moved, and for a bound store one stat of the
-// backend against the bound identity. It never spawns git.
+// check is CheckRecords: a fixed number of stats and no git. The context
+// config is stat'ed and the binding re-read only when that stat moved. A bound
+// store then stats the backend against the bound identity, requires it to have
+// gained no commondir file, and stats the backend config, re-reading it for a
+// binding only when its stamp moved.
 func (w *storageBinding) check() error {
-	info, err := os.Stat(w.config)
-	if err != nil {
-		return w.fail(fmt.Errorf("%w: %v", ErrBindingChanged, err))
-	}
-	stamp := stampOf(info)
-	w.mu.Lock()
-	moved := stamp != w.stamp
-	w.mu.Unlock()
-	if moved {
-		if err := w.recheckBinding(); err != nil {
-			return w.fail(err)
-		}
-		w.mu.Lock()
-		w.stamp = stamp
-		w.mu.Unlock()
+	if err := w.refresh(w.config, &w.stamp, ErrBindingChanged, w.recheckBinding); err != nil {
+		return w.fail(err)
 	}
 	if !w.bound {
 		return nil
 	}
-	backend, err := os.Stat(w.binding.CommonDir)
+	backend := w.binding.CommonDir
+	info, err := os.Stat(backend)
 	if err != nil {
 		return w.fail(fmt.Errorf("%w: %v", ErrBackendUnavailable, err))
 	}
-	if device, inode := gitobj.FileID(backend); device != w.binding.Device || inode != w.binding.Inode {
+	if device, inode := gitobj.FileID(info); device != w.binding.Device || inode != w.binding.Inode {
 		return w.fail(fmt.Errorf("%w: bound device %d inode %d, found device %d inode %d", ErrBackendReplaced, w.binding.Device, w.binding.Inode, device, inode))
 	}
+	switch _, err := os.Lstat(filepath.Join(backend, "commondir")); {
+	case err == nil:
+		return w.fail(fmt.Errorf("%w: %s now carries a commondir file", ErrBackendRedirects, backend))
+	case !errors.Is(err, fs.ErrNotExist):
+		return w.fail(fmt.Errorf("%w: %s/commondir: %v", ErrBackendRedirects, backend, err))
+	}
+	if err := w.refresh(filepath.Join(backend, "config"), &w.backendStamp, ErrBackendUnavailable, func() error { return backendRedirects(backend) }); err != nil {
+		return w.fail(err)
+	}
+	return nil
+}
+
+// refresh stats path and, only when its stamp differs from *last, runs reread
+// and records the new stamp. A path that cannot be stat'ed wraps missing.
+func (w *storageBinding) refresh(path string, last *configStamp, missing error, reread func() error) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("%w: %v", missing, err)
+	}
+	stamp := stampOf(info)
+	w.mu.Lock()
+	moved := stamp != *last
+	w.mu.Unlock()
+	if !moved {
+		return nil
+	}
+	if err := reread(); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	*last = stamp
+	w.mu.Unlock()
 	return nil
 }
 

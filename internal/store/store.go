@@ -258,6 +258,21 @@ func (s *Store) Binding() (Binding, bool) { return s.storage.binding, s.storage.
 // Every failure is a *BindingError. It never spawns git.
 func (s *Store) CheckRecords() error { return s.storage.check() }
 
+// PublishRef is the one path every records ref publication takes: the exact
+// compare-and-swap through RecordsGit, then CheckRecords again, so a binding
+// that changed while the ref was being written surfaces as a *BindingError
+// naming the published ref instead of a record silently hidden behind a new
+// binding. A failed compare-and-swap returns gitcmd's error unchanged.
+func (s *Store) PublishRef(ctx context.Context, ref string, newSHA, old model.SHA) error {
+	if err := s.RecordsGit.UpdateRef(ctx, ref, newSHA, old); err != nil {
+		return err
+	}
+	if err := s.CheckRecords(); err != nil {
+		return fmt.Errorf("published %s: %w", ref, err)
+	}
+	return nil
+}
+
 // GitDir returns the absolute per-worktree git directory, the one holding this
 // worktree's HEAD.
 func (s *Store) GitDir() string { return s.gitDir }

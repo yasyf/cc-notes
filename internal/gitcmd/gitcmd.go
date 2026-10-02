@@ -54,21 +54,42 @@ var casPatterns = []string{"cannot lock ref", "is at", "but expected", "referenc
 // when the remote tip is unknown locally.
 var nonFFPatterns = []string{"non-fast-forward", "fetch first", "[rejected]"}
 
-// Git runs the system git binary against one repository. Dir may be any path
-// inside the repository or its worktree; every invocation passes it via -C.
-// A checkout handle (the zero value plus Dir) inherits the process
-// environment. A Backend handle drops inherited repository routing.
+// Git runs the system git binary against one repository. A checkout handle
+// (the zero value plus Dir) runs with -C Dir under the inherited environment,
+// so git discovers the repository from any path inside it or its worktree. A
+// Backend handle names a git directory outright and never discovers one.
 type Git struct {
 	Dir     string
 	backend bool
 }
 
-// Backend returns a handle on the repository at dir whose commands drop every
+// Backend returns a handle on the git directory at dir, an absolute common
+// directory. Every command passes it as --git-dir, so git opens exactly that
+// directory and performs no discovery: a nested .git file inside it, a
+// ceiling, or an inherited GIT_DIR cannot redirect the command. Every
 // inherited variable that reroutes git to another repository, object
-// database, index, ref namespace, or config file, so -C dir alone selects the
-// repository. Authentication, transport, identity, and user configuration
-// variables pass through. Records stores pass the backend's common directory.
+// database, index, ref namespace, or config file is dropped; authentication,
+// transport, identity, and user configuration variables pass through. The
+// handle has no work tree of its own: records stores drive refs, config,
+// fetch, push, and credentials through it, never checkout operations.
 func Backend(dir string) Git { return Git{Dir: dir, backend: true} }
+
+// Discover resolves the repository containing dir, any path inside it or its
+// worktree, with inherited repository routing dropped, so dir alone selects
+// it: the scrubbed form of Git.Dirs for a path not yet known to be a git
+// directory. The records handle on its result is Backend(commonDir).
+func Discover(ctx context.Context, dir string) (gitDir, commonDir string, bare bool, err error) {
+	return Git{Dir: dir}.dirs(ctx, scrubRouting(os.Environ()))
+}
+
+// argv prefixes args with the repository selection: -C Dir for a checkout
+// handle, -C Dir plus --git-dir=Dir for a backend handle.
+func (g Git) argv(args ...string) []string {
+	if g.backend {
+		return append([]string{"-C", g.Dir, "--git-dir=" + g.Dir}, args...)
+	}
+	return append([]string{"-C", g.Dir}, args...)
+}
 
 // routingEnv names every environment variable that reroutes git away from the
 // repository -C selects. It is an exact-name deny-list: GIT_CONFIG_* injection,
@@ -113,6 +134,10 @@ func (g Git) environ(env []string) []string {
 	if env == nil {
 		env = os.Environ()
 	}
+	return scrubRouting(env)
+}
+
+func scrubRouting(env []string) []string {
 	return slices.DeleteFunc(slices.Clone(env), routesRepository)
 }
 
@@ -153,7 +178,7 @@ func (g Git) probe(ctx context.Context, stdin string, args ...string) (string, e
 
 func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...string) (string, error) {
 	//nolint:gosec // G204: git is a fixed argv[0]; args are internal git subcommands, not user-shell input, in this CLI's own repo.
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", g.Dir}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", g.argv(args...)...)
 	cmd.Env = g.environ(env)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
@@ -662,6 +687,15 @@ func (g Git) ConfigFileSet(ctx context.Context, path, key, value string) error {
 	return nil
 }
 
+// ConfigFileUnset removes key from exactly the config file at path via git
+// config --file --unset.
+func (g Git) ConfigFileUnset(ctx context.Context, path, key string) error {
+	if _, err := g.run(ctx, "", "config", "--file", path, "--unset", key); err != nil {
+		return fmt.Errorf("config unset %s in %s: %w", key, path, err)
+	}
+	return nil
+}
+
 // ConfigGetAll returns every value of key in the repository-local config,
 // in order, or an empty slice when the key is unset.
 func (g Git) ConfigGetAll(ctx context.Context, key string) ([]string, error) {
@@ -828,7 +862,11 @@ func (g Git) CommonDir(ctx context.Context) (string, error) {
 // Dirs returns the physical per-worktree and shared git directories and
 // whether the repository is bare, from one --path-format=absolute rev-parse.
 func (g Git) Dirs(ctx context.Context) (gitDir, commonDir string, bare bool, err error) {
-	out, err := g.run(ctx, "", "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir", "--is-bare-repository")
+	return g.dirs(ctx, nil)
+}
+
+func (g Git) dirs(ctx context.Context, env []string) (gitDir, commonDir string, bare bool, err error) {
+	out, err := g.runEnv(ctx, env, "", "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir", "--is-bare-repository")
 	if err != nil {
 		return "", "", false, fmt.Errorf("git dirs: %w", err)
 	}

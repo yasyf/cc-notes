@@ -402,7 +402,7 @@ func ensureContains(ctx context.Context, s *store.Store, ref string, tip model.S
 func advance(ctx context.Context, s *store.Store, ref string, tip model.SHA) (outcome, error) {
 	current, err := s.Repo.Tip(ctx, ref)
 	if errors.Is(err, gitobj.ErrRefNotFound) {
-		if err := s.RecordsGit.UpdateRef(ctx, ref, tip, ""); err != nil {
+		if err := s.PublishRef(ctx, ref, tip, ""); err != nil {
 			return refKept, err
 		}
 		return refCreated, nil
@@ -425,7 +425,7 @@ func advance(ctx context.Context, s *store.Store, ref string, tip model.SHA) (ou
 		return refKept, err
 	}
 	if behind {
-		if err := s.RecordsGit.UpdateRef(ctx, ref, tip, current); err != nil {
+		if err := s.PublishRef(ctx, ref, tip, current); err != nil {
 			return refKept, err
 		}
 		return refFastForwarded, nil
