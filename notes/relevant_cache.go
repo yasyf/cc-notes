@@ -54,9 +54,11 @@ type fileStamp struct {
 	Path    string      `json:"path"`
 	Missing bool        `json:"missing,omitempty"`
 	Link    bool        `json:"link,omitempty"`
+	Ident   bool        `json:"ident,omitempty"`
 	Size    int64       `json:"size,omitempty"`
 	ModTime int64       `json:"mtime,omitempty"`
 	Ctime   int64       `json:"ctime,omitempty"`
+	Dev     uint64      `json:"dev,omitempty"`
 	Inode   uint64      `json:"inode,omitempty"`
 	Mode    os.FileMode `json:"mode,omitempty"`
 }
@@ -66,15 +68,15 @@ type fileStamp struct {
 // depends on has changed. variant names everything render bakes into its
 // output (format, limit), so two renderings never share an entry.
 //
-// A warm hit re-stats the captured fingerprints and runs no git; a moved
-// fingerprint rebuilds the content key through one ref enumeration, and only
-// a changed key scores again.
+// A warm hit re-stats the fingerprints and runs no git; on a bound store it
+// is also the backend recheck. A moved fingerprint rebuilds the key, and
+// only a changed key scores again.
 func (c *Client) RelevantCached(ctx context.Context, target string, filter RelevantFilter, variant string, render func([]RelevantEntry) ([]byte, error)) ([]byte, error) {
 	p, err := c.relevantPath(ctx, target)
 	if err != nil {
 		return nil, err
 	}
-	name := relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, variant)
+	name := c.relevantName(p, filter, variant)
 	now := time.Now()
 	var cached relevantCacheEntry
 	var cachedOK bool
@@ -85,6 +87,11 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 			// stamp; a foreign in-place rewrite of an existing loose ref under a
 			// directory stamp (go-git setRef) is not covered.
 			if cached, hit, cachedOK = readRelevantCacheEntry(f, now); hit {
+				if _, bound := c.s.Binding(); bound {
+					if err := c.s.CheckRecords(); err != nil {
+						return nil, err
+					}
+				}
 				return cached.Output, nil
 			}
 		}
@@ -93,7 +100,6 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if cachedOK {
 		deps = cached.Deps
 	}
-	c.s.EnsureCaches()
 	in, err := c.relevantInputs(ctx, p, filter, variant, deps)
 	if err != nil {
 		return nil, err
@@ -276,8 +282,12 @@ func (f fileStamp) racy(start time.Time) bool {
 	return !f.Missing && (time.Unix(0, f.ModTime).After(edge) || time.Unix(0, f.Ctime).After(edge))
 }
 
-func relevantCacheName(gitDir, dir, p string, filter RelevantFilter, variant string) string {
-	sum := sha256.Sum256(fmt.Appendf(nil, "%s\n%s\n%s\n%+v\n%s", gitDir, dir, p, filter, variant))
+func (c *Client) relevantName(p string, filter RelevantFilter, variant string) string {
+	binding := ""
+	if b, bound := c.s.Binding(); bound {
+		binding = b.String()
+	}
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s\n%s\n%s\n%s\n%+v\n%s", c.s.GitDir(), c.s.Git.Dir, binding, p, filter, variant))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -318,10 +328,25 @@ func (e relevantCacheEntry) filesValid() bool {
 }
 
 func restamp(s fileStamp) fileStamp {
-	if s.Link {
+	switch {
+	case s.Ident:
+		return identStampOf(s.Path)
+	case s.Link:
 		return lstampOf(s.Path)
 	}
 	return stampOf(s.Path)
+}
+
+// identStampOf fingerprints a directory by identity alone: the backend common
+// directory's mtime and ctime move on every checkout, commit, fetch, and
+// config write there, none of which changes a bound context's relevance.
+func identStampOf(path string) fileStamp {
+	info, err := os.Stat(path) //nolint:gosec // G703: stats only the backend directory this process recorded in its own cache entry.
+	if err != nil {
+		return fileStamp{Path: path, Ident: true, Missing: true}
+	}
+	device, inode := gitobj.FileID(info)
+	return fileStamp{Path: path, Ident: true, Dev: device, Inode: inode, Mode: info.Mode().Type()}
 }
 
 func stampOf(path string) fileStamp {

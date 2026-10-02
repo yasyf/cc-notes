@@ -92,6 +92,10 @@ type relevantInputs struct {
 }
 
 func (c *Client) relevantInputs(ctx context.Context, p string, filter RelevantFilter, variant string, deps relevantDeps) (*relevantInputs, error) {
+	if err := c.s.CheckRecords(); err != nil {
+		return nil, err
+	}
+	c.s.EnsureCaches()
 	in := &relevantInputs{
 		client:    c,
 		path:      p,
@@ -111,6 +115,7 @@ func (c *Client) relevantInputs(ctx context.Context, p string, filter RelevantFi
 		noCache:   relevantRouted(),
 	}
 	in.findRoots()
+	in.watchRecords()
 	if err := in.watchExecutables(); err != nil {
 		return nil, err
 	}
@@ -258,7 +263,7 @@ func (in *relevantInputs) resolve(s fileStamp) (string, bool) {
 }
 
 func (in *relevantInputs) findRoots() {
-	for _, dir := range []string{in.commonDir, in.gitDir} {
+	for _, dir := range []string{in.commonDir, in.gitDir, in.client.s.RecordsCommonDir()} {
 		resolved, ok := in.resolve(fileStamp{Path: dir})
 		if !ok {
 			continue
@@ -407,6 +412,17 @@ func (in *relevantInputs) watchBytes(label, path string) {
 		return
 	}
 	in.record("%s %s %q", label, path, data)
+}
+
+func (in *relevantInputs) watchRecords() {
+	b, bound := in.client.s.Binding()
+	if !bound {
+		return
+	}
+	in.record("storage %s", b)
+	// The identity stamp carries the validated binding, not a fresh stat: a
+	// backend replaced mid-capture fails close() instead of being persisted.
+	in.keep(fileStamp{Path: b.CommonDir, Ident: true, Dev: b.Device, Inode: b.Inode, Mode: os.ModeDir})
 }
 
 func (in *relevantInputs) watchExecutables() error {
@@ -893,7 +909,7 @@ func (in *relevantInputs) configured(key string) bool {
 
 func (in *relevantInputs) watchHistory() error {
 	in.watch(joinPath(in.commonDir, "shallow"))
-	grafted, err := in.client.s.Repo.RefreshShallow()
+	grafted, err := in.client.s.ContextRepo.RefreshShallow()
 	if err != nil {
 		return err
 	}
@@ -944,14 +960,16 @@ func (in *relevantInputs) watchBase(ctx context.Context) error {
 }
 
 func (in *relevantInputs) watchEntities(ctx context.Context) error {
+	recordsCommonDir := in.client.s.RecordsCommonDir()
+	in.watch(joinPath(recordsCommonDir, "packed-refs"))
 	for _, root := range relevantRefRoots {
-		in.watch(joinPath(in.commonDir, filepath.FromSlash(strings.TrimSuffix(root, "/"))))
+		in.watch(joinPath(recordsCommonDir, filepath.FromSlash(strings.TrimSuffix(root, "/"))))
 	}
-	entries, err := in.client.s.Git.RefEntries(ctx, append(slices.Clone(relevantRefRoots), replaceRefRoot)...)
+	records, replace, err := in.refEntries(ctx)
 	if err != nil {
 		return err
 	}
-	for _, e := range entries {
+	for _, e := range records {
 		if e.Symref != "" {
 			in.record("tip sym %s %s %s", e.Ref, e.Tip, e.Symref)
 			continue
@@ -964,7 +982,39 @@ func (in *relevantInputs) watchEntities(ctx context.Context) error {
 			}
 		}
 	}
+	for _, e := range replace {
+		if e.Symref != "" {
+			in.record("replace sym %s %s %s", e.Ref, e.Tip, e.Symref)
+			continue
+		}
+		in.record("replace hash %s %s", e.Ref, e.Tip)
+	}
 	return nil
+}
+
+func (in *relevantInputs) refEntries(ctx context.Context) (records, replace []gitcmd.RefEntry, err error) {
+	s := in.client.s
+	if _, bound := s.Binding(); bound {
+		if records, err = s.RecordsGit.RefEntries(ctx, relevantRefRoots...); err != nil {
+			return nil, nil, err
+		}
+		if replace, err = s.Git.RefEntries(ctx, replaceRefRoot); err != nil {
+			return nil, nil, err
+		}
+		return records, replace, nil
+	}
+	entries, err := s.Git.RefEntries(ctx, append(slices.Clone(relevantRefRoots), replaceRefRoot)...)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Ref, replaceRefRoot) {
+			replace = append(replace, e)
+			continue
+		}
+		records = append(records, e)
+	}
+	return records, replace, nil
 }
 
 func (in *relevantInputs) setDeps(ctx context.Context, branches, commits []string) error {
@@ -1046,7 +1096,7 @@ func (in *relevantInputs) auditWorktree(ctx context.Context, anchors []string) e
 
 func (in *relevantInputs) key() string {
 	var digest strings.Builder
-	digest.WriteString(relevantCacheName(in.gitDir, in.client.s.Git.Dir, in.path, in.filter, in.variant))
+	digest.WriteString(in.client.relevantName(in.path, in.filter, in.variant))
 	for _, line := range in.lines {
 		digest.WriteByte('\n')
 		digest.WriteString(line)

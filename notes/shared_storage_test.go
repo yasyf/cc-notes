@@ -1,6 +1,8 @@
 package notes_test
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -340,5 +343,328 @@ func TestSharedStorageContextComesFromThinCheckout(t *testing.T) {
 	}
 	if got := len(sharedRecordTips(t, source)); got != 2 {
 		t.Fatalf("source holds %d records refs, want 2 (the note and the task)", got)
+	}
+}
+
+// TestSharedStorageDeepenInvalidatesHistoryUnavailable rescores a cached
+// HISTORY-UNAVAILABLE verdict after an explicit unshallow of the bound clone.
+func TestSharedStorageDeepenInvalidatesHistoryUnavailable(t *testing.T) {
+	t.Cleanup(notes.SetRelevantRacyWindow(0))
+	source := gittest.InitRepo(t)
+	t.Setenv("CC_NOTES_ACTOR", "Test User <test@example.com>")
+	old := sharedCommit(t, source, "old.go", "package old\n")
+	sharedCommit(t, source, "a.go", "package a\n")
+	sharedCommit(t, source, "b.go", "package b\n")
+	note, _, err := sharedOpen(t, source).CreateNote(t.Context(), notes.NoteSpec{
+		Title:   "Old decision",
+		Body:    "anchored before the clone's depth",
+		Anchors: notes.AnchorSpec{Commits: []string{string(old)}, Paths: []string{"a.go"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	thin := gittest.ShallowClone(t, source, 1)
+	sharedBind(t, thin, source)
+	if sharedHasObject(thin, string(old)) {
+		t.Fatalf("fixture invalid: the clone holds %s", old)
+	}
+	c := sharedOpen(t, thin)
+
+	renders := 0
+	render := func(entries []notes.RelevantEntry) ([]byte, error) {
+		renders++
+		var b strings.Builder
+		for _, e := range entries {
+			b.WriteString(string(e.Note.ID) + " [" + string(e.Verdict) + "]\n")
+		}
+		return []byte(b.String()), nil
+	}
+	relevant := func(step, want string, wantRenders int) {
+		t.Helper()
+		out, err := c.RelevantCached(t.Context(), "a.go", notes.RelevantFilter{}, "verdicts", render)
+		if err != nil {
+			t.Fatalf("%s: RelevantCached: %v", step, err)
+		}
+		if string(out) != want {
+			t.Fatalf("%s: RelevantCached = %q, want %q", step, out, want)
+		}
+		if renders != wantRenders {
+			t.Fatalf("%s: renders = %d, want %d", step, renders, wantRenders)
+		}
+	}
+
+	unavailable := string(note.ID) + " [" + string(notes.VerdictHistoryUnavailable) + "]\n"
+	relevant("cold", unavailable, 1)
+	relevant("warm", unavailable, 1)
+	gittest.Git(t, thin, "fetch", "-q", "--unshallow", "origin")
+	if !sharedHasObject(thin, string(old)) {
+		t.Fatalf("fixture invalid: the unshallow did not fetch %s", old)
+	}
+	relevant("after deepen", string(note.ID)+" []\n", 2)
+}
+
+func sharedNote(t *testing.T, c *notes.Client, title string) model.EntityID {
+	t.Helper()
+	note, _, err := c.CreateNote(t.Context(), notes.NoteSpec{Title: title, Body: title, Anchors: notes.AnchorSpec{Paths: []string{"a.go"}}})
+	if err != nil {
+		t.Fatalf("CreateNote(%s): %v", title, err)
+	}
+	return note.ID
+}
+
+func sharedIDs(ids ...model.EntityID) string {
+	lines := make([]string, len(ids))
+	for i, id := range ids {
+		lines[i] = string(id)
+	}
+	slices.Sort(lines)
+	return strings.Join(lines, "\n")
+}
+
+type sharedRelevance struct {
+	t       *testing.T
+	c       *notes.Client
+	git     gitCounter
+	renders int
+	last    string
+}
+
+func (r *sharedRelevance) render(entries []notes.RelevantEntry) ([]byte, error) {
+	r.renders++
+	ids := make([]model.EntityID, len(entries))
+	for i, e := range entries {
+		ids[i] = e.Note.ID
+	}
+	return []byte(sharedIDs(ids...)), nil
+}
+
+func (r *sharedRelevance) call() (cacheTier, error) {
+	r.t.Helper()
+	calls, renders := r.git.calls(r.t), r.renders
+	out, err := r.c.RelevantCached(r.t.Context(), "a.go", notes.RelevantFilter{}, "ids", r.render)
+	if err != nil {
+		return 0, err
+	}
+	r.last = string(out)
+	switch {
+	case r.renders > renders:
+		return tierRebuild, nil
+	case r.git.calls(r.t) > calls:
+		return tierRevalidate, nil
+	}
+	return tierHit, nil
+}
+
+func (r *sharedRelevance) expect(step string, want cacheTier, wantOut string) {
+	r.t.Helper()
+	got, err := r.call()
+	if err != nil {
+		r.t.Fatalf("%s: RelevantCached: %v", step, err)
+	}
+	if got != want {
+		r.t.Fatalf("%s: served by %v, want %v", step, got, want)
+	}
+	if r.last != wantOut {
+		r.t.Fatalf("%s: RelevantCached = %q, want %q", step, r.last, wantOut)
+	}
+}
+
+func (r *sharedRelevance) settle(step string, wantOut string) notes.RelevantCacheProbe {
+	r.t.Helper()
+	if _, err := r.call(); err != nil {
+		r.t.Fatalf("%s (promotion): RelevantCached: %v", step, err)
+	}
+	r.expect(step, tierHit, wantOut)
+	probe, ok, err := notes.RelevantCacheProbeOf(r.c, "a.go", notes.RelevantFilter{}, "ids")
+	if err != nil {
+		r.t.Fatalf("%s: RelevantCacheProbeOf: %v", step, err)
+	}
+	if !ok {
+		r.t.Fatalf("%s: no cache entry persisted", step)
+	}
+	return probe
+}
+
+// TestSharedStorageRelevantWarmHitIsFixedWork pins a bound clone's warm hit
+// to zero git and exactly two stamps over an unbound clone, invalidated by
+// backend entity writes and clone HEAD moves, never by source branch work.
+func TestSharedStorageRelevantWarmHitIsFixedWork(t *testing.T) {
+	t.Cleanup(notes.SetRelevantRacyWindow(0))
+	source := gittest.InitRepo(t)
+	t.Setenv("CC_NOTES_ACTOR", "Test User <test@example.com>")
+	sharedCommit(t, source, "a.go", "package a\n")
+	src := sharedOpen(t, source)
+	first := sharedNote(t, src, "First")
+	thin := gittest.ShallowClone(t, source, 1)
+	sharedBind(t, thin, source)
+	unbound := gittest.ShallowClone(t, source, 1)
+	git := installCountingGit(t, countingGitScript)
+	bound := &sharedRelevance{t: t, c: sharedOpen(t, thin), git: git}
+	plain := &sharedRelevance{t: t, c: sharedOpen(t, unbound), git: git}
+
+	bound.expect("bound cold", tierRebuild, sharedIDs(first))
+	boundStamps := bound.settle("bound warm", sharedIDs(first)).Stamps
+	plain.expect("unbound cold", tierRebuild, "")
+	plainStamps := plain.settle("unbound warm", "").Stamps
+	if len(boundStamps) != len(plainStamps)+2 {
+		t.Fatalf("bound clone stamps = %d, unbound clone stamps = %d; want exactly two more\nbound   %v\nunbound %v", len(boundStamps), len(plainStamps), boundStamps, plainStamps)
+	}
+	s, err := store.Open(thin)
+	if err != nil {
+		t.Fatalf("store.Open(%s): %v", thin, err)
+	}
+	backend, isBound := s.Binding()
+	if !isBound {
+		t.Fatalf("store.Open(%s): not bound", thin)
+	}
+	for _, want := range []string{filepath.Join(backend.CommonDir, "packed-refs"), backend.CommonDir} {
+		if !slices.Contains(boundStamps, want) {
+			t.Fatalf("bound clone stamps %v lack %s", boundStamps, want)
+		}
+	}
+	for _, stamp := range plainStamps {
+		if strings.HasPrefix(stamp, backend.CommonDir) {
+			t.Fatalf("unbound clone stamps the source: %s", stamp)
+		}
+	}
+
+	second := sharedNote(t, src, "Second")
+	bound.expect("backend note written", tierRebuild, sharedIDs(first, second))
+	if got := bound.settle("warm after the backend write", sharedIDs(first, second)).Stamps; len(got) != len(boundStamps) {
+		t.Fatalf("stamps after a second entity = %d, want %d: %v", len(got), len(boundStamps), got)
+	}
+
+	gittest.Git(t, source, "checkout", "-q", "-b", "side")
+	sharedCommit(t, source, "side.go", "package side\n")
+	bound.expect("source branch and commit", tierHit, sharedIDs(first, second))
+	var updates strings.Builder
+	for i := range 200 {
+		fmt.Fprintf(&updates, "update refs/heads/unrelated-%03d HEAD\n", i)
+	}
+	refs := exec.CommandContext(t.Context(), "git", "-C", source, "update-ref", "--stdin")
+	refs.Stdin = strings.NewReader(updates.String())
+	if out, err := refs.CombinedOutput(); err != nil {
+		t.Fatalf("create unrelated source refs: %v\n%s", err, out)
+	}
+	bound.expect("unrelated source refs", tierHit, sharedIDs(first, second))
+
+	sharedCommit(t, thin, "b.go", "package b\n")
+	bound.expect("clone commit", tierRebuild, sharedIDs(first, second))
+	bound.settle("warm after the clone commit", sharedIDs(first, second))
+	gittest.Git(t, thin, "checkout", "-q", "-b", "feature")
+	bound.expect("clone branch switch", tierRebuild, sharedIDs(first, second))
+}
+
+func sharedRename(t *testing.T, from, to string) {
+	t.Helper()
+	if err := os.Rename(from, to); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sharedBindingTo(t *testing.T, commonDir string) store.Binding {
+	t.Helper()
+	info, err := os.Stat(commonDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, inode := gitobj.FileID(info)
+	return store.Binding{CommonDir: commonDir, Device: device, Inode: inode}
+}
+
+// TestSharedStorageRelevantBackendFailureNeverServesCache breaks the backend
+// under a warm entry: the pre-opened client fails with a *store.BindingError
+// and a fresh client never sees the stale output.
+func TestSharedStorageRelevantBackendFailureNeverServesCache(t *testing.T) {
+	t.Cleanup(notes.SetRelevantRacyWindow(0))
+	for _, tc := range []struct {
+		name      string
+		breakIt   func(t *testing.T, thin, backend string)
+		want      error
+		freshOpen error
+	}{
+		{
+			name:      "backend removed",
+			breakIt:   func(t *testing.T, _, backend string) { sharedRename(t, backend, backend+".gone") },
+			want:      store.ErrBackendUnavailable,
+			freshOpen: store.ErrBackendUnavailable,
+		},
+		{
+			name: "backend replaced",
+			breakIt: func(t *testing.T, _, backend string) {
+				sharedRename(t, backend, backend+".old")
+				if out, err := exec.CommandContext(t.Context(), "cp", "-R", backend+".old", backend).CombinedOutput(); err != nil {
+					t.Fatalf("cp -R: %v\n%s", err, out)
+				}
+			},
+			want:      store.ErrBackendReplaced,
+			freshOpen: store.ErrBackendReplaced,
+		},
+		{
+			name: "backend redirects",
+			breakIt: func(t *testing.T, _, backend string) {
+				if err := os.WriteFile(filepath.Join(backend, "commondir"), []byte("../elsewhere\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want:      store.ErrBackendRedirects,
+			freshOpen: store.ErrBackendUnavailable,
+		},
+		{
+			name: "context rebound",
+			breakIt: func(t *testing.T, thin, _ string) {
+				other := sharedBindingTo(t, filepath.Join(gittest.InitRepo(t), ".git"))
+				gittest.Git(t, thin, "config", "cc-notes.storage", other.String())
+			},
+			want: store.ErrBindingChanged,
+		},
+		{
+			name:    "binding removed",
+			breakIt: func(t *testing.T, thin, _ string) { gittest.Git(t, thin, "config", "--unset", "cc-notes.storage") },
+			want:    store.ErrBindingChanged,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := gittest.InitRepo(t)
+			t.Setenv("CC_NOTES_ACTOR", "Test User <test@example.com>")
+			sharedCommit(t, source, "a.go", "package a\n")
+			note := sharedNote(t, sharedOpen(t, source), "Shared")
+			thin := gittest.ShallowClone(t, source, 1)
+			sharedBind(t, thin, source)
+			s, err := store.Open(thin)
+			if err != nil {
+				t.Fatalf("store.Open(%s): %v", thin, err)
+			}
+			backend, isBound := s.Binding()
+			if !isBound {
+				t.Fatalf("store.Open(%s): not bound", thin)
+			}
+			warm := &sharedRelevance{t: t, c: sharedOpen(t, thin), git: installCountingGit(t, countingGitScript)}
+			warm.expect("cold", tierRebuild, sharedIDs(note))
+			warm.settle("warm", sharedIDs(note))
+
+			tc.breakIt(t, thin, backend.CommonDir)
+			var bindingErr *store.BindingError
+			if _, err := warm.call(); !errors.As(err, &bindingErr) || !errors.Is(err, tc.want) {
+				t.Fatalf("pre-opened client after %s: RelevantCached err = %v, want a *store.BindingError wrapping %v", tc.name, err, tc.want)
+			}
+			fresh, err := notes.Open(thin)
+			if tc.freshOpen != nil {
+				if !errors.As(err, &bindingErr) || !errors.Is(err, tc.freshOpen) {
+					t.Fatalf("fresh Open after %s: err = %v, want a *store.BindingError wrapping %v", tc.name, err, tc.freshOpen)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("fresh Open after %s: %v", tc.name, err)
+			}
+			out, err := fresh.RelevantCached(t.Context(), "a.go", notes.RelevantFilter{}, "ids", warm.render)
+			if err != nil {
+				t.Fatalf("fresh client after %s: RelevantCached: %v", tc.name, err)
+			}
+			if string(out) != "" {
+				t.Fatalf("fresh client after %s: RelevantCached = %q, want the new records repository's empty corpus", tc.name, out)
+			}
+		})
 	}
 }

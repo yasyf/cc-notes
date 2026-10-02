@@ -92,7 +92,7 @@ func relevantCacheBytes(ctx context.Context, c *Client, target string, filter Re
 	if err != nil {
 		return "", nil, false, err
 	}
-	name = relevantCacheName(c.s.GitDir(), c.s.Git.Dir, p, filter, variant)
+	name = c.relevantName(p, filter, variant)
 	f, ok := c.s.OpenRelevantCache(name)
 	if !ok {
 		return name, nil, false, nil
