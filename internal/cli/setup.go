@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/plugin"
 )
 
@@ -171,11 +172,11 @@ func enableCaptHook(cmd *cobra.Command, root string) error {
 // repoRoot returns the absolute worktree root of the repository containing the
 // working directory.
 func repoRoot(cmd *cobra.Command) (string, error) {
-	s, err := openStore(cmd)
+	dir, err := repoDir(cmd)
 	if err != nil {
 		return "", err
 	}
-	return s.Git.Root(cmd.Context())
+	return gitcmd.Git{Dir: dir}.Root(cmd.Context())
 }
 
 // installTree copies every file under src in fsys into dst, recreating the

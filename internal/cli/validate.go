@@ -69,7 +69,7 @@ func newTaskValidateCmd() *cobra.Command {
 					return err
 				}
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			validated, err := c.ValidateTask(ctx, id, scripted, timeout, func(crit model.Criterion, status model.CriterionStatus) error {

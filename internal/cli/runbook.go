@@ -66,7 +66,7 @@ func newRunbookAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			if anchors.commits, err = resolveCommits(ctx, s.Git, anchors.commits); err != nil {
@@ -145,7 +145,7 @@ func newRunbookStatusCmd(use string, status model.RunbookStatus) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveRunbook(ctx, args[0])
@@ -205,7 +205,7 @@ func newRunbookEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveRunbook(ctx, args[0])
@@ -297,7 +297,7 @@ func newRunbookCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveRunbook(ctx, args[0])
@@ -361,7 +361,7 @@ func newStepAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveRunbook(ctx, args[0])
@@ -396,7 +396,7 @@ func newStepRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveRunbook(ctx, args[0])
@@ -446,7 +446,7 @@ func newStepEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveRunbook(ctx, args[0])
@@ -482,7 +482,7 @@ func newStepMoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveRunbook(ctx, args[0])
@@ -575,7 +575,7 @@ func newRunStartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveRunbook(ctx, args[0])
@@ -697,7 +697,7 @@ func newRunStepStatusCmd(use string, status model.StepResultStatus) *cobra.Comma
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveRunbook(ctx, args[0])
@@ -731,7 +731,7 @@ func newRunFinishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveRunbook(ctx, args[0])

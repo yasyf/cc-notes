@@ -64,7 +64,7 @@ func newProjectAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			project, reused, err := c.CreateProject(ctx, notes.ProjectSpec{Title: args[0], Description: text, Labels: labels})
@@ -136,7 +136,7 @@ func newProjectStatusCmd(use string, status model.ProjectStatus) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveProject(ctx, args[0])
@@ -197,7 +197,7 @@ func newProjectEditCmd() *cobra.Command {
 			if projectEditEmpty(edit) {
 				return &UsageError{Err: errors.New("project edit requires at least one flag")}
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveProject(ctx, args[0])
@@ -246,7 +246,7 @@ func newProjectCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveProject(ctx, args[0])

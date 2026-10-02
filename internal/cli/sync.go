@@ -52,7 +52,7 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			if _, err := ccsync.Install(ctx, s.Git, remote); err != nil {
+			if _, err := ccsync.Install(ctx, s.RecordsGit, remote); err != nil {
 				return err
 			}
 			root, err := s.Git.Root(ctx)

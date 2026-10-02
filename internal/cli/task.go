@@ -164,7 +164,7 @@ func newTaskAddCmd() *cobra.Command {
 					return err
 				}
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			tt, err := parseTaskType(taskType)
@@ -390,7 +390,7 @@ func newTaskStartCmd() *cobra.Command {
 					return err
 				}
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -425,7 +425,7 @@ func newTaskClaimCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -490,7 +490,7 @@ func newTaskRenewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -520,7 +520,7 @@ func newTaskDoneCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -552,7 +552,7 @@ func newTaskCancelCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -696,7 +696,7 @@ func newTaskEditCmd() *cobra.Command {
 			if editEmpty(edit) {
 				return &UsageError{Err: errors.New("task edit requires at least one flag")}
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -763,7 +763,7 @@ func newTaskCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -838,7 +838,7 @@ func newTaskDepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -872,7 +872,7 @@ func newTaskUndepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -926,7 +926,7 @@ func taskCommitLinkCmd(verb, short string, write func(*notes.Client, context.Con
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -1088,7 +1088,7 @@ func newCriterionAddCmd() *cobra.Command {
 					return err
 				}
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -1121,7 +1121,7 @@ func newCriterionRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -1152,7 +1152,7 @@ func newCriterionStatusCmd(use string, status model.CriterionStatus) *cobra.Comm
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])
@@ -1198,7 +1198,7 @@ func newCriterionScriptCmd() *cobra.Command {
 					return err
 				}
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveTask(ctx, args[0])

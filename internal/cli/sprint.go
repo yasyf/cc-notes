@@ -63,7 +63,7 @@ func newSprintAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			var projectID model.EntityID
@@ -166,7 +166,7 @@ func newSprintStatusCmd(use string, status model.SprintStatus) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveSprint(ctx, args[0])
@@ -259,7 +259,7 @@ func newSprintEditCmd() *cobra.Command {
 			if sprintEditEmpty(edit) {
 				return &UsageError{Err: errors.New("sprint edit requires at least one flag")}
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveSprint(ctx, args[0])
@@ -317,7 +317,7 @@ func newSprintCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveSprint(ctx, args[0])

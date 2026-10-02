@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -139,18 +140,25 @@ func deriveRemote(ctx context.Context, g gitcmd.Git) (string, error) {
 	return defaultRemote, nil
 }
 
-// autoInstall best-effort wires the derived remote's refspecs before a
-// write: a repository without the remote is left alone, any other failure
-// is loud. Config lines it actually added are announced once on stderr —
-// including the push.default override when the HEAD push refspec is new —
-// so the silent first mutating command never changes git push behavior
-// invisibly.
-func autoInstall(ctx context.Context, cmd *cobra.Command, g gitcmd.Git) error {
-	remote, err := deriveRemote(ctx, g)
+func recordsConfig(s *store.Store) string {
+	if _, bound := s.Binding(); !bound {
+		return ".git/config"
+	}
+	return filepath.Join(s.RecordsCommonDir(), "config")
+}
+
+// autoInstall best-effort wires the derived remote's refspecs into the
+// store's records repository before a write: a repository without the remote
+// is left alone, any other failure is loud. Config lines it actually added are
+// announced once on stderr — including the push.default override when the HEAD
+// push refspec is new — so the silent first mutating command never changes git
+// push behavior invisibly.
+func autoInstall(ctx context.Context, cmd *cobra.Command, s *store.Store) error {
+	remote, err := deriveRemote(ctx, s.RecordsGit)
 	if err != nil {
 		return err
 	}
-	report, err := ccsync.Install(ctx, g, remote)
+	report, err := ccsync.Install(ctx, s.RecordsGit, remote)
 	switch {
 	case errors.Is(err, ccsync.ErrRemoteNotFound):
 		return nil
@@ -161,8 +169,8 @@ func autoInstall(ctx context.Context, cmd *cobra.Command, g gitcmd.Git) error {
 	}
 	stderr := cmd.ErrOrStderr()
 	if len(report.Added) > 0 {
-		if _, err := fmt.Fprintf(stderr, "cc-notes: installed refspecs in .git/config for %q: %s\n",
-			remote, strings.Join(report.Added, "; ")); err != nil {
+		if _, err := fmt.Fprintf(stderr, "cc-notes: installed refspecs in %s for %q: %s\n",
+			recordsConfig(s), remote, strings.Join(report.Added, "; ")); err != nil {
 			return err
 		}
 	}
