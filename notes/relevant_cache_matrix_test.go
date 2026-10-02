@@ -1161,9 +1161,9 @@ func TestRelevantCachedServesAnIncludeAboveTheGitDirWarm(t *testing.T) {
 
 func TestRelevantCachedServesAnIncludeBehindADirectoryLinkWarm(t *testing.T) {
 	includeServesWarmThenSees(t, "inc/extra.config", "include edited behind the link", func(t *testing.T, common string) string {
-		real := t.TempDir()
-		symlink(t, real, filepath.Join(common, "inc"))
-		extra := filepath.Join(real, "extra.config")
+		target := t.TempDir()
+		symlink(t, target, filepath.Join(common, "inc"))
+		extra := filepath.Join(target, "extra.config")
 		writeConfig(t, extra, "Linked")
 		return extra
 	})

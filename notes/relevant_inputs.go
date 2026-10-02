@@ -238,8 +238,8 @@ func (in *relevantInputs) resolve(s fileStamp) (string, bool) {
 func (in *relevantInputs) rootDirs() []string {
 	var roots []string
 	for _, dir := range []string{in.commonDir, in.gitDir} {
-		if real, ok := in.resolve(fileStamp{Path: dir}); ok && !slices.Contains(roots, real) {
-			roots = append(roots, real)
+		if resolved, ok := in.resolve(fileStamp{Path: dir}); ok && !slices.Contains(roots, resolved) {
+			roots = append(roots, resolved)
 		}
 	}
 	return roots

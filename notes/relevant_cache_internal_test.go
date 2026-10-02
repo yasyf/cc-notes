@@ -348,8 +348,13 @@ func TestRelevantCachedPersistsASettledCaptureInAQuietRepository(t *testing.T) {
 		t.Fatalf("racy = %t revalidate = %t, want a settled entry", entry.Racy, entry.Revalidate)
 	}
 	missing := make(map[string]bool)
+	physicalGitDir := realPath(t, gitDir)
 	for _, stamp := range entry.Stamps {
-		if stamp.Missing && filepath.Dir(stamp.Path) == gitDir {
+		parent := filepath.Dir(stamp.Path)
+		if _, err := os.Lstat(parent); err != nil {
+			continue
+		}
+		if stamp.Missing && realPath(t, parent) == physicalGitDir {
 			missing[filepath.Base(stamp.Path)] = true
 		}
 	}
@@ -372,9 +377,9 @@ func TestRelevantCachedGuardsTheRealDirectoryBehindALinkedInclude(t *testing.T) 
 	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}}}); err != nil {
 		t.Fatalf("CreateNote: %v", err)
 	}
-	real := realPath(t, t.TempDir())
+	target := realPath(t, t.TempDir())
 	link := filepath.Join(c.s.CommonDir(), "inc")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
 
@@ -385,8 +390,8 @@ func TestRelevantCachedGuardsTheRealDirectoryBehindALinkedInclude(t *testing.T) 
 	if in.revalidate {
 		t.Fatal("an include below a directory link that resolves forced revalidation")
 	}
-	if !guards(in, real) || guards(in, link) {
-		t.Fatalf("guards %+v; want the real directory %s and never the link %s", in.guards, real, link)
+	if !guards(in, target) || guards(in, link) {
+		t.Fatalf("guards %+v; want the real directory %s and never the link %s", in.guards, target, link)
 	}
 
 	renders := 0
@@ -418,13 +423,13 @@ func TestRelevantCachedGuardsTheDirectoryHoldingATraversedLink(t *testing.T) {
 	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}}}); err != nil {
 		t.Fatalf("CreateNote: %v", err)
 	}
-	real := realPath(t, t.TempDir())
+	target := realPath(t, t.TempDir())
 	inc := filepath.Join(c.s.CommonDir(), "inc")
 	if err := os.Mkdir(inc, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(inc, "link")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
 
@@ -435,8 +440,8 @@ func TestRelevantCachedGuardsTheDirectoryHoldingATraversedLink(t *testing.T) {
 	if in.revalidate {
 		t.Fatal("an include below a directory link that resolves forced revalidation")
 	}
-	if holder := realPath(t, inc); !guards(in, holder) || !guards(in, real) || guards(in, link) {
-		t.Fatalf("guards %+v; want the directory holding the link %s and the real target %s, never the link %s", in.guards, holder, real, link)
+	if holder := realPath(t, inc); !guards(in, holder) || !guards(in, target) || guards(in, link) {
+		t.Fatalf("guards %+v; want the directory holding the link %s and the real target %s, never the link %s", in.guards, holder, target, link)
 	}
 
 	renders := 0
@@ -491,14 +496,14 @@ func TestRelevantInputsDistrustAStampTheWalkContradicts(t *testing.T) {
 			if err != nil {
 				t.Fatalf("relevantInputs: %v", err)
 			}
-			real := realPath(t, gitDir)
+			target := realPath(t, gitDir)
 			s := lstampOf(orig)
 			if s.Missing == tc.present {
 				t.Fatalf("stamp missing = %t, want %t", s.Missing, !tc.present)
 			}
 			set[!tc.present]()
 			in.keep(s)
-			if !guards(in, real) {
+			if !guards(in, target) {
 				t.Fatalf("a stamp the walk contradicted left the git dir unguarded: %+v", in.guards)
 			}
 			if !in.untrusted {
@@ -670,11 +675,11 @@ func moved(in *relevantInputs) []fileStamp {
 
 func realPath(t *testing.T, path string) string {
 	t.Helper()
-	real, err := filepath.EvalSymlinks(path)
+	target, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return real
+	return target
 }
 
 func TestRelevantCachedPersistsAColdBuildInAnUnfoldedRepository(t *testing.T) {
