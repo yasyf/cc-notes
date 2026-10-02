@@ -3,7 +3,9 @@ package store
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -47,11 +49,28 @@ type ReferencedObject struct {
 	Uses []AttachmentUse
 }
 
+const (
+	attachIndexSubdir = "cc-notes"
+	attachIndexName   = "attachments-v1.json"
+)
+
 // refAttachments pairs one parsed entity ref with the attachments its live
 // state references.
 type refAttachments struct {
-	ref  refs.Ref
-	atts []model.Attachment
+	ref      refs.Ref
+	tip      model.SHA
+	atts     []model.Attachment
+	complete bool
+}
+
+type attachIndex struct {
+	Generation string                      `json:"generation"`
+	Refs       map[string]attachIndexEntry `json:"refs"`
+}
+
+type attachIndexEntry struct {
+	Tip         model.SHA          `json:"tip"`
+	Attachments []model.Attachment `json:"attachments,omitempty"`
 }
 
 // useKey dedupes attachment uses per oid when a checkpoint State and the
@@ -124,8 +143,9 @@ func (s *Store) ensurePruneGuard(ctx context.Context) (bool, error) {
 // checkpoints are fold seeds, so content they reference must stay
 // resolvable. Historical add_attachment ops covered by neither contribute
 // nothing: removing an entity's last attachment removes its objects from the
-// set. The fold cache accelerates the snapshot half; the chain read the
-// checkpoint scan needs runs regardless. The result is sorted by oid with
+// set. The attachment index answers every ref whose tip it recorded, so only
+// refs that moved since the last scan read their chains; the fold cache
+// accelerates the snapshot half of those. The result is sorted by oid with
 // sorted uses, so transfer errors name entities deterministically.
 func (s *Store) ReferencedAttachments(ctx context.Context) ([]ReferencedObject, error) {
 	var entries []tipEntry
@@ -136,10 +156,21 @@ func (s *Store) ReferencedAttachments(ctx context.Context) ([]ReferencedObject, 
 		}
 		entries = append(entries, children...)
 	}
+	index := s.readAttachIndex()
 	perRef := make([]refAttachments, len(entries))
+	misses := 0
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(listConcurrency)
 	for i, e := range entries {
+		if hit, ok := index.Refs[e.ref]; ok && hit.Tip == e.tip {
+			parsed, err := refs.Parse(e.ref)
+			if err != nil {
+				return nil, fmt.Errorf("referenced attachments: %w", err)
+			}
+			perRef[i] = refAttachments{ref: parsed, tip: e.tip, atts: hit.Attachments, complete: true}
+			continue
+		}
+		misses++
 		g.Go(func() error {
 			ra, err := s.refAttachments(gctx, e)
 			if err != nil {
@@ -152,7 +183,41 @@ func (s *Store) ReferencedAttachments(ctx context.Context) ([]ReferencedObject, 
 	if err := g.Wait(); err != nil {
 		return nil, fmt.Errorf("referenced attachments: %w", err)
 	}
+	if misses > 0 || len(index.Refs) != len(entries) {
+		s.writeAttachIndex(perRef)
+	}
 	return mergeReferenced(perRef), nil
+}
+
+func (s *Store) readAttachIndex() attachIndex {
+	//nolint:gosec // G304: the path is this store's own cache file, not external input.
+	data, err := os.ReadFile(filepath.Join(s.commonDir, attachIndexSubdir, attachIndexName))
+	if err != nil {
+		return attachIndex{}
+	}
+	var index attachIndex
+	if json.Unmarshal(data, &index) != nil || index.Generation != foldCacheGeneration {
+		return attachIndex{}
+	}
+	return index
+}
+
+func (s *Store) writeAttachIndex(perRef []refAttachments) {
+	index := attachIndex{Generation: foldCacheGeneration, Refs: make(map[string]attachIndexEntry, len(perRef))}
+	for _, ra := range perRef {
+		if ra.complete {
+			index.Refs[refs.For(ra.ref.Kind, ra.ref.ID)] = attachIndexEntry{Tip: ra.tip, Attachments: ra.atts}
+		}
+	}
+	data, err := json.Marshal(index)
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(s.commonDir, attachIndexSubdir)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return
+	}
+	writeFileAtomic(dir, attachIndexName, data)
 }
 
 // refAttachments folds one entity ref and collects its live attachment set:
@@ -182,7 +247,7 @@ func (s *Store) refAttachments(ctx context.Context, e tipEntry) (refAttachments,
 			}
 		}
 	}
-	return refAttachments{ref: parsed, atts: atts}, nil
+	return refAttachments{ref: parsed, tip: e.tip, atts: atts, complete: snap.Meta().SkippedOps == 0}, nil
 }
 
 // mergeReferenced folds per-ref attachment sets into the deduplicated,
