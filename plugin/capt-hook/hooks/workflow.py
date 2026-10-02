@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from collections.abc import Callable
@@ -214,9 +215,15 @@ def _fetch_refspec(name: str) -> str:
     return f"+refs/cc-notes/*:refs/cc-notes-sync/{name}/*"
 
 
-def wired_remotes(evt: BaseHookEvent) -> list[str]:
+def records_git(evt: BaseHookEvent, root: str | None = None) -> tuple[str, ...]:
+    here = ("-C", root) if root is not None else ()
+    binding = evt.ctx.git(*here, "config", "--local", "--get", "cc-notes.storage")
+    return (f"--git-dir={json.loads(binding)['commonDir']}",) if binding else here
+
+
+def wired_remotes(evt: BaseHookEvent, records: tuple[str, ...]) -> list[str]:
     try:
-        out = evt.ctx.git("config", "--get-regexp", r"^remote\..*\.fetch$")
+        out = evt.ctx.git(*records, "config", "--get-regexp", r"^remote\..*\.fetch$")
     except (OSError, subprocess.SubprocessError):
         return []
     if not out:
@@ -260,7 +267,7 @@ class SyncOutcome(NamedTuple):
 
 
 def do_sync(evt: BaseHookEvent) -> list[SyncOutcome]:
-    remotes = wired_remotes(evt)
+    remotes = wired_remotes(evt, records_git(evt))
     if not remotes:
         ok = run_sync(evt)
         return [SyncOutcome("", ok is True, "cc-notes sync failed — run `cc-notes sync` to retry." if ok is False else None)]
@@ -329,7 +336,7 @@ def target_repos(evt: PostToolUseEvent, matches: Callable[[Call], bool]) -> list
 
 def cc_notes_repo(evt: BaseHookEvent, root: str) -> bool:
     try:
-        out = evt.ctx.git("-C", root, "for-each-ref", "--count=1", "--format=%(refname)", "refs/cc-notes/")
+        out = evt.ctx.git(*records_git(evt, root), "for-each-ref", "--count=1", "--format=%(refname)", "refs/cc-notes/")
     except (OSError, subprocess.SubprocessError):
         return False
     return bool(out and out.strip())
@@ -622,7 +629,8 @@ def surface_sync_failures(evt: BaseHookEvent) -> HookResult | None:
 
 
 def cc_notes_refs_dirty(evt: BaseHookEvent) -> bool:
-    out = evt.ctx.git("for-each-ref", "--format=%(refname) %(objectname)", _LOCAL_REF_PREFIX, _TRACKING_NS)
+    records = records_git(evt)
+    out = evt.ctx.git(*records, "for-each-ref", "--format=%(refname) %(objectname)", _LOCAL_REF_PREFIX, _TRACKING_NS)
     if not out:
         return False
     local: dict[str, str] = {}
@@ -635,7 +643,7 @@ def cc_notes_refs_dirty(evt: BaseHookEvent) -> bool:
             tracking.append((refname[len(_TRACKING_NS) :], oid))
     if not local:
         return False
-    remotes = wired_remotes(evt)
+    remotes = wired_remotes(evt, records)
     if not remotes:
         return True
     per_remote: dict[str, dict[str, str]] = {r: {} for r in remotes}

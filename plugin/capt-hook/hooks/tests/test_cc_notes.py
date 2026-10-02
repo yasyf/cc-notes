@@ -1142,6 +1142,7 @@ def _calls_of(calls: list[tuple[str, ...]], *suffix: str) -> list[int]:
 # --remote origin``). Map it to ``None`` for a bare fallback, or to ``_wired(*names)`` to wire remotes.
 _CONFIG_KEY = ("config", "--get-regexp", r"^remote\..*\.fetch$")
 _INIT_TAIL = ("for-each-ref", "--count=1", "--format=%(refname)", "refs/cc-notes/")
+_BINDING_TAIL = ("config", "--local", "--get", "cc-notes.storage")
 
 
 def _repo(path: Path) -> Path:
@@ -3939,7 +3940,7 @@ def _remotes(monkeypatch, tmp_path, config_out) -> list[str]:
     """Run ``wired_remotes`` against a ``git config --get-regexp`` payload stub."""
     evt = mock_event("PostToolUse", tool="Bash", command="cc-notes note add x", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "git", stub_git({_CONFIG_KEY: config_out}))
-    return wired_remotes(evt)
+    return wired_remotes(evt, ())
 
 
 def test_wired_remotes_parses_origin(monkeypatch, tmp_path) -> None:
@@ -4310,6 +4311,97 @@ def test_merge_in_other_repo_reconciles_and_syncs_that_repo(monkeypatch, tmp_pat
         check(f"merge target {command!r}: synced the other repo in its dir", _run_dirs(run_calls) == [real], repr(run_calls))
 
 
+_REAL_RUN = subprocess.run
+
+
+def real_git(cwd: Path):
+    """An ``evt.ctx.git`` running real git in ``cwd``: stdout, or None when git fails, the helper's fail-closed contract.
+
+    It holds the unpatched ``subprocess.run``, so a test may still stub ``workflow.subprocess.run``.
+    """
+
+    def _git(*args: str) -> str | None:
+        done = _REAL_RUN(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
+        return done.stdout if done.returncode == 0 else None
+
+    return _git
+
+
+def _bound_checkout(tmp_path: Path) -> Path:
+    """A checkout on ``topic`` bound to a records backend that holds a never-synced record and wires origin.
+
+    The checkout itself holds no records and no remotes; the binding is the canonical
+    ``cc-notes.storage`` wire form ``cc-notes storage bind`` publishes in the checkout's common config.
+    """
+    backend, checkout = tmp_path / "backend", tmp_path / "checkout"
+    for repo, branch in ((backend, "main"), (checkout, "topic")):
+        _REAL_RUN(["git", "init", "-q", "-b", branch, str(repo)], check=True)
+        _REAL_RUN(
+            ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+             "commit", "-q", "--no-verify", "--allow-empty", "-m", "c"],
+            check=True,
+        )
+    _REAL_RUN(["git", "-C", str(backend), "update-ref", "refs/cc-notes/notes/x", "HEAD"], check=True)
+    _REAL_RUN(["git", "-C", str(backend), "config", "remote.origin.fetch", "+refs/cc-notes/*:refs/cc-notes-sync/origin/*"], check=True)
+    common_dir = (backend / ".git").resolve()
+    stat = common_dir.stat()
+    binding = json.dumps({"version": 1, "commonDir": str(common_dir), "device": stat.st_dev, "inode": stat.st_ino})
+    _REAL_RUN(["git", "-C", str(checkout), "config", "cc-notes.storage", binding], check=True)
+    return checkout
+
+
+def test_bound_checkout_syncs_and_reconciles_through_its_backend(monkeypatch, tmp_path) -> None:
+    """A bound checkout's records, tracking refs, and wired remotes live in its backend; its branch stays its own.
+
+    The write, merge, and SessionEnd hooks find the record and the origin wiring through the binding,
+    from the session repo and from a foreign session alike, and reconcile onto the checkout's branch.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    checkout = _bound_checkout(tmp_path)
+    real = str(checkout.resolve())
+    synced = ("cc-notes", "sync", "--remote", "origin")
+    answers = {("sync", "--remote", "origin"): "ok", ("reconcile", "--into", "topic"): "ok", ("-R", real, "reconcile", "--into", "topic"): "ok"}
+
+    monkeypatch.setattr(workflow, "resolve_project_dir", lambda: real)
+    for handler, command, expected in (
+        (sync_after_record_write, "cc-notes note add x", [synced]),
+        (reconcile_after_merge, "git merge feature/x", [("cc-notes", "reconcile", "--into", "topic"), synced]),
+    ):
+        state = tmp_path / f"state-{handler.__name__}"
+        state.mkdir()
+        evt = mock_event("PostToolUse", tool="Bash", command=command, session_dir=state)
+        monkeypatch.setattr(evt.ctx, "git", real_git(checkout))
+        cli, calls = recording_cli(answers)
+        monkeypatch.setattr(evt.ctx, "call_cli", cli)
+        handler(evt)
+        check(f"bound session {command!r}: synced origin through the backend", calls == expected, repr(calls))
+
+    state = tmp_path / "state-session-end"
+    state.mkdir()
+    end = mock_event("SessionEnd", reason="other", session_dir=state)
+    monkeypatch.setattr(end.ctx, "git", real_git(checkout))
+    cli, calls = recording_cli(answers)
+    monkeypatch.setattr(end.ctx, "call_cli", cli)
+    check("bound session end: the backend's unsynced record reads dirty", cc_notes_refs_dirty(end) is True)
+    sync_at_session_end(end)
+    check("bound session end: synced origin through the backend", calls == [synced], repr(calls))
+
+    elsewhere = tmp_path / "elsewhere"
+    _REAL_RUN(["git", "init", "-q", str(elsewhere)], check=True)
+    monkeypatch.setattr(workflow, "resolve_project_dir", lambda: str(elsewhere))
+    state = tmp_path / "state-foreign"
+    state.mkdir()
+    evt = mock_event("PostToolUse", tool="Bash", command=f"git -C {checkout} merge feature/x", session_dir=state)
+    monkeypatch.setattr(evt.ctx, "git", real_git(elsewhere))
+    cli, calls = recording_cli(answers)
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    run, run_calls = recording_run()
+    monkeypatch.setattr(workflow.subprocess, "run", run)
+    reconcile_after_merge(evt)
+    check("bound foreign merge: reconciled onto the checkout's branch", calls == [("cc-notes", "-R", real, "reconcile", "--into", "topic")], repr(calls))
+    check("bound foreign merge: synced the checkout in its dir", _run_dirs(run_calls) == [real], repr(run_calls))
+
+
 def test_sync_hooks_outside_any_repo_spawn_nothing(monkeypatch, tmp_path) -> None:
     """Outside any git repository nothing spawns at all; in a repo with no cc-notes refs only the refs probe runs."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
@@ -4336,8 +4428,8 @@ def test_sync_hooks_outside_any_repo_spawn_nothing(monkeypatch, tmp_path) -> Non
         run, run_calls = recording_run()
         monkeypatch.setattr(workflow.subprocess, "run", run)
         handler(evt)
-        probes = [("-C", str(cold.resolve()), *_INIT_TAIL)] if in_repo else []
-        check(f"no target {command!r}: only the refs probe ran", git_calls == probes, repr(git_calls))
+        probes = [("-C", str(cold.resolve()), *_BINDING_TAIL), ("-C", str(cold.resolve()), *_INIT_TAIL)] if in_repo else []
+        check(f"no target {command!r}: only the binding and refs probes ran", git_calls == probes, repr(git_calls))
         check(f"no target {command!r}: no cc-notes call", cli_calls == [] and run_calls == [], repr((cli_calls, run_calls)))
 
 
