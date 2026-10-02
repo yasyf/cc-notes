@@ -149,6 +149,7 @@ from hooks.workflow import (
     sync_after_ref_move,
     sync_at_session_end,
     SyncFailures,
+    records_git,
     wired_remotes,
 )
 import hooks.workflow as workflow
@@ -1152,7 +1153,11 @@ def _repo(path: Path) -> Path:
 
 
 def repo_git(mapping: dict[tuple[str, ...], str | None], *, uninitialized: tuple[Path, ...] = (), calls: list | None = None):
-    """A ``stub_git`` that also answers the cc-notes-initialized probe: every repo holds refs except ``uninitialized``."""
+    """A ``stub_git`` that also answers the cc-notes-initialized probe: every repo holds refs except ``uninitialized``.
+
+    A ``-C <root>`` prefix with no exact key falls through to the unscoped key, so a
+    mapping keyed on bare argv answers the per-target probes the hooks scope to a repo.
+    """
     plain = stub_git(mapping)
     cold = {str(p.resolve()) for p in uninitialized}
 
@@ -1161,6 +1166,8 @@ def repo_git(mapping: dict[tuple[str, ...], str | None], *, uninitialized: tuple
             calls.append(args)
         if len(args) == 2 + len(_INIT_TAIL) and args[0] == "-C" and args[2:] == _INIT_TAIL:
             return None if args[1] in cold else "refs/cc-notes/notes/x"
+        if args[:1] == ("-C",) and tuple(args) not in mapping:
+            return plain(*args[2:])
         return plain(*args)
 
     return _git
@@ -2956,7 +2963,8 @@ def test_auto_sync_failure_warns_on_next_event_once(monkeypatch, tmp_path) -> No
         sync_after_ref_move(claim_event(tmp_path / "prompt", monkeypatch, cli=cli)) is None
         and surface_sync_failures(mock_event("UserPromptSubmit", prompt="next", session_dir=tmp_path / "prompt")) is not None,
     )
-    [outcome] = do_sync(claim_event(tmp_path, monkeypatch, cli=cli))
+    evt = claim_event(tmp_path, monkeypatch, cli=cli)
+    [outcome] = do_sync(evt, records_git(evt))
     check("sync failure: do_sync carries the failure line", not outcome.synced and outcome.failure is not None and "cc-notes sync failed" in outcome.failure, repr(outcome))
 
 
@@ -3020,7 +3028,7 @@ def test_auto_sync_benign_outcomes_queue_nothing(monkeypatch, tmp_path) -> None:
         sync_after_ref_move(evt)
         check(f"{name}: the sync was attempted", _calls_of(calls, "sync") == [0], repr(calls))
         check(f"{name}: nothing surfaces on the next event", surface_sync_failures(_next_event(session)) is None)
-        check(f"{name}: do_sync is neither synced nor failed", do_sync(claim_event(session, monkeypatch, cli=cli)) == [("", False, None)])
+        check(f"{name}: do_sync is neither synced nor failed", do_sync(evt := claim_event(session, monkeypatch, cli=cli), records_git(evt)) == [("", False, None)])
 
 
 def test_reconcile_after_merge(monkeypatch, tmp_path) -> None:
@@ -3933,7 +3941,7 @@ def test_cc_notes_refs_dirty_maps_suffix_exactly(monkeypatch, tmp_path) -> None:
     )
     evt = mock_event("SessionEnd", reason="other", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "git", stub_git({_FER_KEY: out, _CONFIG_KEY: _wired("origin")}))
-    check("dirty check: one differing suffix makes the repo dirty", cc_notes_refs_dirty(evt) is True)
+    check("dirty check: one differing suffix makes the repo dirty", cc_notes_refs_dirty(evt, records_git(evt)) is True)
 
 
 def _remotes(monkeypatch, tmp_path, config_out) -> list[str]:
@@ -4000,7 +4008,7 @@ def test_do_sync_syncs_each_wired_remote(monkeypatch, tmp_path) -> None:
         monkeypatch, tmp_path, wired=("origin", "upstream"),
         mapping={("sync", "--remote", "origin"): "ok", ("sync", "--remote", "upstream"): "ok"},
     )
-    outcome = do_sync(evt)
+    outcome = do_sync(evt, records_git(evt))
     check("do_sync: origin then upstream via --remote",
           _calls_of(calls, "sync", "--remote", "origin") == [0] and _calls_of(calls, "sync", "--remote", "upstream") == [1], repr(calls))
     check("do_sync: multi-remote success is synced with no line", outcome == [("origin", True, None), ("upstream", True, None)], repr(outcome))
@@ -4010,7 +4018,7 @@ def test_do_sync_zero_wired_falls_back_bare(monkeypatch, tmp_path) -> None:
     """No wired remote falls back to a bare `cc-notes sync` (no --remote)."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt, calls = _do_sync_event(monkeypatch, tmp_path, wired=(), mapping={("sync",): "ok"})
-    outcome = do_sync(evt)
+    outcome = do_sync(evt, records_git(evt))
     check("do_sync: bare sync when zero wired", calls == [("cc-notes", "sync")], repr(calls))
     check("do_sync: bare success is synced with no line", outcome == [("", True, None)], repr(outcome))
 
@@ -4019,7 +4027,7 @@ def test_do_sync_single_wired_uses_remote(monkeypatch, tmp_path) -> None:
     """A single wired remote syncs via --remote, and success yields no line."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt, calls = _do_sync_event(monkeypatch, tmp_path, wired=("origin",), mapping={("sync", "--remote", "origin"): "ok"})
-    outcome = do_sync(evt)
+    outcome = do_sync(evt, records_git(evt))
     check("do_sync: single wired uses --remote", calls == [("cc-notes", "sync", "--remote", "origin")], repr(calls))
     check("do_sync: success is synced with no line", outcome == [("origin", True, None)], repr(outcome))
 
@@ -4032,7 +4040,7 @@ def test_do_sync_multi_remote_failure_names_remote(monkeypatch, tmp_path) -> Non
         mapping={("sync", "--remote", "origin"): "ok"},
         raises={("sync", "--remote", "upstream"): _rejected("! [rejected] non-fast-forward\n")},
     )
-    line = next(o.failure for o in do_sync(evt) if o.failure)
+    line = next(o.failure for o in do_sync(evt, records_git(evt)) if o.failure)
     check(
         "do_sync: failure names the exact per-remote retry",
         line is not None and "cc-notes sync failed" in line and "`cc-notes sync --remote upstream`" in line,
@@ -4048,7 +4056,7 @@ def test_do_sync_partial_failure_warns(monkeypatch, tmp_path) -> None:
         mapping={("sync", "--remote", "origin"): "ok"},
         raises={("sync", "--remote", "upstream"): _rejected("! [rejected] non-fast-forward\n")},
     )
-    line = next(o.failure for o in do_sync(evt) if o.failure)
+    line = next(o.failure for o in do_sync(evt, records_git(evt)) if o.failure)
     check("do_sync: partial failure warns", line is not None and "cc-notes sync failed" in line and "Synced cc-notes refs." not in line, repr(line))
     check("do_sync: both remotes were attempted", len(_sync_runs(calls)) == 2, repr(calls))
 
@@ -4382,7 +4390,7 @@ def test_bound_checkout_syncs_and_reconciles_through_its_backend(monkeypatch, tm
     monkeypatch.setattr(end.ctx, "git", real_git(checkout))
     cli, calls = recording_cli(answers)
     monkeypatch.setattr(end.ctx, "call_cli", cli)
-    check("bound session end: the backend's unsynced record reads dirty", cc_notes_refs_dirty(end) is True)
+    check("bound session end: the backend's unsynced record reads dirty", cc_notes_refs_dirty(end, records_git(end)) is True)
     sync_at_session_end(end)
     check("bound session end: synced origin through the backend", calls == [synced], repr(calls))
 
