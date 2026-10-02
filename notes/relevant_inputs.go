@@ -26,10 +26,7 @@ import (
 var relevantRacyWindow = 2 * time.Second
 
 const (
-	relevantSymrefDepth = 5
-	// Linux's MAXSYMLINKS: past it every stat fails with ELOOP whatever the
-	// targets hold, so no deeper link can change a capture.
-	relevantLinkHops      = 40
+	relevantSymrefDepth   = 5
 	relevantMissing       = "missing"
 	defaultReplaceRefBase = "refs/replace/"
 )
@@ -155,21 +152,40 @@ func (in *relevantInputs) keep(s fileStamp) fileStamp {
 }
 
 func (in *relevantInputs) guardMissing(path string) {
-	for hops := 0; ; hops++ {
-		in.guard(filepath.Dir(path))
-		target, err := os.Readlink(path)
-		if err != nil || hops == relevantLinkHops {
-			return
+	ancestor := path
+	for {
+		if _, err := os.Lstat(ancestor); err == nil {
+			break
 		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(path), target)
+		up := parentPath(ancestor)
+		if up == ancestor {
+			break
 		}
-		path = target
+		ancestor = up
 	}
+	if slices.Contains(strings.Split(path[len(ancestor):], string(filepath.Separator)), "..") {
+		in.revalidate = true
+		return
+	}
+	// The kernel resolves links on the way to the ancestor; a lexical join
+	// of a link target lands the guard on the wrong directory.
+	real, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		in.revalidate = true
+		return
+	}
+	in.guard(real)
+}
+
+func parentPath(path string) string {
+	i := strings.LastIndexByte(path, filepath.Separator)
+	if i <= 0 {
+		return path[:i+1]
+	}
+	return path[:i]
 }
 
 func (in *relevantInputs) guard(dir string) {
-	dir = nearestExisting(dir)
 	if in.guarded[dir] {
 		return
 	}
@@ -365,7 +381,7 @@ func (in *relevantInputs) watchDirs(dir string) {
 			continue
 		}
 		if target, ok := in.symref(path, e.Type()); ok {
-			in.watchDep(target, 0)
+			in.watchDep(target, 1)
 		}
 	}
 }
@@ -387,7 +403,18 @@ func (in *relevantInputs) watchDep(name string, depth int) {
 		return
 	}
 	in.depSeen[name] = depth
-	if name == "HEAD" || rootPseudoref(name) {
+	switch {
+	case name == "HEAD":
+		in.watchRef(name, depth)
+		return
+	case rootPseudoref(name):
+		// An anchored root ref is one leaf stamp; one reached as a symref
+		// target would add a leaf per alias, and the git dir itself is too
+		// noisy to stamp as a directory.
+		if depth > 0 {
+			in.revalidate = true
+			return
+		}
 		in.watchRef(name, depth)
 		return
 	}
@@ -497,6 +524,7 @@ func (in *relevantInputs) watchConfig(ctx context.Context) error {
 	if _, in.me, err = git.AuthorIdent(ctx); err != nil {
 		return err
 	}
+	in.record("me %s", in.me)
 	if !in.explicitEmail() {
 		in.revalidate = true
 	}

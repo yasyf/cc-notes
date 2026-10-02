@@ -76,13 +76,17 @@ if [ "$(cat "$CC_NOTES_RACE_STATE")" != armed ] || [ $hit = 0 ]; then
 fi
 case "$CC_NOTES_RACE_MODE" in
 orig-head) "$CC_NOTES_REAL_GIT" -C "$CC_NOTES_RACE_DIR" update-ref ORIG_HEAD "$CC_NOTES_RACE_VALUE" ;;
-include) "$CC_NOTES_REAL_GIT" config --file "$CC_NOTES_RACE_FILE" user.email "$CC_NOTES_RACE_VALUE" ;;
+include)
+	[ -z "$CC_NOTES_RACE_MKDIR" ] || mkdir "$CC_NOTES_RACE_MKDIR"
+	"$CC_NOTES_REAL_GIT" config --file "$CC_NOTES_RACE_FILE" user.email "$CC_NOTES_RACE_VALUE" ;;
 esac
 "$CC_NOTES_REAL_GIT" "$@"
 rc=$?
 case "$CC_NOTES_RACE_MODE" in
 orig-head) "$CC_NOTES_REAL_GIT" -C "$CC_NOTES_RACE_DIR" update-ref -d ORIG_HEAD ;;
-include) rm "$CC_NOTES_RACE_FILE" ;;
+include)
+	rm "$CC_NOTES_RACE_FILE"
+	[ -z "$CC_NOTES_RACE_MKDIR" ] || rmdir "$CC_NOTES_RACE_MKDIR" ;;
 esac
 printf fired > "$CC_NOTES_RACE_STATE"
 exit $rc
@@ -1002,27 +1006,61 @@ func TestRelevantCachedNeverPinsARootRefRacedDuringCapture(t *testing.T) {
 	}
 }
 
+type includeRace struct {
+	path    string
+	settled cacheTier
+	layout  func(t *testing.T, common string) (file, mkdir string)
+}
+
 func TestRelevantCachedNeverPinsARootIncludeRacedDuringCapture(t *testing.T) {
-	includeRaceNeverPins(t, false)
+	includeRaceNeverPins(t, includeRace{path: "extra.config", settled: tierHit, layout: func(_ *testing.T, common string) (string, string) {
+		return filepath.Join(common, "extra.config"), ""
+	}})
 }
 
 func TestRelevantCachedNeverPinsADanglingIncludeLinkRacedDuringCapture(t *testing.T) {
-	includeRaceNeverPins(t, true)
+	includeRaceNeverPins(t, includeRace{path: "extra.config", settled: tierRevalidate, layout: func(t *testing.T, common string) (string, string) {
+		external := filepath.Join(t.TempDir(), "external.config")
+		symlink(t, external, filepath.Join(common, "extra.config"))
+		return external, ""
+	}})
 }
 
-func includeRaceNeverPins(t *testing.T, linked bool) {
+func TestRelevantCachedNeverPinsAnIncludeLinkedThroughDotDotRacedDuringCapture(t *testing.T) {
+	includeRaceNeverPins(t, includeRace{path: "extra.config", settled: tierRevalidate, layout: func(t *testing.T, common string) (string, string) {
+		outside := t.TempDir()
+		nested := filepath.Join(outside, "nested")
+		if err := os.Mkdir(nested, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		symlink(t, nested, filepath.Join(common, "hop"))
+		symlink(t, filepath.FromSlash("hop/../external.config"), filepath.Join(common, "extra.config"))
+		return filepath.Join(outside, "external.config"), ""
+	}})
+}
+
+func TestRelevantCachedNeverPinsAnIncludeBelowADanglingDirectoryLinkRacedDuringCapture(t *testing.T) {
+	includeRaceNeverPins(t, includeRace{path: "inc/extra.config", settled: tierRevalidate, layout: func(t *testing.T, common string) (string, string) {
+		missing := filepath.Join(t.TempDir(), "missing")
+		symlink(t, missing, filepath.Join(common, "inc"))
+		return filepath.Join(missing, "extra.config"), missing
+	}})
+}
+
+func symlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func includeRaceNeverPins(t *testing.T, race includeRace) {
 	t.Cleanup(notes.SetRelevantRacyWindow(0))
 	fx := newMatrixFixture(t)
 	fx.crossAuthor(t)
-	fx.run(t, "config", "include.path", "extra.config")
-	include := filepath.Join(fx.commonDir(t), "extra.config")
-	if linked {
-		external := filepath.Join(t.TempDir(), "external.config")
-		if err := os.Symlink(external, include); err != nil {
-			t.Fatal(err)
-		}
-		include = external
-	}
+	fx.run(t, "config", "include.path", race.path)
+	include, mkdir := race.layout(t, fx.commonDir(t))
+	t.Setenv("CC_NOTES_RACE_MKDIR", mkdir)
 	fx.armRootRace(t, "include", "GIT_AUTHOR_IDENT", relevantOther, include)
 	p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: fx.counter}
 	if got := p.call("capture raced by the include appearing"); got != tierRebuild {
@@ -1032,14 +1070,17 @@ func includeRaceNeverPins(t *testing.T, linked bool) {
 		t.Fatalf("the raced identity still scored cross-author; the include never reached the identity read: %s", p.last)
 	}
 	fx.rootRaceFired(t)
-	if _, ok, err := notes.RelevantCacheProbeOf(fx.c, matrixTarget, p.filter, "json"); err != nil || ok {
-		t.Fatalf("a capture whose include appeared and vanished persisted an entry: ok=%t err=%v", ok, err)
+	if probe, ok, err := notes.RelevantCacheProbeOf(fx.c, matrixTarget, p.filter, "json"); err != nil || (ok && !probe.Revalidate) {
+		t.Fatalf("a capture whose include appeared and vanished persisted a settled entry: ok=%t err=%v %+v", ok, err, probe)
 	}
 	p.expect("first call after the race", tierRebuild)
 	if !bytes.Contains(p.last, []byte(`"cross-author"`)) {
 		t.Fatalf("answer after the race lost the cross-author signal: %s", p.last)
 	}
-	p.promoteThen("settled after the race", tierHit)
+	p.promoteThen("settled after the race", race.settled)
+	if probe := p.entry("settled after the race"); probe.Revalidate != (race.settled == tierRevalidate) {
+		t.Fatalf("settled entry revalidate = %t, want %t: %+v", probe.Revalidate, race.settled == tierRevalidate, probe)
+	}
 }
 
 func TestRelevantCachedWatchesASharedSymrefTailFromItsShallowestArrival(t *testing.T) {
@@ -1110,6 +1151,45 @@ func TestRelevantCachedDetachedSymlinkAliasesShareOneTargetDirectoryStamp(t *tes
 	}
 	if counts[tips] != counts[1] || counts[1] != counts[0]+1 {
 		t.Fatalf("stamps at 0/1/%d aliases = %d/%d/%d; want one directory stamp for the first alias and none for the rest", tips, counts[0], counts[1], counts[tips])
+	}
+}
+
+func TestRelevantCachedDetachedRootRefAliasesPersistNoLeafStamps(t *testing.T) {
+	const aliases = 20
+	counts := make(map[int]int)
+	for _, n := range []int{0, aliases} {
+		t.Run(fmt.Sprintf("aliases=%02d", n), func(t *testing.T) {
+			t.Cleanup(notes.SetRelevantRacyWindow(0))
+			fx := newMatrixFixture(t)
+			fx.detachAhead(t)
+			for i := range n {
+				root := fmt.Sprintf("ROOTREF_%02d", i)
+				fx.run(t, "update-ref", root, string(fx.root))
+				fx.run(t, "symbolic-ref", fmt.Sprintf("refs/heads/alias%02d", i), root)
+			}
+			fx.anchored(t, "trunk work", "main")
+			p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: installCountingGit(t, countingGitScript)}
+			p.expect("cold", tierRebuild)
+			want := tierHit
+			if n > 0 {
+				want = tierRevalidate
+			}
+			p.promoteThen("warm", want)
+			probe := p.entry("warm")
+			if probe.Revalidate != (n > 0) {
+				t.Fatalf("revalidate = %t with %d root-ref aliases, want %t: %+v", probe.Revalidate, n, n > 0, probe)
+			}
+			if leaf := slices.IndexFunc(probe.Stamps, func(s string) bool { return strings.HasPrefix(filepath.Base(s), "ROOTREF_") }); leaf >= 0 {
+				t.Fatalf("a root ref reached only through an iterated alias was leaf-stamped: %s\nall stamps %q", probe.Stamps[leaf], probe.Stamps)
+			}
+			counts[n] = len(probe.Stamps)
+		})
+	}
+	if t.Failed() {
+		return
+	}
+	if counts[aliases] != counts[0] {
+		t.Fatalf("stamps at 0/%d root-ref aliases = %d/%d; want the same count", aliases, counts[0], counts[aliases])
 	}
 }
 
