@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Share records storage across checkouts.** `cc-notes storage bind --source PATH`
+  binds a checkout to a local repository's records through `cc-notes.storage` in
+  its git configuration. Entities, sync, Git Large File Storage (LFS)
+  attachments, and the fold cache use the records repository. HEAD, branches,
+  anchor resolution, ancestry, witness checks, author identity, and the
+  relevance cache stay with the checkout. Binding does not fetch, copy records,
+  install hooks or refspecs, or start services. Shallow history that cannot
+  establish commit reachability reports `HISTORY-UNAVAILABLE`, below `DRIFTED`
+  and above `STALE`, without increasing `needs_review` counts. Malformed
+  bindings and unavailable, replaced, or redirecting backends fail visibly
+  instead of returning an empty corpus.
+
 ## [0.63.8] - 2026-10-01
 
 ### Fixed

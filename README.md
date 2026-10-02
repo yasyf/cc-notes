@@ -129,6 +129,18 @@ cc-notes plan done 8d2ed23 --outcome "status 19.8s -> 2.1s on the monorepo"
 
 ---
 
+## Share one records store across checkouts
+
+Bind a thin or shallow checkout to a full source repository to share its notes, tasks, and other records:
+
+```bash
+cc-notes -R /work/thin storage bind --source /work/full
+```
+
+Entities, sync, Git Large File Storage (LFS) attachments, and the fold cache use the source repository. HEAD, branches, anchor resolution, ancestry, path and tree witness checks, author identity, and the relevance cache use the checkout. Binding stores only `cc-notes.storage` in the checkout's git config; it does not fetch, copy records, install hooks or refspecs, or start services.
+
+An invalid binding or an unavailable or replaced source produces an error instead of an empty corpus. See [`storage bind`](plugin/skills/using-cc-notes/references/cli-reference.md#cc-notes-storage-bind) for validation and refusal cases.
+
 ## Commands
 
 | Command | What it does |
@@ -138,12 +150,13 @@ cc-notes plan done 8d2ed23 --outcome "status 19.8s -> 2.1s on the monorepo"
 | `cc-notes service install` | macOS: activate or exactly reconcile the already-installed helper generation |
 | `cc-notes service uninstall` | macOS: durably deactivate the global FuseKit service while retaining the verified signed app for later reactivation |
 | `cc-notes init` | Provision through the installed macOS service; install refspecs and register ready plugin/CI surfaces; never install or upgrade the service |
+| `cc-notes storage bind --source PATH` | Share a local repository's records while keeping the current checkout's context |
 | `cc-notes status` | Read-only board: backlog, your branch's tasks, in-progress claims, notes needing review |
 | `cc-notes task add` | Create a task (`--backlog` for the shared queue, `--criterion` for a validation gate) |
 | `cc-notes task start` / `done` | Claim a task onto your branch; close it and anchor your HEAD commit |
 | `cc-notes task validate` | Run a task's stored criterion scripts and record each as met or failed; `task done` gates on the criteria |
 | `cc-notes note add` | Add a note, optionally anchored to a path, directory, commit, or branch |
-| `cc-notes note review` | Flag notes as `DRIFTED`, `STALE`, or `UNVERIFIED` |
+| `cc-notes note review` | Report freshness verdicts, including `HISTORY-UNAVAILABLE` when shallow history prevents a commit reachability decision |
 | `cc-notes answer add` | Record a user's reply with its verbatim question; the capt-hook pack captures `AskUserQuestion` replies and recalls durable answers |
 | `cc-notes doc add` | Store a long-form handoff with a `--when` trigger, surfaced to the next agent by `cc-notes relevant` |
 | `cc-notes log add` | Start an append-only journal, surfaced by `cc-notes relevant`; logs skip the review lifecycle since they never drift |
@@ -159,7 +172,7 @@ cc-notes plan done 8d2ed23 --outcome "status 19.8s -> 2.1s on the monorepo"
 | `cc-notes sync` | Push and pull `refs/cc-notes/*`, union-merging concurrent edits and transferring attachment content |
 | `cc-notes viz` | Watch branch flow and note/task/doc lifecycles live in a browser |
 
-Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) covers every flag. Docs and notes also edit as checked-out plain files: `doc edit <id> --checkout` (or `note edit`) renders the entity to Markdown and prints its path, and `--apply` commits your edits back. Tasks, sprints, projects, runbooks, and plans carry threaded discussion via `<noun> comment`. Every mutation echoes a lean tab-separated line, and every command takes `--json` — where listings and mutation acknowledgements return a compact summary, and `<noun> show <id> --json` returns the record whole, its bulkiest append-only histories capped at the 20 most recent with an elided count beside them. A global `--repo PATH` (`-R`) points any command at another repository's store from any cwd — pass any path inside it, while file-path arguments still resolve against the invocation cwd.
+Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and the [CLI reference](plugin/skills/using-cc-notes/references/cli-reference.md) covers every flag. Docs and notes also edit as checked-out plain files: `doc edit <id> --checkout` (or `note edit`) renders the entity to Markdown and prints its path, and `--apply` commits your edits back. Tasks, sprints, projects, runbooks, and plans carry threaded discussion via `<noun> comment`. Every mutation echoes a lean tab-separated line, and every command takes `--json` — where listings and mutation acknowledgements return a compact summary, and `<noun> show <id> --json` returns the record whole, its bulkiest append-only histories capped at the 20 most recent with an elided count beside them. A global `--repo PATH` (`-R`) selects the context checkout and uses its binding (if any) to select the records store from any cwd — pass any path inside it, while file-path arguments still resolve against the invocation cwd.
 
 ## MCP server
 
@@ -178,7 +191,7 @@ The Claude Code plugin wires the server for you: it ships a bundled `.mcp.json` 
 }
 ```
 
-Setup and host-facing commands stay CLI-only — `init`, `gc`/`compact`, `viz`, `version`, the skills/hooks/workflows installers, and the `--checkout`/`--apply` file mode the `body` parameter replaces. If the binary is missing or predates this release, the server shows `failed` in `/mcp`, the session carries on, and the capt-hook nudges keep their CLI wording. To keep those hooks but switch the server off, add it to `deniedMcpServers` in your personal settings.
+Setup and host-facing commands stay CLI-only — `init`, `storage bind`, `gc`/`compact`, `viz`, `version`, the skills/hooks/workflows installers, and the `--checkout`/`--apply` file mode the `body` parameter replaces. If the binary is missing or predates this release, the server shows `failed` in `/mcp`, the session carries on, and the capt-hook nudges keep their CLI wording. To keep those hooks but switch the server off, add it to `deniedMcpServers` in your personal settings.
 
 ## Attachments
 

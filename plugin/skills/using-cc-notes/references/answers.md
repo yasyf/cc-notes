@@ -118,7 +118,10 @@ keeps the record in `answer list`; `answer review` reports it as `EXPIRED`. Veri
 `answer expire --clear` clears that flag.
 
 `answer review` also surfaces unverified, drifted, and stale records, plus dangling
-supersession edges. Review the question and its anchors before re-confirming the reply.
+supersession edges. `HISTORY-UNAVAILABLE` means shallow checkout history prevents a commit
+reachability decision. It ranks below `DRIFTED` and above `STALE`, and does not count toward
+`status`'s `needs_review` totals. Deepen the checkout and review again to resolve missing
+history. Review the question and its anchors before re-confirming the reply.
 `answer rm` tombstones a record while preserving its history.
 
 The CLI and MCP verbs follow the doc equivalents, without `when`:
