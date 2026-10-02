@@ -459,6 +459,76 @@ func TestRelevantCachedGuardsTheDirectoryHoldingATraversedLink(t *testing.T) {
 	}
 }
 
+func TestRelevantInputsDistrustAStampTheWalkContradicts(t *testing.T) {
+	defer SetRelevantRacyWindow(0)()
+	cases := []struct {
+		name    string
+		present bool
+	}{
+		{name: "the base appears between its stamp and the walk", present: false},
+		{name: "the base vanishes between its stamp and the walk", present: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, dir := newWBClient(t)
+			ctx := t.Context()
+			gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+			root := model.SHA(strings.TrimSpace(gittest.Git(t, dir, "rev-parse", "HEAD")))
+			gittest.Git(t, dir, "pack-refs", "--all")
+			gitDir := c.s.GitDir()
+			if err := os.WriteFile(filepath.Join(gitDir, "shallow"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			orig := filepath.Join(gitDir, "ORIG_HEAD")
+			set := map[bool]func(){
+				true:  func() { gittest.Git(t, dir, "update-ref", "ORIG_HEAD", string(root)) },
+				false: func() { gittest.Git(t, dir, "update-ref", "-d", "ORIG_HEAD") },
+			}
+			if tc.present {
+				set[true]()
+			}
+			in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
+			if err != nil {
+				t.Fatalf("relevantInputs: %v", err)
+			}
+			real := realPath(t, gitDir)
+			if guards(in, real) {
+				t.Fatalf("fixture: the git dir is guarded before ORIG_HEAD is stamped: %+v", in.guards)
+			}
+			s := lstampOf(orig)
+			if s.Missing == tc.present {
+				t.Fatalf("stamp missing = %t, want %t", s.Missing, !tc.present)
+			}
+			set[!tc.present]()
+			in.keep(s)
+			if !guards(in, real) {
+				t.Fatalf("a stamp the walk contradicted left the git dir unguarded: %+v", in.guards)
+			}
+			if !in.untrusted {
+				t.Fatal("a stamp the walk contradicted left the capture trusted")
+			}
+			resolved, err := c.s.Git.ResolveRevs(ctx, []string{"ORIG_HEAD^{commit}"})
+			if err != nil {
+				t.Fatalf("ResolveRevs: %v", err)
+			}
+			var want model.SHA
+			if !tc.present {
+				want = root
+			}
+			if got := resolved["ORIG_HEAD^{commit}"]; got != want {
+				t.Fatalf("the capture's read resolved ORIG_HEAD to %q, want %q", got, want)
+			}
+			set[tc.present]()
+			if in.close() {
+				t.Fatal("close accepted a capture whose base changed between its stamp and its walk and changed back before close")
+			}
+			if !in.racy() {
+				t.Fatal("racy accepted a capture whose base changed between its stamp and its walk")
+			}
+		})
+	}
+}
+
 func guards(in *relevantInputs, path string) bool {
 	return slices.ContainsFunc(in.guards, func(g fileStamp) bool { return g.Path == path })
 }

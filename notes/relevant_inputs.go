@@ -146,13 +146,15 @@ func (in *relevantInputs) keep(s fileStamp) fileStamp {
 	}
 	in.watched[s.Path] = s
 	in.stamps = append(in.stamps, s)
-	in.resolve(s.Path, !s.Link)
+	in.resolve(s)
 	return s
 }
 
-func (in *relevantInputs) resolve(path string, followFinal bool) {
-	// Walked as the kernel opens it: a ".." after a symlink climbs out of the
-	// link's target, which a lexically cleaned path would have collapsed away.
+func (in *relevantInputs) resolve(s fileStamp) {
+	// Walked as the kernel opens it: ".." after a symlink climbs out of its
+	// target. The stamp, not the walk, decides the guard: a file that
+	// appeared since the stamp can vanish again before close.
+	path := s.Path
 	if !filepath.IsAbs(path) {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -185,12 +187,15 @@ func (in *relevantInputs) resolve(path string, followFinal bool) {
 		if err != nil {
 			if fromLink || slices.Contains(rest, "..") {
 				in.revalidate = true
-				return
+			} else {
+				in.guard(cur)
 			}
-			in.guard(cur)
+			if !s.Missing {
+				in.untrusted = true
+			}
 			return
 		}
-		if info.Mode()&os.ModeSymlink == 0 || (len(rest) == 0 && !followFinal) {
+		if info.Mode()&os.ModeSymlink == 0 || (len(rest) == 0 && s.Link) {
 			cur = next
 			continue
 		}
@@ -214,6 +219,10 @@ func (in *relevantInputs) resolve(path string, followFinal bool) {
 		}
 		rest = append(hop, rest...)
 		linked += len(hop)
+	}
+	if s.Missing {
+		in.guard(parentPath(cur))
+		in.untrusted = true
 	}
 }
 
