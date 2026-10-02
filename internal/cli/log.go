@@ -91,7 +91,7 @@ func newLogAddCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&entry, "entry", "", "optional first entry; - reads stdin")
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
-	bindLabels(flags, &labels, "label (repeatable)")
+	bindAddLabels(cmd, &labels)
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
 	return cmd

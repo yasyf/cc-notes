@@ -11,6 +11,7 @@ import (
 )
 
 type ledgerAddArgs struct {
+	localityArgs
 	Title   string   `json:"title" jsonschema:"short handle for the ledger"`
 	Body    string   `json:"body,omitempty" jsonschema:"ledger description (echoed as 'description' in the ledger DTO)"`
 	Columns []string `json:"columns,omitempty" jsonschema:"field names in display order"`
@@ -88,6 +89,7 @@ func registerLedger(ts *toolset, b *bridge) {
 			flags = optRepeated(flags, "--column", in.Columns)
 			flags = optRepeated(flags, "--label", in.Labels)
 			flags = anchorSetFlags(flags, in.anchorSetArgs)
+			flags = localityFlags(flags, in.localityArgs)
 			return b.run(ctx, argvFor([]string{"ledger", "add"}, flags, in.Title)...)
 		})
 

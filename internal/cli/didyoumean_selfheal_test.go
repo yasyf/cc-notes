@@ -178,7 +178,7 @@ func TestSelfHealingErrorExactShapes(t *testing.T) {
 			name: "unknown flag with a sibling scan",
 			args: []string{"runbook", "add", "Deploy", "--attach"},
 			want: "unknown flag: --attach\n" +
-				"runbook add takes: --body --branch --commit --dir --json --label --path --step\n" +
+				"runbook add takes: --body --branch --commit --dir --json --label --local --path --step --sync\n" +
 				`--attach exists on: "answer add" (` + attachUsage + `), "doc add" (` + attachUsage + `), "log add" (` + attachUsage + `)`,
 		},
 	}

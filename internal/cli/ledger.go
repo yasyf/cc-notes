@@ -92,7 +92,7 @@ func newLedgerAddCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	bindBody(flags, &body, "ledger description; - reads stdin")
-	bindLabels(flags, &labels, "label (repeatable)")
+	bindAddLabels(cmd, &labels)
 	bindColumns(flags, &columns)
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)

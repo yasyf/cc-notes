@@ -90,7 +90,7 @@ func newRunbookAddCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	bindBody(flags, &body, "runbook description; - reads stdin")
-	bindLabels(flags, &labels, "label (repeatable)")
+	bindAddLabels(cmd, &labels)
 	flags.StringArrayVar(&steps, "step", nil, "initial step text, in order (repeatable)")
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)

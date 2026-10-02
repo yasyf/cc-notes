@@ -99,7 +99,7 @@ func newSprintAddCmd() *cobra.Command {
 	flags := cmd.Flags()
 	bindBody(flags, &body, "sprint description; - reads stdin")
 	flags.StringVar(&project, "project", "", "project id prefix")
-	bindLabels(flags, &labels, "label (repeatable)")
+	bindAddLabels(cmd, &labels)
 	flags.StringVar(&start, "start", "", "start date YYYY-MM-DD")
 	flags.StringVar(&end, "end", "", "end date YYYY-MM-DD")
 	bindJSON(flags, &jsonOut)

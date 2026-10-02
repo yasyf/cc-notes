@@ -7,6 +7,7 @@ import (
 )
 
 type taskAddArgs struct {
+	localityArgs
 	Title                string   `json:"title" jsonschema:"short handle for the task"`
 	Body                 string   `json:"body,omitempty" jsonschema:"task body (markdown; echoed as 'description' in the task DTO)"`
 	Type                 string   `json:"type,omitempty" jsonschema:"task type: task|bug|epic|question (default task)"`
@@ -168,6 +169,7 @@ func registerTask(ts *toolset, b *bridge) {
 			flags = optStr(flags, "--branch", in.Branch)
 			flags = optBool(flags, "--backlog", in.Backlog)
 			flags = anchorSetBranchlessFlags(flags, in.anchorSetBranchlessArgs)
+			flags = localityFlags(flags, in.localityArgs)
 			return b.run(ctx, argvFor([]string{"task", "add"}, flags, in.Title)...)
 		})
 

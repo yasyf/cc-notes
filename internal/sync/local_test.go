@@ -1,6 +1,7 @@
 package sync_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gittest"
@@ -49,6 +50,24 @@ func TestLocalEntitiesStayOffTheRemote(t *testing.T) {
 	if remoteHas(t, bare, task) {
 		t.Errorf("sync published local task %s", task)
 	}
+}
+
+func TestPublishedEntityRefusesLocalAttachment(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	gittest.Git(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+	if _, err := ccsync.Install(t.Context(), a.Git, "origin"); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	ref := refs.For(model.KindNote, createNote(t, a, "published").ID)
+	sync(t, a)
+	raw := model.AddAttachment{Name: "run.log", OID: "e3b1c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", Size: 1}
+
+	_, err := a.Append(t.Context(), ref, []model.Op{raw})
+	if refusal := (*store.LocalAttachmentError)(nil); !errors.As(err, &refusal) {
+		t.Fatalf("Append raw log to published note: err = %v, want LocalAttachmentError", err)
+	}
+	appendOps(t, a, ref, model.AddTag{Tag: store.SyncedLabel}, raw)
 }
 
 func TestPolicyReasons(t *testing.T) {

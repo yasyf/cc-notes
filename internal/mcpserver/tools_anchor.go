@@ -36,6 +36,17 @@ type anchorEditArgs struct {
 
 // anchorSetFlags appends the --commit/--path/--dir/--branch flags for an add
 // tool, in the CLI's flag order.
+// localityArgs is the add-tool fragment for --local and --sync.
+type localityArgs struct {
+	Local bool `json:"local,omitempty" jsonschema:"keep it on this clone: sync and git push never publish it"`
+	Sync  bool `json:"sync,omitempty" jsonschema:"publish it even when a local default (label, attachment size or name) matches"`
+}
+
+func localityFlags(flags []string, a localityArgs) []string {
+	flags = optBool(flags, "--local", a.Local)
+	return optBool(flags, "--sync", a.Sync)
+}
+
 func anchorSetFlags(flags []string, a anchorSetArgs) []string {
 	flags = optRepeated(flags, "--commit", a.Commits)
 	flags = optRepeated(flags, "--path", a.Paths)

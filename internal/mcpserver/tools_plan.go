@@ -7,6 +7,7 @@ import (
 )
 
 type planAddArgs struct {
+	localityArgs
 	Title    string   `json:"title" jsonschema:"short handle for the plan"`
 	Body     string   `json:"body,omitempty" jsonschema:"the plan text, verbatim — context, approach, pitfalls, verification (required unless body_file is given)"`
 	BodyFile string   `json:"body_file,omitempty" jsonschema:"read the plan text from this file instead of body"`
@@ -68,6 +69,7 @@ func registerPlan(ts *toolset, b *bridge) {
 			flags = optBool(flags, "--approved", in.Approved)
 			flags = optRepeated(flags, "--label", in.Labels)
 			flags = anchorSetFlags(flags, in.anchorSetArgs)
+			flags = localityFlags(flags, in.localityArgs)
 			return b.run(ctx, argvFor([]string{"plan", "add"}, flags, in.Title)...)
 		})
 

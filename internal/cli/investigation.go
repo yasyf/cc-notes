@@ -109,7 +109,7 @@ func newInvestigationOpenCmd() *cobra.Command {
 	flags := cmd.Flags()
 	bindBody(flags, &body, "investigation premise; - reads stdin")
 	flags.StringArrayVar(&findings, "finding", nil, "initial finding text (repeatable)")
-	bindLabels(flags, &labels, "label (repeatable)")
+	bindAddLabels(cmd, &labels)
 	anchors.bind(flags)
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
 	bindJSON(flags, &jsonOut)

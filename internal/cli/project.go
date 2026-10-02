@@ -79,7 +79,7 @@ func newProjectAddCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	bindBody(flags, &body, "project description; - reads stdin")
-	bindLabels(flags, &labels, "label (repeatable)")
+	bindAddLabels(cmd, &labels)
 	bindJSON(flags, &jsonOut)
 	return cmd
 }
