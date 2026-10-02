@@ -42,7 +42,7 @@ func TestGitDriverSharedSourceIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if index.Git != gitcmd.Backend(sourceCommon) {
+	if index.Git != gitcmd.Backend(sourceCommon, filepath.Dir(sourceCommon)) {
 		t.Fatalf("index.Git = %+v, want a Backend handle on %q", index.Git, sourceCommon)
 	}
 	if index.Repo != opened.Repo || opened.RecordsCommonDir() != sourceCommon {

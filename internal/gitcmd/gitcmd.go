@@ -57,36 +57,34 @@ var nonFFPatterns = []string{"non-fast-forward", "fetch first", "[rejected]"}
 // Git runs the system git binary against one repository. A checkout handle
 // (the zero value plus Dir) runs with -C Dir under the inherited environment,
 // so git discovers the repository from any path inside it or its worktree. A
-// Backend handle names a git directory outright and never discovers one.
+// Backend handle names a git directory outright and never discovers one; it
+// runs from workDir.
 type Git struct {
 	Dir     string
+	workDir string
 	backend bool
 }
 
-// Backend returns a handle on the git directory at dir, an absolute common
-// directory. Every command passes it as --git-dir, so git opens exactly that
-// directory and performs no discovery: a nested .git file inside it, a
-// ceiling, or an inherited GIT_DIR cannot redirect the command. Every
-// inherited variable that reroutes git to another repository, object
-// database, index, ref namespace, or config file is dropped; authentication,
-// transport, identity, and user configuration variables pass through. The
-// handle has no work tree of its own: records stores drive refs, config,
-// fetch, push, and credentials through it, never checkout operations.
-func Backend(dir string) Git { return Git{Dir: dir, backend: true} }
+// Backend returns a handle on the absolute common directory dir, pinned as
+// --git-dir so no discovery or inherited routing variable can redirect it,
+// that runs every command from workDir: the repository's main working tree
+// root, or dir itself for a bare repository, so cwd-relative transport paths
+// such as a relative remote URL resolve exactly as for git run inside it.
+func Backend(dir, workDir string) Git { return Git{Dir: dir, workDir: workDir, backend: true} }
 
 // Discover resolves the repository containing dir, any path inside it or its
 // worktree, with inherited repository routing dropped, so dir alone selects
 // it: the scrubbed form of Git.Dirs for a path not yet known to be a git
-// directory. The records handle on its result is Backend(commonDir).
+// directory. The records handle on its result is Backend(commonDir, workDir).
 func Discover(ctx context.Context, dir string) (gitDir, commonDir string, bare bool, err error) {
 	return Git{Dir: dir}.dirs(ctx, scrubRouting(os.Environ()))
 }
 
 // argv prefixes args with the repository selection: -C Dir for a checkout
-// handle, -C Dir plus --git-dir=Dir for a backend handle.
+// handle, -C workDir plus --git-dir=Dir for a backend handle.
 func (g Git) argv(args ...string) []string {
 	if g.backend {
-		return append([]string{"-C", g.Dir, "--git-dir=" + g.Dir}, args...)
+		return append([]string{"-C", g.workDir, "--git-dir=" + g.Dir}, args...)
 	}
 	return append([]string{"-C", g.Dir}, args...)
 }

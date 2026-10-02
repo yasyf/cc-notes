@@ -57,7 +57,7 @@ func TestBackendEnvironDropsExactlyRoutingVars(t *testing.T) {
 	for _, name := range routingEnvWant {
 		t.Run(name, func(t *testing.T) {
 			env := slices.Concat([]string{name + "=/elsewhere"}, keptEnv, []string{name + "="})
-			got := Backend("/repo").environ(env)
+			got := Backend("/repo", "/repo").environ(env)
 			if !slices.Equal(got, keptEnv) {
 				t.Fatalf("Backend environ dropped the wrong set:\n got %q\nwant %q", got, keptEnv)
 			}
@@ -81,7 +81,7 @@ func TestBackendEnvironDropsExactlyRoutingVars(t *testing.T) {
 	t.Run("backend nil env is the scrubbed process environment", func(t *testing.T) {
 		t.Setenv("GIT_DIR", "/elsewhere")
 		t.Setenv("GIT_ASKPASS", "/usr/bin/true")
-		got := Backend("/repo").environ(nil)
+		got := Backend("/repo", "/repo").environ(nil)
 		if len(got) != len(os.Environ())-1 {
 			t.Fatalf("backend environ(nil) has %d entries, want the process environment's %d minus GIT_DIR", len(got), len(os.Environ()))
 		}
@@ -92,4 +92,12 @@ func TestBackendEnvironDropsExactlyRoutingVars(t *testing.T) {
 			t.Fatalf("backend environ(nil) kept %q", got[i])
 		}
 	})
+}
+
+func TestBackendArgvRunsFromWorkDir(t *testing.T) {
+	got := Backend("/repo/.git", "/repo").argv("push", "origin")
+	want := []string{"-C", "/repo", "--git-dir=/repo/.git", "push", "origin"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("argv = %q, want %q", got, want)
+	}
 }

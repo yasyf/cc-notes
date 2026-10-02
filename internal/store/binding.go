@@ -204,6 +204,35 @@ func backendRedirects(commonDir string) error {
 	return nil
 }
 
+// workDirOf returns the directory git runs from inside the repository at
+// commonDir, read from its exact config: commonDir when bare, else
+// core.worktree, else the parent of a common directory named .git.
+func workDirOf(commonDir string) (string, error) {
+	config := filepath.Join(commonDir, "config")
+	bare, err := gitobj.ConfigValues(config, "core", "bare")
+	if err != nil {
+		return "", err
+	}
+	if len(bare) > 0 && bare[len(bare)-1] == "true" {
+		return commonDir, nil
+	}
+	worktree, err := gitobj.ConfigValues(config, "core", "worktree")
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case len(worktree) > 0:
+		root := worktree[len(worktree)-1]
+		if !filepath.IsAbs(root) {
+			root = filepath.Join(commonDir, root)
+		}
+		return filepath.Clean(root), nil
+	case filepath.Base(commonDir) == ".git":
+		return filepath.Dir(commonDir), nil
+	}
+	return commonDir, nil
+}
+
 // openRecords opens the validated backend's object database; a layout gitobj
 // cannot read is an unavailable backend.
 func openRecords(b Binding) (*gitobj.Repo, error) {
@@ -229,13 +258,14 @@ func stampOf(info os.FileInfo) configStamp {
 
 // storageBinding is what a store knows about its context's cc-notes.storage
 // value: the config file it was read from, the validated binding when one was
-// set, and the stamps the context config and the backend config were read
-// under. mu guards the stamps; the rest is immutable after open, and Pinned
-// views share the whole record.
+// set, the directory backend commands run from, and the stamps the context
+// config and the backend config were read under. mu guards the stamps; the
+// rest is immutable after open, and Pinned views share the whole record.
 type storageBinding struct {
 	config  string
 	binding Binding
 	bound   bool
+	workDir string
 
 	mu           sync.Mutex
 	stamp        configStamp
@@ -268,6 +298,10 @@ func openBinding(commonDir string) (*storageBinding, error) {
 		return nil, w.fail(err)
 	}
 	w.backendStamp = backendStamp
+	w.workDir, err = workDirOf(b.CommonDir)
+	if err != nil {
+		return nil, w.fail(fmt.Errorf("%w: %w", ErrBackendUnavailable, err))
+	}
 	return w, nil
 }
 

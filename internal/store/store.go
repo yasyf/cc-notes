@@ -208,7 +208,7 @@ func OpenContext(ctx context.Context, dir string) (*Store, error) {
 			return nil, s.storage.fail(err)
 		}
 		s.Repo = records
-		s.RecordsGit = gitcmd.Backend(b.CommonDir)
+		s.RecordsGit = gitcmd.Backend(b.CommonDir, s.storage.workDir)
 		s.recordsCommonDir = b.CommonDir
 	}
 	s.cache = newFoldCache(filepath.Join(s.recordsCommonDir, foldCacheSubdir), foldCacheCap)

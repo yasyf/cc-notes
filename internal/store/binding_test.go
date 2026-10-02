@@ -230,7 +230,7 @@ func TestOpenContextBound(t *testing.T) {
 		if s.Repo == s.ContextRepo {
 			t.Fatalf("Open(%s): records and context share one object database", dir)
 		}
-		if s.RecordsGit != gitcmd.Backend(f.sourceCommon) {
+		if s.RecordsGit != gitcmd.Backend(f.sourceCommon, filepath.Dir(f.sourceCommon)) {
 			t.Fatalf("Open(%s): RecordsGit = %+v, want a Backend handle on %q", dir, s.RecordsGit, f.sourceCommon)
 		}
 		if s.Git != (gitcmd.Git{Dir: dir}) {

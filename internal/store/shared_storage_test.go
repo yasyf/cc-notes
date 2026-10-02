@@ -471,8 +471,8 @@ func TestHasNotesBounded(t *testing.T) {
 			if !strings.Contains(lines[0], " for-each-ref --count=1 ") || !strings.HasSuffix(lines[0], " "+refs.Namespace) {
 				t.Fatalf("HasNotes ran %q, want one for-each-ref --count=1 over %s", lines[0], refs.Namespace)
 			}
-			if tc.bound && !strings.HasPrefix(lines[0], "-C "+f.sourceCommon+" ") {
-				t.Fatalf("HasNotes ran %q, want it against the records repository %s", lines[0], f.sourceCommon)
+			if tc.bound && !strings.HasPrefix(lines[0], "-C "+filepath.Dir(f.sourceCommon)+" --git-dir="+f.sourceCommon+" ") {
+				t.Fatalf("HasNotes ran %q, want it pinned to the records repository %s from its working tree", lines[0], f.sourceCommon)
 			}
 		})
 	}

@@ -86,7 +86,11 @@ func Bind(ctx context.Context, contextDir, sourceDir string) (BindResult, error)
 	case err != nil:
 		return BindResult{}, err
 	}
-	records := gitcmd.Backend(ctxCommon)
+	workDir, err := workDirOf(ctxCommon)
+	if err != nil {
+		return BindResult{}, fmt.Errorf("probe context records: %w", err)
+	}
+	records := gitcmd.Backend(ctxCommon, workDir)
 	held, err := records.FirstRef(ctx, refs.Namespace)
 	if err != nil {
 		return BindResult{}, fmt.Errorf("probe context records: %w", err)

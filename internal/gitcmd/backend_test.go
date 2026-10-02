@@ -98,7 +98,7 @@ func TestBackendIgnoresInheritedRouting(t *testing.T) {
 			before := censusOf(t, thin)
 			t.Setenv(row.key, row.value)
 			ctx := t.Context()
-			g := gitcmd.Backend(sourceGit)
+			g := gitcmd.Backend(sourceGit, filepath.Dir(sourceGit))
 			ref := "refs/cc-notes/notes/" + strings.ToLower(row.key)
 
 			_, commonDir, _, err := g.Dirs(ctx)
@@ -220,7 +220,7 @@ func TestConfigFileSetExactFile(t *testing.T) {
 		g    gitcmd.Git
 		key  string
 	}{
-		{"backend handle", gitcmd.Backend(filepath.Join(repo, ".git")), "cc-notes.storage"},
+		{"backend handle", gitcmd.Backend(filepath.Join(repo, ".git"), repo), "cc-notes.storage"},
 		{"checkout handle", gitcmd.Git{Dir: repo}, "cc-notes.checkout"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -265,7 +265,7 @@ func TestBackendNeverDiscovers(t *testing.T) {
 	}
 	before := censusOf(t, victim)
 
-	g := gitcmd.Backend(sourceGit)
+	g := gitcmd.Backend(sourceGit, filepath.Dir(sourceGit))
 	_, common, _, err := g.Dirs(ctx)
 	if err != nil {
 		t.Fatalf("Dirs: %v", err)
@@ -340,7 +340,7 @@ func TestCommitProbesNeverLazyFetch(t *testing.T) {
 		g    gitcmd.Git
 	}{
 		{"checkout handle", gitcmd.Git{Dir: thin}},
-		{"backend handle", gitcmd.Backend(filepath.Join(thin, ".git"))},
+		{"backend handle", gitcmd.Backend(filepath.Join(thin, ".git"), thin)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resolved, err := tc.g.ResolveRevs(ctx, []string{string(missing), string(head)})

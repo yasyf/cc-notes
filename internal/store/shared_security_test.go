@@ -18,48 +18,9 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-// gitShim is a git wrapper put first on PATH: when "$*" matches Pattern (an
-// sh case glob) for the Nth time (every time when N is 0) it runs each
-// Interleave argv through the real git first, then execs the real git with the
-// original argv. Tests use it to land a concurrent write between two steps of
-// one operation.
-type gitShim struct {
-	Pattern    string
-	N          int
-	Interleave [][]string
-}
-
-func (sh gitShim) install(t *testing.T) {
-	t.Helper()
-	realGit, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatalf("find git: %v", err)
-	}
-	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-	dir := t.TempDir()
-	var b strings.Builder
-	fmt.Fprintf(&b, "#!/bin/sh\ncase \"$*\" in\n%s)\n", sh.Pattern)
-	if sh.N > 0 {
-		count := quote(filepath.Join(dir, "count"))
-		fmt.Fprintf(&b, "\tn=$(($(cat %s 2>/dev/null || echo 0) + 1))\n\techo \"$n\" >%s\n\t[ \"$n\" -eq %d ] || exec %s \"$@\"\n", count, count, sh.N, quote(realGit))
-	}
-	for _, argv := range sh.Interleave {
-		b.WriteString("\t" + quote(realGit))
-		for _, arg := range argv {
-			b.WriteString(" " + quote(arg))
-		}
-		b.WriteString("\n")
-	}
-	fmt.Fprintf(&b, "\t;;\nesac\nexec %s \"$@\"\n", quote(realGit))
-	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(b.String()), 0o700); err != nil {
-		t.Fatalf("write git shim: %v", err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
-
 func shimGit(t *testing.T, pattern string, interleave ...string) {
 	t.Helper()
-	gitShim{Pattern: pattern, Interleave: [][]string{interleave}}.install(t)
+	gittest.GitShim{Pattern: pattern, Interleave: [][]string{interleave}}.Install(t)
 }
 
 func symlinkOver(t *testing.T, path, target string) {
@@ -371,7 +332,7 @@ func TestBindKeepsPublishedBindingNamingHiddenRecords(t *testing.T) {
 			for _, ref := range raced {
 				interleave = append(interleave, []string{"-C", f.thin, "update-ref", ref, "HEAD"})
 			}
-			gitShim{Pattern: tc.pattern, N: 1, Interleave: interleave}.install(t)
+			gittest.GitShim{Pattern: tc.pattern, N: 1, Interleave: interleave}.Install(t)
 
 			_, err := Bind(t.Context(), f.thin, f.source)
 			be := assertBindingError(t, err, ErrContextHasRecords, f.config(), f.sourceCommon)
@@ -518,9 +479,9 @@ func TestBindKeepsAcknowledgedRecordReachable(t *testing.T) {
 func TestBindRereadsBindingUnderLock(t *testing.T) {
 	f := newSharedFixture(t)
 	other := bindingFor(t, filepath.Join(initSourceRepo(t), ".git"))
-	gitShim{Pattern: `*"for-each-ref --count=1"*`, N: 1, Interleave: [][]string{
+	gittest.GitShim{Pattern: `*"for-each-ref --count=1"*`, N: 1, Interleave: [][]string{
 		{"config", "--file", f.config(), bindingKey, other.String()},
-	}}.install(t)
+	}}.Install(t)
 
 	_, err := Bind(t.Context(), f.thin, f.source)
 	be := assertBindingError(t, err, ErrBindingConflict, f.config(), other.CommonDir)
@@ -597,4 +558,40 @@ func TestReplaceConfig(t *testing.T) {
 			t.Fatalf("lock left behind: %v", err)
 		}
 	})
+}
+
+// TestPruneTombstonesRechecksBinding pins R2: a binding published while GC
+// was deleting a tombstoned ref fails the prune naming that ref, before its
+// remote copy is deleted, instead of tallying a prune under a context now
+// bound elsewhere.
+func TestPruneTombstonesRechecksBinding(t *testing.T) {
+	ctx := t.Context()
+	f := newSharedFixture(t)
+	f.bind(t)
+	s := openStore(t, f.thin)
+	bare := gittest.InitBare(t)
+	gittest.Git(t, f.source, "remote", "add", "origin", bare)
+	answer := create(t, s, answerOps("doomed")).(model.Answer)
+	ref := refs.For(model.KindAnswer, answer.ID)
+	if _, err := s.Append(ctx, ref, []model.Op{model.DeleteNote{}}); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+	gittest.Git(t, f.source, "push", "origin", ref+":"+ref)
+	other := bindingFor(t, filepath.Join(initSourceRepo(t), ".git"))
+	shimGit(t, `*"update-ref --stdin -z"*`, "config", "--file", f.config(), bindingKey, other.String())
+
+	pruned, failed, err := s.PruneTombstones(ctx, "origin")
+	_ = assertBindingError(t, err, ErrBindingChanged, f.config(), f.sourceCommon)
+	if !strings.Contains(err.Error(), ref) {
+		t.Fatalf("error %q does not name the deleted ref %s", err, ref)
+	}
+	if pruned != 0 || failed != 0 {
+		t.Fatalf("pruned/failed = %d/%d, want 0/0", pruned, failed)
+	}
+	if got := gittest.Git(t, bare, "for-each-ref", "--format=%(refname)", ref); got != ref {
+		t.Fatalf("remote %s = %q, want it kept after the refused prune", ref, got)
+	}
+	if got := gittest.Git(t, f.source, "for-each-ref", "--format=%(refname)", ref); got != "" {
+		t.Fatalf("backend still holds %s after its local delete committed: %q", ref, got)
+	}
 }

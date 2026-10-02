@@ -158,7 +158,7 @@ func autoInstall(ctx context.Context, cmd *cobra.Command, s *store.Store) error 
 	if err != nil {
 		return err
 	}
-	report, err := ccsync.Install(ctx, s.RecordsGit, remote)
+	report, err := installRecords(ctx, s, remote)
 	switch {
 	case errors.Is(err, ccsync.ErrRemoteNotFound):
 		return nil
@@ -187,6 +187,20 @@ func autoInstall(ctx context.Context, cmd *cobra.Command, s *store.Store) error 
 		}
 	}
 	return nil
+}
+
+// installRecords installs remote's records refspecs through the store's
+// records handle, then rechecks the binding, so config written into a
+// context bound meanwhile fails naming that config.
+func installRecords(ctx context.Context, s *store.Store, remote string) (ccsync.InstallReport, error) {
+	report, err := ccsync.Install(ctx, s.RecordsGit, remote)
+	if err != nil {
+		return ccsync.InstallReport{}, err
+	}
+	if err := s.CheckRecords(); err != nil {
+		return ccsync.InstallReport{}, fmt.Errorf("installed refspecs in %s: %w", recordsConfig(s), err)
+	}
+	return report, nil
 }
 
 // dirExists reports whether path is an existing directory.

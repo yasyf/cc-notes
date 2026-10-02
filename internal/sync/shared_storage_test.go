@@ -161,3 +161,63 @@ func TestSyncBoundRefusesReplacedBackend(t *testing.T) {
 	}
 	f.assertThinUntouched(t)
 }
+
+// TestSyncBoundResolvesRelativeRemoteFromSource pins the transport working
+// directory: a bound sync runs git from the source's working tree, so a
+// relative remote URL or pushurl reaches the sibling origin.git that git run
+// inside the source reaches, never a repository nested inside the source.
+func TestSyncBoundResolvesRelativeRemoteFromSource(t *testing.T) {
+	rows := []struct {
+		name   string
+		remote func(t *testing.T, source, sibling string)
+	}{
+		{name: "relative url", remote: func(t *testing.T, source, _ string) {
+			gittest.Git(t, source, "remote", "add", "origin", "../origin.git")
+		}},
+		{name: "relative pushurl", remote: func(t *testing.T, source, sibling string) {
+			gittest.Git(t, source, "remote", "add", "origin", sibling)
+			gittest.Git(t, source, "remote", "set-url", "--push", "origin", "../origin.git")
+		}},
+	}
+	for _, tc := range rows {
+		t.Run(tc.name, func(t *testing.T) {
+			gittest.ScrubEnv(t)
+			root := t.TempDir()
+			source, sibling, nested := filepath.Join(root, "source"), filepath.Join(root, "origin.git"), filepath.Join(root, "source", "origin.git")
+			gittest.Git(t, root, "init", "-q", "-b", "main", "source")
+			gittest.Git(t, source, "config", "user.name", "Test User")
+			gittest.Git(t, source, "config", "user.email", "test@example.com")
+			gittest.Git(t, source, "commit", "-q", "--allow-empty", "-m", "base")
+			gittest.Git(t, root, "init", "-q", "--bare", "origin.git")
+			gittest.Git(t, source, "init", "-q", "--bare", "origin.git")
+			tc.remote(t, source, sibling)
+			checkout := filepath.Join(root, "checkout")
+			gittest.Git(t, root, "clone", "-q", "--no-local", "--depth=1", "--single-branch", "file://"+source, "checkout")
+			gittest.Git(t, checkout, "config", "user.name", "Test User")
+			gittest.Git(t, checkout, "config", "user.email", "test@example.com")
+			if _, err := store.Bind(t.Context(), checkout, source); err != nil {
+				t.Fatalf("Bind(checkout, source): %v", err)
+			}
+			s, err := store.Open(checkout)
+			if err != nil {
+				t.Fatalf("Open(checkout): %v", err)
+			}
+			note := createNote(t, s, "routed through the source")
+			ref := refs.For(model.KindNote, note.ID)
+
+			if report := sync(t, s); report.Pushed != 1 {
+				t.Fatalf("sync report = %+v, want 1 pushed", report)
+			}
+			want := map[string]string{ref: gittest.Git(t, source, "rev-parse", "--verify", ref)}
+			if got := ccRefs(t, sibling); !reflect.DeepEqual(got, want) {
+				t.Fatalf("sibling origin.git refs = %v, want %v", got, want)
+			}
+			if got := ccRefs(t, nested); len(got) != 0 {
+				t.Fatalf("the repository nested inside the source received %v: the relative URL resolved from the git directory", got)
+			}
+			if got := gittest.Git(t, source, "ls-remote", "--refs", "origin", ref); !strings.HasSuffix(got, "\t"+ref) {
+				t.Fatalf("git ls-remote origin inside the source = %q, want %s where the bound sync pushed", got, ref)
+			}
+		})
+	}
+}

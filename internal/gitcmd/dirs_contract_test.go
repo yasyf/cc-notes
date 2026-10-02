@@ -106,7 +106,7 @@ func TestDirsRepositoryLayouts(t *testing.T) {
 	for _, name := range []string{"normal non-bare repo", "linked worktree", "bare repo"} {
 		t.Run("backend on "+name, func(t *testing.T) {
 			common := commonDirs[name]
-			backend := gitcmd.Backend(common)
+			backend := gitcmd.Backend(common, common)
 			gitDir, commonDir, _, err := backend.Dirs(t.Context())
 			if err != nil {
 				t.Fatalf("Backend(%q).Dirs: %v", common, err)
@@ -133,7 +133,7 @@ func TestDirsRepositoryLayouts(t *testing.T) {
 			}
 		})
 	}
-	backend := gitcmd.Backend(commonDirs["normal non-bare repo"])
+	backend := gitcmd.Backend(commonDirs["normal non-bare repo"], normal)
 	gittest.Git(t, normal, "update-ref", "refs/cc-notes/notes/b", "HEAD")
 	gittest.Git(t, normal, "update-ref", "refs/cc-notes/notes/a", "HEAD")
 	first, err := backend.FirstRef(t.Context(), "refs/cc-notes/")
