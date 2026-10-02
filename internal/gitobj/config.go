@@ -13,6 +13,7 @@ import (
 // config file at path, in file order, decoding exactly that file: no
 // includes, no other scope, no environment. A missing file holds no values.
 func ConfigValues(path, section, key string) ([]string, error) {
+	//nolint:gosec // G304: path is a git config file the caller located inside a repository's git directories.
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil

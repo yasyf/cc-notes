@@ -42,7 +42,7 @@ func Bind(ctx context.Context, contextDir, sourceDir string) (BindResult, error)
 	config := filepath.Join(ctxCommon, "config")
 	info, err := os.Lstat(config)
 	if err != nil {
-		return BindResult{}, &BindingError{Config: config, Err: fmt.Errorf("%w: %v", ErrBindingMalformed, err)}
+		return BindResult{}, &BindingError{Config: config, Err: fmt.Errorf("%w: %w", ErrBindingMalformed, err)}
 	}
 	if !info.Mode().IsRegular() {
 		return BindResult{}, &BindingError{Config: config, Err: fmt.Errorf("%w: %s is not a regular file", ErrBindingMalformed, config)}
@@ -102,8 +102,11 @@ func Bind(ctx context.Context, contextDir, sourceDir string) (BindResult, error)
 			return fmt.Errorf("publish binding: %w", err)
 		}
 		published, bound, err := readBinding(lock)
-		if err != nil || !bound || published != want {
-			return fmt.Errorf("publish binding: wrote %s, read back %+v (bound %v): %v", want, published, bound, err)
+		if err != nil {
+			return fmt.Errorf("publish binding: wrote %s, read back failed: %w", want, err)
+		}
+		if !bound || published != want {
+			return fmt.Errorf("publish binding: wrote %s, read back %+v (bound %v)", want, published, bound)
 		}
 		return nil
 	}
@@ -134,6 +137,7 @@ func Bind(ctx context.Context, contextDir, sourceDir string) (BindResult, error)
 // of racing; an existing lock is refused, never waited on or removed.
 func replaceConfig(config string, perm fs.FileMode, edit func(lock string) error) error {
 	lock := config + ".lock"
+	//nolint:gosec // G304: lock is the context's own config.lock under its git common directory.
 	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 	if errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("%s exists: another process is writing the context config; retry once it finishes", lock)
@@ -158,11 +162,12 @@ func replaceConfig(config string, perm fs.FileMode, edit func(lock string) error
 }
 
 func seedLock(lock *os.File, config string) error {
+	//nolint:gosec // G304: config is the context's own config file under its git common directory.
 	current, err := os.OpenFile(config, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return err
 	}
-	defer current.Close()
+	defer func() { _ = current.Close() }()
 	_, err = io.Copy(lock, current)
 	return err
 }

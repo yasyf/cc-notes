@@ -391,7 +391,7 @@ func TestOpenContextBindingFailures(t *testing.T) {
 				if s != nil {
 					t.Fatalf("Open(%s) returned a store under a broken binding", dir)
 				}
-				assertBindingError(t, err, tc.sentinel, f.config(), wantSource)
+				_ = assertBindingError(t, err, tc.sentinel, f.config(), wantSource)
 			}
 			f.assertNoRecords(t)
 		})
@@ -528,7 +528,7 @@ func TestCheckRecordsPreOpened(t *testing.T) {
 				}
 				return
 			}
-			assertBindingError(t, err, tc.sentinel, f.config(), wantSource)
+			_ = assertBindingError(t, err, tc.sentinel, f.config(), wantSource)
 			if again := s.CheckRecords(); !errors.Is(again, tc.sentinel) {
 				t.Fatalf("CheckRecords stopped failing on the second call: %v", again)
 			}

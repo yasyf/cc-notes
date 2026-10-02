@@ -16,5 +16,6 @@ func StatIdentity(info os.FileInfo) (ctime int64, inode uint64) {
 // path keeps until the file is replaced.
 func FileID(info os.FileInfo) (device, inode uint64) {
 	st := info.Sys().(*syscall.Stat_t)
+	//nolint:gosec // G115: Dev is int32 on darwin; the unsigned bit pattern is the device number, sign extension would corrupt it.
 	return uint64(uint32(st.Dev)), st.Ino
 }

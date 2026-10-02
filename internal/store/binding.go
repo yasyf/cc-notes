@@ -110,7 +110,7 @@ func parseBinding(raw string) (Binding, error) {
 	dec.DisallowUnknownFields()
 	var wire bindingWire
 	if err := dec.Decode(&wire); err != nil {
-		return Binding{}, fmt.Errorf("%w: %v", ErrBindingMalformed, err)
+		return Binding{}, fmt.Errorf("%w: %w", ErrBindingMalformed, err)
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return Binding{}, fmt.Errorf("%w: trailing data after the binding object", ErrBindingMalformed)
@@ -134,7 +134,7 @@ func readBinding(configPath string) (Binding, bool, error) {
 	section, key, _ := strings.Cut(bindingKey, ".")
 	values, err := gitobj.ConfigValues(configPath, section, key)
 	if err != nil {
-		return Binding{}, false, fmt.Errorf("%w: %v", ErrBindingMalformed, err)
+		return Binding{}, false, fmt.Errorf("%w: %w", ErrBindingMalformed, err)
 	}
 	switch len(values) {
 	case 0:
@@ -156,7 +156,7 @@ func readBinding(configPath string) (Binding, bool, error) {
 func validateBackend(b Binding, context fileID) (configStamp, error) {
 	info, err := os.Stat(b.CommonDir)
 	if err != nil {
-		return configStamp{}, fmt.Errorf("%w: %v", ErrBackendUnavailable, err)
+		return configStamp{}, fmt.Errorf("%w: %w", ErrBackendUnavailable, err)
 	}
 	if !info.IsDir() {
 		return configStamp{}, fmt.Errorf("%w: %s is not a directory", ErrBackendUnavailable, b.CommonDir)
@@ -175,7 +175,7 @@ func validateBackend(b Binding, context fileID) (configStamp, error) {
 		path := filepath.Join(b.CommonDir, entry)
 		info, err := os.Lstat(path)
 		if err != nil {
-			return configStamp{}, fmt.Errorf("%w: %s is not a git common directory: %v", ErrBackendUnavailable, b.CommonDir, err)
+			return configStamp{}, fmt.Errorf("%w: %s is not a git common directory: %w", ErrBackendUnavailable, b.CommonDir, err)
 		}
 		if info.Mode()&fs.ModeSymlink != 0 {
 			return configStamp{}, fmt.Errorf("%w: %s is a symlink", ErrBackendRedirects, path)
@@ -183,7 +183,7 @@ func validateBackend(b Binding, context fileID) (configStamp, error) {
 	}
 	config, err := os.Stat(filepath.Join(b.CommonDir, "config"))
 	if err != nil {
-		return configStamp{}, fmt.Errorf("%w: %v", ErrBackendUnavailable, err)
+		return configStamp{}, fmt.Errorf("%w: %w", ErrBackendUnavailable, err)
 	}
 	if err := backendRedirects(b.CommonDir); err != nil {
 		return configStamp{}, err
@@ -196,7 +196,7 @@ func validateBackend(b Binding, context fileID) (configStamp, error) {
 func backendRedirects(commonDir string) error {
 	target, bound, err := readBinding(filepath.Join(commonDir, "config"))
 	if err != nil {
-		return fmt.Errorf("%w: %s carries a %s value that does not parse: %v", ErrBackendRedirects, commonDir, bindingKey, err)
+		return fmt.Errorf("%w: %s carries a %s value that does not parse: %w", ErrBackendRedirects, commonDir, bindingKey, err)
 	}
 	if bound {
 		return fmt.Errorf("%w: %s is bound to %s", ErrBackendRedirects, commonDir, target.CommonDir)
@@ -209,7 +209,7 @@ func backendRedirects(commonDir string) error {
 func openRecords(b Binding) (*gitobj.Repo, error) {
 	repo, err := gitobj.Open(b.CommonDir, b.CommonDir)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrBackendUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrBackendUnavailable, err)
 	}
 	return repo, nil
 }
@@ -249,7 +249,7 @@ func openBinding(commonDir string) (*storageBinding, error) {
 	config := filepath.Join(commonDir, "config")
 	info, err := os.Stat(config)
 	if err != nil {
-		return nil, &BindingError{Config: config, Err: fmt.Errorf("%w: %v", ErrBindingMalformed, err)}
+		return nil, &BindingError{Config: config, Err: fmt.Errorf("%w: %w", ErrBindingMalformed, err)}
 	}
 	b, bound, err := readBinding(config)
 	if err != nil {
@@ -261,7 +261,7 @@ func openBinding(commonDir string) (*storageBinding, error) {
 	}
 	context, err := fileIDOf(commonDir)
 	if err != nil {
-		return nil, w.fail(fmt.Errorf("%w: cannot stat the context common directory: %v", ErrBackendUnavailable, err))
+		return nil, w.fail(fmt.Errorf("%w: cannot stat the context common directory: %w", ErrBackendUnavailable, err))
 	}
 	backendStamp, err := validateBackend(b, context)
 	if err != nil {
@@ -294,7 +294,7 @@ func (w *storageBinding) check() error {
 	backend := w.binding.CommonDir
 	info, err := os.Stat(backend)
 	if err != nil {
-		return w.fail(fmt.Errorf("%w: %v", ErrBackendUnavailable, err))
+		return w.fail(fmt.Errorf("%w: %w", ErrBackendUnavailable, err))
 	}
 	if device, inode := gitobj.FileID(info); device != w.binding.Device || inode != w.binding.Inode {
 		return w.fail(fmt.Errorf("%w: bound device %d inode %d, found device %d inode %d", ErrBackendReplaced, w.binding.Device, w.binding.Inode, device, inode))
@@ -303,7 +303,7 @@ func (w *storageBinding) check() error {
 	case err == nil:
 		return w.fail(fmt.Errorf("%w: %s now carries a commondir file", ErrBackendRedirects, backend))
 	case !errors.Is(err, fs.ErrNotExist):
-		return w.fail(fmt.Errorf("%w: %s/commondir: %v", ErrBackendRedirects, backend, err))
+		return w.fail(fmt.Errorf("%w: %s/commondir: %w", ErrBackendRedirects, backend, err))
 	}
 	if err := w.refresh(filepath.Join(backend, "config"), &w.backendStamp, ErrBackendUnavailable, func() error { return backendRedirects(backend) }); err != nil {
 		return w.fail(err)
@@ -316,7 +316,7 @@ func (w *storageBinding) check() error {
 func (w *storageBinding) refresh(path string, last *configStamp, missing error, reread func() error) error {
 	info, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("%w: %v", missing, err)
+		return fmt.Errorf("%w: %w", missing, err)
 	}
 	stamp := stampOf(info)
 	w.mu.Lock()

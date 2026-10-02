@@ -293,7 +293,6 @@ func TestBoundStoreCAS(t *testing.T) {
 }
 
 func TestBoundStoreIgnoresInheritedRouting(t *testing.T) {
-	ctx := t.Context()
 	f := newSharedFixture(t)
 	f.bind(t)
 	bare := gittest.InitBare(t)
@@ -301,6 +300,7 @@ func TestBoundStoreIgnoresInheritedRouting(t *testing.T) {
 
 	var kept, doomed model.Note
 	t.Run("mutate under routing variables aimed at the thin repository", func(t *testing.T) {
+		ctx := t.Context()
 		t.Setenv("GIT_DIR", f.thinCommon)
 		t.Setenv("GIT_COMMON_DIR", f.thinCommon)
 		t.Setenv("GIT_OBJECT_DIRECTORY", filepath.Join(f.thinCommon, "objects"))
@@ -381,7 +381,7 @@ func TestBoundStoreFailsAfterBackendReplaced(t *testing.T) {
 	}
 	for _, op := range ops {
 		t.Run(op.name, func(t *testing.T) {
-			assertBindingError(t, op.run(), ErrBackendReplaced, f.config(), f.sourceCommon)
+			_ = assertBindingError(t, op.run(), ErrBackendReplaced, f.config(), f.sourceCommon)
 		})
 	}
 	f.assertNoRecords(t)

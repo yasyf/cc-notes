@@ -31,7 +31,7 @@ type gitShim struct {
 
 func (sh gitShim) install(t *testing.T) {
 	t.Helper()
-	real, err := exec.LookPath("git")
+	realGit, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatalf("find git: %v", err)
 	}
@@ -41,16 +41,16 @@ func (sh gitShim) install(t *testing.T) {
 	fmt.Fprintf(&b, "#!/bin/sh\ncase \"$*\" in\n%s)\n", sh.Pattern)
 	if sh.N > 0 {
 		count := quote(filepath.Join(dir, "count"))
-		fmt.Fprintf(&b, "\tn=$(($(cat %s 2>/dev/null || echo 0) + 1))\n\techo \"$n\" >%s\n\t[ \"$n\" -eq %d ] || exec %s \"$@\"\n", count, count, sh.N, quote(real))
+		fmt.Fprintf(&b, "\tn=$(($(cat %s 2>/dev/null || echo 0) + 1))\n\techo \"$n\" >%s\n\t[ \"$n\" -eq %d ] || exec %s \"$@\"\n", count, count, sh.N, quote(realGit))
 	}
 	for _, argv := range sh.Interleave {
-		b.WriteString("\t" + quote(real))
+		b.WriteString("\t" + quote(realGit))
 		for _, arg := range argv {
 			b.WriteString(" " + quote(arg))
 		}
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "\t;;\nesac\nexec %s \"$@\"\n", quote(real))
+	fmt.Fprintf(&b, "\t;;\nesac\nexec %s \"$@\"\n", quote(realGit))
 	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(b.String()), 0o700); err != nil {
 		t.Fatalf("write git shim: %v", err)
 	}
@@ -81,7 +81,7 @@ type gitGate struct {
 
 func installGitGates(t *testing.T, gates ...*gitGate) {
 	t.Helper()
-	real, err := exec.LookPath("git")
+	realGit, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatalf("find git: %v", err)
 	}
@@ -97,7 +97,7 @@ func installGitGates(t *testing.T, gates ...*gitGate) {
 		fifo, passed := quote(gate.fifo), quote(gate.fifo+".passed")
 		fmt.Fprintf(&b, "%s)\n\t[ -e %s ] || { : >%s; cat %s >/dev/null; }\n\t;;\n", gate.Pattern, passed, passed, fifo)
 	}
-	fmt.Fprintf(&b, "esac\nexec %s \"$@\"\n", quote(real))
+	fmt.Fprintf(&b, "esac\nexec %s \"$@\"\n", quote(realGit))
 	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(b.String()), 0o700); err != nil {
 		t.Fatalf("write git shim: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestCheckRecordsBackendRouting(t *testing.T) {
 					}
 					continue
 				}
-				assertBindingError(t, err, tc.sentinel, f.config(), f.sourceCommon)
+				_ = assertBindingError(t, err, tc.sentinel, f.config(), f.sourceCommon)
 			}
 			if _, err := Open(f.worktreeB); (err == nil) != (tc.sentinel == nil) || (err != nil && !errors.Is(err, tc.sentinel)) {
 				t.Fatalf("Open after the change = %v, want %v", err, tc.sentinel)
@@ -287,7 +287,7 @@ func TestBindIdempotentRevalidatesBackend(t *testing.T) {
 			}
 			tc.sabotage(t, backend)
 			_, err = Bind(t.Context(), f.thin, f.source)
-			assertBindingError(t, err, tc.sentinel, f.config(), backendCommon)
+			_ = assertBindingError(t, err, tc.sentinel, f.config(), backendCommon)
 		})
 	}
 }
@@ -409,7 +409,7 @@ func TestPublishRefRechecksBinding(t *testing.T) {
 	shimGit(t, `*"update-ref --stdin"*`, "config", "--file", f.config(), bindingKey, bindingFor(t, f.sourceCommon).String())
 
 	_, err = s.Create(t.Context(), noteOps("raced"))
-	assertBindingError(t, err, ErrBindingChanged, f.config(), "")
+	_ = assertBindingError(t, err, ErrBindingChanged, f.config(), "")
 	refs := gittest.Git(t, f.thin, "for-each-ref", "--format=%(refname)", "refs/cc-notes/notes/")
 	if refs == "" || strings.Contains(refs, "\n") {
 		t.Fatalf("context refs = %q, want exactly the one published ref", refs)
@@ -444,7 +444,7 @@ func TestSourceIndexPublishRechecksBinding(t *testing.T) {
 
 	operationID := strings.Repeat("1", 64)
 	_, err = index.CommitOperation(t.Context(), head, operationID, "created", sha256.Sum256([]byte("request")), []gitcmd.RefUpdate{prepared.RefUpdate()})
-	assertBindingError(t, err, ErrBindingChanged, f.config(), f.sourceCommon)
+	_ = assertBindingError(t, err, ErrBindingChanged, f.config(), f.sourceCommon)
 	for _, ref := range []string{prepared.Ref, sourceindex.Ref, "refs/cc-notes-source-v1/operations/" + operationID} {
 		if !strings.Contains(err.Error(), ref) {
 			t.Fatalf("error %q does not name the published ref %s", err, ref)
@@ -487,7 +487,7 @@ func TestBindKeepsAcknowledgedRecordReachable(t *testing.T) {
 
 	releaseStale()
 	staleErr := <-staleDone
-	assertBindingError(t, staleErr, ErrBindingChanged, f.config(), "")
+	_ = assertBindingError(t, staleErr, ErrBindingChanged, f.config(), "")
 	hidden := gittest.Git(t, f.thin, "for-each-ref", "--format=%(refname)", "refs/cc-notes/")
 	if !strings.HasPrefix(hidden, "refs/cc-notes/notes/") || strings.Contains(hidden, "\n") {
 		t.Fatalf("context refs = %q, want exactly the stale writer's note", hidden)
