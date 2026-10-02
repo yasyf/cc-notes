@@ -8,16 +8,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/refs"
 )
 
-var (
-	errBindingPresent    = errors.New("binding already present")
-	errBindingSuperseded = errors.New("binding replaced meanwhile and left in place")
-)
+var errBindingPresent = errors.New("binding already present")
 
 // BindResult reports one Bind: the context's common directory, the binding it
 // now carries, and whether this call published it.
@@ -32,10 +30,10 @@ type BindResult struct {
 // file, through git's own lockfile protocol, and reads the source without
 // modifying it. A source that is itself bound contributes its own backend, so
 // the published binding is always direct: bindings never chain. The backend
-// is validated before an identical existing binding is accepted, and a record
-// that lands in the context while the binding is being published rolls the
-// binding back, unless another writer has already replaced it, in which case
-// the newer binding stays.
+// is validated before an identical existing binding is accepted. A record that
+// lands in the context while the binding is being published is reported as
+// ErrContextHasRecords naming every ref the binding hides; the binding stays,
+// since nothing rewrites the context config after publication.
 func Bind(ctx context.Context, contextDir, sourceDir string) (BindResult, error) {
 	_, ctxCommon, _, err := gitcmd.Git{Dir: contextDir}.Dirs(ctx)
 	if err != nil {
@@ -115,32 +113,18 @@ func Bind(ctx context.Context, contextDir, sourceDir string) (BindResult, error)
 	case err != nil:
 		return BindResult{}, err
 	}
-	held, err = records.FirstRef(ctx, refs.Namespace)
+	hidden, err := records.RefEntries(ctx, refs.Namespace)
 	if err != nil {
 		return BindResult{}, fmt.Errorf("probe context records after publishing: %w", err)
 	}
-	if held == "" {
+	if len(hidden) == 0 {
 		return BindResult{Context: ctxCommon, Binding: want, Changed: true}, nil
 	}
-	unpublish := func(lock string) error {
-		current, bound, err := readBinding(lock)
-		switch {
-		case err != nil:
-			return err
-		case !bound:
-			return fmt.Errorf("%w: already removed", errBindingSuperseded)
-		case current != want:
-			return fmt.Errorf("%w: now bound to %s", errBindingSuperseded, current.CommonDir)
-		}
-		return records.ConfigFileUnset(ctx, lock, bindingKey)
+	names := make([]string, len(hidden))
+	for i, entry := range hidden {
+		names[i] = entry.Ref
 	}
-	switch err := replaceConfig(config, info.Mode().Perm(), unpublish); {
-	case errors.Is(err, errBindingSuperseded):
-		return BindResult{}, fail(fmt.Errorf("%w: %s appeared while binding; %v", ErrContextHasRecords, held, err))
-	case err != nil:
-		return BindResult{}, fail(fmt.Errorf("%w: %s appeared while binding, and removing the binding failed: %v", ErrContextHasRecords, held, err))
-	}
-	return BindResult{}, fail(fmt.Errorf("%w: %s", ErrContextHasRecords, held))
+	return BindResult{}, fail(fmt.Errorf("%w: binding to %s was published and stays; it hides %s", ErrContextHasRecords, want.CommonDir, strings.Join(names, ", ")))
 }
 
 // replaceConfig publishes a new version of config through git's own lockfile

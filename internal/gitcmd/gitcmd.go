@@ -687,15 +687,6 @@ func (g Git) ConfigFileSet(ctx context.Context, path, key, value string) error {
 	return nil
 }
 
-// ConfigFileUnset removes key from exactly the config file at path via git
-// config --file --unset.
-func (g Git) ConfigFileUnset(ctx context.Context, path, key string) error {
-	if _, err := g.run(ctx, "", "config", "--file", path, "--unset", key); err != nil {
-		return fmt.Errorf("config unset %s in %s: %w", key, path, err)
-	}
-	return nil
-}
-
 // ConfigGetAll returns every value of key in the repository-local config,
 // in order, or an empty slice when the key is unset.
 func (g Git) ConfigGetAll(ctx context.Context, key string) ([]string, error) {

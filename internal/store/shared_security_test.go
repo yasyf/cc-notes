@@ -8,11 +8,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/sourceindex"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // gitShim is a git wrapper put first on PATH: when "$*" matches Pattern (an
@@ -67,6 +70,63 @@ func symlinkOver(t *testing.T, path, target string) {
 	if err := os.Symlink(target, path); err != nil {
 		t.Fatalf("symlink %s -> %s: %v", path, target, err)
 	}
+}
+
+// gitGate parks the first git invocation whose "$*" matches Pattern (an sh
+// case glob) until the test releases it, through a fifo the shim reads.
+type gitGate struct {
+	Pattern string
+	fifo    string
+}
+
+func installGitGates(t *testing.T, gates ...*gitGate) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("find git: %v", err)
+	}
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+	dir := t.TempDir()
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\ncase \"$*\" in\n")
+	for i, gate := range gates {
+		gate.fifo = filepath.Join(dir, fmt.Sprintf("gate-%d", i))
+		if err := syscall.Mkfifo(gate.fifo, 0o600); err != nil {
+			t.Fatalf("mkfifo %s: %v", gate.fifo, err)
+		}
+		fifo, passed := quote(gate.fifo), quote(gate.fifo+".passed")
+		fmt.Fprintf(&b, "%s)\n\t[ -e %s ] || { : >%s; cat %s >/dev/null; }\n\t;;\n", gate.Pattern, passed, passed, fifo)
+	}
+	fmt.Fprintf(&b, "esac\nexec %s \"$@\"\n", quote(real))
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(b.String()), 0o700); err != nil {
+		t.Fatalf("write git shim: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// arrive blocks until git reaches the gate and returns the release; an
+// operation that reports on done first never reached it, which fails the test.
+func (g *gitGate) arrive(t *testing.T, done <-chan error) (release func()) {
+	t.Helper()
+	opened := make(chan *os.File, 1)
+	failed := make(chan error, 1)
+	go func() {
+		w, err := os.OpenFile(g.fifo, os.O_WRONLY, 0)
+		if err != nil {
+			failed <- err
+			return
+		}
+		opened <- w
+	}()
+	select {
+	case w := <-opened:
+		return func() { _ = w.Close() }
+	case err := <-failed:
+		t.Fatalf("open gate %s: %v", g.fifo, err)
+	case err := <-done:
+		t.Fatalf("operation returned %v before git reached gate %s", err, g.Pattern)
+	}
+	return nil
 }
 
 // TestCheckRecordsBackendRouting pins S3: a bound store's recheck refuses a
@@ -294,35 +354,51 @@ func TestBindRefusesHeldConfigLock(t *testing.T) {
 	}
 }
 
-// TestBindRollsBackWhenRecordAppears pins S5(b): a record that lands in the
-// context between the emptiness probe and the publish is caught by the
-// post-publish probe; the binding is removed again and the refusal names the
-// ref, so the record is never hidden.
-func TestBindRollsBackWhenRecordAppears(t *testing.T) {
-	f := newSharedFixture(t)
-	const raced = "refs/cc-notes/notes/raced"
-	shimGit(t, `*"config --file "*"cc-notes.storage"*`, "-C", f.thin, "update-ref", raced, "HEAD")
+// TestBindKeepsPublishedBindingNamingHiddenRecords pins the revised S5(b):
+// records landing after the emptiness probe make Bind refuse naming each
+// hidden ref, and the context config is never rewritten after publication.
+func TestBindKeepsPublishedBindingNamingHiddenRecords(t *testing.T) {
+	raced := []string{"refs/cc-notes/notes/raced", "refs/cc-notes/tasks/raced"}
+	rows := []struct {
+		name    string
+		pattern string
+		rebound bool
+	}{
+		{name: "records land during the publish", pattern: `*"config --file "*"cc-notes.storage"*`},
+		{name: "another binder replaced the binding before the probe", pattern: `*"for-each-ref --format="*`, rebound: true},
+	}
+	for _, tc := range rows {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSharedFixture(t)
+			want := bindingFor(t, f.sourceCommon)
+			var interleave [][]string
+			if tc.rebound {
+				want = bindingFor(t, filepath.Join(initSourceRepo(t), ".git"))
+				interleave = append(interleave, []string{"config", "--file", f.config(), bindingKey, want.String()})
+			}
+			for _, ref := range raced {
+				interleave = append(interleave, []string{"-C", f.thin, "update-ref", ref, "HEAD"})
+			}
+			gitShim{Pattern: tc.pattern, N: 1, Interleave: interleave}.install(t)
 
-	_, err := Bind(t.Context(), f.thin, f.source)
-	be := assertBindingError(t, err, ErrContextHasRecords, f.config(), f.sourceCommon)
-	if !strings.Contains(be.Error(), raced) {
-		t.Fatalf("refusal %q does not name %s", be, raced)
-	}
-	if _, bound, err := readBinding(f.config()); err != nil || bound {
-		t.Fatalf("binding left published after the rollback (bound %v, %v)", bound, err)
-	}
-	if _, err := os.Lstat(f.config() + ".lock"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a lock was left behind: %v", err)
-	}
-	s, err := Open(f.thin)
-	if err != nil {
-		t.Fatalf("Open after the rollback: %v", err)
-	}
-	if _, bound := s.Binding(); bound {
-		t.Fatal("store opened bound after the rollback")
-	}
-	if got := gittest.Git(t, f.thin, "for-each-ref", "--format=%(refname)", "refs/cc-notes/"); got != raced {
-		t.Fatalf("context refs = %q, want exactly %s", got, raced)
+			_, err := Bind(t.Context(), f.thin, f.source)
+			be := assertBindingError(t, err, ErrContextHasRecords, f.config(), f.sourceCommon)
+			if !strings.Contains(be.Error(), "published") || !strings.Contains(be.Error(), strings.Join(raced, ", ")) {
+				t.Fatalf("refusal %q does not say the binding was published naming %v", be, raced)
+			}
+			if got, bound, err := readBinding(f.config()); err != nil || !bound || got != want {
+				t.Fatalf("binding after the refusal = %+v (bound %v, %v), want %+v", got, bound, err, want)
+			}
+			if _, err := os.Lstat(f.config() + ".lock"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a lock was left behind: %v", err)
+			}
+			if got, bound := openStore(t, f.thin).Binding(); !bound || got != want {
+				t.Fatalf("Open after the refusal bound to %+v (bound %v), want %+v", got, bound, want)
+			}
+			if got := gittest.Git(t, f.thin, "for-each-ref", "--format=%(refname)", "refs/cc-notes/"); got != strings.Join(raced, "\n") {
+				t.Fatalf("context refs = %q, want exactly %v", got, raced)
+			}
+		})
 	}
 }
 
@@ -388,32 +464,58 @@ func TestSourceIndexPublishRechecksBinding(t *testing.T) {
 	f.assertNoRecords(t)
 }
 
-// TestBindRollbackPreservesNewerBinding pins the scope of the S5(b) rollback:
-// when a record appears while binding and another writer has already replaced
-// the binding, Bind refuses with ErrContextHasRecords naming both and leaves
-// the newer binding in place instead of unbinding a context it no longer owns.
-func TestBindRollbackPreservesNewerBinding(t *testing.T) {
+// TestBindKeepsAcknowledgedRecordReachable pins the R1 schedule: a stale
+// unbound writer lands a context ref after Bind published and a bound writer
+// was acknowledged. Both fail naming that ref; the binding stays, so a fresh
+// open still reaches the acknowledged record.
+func TestBindKeepsAcknowledgedRecordReachable(t *testing.T) {
 	f := newSharedFixture(t)
-	other := bindingFor(t, filepath.Join(initSourceRepo(t), ".git"))
-	const raced = "refs/cc-notes/notes/raced"
-	gitShim{Pattern: `*"for-each-ref --count=1"*`, N: 2, Interleave: [][]string{
-		{"config", "--file", f.config(), bindingKey, other.String()},
-		{"-C", f.thin, "update-ref", raced, "HEAD"},
-	}}.install(t)
+	stale := openStore(t, f.thin)
+	staleGate := &gitGate{Pattern: `*"-C ` + stale.RecordsGit.Dir + ` "*"update-ref --stdin"*`}
+	bindGate := &gitGate{Pattern: `*"--git-dir=` + f.thinCommon + ` for-each-ref --format="*`}
+	installGitGates(t, staleGate, bindGate)
 
-	_, err := Bind(t.Context(), f.thin, f.source)
-	be := assertBindingError(t, err, ErrContextHasRecords, f.config(), f.sourceCommon)
-	if !strings.Contains(be.Error(), raced) || !strings.Contains(be.Error(), other.CommonDir) {
-		t.Fatalf("refusal %q does not name %s and %s", be, raced, other.CommonDir)
+	staleDone := make(chan error, 1)
+	go func() {
+		_, err := stale.Create(t.Context(), noteOps("stale context writer"))
+		staleDone <- err
+	}()
+	releaseStale := staleGate.arrive(t, staleDone)
+	bindDone := make(chan error, 1)
+	go func() {
+		_, err := Bind(t.Context(), f.thin, f.source)
+		bindDone <- err
+	}()
+	releaseBind := bindGate.arrive(t, bindDone)
+	acknowledged, err := openStore(t, f.thin).Create(t.Context(), noteOps("acknowledged in backend"))
+	if err != nil {
+		t.Fatalf("bound Create while Bind is parked: %v", err)
 	}
-	if got, bound, err := readBinding(f.config()); err != nil || !bound || got != other {
-		t.Fatalf("binding after the rollback = %+v (bound %v, %v), want %+v", got, bound, err, other)
+	ref := refs.For(model.KindNote, acknowledged.(model.Note).ID)
+
+	releaseStale()
+	staleErr := <-staleDone
+	assertBindingError(t, staleErr, ErrBindingChanged, f.config(), "")
+	hidden := gittest.Git(t, f.thin, "for-each-ref", "--format=%(refname)", "refs/cc-notes/")
+	if !strings.HasPrefix(hidden, "refs/cc-notes/notes/") || strings.Contains(hidden, "\n") {
+		t.Fatalf("context refs = %q, want exactly the stale writer's note", hidden)
 	}
-	if _, err := os.Lstat(f.config() + ".lock"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a lock was left behind: %v", err)
+	if !strings.Contains(staleErr.Error(), hidden) {
+		t.Fatalf("stale write error %q does not name %s", staleErr, hidden)
 	}
-	if got := gittest.Git(t, f.thin, "for-each-ref", "--format=%(refname)", "refs/cc-notes/"); got != raced {
-		t.Fatalf("context refs = %q, want exactly %s", got, raced)
+
+	releaseBind()
+	be := assertBindingError(t, <-bindDone, ErrContextHasRecords, f.config(), f.sourceCommon)
+	if !strings.Contains(be.Error(), "published") || !strings.Contains(be.Error(), hidden) {
+		t.Fatalf("Bind refusal %q does not say the binding was published hiding %s", be, hidden)
+	}
+	want := bindingFor(t, f.sourceCommon)
+	reopened := openStore(t, f.thin)
+	if got, bound := reopened.Binding(); !bound || got != want {
+		t.Fatalf("context after the refusal bound to %+v (bound %v), want %+v", got, bound, want)
+	}
+	if _, err := reopened.Load(t.Context(), ref); err != nil {
+		t.Fatalf("acknowledged record %s unreachable from the context: %v", ref, err)
 	}
 }
 
