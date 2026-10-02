@@ -46,6 +46,7 @@ const (
 	maxRefAttempts = 16
 	// refConcurrency bounds the per-ref fan-out of reconcile.
 	refConcurrency = 8
+	pushArgBudget  = 256 << 10
 )
 
 var (
@@ -168,12 +169,9 @@ func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report
 		if err := e.uploadAttachments(ctx, secluded); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		if pending == 0 {
-			return e.finish(ctx, round, 0)
-		}
-		switch err := s.Git.Push(ctx, remote, pushArgs(secluded)...); {
+		switch err := e.push(ctx, pending); {
 		case err == nil:
-			return e.finish(ctx, round, pending)
+			return e.finish(ctx, round, len(pending))
 		case errors.Is(err, gitcmd.ErrNonFastForward):
 		default:
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
@@ -271,6 +269,9 @@ func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA
 			scope[ref] = tip
 			continue
 		}
+		if localTip == tip {
+			continue
+		}
 		contains, err := e.store.Repo.IsAncestor(ctx, tip, localTip)
 		if err != nil {
 			return nil, err
@@ -282,29 +283,28 @@ func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA
 	return scope, nil
 }
 
-// pending counts the local refs the upcoming push would create or update,
-// leaving out every local entity, and returns the full secluded set the push
-// excludes. A pending ref the local policy keeps on this clone joins the set
-// before anything is pushed, so an entity written by a cc-notes predating the
-// policy never leaves on its first sync.
-func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (int, map[string]bool, error) {
-	local, err := e.store.Repo.ListPrefix(ctx, namespace)
+// pending returns the local refs the upcoming push would create or update,
+// sorted and leaving out every local entity, and the full secluded set the
+// push excludes. A pending ref the local policy keeps on this clone joins the
+// set before anything is pushed, so an entity written by a cc-notes predating
+// the policy never leaves on its first sync.
+func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) ([]string, map[string]bool, error) {
+	local, err := e.store.Git.Refs(ctx, namespace)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	secluded, err := e.store.Secluded()
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
-	var add []string
-	count := 0
+	var add, pending []string
 	for ref, tip := range local {
 		if remoteView[ref] == tip || secluded[ref] {
 			continue
 		}
 		reason, err := e.store.LocalReason(ctx, ref)
 		if err != nil {
-			return 0, nil, err
+			return nil, nil, err
 		}
 		if _, published := remoteView[ref]; published && store.Defaulted(reason) {
 			reason = ""
@@ -314,25 +314,40 @@ func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (
 			secluded[ref] = true
 			continue
 		}
-		count++
+		pending = append(pending, ref)
 	}
 	if len(add) > 0 {
 		if err := e.store.Seclude(ctx, add, nil); err != nil {
-			return 0, nil, err
+			return nil, nil, err
 		}
 	}
-	return count, secluded, nil
+	slices.Sort(pending)
+	return pending, secluded, nil
 }
 
-// pushArgs is the wildcard entity refspec plus one negative refspec per
-// secluded ref, sorted so the push argv is deterministic.
-func pushArgs(secluded map[string]bool) []string {
-	negatives := make([]string, 0, len(secluded))
-	for ref := range secluded {
-		negatives = append(negatives, "^"+ref)
+func (e *engine) push(ctx context.Context, pending []string) error {
+	for _, batch := range pushBatches(pending) {
+		if err := e.store.Git.Push(ctx, e.remote, batch...); err != nil {
+			return err
+		}
 	}
-	slices.Sort(negatives)
-	return append([]string{pushRefspec}, negatives...)
+	return nil
+}
+
+func pushBatches(pending []string) [][]string {
+	var batches [][]string
+	start, size := 0, 0
+	for i, ref := range pending {
+		if i > start && size+len(ref) > pushArgBudget {
+			batches = append(batches, pending[start:i])
+			start, size = i, 0
+		}
+		size += len(ref)
+	}
+	if start < len(pending) {
+		batches = append(batches, pending[start:])
+	}
+	return batches
 }
 
 // ensure folds tip into ref and tallies what it took.

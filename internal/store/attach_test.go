@@ -315,8 +315,8 @@ func TestReferencedAttachmentsKeepsCheckpointState(t *testing.T) {
 }
 
 // TestReferencedAttachmentsColdCache proves the scan does not depend on fold
-// cache state: a store reopened with an empty cache directory sees the same
-// set.
+// cache or attachment index state: a store reopened with an empty cache
+// directory and no index sees the same set.
 func TestReferencedAttachmentsColdCache(t *testing.T) {
 	s := initStore(t)
 	note, err := s.Create(t.Context(), noteOps("cold"))
@@ -331,10 +331,71 @@ func TestReferencedAttachmentsColdCache(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	reopened.cache = newFoldCache(t.TempDir(), foldCacheCap)
+	if err := os.Remove(filepath.Join(s.commonDir, attachIndexSubdir, attachIndexName)); err != nil {
+		t.Fatalf("remove attachment index: %v", err)
+	}
 	if cold := referenced(t, reopened); !reflect.DeepEqual(cold, warm) {
 		t.Fatalf("cold-cache referenced = %+v, want %+v", cold, warm)
 	}
 	if !strings.HasPrefix(warm[0].OID, "b") || warm[0].Size != 3 {
 		t.Fatalf("referenced = %+v, want oid %s size 3", warm, oidB)
+	}
+}
+
+func writeIndex(t *testing.T, s *Store, index attachIndex) {
+	t.Helper()
+	data, err := json.Marshal(index)
+	if err != nil {
+		t.Fatalf("marshal index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(s.commonDir, attachIndexSubdir, attachIndexName), data, 0o600); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+}
+
+func TestReferencedAttachmentsIndex(t *testing.T) {
+	s := initStore(t)
+	note, err := s.Create(t.Context(), noteOps("indexed"))
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	noteRef := refs.For(model.KindNote, note.EntityID())
+	attach(t, s, noteRef, "a.bin", oidA, 5)
+	referenced(t, s)
+
+	tip := gittest.Git(t, s.Git.Dir, "rev-parse", noteRef)
+	if got, want := s.readAttachIndex(), (attachIndex{
+		Generation: foldCacheGeneration,
+		Refs:       map[string]attachIndexEntry{noteRef: {Tip: model.SHA(tip), Attachments: []model.Attachment{{Name: "a.bin", OID: oidA, Size: 5}}}},
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("index after scan = %+v, want %+v", got, want)
+	}
+
+	planted := attachIndex{
+		Generation: foldCacheGeneration,
+		Refs:       map[string]attachIndexEntry{noteRef: {Tip: model.SHA(tip), Attachments: []model.Attachment{{Name: "planted.bin", OID: oidB, Size: 7}}}},
+	}
+	writeIndex(t, s, planted)
+	want := []ReferencedObject{{OID: oidB, Size: 7, Uses: []AttachmentUse{{Kind: model.KindNote, Entity: note.EntityID(), Name: "planted.bin"}}}}
+	if got := referenced(t, s); !reflect.DeepEqual(got, want) {
+		t.Fatalf("referenced with an index hit = %+v, want the indexed set %+v", got, want)
+	}
+
+	planted.Generation = "other-vocabulary"
+	writeIndex(t, s, planted)
+	want = []ReferencedObject{{OID: oidA, Size: 5, Uses: []AttachmentUse{{Kind: model.KindNote, Entity: note.EntityID(), Name: "a.bin"}}}}
+	if got := referenced(t, s); !reflect.DeepEqual(got, want) {
+		t.Fatalf("referenced with a foreign-generation index = %+v, want the folded set %+v", got, want)
+	}
+
+	planted.Generation = foldCacheGeneration
+	writeIndex(t, s, planted)
+	attach(t, s, noteRef, "b.bin", oidB, 9)
+	want = []ReferencedObject{
+		{OID: oidA, Size: 5, Uses: []AttachmentUse{{Kind: model.KindNote, Entity: note.EntityID(), Name: "a.bin"}}},
+		{OID: oidB, Size: 9, Uses: []AttachmentUse{{Kind: model.KindNote, Entity: note.EntityID(), Name: "b.bin"}}},
+	}
+	if got := referenced(t, s); !reflect.DeepEqual(got, want) {
+		t.Fatalf("referenced after the ref moved = %+v, want the folded set %+v", got, want)
 	}
 }
