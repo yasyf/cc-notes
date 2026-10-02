@@ -336,18 +336,16 @@ func (e *engine) push(ctx context.Context, pending []string) error {
 
 func pushBatches(pending []string) [][]string {
 	var batches [][]string
-	var batch []string
-	size := 0
-	for _, ref := range pending {
-		if len(batch) > 0 && size+len(ref) > pushArgBudget {
-			batches = append(batches, batch)
-			batch, size = nil, 0
+	start, size := 0, 0
+	for i, ref := range pending {
+		if i > start && size+len(ref) > pushArgBudget {
+			batches = append(batches, pending[start:i])
+			start, size = i, 0
 		}
-		batch = append(batch, ref)
 		size += len(ref)
 	}
-	if len(batch) > 0 {
-		batches = append(batches, batch)
+	if start < len(pending) {
+		batches = append(batches, pending[start:])
 	}
 	return batches
 }
