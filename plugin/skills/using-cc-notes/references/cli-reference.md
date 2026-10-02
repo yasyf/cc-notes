@@ -228,8 +228,8 @@ An identical parsed binding succeeds without rewriting config, after validating 
 backend. Whitespace in the stored JSON does not affect equality. A different binding,
 including a different identity at the same path, is refused; there is no force flag or
 `storage unbind` command. A new binding is also refused if the checkout holds any
-`refs/cc-notes/` refs. If a record appears during publication, the command removes the new
-binding and reports the refusal; a failed removal is included in the error.
+`refs/cc-notes/` refs. If records appear during publication, the binding stays published
+and the command fails, naming every context ref the binding hides.
 
 The command prints `bound <context-common-dir> to records at <backend-common-dir>` after
 publication, or `already bound <context-common-dir> to records at <backend-common-dir>`
@@ -251,12 +251,14 @@ cannot be resolved. Each refusal includes one of these reasons and its details:
 | `malformed storage binding` | Invalid JSON, unknown fields, trailing data, a version other than 1, a non-absolute or unclean `commonDir`, zero inode, or multiple values; config read failures and a non-regular context config also fail with this reason |
 | `context bound to a different backend: bound to <existing>, asked to bind <requested>` | An existing binding differs from the requested binding |
 | `context already holds cc-notes records: <ref>` | A new binding would hide an existing checkout record |
+| `context already holds cc-notes records: binding to <backend> was published and stays; it hides <refs>` | Records appeared during publication; the binding stays, and `<refs>` lists every hidden context ref, separated by commas |
 | `storage binding cycle: <backend> is the context repository` | The resolved backend is the checkout's own repository |
 | `storage backend unavailable` | The backend is missing, unreadable, not a git common directory, or uses an unsupported repository layout; the message includes the specific failure |
 | `storage backend identity changed: bound device <n> inode <n>, found device <n> inode <n>` | A source's recorded backend identity no longer matches the directory |
 | `storage backend redirects to another repository: <backend> is bound to <target>` | The resolved backend has another binding |
 | `storage backend redirects to another repository: <backend> carries a cc-notes.storage value that does not parse: <detail>` | The resolved backend has a malformed binding |
-| `storage backend redirects to another repository: <backend> now carries a commondir file` | The backend gained a `commondir` file after binding; later records operations report this error |
+| `storage backend redirects to another repository: <backend> is a linked worktree's git directory, not a git common directory` | The backend carries a `commondir` file; bind and open refuse it |
+| `storage backend redirects to another repository: <backend> now carries a commondir file` | The backend gained a `commondir` file after the store opened; later records operations report this error |
 | `storage backend redirects to another repository: <path> is a symlink` | The backend's `objects`, `refs`, or `HEAD` entry is a symlink |
 
 A config lock refusal is reported as `<config>.lock exists: another process is writing the
@@ -266,6 +268,17 @@ untouched.
 Later records operations report invalid bindings as errors instead of returning an empty corpus.
 A client opened before a binding was added, removed, or changed reports
 `storage binding changed since open`, with a `reopen the store` instruction.
+If a records writer publishes refs after its binding changed, it fails with
+`published <refs>: <binding-error>`, naming every ref it wrote as a comma-separated list.
+The binding error includes `storage binding changed since open: now bound to <backend>; reopen
+the store`, or `storage binding changed since open: binding removed; reopen the store`.
+
+Do not use a bound checkout as a remote for other clones to push cc-notes refs into.
+The binding hides records pushed into the context's `refs/cc-notes/` namespace.
+
+In a bound checkout, the policy that keeps local entities off sync reads
+`cc-notes.localLabel`, `cc-notes.localAttachBytes`, and `cc-notes.localAttachGlob` from the
+records repository's config.
 
 For a checkout at `/work/thin` and a source repository at `/work/full`:
 
