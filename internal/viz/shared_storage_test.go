@@ -143,6 +143,9 @@ func TestBuilderSharedStorage(t *testing.T) {
 		if got, want := shapesFor(g, note), []evShape{{typ: lifecycle.TypeCreated}}; !reflect.DeepEqual(got, want) {
 			t.Errorf("source note events = %+v, want %+v", got, want)
 		}
+		if got := summaryByID(t, g, note); got.Kind != "note" || got.Title != "shared note" {
+			t.Errorf("source note summary = %+v, want kind note titled %q", got, "shared note")
+		}
 		f.assertThinHoldsNoRecords(t)
 	})
 
