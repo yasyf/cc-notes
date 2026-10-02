@@ -695,6 +695,7 @@ func invalidationCases() []matrixCase {
 				fx.includeExtra(t, relevantMe)
 				t.Setenv("CC_NOTES_NOTE_STALE_AFTER", "2160h")
 			},
+			settled: tierRebuild,
 			writes: []matrixWrite{
 				{name: "GIT_CONFIG names a decoy file", want: tierRebuild, do: func(t *testing.T, _ *matrixFixture) {
 					decoy := filepath.Join(t.TempDir(), "decoy.config")
@@ -740,16 +741,19 @@ func invalidationCases() []matrixCase {
 			}}},
 		},
 		{
-			name: "GIT_SHALLOW_FILE written",
-			setup: func(t *testing.T, fx *matrixFixture) {
-				fx.crossAuthor(t)
-				t.Setenv("GIT_SHALLOW_FILE", filepath.Join(t.TempDir(), "shallow"))
+			name:    "GIT_SHALLOW_FILE written",
+			setup:   func(t *testing.T, fx *matrixFixture) { fx.crossAuthor(t) },
+			settled: tierRebuild,
+			writes: []matrixWrite{
+				{name: "GIT_SHALLOW_FILE names an absent file", want: tierRebuild, do: func(t *testing.T, _ *matrixFixture) {
+					t.Setenv("GIT_SHALLOW_FILE", filepath.Join(t.TempDir(), "shallow"))
+				}},
+				{name: "the overriding shallow file grafts HEAD", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
+					if err := os.WriteFile(os.Getenv("GIT_SHALLOW_FILE"), []byte(string(fx.theirs)+"\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}},
 			},
-			writes: []matrixWrite{{name: "the overriding shallow file grafts HEAD", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
-				if err := os.WriteFile(os.Getenv("GIT_SHALLOW_FILE"), []byte(string(fx.theirs)+"\n"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}}},
 		},
 		{
 			name:  "repository made shallow",
@@ -1079,15 +1083,15 @@ func TestRelevantCachedNeverPinsAnIncludeBehindALinkRetargetedDuringCapture(t *t
 	}})
 }
 
-func TestRelevantCachedNeverPinsARelativeShallowFileRacedDuringCapture(t *testing.T) {
-	historyOverrideNeverPins(t, "GIT_SHALLOW_FILE")
+func TestRelevantCachedNeverCachesUnderAShallowFileOverride(t *testing.T) {
+	historyOverrideNeverCaches(t, "GIT_SHALLOW_FILE")
 }
 
-func TestRelevantCachedNeverPinsARelativeGraftFileRacedDuringCapture(t *testing.T) {
-	historyOverrideNeverPins(t, "GIT_GRAFT_FILE")
+func TestRelevantCachedNeverCachesUnderAGraftFileOverride(t *testing.T) {
+	historyOverrideNeverCaches(t, "GIT_GRAFT_FILE")
 }
 
-func historyOverrideNeverPins(t *testing.T, env string) {
+func historyOverrideNeverCaches(t *testing.T, env string) {
 	t.Cleanup(notes.SetRelevantRacyWindow(0))
 	fx := newMatrixFixture(t)
 	fx.crossAuthor(t)
@@ -1099,6 +1103,12 @@ func historyOverrideNeverPins(t *testing.T, env string) {
 	file := filepath.Join(fx.repo, "history", "boundary")
 	fx.armRootRace(t, "history", "merge-base", string(fx.theirs), file)
 	p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: fx.counter}
+	noEntry := func(step string) {
+		t.Helper()
+		if probe, ok, err := notes.RelevantCacheProbeOf(fx.c, matrixTarget, p.filter, "json"); err != nil || ok {
+			t.Fatalf("%s: a capture under a %s override persisted an entry: ok=%t err=%v %+v", step, env, ok, err, probe)
+		}
+	}
 	if got := p.call("capture raced by the boundary appearing"); got != tierRebuild {
 		t.Fatalf("raced capture served by %v, want %v", got, tierRebuild)
 	}
@@ -1106,25 +1116,13 @@ func historyOverrideNeverPins(t *testing.T, env string) {
 		t.Fatalf("the raced history still scored cross-author; the %s boundary never reached merge-base: %s", env, p.last)
 	}
 	fx.rootRaceFired(t)
-	if probe, ok, err := notes.RelevantCacheProbeOf(fx.c, matrixTarget, p.filter, "json"); err != nil || (ok && !probe.Revalidate) {
-		t.Fatalf("a capture whose %s boundary appeared and vanished persisted a settled entry: ok=%t err=%v %+v", env, ok, err, probe)
-	}
+	noEntry("after the race")
 	p.expect("first call after the race", tierRebuild)
 	if !bytes.Contains(p.last, []byte(`"cross-author"`)) {
 		t.Fatalf("answer after the race lost the cross-author signal: %s", p.last)
 	}
-	p.promoteThen("settled after the race", tierHit)
-	probe := p.entry("settled after the race")
-	if probe.Revalidate {
-		t.Fatalf("a quiet repository with a relative %s settled with revalidate set: %+v", env, probe)
-	}
-	want := filepath.Join(realDir(t, fx.repo), "history", "boundary")
-	if !slices.Contains(probe.Stamps, want) {
-		t.Fatalf("the settled entry never stamped the override git reads, %s: %q", want, probe.Stamps)
-	}
-	if stray := filepath.Join(decoy, "history", "boundary"); slices.Contains(probe.Stamps, stray) {
-		t.Fatalf("the settled entry stamped the process-relative decoy %s: %q", stray, probe.Stamps)
-	}
+	p.expect("second call after the race", tierRebuild)
+	noEntry("after two quiet calls")
 	if err := os.WriteFile(file, []byte(string(fx.theirs)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1134,13 +1132,34 @@ func historyOverrideNeverPins(t *testing.T, env string) {
 	}
 }
 
-func realDir(t *testing.T, dir string) string {
-	t.Helper()
-	real, err := filepath.EvalSymlinks(dir)
-	if err != nil {
+func TestRelevantCachedNeverPinsAnAttributesFileRacedDuringTheDriftCheck(t *testing.T) {
+	t.Cleanup(notes.SetRelevantRacyWindow(0))
+	fx := newMatrixFixture(t)
+	if err := os.WriteFile(filepath.Join(fx.repo, matrixTarget), []byte("v1\r\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return real
+	settle(t, fx.repo, matrixTarget)
+	fx.run(t, "config", "core.autocrlf", "false")
+	fx.run(t, "config", "core.safecrlf", "false")
+	attributes := filepath.Join(t.TempDir(), "attributes")
+	fx.run(t, "config", "core.attributesFile", attributes)
+	fx.armRootRace(t, "history", "hash-object", "*.go text", attributes)
+	p := &tierProbe{t: t, c: fx.c, dir: fx.dir, filter: notes.RelevantFilter{Attached: true, Worktree: true}, git: fx.counter}
+	if got := p.call("drift check raced by the attributes file appearing"); got != tierRebuild {
+		t.Fatalf("raced capture served by %v, want %v", got, tierRebuild)
+	}
+	if bytes.Contains(p.last, []byte(`"DRIFTED"`)) {
+		t.Fatalf("the raced hash still drifted; the attributes file never reached hash-object: %s", p.last)
+	}
+	fx.rootRaceFired(t)
+	if probe, ok, err := notes.RelevantCacheProbeOf(fx.c, matrixTarget, p.filter, "json"); err != nil || ok {
+		t.Fatalf("a capture whose attributes file appeared and vanished persisted an entry: ok=%t err=%v %+v", ok, err, probe)
+	}
+	p.expect("first call after the race", tierRebuild)
+	if !bytes.Contains(p.last, []byte(`"DRIFTED"`)) {
+		t.Fatalf("answer after the race lost the drift verdict: %s", p.last)
+	}
+	p.promoteThen("settled after the race", tierHit)
 }
 
 func mkdir(t *testing.T, dir string) {

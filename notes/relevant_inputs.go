@@ -26,13 +26,17 @@ import (
 var relevantRacyWindow = 2 * time.Second
 
 const (
-	relevantSymrefDepth   = 5
-	relevantLinkHops      = 40
-	relevantMissing       = "missing"
-	defaultReplaceRefBase = "refs/replace/"
+	relevantSymrefDepth = 5
+	relevantLinkHops    = 40
+	relevantMissing     = "missing"
+	replaceRefRoot      = "refs/replace/"
 )
 
-var relevantEnvKeys = []string{"HOME", "XDG_CONFIG_HOME", "EMAIL", noteStaleAfterEnv}
+var (
+	relevantEnvKeys     = []string{"HOME", "XDG_CONFIG_HOME", "EMAIL", noteStaleAfterEnv}
+	relevantRoutingEnv  = []string{"GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_ATTR_SOURCE", "GIT_CONFIG"}
+	relevantRelativeEnv = []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_ATTR_GLOBAL", "GIT_ATTR_SYSTEM", "XDG_CONFIG_HOME", "HOME"}
+)
 
 type commitResolver = func(context.Context, string) (model.SHA, error)
 
@@ -62,7 +66,7 @@ type relevantInputs struct {
 	guards     []fileStamp
 	watched    map[string]fileStamp
 	guarded    map[string]fileStamp
-	roots      []string
+	roots      []os.FileInfo
 	depSeen    map[string]int
 	lines      []string
 	revalidate bool
@@ -104,8 +108,9 @@ func (c *Client) relevantInputs(ctx context.Context, p string, filter RelevantFi
 		tips:      make(map[string]model.SHA),
 		deps:      relevantDeps{Config: deps.Config},
 		values:    make(map[string]model.SHA),
+		noCache:   relevantRouted(),
 	}
-	in.roots = in.rootDirs()
+	in.findRoots()
 	if err := in.watchExecutables(); err != nil {
 		return nil, err
 	}
@@ -117,7 +122,7 @@ func (c *Client) relevantInputs(ctx context.Context, p string, filter RelevantFi
 	if err := in.watchConfig(ctx); err != nil {
 		return nil, err
 	}
-	if err := in.watchHistory(ctx); err != nil {
+	if err := in.watchHistory(); err != nil {
 		return nil, err
 	}
 	if err := in.watchBranch(ctx); err != nil {
@@ -159,6 +164,14 @@ func (in *relevantInputs) keep(s fileStamp) fileStamp {
 	return s
 }
 
+func (in *relevantInputs) resolveFiles(paths []string) []fileStamp {
+	stamps := stampsOf(paths)
+	for _, s := range stamps {
+		in.resolve(s)
+	}
+	return stamps
+}
+
 func (in *relevantInputs) resolve(s fileStamp) (string, bool) {
 	// Walked as the kernel opens it: ".." after a symlink climbs out of its
 	// target. The stamp, not the walk, decides the guard: a file that
@@ -175,6 +188,7 @@ func (in *relevantInputs) resolve(s fileStamp) (string, bool) {
 	root, rest := splitAbs(path)
 	cur := root
 	seen := make(map[string]fileStamp)
+	inside := make(map[string]bool)
 	linked, hops := 0, 0
 	for len(rest) > 0 {
 		name := rest[0]
@@ -206,9 +220,10 @@ func (in *relevantInputs) resolve(s fileStamp) (string, bool) {
 			return "", false
 		}
 		if info.Mode()&os.ModeSymlink == 0 || (len(rest) == 0 && s.Link) {
+			inside[next] = inside[cur] || in.isRoot(info)
 			cur = next
 			seen[cur] = stampFrom(cur, info, nil, false)
-			if info.IsDir() && in.underRoot(cur) {
+			if info.IsDir() && inside[cur] {
 				in.guard(cur, seen[cur])
 			}
 			continue
@@ -242,20 +257,55 @@ func (in *relevantInputs) resolve(s fileStamp) (string, bool) {
 	return cur, true
 }
 
-func (in *relevantInputs) rootDirs() []string {
-	var roots []string
+func (in *relevantInputs) findRoots() {
 	for _, dir := range []string{in.commonDir, in.gitDir} {
-		if resolved, ok := in.resolve(fileStamp{Path: dir}); ok && !slices.Contains(roots, resolved) {
-			roots = append(roots, resolved)
+		resolved, ok := in.resolve(fileStamp{Path: dir})
+		if !ok {
+			continue
+		}
+		if info, err := os.Stat(resolved); err == nil && !in.isRoot(info) {
+			in.roots = append(in.roots, info)
 		}
 	}
-	return roots
 }
 
-func (in *relevantInputs) underRoot(dir string) bool {
-	return slices.ContainsFunc(in.roots, func(root string) bool {
-		return dir == root || strings.HasPrefix(dir, joinPath(root, ""))
-	})
+func (in *relevantInputs) isRoot(info os.FileInfo) bool {
+	return slices.ContainsFunc(in.roots, func(root os.FileInfo) bool { return os.SameFile(root, info) })
+}
+
+func within(dir, root string) (bool, error) {
+	target, err := os.Stat(root)
+	if err != nil {
+		return false, err
+	}
+	for {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return false, err
+		}
+		if os.SameFile(info, target) {
+			return true, nil
+		}
+		up := parentPath(dir)
+		if up == dir {
+			return false, nil
+		}
+		dir = up
+	}
+}
+
+func relevantRouted() bool {
+	for _, name := range relevantRoutingEnv {
+		if _, ok := os.LookupEnv(name); ok {
+			return true
+		}
+	}
+	for _, name := range relevantRelativeEnv {
+		if value, ok := os.LookupEnv(name); ok && !filepath.IsAbs(value) {
+			return true
+		}
+	}
+	return false
 }
 
 func splitAbs(path string) (root string, rest []string) {
@@ -325,7 +375,11 @@ func (in *relevantInputs) locateGitCwd(ctx context.Context) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if dir == root || strings.HasPrefix(dir, joinPath(root, "")) {
+	below, err := within(dir, root)
+	if err != nil {
+		return "", false
+	}
+	if below {
 		return root, true
 	}
 	return dir, true
@@ -340,15 +394,6 @@ func (in *relevantInputs) gitPath(ctx context.Context, path string) (string, boo
 		return "", false
 	}
 	return joinPath(cwd, path), true
-}
-
-func (in *relevantInputs) watchEnvBytes(ctx context.Context, label, path string) {
-	resolved, ok := in.gitPath(ctx, path)
-	if !ok {
-		in.noCache = true
-		return
-	}
-	in.watchBytes(label, resolved)
 }
 
 func (in *relevantInputs) watchBytes(label, path string) {
@@ -700,15 +745,9 @@ func (in *relevantInputs) configFiles(ctx context.Context, entries []gitcmd.Conf
 	add(joinPath(in.commonDir, "config"))
 	vars, _ := splitVarList(varList)
 	for _, line := range vars {
-		name, value, _ := strings.Cut(line, "=")
-		if name != "GIT_CONFIG_SYSTEM" && name != "GIT_CONFIG_GLOBAL" {
-			continue
+		if name, value, _ := strings.Cut(line, "="); name == "GIT_CONFIG_SYSTEM" || name == "GIT_CONFIG_GLOBAL" {
+			add(value)
 		}
-		if !filepath.IsAbs(value) {
-			in.revalidate = true
-			continue
-		}
-		add(value)
 	}
 	home := os.Getenv("HOME")
 	worktreeConfig := false
@@ -762,7 +801,7 @@ func includeKey(key string) bool {
 
 func (in *relevantInputs) includeTarget(value, dir, home string) (string, bool) {
 	switch {
-	case strings.HasPrefix(value, "~/") && (home == "" || filepath.IsAbs(home)):
+	case strings.HasPrefix(value, "~/"):
 		return joinPath(home, value[2:]), true
 	case strings.HasPrefix(value, "~"), strings.HasPrefix(value, "%(prefix)"):
 		in.revalidate = true
@@ -852,7 +891,7 @@ func (in *relevantInputs) configured(key string) bool {
 	return slices.ContainsFunc(in.config, func(e gitcmd.ConfigEntry) bool { return e.Key == key })
 }
 
-func (in *relevantInputs) watchHistory(ctx context.Context) error {
+func (in *relevantInputs) watchHistory() error {
 	in.watch(joinPath(in.commonDir, "shallow"))
 	grafted, err := in.client.s.Repo.RefreshShallow()
 	if err != nil {
@@ -861,32 +900,9 @@ func (in *relevantInputs) watchHistory(ctx context.Context) error {
 	for _, sha := range grafted {
 		in.record("shallow %s", sha)
 	}
-	if file := os.Getenv("GIT_SHALLOW_FILE"); file != "" {
-		in.watchEnvBytes(ctx, "shallow-file", file)
-	}
-	if grafts := os.Getenv("GIT_GRAFT_FILE"); grafts != "" {
-		in.watchEnvBytes(ctx, "grafts", grafts)
-	} else {
-		in.watchBytes("grafts", joinPath(joinPath(in.commonDir, "info"), "grafts"))
-	}
-	base := strings.TrimSuffix(replaceRefBase(), "/")
-	if dir, ok := in.refFile(base); ok && strings.HasPrefix(base, "refs/") {
-		in.watchDirs(dir)
-	} else {
-		in.revalidate = true
-	}
+	in.watchBytes("grafts", joinPath(joinPath(in.commonDir, "info"), "grafts"))
+	in.watchDirs(joinPath(in.commonDir, filepath.FromSlash(strings.TrimSuffix(replaceRefRoot, "/"))))
 	return nil
-}
-
-func replaceRefBase() string {
-	base := os.Getenv("GIT_REPLACE_REF_BASE")
-	if base == "" {
-		return defaultReplaceRefBase
-	}
-	if !strings.HasSuffix(base, "/") {
-		base += "/"
-	}
-	return base
 }
 
 func (in *relevantInputs) detached() bool {
@@ -931,7 +947,7 @@ func (in *relevantInputs) watchEntities(ctx context.Context) error {
 	for _, root := range relevantRefRoots {
 		in.watch(joinPath(in.commonDir, filepath.FromSlash(strings.TrimSuffix(root, "/"))))
 	}
-	entries, err := in.client.s.Git.RefEntries(ctx, append(slices.Clone(relevantRefRoots), replaceRefBase())...)
+	entries, err := in.client.s.Git.RefEntries(ctx, append(slices.Clone(relevantRefRoots), replaceRefRoot)...)
 	if err != nil {
 		return err
 	}
@@ -1009,7 +1025,7 @@ func (in *relevantInputs) resolveCommit(_ context.Context, rev string) (model.SH
 }
 
 func (in *relevantInputs) auditWorktree(ctx context.Context, anchors []string) error {
-	if os.Getenv("GIT_ATTR_SOURCE") != "" || in.configured("attr.tree") {
+	if in.configured("attr.tree") {
 		in.noCache = true
 		return nil
 	}

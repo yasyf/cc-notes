@@ -78,13 +78,15 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	now := time.Now()
 	var cached relevantCacheEntry
 	var cachedOK bool
-	if f, ok := c.s.OpenRelevantCache(name); ok {
-		var hit bool
-		// Lock-and-rename publishes (git, libgit2, gix, JGit, cc-notes) move a
-		// stamp; a foreign in-place rewrite of an existing loose ref under a
-		// directory stamp (go-git setRef) is not covered.
-		if cached, hit, cachedOK = readRelevantCacheEntry(f, now); hit {
-			return cached.Output, nil
+	if !relevantRouted() {
+		if f, ok := c.s.OpenRelevantCache(name); ok {
+			var hit bool
+			// Lock-and-rename publishes (git, libgit2, gix, JGit, cc-notes) move a
+			// stamp; a foreign in-place rewrite of an existing loose ref under a
+			// directory stamp (go-git setRef) is not covered.
+			if cached, hit, cachedOK = readRelevantCacheEntry(f, now); hit {
+				return cached.Output, nil
+			}
 		}
 	}
 	var deps relevantDeps
@@ -113,7 +115,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 			return nil, err
 		}
 	}
-	before := stampsOf(paths)
+	before := in.resolveFiles(paths)
 	if err := in.auditWorktree(ctx, anchors); err != nil {
 		return nil, err
 	}

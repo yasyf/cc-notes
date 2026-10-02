@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -741,25 +740,20 @@ func (g Git) Root(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// CommonDir returns the absolute shared git directory — the main repository's
-// .git — so linked worktrees resolve to one location. git answers relative to
-// the -C directory, so a relative path is joined back onto Dir.
+// CommonDir returns the physical shared git directory, the main repository's
+// .git, as git prints it with --path-format=absolute (git 2.31+).
 func (g Git) CommonDir(ctx context.Context) (string, error) {
-	out, err := g.run(ctx, "", "rev-parse", "--git-common-dir")
+	out, err := g.run(ctx, "", "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return "", fmt.Errorf("common dir: %w", err)
 	}
-	path := strings.TrimSpace(out)
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(g.Dir, path)
-	}
-	return path, nil
+	return strings.TrimSpace(out), nil
 }
 
-// Dirs returns the absolute per-worktree and shared git directories and
-// whether the repository is bare, from one rev-parse.
+// Dirs returns the physical per-worktree and shared git directories and
+// whether the repository is bare, from one --path-format=absolute rev-parse.
 func (g Git) Dirs(ctx context.Context) (gitDir, commonDir string, bare bool, err error) {
-	out, err := g.run(ctx, "", "rev-parse", "--absolute-git-dir", "--git-common-dir", "--is-bare-repository")
+	out, err := g.run(ctx, "", "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir", "--is-bare-repository")
 	if err != nil {
 		return "", "", false, fmt.Errorf("git dirs: %w", err)
 	}
@@ -767,29 +761,15 @@ func (g Git) Dirs(ctx context.Context) (gitDir, commonDir string, bare bool, err
 	if len(lines) != 3 {
 		return "", "", false, fmt.Errorf("git dirs: unexpected rev-parse output %q", out)
 	}
-	gitDir = strings.TrimSpace(lines[0])
-	commonDir = strings.TrimSpace(lines[1])
-	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(g.Dir, commonDir)
-	}
-	commonDir, err = filepath.Abs(commonDir)
-	if err != nil {
-		return "", "", false, fmt.Errorf("git dirs: absolute common dir: %w", err)
-	}
-	return gitDir, commonDir, strings.TrimSpace(lines[2]) == "true", nil
+	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), strings.TrimSpace(lines[2]) == "true", nil
 }
 
 // HooksDir returns the absolute path of the repository's hooks directory,
-// honoring a configured core.hooksPath. git resolves the path relative to
-// the -C directory, so a relative answer is joined back onto Dir.
+// honoring a configured core.hooksPath, as git itself resolves it.
 func (g Git) HooksDir(ctx context.Context) (string, error) {
-	out, err := g.run(ctx, "", "rev-parse", "--git-path", "hooks")
+	out, err := g.run(ctx, "", "rev-parse", "--path-format=absolute", "--git-path", "hooks")
 	if err != nil {
 		return "", fmt.Errorf("hooks dir: %w", err)
 	}
-	path := strings.TrimSpace(out)
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(g.Dir, path)
-	}
-	return path, nil
+	return strings.TrimSpace(out), nil
 }

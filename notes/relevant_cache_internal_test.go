@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -613,7 +612,7 @@ func TestRelevantInputsRefuseACaptureWhoseRefDirectoryWasSwappedAway(t *testing.
 	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
 	root := model.SHA(strings.TrimSpace(gittest.Git(t, dir, "rev-parse", "HEAD")))
 	common := c.s.CommonDir()
-	for _, ref := range append(slices.Clone(relevantRefRoots), replaceRefBase()) {
+	for _, ref := range append(slices.Clone(relevantRefRoots), replaceRefRoot) {
 		if err := os.MkdirAll(filepath.Join(common, filepath.FromSlash(strings.TrimSuffix(ref, "/"))), 0o750); err != nil {
 			t.Fatal(err)
 		}
@@ -690,7 +689,18 @@ func TestRelevantInputsGitCwdMatchesNativeGit(t *testing.T) {
 		t.Setenv("GIT_DIR", filepath.Join(repo, ".git"))
 		t.Setenv("GIT_WORK_TREE", repo)
 	}
+	var mixedCase string
 	cases := []layout{
+		{"worktree subdirectory spelled in another case", func(t *testing.T, repo string) string {
+			mixedCase = filepath.Join(t.TempDir(), "Mixed")
+			gittest.Git(t, repo, "clone", "-q", repo, mixedCase)
+			sub := subdir(t, mixedCase)
+			flipped := filepath.Join(filepath.Dir(mixedCase), "mIXED", "sub")
+			if !sameFile(flipped, sub) {
+				t.Skip("the temporary filesystem is case-sensitive")
+			}
+			return flipped
+		}, func(t *testing.T, _, _ string) string { return realPath(t, mixedCase) }, true},
 		{"worktree root", func(_ *testing.T, repo string) string { return repo }, physical, true},
 		{"worktree subdirectory", subdir, physical, true},
 		{"worktree reached through a symlink", func(t *testing.T, repo string) string {
@@ -702,7 +712,7 @@ func TestRelevantInputsGitCwdMatchesNativeGit(t *testing.T) {
 		}, physical, true},
 		{"bare repository", bare, self, true},
 		{"bare subdirectory", func(t *testing.T, repo string) string { return filepath.Join(bare(t, repo), "refs") }, self, true},
-		{"linked worktree subdirectory", func(t *testing.T, repo string) string { return subdir(t, linked(t, repo)) }, func(t *testing.T, repo, dir string) string {
+		{"linked worktree subdirectory", func(t *testing.T, repo string) string { return subdir(t, linked(t, repo)) }, func(t *testing.T, _, dir string) string {
 			return realPath(t, filepath.Dir(dir))
 		}, true},
 		{"core.bare set in a repository with a worktree", func(t *testing.T, repo string) string {
@@ -749,7 +759,7 @@ func TestRelevantInputsGitCwdMatchesNativeGit(t *testing.T) {
 				if err := os.WriteFile(file, []byte(head+"\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				defer os.Remove(file)
+				defer func() { _ = os.Remove(file) }()
 				cmd := exec.Command("git", "-C", dir, "rev-parse", "--is-shallow-repository")
 				cmd.Env = append(os.Environ(), "GIT_SHALLOW_FILE=boundary")
 				out, err := cmd.CombinedOutput()
@@ -770,73 +780,120 @@ func TestRelevantInputsGitCwdMatchesNativeGit(t *testing.T) {
 
 func TestRelevantInputsIncludeTargetExpandsHomeAsGitDoes(t *testing.T) {
 	cases := []struct {
-		name       string
-		home       string
-		want       string
-		revalidate bool
+		name string
+		home string
+		want string
 	}{
-		{"absolute home", "/home/me", "/home/me/extra.config", false},
-		{"empty home expands to the root", "", "/extra.config", false},
-		{"relative home is resolved against the including file", "homerel", "", true},
+		{"absolute home", "/home/me", "/home/me/extra.config"},
+		{"empty home expands to the root", "", "/extra.config"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			in := &relevantInputs{}
 			got, ok := in.includeTarget("~/extra.config", "/repo/.git", filepath.FromSlash(tc.home))
-			if want := filepath.FromSlash(tc.want); got != want || ok != (want != "") {
+			if want := filepath.FromSlash(tc.want); got != want || !ok {
 				t.Fatalf("includeTarget = %q, %t; want %q", got, ok, want)
 			}
-			if in.revalidate != tc.revalidate {
-				t.Fatalf("revalidate = %t, want %t", in.revalidate, tc.revalidate)
+			if in.revalidate {
+				t.Fatal("an absolute include target set revalidate")
 			}
 		})
 	}
 }
 
-func TestRelevantInputsWatchHistoryFollowsTheReplaceRefBase(t *testing.T) {
-	c, main := newWBClient(t)
-	ctx := t.Context()
-	gittest.Git(t, main, "commit", "--allow-empty", "-q", "-m", "root")
-	linked := filepath.Join(t.TempDir(), "linked")
-	gittest.Git(t, main, "worktree", "add", "-q", linked)
-	c, err := Open(linked)
-	if err != nil {
-		t.Fatalf("Open(%s): %v", linked, err)
+func TestRelevantInputsGuardsTheGitDirectoryUnderAnotherSpelling(t *testing.T) {
+	c, _ := newWBClient(t)
+	gitDir := c.s.GitDir()
+	flipped := filepath.Join(filepath.Dir(gitDir), ".GIT")
+	if !sameFile(flipped, gitDir) {
+		t.Skip("the temporary filesystem is case-sensitive")
 	}
-	gitDir, commonDir := c.s.GitDir(), c.s.CommonDir()
-	cases := []struct {
-		name       string
-		base       string
-		watched    string
-		revalidate bool
-	}{
-		{"default", "", filepath.Join(commonDir, "refs", "replace"), false},
-		{"shared prefix", "refs/replacements/", filepath.Join(commonDir, "refs", "replacements"), false},
-		{"per-worktree prefix", "refs/worktree/replace/", filepath.Join(gitDir, "refs", "worktree", "replace"), false},
-		{"prefix outside refs", "custom/", "", true},
+	in := &relevantInputs{client: c, gitDir: gitDir, commonDir: c.s.CommonDir(), watched: make(map[string]fileStamp), guarded: make(map[string]fileStamp)}
+	in.findRoots()
+	if len(in.roots) != 1 {
+		t.Fatalf("roots = %d, want the git and common dir folded into one", len(in.roots))
+	}
+	in.watch(filepath.Join(flipped, "HEAD"))
+	if !guards(in, flipped) {
+		t.Fatalf("guards %v; want the git directory entered as %s", in.guards, flipped)
+	}
+}
+
+func TestRelevantCachedNeverCachesARoutedEnvironment(t *testing.T) {
+	c, dir := newWBClient(t)
+	ctx := t.Context()
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}}}); err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	render := func(entries []RelevantEntry) ([]byte, error) { return json.Marshal(entries) }
+	cached := func(t *testing.T) []byte {
+		t.Helper()
+		out, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render)
+		if err != nil {
+			t.Fatalf("RelevantCached: %v", err)
+		}
+		return out
+	}
+	fresh := func(t *testing.T) []byte {
+		t.Helper()
+		entries, err := c.Relevant(ctx, "svc/handler.go", RelevantFilter{})
+		if err != nil {
+			t.Fatalf("Relevant: %v", err)
+		}
+		out, err := json.Marshal(entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	cached(t)
+	if _, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{}); !ok {
+		t.Fatal("control: an unrouted environment persisted no entry")
+	}
+	gitDir := c.s.GitDir()
+	absent := filepath.Join(t.TempDir(), "absent")
+	cases := []struct{ name, value string }{
+		{"GIT_DIR", gitDir},
+		{"GIT_COMMON_DIR", gitDir},
+		{"GIT_WORK_TREE", dir},
+		{"GIT_REPLACE_REF_BASE", "refs/replace/"},
+		{"GIT_SHALLOW_FILE", absent},
+		{"GIT_GRAFT_FILE", absent},
+		{"GIT_OBJECT_DIRECTORY", filepath.Join(gitDir, "objects")},
+		{"GIT_ALTERNATE_OBJECT_DIRECTORIES", t.TempDir()},
+		{"GIT_INDEX_FILE", filepath.Join(gitDir, "index")},
+		{"GIT_NAMESPACE", "ns"},
+		{"GIT_ATTR_SOURCE", "HEAD"},
+		{"GIT_CONFIG", absent},
+		{"GIT_CONFIG_GLOBAL", "rel.gitconfig"},
+		{"GIT_CONFIG_SYSTEM", "rel.gitconfig"},
+		{"GIT_ATTR_GLOBAL", "relattrs"},
+		{"GIT_ATTR_SYSTEM", "relattrs"},
+		{"XDG_CONFIG_HOME", "relxdg"},
+		{"HOME", "relhome"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("GIT_REPLACE_REF_BASE", tc.base)
-			in := &relevantInputs{client: c, gitDir: gitDir, commonDir: commonDir, watched: make(map[string]fileStamp), guarded: make(map[string]fileStamp), depSeen: make(map[string]int), symrefs: make(map[string]string)}
-			if err := in.watchHistory(ctx); err != nil {
-				t.Fatalf("watchHistory: %v", err)
+			if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "relevant-v3")); err != nil {
+				t.Fatal(err)
 			}
-			if in.revalidate != tc.revalidate {
-				t.Fatalf("revalidate = %t, want %t", in.revalidate, tc.revalidate)
-			}
-			if tc.watched == "" {
-				return
-			}
-			if _, ok := in.watched[tc.watched]; !ok {
-				t.Fatalf("the replace ref directory git reads, %s, is not watched: %+v", tc.watched, slices.Collect(maps.Keys(in.watched)))
+			t.Setenv(tc.name, tc.value)
+			want := fresh(t)
+			for _, call := range []string{"first", "second"} {
+				if got := cached(t); !bytes.Equal(got, want) {
+					t.Fatalf("%s call under %s=%s differs from a fresh answer\ncached %s\nfresh  %s", call, tc.name, tc.value, got, want)
+				}
+				if entry, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{}); ok {
+					t.Fatalf("%s call under %s=%s persisted an entry: %+v", call, tc.name, tc.value, entry)
+				}
 			}
 		})
 	}
 }
 
 func TestRelevantCacheDriftInputsResolveAttributePathsAgainstGit(t *testing.T) {
-	c, repo := newWBClient(t)
+	_, repo := newWBClient(t)
 	ctx := t.Context()
 	gittest.Git(t, repo, "commit", "--allow-empty", "-q", "-m", "root")
 	sub := filepath.Join(repo, "sub")
@@ -865,6 +922,18 @@ func TestRelevantCacheDriftInputsResolveAttributePathsAgainstGit(t *testing.T) {
 
 func guards(in *relevantInputs, path string) bool {
 	return slices.ContainsFunc(in.guards, func(g fileStamp) bool { return g.Path == path })
+}
+
+func sameFile(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
 }
 
 func moved(in *relevantInputs) []fileStamp {
