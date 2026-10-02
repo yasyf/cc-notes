@@ -29,9 +29,10 @@ var (
 	// ErrBackendReplaced reports a backend whose device/inode no longer matches
 	// the identity recorded when it was bound.
 	ErrBackendReplaced = errors.New("storage backend identity changed")
-	// ErrBackendRedirects reports a backend that carries a storage binding of
-	// its own; bindings never chain.
-	ErrBackendRedirects = errors.New("storage backend is itself bound")
+	// ErrBackendRedirects reports a backend that routes records to another
+	// repository: a storage binding of its own (bindings never chain), a
+	// commondir file, or a symlinked objects, refs, or HEAD entry.
+	ErrBackendRedirects = errors.New("storage backend redirects to another repository")
 	// ErrBindingCycle reports a binding that points a context at itself.
 	ErrBindingCycle = errors.New("storage binding cycle")
 	// ErrBindingChanged reports a context whose binding was published, removed,
