@@ -1003,11 +1003,27 @@ func TestRelevantCachedNeverPinsARootRefRacedDuringCapture(t *testing.T) {
 }
 
 func TestRelevantCachedNeverPinsARootIncludeRacedDuringCapture(t *testing.T) {
+	includeRaceNeverPins(t, false)
+}
+
+func TestRelevantCachedNeverPinsADanglingIncludeLinkRacedDuringCapture(t *testing.T) {
+	includeRaceNeverPins(t, true)
+}
+
+func includeRaceNeverPins(t *testing.T, linked bool) {
 	t.Cleanup(notes.SetRelevantRacyWindow(0))
 	fx := newMatrixFixture(t)
 	fx.crossAuthor(t)
 	fx.run(t, "config", "include.path", "extra.config")
-	fx.armRootRace(t, "include", "GIT_AUTHOR_IDENT", relevantOther, filepath.Join(fx.commonDir(t), "extra.config"))
+	include := filepath.Join(fx.commonDir(t), "extra.config")
+	if linked {
+		external := filepath.Join(t.TempDir(), "external.config")
+		if err := os.Symlink(external, include); err != nil {
+			t.Fatal(err)
+		}
+		include = external
+	}
+	fx.armRootRace(t, "include", "GIT_AUTHOR_IDENT", relevantOther, include)
 	p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: fx.counter}
 	if got := p.call("capture raced by the include appearing"); got != tierRebuild {
 		t.Fatalf("raced capture served by %v, want %v", got, tierRebuild)
@@ -1024,6 +1040,77 @@ func TestRelevantCachedNeverPinsARootIncludeRacedDuringCapture(t *testing.T) {
 		t.Fatalf("answer after the race lost the cross-author signal: %s", p.last)
 	}
 	p.promoteThen("settled after the race", tierHit)
+}
+
+func TestRelevantCachedWatchesASharedSymrefTailFromItsShallowestArrival(t *testing.T) {
+	t.Cleanup(notes.SetRelevantRacyWindow(0))
+	fx := newMatrixFixture(t)
+	fx.symlinkRef(t, "refs/heads/f", "refs/remotes/upstream/tip", fx.root)
+	for _, hop := range [][2]string{{"e", "f"}, {"d", "e"}, {"c", "d"}, {"b", "c"}, {"a", "b"}} {
+		fx.run(t, "symbolic-ref", "refs/heads/"+hop[0], "refs/heads/"+hop[1])
+	}
+	fx.anchored(t, "aliased work", "a", "f")
+	p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: installCountingGit(t, countingGitScript)}
+	p.expect("cold", tierRebuild)
+	p.promoteThen("settled", tierRevalidate)
+	probe := p.entry("settled")
+	if !probe.Revalidate {
+		t.Fatalf("a symref chain git refuses to resolve settled without revalidate: %+v", probe)
+	}
+	if !slices.ContainsFunc(probe.Stamps, func(s string) bool { return strings.HasSuffix(filepath.ToSlash(s), "/refs/remotes/upstream") }) {
+		t.Fatalf("f, first reached at the depth limit through a, was never traversed from its own anchor: no stamp on refs/remotes/upstream\nall stamps %q", probe.Stamps)
+	}
+	before := p.last
+	fx.run(t, "update-ref", "refs/remotes/upstream/tip", string(fx.sideCommit(t)))
+	p.expect("upstream/tip moved off HEAD's history", tierRebuild)
+	if bytes.Equal(before, p.last) {
+		t.Fatalf("moving the shared tail left the answer unchanged: %s", p.last)
+	}
+}
+
+func TestRelevantCachedDetachedSymlinkAliasesShareOneTargetDirectoryStamp(t *testing.T) {
+	const tips = 20
+	counts := make(map[int]int)
+	for _, aliases := range []int{0, 1, tips} {
+		t.Run(fmt.Sprintf("aliases=%02d", aliases), func(t *testing.T) {
+			t.Cleanup(notes.SetRelevantRacyWindow(0))
+			fx := newMatrixFixture(t)
+			fx.detachAhead(t)
+			for i := range tips {
+				target := fmt.Sprintf("refs/remotes/side/tip%02d", i)
+				if i < aliases {
+					fx.symlinkRef(t, fmt.Sprintf("refs/heads/alias%02d", i), target, fx.root)
+					continue
+				}
+				fx.run(t, "update-ref", target, string(fx.root))
+			}
+			fx.anchored(t, "trunk work", "main")
+			p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: installCountingGit(t, countingGitScript)}
+			p.expect("cold", tierRebuild)
+			p.promoteThen("warm", tierHit)
+			probe := p.entry("warm")
+			var sideDir, sideLeaves int
+			for _, stamp := range probe.Stamps {
+				switch _, rest, found := strings.Cut(filepath.ToSlash(stamp), "/refs/remotes/side"); {
+				case !found:
+				case rest == "":
+					sideDir++
+				case strings.HasPrefix(rest, "/"):
+					sideLeaves++
+				}
+			}
+			if want := min(aliases, 1); sideDir != want || sideLeaves != 0 {
+				t.Fatalf("refs/remotes/side stamps: directory %d times, %d leaves below it; want the directory %d times and no leaves\nall stamps %q", sideDir, sideLeaves, want, probe.Stamps)
+			}
+			counts[aliases] = len(probe.Stamps)
+		})
+	}
+	if t.Failed() {
+		return
+	}
+	if counts[tips] != counts[1] || counts[1] != counts[0]+1 {
+		t.Fatalf("stamps at 0/1/%d aliases = %d/%d/%d; want one directory stamp for the first alias and none for the rest", tips, counts[0], counts[1], counts[tips])
+	}
 }
 
 func totalAllocated(fn func()) uint64 {

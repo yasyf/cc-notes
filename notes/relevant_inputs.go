@@ -26,7 +26,10 @@ import (
 var relevantRacyWindow = 2 * time.Second
 
 const (
-	relevantSymrefDepth   = 5
+	relevantSymrefDepth = 5
+	// Linux's MAXSYMLINKS: past it every stat fails with ELOOP whatever the
+	// targets hold, so no deeper link can change a capture.
+	relevantLinkHops      = 40
 	relevantMissing       = "missing"
 	defaultReplaceRefBase = "refs/replace/"
 )
@@ -54,7 +57,7 @@ type relevantInputs struct {
 	guards     []fileStamp
 	watched    map[string]fileStamp
 	guarded    map[string]bool
-	depSeen    map[string]bool
+	depSeen    map[string]int
 	lines      []string
 	revalidate bool
 	untrusted  bool
@@ -89,7 +92,7 @@ func (c *Client) relevantInputs(ctx context.Context, p string, filter RelevantFi
 		start:     time.Now(),
 		watched:   make(map[string]fileStamp),
 		guarded:   make(map[string]bool),
-		depSeen:   make(map[string]bool),
+		depSeen:   make(map[string]int),
 		symrefs:   make(map[string]string),
 		vars:      make(map[string]string),
 		tips:      make(map[string]model.SHA),
@@ -146,9 +149,23 @@ func (in *relevantInputs) keep(s fileStamp) fileStamp {
 	in.watched[s.Path] = s
 	in.stamps = append(in.stamps, s)
 	if s.Missing {
-		in.guard(filepath.Dir(s.Path))
+		in.guardMissing(s.Path)
 	}
 	return s
+}
+
+func (in *relevantInputs) guardMissing(path string) {
+	for hops := 0; ; hops++ {
+		in.guard(filepath.Dir(path))
+		target, err := os.Readlink(path)
+		if err != nil || hops == relevantLinkHops {
+			return
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = target
+	}
 }
 
 func (in *relevantInputs) guard(dir string) {
@@ -245,31 +262,38 @@ func (in *relevantInputs) watchRef(name string, depth int) {
 		return
 	}
 	s := in.watchLink(file)
-	if s.Missing || depth == relevantSymrefDepth {
+	if s.Missing {
 		return
 	}
-	var target string
-	if s.Mode&os.ModeSymlink != 0 {
-		link, ok := in.linkSymref(file)
-		if !ok {
-			return
-		}
-		target = link
-	} else {
-		data, err := os.ReadFile(file) //nolint:gosec // G304: a ref file inside this repository's git directories.
-		if err != nil {
-			in.untrusted = true
-			return
-		}
-		symref, ok := symrefTarget(data)
-		if !ok {
-			return
-		}
-		target = symref
+	target, ok := in.symref(file, s.Mode)
+	if !ok {
+		return
 	}
 	in.symrefs[name] = target
 	in.record("symref %s %s", name, target)
-	in.watchRef(target, depth+1)
+	if in.followSymref(depth) {
+		in.watchRef(target, depth+1)
+	}
+}
+
+func (in *relevantInputs) followSymref(depth int) bool {
+	if depth < relevantSymrefDepth {
+		return true
+	}
+	in.revalidate = true
+	return false
+}
+
+func (in *relevantInputs) symref(file string, mode os.FileMode) (string, bool) {
+	if mode&os.ModeSymlink != 0 {
+		return in.linkSymref(file)
+	}
+	data, err := os.ReadFile(file) //nolint:gosec // G304: a ref file inside this repository's git directories.
+	if err != nil {
+		in.untrusted = true
+		return "", false
+	}
+	return symrefTarget(data)
 }
 
 func (in *relevantInputs) linkSymref(file string) (string, bool) {
@@ -339,19 +363,9 @@ func (in *relevantInputs) watchDirs(dir string) {
 			continue
 		case strings.HasSuffix(e.Name(), ".lock"):
 			continue
-		case e.Type()&os.ModeSymlink != 0:
-			if target, ok := in.linkSymref(path); ok {
-				in.watchRef(target, 0)
-			}
-			continue
 		}
-		data, err := os.ReadFile(path) //nolint:gosec // G304: a ref file inside this repository's git directories.
-		if err != nil {
-			in.untrusted = true
-			continue
-		}
-		if target, ok := symrefTarget(data); ok {
-			in.watchRef(target, 0)
+		if target, ok := in.symref(path, e.Type()); ok {
+			in.watchDep(target, 0)
 		}
 	}
 }
@@ -366,10 +380,13 @@ func cleanRevName(rev string) bool {
 }
 
 func (in *relevantInputs) watchDep(name string, depth int) {
-	if in.depSeen[name] || !cleanRevName(name) {
+	if !cleanRevName(name) {
 		return
 	}
-	in.depSeen[name] = true
+	if seen, ok := in.depSeen[name]; ok && seen <= depth {
+		return
+	}
+	in.depSeen[name] = depth
 	if name == "HEAD" || rootPseudoref(name) {
 		in.watchRef(name, depth)
 		return
@@ -385,18 +402,7 @@ func (in *relevantInputs) watchDep(name string, depth int) {
 	if err != nil || info.IsDir() {
 		return
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		if target, ok := in.linkSymref(file); ok && depth < relevantSymrefDepth {
-			in.watchDep(target, depth+1)
-		}
-		return
-	}
-	data, err := os.ReadFile(file) //nolint:gosec // G304: a ref file inside this repository's git directories.
-	if err != nil {
-		in.untrusted = true
-		return
-	}
-	if target, ok := symrefTarget(data); ok && depth < relevantSymrefDepth {
+	if target, ok := in.symref(file, info.Mode()); ok && in.followSymref(depth) {
 		in.watchDep(target, depth+1)
 	}
 }
