@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,8 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/internal/store"
+	"github.com/yasyf/cc-notes/model"
 )
 
 func relevantEntryOf(ctx context.Context, t *testing.T, c *Client, target string, filter RelevantFilter) (relevantCacheEntry, bool) {
@@ -296,6 +300,66 @@ func TestRelevantCachedRefusesACaptureWhoseGuardMoved(t *testing.T) {
 	}
 	if _, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{}); !ok {
 		t.Fatal("a quiet capture must write the entry")
+	}
+}
+
+func TestRelevantCachedPersistsASettledCaptureInAQuietRepository(t *testing.T) {
+	defer SetRelevantRacyWindow(0)()
+	c, dir := newWBClient(t)
+	ctx := t.Context()
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	anchors := []model.Anchor{{Kind: model.AnchorPath, Value: "svc/handler.go"}, {Kind: model.AnchorCommit, Value: "ORIG_HEAD"}}
+	if _, err := s.Create(ctx, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: "handler", Anchors: anchors}}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	gitDir := c.s.GitDir()
+	rootFiles := []string{"packed-refs", "shallow", "ORIG_HEAD"}
+	for _, name := range rootFiles {
+		if _, err := os.Lstat(filepath.Join(gitDir, name)); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("%s is present in the git dir: %v", name, err)
+		}
+	}
+
+	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
+	if err != nil {
+		t.Fatalf("relevantInputs: %v", err)
+	}
+	if !slices.ContainsFunc(in.guards, func(g fileStamp) bool { return g.Path == gitDir }) {
+		t.Fatalf("missing root files left the git dir unguarded during capture: %+v", in.guards)
+	}
+
+	renders := 0
+	render := func(entries []RelevantEntry) ([]byte, error) {
+		renders++
+		return json.Marshal(entries)
+	}
+	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil {
+		t.Fatalf("RelevantCached: %v", err)
+	}
+	entry, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{})
+	if !ok {
+		t.Fatal("a quiet capture guarding the git dir persisted no entry")
+	}
+	if entry.Racy || entry.Revalidate {
+		t.Fatalf("racy = %t revalidate = %t, want a settled entry", entry.Racy, entry.Revalidate)
+	}
+	missing := make(map[string]bool)
+	for _, stamp := range entry.Stamps {
+		if stamp.Missing && filepath.Dir(stamp.Path) == gitDir {
+			missing[filepath.Base(stamp.Path)] = true
+		}
+	}
+	for _, name := range rootFiles {
+		if !missing[name] {
+			t.Fatalf("the entry carries no missing stamp for %s: %+v", name, entry.Stamps)
+		}
+	}
+	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil || renders != 1 {
+		t.Fatalf("warm call: err %v renders %d, want the settled entry served", err, renders)
 	}
 }
 

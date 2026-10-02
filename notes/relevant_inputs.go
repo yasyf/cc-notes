@@ -145,11 +145,8 @@ func (in *relevantInputs) keep(s fileStamp) fileStamp {
 	}
 	in.watched[s.Path] = s
 	in.stamps = append(in.stamps, s)
-	// A missing file directly in the git dir (packed-refs, shallow, a root
-	// pseudoref) goes unguarded: git never creates and deletes one within a
-	// capture, and guarding the dir would trip on every index write.
-	if dir := filepath.Dir(s.Path); s.Missing && dir != in.gitDir && dir != in.commonDir {
-		in.guard(dir)
+	if s.Missing {
+		in.guard(filepath.Dir(s.Path))
 	}
 	return s
 }
@@ -253,9 +250,8 @@ func (in *relevantInputs) watchRef(name string, depth int) {
 	}
 	var target string
 	if s.Mode&os.ModeSymlink != 0 {
-		link, err := os.Readlink(file)
-		if err != nil {
-			in.untrusted = true
+		link, ok := in.linkSymref(file)
+		if !ok {
 			return
 		}
 		target = link
@@ -274,6 +270,21 @@ func (in *relevantInputs) watchRef(name string, depth int) {
 	in.symrefs[name] = target
 	in.record("symref %s %s", name, target)
 	in.watchRef(target, depth+1)
+}
+
+func (in *relevantInputs) linkSymref(file string) (string, bool) {
+	target, err := os.Readlink(file)
+	if err != nil {
+		in.untrusted = true
+		return "", false
+	}
+	// git's files backend treats a link naming a ref under refs/ as a symref
+	// and reads any other link through the filesystem, a path no stamp covers.
+	if !strings.HasPrefix(target, "refs/") || plumbing.ReferenceName(target).Validate() != nil {
+		in.revalidate = true
+		return "", false
+	}
+	return target, true
 }
 
 func symrefTarget(data []byte) (string, bool) {
@@ -322,11 +333,16 @@ func (in *relevantInputs) watchDirs(dir string) {
 	}
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
-		if e.IsDir() {
+		switch {
+		case e.IsDir():
 			in.watchDirs(path)
 			continue
-		}
-		if strings.HasSuffix(e.Name(), ".lock") {
+		case strings.HasSuffix(e.Name(), ".lock"):
+			continue
+		case e.Type()&os.ModeSymlink != 0:
+			if target, ok := in.linkSymref(path); ok {
+				in.watchRef(target, 0)
+			}
 			continue
 		}
 		data, err := os.ReadFile(path) //nolint:gosec // G304: a ref file inside this repository's git directories.
@@ -365,8 +381,19 @@ func (in *relevantInputs) watchDep(name string, depth int) {
 	}
 	in.watch(nearestExisting(filepath.Dir(file)))
 	in.watch(filepath.Join(in.commonDir, "packed-refs"))
+	info, err := os.Lstat(file)
+	if err != nil || info.IsDir() {
+		return
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		if target, ok := in.linkSymref(file); ok && depth < relevantSymrefDepth {
+			in.watchDep(target, depth+1)
+		}
+		return
+	}
 	data, err := os.ReadFile(file) //nolint:gosec // G304: a ref file inside this repository's git directories.
 	if err != nil {
+		in.untrusted = true
 		return
 	}
 	if target, ok := symrefTarget(data); ok && depth < relevantSymrefDepth {

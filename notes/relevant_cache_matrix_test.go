@@ -64,6 +64,30 @@ fi
 exit $rc
 `
 
+const rootRaceGitScript = `#!/bin/sh
+printf '%s\037' "$@" >> "$CC_NOTES_GIT_TRACE"
+printf '\n' >> "$CC_NOTES_GIT_TRACE"
+hit=0
+for a in "$@"; do
+	[ "$a" = "$CC_NOTES_RACE_TRIGGER" ] && hit=1
+done
+if [ "$(cat "$CC_NOTES_RACE_STATE")" != armed ] || [ $hit = 0 ]; then
+	exec "$CC_NOTES_REAL_GIT" "$@"
+fi
+case "$CC_NOTES_RACE_MODE" in
+orig-head) "$CC_NOTES_REAL_GIT" -C "$CC_NOTES_RACE_DIR" update-ref ORIG_HEAD "$CC_NOTES_RACE_VALUE" ;;
+include) "$CC_NOTES_REAL_GIT" config --file "$CC_NOTES_RACE_FILE" user.email "$CC_NOTES_RACE_VALUE" ;;
+esac
+"$CC_NOTES_REAL_GIT" "$@"
+rc=$?
+case "$CC_NOTES_RACE_MODE" in
+orig-head) "$CC_NOTES_REAL_GIT" -C "$CC_NOTES_RACE_DIR" update-ref -d ORIG_HEAD ;;
+include) rm "$CC_NOTES_RACE_FILE" ;;
+esac
+printf fired > "$CC_NOTES_RACE_STATE"
+exit $rc
+`
+
 type cacheTier int
 
 const (
@@ -347,6 +371,41 @@ func (fx *matrixFixture) includeExtra(t *testing.T, email string) {
 	fx.run(t, "config", "-f", filepath.Join(fx.commonDir(t), "extra.config"), "user.email", email)
 }
 
+func (fx *matrixFixture) symlinkRef(t *testing.T, name, target string, at model.SHA) {
+	t.Helper()
+	fx.run(t, "config", "core.preferSymlinkRefs", "true")
+	fx.run(t, "update-ref", target, string(at))
+	fx.run(t, "symbolic-ref", name, target)
+	if link, err := os.Readlink(filepath.Join(fx.commonDir(t), filepath.FromSlash(name))); err != nil || link != target {
+		t.Fatalf("%s is not a symlink to %s: %q, %v", name, target, link, err)
+	}
+}
+
+func (fx *matrixFixture) armRootRace(t *testing.T, mode, trigger, value, file string) {
+	t.Helper()
+	state := filepath.Join(t.TempDir(), "race")
+	if err := os.WriteFile(state, []byte("armed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_NOTES_RACE_STATE", state)
+	t.Setenv("CC_NOTES_RACE_DIR", fx.repo)
+	t.Setenv("CC_NOTES_RACE_MODE", mode)
+	t.Setenv("CC_NOTES_RACE_TRIGGER", trigger)
+	t.Setenv("CC_NOTES_RACE_VALUE", value)
+	t.Setenv("CC_NOTES_RACE_FILE", file)
+	fx.counter = installCountingGit(t, rootRaceGitScript)
+}
+
+func (fx *matrixFixture) rootRaceFired(t *testing.T) {
+	t.Helper()
+	if got, err := os.ReadFile(os.Getenv("CC_NOTES_RACE_STATE")); err != nil || string(got) != "fired" {
+		t.Fatalf("race state = %q, %v; want fired (the shim never saw its trigger)", got, err)
+	}
+	if _, err := os.Lstat(os.Getenv("CC_NOTES_RACE_FILE")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("%s survived the race: %v", os.Getenv("CC_NOTES_RACE_FILE"), err)
+	}
+}
+
 func gitWrite(args ...string) func(*testing.T, *matrixFixture) {
 	return func(t *testing.T, fx *matrixFixture) {
 		t.Helper()
@@ -514,6 +573,46 @@ func invalidationCases() []matrixCase {
 			writes: []matrixWrite{{name: "symref target outside refs/heads moved to HEAD", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
 				fx.run(t, "update-ref", "refs/remotes/side/tip", string(fx.theirs))
 			}}},
+		},
+		{
+			name: "symlink alias target moved",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.symlinkRef(t, "refs/heads/alias", "refs/remotes/upstream/tip", fx.root)
+				fx.anchored(t, "alias work", "alias")
+			},
+			writes: []matrixWrite{{name: "upstream/tip moved off HEAD's history", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
+				fx.run(t, "update-ref", "refs/remotes/upstream/tip", string(fx.sideCommit(t)))
+			}}},
+		},
+		{
+			name: "detached bookmark symlink target moved",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.detachAhead(t)
+				fx.symlinkRef(t, "refs/heads/alias", "refs/remotes/side/tip", fx.root)
+				fx.anchored(t, "trunk work", "main")
+			},
+			writes: []matrixWrite{{name: "symlink target outside refs/heads moved to HEAD", want: tierRevalidate, do: func(t *testing.T, fx *matrixFixture) {
+				fx.run(t, "update-ref", "refs/remotes/side/tip", string(fx.theirs))
+			}}},
+		},
+		{
+			name: "detached bookmark read through a filesystem symlink",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.detachAhead(t)
+				fx.run(t, "update-ref", "refs/remotes/side/tip", string(fx.root))
+				fx.anchored(t, "trunk work", "main")
+			},
+			writes: []matrixWrite{
+				{name: "refs/heads/alias linked to ../remotes/side/tip", want: tierRevalidate, do: func(t *testing.T, fx *matrixFixture) {
+					if err := os.Symlink(filepath.Join("..", "remotes", "side", "tip"), filepath.Join(fx.commonDir(t), "refs", "heads", "alias")); err != nil {
+						t.Fatal(err)
+					}
+				}},
+				{name: "side/tip moved to HEAD", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
+					fx.run(t, "update-ref", "refs/remotes/side/tip", string(fx.theirs))
+				}},
+			},
+			settled: tierRevalidate,
 		},
 		{
 			name: "origin/HEAD made ambiguous by a tag",
@@ -879,6 +978,50 @@ func raceNeverPins(t *testing.T, next string, endsRaced bool) {
 	p.expect("first call after the race", tierRebuild)
 	if raced := strings.Contains(string(p.last), "handler, raced"); raced != endsRaced {
 		t.Fatalf("answer after the race carries the raced title = %t, want %t: %s", raced, endsRaced, p.last)
+	}
+	p.promoteThen("settled after the race", tierHit)
+}
+
+func TestRelevantCachedNeverPinsARootRefRacedDuringCapture(t *testing.T) {
+	t.Cleanup(notes.SetRelevantRacyWindow(0))
+	fx := newMatrixFixture(t)
+	fx.armRootRace(t, "orig-head", "cat-file", string(fx.root), filepath.Join(fx.commonDir(t), "ORIG_HEAD"))
+	filter := notes.RelevantFilter{Base: "ORIG_HEAD"}
+	render := func(entries []notes.RelevantEntry) ([]byte, error) { return json.Marshal(entries) }
+	if _, err := fx.c.RelevantCached(t.Context(), matrixTarget, filter, "json", render); err != nil {
+		t.Fatalf("capture raced by ORIG_HEAD appearing: %v", err)
+	}
+	fx.rootRaceFired(t)
+	if _, ok, err := notes.RelevantCacheProbeOf(fx.c, matrixTarget, filter, "json"); err != nil || ok {
+		t.Fatalf("a capture whose base appeared and vanished persisted an entry: ok=%t err=%v", ok, err)
+	}
+	_, cachedErr := fx.c.RelevantCached(t.Context(), matrixTarget, filter, "json", render)
+	_, freshErr := fx.c.Relevant(t.Context(), matrixTarget, filter)
+	if cachedErr == nil || freshErr == nil || cachedErr.Error() != freshErr.Error() {
+		t.Fatalf("after the race: cached %v, fresh %v; want the same missing-base error", cachedErr, freshErr)
+	}
+}
+
+func TestRelevantCachedNeverPinsARootIncludeRacedDuringCapture(t *testing.T) {
+	t.Cleanup(notes.SetRelevantRacyWindow(0))
+	fx := newMatrixFixture(t)
+	fx.crossAuthor(t)
+	fx.run(t, "config", "include.path", "extra.config")
+	fx.armRootRace(t, "include", "GIT_AUTHOR_IDENT", relevantOther, filepath.Join(fx.commonDir(t), "extra.config"))
+	p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: fx.counter}
+	if got := p.call("capture raced by the include appearing"); got != tierRebuild {
+		t.Fatalf("raced capture served by %v, want %v", got, tierRebuild)
+	}
+	if bytes.Contains(p.last, []byte(`"cross-author"`)) {
+		t.Fatalf("the raced identity still scored cross-author; the include never reached the identity read: %s", p.last)
+	}
+	fx.rootRaceFired(t)
+	if _, ok, err := notes.RelevantCacheProbeOf(fx.c, matrixTarget, p.filter, "json"); err != nil || ok {
+		t.Fatalf("a capture whose include appeared and vanished persisted an entry: ok=%t err=%v", ok, err)
+	}
+	p.expect("first call after the race", tierRebuild)
+	if !bytes.Contains(p.last, []byte(`"cross-author"`)) {
+		t.Fatalf("answer after the race lost the cross-author signal: %s", p.last)
 	}
 	p.promoteThen("settled after the race", tierHit)
 }
