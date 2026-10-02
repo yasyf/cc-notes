@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -76,15 +75,11 @@ func showNote(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string
 	if err != nil {
 		return err
 	}
-	head, err := resolveHead(ctx, s)
-	if err != nil {
-		return err
-	}
 	staleAfter, err := noteStaleAfter(ctx, s.Git)
 	if err != nil {
 		return err
 	}
-	verdict, err := noteVerdict(ctx, s, head, note, time.Now(), staleAfter, false)
+	verdict, err := c.NoteVerdict(ctx, note, staleAfter, false)
 	if err != nil {
 		return err
 	}
@@ -101,9 +96,9 @@ func showNote(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string
 		return err
 	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newNoteDTO(note, verdict, supersedes, liveHead, atts))
+		return printJSON(cmd.OutOrStdout(), newNoteDTO(note, string(verdict), supersedes, liveHead, atts))
 	}
-	_, err = fmt.Fprint(cmd.OutOrStdout(), renderNoteShow(note, verdict, supersedes, atts))
+	_, err = fmt.Fprint(cmd.OutOrStdout(), renderNoteShow(note, string(verdict), supersedes, atts))
 	return err
 }
 
@@ -113,15 +108,11 @@ func showDoc(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string,
 	if err != nil {
 		return err
 	}
-	head, err := resolveHead(ctx, s)
-	if err != nil {
-		return err
-	}
 	staleAfter, err := noteStaleAfter(ctx, s.Git)
 	if err != nil {
 		return err
 	}
-	verdict, err := docVerdict(ctx, s, head, doc, time.Now(), staleAfter, false)
+	verdict, err := c.DocVerdict(ctx, doc, staleAfter, false)
 	if err != nil {
 		return err
 	}
@@ -138,9 +129,9 @@ func showDoc(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string,
 		return err
 	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newDocDTO(doc, verdict, supersedes, liveHead, atts))
+		return printJSON(cmd.OutOrStdout(), newDocDTO(doc, string(verdict), supersedes, liveHead, atts))
 	}
-	_, err = fmt.Fprint(cmd.OutOrStdout(), renderDocShow(doc, verdict, supersedes, atts))
+	_, err = fmt.Fprint(cmd.OutOrStdout(), renderDocShow(doc, string(verdict), supersedes, atts))
 	return err
 }
 
@@ -150,15 +141,11 @@ func showAnswer(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix stri
 	if err != nil {
 		return err
 	}
-	head, err := resolveHead(ctx, s)
-	if err != nil {
-		return err
-	}
 	staleAfter, err := noteStaleAfter(ctx, s.Git)
 	if err != nil {
 		return err
 	}
-	verdict, err := answerVerdict(ctx, s, head, answer, time.Now(), staleAfter, false)
+	verdict, err := c.AnswerVerdict(ctx, answer, staleAfter, false)
 	if err != nil {
 		return err
 	}
@@ -175,9 +162,9 @@ func showAnswer(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix stri
 		return err
 	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), newAnswerDTO(answer, verdict, supersedes, liveHead, atts))
+		return printJSON(cmd.OutOrStdout(), newAnswerDTO(answer, string(verdict), supersedes, liveHead, atts))
 	}
-	_, err = fmt.Fprint(cmd.OutOrStdout(), renderNoteShow(model.Note(answer), verdict, supersedes, atts))
+	_, err = fmt.Fprint(cmd.OutOrStdout(), renderNoteShow(model.Note(answer), string(verdict), supersedes, atts))
 	return err
 }
 

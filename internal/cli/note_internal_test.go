@@ -1,15 +1,19 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
-	"time"
 
+	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/notes"
 )
 
 // driftRepoInit scrubs the ambient git/cc-notes environment and creates a git
@@ -55,159 +59,124 @@ func commitDirFile(t *testing.T, dir, path, content string) {
 	driftRepoGit(t, dir, "commit", "-q", "-m", "commit "+path)
 }
 
-func TestNoteDirAnchorDrift(t *testing.T) {
-	dir := t.TempDir()
-	driftRepoInit(t, dir)
-	commitDirFile(t, dir, "internal/auth/login.go", "v1\n")
-
+func showDrift(t *testing.T, dir string, id model.EntityID) notes.Verdict {
+	t.Helper()
 	t.Chdir(dir)
-	s, err := store.Open(dir)
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
+	root := NewRootCmd()
+	var stdout bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stdout)
+	root.SetArgs([]string{"show", string(id), "--json"})
+	if err := root.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("show %s: %v\n%s", id, err, stdout.String())
 	}
-	ctx := t.Context()
-	head, err := resolveHead(ctx, s)
-	if err != nil {
-		t.Fatalf("resolveHead: %v", err)
+	var shown struct {
+		Drift notes.Verdict `json:"drift"`
 	}
-	if head == "" {
-		t.Fatal("HEAD is unborn after a commit")
+	if err := json.Unmarshal(stdout.Bytes(), &shown); err != nil {
+		t.Fatalf("decode show %s: %v\n%s", id, err, stdout.String())
 	}
-
-	anchors := []model.Anchor{{Kind: model.AnchorDir, Value: "internal/auth"}}
-	witness, err := buildWitness(ctx, s, head, anchors)
-	if err != nil {
-		t.Fatalf("buildWitness: %v", err)
-	}
-	if len(witness) != 1 || witness[0].Anchor != anchors[0] || witness[0].OID == "" {
-		t.Fatalf("witness = %+v, want one dir-anchor witness with a tree oid", witness)
-	}
-	note := model.Note{Anchors: anchors, Witness: witness}
-
-	drifted, err := driftedOf(ctx, s, head, freshFromNote(note), false)
-	if err != nil {
-		t.Fatalf("driftedOf (unchanged): %v", err)
-	}
-	if drifted {
-		t.Fatal("dir anchor drifted with no change to the subtree")
-	}
-
-	commitDirFile(t, dir, "internal/auth/login.go", "v2\n")
-	head, err = resolveHead(ctx, s)
-	if err != nil {
-		t.Fatalf("resolveHead after edit: %v", err)
-	}
-	drifted, err = driftedOf(ctx, s, head, freshFromNote(note), false)
-	if err != nil {
-		t.Fatalf("driftedOf (changed): %v", err)
-	}
-	if !drifted {
-		t.Fatal("dir anchor did not drift after a file under it changed")
-	}
-
-	driftRepoGit(t, dir, "rm", "-q", "-r", "internal/auth")
-	driftRepoGit(t, dir, "commit", "-q", "-m", "remove internal/auth")
-	head, err = resolveHead(ctx, s)
-	if err != nil {
-		t.Fatalf("resolveHead after delete: %v", err)
-	}
-	drifted, err = driftedOf(ctx, s, head, freshFromNote(note), false)
-	if err != nil {
-		t.Fatalf("driftedOf (deleted): %v", err)
-	}
-	if !drifted {
-		t.Fatal("dir anchor did not drift after the directory was deleted")
-	}
+	return shown.Drift
 }
 
-// TestCommitAnchorShortShaResolves is the litmus for driftedOf's read-path
-// commit resolver: a witnessed commit anchor stored as a short (un-canonicalized)
-// sha must be resolved via git, never explode on "invalid sha". A resolvable
-// prefix reachable from HEAD reads fresh (not drifted); an unresolvable one
-// degrades to drifted (best-effort). Reverting the ResolveCommit call in
-// driftedOf makes both cases fail with "invalid sha".
-func TestCommitAnchorShortShaResolves(t *testing.T) {
+// TestShowUsesNotesVerdict anchors a note, a doc, and an answer to an old
+// commit, grafts the history past it, and drifts a second note's path: the
+// drift cc-notes show prints is notes.Client's verdict for every kind,
+// HISTORY-UNAVAILABLE included.
+func TestShowUsesNotesVerdict(t *testing.T) {
 	dir := t.TempDir()
 	driftRepoInit(t, dir)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(ccnhome.Env, t.TempDir())
+	t.Setenv("CC_NOTES_ACTOR", "Test User <test@example.com>")
 	commitDirFile(t, dir, "pkg/a.go", "v1\n")
+	old := gittest.Git(t, dir, "rev-parse", "HEAD")
+	commitDirFile(t, dir, "pkg/b.go", "v1\n")
 
-	t.Chdir(dir)
-	s, err := store.Open(dir)
+	c, err := notes.Open(dir)
 	if err != nil {
-		t.Fatalf("store.Open: %v", err)
+		t.Fatalf("notes.Open: %v", err)
 	}
 	ctx := t.Context()
-	head, err := resolveHead(ctx, s)
+	onOld := notes.AnchorSpec{Commits: []string{old}}
+	unknownNote, _, err := c.CreateNote(ctx, notes.NoteSpec{Title: "old commit", Body: "b", Anchors: onOld})
 	if err != nil {
-		t.Fatalf("resolveHead: %v", err)
+		t.Fatalf("CreateNote: %v", err)
 	}
-	if head == "" {
-		t.Fatal("HEAD is unborn after a commit")
+	driftedNote, _, err := c.CreateNote(ctx, notes.NoteSpec{Title: "changed path", Body: "b", Anchors: notes.AnchorSpec{Paths: []string{"pkg/b.go"}}})
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	freshNote, _, err := c.CreateNote(ctx, notes.NoteSpec{Title: "intact path", Body: "b", Anchors: notes.AnchorSpec{Paths: []string{"pkg/a.go"}}})
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	unknownDoc, _, err := c.CreateDoc(ctx, notes.DocSpec{Title: "old commit", Body: "b", Anchors: onOld})
+	if err != nil {
+		t.Fatalf("CreateDoc: %v", err)
+	}
+	unknownAnswer, _, err := c.CreateAnswer(ctx, notes.NoteSpec{Title: "old commit?", Body: "b", Anchors: onOld})
+	if err != nil {
+		t.Fatalf("CreateAnswer: %v", err)
+	}
+	commitDirFile(t, dir, "pkg/b.go", "v2\n")
+	gittest.Shallow(t, dir, gittest.Git(t, dir, "rev-parse", "HEAD"))
+	staleAfter, err := c.NoteStaleAfter(ctx)
+	if err != nil {
+		t.Fatalf("NoteStaleAfter: %v", err)
 	}
 
-	for _, tc := range []struct {
+	noteVerdict := func(id model.EntityID) (notes.Verdict, error) {
+		n, err := c.Note(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		return c.NoteVerdict(ctx, n, staleAfter, false)
+	}
+	cases := []struct {
 		name    string
-		value   string
-		drifted bool
+		id      model.EntityID
+		verdict func() (notes.Verdict, error)
+		want    notes.Verdict
 	}{
-		{"resolvable prefix reachable from head is fresh", string(head)[:8], false},
-		{"unresolvable prefix drifts", "21aab439", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			anchor := model.Anchor{Kind: model.AnchorCommit, Value: tc.value}
-			fe := freshEntity{
-				Anchors: []model.Anchor{anchor},
-				Witness: []model.AnchorWitness{{Anchor: anchor, OID: model.SHA(tc.value)}},
-			}
-			drifted, err := driftedOf(ctx, s, head, fe, false)
+		{"note on an old commit", unknownNote.ID, func() (notes.Verdict, error) { return noteVerdict(unknownNote.ID) }, notes.VerdictHistoryUnavailable},
+		{"note on a changed path", driftedNote.ID, func() (notes.Verdict, error) { return noteVerdict(driftedNote.ID) }, notes.VerdictDrifted},
+		{"note on an intact path", freshNote.ID, func() (notes.Verdict, error) { return noteVerdict(freshNote.ID) }, ""},
+		{"doc on an old commit", unknownDoc.ID, func() (notes.Verdict, error) {
+			d, err := c.Doc(ctx, unknownDoc.ID)
 			if err != nil {
-				t.Fatalf("driftedOf: %v", err)
+				return "", err
 			}
-			if drifted != tc.drifted {
-				t.Fatalf("drifted = %v, want %v", drifted, tc.drifted)
+			return c.DocVerdict(ctx, d, staleAfter, false)
+		}, notes.VerdictHistoryUnavailable},
+		{"answer on an old commit", unknownAnswer.ID, func() (notes.Verdict, error) {
+			a, err := c.Answer(ctx, unknownAnswer.ID)
+			if err != nil {
+				return "", err
+			}
+			return c.AnswerVerdict(ctx, a, staleAfter, false)
+		}, notes.VerdictHistoryUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := tc.verdict()
+			if err != nil {
+				t.Fatalf("client verdict: %v", err)
+			}
+			if client != tc.want {
+				t.Fatalf("fixture invalid: client verdict = %q, want %q", client, tc.want)
+			}
+			if shown := showDrift(t, dir, tc.id); shown != client {
+				t.Errorf("show --json drift = %q, client verdict = %q", shown, client)
 			}
 		})
 	}
 }
 
-func TestNoteVerdict(t *testing.T) {
-	now := time.Unix(1_000_000, 0)
-	t.Run("never verified is UNVERIFIED before any git read", func(t *testing.T) {
-		// A zero VerifiedAt short-circuits, so the nil store is never touched.
-		got, err := noteVerdict(t.Context(), nil, "", model.Note{}, now, time.Hour, false)
-		if err != nil {
-			t.Fatalf("noteVerdict: %v", err)
-		}
-		if got != verdictUnverified {
-			t.Fatalf("verdict = %q, want %q", got, verdictUnverified)
-		}
-	})
-	t.Run("verified within threshold against unborn HEAD is fresh", func(t *testing.T) {
-		n := model.Note{VerifiedAt: now.Add(-time.Minute).Unix()}
-		got, err := noteVerdict(t.Context(), nil, "", n, now, time.Hour, false)
-		if err != nil {
-			t.Fatalf("noteVerdict: %v", err)
-		}
-		if got != "" {
-			t.Fatalf("verdict = %q, want fresh", got)
-		}
-	})
-	t.Run("verified past threshold is STALE", func(t *testing.T) {
-		n := model.Note{VerifiedAt: now.Add(-2 * time.Hour).Unix()}
-		got, err := noteVerdict(t.Context(), nil, "", n, now, time.Hour, false)
-		if err != nil {
-			t.Fatalf("noteVerdict: %v", err)
-		}
-		if got != verdictStale {
-			t.Fatalf("verdict = %q, want %q", got, verdictStale)
-		}
-	})
-}
-
 func TestFilterVerdicts(t *testing.T) {
 	rs := []reviewed[model.Note]{
 		{entity: model.Note{ID: "a"}, verdict: verdictDrifted},
-		{entity: model.Note{ID: "b"}, verdict: verdictStale},
+		{entity: model.Note{ID: "b"}, verdict: string(notes.VerdictStale)},
 		{entity: model.Note{ID: "c"}, verdict: verdictUnverified},
 		{entity: model.Note{ID: "d"}, verdict: verdictExpired},
 	}
@@ -228,9 +197,9 @@ func TestFilterVerdicts(t *testing.T) {
 	}
 }
 
-func ids(notes []model.Note) []string {
-	out := make([]string, len(notes))
-	for i, n := range notes {
+func ids(ns []model.Note) []string {
+	out := make([]string, len(ns))
+	for i, n := range ns {
 		out[i] = string(n.ID)
 	}
 	return out
@@ -251,76 +220,115 @@ func eqIDs(t *testing.T, got []model.Note, want ...string) {
 
 func TestRankNotes(t *testing.T) {
 	t.Run("tier order title>tag>body", func(t *testing.T) {
-		notes := []model.Note{
+		ns := []model.Note{
 			{ID: "body", Title: "Z", Body: "the widget breaks"},
 			{ID: "title", Title: "Widget design"},
 			{ID: "tag", Title: "Other", Tags: []string{"widget"}},
 			{ID: "none", Title: "unrelated", Body: "nothing here"},
 		}
-		got := rankEntities(notes, "widget", nil, "", "", "", "", "", 20, noteRank)
+		got := rankEntities(ns, "widget", nil, "", "", "", "", "", 20, noteRank)
 		eqIDs(t, got, "title", "tag", "body")
 	})
 
 	t.Run("recency then id within tier", func(t *testing.T) {
-		notes := []model.Note{
+		ns := []model.Note{
 			{ID: "b", Title: "widget B", UpdatedAt: 100},
 			{ID: "a", Title: "widget A", UpdatedAt: 200},
 			{ID: "d", Title: "widget D", UpdatedAt: 100},
 			{ID: "c", Title: "widget C", UpdatedAt: 100},
 		}
-		got := rankEntities(notes, "widget", nil, "", "", "", "", "", 20, noteRank)
+		got := rankEntities(ns, "widget", nil, "", "", "", "", "", 20, noteRank)
 		eqIDs(t, got, "a", "b", "c", "d")
 	})
 
 	t.Run("limit truncation", func(t *testing.T) {
-		notes := []model.Note{
+		ns := []model.Note{
 			{ID: "a", Title: "widget A", UpdatedAt: 300},
 			{ID: "b", Title: "widget B", UpdatedAt: 200},
 			{ID: "c", Title: "widget C", UpdatedAt: 100},
 		}
-		got := rankEntities(notes, "widget", nil, "", "", "", "", "", 2, noteRank)
+		got := rankEntities(ns, "widget", nil, "", "", "", "", "", 2, noteRank)
 		eqIDs(t, got, "a", "b")
 	})
 
 	t.Run("tag filter narrows", func(t *testing.T) {
-		notes := []model.Note{
+		ns := []model.Note{
 			{ID: "yes", Title: "widget one", Tags: []string{"design"}},
 			{ID: "no", Title: "widget two", Tags: []string{"misc"}},
 		}
-		got := rankEntities(notes, "widget", []string{"design"}, "", "", "", "", "", 20, noteRank)
+		got := rankEntities(ns, "widget", []string{"design"}, "", "", "", "", "", 20, noteRank)
 		eqIDs(t, got, "yes")
 	})
 
 	t.Run("author filter narrows", func(t *testing.T) {
-		notes := []model.Note{
+		ns := []model.Note{
 			{ID: "yes", Title: "widget", Author: "ada <ada@example.com>"},
 			{ID: "no", Title: "widget", Author: "ben <ben@example.com>"},
 		}
-		got := rankEntities(notes, "widget", nil, "ada <ada@example.com>", "", "", "", "", 20, noteRank)
+		got := rankEntities(ns, "widget", nil, "ada <ada@example.com>", "", "", "", "", 20, noteRank)
 		eqIDs(t, got, "yes")
 	})
 
 	t.Run("anchor filters narrow", func(t *testing.T) {
-		notes := []model.Note{
+		ns := []model.Note{
 			{ID: "yes", Title: "widget", Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "a.go"}}},
 			{ID: "no", Title: "widget", Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "b.go"}}},
 		}
-		got := rankEntities(notes, "widget", nil, "", "a.go", "", "", "", 20, noteRank)
+		got := rankEntities(ns, "widget", nil, "", "a.go", "", "", "", 20, noteRank)
 		eqIDs(t, got, "yes")
 	})
 
 	t.Run("dir anchor filter narrows", func(t *testing.T) {
-		notes := []model.Note{
+		ns := []model.Note{
 			{ID: "yes", Title: "widget", Anchors: []model.Anchor{{Kind: model.AnchorDir, Value: "internal/auth"}}},
 			{ID: "no", Title: "widget", Anchors: []model.Anchor{{Kind: model.AnchorDir, Value: "internal/sync"}}},
 		}
-		got := rankEntities(notes, "widget", nil, "", "", "internal/auth", "", "", 20, noteRank)
+		got := rankEntities(ns, "widget", nil, "", "", "internal/auth", "", "", 20, noteRank)
 		eqIDs(t, got, "yes")
 	})
 
 	t.Run("case-insensitive match", func(t *testing.T) {
-		notes := []model.Note{{ID: "a", Title: "The Widget Factory"}}
-		got := rankEntities(notes, "WIDGET", nil, "", "", "", "", "", 20, noteRank)
+		ns := []model.Note{{ID: "a", Title: "The Widget Factory"}}
+		got := rankEntities(ns, "WIDGET", nil, "", "", "", "", "", 20, noteRank)
 		eqIDs(t, got, "a")
 	})
+}
+
+// TestWitnessReadsBoundContext opens a depth-1 clone bound to its full source
+// after both moved apart: the HEAD and the path witness a born-verified note
+// records come from the clone, never the records repository.
+func TestWitnessReadsBoundContext(t *testing.T) {
+	source := gittest.InitRepo(t)
+	commitDirFile(t, source, "pkg/a.go", "v1\n")
+	thin := gittest.ShallowClone(t, source, 1)
+	commitDirFile(t, thin, "pkg/a.go", "thin\n")
+	commitDirFile(t, source, "pkg/a.go", "source later\n")
+	if _, err := store.Bind(t.Context(), thin, source); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	s, err := store.Open(thin)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	ctx := t.Context()
+
+	head, err := resolveHead(ctx, s)
+	if err != nil {
+		t.Fatalf("resolveHead: %v", err)
+	}
+	if want := model.SHA(gittest.Git(t, thin, "rev-parse", "HEAD")); head != want {
+		t.Fatalf("resolveHead = %s, want the clone's HEAD %s", head, want)
+	}
+	anchors := []model.Anchor{{Kind: model.AnchorPath, Value: "pkg/a.go"}, {Kind: model.AnchorDir, Value: "pkg"}}
+	witness, err := buildWitness(ctx, s, head, anchors)
+	if err != nil {
+		t.Fatalf("buildWitness: %v", err)
+	}
+	want := []model.AnchorWitness{
+		{Anchor: anchors[0], OID: model.SHA(gittest.Git(t, thin, "rev-parse", "HEAD:pkg/a.go"))},
+		{Anchor: anchors[1], OID: model.SHA(gittest.Git(t, thin, "rev-parse", "HEAD:pkg"))},
+	}
+	if !slices.Equal(witness, want) {
+		t.Errorf("buildWitness = %+v, want the clone's oids %+v", witness, want)
+	}
 }

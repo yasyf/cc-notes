@@ -18,8 +18,8 @@ import (
 
 // Verdict is the single freshness verdict a note or doc carries in a review. An
 // entity carries at most one, by the precedence EXPIRED > UNVERIFIED > DRIFTED >
-// STALE; DANGLING is reported separately for a broken supersede edge. The empty
-// Verdict means fresh.
+// HISTORY-UNAVAILABLE > STALE; DANGLING is reported separately for a broken
+// supersede edge. The empty Verdict means fresh.
 type Verdict string
 
 const (
@@ -29,6 +29,10 @@ const (
 	VerdictUnverified Verdict = "UNVERIFIED"
 	// VerdictDrifted reports an entity whose witnessed content changed at HEAD.
 	VerdictDrifted Verdict = "DRIFTED"
+	// VerdictHistoryUnavailable reports a witnessed commit anchor whose
+	// reachability the context graph cannot decide because it ends at a shallow
+	// boundary. It is not a proven change: Status.NeedsReview does not count it.
+	VerdictHistoryUnavailable Verdict = "HISTORY-UNAVAILABLE"
 	// VerdictStale reports an entity last verified longer ago than the threshold.
 	VerdictStale Verdict = "STALE"
 	// VerdictDangling reports a superseded entity whose target has been tombstoned.
@@ -663,9 +667,10 @@ func textTier(title string, tags, bodies []string, q string) int {
 
 // ReviewNotes folds the review set (non-deleted, including superseded for
 // dangling detection) and returns each flagged note with its verdict. A
-// non-superseded note carries its content verdict (UNVERIFIED/DRIFTED/STALE/
-// EXPIRED); a superseded note is surfaced only when its edge dangles. Fresh
-// notes are dropped. Order follows the note list: creation time then id.
+// non-superseded note carries its content verdict (UNVERIFIED/DRIFTED/
+// HISTORY-UNAVAILABLE/STALE/EXPIRED); a superseded note is surfaced only when
+// its edge dangles. Fresh notes are dropped. Order follows the note list:
+// creation time then id.
 func (c *Client) ReviewNotes(ctx context.Context, staleAfter time.Duration) ([]NoteReview, error) {
 	all, err := c.s.ListNotes(ctx, false, true)
 	if err != nil {
@@ -876,8 +881,8 @@ func freshFromDoc(d model.Doc) freshDocument {
 
 // verdictOf computes the single review verdict for fe against live content at
 // head, returning "" when fresh. Precedence is EXPIRED > UNVERIFIED > DRIFTED >
-// STALE; dangling supersede edges are surfaced separately. An unborn HEAD skips
-// drift detection unless worktree is set.
+// HISTORY-UNAVAILABLE > STALE; dangling supersede edges are surfaced
+// separately. An unborn HEAD skips drift detection unless worktree is set.
 func (c *Client) verdictOf(ctx context.Context, head model.SHA, fe freshDocument, now time.Time, staleAfter time.Duration, worktree bool, resolve commitResolver) (Verdict, error) {
 	if fe.StaleAt != 0 {
 		return VerdictExpired, nil
@@ -886,12 +891,16 @@ func (c *Client) verdictOf(ctx context.Context, head model.SHA, fe freshDocument
 		return VerdictUnverified, nil
 	}
 	if head != "" || worktree {
-		drifted, err := c.driftedOf(ctx, head, fe, worktree, resolve)
+		d, err := c.driftOf(ctx, head, fe, worktree, resolve)
 		if err != nil {
 			return "", err
 		}
-		if drifted {
+		switch d {
+		case driftProven:
 			return VerdictDrifted, nil
+		case driftUnknown:
+			return VerdictHistoryUnavailable, nil
+		case driftNone:
 		}
 	}
 	if now.Sub(time.Unix(fe.VerifiedAt, 0)) > staleAfter {
@@ -900,16 +909,28 @@ func (c *Client) verdictOf(ctx context.Context, head model.SHA, fe freshDocument
 	return "", nil
 }
 
-// driftedOf reports whether any witnessed anchor no longer matches live content
-// at head: a path or directory whose content oid changed or vanished, or a
-// commit no longer reachable from head. Anchors without a recorded witness are
-// not drift-checked. When worktree is true, a path anchor's live oid is the
-// on-disk working-tree blob, so an uncommitted edit drifts the entity.
-func (c *Client) driftedOf(ctx context.Context, head model.SHA, fe freshDocument, worktree bool, resolve commitResolver) (bool, error) {
+type drift int
+
+const (
+	driftNone drift = iota
+	driftUnknown
+	driftProven
+)
+
+// driftOf checks every witnessed anchor against live content at head: a path or
+// directory whose content oid changed or vanished, or a commit no longer
+// reachable from head, is proven drift and returned at once. A commit whose
+// reachability the context graph cannot decide — it ends at a shallow boundary
+// — is driftUnknown, unless a later anchor proves drift. Anchors without a
+// recorded witness are not drift-checked, nor are commit anchors against an
+// unborn head. When worktree is true, a path anchor's live oid is the on-disk
+// working-tree blob, so an uncommitted edit drifts the entity.
+func (c *Client) driftOf(ctx context.Context, head model.SHA, fe freshDocument, worktree bool, resolve commitResolver) (drift, error) {
 	byAnchor := make(map[model.Anchor]model.AnchorWitness, len(fe.Witness))
 	for _, w := range fe.Witness {
 		byAnchor[w.Anchor] = w
 	}
+	result := driftNone
 	for _, a := range fe.Anchors {
 		w, ok := byAnchor[a]
 		if !ok {
@@ -919,36 +940,58 @@ func (c *Client) driftedOf(ctx context.Context, head model.SHA, fe freshDocument
 		case model.AnchorPath, model.AnchorDir:
 			oid, err := c.liveAnchorOID(ctx, head, a, worktree)
 			if errors.Is(err, model.ErrPathNotFound) {
-				return true, nil
+				return driftProven, nil
 			}
 			if err != nil {
-				return false, err
+				return driftNone, err
 			}
 			if oid != w.OID {
-				return true, nil
+				return driftProven, nil
 			}
 		case model.AnchorCommit:
-			sha, err := resolve(ctx, a.Value)
-			if errors.Is(err, gitcmd.ErrRevNotFound) {
-				return true, nil
+			if head == "" {
+				continue
 			}
+			ancestry, err := c.commitAncestry(ctx, head, a.Value, resolve)
 			if err != nil {
-				return false, err
+				return driftNone, err
 			}
-			reachable, err := c.s.Repo.IsAncestor(ctx, sha, head)
-			if errors.Is(err, gitobj.ErrCommitNotFound) {
-				return true, nil
-			}
-			if err != nil {
-				return false, err
-			}
-			if !reachable {
-				return true, nil
+			switch ancestry {
+			case gitobj.NotAncestor:
+				return driftProven, nil
+			case gitobj.AncestryUnknown:
+				result = driftUnknown
+			case gitobj.Ancestor:
 			}
 		case model.AnchorBranch:
 		}
 	}
-	return false, nil
+	return result, nil
+}
+
+// commitAncestry reports what the context graph proves about a commit anchor
+// reaching head. A value naming no commit is unknown only in a shallow checkout;
+// a complete one proves it gone.
+func (c *Client) commitAncestry(ctx context.Context, head model.SHA, rev string, resolve commitResolver) (gitobj.Ancestry, error) {
+	sha, err := resolve(ctx, rev)
+	if errors.Is(err, gitcmd.ErrRevNotFound) {
+		shallow, err := c.s.ContextRepo.Shallow()
+		if err != nil {
+			return gitobj.NotAncestor, err
+		}
+		if shallow {
+			return gitobj.AncestryUnknown, nil
+		}
+		return gitobj.NotAncestor, nil
+	}
+	if err != nil {
+		return gitobj.NotAncestor, err
+	}
+	ancestry, err := c.s.ContextRepo.Ancestry(ctx, sha, head)
+	if errors.Is(err, gitobj.ErrCommitNotFound) {
+		return gitobj.NotAncestor, nil
+	}
+	return ancestry, err
 }
 
 // liveAnchorOID resolves the current content oid of a path or directory anchor.
@@ -964,7 +1007,7 @@ func (c *Client) liveAnchorOID(ctx context.Context, head model.SHA, a model.Anch
 		oid, err := c.s.Git.WorktreeBlobOID(ctx, filepath.Join(root, a.Value))
 		return model.SHA(oid), err
 	}
-	return c.s.Repo.PathOID(ctx, head, a.Value)
+	return c.s.ContextRepo.PathOID(ctx, head, a.Value)
 }
 
 // supersedeDangling reports whether any of the supersede targets has been

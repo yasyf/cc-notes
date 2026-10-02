@@ -3,78 +3,26 @@ package cli
 import (
 	"context"
 	"errors"
-	"path/filepath"
-	"time"
 
-	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
 
-// Note review verdicts. A note carries at most one: precedence is
-// EXPIRED > UNVERIFIED > DRIFTED > STALE. DANGLING has no CLI alias — only
-// notes.Client folds supersede edges. The CLI verdict strings alias the
-// notes.Verdict constants that own the vocabulary.
+// Note review verdicts the review filters select. notes.Client computes every
+// verdict and owns the vocabulary; these alias its notes.Verdict constants.
 const (
 	verdictExpired    = string(notes.VerdictExpired)
 	verdictUnverified = string(notes.VerdictUnverified)
 	verdictDrifted    = string(notes.VerdictDrifted)
-	verdictStale      = string(notes.VerdictStale)
 )
 
-// freshEntity carries the freshness-relevant fields a Note, Doc, and Answer
-// share — anchors, content witness, last-verify time, the out-of-date flag, and
-// supersede edges — so one verdict/drift implementation serves every such kind.
-// Each exposes these as fields; the cli-local adapters (freshFromNote,
-// freshFromDoc, freshFromAnswer) project them without colliding with any method.
-type freshEntity struct {
-	Anchors      []model.Anchor
-	Witness      []model.AnchorWitness
-	VerifiedAt   int64
-	StaleAt      int64
-	SupersededBy []model.EntityID
-}
-
-// freshFromNote projects a note onto its freshness fields.
-func freshFromNote(n model.Note) freshEntity {
-	return freshEntity{
-		Anchors:      n.Anchors,
-		Witness:      n.Witness,
-		VerifiedAt:   n.VerifiedAt,
-		StaleAt:      n.StaleAt,
-		SupersededBy: n.SupersededBy,
-	}
-}
-
-// freshFromAnswer projects an answer onto its freshness fields.
-func freshFromAnswer(a model.Answer) freshEntity {
-	return freshEntity{
-		Anchors:      a.Anchors,
-		Witness:      a.Witness,
-		VerifiedAt:   a.VerifiedAt,
-		StaleAt:      a.StaleAt,
-		SupersededBy: a.SupersededBy,
-	}
-}
-
-// freshFromDoc projects a doc onto its freshness fields.
-func freshFromDoc(d model.Doc) freshEntity {
-	return freshEntity{
-		Anchors:      d.Anchors,
-		Witness:      d.Witness,
-		VerifiedAt:   d.VerifiedAt,
-		StaleAt:      d.StaleAt,
-		SupersededBy: d.SupersededBy,
-	}
-}
-
-// resolveHead returns the commit HEAD points at, or "" when HEAD is unborn (a
-// repository with no commits yet). An unborn HEAD means there is no live
-// content to witness or drift-check against.
+// resolveHead returns the commit the context checkout's HEAD points at, or ""
+// when HEAD is unborn (a repository with no commits yet). An unborn HEAD means
+// there is no live content to witness or drift-check against.
 func resolveHead(ctx context.Context, s *store.Store) (model.SHA, error) {
-	head, err := s.Repo.Tip(ctx, "HEAD")
+	head, err := s.ContextRepo.Tip(ctx, "HEAD")
 	if errors.Is(err, gitobj.ErrRefNotFound) {
 		return "", nil
 	}
@@ -97,7 +45,7 @@ func buildWitness(ctx context.Context, s *store.Store, head model.SHA, anchors [
 			if head == "" {
 				continue
 			}
-			oid, err := s.Repo.PathOID(ctx, head, a.Value)
+			oid, err := s.ContextRepo.PathOID(ctx, head, a.Value)
 			if errors.Is(err, model.ErrPathNotFound) {
 				continue
 			}
@@ -108,7 +56,6 @@ func buildWitness(ctx context.Context, s *store.Store, head model.SHA, anchors [
 		case model.AnchorCommit:
 			witness = append(witness, model.AnchorWitness{Anchor: a, OID: model.SHA(a.Value)})
 		case model.AnchorBranch:
-			// Branch anchors are not witnessed and not drift-checked.
 		}
 	}
 	return witness, nil
@@ -121,121 +68,4 @@ func witnessIndex(witness []model.AnchorWitness) map[model.Anchor]model.AnchorWi
 		m[w.Anchor] = w
 	}
 	return m
-}
-
-// verdictOf computes the single review verdict for fe against live content at
-// head, returning "" when fresh. Precedence is
-// EXPIRED > UNVERIFIED > DRIFTED > STALE; dangling supersede edges are surfaced
-// separately, by notes.Client's ReviewNotes/ReviewDocs. An unborn HEAD skips
-// drift detection.
-// When worktree is true, path anchors drift-check against the on-disk
-// working-tree file rather than the committed blob at head. noteVerdict and
-// docVerdict are thin projections onto this shared core.
-func verdictOf(ctx context.Context, s *store.Store, head model.SHA, fe freshEntity, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
-	if fe.StaleAt != 0 {
-		return verdictExpired, nil
-	}
-	if fe.VerifiedAt == 0 {
-		return verdictUnverified, nil
-	}
-	if head != "" || worktree {
-		drifted, err := driftedOf(ctx, s, head, fe, worktree)
-		if err != nil {
-			return "", err
-		}
-		if drifted {
-			return verdictDrifted, nil
-		}
-	}
-	if now.Sub(time.Unix(fe.VerifiedAt, 0)) > staleAfter {
-		return verdictStale, nil
-	}
-	return "", nil
-}
-
-// driftedOf reports whether any witnessed anchor no longer matches live content
-// at head: a path or directory whose content oid changed or vanished (a
-// directory's witness is its tree oid, so any change under the subtree drifts),
-// or a commit no longer reachable from head. Anchors without a recorded witness
-// are not drift-checked. When worktree is true, a path anchor's live oid is the
-// on-disk working-tree blob (WorktreeBlobOID), so an uncommitted edit drifts the
-// entity; directory and commit anchors keep their HEAD-based check.
-func driftedOf(ctx context.Context, s *store.Store, head model.SHA, fe freshEntity, worktree bool) (bool, error) {
-	byAnchor := witnessIndex(fe.Witness)
-	for _, a := range fe.Anchors {
-		w, ok := byAnchor[a]
-		if !ok {
-			continue
-		}
-		switch a.Kind {
-		case model.AnchorPath, model.AnchorDir:
-			oid, err := liveAnchorOID(ctx, s, head, a, worktree)
-			if errors.Is(err, model.ErrPathNotFound) {
-				return true, nil
-			}
-			if err != nil {
-				return false, err
-			}
-			if oid != w.OID {
-				return true, nil
-			}
-		case model.AnchorCommit:
-			sha, err := s.Git.ResolveCommit(ctx, a.Value)
-			if errors.Is(err, gitcmd.ErrRevNotFound) {
-				return true, nil
-			}
-			if err != nil {
-				return false, err
-			}
-			reachable, err := s.Repo.IsAncestor(ctx, sha, head)
-			if errors.Is(err, gitobj.ErrCommitNotFound) {
-				return true, nil
-			}
-			if err != nil {
-				return false, err
-			}
-			if !reachable {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-// noteVerdict computes the single review verdict for n against live content at
-// head, returning "" when the note is fresh. See verdictOf for precedence and
-// the worktree semantics.
-func noteVerdict(ctx context.Context, s *store.Store, head model.SHA, n model.Note, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
-	return verdictOf(ctx, s, head, freshFromNote(n), now, staleAfter, worktree)
-}
-
-// docVerdict computes the single review verdict for d against live content at
-// head, returning "" when the doc is fresh. A doc carries the same verdict set
-// and precedence as a note. See verdictOf.
-func docVerdict(ctx context.Context, s *store.Store, head model.SHA, d model.Doc, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
-	return verdictOf(ctx, s, head, freshFromDoc(d), now, staleAfter, worktree)
-}
-
-// answerVerdict computes the single review verdict for a against live content
-// at head, returning "" when the answer is fresh. An answer carries the same
-// verdict set and precedence as a note. See verdictOf.
-func answerVerdict(ctx context.Context, s *store.Store, head model.SHA, a model.Answer, now time.Time, staleAfter time.Duration, worktree bool) (string, error) {
-	return verdictOf(ctx, s, head, freshFromAnswer(a), now, staleAfter, worktree)
-}
-
-// liveAnchorOID resolves the current content oid of a path or directory anchor.
-// A path anchor under worktree mode reads the on-disk working-tree blob
-// (WorktreeBlobOID), surfacing an uncommitted edit as drift; otherwise, and
-// always for a directory anchor, it reads the committed object at head
-// (PathOID). A missing path wraps model.ErrPathNotFound either way.
-func liveAnchorOID(ctx context.Context, s *store.Store, head model.SHA, a model.Anchor, worktree bool) (model.SHA, error) {
-	if worktree && a.Kind == model.AnchorPath {
-		root, err := s.Root(ctx)
-		if err != nil {
-			return "", err
-		}
-		oid, err := s.Git.WorktreeBlobOID(ctx, filepath.Join(root, a.Value))
-		return model.SHA(oid), err
-	}
-	return s.Repo.PathOID(ctx, head, a.Value)
 }

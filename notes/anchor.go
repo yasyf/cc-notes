@@ -103,7 +103,7 @@ func (c *Client) buildWitness(ctx context.Context, head model.SHA, anchors []mod
 			if head == "" {
 				continue
 			}
-			oid, err := c.s.Repo.PathOID(ctx, head, a.Value)
+			oid, err := c.s.ContextRepo.PathOID(ctx, head, a.Value)
 			if errors.Is(err, model.ErrPathNotFound) {
 				continue
 			}

@@ -83,7 +83,8 @@ type StatusRun struct {
 }
 
 // SummaryCount summarizes a note, doc, or answer set: the total live entities and the
-// count needing review.
+// count needing review — every flagged entity except a HISTORY-UNAVAILABLE one,
+// whose missing history is not a proven change.
 type SummaryCount struct {
 	Total       int
 	NeedsReview int
@@ -167,9 +168,9 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	report := StatusReport{
 		Branch:         branch,
 		Runs:           inFlightRuns(runbooks, now, ttl),
-		Notes:          SummaryCount{Total: len(noteList), NeedsReview: len(noteReviews)},
-		Docs:           SummaryCount{Total: len(docList), NeedsReview: len(docReviews)},
-		Answers:        SummaryCount{Total: len(answerList), NeedsReview: len(answerReviews)},
+		Notes:          SummaryCount{Total: len(noteList), NeedsReview: needsReview(noteReviews, func(r NoteReview) Verdict { return r.Verdict })},
+		Docs:           SummaryCount{Total: len(docList), NeedsReview: needsReview(docReviews, func(r DocReview) Verdict { return r.Verdict })},
+		Answers:        SummaryCount{Total: len(answerList), NeedsReview: needsReview(answerReviews, func(r AnswerReview) Verdict { return r.Verdict })},
 		Logs:           len(logList),
 		Papercuts:      papercutCount(logList),
 		Investigations: investigationSummary(invList),
@@ -181,6 +182,16 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	}
 	fillTaskBuckets(&report, tasks, ready, now, ttl)
 	return report, nil
+}
+
+func needsReview[R any](reviews []R, verdict func(R) Verdict) int {
+	n := 0
+	for _, r := range reviews {
+		if verdict(r) != VerdictHistoryUnavailable {
+			n++
+		}
+	}
+	return n
 }
 
 // TaskStatus is the task half of Status: the current branch, the backlog with

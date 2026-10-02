@@ -2,6 +2,8 @@ package sync_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -403,4 +405,125 @@ func mapsEqual(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// TestReconcileHistoryUnavailableNeverMoves grafts main's history at a commit
+// after feature/x merged, so the walk from main ends at the boundary before
+// reaching feature/x's tip. That branch keeps its task with reason "history
+// unavailable"; a branch merged inside the window still moves, and a task on a
+// branch with no ref stays put. Removing the graft proves the merge, and the
+// next run moves the task.
+func TestReconcileHistoryUnavailableNeverMoves(t *testing.T) {
+	s := reconcileClone(t)
+	dir := s.Git.Dir
+	branchFrom(t, dir, "feature/x")
+	deep := createTask(t, s, "merged before the boundary", "feature/x")
+	mergeInto(t, dir, "main", "feature/x")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "main after x")
+	boundary := gittest.Git(t, dir, "rev-parse", "HEAD")
+	branchFrom(t, dir, "feature/near")
+	near := createTask(t, s, "merged inside the window", "feature/near")
+	mergeInto(t, dir, "main", "feature/near")
+	gone := createTask(t, s, "no branch ref", "feature/gone")
+	gittest.Shallow(t, dir, boundary)
+	deepRef := refs.For(model.KindTask, deep.ID)
+	deepTip := ccRefs(t, dir)[deepRef]
+
+	report := reconcile(t, s, "main", nil, false, false)
+
+	want := []ccsync.BranchResult{
+		{Branch: "feature/gone", Reason: "branch ref missing"},
+		{Branch: "feature/near", Merged: true},
+		{Branch: "feature/x", Reason: "history unavailable"},
+	}
+	if len(report.Branches) != len(want) {
+		t.Fatalf("report = %+v, want %d branches", report.Branches, len(want))
+	}
+	for i, w := range want {
+		got := report.Branches[i]
+		if got.Branch != w.Branch || got.Merged != w.Merged || got.Reason != w.Reason {
+			t.Errorf("branch %d = {%s merged=%t reason=%q}, want {%s merged=%t reason=%q}", i, got.Branch, got.Merged, got.Reason, w.Branch, w.Merged, w.Reason)
+		}
+	}
+	if got, want := report.Carried(), 1; got != want {
+		t.Errorf("Carried = %d, want %d", got, want)
+	}
+	if got := ccRefs(t, dir)[deepRef]; got != deepTip {
+		t.Errorf("%s moved %s -> %s, want no op appended under unproven history", deepRef, deepTip, got)
+	}
+	if got := taskIDs(listTasks(t, s, "feature/x")); !slices.Equal(got, []model.EntityID{deep.ID}) {
+		t.Errorf("ListTasks(feature/x) = %v, want the unproven task kept", got)
+	}
+	if got := taskIDs(listTasks(t, s, "feature/gone")); !slices.Equal(got, []model.EntityID{gone.ID}) {
+		t.Errorf("ListTasks(feature/gone) = %v, want the ref-less task kept", got)
+	}
+	if got := taskIDs(listTasks(t, s, "main")); !slices.Equal(got, []model.EntityID{near.ID}) {
+		t.Errorf("ListTasks(main) = %v, want only the proven merge carried", got)
+	}
+
+	gittest.Unshallow(t, dir)
+	proven := findBranch(t, reconcile(t, s, "main", []model.Branch{"feature/x"}, false, false), "feature/x")
+	if !proven.Merged || proven.Reason != "" {
+		t.Errorf("feature/x after unshallow = %+v, want merged", proven)
+	}
+	if got := loadTask(t, s, deepRef).Branch; got != "main" {
+		t.Errorf("task %s branch after unshallow = %q, want main", deep.ID.Short(), got)
+	}
+}
+
+func boundClone(t *testing.T) (thin, source string, s *store.Store) {
+	t.Helper()
+	source = gittest.InitRepo(t)
+	gittest.Git(t, source, "commit", "-q", "--allow-empty", "-m", "source root")
+	gittest.Git(t, source, "commit", "-q", "--allow-empty", "-m", "source tip")
+	thin = gittest.ShallowClone(t, source, 1)
+	gittest.Git(t, thin, "checkout", "-q", "-b", "feature")
+	gittest.Git(t, thin, "commit", "-q", "--allow-empty", "-m", "thin only")
+	if _, err := store.Bind(t.Context(), thin, source); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	s, err := store.Open(thin)
+	if err != nil {
+		t.Fatalf("Open(%s): %v", thin, err)
+	}
+	if _, bound := s.Binding(); !bound {
+		t.Fatal("fixture invalid: the clone opened unbound")
+	}
+	return thin, source, s
+}
+
+// TestReconcileBoundResolvesTargetInContext reconciles a bound clone into a
+// branch only the clone has: the target resolves against the context checkout,
+// never the records repository.
+func TestReconcileBoundResolvesTargetInContext(t *testing.T) {
+	_, _, s := boundClone(t)
+	report, err := ccsync.Reconcile(t.Context(), s, "feature", nil, false, true)
+	if err != nil {
+		t.Fatalf("Reconcile into the clone-only branch: %v", err)
+	}
+	if report.Into != "feature" || report.Scanned() != 0 {
+		t.Errorf("report = %+v, want into feature with nothing scanned", report)
+	}
+}
+
+// TestReconcileBoundBackendReplacedFails replaces the bound records repository
+// under a pre-opened store: Reconcile fails naming the binding before it reads
+// a branch or writes a ref.
+func TestReconcileBoundBackendReplacedFails(t *testing.T) {
+	thin, source, s := boundClone(t)
+	if err := os.Rename(source, source+".moved"); err != nil {
+		t.Fatalf("move source: %v", err)
+	}
+	gittest.Git(t, filepath.Dir(source), "init", "-q", "-b", "main", source)
+	before := gittest.Git(t, thin, "for-each-ref", "--format=%(refname) %(objectname)")
+
+	for _, dryRun := range []bool{false, true} {
+		_, err := ccsync.Reconcile(t.Context(), s, "main", nil, false, dryRun)
+		if !errors.Is(err, store.ErrBackendReplaced) {
+			t.Errorf("Reconcile(dryRun=%t) over a replaced backend = %v, want ErrBackendReplaced", dryRun, err)
+		}
+	}
+	if after := gittest.Git(t, thin, "for-each-ref", "--format=%(refname) %(objectname)"); after != before {
+		t.Errorf("clone refs changed:\n%s\n->\n%s", before, after)
+	}
 }

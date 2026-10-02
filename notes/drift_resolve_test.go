@@ -34,7 +34,7 @@ func witnessShortCommitAnchor(t *testing.T, c *Client, id model.EntityID, value 
 // note witnessed against a short (or foreign) commit sha must be reviewed via
 // git resolution, never explode on "invalid sha". A resolvable prefix reachable
 // from HEAD reads fresh; an unresolvable one degrades to DRIFTED (best-effort
-// skip). Reverting the ResolveCommit call in notes/document.go's driftedOf makes
+// skip). Reverting the resolve call in notes/document.go's commitAncestry makes
 // both cases fail with "invalid sha".
 func TestReviewShortCommitAnchor(t *testing.T) {
 	for _, tc := range []struct {
