@@ -101,10 +101,10 @@ func (e *LocalAttachmentError) Error() string {
 // LocalPolicy reads the policy from git config once per Store, falling back
 // to DefaultLocalPolicy field by field.
 func (s *Store) LocalPolicy(ctx context.Context) (LocalPolicy, error) {
-	s.policyOnce.Do(func() {
-		s.policy, s.policyErr = readLocalPolicy(ctx, s)
+	s.policy.once.Do(func() {
+		s.policy.value, s.policy.err = readLocalPolicy(ctx, s)
 	})
-	return s.policy, s.policyErr
+	return s.policy.value, s.policy.err
 }
 
 func readLocalPolicy(ctx context.Context, s *Store) (LocalPolicy, error) {

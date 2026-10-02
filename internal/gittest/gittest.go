@@ -55,16 +55,11 @@ func Git(t testing.TB, dir string, args ...string) string {
 // Dirs returns the repository's per-worktree and shared git directories.
 func Dirs(t testing.TB, dir string) (gitDir, commonDir string) {
 	t.Helper()
-	lines := strings.Split(Git(t, dir, "rev-parse", "--absolute-git-dir", "--git-common-dir"), "\n")
+	lines := strings.Split(Git(t, dir, "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir"), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("rev-parse git dirs returned %d lines, want 2", len(lines))
 	}
-	gitDir = strings.TrimSpace(lines[0])
-	commonDir = strings.TrimSpace(lines[1])
-	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(dir, commonDir)
-	}
-	return gitDir, commonDir
+	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
 }
 
 // InitRepo scrubs the git environment and creates a repository on branch

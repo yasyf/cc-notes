@@ -160,7 +160,11 @@ func TestInitNoRemote(t *testing.T) {
 func TestInitHookInstallsPostMerge(t *testing.T) {
 	dir, _ := initRepoWithRemote(t)
 	out := mustRun(t, dir, "init", "--hook")
-	hook := filepath.Join(dir, ".git", "hooks", "post-merge")
+	physicalDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(physicalDir, ".git", "hooks", "post-merge")
 	if !strings.Contains(out, "installed: post-merge hook at "+hook) {
 		t.Fatalf("init --hook output = %q, want a post-merge install line for %q", out, hook)
 	}

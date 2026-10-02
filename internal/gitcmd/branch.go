@@ -21,27 +21,48 @@ type RefTip struct {
 	Time int64
 }
 
-// Refs lists every hash ref under the given patterns in one git for-each-ref
-// invocation.
-func (g Git) Refs(ctx context.Context, patterns ...string) (map[string]model.SHA, error) {
+// RefEntry is one ref as for-each-ref reports it: its name, the object it
+// resolves to, and for a symbolic ref the ref it targets.
+type RefEntry struct {
+	Ref    string
+	Tip    model.SHA
+	Symref string
+}
+
+// RefEntries lists every ref under the given patterns in one git for-each-ref
+// invocation, symbolic refs included with their targets, in git's order.
+func (g Git) RefEntries(ctx context.Context, patterns ...string) ([]RefEntry, error) {
 	out, err := g.run(ctx, "", append([]string{"for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)"}, patterns...)...)
 	if err != nil {
 		return nil, fmt.Errorf("refs: %w", err)
 	}
 	lines := nonEmptyLines(out)
-	if len(lines) == 0 {
-		return nil, nil
-	}
-	refs := make(map[string]model.SHA, len(lines))
+	entries := make([]RefEntry, 0, len(lines))
 	for _, line := range lines {
 		fields := strings.Split(line, "\x00")
 		if len(fields) != 3 || fields[0] == "" || fields[1] == "" {
 			return nil, fmt.Errorf("refs: malformed line %q", line)
 		}
-		if fields[2] != "" {
-			continue
+		entries = append(entries, RefEntry{Ref: fields[0], Tip: model.SHA(fields[1]), Symref: fields[2]})
+	}
+	return entries, nil
+}
+
+// Refs lists every hash ref under the given patterns in one git for-each-ref
+// invocation.
+func (g Git) Refs(ctx context.Context, patterns ...string) (map[string]model.SHA, error) {
+	entries, err := g.RefEntries(ctx, patterns...)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	refs := make(map[string]model.SHA, len(entries))
+	for _, e := range entries {
+		if e.Symref == "" {
+			refs[e.Ref] = e.Tip
 		}
-		refs[fields[0]] = model.SHA(fields[1])
 	}
 	return refs, nil
 }

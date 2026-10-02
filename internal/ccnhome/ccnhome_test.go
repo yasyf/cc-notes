@@ -108,7 +108,7 @@ func TestRepoKeyRepositoryLayouts(t *testing.T) {
 	layouts := initLayouts(t)
 
 	keys := make(map[string]string, len(layouts))
-	raw := make(map[string]string, len(layouts))
+	commonDirs := make(map[string]string, len(layouts))
 	for name, dir := range layouts {
 		_, commonDir := gittest.Dirs(t, dir)
 		key, err := ccnhome.RepoKey(commonDir)
@@ -116,7 +116,7 @@ func TestRepoKeyRepositoryLayouts(t *testing.T) {
 			t.Fatalf("RepoKey(%s): %v", name, err)
 		}
 		keys[name] = key
-		raw[name] = unresolvedKey(t, commonDir)
+		commonDirs[name] = commonDir
 	}
 
 	for _, pair := range [][2]string{{"normal", "linked"}, {"normal", "alias"}} {
@@ -124,8 +124,16 @@ func TestRepoKeyRepositoryLayouts(t *testing.T) {
 			t.Errorf("%s and %s keys differ: %s != %s", pair[0], pair[1], keys[pair[0]], keys[pair[1]])
 		}
 	}
-	if raw["normal"] == raw["alias"] {
-		t.Errorf("unresolved keys for normal and its symlink alias match: %s", raw["normal"])
+	aliasSpelling := filepath.Join(layouts["alias"], ".git")
+	aliasKey, err := ccnhome.RepoKey(aliasSpelling)
+	if err != nil {
+		t.Fatalf("RepoKey(%s): %v", aliasSpelling, err)
+	}
+	if aliasKey != keys["normal"] {
+		t.Errorf("the alias spelling %s keys %s, the normal checkout %s", aliasSpelling, aliasKey, keys["normal"])
+	}
+	if unresolvedKey(t, aliasSpelling) == unresolvedKey(t, commonDirs["normal"]) {
+		t.Errorf("unresolved keys for normal and its hand-spelled symlink alias match: %s", unresolvedKey(t, aliasSpelling))
 	}
 	for _, pair := range [][2]string{{"normal", "bare"}, {"normal", "submodule"}, {"bare", "submodule"}} {
 		if keys[pair[0]] == keys[pair[1]] {
@@ -675,11 +683,11 @@ func TestDirsFeedsRepoKey(t *testing.T) {
 	layouts := initLayouts(t)
 	ctx := t.Context()
 
-	_, mainCommon, err := (gitcmd.Git{Dir: layouts["normal"]}).Dirs(ctx)
+	_, mainCommon, _, err := (gitcmd.Git{Dir: layouts["normal"]}).Dirs(ctx)
 	if err != nil {
 		t.Fatalf("Dirs(normal): %v", err)
 	}
-	_, linkedCommon, err := (gitcmd.Git{Dir: layouts["linked"]}).Dirs(ctx)
+	_, linkedCommon, _, err := (gitcmd.Git{Dir: layouts["linked"]}).Dirs(ctx)
 	if err != nil {
 		t.Fatalf("Dirs(linked): %v", err)
 	}

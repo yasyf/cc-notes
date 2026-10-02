@@ -9,14 +9,9 @@ import (
 	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
-// TestDirsRepositoryLayouts pins what Dirs returns for the layouts TestDirs
-// does not reach: a bare repository, a submodule checkout, and a repository
-// reached through a symlinked alias, alongside the linked worktree. The
-// assertions compare the returned paths verbatim rather than through
-// filepath.EvalSymlinks, because the difference EvalSymlinks would hide — Git
-// answering --absolute-git-dir physically while Dirs joins a relative
-// --git-common-dir onto the caller's lexical directory — is the contract a
-// consumer that hashes the common directory has to know about.
+// TestDirsRepositoryLayouts pins the physical directories Dirs returns for a
+// bare repository, a submodule, a linked worktree, and a repository reached
+// through a symlinked alias or a symlink to one of its subdirectories.
 func TestDirsRepositoryLayouts(t *testing.T) {
 	gittest.ScrubEnv(t)
 	root := t.TempDir()
@@ -24,6 +19,9 @@ func TestDirsRepositoryLayouts(t *testing.T) {
 	normal := filepath.Join(root, "normal")
 	initDirsContractRepo(t, normal)
 	gittest.Git(t, normal, "commit", "-q", "--allow-empty", "-m", "base")
+	if err := os.Mkdir(filepath.Join(normal, "sub"), 0o750); err != nil {
+		t.Fatalf("mkdir subdirectory: %v", err)
+	}
 
 	linked := filepath.Join(root, "linked")
 	gittest.Git(t, normal, "worktree", "add", "-q", "-b", "dirs-linked", linked)
@@ -47,9 +45,14 @@ func TestDirsRepositoryLayouts(t *testing.T) {
 	if err := os.Symlink(normal, alias); err != nil {
 		t.Fatalf("symlink repo: %v", err)
 	}
+	subAlias := filepath.Join(root, "normal-sub-alias")
+	if err := os.Symlink(filepath.Join(normal, "sub"), subAlias); err != nil {
+		t.Fatalf("symlink subdirectory: %v", err)
+	}
 
 	physicalNormalCommon := filepath.Join(evalDirsContractPath(t, normal), ".git")
 	physicalSubmoduleCommon := filepath.Join(evalDirsContractPath(t, super), ".git", "modules", "module")
+	physicalBare := evalDirsContractPath(t, bare)
 
 	cases := []struct {
 		name          string
@@ -57,42 +60,18 @@ func TestDirsRepositoryLayouts(t *testing.T) {
 		wantGitDir    string
 		wantCommonDir string
 	}{
-		{
-			name:          "normal non-bare repo",
-			dir:           normal,
-			wantGitDir:    physicalNormalCommon,
-			wantCommonDir: filepath.Join(normal, ".git"),
-		},
-		{
-			name:          "linked worktree",
-			dir:           linked,
-			wantGitDir:    filepath.Join(physicalNormalCommon, "worktrees", "linked"),
-			wantCommonDir: physicalNormalCommon,
-		},
-		{
-			name:          "bare repo",
-			dir:           bare,
-			wantGitDir:    evalDirsContractPath(t, bare),
-			wantCommonDir: bare,
-		},
-		{
-			name:          "submodule checkout",
-			dir:           submodule,
-			wantGitDir:    physicalSubmoduleCommon,
-			wantCommonDir: physicalSubmoduleCommon,
-		},
-		{
-			name:          "symlinked repo path",
-			dir:           alias,
-			wantGitDir:    physicalNormalCommon,
-			wantCommonDir: filepath.Join(alias, ".git"),
-		},
+		{"normal non-bare repo", normal, physicalNormalCommon, physicalNormalCommon},
+		{"linked worktree", linked, filepath.Join(physicalNormalCommon, "worktrees", "linked"), physicalNormalCommon},
+		{"bare repo", bare, physicalBare, physicalBare},
+		{"submodule checkout", submodule, physicalSubmoduleCommon, physicalSubmoduleCommon},
+		{"symlinked repo path", alias, physicalNormalCommon, physicalNormalCommon},
+		{"symlinked subdirectory", subAlias, physicalNormalCommon, physicalNormalCommon},
 	}
 
 	commonDirs := make(map[string]string, len(cases))
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gitDir, commonDir, err := (gitcmd.Git{Dir: tc.dir}).Dirs(t.Context())
+			gitDir, commonDir, _, err := (gitcmd.Git{Dir: tc.dir}).Dirs(t.Context())
 			if err != nil {
 				t.Fatalf("Dirs(%q): %v", tc.dir, err)
 			}
@@ -102,28 +81,21 @@ func TestDirsRepositoryLayouts(t *testing.T) {
 			if commonDir != tc.wantCommonDir {
 				t.Fatalf("common dir: got %q, want %q", commonDir, tc.wantCommonDir)
 			}
-			if !filepath.IsAbs(commonDir) {
-				t.Fatalf("common dir %q is not absolute", commonDir)
-			}
 			commonDirs[tc.name] = commonDir
 		})
 	}
 
-	if commonDirs["normal non-bare repo"] == commonDirs["symlinked repo path"] {
-		t.Fatalf("Dirs resolved the symlink alias to %q; it must not", commonDirs["normal non-bare repo"])
-	}
-	if got, want := evalDirsContractPath(t, commonDirs["symlinked repo path"]), evalDirsContractPath(t, commonDirs["normal non-bare repo"]); got != want {
-		t.Fatalf("resolved alias common dir %q, want %q", got, want)
-	}
-	if got, want := evalDirsContractPath(t, commonDirs["linked worktree"]), evalDirsContractPath(t, commonDirs["normal non-bare repo"]); got != want {
-		t.Fatalf("resolved linked-worktree common dir %q, want %q", got, want)
+	for _, name := range []string{"symlinked repo path", "symlinked subdirectory", "linked worktree"} {
+		if commonDirs[name] != commonDirs["normal non-bare repo"] {
+			t.Fatalf("%s common dir %q, want the main checkout's %q", name, commonDirs[name], commonDirs["normal non-bare repo"])
+		}
 	}
 	for _, pair := range [][2]string{
 		{"normal non-bare repo", "bare repo"},
 		{"normal non-bare repo", "submodule checkout"},
 		{"bare repo", "submodule checkout"},
 	} {
-		if evalDirsContractPath(t, commonDirs[pair[0]]) == evalDirsContractPath(t, commonDirs[pair[1]]) {
+		if commonDirs[pair[0]] == commonDirs[pair[1]] {
 			t.Fatalf("%s and %s share a common dir: %q", pair[0], pair[1], commonDirs[pair[0]])
 		}
 	}

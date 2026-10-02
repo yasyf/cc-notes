@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -87,9 +88,11 @@ type Repo struct {
 // absent file, which is also the un-grafted repository, so a handle opened
 // against one reads the file only once something writes it.
 type graftStamp struct {
-	exists  bool
-	size    int64
-	modNano int64
+	exists    bool
+	size      int64
+	modNano   int64
+	ctimeNano int64
+	inode     uint64
 }
 
 // Open opens filesystem storage at the discovered per-worktree and shared git
@@ -146,7 +149,25 @@ func (r *Repo) statGraft() (graftStamp, error) {
 	if err != nil {
 		return graftStamp{}, fmt.Errorf("stat shallow boundary: %w", err)
 	}
-	return graftStamp{exists: true, size: info.Size(), modNano: info.ModTime().UnixNano()}, nil
+	ctime, inode := StatIdentity(info)
+	return graftStamp{exists: true, size: info.Size(), modNano: info.ModTime().UnixNano(), ctimeNano: ctime, inode: inode}, nil
+}
+
+// RefreshShallow re-reads the shallow boundary when its file changed and
+// returns the grafted commits it now holds, sorted, so a caller keying work on
+// the boundary records exactly the one in-process ancestry reads.
+func (r *Repo) RefreshShallow() ([]model.SHA, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.refreshGraft(); err != nil {
+		return nil, err
+	}
+	grafted := make([]model.SHA, 0, len(r.shallow))
+	for hash := range r.shallow {
+		grafted = append(grafted, model.SHA(hash.String()))
+	}
+	slices.Sort(grafted)
+	return grafted, nil
 }
 
 func verifyLayout(storage *filesystem.Storage) error {

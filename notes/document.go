@@ -685,7 +685,7 @@ func (c *Client) ReviewNotes(ctx context.Context, staleAfter time.Duration) ([]N
 			}
 			continue
 		}
-		verdict, err := c.verdictOf(ctx, head, freshFromNote(n), now, staleAfter, false)
+		verdict, err := c.verdictOf(ctx, head, freshFromNote(n), now, staleAfter, false, c.s.Git.ResolveCommit)
 		if err != nil {
 			return nil, err
 		}
@@ -717,7 +717,7 @@ func (c *Client) ReviewDocs(ctx context.Context, staleAfter time.Duration) ([]Do
 			}
 			continue
 		}
-		verdict, err := c.verdictOf(ctx, head, freshFromDoc(d), now, staleAfter, false)
+		verdict, err := c.verdictOf(ctx, head, freshFromDoc(d), now, staleAfter, false, c.s.Git.ResolveCommit)
 		if err != nil {
 			return nil, err
 		}
@@ -736,7 +736,7 @@ func (c *Client) NoteVerdict(ctx context.Context, n model.Note, staleAfter time.
 	if err != nil {
 		return "", err
 	}
-	return c.verdictOf(ctx, head, freshFromNote(n), time.Now(), staleAfter, worktree)
+	return c.verdictOf(ctx, head, freshFromNote(n), time.Now(), staleAfter, worktree, c.s.Git.ResolveCommit)
 }
 
 // DocVerdict computes d's single review verdict against live content, mirroring
@@ -746,7 +746,7 @@ func (c *Client) DocVerdict(ctx context.Context, d model.Doc, staleAfter time.Du
 	if err != nil {
 		return "", err
 	}
-	return c.verdictOf(ctx, head, freshFromDoc(d), time.Now(), staleAfter, worktree)
+	return c.verdictOf(ctx, head, freshFromDoc(d), time.Now(), staleAfter, worktree, c.s.Git.ResolveCommit)
 }
 
 // NoteSuperseders returns the ids of notes that supersede id, sorted: the
@@ -878,7 +878,7 @@ func freshFromDoc(d model.Doc) freshDocument {
 // head, returning "" when fresh. Precedence is EXPIRED > UNVERIFIED > DRIFTED >
 // STALE; dangling supersede edges are surfaced separately. An unborn HEAD skips
 // drift detection unless worktree is set.
-func (c *Client) verdictOf(ctx context.Context, head model.SHA, fe freshDocument, now time.Time, staleAfter time.Duration, worktree bool) (Verdict, error) {
+func (c *Client) verdictOf(ctx context.Context, head model.SHA, fe freshDocument, now time.Time, staleAfter time.Duration, worktree bool, resolve commitResolver) (Verdict, error) {
 	if fe.StaleAt != 0 {
 		return VerdictExpired, nil
 	}
@@ -886,7 +886,7 @@ func (c *Client) verdictOf(ctx context.Context, head model.SHA, fe freshDocument
 		return VerdictUnverified, nil
 	}
 	if head != "" || worktree {
-		drifted, err := c.driftedOf(ctx, head, fe, worktree)
+		drifted, err := c.driftedOf(ctx, head, fe, worktree, resolve)
 		if err != nil {
 			return "", err
 		}
@@ -905,7 +905,7 @@ func (c *Client) verdictOf(ctx context.Context, head model.SHA, fe freshDocument
 // commit no longer reachable from head. Anchors without a recorded witness are
 // not drift-checked. When worktree is true, a path anchor's live oid is the
 // on-disk working-tree blob, so an uncommitted edit drifts the entity.
-func (c *Client) driftedOf(ctx context.Context, head model.SHA, fe freshDocument, worktree bool) (bool, error) {
+func (c *Client) driftedOf(ctx context.Context, head model.SHA, fe freshDocument, worktree bool, resolve commitResolver) (bool, error) {
 	byAnchor := make(map[model.Anchor]model.AnchorWitness, len(fe.Witness))
 	for _, w := range fe.Witness {
 		byAnchor[w.Anchor] = w
@@ -928,7 +928,7 @@ func (c *Client) driftedOf(ctx context.Context, head model.SHA, fe freshDocument
 				return true, nil
 			}
 		case model.AnchorCommit:
-			sha, err := c.s.Git.ResolveCommit(ctx, a.Value)
+			sha, err := resolve(ctx, a.Value)
 			if errors.Is(err, gitcmd.ErrRevNotFound) {
 				return true, nil
 			}

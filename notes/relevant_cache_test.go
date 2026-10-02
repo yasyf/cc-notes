@@ -153,10 +153,9 @@ func TestRelevantCachedNeverPinsAFileDeletedDuringTheDriftCheck(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wrapper, "git"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	path := os.Getenv("PATH")
 	t.Setenv("REAL_GIT", realGit)
 	t.Setenv("DELETE_AFTER_HASH", filepath.Join(dir, "svc/handler.go"))
-	t.Setenv("PATH", wrapper+string(os.PathListSeparator)+path)
+	t.Setenv("PATH", wrapper+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	p := &relevantProbe{t: t, c: c, dir: dir, target: "svc/handler.go"}
 	worktree := notes.RelevantFilter{Attached: true, Worktree: true}
@@ -166,7 +165,6 @@ func TestRelevantCachedNeverPinsAFileDeletedDuringTheDriftCheck(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "svc/handler.go")); !os.IsNotExist(err) {
 		t.Fatalf("the wrapper did not delete the file after hashing it: %v", err)
 	}
-	t.Setenv("PATH", path)
 	p.expect("after a deletion that raced the drift check", worktree, true)
 }
 
@@ -248,24 +246,10 @@ func TestRelevantCachedFollowsSymbolicRefsAndResolvedBase(t *testing.T) {
 }
 
 func TestRelevantCachedScopesRefLookupToDependencies(t *testing.T) {
+	defer notes.SetRelevantRacyWindow(0)()
 	c, dir := newClient(t)
 	root := commitFile(t, dir, "svc/handler.go", "v1\n")
 	makeNote(t, c, "handler", notes.AnchorSpec{Paths: []string{"svc/handler.go"}, Branches: []string{"future"}})
-
-	p := &relevantProbe{t: t, c: c, dir: dir, target: "svc/handler.go"}
-	clean := notes.RelevantFilter{}
-	p.expect("cold", clean, true)
-	p.expect("warm", clean, false)
-
-	var updates strings.Builder
-	for i := range 128 {
-		fmt.Fprintf(&updates, "update refs/heads/unrelated-%03d %s\n", i, root)
-	}
-	cmd := exec.CommandContext(t.Context(), "git", "-C", dir, "update-ref", "--stdin")
-	cmd.Stdin = strings.NewReader(updates.String())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("create unrelated refs: %v\n%s", err, out)
-	}
 
 	realGit, err := exec.LookPath("git")
 	if err != nil {
@@ -273,30 +257,66 @@ func TestRelevantCachedScopesRefLookupToDependencies(t *testing.T) {
 	}
 	wrapper := t.TempDir()
 	logPath := filepath.Join(wrapper, "git.log")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$RELEVANT_TEST_LOG\"\nexec \"$REAL_GIT\" \"$@\"\n"
+	script := "#!/bin/sh\nprintf '%s\\037' \"$@\" >> \"$RELEVANT_TEST_LOG\"\nprintf '\\n' >> \"$RELEVANT_TEST_LOG\"\nexec \"$REAL_GIT\" \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(wrapper, "git"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("REAL_GIT", realGit)
 	t.Setenv("RELEVANT_TEST_LOG", logPath)
 	t.Setenv("PATH", wrapper+string(os.PathListSeparator)+os.Getenv("PATH"))
+	p := &relevantProbe{t: t, c: c, dir: dir, target: "svc/handler.go"}
+	clean := notes.RelevantFilter{}
+	gitCalls := func() [][]string {
+		t.Helper()
+		data, err := os.ReadFile(logPath)
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		var calls [][]string
+		for line := range strings.Lines(string(data)) {
+			if line = strings.TrimSuffix(line, "\n"); line != "" {
+				calls = append(calls, strings.Split(strings.TrimSuffix(line, "\x1f"), "\x1f")[2:])
+			}
+		}
+		return calls
+	}
+	counted := func(step string) [][]string {
+		t.Helper()
+		if err := os.RemoveAll(logPath); err != nil {
+			t.Fatal(err)
+		}
+		before := p.renders
+		if _, err := c.RelevantCached(t.Context(), p.target, clean, "json", p.render); err != nil {
+			t.Fatalf("%s: RelevantCached: %v", step, err)
+		}
+		if p.renders != before {
+			t.Fatalf("%s: recomputed the cache: renders = %d, want %d", step, p.renders, before)
+		}
+		return gitCalls()
+	}
 
-	before := p.renders
-	if _, err := c.RelevantCached(t.Context(), p.target, clean, "json", p.render); err != nil {
-		t.Fatalf("RelevantCached: %v", err)
+	p.expect("cold", clean, true)
+	p.expect("promoted", clean, false)
+	if calls := counted("warm"); len(calls) != 0 {
+		t.Fatalf("warm hit ran git: %v", calls)
 	}
-	if p.renders != before {
-		t.Fatalf("unrelated refs recomputed the cache: renders = %d, want %d", p.renders, before)
+
+	var updates strings.Builder
+	for i := range 128 {
+		fmt.Fprintf(&updates, "update refs/heads/unrelated-%03d %s\n", i, root)
 	}
-	log, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
+	cmd := exec.CommandContext(t.Context(), realGit, "-C", dir, "update-ref", "--stdin")
+	cmd.Stdin = strings.NewReader(updates.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create unrelated refs: %v\n%s", err, out)
 	}
-	var lookups [][]string
-	for line := range strings.Lines(string(log)) {
-		fields := strings.Fields(line)
-		if i := slices.Index(fields, "for-each-ref"); i >= 0 {
-			lookups = append(lookups, fields[i+2:])
+	var enumerations, resolutions [][]string
+	for _, call := range counted("unrelated branches written") {
+		switch call[0] {
+		case "for-each-ref":
+			enumerations = append(enumerations, call[2:])
+		case "cat-file":
+			resolutions = append(resolutions, call)
 		}
 	}
 	want := []string{
@@ -308,9 +328,43 @@ func TestRelevantCachedScopesRefLookupToDependencies(t *testing.T) {
 		"refs/cc-notes/runbooks/",
 		"refs/cc-notes/investigations/",
 		"refs/cc-notes/plans/",
-		"refs/heads/future",
+		"refs/replace/",
 	}
-	if len(lookups) != 1 || !slices.Equal(lookups[0], want) {
-		t.Fatalf("for-each-ref lookups = %v, want [%v]", lookups, want)
+	if len(enumerations) != 1 || !slices.Equal(enumerations[0], want) {
+		t.Fatalf("for-each-ref lookups = %v, want [%v]", enumerations, want)
+	}
+	if len(resolutions) != 1 {
+		t.Fatalf("cat-file resolutions = %v, want exactly one batch", resolutions)
+	}
+	if calls := counted("warm again"); len(calls) != 0 {
+		t.Fatalf("warm hit after the key tier ran git: %v", calls)
+	}
+}
+
+func TestRelevantCachedServesABareRepository(t *testing.T) {
+	defer notes.SetRelevantRacyWindow(0)()
+	bare := gittest.InitBare(t)
+	gittest.Git(t, bare, "config", "user.name", "Test User")
+	gittest.Git(t, bare, "config", "user.email", "test@example.com")
+	t.Setenv("CC_NOTES_ACTOR", testActor)
+	c, err := notes.Open(bare)
+	if err != nil {
+		t.Fatalf("Open(%s): %v", bare, err)
+	}
+	makeNote(t, c, "handler", notes.AnchorSpec{Paths: []string{"svc/handler.go"}, Dirs: []string{"svc"}})
+	makeNote(t, c, "service", notes.AnchorSpec{Dirs: []string{"svc"}})
+
+	p := &relevantProbe{t: t, c: c, dir: bare, target: "svc/handler.go"}
+	p.expect("cold", notes.RelevantFilter{}, true)
+	p.expect("warm", notes.RelevantFilter{}, false)
+	if _, err := c.RelevantCached(t.Context(), p.target, notes.RelevantFilter{}, "json", p.render); err != nil {
+		t.Fatalf("RelevantCached: %v", err)
+	}
+	probe, ok, err := notes.RelevantCacheProbeOf(c, p.target, notes.RelevantFilter{}, "json")
+	if err != nil || !ok {
+		t.Fatalf("RelevantCacheProbeOf = %+v, %t, %v; want an entry", probe, ok, err)
+	}
+	if probe.Racy || probe.Revalidate {
+		t.Fatalf("entry racy = %t revalidate = %t; want a warm-path entry", probe.Racy, probe.Revalidate)
 	}
 }

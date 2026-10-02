@@ -135,6 +135,37 @@ func TestOpenWorktreeConfig(t *testing.T) {
 	}
 }
 
+func TestOpenThroughASymlinkedSubdirectory(t *testing.T) {
+	repo := gittest.InitRepo(t)
+	sub := filepath.Join(repo, "sub")
+	if err := os.Mkdir(sub, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	link := filepath.Join(outside, "sublink")
+	if err := os.Symlink(sub, link); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(link)
+	if err != nil {
+		t.Fatalf("Open(%s): %v", link, err)
+	}
+	want, err := filepath.EvalSymlinks(filepath.Join(repo, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.GitDir() != want || s.CommonDir() != want {
+		t.Fatalf("dirs = %q, %q; want %q for both", s.GitDir(), s.CommonDir(), want)
+	}
+	s.EnsureCaches()
+	if _, err := os.Stat(filepath.Join(want, relevantCacheSubdir)); err != nil {
+		t.Fatalf("relevance cache directory under the real git dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, ".git")); !os.IsNotExist(err) {
+		t.Fatalf("a stray .git beside the symlink: %v", err)
+	}
+}
+
 func TestOpenNonRepo(t *testing.T) {
 	gittest.ScrubEnv(t)
 	_, err := Open(t.TempDir())
@@ -464,7 +495,7 @@ func TestAppendContended(t *testing.T) {
 	}
 	gittest.Git(t, blocked, "update-ref", ref, string(decoy.ID))
 
-	doctored := &Store{Repo: s.Repo, Git: gitcmd.Git{Dir: blocked}, now: time.Now}
+	doctored := &Store{Repo: s.Repo, Git: gitcmd.Git{Dir: blocked}, now: time.Now, root: &rootMemo{}, policy: &policyMemo{}}
 	_, err := doctored.Append(t.Context(), ref, []model.Op{model.AddTag{Tag: "x"}})
 	if !errors.Is(err, ErrContended) {
 		t.Fatalf("Append = %v, want ErrContended", err)
