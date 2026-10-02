@@ -369,7 +369,7 @@ func TestOpenContextBindingFailures(t *testing.T) {
 				setBindingValue(t, f.config(), b.String())
 				return b.CommonDir
 			},
-			sentinel: ErrBackendUnavailable,
+			sentinel: ErrBackendRedirects,
 		},
 		{
 			name: "reftable backend",

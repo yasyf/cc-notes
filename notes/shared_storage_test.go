@@ -610,7 +610,7 @@ func TestSharedStorageRelevantBackendFailureNeverServesCache(t *testing.T) {
 				}
 			},
 			want:      store.ErrBackendRedirects,
-			freshOpen: store.ErrBackendUnavailable,
+			freshOpen: store.ErrBackendRedirects,
 		},
 		{
 			name: "context rebound",

@@ -138,9 +138,6 @@ func TestCheckRecordsBackendRouting(t *testing.T) {
 		name     string
 		mutate   func(t *testing.T, f *sharedFixture)
 		sentinel error
-		// openSentinel is what a fresh Open reports; validateBackend classifies
-		// a commondir file as a layout failure, the recheck as a redirect.
-		openSentinel error
 	}{
 		{
 			name: "backend gains a commondir file",
@@ -149,8 +146,7 @@ func TestCheckRecordsBackendRouting(t *testing.T) {
 					t.Fatalf("write commondir: %v", err)
 				}
 			},
-			sentinel:     ErrBackendRedirects,
-			openSentinel: ErrBackendUnavailable,
+			sentinel: ErrBackendRedirects,
 		},
 		{
 			name: "backend becomes bound",
@@ -195,12 +191,8 @@ func TestCheckRecordsBackendRouting(t *testing.T) {
 				}
 				assertBindingError(t, err, tc.sentinel, f.config(), f.sourceCommon)
 			}
-			want := tc.sentinel
-			if tc.openSentinel != nil {
-				want = tc.openSentinel
-			}
-			if _, err := Open(f.worktreeB); (err == nil) != (want == nil) || (err != nil && !errors.Is(err, want)) {
-				t.Fatalf("Open after the change = %v, want %v", err, want)
+			if _, err := Open(f.worktreeB); (err == nil) != (tc.sentinel == nil) || (err != nil && !errors.Is(err, tc.sentinel)) {
+				t.Fatalf("Open after the change = %v, want %v", err, tc.sentinel)
 			}
 		})
 	}

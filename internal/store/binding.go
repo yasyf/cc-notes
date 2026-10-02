@@ -169,7 +169,7 @@ func validateBackend(b Binding, context fileID) (configStamp, error) {
 		return configStamp{}, fmt.Errorf("%w: binding points at the context itself", ErrBindingCycle)
 	}
 	if _, err := os.Lstat(filepath.Join(b.CommonDir, "commondir")); err == nil {
-		return configStamp{}, fmt.Errorf("%w: %s is a linked worktree's git directory, not a git common directory", ErrBackendUnavailable, b.CommonDir)
+		return configStamp{}, fmt.Errorf("%w: %s is a linked worktree's git directory, not a git common directory", ErrBackendRedirects, b.CommonDir)
 	}
 	for _, entry := range []string{"objects", "refs", "HEAD"} {
 		path := filepath.Join(b.CommonDir, entry)

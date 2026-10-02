@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync/atomic"
 
@@ -234,15 +235,25 @@ func trackingView(ctx context.Context, s *store.Store, trackingPrefix string) (m
 
 // reconcile converges every ref in scope. Local-only refs need no work here:
 // the push publishes them. Each ref handed to ensure is tallied so the report
-// surfaces exactly what this run folded.
+// surfaces exactly what this run folded. Every ref runs to its own verdict and
+// the error joins each failure, so a binding moved mid-run names every ref it
+// hid rather than the first.
 func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) error {
-	g, gctx := errgroup.WithContext(ctx)
+	ordered := slices.Sorted(maps.Keys(scope))
+	errs := make([]error, len(ordered))
+	var g errgroup.Group
 	g.SetLimit(refConcurrency)
-	for ref, tip := range scope {
+	for i, ref := range ordered {
 		e.reconciled.Add(1)
-		g.Go(func() error { return e.ensure(gctx, ref, tip) })
+		g.Go(func() error {
+			errs[i] = e.ensure(ctx, ref, scope[ref])
+			return errs[i]
+		})
 	}
-	return g.Wait()
+	if err := g.Wait(); err != nil {
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 // changed returns the subset of after whose tip differs from before, plus any
