@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -474,5 +475,35 @@ func TestHasNotesBounded(t *testing.T) {
 				t.Fatalf("HasNotes ran %q, want it against the records repository %s", lines[0], f.sourceCommon)
 			}
 		})
+	}
+}
+
+// TestSharedStorageAttachmentIndexLivesInRecords pins the per-tip attachment
+// index beside the fold cache it is keyed with: a bound clone's scan writes it
+// under the records common directory and the thin common directory gains none.
+func TestSharedStorageAttachmentIndexLivesInRecords(t *testing.T) {
+	f := newSharedFixture(t)
+	f.bind(t)
+	s := openStore(t, f.thin)
+	note, err := s.Create(t.Context(), noteOps("indexed"))
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	ref := refs.For(model.KindNote, note.EntityID())
+	attach(t, s, ref, "a.bin", oidA, 5)
+	referenced(t, s)
+
+	index := filepath.Join(attachIndexSubdir, attachIndexName)
+	if _, err := os.Stat(filepath.Join(f.sourceCommon, index)); err != nil {
+		t.Fatalf("attachment index missing from the records common directory: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.thinCommon, index)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("attachment index in the thin common directory: stat = %v, want not exist", err)
+	}
+	if got, want := s.readAttachIndex().Refs[ref].Tip, refTip(t, f.source, ref); got != want {
+		t.Fatalf("indexed tip for %s = %s, want %s", ref, got, want)
+	}
+	if out := gittest.Git(t, f.thin, "for-each-ref", "--format=%(refname)", "refs/cc-notes/"); out != "" {
+		t.Fatalf("thin repository holds records refs:\n%s", out)
 	}
 }

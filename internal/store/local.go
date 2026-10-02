@@ -24,10 +24,10 @@ const (
 	// SyncedLabel publishes an entity a default would otherwise keep local.
 	// LocalLabel wins when both are present.
 	SyncedLabel = "synced"
-	// LocalPushInclude is the config file, relative to the common git
+	// LocalPushInclude is the config file, relative to the records common git
 	// directory, recording every local entity ref as cc-notes.secluded and as
 	// a negative push refspec for every remote wired with refs.PushRefspec.
-	// .git/config includes it, so a plain git push honors it; cc-notes
+	// The records config includes it, so a plain git push honors it; cc-notes
 	// rewrites it whole, never through git config.
 	LocalPushInclude = "cc-notes/local-push.config"
 )
@@ -98,8 +98,8 @@ func (e *LocalAttachmentError) Error() string {
 		"keep this one local with `ccn local mark %s`, or publish the file with it by labelling %s %s", e.ID, e.Reason, e.ID, e.ID, SyncedLabel)
 }
 
-// LocalPolicy reads the policy from git config once per Store, falling back
-// to DefaultLocalPolicy field by field.
+// LocalPolicy reads the policy from the records config once per Store, falling
+// back to DefaultLocalPolicy field by field.
 func (s *Store) LocalPolicy(ctx context.Context) (LocalPolicy, error) {
 	s.policy.once.Do(func() {
 		s.policy.value, s.policy.err = readLocalPolicy(ctx, s)
@@ -108,7 +108,7 @@ func (s *Store) LocalPolicy(ctx context.Context) (LocalPolicy, error) {
 }
 
 func readLocalPolicy(ctx context.Context, s *Store) (LocalPolicy, error) {
-	pairs, err := s.Git.ConfigGetRegexp(ctx, `^cc-notes\.local`)
+	pairs, err := s.RecordsGit.ConfigGetRegexp(ctx, `^cc-notes\.local`)
 	if err != nil {
 		return LocalPolicy{}, fmt.Errorf("local policy: %w", err)
 	}
@@ -152,7 +152,7 @@ func (s *Store) LocalReason(ctx context.Context, ref string) (string, error) {
 
 // Secluded returns the refs the local push include currently excludes.
 func (s *Store) Secluded() (map[string]bool, error) {
-	data, err := os.ReadFile(filepath.Join(s.commonDir, LocalPushInclude))
+	data, err := os.ReadFile(filepath.Join(s.recordsCommonDir, LocalPushInclude))
 	if os.IsNotExist(err) {
 		return map[string]bool{}, nil
 	}
@@ -170,14 +170,14 @@ func (s *Store) Secluded() (map[string]bool, error) {
 }
 
 // Seclude adds refs to and removes release from the local push include,
-// rewriting it whole under an exclusive lock, and makes sure .git/config
-// includes it.
+// rewriting it whole under an exclusive lock, and makes sure the records
+// config includes it.
 func (s *Store) Seclude(ctx context.Context, add, release []string) (err error) {
-	dir := filepath.Join(s.commonDir, filepath.Dir(LocalPushInclude))
+	dir := filepath.Join(s.recordsCommonDir, filepath.Dir(LocalPushInclude))
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("seclude: %w", err)
 	}
-	lock, err := os.OpenFile(filepath.Join(s.commonDir, LocalPushInclude+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := os.OpenFile(filepath.Join(s.recordsCommonDir, LocalPushInclude+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return fmt.Errorf("seclude: %w", err)
 	}
@@ -203,7 +203,7 @@ func (s *Store) Seclude(ctx context.Context, add, release []string) (err error) 
 	if err != nil {
 		return fmt.Errorf("seclude: %w", err)
 	}
-	if err := writeLocalPush(filepath.Join(s.commonDir, LocalPushInclude), remotes, current); err != nil {
+	if err := writeLocalPush(filepath.Join(s.recordsCommonDir, LocalPushInclude), remotes, current); err != nil {
 		return fmt.Errorf("seclude: %w", err)
 	}
 	return s.ensureLocalInclude(ctx)
@@ -211,7 +211,7 @@ func (s *Store) Seclude(ctx context.Context, add, release []string) (err error) 
 
 // wiredRemotes lists the remotes whose push config carries refs.PushRefspec.
 func (s *Store) wiredRemotes(ctx context.Context) ([]string, error) {
-	pairs, err := s.Git.ConfigGetRegexp(ctx, `^remote\..*\.push$`)
+	pairs, err := s.RecordsGit.ConfigGetRegexp(ctx, `^remote\..*\.push$`)
 	if err != nil {
 		return nil, err
 	}
@@ -254,14 +254,14 @@ func writeLocalPush(file string, remotes []string, secluded map[string]bool) err
 }
 
 func (s *Store) ensureLocalInclude(ctx context.Context) error {
-	includes, err := s.Git.ConfigGetAll(ctx, "include.path")
+	includes, err := s.RecordsGit.ConfigGetAll(ctx, "include.path")
 	if err != nil {
 		return fmt.Errorf("seclude: %w", err)
 	}
 	if slices.Contains(includes, LocalPushInclude) {
 		return nil
 	}
-	if err := s.Git.ConfigAdd(ctx, "include.path", LocalPushInclude); err != nil {
+	if err := s.RecordsGit.ConfigAdd(ctx, "include.path", LocalPushInclude); err != nil {
 		return fmt.Errorf("seclude: %w", err)
 	}
 	return nil
@@ -280,7 +280,7 @@ func (s *Store) Published(ctx context.Context, ref string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	tracked, err := s.Git.Refs(ctx, "refs/cc-notes-sync/*/"+strings.TrimPrefix(refs.For(parsed.Kind, parsed.ID), refs.Namespace))
+	tracked, err := s.RecordsGit.Refs(ctx, "refs/cc-notes-sync/*/"+strings.TrimPrefix(refs.For(parsed.Kind, parsed.ID), refs.Namespace))
 	if err != nil {
 		return false, err
 	}

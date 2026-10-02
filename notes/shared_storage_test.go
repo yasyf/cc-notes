@@ -3,9 +3,11 @@ package notes_test
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -666,5 +668,42 @@ func TestSharedStorageRelevantBackendFailureNeverServesCache(t *testing.T) {
 				t.Fatalf("fresh client after %s: RelevantCached = %q, want the new records repository's empty corpus", tc.name, out)
 			}
 		})
+	}
+}
+
+// TestSharedStorageLocalEntitiesReadRecords pins the local policy through a
+// bound client: SetLocal secludes in the records repository, LocalEntities
+// lists from the records refs, and the thin repository gains neither.
+func TestSharedStorageLocalEntitiesReadRecords(t *testing.T) {
+	ctx := t.Context()
+	source := gittest.InitRepo(t)
+	sharedCommit(t, source, "a.go", "package a\n")
+	thin := gittest.ShallowClone(t, source, 1)
+	sharedBind(t, thin, source)
+	c := sharedOpen(t, thin)
+	id := sharedNote(t, c, "brief")
+
+	wantReason := "label " + store.LocalLabel
+	if reason, err := c.SetLocal(ctx, model.KindNote, id, true); err != nil || reason != wantReason {
+		t.Fatalf("SetLocal = %q, %v; want %q", reason, err, wantReason)
+	}
+	got, err := c.LocalEntities(ctx)
+	if err != nil {
+		t.Fatalf("LocalEntities: %v", err)
+	}
+	want := []notes.LocalEntity{{Kind: model.KindNote, ID: id, Title: "brief", Reason: wantReason, Secluded: true}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LocalEntities = %+v, want %+v", got, want)
+	}
+	_, sourceCommon := gittest.Dirs(t, source)
+	_, thinCommon := gittest.Dirs(t, thin)
+	if _, err := os.Stat(filepath.Join(sourceCommon, store.LocalPushInclude)); err != nil {
+		t.Fatalf("records push include: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(thinCommon, store.LocalPushInclude)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("thin push include: stat = %v, want not exist", err)
+	}
+	if out := gittest.Git(t, thin, "for-each-ref", "--format=%(refname)", "refs/cc-notes/"); out != "" {
+		t.Fatalf("thin repository holds records refs:\n%s", out)
 	}
 }

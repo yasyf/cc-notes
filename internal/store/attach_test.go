@@ -331,7 +331,7 @@ func TestReferencedAttachmentsColdCache(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	reopened.cache = newFoldCache(t.TempDir(), foldCacheCap)
-	if err := os.Remove(filepath.Join(s.commonDir, attachIndexSubdir, attachIndexName)); err != nil {
+	if err := os.Remove(filepath.Join(s.recordsCommonDir, attachIndexSubdir, attachIndexName)); err != nil {
 		t.Fatalf("remove attachment index: %v", err)
 	}
 	if cold := referenced(t, reopened); !reflect.DeepEqual(cold, warm) {
@@ -348,7 +348,7 @@ func writeIndex(t *testing.T, s *Store, index attachIndex) {
 	if err != nil {
 		t.Fatalf("marshal index: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(s.commonDir, attachIndexSubdir, attachIndexName), data, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(s.recordsCommonDir, attachIndexSubdir, attachIndexName), data, 0o600); err != nil {
 		t.Fatalf("write index: %v", err)
 	}
 }

@@ -196,7 +196,7 @@ func (s *Store) ReferencedAttachments(ctx context.Context) ([]ReferencedObject, 
 
 func (s *Store) readAttachIndex() attachIndex {
 	//nolint:gosec // G304: the path is this store's own cache file, not external input.
-	data, err := os.ReadFile(filepath.Join(s.commonDir, attachIndexSubdir, attachIndexName))
+	data, err := os.ReadFile(filepath.Join(s.recordsCommonDir, attachIndexSubdir, attachIndexName))
 	if err != nil {
 		return attachIndex{}
 	}
@@ -218,7 +218,7 @@ func (s *Store) writeAttachIndex(perRef []refAttachments) {
 	if err != nil {
 		return
 	}
-	dir := filepath.Join(s.commonDir, attachIndexSubdir)
+	dir := filepath.Join(s.recordsCommonDir, attachIndexSubdir)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return
 	}
