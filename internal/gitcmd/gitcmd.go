@@ -424,10 +424,12 @@ func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error
 	return nil
 }
 
-// Push uploads to remote using the given refspecs, never forced. A rejected
-// update wraps ErrNonFastForward.
+// Push uploads to remote using the given refspecs, never forced and without
+// the pre-push hook: Sync has already uploaded attachment content itself, and
+// a repo hook such as git-lfs's rescans every pushed ref. A rejected update
+// wraps ErrNonFastForward.
 func (g Git) Push(ctx context.Context, remote string, refspecs ...string) error {
-	_, err := g.run(ctx, "", append([]string{"push", remote}, refspecs...)...)
+	_, err := g.run(ctx, "", append([]string{"push", "--no-verify", remote}, refspecs...)...)
 	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
 		return fmt.Errorf("push %s: %w", remote, err)
 	}
