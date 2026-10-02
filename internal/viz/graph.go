@@ -223,7 +223,7 @@ func (b *Builder) walkTruncated(ctx context.Context, trunk *branchState, others 
 	for _, s := range others {
 		tips = append(tips, s.tip)
 	}
-	_, truncated, err := b.store.Repo.WalkCommits(ctx, tips, walkLimit, since)
+	_, truncated, err := b.store.ContextRepo.WalkCommits(ctx, tips, walkLimit, since)
 	if err != nil {
 		return false, fmt.Errorf("walk commits: %w", err)
 	}

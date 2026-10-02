@@ -65,7 +65,7 @@ func (r *topoRun) commitTime(sha model.SHA) (int64, error) {
 	if t, ok := r.times[sha]; ok {
 		return t, nil
 	}
-	commits, _, err := r.b.store.Repo.WalkCommits(r.ctx, []model.SHA{sha}, 1, 0)
+	commits, _, err := r.b.store.ContextRepo.WalkCommits(r.ctx, []model.SHA{sha}, 1, 0)
 	if err != nil {
 		return 0, fmt.Errorf("commit time %s: %w", sha, err)
 	}
@@ -82,7 +82,7 @@ func (r *topoRun) window(sha model.SHA) (windowSet, error) {
 	if w, ok := r.windows[sha]; ok {
 		return w, nil
 	}
-	commits, _, err := r.b.store.Repo.WalkCommits(r.ctx, []model.SHA{sha}, walkLimit, r.since)
+	commits, _, err := r.b.store.ContextRepo.WalkCommits(r.ctx, []model.SHA{sha}, walkLimit, r.since)
 	if err != nil {
 		return windowSet{}, fmt.Errorf("walk %s: %w", sha, err)
 	}
@@ -104,7 +104,7 @@ func (r *topoRun) firstParentMerges(tip model.SHA) ([]gitobj.CodeCommit, error) 
 	if merges, ok := r.merges[tip]; ok {
 		return merges, nil
 	}
-	merges, err := r.b.store.Repo.FirstParentMerges(r.ctx, tip, walkLimit, r.cutoff)
+	merges, err := r.b.store.ContextRepo.FirstParentMerges(r.ctx, tip, walkLimit, r.cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("first-parent merges %s: %w", tip, err)
 	}

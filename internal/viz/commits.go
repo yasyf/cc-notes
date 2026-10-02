@@ -72,7 +72,7 @@ func (s *Server) handleCommits(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
-	all, truncated, err := s.store.Repo.WalkCommits(ctx, liveTips(g), maxCommitLimit, 0)
+	all, truncated, err := s.store.ContextRepo.WalkCommits(ctx, liveTips(g), maxCommitLimit, 0)
 	if err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
@@ -167,7 +167,7 @@ func reachFrom(ctx context.Context, st *store.Store, cache map[model.SHA]reachSe
 	if rs, ok := cache[sha]; ok {
 		return rs, nil
 	}
-	commits, _, err := st.Repo.WalkCommits(ctx, []model.SHA{sha}, maxCommitLimit, 0)
+	commits, _, err := st.ContextRepo.WalkCommits(ctx, []model.SHA{sha}, maxCommitLimit, 0)
 	if err != nil {
 		return reachSet{}, fmt.Errorf("walk reachable from %s: %w", sha, err)
 	}
