@@ -277,6 +277,30 @@ func TestFetchPushRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPushSkipsPrePushHook(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := initRepo(t)
+	gittest.Git(t, a.Dir, "remote", "add", "origin", bare)
+	hooks := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hooks, "pre-push"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write hook: %v", err)
+	}
+	gittest.Git(t, a.Dir, "config", "core.hooksPath", hooks)
+	ctx := t.Context()
+	c1 := commitEmpty(t, a, "c1")
+	ref := "refs/cc-notes/notes/" + string(c1)
+	if err := a.UpdateRef(ctx, ref, c1, ""); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := a.Push(ctx, "origin", "refs/cc-notes/*:refs/cc-notes/*"); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if got := resolve(t, bare, ref); got != c1 {
+		t.Fatalf("remote ref at %s, want %s", got, c1)
+	}
+}
+
 func TestConfig(t *testing.T) {
 	g := initRepo(t)
 	ctx := t.Context()
