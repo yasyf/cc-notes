@@ -409,6 +409,56 @@ func TestRelevantCachedGuardsTheRealDirectoryBehindALinkedInclude(t *testing.T) 
 	}
 }
 
+func TestRelevantCachedGuardsTheDirectoryHoldingATraversedLink(t *testing.T) {
+	defer SetRelevantRacyWindow(0)()
+	c, dir := newWBClient(t)
+	ctx := t.Context()
+	gittest.Git(t, dir, "config", "include.path", "inc/link/extra.config")
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}}}); err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	real := realPath(t, t.TempDir())
+	inc := filepath.Join(c.s.CommonDir(), "inc")
+	if err := os.Mkdir(inc, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(inc, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+
+	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
+	if err != nil {
+		t.Fatalf("relevantInputs: %v", err)
+	}
+	if in.revalidate {
+		t.Fatal("an include below a directory link that resolves forced revalidation")
+	}
+	if holder := realPath(t, inc); !guards(in, holder) || !guards(in, real) || guards(in, link) {
+		t.Fatalf("guards %+v; want the directory holding the link %s and the real target %s, never the link %s", in.guards, holder, real, link)
+	}
+
+	renders := 0
+	render := func(entries []RelevantEntry) ([]byte, error) {
+		renders++
+		return json.Marshal(entries)
+	}
+	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil {
+		t.Fatalf("RelevantCached: %v", err)
+	}
+	entry, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{})
+	if !ok {
+		t.Fatal("a quiet capture reaching its include through a nested directory link persisted no entry")
+	}
+	if entry.Racy || entry.Revalidate {
+		t.Fatalf("racy = %t revalidate = %t, want a settled entry", entry.Racy, entry.Revalidate)
+	}
+	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil || renders != 1 {
+		t.Fatalf("warm call: err %v renders %d, want the settled entry served", err, renders)
+	}
+}
+
 func guards(in *relevantInputs, path string) bool {
 	return slices.ContainsFunc(in.guards, func(g fileStamp) bool { return g.Path == path })
 }

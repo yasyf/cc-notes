@@ -77,6 +77,7 @@ fi
 case "$CC_NOTES_RACE_MODE" in
 orig-head) "$CC_NOTES_REAL_GIT" -C "$CC_NOTES_RACE_DIR" update-ref ORIG_HEAD "$CC_NOTES_RACE_VALUE" ;;
 include)
+	[ -z "$CC_NOTES_RACE_LINK" ] || ln -sfn "$CC_NOTES_RACE_LINK_SWAP" "$CC_NOTES_RACE_LINK"
 	[ -z "$CC_NOTES_RACE_MKDIR" ] || mkdir "$CC_NOTES_RACE_MKDIR"
 	"$CC_NOTES_REAL_GIT" config --file "$CC_NOTES_RACE_FILE" user.email "$CC_NOTES_RACE_VALUE" ;;
 esac
@@ -86,7 +87,8 @@ case "$CC_NOTES_RACE_MODE" in
 orig-head) "$CC_NOTES_REAL_GIT" -C "$CC_NOTES_RACE_DIR" update-ref -d ORIG_HEAD ;;
 include)
 	rm "$CC_NOTES_RACE_FILE"
-	[ -z "$CC_NOTES_RACE_MKDIR" ] || rmdir "$CC_NOTES_RACE_MKDIR" ;;
+	[ -z "$CC_NOTES_RACE_MKDIR" ] || rmdir "$CC_NOTES_RACE_MKDIR"
+	[ -z "$CC_NOTES_RACE_LINK" ] || ln -sfn "$CC_NOTES_RACE_LINK_RESTORE" "$CC_NOTES_RACE_LINK" ;;
 esac
 printf fired > "$CC_NOTES_RACE_STATE"
 exit $rc
@@ -1006,45 +1008,80 @@ func TestRelevantCachedNeverPinsARootRefRacedDuringCapture(t *testing.T) {
 	}
 }
 
+type includeLayout struct {
+	file  string
+	mkdir string
+	link  string
+	swap  string
+}
+
 type includeRace struct {
 	path    string
 	settled cacheTier
-	layout  func(t *testing.T, common string) (file, mkdir string)
+	layout  func(t *testing.T, common string) includeLayout
 }
 
 func TestRelevantCachedNeverPinsARootIncludeRacedDuringCapture(t *testing.T) {
-	includeRaceNeverPins(t, includeRace{path: "extra.config", settled: tierHit, layout: func(_ *testing.T, common string) (string, string) {
-		return filepath.Join(common, "extra.config"), ""
+	includeRaceNeverPins(t, includeRace{path: "extra.config", settled: tierHit, layout: func(_ *testing.T, common string) includeLayout {
+		return includeLayout{file: filepath.Join(common, "extra.config")}
 	}})
 }
 
 func TestRelevantCachedNeverPinsADanglingIncludeLinkRacedDuringCapture(t *testing.T) {
-	includeRaceNeverPins(t, includeRace{path: "extra.config", settled: tierRevalidate, layout: func(t *testing.T, common string) (string, string) {
+	includeRaceNeverPins(t, includeRace{path: "extra.config", settled: tierRevalidate, layout: func(t *testing.T, common string) includeLayout {
 		external := filepath.Join(t.TempDir(), "external.config")
 		symlink(t, external, filepath.Join(common, "extra.config"))
-		return external, ""
+		return includeLayout{file: external}
 	}})
 }
 
 func TestRelevantCachedNeverPinsAnIncludeLinkedThroughDotDotRacedDuringCapture(t *testing.T) {
-	includeRaceNeverPins(t, includeRace{path: "extra.config", settled: tierRevalidate, layout: func(t *testing.T, common string) (string, string) {
+	includeRaceNeverPins(t, includeRace{path: "extra.config", settled: tierRevalidate, layout: func(t *testing.T, common string) includeLayout {
 		outside := t.TempDir()
 		nested := filepath.Join(outside, "nested")
-		if err := os.Mkdir(nested, 0o750); err != nil {
-			t.Fatal(err)
-		}
+		mkdir(t, nested)
 		symlink(t, nested, filepath.Join(common, "hop"))
 		symlink(t, filepath.FromSlash("hop/../external.config"), filepath.Join(common, "extra.config"))
-		return filepath.Join(outside, "external.config"), ""
+		return includeLayout{file: filepath.Join(outside, "external.config")}
 	}})
 }
 
 func TestRelevantCachedNeverPinsAnIncludeBelowADanglingDirectoryLinkRacedDuringCapture(t *testing.T) {
-	includeRaceNeverPins(t, includeRace{path: "inc/extra.config", settled: tierRevalidate, layout: func(t *testing.T, common string) (string, string) {
+	includeRaceNeverPins(t, includeRace{path: "inc/extra.config", settled: tierRevalidate, layout: func(t *testing.T, common string) includeLayout {
 		missing := filepath.Join(t.TempDir(), "missing")
 		symlink(t, missing, filepath.Join(common, "inc"))
-		return filepath.Join(missing, "extra.config"), missing
+		return includeLayout{file: filepath.Join(missing, "extra.config"), mkdir: missing}
 	}})
+}
+
+func TestRelevantCachedNeverPinsAnIncludeClimbingThroughADirectoryLinkRacedDuringCapture(t *testing.T) {
+	includeRaceNeverPins(t, includeRace{path: "hop/../external.config", settled: tierHit, layout: func(t *testing.T, common string) includeLayout {
+		outside := t.TempDir()
+		nested := filepath.Join(outside, "nested")
+		mkdir(t, nested)
+		symlink(t, nested, filepath.Join(common, "hop"))
+		return includeLayout{file: filepath.Join(outside, "external.config")}
+	}})
+}
+
+func TestRelevantCachedNeverPinsAnIncludeBehindALinkRetargetedDuringCapture(t *testing.T) {
+	includeRaceNeverPins(t, includeRace{path: "inc/link/extra.config", settled: tierHit, layout: func(t *testing.T, common string) includeLayout {
+		outside := t.TempDir()
+		v1, v2, inc := filepath.Join(outside, "v1"), filepath.Join(outside, "v2"), filepath.Join(common, "inc")
+		mkdir(t, v1)
+		mkdir(t, v2)
+		mkdir(t, inc)
+		link := filepath.Join(inc, "link")
+		symlink(t, v1, link)
+		return includeLayout{file: filepath.Join(v2, "extra.config"), link: link, swap: v2}
+	}})
+}
+
+func mkdir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.Mkdir(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func symlink(t *testing.T, target, link string) {
@@ -1054,14 +1091,30 @@ func symlink(t *testing.T, target, link string) {
 	}
 }
 
+func readLink(t *testing.T, link string) string {
+	t.Helper()
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return target
+}
+
 func includeRaceNeverPins(t *testing.T, race includeRace) {
 	t.Cleanup(notes.SetRelevantRacyWindow(0))
 	fx := newMatrixFixture(t)
 	fx.crossAuthor(t)
 	fx.run(t, "config", "include.path", race.path)
-	include, mkdir := race.layout(t, fx.commonDir(t))
-	t.Setenv("CC_NOTES_RACE_MKDIR", mkdir)
-	fx.armRootRace(t, "include", "GIT_AUTHOR_IDENT", relevantOther, include)
+	layout := race.layout(t, fx.commonDir(t))
+	restore := ""
+	if layout.link != "" {
+		restore = readLink(t, layout.link)
+	}
+	t.Setenv("CC_NOTES_RACE_MKDIR", layout.mkdir)
+	t.Setenv("CC_NOTES_RACE_LINK", layout.link)
+	t.Setenv("CC_NOTES_RACE_LINK_SWAP", layout.swap)
+	t.Setenv("CC_NOTES_RACE_LINK_RESTORE", restore)
+	fx.armRootRace(t, "include", "GIT_AUTHOR_IDENT", relevantOther, layout.file)
 	p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: fx.counter}
 	if got := p.call("capture raced by the include appearing"); got != tierRebuild {
 		t.Fatalf("raced capture served by %v, want %v", got, tierRebuild)
@@ -1070,6 +1123,11 @@ func includeRaceNeverPins(t *testing.T, race includeRace) {
 		t.Fatalf("the raced identity still scored cross-author; the include never reached the identity read: %s", p.last)
 	}
 	fx.rootRaceFired(t)
+	if layout.link != "" {
+		if got := readLink(t, layout.link); got != restore {
+			t.Fatalf("%s -> %s after the race, want %s restored", layout.link, got, restore)
+		}
+	}
 	if probe, ok, err := notes.RelevantCacheProbeOf(fx.c, matrixTarget, p.filter, "json"); err != nil || (ok && !probe.Revalidate) {
 		t.Fatalf("a capture whose include appeared and vanished persisted a settled entry: ok=%t err=%v %+v", ok, err, probe)
 	}
@@ -1080,6 +1138,63 @@ func includeRaceNeverPins(t *testing.T, race includeRace) {
 	p.promoteThen("settled after the race", race.settled)
 	if probe := p.entry("settled after the race"); probe.Revalidate != (race.settled == tierRevalidate) {
 		t.Fatalf("settled entry revalidate = %t, want %t: %+v", probe.Revalidate, race.settled == tierRevalidate, probe)
+	}
+}
+
+func TestRelevantCachedSeesAnIncludeCreatedWhereADirectoryLinkClimbsTo(t *testing.T) {
+	includeServesWarmThenSees(t, "hop/../external.config", "include created where the link climbs to", func(t *testing.T, common string) string {
+		outside := t.TempDir()
+		nested := filepath.Join(outside, "nested")
+		mkdir(t, nested)
+		symlink(t, nested, filepath.Join(common, "hop"))
+		return filepath.Join(outside, "external.config")
+	})
+}
+
+func TestRelevantCachedServesAnIncludeAboveTheGitDirWarm(t *testing.T) {
+	includeServesWarmThenSees(t, "../shared.gitconfig", "include above the git dir edited", func(t *testing.T, common string) string {
+		shared := filepath.Join(filepath.Dir(common), "shared.gitconfig")
+		writeConfig(t, shared, "Shared")
+		return shared
+	})
+}
+
+func TestRelevantCachedServesAnIncludeBehindADirectoryLinkWarm(t *testing.T) {
+	includeServesWarmThenSees(t, "inc/extra.config", "include edited behind the link", func(t *testing.T, common string) string {
+		real := t.TempDir()
+		symlink(t, real, filepath.Join(common, "inc"))
+		extra := filepath.Join(real, "extra.config")
+		writeConfig(t, extra, "Linked")
+		return extra
+	})
+}
+
+func writeConfig(t *testing.T, file, name string) {
+	t.Helper()
+	if err := os.WriteFile(file, []byte("[user]\n\tname = "+name+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func includeServesWarmThenSees(t *testing.T, path, step string, layout func(t *testing.T, common string) string) {
+	t.Cleanup(notes.SetRelevantRacyWindow(0))
+	fx := newMatrixFixture(t)
+	fx.crossAuthor(t)
+	file := layout(t, fx.commonDir(t))
+	fx.run(t, "config", "include.path", path)
+	p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: installCountingGit(t, countingGitScript)}
+	p.expect("cold", tierRebuild)
+	p.promoteThen("settled", tierHit)
+	if probe := p.entry("settled"); probe.Revalidate {
+		t.Fatalf("a quiet repository settled with revalidate set: %+v", probe)
+	}
+	if !bytes.Contains(p.last, []byte(`"cross-author"`)) {
+		t.Fatalf("settled answer lacks cross-author before the include names the teammate: %s", p.last)
+	}
+	fx.run(t, "config", "--file", file, "user.email", relevantOther)
+	p.expect(step, tierRebuild)
+	if bytes.Contains(p.last, []byte(`"cross-author"`)) {
+		t.Fatalf("%s: the identity the include now sets never reached the answer: %s", step, p.last)
 	}
 }
 

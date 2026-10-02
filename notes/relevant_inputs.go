@@ -27,6 +27,7 @@ var relevantRacyWindow = 2 * time.Second
 
 const (
 	relevantSymrefDepth   = 5
+	relevantLinkHops      = 40
 	relevantMissing       = "missing"
 	defaultReplaceRefBase = "refs/replace/"
 )
@@ -145,36 +146,87 @@ func (in *relevantInputs) keep(s fileStamp) fileStamp {
 	}
 	in.watched[s.Path] = s
 	in.stamps = append(in.stamps, s)
-	if s.Missing {
-		in.guardMissing(s.Path)
-	}
+	in.resolve(s.Path, !s.Link)
 	return s
 }
 
-func (in *relevantInputs) guardMissing(path string) {
-	ancestor := path
-	for {
-		if _, err := os.Lstat(ancestor); err == nil {
-			break
+func (in *relevantInputs) resolve(path string, followFinal bool) {
+	// Walked as the kernel opens it: a ".." after a symlink climbs out of the
+	// link's target, which a lexically cleaned path would have collapsed away.
+	if !filepath.IsAbs(path) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			in.revalidate = true
+			return
 		}
-		up := parentPath(ancestor)
-		if up == ancestor {
-			break
+		path = joinPath(cwd, path)
+	}
+	root, rest := splitAbs(path)
+	cur := root
+	linked, hops := 0, 0
+	for len(rest) > 0 {
+		name := rest[0]
+		rest = rest[1:]
+		fromLink := linked > 0
+		if fromLink {
+			linked--
 		}
-		ancestor = up
+		switch name {
+		case "", ".":
+			continue
+		case "..":
+			if cur != root {
+				cur = parentPath(cur)
+			}
+			continue
+		}
+		next := joinPath(cur, name)
+		info, err := os.Lstat(next)
+		if err != nil {
+			if fromLink || slices.Contains(rest, "..") {
+				in.revalidate = true
+				return
+			}
+			in.guard(cur)
+			return
+		}
+		if info.Mode()&os.ModeSymlink == 0 || (len(rest) == 0 && !followFinal) {
+			cur = next
+			continue
+		}
+		in.guard(cur)
+		hops++
+		if hops > relevantLinkHops {
+			in.revalidate = true
+			return
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			in.untrusted = true
+			return
+		}
+		var hop []string
+		if filepath.IsAbs(target) {
+			root, hop = splitAbs(target)
+			cur = root
+		} else {
+			hop = strings.Split(target, string(filepath.Separator))
+		}
+		rest = append(hop, rest...)
+		linked += len(hop)
 	}
-	if slices.Contains(strings.Split(path[len(ancestor):], string(filepath.Separator)), "..") {
-		in.revalidate = true
-		return
+}
+
+func splitAbs(path string) (root string, rest []string) {
+	root = filepath.VolumeName(path) + string(filepath.Separator)
+	return root, strings.Split(path[len(root):], string(filepath.Separator))
+}
+
+func joinPath(dir, name string) string {
+	if strings.HasSuffix(dir, string(filepath.Separator)) {
+		return dir + name
 	}
-	// The kernel resolves links on the way to the ancestor; a lexical join
-	// of a link target lands the guard on the wrong directory.
-	real, err := filepath.EvalSymlinks(ancestor)
-	if err != nil {
-		in.revalidate = true
-		return
-	}
-	in.guard(real)
+	return dir + string(filepath.Separator) + name
 }
 
 func parentPath(path string) string {
@@ -198,7 +250,7 @@ func nearestExisting(dir string) string {
 		if _, err := os.Lstat(dir); err == nil {
 			return dir
 		}
-		up := filepath.Dir(dir)
+		up := parentPath(dir)
 		if up == dir {
 			return dir
 		}
@@ -271,7 +323,7 @@ func (in *relevantInputs) watchHead(ctx context.Context) error {
 }
 
 func (in *relevantInputs) watchRef(name string, depth int) {
-	in.watch(filepath.Join(in.commonDir, "packed-refs"))
+	in.watch(joinPath(in.commonDir, "packed-refs"))
 	file, ok := in.refFile(name)
 	if !ok {
 		in.revalidate = true
@@ -338,13 +390,13 @@ func symrefTarget(data []byte) (string, bool) {
 func (in *relevantInputs) refFile(name string) (string, bool) {
 	switch {
 	case name == "HEAD" || rootPseudoref(name):
-		return filepath.Join(in.gitDir, name), true
+		return joinPath(in.gitDir, name), true
 	case strings.HasPrefix(name, "refs/bisect/"), strings.HasPrefix(name, "refs/worktree/"), strings.HasPrefix(name, "refs/rewritten/"):
-		return filepath.Join(in.gitDir, filepath.FromSlash(name)), true
+		return joinPath(in.gitDir, filepath.FromSlash(name)), true
 	case strings.HasPrefix(name, "main-worktree/"):
-		return filepath.Join(in.commonDir, filepath.FromSlash(strings.TrimPrefix(name, "main-worktree/"))), true
+		return joinPath(in.commonDir, filepath.FromSlash(strings.TrimPrefix(name, "main-worktree/"))), true
 	case strings.HasPrefix(name, "worktrees/"), strings.HasPrefix(name, "refs/"):
-		return filepath.Join(in.commonDir, filepath.FromSlash(name)), true
+		return joinPath(in.commonDir, filepath.FromSlash(name)), true
 	}
 	return "", false
 }
@@ -372,7 +424,7 @@ func (in *relevantInputs) watchDirs(dir string) {
 		return
 	}
 	for _, e := range entries {
-		path := filepath.Join(dir, e.Name())
+		path := joinPath(dir, e.Name())
 		switch {
 		case e.IsDir():
 			in.watchDirs(path)
@@ -423,8 +475,8 @@ func (in *relevantInputs) watchDep(name string, depth int) {
 		in.revalidate = true
 		return
 	}
-	in.watch(nearestExisting(filepath.Dir(file)))
-	in.watch(filepath.Join(in.commonDir, "packed-refs"))
+	in.watch(nearestExisting(parentPath(file)))
+	in.watch(joinPath(in.commonDir, "packed-refs"))
 	info, err := os.Lstat(file)
 	if err != nil || info.IsDir() {
 		return
@@ -552,7 +604,7 @@ func (in *relevantInputs) configFiles(ctx context.Context, entries []gitcmd.Conf
 			files = append(files, path)
 		}
 	}
-	add(filepath.Join(in.commonDir, "config"))
+	add(joinPath(in.commonDir, "config"))
 	vars, _ := splitVarList(varList)
 	for _, line := range vars {
 		name, value, _ := strings.Cut(line, "=")
@@ -580,26 +632,24 @@ func (in *relevantInputs) configFiles(ctx context.Context, entries []gitcmd.Conf
 						return nil, nil, fmt.Errorf("config origin %s: %w", origin, err)
 					}
 				}
-				origin = filepath.Join(base, origin)
+				origin = joinPath(base, origin)
 			}
-			origin = filepath.Clean(origin)
 			origins[origin] = true
 			add(origin)
 		}
 		if !includeKey(e.Key) {
 			continue
 		}
-		target, ok := in.includeTarget(e.Value, filepath.Dir(origin), home)
-		switch {
-		case !ok:
-		case fromFile || filepath.IsAbs(target):
+		dir := ""
+		if fromFile {
+			dir = parentPath(origin)
+		}
+		if target, ok := in.includeTarget(e.Value, dir, home); ok {
 			add(target)
-		default:
-			in.revalidate = true
 		}
 	}
 	if worktreeConfig {
-		add(filepath.Join(in.gitDir, "config.worktree"))
+		add(joinPath(in.gitDir, "config.worktree"))
 	}
 	return files, origins, nil
 }
@@ -625,14 +675,17 @@ func includeKey(key string) bool {
 func (in *relevantInputs) includeTarget(value, dir, home string) (string, bool) {
 	switch {
 	case strings.HasPrefix(value, "~/"):
-		return filepath.Join(home, value[2:]), true
+		return joinPath(home, value[2:]), true
 	case strings.HasPrefix(value, "~"), strings.HasPrefix(value, "%(prefix)"):
 		in.revalidate = true
 		return "", false
 	case filepath.IsAbs(value):
-		return filepath.Clean(value), true
+		return value, true
+	case dir == "":
+		in.revalidate = true
+		return "", false
 	}
-	return filepath.Join(dir, value), true
+	return joinPath(dir, value), true
 }
 
 func (in *relevantInputs) auditConfig(entries []gitcmd.ConfigEntry, files []string, origins map[string]bool, dump string) {
@@ -712,7 +765,7 @@ func (in *relevantInputs) configured(key string) bool {
 }
 
 func (in *relevantInputs) watchHistory() error {
-	in.watch(filepath.Join(in.commonDir, "shallow"))
+	in.watch(joinPath(in.commonDir, "shallow"))
 	grafted, err := in.client.s.Repo.RefreshShallow()
 	if err != nil {
 		return err
@@ -725,10 +778,10 @@ func (in *relevantInputs) watchHistory() error {
 	}
 	grafts := os.Getenv("GIT_GRAFT_FILE")
 	if grafts == "" {
-		grafts = filepath.Join(in.commonDir, "info", "grafts")
+		grafts = joinPath(joinPath(in.commonDir, "info"), "grafts")
 	}
 	in.watchBytes("grafts", grafts)
-	in.watchDirs(filepath.Join(in.commonDir, filepath.FromSlash(strings.TrimSuffix(replaceRefBase(), "/"))))
+	in.watchDirs(joinPath(in.commonDir, filepath.FromSlash(strings.TrimSuffix(replaceRefBase(), "/"))))
 	return nil
 }
 
@@ -749,7 +802,7 @@ func (in *relevantInputs) detached() bool {
 
 func (in *relevantInputs) watchBranch(ctx context.Context) error {
 	if in.detached() {
-		in.watchDirs(filepath.Join(in.commonDir, "refs", "heads"))
+		in.watchDirs(joinPath(in.commonDir, filepath.FromSlash("refs/heads")))
 		in.watchRef("refs/remotes/origin/HEAD", 0)
 	}
 	branch, err := in.client.resolveRelevantBranch(ctx, in.filter.Branch)
@@ -783,7 +836,7 @@ func (in *relevantInputs) watchBase(ctx context.Context) error {
 
 func (in *relevantInputs) watchEntities(ctx context.Context) error {
 	for _, root := range relevantRefRoots {
-		in.watch(filepath.Join(in.commonDir, filepath.FromSlash(strings.TrimSuffix(root, "/"))))
+		in.watch(joinPath(in.commonDir, filepath.FromSlash(strings.TrimSuffix(root, "/"))))
 	}
 	entries, err := in.client.s.Git.RefEntries(ctx, append(slices.Clone(relevantRefRoots), replaceRefBase())...)
 	if err != nil {
