@@ -42,6 +42,12 @@ type relevantDeps struct {
 	Config   []string `json:"config,omitempty"`
 }
 
+type gitCwd struct {
+	done bool
+	ok   bool
+	dir  string
+}
+
 type relevantInputs struct {
 	client    *Client
 	path      string
@@ -50,6 +56,7 @@ type relevantInputs struct {
 	gitDir    string
 	commonDir string
 	start     time.Time
+	cwd       gitCwd
 
 	stamps     []fileStamp
 	guards     []fileStamp
@@ -110,7 +117,7 @@ func (c *Client) relevantInputs(ctx context.Context, p string, filter RelevantFi
 	if err := in.watchConfig(ctx); err != nil {
 		return nil, err
 	}
-	if err := in.watchHistory(); err != nil {
+	if err := in.watchHistory(ctx); err != nil {
 		return nil, err
 	}
 	if err := in.watchBranch(ctx); err != nil {
@@ -294,6 +301,54 @@ func nearestExisting(dir string) string {
 		}
 		dir = up
 	}
+}
+
+func (in *relevantInputs) gitCwd(ctx context.Context) (string, bool) {
+	if !in.cwd.done {
+		in.cwd.done = true
+		in.cwd.dir, in.cwd.ok = in.locateGitCwd(ctx)
+	}
+	return in.cwd.dir, in.cwd.ok
+}
+
+func (in *relevantInputs) locateGitCwd(ctx context.Context) (string, bool) {
+	// git -C Dir ends setup in the physical worktree root when Dir sits at or
+	// below it and in Dir otherwise; every other setup chdir is undone.
+	dir, ok := in.resolve(fileStamp{Path: in.client.s.Git.Dir})
+	if !ok {
+		return "", false
+	}
+	if in.client.s.Bare() {
+		return dir, true
+	}
+	root, err := in.client.s.Root(ctx)
+	if err != nil {
+		return "", false
+	}
+	if dir == root || strings.HasPrefix(dir, joinPath(root, "")) {
+		return root, true
+	}
+	return dir, true
+}
+
+func (in *relevantInputs) gitPath(ctx context.Context, path string) (string, bool) {
+	if filepath.IsAbs(path) {
+		return path, true
+	}
+	cwd, ok := in.gitCwd(ctx)
+	if !ok {
+		return "", false
+	}
+	return joinPath(cwd, path), true
+}
+
+func (in *relevantInputs) watchEnvBytes(ctx context.Context, label, path string) {
+	resolved, ok := in.gitPath(ctx, path)
+	if !ok {
+		in.noCache = true
+		return
+	}
+	in.watchBytes(label, resolved)
 }
 
 func (in *relevantInputs) watchBytes(label, path string) {
@@ -663,17 +718,12 @@ func (in *relevantInputs) configFiles(ctx context.Context, entries []gitcmd.Conf
 		}
 		origin, fromFile := strings.CutPrefix(e.Origin, "file:")
 		if fromFile {
-			if !filepath.IsAbs(origin) {
-				base := in.gitDir
-				if !in.client.s.Bare() {
-					if base, err = in.client.s.Root(ctx); err != nil {
-						return nil, nil, fmt.Errorf("config origin %s: %w", origin, err)
-					}
-				}
-				origin = joinPath(base, origin)
+			if origin, fromFile = in.gitPath(ctx, origin); !fromFile {
+				in.revalidate = true
+			} else {
+				origins[origin] = true
+				add(origin)
 			}
-			origins[origin] = true
-			add(origin)
 		}
 		if !includeKey(e.Key) {
 			continue
@@ -712,7 +762,7 @@ func includeKey(key string) bool {
 
 func (in *relevantInputs) includeTarget(value, dir, home string) (string, bool) {
 	switch {
-	case strings.HasPrefix(value, "~/"):
+	case strings.HasPrefix(value, "~/") && (home == "" || filepath.IsAbs(home)):
 		return joinPath(home, value[2:]), true
 	case strings.HasPrefix(value, "~"), strings.HasPrefix(value, "%(prefix)"):
 		in.revalidate = true
@@ -802,7 +852,7 @@ func (in *relevantInputs) configured(key string) bool {
 	return slices.ContainsFunc(in.config, func(e gitcmd.ConfigEntry) bool { return e.Key == key })
 }
 
-func (in *relevantInputs) watchHistory() error {
+func (in *relevantInputs) watchHistory(ctx context.Context) error {
 	in.watch(joinPath(in.commonDir, "shallow"))
 	grafted, err := in.client.s.Repo.RefreshShallow()
 	if err != nil {
@@ -812,14 +862,19 @@ func (in *relevantInputs) watchHistory() error {
 		in.record("shallow %s", sha)
 	}
 	if file := os.Getenv("GIT_SHALLOW_FILE"); file != "" {
-		in.watchBytes("shallow-file", file)
+		in.watchEnvBytes(ctx, "shallow-file", file)
 	}
-	grafts := os.Getenv("GIT_GRAFT_FILE")
-	if grafts == "" {
-		grafts = joinPath(joinPath(in.commonDir, "info"), "grafts")
+	if grafts := os.Getenv("GIT_GRAFT_FILE"); grafts != "" {
+		in.watchEnvBytes(ctx, "grafts", grafts)
+	} else {
+		in.watchBytes("grafts", joinPath(joinPath(in.commonDir, "info"), "grafts"))
 	}
-	in.watchBytes("grafts", grafts)
-	in.watchDirs(joinPath(in.commonDir, filepath.FromSlash(strings.TrimSuffix(replaceRefBase(), "/"))))
+	base := strings.TrimSuffix(replaceRefBase(), "/")
+	if dir, ok := in.refFile(base); ok && strings.HasPrefix(base, "refs/") {
+		in.watchDirs(dir)
+	} else {
+		in.revalidate = true
+	}
 	return nil
 }
 

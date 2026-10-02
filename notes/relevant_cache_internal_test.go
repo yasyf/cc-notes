@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -656,6 +657,209 @@ func TestRelevantInputsRefuseACaptureWhoseRefDirectoryWasSwappedAway(t *testing.
 		if !guards(in, realPath(t, d)) {
 			t.Fatalf("the walk to a missing ref left %s unguarded: %+v", d, in.guards)
 		}
+	}
+}
+
+func TestRelevantInputsGitCwdMatchesNativeGit(t *testing.T) {
+	type layout struct {
+		name   string
+		dir    func(t *testing.T, repo string) string
+		want   func(t *testing.T, repo, dir string) string
+		wantOK bool
+	}
+	physical := func(t *testing.T, repo, _ string) string { return realPath(t, repo) }
+	self := func(t *testing.T, _, dir string) string { return realPath(t, dir) }
+	subdir := func(t *testing.T, repo string) string {
+		sub := filepath.Join(repo, "sub")
+		if err := os.Mkdir(sub, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		return sub
+	}
+	bare := func(t *testing.T, repo string) string {
+		dir := filepath.Join(t.TempDir(), "bare.git")
+		gittest.Git(t, repo, "clone", "-q", "--bare", repo, dir)
+		return dir
+	}
+	linked := func(t *testing.T, repo string) string {
+		dir := filepath.Join(t.TempDir(), "linked")
+		gittest.Git(t, repo, "worktree", "add", "-q", dir)
+		return dir
+	}
+	explicit := func(t *testing.T, repo string) {
+		t.Setenv("GIT_DIR", filepath.Join(repo, ".git"))
+		t.Setenv("GIT_WORK_TREE", repo)
+	}
+	cases := []layout{
+		{"worktree root", func(_ *testing.T, repo string) string { return repo }, physical, true},
+		{"worktree subdirectory", subdir, physical, true},
+		{"worktree reached through a symlink", func(t *testing.T, repo string) string {
+			link := filepath.Join(t.TempDir(), "link")
+			if err := os.Symlink(repo, link); err != nil {
+				t.Fatal(err)
+			}
+			return filepath.Join(link, filepath.Base(subdir(t, repo)))
+		}, physical, true},
+		{"bare repository", bare, self, true},
+		{"bare subdirectory", func(t *testing.T, repo string) string { return filepath.Join(bare(t, repo), "refs") }, self, true},
+		{"linked worktree subdirectory", func(t *testing.T, repo string) string { return subdir(t, linked(t, repo)) }, func(t *testing.T, repo, dir string) string {
+			return realPath(t, filepath.Dir(dir))
+		}, true},
+		{"core.bare set in a repository with a worktree", func(t *testing.T, repo string) string {
+			gittest.Git(t, repo, "config", "core.bare", "true")
+			return subdir(t, repo)
+		}, self, true},
+		{"explicit git dir with the directory outside its worktree", func(t *testing.T, repo string) string {
+			explicit(t, repo)
+			return t.TempDir()
+		}, self, true},
+		{"explicit git dir with the directory below its worktree", func(t *testing.T, repo string) string {
+			explicit(t, repo)
+			return subdir(t, repo)
+		}, physical, true},
+		{"inside the git directory", func(_ *testing.T, repo string) string { return filepath.Join(repo, ".git") }, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := gittest.InitRepo(t)
+			t.Setenv("CC_NOTES_ACTOR", "Test User <test@example.com>")
+			gittest.Git(t, repo, "commit", "--allow-empty", "-q", "-m", "root")
+			head := gittest.Git(t, repo, "rev-parse", "HEAD")
+			dir := tc.dir(t, repo)
+			elsewhere := t.TempDir()
+			t.Chdir(elsewhere)
+			c, err := Open(dir)
+			if err != nil {
+				t.Fatalf("Open(%s): %v", dir, err)
+			}
+			in := &relevantInputs{client: c, watched: make(map[string]fileStamp), guarded: make(map[string]fileStamp)}
+			got, ok := in.gitCwd(t.Context())
+			if ok != tc.wantOK {
+				t.Fatalf("gitCwd = %q, %t; want ok %t", got, ok, tc.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if want := tc.want(t, repo, dir); got != want {
+				t.Fatalf("gitCwd = %q, want %q", got, want)
+			}
+			shallowAt := func(base string) bool {
+				t.Helper()
+				file := filepath.Join(base, "boundary")
+				if err := os.WriteFile(file, []byte(head+"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				defer os.Remove(file)
+				cmd := exec.Command("git", "-C", dir, "rev-parse", "--is-shallow-repository")
+				cmd.Env = append(os.Environ(), "GIT_SHALLOW_FILE=boundary")
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("git -C %s rev-parse --is-shallow-repository: %v: %s", dir, err, out)
+				}
+				return strings.TrimSpace(string(out)) == "true"
+			}
+			if !shallowAt(got) {
+				t.Fatalf("git -C %s does not read a relative GIT_SHALLOW_FILE from %s", dir, got)
+			}
+			if shallowAt(elsewhere) {
+				t.Fatalf("git -C %s reads a relative GIT_SHALLOW_FILE from the process directory %s, so the probe discriminates nothing", dir, elsewhere)
+			}
+		})
+	}
+}
+
+func TestRelevantInputsIncludeTargetExpandsHomeAsGitDoes(t *testing.T) {
+	cases := []struct {
+		name       string
+		home       string
+		want       string
+		revalidate bool
+	}{
+		{"absolute home", "/home/me", "/home/me/extra.config", false},
+		{"empty home expands to the root", "", "/extra.config", false},
+		{"relative home is resolved against the including file", "homerel", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := &relevantInputs{}
+			got, ok := in.includeTarget("~/extra.config", "/repo/.git", filepath.FromSlash(tc.home))
+			if want := filepath.FromSlash(tc.want); got != want || ok != (want != "") {
+				t.Fatalf("includeTarget = %q, %t; want %q", got, ok, want)
+			}
+			if in.revalidate != tc.revalidate {
+				t.Fatalf("revalidate = %t, want %t", in.revalidate, tc.revalidate)
+			}
+		})
+	}
+}
+
+func TestRelevantInputsWatchHistoryFollowsTheReplaceRefBase(t *testing.T) {
+	c, main := newWBClient(t)
+	ctx := t.Context()
+	gittest.Git(t, main, "commit", "--allow-empty", "-q", "-m", "root")
+	linked := filepath.Join(t.TempDir(), "linked")
+	gittest.Git(t, main, "worktree", "add", "-q", linked)
+	c, err := Open(linked)
+	if err != nil {
+		t.Fatalf("Open(%s): %v", linked, err)
+	}
+	gitDir, commonDir := c.s.GitDir(), c.s.CommonDir()
+	cases := []struct {
+		name       string
+		base       string
+		watched    string
+		revalidate bool
+	}{
+		{"default", "", filepath.Join(commonDir, "refs", "replace"), false},
+		{"shared prefix", "refs/replacements/", filepath.Join(commonDir, "refs", "replacements"), false},
+		{"per-worktree prefix", "refs/worktree/replace/", filepath.Join(gitDir, "refs", "worktree", "replace"), false},
+		{"prefix outside refs", "custom/", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GIT_REPLACE_REF_BASE", tc.base)
+			in := &relevantInputs{client: c, gitDir: gitDir, commonDir: commonDir, watched: make(map[string]fileStamp), guarded: make(map[string]fileStamp), depSeen: make(map[string]int), symrefs: make(map[string]string)}
+			if err := in.watchHistory(ctx); err != nil {
+				t.Fatalf("watchHistory: %v", err)
+			}
+			if in.revalidate != tc.revalidate {
+				t.Fatalf("revalidate = %t, want %t", in.revalidate, tc.revalidate)
+			}
+			if tc.watched == "" {
+				return
+			}
+			if _, ok := in.watched[tc.watched]; !ok {
+				t.Fatalf("the replace ref directory git reads, %s, is not watched: %+v", tc.watched, slices.Collect(maps.Keys(in.watched)))
+			}
+		})
+	}
+}
+
+func TestRelevantCacheDriftInputsResolveAttributePathsAgainstGit(t *testing.T) {
+	c, repo := newWBClient(t)
+	ctx := t.Context()
+	gittest.Git(t, repo, "commit", "--allow-empty", "-q", "-m", "root")
+	sub := filepath.Join(repo, "sub")
+	if err := os.Mkdir(sub, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Open(sub)
+	if err != nil {
+		t.Fatalf("Open(%s): %v", sub, err)
+	}
+	t.Chdir(t.TempDir())
+	in := &relevantInputs{client: c, watched: make(map[string]fileStamp), guarded: make(map[string]fileStamp), vars: map[string]string{"GIT_ATTR_GLOBAL": filepath.FromSlash("xdgrel/git/attributes")}}
+	entries := []RelevantEntry{{Kind: model.KindNote, Note: model.Note{VerifiedAt: 1, Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "svc/handler.go"}}}}}
+	paths, _, err := c.driftInputs(ctx, entries, in)
+	if err != nil {
+		t.Fatalf("driftInputs: %v", err)
+	}
+	want := filepath.Join(realPath(t, repo), "xdgrel", "git", "attributes")
+	if !slices.Contains(paths, want) {
+		t.Fatalf("drift files %q lack the global attributes file git reads, %s", paths, want)
+	}
+	if in.noCache {
+		t.Fatal("a resolvable attributes path disabled the cache")
 	}
 }
 

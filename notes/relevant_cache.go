@@ -109,7 +109,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	}
 	var paths, anchors []string
 	if filter.Worktree {
-		if paths, anchors, err = c.driftInputs(ctx, entries, in.vars); err != nil {
+		if paths, anchors, err = c.driftInputs(ctx, entries, in); err != nil {
 			return nil, err
 		}
 	}
@@ -206,7 +206,7 @@ func (h *relevantCacheHeader) readDeps(r io.Reader) bool {
 	return err == nil && json.Unmarshal(data, &h.Deps) == nil
 }
 
-func (c *Client) driftInputs(ctx context.Context, entries []RelevantEntry, vars map[string]string) (paths, anchors []string, err error) {
+func (c *Client) driftInputs(ctx context.Context, entries []RelevantEntry, in *relevantInputs) (paths, anchors []string, err error) {
 	add := func(p string) {
 		if !slices.Contains(paths, p) {
 			paths = append(paths, p)
@@ -243,9 +243,16 @@ func (c *Client) driftInputs(ctx context.Context, entries []RelevantEntry, vars 
 	}
 	add(filepath.Join(c.s.CommonDir(), "info", "attributes"))
 	for _, v := range []string{"GIT_ATTR_GLOBAL", "GIT_ATTR_SYSTEM"} {
-		if p := vars[v]; p != "" {
-			add(p)
+		p := in.vars[v]
+		if p == "" {
+			continue
 		}
+		resolved, ok := in.gitPath(ctx, p)
+		if !ok {
+			in.noCache = true
+			continue
+		}
+		add(resolved)
 	}
 	return paths, anchors, nil
 }

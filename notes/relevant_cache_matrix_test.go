@@ -80,6 +80,7 @@ include)
 	[ -z "$CC_NOTES_RACE_LINK" ] || ln -sfn "$CC_NOTES_RACE_LINK_SWAP" "$CC_NOTES_RACE_LINK"
 	[ -z "$CC_NOTES_RACE_MKDIR" ] || mkdir "$CC_NOTES_RACE_MKDIR"
 	"$CC_NOTES_REAL_GIT" config --file "$CC_NOTES_RACE_FILE" user.email "$CC_NOTES_RACE_VALUE" ;;
+history) printf '%s\n' "$CC_NOTES_RACE_VALUE" > "$CC_NOTES_RACE_FILE" ;;
 esac
 "$CC_NOTES_REAL_GIT" "$@"
 rc=$?
@@ -89,6 +90,7 @@ include)
 	rm "$CC_NOTES_RACE_FILE"
 	[ -z "$CC_NOTES_RACE_MKDIR" ] || rmdir "$CC_NOTES_RACE_MKDIR"
 	[ -z "$CC_NOTES_RACE_LINK" ] || ln -sfn "$CC_NOTES_RACE_LINK_RESTORE" "$CC_NOTES_RACE_LINK" ;;
+history) rm "$CC_NOTES_RACE_FILE" ;;
 esac
 printf fired > "$CC_NOTES_RACE_STATE"
 exit $rc
@@ -1075,6 +1077,70 @@ func TestRelevantCachedNeverPinsAnIncludeBehindALinkRetargetedDuringCapture(t *t
 		symlink(t, v1, link)
 		return includeLayout{file: filepath.Join(v2, "extra.config"), link: link, swap: v2}
 	}})
+}
+
+func TestRelevantCachedNeverPinsARelativeShallowFileRacedDuringCapture(t *testing.T) {
+	historyOverrideNeverPins(t, "GIT_SHALLOW_FILE")
+}
+
+func TestRelevantCachedNeverPinsARelativeGraftFileRacedDuringCapture(t *testing.T) {
+	historyOverrideNeverPins(t, "GIT_GRAFT_FILE")
+}
+
+func historyOverrideNeverPins(t *testing.T, env string) {
+	t.Cleanup(notes.SetRelevantRacyWindow(0))
+	fx := newMatrixFixture(t)
+	fx.crossAuthor(t)
+	decoy := t.TempDir()
+	mkdir(t, filepath.Join(decoy, "history"))
+	mkdir(t, filepath.Join(fx.repo, "history"))
+	t.Chdir(decoy)
+	t.Setenv(env, filepath.Join("history", "boundary"))
+	file := filepath.Join(fx.repo, "history", "boundary")
+	fx.armRootRace(t, "history", "merge-base", string(fx.theirs), file)
+	p := &tierProbe{t: t, c: fx.c, dir: fx.dir, git: fx.counter}
+	if got := p.call("capture raced by the boundary appearing"); got != tierRebuild {
+		t.Fatalf("raced capture served by %v, want %v", got, tierRebuild)
+	}
+	if bytes.Contains(p.last, []byte(`"cross-author"`)) {
+		t.Fatalf("the raced history still scored cross-author; the %s boundary never reached merge-base: %s", env, p.last)
+	}
+	fx.rootRaceFired(t)
+	if probe, ok, err := notes.RelevantCacheProbeOf(fx.c, matrixTarget, p.filter, "json"); err != nil || (ok && !probe.Revalidate) {
+		t.Fatalf("a capture whose %s boundary appeared and vanished persisted a settled entry: ok=%t err=%v %+v", env, ok, err, probe)
+	}
+	p.expect("first call after the race", tierRebuild)
+	if !bytes.Contains(p.last, []byte(`"cross-author"`)) {
+		t.Fatalf("answer after the race lost the cross-author signal: %s", p.last)
+	}
+	p.promoteThen("settled after the race", tierHit)
+	probe := p.entry("settled after the race")
+	if probe.Revalidate {
+		t.Fatalf("a quiet repository with a relative %s settled with revalidate set: %+v", env, probe)
+	}
+	want := filepath.Join(realDir(t, fx.repo), "history", "boundary")
+	if !slices.Contains(probe.Stamps, want) {
+		t.Fatalf("the settled entry never stamped the override git reads, %s: %q", want, probe.Stamps)
+	}
+	if stray := filepath.Join(decoy, "history", "boundary"); slices.Contains(probe.Stamps, stray) {
+		t.Fatalf("the settled entry stamped the process-relative decoy %s: %q", stray, probe.Stamps)
+	}
+	if err := os.WriteFile(file, []byte(string(fx.theirs)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.expect("boundary written where git reads it", tierRebuild)
+	if bytes.Contains(p.last, []byte(`"cross-author"`)) {
+		t.Fatalf("the %s boundary git now reads never reached the answer: %s", env, p.last)
+	}
+}
+
+func realDir(t *testing.T, dir string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
 }
 
 func mkdir(t *testing.T, dir string) {
