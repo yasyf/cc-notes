@@ -76,7 +76,8 @@ func checkVerdicts(t *testing.T, c *Client, cases []verdictCase) {
 // commit, every object still present, and pins each anchor shape against the
 // truncated graph and then against the same handle once the graft is gone. An
 // anchor the graph cannot decide is HISTORY-UNAVAILABLE; a proven change still
-// wins, whichever anchor comes first; a complete graph proves the answer.
+// wins, whichever anchor comes first; an orphan head whose own walk never meets
+// the boundary, and a complete graph, prove the answer.
 func TestVerdictHistoryUnavailable(t *testing.T) {
 	c, dir := newWBClient(t)
 	c1 := commitContent(t, dir, "a.go", "v1\n")
@@ -106,6 +107,15 @@ func TestVerdictHistoryUnavailable(t *testing.T) {
 			return n
 		}(), want: VerdictExpired},
 	})
+
+	gittest.Git(t, dir, "checkout", "-q", "--orphan", "lone")
+	gittest.Git(t, dir, "commit", "-q", "-m", "lone")
+	checkVerdicts(t, c, []verdictCase{
+		{name: "grafted, orphan head: commit beyond the boundary", note: witnessedNote(now, commitWitness(string(c1))), want: VerdictDrifted},
+		{name: "grafted, orphan head: unresolvable abbreviation", note: witnessedNote(now, commitWitness(unresolvablePrefix)), want: VerdictDrifted},
+		{name: "grafted, orphan head: absent full sha", note: witnessedNote(now, commitWitness(absentSHA)), want: VerdictDrifted},
+	})
+	gittest.Git(t, dir, "checkout", "-q", "main")
 
 	gittest.Unshallow(t, dir)
 	checkVerdicts(t, c, []verdictCase{

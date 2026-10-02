@@ -707,3 +707,99 @@ func TestSharedStorageLocalEntitiesReadRecords(t *testing.T) {
 		t.Fatalf("thin repository holds records refs:\n%s", out)
 	}
 }
+
+// TestSharedStorageOrphanHeadProvesDrift pins the review's orphan-branch
+// scenario, bound and unbound: a depth-1 clone lacks the anchor commit, but its
+// HEAD is an orphan commit whose complete history never meets the shallow
+// boundary, so the anchor is proven unreachable and the note is DRIFTED, the
+// verdict a full clone reports. Fetching the anchor's object alone moves no
+// relevance stamp, so the warm cached answer must already equal a fresh one.
+// Back on the branch whose walk does reach the boundary, the same anchor is
+// genuinely undecidable and stays HISTORY-UNAVAILABLE.
+func TestSharedStorageOrphanHeadProvesDrift(t *testing.T) {
+	for _, mode := range []string{"bound", "unbound"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Cleanup(notes.SetRelevantRacyWindow(0))
+			source := gittest.InitRepo(t)
+			t.Setenv("CC_NOTES_ACTOR", "Test User <test@example.com>")
+			anchor := sharedCommit(t, source, "a.go", "package a\n")
+			sharedCommit(t, source, "b.go", "package b\n")
+			note, _, err := sharedOpen(t, source).CreateNote(t.Context(), notes.NoteSpec{
+				Title:   "Anchored decision",
+				Body:    "anchored past the clone's depth",
+				Anchors: notes.AnchorSpec{Commits: []string{string(anchor)}, Paths: []string{"a.go"}},
+			})
+			if err != nil {
+				t.Fatalf("CreateNote: %v", err)
+			}
+			thin := gittest.ShallowClone(t, source, 1)
+			branch := gittest.Git(t, thin, "branch", "--show-current")
+			gittest.Git(t, thin, "checkout", "-q", "--orphan", "orphan")
+			gittest.Git(t, thin, "commit", "-q", "-m", "orphan")
+			if mode == "bound" {
+				sharedBind(t, thin, source)
+			} else {
+				gittest.Git(t, thin, "fetch", "-q", "origin", "+refs/cc-notes/*:refs/cc-notes/*")
+			}
+			if sharedHasObject(thin, string(anchor)) {
+				t.Fatalf("fixture invalid: the clone holds %s", anchor)
+			}
+			c := sharedOpen(t, thin)
+
+			lines := func(entries []notes.RelevantEntry) string {
+				var b strings.Builder
+				for _, e := range entries {
+					b.WriteString(string(e.Note.ID) + " [" + string(e.Verdict) + "]\n")
+				}
+				return b.String()
+			}
+			render := func(entries []notes.RelevantEntry) ([]byte, error) { return []byte(lines(entries)), nil }
+			check := func(step string, want notes.Verdict) {
+				t.Helper()
+				n, err := c.Note(t.Context(), note.ID)
+				if err != nil {
+					t.Fatalf("%s: Note: %v", step, err)
+				}
+				got, err := c.NoteVerdict(t.Context(), n, time.Hour, false)
+				if err != nil {
+					t.Fatalf("%s: NoteVerdict: %v", step, err)
+				}
+				if got != want {
+					t.Errorf("%s: NoteVerdict = %q, want %q", step, got, want)
+				}
+				cached, err := c.RelevantCached(t.Context(), "a.go", notes.RelevantFilter{}, "verdicts", render)
+				if err != nil {
+					t.Fatalf("%s: RelevantCached: %v", step, err)
+				}
+				fresh, err := c.Relevant(t.Context(), "a.go", notes.RelevantFilter{})
+				if err != nil {
+					t.Fatalf("%s: Relevant: %v", step, err)
+				}
+				wantLines := string(note.ID) + " [" + string(want) + "]\n"
+				if string(cached) != wantLines || lines(fresh) != wantLines {
+					t.Errorf("%s: RelevantCached = %q, fresh Relevant = %q; want both %q", step, cached, lines(fresh), wantLines)
+				}
+			}
+
+			check("orphan head, cold", notes.VerdictDrifted)
+			check("orphan head, warm", notes.VerdictDrifted)
+			shallowFile := filepath.Join(thin, ".git", "shallow")
+			before, err := os.ReadFile(shallowFile)
+			if err != nil {
+				t.Fatalf("read shallow: %v", err)
+			}
+			gittest.Git(t, thin, "fetch", "-q", "--no-tags", "--no-write-fetch-head", "origin", string(anchor))
+			after, err := os.ReadFile(shallowFile)
+			if err != nil {
+				t.Fatalf("read shallow: %v", err)
+			}
+			if !sharedHasObject(thin, string(anchor)) || string(after) != string(before) {
+				t.Fatalf("fixture invalid: fetching %s must add its object and leave the shallow file %q unchanged, got %q", anchor, before, after)
+			}
+			check("orphan head, anchor object fetched", notes.VerdictDrifted)
+
+			gittest.Git(t, thin, "checkout", "-q", branch)
+			check("boundary head", notes.VerdictHistoryUnavailable)
+		})
+	}
+}

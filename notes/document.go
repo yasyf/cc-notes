@@ -970,19 +970,13 @@ func (c *Client) driftOf(ctx context.Context, head model.SHA, fe freshDocument, 
 }
 
 // commitAncestry reports what the context graph proves about a commit anchor
-// reaching head. A value naming no commit is unknown only in a shallow checkout;
-// a complete one proves it gone.
+// reaching head. A value naming no commit, like a full hash whose object is
+// absent, is unknown only when head's own history ends at a shallow boundary; a
+// walk from head that drains complete proves it gone.
 func (c *Client) commitAncestry(ctx context.Context, head model.SHA, rev string, resolve commitResolver) (gitobj.Ancestry, error) {
 	sha, err := resolve(ctx, rev)
 	if errors.Is(err, gitcmd.ErrRevNotFound) {
-		shallow, err := c.s.ContextRepo.Shallow()
-		if err != nil {
-			return gitobj.NotAncestor, err
-		}
-		if shallow {
-			return gitobj.AncestryUnknown, nil
-		}
-		return gitobj.NotAncestor, nil
+		return c.s.ContextRepo.AbsentAncestry(ctx, head)
 	}
 	if err != nil {
 		return gitobj.NotAncestor, err

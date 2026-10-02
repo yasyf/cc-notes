@@ -26,8 +26,8 @@ const (
 	// Ancestor reports a commit that is the descendant or reachable from it.
 	Ancestor
 	// AncestryUnknown reports a walk that stopped at a shallow boundary before
-	// meeting the commit, or a commit absent from a shallow repository: the
-	// history that would decide it is not in the object database.
+	// meeting the commit: the history that would decide it is not in the object
+	// database.
 	AncestryUnknown
 )
 
@@ -73,9 +73,11 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b model.SHA) (bool, error) {
 // Ancestry reports what the repository's graph proves about a being an
 // ancestor of — or equal to — b. It differs from IsAncestor only where the
 // graph ends at a shallow boundary: a walk from b that drains without meeting
-// a after cutting a boundary commit's parents, or an a absent from a shallow
-// repository, is AncestryUnknown rather than a negative. An a absent from a
-// complete repository, and any absent b, wrap ErrCommitNotFound.
+// a after cutting a boundary commit's parents is AncestryUnknown rather than a
+// negative. An a absent from a shallow repository is judged by AbsentAncestry,
+// so its verdict never depends on whether its object happens to be present.
+// An a absent from a complete repository, and any absent b, wrap
+// ErrCommitNotFound.
 func (r *Repo) Ancestry(ctx context.Context, a, b model.SHA) (Ancestry, error) {
 	if err := ctx.Err(); err != nil {
 		return NotAncestor, err
@@ -87,7 +89,7 @@ func (r *Repo) Ancestry(ctx context.Context, a, b model.SHA) (Ancestry, error) {
 	}
 	ancestor, err := r.commit(a)
 	if errors.Is(err, ErrCommitNotFound) && len(r.shallow) > 0 {
-		return AncestryUnknown, nil
+		return r.absentAncestry(ctx, b)
 	}
 	if err != nil {
 		return NotAncestor, err
@@ -103,20 +105,59 @@ func (r *Repo) Ancestry(ctx context.Context, a, b model.SHA) (Ancestry, error) {
 	return verdict, nil
 }
 
-// Shallow reports whether the repository currently has a shallow boundary,
-// re-reading the shallow file when it changed.
-func (r *Repo) Shallow() (bool, error) {
+// AbsentAncestry reports what the graph proves about b reaching a commit the
+// object database does not hold, such as a revision no object resolves to. No
+// walk from b can meet such a commit, so a walk that drains without cutting a
+// shallow boundary proves NotAncestor and one that cut a boundary commit's
+// parents is AncestryUnknown. The drained frontier is memoized like Ancestry's,
+// and a complete repository answers NotAncestor without walking. An absent b
+// wraps ErrCommitNotFound.
+func (r *Repo) AbsentAncestry(ctx context.Context, b model.SHA) (Ancestry, error) {
+	if err := ctx.Err(); err != nil {
+		return NotAncestor, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.refreshGraft(); err != nil {
-		return false, err
+		return NotAncestor, err
 	}
-	return len(r.shallow) > 0, nil
+	return r.absentAncestry(ctx, b)
+}
+
+func (r *Repo) absentAncestry(ctx context.Context, b model.SHA) (Ancestry, error) {
+	descendant, err := r.commit(b)
+	if err != nil {
+		return NotAncestor, err
+	}
+	if len(r.shallow) == 0 {
+		return NotAncestor, nil
+	}
+	w := r.reachOf(descendant.Hash)
+	for len(w.queue) > 0 {
+		if err := r.expand(ctx, w); err != nil {
+			return NotAncestor, fmt.Errorf("walk ancestry of %s: %w", b, err)
+		}
+	}
+	return w.drained(), nil
 }
 
 // reachable expands descendant's frontier until it reaches ancestor or runs
-// out, resuming a frontier an earlier call left partially expanded. A drained
-// frontier is NotAncestor, or AncestryUnknown once it cut a boundary commit's
+// out, resuming a frontier an earlier call left partially expanded.
+func (r *Repo) reachable(ctx context.Context, ancestor, descendant plumbing.Hash) (Ancestry, error) {
+	w := r.reachOf(descendant)
+	for !w.seen[ancestor] {
+		if len(w.queue) == 0 {
+			return w.drained(), nil
+		}
+		if err := r.expand(ctx, w); err != nil {
+			return NotAncestor, err
+		}
+	}
+	return Ancestor, nil
+}
+
+// expand reads the frontier's next commit and queues its unseen parents, or
+// marks the frontier truncated when the commit is a shallow boundary that has
 // parents.
 //
 // The queue is peeked and only dequeued once its commit has been read: a read
@@ -124,35 +165,35 @@ func (r *Repo) Shallow() (bool, error) {
 // cancelled context — must leave the frontier exactly where it was, or the
 // next call resumes past a commit it never expanded and memoizes a false
 // negative.
-func (r *Repo) reachable(ctx context.Context, ancestor, descendant plumbing.Hash) (Ancestry, error) {
-	w := r.reachOf(descendant)
-	for !w.seen[ancestor] {
-		if len(w.queue) == 0 {
-			if w.truncated {
-				return AncestryUnknown, nil
-			}
-			return NotAncestor, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return NotAncestor, err
-		}
-		commit, err := r.lookupCommit(w.queue[0])
-		if err != nil {
-			return NotAncestor, err
-		}
-		w.queue = w.queue[1:]
-		if r.shallow[commit.Hash] {
-			w.truncated = w.truncated || len(commit.ParentHashes) > 0
-			continue
-		}
-		for _, parent := range commit.ParentHashes {
-			if !w.seen[parent] {
-				w.seen[parent] = true
-				w.queue = append(w.queue, parent)
-			}
+func (r *Repo) expand(ctx context.Context, w *reach) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	commit, err := r.lookupCommit(w.queue[0])
+	if err != nil {
+		return err
+	}
+	w.queue = w.queue[1:]
+	if r.shallow[commit.Hash] {
+		w.truncated = w.truncated || len(commit.ParentHashes) > 0
+		return nil
+	}
+	for _, parent := range commit.ParentHashes {
+		if !w.seen[parent] {
+			w.seen[parent] = true
+			w.queue = append(w.queue, parent)
 		}
 	}
-	return Ancestor, nil
+	return nil
+}
+
+// drained is a fully expanded frontier's verdict for a commit it never met:
+// NotAncestor, or AncestryUnknown once it cut a boundary commit's parents.
+func (w *reach) drained() Ancestry {
+	if w.truncated {
+		return AncestryUnknown
+	}
+	return NotAncestor
 }
 
 func (r *Repo) reachOf(descendant plumbing.Hash) *reach {
