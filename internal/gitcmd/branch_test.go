@@ -274,16 +274,6 @@ func TestRefs(t *testing.T) {
 		t.Fatalf("Refs() = %+v, want %+v", got, want)
 	}
 
-	resolved, err := g.ResolvedRefs(ctx, "refs/heads/", "refs/remotes/origin/")
-	if err != nil {
-		t.Fatalf("ResolvedRefs: %v", err)
-	}
-	resolvedWant := maps.Clone(want)
-	resolvedWant["refs/remotes/origin/HEAD"] = c1
-	if !maps.Equal(resolved, resolvedWant) {
-		t.Fatalf("ResolvedRefs() = %+v, want %+v", resolved, resolvedWant)
-	}
-
 	got, err = g.Refs(ctx, "refs/does-not-exist/")
 	if err != nil {
 		t.Fatalf("Refs no match: %v", err)
@@ -291,12 +281,43 @@ func TestRefs(t *testing.T) {
 	if got != nil {
 		t.Fatalf("Refs no match = %+v, want nil", got)
 	}
-	resolved, err = g.ResolvedRefs(ctx, "refs/does-not-exist/")
-	if err != nil {
-		t.Fatalf("ResolvedRefs no match: %v", err)
+}
+
+func TestFirstRef(t *testing.T) {
+	g := initRepo(t)
+	ctx := t.Context()
+	c1 := commitEmpty(t, g, "c1")
+
+	cases := []struct {
+		name     string
+		refs     []string
+		prefixes []string
+		want     string
+	}{
+		{name: "none", prefixes: []string{"refs/cc-notes/"}},
+		{name: "one", refs: []string{"refs/cc-notes/notes/b"}, prefixes: []string{"refs/cc-notes/"}, want: "refs/cc-notes/notes/b"},
+		{name: "many in refname order", refs: []string{"refs/cc-notes/tasks/a", "refs/cc-notes/notes/c", "refs/cc-notes/notes/a"}, prefixes: []string{"refs/cc-notes/"}, want: "refs/cc-notes/notes/a"},
+		{name: "second prefix only", refs: []string{"refs/cc-notes-sync/origin/notes/a"}, prefixes: []string{"refs/cc-notes/", "refs/cc-notes-sync/"}, want: "refs/cc-notes-sync/origin/notes/a"},
+		{name: "prefix is not a substring match", refs: []string{"refs/cc-notes-sync/origin/notes/a"}, prefixes: []string{"refs/cc-notes/"}},
 	}
-	if resolved != nil {
-		t.Fatalf("ResolvedRefs no match = %+v, want nil", resolved)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, ref := range tc.refs {
+				gittest.Git(t, g.Dir, "update-ref", ref, string(c1))
+			}
+			t.Cleanup(func() {
+				for _, ref := range tc.refs {
+					gittest.Git(t, g.Dir, "update-ref", "-d", ref)
+				}
+			})
+			got, err := g.FirstRef(ctx, tc.prefixes...)
+			if err != nil {
+				t.Fatalf("FirstRef: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("FirstRef(%v) = %q, want %q", tc.prefixes, got, tc.want)
+			}
+		})
 	}
 }
 

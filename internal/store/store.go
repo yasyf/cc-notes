@@ -3,9 +3,18 @@
 // extends it under ref compare-and-swap with bounded retries, Load and the
 // List methods fold chains into snapshots, Resolve expands short id
 // prefixes, and Merge writes the union merge commit sync uses for diverged
-// replicas. Object access goes through the exported Repo (gitobj) and Git
-// (gitcmd) handles; internal/sync composes them directly for fetch, push,
-// ref listing, and chain reads.
+// replicas.
+//
+// A store spans two repository roles. The records repository holds entity
+// refs, operation commits, folds, attachments, and source-index objects,
+// reached through Repo (gitobj) and RecordsGit (gitcmd). The context checkout
+// the store was opened at supplies HEAD, branches, commits, trees, working
+// files, config settings, and author identity, reached through ContextRepo and
+// Git. A checkout with no cc-notes.storage binding is its own records
+// repository; a bound one — a thin clone sharing a full repository's corpus —
+// reads and writes records in the backend the binding names, validated at open
+// and rechecked at every records operation. internal/sync composes the records
+// handles directly for fetch, push, ref listing, and chain reads.
 package store
 
 import (
@@ -102,25 +111,39 @@ func (e *DuplicateError) Error() string {
 // Is reports whether target is ErrDuplicate.
 func (e *DuplicateError) Is(target error) bool { return target == ErrDuplicate }
 
-// Store reads and writes entities in one repository. Repo carries object
-// writes and all reads; Git carries ref compare-and-swap, config, identity,
-// and network operations. internal/sync composes both handles directly.
+// Store reads and writes entities. Records — entity refs, op commits, folds,
+// attachments, source-index objects — live in the records repository; HEAD,
+// branches, commits, trees, working files, config settings, and author identity
+// come from the context checkout the store was opened at. A context with no
+// storage binding is its own records repository.
 type Store struct {
+	// Repo is the records object database.
 	Repo *gitobj.Repo
-	Git  gitcmd.Git
+	// Git runs git in the context checkout.
+	Git gitcmd.Git
+	// RecordsGit runs git against the records repository: entity ref CAS, sync,
+	// notes refspecs, the LFS endpoint, and the prune guard.
+	RecordsGit gitcmd.Git
+	// ContextRepo is the context object database: HEAD, ancestry, path and tree
+	// witnesses.
+	ContextRepo *gitobj.Repo
 
 	// now stamps commit signatures; tests freeze it.
 	now func() time.Time
-	// cache is the local, tip-keyed fold accelerator. It lives outside
-	// refs/cc-notes/* and is never pushed.
-	cache     *foldCache
-	relevant  *lruDir
-	gitDir    string
-	commonDir string
-	bare      bool
-	root      *rootMemo
-	policy    *policyMemo
-	pins      map[string]model.SHA
+	// cache is the local, tip-keyed fold accelerator under the records common
+	// directory. It lives outside refs/cc-notes/* and is never pushed.
+	cache *foldCache
+	// relevant caches relevance results under the context common directory.
+	relevant         *lruDir
+	gitDir           string
+	commonDir        string
+	recordsCommonDir string
+	bare             bool
+	root             *rootMemo
+	policy           *policyMemo
+	pins             map[string]model.SHA
+	// storage is the context's binding record; Pinned views share it.
+	storage *storageBinding
 }
 
 type rootMemo struct {
@@ -146,29 +169,51 @@ func Open(dir string) (*Store, error) {
 	return OpenContext(context.Background(), dir)
 }
 
-// OpenContext is Open with an explicit context for repository discovery.
+// OpenContext is Open with an explicit context for repository discovery. The
+// context is discovered first; a cc-notes.storage binding in its common config
+// is then validated and the records repository opened from it. A binding that
+// is malformed, or names a backend that is missing, replaced, bound onward, or
+// unreadable, is a *BindingError — never a fallback to a context-local corpus.
 func OpenContext(ctx context.Context, dir string) (*Store, error) {
 	git := gitcmd.Git{Dir: dir}
 	gitDir, commonDir, bare, err := git.Dirs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("open git repository at %s: %w", dir, err)
 	}
-	repo, err := gitobj.Open(gitDir, commonDir)
+	contextRepo, err := gitobj.Open(gitDir, commonDir)
 	if err != nil {
 		return nil, fmt.Errorf("open git repository at %s: %w", dir, err)
 	}
-	return &Store{
-		Repo:      repo,
-		Git:       git,
-		now:       time.Now,
-		cache:     newFoldCache(filepath.Join(commonDir, foldCacheSubdir), foldCacheCap),
-		relevant:  &lruDir{capacity: relevantCacheCap, dir: filepath.Join(commonDir, relevantCacheSubdir)},
-		gitDir:    gitDir,
-		commonDir: commonDir,
-		bare:      bare,
-		root:      &rootMemo{},
-		policy:    &policyMemo{},
-	}, nil
+	s := &Store{
+		Repo:             contextRepo,
+		Git:              git,
+		RecordsGit:       git,
+		ContextRepo:      contextRepo,
+		now:              time.Now,
+		gitDir:           gitDir,
+		commonDir:        commonDir,
+		recordsCommonDir: commonDir,
+		bare:             bare,
+		root:             &rootMemo{},
+		policy:           &policyMemo{},
+	}
+	s.storage, err = openBinding(commonDir)
+	if err != nil {
+		return nil, err
+	}
+	if s.storage.bound {
+		b := s.storage.binding
+		records, err := openRecords(b)
+		if err != nil {
+			return nil, s.storage.fail(err)
+		}
+		s.Repo = records
+		s.RecordsGit = gitcmd.Backend(b.CommonDir)
+		s.recordsCommonDir = b.CommonDir
+	}
+	s.cache = newFoldCache(filepath.Join(s.recordsCommonDir, foldCacheSubdir), foldCacheCap)
+	s.relevant = &lruDir{capacity: relevantCacheCap, dir: filepath.Join(commonDir, relevantCacheSubdir)}
+	return s, nil
 }
 
 // Pinned returns a view of the store whose listings fold exactly the entity
@@ -176,22 +221,42 @@ func OpenContext(ctx context.Context, dir string) (*Store, error) {
 // repository. Every other handle and cache is shared with s.
 func (s *Store) Pinned(tips map[string]model.SHA) *Store {
 	return &Store{
-		Repo:      s.Repo,
-		Git:       s.Git,
-		now:       s.now,
-		cache:     s.cache,
-		relevant:  s.relevant,
-		gitDir:    s.gitDir,
-		commonDir: s.commonDir,
-		bare:      s.bare,
-		root:      s.root,
-		policy:    s.policy,
-		pins:      tips,
+		Repo:             s.Repo,
+		Git:              s.Git,
+		RecordsGit:       s.RecordsGit,
+		ContextRepo:      s.ContextRepo,
+		now:              s.now,
+		cache:            s.cache,
+		relevant:         s.relevant,
+		gitDir:           s.gitDir,
+		commonDir:        s.commonDir,
+		recordsCommonDir: s.recordsCommonDir,
+		bare:             s.bare,
+		root:             s.root,
+		policy:           s.policy,
+		pins:             tips,
+		storage:          s.storage,
 	}
 }
 
-// CommonDir returns the repository's absolute shared git directory.
+// CommonDir returns the context's absolute shared git directory.
 func (s *Store) CommonDir() string { return s.commonDir }
+
+// RecordsCommonDir returns the records repository's absolute common directory:
+// the backend's when bound, the context's otherwise.
+func (s *Store) RecordsCommonDir() string { return s.recordsCommonDir }
+
+// Binding returns the validated storage binding the store opened under, or
+// ok=false when the context is its own records repository.
+func (s *Store) Binding() (Binding, bool) { return s.storage.binding, s.storage.bound }
+
+// CheckRecords re-validates the records backend at an operation boundary. A
+// bound store stats the context config (re-reading the binding only when that
+// stat moved) and the backend directory against the bound device/inode. An
+// unbound store stats the config alone, so a binding published after open
+// surfaces as ErrBindingChanged instead of a silent write into the context.
+// Every failure is a *BindingError. It never spawns git.
+func (s *Store) CheckRecords() error { return s.storage.check() }
 
 // GitDir returns the absolute per-worktree git directory, the one holding this
 // worktree's HEAD.

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -96,6 +97,27 @@ func Unshallow(t testing.TB, dir string) {
 	if err := os.Remove(filepath.Join(commonDir, "shallow")); err != nil {
 		t.Fatalf("remove shallow file: %v", err)
 	}
+}
+
+// ShallowClone clones source at depth over the file transport — the real
+// shallow negotiation, never the local hardlink shortcut — into a fresh
+// directory with the same local identity InitRepo sets, returning it.
+func ShallowClone(t testing.TB, source string, depth int) string {
+	t.Helper()
+	dir := t.TempDir()
+	Git(t, filepath.Dir(dir), "clone", "-q", "--no-local", "--depth="+strconv.Itoa(depth), "--single-branch", "file://"+source, dir)
+	Git(t, dir, "config", "user.name", "Test User")
+	Git(t, dir, "config", "user.email", "test@example.com")
+	return dir
+}
+
+// AddWorktree adds a linked worktree of repo on the new branch and returns its
+// directory.
+func AddWorktree(t testing.TB, repo, branch string) string {
+	t.Helper()
+	dir := t.TempDir()
+	Git(t, repo, "worktree", "add", "-q", "-b", branch, dir)
+	return dir
 }
 
 // InitBare scrubs the git environment and creates a bare repository,

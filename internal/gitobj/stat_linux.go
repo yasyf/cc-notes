@@ -11,3 +11,10 @@ func StatIdentity(info os.FileInfo) (ctime int64, inode uint64) {
 	st := info.Sys().(*syscall.Stat_t)
 	return st.Ctim.Nano(), st.Ino
 }
+
+// FileID returns the device and inode numbers behind info, the identity a
+// path keeps until the file is replaced.
+func FileID(info os.FileInfo) (device, inode uint64) {
+	st := info.Sys().(*syscall.Stat_t)
+	return uint64(st.Dev), st.Ino
+}
