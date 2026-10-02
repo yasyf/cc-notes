@@ -7,6 +7,7 @@ import (
 )
 
 type answerAddArgs struct {
+	localityArgs
 	Title  string   `json:"title" jsonschema:"the question the user answered, verbatim"`
 	Body   string   `json:"body,omitempty" jsonschema:"the chosen answer on the first line, then optional 'Options: a | b' and 'Notes: ...' lines"`
 	Labels []string `json:"labels,omitempty" jsonschema:"labels such as scope:durable and header:<chip> (echoed as 'tags' in the answer DTO)"`
@@ -24,6 +25,7 @@ func registerAnswer(ts *toolset, b *bridge) {
 			flags = optRepeated(flags, "--label", in.Labels)
 			flags = anchorSetFlags(flags, in.anchorSetArgs)
 			flags = optRepeated(flags, "--attach", in.Attach)
+			flags = localityFlags(flags, in.localityArgs)
 			return b.run(ctx, argvFor([]string{"answer", "add"}, flags, in.Title)...)
 		})
 

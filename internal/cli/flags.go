@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/yasyf/cc-notes/internal/store"
 )
 
 // This file holds the canonical flag-name literals of the harmonized CLI
@@ -24,6 +27,27 @@ func bindBody(f *pflag.FlagSet, p *string, usage string) {
 
 func bindLabels(f *pflag.FlagSet, p *[]string, usage string) {
 	f.StringArrayVar(p, "label", nil, usage)
+}
+
+// bindAddLabels binds an add verb's --label plus --local and --sync, which add
+// store.LocalLabel or store.SyncedLabel to the labels before cmd runs.
+func bindAddLabels(cmd *cobra.Command, p *[]string) {
+	var local, sync bool
+	f := cmd.Flags()
+	bindLabels(f, p, "label (repeatable)")
+	f.BoolVar(&local, "local", false, "keep it on this clone: sync and git push never publish it")
+	f.BoolVar(&sync, "sync", false, "publish it even when a local default (label, attachment size or name) matches")
+	cmd.MarkFlagsMutuallyExclusive("local", "sync")
+	run := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if local {
+			*p = append(*p, store.LocalLabel)
+		}
+		if sync {
+			*p = append(*p, store.SyncedLabel)
+		}
+		return run(cmd, args)
+	}
 }
 
 // bindLimit binds --limit with the one canonical "0 = all" result-cap wording.

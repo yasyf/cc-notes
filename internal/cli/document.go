@@ -155,7 +155,7 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 		flags.StringVar(&when, "when", "", "free-text read-this-when trigger")
 	}
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
-	bindLabels(flags, &labels, "label (repeatable)")
+	bindAddLabels(cmd, &labels)
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
 	flags.BoolVar(&checkout, "checkout", false, "write "+withArticle(spec.noun)+" template (prefilled from TITLE and anchor/label flags) to an editable file and print its path")

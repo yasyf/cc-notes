@@ -7,6 +7,7 @@ import (
 )
 
 type docAddArgs struct {
+	localityArgs
 	noteAddArgs
 	When string `json:"when,omitempty" jsonschema:"free-text read-this-when trigger"`
 }
@@ -27,6 +28,7 @@ func registerDoc(ts *toolset, b *bridge) {
 			flags = optRepeated(flags, "--label", in.Labels)
 			flags = anchorSetFlags(flags, in.anchorSetArgs)
 			flags = optRepeated(flags, "--attach", in.Attach)
+			flags = localityFlags(flags, in.localityArgs)
 			return b.run(ctx, argvFor([]string{"doc", "add"}, flags, in.Title)...)
 		})
 

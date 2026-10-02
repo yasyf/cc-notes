@@ -107,7 +107,7 @@ func newPlanAddCmd() *cobra.Command {
 	bindBody(flags, &body, "the plan text, verbatim; - reads stdin")
 	flags.StringVar(&bodyFile, "body-file", "", "read the plan text from this file")
 	flags.BoolVar(&approved, "approved", false, "record the plan already approved instead of draft")
-	bindLabels(flags, &labels, "label (repeatable)")
+	bindAddLabels(cmd, &labels)
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
 	cmd.MarkFlagsMutuallyExclusive("body", "body-file")

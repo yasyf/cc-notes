@@ -7,6 +7,7 @@ import (
 )
 
 type logAddArgs struct {
+	localityArgs
 	Title  string   `json:"title" jsonschema:"short handle for the log"`
 	Entry  string   `json:"entry,omitempty" jsonschema:"optional first entry text"`
 	Labels []string `json:"labels,omitempty" jsonschema:"labels (echoed as 'tags' in the log DTO)"`
@@ -53,6 +54,7 @@ func registerLog(ts *toolset, b *bridge) {
 			flags = optRepeated(flags, "--label", in.Labels)
 			flags = anchorSetFlags(flags, in.anchorSetArgs)
 			flags = optRepeated(flags, "--attach", in.Attach)
+			flags = localityFlags(flags, in.localityArgs)
 			return b.run(ctx, argvFor([]string{"log", "add"}, flags, in.Title)...)
 		})
 

@@ -34,7 +34,9 @@ command: cc-notes answer add
     --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+    --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -258,7 +260,9 @@ command: cc-notes doc add
     --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+    --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
     --when shorthand=none type=string default="" usage="free-text read-this-when trigger"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -700,7 +704,9 @@ command: cc-notes investigation open
     --finding shorthand=none type=stringArray default="[]" usage="initial finding text (repeatable)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+    --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -861,7 +867,9 @@ command: cc-notes ledger add
     --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+    --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -1096,7 +1104,9 @@ command: cc-notes log add
     --entry shorthand=none type=string default="" usage="optional first entry; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+    --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -1257,7 +1267,9 @@ command: cc-notes note add
     --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+    --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -1503,7 +1515,9 @@ command: cc-notes plan add
     --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
+    --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -1690,6 +1704,8 @@ command: cc-notes project add
     --body shorthand=none type=string default="" usage="project description; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
+    --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -1843,8 +1859,10 @@ command: cc-notes runbook add
     --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --step shorthand=none type=stringArray default="[]" usage="initial step text, in order (repeatable)"
+    --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -2226,8 +2244,10 @@ command: cc-notes sprint add
     --end shorthand=none type=string default="" usage="end date YYYY-MM-DD"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --project shorthand=none type=string default="" usage="project id prefix"
     --start shorthand=none type=string default="" usage="start date YYYY-MM-DD"
+    --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -2365,6 +2385,7 @@ command: cc-notes task add
     --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
+    --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --no-validation-criteria shorthand=none type=bool default="false" usage="create with no acceptance criteria"
     --parent shorthand=none type=string default="" usage="parent task id prefix"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
@@ -2372,6 +2393,7 @@ command: cc-notes task add
     --priority shorthand=none type=int default="2" usage="priority 0-3 (0 most urgent)"
     --project shorthand=none type=string default="" usage="project id prefix"
     --sprint shorthand=none type=string default="" usage="sprint id prefix"
+    --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
     --type shorthand=none type=string default="task" usage="task type (task|bug|epic|question)"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"

@@ -8,6 +8,7 @@ import (
 )
 
 type noteAddArgs struct {
+	localityArgs
 	Title  string   `json:"title" jsonschema:"short handle for the note"`
 	Body   string   `json:"body,omitempty" jsonschema:"note body (markdown)"`
 	Labels []string `json:"labels,omitempty" jsonschema:"labels (echoed as 'tags' in the note DTO)"`
@@ -37,6 +38,7 @@ func registerNote(ts *toolset, b *bridge) {
 			flags = optRepeated(flags, "--label", in.Labels)
 			flags = anchorSetFlags(flags, in.anchorSetArgs)
 			flags = optRepeated(flags, "--attach", in.Attach)
+			flags = localityFlags(flags, in.localityArgs)
 			return b.run(ctx, argvFor([]string{"note", "add"}, flags, in.Title)...)
 		})
 

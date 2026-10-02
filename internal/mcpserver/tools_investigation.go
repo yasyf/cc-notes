@@ -7,6 +7,7 @@ import (
 )
 
 type investigationOpenArgs struct {
+	localityArgs
 	Title    string   `json:"title" jsonschema:"short handle for the investigation; keep the verdict out of the title"`
 	Premise  string   `json:"premise" jsonschema:"falsifiable suspicion being investigated"`
 	Findings []string `json:"findings,omitempty" jsonschema:"initial finding texts"`
@@ -137,6 +138,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 			flags = optRepeated(flags, "--label", in.Labels)
 			flags = anchorSetFlags(flags, in.anchorSetArgs)
 			flags = optRepeated(flags, "--attach", in.Attach)
+			flags = localityFlags(flags, in.localityArgs)
 			return b.run(ctx, argvFor([]string{"investigation", "open"}, flags, in.Title)...)
 		})
 

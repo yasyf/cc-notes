@@ -247,7 +247,7 @@ func newTaskAddCmd() *cobra.Command {
 	bindBody(flags, &body, "task description; - reads stdin")
 	flags.StringVar(&taskType, "type", "task", "task type (task|bug|epic|question)")
 	flags.IntVar(&priority, "priority", 2, "priority 0-3 (0 most urgent)")
-	bindLabels(flags, &labels, "label (repeatable)")
+	bindAddLabels(cmd, &labels)
 	flags.StringArrayVar(&criteria, "criterion", nil, "acceptance criterion text (repeatable, required unless --no-validation-criteria)")
 	flags.BoolVar(&noValidation, "no-validation-criteria", false, "create with no acceptance criteria")
 	flags.StringVar(&parent, "parent", "", "parent task id prefix")

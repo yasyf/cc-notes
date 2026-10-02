@@ -568,7 +568,11 @@ List every entity this clone keeps to itself, with the reason: the `local` label
 `*.log`, `*.out`, `*.jsonl`). The `synced` label overrides every default; `local` overrides
 `synced`. Sync withholds local entities and the attachment content only they reference, and every
 write records a negative push refspec for each in `.git/cc-notes/local-push.config`, which
-`.git/config` includes, so a plain `git push` withholds them too.
+`.git/config` includes, so a plain `git push` withholds them too. Every add verb takes `--local` and
+`--sync` (MCP `local`, `sync`), which add the `local` or `synced` label at creation. A default never
+withholds an entity a remote already has, so attaching a file a default covers to a published
+entity fails and names the remedies: attach it to a local entity, `cc-notes local mark` this one,
+or label this one `synced`.
 
 JSON shape: `[{"id":string,"kind":string,"title":string,"reason":string,"secluded":bool}]`.
 `secluded` is false for an entity a default covers that no write or sync has guarded yet.

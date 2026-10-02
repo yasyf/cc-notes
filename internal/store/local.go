@@ -66,16 +66,36 @@ func (p LocalPolicy) Reason(meta model.Meta) string {
 		}
 	}
 	for _, att := range meta.Attachments {
-		if p.MaxBytes > 0 && att.Size > p.MaxBytes {
-			return fmt.Sprintf("attachment %s is %d bytes, over %d", att.Name, att.Size, p.MaxBytes)
-		}
-		for _, glob := range p.Globs {
-			if ok, _ := path.Match(glob, att.Name); ok {
-				return fmt.Sprintf("attachment %s matches %s", att.Name, glob)
-			}
+		if reason := p.attachmentReason(att); reason != "" {
+			return reason
 		}
 	}
 	return ""
+}
+
+func (p LocalPolicy) attachmentReason(att model.Attachment) string {
+	if p.MaxBytes > 0 && att.Size > p.MaxBytes {
+		return fmt.Sprintf("attachment %s is %d bytes, over %d", att.Name, att.Size, p.MaxBytes)
+	}
+	for _, glob := range p.Globs {
+		if ok, _ := path.Match(glob, att.Name); ok {
+			return fmt.Sprintf("attachment %s matches %s", att.Name, glob)
+		}
+	}
+	return ""
+}
+
+// LocalAttachmentError refuses attaching a file a local default covers to an
+// entity a remote already has: the default cannot withhold a published entity,
+// so the file would publish with it.
+type LocalAttachmentError struct {
+	ID     model.EntityID
+	Reason string
+}
+
+func (e *LocalAttachmentError) Error() string {
+	return fmt.Sprintf("%s is published and %s, which keeps a file local: attach it to a local entity (add one with --local), "+
+		"keep this one local with `ccn local mark %s`, or publish the file with it by labelling %s %s", e.ID, e.Reason, e.ID, e.ID, SyncedLabel)
 }
 
 // LocalPolicy reads the policy from git config once per Store, falling back
@@ -269,7 +289,9 @@ func (s *Store) Published(ctx context.Context, ref string) (bool, error) {
 
 // track keeps ref's entry in the local push include in step with snap after a
 // write, so a plain git push between writes never publishes a local entity.
-func (s *Store) track(ctx context.Context, ref string, snap model.Snapshot) error {
+// It refuses the write when a default would keep one of the added attachments
+// local but ref is already published.
+func (s *Store) track(ctx context.Context, ref string, snap model.Snapshot, added []model.Attachment) error {
 	policy, err := s.LocalPolicy(ctx)
 	if err != nil {
 		return err
@@ -281,6 +303,9 @@ func (s *Store) track(ctx context.Context, ref string, snap model.Snapshot) erro
 			return err
 		}
 		if published {
+			if err := policy.refuse(ref, added); err != nil {
+				return err
+			}
 			reason = ""
 		}
 	}
@@ -294,6 +319,19 @@ func (s *Store) track(ctx context.Context, ref string, snap model.Snapshot) erro
 		return s.Seclude(ctx, []string{ref}, nil)
 	case !local && secluded[ref]:
 		return s.Seclude(ctx, nil, []string{ref})
+	}
+	return nil
+}
+
+func (p LocalPolicy) refuse(ref string, added []model.Attachment) error {
+	for _, att := range added {
+		if reason := p.attachmentReason(att); reason != "" {
+			parsed, err := refs.Parse(ref)
+			if err != nil {
+				return err
+			}
+			return &LocalAttachmentError{ID: parsed.ID, Reason: reason}
+		}
 	}
 	return nil
 }

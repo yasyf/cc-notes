@@ -63,7 +63,7 @@ func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (m
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	ref := refs.For(kind, model.EntityID(sha))
-	if err := s.track(ctx, ref, snapshot); err != nil {
+	if err := s.track(ctx, ref, snapshot, nil); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	if err := s.Git.UpdateRef(ctx, ref, sha, ""); err != nil {
@@ -120,7 +120,7 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
-		if err := s.track(ctx, ref, snapshot); err != nil {
+		if err := s.track(ctx, ref, snapshot, addedAttachments(ops)); err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
 		switch err := s.Git.UpdateRef(ctx, ref, sha, tip); {
@@ -243,4 +243,14 @@ func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (
 	}
 	s.cache.put(sha, merged)
 	return sha, nil
+}
+
+func addedAttachments(ops []model.Op) []model.Attachment {
+	var out []model.Attachment
+	for _, op := range ops {
+		if add, ok := op.(model.AddAttachment); ok {
+			out = append(out, model.Attachment(add))
+		}
+	}
+	return out
 }

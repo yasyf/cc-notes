@@ -7,6 +7,7 @@ import (
 )
 
 type runbookAddArgs struct {
+	localityArgs
 	Title  string   `json:"title" jsonschema:"short handle for the runbook"`
 	Body   string   `json:"body,omitempty" jsonschema:"runbook description (echoed as 'description' in the runbook DTO)"`
 	Labels []string `json:"labels,omitempty" jsonschema:"labels"`
@@ -126,6 +127,7 @@ func registerRunbook(ts *toolset, b *bridge) {
 			flags = optRepeated(flags, "--label", in.Labels)
 			flags = anchorSetFlags(flags, in.anchorSetArgs)
 			flags = optRepeated(flags, "--step", in.Steps)
+			flags = localityFlags(flags, in.localityArgs)
 			return b.run(ctx, argvFor([]string{"runbook", "add"}, flags, in.Title)...)
 		})
 

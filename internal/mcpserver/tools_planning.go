@@ -7,6 +7,7 @@ import (
 )
 
 type sprintAddArgs struct {
+	localityArgs
 	Title   string   `json:"title" jsonschema:"short handle for the sprint"`
 	Body    string   `json:"body,omitempty" jsonschema:"sprint body (echoed as 'description' in the sprint DTO)"`
 	Project string   `json:"project,omitempty" jsonschema:"project id prefix"`
@@ -35,6 +36,7 @@ type sprintListArgs struct {
 }
 
 type projectAddArgs struct {
+	localityArgs
 	Title  string   `json:"title" jsonschema:"short handle for the project"`
 	Body   string   `json:"body,omitempty" jsonschema:"project body (echoed as 'description' in the project DTO)"`
 	Labels []string `json:"labels,omitempty" jsonschema:"labels"`
@@ -63,6 +65,7 @@ func registerPlanning(ts *toolset, b *bridge) {
 			flags = optRepeated(flags, "--label", in.Labels)
 			flags = optStr(flags, "--start", in.Start)
 			flags = optStr(flags, "--end", in.End)
+			flags = localityFlags(flags, in.localityArgs)
 			return b.run(ctx, argvFor([]string{"sprint", "add"}, flags, in.Title)...)
 		})
 
@@ -106,6 +109,7 @@ func registerPlanning(ts *toolset, b *bridge) {
 				return nil, nil, err
 			}
 			flags = optRepeated(flags, "--label", in.Labels)
+			flags = localityFlags(flags, in.localityArgs)
 			return b.run(ctx, argvFor([]string{"project", "add"}, flags, in.Title)...)
 		})
 
