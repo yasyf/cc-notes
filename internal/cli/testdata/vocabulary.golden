@@ -37,6 +37,7 @@ command: cc-notes answer add
     --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
+    --title shorthand=none type=string default="" usage="the TITLE, given as a flag instead of positionally"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -263,6 +264,7 @@ command: cc-notes doc add
     --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
+    --title shorthand=none type=string default="" usage="the TITLE, given as a flag instead of positionally"
     --when shorthand=none type=string default="" usage="free-text read-this-when trigger"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -707,6 +709,7 @@ command: cc-notes investigation open
     --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
+    --title shorthand=none type=string default="" usage="the TITLE, given as a flag instead of positionally"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -870,6 +873,7 @@ command: cc-notes ledger add
     --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
+    --title shorthand=none type=string default="" usage="the TITLE, given as a flag instead of positionally"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -1107,6 +1111,7 @@ command: cc-notes log add
     --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
+    --title shorthand=none type=string default="" usage="the TITLE, given as a flag instead of positionally"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -1270,6 +1275,7 @@ command: cc-notes note add
     --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
+    --title shorthand=none type=string default="" usage="the TITLE, given as a flag instead of positionally"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -1518,6 +1524,7 @@ command: cc-notes plan add
     --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
+    --title shorthand=none type=string default="" usage="the TITLE, given as a flag instead of positionally"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -1706,6 +1713,7 @@ command: cc-notes project add
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
     --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
     --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
+    --title shorthand=none type=string default="" usage="the TITLE, given as a flag instead of positionally"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -1863,6 +1871,7 @@ command: cc-notes runbook add
     --path shorthand=none type=stringArray default="[]" usage="path anchor (repeatable)"
     --step shorthand=none type=stringArray default="[]" usage="initial step text, in order (repeatable)"
     --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
+    --title shorthand=none type=string default="" usage="the TITLE, given as a flag instead of positionally"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -2248,6 +2257,7 @@ command: cc-notes sprint add
     --project shorthand=none type=string default="" usage="project id prefix"
     --start shorthand=none type=string default="" usage="start date YYYY-MM-DD"
     --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
+    --title shorthand=none type=string default="" usage="the TITLE, given as a flag instead of positionally"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -2414,6 +2424,7 @@ command: cc-notes task add
     --project shorthand=none type=string default="" usage="project id prefix"
     --sprint shorthand=none type=string default="" usage="sprint id prefix"
     --sync shorthand=none type=bool default="false" usage="publish it even when a local default (label, attachment size or name) matches"
+    --title shorthand=none type=string default="" usage="the TITLE, given as a flag instead of positionally"
     --type shorthand=none type=string default="task" usage="task type (task|bug|epic|question)"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
