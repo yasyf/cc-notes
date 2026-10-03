@@ -343,3 +343,158 @@ func TestIsAncestorMemoResumes(t *testing.T) {
 		}
 	}
 }
+
+type ancestryCase struct {
+	name    string
+	a, b    model.SHA
+	want    gitobj.Ancestry
+	wantErr error
+}
+
+func checkAncestry(t *testing.T, repo *gitobj.Repo, cases []ancestryCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := repo.Ancestry(t.Context(), tc.a, tc.b)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("Ancestry(%s, %s) = %d, %v; want error %v", tc.a, tc.b, got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Ancestry(%s, %s): %v", tc.a, tc.b, err)
+			}
+			if got != tc.want {
+				t.Errorf("Ancestry(%s, %s) = %d, want %d", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+}
+
+func checkAbsentAncestry(t *testing.T, repo *gitobj.Repo, want map[model.SHA]gitobj.Ancestry) {
+	t.Helper()
+	for b, w := range want {
+		if got, err := repo.AbsentAncestry(t.Context(), b); err != nil || got != w {
+			t.Errorf("AbsentAncestry(%s) = %d, %v; want %d, nil", b, got, err, w)
+		}
+	}
+}
+
+// TestAncestry pins the three verdicts against one six-commit chain, first as a
+// complete graph, then under a graft two commits back from the tip, then after
+// the graft is removed from under the same handle. Only a walk that cut a
+// boundary commit's parents, or a commit a shallow repository lacks, is
+// AncestryUnknown; a parentless boundary truncates nothing, and a complete
+// graph still proves a negative or fails on an absent commit.
+func TestAncestry(t *testing.T) {
+	const depth = 6
+	dir := initRepo(t)
+	writer := open(t, dir)
+	chain := opsChain(t, writer, depth)
+	unrelated := write(t, writer, nil, t3, tagPack)
+	offChain := write(t, writer, []model.SHA{chain[0]}, t3, retitlePack)
+	root, boundary, tip := chain[0], chain[depth-3], chain[depth-1]
+	absent := model.SHA("0123456789abcdef0123456789abcdef01234567")
+
+	repo := open(t, dir)
+	checkAncestry(t, repo, []ancestryCase{
+		{name: "complete: reachable", a: root, b: tip, want: gitobj.Ancestor},
+		{name: "complete: self", a: tip, b: tip, want: gitobj.Ancestor},
+		{name: "complete: unrelated root is proven unreachable", a: unrelated, b: tip, want: gitobj.NotAncestor},
+		{name: "complete: a sibling branch is proven unreachable", a: offChain, b: tip, want: gitobj.NotAncestor},
+		{name: "complete: descendant against its ancestor", a: tip, b: root, want: gitobj.NotAncestor},
+		{name: "complete: absent ancestor", a: absent, b: tip, wantErr: gitobj.ErrCommitNotFound},
+	})
+
+	gittest.Shallow(t, dir, string(boundary))
+	checkAncestry(t, repo, []ancestryCase{
+		{name: "grafted: inside the window", a: chain[depth-2], b: tip, want: gitobj.Ancestor},
+		{name: "grafted: the boundary itself", a: boundary, b: tip, want: gitobj.Ancestor},
+		{name: "grafted: past the boundary", a: root, b: tip, want: gitobj.AncestryUnknown},
+		{name: "grafted: unrelated root", a: unrelated, b: tip, want: gitobj.AncestryUnknown},
+		{name: "grafted: absent ancestor", a: absent, b: tip, want: gitobj.AncestryUnknown},
+		{name: "grafted: absent ancestor of a complete history", a: absent, b: unrelated, want: gitobj.NotAncestor},
+		{name: "grafted: an unrelated root's complete history", a: root, b: unrelated, want: gitobj.NotAncestor},
+		{name: "grafted: absent descendant", a: tip, b: absent, wantErr: gitobj.ErrCommitNotFound},
+	})
+	for _, a := range []model.SHA{root, unrelated} {
+		if got, err := repo.IsAncestor(t.Context(), a, tip); err != nil || got {
+			t.Errorf("IsAncestor(%s, %s) under the graft = %t, %v; want false, nil as git merge-base --is-ancestor answers", a, tip, got, err)
+		}
+	}
+
+	gittest.Shallow(t, dir, string(root))
+	checkAncestry(t, repo, []ancestryCase{
+		{name: "parentless boundary: reachable", a: root, b: tip, want: gitobj.Ancestor},
+		{name: "parentless boundary: unrelated root is proven unreachable", a: unrelated, b: tip, want: gitobj.NotAncestor},
+		{name: "parentless boundary: absent ancestor is proven unreachable", a: absent, b: tip, want: gitobj.NotAncestor},
+	})
+
+	gittest.Unshallow(t, dir)
+	checkAncestry(t, repo, []ancestryCase{
+		{name: "unshallowed: the truncated pair is proven", a: root, b: tip, want: gitobj.Ancestor},
+		{name: "unshallowed: unrelated root is proven unreachable", a: unrelated, b: tip, want: gitobj.NotAncestor},
+	})
+}
+
+// TestAncestryMemoKeepsTruncation resumes one descendant's frontier across
+// calls under a graft: a hit inside the window leaves it partially expanded,
+// the next query drains it past the boundary, and every later query answers
+// from the drained memo. The truncation belongs to the memo, not to the walk
+// that saw the boundary, or a drained frontier would answer a proven negative.
+func TestAncestryMemoKeepsTruncation(t *testing.T) {
+	const depth = 6
+	dir := initRepo(t)
+	writer := open(t, dir)
+	chain := opsChain(t, writer, depth)
+	unrelated := write(t, writer, nil, t3, tagPack)
+	root, tip := chain[0], chain[depth-1]
+	gittest.Shallow(t, dir, string(chain[depth-3]))
+
+	checkAncestry(t, open(t, dir), []ancestryCase{
+		{name: "hit inside the window", a: chain[depth-2], b: tip, want: gitobj.Ancestor},
+		{name: "drain past the boundary", a: root, b: tip, want: gitobj.AncestryUnknown},
+		{name: "drained memo, unrelated root", a: unrelated, b: tip, want: gitobj.AncestryUnknown},
+		{name: "drained memo, past the boundary again", a: root, b: tip, want: gitobj.AncestryUnknown},
+		{name: "drained memo, hit inside the window", a: chain[depth-2], b: tip, want: gitobj.Ancestor},
+	})
+}
+
+// TestAncestryShallowClone runs Ancestry over a real depth-2 clone, whose
+// shallow file git writes and whose older commits are genuinely absent. An
+// absent source commit is AncestryUnknown from a head whose walk reaches the
+// boundary, never ErrCommitNotFound, but proven unreachable from an orphan
+// commit whose complete history never meets the boundary, whether or not its
+// object was fetched; a full fetch then proves it from the tip.
+func TestAncestryShallowClone(t *testing.T) {
+	const depth = 5
+	origin := initRepo(t)
+	writer := open(t, origin)
+	chain := opsChain(t, writer, depth)
+	root, tip := chain[0], chain[depth-1]
+	git(t, origin, "update-ref", "refs/heads/main", string(tip))
+
+	clone := gittest.ShallowClone(t, origin, 2)
+	repo := open(t, clone)
+	orphan := model.SHA(git(t, clone, "commit-tree", "-m", "orphan", gitStdin(t, clone, "", "mktree")))
+	checkAncestry(t, repo, []ancestryCase{
+		{name: "inside the clone's window", a: chain[depth-2], b: tip, want: gitobj.Ancestor},
+		{name: "absent source commit", a: root, b: tip, want: gitobj.AncestryUnknown},
+		{name: "absent descendant", a: tip, b: root, wantErr: gitobj.ErrCommitNotFound},
+		{name: "absent source commit from an orphan", a: root, b: orphan, want: gitobj.NotAncestor},
+	})
+	checkAbsentAncestry(t, repo, map[model.SHA]gitobj.Ancestry{tip: gitobj.AncestryUnknown, orphan: gitobj.NotAncestor})
+
+	git(t, clone, "-c", "protocol.file.allow=always", "fetch", "-q", "--no-tags", "origin", string(root))
+	checkAncestry(t, repo, []ancestryCase{
+		{name: "fetched source commit from the tip", a: root, b: tip, want: gitobj.AncestryUnknown},
+		{name: "fetched source commit from an orphan", a: root, b: orphan, want: gitobj.NotAncestor},
+	})
+
+	git(t, clone, "-c", "protocol.file.allow=always", "fetch", "-q", "--unshallow", "origin")
+	checkAncestry(t, repo, []ancestryCase{
+		{name: "unshallowed: the source commit is proven", a: root, b: tip, want: gitobj.Ancestor},
+	})
+	checkAbsentAncestry(t, repo, map[model.SHA]gitobj.Ancestry{tip: gitobj.NotAncestor, orphan: gitobj.NotAncestor})
+}

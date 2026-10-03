@@ -99,6 +99,50 @@ func TestDirsRepositoryLayouts(t *testing.T) {
 			t.Fatalf("%s and %s share a common dir: %q", pair[0], pair[1], commonDirs[pair[0]])
 		}
 	}
+
+	// A Backend handle on a common directory answers with that directory
+	// itself: records stores open the backend at its common dir, never through
+	// a worktree, and sourceindex joins CommonDir back onto Dir.
+	for _, name := range []string{"normal non-bare repo", "linked worktree", "bare repo"} {
+		t.Run("backend on "+name, func(t *testing.T) {
+			common := commonDirs[name]
+			backend := gitcmd.Backend(common, common)
+			gitDir, commonDir, _, err := backend.Dirs(t.Context())
+			if err != nil {
+				t.Fatalf("Backend(%q).Dirs: %v", common, err)
+			}
+			if evalDirsContractPath(t, gitDir) != evalDirsContractPath(t, common) {
+				t.Fatalf("backend git dir: got %q, want %q", gitDir, common)
+			}
+			if commonDir != common {
+				t.Fatalf("backend common dir: got %q, want %q", commonDir, common)
+			}
+			got, err := backend.CommonDir(t.Context())
+			if err != nil {
+				t.Fatalf("Backend(%q).CommonDir: %v", common, err)
+			}
+			if got != common {
+				t.Fatalf("backend CommonDir(): got %q, want %q", got, common)
+			}
+			first, err := backend.FirstRef(t.Context(), "refs/cc-notes/")
+			if err != nil {
+				t.Fatalf("Backend(%q).FirstRef: %v", common, err)
+			}
+			if first != "" {
+				t.Fatalf("backend FirstRef on an empty namespace = %q, want \"\"", first)
+			}
+		})
+	}
+	backend := gitcmd.Backend(commonDirs["normal non-bare repo"], normal)
+	gittest.Git(t, normal, "update-ref", "refs/cc-notes/notes/b", "HEAD")
+	gittest.Git(t, normal, "update-ref", "refs/cc-notes/notes/a", "HEAD")
+	first, err := backend.FirstRef(t.Context(), "refs/cc-notes/")
+	if err != nil {
+		t.Fatalf("backend FirstRef: %v", err)
+	}
+	if first != "refs/cc-notes/notes/a" {
+		t.Fatalf("backend FirstRef = %q, want refs/cc-notes/notes/a", first)
+	}
 }
 
 func initDirsContractRepo(t *testing.T, dir string) {

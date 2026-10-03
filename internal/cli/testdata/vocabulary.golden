@@ -2348,6 +2348,26 @@ command: cc-notes status
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
+command: cc-notes storage
+  use: storage
+  aliases: -
+  short: Bind this checkout to a shared records repository
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
+command: cc-notes storage bind
+  use: bind
+  aliases: -
+  short: Use the cc-notes records of the repository at --source
+  hidden: false
+  flags:
+    --source shorthand=none type=string default="" usage="any path inside the repository whose cc-notes records this checkout shares"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
+
 command: cc-notes sync
   use: sync
   aliases: -

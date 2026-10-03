@@ -19,9 +19,9 @@ type Credential struct{ Username, Password string }
 // itself must never block a sync waiting for a terminal.
 func (g Git) credential(ctx context.Context, verb, input string) (string, error) {
 	//nolint:gosec // G204: git is a fixed argv[0]; verb is an internal constant.
-	cmd := exec.CommandContext(ctx, "git", "-C", g.Dir, "credential", verb)
+	cmd := exec.CommandContext(ctx, "git", g.argv("credential", verb)...)
 	cmd.Stdin = strings.NewReader(input)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(g.environ(os.Environ()), "GIT_TERMINAL_PROMPT=0")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

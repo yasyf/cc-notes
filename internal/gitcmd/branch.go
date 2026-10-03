@@ -67,31 +67,24 @@ func (g Git) Refs(ctx context.Context, patterns ...string) (map[string]model.SHA
 	return refs, nil
 }
 
-// ResolvedRefs lists every ref under the given patterns in one git
-// for-each-ref invocation, resolving symbolic refs to their current tips.
-func (g Git) ResolvedRefs(ctx context.Context, patterns ...string) (map[string]model.SHA, error) {
-	out, err := g.run(ctx, "", append([]string{"for-each-ref", "--format=%(refname)%00%(objectname)"}, patterns...)...)
+// FirstRef returns the first ref, in refname order, under any of prefixes, or ""
+// when none exists: one for-each-ref --count=1, never a full enumeration.
+func (g Git) FirstRef(ctx context.Context, prefixes ...string) (string, error) {
+	out, err := g.run(ctx, "", append([]string{"for-each-ref", "--count=1", "--format=%(refname)"}, prefixes...)...)
 	if err != nil {
-		return nil, fmt.Errorf("resolved refs: %w", err)
+		return "", fmt.Errorf("first ref: %w", err)
 	}
 	lines := nonEmptyLines(out)
 	if len(lines) == 0 {
-		return nil, nil
+		return "", nil
 	}
-	refs := make(map[string]model.SHA, len(lines))
-	for _, line := range lines {
-		fields := strings.Split(line, "\x00")
-		if len(fields) != 2 || fields[0] == "" || fields[1] == "" {
-			return nil, fmt.Errorf("resolved refs: malformed line %q", line)
-		}
-		refs[fields[0]] = model.SHA(fields[1])
-	}
-	return refs, nil
+	return lines[0], nil
 }
 
 // AncestorSet returns every commit reachable from commit, including commit.
+// The walk never fetches missing history from a promisor remote.
 func (g Git) AncestorSet(ctx context.Context, commit model.SHA) (map[model.SHA]struct{}, error) {
-	out, err := g.run(ctx, "", "rev-list", string(commit))
+	out, err := g.probe(ctx, "", "rev-list", string(commit))
 	if err != nil {
 		return nil, fmt.Errorf("ancestor set %s: %w", commit, err)
 	}
@@ -114,7 +107,7 @@ func (g Git) TrunkBranch(ctx context.Context) (model.Branch, error) {
 		return "", fmt.Errorf("trunk branch: %w", err)
 	}
 	for _, name := range []string{"main", "master"} {
-		_, err := g.run(ctx, "", "rev-parse", "--verify", "--quiet", "refs/heads/"+name)
+		_, err := g.probe(ctx, "", "rev-parse", "--verify", "--quiet", "refs/heads/"+name)
 		var cmdErr *commandError
 		if errors.As(err, &cmdErr) {
 			continue
@@ -254,7 +247,7 @@ func (g Git) soleBranchAtHead(ctx context.Context) (model.Branch, error) {
 
 func (g Git) resolveTrunkRef(ctx context.Context, trunk model.Branch) (string, error) {
 	for _, ref := range []string{"refs/heads/" + string(trunk), "refs/remotes/origin/" + string(trunk)} {
-		_, err := g.run(ctx, "", "rev-parse", "--verify", "--quiet", ref)
+		_, err := g.probe(ctx, "", "rev-parse", "--verify", "--quiet", ref)
 		if err == nil {
 			return ref, nil
 		}
@@ -276,7 +269,7 @@ func (g Git) branchesMergedInto(ctx context.Context, rev string) ([]string, erro
 }
 
 func (g Git) isAncestorOrEqual(ctx context.Context, ref, of string) (bool, error) {
-	_, err := g.run(ctx, "", "merge-base", "--is-ancestor", ref, of)
+	_, err := g.probe(ctx, "", "merge-base", "--is-ancestor", ref, of)
 	if err == nil {
 		return true, nil
 	}

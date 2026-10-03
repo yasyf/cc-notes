@@ -25,7 +25,10 @@ type LocalEntity struct {
 // sorted by kind then id. A default never covers an entity a remote already
 // tracks.
 func (c *Client) LocalEntities(ctx context.Context) ([]LocalEntity, error) {
-	tips, err := c.s.Git.Refs(ctx, refs.Namespace)
+	if err := c.s.CheckRecords(); err != nil {
+		return nil, err
+	}
+	tips, err := c.s.RecordsGit.Refs(ctx, refs.Namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +40,7 @@ func (c *Client) LocalEntities(ctx context.Context) ([]LocalEntity, error) {
 	if err != nil {
 		return nil, err
 	}
-	tracked, err := c.s.Git.Refs(ctx, "refs/cc-notes-sync/")
+	tracked, err := c.s.RecordsGit.Refs(ctx, "refs/cc-notes-sync/")
 	if err != nil {
 		return nil, err
 	}

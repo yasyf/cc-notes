@@ -62,7 +62,7 @@ func newLogAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			if anchors.commits, err = resolveCommits(ctx, s.Git, anchors.commits); err != nil {
@@ -127,7 +127,7 @@ func newLogAppendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveLog(ctx, args[0])
@@ -279,7 +279,7 @@ func newLogEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveLog(ctx, args[0])

@@ -81,7 +81,7 @@ func newPlanAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			if anchors.commits, err = resolveCommits(ctx, s.Git, anchors.commits); err != nil {
@@ -251,7 +251,7 @@ func newPlanEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolvePlan(ctx, args[0])
@@ -325,7 +325,7 @@ func runPlanTransition(cmd *cobra.Command, prefix string, jsonOut bool, transiti
 	if err != nil {
 		return err
 	}
-	if err := autoInstall(ctx, cmd, s.Git); err != nil {
+	if err := autoInstall(ctx, cmd, s); err != nil {
 		return err
 	}
 	id, err := c.ResolvePlan(ctx, prefix)
@@ -363,7 +363,7 @@ func newPlanCommentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolvePlan(ctx, args[0])
@@ -402,7 +402,7 @@ func newPlanSupersedeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolvePlan(ctx, args[0])

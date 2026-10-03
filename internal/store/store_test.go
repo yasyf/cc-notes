@@ -316,7 +316,7 @@ func TestLoadToleratesNewerHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteOpsCommit: %v", err)
 	}
-	if err := s.Git.UpdateRef(ctx, ref, sha, tip); err != nil {
+	if err := s.RecordsGit.UpdateRef(ctx, ref, sha, tip); err != nil {
 		t.Fatalf("UpdateRef: %v", err)
 	}
 
@@ -495,7 +495,17 @@ func TestAppendContended(t *testing.T) {
 	}
 	gittest.Git(t, blocked, "update-ref", ref, string(decoy.ID))
 
-	doctored := &Store{Repo: s.Repo, Git: gitcmd.Git{Dir: blocked}, now: time.Now, root: &rootMemo{}, policy: &policyMemo{}}
+	doctored := &Store{
+		Repo:             s.Repo,
+		Git:              gitcmd.Git{Dir: blocked},
+		RecordsGit:       gitcmd.Git{Dir: blocked},
+		ContextRepo:      s.Repo,
+		now:              time.Now,
+		root:             &rootMemo{},
+		policy:           &policyMemo{},
+		recordsCommonDir: s.CommonDir(),
+		storage:          s.storage,
+	}
 	_, err := doctored.Append(t.Context(), ref, []model.Op{model.AddTag{Tag: "x"}})
 	if !errors.Is(err, ErrContended) {
 		t.Fatalf("Append = %v, want ErrContended", err)

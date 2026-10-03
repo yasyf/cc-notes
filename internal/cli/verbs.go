@@ -50,7 +50,7 @@ func (k kindSpec[T]) rmCmd(
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := resolve(c, ctx, args[0])

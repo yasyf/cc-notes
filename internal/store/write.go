@@ -28,6 +28,9 @@ func (s *Store) CreateExact(ctx context.Context, ops []model.Op) (model.Snapshot
 }
 
 func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (model.Snapshot, error) {
+	if err := s.CheckRecords(); err != nil {
+		return nil, fmt.Errorf("create: %w", err)
+	}
 	if len(ops) == 0 {
 		return nil, errors.New("create: no ops")
 	}
@@ -66,7 +69,7 @@ func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (m
 	if err := s.track(ctx, ref, snapshot, nil); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
-	if err := s.Git.UpdateRef(ctx, ref, sha, ""); err != nil {
+	if err := s.PublishRef(ctx, ref, sha, ""); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	s.cache.put(sha, snapshot)
@@ -77,6 +80,9 @@ func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (m
 // compare-and-swap with bounded retries, returning the new folded snapshot.
 // Exhausting the retries fails wrapping ErrContended.
 func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.Snapshot, error) {
+	if err := s.CheckRecords(); err != nil {
+		return nil, fmt.Errorf("append to %s: %w", ref, err)
+	}
 	if len(ops) == 0 {
 		return nil, fmt.Errorf("append to %s: no ops", ref)
 	}
@@ -123,7 +129,7 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 		if err := s.track(ctx, ref, snapshot, addedAttachments(ops)); err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
-		switch err := s.Git.UpdateRef(ctx, ref, sha, tip); {
+		switch err := s.PublishRef(ctx, ref, sha, tip); {
 		case err == nil:
 			s.cache.put(sha, snapshot)
 			return snapshot, nil
@@ -140,6 +146,9 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 // compare-and-swap, preserving the entity id and folded State. It returns the
 // post-compaction snapshot; exhausting the retries fails wrapping ErrContended.
 func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error) {
+	if err := s.CheckRecords(); err != nil {
+		return nil, fmt.Errorf("compact %s: %w", ref, err)
+	}
 	name, email, err := s.actor(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("compact %s: %w", ref, err)
@@ -188,7 +197,7 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 		if err != nil {
 			return nil, fmt.Errorf("compact %s: %w", ref, err)
 		}
-		switch err := s.Git.UpdateRef(ctx, ref, sha, tip); {
+		switch err := s.PublishRef(ctx, ref, sha, tip); {
 		case err == nil:
 			s.cache.put(sha, snapshot)
 			return snapshot, nil
@@ -206,6 +215,9 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 // with gitcmd.ErrCASMismatch. The merge pack carries no ops of its own, so the
 // fold stays tolerant: a chain a newer cc-notes wrote still merges here.
 func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (model.SHA, error) {
+	if err := s.CheckRecords(); err != nil {
+		return "", fmt.Errorf("merge %s: %w", ref, err)
+	}
 	ourChain, err := s.Repo.ReadChain(ctx, ours)
 	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
@@ -238,7 +250,7 @@ func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (
 	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
-	if err := s.Git.UpdateRef(ctx, ref, sha, ours); err != nil {
+	if err := s.PublishRef(ctx, ref, sha, ours); err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
 	s.cache.put(sha, merged)

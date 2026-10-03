@@ -41,7 +41,7 @@ func (b *Builder) trunkName(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("resolve trunk: %w", err)
 	}
 	for _, name := range []string{"main", "master"} {
-		switch _, err := b.store.Repo.Tip(ctx, headsPrefix+name); {
+		switch _, err := b.store.ContextRepo.Tip(ctx, headsPrefix+name); {
 		case err == nil:
 			return name, nil
 		case !errors.Is(err, gitobj.ErrRefNotFound):

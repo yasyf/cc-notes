@@ -36,8 +36,10 @@ type ReconcileReport struct {
 
 // BranchResult records what Reconcile found for one source branch: the
 // open and in-progress tasks folding to it, whether it counted as merged
-// into the target, and — when it did not merge — why. Reason is empty for a
-// merged branch.
+// into the target, and — when it did not merge — why: "branch ref missing",
+// "not merged", or "history unavailable" when the context checkout's graph
+// ends at a shallow boundary before deciding. Reason is empty for a merged
+// branch.
 type BranchResult struct {
 	Branch model.Branch
 	Merged bool
@@ -78,14 +80,20 @@ func (r ReconcileReport) Carried() int {
 // to the target branch. It resolves the target tip, selects source branches
 // (the explicit from list, else every branch that folded tasks claim minus
 // the target and the backlog), and for each one collects the open and
-// in-progress tasks folding to it. A source branch counts as merged when
-// force is set or its branch tip is an ancestor of — or equal to — the target
-// tip; only merged branches are moved, and only when dryRun is false. Each
-// moved task gets a SetBranch{into} op, so the run is idempotent: a moved
-// task folds to into and the next pass's source scan no longer finds it.
-// Source branches are processed in sorted order for deterministic output.
+// in-progress tasks folding to it. Branches, their tips, and their ancestry
+// come from the context checkout; the tasks and their moves live in the
+// records repository. A source branch counts as merged when force is set or
+// the context graph proves its branch tip an ancestor of — or equal to — the
+// target tip; a graph that ends at a shallow boundary first never moves a task.
+// Only merged branches are moved, and only when dryRun is false. Each moved
+// task gets a SetBranch{into} op, so the run is idempotent: a moved task folds
+// to into and the next pass's source scan no longer finds it. Source branches
+// are processed in sorted order for deterministic output.
 func Reconcile(ctx context.Context, s *store.Store, into model.Branch, from []model.Branch, force, dryRun bool) (ReconcileReport, error) {
-	targetTip, err := s.Repo.Tip(ctx, "refs/heads/"+string(into))
+	if err := s.CheckRecords(); err != nil {
+		return ReconcileReport{}, fmt.Errorf("reconcile into %s: %w", into, err)
+	}
+	targetTip, err := s.ContextRepo.Tip(ctx, "refs/heads/"+string(into))
 	if err != nil {
 		return ReconcileReport{}, fmt.Errorf("resolve target branch %s: %w", into, err)
 	}
@@ -114,7 +122,7 @@ func Reconcile(ctx context.Context, s *store.Store, into model.Branch, from []mo
 		if force {
 			result.Merged = true
 		} else {
-			bTip, err := s.Repo.Tip(ctx, "refs/heads/"+string(b))
+			bTip, err := s.ContextRepo.Tip(ctx, "refs/heads/"+string(b))
 			if errors.Is(err, gitobj.ErrRefNotFound) {
 				result.Reason = "branch ref missing"
 				report.Branches = append(report.Branches, result)
@@ -123,13 +131,17 @@ func Reconcile(ctx context.Context, s *store.Store, into model.Branch, from []mo
 			if err != nil {
 				return ReconcileReport{}, fmt.Errorf("resolve source branch %s: %w", b, err)
 			}
-			merged, err := s.Repo.IsAncestor(ctx, bTip, targetTip)
+			ancestry, err := s.ContextRepo.Ancestry(ctx, bTip, targetTip)
 			if err != nil {
 				return ReconcileReport{}, err
 			}
-			result.Merged = merged
-			if !merged {
+			switch ancestry {
+			case gitobj.Ancestor:
+				result.Merged = true
+			case gitobj.NotAncestor:
 				result.Reason = "not merged"
+			case gitobj.AncestryUnknown:
+				result.Reason = "history unavailable"
 			}
 		}
 		report.Branches = append(report.Branches, result)
@@ -153,7 +165,7 @@ func Reconcile(ctx context.Context, s *store.Store, into model.Branch, from []mo
 // with. A canonical ref already containing the tracking tip is kept untouched,
 // so a rerun is a no-op.
 func foldTracking(ctx context.Context, s *store.Store) error {
-	remotes, err := s.Git.Remotes(ctx)
+	remotes, err := s.RecordsGit.Remotes(ctx)
 	if err != nil {
 		return fmt.Errorf("fold tracking refs: %w", err)
 	}

@@ -43,7 +43,10 @@ type Client struct {
 
 // Open opens the cc-notes store for the git repository containing dir,
 // following worktree and subdirectory indirection. It does not require the
-// repository to hold any cc-notes entity yet. The author identity for writes
+// repository to hold any cc-notes entity yet. A checkout bound to a shared
+// records repository (cc-notes storage bind) reads and writes that
+// repository's entities while HEAD, branches, anchors, files, settings, and
+// identity still come from the checkout at dir. The author identity for writes
 // resolves lazily on each write: the CC_NOTES_ACTOR environment variable
 // ("Name <email>") when set, otherwise git's configured author identity.
 // Each write also stamps the Claude session id from CC_NOTES_SESSION_ID,
@@ -84,9 +87,9 @@ func (c *Client) currentBranchOrBacklog(ctx context.Context) (model.Branch, bool
 	return branch, false, nil
 }
 
-// head returns the repository's HEAD commit, or "" on an unborn branch.
+// head returns the context checkout's HEAD commit, or "" on an unborn branch.
 func (c *Client) head(ctx context.Context) (model.SHA, error) {
-	head, err := c.s.Repo.Tip(ctx, "HEAD")
+	head, err := c.s.ContextRepo.Tip(ctx, "HEAD")
 	if errors.Is(err, gitobj.ErrRefNotFound) {
 		return "", nil
 	}
@@ -141,10 +144,10 @@ func parseDuration(s string) (time.Duration, error) {
 }
 
 // deriveRemote resolves the remote a best-effort sync or install targets when
-// none is named: the sole cc-notes-wired remote when exactly one is wired, else
-// the default remote. WiredRemotes failures propagate.
+// none is named: the sole cc-notes-wired remote of the records repository when
+// exactly one is wired, else the default remote. WiredRemotes failures propagate.
 func (c *Client) deriveRemote(ctx context.Context) (string, error) {
-	wired, err := ccsync.WiredRemotes(ctx, c.s.Git)
+	wired, err := ccsync.WiredRemotes(ctx, c.s.RecordsGit)
 	if err != nil {
 		return "", err
 	}

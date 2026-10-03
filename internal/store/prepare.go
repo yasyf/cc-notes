@@ -29,6 +29,9 @@ func (p PreparedRef) RefUpdate() gitcmd.RefUpdate {
 // PrepareCreateExact writes an exact new entity chain without publishing its
 // ref. The operation's durable nonce must already be present in the create op.
 func (s *Store) PrepareCreateExact(ctx context.Context, ops []model.Op) (PreparedRef, error) {
+	if err := s.CheckRecords(); err != nil {
+		return PreparedRef{}, fmt.Errorf("prepare create: %w", err)
+	}
 	if len(ops) == 0 {
 		return PreparedRef{}, errors.New("prepare create: no ops")
 	}
@@ -62,6 +65,9 @@ func (s *Store) PrepareCreateExact(ctx context.Context, ops []model.Op) (Prepare
 // PrepareAppendAt writes an entity commit against one immutable expected tip
 // without resolving or moving its ref.
 func (s *Store) PrepareAppendAt(ctx context.Context, ref string, expected model.SHA, ops []model.Op) (PreparedRef, error) {
+	if err := s.CheckRecords(); err != nil {
+		return PreparedRef{}, fmt.Errorf("prepare append to %s: %w", ref, err)
+	}
 	if len(ops) == 0 {
 		return PreparedRef{}, fmt.Errorf("prepare append to %s: no ops", ref)
 	}

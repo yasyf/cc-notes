@@ -1,8 +1,8 @@
 # cc-notes CLI reference
 
-The command surface, grouped by noun: package, service, repo, task, sprint, project, runbook, investigation, plan,
+The command surface, grouped by noun: package, service, storage, repo, task, sprint, project, runbook, investigation, plan,
 note, answer, doc, log, papercut, kg. Every command takes `-h`/`--help`. Commands outside the `service` group also accept
-a global `--repo PATH` (`-R`) that targets another repository's store from any cwd — pass any path
+a global `--repo PATH` (`-R`) that selects the context checkout from any cwd — pass any path
 inside it, while file-path arguments still resolve against the invocation cwd. Cobra displays the
 inherited repository flag in package and service help, but those machine operations reject it before doing work.
 Every note, answer, doc, log, papercut, task, sprint, project,
@@ -202,6 +202,89 @@ list` return the complete timeline or thread, `investigation finding list` every
 `runbook run list` every run (then `runbook run show` for one run's steps).
 
 ## Repo commands
+
+### `cc-notes storage bind`
+
+MCP: — (CLI-only: binds a checkout to shared records storage, an operator step)
+
+Bind the current checkout, or the checkout selected by `--repo` (`-R`), to another local
+repository's cc-notes records. Takes no positional arguments.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--source <path>` | required | Directory inside the repository whose records this checkout shares; a subdirectory or linked worktree is accepted |
+
+The binding is one `cc-notes.storage` value in the checkout's own git config, at
+`<context-common-dir>/config`. Linked worktrees sharing that common directory share the
+binding. Its JSON fields are `version`, `commonDir`, `device`, and `inode`. Version `1` records
+the backend's canonical absolute common directory and its file system device/inode identity.
+Reads use that exact config file, without includes, global config, or environment overrides.
+
+If the source is already bound, the command validates its backend and stores that direct
+binding. The backend must not itself be bound. Binding writes nothing into the source:
+it does not fetch, copy records, install hooks or refspecs, or start services.
+
+An identical parsed binding succeeds without rewriting config, after validating the
+backend. Whitespace in the stored JSON does not affect equality. A different binding,
+including a different identity at the same path, is refused; there is no force flag or
+`storage unbind` command. A new binding is also refused if the checkout holds any
+`refs/cc-notes/` refs. If records appear during publication, the binding stays published
+and the command fails, naming every context ref the binding hides.
+
+The command prints `bound <context-common-dir> to records at <backend-common-dir>` after
+publication, or `already bound <context-common-dir> to records at <backend-common-dir>`
+for an identical binding.
+
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | Bound successfully, or already bound to the same validated backend |
+| 1 | Binding refused, or repository, config, or file system operation failed |
+| 2 | Usage error, including missing `--source`, positional arguments, or `--source <path>: not a directory` |
+
+Binding errors name the config and, when available, the source:
+`storage binding cc-notes.storage in <config> (source <source>): <reason>`.
+The CLI prefixes binding errors with `error:` and omits `(source <source>)` when the source
+cannot be resolved. Each refusal includes one of these reasons and its details:
+
+| Reason | Condition |
+|--------|-----------|
+| `malformed storage binding` | Invalid JSON, unknown fields, trailing data, a version other than 1, a non-absolute or unclean `commonDir`, zero inode, or multiple values; config read failures and a non-regular context config also fail with this reason |
+| `context bound to a different backend: bound to <existing>, asked to bind <requested>` | An existing binding differs from the requested binding |
+| `context already holds cc-notes records: <ref>` | A new binding would hide an existing checkout record |
+| `context already holds cc-notes records: binding to <backend> was published and stays; it hides <refs>` | Records appeared during publication; the binding stays, and `<refs>` lists every hidden context ref, separated by commas |
+| `storage binding cycle: <backend> is the context repository` | The resolved backend is the checkout's own repository |
+| `storage backend unavailable` | The backend is missing, unreadable, not a git common directory, or uses an unsupported repository layout; the message includes the specific failure |
+| `storage backend identity changed: bound device <n> inode <n>, found device <n> inode <n>` | A source's recorded backend identity no longer matches the directory |
+| `storage backend redirects to another repository: <backend> is bound to <target>` | The resolved backend has another binding |
+| `storage backend redirects to another repository: <backend> carries a cc-notes.storage value that does not parse: <detail>` | The resolved backend has a malformed binding |
+| `storage backend redirects to another repository: <backend> is a linked worktree's git directory, not a git common directory` | The backend carries a `commondir` file; bind and open refuse it |
+| `storage backend redirects to another repository: <backend> now carries a commondir file` | The backend gained a `commondir` file after the store opened; later records operations report this error |
+| `storage backend redirects to another repository: <path> is a symlink` | The backend's `objects`, `refs`, or `HEAD` entry is a symlink |
+
+A config lock refusal is reported as `<config>.lock exists: another process is writing the
+context config; retry once it finishes`. An existing lock causes an immediate error and remains
+untouched.
+
+Later records operations report invalid bindings as errors instead of returning an empty corpus.
+A client opened before a binding was added, removed, or changed reports
+`storage binding changed since open`, with a `reopen the store` instruction.
+If a records writer publishes refs after its binding changed, it fails with
+`published <refs>: <binding-error>`, naming every ref it wrote as a comma-separated list.
+The binding error includes `storage binding changed since open: now bound to <backend>; reopen
+the store`, or `storage binding changed since open: binding removed; reopen the store`.
+
+Do not use a bound checkout as a remote for other clones to push cc-notes refs into.
+The binding hides records pushed into the context's `refs/cc-notes/` namespace.
+
+In a bound checkout, the policy that keeps local entities off sync reads
+`cc-notes.localLabel`, `cc-notes.localAttachBytes`, and `cc-notes.localAttachGlob` from the
+records repository's config.
+
+For a checkout at `/work/thin` and a source repository at `/work/full`:
+
+```console
+$ cc-notes -R /work/thin storage bind --source /work/full
+```
 
 ### `cc-notes init`
 
@@ -2711,10 +2794,12 @@ ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
 
 MCP: note_review (stale_after, drift, unverified, expired)
 
-Surface notes needing attention, each with a verdict appended to the lean line: `EXPIRED` (an
-agent flagged it out-of-date with `note expire`; top precedence), `DRIFTED` (an anchored path or
-commit changed since the note was verified), `STALE` (verified too long ago), `UNVERIFIED` (never
-verified), and dangling supersede edges.
+Surface notes needing attention, each with a verdict appended to the lean line. Precedence is
+`EXPIRED > UNVERIFIED > DRIFTED > HISTORY-UNAVAILABLE > STALE`: manually expired, never verified,
+proven anchor drift, commit reachability unknown because the checkout's history is shallow,
+or verified too long ago. Broken supersede edges report `DANGLING` separately.
+The `--drift` filter omits `HISTORY-UNAVAILABLE`; `status` omits it from `needs_review` totals.
+Proven path or directory drift still takes precedence over missing history.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -2984,10 +3069,11 @@ $ cc-notes answer expire 8d2ed23 --reason "The caller set has changed"
 
 MCP: answer_review (stale_after, drift, unverified, expired)
 
-Surface answers needing attention, each with a verdict appended to the lean line: `EXPIRED`
-(an agent flagged it out-of-date with `answer expire`; top precedence), `DRIFTED` (an anchored
-path, directory, or commit changed since the answer was verified), `STALE` (verified too long
-ago), `UNVERIFIED` (never verified), and dangling supersede edges.
+Surface answers needing attention, each with a verdict appended to the lean line. Precedence is
+`EXPIRED > UNVERIFIED > DRIFTED > HISTORY-UNAVAILABLE > STALE`: manually expired, never verified,
+proven anchor drift, commit reachability unknown because the checkout's history is shallow,
+or verified too long ago. Broken supersede edges report `DANGLING` separately.
+The `--drift` filter omits `HISTORY-UNAVAILABLE`; `status` omits it from `needs_review` totals.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -3274,10 +3360,11 @@ $ cc-notes doc expire 62208d7 --reason "tokens now live 30 minutes"
 
 MCP: doc_review (stale_after, drift, unverified, expired)
 
-Surface docs needing attention, each with a verdict appended to the lean line: `EXPIRED` (an agent
-flagged it out-of-date with `doc expire`; top precedence), `DRIFTED` (an anchored path, directory,
-or commit changed since the doc was verified), `STALE` (verified too long ago), `UNVERIFIED` (never
-verified), and dangling supersede edges.
+Surface docs needing attention, each with a verdict appended to the lean line. Precedence is
+`EXPIRED > UNVERIFIED > DRIFTED > HISTORY-UNAVAILABLE > STALE`: manually expired, never verified,
+proven anchor drift, commit reachability unknown because the checkout's history is shallow,
+or verified too long ago. Broken supersede edges report `DANGLING` separately.
+The `--drift` filter omits `HISTORY-UNAVAILABLE`; `status` omits it from `needs_review` totals.
 
 | Flag | Default | Meaning |
 |------|---------|---------|

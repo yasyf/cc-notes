@@ -204,10 +204,14 @@ refs), or any cc-notes write — a mutating CLI subcommand (every noun's write v
 or an MCP tool that isn't a known reader (a deny-list of the read tools, so the matcher
 fails open: an unlisted future tool costs one harmless idempotent sync) — the pack runs
 `cc-notes sync` itself in the background — once per turn across every trigger. The sync covers every
-cc-notes-wired remote — each remote whose fetch refspec in git config tracks
+cc-notes-wired remote — each remote whose fetch refspec in the records backend's git config tracks
 `refs/cc-notes/*` — via `cc-notes sync --remote <name>`, falling back to one bare
 `cc-notes sync` when none is wired. Reads never sync. This replaces the old
 "run cc-notes sync" nudge.
+
+For a bound checkout, `records_git` reads `cc-notes.storage` from the checkout's local
+config and uses `--git-dir=<commonDir>` for the records probes. Branch context stays
+in the checkout.
 
 The commands `cd /other/repo && git push`,
 `git -C /other/repo merge topic`, `jj -R /other/repo git fetch`, and
@@ -245,9 +249,10 @@ raised handler would cost real work. A missing edge costs one graph hop instead.
 
 **The SessionEnd backstop.** A write-only session can end without ever hitting a sync
 trigger (the memory mirror is the canonical case). At session end an async handler runs a
-zero-network dirty check — local `refs/cc-notes/*` tips against their fetched copies under
-`refs/cc-notes-sync/<remote>/*`, for every wired remote — and runs `cc-notes sync` only when
-some wired remote is missing a local ref or holds a differing tip; a tracking-only ref
+zero-network dirty check in the records backend. The check compares local `refs/cc-notes/*` tips
+against their fetched copies under `refs/cc-notes-sync/<remote>/*` for every wired remote.
+The handler runs `cc-notes sync` only when some wired remote is missing a local ref or holds
+a differing tip; a tracking-only ref
 (remote ahead) is no push moment. It is silent best-effort end to end — no remote, offline,
 and timeout all stay quiet, and async dispatch drops its output anyway. Needs capt-hook >=
 9.2, whose captain-hook plugin dispatches `run SessionEnd --async`.

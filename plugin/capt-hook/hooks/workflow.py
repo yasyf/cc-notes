@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from collections.abc import Callable
@@ -214,9 +215,15 @@ def _fetch_refspec(name: str) -> str:
     return f"+refs/cc-notes/*:refs/cc-notes-sync/{name}/*"
 
 
-def wired_remotes(evt: BaseHookEvent) -> list[str]:
+def records_git(evt: BaseHookEvent, root: str | None = None) -> tuple[str, ...]:
+    here = ("-C", root) if root is not None else ()
+    binding = evt.ctx.git(*here, "config", "--local", "--get", "cc-notes.storage")
+    return (f"--git-dir={json.loads(binding)['commonDir']}",) if binding else here
+
+
+def wired_remotes(evt: BaseHookEvent, records: tuple[str, ...]) -> list[str]:
     try:
-        out = evt.ctx.git("config", "--get-regexp", r"^remote\..*\.fetch$")
+        out = evt.ctx.git(*records, "config", "--get-regexp", r"^remote\..*\.fetch$")
     except (OSError, subprocess.SubprocessError):
         return []
     if not out:
@@ -259,8 +266,8 @@ class SyncOutcome(NamedTuple):
     failure: str | None
 
 
-def do_sync(evt: BaseHookEvent) -> list[SyncOutcome]:
-    remotes = wired_remotes(evt)
+def do_sync(evt: BaseHookEvent, records: tuple[str, ...]) -> list[SyncOutcome]:
+    remotes = wired_remotes(evt, records)
     if not remotes:
         ok = run_sync(evt)
         return [SyncOutcome("", ok is True, "cc-notes sync failed — run `cc-notes sync` to retry." if ok is False else None)]
@@ -276,8 +283,8 @@ def cross_sync(evt: BaseHookEvent, cwd: str) -> list[SyncOutcome]:
     return [SyncOutcome("", ok is True, f"cc-notes sync failed in {cwd} — run `cc-notes sync` there to retry." if ok is False else None)]
 
 
-def auto_sync(evt: PostToolUseEvent) -> list[SyncOutcome]:
-    return do_sync(evt) if should_autosync(evt) else []
+def auto_sync(evt: PostToolUseEvent, records: tuple[str, ...]) -> list[SyncOutcome]:
+    return do_sync(evt, records) if should_autosync(evt) else []
 
 
 class SyncFailures(BaseModel):
@@ -327,9 +334,9 @@ def target_repos(evt: PostToolUseEvent, matches: Callable[[Call], bool]) -> list
     return roots
 
 
-def cc_notes_repo(evt: BaseHookEvent, root: str) -> bool:
+def cc_notes_repo(evt: BaseHookEvent, records: tuple[str, ...]) -> bool:
     try:
-        out = evt.ctx.git("-C", root, "for-each-ref", "--count=1", "--format=%(refname)", "refs/cc-notes/")
+        out = evt.ctx.git(*records, "for-each-ref", "--count=1", "--format=%(refname)", "refs/cc-notes/")
     except (OSError, subprocess.SubprocessError):
         return False
     return bool(out and out.strip())
@@ -343,10 +350,11 @@ def session_root() -> str | None:
 def sync_targets(evt: PostToolUseEvent, matches: Callable[[Call], bool], *, reconcile: bool = False) -> None:
     session = session_root()
     for root in target_repos(evt, matches):
-        if not cc_notes_repo(evt, root):
+        records = records_git(evt, root)
+        if not cc_notes_repo(evt, records):
             continue
         if root == session:
-            record_sync(evt, "", auto_reconcile(evt) if reconcile else auto_sync(evt))
+            record_sync(evt, "", auto_reconcile(evt, records) if reconcile else auto_sync(evt, records))
             continue
         if reconcile:
             branch = (evt.ctx.git("-C", root, "rev-parse", "--abbrev-ref", "HEAD") or "").strip()
@@ -356,11 +364,11 @@ def sync_targets(evt: PostToolUseEvent, matches: Callable[[Call], bool], *, reco
             record_sync(evt, root, cross_sync(evt, root))
 
 
-def auto_reconcile(evt: PostToolUseEvent) -> list[SyncOutcome]:
+def auto_reconcile(evt: PostToolUseEvent, records: tuple[str, ...]) -> list[SyncOutcome]:
     branch = (evt.ctx.git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
     if branch and branch != "HEAD":
         run_cc_notes(evt, "reconcile", "--into", branch)
-    return auto_sync(evt)
+    return auto_sync(evt, records)
 
 
 TASK_MCP_PREFIX = MCP_TOOL_PREFIX + "task_"
@@ -621,8 +629,8 @@ def surface_sync_failures(evt: BaseHookEvent) -> HookResult | None:
     return evt.warn(*failed) if failed else None
 
 
-def cc_notes_refs_dirty(evt: BaseHookEvent) -> bool:
-    out = evt.ctx.git("for-each-ref", "--format=%(refname) %(objectname)", _LOCAL_REF_PREFIX, _TRACKING_NS)
+def cc_notes_refs_dirty(evt: BaseHookEvent, records: tuple[str, ...]) -> bool:
+    out = evt.ctx.git(*records, "for-each-ref", "--format=%(refname) %(objectname)", _LOCAL_REF_PREFIX, _TRACKING_NS)
     if not out:
         return False
     local: dict[str, str] = {}
@@ -635,7 +643,7 @@ def cc_notes_refs_dirty(evt: BaseHookEvent) -> bool:
             tracking.append((refname[len(_TRACKING_NS) :], oid))
     if not local:
         return False
-    remotes = wired_remotes(evt)
+    remotes = wired_remotes(evt, records)
     if not remotes:
         return True
     per_remote: dict[str, dict[str, str]] = {r: {} for r in remotes}
@@ -649,8 +657,9 @@ def cc_notes_refs_dirty(evt: BaseHookEvent) -> bool:
 
 @on(Event.SessionEnd, only_if=[CcNotesAvailable()], async_=True)
 def sync_at_session_end(evt: SessionEndEvent) -> None:
-    if cc_notes_refs_dirty(evt):
-        do_sync(evt)
+    records = records_git(evt)
+    if cc_notes_refs_dirty(evt, records):
+        do_sync(evt, records)
 
 
 nudge(

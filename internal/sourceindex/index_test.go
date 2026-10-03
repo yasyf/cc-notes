@@ -2,11 +2,13 @@ package sourceindex_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +26,8 @@ func fixture(t *testing.T) (sourceindex.Index, *gitobj.Repo) {
 	t.Helper()
 	dir := gittest.InitRepo(t)
 	repo := openRepo(t, dir)
-	return sourceindex.Index{Repo: repo, Git: gitcmd.Git{Dir: dir}}, repo
+	git := gitcmd.Git{Dir: dir}
+	return sourceindex.Index{Repo: repo, Git: git, Publish: git.UpdateRefs}, repo
 }
 
 func openRepo(t *testing.T, dir string) *gitobj.Repo {
@@ -56,6 +59,48 @@ func createCommit(t *testing.T, repo *gitobj.Repo, nonce string) model.SHA {
 	return commit(t, repo, "", model.Pack{Lamport: 1, Ops: []model.Op{model.CreateNote{
 		Nonce: nonce, Title: nonce,
 	}}})
+}
+
+func TestRefTransactionsRouteThroughPublish(t *testing.T) {
+	index, repo := fixture(t)
+	git := index.Git
+	var published [][]string
+	index.Publish = func(ctx context.Context, updates []gitcmd.RefUpdate) error {
+		names := make([]string, len(updates))
+		for i, update := range updates {
+			names[i] = update.Ref
+		}
+		published = append(published, names)
+		return git.UpdateRefs(ctx, updates)
+	}
+	root := createCommit(t, repo, "0123456789abcdef0123456789abcdef")
+	ref := refs.For(model.KindNote, model.EntityID(root))
+	if err := git.UpdateRef(t.Context(), ref, root, ""); err != nil {
+		t.Fatalf("create entity ref: %v", err)
+	}
+	before, err := index.Refresh(t.Context())
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	revised := commit(t, repo, root, model.Pack{Lamport: 2, Ops: []model.Op{model.SetTitle{Title: "routed"}}})
+	operationID := strings.Repeat("7", 64)
+	requestDigest := sha256.Sum256([]byte("routed request"))
+	if _, err := index.CommitOperation(t.Context(), before, operationID, "entity:note:"+string(root), requestDigest, []gitcmd.RefUpdate{{Ref: ref, New: revised, Old: root}}); err != nil {
+		t.Fatalf("CommitOperation: %v", err)
+	}
+	if _, err := index.SettleOperation(t.Context(), operationID, requestDigest, sha256.Sum256([]byte("routed receipt")), gitobj.SourceOperationAcknowledged); err != nil {
+		t.Fatalf("SettleOperation: %v", err)
+	}
+	operationRef := "refs/cc-notes-source-v1/operations/" + operationID
+	pinRef := "refs/heads/cc-notes-receipt-pins/" + operationID
+	want := [][]string{
+		{sourceindex.Ref},
+		{ref, sourceindex.Ref, operationRef, pinRef},
+		{operationRef, pinRef},
+	}
+	if !reflect.DeepEqual(published, want) {
+		t.Fatalf("published transactions = %v, want %v", published, want)
+	}
 }
 
 func TestRefreshIsIdempotentAndSealsExternalChanges(t *testing.T) {

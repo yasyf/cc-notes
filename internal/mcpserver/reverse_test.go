@@ -31,6 +31,7 @@ var excludedCommands = map[string]bool{
 	"skills":    true, // installs the plugin skill into the checkout
 	"workflows": true, // installs workflow templates into the checkout
 	"version":   true, // prints the binary version
+	"storage":   true, // binds a checkout to shared records storage, an operator step
 }
 
 // excludedCommandPaths are noun-scoped subcommands whose capability the MCP

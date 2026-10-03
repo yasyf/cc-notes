@@ -48,7 +48,7 @@ func newReconcileCmd() *cobra.Command {
 				fromBranches = append(fromBranches, b)
 			}
 			if !dryRun {
-				if err := autoInstall(ctx, cmd, s.Git); err != nil {
+				if err := autoInstall(ctx, cmd, s); err != nil {
 					return err
 				}
 			}

@@ -13,6 +13,9 @@ import (
 // commit changed. A missing ref fails with gitobj.ErrRefNotFound. Unlike Load
 // it does not consult the fold cache — the trail is a one-off read.
 func (s *Store) History(ctx context.Context, ref string) ([]fold.Step, error) {
+	if err := s.CheckRecords(); err != nil {
+		return nil, fmt.Errorf("history %s: %w", ref, err)
+	}
 	tip, err := s.Repo.Tip(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("history %s: %w", ref, err)

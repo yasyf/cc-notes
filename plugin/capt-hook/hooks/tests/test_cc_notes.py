@@ -149,6 +149,7 @@ from hooks.workflow import (
     sync_after_ref_move,
     sync_at_session_end,
     SyncFailures,
+    records_git,
     wired_remotes,
 )
 import hooks.workflow as workflow
@@ -1142,6 +1143,7 @@ def _calls_of(calls: list[tuple[str, ...]], *suffix: str) -> list[int]:
 # --remote origin``). Map it to ``None`` for a bare fallback, or to ``_wired(*names)`` to wire remotes.
 _CONFIG_KEY = ("config", "--get-regexp", r"^remote\..*\.fetch$")
 _INIT_TAIL = ("for-each-ref", "--count=1", "--format=%(refname)", "refs/cc-notes/")
+_BINDING_TAIL = ("config", "--local", "--get", "cc-notes.storage")
 
 
 def _repo(path: Path) -> Path:
@@ -1151,7 +1153,11 @@ def _repo(path: Path) -> Path:
 
 
 def repo_git(mapping: dict[tuple[str, ...], str | None], *, uninitialized: tuple[Path, ...] = (), calls: list | None = None):
-    """A ``stub_git`` that also answers the cc-notes-initialized probe: every repo holds refs except ``uninitialized``."""
+    """A ``stub_git`` that also answers the cc-notes-initialized probe: every repo holds refs except ``uninitialized``.
+
+    A ``-C <root>`` prefix with no exact key falls through to the unscoped key, so a
+    mapping keyed on bare argv answers the per-target probes the hooks scope to a repo.
+    """
     plain = stub_git(mapping)
     cold = {str(p.resolve()) for p in uninitialized}
 
@@ -1160,6 +1166,8 @@ def repo_git(mapping: dict[tuple[str, ...], str | None], *, uninitialized: tuple
             calls.append(args)
         if len(args) == 2 + len(_INIT_TAIL) and args[0] == "-C" and args[2:] == _INIT_TAIL:
             return None if args[1] in cold else "refs/cc-notes/notes/x"
+        if args[:1] == ("-C",) and tuple(args) not in mapping:
+            return plain(*args[2:])
         return plain(*args)
 
     return _git
@@ -2955,7 +2963,8 @@ def test_auto_sync_failure_warns_on_next_event_once(monkeypatch, tmp_path) -> No
         sync_after_ref_move(claim_event(tmp_path / "prompt", monkeypatch, cli=cli)) is None
         and surface_sync_failures(mock_event("UserPromptSubmit", prompt="next", session_dir=tmp_path / "prompt")) is not None,
     )
-    [outcome] = do_sync(claim_event(tmp_path, monkeypatch, cli=cli))
+    evt = claim_event(tmp_path, monkeypatch, cli=cli)
+    [outcome] = do_sync(evt, records_git(evt))
     check("sync failure: do_sync carries the failure line", not outcome.synced and outcome.failure is not None and "cc-notes sync failed" in outcome.failure, repr(outcome))
 
 
@@ -3019,7 +3028,7 @@ def test_auto_sync_benign_outcomes_queue_nothing(monkeypatch, tmp_path) -> None:
         sync_after_ref_move(evt)
         check(f"{name}: the sync was attempted", _calls_of(calls, "sync") == [0], repr(calls))
         check(f"{name}: nothing surfaces on the next event", surface_sync_failures(_next_event(session)) is None)
-        check(f"{name}: do_sync is neither synced nor failed", do_sync(claim_event(session, monkeypatch, cli=cli)) == [("", False, None)])
+        check(f"{name}: do_sync is neither synced nor failed", do_sync(evt := claim_event(session, monkeypatch, cli=cli), records_git(evt)) == [("", False, None)])
 
 
 def test_reconcile_after_merge(monkeypatch, tmp_path) -> None:
@@ -3932,14 +3941,14 @@ def test_cc_notes_refs_dirty_maps_suffix_exactly(monkeypatch, tmp_path) -> None:
     )
     evt = mock_event("SessionEnd", reason="other", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "git", stub_git({_FER_KEY: out, _CONFIG_KEY: _wired("origin")}))
-    check("dirty check: one differing suffix makes the repo dirty", cc_notes_refs_dirty(evt) is True)
+    check("dirty check: one differing suffix makes the repo dirty", cc_notes_refs_dirty(evt, records_git(evt)) is True)
 
 
 def _remotes(monkeypatch, tmp_path, config_out) -> list[str]:
     """Run ``wired_remotes`` against a ``git config --get-regexp`` payload stub."""
     evt = mock_event("PostToolUse", tool="Bash", command="cc-notes note add x", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "git", stub_git({_CONFIG_KEY: config_out}))
-    return wired_remotes(evt)
+    return wired_remotes(evt, ())
 
 
 def test_wired_remotes_parses_origin(monkeypatch, tmp_path) -> None:
@@ -3999,7 +4008,7 @@ def test_do_sync_syncs_each_wired_remote(monkeypatch, tmp_path) -> None:
         monkeypatch, tmp_path, wired=("origin", "upstream"),
         mapping={("sync", "--remote", "origin"): "ok", ("sync", "--remote", "upstream"): "ok"},
     )
-    outcome = do_sync(evt)
+    outcome = do_sync(evt, records_git(evt))
     check("do_sync: origin then upstream via --remote",
           _calls_of(calls, "sync", "--remote", "origin") == [0] and _calls_of(calls, "sync", "--remote", "upstream") == [1], repr(calls))
     check("do_sync: multi-remote success is synced with no line", outcome == [("origin", True, None), ("upstream", True, None)], repr(outcome))
@@ -4009,7 +4018,7 @@ def test_do_sync_zero_wired_falls_back_bare(monkeypatch, tmp_path) -> None:
     """No wired remote falls back to a bare `cc-notes sync` (no --remote)."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt, calls = _do_sync_event(monkeypatch, tmp_path, wired=(), mapping={("sync",): "ok"})
-    outcome = do_sync(evt)
+    outcome = do_sync(evt, records_git(evt))
     check("do_sync: bare sync when zero wired", calls == [("cc-notes", "sync")], repr(calls))
     check("do_sync: bare success is synced with no line", outcome == [("", True, None)], repr(outcome))
 
@@ -4018,7 +4027,7 @@ def test_do_sync_single_wired_uses_remote(monkeypatch, tmp_path) -> None:
     """A single wired remote syncs via --remote, and success yields no line."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt, calls = _do_sync_event(monkeypatch, tmp_path, wired=("origin",), mapping={("sync", "--remote", "origin"): "ok"})
-    outcome = do_sync(evt)
+    outcome = do_sync(evt, records_git(evt))
     check("do_sync: single wired uses --remote", calls == [("cc-notes", "sync", "--remote", "origin")], repr(calls))
     check("do_sync: success is synced with no line", outcome == [("origin", True, None)], repr(outcome))
 
@@ -4031,7 +4040,7 @@ def test_do_sync_multi_remote_failure_names_remote(monkeypatch, tmp_path) -> Non
         mapping={("sync", "--remote", "origin"): "ok"},
         raises={("sync", "--remote", "upstream"): _rejected("! [rejected] non-fast-forward\n")},
     )
-    line = next(o.failure for o in do_sync(evt) if o.failure)
+    line = next(o.failure for o in do_sync(evt, records_git(evt)) if o.failure)
     check(
         "do_sync: failure names the exact per-remote retry",
         line is not None and "cc-notes sync failed" in line and "`cc-notes sync --remote upstream`" in line,
@@ -4047,7 +4056,7 @@ def test_do_sync_partial_failure_warns(monkeypatch, tmp_path) -> None:
         mapping={("sync", "--remote", "origin"): "ok"},
         raises={("sync", "--remote", "upstream"): _rejected("! [rejected] non-fast-forward\n")},
     )
-    line = next(o.failure for o in do_sync(evt) if o.failure)
+    line = next(o.failure for o in do_sync(evt, records_git(evt)) if o.failure)
     check("do_sync: partial failure warns", line is not None and "cc-notes sync failed" in line and "Synced cc-notes refs." not in line, repr(line))
     check("do_sync: both remotes were attempted", len(_sync_runs(calls)) == 2, repr(calls))
 
@@ -4310,6 +4319,97 @@ def test_merge_in_other_repo_reconciles_and_syncs_that_repo(monkeypatch, tmp_pat
         check(f"merge target {command!r}: synced the other repo in its dir", _run_dirs(run_calls) == [real], repr(run_calls))
 
 
+_REAL_RUN = subprocess.run
+
+
+def real_git(cwd: Path):
+    """An ``evt.ctx.git`` running real git in ``cwd``: stdout, or None when git fails, the helper's fail-closed contract.
+
+    It holds the unpatched ``subprocess.run``, so a test may still stub ``workflow.subprocess.run``.
+    """
+
+    def _git(*args: str) -> str | None:
+        done = _REAL_RUN(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
+        return done.stdout if done.returncode == 0 else None
+
+    return _git
+
+
+def _bound_checkout(tmp_path: Path) -> Path:
+    """A checkout on ``topic`` bound to a records backend that holds a never-synced record and wires origin.
+
+    The checkout itself holds no records and no remotes; the binding is the canonical
+    ``cc-notes.storage`` wire form ``cc-notes storage bind`` publishes in the checkout's common config.
+    """
+    backend, checkout = tmp_path / "backend", tmp_path / "checkout"
+    for repo, branch in ((backend, "main"), (checkout, "topic")):
+        _REAL_RUN(["git", "init", "-q", "-b", branch, str(repo)], check=True)
+        _REAL_RUN(
+            ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+             "commit", "-q", "--no-verify", "--allow-empty", "-m", "c"],
+            check=True,
+        )
+    _REAL_RUN(["git", "-C", str(backend), "update-ref", "refs/cc-notes/notes/x", "HEAD"], check=True)
+    _REAL_RUN(["git", "-C", str(backend), "config", "remote.origin.fetch", "+refs/cc-notes/*:refs/cc-notes-sync/origin/*"], check=True)
+    common_dir = (backend / ".git").resolve()
+    stat = common_dir.stat()
+    binding = json.dumps({"version": 1, "commonDir": str(common_dir), "device": stat.st_dev, "inode": stat.st_ino})
+    _REAL_RUN(["git", "-C", str(checkout), "config", "cc-notes.storage", binding], check=True)
+    return checkout
+
+
+def test_bound_checkout_syncs_and_reconciles_through_its_backend(monkeypatch, tmp_path) -> None:
+    """A bound checkout's records, tracking refs, and wired remotes live in its backend; its branch stays its own.
+
+    The write, merge, and SessionEnd hooks find the record and the origin wiring through the binding,
+    from the session repo and from a foreign session alike, and reconcile onto the checkout's branch.
+    """
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    checkout = _bound_checkout(tmp_path)
+    real = str(checkout.resolve())
+    synced = ("cc-notes", "sync", "--remote", "origin")
+    answers = {("sync", "--remote", "origin"): "ok", ("reconcile", "--into", "topic"): "ok", ("-R", real, "reconcile", "--into", "topic"): "ok"}
+
+    monkeypatch.setattr(workflow, "resolve_project_dir", lambda: real)
+    for handler, command, expected in (
+        (sync_after_record_write, "cc-notes note add x", [synced]),
+        (reconcile_after_merge, "git merge feature/x", [("cc-notes", "reconcile", "--into", "topic"), synced]),
+    ):
+        state = tmp_path / f"state-{handler.__name__}"
+        state.mkdir()
+        evt = mock_event("PostToolUse", tool="Bash", command=command, session_dir=state)
+        monkeypatch.setattr(evt.ctx, "git", real_git(checkout))
+        cli, calls = recording_cli(answers)
+        monkeypatch.setattr(evt.ctx, "call_cli", cli)
+        handler(evt)
+        check(f"bound session {command!r}: synced origin through the backend", calls == expected, repr(calls))
+
+    state = tmp_path / "state-session-end"
+    state.mkdir()
+    end = mock_event("SessionEnd", reason="other", session_dir=state)
+    monkeypatch.setattr(end.ctx, "git", real_git(checkout))
+    cli, calls = recording_cli(answers)
+    monkeypatch.setattr(end.ctx, "call_cli", cli)
+    check("bound session end: the backend's unsynced record reads dirty", cc_notes_refs_dirty(end, records_git(end)) is True)
+    sync_at_session_end(end)
+    check("bound session end: synced origin through the backend", calls == [synced], repr(calls))
+
+    elsewhere = tmp_path / "elsewhere"
+    _REAL_RUN(["git", "init", "-q", str(elsewhere)], check=True)
+    monkeypatch.setattr(workflow, "resolve_project_dir", lambda: str(elsewhere))
+    state = tmp_path / "state-foreign"
+    state.mkdir()
+    evt = mock_event("PostToolUse", tool="Bash", command=f"git -C {checkout} merge feature/x", session_dir=state)
+    monkeypatch.setattr(evt.ctx, "git", real_git(elsewhere))
+    cli, calls = recording_cli(answers)
+    monkeypatch.setattr(evt.ctx, "call_cli", cli)
+    run, run_calls = recording_run()
+    monkeypatch.setattr(workflow.subprocess, "run", run)
+    reconcile_after_merge(evt)
+    check("bound foreign merge: reconciled onto the checkout's branch", calls == [("cc-notes", "-R", real, "reconcile", "--into", "topic")], repr(calls))
+    check("bound foreign merge: synced the checkout in its dir", _run_dirs(run_calls) == [real], repr(run_calls))
+
+
 def test_sync_hooks_outside_any_repo_spawn_nothing(monkeypatch, tmp_path) -> None:
     """Outside any git repository nothing spawns at all; in a repo with no cc-notes refs only the refs probe runs."""
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
@@ -4336,8 +4436,8 @@ def test_sync_hooks_outside_any_repo_spawn_nothing(monkeypatch, tmp_path) -> Non
         run, run_calls = recording_run()
         monkeypatch.setattr(workflow.subprocess, "run", run)
         handler(evt)
-        probes = [("-C", str(cold.resolve()), *_INIT_TAIL)] if in_repo else []
-        check(f"no target {command!r}: only the refs probe ran", git_calls == probes, repr(git_calls))
+        probes = [("-C", str(cold.resolve()), *_BINDING_TAIL), ("-C", str(cold.resolve()), *_INIT_TAIL)] if in_repo else []
+        check(f"no target {command!r}: only the binding and refs probes ran", git_calls == probes, repr(git_calls))
         check(f"no target {command!r}: no cc-notes call", cli_calls == [] and run_calls == [], repr((cli_calls, run_calls)))
 
 

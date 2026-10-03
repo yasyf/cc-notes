@@ -129,7 +129,7 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			if anchors.commits, err = resolveCommits(ctx, s.Git, anchors.commits); err != nil {
@@ -216,7 +216,7 @@ func (spec documentSpec[T]) editVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := spec.resolve(ctx, c, args[0])
@@ -270,7 +270,7 @@ func (spec documentSpec[T]) verifyVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := spec.resolve(ctx, c, args[0])
@@ -306,7 +306,7 @@ func (spec documentSpec[T]) supersedeVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := spec.resolve(ctx, c, args[0])
@@ -345,7 +345,7 @@ func (spec documentSpec[T]) expireVerb() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := spec.resolve(ctx, c, args[0])

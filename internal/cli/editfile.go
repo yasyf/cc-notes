@@ -519,7 +519,7 @@ func editApply(ctx context.Context, cmd *cobra.Command, s *store.Store, c *notes
 		}
 		return a.print(cmd, c, snap, jsonOut)
 	}
-	if err := autoInstall(ctx, cmd, s.Git); err != nil {
+	if err := autoInstall(ctx, cmd, s); err != nil {
 		return err
 	}
 	snap, err := s.Append(ctx, ref, ops)
@@ -578,7 +578,7 @@ func addApply(ctx context.Context, cmd *cobra.Command, s *store.Store, c *notes.
 	if err != nil {
 		return fmt.Errorf("%w\nfix %s and re-run --apply, or --abort to discard", err, files.buffer)
 	}
-	if err := autoInstall(ctx, cmd, s.Git); err != nil {
+	if err := autoInstall(ctx, cmd, s); err != nil {
 		return err
 	}
 	attOps, err := attachOps(ctx, cmd, s, attach)

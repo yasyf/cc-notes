@@ -606,3 +606,99 @@ func docIDs(ds []model.Doc) []model.EntityID {
 	}
 	return ids
 }
+
+// TestVerdictPrecedenceAgainstUnbornHead pins the verdicts that never reach a
+// drift check, for notes and docs alike, in a repository whose HEAD is unborn:
+// EXPIRED outranks everything, a never-verified entity is UNVERIFIED, and a
+// verified one is fresh or STALE by its age alone.
+func TestVerdictPrecedenceAgainstUnbornHead(t *testing.T) {
+	c, _ := newClient(t)
+	now := time.Now()
+	cases := []struct {
+		name       string
+		verifiedAt time.Time
+		staleAt    time.Time
+		want       notes.Verdict
+	}{
+		{name: "out-of-date flag is EXPIRED", verifiedAt: now, staleAt: now, want: notes.VerdictExpired},
+		{name: "never verified is UNVERIFIED", want: notes.VerdictUnverified},
+		{name: "verified within threshold is fresh", verifiedAt: now.Add(-time.Minute), want: ""},
+		{name: "verified past threshold is STALE", verifiedAt: now.Add(-2 * time.Hour), want: notes.VerdictStale},
+	}
+	unix := func(at time.Time) int64 {
+		if at.IsZero() {
+			return 0
+		}
+		return at.Unix()
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			note := model.Note{VerifiedAt: unix(tc.verifiedAt), StaleAt: unix(tc.staleAt)}
+			got, err := c.NoteVerdict(t.Context(), note, time.Hour, false)
+			if err != nil {
+				t.Fatalf("NoteVerdict: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("NoteVerdict = %q, want %q", got, tc.want)
+			}
+			got, err = c.DocVerdict(t.Context(), model.Doc{VerifiedAt: note.VerifiedAt, StaleAt: note.StaleAt}, time.Hour, false)
+			if err != nil {
+				t.Fatalf("DocVerdict: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("DocVerdict = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestVerdictDirAnchorDrift witnesses a directory anchor as its tree oid on a
+// note and a doc, then changes a file under it and finally deletes it: the
+// unchanged subtree is fresh, and either change drifts both.
+func TestVerdictDirAnchorDrift(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	commitFile(t, dir, "internal/auth/login.go", "v1\n")
+	onDir := notes.AnchorSpec{Dirs: []string{"internal/auth"}}
+	note, _, err := c.CreateNote(ctx, notes.NoteSpec{Title: "dir note", Body: "b", Anchors: onDir})
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	doc, _, err := c.CreateDoc(ctx, notes.DocSpec{Title: "dir doc", Body: "b", Anchors: onDir})
+	if err != nil {
+		t.Fatalf("CreateDoc: %v", err)
+	}
+	tree := model.SHA(gittest.Git(t, dir, "rev-parse", "HEAD:internal/auth"))
+	for _, w := range [][]model.AnchorWitness{note.Witness, doc.Witness} {
+		if len(w) != 1 || w[0].Anchor.Kind != model.AnchorDir || w[0].OID != tree {
+			t.Fatalf("witness = %+v, want one dir witness at tree %s", w, tree)
+		}
+	}
+
+	steps := []struct {
+		name   string
+		change func()
+		want   notes.Verdict
+	}{
+		{name: "unchanged subtree", change: func() {}, want: ""},
+		{name: "a file under the directory changed", change: func() { commitFile(t, dir, "internal/auth/login.go", "v2\n") }, want: notes.VerdictDrifted},
+		{name: "the directory deleted", change: func() {
+			gittest.Git(t, dir, "rm", "-q", "-r", "internal/auth")
+			gittest.Git(t, dir, "commit", "-q", "-m", "remove internal/auth")
+		}, want: notes.VerdictDrifted},
+	}
+	for _, step := range steps {
+		step.change()
+		noteVerdict, err := c.NoteVerdict(ctx, note, time.Hour, false)
+		if err != nil {
+			t.Fatalf("%s: NoteVerdict: %v", step.name, err)
+		}
+		docVerdict, err := c.DocVerdict(ctx, doc, time.Hour, false)
+		if err != nil {
+			t.Fatalf("%s: DocVerdict: %v", step.name, err)
+		}
+		if noteVerdict != step.want || docVerdict != step.want {
+			t.Errorf("%s: note %q, doc %q; want %q", step.name, noteVerdict, docVerdict, step.want)
+		}
+	}
+}

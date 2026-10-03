@@ -68,7 +68,7 @@ func newLedgerAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			if anchors.commits, err = resolveCommits(ctx, s.Git, anchors.commits); err != nil {
@@ -490,7 +490,7 @@ func openLedger(cmd *cobra.Command, prefix string) (*notes.Client, model.EntityI
 	if err != nil {
 		return nil, "", err
 	}
-	if err := autoInstall(ctx, cmd, s.Git); err != nil {
+	if err := autoInstall(ctx, cmd, s); err != nil {
 		return nil, "", err
 	}
 	id, err := c.ResolveLedger(ctx, prefix)

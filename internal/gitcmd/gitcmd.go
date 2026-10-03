@@ -54,10 +54,90 @@ var casPatterns = []string{"cannot lock ref", "is at", "but expected", "referenc
 // when the remote tip is unknown locally.
 var nonFFPatterns = []string{"non-fast-forward", "fetch first", "[rejected]"}
 
-// Git runs the system git binary against one repository. Dir may be any
-// path inside the repository or its worktree; every invocation passes it
-// via -C.
-type Git struct{ Dir string }
+// Git runs the system git binary against one repository. A checkout handle
+// (the zero value plus Dir) runs with -C Dir under the inherited environment,
+// so git discovers the repository from any path inside it or its worktree. A
+// Backend handle names a git directory outright and never discovers one; it
+// runs from workDir.
+type Git struct {
+	Dir     string
+	workDir string
+	backend bool
+}
+
+// Backend returns a handle on the absolute common directory dir, pinned as
+// --git-dir so no discovery or inherited routing variable can redirect it,
+// that runs every command from workDir: the repository's main working tree
+// root, or dir itself for a bare repository, so cwd-relative transport paths
+// such as a relative remote URL resolve exactly as for git run inside it.
+func Backend(dir, workDir string) Git { return Git{Dir: dir, workDir: workDir, backend: true} }
+
+// Discover resolves the repository containing dir, any path inside it or its
+// worktree, with inherited repository routing dropped, so dir alone selects
+// it: the scrubbed form of Git.Dirs for a path not yet known to be a git
+// directory. The records handle on its result is Backend(commonDir, workDir).
+func Discover(ctx context.Context, dir string) (gitDir, commonDir string, bare bool, err error) {
+	return Git{Dir: dir}.dirs(ctx, scrubRouting(os.Environ()))
+}
+
+// argv prefixes args with the repository selection: -C Dir for a checkout
+// handle, -C workDir plus --git-dir=Dir for a backend handle.
+func (g Git) argv(args ...string) []string {
+	if g.backend {
+		return append([]string{"-C", g.workDir, "--git-dir=" + g.Dir}, args...)
+	}
+	return append([]string{"-C", g.Dir}, args...)
+}
+
+// routingEnv names every environment variable that reroutes git away from the
+// repository -C selects. It is an exact-name deny-list: GIT_CONFIG_* injection,
+// credential, SSH, TLS, identity, and trace variables all pass through.
+var routingEnv = []string{
+	"GIT_DIR",
+	"GIT_WORK_TREE",
+	"GIT_COMMON_DIR",
+	"GIT_OBJECT_DIRECTORY",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_INDEX_FILE",
+	"GIT_SHALLOW_FILE",
+	"GIT_GRAFT_FILE",
+	"GIT_REPLACE_REF_BASE",
+	"GIT_NO_REPLACE_OBJECTS",
+	"GIT_NAMESPACE",
+	"GIT_CEILING_DIRECTORIES",
+	"GIT_DISCOVERY_ACROSS_FILESYSTEM",
+	"GIT_QUARANTINE_PATH",
+	"GIT_REFERENCE_BACKEND",
+	"GIT_CONFIG",
+	"GIT_PREFIX",
+	"GIT_IMPLICIT_WORK_TREE",
+}
+
+// noLazyFetchEnv keeps a commit probe from fetching a missing object from a
+// promisor remote: a partial clone answers "missing" instead of dialing out.
+const noLazyFetchEnv = "GIT_NO_LAZY_FETCH=1"
+
+func routesRepository(kv string) bool {
+	name, _, _ := strings.Cut(kv, "=")
+	return slices.Contains(routingEnv, name)
+}
+
+// environ returns the environment one command runs under: env as given for a
+// checkout handle (nil inherits the process environment), the inherited or
+// given environment minus routingEnv for a backend handle.
+func (g Git) environ(env []string) []string {
+	if !g.backend {
+		return env
+	}
+	if env == nil {
+		env = os.Environ()
+	}
+	return scrubRouting(env)
+}
+
+func scrubRouting(env []string) []string {
+	return slices.DeleteFunc(slices.Clone(env), routesRepository)
+}
 
 // commandError carries the trimmed stderr of a failed git invocation for
 // sentinel classification.
@@ -88,10 +168,16 @@ func (g Git) run(ctx context.Context, stdin string, args ...string) (string, err
 	return g.runEnv(ctx, nil, stdin, args...)
 }
 
+// probe runs a commit-existence, commit-resolution, or ancestry query that
+// must answer from the local object database alone.
+func (g Git) probe(ctx context.Context, stdin string, args ...string) (string, error) {
+	return g.runEnv(ctx, append(os.Environ(), noLazyFetchEnv), stdin, args...)
+}
+
 func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...string) (string, error) {
 	//nolint:gosec // G204: git is a fixed argv[0]; args are internal git subcommands, not user-shell input, in this CLI's own repo.
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", g.Dir}, args...)...)
-	cmd.Env = env
+	cmd := exec.CommandContext(ctx, "git", g.argv(args...)...)
+	cmd.Env = g.environ(env)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
@@ -224,9 +310,10 @@ func (g Git) WorktreeBlobOID(ctx context.Context, path string) (string, error) {
 
 // ResolveRevs resolves every revision expression to the full sha of the object
 // it names in one git cat-file invocation, keyed by the expression. An
-// expression naming no object, or an ambiguous one, maps to the empty sha.
+// expression naming no object, or an ambiguous one, maps to the empty sha. An
+// object a partial clone never fetched is missing: the probe never fetches.
 func (g Git) ResolveRevs(ctx context.Context, revs []string) (map[string]model.SHA, error) {
-	out, err := g.run(ctx, strings.Join(revs, "\n")+"\n", "cat-file", "--batch-check=%(objectname)")
+	out, err := g.probe(ctx, strings.Join(revs, "\n")+"\n", "cat-file", "--batch-check=%(objectname)")
 	if err != nil {
 		return nil, fmt.Errorf("resolve revs: %w", err)
 	}
@@ -264,9 +351,10 @@ func (g Git) CheckAttr(ctx context.Context, attr string, paths []string) (map[st
 }
 
 // CommitSHA resolves rev to the full hex sha of the commit it names, for
-// blame. A rev that names no commit wraps ErrRevNotFound.
+// blame. A rev that names no commit, or one a partial clone never fetched,
+// wraps ErrRevNotFound: the probe never fetches.
 func (g Git) CommitSHA(ctx context.Context, rev string) (model.SHA, error) {
-	out, err := g.run(ctx, "", "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	out, err := g.probe(ctx, "", "rev-parse", "--verify", "--quiet", rev+"^{commit}")
 	if err != nil {
 		var cmdErr *commandError
 		if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 {
@@ -292,9 +380,10 @@ func (g Git) ResolveCommit(ctx context.Context, rev string) (model.SHA, error) {
 
 // MergeBase returns the best common ancestor of a and b (git merge-base) as a
 // full hex sha. When the two revs share no common ancestor — git exits 1 with
-// empty stdout — it wraps ErrRevNotFound.
+// empty stdout — it wraps ErrRevNotFound. The walk never fetches missing
+// history from a promisor remote.
 func (g Git) MergeBase(ctx context.Context, a, b string) (model.SHA, error) {
-	out, err := g.run(ctx, "", "merge-base", a, b)
+	out, err := g.probe(ctx, "", "merge-base", a, b)
 	if err != nil {
 		var cmdErr *commandError
 		if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 && strings.TrimSpace(out) == "" {
@@ -587,6 +676,15 @@ func envWithoutGitConfig() []string {
 	return slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "GIT_CONFIG=") })
 }
 
+// ConfigFileSet sets key to value in exactly the config file at path — no
+// scope resolution, no includes — via git config --file.
+func (g Git) ConfigFileSet(ctx context.Context, path, key, value string) error {
+	if _, err := g.run(ctx, "", "config", "--file", path, key, value); err != nil {
+		return fmt.Errorf("config set %s in %s: %w", key, path, err)
+	}
+	return nil
+}
+
 // ConfigGetAll returns every value of key in the repository-local config,
 // in order, or an empty slice when the key is unset.
 func (g Git) ConfigGetAll(ctx context.Context, key string) ([]string, error) {
@@ -753,7 +851,11 @@ func (g Git) CommonDir(ctx context.Context) (string, error) {
 // Dirs returns the physical per-worktree and shared git directories and
 // whether the repository is bare, from one --path-format=absolute rev-parse.
 func (g Git) Dirs(ctx context.Context) (gitDir, commonDir string, bare bool, err error) {
-	out, err := g.run(ctx, "", "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir", "--is-bare-repository")
+	return g.dirs(ctx, nil)
+}
+
+func (g Git) dirs(ctx context.Context, env []string) (gitDir, commonDir string, bare bool, err error) {
+	out, err := g.runEnv(ctx, env, "", "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir", "--is-bare-repository")
 	if err != nil {
 		return "", "", false, fmt.Errorf("git dirs: %w", err)
 	}

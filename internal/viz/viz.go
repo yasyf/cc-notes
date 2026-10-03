@@ -301,14 +301,22 @@ func isBranchRef(ref string) bool {
 // ref move, appearance, or removal changes it, and so does a checkout that moves
 // HEAD to another branch without moving a tip, or a different window.
 func (b *Builder) digest(ctx context.Context, since int64) (string, error) {
-	prefixes := []string{"refs/heads/", "refs/remotes/origin/", refs.Namespace}
-	tips, err := b.store.Git.Refs(ctx, prefixes...)
+	if err := b.store.CheckRecords(); err != nil {
+		return "", fmt.Errorf("list graph refs: %w", err)
+	}
+	branches, err := b.store.Git.Refs(ctx, "refs/heads/", "refs/remotes/origin/")
 	if err != nil {
 		return "", fmt.Errorf("list graph refs: %w", err)
 	}
-	lines := make([]string, 0, len(tips))
-	for ref, tip := range tips {
-		lines = append(lines, ref+"\x00"+string(tip))
+	entities, err := b.store.RecordsGit.Refs(ctx, refs.Namespace)
+	if err != nil {
+		return "", fmt.Errorf("list graph refs: %w", err)
+	}
+	lines := make([]string, 0, len(branches)+len(entities))
+	for _, tips := range []map[string]model.SHA{branches, entities} {
+		for ref, tip := range tips {
+			lines = append(lines, ref+"\x00"+string(tip))
+		}
 	}
 	sort.Strings(lines)
 	head, err := b.head(ctx)
@@ -352,7 +360,10 @@ func (b *Builder) head(ctx context.Context) (string, error) {
 
 // entityRefs lists every cc-notes entity ref, sorted, paired with its tip.
 func (b *Builder) entityRefs(ctx context.Context) ([]refTip, error) {
-	tips, err := b.store.Git.Refs(ctx, refs.Namespace)
+	if err := b.store.CheckRecords(); err != nil {
+		return nil, fmt.Errorf("list entity refs: %w", err)
+	}
+	tips, err := b.store.RecordsGit.Refs(ctx, refs.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("list entity refs: %w", err)
 	}

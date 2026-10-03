@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -139,18 +140,25 @@ func deriveRemote(ctx context.Context, g gitcmd.Git) (string, error) {
 	return defaultRemote, nil
 }
 
-// autoInstall best-effort wires the derived remote's refspecs before a
-// write: a repository without the remote is left alone, any other failure
-// is loud. Config lines it actually added are announced once on stderr —
-// including the push.default override when the HEAD push refspec is new —
-// so the silent first mutating command never changes git push behavior
-// invisibly.
-func autoInstall(ctx context.Context, cmd *cobra.Command, g gitcmd.Git) error {
-	remote, err := deriveRemote(ctx, g)
+func recordsConfig(s *store.Store) string {
+	if _, bound := s.Binding(); !bound {
+		return ".git/config"
+	}
+	return filepath.Join(s.RecordsCommonDir(), "config")
+}
+
+// autoInstall best-effort wires the derived remote's refspecs into the
+// store's records repository before a write: a repository without the remote
+// is left alone, any other failure is loud. Config lines it actually added are
+// announced once on stderr — including the push.default override when the HEAD
+// push refspec is new — so the silent first mutating command never changes git
+// push behavior invisibly.
+func autoInstall(ctx context.Context, cmd *cobra.Command, s *store.Store) error {
+	remote, err := deriveRemote(ctx, s.RecordsGit)
 	if err != nil {
 		return err
 	}
-	report, err := ccsync.Install(ctx, g, remote)
+	report, err := installRecords(ctx, s, remote)
 	switch {
 	case errors.Is(err, ccsync.ErrRemoteNotFound):
 		return nil
@@ -161,8 +169,8 @@ func autoInstall(ctx context.Context, cmd *cobra.Command, g gitcmd.Git) error {
 	}
 	stderr := cmd.ErrOrStderr()
 	if len(report.Added) > 0 {
-		if _, err := fmt.Fprintf(stderr, "cc-notes: installed refspecs in .git/config for %q: %s\n",
-			remote, strings.Join(report.Added, "; ")); err != nil {
+		if _, err := fmt.Fprintf(stderr, "cc-notes: installed refspecs in %s for %q: %s\n",
+			recordsConfig(s), remote, strings.Join(report.Added, "; ")); err != nil {
 			return err
 		}
 	}
@@ -179,6 +187,20 @@ func autoInstall(ctx context.Context, cmd *cobra.Command, g gitcmd.Git) error {
 		}
 	}
 	return nil
+}
+
+// installRecords installs remote's records refspecs through the store's
+// records handle, then rechecks the binding, so config written into a
+// context bound meanwhile fails naming that config.
+func installRecords(ctx context.Context, s *store.Store, remote string) (ccsync.InstallReport, error) {
+	report, err := ccsync.Install(ctx, s.RecordsGit, remote)
+	if err != nil {
+		return ccsync.InstallReport{}, err
+	}
+	if err := s.CheckRecords(); err != nil {
+		return ccsync.InstallReport{}, fmt.Errorf("installed refspecs in %s: %w", recordsConfig(s), err)
+	}
+	return report, nil
 }
 
 // dirExists reports whether path is an existing directory.

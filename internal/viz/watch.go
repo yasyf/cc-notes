@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -16,10 +17,11 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-// watchPrefixes are the ref namespaces the Watcher snapshots each tick: local
-// and remote branches, and the cc-notes entity namespace. A move under any of
-// them changes the graph, so the digest the Builder caches on moves with it.
-var watchPrefixes = []string{"refs/heads/", "refs/remotes/", refs.Namespace}
+// branchPrefixes are the context checkout's ref namespaces the Watcher
+// snapshots each tick alongside the records repository's refs.Namespace. A move
+// under any of them changes the graph, so the digest the Builder caches on moves
+// with it.
+var branchPrefixes = []string{"refs/heads/", "refs/remotes/"}
 
 // headKey is the synthetic snapshot key for the commit HEAD resolves to. It
 // catches a checkout that repoints HEAD without moving any branch tip; it is not
@@ -44,8 +46,7 @@ type refsEvent struct {
 // goroutine beyond Run's own loop and holds all scan state single-threaded, so
 // it carries no synchronization.
 type Watcher struct {
-	repo     *gitobj.Repo
-	git      gitcmd.Git
+	store    *store.Store
 	builder  *Builder
 	hub      *Hub
 	interval time.Duration
@@ -58,7 +59,7 @@ type Watcher struct {
 // NewWatcher returns a Watcher over the store's refs that publishes to hub every
 // interval.
 func NewWatcher(s *store.Store, b *Builder, hub *Hub, interval time.Duration) *Watcher {
-	return &Watcher{repo: s.Repo, git: s.Git, builder: b, hub: hub, interval: interval}
+	return &Watcher{store: s, builder: b, hub: hub, interval: interval}
 }
 
 // Run performs one immediate baseline scan on entry — recording the current ref
@@ -128,14 +129,25 @@ func (w *Watcher) scan(ctx context.Context) error {
 	return nil
 }
 
-// snapshot builds the current ref→tip map over watchPrefixes plus the headKey
-// tip, and resolves the branch HEAD points at (empty when detached).
+// snapshot builds the current ref→tip map over the context's branchPrefixes,
+// the records repository's entity refs, and the headKey tip, and resolves the
+// branch HEAD points at (empty when detached).
 func (w *Watcher) snapshot(ctx context.Context) (map[string]model.SHA, string, error) {
-	tips, err := w.git.Refs(ctx, watchPrefixes...)
+	if err := w.store.CheckRecords(); err != nil {
+		return nil, "", fmt.Errorf("list watched refs: %w", err)
+	}
+	branches, err := w.store.Git.Refs(ctx, branchPrefixes...)
 	if err != nil {
 		return nil, "", fmt.Errorf("list watched refs: %w", err)
 	}
-	tip, err := w.repo.Tip(ctx, headKey)
+	entities, err := w.store.RecordsGit.Refs(ctx, refs.Namespace)
+	if err != nil {
+		return nil, "", fmt.Errorf("list watched refs: %w", err)
+	}
+	tips := make(map[string]model.SHA, len(branches)+len(entities)+1)
+	maps.Copy(tips, branches)
+	maps.Copy(tips, entities)
+	tip, err := w.store.ContextRepo.Tip(ctx, headKey)
 	switch {
 	case errors.Is(err, gitobj.ErrRefNotFound):
 	case err != nil:
@@ -154,7 +166,7 @@ func (w *Watcher) snapshot(ctx context.Context) (map[string]model.SHA, string, e
 // resolvable branch to the empty string — the same source and convention as the
 // Builder's head().
 func (w *Watcher) headBranch(ctx context.Context) (string, error) {
-	branch, err := w.git.CurrentBranch(ctx)
+	branch, err := w.store.Git.CurrentBranch(ctx)
 	if errors.Is(err, gitcmd.ErrDetachedHead) {
 		return "", nil
 	}

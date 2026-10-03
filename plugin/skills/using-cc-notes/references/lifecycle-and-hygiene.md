@@ -39,6 +39,27 @@ ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes	DRIFTED
 
 The lean line gains a trailing verdict. `--drift` restricts the listing to drifted notes; without it, review surfaces every note needing attention.
 
+### Resolve unavailable history
+
+`HISTORY-UNAVAILABLE` means the checkout's shallow history cannot establish whether a
+witnessed commit anchor is reachable from HEAD. `DRIFTED` means the check proved a change:
+path or directory content changed or vanished, or an anchored commit is no longer reachable.
+`STALE` means the last verification is too old. Missing history leaves drift undecided; a proven
+drift on another anchor still takes precedence.
+
+Deepen the checkout, then run review again without `--drift`. For a shallow checkout whose
+`origin` has the full history:
+
+```console
+$ git fetch --unshallow origin
+$ cc-notes note review
+```
+
+cc-notes checks the checkout's own graph even when it shares records with a full source
+repository. It does not fetch missing commit history or borrow the source's graph for this
+decision. `HISTORY-UNAVAILABLE` does not count toward the note, doc, or answer `needs_review`
+totals in `cc-notes status`.
+
 ### Supersession
 
 When a decision is replaced instead of re-confirmed, record the replacement as a real edge:
@@ -67,13 +88,14 @@ The note surfaces in `cc-notes note review` as `EXPIRED`, which takes precedence
 
 ### Review verdicts
 
-`cc-notes note review` surfaces every kind of note decay. Each flagged note carries exactly one verdict, with precedence `EXPIRED > UNVERIFIED > DRIFTED > STALE`:
+`cc-notes note review` surfaces freshness problems and missing history. Each flagged note carries exactly one verdict, with precedence `EXPIRED > UNVERIFIED > DRIFTED > HISTORY-UNAVAILABLE > STALE`:
 
 | Verdict | Meaning |
 |---------|---------|
 | `EXPIRED` | An agent flagged it out-of-date by hand with `note expire` |
 | `UNVERIFIED` | Never verified since creation |
-| `DRIFTED` | An anchored path or commit changed since the note was last verified |
+| `DRIFTED` | Anchored path or directory content changed or vanished, or a commit is proven unreachable from HEAD |
+| `HISTORY-UNAVAILABLE` | Shallow checkout history prevents a commit reachability decision; deepen the checkout and review again |
 | `STALE` | Verified, but longer ago than the staleness threshold |
 | `DANGLING` | A supersede edge points at a note that has since been tombstoned |
 
@@ -87,6 +109,15 @@ The note surfaces in `cc-notes note review` as `EXPIRED`, which takes precedence
 The staleness threshold also comes from `cc-notes.noteStaleAfter` in git config or the `CC_NOTES_NOTE_STALE_AFTER` environment variable, defaulting to 90 days. A `DANGLING` verdict means a broken chain would otherwise silently hide a fact; the fix is to re-point or remove the edge.
 
 The everyday loop: run `cc-notes note review` periodically, `cc-notes note verify` the notes that still hold, and `cc-notes note supersede` the ones a newer decision replaced.
+
+### Storage errors
+
+When a checkout [shares records storage](cli-reference.md#cc-notes-storage-bind), a malformed
+binding or an unavailable, replaced, or redirecting backend produces a visible error. The
+message names `cc-notes.storage`, its config file, and the source when it can be resolved;
+an empty corpus does not stand in for a failed lookup. Resolve the reported binding or
+backend problem before retrying. If a running client reports `storage binding changed since
+open`, reopen the store so it reads the current binding.
 
 ## Task lifecycle hygiene
 

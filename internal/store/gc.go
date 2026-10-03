@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -37,8 +38,11 @@ func (s *Store) GCLocal(ctx context.Context) (int, error) {
 // there is no task tombstone. Pruning is best-effort and non-convergent — a
 // stale clone that never saw the delete re-advertises the ref on its next push —
 // so it continues past per-ref failures, tallying pruned (both deletes
-// succeeded) and failed, and never returns a per-ref error.
-func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, failed int, err error) {
+// succeeded) and failed, and never returns a per-ref error. A binding changed
+// since open is the one exception: it returns naming the ref deleted locally,
+// before that ref's remote copy is touched.
+func (s *Store) PruneTombstones(ctx context.Context, remote string) (int, int, error) {
+	var tally pruneTally
 	notes, err := s.ListNotes(ctx, true, true)
 	if err != nil {
 		return 0, 0, err
@@ -47,159 +51,117 @@ func (s *Store) PruneTombstones(ctx context.Context, remote string) (pruned, fai
 		if !n.Deleted {
 			continue
 		}
-		ref := refs.For(model.KindNote, n.ID)
-		if err := s.Git.DeleteRef(ctx, ref, n.Head); err != nil {
-			failed++
-			continue
+		if err := s.prune(ctx, remote, refs.For(model.KindNote, n.ID), n.Head, &tally); err != nil {
+			return tally.pruned, tally.failed, err
 		}
-		s.cache.delete(n.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
-			failed++
-			continue
-		}
-		pruned++
 	}
 	docs, err := s.ListDocs(ctx, true, true)
 	if err != nil {
-		return pruned, failed, err
+		return tally.pruned, tally.failed, err
 	}
 	for _, d := range docs {
 		if !d.Deleted {
 			continue
 		}
-		ref := refs.For(model.KindDoc, d.ID)
-		if err := s.Git.DeleteRef(ctx, ref, d.Head); err != nil {
-			failed++
-			continue
+		if err := s.prune(ctx, remote, refs.For(model.KindDoc, d.ID), d.Head, &tally); err != nil {
+			return tally.pruned, tally.failed, err
 		}
-		s.cache.delete(d.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
-			failed++
-			continue
-		}
-		pruned++
 	}
 	logs, err := s.ListLogs(ctx, true)
 	if err != nil {
-		return pruned, failed, err
+		return tally.pruned, tally.failed, err
 	}
 	for _, l := range logs {
 		if !l.Deleted {
 			continue
 		}
-		ref := refs.For(model.KindLog, l.ID)
-		if err := s.Git.DeleteRef(ctx, ref, l.Head); err != nil {
-			failed++
-			continue
+		if err := s.prune(ctx, remote, refs.For(model.KindLog, l.ID), l.Head, &tally); err != nil {
+			return tally.pruned, tally.failed, err
 		}
-		s.cache.delete(l.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
-			failed++
-			continue
-		}
-		pruned++
 	}
 	runbooks, err := listOf(ctx, s, model.KindRunbook, fold.Runbook, ListOpts{IncludeDeleted: true})
 	if err != nil {
-		return pruned, failed, err
+		return tally.pruned, tally.failed, err
 	}
 	for _, rb := range runbooks {
 		if !rb.Deleted {
 			continue
 		}
-		ref := refs.For(model.KindRunbook, rb.ID)
-		if err := s.Git.DeleteRef(ctx, ref, rb.Head); err != nil {
-			failed++
-			continue
+		if err := s.prune(ctx, remote, refs.For(model.KindRunbook, rb.ID), rb.Head, &tally); err != nil {
+			return tally.pruned, tally.failed, err
 		}
-		s.cache.delete(rb.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
-			failed++
-			continue
-		}
-		pruned++
 	}
 	ledgers, err := listOf(ctx, s, model.KindLedger, fold.Ledger, ListOpts{IncludeDeleted: true})
 	if err != nil {
-		return pruned, failed, err
+		return tally.pruned, tally.failed, err
 	}
 	for _, l := range ledgers {
 		if !l.Deleted {
 			continue
 		}
-		ref := refs.For(model.KindLedger, l.ID)
-		if err := s.Git.DeleteRef(ctx, ref, l.Head); err != nil {
-			failed++
-			continue
+		if err := s.prune(ctx, remote, refs.For(model.KindLedger, l.ID), l.Head, &tally); err != nil {
+			return tally.pruned, tally.failed, err
 		}
-		s.cache.delete(l.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
-			failed++
-			continue
-		}
-		pruned++
 	}
 	investigations, err := listOf(ctx, s, model.KindInvestigation, fold.Investigation, ListOpts{IncludeDeleted: true})
 	if err != nil {
-		return pruned, failed, err
+		return tally.pruned, tally.failed, err
 	}
 	for _, inv := range investigations {
 		if !inv.Deleted {
 			continue
 		}
-		ref := refs.For(model.KindInvestigation, inv.ID)
-		if err := s.Git.DeleteRef(ctx, ref, inv.Head); err != nil {
-			failed++
-			continue
+		if err := s.prune(ctx, remote, refs.For(model.KindInvestigation, inv.ID), inv.Head, &tally); err != nil {
+			return tally.pruned, tally.failed, err
 		}
-		s.cache.delete(inv.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
-			failed++
-			continue
-		}
-		pruned++
 	}
 	plans, err := listOf(ctx, s, model.KindPlan, fold.Plan, ListOpts{IncludeDeleted: true})
 	if err != nil {
-		return pruned, failed, err
+		return tally.pruned, tally.failed, err
 	}
 	for _, p := range plans {
 		if !p.Deleted {
 			continue
 		}
-		ref := refs.For(model.KindPlan, p.ID)
-		if err := s.Git.DeleteRef(ctx, ref, p.Head); err != nil {
-			failed++
-			continue
+		if err := s.prune(ctx, remote, refs.For(model.KindPlan, p.ID), p.Head, &tally); err != nil {
+			return tally.pruned, tally.failed, err
 		}
-		s.cache.delete(p.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
-			failed++
-			continue
-		}
-		pruned++
 	}
 	answers, err := s.ListAnswers(ctx, true, true)
 	if err != nil {
-		return pruned, failed, err
+		return tally.pruned, tally.failed, err
 	}
 	for _, a := range answers {
 		if !a.Deleted {
 			continue
 		}
-		ref := refs.For(model.KindAnswer, a.ID)
-		if err := s.Git.DeleteRef(ctx, ref, a.Head); err != nil {
-			failed++
-			continue
+		if err := s.prune(ctx, remote, refs.For(model.KindAnswer, a.ID), a.Head, &tally); err != nil {
+			return tally.pruned, tally.failed, err
 		}
-		s.cache.delete(a.Head)
-		if err := s.Git.DeleteRemoteRef(ctx, remote, ref); err != nil {
-			failed++
-			continue
-		}
-		pruned++
 	}
-	return pruned, failed, nil
+	return tally.pruned, tally.failed, nil
+}
+
+type pruneTally struct{ pruned, failed int }
+
+// prune deletes one tombstoned ref locally, rechecks the binding so a context
+// rebound meanwhile fails naming the ref before its remote copy is touched,
+// then deletes it on remote, tallying per-ref git failures.
+func (s *Store) prune(ctx context.Context, remote, ref string, head model.SHA, tally *pruneTally) error {
+	if err := s.RecordsGit.DeleteRef(ctx, ref, head); err != nil {
+		tally.failed++
+		return nil
+	}
+	s.cache.delete(head)
+	if err := s.CheckRecords(); err != nil {
+		return fmt.Errorf("deleted %s: %w", ref, err)
+	}
+	if err := s.RecordsGit.DeleteRemoteRef(ctx, remote, ref); err != nil {
+		tally.failed++
+		return nil
+	}
+	tally.pruned++
+	return nil
 }
 
 // liveTips returns the set of commit shas that are the current tip of some

@@ -60,7 +60,7 @@ stdin ("... | cc-notes papercut -").`,
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			journal, err := findOrCreatePapercutLog(ctx, cmd, c)

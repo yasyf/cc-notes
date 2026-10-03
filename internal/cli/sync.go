@@ -10,7 +10,6 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/gitcmd"
-	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/cc-notes/notes"
 )
@@ -52,7 +51,7 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			if _, err := ccsync.Install(ctx, s.Git, remote); err != nil {
+			if _, err := installRecords(ctx, s, remote); err != nil {
 				return err
 			}
 			root, err := s.Git.Root(ctx)

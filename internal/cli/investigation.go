@@ -79,7 +79,7 @@ func newInvestigationOpenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			if anchors.commits, err = resolveCommits(ctx, s.Git, anchors.commits); err != nil {
@@ -196,7 +196,7 @@ func newInvestigationAppendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveInvestigation(ctx, args[0])
@@ -312,7 +312,7 @@ func newFindingAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveInvestigation(ctx, args[0])
@@ -355,7 +355,7 @@ func newFindingEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveInvestigation(ctx, args[0])
@@ -390,7 +390,7 @@ func newFindingStatusCmd(use string, status model.FindingStatus) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveInvestigation(ctx, args[0])
@@ -428,7 +428,7 @@ func newFindingRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveInvestigation(ctx, args[0])
@@ -598,7 +598,7 @@ func runInvestigationTransition(cmd *cobra.Command, args []string, requireText, 
 	if err != nil {
 		return err
 	}
-	if err := autoInstall(ctx, cmd, s.Git); err != nil {
+	if err := autoInstall(ctx, cmd, s); err != nil {
 		return err
 	}
 	id, err := c.ResolveInvestigation(ctx, args[0])
@@ -661,7 +661,7 @@ func newInvestigationFixCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveInvestigation(ctx, args[0])
@@ -697,7 +697,7 @@ func newInvestigationFollowUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveInvestigation(ctx, args[0])
@@ -743,7 +743,7 @@ func newInvestigationSupersedeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveInvestigation(ctx, args[0])
@@ -808,7 +808,7 @@ func newInvestigationEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoInstall(ctx, cmd, s.Git); err != nil {
+			if err := autoInstall(ctx, cmd, s); err != nil {
 				return err
 			}
 			id, err := c.ResolveInvestigation(ctx, args[0])
