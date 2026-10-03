@@ -387,6 +387,32 @@ func TestReadChainIncompleteDeletedObject(t *testing.T) {
 	}
 }
 
+func TestReadChainMaintenanceLoosePack(t *testing.T) {
+	dir := initRepo(t)
+	repo := open(t, dir)
+	c1 := write(t, repo, nil, t0, createPack)
+	c2 := write(t, repo, []model.SHA{c1}, t1, retitlePack)
+
+	git(t, dir, "maintenance", "run", "--task=loose-objects")
+	git(t, dir, "maintenance", "run", "--task=loose-objects")
+	loose := filepath.Join(dir, ".git", "objects", string(c1)[:2], string(c1)[2:])
+	if _, err := os.Stat(loose); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stat %s = %v, want the object packed away", loose, err)
+	}
+	packs, err := filepath.Glob(filepath.Join(dir, ".git", "objects", "pack", "loose-*.pack"))
+	if err != nil || len(packs) == 0 {
+		t.Fatalf("loose-objects wrote no loose-*.pack: %v", err)
+	}
+
+	got, err := open(t, dir).ReadChain(t.Context(), c2)
+	if err != nil {
+		t.Fatalf("ReadChain: %v", err)
+	}
+	if len(got) != 2 || got[0].SHA != c2 || got[1].SHA != c1 {
+		t.Errorf("ReadChain = %+v, want [%s %s]", got, c2, c1)
+	}
+}
+
 func TestReadChainIncompleteShallow(t *testing.T) {
 	origin := initRepo(t)
 	repo := open(t, origin)
