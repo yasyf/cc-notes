@@ -81,7 +81,7 @@ func newProjectAddCmd() *cobra.Command {
 	bindBody(flags, &body, "project description; - reads stdin")
 	bindAddLabels(cmd, &labels)
 	bindJSON(flags, &jsonOut)
-	return cmd
+	return withTitleFlag(cmd)
 }
 
 func newProjectListCmd() *cobra.Command {

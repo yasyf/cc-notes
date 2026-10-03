@@ -94,7 +94,7 @@ func newLogAddCmd() *cobra.Command {
 	bindAddLabels(cmd, &labels)
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
-	return cmd
+	return withTitleFlag(cmd)
 }
 
 func newLogAppendCmd() *cobra.Command {

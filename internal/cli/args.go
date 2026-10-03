@@ -180,3 +180,36 @@ func noUnknownSubcommand(cmd *cobra.Command, args []string) error {
 // rejecting unknown subcommands via noUnknownSubcommand — instead of
 // short-circuiting to help; a bare group invocation still prints help.
 func runHelp(cmd *cobra.Command, _ []string) error { return cmd.Help() }
+
+func withTitleFlag(cmd *cobra.Command) *cobra.Command {
+	var title string
+	cmd.Flags().StringVar(&title, "title", "", "the TITLE, given as a flag instead of positionally")
+	validate, run := cmd.Args, cmd.RunE
+	merge := func(cmd *cobra.Command, args []string) ([]string, error) {
+		switch {
+		case !cmd.Flags().Changed("title"):
+			return args, nil
+		case len(args) == 0:
+			return []string{title}, nil
+		case args[0] == title:
+			return args, nil
+		default:
+			return nil, &UsageError{Err: fmt.Errorf("%s got two titles, --title %q and positional TITLE %q; give the title once", cmd.CommandPath(), title, args[0])}
+		}
+	}
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		merged, err := merge(cmd, args)
+		if err != nil {
+			return err
+		}
+		return validate(cmd, merged)
+	}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		merged, err := merge(cmd, args)
+		if err != nil {
+			return err
+		}
+		return run(cmd, merged)
+	}
+	return cmd
+}

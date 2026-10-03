@@ -111,7 +111,7 @@ func newPlanAddCmd() *cobra.Command {
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
 	cmd.MarkFlagsMutuallyExclusive("body", "body-file")
-	return cmd
+	return withTitleFlag(cmd)
 }
 
 // planBody resolves a plan's body from exactly one of --body-file, the

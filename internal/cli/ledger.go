@@ -96,7 +96,7 @@ func newLedgerAddCmd() *cobra.Command {
 	bindColumns(flags, &columns)
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
-	return cmd
+	return withTitleFlag(cmd)
 }
 
 func newLedgerListCmd() *cobra.Command {

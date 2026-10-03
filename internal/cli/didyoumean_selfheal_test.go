@@ -179,6 +179,7 @@ func TestSelfHealingErrorExactShapes(t *testing.T) {
 			args: []string{"runbook", "add", "Deploy", "--attach"},
 			want: "unknown flag: --attach\n" +
 				"runbook add takes: --body --branch --commit --dir --json --label --local --path --step --sync\n" +
+				"                   --title\n" +
 				`--attach exists on: "answer add" (` + attachUsage + `), "doc add" (` + attachUsage + `), "log add" (` + attachUsage + `)`,
 		},
 	}

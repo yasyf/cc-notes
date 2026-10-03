@@ -161,7 +161,7 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 	flags.BoolVar(&checkout, "checkout", false, "write "+withArticle(spec.noun)+" template (prefilled from TITLE and anchor/label flags) to an editable file and print its path")
 	flags.BoolVar(&apply, "apply", false, "create the "+spec.noun+" from the checked-out file (add --apply PATH); may carry --attach")
 	flags.BoolVar(&abort, "abort", false, "discard the checked-out file (add --abort PATH)")
-	return cmd
+	return withTitleFlag(cmd)
 }
 
 // editVerb builds "edit ID": mutate the entity by flags via notes.Client, or as a

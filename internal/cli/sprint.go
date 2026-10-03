@@ -103,7 +103,7 @@ func newSprintAddCmd() *cobra.Command {
 	flags.StringVar(&start, "start", "", "start date YYYY-MM-DD")
 	flags.StringVar(&end, "end", "", "end date YYYY-MM-DD")
 	bindJSON(flags, &jsonOut)
-	return cmd
+	return withTitleFlag(cmd)
 }
 
 func newSprintListCmd() *cobra.Command {
