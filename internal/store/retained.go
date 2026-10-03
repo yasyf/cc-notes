@@ -230,7 +230,7 @@ func gitEntryAt(path string) (gitEntry, error) {
 }
 
 func linkAt(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // Git discovery supplies this path; retention validates its resolved repository.
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
@@ -303,7 +303,7 @@ func headStamps(gitDir, commonDir string) (head, branch configStamp, err error) 
 	if head, err = stampAt(path); err != nil {
 		return configStamp{}, configStamp{}, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // HEAD is read inside the already resolved Git directory.
 	if err != nil {
 		return configStamp{}, configStamp{}, err
 	}
@@ -316,7 +316,7 @@ func headStamps(gitDir, commonDir string) (head, branch configStamp, err error) 
 }
 
 func stampAt(path string) (configStamp, error) {
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) //nolint:gosec // Discovery paths are identity-checked before retention.
 	if errors.Is(err, fs.ErrNotExist) {
 		return configStamp{}, nil
 	}
