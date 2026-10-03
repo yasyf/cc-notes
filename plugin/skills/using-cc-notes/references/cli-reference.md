@@ -805,6 +805,7 @@ go through `task edit --add-branch`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--priority <0-3>` | `2` | Priority; 0 is most urgent |
 | `--type <type>` | `task` | One of `task`, `bug`, `epic`, `question` |
 | `--label <label>` | none | Label; repeatable |
@@ -1274,6 +1275,7 @@ Create a project. It is born `active`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
 | `--label <label>` | none | Label; repeatable |
 | `--json` | off | Emit JSON |
@@ -1416,6 +1418,7 @@ Create a sprint. It is born `planned`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
 | `--project <id>` | none | Owning project (id prefix) |
 | `--label <label>` | none | Label; repeatable |
@@ -1563,6 +1566,7 @@ on, exactly as on `note add`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
 | `--label <label>` | none | Label; repeatable |
 | `--step <text>` | none | Initial step; repeatable, kept in flag order |
@@ -1864,6 +1868,7 @@ always roots a fresh investigation.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | none | The premise; positional `BODY` and `-` (stdin) are equivalent |
 | `--finding <text>` | none | Initial finding, born `open`; repeatable, kept in flag order |
 | `--label <label>` | none | Label; repeatable |
@@ -2253,6 +2258,7 @@ record is returned with a warning.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | none | The plan text, verbatim; positional `BODY` and `-` (stdin) are equivalent |
 | `--body-file <file>` | none | Read the plan text from this file; mutually exclusive with `--body` |
 | `--approved` | off | Record the plan already approved instead of draft |
@@ -2494,6 +2500,7 @@ tracks, exactly as on `note add`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
 | `--column <name>` | none | Field name in display order; repeatable |
 | `--label <label>` | none | Label; repeatable |
@@ -2676,6 +2683,7 @@ belongs in `--body`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Note body; positional `BODY` and `-` (stdin) are equivalent |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
@@ -2943,6 +2951,7 @@ create transaction.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Answer body; positional `BODY` and `-` (stdin) are equivalent |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
@@ -3229,6 +3238,7 @@ the same create transaction.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | required unless `--attach` is given | Doc body; positional `BODY` and `-` (stdin) are equivalent |
 | `--when <text>` | empty | Free-text "read this when…" trigger, surfaced verbatim |
 | `--label <label>` | none | Label; repeatable |
@@ -3510,6 +3520,7 @@ the entry is recorded as a separate append so its author and timestamp are hones
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--entry <text>` | none | Record a first entry; positional `BODY` and `-` (stdin) are equivalent |
 | `--attach <file>` | none | Attach a file (git-lfs); repeatable |
 | `--label <label>` | none | Label; repeatable |

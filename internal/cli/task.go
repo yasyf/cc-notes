@@ -260,7 +260,7 @@ func newTaskAddCmd() *cobra.Command {
 	anchors.bindWithoutBranch(flags)
 	bindJSON(flags, &jsonOut)
 	cmd.MarkFlagsMutuallyExclusive("branch", "backlog")
-	return cmd
+	return withTitleFlag(cmd)
 }
 
 func newTaskListCmd() *cobra.Command {

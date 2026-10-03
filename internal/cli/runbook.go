@@ -94,7 +94,7 @@ func newRunbookAddCmd() *cobra.Command {
 	flags.StringArrayVar(&steps, "step", nil, "initial step text, in order (repeatable)")
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
-	return cmd
+	return withTitleFlag(cmd)
 }
 
 func newRunbookListCmd() *cobra.Command {

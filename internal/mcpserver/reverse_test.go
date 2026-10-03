@@ -61,6 +61,11 @@ var excludedFlags = map[string]bool{
 	"abort":    true, // CLI-only editable-buffer mode; MCP writes the body inline
 }
 
+var positionalAliasFlags = map[string]bool{
+	"add --title":  true,
+	"open --title": true,
+}
+
 // coverageRecorder accumulates the command paths and Changed flag names the
 // neutered recording root observes as MCP tool calls drive the real cobra tree,
 // plus a per-tool attribution (byTool) keyed by the driving tool the caller names
@@ -319,7 +324,7 @@ func checkLeaf(c *cobra.Command, coveredCmds map[string]bool, coveredFlags map[s
 		return
 	}
 	c.LocalFlags().VisitAll(func(f *pflag.Flag) {
-		if excludedFlags[f.Name] {
+		if excludedFlags[f.Name] || positionalAliasFlags[c.Name()+" --"+f.Name] {
 			return
 		}
 		if !coveredFlags[path][f.Name] {

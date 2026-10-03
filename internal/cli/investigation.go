@@ -113,7 +113,7 @@ func newInvestigationOpenCmd() *cobra.Command {
 	anchors.bind(flags)
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
 	bindJSON(flags, &jsonOut)
-	return cmd
+	return withTitleFlag(cmd)
 }
 
 func newInvestigationListCmd() *cobra.Command {
