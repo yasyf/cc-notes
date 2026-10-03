@@ -428,13 +428,13 @@ func anchoredNear(reasons []string) bool {
 func (c *Client) entryVerdict(ctx context.Context, e RelevantEntry, in *relevantInputs, worktree bool) (Verdict, error) {
 	switch e.Kind {
 	case model.KindDoc:
-		return c.verdictOf(ctx, in.head, freshFromDoc(e.Doc), in.start, in.staleAfter, worktree, in.resolveCommit)
+		return c.verdictOf(ctx, in.head, freshFromDoc(e.Doc), in.start, in.staleAfter, worktree, c.judgeVia(in.resolveCommit))
 	case model.KindAnswer:
-		return c.verdictOf(ctx, in.head, freshFromAnswer(e.Answer), in.start, in.staleAfter, worktree, in.resolveCommit)
+		return c.verdictOf(ctx, in.head, freshFromAnswer(e.Answer), in.start, in.staleAfter, worktree, c.judgeVia(in.resolveCommit))
 	case model.KindLog, model.KindRunbook, model.KindInvestigation, model.KindPlan, model.KindLedger:
 		return "", nil
 	default:
-		return c.verdictOf(ctx, in.head, freshFromNote(e.Note), in.start, in.staleAfter, worktree, in.resolveCommit)
+		return c.verdictOf(ctx, in.head, freshFromNote(e.Note), in.start, in.staleAfter, worktree, c.judgeVia(in.resolveCommit))
 	}
 }
 

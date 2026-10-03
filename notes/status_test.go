@@ -1,8 +1,11 @@
 package notes_test
 
 import (
+	"context"
+	"os"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gittest"
@@ -388,7 +391,70 @@ func TestTaskStatusMatchesStatusBuckets(t *testing.T) {
 	if len(tasks.InProgress) == 0 || !tasks.InProgress[0].Tasks[0].Stale {
 		t.Errorf("InProgress = %+v, want the held task with a stale lease", tasks.InProgress)
 	}
+	wantBlocking := map[model.EntityID][]model.EntityID{blocker.ID: {blocked.ID}}
+	if !reflect.DeepEqual(full.Blocking, wantBlocking) || !reflect.DeepEqual(tasks.Blocking, wantBlocking) {
+		t.Errorf("Blocking: status %v, task status %v; want %v", full.Blocking, tasks.Blocking, wantBlocking)
+	}
 	if tasks.Notes != (notes.SummaryCount{}) || tasks.Runs != nil {
 		t.Errorf("TaskStatus filled record counts: notes %+v runs %+v", tasks.Notes, tasks.Runs)
 	}
+}
+
+func TestStatusReadsEachViewFromOneScopedRefQuery(t *testing.T) {
+	recordRoots := []string{
+		"refs/cc-notes/tasks/", "refs/cc-notes/runbooks/", "refs/cc-notes/notes/", "refs/cc-notes/docs/",
+		"refs/cc-notes/answers/", "refs/cc-notes/logs/", "refs/cc-notes/investigations/",
+		"refs/cc-notes/sprints/", "refs/cc-notes/projects/", "refs/cc-notes/plans/",
+	}
+	for _, tc := range []struct {
+		name  string
+		run   func(*notes.Client, context.Context) (notes.StatusReport, error)
+		roots []string
+	}{
+		{"status", (*notes.Client).Status, recordRoots},
+		{"task status", (*notes.Client).TaskStatus, []string{"refs/cc-notes/tasks/"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, dir := newClient(t)
+			gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+			mustTask(t, c, notes.TaskSpec{Title: "backlog", Backlog: true})
+			makeNote(t, c, "a note", notes.AnchorSpec{})
+			g := installCountingGit(t, countingGitScript)
+
+			rep, err := tc.run(c, t.Context())
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if len(rep.Backlog) != 1 {
+				t.Fatalf("Backlog = %+v, want the one backlog task", rep.Backlog)
+			}
+			if queries := refQueries(t, g); len(queries) != 1 || !slices.Equal(queries[0], tc.roots) {
+				t.Fatalf("for-each-ref patterns = %q, want one query over exactly %q", queries, tc.roots)
+			}
+		})
+	}
+}
+
+func refQueries(t *testing.T, g gitCounter) [][]string {
+	t.Helper()
+	data, err := os.ReadFile(g.trace)
+	if err != nil {
+		t.Fatalf("read git trace: %v", err)
+	}
+	var queries [][]string
+	for line := range strings.Lines(string(data)) {
+		args := strings.Split(strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\x1f"), "\x1f")
+		i := slices.Index(args, "for-each-ref")
+		if i < 0 {
+			continue
+		}
+		var patterns []string
+		for _, arg := range args[i+1:] {
+			if strings.HasPrefix(arg, "refs/") {
+				patterns = append(patterns, arg)
+			}
+		}
+		queries = append(queries, patterns)
+	}
+	return queries
 }

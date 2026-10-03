@@ -56,7 +56,7 @@ func newRelevantCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := notes.Open(dir)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}

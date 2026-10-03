@@ -33,6 +33,10 @@ func (c *Client) TasksBlockingIndex(ctx context.Context) (map[model.EntityID][]m
 	if err != nil {
 		return nil, err
 	}
+	return blockingIndex(tasks), nil
+}
+
+func blockingIndex(tasks []model.Task) map[model.EntityID][]model.EntityID {
 	index := make(map[model.EntityID][]model.EntityID)
 	for _, t := range tasks {
 		for _, dep := range t.BlockedBy {
@@ -42,7 +46,7 @@ func (c *Client) TasksBlockingIndex(ctx context.Context) (map[model.EntityID][]m
 	for id := range index {
 		slices.Sort(index[id])
 	}
-	return index, nil
+	return index
 }
 
 // pointingAt returns the sorted ids of the entities in list whose key edge is

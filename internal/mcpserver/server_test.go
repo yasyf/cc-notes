@@ -19,6 +19,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/mcpserver"
+	"github.com/yasyf/cc-notes/internal/store"
 )
 
 // initRepo creates a repository on main with one seed commit and chdirs into it,
@@ -40,8 +41,14 @@ func initRepo(t *testing.T) string {
 // connect wires an mcpserver to an SDK client over in-memory transports.
 func connect(t *testing.T) *mcp.ClientSession {
 	t.Helper()
+	return connectWith(t, mcpserver.Config{Version: "test", NewRoot: cli.NewRootCmd, Label: cli.Label, Message: cli.Message, Hint: cli.Hint})
+}
+
+// connectWith is connect over an explicit server config.
+func connectWith(t *testing.T, cfg mcpserver.Config) *mcp.ClientSession {
+	t.Helper()
 	ctx := t.Context()
-	srv := mcpserver.New(mcpserver.Config{Version: "test", NewRoot: cli.NewRootCmd, Label: cli.Label, Message: cli.Message, Hint: cli.Hint})
+	srv := mcpserver.New(cfg)
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(ctx, st, nil)
 	if err != nil {
@@ -828,4 +835,36 @@ func sortedKeys(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestRetainedStoreServesToolCalls(t *testing.T) {
+	dir := initRepo(t)
+	retained, err := store.Retain(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("Retain: %v", err)
+	}
+	cs := connectWith(t, mcpserver.Config{Version: "test", NewRoot: cli.NewRootCmd, Label: cli.Label, Message: cli.Message, Hint: cli.Hint, Store: retained})
+	type statusOut struct {
+		Branch string `json:"branch"`
+		Notes  struct {
+			Total int `json:"total"`
+		} `json:"notes"`
+	}
+	for _, step := range []struct {
+		name   string
+		move   func()
+		branch string
+		notes  int
+	}{
+		{"first write", func() {}, "main", 1},
+		{"after a checkout", func() { gittest.Git(t, dir, "checkout", "-q", "-b", "feature") }, "feature", 2},
+		{"after a commit", func() { gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "next") }, "feature", 3},
+	} {
+		step.move()
+		call(t, cs, "note_add", map[string]any{"title": step.name, "body": step.name})
+		got := decode[statusOut](t, call(t, cs, "status", map[string]any{}))
+		if got.Branch != step.branch || got.Notes.Total != step.notes {
+			t.Fatalf("%s: status = %+v, want branch %q with %d notes", step.name, got, step.branch, step.notes)
+		}
+	}
 }
