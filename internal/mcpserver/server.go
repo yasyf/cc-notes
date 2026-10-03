@@ -24,6 +24,9 @@ type Config struct {
 	// Hint renders the remediation an error carries beyond its message, so a tool
 	// result carries the same way forward the CLI prints to stderr.
 	Hint func(error) string
+	// Store, when set, is the retained store every tool call runs against;
+	// unset, each call opens the repository itself.
+	Store *store.Retained
 }
 
 // New builds the MCP server with every tool table registered.
@@ -32,7 +35,7 @@ func New(cfg Config) *mcp.Server {
 		&mcp.Implementation{Name: "cc-notes", Version: cfg.Version},
 		&mcp.ServerOptions{Instructions: instructions},
 	)
-	b := &bridge{newRoot: cfg.NewRoot, label: cfg.Label, message: cfg.Message, hint: cfg.Hint}
+	b := &bridge{newRoot: cfg.NewRoot, label: cfg.Label, message: cfg.Message, hint: cfg.Hint, retained: cfg.Store}
 	ts := &toolset{srv: srv, props: map[string]toolProps{}}
 	registerAll(ts, b)
 	srv.AddReceivingMiddleware(didYouMeanMiddleware(ts.props))
@@ -58,10 +61,11 @@ func registerAll(ts *toolset, b *bridge) {
 }
 
 // Serve resolves the project directory, chdirs once (per-call chdir would race
-// concurrent tool calls), writes the liveness marker, and runs the server over
-// stdio until ctx is cancelled — at which point the deferred marker cleanup
-// runs. A signal-initiated stop is a clean shutdown, not a failure: the
-// cancellation-induced transport error is suppressed so the process exits 0.
+// concurrent tool calls), retains one store for every tool call, writes the
+// liveness marker, and runs the server over stdio until ctx is cancelled — at
+// which point the deferred marker cleanup runs. A signal-initiated stop is a
+// clean shutdown, not a failure: the cancellation-induced transport error is
+// suppressed so the process exits 0.
 func Serve(ctx context.Context, dir string, cfg Config) error {
 	workdir, err := resolveWorkdir(dir)
 	if err != nil {
@@ -70,7 +74,15 @@ func Serve(ctx context.Context, dir string, cfg Config) error {
 	if err := os.Chdir(workdir); err != nil {
 		return fmt.Errorf("chdir %s: %w", workdir, err)
 	}
-	s, err := store.OpenContext(ctx, workdir)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("working directory: %w", err)
+	}
+	retained, err := store.Retain(ctx, cwd)
+	if err != nil {
+		return err
+	}
+	s, err := retained.Store(ctx)
 	if err != nil {
 		return err
 	}
@@ -79,6 +91,7 @@ func Serve(ctx context.Context, dir string, cfg Config) error {
 		return err
 	}
 	defer RemoveMarker(markerDir)
+	cfg.Store = retained
 	err = New(cfg).Run(ctx, &mcp.StdioTransport{})
 	if ctx.Err() != nil {
 		return nil

@@ -46,6 +46,10 @@ func repoDir(cmd *cobra.Command) (string, error) {
 // openStore opens the store for the repository containing the working
 // directory, or the one named by --repo.
 func openStore(cmd *cobra.Command) (*store.Store, error) {
+	s, retained, err := retainedStore(cmd)
+	if err != nil || retained {
+		return s, err
+	}
 	dir, err := repoDir(cmd)
 	if err != nil {
 		return nil, err
@@ -57,6 +61,13 @@ func openStore(cmd *cobra.Command) (*store.Store, error) {
 // directory, or the one named by --repo — the client-only opener for commands
 // that need no *store.Store.
 func openClient(cmd *cobra.Command) (*notes.Client, error) {
+	s, retained, err := retainedStore(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if retained {
+		return notes.FromStore(s), nil
+	}
 	dir, err := repoDir(cmd)
 	if err != nil {
 		return nil, err
@@ -69,11 +80,18 @@ func openClient(cmd *cobra.Command) (*notes.Client, error) {
 // logic, over the repository containing the working directory, or the one named
 // by --repo.
 func openStoreClient(cmd *cobra.Command) (*store.Store, *notes.Client, error) {
+	s, retained, err := retainedStore(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+	if retained {
+		return s, notes.FromStore(s), nil
+	}
 	dir, err := repoDir(cmd)
 	if err != nil {
 		return nil, nil, err
 	}
-	s, err := store.OpenContext(cmd.Context(), dir)
+	s, err = store.OpenContext(cmd.Context(), dir)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -82,6 +100,22 @@ func openStoreClient(cmd *cobra.Command) (*store.Store, *notes.Client, error) {
 		return nil, nil, err
 	}
 	return s, c, nil
+}
+
+func retainedStore(cmd *cobra.Command) (*store.Store, bool, error) {
+	r, ok := store.RetainedFrom(cmd.Context())
+	if !ok {
+		return nil, false, nil
+	}
+	repo, err := cmd.Flags().GetString("repo")
+	if err != nil {
+		return nil, false, err
+	}
+	if repo != "" {
+		return nil, false, nil
+	}
+	s, err := r.Store(cmd.Context())
+	return s, true, err
 }
 
 // resolveBranch returns value verbatim when provided — the flag was explicitly

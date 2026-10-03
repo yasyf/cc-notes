@@ -246,16 +246,20 @@ func (c *Client) ReadyTasks(ctx context.Context, scope BranchScope, branch model
 	if err != nil {
 		return nil, err
 	}
+	return c.readyAmong(ctx, tasks, scope, branch)
+}
+
+func (c *Client) readyAmong(ctx context.Context, tasks []model.Task, scope BranchScope, branch model.Branch) ([]model.Task, error) {
 	inScope, err := c.branchScope(ctx, scope, branch)
 	if err != nil {
 		return nil, err
 	}
 	live := taskMap(tasks)
-	tasks = slices.DeleteFunc(tasks, func(t model.Task) bool {
+	ready := slices.DeleteFunc(slices.Clone(tasks), func(t model.Task) bool {
 		return !inScope(t) || t.Status != model.StatusOpen || t.Assignee != "" || !unblocked(live, t)
 	})
-	sortTasks(tasks)
-	return tasks, nil
+	sortTasks(ready)
+	return ready, nil
 }
 
 // StaleTasks folds every task and returns the in-progress tasks idle past ttl,

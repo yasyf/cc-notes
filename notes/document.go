@@ -680,6 +680,10 @@ func (c *Client) ReviewNotes(ctx context.Context, staleAfter time.Duration) ([]N
 	if err != nil {
 		return nil, err
 	}
+	return c.reviewNotes(ctx, all, head, staleAfter, memoAncestry(c.judgeVia(c.s.Git.ResolveCommit)))
+}
+
+func (c *Client) reviewNotes(ctx context.Context, all []model.Note, head model.SHA, staleAfter time.Duration, judge ancestryJudge) ([]NoteReview, error) {
 	now := time.Now()
 	exists := existsSet(all, func(n model.Note) model.EntityID { return n.ID })
 	var out []NoteReview
@@ -690,7 +694,7 @@ func (c *Client) ReviewNotes(ctx context.Context, staleAfter time.Duration) ([]N
 			}
 			continue
 		}
-		verdict, err := c.verdictOf(ctx, head, freshFromNote(n), now, staleAfter, false, c.s.Git.ResolveCommit)
+		verdict, err := c.verdictOf(ctx, head, freshFromNote(n), now, staleAfter, false, judge)
 		if err != nil {
 			return nil, err
 		}
@@ -712,6 +716,10 @@ func (c *Client) ReviewDocs(ctx context.Context, staleAfter time.Duration) ([]Do
 	if err != nil {
 		return nil, err
 	}
+	return c.reviewDocs(ctx, all, head, staleAfter, memoAncestry(c.judgeVia(c.s.Git.ResolveCommit)))
+}
+
+func (c *Client) reviewDocs(ctx context.Context, all []model.Doc, head model.SHA, staleAfter time.Duration, judge ancestryJudge) ([]DocReview, error) {
 	now := time.Now()
 	exists := existsSet(all, func(d model.Doc) model.EntityID { return d.ID })
 	var out []DocReview
@@ -722,7 +730,7 @@ func (c *Client) ReviewDocs(ctx context.Context, staleAfter time.Duration) ([]Do
 			}
 			continue
 		}
-		verdict, err := c.verdictOf(ctx, head, freshFromDoc(d), now, staleAfter, false, c.s.Git.ResolveCommit)
+		verdict, err := c.verdictOf(ctx, head, freshFromDoc(d), now, staleAfter, false, judge)
 		if err != nil {
 			return nil, err
 		}
@@ -741,7 +749,7 @@ func (c *Client) NoteVerdict(ctx context.Context, n model.Note, staleAfter time.
 	if err != nil {
 		return "", err
 	}
-	return c.verdictOf(ctx, head, freshFromNote(n), time.Now(), staleAfter, worktree, c.s.Git.ResolveCommit)
+	return c.verdictOf(ctx, head, freshFromNote(n), time.Now(), staleAfter, worktree, c.judgeVia(c.s.Git.ResolveCommit))
 }
 
 // DocVerdict computes d's single review verdict against live content, mirroring
@@ -751,7 +759,7 @@ func (c *Client) DocVerdict(ctx context.Context, d model.Doc, staleAfter time.Du
 	if err != nil {
 		return "", err
 	}
-	return c.verdictOf(ctx, head, freshFromDoc(d), time.Now(), staleAfter, worktree, c.s.Git.ResolveCommit)
+	return c.verdictOf(ctx, head, freshFromDoc(d), time.Now(), staleAfter, worktree, c.judgeVia(c.s.Git.ResolveCommit))
 }
 
 // NoteSuperseders returns the ids of notes that supersede id, sorted: the
@@ -883,7 +891,7 @@ func freshFromDoc(d model.Doc) freshDocument {
 // head, returning "" when fresh. Precedence is EXPIRED > UNVERIFIED > DRIFTED >
 // HISTORY-UNAVAILABLE > STALE; dangling supersede edges are surfaced
 // separately. An unborn HEAD skips drift detection unless worktree is set.
-func (c *Client) verdictOf(ctx context.Context, head model.SHA, fe freshDocument, now time.Time, staleAfter time.Duration, worktree bool, resolve commitResolver) (Verdict, error) {
+func (c *Client) verdictOf(ctx context.Context, head model.SHA, fe freshDocument, now time.Time, staleAfter time.Duration, worktree bool, judge ancestryJudge) (Verdict, error) {
 	if fe.StaleAt != 0 {
 		return VerdictExpired, nil
 	}
@@ -891,7 +899,7 @@ func (c *Client) verdictOf(ctx context.Context, head model.SHA, fe freshDocument
 		return VerdictUnverified, nil
 	}
 	if head != "" || worktree {
-		d, err := c.driftOf(ctx, head, fe, worktree, resolve)
+		d, err := c.driftOf(ctx, head, fe, worktree, judge)
 		if err != nil {
 			return "", err
 		}
@@ -925,7 +933,7 @@ const (
 // recorded witness are not drift-checked, nor are commit anchors against an
 // unborn head. When worktree is true, a path anchor's live oid is the on-disk
 // working-tree blob, so an uncommitted edit drifts the entity.
-func (c *Client) driftOf(ctx context.Context, head model.SHA, fe freshDocument, worktree bool, resolve commitResolver) (drift, error) {
+func (c *Client) driftOf(ctx context.Context, head model.SHA, fe freshDocument, worktree bool, judge ancestryJudge) (drift, error) {
 	byAnchor := make(map[model.Anchor]model.AnchorWitness, len(fe.Witness))
 	for _, w := range fe.Witness {
 		byAnchor[w.Anchor] = w
@@ -952,7 +960,7 @@ func (c *Client) driftOf(ctx context.Context, head model.SHA, fe freshDocument, 
 			if head == "" {
 				continue
 			}
-			ancestry, err := c.commitAncestry(ctx, head, a.Value, resolve)
+			ancestry, err := judge(ctx, head, a.Value)
 			if err != nil {
 				return driftNone, err
 			}
@@ -986,6 +994,30 @@ func (c *Client) commitAncestry(ctx context.Context, head model.SHA, rev string,
 		return gitobj.NotAncestor, nil
 	}
 	return ancestry, err
+}
+
+type ancestryJudge func(ctx context.Context, head model.SHA, rev string) (gitobj.Ancestry, error)
+
+func (c *Client) judgeVia(resolve commitResolver) ancestryJudge {
+	return func(ctx context.Context, head model.SHA, rev string) (gitobj.Ancestry, error) {
+		return c.commitAncestry(ctx, head, rev, resolve)
+	}
+}
+
+func memoAncestry(judge ancestryJudge) ancestryJudge {
+	judged := map[[2]string]gitobj.Ancestry{}
+	return func(ctx context.Context, head model.SHA, rev string) (gitobj.Ancestry, error) {
+		key := [2]string{string(head), rev}
+		if ancestry, ok := judged[key]; ok {
+			return ancestry, nil
+		}
+		ancestry, err := judge(ctx, head, rev)
+		if err != nil {
+			return ancestry, err
+		}
+		judged[key] = ancestry
+		return ancestry, nil
+	}
 }
 
 // liveAnchorOID resolves the current content oid of a path or directory anchor.

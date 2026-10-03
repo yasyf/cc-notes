@@ -2,6 +2,7 @@ package store
 
 import (
 	"cmp"
+	"container/list"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,7 +19,8 @@ type lruDir struct {
 
 	mu     sync.Mutex
 	seeded bool
-	order  []string
+	order  *list.List
+	index  map[string]*list.Element
 }
 
 func (l *lruDir) read(name string) ([]byte, bool) {
@@ -59,8 +61,8 @@ func (l *lruDir) touch(name string) {
 	if !l.seeded {
 		return
 	}
-	if i := slices.Index(l.order, name); i >= 0 {
-		l.order = append(slices.Delete(l.order, i, i+1), name)
+	if e, ok := l.index[name]; ok {
+		l.order.MoveToBack(e)
 	}
 }
 
@@ -90,17 +92,23 @@ func (l *lruDir) promote(seed []string, name string) []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if !l.seeded {
-		l.order = seed
+		l.order = list.New()
+		l.index = make(map[string]*list.Element, len(seed))
+		for _, n := range seed {
+			l.index[n] = l.order.PushBack(n)
+		}
 		l.seeded = true
 	}
-	if i := slices.Index(l.order, name); i >= 0 {
-		l.order = slices.Delete(l.order, i, i+1)
+	if e, ok := l.index[name]; ok {
+		l.order.MoveToBack(e)
+	} else {
+		l.index[name] = l.order.PushBack(name)
 	}
-	l.order = append(l.order, name)
 	var evict []string
-	for len(l.order) > l.capacity {
-		evict = append(evict, l.order[0])
-		l.order = l.order[1:]
+	for l.order.Len() > l.capacity {
+		oldest := l.order.Remove(l.order.Front()).(string)
+		delete(l.index, oldest)
+		evict = append(evict, oldest)
 	}
 	return evict
 }
@@ -153,7 +161,8 @@ func (l *lruDir) remove(name string) {
 	_ = os.Remove(filepath.Join(l.dir, name))
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if i := slices.Index(l.order, name); i >= 0 {
-		l.order = slices.Delete(l.order, i, i+1)
+	if e, ok := l.index[name]; ok {
+		l.order.Remove(e)
+		delete(l.index, name)
 	}
 }

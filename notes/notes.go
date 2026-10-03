@@ -59,6 +59,12 @@ func Open(dir string) (*Client, error) {
 	return &Client{s: s}, nil
 }
 
+// FromStore wraps an already-open store in a Client, so a caller that holds a
+// store shares it instead of opening the repository again.
+func FromStore(s *store.Store) *Client {
+	return &Client{s: s}
+}
+
 // HasNotes reports whether the repository holds any cc-notes entity — any ref
 // under refs/cc-notes/. A repository that has never used cc-notes returns
 // false, the signal a caller uses to gate optional cc-notes wiring.

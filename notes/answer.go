@@ -160,6 +160,10 @@ func (c *Client) ReviewAnswers(ctx context.Context, staleAfter time.Duration) ([
 	if err != nil {
 		return nil, err
 	}
+	return c.reviewAnswers(ctx, all, head, staleAfter, memoAncestry(c.judgeVia(c.s.Git.ResolveCommit)))
+}
+
+func (c *Client) reviewAnswers(ctx context.Context, all []model.Answer, head model.SHA, staleAfter time.Duration, judge ancestryJudge) ([]AnswerReview, error) {
 	now := time.Now()
 	exists := existsSet(all, func(a model.Answer) model.EntityID { return a.ID })
 	var out []AnswerReview
@@ -170,7 +174,7 @@ func (c *Client) ReviewAnswers(ctx context.Context, staleAfter time.Duration) ([
 			}
 			continue
 		}
-		verdict, err := c.verdictOf(ctx, head, freshFromAnswer(a), now, staleAfter, false, c.s.Git.ResolveCommit)
+		verdict, err := c.verdictOf(ctx, head, freshFromAnswer(a), now, staleAfter, false, judge)
 		if err != nil {
 			return nil, err
 		}
@@ -188,7 +192,7 @@ func (c *Client) AnswerVerdict(ctx context.Context, a model.Answer, staleAfter t
 	if err != nil {
 		return "", err
 	}
-	return c.verdictOf(ctx, head, freshFromAnswer(a), time.Now(), staleAfter, worktree, c.s.Git.ResolveCommit)
+	return c.verdictOf(ctx, head, freshFromAnswer(a), time.Now(), staleAfter, worktree, c.judgeVia(c.s.Git.ResolveCommit))
 }
 
 // AnswerSuperseders returns the ids of answers that supersede id, sorted.

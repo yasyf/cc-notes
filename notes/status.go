@@ -9,6 +9,11 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
+var statusKinds = []model.Kind{
+	model.KindTask, model.KindRunbook, model.KindNote, model.KindDoc, model.KindAnswer,
+	model.KindLog, model.KindInvestigation, model.KindSprint, model.KindProject, model.KindPlan,
+}
+
 // StatusReport is the orientation snapshot Status returns. Branch is empty on a
 // detached HEAD or the backlog. Backlog and YourBranch are ordered by priority
 // then creation time then id; InProgress by assignee then the same task order;
@@ -20,6 +25,9 @@ import (
 // SkippedOps totals the ops this pass could not fold — history a newer
 // cc-notes wrote. Every entity kind contributes, over the live records the
 // report covers. Non-zero means upgrade.
+//
+// Blocking is TasksBlockingIndex over the same tasks the buckets come from:
+// each task id mapped to the sorted ids of the live tasks it blocks.
 type StatusReport struct {
 	Branch         model.Branch
 	Backlog        []StatusBacklogTask
@@ -34,6 +42,7 @@ type StatusReport struct {
 	Investigations InvestigationSummary
 	Plans          int
 	SkippedOps     int
+	Blocking       map[model.EntityID][]model.EntityID
 }
 
 // InvestigationSummary is the orientation count of open investigations: Open
@@ -90,7 +99,8 @@ type SummaryCount struct {
 	NeedsReview int
 }
 
-// Status aggregates the orientation view in one fold per entity kind. The
+// Status aggregates the orientation view in one fold per entity kind, every
+// kind read from one ref query so the counts describe a single moment. The
 // current branch degrades to empty on a detached HEAD. Sprints and projects
 // feed nothing but SkippedOps, which states its verdict over the whole
 // repository and so cannot scan only the kinds the view itself needs.
@@ -104,66 +114,77 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	if err != nil {
 		return StatusReport{}, err
 	}
-	tasks, err := c.s.ListTasks(ctx)
+	pinned, err := c.s.PinnedKinds(ctx, statusKinds...)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	ready, err := c.ReadyTasks(ctx, ScopeBacklog, "")
+	v := &Client{s: pinned}
+	tasks, err := v.s.ListTasks(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	runbooks, err := c.s.ListRunbooks(ctx)
+	ready, err := v.readyAmong(ctx, tasks, ScopeBacklog, "")
 	if err != nil {
 		return StatusReport{}, err
 	}
-	noteList, err := c.s.ListNotes(ctx, false, false)
+	runbooks, err := v.s.ListRunbooks(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	docList, err := c.s.ListDocs(ctx, false, false)
+	noteSet, err := v.s.ListNotes(ctx, false, true)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	answerList, err := c.s.ListAnswers(ctx, false, false)
+	docSet, err := v.s.ListDocs(ctx, false, true)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	logList, err := c.s.ListLogs(ctx, false)
+	answerSet, err := v.s.ListAnswers(ctx, false, true)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	invList, err := c.s.ListInvestigations(ctx)
+	logList, err := v.s.ListLogs(ctx, false)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	sprintList, err := c.s.ListSprints(ctx)
+	invList, err := v.s.ListInvestigations(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	projectList, err := c.s.ListProjects(ctx)
+	sprintList, err := v.s.ListSprints(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	planList, err := c.s.ListPlans(ctx)
+	projectList, err := v.s.ListProjects(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	staleAfter, err := c.NoteStaleAfter(ctx)
+	planList, err := v.s.ListPlans(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	noteReviews, err := c.ReviewNotes(ctx, staleAfter)
+	staleAfter, err := v.NoteStaleAfter(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	docReviews, err := c.ReviewDocs(ctx, staleAfter)
+	head, err := v.head(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	answerReviews, err := c.ReviewAnswers(ctx, staleAfter)
+	judge := memoAncestry(v.judgeVia(v.s.Git.ResolveCommit))
+	noteReviews, err := v.reviewNotes(ctx, noteSet, head, staleAfter, judge)
 	if err != nil {
 		return StatusReport{}, err
 	}
+	docReviews, err := v.reviewDocs(ctx, docSet, head, staleAfter, judge)
+	if err != nil {
+		return StatusReport{}, err
+	}
+	answerReviews, err := v.reviewAnswers(ctx, answerSet, head, staleAfter, judge)
+	if err != nil {
+		return StatusReport{}, err
+	}
+	noteList, docList, answerList := unsuperseded(noteSet), unsuperseded(docSet), unsuperseded(answerSet)
 
 	report := StatusReport{
 		Branch:         branch,
@@ -179,6 +200,7 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 			sumSkipped(docList) + sumSkipped(logList) + sumSkipped(invList) +
 			sumSkipped(sprintList) + sumSkipped(projectList) + sumSkipped(planList) +
 			sumSkipped(answerList),
+		Blocking: blockingIndex(tasks),
 	}
 	fillTaskBuckets(&report, tasks, ready, now, ttl)
 	return report, nil
@@ -213,11 +235,11 @@ func (c *Client) TaskStatus(ctx context.Context) (StatusReport, error) {
 	if err != nil {
 		return StatusReport{}, err
 	}
-	ready, err := c.ReadyTasks(ctx, ScopeBacklog, "")
+	ready, err := c.readyAmong(ctx, tasks, ScopeBacklog, "")
 	if err != nil {
 		return StatusReport{}, err
 	}
-	report := StatusReport{Branch: branch, SkippedOps: sumSkipped(tasks)}
+	report := StatusReport{Branch: branch, SkippedOps: sumSkipped(tasks), Blocking: blockingIndex(tasks)}
 	fillTaskBuckets(&report, tasks, ready, now, ttl)
 	return report, nil
 }
@@ -312,6 +334,10 @@ func papercutCount(logList []model.Log) int {
 		}
 	}
 	return count
+}
+
+func unsuperseded[T model.Snapshot](snaps []T) []T {
+	return slices.DeleteFunc(slices.Clone(snaps), func(s T) bool { return s.Meta().Superseded })
 }
 
 // sumSkipped totals the ops the fold skipped across snaps.

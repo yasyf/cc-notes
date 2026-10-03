@@ -147,6 +147,8 @@ func readBinding(configPath string) (Binding, bool, error) {
 	}
 }
 
+var backendEntries = [...]string{"objects", "refs", "HEAD"}
+
 // validateBackend proves the bound backend is still the repository that was
 // bound: present, the recorded device/inode, not the context itself, a git
 // common directory rather than a linked worktree's git directory, holding its
@@ -171,15 +173,8 @@ func validateBackend(b Binding, context fileID) (configStamp, error) {
 	if _, err := os.Lstat(filepath.Join(b.CommonDir, "commondir")); err == nil {
 		return configStamp{}, fmt.Errorf("%w: %s is a linked worktree's git directory, not a git common directory", ErrBackendRedirects, b.CommonDir)
 	}
-	for _, entry := range []string{"objects", "refs", "HEAD"} {
-		path := filepath.Join(b.CommonDir, entry)
-		info, err := os.Lstat(path)
-		if err != nil {
-			return configStamp{}, fmt.Errorf("%w: %s is not a git common directory: %w", ErrBackendUnavailable, b.CommonDir, err)
-		}
-		if info.Mode()&fs.ModeSymlink != 0 {
-			return configStamp{}, fmt.Errorf("%w: %s is a symlink", ErrBackendRedirects, path)
-		}
+	if _, err := backendEntryIDs(b.CommonDir); err != nil {
+		return configStamp{}, err
 	}
 	config, err := os.Stat(filepath.Join(b.CommonDir, "config"))
 	if err != nil {
@@ -189,6 +184,23 @@ func validateBackend(b Binding, context fileID) (configStamp, error) {
 		return configStamp{}, err
 	}
 	return stampOf(config), nil
+}
+
+func backendEntryIDs(commonDir string) ([len(backendEntries)]fileID, error) {
+	var ids [len(backendEntries)]fileID
+	for i, entry := range backendEntries {
+		path := filepath.Join(commonDir, entry)
+		info, err := os.Lstat(path)
+		if err != nil {
+			return ids, fmt.Errorf("%w: %s is not a git common directory: %w", ErrBackendUnavailable, commonDir, err)
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return ids, fmt.Errorf("%w: %s is a symlink", ErrBackendRedirects, path)
+		}
+		device, inode := gitobj.FileID(info)
+		ids[i] = fileID{device: device, inode: inode}
+	}
+	return ids, nil
 }
 
 // backendRedirects refuses a backend whose own config carries a binding, or a
@@ -366,6 +378,12 @@ func (w *storageBinding) refresh(path string, last *configStamp, missing error, 
 	*last = stamp
 	w.mu.Unlock()
 	return nil
+}
+
+func (w *storageBinding) stamps() (config, backend configStamp) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.stamp, w.backendStamp
 }
 
 func (w *storageBinding) recheckBinding() error {

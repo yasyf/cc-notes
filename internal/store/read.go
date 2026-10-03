@@ -330,6 +330,27 @@ func (s *Store) ListAnswers(ctx context.Context, includeDeleted, includeSupersed
 	return listOf(ctx, s, model.KindAnswer, fold.Answer, ListOpts{IncludeDeleted: includeDeleted, IncludeSuperseded: includeSuperseded})
 }
 
+// PinnedKinds enumerates the refs of exactly kinds in one for-each-ref and
+// returns the Pinned view of them, so listing several kinds folds one
+// consistent set of tips without a ref query per listing.
+func (s *Store) PinnedKinds(ctx context.Context, kinds ...model.Kind) (*Store, error) {
+	if err := s.CheckRecords(); err != nil {
+		return nil, err
+	}
+	roots := make([]string, len(kinds))
+	for i, kind := range kinds {
+		roots[i] = refs.Root(kind)
+	}
+	tips, err := s.RecordsGit.Refs(ctx, roots...)
+	if err != nil {
+		return nil, err
+	}
+	if tips == nil {
+		tips = map[string]model.SHA{}
+	}
+	return s.Pinned(tips), nil
+}
+
 // children lists the refs that are immediate children of prefix, excluding
 // nested namespaces.
 func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error) {

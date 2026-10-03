@@ -16,6 +16,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
+
+	"github.com/yasyf/cc-notes/internal/store"
 )
 
 // bridge runs argv against a fresh cobra root and maps stdout/stderr/error into
@@ -26,6 +28,8 @@ type bridge struct {
 	label   func(error) string
 	message func(error) string
 	hint    func(error) string
+
+	retained *store.Retained
 }
 
 // run executes argv in-process and returns the tool result: stdout (the JSON
@@ -35,6 +39,9 @@ type bridge struct {
 // protocol owns it — and pins stdin to empty so no command blocks on the
 // protocol's own stdin.
 func (b *bridge) run(ctx context.Context, argv ...string) (*mcp.CallToolResult, any, error) {
+	if b.retained != nil {
+		ctx = store.WithRetained(ctx, b.retained)
+	}
 	root := b.newRoot()
 	var out, errBuf bytes.Buffer
 	root.SetOut(&out)

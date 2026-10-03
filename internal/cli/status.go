@@ -30,7 +30,7 @@ func newStatusCmd() *cobra.Command {
 					return err
 				}
 				if jsonOut {
-					return printTaskStatusJSON(cmd, c, report)
+					return printTaskStatusJSON(cmd, report)
 				}
 				return printTaskStatusText(cmd, report)
 			}
@@ -39,7 +39,7 @@ func newStatusCmd() *cobra.Command {
 				return err
 			}
 			if jsonOut {
-				return printStatusJSON(cmd, c, report)
+				return printStatusJSON(cmd, report)
 			}
 			return printStatusText(cmd, report)
 		},
@@ -114,30 +114,22 @@ func staleFlag(stale bool) string {
 	return "fresh"
 }
 
-func printTaskStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusReport) error {
-	blocks, err := c.TasksBlockingIndex(cmd.Context())
-	if err != nil {
-		return err
-	}
+func printTaskStatusJSON(cmd *cobra.Command, report notes.StatusReport) error {
 	return printJSON(cmd.OutOrStdout(), statusTasksDTO{
 		Branch:     string(report.Branch),
-		Backlog:    statusBacklogDTOs(report.Backlog, blocks),
-		YourBranch: taskSummaryDTOs(report.YourBranch, blocks),
-		InProgress: statusAssigneeDTOs(report.InProgress, blocks),
+		Backlog:    statusBacklogDTOs(report.Backlog, report.Blocking),
+		YourBranch: taskSummaryDTOs(report.YourBranch, report.Blocking),
+		InProgress: statusAssigneeDTOs(report.InProgress, report.Blocking),
 		SkippedOps: report.SkippedOps,
 	})
 }
 
-func printStatusJSON(cmd *cobra.Command, c *notes.Client, report notes.StatusReport) error {
-	blocks, err := c.TasksBlockingIndex(cmd.Context())
-	if err != nil {
-		return err
-	}
+func printStatusJSON(cmd *cobra.Command, report notes.StatusReport) error {
 	dto := statusDTO{
 		Branch:     string(report.Branch),
-		Backlog:    statusBacklogDTOs(report.Backlog, blocks),
-		YourBranch: taskSummaryDTOs(report.YourBranch, blocks),
-		InProgress: statusAssigneeDTOs(report.InProgress, blocks),
+		Backlog:    statusBacklogDTOs(report.Backlog, report.Blocking),
+		YourBranch: taskSummaryDTOs(report.YourBranch, report.Blocking),
+		InProgress: statusAssigneeDTOs(report.InProgress, report.Blocking),
 		Runs:       make([]statusRunDTO, 0, len(report.Runs)),
 		Notes:      statusNotesDTO{Total: report.Notes.Total, NeedsReview: report.Notes.NeedsReview},
 		Docs:       statusNotesDTO{Total: report.Docs.Total, NeedsReview: report.Docs.NeedsReview},
