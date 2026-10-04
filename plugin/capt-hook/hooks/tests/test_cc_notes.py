@@ -31,6 +31,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,10 +40,15 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from hooks.answers import (
+    RECENT_ANSWER_LIMIT,
+    AnsweredQuestion,
     AnswerTriage,
     AnswerVerdict,
+    CapturedAnswers,
     float_prompt_answers,
+    heuristic_scope,
     record_user_answers,
+    refine_user_answers,
     restore_answers_after_compact,
     stage_prompt_answers,
 )
@@ -4870,15 +4876,22 @@ def test_compact_restore_boundary_eight_vs_nine(monkeypatch, tmp_path) -> None:
 
 ANSWER_ROOT = "/repo"
 ANSWER_LIST = ("answer", "list", "--json", "--label", "scope:durable", "--limit", str(common.ANSWER_CANDIDATE_LIMIT))
+RECENT_LIST = ("answer", "list", "--json", "--limit", str(RECENT_ANSWER_LIMIT))
 ANSWER_GIT = {("rev-parse", "--show-toplevel"): f"{ANSWER_ROOT}\n", ("rev-parse", "--abbrev-ref", "HEAD"): "feat/x\n"}
+CAPTURE_FLAGS = ("--label", "from:owner", "--label", "source:askuserquestion")
 
 
-def question(text: str, header: str = "", labels: tuple[str, ...] = ("A", "B"), multi: bool = False) -> dict:
-    return {"question": text, "header": header, "multiSelect": multi, "options": [{"label": l, "description": ""} for l in labels]}
+def question(text: str, header: str = "", labels: tuple[str, ...] = ("A", "B"), multi: bool = False, description: str = "") -> dict:
+    return {"question": text, "header": header, "multiSelect": multi, "options": [{"label": l, "description": description} for l in labels]}
 
 
 def durable_answer(answer_id: str, title: str = "Q?", body: str = "A") -> dict:
     return {"id": answer_id, "title": title, "body": body, "tags": ["scope:durable"], "updated_at": "2026-09-15T00:00:00Z"}
+
+
+def recent_answer(title: str, hours_ago: float) -> dict:
+    at = datetime.now(UTC) - timedelta(hours=hours_ago)
+    return {"id": "rec0001ffff", "title": title, "body": "A", "tags": [], "updated_at": at.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 def touched_transcript(*paths: str):
@@ -4896,7 +4909,11 @@ def touched_transcript(*paths: str):
     )
 
 
-def answer_event(monkeypatch, tmp_path, questions: list[dict], response, *, candidates: list[dict] | None = None, triage=None, added: tuple[str, ...] = ("ans0001aaaa",), paths: tuple[str, ...] = ()):
+def answer_event(
+    monkeypatch, tmp_path, questions: list[dict], response, *,
+    candidates: list[dict] | None = None, recent: list[dict] | None = None, triage=None,
+    added: tuple[str, ...] = ("ans0001aaaa",), paths: tuple[str, ...] = (),
+):
     """An AskUserQuestion PostToolUse with the answer CLI, git, and triage stubbed; returns (evt, calls)."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     evt = mock_tool_event(
@@ -4911,9 +4928,11 @@ def answer_event(monkeypatch, tmp_path, questions: list[dict], response, *, cand
         calls.append(tuple(args[1:]))
         if tuple(args[1:]) == ANSWER_LIST:
             return json.dumps(candidates or [])
+        if tuple(args[1:]) == RECENT_LIST:
+            return json.dumps(recent or [])
         if args[1:3] == ["answer", "add"]:
             return json.dumps({"id": next(ids)})
-        if args[1:3] == ["answer", "supersede"]:
+        if args[1:3] in (["answer", "supersede"], ["answer", "edit"]):
             return "{}"
         return None
 
@@ -4927,94 +4946,176 @@ def answer_adds(calls: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
     return [c for c in calls if c[:2] == ("answer", "add")]
 
 
-def test_record_user_answers_acks_survive_a_second_capture(monkeypatch, tmp_path) -> None:
-    """Two AskUserQuestion captures before a drain each keep their acknowledgement."""
-    for text, answer_id in (("Which language?", "ans0001aaaa"), ("Which database?", "ans0002bbbb")):
-        evt, _ = answer_event(
-            monkeypatch, tmp_path, [question(text)], {"answers": {text: "Go"}},
-            triage=AnswerTriage(verdicts=[AnswerVerdict(index=0)]), added=(answer_id,),
-        )
-        record_user_answers(evt)
+def answer_edits(calls: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    return [c for c in calls if c[:2] == ("answer", "edit")]
 
-    message = (float_deferred_notices(mock_event("PostToolUse", tool="Bash", command="git status", session_dir=tmp_path)) or SimpleNamespace(message="")).message or ""
-    check("answer acks: both captures acknowledged", message.count("Recorded answers in cc-notes") == 2, message)
+
+def captured_then_refined(evt, calls: list[tuple[str, ...]]) -> None:
+    record_user_answers(evt)
+    calls.clear()
+    refine_user_answers(evt)
 
 
 def test_record_user_answers_single(monkeypatch, tmp_path) -> None:
-    """One answered question lands verbatim with its scope, header, branch, and in-repo session paths."""
+    """One answer records synchronously with the capture labels and branch, never calling the model or the transcript."""
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Which language?", header="Lang", labels=("Go", "Rust"))],
         {"questions": [], "answers": {"Which language?": "Go"}, "annotations": {}},
-        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, scope="ephemeral")]),
-        paths=(f"{ANSWER_ROOT}/src/a.go", "/elsewhere/x.go", f"{ANSWER_ROOT}/src/b.go", f"{ANSWER_ROOT}/src/a.go"),
     )
-    result = floated(record_user_answers, evt)
+
+    def offline(*_a, **_k):
+        raise AssertionError("the foreground capture reached a slow dependency")
+
+    class OfflineTranscript:
+        __getattr__ = offline
+
+    monkeypatch.setattr(evt.ctx, "call_llm", offline)
+    monkeypatch.setattr(evt.ctx, "transcript", OfflineTranscript())
+    result = record_user_answers(evt)
     check("answer single: warns", result is not None and result.action is Action.warn, repr(result))
     expected = (
-        "answer", "add", "--json", "--label", "scope:ephemeral", "--label", "header:Lang",
-        "--branch", "feat/x", "--path", "src/a.go", "--path", "src/b.go",
-        "--body=Go\nOptions: Go | Rust", "--", "Which language?",
+        "answer", "add", "--json", *CAPTURE_FLAGS, "--label", "scope:ephemeral", "--label", "header:Lang",
+        "--branch", "feat/x", "--body=Go\nOptions: Go | Rust", "--", "Which language?",
     )
     check("answer single: exact add argv", answer_adds(calls) == [expected], repr(answer_adds(calls)))
-    if result and result.message:
-        check("answer single: ack states the rule", "Recorded answers in cc-notes" in result.message, result.message)
+    check("answer single: dedupe reads recent answers first", calls[0] == RECENT_LIST, repr(calls))
+    message = result.message if result else ""
+    check("answer single: ack forbids a hand record", "never record them again by hand" in message, message)
+    check("answer single: ack names the record", "ans0001 Which language? → Go" in message, message)
 
 
-def test_record_user_answers_multiselect_defaults_durable(monkeypatch, tmp_path) -> None:
-    """A multiSelect answer keeps its comma-joined labels; a failed triage records it durable."""
+def test_record_user_answers_heuristic_scope() -> None:
+    """Rule words in the header or options, or always/never/going forward in the reply, record durable."""
+
+    def pair(answer: str = "A", header: str = "", description: str = "", notes: str = "") -> AnsweredQuestion:
+        return AnsweredQuestion(
+            question="Q?", header=header, answer=answer, options=["A", "B"], notes=notes,
+            asked="\n".join([header, f"A {description}", f"B {description}"]), preview="",
+        )
+
+    cases = {
+        "header names a standing rule": (pair(header="Standing rule"), "durable"),
+        "option text says always": (pair(description="always ask first"), "durable"),
+        "notes say going forward": (pair(notes="Going forward, ship on merge"), "durable"),
+        "typed reply says never": (pair(answer="never deploy on fridays"), "durable"),
+        "picked label says never": (AnsweredQuestion("Q?", "", "Never", ["Never", "Now"], "", "\nNever \nNow ", ""), "durable"),
+        "plain pick": (pair(), "ephemeral"),
+        "multi pick": (pair(answer="A, B"), "ephemeral"),
+        "a pick in a never-free question": (pair(notes="ship it now"), "ephemeral"),
+    }
+    for name, (case, want) in cases.items():
+        check(f"answer scope: {name}", heuristic_scope(case) == want, heuristic_scope(case))
+
+
+def test_record_user_answers_dedupes_recent_titles(monkeypatch, tmp_path) -> None:
+    """A title recorded in the last 24 hours is skipped; an older one records again."""
+    for hours, want in ((1, 0), (25, 1)):
+        evt, calls = answer_event(
+            monkeypatch, tmp_path / str(hours), [question("Which language?")], {"answers": {"Which language?": "A"}},
+            recent=[recent_answer("Which language?", hours)],
+        )
+        result = record_user_answers(evt)
+        check(f"answer dedupe: {hours}h old -> {want} add", len(answer_adds(calls)) == want, repr(calls))
+        check(f"answer dedupe: {hours}h old ack", (result is not None) == bool(want), repr(result))
+
+
+def test_record_user_answers_multiselect(monkeypatch, tmp_path) -> None:
+    """A multiSelect answer keeps its comma-joined labels and records ephemeral without a header label."""
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Which checks?", labels=("lint", "test", "fmt"), multi=True)],
         json.dumps({"answers": {"Which checks?": "lint, test"}}),
     )
-    result = floated(record_user_answers, evt)
+    result = record_user_answers(evt)
     adds = answer_adds(calls)
     check("answer multi: one add", len(adds) == 1, repr(adds))
     check("answer multi: string tool_response parsed, labels joined", adds and "--body=lint, test\nOptions: lint | test | fmt" in adds[0], repr(adds))
-    check("answer multi: empty triage -> durable", adds and "scope:durable" in adds[0], repr(adds))
+    check("answer multi: plain picks are ephemeral", adds and "scope:ephemeral" in adds[0], repr(adds))
     check("answer multi: no header label without a header", adds and not any(a.startswith("header:") for a in adds[0]), repr(adds))
-    check("answer multi: warns", result is not None and "Recorded answers in cc-notes" in (result.message or ""), repr(result))
+    check("answer multi: warns", result is not None and "Recorded these answers in cc-notes" in (result.message or ""), repr(result))
 
 
-def test_record_user_answers_free_text_and_notes(monkeypatch, tmp_path) -> None:
-    """Free "Other" text records verbatim, notes ride a Notes line, and secret-looking text never records."""
+def test_record_user_answers_free_text_notes_and_preview(monkeypatch, tmp_path) -> None:
+    """Free "Other" text records verbatim, notes and the picked preview ride their own lines, secrets never record."""
     evt, calls = answer_event(
         monkeypatch, tmp_path,
         [question("Indent style?"), question("Deploy key?"), question("Branch name?")],
         {
             "answers": {"Indent style?": "tabs, width 4", "Deploy key?": "ghp_" + "a" * 36, "Branch name?": "B", "Unasked?": "A"},
-            "annotations": {"Indent style?": {"notes": "matches the go fmt default", "preview": "x"}, "Branch name?": {"notes": "token: hunter2hunter2"}},
+            "annotations": {
+                "Indent style?": {"notes": "matches the go fmt default", "preview": "x"},
+                "Branch name?": {"notes": "token: hunter2hunter2", "preview": "password: hunter2hunter2"},
+            },
         },
         added=("ans0001aaaa", "ans0002bbbb"),
     )
-    floated(record_user_answers, evt)
+    record_user_answers(evt)
     adds = answer_adds(calls)
     check("answer free: secret answer and unasked key skipped", [a[-1] for a in adds] == ["Indent style?", "Branch name?"], repr(adds))
-    check("answer free: free text + notes body", adds and "--body=tabs, width 4\nOptions: A | B\nNotes: matches the go fmt default" in adds[0], repr(adds))
-    check("answer free: secret-looking notes dropped", len(adds) == 2 and "--body=B\nOptions: A | B" in adds[1], repr(adds))
+    check("answer free: free text, notes, preview body", adds and "--body=tabs, width 4\nOptions: A | B\nNotes: matches the go fmt default\nPreview: x" in adds[0], repr(adds))
+    check("answer free: secret-looking notes and preview dropped", len(adds) == 2 and "--body=B\nOptions: A | B" in adds[1], repr(adds))
+    lines = evt.ctx.s.load(SessionAnswers).lines
+    check("answer free: preview stays out of the rendered answer", lines.get("ans0001aaaa") == "ans0001 Indent style? → tabs, width 4", repr(lines))
 
 
-def test_record_user_answers_supersedes(monkeypatch, tmp_path) -> None:
+def test_refine_user_answers_anchors_paths_and_relabels(monkeypatch, tmp_path) -> None:
+    """The background pass adds in-repo session paths and swaps the scope the model disagrees with."""
+    evt, calls = answer_event(
+        monkeypatch, tmp_path, [question("Which language?", labels=("Go", "Rust"))], {"answers": {"Which language?": "Go"}},
+        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, scope="durable")]),
+        paths=(f"{ANSWER_ROOT}/src/a.go", "/elsewhere/x.go", f"{ANSWER_ROOT}/src/b.go", f"{ANSWER_ROOT}/src/a.go"),
+    )
+    captured_then_refined(evt, calls)
+    expected = (
+        "answer", "edit", "ans0001aaaa", "--json", "--rm-label", "scope:ephemeral", "--add-label", "scope:durable",
+        "--add-path", "src/a.go", "--add-path", "src/b.go",
+    )
+    check("refine: one edit with relabel and paths", answer_edits(calls) == [expected], repr(calls))
+    check("refine: consumes the captured id", evt.ctx.s.load(CapturedAnswers).ids == {}, repr(evt.ctx.s.load(CapturedAnswers).ids))
+
+
+def test_refine_user_answers_agreeing_triage_without_paths_edits_nothing(monkeypatch, tmp_path) -> None:
+    evt, calls = answer_event(
+        monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}},
+        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, scope="ephemeral")]),
+    )
+    captured_then_refined(evt, calls)
+    check("refine agree: no edit", answer_edits(calls) == [], repr(calls))
+
+
+def test_refine_user_answers_skips_uncaptured(monkeypatch, tmp_path) -> None:
+    """A deduped answer was never captured, so the background pass makes no calls."""
+    evt, calls = answer_event(
+        monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}}, recent=[recent_answer("Q?", 1)],
+        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="old0001")]),
+    )
+    captured_then_refined(evt, calls)
+    check("refine uncaptured: no calls", calls == [], repr(calls))
+
+
+def test_refine_user_answers_supersedes(monkeypatch, tmp_path) -> None:
     """A triage naming a candidate supersedes it by full id, and the old line leaves the session ledger."""
     old = durable_answer("old0001cccc", title="Which language?", body="Rust")
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Which language?", labels=("Go", "Rust"))],
         {"answers": {"Which language?": "Go"}},
-        candidates=[old],
-        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="old0001")]),
+        candidates=[old, durable_answer("ans0001aaaa", title="Which language?", body="Go")],
+        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, scope="ephemeral", supersedes="old0001")]),
     )
     evt.ctx.s[SessionAnswers].set(SessionAnswers(lines={"old0001cccc": "old0001 Which language? → Rust"}))
-    result = floated(record_user_answers, evt)
-    check("answer supersede: supersede argv", ("answer", "supersede", "old0001cccc", "--by", "ans0001aaaa", "--json") in calls, repr(calls))
-    check("answer supersede: acks the capture", result is not None and "Recorded answers in cc-notes" in (result.message or ""), repr(result))
+    prompts: list[str] = []
+    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: prompts.append(str(prompt)) or AnswerTriage(verdicts=[AnswerVerdict(index=0, scope="ephemeral", supersedes="old0001")]))
+    captured_then_refined(evt, calls)
+    check("refine supersede: supersede argv", ("answer", "supersede", "old0001cccc", "--by", "ans0001aaaa", "--json") in calls, repr(calls))
+    check("refine supersede: the fresh record is never its own candidate", prompts and "ans0001aaaa\t" not in prompts[0], repr(prompts))
     lines = evt.ctx.s.load(SessionAnswers).lines
-    check("answer supersede: ledger swaps old for new", list(lines) == ["ans0001aaaa"] and lines["ans0001aaaa"] == "ans0001 Which language? → Go", repr(lines))
+    check("refine supersede: ledger swaps old for new", list(lines) == ["ans0001aaaa"] and lines["ans0001aaaa"] == "ans0001 Which language? → Go", repr(lines))
 
 
 def test_record_user_answers_long_question(monkeypatch, tmp_path) -> None:
     """A question over the title cap records a clamped title plus the full text on a Question: line."""
     long_q = "Which retry policy should the sync loop use when the remote rejects a push? " * 5
     evt, calls = answer_event(monkeypatch, tmp_path, [question(long_q, labels=("Backoff", "Fail"))], {"answers": {long_q: "Backoff"}})
-    floated(record_user_answers, evt)
+    record_user_answers(evt)
     adds = answer_adds(calls)
     check("answer long: fixture exceeds the cap", len(long_q.encode()) > MAX_TITLE_BYTES)
     check("answer long: title clamped", adds and adds[0][-1] == clamp_title(long_q) and adds[0][-1] != long_q, repr(adds))
@@ -5025,13 +5126,15 @@ def test_record_user_answers_long_question(monkeypatch, tmp_path) -> None:
     check("answer long: render_note_lines uses the full question", render_note_lines([{"kind": "answer", "answer": record}]) == [f"ans0001 {long_q} → Backoff"])
 
     triage_prompts: list[str] = []
-    later, _ = answer_event(monkeypatch, tmp_path / "later", [question(long_q)], {"answers": {long_q: "Fail"}}, candidates=[record])
+    later, later_calls = answer_event(
+        monkeypatch, tmp_path / "later", [question(long_q)], {"answers": {long_q: "Fail"}}, candidates=[record], added=("ans0002bbbb",),
+    )
     monkeypatch.setattr(later.ctx, "call_llm", lambda prompt, **kw: triage_prompts.append(str(prompt)) or AnswerTriage())
-    floated(record_user_answers, later)
+    captured_then_refined(later, later_calls)
     check("answer long: triage candidates carry the full question", triage_prompts and f"ans0001aaaa\tans0001 {long_q} → Backoff" in triage_prompts[0], repr(triage_prompts))
 
 
-def test_record_user_answers_reused_id_never_self_supersedes(monkeypatch, tmp_path) -> None:
+def test_refine_user_answers_reused_id_never_self_supersedes(monkeypatch, tmp_path) -> None:
     """An identical answer add reuses the candidate's id, so a triage naming it must not supersede it with itself."""
     same = durable_answer("old0001cccc", title="Which language?", body="Go")
     evt, calls = answer_event(
@@ -5040,12 +5143,11 @@ def test_record_user_answers_reused_id_never_self_supersedes(monkeypatch, tmp_pa
         candidates=[same], added=("old0001cccc",),
         triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="old0001")]),
     )
-    result = floated(record_user_answers, evt)
-    check("answer reuse: no supersede call", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
-    check("answer reuse: ack claims no supersede", result is not None and "supersedes" not in (result.message or ""), repr(result))
+    captured_then_refined(evt, calls)
+    check("refine reuse: no supersede call", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
 
 
-def test_record_user_answers_supersede_needs_unique_prefix(monkeypatch, tmp_path) -> None:
+def test_refine_user_answers_supersede_needs_unique_prefix(monkeypatch, tmp_path) -> None:
     """A triage id supersedes only a candidate it names exactly or as a unique prefix, never one it merely extends."""
     candidates = [durable_answer("old0001cccc"), durable_answer("old0001dddd"), durable_answer("old0002eeee")]
     for named, want in (("old0001", None), ("old0002eeeeffff", None), ("old0001dddd", "old0001dddd"), ("old0002", "old0002eeee")):
@@ -5053,23 +5155,24 @@ def test_record_user_answers_supersede_needs_unique_prefix(monkeypatch, tmp_path
             monkeypatch, tmp_path / named, [question("Q?")], {"answers": {"Q?": "A"}},
             candidates=candidates, triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes=named)]),
         )
-        floated(record_user_answers, evt)
+        captured_then_refined(evt, calls)
         supersedes = [c[2] for c in calls if c[:2] == ("answer", "supersede")]
-        check(f"answer prefix: {named} supersedes {want}", supersedes == ([want] if want else []), repr(supersedes))
+        check(f"refine prefix: {named} supersedes {want}", supersedes == ([want] if want else []), repr(supersedes))
 
 
-def test_record_user_answers_unknown_supersede_ignored(monkeypatch, tmp_path) -> None:
+def test_refine_user_answers_unknown_supersede_ignored(monkeypatch, tmp_path) -> None:
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}},
         triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="nope123")]),
     )
-    floated(record_user_answers, evt)
-    check("answer supersede: a non-candidate id never supersedes", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
+    captured_then_refined(evt, calls)
+    check("refine supersede: a non-candidate id never supersedes", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
 
 
 def test_record_user_answers_silent_without_answers(monkeypatch, tmp_path) -> None:
     evt, calls = answer_event(monkeypatch, tmp_path, [question("Q?")], None)
-    check("answer none: silent", floated(record_user_answers, evt) is None)
+    check("answer none: silent", record_user_answers(evt) is None)
+    refine_user_answers(evt)
     check("answer none: no CLI calls", calls == [], repr(calls))
 
 
@@ -5336,9 +5439,9 @@ def test_render_answer_line_multiline_answer(monkeypatch, tmp_path) -> None:
     entry = {"kind": "answer", "answer": record, "reasons": []}
     check("multiline: recall line joins the answer lines", render_note_lines([entry]) == ["ans0001 Rollout plan? → Canary first / then 10%"], repr(render_note_lines([entry])))
     triage_prompts: list[str] = []
-    evt, _ = answer_event(monkeypatch, tmp_path, [question("Rollout plan?")], {"answers": {"Rollout plan?": "B"}}, candidates=[record])
+    evt, calls = answer_event(monkeypatch, tmp_path, [question("Rollout plan?")], {"answers": {"Rollout plan?": "B"}}, candidates=[record], added=("ans0002bbbb",))
     monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: triage_prompts.append(str(prompt)) or AnswerTriage())
-    floated(record_user_answers, evt)
+    captured_then_refined(evt, calls)
     check("multiline: triage candidate carries the whole answer", triage_prompts and "ans0001aaaa\tans0001 Rollout plan? → Canary first / then 10%" in triage_prompts[0], repr(triage_prompts))
 
 

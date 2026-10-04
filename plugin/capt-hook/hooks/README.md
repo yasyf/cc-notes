@@ -29,7 +29,7 @@ native task tracking versus durable, git-synced cc-notes entities.
 | `cc-notes runbook add` | Durable, git-synced | Repo-global, anchored like a note | A repeatable procedure as ordered steps, each optionally carrying a command; every execution is a tracked run with per-step outcomes |
 | `cc-notes investigation open` | Durable, git-synced | Repo-global, anchored like a note | One debugging arc: an immutable premise, findings with dispositions, an append-only evidence timeline, and a status that holds the verdict |
 | `cc-notes plan add` | Durable, git-synced | Repo-global, anchored like a note | One approved plan held verbatim — context, approach, pitfalls, verification — moving draft → approved → executing → done/abandoned, with tasks pointing back at it via `task add --plan <id>`. The pack records this one for you on `ExitPlanMode` |
-| `cc-notes answer add` | Durable, git-synced | Repo-global, anchored to the branch and the files the session touched | One answer the user gave to an `AskUserQuestion`: the question as title, the chosen answer as body, labeled `scope:durable` or `scope:ephemeral`. The pack records every answer for you |
+| `cc-notes answer add` | Durable, git-synced | Repo-global, anchored to the branch and the files the session touched | One answer the user gave to an `AskUserQuestion`: the question as title, the chosen answer as body, labeled `scope:durable` or `scope:ephemeral`. The pack records every answer for you, labeled `from:owner` and `source:askuserquestion` |
 
 Tasks are global. The id addresses a task no matter which branch it lives on, and
 its branch is a mutable attribute. `cc-notes task add --backlog` parks work in the
@@ -63,13 +63,16 @@ through the `unseen` scopes below, so a second fire about the same file carries 
 new. So an advisory arrives one event after the event that earned it, and a hook that is still
 thinking costs that event nothing.
 
-Two things do not travel this way. A `max_fires`-capped hook cannot: captain-hook reserves a
+Three things do not travel this way. A `max_fires`-capped hook cannot: captain-hook reserves a
 fire before the handler runs and releases it unless the handler returns a result, so a capped
 hook that defers instead of returning would never consume its cap — which is why the
-internal-write router still runs synchronously. And a capture that reads shared state before
-writing it needs its own serialization: the answer capture holds a session-scoped lock across
-list-triage-record-supersede, because two background captures interleaving there would each
-list candidates before either recorded and leave a superseded answer live.
+internal-write router still runs synchronously. The answer record cannot either. Captain-hook
+drops a background group whose evidence lease goes stale, and in a large session that lost every
+answer. The record therefore runs in the foreground, skipping the model and the transcript, and
+only its refinement runs in the background. And a refinement that reads shared state before
+writing it needs its own serialization: it holds a session-scoped lock across
+list-triage-supersede, because two background refinements interleaving there would each list
+candidates before either superseded and leave a superseded answer live.
 
 The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
 on purpose; the LLM is the precision gate in both directions. The only deterministic hooks
@@ -304,20 +307,27 @@ other cc-notes call in the pack it fails closed — a failed capture drops the c
 keeps the teach.
 
 **The answer capture.** An answer to `AskUserQuestion` is a decision the next session would
-otherwise ask again. After every `AskUserQuestion` this handler pairs each question with its
+otherwise ask again, so the pack records every answer itself and the agent never records one by
+hand. Right after `AskUserQuestion` returns, a foreground handler pairs each question with its
 answer by exact question text (a multiSelect answer keeps its comma-joined labels, free
-"Other" text records verbatim) and records it with `cc-notes answer add`: the question as the
-title, clamped to the 256-byte title cap, and a body of the answer, a `Question:` line with the
-full text when the title was clamped, an `Options:` line, and the user's `Notes:` annotation. One small-model call labels each answer `scope:durable` (a preference,
-convention, or decision) or `scope:ephemeral` (a one-off pick), and names the earlier durable
-answer it replaces, which the handler then retires with `answer supersede <old> --by <new>`. A
-model error records every answer durable with no supersede. Each record is anchored to the
-current branch and up to ten repo-relative files the session touched, and carries a
-`header:<chip>` label when the question has a header. An answer or note that looks like a
-secret never records, because the refs sync to the remote. Like the plan capture it is
-uncapped and fails closed to silence. The whole capture runs in the background and the next
-event floats its acknowledgement, so the triage call and the `answer add` writes never hold
-the `AskUserQuestion` result.
+"Other" text records verbatim) and runs `cc-notes answer add`: the question as the title,
+clamped to the 256-byte title cap, and a body of the answer, a `Question:` line with the full
+text when the title was clamped, an `Options:` line, the user's `Notes:` annotation, and a
+`Preview:` line carrying the picked option's preview. Every record carries `from:owner`,
+`source:askuserquestion`, a `header:<chip>` label when the question has a header, and a scope
+label from a visible heuristic. The scope is `scope:durable` when the header or the option text
+says rule, standing, always, or never. It is also durable when the notes or the typed reply say
+always, never, or going forward. Every other answer is `scope:ephemeral`. A title already recorded in the last 24 hours is skipped.
+The record is anchored to the current branch, and the handler's warning lists what it recorded.
+It reads no transcript and calls no model, so a large session's evidence deadline cannot drop
+it.
+
+A background pass then refines what the foreground recorded. One small-model call re-labels a
+scope it disagrees with and names the earlier durable answer each one replaces, which the pass
+retires with `answer supersede <old> --by <new>`; the same `answer edit` adds up to ten
+repo-relative files the session touched as path anchors. The refinement is best-effort: when it
+fails or never runs, the heuristic scope and the branch anchor stand. An answer or note that
+looks like a secret never records, because the refs sync to the remote.
 
 **The compact tracker.** Compaction wipes the window; the entities the session touched should
 not vanish with it. Every cc-notes entity call — an MCP tool or a `cc-notes`/`ccn` leg of any

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
@@ -40,11 +41,15 @@ from .common import (
     utf8_len,
 )
 from .compact import CompactResume
-from .deferred import defer
 from .surface import SurfacePick
 
 MAX_ANSWER_PATHS = 10
 RESTORE_EXCERPT_CHARS = 160
+RECENT_ANSWER_LIMIT = 100
+DEDUP_WINDOW = timedelta(hours=24)
+CAPTURE_LABELS = ("from:owner", "source:askuserquestion")
+STANDING_ASK_RE = re.compile(r"\b(?:rules?|standing|always|never)\b", re.IGNORECASE)
+STANDING_REPLY_RE = re.compile(r"\b(?:always|never|going forward)\b", re.IGNORECASE)
 
 SECRET_RE = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----"
@@ -86,6 +91,8 @@ class AnsweredQuestion(NamedTuple):
     answer: str
     options: list[str]
     notes: str
+    asked: str
+    preview: str
 
 
 class AnswerVerdict(BaseModel):
@@ -103,14 +110,18 @@ class AnswerTriage(BaseModel):
 
 
 class AnswerCaptureLock(BaseModel):
-    """Empty state whose file lock serializes one session's background answer captures.
+    """Empty state whose file lock serializes one session's background answer refinements.
 
-    A capture lists the durable candidates, triages against them, records, and retires the
-    candidate its verdict supersedes. Two captures overlapping would both list candidates before
-    either recorded, so the second would supersede an answer the first had already replaced and
-    both would stay live. Running on the reply's thread made that window small; running in the
-    background makes it the whole capture.
+    A refinement lists the durable candidates, triages against them, and retires the candidate
+    its verdict supersedes. Two refinements overlapping would both list candidates before either
+    superseded, so both answers would stay live.
     """
+
+
+class CapturedAnswers(BaseModel):
+    """Answer ids the foreground capture recorded, keyed by question, awaiting background refinement."""
+
+    ids: dict[str, str] = {}
 
 
 class PromptAnswerPicks(BaseModel):
@@ -131,17 +142,32 @@ def answered_questions(evt: PostToolUseEvent) -> list[AnsweredQuestion]:
         answer = answers.get(q["question"])
         if not isinstance(answer, str) or SECRET_RE.search(answer):
             continue
-        notes = (annotations.get(q["question"]) or {}).get("notes") or ""
+        annotation = annotations.get(q["question"]) or {}
+        notes = annotation.get("notes") or ""
+        preview = annotation.get("preview") or ""
+        options = q.get("options", [])
         pairs.append(
             AnsweredQuestion(
                 question=q["question"],
                 header=q.get("header", ""),
                 answer=answer,
-                options=[o["label"] for o in q.get("options", [])],
+                options=[o["label"] for o in options],
                 notes="" if SECRET_RE.search(notes) else notes.strip(),
+                asked="\n".join([q.get("header", ""), *(f"{o['label']} {o.get('description', '')}" for o in options)]),
+                preview="" if SECRET_RE.search(preview) else preview.strip(),
             )
         )
     return pairs
+
+
+def typed_reply(pair: AnsweredQuestion) -> str:
+    picked = [part.strip() for part in pair.answer.split(",")]
+    return "" if all(label in pair.options for label in picked) else pair.answer
+
+
+def heuristic_scope(pair: AnsweredQuestion) -> str:
+    standing = STANDING_ASK_RE.search(pair.asked) or STANDING_REPLY_RE.search(f"{pair.notes}\n{typed_reply(pair)}")
+    return "durable" if standing else "ephemeral"
 
 
 def answer_body(pair: AnsweredQuestion) -> str:
@@ -152,6 +178,8 @@ def answer_body(pair: AnsweredQuestion) -> str:
         lines.append("Options: " + " | ".join(pair.options))
     if pair.notes:
         lines.append(f"Notes: {pair.notes}")
+    if pair.preview:
+        lines.append(f"Preview: {pair.preview}")
     return "\n".join(lines)
 
 
@@ -197,46 +225,86 @@ def session_paths(evt: PostToolUseEvent) -> list[str]:
     return paths
 
 
-def anchor_args(evt: PostToolUseEvent) -> list[str]:
-    args: list[str] = []
+def branch_args(evt: PostToolUseEvent) -> list[str]:
     branch = (evt.ctx.git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
-    if branch and branch != "HEAD":
-        args += ["--branch", branch]
-    for path in session_paths(evt):
-        args += ["--path", path]
-    return args
+    return ["--branch", branch] if branch and branch != "HEAD" else []
 
 
-def add_answer(evt: PostToolUseEvent, pair: AnsweredQuestion, scope: str, anchors: list[str]) -> str:
-    labels = ["--label", f"scope:{scope}"]
+def recent_titles(evt: PostToolUseEvent) -> set[str]:
+    since = datetime.now(UTC) - DEDUP_WINDOW
+    rows = parse_answers(run_cc_notes(evt, "answer", "list", "--json", "--limit", str(RECENT_ANSWER_LIMIT)))
+    return {a["title"] for a in rows if datetime.fromisoformat(a["updated_at"]) >= since}
+
+
+def add_answer(evt: PostToolUseEvent, pair: AnsweredQuestion, anchors: list[str]) -> str:
+    labels = [*CAPTURE_LABELS, f"scope:{heuristic_scope(pair)}"]
     if pair.header:
-        labels += ["--label", f"header:{pair.header}"]
-    out = run_cc_notes(evt, "answer", "add", "--json", *labels, *anchors, f"--body={answer_body(pair)}", "--", clamp_title(pair.question))
+        labels.append(f"header:{pair.header}")
+    flags = [arg for label in labels for arg in ("--label", label)]
+    out = run_cc_notes(evt, "answer", "add", "--json", *flags, *anchors, f"--body={answer_body(pair)}", "--", clamp_title(pair.question))
     return json_field(out, "id")
 
 
-def capture_user_answers(evt: PostToolUseEvent) -> HookResult | None:
-    pairs = answered_questions(evt)
-    if not pairs:
+@on(
+    Event.PostToolUse,
+    only_if=[Tool("AskUserQuestion"), CcNotesAvailable()],
+    max_fires=None,
+    tests={
+        Input(tool="AskUserQuestion", tool_input={"questions": [{"question": "Q?", "header": "h", "multiSelect": False, "options": [{"label": "A"}]}]}): Allow(),
+        Input(tool="Edit", file="m.py"): Allow(),
+    },
+)
+def record_user_answers(evt: PostToolUseEvent) -> HookResult | None:
+    if not (pairs := answered_questions(evt)):
         return None
-    candidates = durable_answers(evt)
-    verdicts = triage_answers(evt, pairs, candidates)
-    anchors = anchor_args(evt)
+    seen = recent_titles(evt)
+    anchors = branch_args(evt)
     recorded: list[dict[str, Any]] = []
-    for i, pair in enumerate(pairs):
-        verdict = verdicts.get(i)
-        scope = verdict.scope if verdict else "durable"
-        if not (answer_id := add_answer(evt, pair, scope, anchors)):
+    captured: dict[str, str] = {}
+    for pair in pairs:
+        title = clamp_title(pair.question)
+        if title in seen:
             continue
+        seen.add(title)
+        if answer_id := add_answer(evt, pair, anchors):
+            captured[pair.question] = answer_id
+            recorded.append({"id": answer_id, "title": title, "body": answer_body(pair)})
+    if not recorded:
+        return None
+    with evt.ctx.s[CapturedAnswers].mutate() as state:
+        state.ids.update(captured)
+    remember_answers(evt, recorded)
+    return evt.warn(
+        "Recorded these answers in cc-notes; never record them again by hand. `cc-notes answer list` reviews them:",
+        *(answer_line(a) for a in recorded),
+    )
+
+
+def scope_edit(scope: str, verdict: AnswerVerdict | None) -> list[str]:
+    if verdict is None or verdict.scope == scope:
+        return []
+    return ["--rm-label", f"scope:{scope}", "--add-label", f"scope:{verdict.scope}"]
+
+
+def refine_captured_answers(evt: PostToolUseEvent) -> None:
+    pairs = answered_questions(evt)
+    with evt.ctx.s[CapturedAnswers].mutate() as state:
+        captured = {p.question: state.ids.pop(p.question) for p in pairs if p.question in state.ids}
+    if not (pairs := [p for p in pairs if p.question in captured]):
+        return
+    fresh = set(captured.values())
+    candidates = [a for a in durable_answers(evt) if a["id"] not in fresh]
+    verdicts = triage_answers(evt, pairs, candidates)
+    paths = [arg for path in session_paths(evt) for arg in ("--add-path", path)]
+    for i, pair in enumerate(pairs):
+        answer_id = captured[pair.question]
+        verdict = verdicts.get(i)
+        if edits := [*scope_edit(heuristic_scope(pair), verdict), *paths]:
+            run_cc_notes(evt, "answer", "edit", answer_id, "--json", *edits)
         old = superseded_id(verdict, candidates)
         if old and old != answer_id and run_cc_notes(evt, "answer", "supersede", old, "--by", answer_id, "--json") is not None:
             with evt.ctx.s[SessionAnswers].mutate() as state:
                 state.lines.pop(old, None)
-        recorded.append({"id": answer_id, "title": clamp_title(pair.question), "body": answer_body(pair)})
-    if not recorded:
-        return None
-    remember_answers(evt, recorded)
-    return evt.warn("Recorded answers in cc-notes. Review them with `cc-notes answer list`.")
 
 
 @on(
@@ -249,10 +317,9 @@ def capture_user_answers(evt: PostToolUseEvent) -> HookResult | None:
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
-def record_user_answers(evt: PostToolUseEvent) -> None:
+def refine_user_answers(evt: PostToolUseEvent) -> None:
     with evt.ctx.s[AnswerCaptureLock].mutate():
-        ack = capture_user_answers(evt)
-    defer(evt, ack)
+        refine_captured_answers(evt)
 
 
 def pick_prompt_answers(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> dict[str, str]:
