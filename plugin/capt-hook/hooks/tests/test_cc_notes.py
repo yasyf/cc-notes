@@ -4644,14 +4644,14 @@ def test_compact_tracker_ignores_reads_and_foreign(tmp_path) -> None:
 
 
 def test_compact_tracker_rm_deletes_entry(tmp_path) -> None:
-    """A two-token `*_rm` deletes the tracked entry so a deleted entity is never restored."""
+    """A two-token `*_rm` from any agent deletes every agent's tracked entry so a deleted entity is never restored."""
     ev1 = mock_tool_event(
         tool="mcp__plugin_cc-notes_cc-notes__note_add", event=Event.PostToolUse,
         tool_input={"title": "Doomed"}, output='{"id":"abc123def456"}', session_dir=tmp_path,
     )
     record_touched_entities(ev1)
     ev2 = mock_tool_event(
-        tool="mcp__plugin_cc-notes_cc-notes__note_rm", event=Event.PostToolUse,
+        tool="mcp__plugin_cc-notes_cc-notes__note_rm", event=Event.PostToolUse, agent_id="lane-1",
         tool_input={"id": "abc123def456"}, session_dir=tmp_path,
     )
     record_touched_entities(ev2)
@@ -5096,7 +5096,7 @@ def test_refine_user_answers_skips_uncaptured(monkeypatch, tmp_path) -> None:
 
 
 def test_refine_user_answers_supersedes(monkeypatch, tmp_path) -> None:
-    """A triage naming a candidate supersedes it by full id, and the old line leaves the session ledger."""
+    """A triage naming a candidate supersedes it by full id; the ledger keeps the old id, whose restore resolves to the replacement."""
     old = durable_answer("old0001cccc", title="Which language?", body="Rust")
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Which language?", labels=("Go", "Rust"))],
@@ -5111,7 +5111,7 @@ def test_refine_user_answers_supersedes(monkeypatch, tmp_path) -> None:
     check("refine supersede: supersede argv", ("answer", "supersede", "old0001cccc", "--by", "ans0001aaaa", "--json") in calls, repr(calls))
     check("refine supersede: the fresh record is never its own candidate", prompts and "ans0001aaaa\t" not in prompts[0], repr(prompts))
     lines = evt.ctx.s.load(SessionAnswers).lines
-    check("refine supersede: ledger swaps old for new", list(lines) == ["ans0001aaaa"] and lines["ans0001aaaa"] == "ans0001 Which language? → Go", repr(lines))
+    check("refine supersede: ledger keeps both ids", list(lines) == ["old0001cccc", "ans0001aaaa"], repr(lines))
 
 
 def test_record_user_answers_long_question(monkeypatch, tmp_path) -> None:
@@ -5385,6 +5385,12 @@ def test_restore_answers_after_compact(monkeypatch, tmp_path) -> None:
     with ephemeral.ctx.s[SessionAnswers].mutate() as state:
         state.lines, state.owners = {"eph0001aaaa": "line"}, {"eph0001aaaa": "main"}
     check("answer restore: ephemeral answers never restore", restore_answers_after_compact(ephemeral) is None)
+
+    legacy = restore_event(monkeypatch, tmp_path / "legacy", rows)
+    with legacy.ctx.s[SessionAnswers].mutate() as state:
+        state.lines = {"ans0001aaaa": "line"}
+    restored = restore_answers_after_compact(legacy)
+    check("answer restore: a ledgered answer with no owner restores for the root", restored is not None and "ans0001" in restored.message, repr(restored))
 
 
 def test_restore_answers_after_compact_scopes_to_the_agent(monkeypatch, tmp_path) -> None:

@@ -188,11 +188,10 @@ def _evict(state: TouchedEntities, agent: str) -> None:
 
 
 def _apply(state: TouchedEntities, touch: _Touch, agent: str) -> None:
-    existing = next((e for e in state.entries if e.agent == agent and ids_match(e.id, touch.id)), None)
     if touch.verb == "remove":
-        if existing is not None:
-            state.entries.remove(existing)
+        state.entries = [e for e in state.entries if not ids_match(e.id, touch.id)]
         return
+    existing = next((e for e in state.entries if e.agent == agent and ids_match(e.id, touch.id)), None)
     if existing is None:
         state.entries.append(TouchedEntity(id=touch.id, kind=touch.kind, agent=agent, title=touch.title, verbs=[touch.verb], seq=state.next_seq))
     else:

@@ -341,13 +341,15 @@ not vanish with it. Every cc-notes entity call — an MCP tool or a `cc-notes`/`
 Bash line — silently records which entity it touched and how (created, edited, or explicitly
 shown; search/list/status results never count) into per-session state. Each entry carries
 the touching agent; entries dedup by id within each agent, with short and full prefixes
-merged. A `rm` drops that agent's entry, and a 30-entry cap per agent evicts the oldest
+merged. A `rm` drops every agent's entry for that id, and a 30-entry cap per agent evicts the oldest
 pure-reads first.
 
 When `SessionStart` fires with source `compact`, the restorer injects the digest the
 Surface table describes, cumulative across repeated compactions and limited to the compacting agent's
-own entries. Captured or surfaced answers also carry their agent in session state; only
-that agent's durable answers restore. An agent with no entries injects nothing. Both halves
+own entries. Captured or surfaced answers also carry their agent in session state;
+entries with no recorded owner count as `main`'s. Answer restores select that agent's
+ledger entries, follow superseded ids to their live replacements and include only
+durable answers. An agent with no entries injects nothing. Both halves
 stay silent on parse or store errors, so neither disturbs the tool call.
 
 Claude Code 2.1.289 omits `agent_id` from `SessionStart` and supplies the parent session's

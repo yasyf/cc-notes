@@ -304,9 +304,8 @@ def refine_captured_answers(evt: PostToolUseEvent) -> None:
         if edits := [*scope_edit(heuristic_scope(pair), verdict), *paths]:
             run_cc_notes(evt, "answer", "edit", answer_id, "--json", *edits)
         old = superseded_id(verdict, candidates)
-        if old and old != answer_id and run_cc_notes(evt, "answer", "supersede", old, "--by", answer_id, "--json") is not None:
-            with evt.ctx.s[SessionAnswers].mutate() as state:
-                state.lines.pop(old, None)
+        if old and old != answer_id:
+            run_cc_notes(evt, "answer", "supersede", old, "--by", answer_id, "--json")
 
 
 @on(
@@ -419,7 +418,7 @@ def restore_digest(answers: list[dict[str, Any]]) -> list[str]:
 )
 def restore_answers_after_compact(evt: SessionStartEvent) -> HookResult | None:
     state = evt.ctx.s.load(SessionAnswers)
-    ids = [aid for aid in state.lines if state.owners.get(aid) == agent_key(evt)]
+    ids = [aid for aid in state.lines if state.owners.get(aid, "main") == agent_key(evt)]
     if not ids or not (lines := restore_digest(current_answers(evt, ids))):
         return None
     return evt.warn(*lines)
