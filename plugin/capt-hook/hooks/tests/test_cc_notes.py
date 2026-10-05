@@ -52,6 +52,7 @@ from hooks.answers import (
     restore_answers_after_compact,
     stage_prompt_answers,
 )
+import hooks.answers as answers_module
 from hooks.approval import CcNotesCli, CcNotesMcp, cc_notes_mcp_tool
 from hooks.deferred import float_deferred_notices
 import hooks.common as common
@@ -62,7 +63,7 @@ from hooks.common import (
     clamp_title,
     COMPACT_ANSWER_BUDGET,
     COMPACT_DIGEST_BUDGET,
-    COMPACT_RESTORE_BUDGET,
+    PROMPT_ANSWER_BUDGET,
     dedup_tasks,
     drift_suffix,
     entry_payload,
@@ -126,6 +127,8 @@ from hooks.record import (
 from hooks.session import (
     float_session_answers,
     float_session_tasks,
+    nudge_cc_notes_installed,
+    nudge_cc_notes_missing,
 )
 from hooks.surface import (
     check_note_staleness,
@@ -168,9 +171,7 @@ from hooks.redirect import (
 import hooks.compact as compact
 from hooks.compact import (
     CompactResume,
-    FULL_SHOW_CAP,
     MAX_ENTRIES,
-    POINTER_CAP,
     TouchedEntities,
     TouchedEntity,
     _classify,
@@ -182,7 +183,7 @@ import hooks.bootstrap as bootstrap
 from hooks.bootstrap import ensure_cc_notes_binary
 from captain_hook.cmd import Cmd
 from captain_hook.conditions import check_condition
-from captain_hook.testing.helpers import fixture_session, mock_event, mock_tool_event
+from captain_hook.testing.helpers import fixture_session, mock_event, mock_session_start_event, mock_tool_event
 from captain_hook.types import Action, Event
 
 FAILURES: list[str] = []
@@ -1314,9 +1315,7 @@ def test_gate_open_when_cc_notes_present(monkeypatch) -> None:
 
 
 def _session_nudge_specs():
-    from captain_hook.app import _state
-
-    return [entry.spec for entry in _state.hooks if entry.name.startswith("hooks.session:nudge_")]
+    return [_spec_for(nudge_cc_notes_installed), _spec_for(nudge_cc_notes_missing)]
 
 
 def _spec_for(handler):
@@ -2545,6 +2544,25 @@ def plan_hook_entry():
     return next(h for h in _state.hooks[before:] if h.name == "nudge_plan_capture")
 
 
+def test_native_task_mirror_nudge_fires_once_per_agent(tmp_path) -> None:
+    """The TaskCreate mirror nudge fires once for the root and once for each lane, however many tasks follow."""
+    from captain_hook.app import _state
+    from captain_hook.dispatch import execute_hook
+    from captain_hook.loader import discover_pack
+
+    before = len(_state.hooks)
+    discover_pack("cc-notes", Path(__file__).parents[1])
+    entry = next(h for h in _state.hooks[before:] if h.name == "nudge_mirror_native_tasks")
+    session = tmp_path / "session"
+
+    def fire(agent: str | None) -> bool:
+        evt = mock_tool_event(tool="TaskCreate", event=Event.PostToolUse, agent_id=agent, session_dir=session)
+        return execute_hook(entry, evt, tmp_path / "hook-state") is not None
+
+    fires = [fire(None), fire(None), fire("lane-1"), fire("lane-1"), fire("lane-2"), fire(None)]
+    check("mirror nudge: once per agent", fires == [True, False, True, False, True, False], repr(fires))
+
+
 def test_plan_capture_outlives_the_nudge_budget(monkeypatch, tmp_path) -> None:
     """Six approved plans in one session all reach cc-notes: the capture carries no fire cap.
 
@@ -2989,6 +3007,24 @@ def test_auto_sync_success_clears_a_pending_failure(monkeypatch, tmp_path) -> No
     sync_after_ref_move(claim_event(tmp_path, monkeypatch))
     check("failure then success: nothing pending", _pending_sync_failures(tmp_path) == {}, repr(_pending_sync_failures(tmp_path)))
     check("failure then success: the next event is silent", surface_sync_failures(_next_event(tmp_path)) is None)
+
+
+def test_identical_sync_failure_surfaces_once_per_session(monkeypatch, tmp_path) -> None:
+    """A sync failure that recurs with the same message warns once; a different message still warns."""
+    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(workflow, "should_autosync", lambda *_a, **_k: True)
+    cli, _calls = recording_cli(raises={("sync",): _rejected("! [rejected] non-fast-forward\n")})
+    sync_after_ref_move(claim_event(tmp_path, monkeypatch, cli=cli))
+    first = surface_sync_failures(_next_event(tmp_path))
+    sync_after_ref_move(claim_event(tmp_path, monkeypatch, cli=cli))
+    repeat = surface_sync_failures(_next_event(tmp_path))
+    check("sync dedupe: the first failure warns", first is not None and "cc-notes sync failed" in (first.message or ""), repr(first))
+    check("sync dedupe: the identical failure never warns again", repeat is None, repr(repeat))
+    check("sync dedupe: the repeat is drained, not left pending", _pending_sync_failures(tmp_path) == {}, repr(_pending_sync_failures(tmp_path)))
+    with _next_event(tmp_path).ctx.s[SyncFailures].mutate() as state:
+        state.by_target = {"other#": "cc-notes sync failed in /other — run `cc-notes sync` there to retry."}
+    other = surface_sync_failures(_next_event(tmp_path))
+    check("sync dedupe: a different failure still warns", other is not None and "/other" in (other.message or ""), repr(other))
 
 
 def _pending_sync_failures(tmp_path) -> dict[str, str]:
@@ -4608,14 +4644,14 @@ def test_compact_tracker_ignores_reads_and_foreign(tmp_path) -> None:
 
 
 def test_compact_tracker_rm_deletes_entry(tmp_path) -> None:
-    """A two-token `*_rm` deletes the tracked entry so a deleted entity is never restored."""
+    """A two-token `*_rm` from any agent deletes every agent's tracked entry so a deleted entity is never restored."""
     ev1 = mock_tool_event(
         tool="mcp__plugin_cc-notes_cc-notes__note_add", event=Event.PostToolUse,
         tool_input={"title": "Doomed"}, output='{"id":"abc123def456"}', session_dir=tmp_path,
     )
     record_touched_entities(ev1)
     ev2 = mock_tool_event(
-        tool="mcp__plugin_cc-notes_cc-notes__note_rm", event=Event.PostToolUse,
+        tool="mcp__plugin_cc-notes_cc-notes__note_rm", event=Event.PostToolUse, agent_id="lane-1",
         tool_input={"id": "abc123def456"}, session_dir=tmp_path,
     )
     record_touched_entities(ev2)
@@ -4642,43 +4678,39 @@ def _seed_touched(evt, entries: list[TouchedEntity]) -> None:
         st.next_seq = max((e.seq for e in entries), default=-1) + 1
 
 
-def test_compact_restore_full_show_small(monkeypatch, tmp_path) -> None:
-    """<=8 touched entities with the binary present restore fresh full `show` bodies, most-recent first, CLI closing hint."""
-    monkeypatch.setattr(compact.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+def test_compact_restore_digest_lines(monkeypatch, tmp_path) -> None:
+    """A compaction restores one kind/id/title line per touched record, most recent first, never shelling out."""
     evt = mock_event("SessionStart", source="compact", session_dir=tmp_path)
     _seed_touched(evt, [
         TouchedEntity(id="aaa0001", kind="note", title="Alpha", verbs=["create"], seq=0),
         TouchedEntity(id="bbb0002", kind="task", title="Beta", verbs=["edit"], seq=1),
     ])
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no MCP marker -> deterministic CLI wording
-    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli({
-        ("show", "aaa0001"): "id: aaa0001\ntitle: Alpha\nbody: full alpha",
-        ("show", "bbb0002"): "id: bbb0002\ntitle: Beta\nbody: full beta",
-    }))
-    result = restore_after_compact(evt)
-    check("compact restore full: warns", result is not None, repr(result))
-    msg = result.message
-    check("compact restore full: header present", "just compacted" in msg, msg)
-    check("compact restore full: alpha body injected", "full alpha" in msg, msg)
-    check("compact restore full: beta body injected", "full beta" in msg, msg)
-    check("compact restore full: most-recent (bbb) first", msg.index("bbb0002") < msg.index("aaa0001"), msg)
-    check("compact restore full: CLI closing hint", "cc-notes show <id>" in msg, msg)
-
-
-def test_compact_restore_pointers_large(monkeypatch, tmp_path) -> None:
-    """>8 touched entities restore lean pointer lines capped at POINTER_CAP with a `+N more` tail, never shelling out."""
-    monkeypatch.setattr(compact.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    evt = mock_event("SessionStart", source="compact", session_dir=tmp_path)
-    _seed_touched(evt, [TouchedEntity(id=f"id{i:05d}", kind="note", title=f"N{i}", verbs=["read"], seq=i) for i in range(35)])
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no MCP marker -> deterministic wording, no git shell-out
     calls: list[tuple] = []
     monkeypatch.setattr(evt.ctx, "call_cli", lambda args, **k: calls.append(tuple(args)))
     result = restore_after_compact(evt)
-    check("compact restore large: warns", result is not None, repr(result))
-    msg = result.message
-    check("compact restore large: capped at POINTER_CAP", msg.count("(read)") == POINTER_CAP, str(msg.count("(read)")))
-    check("compact restore large: overflow tail", "+5 more" in msg, msg)
-    check("compact restore large: never shelled out for show", not any(c[:2] == ("cc-notes", "show") for c in calls), repr(calls))
+    check("compact restore: warns", result is not None, repr(result))
+    lines = result.message.split("\n") if result else []
+    check(
+        "compact restore: header, lines newest first, pointer",
+        lines == [compact.DIGEST_HEADER, "task bbb0002 Beta", "note aaa0001 Alpha", "`cc-notes show <id>` re-opens one."],
+        repr(lines),
+    )
+    check("compact restore: never shells out", calls == [], repr(calls))
+
+
+def test_compact_restore_scopes_to_the_agent(monkeypatch, tmp_path) -> None:
+    """Each agent's compaction restores only the records that agent touched; an agent that touched none gets nothing."""
+    for agent, ident in ((None, "aaa0001"), ("lane-1", "bbb0002")):
+        record_touched_entities(mock_tool_event(
+            tool="mcp__plugin_cc-notes_cc-notes__note_show", event=Event.PostToolUse, agent_id=agent,
+            tool_input={"id": ident}, output=f"title: {ident}\n", session_dir=tmp_path,
+        ))
+    root = restore_after_compact(mock_session_start_event("compact", session_dir=tmp_path))
+    lane = restore_after_compact(mock_session_start_event("compact", agent_id="lane-1", session_dir=tmp_path))
+    other = restore_after_compact(mock_session_start_event("compact", agent_id="lane-2", session_dir=tmp_path))
+    check("compact agent: the root restores only its own record", root is not None and "aaa0001" in root.message and "bbb0002" not in root.message, repr(root))
+    check("compact agent: the lane restores only its own record", lane is not None and "bbb0002" in lane.message and "aaa0001" not in lane.message, repr(lane))
+    check("compact agent: an agent that touched nothing restores nothing", other is None, repr(other))
 
 
 def test_compact_restore_source_gate(tmp_path) -> None:
@@ -4695,23 +4727,13 @@ def test_compact_restore_silent_empty(tmp_path) -> None:
 
 
 def test_compact_restore_fits_the_budget(monkeypatch, tmp_path) -> None:
-    """Full bodies past the budget degrade to pointer lines, and long-titled pointers stop at the budget behind a count."""
-    monkeypatch.setattr(compact.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    small = mock_event("SessionStart", source="compact", session_dir=tmp_path / "small")
-    _seed_touched(small, [TouchedEntity(id=f"id{i:05d}", kind="doc", title=f"D{i}", verbs=["edit"], seq=i) for i in range(FULL_SHOW_CAP)])
-    monkeypatch.setattr(small.ctx, "git", lambda *a: None)
-    monkeypatch.setattr(small.ctx, "call_cli", stub_cli({("show", f"id{i:05d}"): f"id: id{i:05d}\nbody: " + "y" * 2000 for i in range(FULL_SHOW_CAP)}))
-    msg = restore_after_compact(small).message
-    check("compact budget full: inside COMPACT_DIGEST_BUDGET", len(msg.encode()) <= COMPACT_DIGEST_BUDGET, str(len(msg.encode())))
-    check("compact budget full: one body fits, the rest are pointers", msg.count("y" * 2000) == 1 and msg.count("(edited)") == FULL_SHOW_CAP - 1, msg)
-
-    large = mock_event("SessionStart", source="compact", session_dir=tmp_path / "large")
-    _seed_touched(large, [TouchedEntity(id=f"id{i:05d}", kind="note", title="t" * 250, verbs=["read"], seq=i) for i in range(POINTER_CAP)])
-    monkeypatch.setattr(large.ctx, "git", lambda *a: None)
-    msg = restore_after_compact(large).message
-    shown = msg.count("(read)")
-    check("compact budget pointers: inside COMPACT_DIGEST_BUDGET", len(msg.encode()) <= COMPACT_DIGEST_BUDGET, str(len(msg.encode())))
-    check("compact budget pointers: the rest counted", 0 < shown < POINTER_CAP and f"+{POINTER_CAP - shown} more" in msg, msg)
+    """Long-titled records stop at COMPACT_DIGEST_BUDGET behind a count folded into the pointer line."""
+    evt = mock_event("SessionStart", source="compact", session_dir=tmp_path)
+    _seed_touched(evt, [TouchedEntity(id=f"id{i:05d}", kind="note", title="t" * 250, verbs=["read"], seq=i) for i in range(MAX_ENTRIES)])
+    msg = restore_after_compact(evt).message
+    shown = msg.count("note id")
+    check("compact budget: inside COMPACT_DIGEST_BUDGET", len(msg.encode()) <= COMPACT_DIGEST_BUDGET, str(len(msg.encode())))
+    check("compact budget: the rest counted", 0 < shown < MAX_ENTRIES and msg.endswith(f"+{MAX_ENTRIES - shown} more. `cc-notes show <id>` re-opens one."), msg)
 
 
 def test_compact_tracker_reads_wrapped_responses(tmp_path) -> None:
@@ -4739,19 +4761,20 @@ def test_compact_tracker_reads_wrapped_responses(tmp_path) -> None:
     check("compact wrapped bash: show title from stdout", [e.title for e in show.ctx.s.load(TouchedEntities).entries] == ["Shown Note"], repr(show.ctx.s.load(TouchedEntities)))
 
 
-def test_compact_restore_binary_missing_pointers(monkeypatch, tmp_path) -> None:
-    """<=8 entities but no binary on PATH falls back to pointer lines without shelling out."""
-    monkeypatch.setattr(compact.shutil, "which", lambda _n: None)
-    evt = mock_event("SessionStart", source="compact", session_dir=tmp_path)
-    _seed_touched(evt, [TouchedEntity(id="aaa0001", kind="note", title="Alpha", verbs=["create"], seq=0)])
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)  # no MCP marker -> deterministic wording, no git shell-out
-    calls: list[tuple] = []
-    monkeypatch.setattr(evt.ctx, "call_cli", lambda args, **k: calls.append(tuple(args)))
-    result = restore_after_compact(evt)
-    check("compact restore no-binary: warns with pointer line", result is not None and "note aaa0001 Alpha (created)" in result.message, repr(result))
-    check("compact restore no-binary: never shelled out for show", not any(c[:2] == ("cc-notes", "show") for c in calls), repr(calls))
-
-
+def test_compact_tracker_evicts_per_agent(tmp_path) -> None:
+    """One agent's touches never evict another's: the cap applies per agent."""
+    for i in range(MAX_ENTRIES + 1):
+        record_touched_entities(mock_tool_event(
+            tool="mcp__plugin_cc-notes_cc-notes__note_show", event=Event.PostToolUse, agent_id="lane-1",
+            tool_input={"id": f"{i:040d}"}, output="title: n%d\n" % i, session_dir=tmp_path,
+        ))
+    record_touched_entities(mock_tool_event(
+        tool="mcp__plugin_cc-notes_cc-notes__note_show", event=Event.PostToolUse,
+        tool_input={"id": "root0001"}, output="title: root\n", session_dir=tmp_path,
+    ))
+    entries = mock_event("SessionStart", source="compact", session_dir=tmp_path).ctx.s.load(TouchedEntities).entries
+    check("compact evict per agent: the lane is capped", sum(e.agent == "lane-1" for e in entries) == MAX_ENTRIES, repr(len(entries)))
+    check("compact evict per agent: the root keeps its record", [e.id for e in entries if e.agent == "main"] == ["root0001"], repr(entries[-1]))
 
 
 def test_compact_classification_derives_structurally(tmp_path) -> None:
@@ -4853,25 +4876,6 @@ def test_compact_tracker_entity_kind_upgrades_on_merge(tmp_path) -> None:
     state = ev2.ctx.s.load(TouchedEntities)
     check("compact kind-upgrade: single merged entry", len(state.entries) == 1, repr(state))
     check("compact kind-upgrade: entity -> task", state.entries[0].kind == "task", state.entries[0].kind)
-
-
-def test_compact_restore_boundary_eight_vs_nine(monkeypatch, tmp_path) -> None:
-    """Exactly FULL_SHOW_CAP entities restore full shows; one more tips into pointer mode with no shell-out."""
-    monkeypatch.setattr(compact.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    e8 = mock_event("SessionStart", source="compact", session_dir=tmp_path / "eight")
-    _seed_touched(e8, [TouchedEntity(id=f"id{i:05d}", kind="note", title=f"N{i}", verbs=["read"], seq=i) for i in range(FULL_SHOW_CAP)])
-    monkeypatch.setattr(e8.ctx, "git", lambda *a: None)
-    monkeypatch.setattr(e8.ctx, "call_cli", stub_cli({("show", f"id{i:05d}"): f"body {i}" for i in range(FULL_SHOW_CAP)}))
-    msg8 = restore_after_compact(e8).message
-    check("compact boundary: exactly FULL_SHOW_CAP restores full shows", "body 0" in msg8 and f"body {FULL_SHOW_CAP - 1}" in msg8, msg8)
-    e9 = mock_event("SessionStart", source="compact", session_dir=tmp_path / "nine")
-    _seed_touched(e9, [TouchedEntity(id=f"id{i:05d}", kind="note", title=f"N{i}", verbs=["read"], seq=i) for i in range(FULL_SHOW_CAP + 1)])
-    monkeypatch.setattr(e9.ctx, "git", lambda *a: None)
-    calls: list[tuple] = []
-    monkeypatch.setattr(e9.ctx, "call_cli", lambda args, **k: calls.append(tuple(args)))
-    msg9 = restore_after_compact(e9).message
-    check("compact boundary: one past the cap tips into pointer mode (no shows)", not any(c[:2] == ("cc-notes", "show") for c in calls), repr(calls))
-    check("compact boundary: pointer mode renders every entry", msg9.count("(read)") == FULL_SHOW_CAP + 1, str(msg9.count("(read)")))
 
 
 ANSWER_ROOT = "/repo"
@@ -4980,8 +4984,7 @@ def test_record_user_answers_single(monkeypatch, tmp_path) -> None:
     check("answer single: exact add argv", answer_adds(calls) == [expected], repr(answer_adds(calls)))
     check("answer single: dedupe reads recent answers first", calls[0] == RECENT_LIST, repr(calls))
     message = result.message if result else ""
-    check("answer single: ack forbids a hand record", "never record them again by hand" in message, message)
-    check("answer single: ack names the record", "ans0001 Which language? → Go" in message, message)
+    check("answer single: one-line ack with the short id, no body", message == "Recorded 1 answer in cc-notes (ans0001); never record them again by hand.", message)
 
 
 def test_record_user_answers_heuristic_scope() -> None:
@@ -5031,7 +5034,7 @@ def test_record_user_answers_multiselect(monkeypatch, tmp_path) -> None:
     check("answer multi: string tool_response parsed, labels joined", adds and "--body=lint, test\nOptions: lint | test | fmt" in adds[0], repr(adds))
     check("answer multi: plain picks are ephemeral", adds and "scope:ephemeral" in adds[0], repr(adds))
     check("answer multi: no header label without a header", adds and not any(a.startswith("header:") for a in adds[0]), repr(adds))
-    check("answer multi: warns", result is not None and "Recorded these answers in cc-notes" in (result.message or ""), repr(result))
+    check("answer multi: warns", result is not None and (result.message or "").startswith("Recorded 1 answer in cc-notes"), repr(result))
 
 
 def test_record_user_answers_free_text_notes_and_preview(monkeypatch, tmp_path) -> None:
@@ -5093,7 +5096,7 @@ def test_refine_user_answers_skips_uncaptured(monkeypatch, tmp_path) -> None:
 
 
 def test_refine_user_answers_supersedes(monkeypatch, tmp_path) -> None:
-    """A triage naming a candidate supersedes it by full id, and the old line leaves the session ledger."""
+    """A triage naming a candidate supersedes it by full id; the ledger keeps the old id, whose restore resolves to the replacement."""
     old = durable_answer("old0001cccc", title="Which language?", body="Rust")
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Which language?", labels=("Go", "Rust"))],
@@ -5108,7 +5111,7 @@ def test_refine_user_answers_supersedes(monkeypatch, tmp_path) -> None:
     check("refine supersede: supersede argv", ("answer", "supersede", "old0001cccc", "--by", "ans0001aaaa", "--json") in calls, repr(calls))
     check("refine supersede: the fresh record is never its own candidate", prompts and "ans0001aaaa\t" not in prompts[0], repr(prompts))
     lines = evt.ctx.s.load(SessionAnswers).lines
-    check("refine supersede: ledger swaps old for new", list(lines) == ["ans0001aaaa"] and lines["ans0001aaaa"] == "ans0001 Which language? → Go", repr(lines))
+    check("refine supersede: ledger keeps both ids", list(lines) == ["old0001cccc", "ans0001aaaa"], repr(lines))
 
 
 def test_record_user_answers_long_question(monkeypatch, tmp_path) -> None:
@@ -5228,7 +5231,7 @@ def test_stage_prompt_answers_floats_on_the_next_prompt(monkeypatch, tmp_path) -
     result = float_prompt_answers(evt)
     check("prompt answers: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
-        check("prompt answers: only the picked answer", "auth001 Session store? → Redis" in result.message and "ui00001" not in result.message, result.message)
+        check("prompt answers: only the picked answer, title only", result.message.split("\n")[1:] == ["auth001 Session store?"], result.message)
     check("prompt answers: a staged pick floats once", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
     later = prompt_event(monkeypatch, tmp_path, rows)
@@ -5277,6 +5280,25 @@ def test_float_prompt_answers_never_calls_out(monkeypatch, tmp_path) -> None:
         monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
         float_prompt_answers(evt)
         check(f"prompt answers: {label} float runs no cc-notes CLI", cli_calls == [], repr(cli_calls))
+
+
+def test_float_prompt_answers_fits_the_budget(monkeypatch, tmp_path) -> None:
+    """A large pick floats inside PROMPT_ANSWER_BUDGET; the answers that did not fit stay candidates for a later prompt."""
+    rows = [durable_answer(f"ans{i:04d}xxxx", title=f"Long durable question number {i}? " + "z" * 60) for i in range(20)]
+    staged = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(SurfacePick(ids=[r["id"] for r in rows])))
+    stage_prompt_answers(staged)
+    message = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)).message
+    shown = [r["id"] for r in rows if r["id"][:7] in message]
+    check("prompt budget: inside PROMPT_ANSWER_BUDGET", len(message.encode()) <= PROMPT_ANSWER_BUDGET, str(len(message.encode())))
+    check("prompt budget: some but not all floated", 0 < len(shown) < len(rows), repr(shown))
+
+    later = prompt_event(monkeypatch, tmp_path, rows)
+    offered: list[str] = []
+    monkeypatch.setattr(later.ctx, "call_llm", lambda prompt, **kw: offered.append(str(prompt)) or SurfacePick())
+    stage_prompt_answers(later)
+    check("prompt budget: a floated answer is never offered again", offered and shown[0] not in offered[0], repr(offered))
+    check("prompt budget: an unfit answer stays a candidate", offered and rows[-1]["id"] in offered[0], repr(offered))
 
 
 def test_stage_prompt_answers_surfaces_a_broken_backend(monkeypatch, tmp_path) -> None:
@@ -5336,28 +5358,63 @@ def restore_event(monkeypatch, tmp_path, rows: list[dict]):
 
 
 def test_restore_answers_after_compact(monkeypatch, tmp_path) -> None:
-    """A compaction re-injects every captured and surfaced answer, capped at the 30 most recent."""
+    """A compaction re-injects the durable answers this agent captured or surfaced as id and title lines, with one pointer."""
     evt, _ = answer_event(monkeypatch, tmp_path, [question("Which language?")], {"answers": {"Which language?": "Go"}})
     floated(record_user_answers, evt)
     float_session_answers(prompt_event(monkeypatch, tmp_path, [durable_answer("dig0001aaaa", title="Tabs?", body="yes")]))
-    rows = [durable_answer("ans0001aaaa", title="Which language?", body="Go\nOptions: A | B"), durable_answer("dig0001aaaa", title="Tabs?", body="yes")]
+    rows = [
+        durable_answer("ans0001aaaa", title="Which language?", body="Go\nOptions: A | B"),
+        durable_answer("dig0001aaaa", title="Tabs?", body="yes") | {"updated_at": "2026-09-16T00:00:00Z"},
+    ]
     result = restore_answers_after_compact(restore_event(monkeypatch, tmp_path, rows))
     check("answer restore: warns", result is not None and result.action is Action.warn, repr(result))
-    if result and result.message:
-        check("answer restore: captured and surfaced lines", "ans0001 Which language? → Go" in result.message and "dig0001 Tabs? → yes" in result.message, result.message)
+    lines = result.message.split("\n") if result else []
+    check(
+        "answer restore: header, titles newest first, pointer",
+        lines == [
+            answers_module.RESTORE_ANSWERS_HEADER,
+            "dig0001 Tabs?",
+            "ans0001 Which language?",
+            "`cc-notes answer list --label scope:durable` lists them with their answers.",
+        ],
+        repr(lines),
+    )
     check("answer restore: empty session silent", restore_answers_after_compact(restore_event(monkeypatch, tmp_path / "none", rows)) is None)
 
-    restore = restore_event(monkeypatch, tmp_path, [durable_answer(f"id{i:05d}", title=f"Q{i}?") for i in range(40)])
-    with restore.ctx.s[SessionAnswers].mutate() as state:
-        state.lines = {f"id{i:05d}": f"line {i}" for i in range(40)}
-    listed = restore_answers_after_compact(restore).message
-    check("answer restore: forty short answers all fit as full lines", all(f"Q{i}? → A" in listed for i in range(40)), listed)
+    ephemeral = restore_event(monkeypatch, tmp_path / "ephemeral", [durable_answer("eph0001aaaa") | {"tags": ["scope:ephemeral"]}])
+    with ephemeral.ctx.s[SessionAnswers].mutate() as state:
+        state.lines, state.owners = {"eph0001aaaa": "line"}, {"eph0001aaaa": "main"}
+    check("answer restore: ephemeral answers never restore", restore_answers_after_compact(ephemeral) is None)
+
+    legacy = restore_event(monkeypatch, tmp_path / "legacy", rows)
+    with legacy.ctx.s[SessionAnswers].mutate() as state:
+        state.lines = {"ans0001aaaa": "line"}
+    restored = restore_answers_after_compact(legacy)
+    check("answer restore: a ledgered answer with no owner restores for the root", restored is not None and "ans0001" in restored.message, repr(restored))
+
+
+def test_restore_answers_after_compact_scopes_to_the_agent(monkeypatch, tmp_path) -> None:
+    """A lane's compaction restores only the answers that lane captured, and the root's only the root's."""
+    lane, _ = answer_event(monkeypatch, tmp_path, [question("Which language?")], {"answers": {"Which language?": "Go"}})
+    lane._raw["agent_id"] = "lane-1"
+    record_user_answers(lane)
+    float_session_answers(prompt_event(monkeypatch, tmp_path, [durable_answer("dig0001aaaa", title="Tabs?", body="yes")]))
+    rows = [durable_answer("ans0001aaaa", title="Which language?"), durable_answer("dig0001aaaa", title="Tabs?")]
+
+    def restored(agent: str | None) -> str:
+        evt = restore_event(monkeypatch, tmp_path, rows)
+        if agent:
+            evt._raw["agent_id"] = agent
+        return (restore_answers_after_compact(evt) or SimpleNamespace(message="")).message or ""
+
+    check("answer agent: the lane restores its own capture only", "ans0001" in restored("lane-1") and "dig0001" not in restored("lane-1"), restored("lane-1"))
+    check("answer agent: the root restores its own float only", "dig0001" in restored(None) and "ans0001" not in restored(None), restored(None))
+    check("answer agent: another lane restores nothing", restored("lane-2") == "", restored("lane-2"))
 
 
 def budget_rows(title: str, durable: int = 50) -> list[dict]:
-    long_body = "release everything as it merges " * 40
     return [
-        durable_answer(f"dur{i:04d}aaaa", title=f"Durable question {i}? {title}", body=long_body) | {"updated_at": f"2026-09-{1 + i % 28:02d}T{i % 24:02d}:{i % 60:02d}:{i // 60:02d}Z"}
+        durable_answer(f"dur{i:04d}aaaa", title=f"Durable question {i}? {title}") | {"updated_at": f"2026-09-{1 + i % 28:02d}T{i % 24:02d}:{i % 60:02d}:{i // 60:02d}Z"}
         for i in range(durable)
     ] + [
         durable_answer(f"eph{i:04d}bbbb", title=f"Ephemeral pick {i}?", body="now") | {"tags": ["scope:ephemeral"], "updated_at": "2026-09-30T23:59:59Z"}
@@ -5369,43 +5426,38 @@ def restored_lines(monkeypatch, tmp_path, rows: list[dict]) -> list[str]:
     restore = restore_event(monkeypatch, tmp_path, rows)
     with restore.ctx.s[SessionAnswers].mutate() as state:
         state.lines = {row["id"]: "stale" for row in rows}
+        state.owners = dict.fromkeys(state.lines, "main")
     return restore_answers_after_compact(restore).message.split("\n")
 
 
 def test_restore_answers_after_compact_fits_the_budget(monkeypatch, tmp_path) -> None:
-    """Sixty answers restore inside the budget: every durable title, excerpts in rank order, ephemeral ones listed or counted."""
+    """Sixty answers restore inside the budget: the newest durable titles in full, the rest counted, ephemeral ones dropped."""
     rows = budget_rows("x" * 20)
     lines = restored_lines(monkeypatch, tmp_path, rows)
     message = "\n".join(lines)
     durable = sorted(rows[:50], key=lambda r: r["updated_at"], reverse=True)
-    body = lines[1:51]
-    excerpted = [" → " in line for line in body]
+    body = lines[1:-1]
     check("answer budget: inside COMPACT_ANSWER_BUDGET", len(message.encode()) <= COMPACT_ANSWER_BUDGET, str(len(message.encode())))
-    check("answer budget: every durable title in full, newest first", all(line.startswith(f"{r['id'][:7]} {r['title']}") for line, r in zip(body, durable)), message)
-    check("answer budget: excerpts fill a rank prefix", any(excerpted) and not all(excerpted) and excerpted == sorted(excerpted, reverse=True), message)
-    check("answer budget: every excerpt at most 160 characters", all(len(line.split(" → ", 1)[1]) <= 160 for line in body if " → " in line), message)
-    named = [row for row in rows if row["id"][:7] in message]
-    tail = int(lines[-1].split()[0].lstrip("+")) if lines[-1].endswith("more answers") else 0
-    check("answer budget: nothing silently dropped", len(named) + tail == len(rows), f"{len(named)} named + {tail} counted")
+    check("answer budget: kept titles are the newest, in full", 0 < len(body) < 50 and all(line == f"{r['id'][:7]} {r['title']}" for line, r in zip(body, durable)), message)
+    check("answer budget: no excerpts", " → " not in message, message)
+    check("answer budget: ephemeral answers dropped", "eph" not in message, message)
+    check(
+        "answer budget: unfit durable titles counted in the pointer",
+        lines[-1] == f"+{50 - len(body)} more. `cc-notes answer list --label scope:durable` lists them with their answers.",
+        lines[-1],
+    )
 
 
 def test_compact_restores_stay_inside_the_total_budget(monkeypatch, tmp_path) -> None:
-    """At 120 long durable titles both compact restores together stay inside COMPACT_RESTORE_BUDGET; unfit titles are counted, never clipped."""
+    """At 120 long durable titles and a full tracker, both compact restores together stay inside their two budgets."""
     rows = budget_rows("y" * 200, durable=120)
     evt = restore_event(monkeypatch, tmp_path, rows)
     with evt.ctx.s[SessionAnswers].mutate() as state:
         state.lines = {row["id"]: "stale" for row in rows}
-    _seed_touched(evt, [TouchedEntity(id=f"id{i:05d}", kind="note", title="t" * 250, verbs=["read"], seq=i) for i in range(POINTER_CAP)])
-    monkeypatch.setattr(compact.shutil, "which", lambda _n: None)
-    answers = restore_answers_after_compact(evt).message
-    total = "\n\n".join([answers, restore_after_compact(evt).message])
-    lines = answers.split("\n")
-    durable = sorted(rows[:120], key=lambda r: r["updated_at"], reverse=True)
-    shown = [line for line in lines[1:] if line.startswith("dur")]
-    check("total budget: both restores inside COMPACT_RESTORE_BUDGET", len(total.encode()) <= COMPACT_RESTORE_BUDGET, str(len(total.encode())))
-    check("total budget: kept titles are the newest, in full", 0 < len(shown) < 120 and all(line == f"{r['id'][:7]} {r['title']}" for line, r in zip(shown, durable)), answers)
-    check("total budget: unfit durable titles counted with a pointer", f"+{120 - len(shown)} more durable answers: `cc-notes answer list --label scope:durable`" in lines, answers)
-    check("total budget: ephemeral answers counted", "eph" not in answers and lines[-1] == "+10 more answers", lines[-1])
+        state.owners = dict.fromkeys(state.lines, "main")
+    _seed_touched(evt, [TouchedEntity(id=f"id{i:05d}", kind="note", title="t" * 250, verbs=["read"], seq=i) for i in range(MAX_ENTRIES)])
+    total = "\n\n".join([restore_answers_after_compact(evt).message, restore_after_compact(evt).message])
+    check("total budget: both restores inside their budgets", len(total.encode()) <= COMPACT_ANSWER_BUDGET + COMPACT_DIGEST_BUDGET + 2, str(len(total.encode())))
 
 
 def test_restore_answers_after_compact_refreshes_ledger(monkeypatch, tmp_path) -> None:
@@ -5427,10 +5479,11 @@ def test_restore_answers_after_compact_refreshes_ledger(monkeypatch, tmp_path) -
             "exp0001dddd": "exp0001 Tabs? → yes",
             "kep0001eeee": "kep0001 Deploy on Fridays? → No",
         }
+        state.owners = dict.fromkeys(state.lines, "main")
     message = (restore_answers_after_compact(restore) or SimpleNamespace(message="")).message or ""
-    check("answer refresh: superseded answer restores as its live head", "new0001 Which language? → Zig" in message and "Rust" not in message and "mid0001" not in message, message)
+    check("answer refresh: superseded answer restores as its live head", "new0001 Which language?" in message and "old0001" not in message and "mid0001" not in message, message)
     check("answer refresh: removed and expired answers dropped", "rmd0001" not in message and "exp0001" not in message, message)
-    check("answer refresh: current text replaces the ledgered line", "kep0001 Deploy on Fridays? → No, never" in message, message)
+    check("answer refresh: a live answer restores", "kep0001 Deploy on Fridays?" in message, message)
 
 
 def test_render_answer_line_multiline_answer(monkeypatch, tmp_path) -> None:

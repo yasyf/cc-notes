@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -626,7 +627,9 @@ def surface_sync_failures(evt: BaseHookEvent) -> HookResult | None:
         return None
     with evt.ctx.s[SyncFailures].mutate() as state:
         failed, state.by_target = list(state.by_target.values()), {}
-    return evt.warn(*failed) if failed else None
+    by_digest = {hashlib.sha256(message.encode()).hexdigest(): message for message in failed}
+    fresh = evt.ctx.s.unseen(list(by_digest), scope="sync-failures")
+    return evt.warn(*(by_digest[digest] for digest in fresh)) if fresh else None
 
 
 def cc_notes_refs_dirty(evt: BaseHookEvent, records: tuple[str, ...]) -> bool:
@@ -662,11 +665,10 @@ def sync_at_session_end(evt: SessionEndEvent) -> None:
         do_sync(evt, records)
 
 
-nudge(
-    "Native tasks vanish at session end and are private to this agent. Mirror durable or cross-agent ones with `cc-notes task add --criterion <how to verify it is done>`.",
-    events=Event.PostToolUse,
+@on(
+    Event.PostToolUse,
     only_if=[Tool("TaskCreate"), ManyNativeTasks(), CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
+    max_fires=1,
     tests={
         Input(
             tool="TaskCreate",
@@ -676,3 +678,7 @@ nudge(
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
+def nudge_mirror_native_tasks(evt: PostToolUseEvent) -> HookResult:
+    return evt.warn(
+        "Native tasks vanish at session end and are private to this agent. Mirror durable or cross-agent ones with `cc-notes task add --criterion <how to verify it is done>`."
+    )

@@ -23,9 +23,9 @@ ANSWERS_SCOPE = "answers"
 ANSWER_METADATA_PREFIXES = ("Question: ", "Options: ", "Notes: ", "Preview: ")
 NUDGE_MAX_FIRES = 3
 LLM_INPUT_CAP = 6000
-COMPACT_RESTORE_BUDGET = 7500
-COMPACT_DIGEST_BUDGET = 3000
-COMPACT_ANSWER_BUDGET = COMPACT_RESTORE_BUDGET - COMPACT_DIGEST_BUDGET - 2
+COMPACT_DIGEST_BUDGET = 1200
+COMPACT_ANSWER_BUDGET = 1200
+PROMPT_ANSWER_BUDGET = 600
 
 MAX_TITLE_BYTES = 256
 
@@ -43,6 +43,11 @@ class RecordVerdict(BaseModel):
 
 class SessionAnswers(BaseModel):
     lines: dict[str, str] = Field(default_factory=dict)
+    owners: dict[str, str] = Field(default_factory=dict)
+
+
+def agent_key(evt: BaseHookEvent) -> str:
+    return evt.agent_id or "main"
 
 
 def is_single_command(cl: CommandLine) -> bool:
@@ -236,12 +241,17 @@ def short_id(full: str) -> str:
     return full[:7]
 
 
-def clip(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
 def utf8_len(text: str) -> int:
     return len(text.encode())
+
+
+def fit_lines(lines: list[str], budget: int) -> list[str]:
+    kept: list[str] = []
+    for line in lines:
+        if (budget := budget - utf8_len(line) - 1) < 0:
+            break
+        kept.append(line)
+    return kept
 
 
 def ids_match(a: str, b: str) -> bool:
@@ -377,8 +387,12 @@ def durable_answers(evt: BaseHookEvent) -> list[dict[str, Any]]:
     return [a for a in parse_answers(out) if not a.get("stale_at")]
 
 
+def seen_answer_ids(evt: BaseHookEvent) -> set[str]:
+    return set(evt.ctx.s.load(SeenKeys).seen.get(ANSWERS_SCOPE, []))
+
+
 def unseen_answers(evt: BaseHookEvent, answers: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen = set(evt.ctx.s.load(SeenKeys).seen.get(ANSWERS_SCOPE, []))
+    seen = seen_answer_ids(evt)
     return [a for a in answers if a["id"] not in seen]
 
 
@@ -390,6 +404,7 @@ def remember_answer_lines(evt: BaseHookEvent, lines: dict[str, str]) -> list[str
     fresh = {aid: lines[aid] for aid in evt.ctx.s.unseen(list(lines), scope=ANSWERS_SCOPE)}
     with evt.ctx.s[SessionAnswers].mutate() as state:
         state.lines.update(fresh)
+        state.owners.update(dict.fromkeys(fresh, agent_key(evt)))
     return list(fresh.values())
 
 

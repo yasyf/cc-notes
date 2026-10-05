@@ -89,9 +89,9 @@ where the action is fixed.
 | `Edit` / `Write` / `MultiEdit` a file (PostToolUse), in the background | anchored records with a non-null drift verdict (`relevant --attached --worktree`) | which drift actually warrants a `verify` / `edit` / `supersede` / `expire`, named per kind, staged for the next event to float |
 | Session start, first `UserPromptSubmit` (once) | your branch's open/in-progress tasks topped up from the backlog | nothing — rendered straight as orientation, capped at seven with a `+K more` → `cc-notes status` |
 | Session start, first `UserPromptSubmit` (once) | the most recently updated live `scope:durable` answers not yet captured or surfaced this session | nothing — rendered as `<short id> <question> → <answer>`, capped at eight with a `+K more` → `cc-notes answer list --label scope:durable` |
-| Every `UserPromptSubmit`, in the background | the unseen live `scope:durable` answers (no model call when there are none) | which bear on the prompt; the pick is staged in session state and floats on the first prompt after it lands, so the prompt itself never waits on the model. Only floated answers are marked seen, so the rest stay candidates for later prompts, one another trigger surfaced meanwhile drops out of the float, and a failed pick stages nothing and records a captain-hook fault |
-| Compaction (`SessionStart`, source `compact`) | the cc-notes entities this session created, edited, or explicitly showed — tracked silently at every cc-notes call, MCP or CLI | nothing — deterministic: eight or fewer restore as full `show` output, more become lean pointer lines (kind · short id · title · how touched), newest first, capped at 30 with a `+N more` → `cc-notes status` |
-| Compaction (`SessionStart`, source `compact`) | the answers this session captured or surfaced | nothing — the `<short id> <question> → <answer>` lines again, the 30 most recent |
+| Every `UserPromptSubmit`, in the background | the unseen live `scope:durable` answers (no model call when there are none) | which bear on the prompt; the pick is staged in session state and floats on the first prompt after it lands, so the prompt itself never waits on the model. The float contains only `<short id> <title>` lines under a header, within 600 bytes total. Only lines that fit are marked seen, keyed by answer id; unfit picks stay candidates and a floated id never floats again this session. An answer another trigger surfaced meanwhile drops out of the float, and a failed pick stages nothing and records a captain-hook fault |
+| Compaction (`SessionStart`, source `compact`) | the cc-notes entities this agent created, edited or explicitly showed, tracked with the touching agent in session state at every cc-notes call, MCP or CLI | nothing; the hook renders one `<kind> <short id> <title>` line per record, newest first, within 1200 bytes total including the header and one final pointer line with `+N more.` when some records do not fit, then "`cc-notes show <id>` re-opens one." No full bodies, how-touched labels or `cc-notes show` shell-out; an agent with no tracked records restores nothing |
+| Compaction (`SessionStart`, source `compact`) | this agent's captured or surfaced `scope:durable` answers, with the capturing or surfacing agent stored in session state | nothing; the hook renders one `<short id> <title>` line per answer, newest first, within 1200 bytes total including the header and one final pointer line naming `cc-notes answer list --label scope:durable`. The pointer starts with `+N more.` when some answers do not fit. Ephemeral answers never restore; an agent with no durable answers restores nothing |
 
 Each record surfaces at most once per session per trigger: a Read floats it as context once,
 an edit asks about its staleness once, tracked in two separate per-session sets. The edit
@@ -107,7 +107,7 @@ re-weighed later. The session-start float is deterministic orientation, not a fi
 | Bash `cc-notes note`/`doc`/`log` `add`/`edit`/`append` (or `cc-notes papercut`) whose title or body text names a purge-bound path (`/tmp`, `/var`, a session scratchpad) the static `EphemeralRecordReference` gate flags — an `--attach` value is exempt (PostToolUse) | the record command the gate flags | (static, no model) carry the content in the record itself — `--body -` (or `--checkout` file mode) for text, `--attach <file>` for artifacts, whose bytes land in the ODB and sync with the repo |
 | `git commit` / `jj commit` / `jj describe` / `ccx vcs ship` (PostToolUse) | the HEAD commit — message, diffstat, bounded patch | whether the change encodes a durable decision worth a note or doc; the `cc-task:` link reminder always fires regardless, and the sync is an automatic side-effect (see below) |
 | `ExitPlanMode` (PostToolUse) | the approved plan's text (`planFilePath`, else inline) | (the capture is static, no model) the plan text is recorded verbatim as an approved `cc-notes plan`, or edited into the plan this session already holds for that file when the title is unchanged; a model then picks which few plan items are durable work → `cc-notes task add --plan <id>` (`--backlog` if shared), and the native-vs-durable teach rides along until the nudge cap |
-| Many open native tasks after `TaskCreate` | the growing native list | (static, no model) mirror the durable or cross-agent items into `cc-notes task add` |
+| Many open native tasks after `TaskCreate` | the growing native list | (static, no model) mirror the durable or cross-agent items into `cc-notes task add`; the nudge fires once per agent per session |
 
 The internal-write and evidence-archive routers share one ask-once-per-turn slot; the commit router judges each HEAD sha once,
 so an amend re-judges while a re-fire on the same commit stays silent; the plan capture fires
@@ -161,8 +161,10 @@ dormant without the captain-hook dispatcher plugin.
 
 ### Firing policy
 
-One cap by class. Every Record router and teach-carrying Workflow reminder is capped at
-`NUDGE_MAX_FIRES` (three) per session as a backstop, and additionally deduped by its own
+Every Record router and teach-carrying Workflow reminder is capped at
+`NUDGE_MAX_FIRES` (three) per agent per session, except the "cc-notes is installed",
+missing-binary and native-task mirror nudges, which fire at most once per agent per
+session (`max_fires=1`). Each of the other capped hooks also dedupes by its own
 key — the turn, the HEAD sha, or the plan text's digest — so it speaks once per real event rather
 than on every fire. The sync actions (after a commit, a claim, a merge/pull/fetch, a push, or a
 cc-notes write) carry no session cap: they run in the background with no output of their own,
@@ -189,8 +191,11 @@ fail-closed. Every sync runs as an async hook, so a network round trip never hol
 call that triggered it. The auto-sync triggers dedup to **at most one sync per target repo per
 turn** — a commit and a claim in the same turn sync once. A successful sync says nothing. A repo
 with no remote or an offline box is a legitimate state, so nothing surfaces. A genuine sync
-failure, such as a non-fast-forward push rejection, is recorded in session state, and
-`surface_sync_failures` shows it once, on your next tool call or prompt, unless a later sync
+failure, such as a non-fast-forward push rejection, is recorded in session state.
+
+`surface_sync_failures` shows each distinct message at most once per session. It
+keys messages by their SHA-256 content hash, so a different message still surfaces.
+A warning appears on your next tool call or prompt unless a later sync
 of the same repo and remote succeeds first and clears it. Each wired remote keeps its own
 warning, so a success on one never clears another's. For a failed wired remote, the hint says:
 "cc-notes sync failed for <remote> — run `cc-notes sync --remote <remote>` to retry."
@@ -318,7 +323,9 @@ text when the title was clamped, an `Options:` line, the user's `Notes:` annotat
 label from a visible heuristic. The scope is `scope:durable` when the header or the option text
 says rule, standing, always, or never. It is also durable when the notes or the typed reply say
 always, never, or going forward. Every other answer is `scope:ephemeral`. A title already recorded in the last 24 hours is skipped.
-The record is anchored to the current branch, and the handler's warning lists what it recorded.
+
+The record is anchored to the current branch, and the handler's one-line warning gives
+the count and short ids, never the answer bodies.
 It reads no transcript and calls no model, so a large session's evidence deadline cannot drop
 it.
 
@@ -332,13 +339,23 @@ looks like a secret never records, because the refs sync to the remote.
 **The compact tracker.** Compaction wipes the window; the entities the session touched should
 not vanish with it. Every cc-notes entity call — an MCP tool or a `cc-notes`/`ccn` leg of any
 Bash line — silently records which entity it touched and how (created, edited, or explicitly
-shown; search/list/status results never count) into per-session state: entries dedup by id
-with short and full prefixes merged, a `rm` drops its entry so a deleted entity is never
-restored, and a 100-entry cap evicts the oldest pure-reads first. When a compaction fires
-`SessionStart` with source `compact`, the restorer injects the digest the Surface table
-describes — cumulative across repeated compactions, and since subagent calls land in the same
-session store, their touches restore too. Both halves are fail-silent: a parse or store error
-never disturbs the tool call, and a session that touched nothing injects nothing.
+shown; search/list/status results never count) into per-session state. Each entry carries
+the touching agent; entries dedup by id within each agent, with short and full prefixes
+merged. A `rm` drops every agent's entry for that id, and a 30-entry cap per agent evicts the oldest
+pure-reads first.
+
+When `SessionStart` fires with source `compact`, the restorer injects the digest the
+Surface table describes, cumulative across repeated compactions and limited to the compacting agent's
+own entries. Captured or surfaced answers also carry their agent in session state;
+entries with no recorded owner count as `main`'s. Answer restores select that agent's
+ledger entries, follow superseded ids to their live replacements and include only
+durable answers. An agent with no entries injects nothing. Both halves
+stay silent on parse or store errors, so neither disturbs the tool call.
+
+Claude Code 2.1.289 omits `agent_id` from `SessionStart` and supplies the parent session's
+`transcript_path` even for subagent compactions. Those events resolve to `main`, so a
+subagent receives the root's capped digests. Once Claude Code sends `agent_id`
+on `SessionStart`, the same code restores each agent's own records and durable answers.
 
 ### The session bootstrap
 
