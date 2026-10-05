@@ -24,18 +24,20 @@ from pydantic import BaseModel
 from .common import (
     COMPACT_ANSWER_BUDGET,
     LLM_INPUT_CAP,
+    PROMPT_ANSWER_BUDGET,
     CcNotesAvailable,
     SessionAnswers,
+    agent_key,
     answer_line,
-    answer_text,
     clamp_title,
-    clip,
     durable_answers,
+    fit_lines,
     json_field,
     parse_answers,
     remember_answer_lines,
     remember_answers,
     run_cc_notes,
+    seen_answer_ids,
     short_id,
     unseen_answers,
     utf8_len,
@@ -44,9 +46,10 @@ from .compact import CompactResume
 from .surface import SurfacePick
 
 MAX_ANSWER_PATHS = 10
-RESTORE_EXCERPT_CHARS = 160
 RECENT_ANSWER_LIMIT = 100
 DEDUP_WINDOW = timedelta(hours=24)
+PROMPT_ANSWERS_HEADER = "Durable answers bear on this prompt; honor them. `cc-notes answer show <id>` reads one:"
+RESTORE_ANSWERS_HEADER = "Durable answers from this session; honor them:"
 CAPTURE_LABELS = ("from:owner", "source:askuserquestion")
 STANDING_ASK_RE = re.compile(r"\b(?:rules?|standing|always|never)\b", re.IGNORECASE)
 STANDING_REPLY_RE = re.compile(r"\b(?:always|never|going forward)\b", re.IGNORECASE)
@@ -274,10 +277,9 @@ def record_user_answers(evt: PostToolUseEvent) -> HookResult | None:
     with evt.ctx.s[CapturedAnswers].mutate() as state:
         state.ids.update(captured)
     remember_answers(evt, recorded)
-    return evt.warn(
-        "Recorded these answers in cc-notes; never record them again by hand. `cc-notes answer list` reviews them:",
-        *(answer_line(a) for a in recorded),
-    )
+    noun = "answer" if len(recorded) == 1 else "answers"
+    ids = ", ".join(short_id(a["id"]) for a in recorded)
+    return evt.warn(f"Recorded {len(recorded)} {noun} in cc-notes ({ids}); never record them again by hand.")
 
 
 def scope_edit(scope: str, verdict: AnswerVerdict | None) -> list[str]:
@@ -322,8 +324,12 @@ def refine_user_answers(evt: PostToolUseEvent) -> None:
         refine_captured_answers(evt)
 
 
+def title_line(answer: dict[str, Any]) -> str:
+    return f"{short_id(answer['id'])} {answer.get('title', '')}"
+
+
 def pick_prompt_answers(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> dict[str, str]:
-    lines = {a["id"]: answer_line(a) for a in fresh}
+    lines = {a["id"]: title_line(a) for a in fresh}
     prompt = (
         Prompt()
         .system(PROMPT_ANSWERS_SYSTEM)
@@ -358,12 +364,12 @@ def stage_prompt_answers(evt: UserPromptSubmitEvent) -> None:
 def float_prompt_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
     with evt.ctx.s[PromptAnswerPicks].mutate() as state:
         staged, state.lines = state.lines, {}
-    if not (lines := remember_answer_lines(evt, staged)):
+    seen = seen_answer_ids(evt)
+    fresh = [aid for aid in staged if aid not in seen]
+    shown = fit_lines([staged[aid] for aid in fresh], PROMPT_ANSWER_BUDGET - utf8_len(PROMPT_ANSWERS_HEADER) - 1)
+    if not (lines := remember_answer_lines(evt, dict(zip(fresh, shown)))):
         return None
-    return evt.warn(
-        "Durable answers already given bear on this prompt; honor them. `cc-notes answer show <id>` has the full record:",
-        *lines,
-    )
+    return evt.warn(PROMPT_ANSWERS_HEADER, *lines)
 
 
 def current_answers(evt: SessionStartEvent, ids: list[str]) -> list[dict[str, Any]]:
@@ -389,52 +395,18 @@ def is_durable(answer: dict[str, Any]) -> bool:
     return "scope:durable" in (answer.get("tags") or [])
 
 
-def restore_rank(answer: dict[str, Any]) -> tuple[bool, str]:
-    return is_durable(answer), answer.get("updated_at", "")
+def restore_pointer(hidden: int) -> str:
+    more = f"+{hidden} more. " if hidden else ""
+    return f"{more}`cc-notes answer list --label scope:durable` lists them with their answers."
 
 
-def title_line(answer: dict[str, Any]) -> str:
-    return f"{short_id(answer['id'])} {answer.get('title', '')}"
-
-
-def excerpt(answer: dict[str, Any]) -> str:
-    return f" → {clip(answer_text(answer), RESTORE_EXCERPT_CHARS)}"
-
-
-def restore_digest(answers: list[dict[str, Any]], show: str, recall: str) -> list[str]:
-    ranked = sorted(answers, key=restore_rank, reverse=True)
-    durable = [a for a in ranked if is_durable(a)]
-    header = f"Honor these answers captured this session, durable first. {show} reads one in full:"
-    reserved = [header, f"+{len(ranked)} more durable answers: {recall}", f"+{len(ranked)} more answers"]
-    room = COMPACT_ANSWER_BUDGET - sum(utf8_len(line) + 1 for line in reserved)
-    kept: list[dict[str, Any]] = []
-    for answer in durable:
-        if utf8_len(title_line(answer)) + 1 > room:
-            break
-        kept.append(answer)
-        room -= utf8_len(title_line(answer)) + 1
-    lines = [header]
-    excerpts = True
-    for answer in kept:
-        line = title_line(answer)
-        if excerpts and utf8_len(tail := excerpt(answer)) <= room:
-            line += tail
-            room -= utf8_len(tail)
-        else:
-            excerpts = False
-        lines.append(line)
-    if len(kept) < len(durable):
-        lines.append(f"+{len(durable) - len(kept)} more durable answers: {recall}")
-    counted = 0
-    for answer in ranked[len(durable) :]:
-        if len(kept) < len(durable) or utf8_len(line := title_line(answer)) + 1 > room:
-            counted += 1
-            continue
-        lines.append(line)
-        room -= utf8_len(line) + 1
-    if counted:
-        lines.append(f"+{counted} more answers")
-    return lines
+def restore_digest(answers: list[dict[str, Any]]) -> list[str]:
+    durable = sorted(filter(is_durable, answers), key=lambda a: a.get("updated_at", ""), reverse=True)
+    if not durable:
+        return []
+    reserved = utf8_len(RESTORE_ANSWERS_HEADER) + utf8_len(restore_pointer(len(durable))) + 2
+    kept = fit_lines([title_line(a) for a in durable], COMPACT_ANSWER_BUDGET - reserved)
+    return [RESTORE_ANSWERS_HEADER, *kept, restore_pointer(len(durable) - len(kept))]
 
 
 @on(
@@ -446,10 +418,8 @@ def restore_digest(answers: list[dict[str, Any]], show: str, recall: str) -> lis
     },
 )
 def restore_answers_after_compact(evt: SessionStartEvent) -> HookResult | None:
-    ids = list(evt.ctx.s.load(SessionAnswers).lines)
-    if not ids:
+    state = evt.ctx.s.load(SessionAnswers)
+    ids = [aid for aid in state.lines if state.owners.get(aid) == agent_key(evt)]
+    if not ids or not (lines := restore_digest(current_answers(evt, ids))):
         return None
-    answers = current_answers(evt, ids)
-    if not answers:
-        return None
-    return evt.warn(*restore_digest(answers, "`cc-notes answer show <id>`", "`cc-notes answer list --label scope:durable`"))
+    return evt.warn(*lines)

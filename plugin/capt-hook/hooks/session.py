@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-from captain_hook import Event, HookResult, Input, UserPromptSubmitEvent, Warn, nudge, on
+from captain_hook import Event, HookResult, Input, UserPromptSubmitEvent, Warn, on
 
 from .common import (
     SESSION_ANSWER_CAP,
@@ -57,20 +57,22 @@ def float_session_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
     return evt.warn(lede, *lines)
 
 
-nudge(
-    "cc-notes is installed. Record durable work with `cc-notes task add`, `cc-notes note add`, or `cc-notes doc add`.",
-    events=Event.UserPromptSubmit,
+@on(
+    Event.UserPromptSubmit,
     only_if=[CcNotesAvailable()],
     max_fires=1,
     tests={
         Input(prompt="keep going"): Warn(pattern="cc-notes task add"),
     },
 )
+def nudge_cc_notes_installed(evt: UserPromptSubmitEvent) -> HookResult:
+    return evt.warn("cc-notes is installed. Record durable work with `cc-notes task add`, `cc-notes note add`, or `cc-notes doc add`.")
 
 
-nudge(
-    "The `cc-notes` binary is not on PATH, so every cc-notes nudge stays silent. Run `brew install yasyf/tap/cc-notes`.",
-    events=Event.UserPromptSubmit,
+@on(
+    Event.UserPromptSubmit,
     only_if=[CcNotesMissing()],
     max_fires=1,
 )
+def nudge_cc_notes_missing(evt: UserPromptSubmitEvent) -> HookResult:
+    return evt.warn("The `cc-notes` binary is not on PATH, so every cc-notes nudge stays silent. Run `brew install yasyf/tap/cc-notes`.")

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-import shutil
 from collections.abc import Sequence
 from itertools import takewhile
 
@@ -24,10 +23,11 @@ from .common import (
     CC_NOTES_EXECUTABLES,
     COMPACT_DIGEST_BUDGET,
     MCP_TOOL_PREFIX,
+    agent_key,
+    fit_lines,
     ids_match,
     is_single_command,
     resolve_cli_tool,
-    run_cc_notes,
     short_id,
     tool_output,
     utf8_len,
@@ -37,9 +37,7 @@ def cli_calls(evt: BaseHookEvent) -> list[Call]:
     return [call for call in evt.cmd.calls() if call.name in CC_NOTES_EXECUTABLES]
 
 
-FULL_SHOW_CAP = 8
-POINTER_CAP = 30
-MAX_ENTRIES = 100
+MAX_ENTRIES = 30
 
 _CREATE_VERBS = frozenset({"add", "open"})
 _LIST_VERBS = frozenset({"list", "search", "review", "ready", "stale", "backlog", "archived"})
@@ -52,6 +50,7 @@ _SHOW_TITLE_RE = re.compile(r"(?m)^title:\s*(.*)$")
 class TouchedEntity(BaseModel):
     id: str
     kind: str
+    agent: str = "main"
     title: str = ""
     verbs: list[str] = Field(default_factory=list)
     seq: int = 0
@@ -182,20 +181,20 @@ def _is_read_only(entry: TouchedEntity) -> bool:
     return "create" not in entry.verbs and "edit" not in entry.verbs
 
 
-def _evict(state: TouchedEntities) -> None:
-    while len(state.entries) > MAX_ENTRIES:
-        pool = [e for e in state.entries if _is_read_only(e)] or state.entries
+def _evict(state: TouchedEntities, agent: str) -> None:
+    while len(owned := [e for e in state.entries if e.agent == agent]) > MAX_ENTRIES:
+        pool = [e for e in owned if _is_read_only(e)] or owned
         state.entries.remove(min(pool, key=lambda e: e.seq))
 
 
-def _apply(state: TouchedEntities, touch: _Touch) -> None:
-    existing = next((e for e in state.entries if ids_match(e.id, touch.id)), None)
+def _apply(state: TouchedEntities, touch: _Touch, agent: str) -> None:
+    existing = next((e for e in state.entries if e.agent == agent and ids_match(e.id, touch.id)), None)
     if touch.verb == "remove":
         if existing is not None:
             state.entries.remove(existing)
         return
     if existing is None:
-        state.entries.append(TouchedEntity(id=touch.id, kind=touch.kind, title=touch.title, verbs=[touch.verb], seq=state.next_seq))
+        state.entries.append(TouchedEntity(id=touch.id, kind=touch.kind, agent=agent, title=touch.title, verbs=[touch.verb], seq=state.next_seq))
     else:
         if len(touch.id) > len(existing.id):
             existing.id = touch.id
@@ -207,7 +206,7 @@ def _apply(state: TouchedEntities, touch: _Touch) -> None:
             existing.verbs.append(touch.verb)
         existing.seq = state.next_seq
     state.next_seq += 1
-    _evict(state)
+    _evict(state, agent)
 
 
 class CcNotesEntityCall(CustomCondition):
@@ -227,7 +226,7 @@ class CcNotesEntityCall(CustomCondition):
 def record_touched_entities(evt: PostToolUseEvent) -> HookResult | None:
     with evt.ctx.s[TouchedEntities].mutate() as state:
         for touch in _touches(evt):
-            _apply(state, touch)
+            _apply(state, touch, agent_key(evt))
     return None
 
 
@@ -237,43 +236,22 @@ class CompactResume(CustomCondition):
         return isinstance(evt, SessionStartEvent) and evt.source == "compact"
 
 
-def _touch_label(verbs: list[str]) -> str:
-    if "create" in verbs:
-        return "created"
-    if "edit" in verbs:
-        return "edited"
-    return "read"
+DIGEST_HEADER = "Context was just compacted. cc-notes records you touched this session:"
 
 
-def _pointer_line(entry: TouchedEntity) -> str:
-    title = f" {entry.title}" if entry.title else ""
-    return f"{entry.kind} {short_id(entry.id)}{title} ({_touch_label(entry.verbs)})"
+def _digest_line(entry: TouchedEntity) -> str:
+    return f"{entry.kind} {short_id(entry.id)} {entry.title}".rstrip()
 
 
-def _full_part(evt: BaseHookEvent, entry: TouchedEntity) -> str:
-    body = (run_cc_notes(evt, "show", entry.id) or "").strip()
-    return f"[{entry.kind} {short_id(entry.id)} · {_touch_label(entry.verbs)}]\n{body}" if body else _pointer_line(entry)
+def _digest_pointer(hidden: int) -> str:
+    more = f"+{hidden} more. " if hidden else ""
+    return f"{more}`cc-notes show <id>` re-opens one."
 
 
-def _digest(evt: BaseHookEvent, entries: list[TouchedEntity]) -> list[str]:
-    parts = ["Context was just compacted. Durable cc-notes records this session touched:"]
-    closing = "Re-open any of these with `cc-notes show <id>`."
-    room = COMPACT_DIGEST_BUDGET - utf8_len(parts[0]) - utf8_len(closing) - len(f"+{len(entries)} more — cc-notes status to orient") - 3
-    full = len(entries) <= FULL_SHOW_CAP and shutil.which("cc-notes") is not None
-    shown = 0
-    for entry in entries[:POINTER_CAP]:
-        part = _full_part(evt, entry) if full else _pointer_line(entry)
-        if utf8_len(part) + 1 > room:
-            part = _pointer_line(entry)
-        if utf8_len(part) + 1 > room:
-            break
-        parts.append(part)
-        room -= utf8_len(part) + 1
-        shown += 1
-    if (extra := len(entries) - shown) > 0:
-        parts.append(f"+{extra} more — cc-notes status to orient")
-    parts.append(closing)
-    return parts
+def _digest(entries: list[TouchedEntity]) -> list[str]:
+    reserved = utf8_len(DIGEST_HEADER) + utf8_len(_digest_pointer(len(entries))) + 2
+    kept = fit_lines([_digest_line(e) for e in entries], COMPACT_DIGEST_BUDGET - reserved)
+    return [DIGEST_HEADER, *kept, _digest_pointer(len(entries) - len(kept))]
 
 
 @on(
@@ -285,8 +263,7 @@ def _digest(evt: BaseHookEvent, entries: list[TouchedEntity]) -> list[str]:
     },
 )
 def restore_after_compact(evt: SessionStartEvent) -> HookResult | None:
-    state = evt.ctx.s.load(TouchedEntities)
-    if not state.entries:
+    agent = agent_key(evt)
+    if not (entries := [e for e in evt.ctx.s.load(TouchedEntities).entries if e.agent == agent]):
         return None
-    entries = sorted(state.entries, key=lambda e: e.seq, reverse=True)
-    return evt.warn(*_digest(evt, entries))
+    return evt.warn(*_digest(sorted(entries, key=lambda e: e.seq, reverse=True)))
