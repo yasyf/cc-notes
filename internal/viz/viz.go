@@ -46,9 +46,9 @@ const (
 	// really does have hundreds of branches active in the window still yields a
 	// readable board and a bounded build.
 	defaultMaxLanes = 100
-	// gitConcurrency bounds the parallel git execs a build fans out. Only execs
-	// run in parallel; every go-git read is serialized by the repository mutex,
-	// so widening this buys nothing there.
+	// gitConcurrency bounds a build's fan-outs: the parallel git execs and the
+	// per-ref trail builds. Every go-git read is serialized by the repository
+	// mutex, so a trail build overlaps only its fold and diff.
 	gitConcurrency = 8
 	// defaultSlowThreshold is the build duration past which Graph narrates: a
 	// "still running" line while the build is in flight and a cost line when it

@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/yasyf/cc-notes/internal/lifecycle"
 	"github.com/yasyf/cc-notes/internal/trail"
 )
@@ -21,12 +23,13 @@ func (b *Builder) eventsAndEntities(ctx context.Context, topo *topology) ([]Even
 	taken := takenBranches(topo)
 	dead := newDeadBranches()
 
+	trails, err := b.trailsOf(ctx, refTips)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	var events []Event
-	for _, rt := range refTips {
-		entries, err := b.trailOf(ctx, rt.ref, rt.tip)
-		if err != nil {
-			return nil, nil, err
-		}
+	for _, entries := range trails {
 		if len(entries) == 0 {
 			continue
 		}
@@ -60,6 +63,28 @@ func (b *Builder) eventsAndEntities(ctx context.Context, topo *topology) ([]Even
 		return nil, nil, err
 	}
 	return events, entities, nil
+}
+
+// trailsOf builds the trail of every entity ref under bounded concurrency,
+// returned in refTips order.
+func (b *Builder) trailsOf(ctx context.Context, refTips []refTip) ([][]trail.Entry, error) {
+	trails := make([][]trail.Entry, len(refTips))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(gitConcurrency)
+	for i, rt := range refTips {
+		g.Go(func() error {
+			entries, err := b.trailOf(gctx, rt.ref, rt.tip)
+			if err != nil {
+				return err
+			}
+			trails[i] = entries
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return trails, nil
 }
 
 // liveBranches is the set of branch names backed by a live ref: the trunk, every
