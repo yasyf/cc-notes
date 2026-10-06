@@ -6,6 +6,7 @@
 package trail
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -44,10 +45,18 @@ type Change struct {
 // Entry per commit in linearization order, classifying each as create, edit, or
 // checkpoint and diffing successive snapshots into field changes. A commit whose
 // only effect was bookkeeping (a lease heartbeat) or that was idempotent changes
-// no visible field and stays out of the trail.
+// no visible field and stays out of the trail. Each snapshot is encoded once and
+// serves as the after side of its own step and the before side of the next.
 func Entries(steps []fold.Step) ([]Entry, error) {
 	var entries []Entry
+	var prev *encodedSnapshot
 	for i, st := range steps {
+		cur, err := encodeSnapshot(st.Snapshot)
+		if err != nil {
+			return nil, err
+		}
+		before := prev
+		prev = cur
 		e := Entry{Commit: st.Commit, Snapshot: st.Snapshot}
 		switch {
 		case IsCheckpoint(st.Commit):
@@ -55,7 +64,11 @@ func Entries(steps []fold.Step) ([]Entry, error) {
 			e.Covers = checkpointCovers(st.Commit)
 		case i == 0:
 			e.Kind = "create"
-			changes, err := diffSnapshots(st.Snapshot.Meta().Kind.Zero(), st.Snapshot)
+			zero, err := encodeSnapshot(st.Snapshot.Meta().Kind.Zero())
+			if err != nil {
+				return nil, err
+			}
+			changes, err := diffSnapshots(zero, cur)
 			if err != nil {
 				return nil, err
 			}
@@ -69,7 +82,7 @@ func Entries(steps []fold.Step) ([]Entry, error) {
 			e.Changes = changes
 		default:
 			e.Kind = "edit"
-			changes, err := diffSnapshots(steps[i-1].Snapshot, st.Snapshot)
+			changes, err := diffSnapshots(before, cur)
 			if err != nil {
 				return nil, err
 			}
@@ -83,50 +96,124 @@ func Entries(steps []fold.Step) ([]Entry, error) {
 	return entries, nil
 }
 
-// diffSnapshots reports the fields that changed between two snapshots of the
-// same entity, by marshaling each to its canonical JSON map and comparing every
-// field but the bookkeeping ones. Scalars report From→To; set-valued fields
-// report Added and Removed elements.
-func diffSnapshots(before, after model.Snapshot) ([]Change, error) {
-	bm, err := snapshotMap(before)
+// encodedSnapshot is a snapshot's canonical JSON split one level deep: each
+// top-level field's raw encoding, plus the per-field array elements split out
+// on first use. Raw equality implies canonical equality, so equal raw bytes
+// settle a field or an element as unchanged without decoding it.
+type encodedSnapshot struct {
+	fields   map[string]json.RawMessage
+	elements map[string]rawElements
+}
+
+// rawElements is one array field's elements and the set of their raw encodings.
+type rawElements struct {
+	elems []json.RawMessage
+	set   map[string]struct{}
+}
+
+func encodeSnapshot(snap model.Snapshot) (*encodedSnapshot, error) {
+	data, err := json.Marshal(snap)
 	if err != nil {
 		return nil, err
 	}
-	am, err := snapshotMap(after)
-	if err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
 		return nil, err
 	}
+	return &encodedSnapshot{fields: fields, elements: map[string]rawElements{}}, nil
+}
+
+// arrayElements returns the field's elements when its value is a JSON array,
+// and nil otherwise — a missing, null, or non-array field has no elements.
+func (s *encodedSnapshot) arrayElements(field string) (rawElements, error) {
+	if re, ok := s.elements[field]; ok {
+		return re, nil
+	}
+	var re rawElements
+	if raw := s.fields[field]; isArray(raw) {
+		if err := json.Unmarshal(raw, &re.elems); err != nil {
+			return rawElements{}, err
+		}
+		re.set = make(map[string]struct{}, len(re.elems))
+		for _, el := range re.elems {
+			re.set[string(el)] = struct{}{}
+		}
+	}
+	s.elements[field] = re
+	return re, nil
+}
+
+// diffSnapshots reports the fields that changed between two encoded snapshots
+// of the same entity, comparing every field but the bookkeeping ones. A field
+// whose raw encoding is unchanged is skipped undecoded. Scalars report From→To;
+// set-valued fields report Added and Removed elements.
+func diffSnapshots(before, after *encodedSnapshot) ([]Change, error) {
 	var changes []Change
-	for _, field := range unionKeys(bm, am) {
+	for _, field := range unionKeys(before.fields, after.fields) {
 		if hiddenFields[field] {
 			continue
 		}
-		if ch, ok := diffField(field, bm[field], am[field]); ok {
+		b, a := before.fields[field], after.fields[field]
+		if bytes.Equal(b, a) {
+			continue
+		}
+		ch, ok, err := diffField(field, before, after)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			changes = append(changes, ch)
 		}
 	}
 	return changes, nil
 }
 
-func diffField(field string, before, after any) (Change, bool) {
-	ba, baIsArray := before.([]any)
-	aa, aaIsArray := after.([]any)
-	if baIsArray || aaIsArray {
-		added, removed := diffElements(ba, aa)
-		if len(added) == 0 && len(removed) == 0 {
-			return Change{}, false
+func diffField(field string, before, after *encodedSnapshot) (Change, bool, error) {
+	b, a := before.fields[field], after.fields[field]
+	if isArray(b) || isArray(a) {
+		be, err := before.arrayElements(field)
+		if err != nil {
+			return Change{}, false, err
 		}
-		return Change{Field: field, Added: added, Removed: removed}, true
+		ae, err := after.arrayElements(field)
+		if err != nil {
+			return Change{}, false, err
+		}
+		added, removed, err := diffElements(be, ae)
+		if err != nil {
+			return Change{}, false, err
+		}
+		if len(added) == 0 && len(removed) == 0 {
+			return Change{}, false, nil
+		}
+		return Change{Field: field, Added: added, Removed: removed}, true, nil
 	}
-	if identity(before) == identity(after) {
-		return Change{}, false
+	bv, err := decode(b)
+	if err != nil {
+		return Change{}, false, err
 	}
-	return Change{Field: field, Scalar: true, From: before, To: after}, true
+	av, err := decode(a)
+	if err != nil {
+		return Change{}, false, err
+	}
+	if identity(bv) == identity(av) {
+		return Change{}, false, nil
+	}
+	return Change{Field: field, Scalar: true, From: bv, To: av}, true, nil
 }
 
-func diffElements(before, after []any) (added, removed []any) {
-	bset := identitySet(before)
-	aset := identitySet(after)
+// diffElements set-diffs two arrays by canonical identity. Elements whose raw
+// encoding appears on both sides are dropped undecoded; only the remainder is
+// decoded and compared.
+func diffElements(before, after rawElements) (added, removed []any, err error) {
+	bset, err := identitySet(uniqueElements(before.elems, after.set))
+	if err != nil {
+		return nil, nil, err
+	}
+	aset, err := identitySet(uniqueElements(after.elems, before.set))
+	if err != nil {
+		return nil, nil, err
+	}
 	for id, v := range aset {
 		if _, ok := bset[id]; !ok {
 			added = append(added, v)
@@ -139,15 +226,29 @@ func diffElements(before, after []any) (added, removed []any) {
 	}
 	sortByIdentity(added)
 	sortByIdentity(removed)
-	return added, removed
+	return added, removed, nil
 }
 
-func identitySet(elems []any) map[string]any {
-	out := make(map[string]any, len(elems))
-	for _, e := range elems {
-		out[identity(e)] = e
+func uniqueElements(elems []json.RawMessage, other map[string]struct{}) []json.RawMessage {
+	var out []json.RawMessage
+	for _, el := range elems {
+		if _, ok := other[string(el)]; !ok {
+			out = append(out, el)
+		}
 	}
 	return out
+}
+
+func identitySet(elems []json.RawMessage) (map[string]any, error) {
+	out := make(map[string]any, len(elems))
+	for _, el := range elems {
+		v, err := decode(el)
+		if err != nil {
+			return nil, err
+		}
+		out[identity(v)] = v
+	}
+	return out, nil
 }
 
 func sortByIdentity(elems []any) {
@@ -165,6 +266,23 @@ func identity(v any) string {
 	return string(b)
 }
 
+// decode turns a raw field or element into its canonical-JSON form; a missing
+// field decodes to nil, as JSON null does.
+func decode(raw json.RawMessage) (any, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+func isArray(raw json.RawMessage) bool {
+	return len(raw) > 0 && raw[0] == '['
+}
+
 // hiddenFields are snapshot fields excluded from the audit diff: bookkeeping
 // that moves on every commit, or derived content witnesses — none of which is a
 // user edit.
@@ -180,19 +298,7 @@ var hiddenFields = map[string]bool{
 	"verified_commit":   true,
 }
 
-func snapshotMap(snap model.Snapshot) (map[string]any, error) {
-	data, err := json.Marshal(snap)
-	if err != nil {
-		return nil, err
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func unionKeys(a, b map[string]any) []string {
+func unionKeys(a, b map[string]json.RawMessage) []string {
 	seen := map[string]bool{}
 	for k := range a {
 		seen[k] = true
