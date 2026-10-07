@@ -75,7 +75,9 @@ list-triage-supersede, because two background refinements interleaving there wou
 candidates before either superseded and leave a superseded answer live.
 
 The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
-on purpose; the LLM is the precision gate in both directions. The only deterministic hooks
+on purpose; a model is the precision gate in both directions. The prompt-answer pick, the
+answer scope and the stale-record filter ask TypeSafe Jev through `evt.decide`; the record
+routers and the supersede pass ask the small model through `call_llm`. The only deterministic hooks
 are the ones with no "which" to pick: the memory mirror, where the file already declares
 its type, the evidence-archive router, where the kind is always a log with attachments,
 the plan capture, where an approved plan is always a plan, and the pure workflow reminders,
@@ -426,8 +428,8 @@ $ uvx --isolated 'capt-hook>=11.0.0' pack test plugin
 Each nudge declares its own `tests={Input(...): Warn()/Allow()}` cases covering a
 firing trigger and a near-miss that must stay silent. The Surface floaters carry one
 inline test each, proving a non-matching tool stays silent; their firing path shells
-out to `cc-notes`, so the inline harness (which stubs only `call_llm`, never the CLI
-subprocess) cannot assert it deterministically.
+out to `cc-notes`, so the inline harness (which stubs `call_llm` and `evt.decide`, never
+the CLI subprocess) cannot assert it deterministically.
 
 The Record routers are LLM-gated, so their inline `tests={...}` cover only the cheap
 static gate: the inline harness stubs `call_llm` to its default verdict, which records
@@ -448,7 +450,7 @@ CLI wording, but both branches share that core. The exact per-branch wording is 
 The Surface floaters split into thin event wiring over pure helpers for parsing,
 rendering, dedup, drift filtering, the precision filter, and task capping. Those
 helpers, both gate branches (binary present opens it, binary absent fails it closed)
-with `shutil.which` mocked, and the firing handlers with stubbed CLI and LLM output
+with `shutil.which` mocked, and the firing handlers with stubbed CLI, LLM and decision output
 have direct unit tests in `tests/test_cc_notes.py`:
 
 ```console

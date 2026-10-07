@@ -245,6 +245,11 @@ def utf8_len(text: str) -> int:
     return len(text.encode())
 
 
+def flat_clip(text: str, cap: int) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= cap else flat[: cap - 1] + "…"
+
+
 def fit_lines(lines: list[str], budget: int) -> list[str]:
     kept: list[str] = []
     for line in lines:

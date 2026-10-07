@@ -37,6 +37,7 @@ from .common import (
     current_branch,
     durable_answers,
     fit_lines,
+    flat_clip,
     json_field,
     parse_answers,
     remember_answer_lines,
@@ -194,13 +195,8 @@ def answer_body(pair: AnsweredQuestion) -> str:
     return "\n".join(lines)
 
 
-def option_text(text: str) -> str:
-    flat = " ".join(text.split())
-    return flat if len(flat) <= OPTION_DESCRIPTION_CAP else flat[: OPTION_DESCRIPTION_CAP - 1] + "…"
-
-
 def answer_options(answers: list[dict[str, Any]], none: str) -> dict[str, str | None]:
-    return {NO_ANSWER: none, **{a["id"]: option_text(f"{answer_question(a)} → {answer_text(a)}") for a in answers}}
+    return {NO_ANSWER: none, **{a["id"]: flat_clip(f"{answer_question(a)} → {answer_text(a)}", OPTION_DESCRIPTION_CAP) for a in answers}}
 
 
 def answered_state(pair: AnsweredQuestion) -> str:
