@@ -12,7 +12,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/yasyf/daemonkit v0.31.1
-	github.com/yasyf/fusekit v1.20.1
+	github.com/yasyf/fusekit v1.20.2
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
