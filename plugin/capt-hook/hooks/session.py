@@ -8,9 +8,10 @@ from .common import (
     SESSION_TASK_CAP,
     CcNotesAvailable,
     CcNotesMissing,
+    branch_answers,
     cap_lines,
+    current_branch,
     dedup_tasks,
-    durable_answers,
     parse_status,
     remember_answers,
     render_steal_line,
@@ -47,13 +48,13 @@ def float_session_tasks(evt: UserPromptSubmitEvent) -> HookResult | None:
 def float_session_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
     if not evt.ctx.s.once("first", scope="session-answers"):
         return None
-    fresh = unseen_answers(evt, durable_answers(evt))
+    fresh = unseen_answers(evt, branch_answers(evt))
     if not fresh:
         return None
     lines = remember_answers(evt, fresh[:SESSION_ANSWER_CAP])
-    lede = "Durable answers already given; honor them instead of asking again. `cc-notes answer show <id>` has the full record:"
+    lede = "Durable answers already given on this branch; honor them instead of asking again. `cc-notes answer show <id>` has the full record:"
     if (extra := len(fresh) - SESSION_ANSWER_CAP) > 0:
-        lines.append(f"+{extra} more — run `cc-notes answer list --label scope:durable`")
+        lines.append(f"+{extra} more — run `cc-notes answer list --label scope:durable --branch {current_branch(evt)}`")
     return evt.warn(lede, *lines)
 
 

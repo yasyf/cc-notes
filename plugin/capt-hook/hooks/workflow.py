@@ -39,6 +39,7 @@ from .common import (
     NATIVE_TASK_MIRROR_THRESHOLD,
     NUDGE_MAX_FIRES,
     RecordVerdict,
+    current_branch,
     ids_match,
     record_command,
     repo_root,
@@ -366,8 +367,7 @@ def sync_targets(evt: PostToolUseEvent, matches: Callable[[Call], bool], *, reco
 
 
 def auto_reconcile(evt: PostToolUseEvent, records: tuple[str, ...]) -> list[SyncOutcome]:
-    branch = (evt.ctx.git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
-    if branch and branch != "HEAD":
+    if branch := current_branch(evt):
         run_cc_notes(evt, "reconcile", "--into", branch)
     return auto_sync(evt, records)
 

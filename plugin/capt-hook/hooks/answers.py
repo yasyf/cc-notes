@@ -19,7 +19,7 @@ from captain_hook import (
     UserPromptSubmitEvent,
     on,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from .common import (
     COMPACT_ANSWER_BUDGET,
@@ -29,7 +29,11 @@ from .common import (
     SessionAnswers,
     agent_key,
     answer_line,
+    answer_question,
+    answer_text,
+    branch_answers,
     clamp_title,
+    current_branch,
     durable_answers,
     fit_lines,
     json_field,
@@ -43,7 +47,6 @@ from .common import (
     utf8_len,
 )
 from .compact import CompactResume
-from .surface import SurfacePick
 
 MAX_ANSWER_PATHS = 10
 RECENT_ANSWER_LIMIT = 100
@@ -79,11 +82,13 @@ ANSWER_TRIAGE_SYSTEM = (
 
 PROMPT_ANSWERS_SYSTEM = (
     "You are a precision filter. The user just sent a coding agent a prompt. The candidates are durable "
-    "answers the user gave to earlier questions: preferences, conventions, and decisions. Keep only the "
-    "answers the agent should honor while acting on this prompt, and drop the ones unrelated to it. "
+    "answers the user gave to earlier questions on this branch, each as its question and the chosen answer.\n"
     "\n"
-    "Return an object with one field, ids: the candidate ids to surface, as a subset of those given. "
-    "When none bear on the prompt, ids is an empty array."
+    "Most prompts bear on none of them; status reports, notifications, and progress updates almost never do. "
+    "Pick an answer only when the agent, acting on this prompt, would make the very decision that answer "
+    "settled, or would contradict it. Sharing a word, a system, or a topic is not enough.\n"
+    "\n"
+    "Return an object with one field, id: that candidate's id, or an empty string when no answer clearly applies."
 )
 
 
@@ -125,6 +130,17 @@ class CapturedAnswers(BaseModel):
     """Answer ids the foreground capture recorded, keyed by question, awaiting background refinement."""
 
     ids: dict[str, str] = {}
+
+
+class PromptAnswerPick(BaseModel):
+    """The prompt filter's verdict: the one candidate answer id the prompt bears on, or empty for none."""
+
+    id: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def wrap_bare_id(cls, value: object) -> object:
+        return {"id": value} if isinstance(value, str) else value
 
 
 class PromptAnswerPicks(BaseModel):
@@ -198,13 +214,17 @@ def triage_answers(evt: PostToolUseEvent, pairs: list[AnsweredQuestion], candida
     return {v.index: v for v in triage.verdicts}
 
 
-def superseded_id(verdict: AnswerVerdict | None, candidates: list[dict[str, Any]]) -> str:
-    if verdict is None or not verdict.supersedes:
+def candidate_id(named: str, candidates: list[dict[str, Any]]) -> str:
+    if not named:
         return ""
-    matches = [a["id"] for a in candidates if a["id"].startswith(verdict.supersedes)]
-    if verdict.supersedes in matches:
-        return verdict.supersedes
+    matches = [a["id"] for a in candidates if a["id"].startswith(named)]
+    if named in matches:
+        return named
     return matches[0] if len(matches) == 1 else ""
+
+
+def superseded_id(verdict: AnswerVerdict | None, candidates: list[dict[str, Any]]) -> str:
+    return candidate_id(verdict.supersedes, candidates) if verdict else ""
 
 
 def session_paths(evt: PostToolUseEvent) -> list[str]:
@@ -229,8 +249,8 @@ def session_paths(evt: PostToolUseEvent) -> list[str]:
 
 
 def branch_args(evt: PostToolUseEvent) -> list[str]:
-    branch = (evt.ctx.git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
-    return ["--branch", branch] if branch and branch != "HEAD" else []
+    branch = current_branch(evt)
+    return ["--branch", branch] if branch else []
 
 
 def recent_titles(evt: PostToolUseEvent) -> set[str]:
@@ -327,18 +347,17 @@ def title_line(answer: dict[str, Any]) -> str:
     return f"{short_id(answer['id'])} {answer.get('title', '')}"
 
 
-def pick_prompt_answers(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> dict[str, str]:
-    lines = {a["id"]: title_line(a) for a in fresh}
+def pick_prompt_answer(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> dict[str, str]:
     prompt = (
         Prompt()
         .system(PROMPT_ANSWERS_SYSTEM)
         .context("prompt", (evt.user_prompt or "")[:LLM_INPUT_CAP])
-        .context("candidates", "\n".join(f"{aid}\t{line}" for aid, line in lines.items()))
-        .ask("Which candidate ids should the agent honor while acting on this prompt?")
+        .context("candidates", "\n".join(f"{a['id']}\t{answer_question(a)} → {answer_text(a)}" for a in fresh)[:LLM_INPUT_CAP])
+        .ask("Which one candidate id, if any, does this prompt clearly bear on or would it violate?")
     )
-    pick = evt.ctx.call_llm(prompt, response_model=SurfacePick, model="small", agent=False, transcript=False)
-    chosen = set(pick.ids)
-    return {aid: line for aid, line in lines.items() if aid in chosen}
+    pick = evt.ctx.call_llm(prompt, response_model=PromptAnswerPick, model="small", agent=False, transcript=False)
+    chosen = candidate_id(pick.id, fresh)
+    return {a["id"]: title_line(a) for a in fresh if a["id"] == chosen}
 
 
 @on(
@@ -348,9 +367,9 @@ def pick_prompt_answers(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]])
     async_=True,
 )
 def stage_prompt_answers(evt: UserPromptSubmitEvent) -> None:
-    if not (fresh := unseen_answers(evt, durable_answers(evt))):
+    if not (fresh := unseen_answers(evt, branch_answers(evt))):
         return
-    if not (picked := pick_prompt_answers(evt, fresh)):
+    if not (picked := pick_prompt_answer(evt, fresh)):
         return
     with evt.ctx.s[PromptAnswerPicks].mutate() as state:
         state.lines.update(picked)
