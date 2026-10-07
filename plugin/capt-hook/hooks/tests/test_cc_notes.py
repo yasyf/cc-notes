@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.13"
-# dependencies = ["capt-hook==12.74.0", "pydantic>=2"]
+# dependencies = ["capt-hook==12.89.1", "pydantic>=2"]
 # ///
 """Direct unit tests for the cc-notes capt-hook pack's pure helpers and handlers.
 
@@ -42,10 +42,7 @@ sys.path.insert(0, str(Path(__file__).parents[2]))
 from hooks.answers import (
     RECENT_ANSWER_LIMIT,
     AnsweredQuestion,
-    AnswerTriage,
-    AnswerVerdict,
     CapturedAnswers,
-    PromptAnswerPick,
     float_prompt_answers,
     heuristic_scope,
     record_user_answers,
@@ -186,6 +183,7 @@ from captain_hook.cmd import Cmd
 from captain_hook.conditions import check_condition
 from captain_hook.testing.helpers import fixture_session, mock_event, mock_session_start_event, mock_tool_event
 from captain_hook.types import Action, Event
+from spawnllm import BinaryAnswer, Decision, LabelAnswer, Refused
 
 FAILURES: list[str] = []
 
@@ -1085,6 +1083,37 @@ def stub_llm(verdict: object):
         return verdict
 
     return _call
+
+
+def binary(p_yes: float) -> BinaryAnswer:
+    return BinaryAnswer(p_yes=p_yes, confidence=abs(2 * p_yes - 1))
+
+
+def label(choice: str, p: float = 0.95) -> LabelAnswer:
+    return LabelAnswer(choice=choice, probabilities={choice: p}, confidence=p)
+
+
+def stub_decide(answers: dict[str, object] | None, asked: list[tuple[object, dict]] | None = None):
+    """Build an ``evt.ctx.decide`` stub answering each asked question id from ``answers``; ``None`` times out.
+
+    ``asked`` collects every call's state and questions, so a test reads what reached the provider.
+    """
+
+    def _decide(state, questions, *, provider, timeout):
+        if asked is not None:
+            asked.append((state, dict(questions)))
+        if answers is None:
+            raise TimeoutError("stubbed decision timeout")
+        return Decision({qid: answers[qid] for qid in questions if qid in answers}, provider.model, 0, 0.0)
+
+    return _decide
+
+
+def offered(asked: list[tuple[object, dict]], qid: str) -> dict[str, str | None]:
+    return dict(asked[0][1][qid].options) if asked and qid in asked[0][1] else {}
+
+
+PICK_NONE = {"answer": label("none")}
 
 
 def stub_git(mapping: dict[tuple[str, ...], str | None]):
@@ -4162,7 +4191,7 @@ def test_write_targets(tmp_path) -> None:
     check("targets: chained cds compose", _targets(f"cd {o} && cd inner && cc-notes note add x", b) == [f"{o}/inner"])
     check("targets: a cd after the write doesn't move it", _targets(f"cc-notes note add x && cd {o}", b) == [b])
     check("targets: two writes in distinct dirs", _targets(f"cc-notes note add a && cd {o} && cc-notes note add b", b) == [b, o])
-    check("targets: an unresolvable cd leaves the walk at base", _targets("cd $HOME && cc-notes note add x", b) == [b])
+    check("targets: an unresolvable cd leaves the walk at base", _targets('cd "$(mktemp -d)" && cc-notes note add x', b) == [b])
     check("targets: an absolute cd resolves even with no base", _targets(f"cd {o} && cc-notes note add x", None) == [o])
     check("targets: a relative cd with no base is unresolvable", _targets("cd sub && cc-notes note add x", None) == [None])
 
@@ -4264,10 +4293,10 @@ def test_cross_repo_subdir_of_session_uses_session_path(monkeypatch, tmp_path) -
 
 
 def test_cross_repo_unresolvable_falls_back_to_session(monkeypatch, tmp_path) -> None:
-    """An unresolvable cd target (a $var) falls back to syncing the session repo."""
+    """An unresolvable cd target (a command substitution) falls back to syncing the session repo."""
     base = tmp_path / "session"
     _repo(base)
-    evt = _cross_event(tmp_path, monkeypatch, command="cd $HOME && cc-notes note add x", base=base)
+    evt = _cross_event(tmp_path, monkeypatch, command='cd "$(mktemp -d)" && cc-notes note add x', base=base)
     sync_after_record_write(evt)
     check("unresolvable: session sync ran", _calls_of(evt._cli_calls, "sync") == [0], repr(evt._cli_calls))
     check("unresolvable: no cross subprocess.run", evt._run_calls == [], repr(evt._run_calls))
@@ -4944,7 +4973,7 @@ def answer_event(
 
     monkeypatch.setattr(evt.ctx, "call_cli", _call)
     monkeypatch.setattr(evt.ctx, "git", stub_git(ANSWER_GIT))
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(triage if triage is not None else AnswerTriage()))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide(triage))
     return evt, calls
 
 
@@ -4975,7 +5004,7 @@ def test_record_user_answers_single(monkeypatch, tmp_path) -> None:
     class OfflineTranscript:
         __getattr__ = offline
 
-    monkeypatch.setattr(evt.ctx, "call_llm", offline)
+    monkeypatch.setattr(evt.ctx, "decide", offline)
     monkeypatch.setattr(evt.ctx, "transcript", OfflineTranscript())
     result = record_user_answers(evt)
     check("answer single: warns", result is not None and result.action is Action.warn, repr(result))
@@ -5066,7 +5095,7 @@ def test_refine_user_answers_anchors_paths_and_relabels(monkeypatch, tmp_path) -
     """The background pass adds in-repo session paths and swaps the scope the model disagrees with."""
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Which language?", labels=("Go", "Rust"))], {"answers": {"Which language?": "Go"}},
-        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, scope="durable")]),
+        triage={"durable": binary(0.9)},
         paths=(f"{ANSWER_ROOT}/src/a.go", "/elsewhere/x.go", f"{ANSWER_ROOT}/src/b.go", f"{ANSWER_ROOT}/src/a.go"),
     )
     captured_then_refined(evt, calls)
@@ -5081,7 +5110,7 @@ def test_refine_user_answers_anchors_paths_and_relabels(monkeypatch, tmp_path) -
 def test_refine_user_answers_agreeing_triage_without_paths_edits_nothing(monkeypatch, tmp_path) -> None:
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}},
-        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, scope="ephemeral")]),
+        triage={"durable": binary(0.1)},
     )
     captured_then_refined(evt, calls)
     check("refine agree: no edit", answer_edits(calls) == [], repr(calls))
@@ -5091,7 +5120,7 @@ def test_refine_user_answers_skips_uncaptured(monkeypatch, tmp_path) -> None:
     """A deduped answer was never captured, so the background pass makes no calls."""
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}}, recent=[recent_answer("Q?", 1)],
-        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="old0001")]),
+        triage={"durable": binary(0.1), "supersedes": label("old0001")},
     )
     captured_then_refined(evt, calls)
     check("refine uncaptured: no calls", calls == [], repr(calls))
@@ -5104,14 +5133,13 @@ def test_refine_user_answers_supersedes(monkeypatch, tmp_path) -> None:
         monkeypatch, tmp_path, [question("Which language?", labels=("Go", "Rust"))],
         {"answers": {"Which language?": "Go"}},
         candidates=[old, durable_answer("ans0001aaaa", title="Which language?", body="Go")],
-        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, scope="ephemeral", supersedes="old0001")]),
     )
     evt.ctx.s[SessionAnswers].set(SessionAnswers(lines={"old0001cccc": "old0001 Which language? → Rust"}))
-    prompts: list[str] = []
-    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: prompts.append(str(prompt)) or AnswerTriage(verdicts=[AnswerVerdict(index=0, scope="ephemeral", supersedes="old0001")]))
+    asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"durable": binary(0.1), "supersedes": label("old0001")}, asked))
     captured_then_refined(evt, calls)
     check("refine supersede: supersede argv", ("answer", "supersede", "old0001cccc", "--by", "ans0001aaaa", "--json") in calls, repr(calls))
-    check("refine supersede: the fresh record is never its own candidate", prompts and "ans0001aaaa\t" not in prompts[0], repr(prompts))
+    check("refine supersede: the fresh record is never its own candidate", list(offered(asked, "supersedes")) == ["none", "old0001"], repr(asked))
     lines = evt.ctx.s.load(SessionAnswers).lines
     check("refine supersede: ledger keeps both ids", list(lines) == ["old0001cccc", "ans0001aaaa"], repr(lines))
 
@@ -5130,13 +5158,14 @@ def test_record_user_answers_long_question(monkeypatch, tmp_path) -> None:
     record = durable_answer("ans0001aaaa", title=clamp_title(long_q), body=f"Backoff\nQuestion: {long_q}\nOptions: Backoff | Fail")
     check("answer long: render_note_lines uses the full question", render_note_lines([{"kind": "answer", "answer": record}]) == [f"ans0001 {long_q} → Backoff"])
 
-    triage_prompts: list[str] = []
+    asked: list[tuple[object, dict]] = []
     later, later_calls = answer_event(
         monkeypatch, tmp_path / "later", [question(long_q)], {"answers": {long_q: "Fail"}}, candidates=[record], added=("ans0002bbbb",),
     )
-    monkeypatch.setattr(later.ctx, "call_llm", lambda prompt, **kw: triage_prompts.append(str(prompt)) or AnswerTriage())
+    monkeypatch.setattr(later.ctx, "decide", stub_decide({"durable": binary(0.1)}, asked))
     captured_then_refined(later, later_calls)
-    check("answer long: triage candidates carry the full question", triage_prompts and f"ans0001aaaa\tans0001 {long_q} → Backoff" in triage_prompts[0], repr(triage_prompts))
+    described = offered(asked, "supersedes").get("ans0001") or ""
+    check("answer long: triage candidates carry the full question", described == f"{' '.join(long_q.split())} → Backoff", repr(described))
 
 
 def test_refine_user_answers_reused_id_never_self_supersedes(monkeypatch, tmp_path) -> None:
@@ -5146,7 +5175,7 @@ def test_refine_user_answers_reused_id_never_self_supersedes(monkeypatch, tmp_pa
         monkeypatch, tmp_path, [question("Which language?", labels=("Go", "Rust"))],
         {"answers": {"Which language?": "Go"}},
         candidates=[same], added=("old0001cccc",),
-        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="old0001")]),
+        triage={"durable": binary(0.1), "supersedes": label("old0001")},
     )
     captured_then_refined(evt, calls)
     check("refine reuse: no supersede call", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
@@ -5158,7 +5187,7 @@ def test_refine_user_answers_supersede_needs_unique_prefix(monkeypatch, tmp_path
     for named, want in (("old0001", None), ("old0002eeeeffff", None), ("old0001dddd", "old0001dddd"), ("old0002", "old0002eeee")):
         evt, calls = answer_event(
             monkeypatch, tmp_path / named, [question("Q?")], {"answers": {"Q?": "A"}},
-            candidates=candidates, triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes=named)]),
+            candidates=candidates, triage={"durable": binary(0.1), "supersedes": label(named)},
         )
         captured_then_refined(evt, calls)
         supersedes = [c[2] for c in calls if c[:2] == ("answer", "supersede")]
@@ -5168,7 +5197,7 @@ def test_refine_user_answers_supersede_needs_unique_prefix(monkeypatch, tmp_path
 def test_refine_user_answers_unknown_supersede_ignored(monkeypatch, tmp_path) -> None:
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}},
-        triage=AnswerTriage(verdicts=[AnswerVerdict(index=0, supersedes="nope123")]),
+        triage={"durable": binary(0.1), "supersedes": label("nope123")},
     )
     captured_then_refined(evt, calls)
     check("refine supersede: a non-candidate id never supersedes", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
@@ -5216,10 +5245,11 @@ def test_durable_answers_skip_expired(monkeypatch, tmp_path) -> None:
     check("expired: digest keeps the live answer", digest is not None and "live001" in (digest.message or ""), repr(digest))
     check("expired: digest drops the expired answer", digest is not None and "gone001" not in (digest.message or ""), repr(digest))
     evt = prompt_event(monkeypatch, tmp_path / "prompt", rows)
-    offered: list[str] = []
-    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: offered.append(str(prompt)) or PromptAnswerPick())
+    asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide(PICK_NONE, asked))
     stage_prompt_answers(evt)
-    check("expired: prompt filter never sees the expired answer", offered and "live001" in offered[0] and "gone001" not in offered[0], repr(offered))
+    options = offered(asked, "answer")
+    check("expired: prompt filter never sees the expired answer", "live001" in options and "gone001" not in options, repr(options))
 
 
 def test_branch_answers_scope_the_floats_to_the_current_branch(monkeypatch, tmp_path) -> None:
@@ -5231,11 +5261,13 @@ def test_branch_answers_scope_the_floats_to_the_current_branch(monkeypatch, tmp_
     check("branch scope: digest never floats another branch's answer", digest is not None and "inc0001" not in (digest.message or ""), repr(digest))
 
     evt = prompt_event(monkeypatch, tmp_path / "prompt", rows, prompt="apply the incident fix", foreign=foreign)
-    offered: list[str] = []
-    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: offered.append(str(prompt)) or PromptAnswerPick(id="inc0001zzzz"))
+    asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"answer": label("inc0001")}, asked))
     stage_prompt_answers(evt)
-    check("branch scope: the pick sees only the branch answer", offered and "auth001" in offered[0] and "inc0001" not in offered[0], repr(offered))
-    check("branch scope: the pick sees the chosen answer, not just the question", offered and "Session store? → Redis" in offered[0], repr(offered))
+    options = offered(asked, "answer")
+    check("branch scope: the pick sees only the branch answer", list(options) == ["none", "auth001"], repr(options))
+    check("branch scope: the pick sees the chosen answer, not just the question", options.get("auth001") == "Session store? → Redis", repr(options))
+    check("branch scope: the pick reads the prompt", asked and asked[0][0] == "apply the incident fix", repr(asked))
     check("branch scope: a picked id outside the candidates floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "prompt", rows)) is None)
 
 
@@ -5244,10 +5276,10 @@ def test_branch_answers_float_nothing_on_a_detached_head(monkeypatch, tmp_path) 
     rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis")]
     check("detached: digest silent", float_session_answers(prompt_event(monkeypatch, tmp_path / "digest", rows, branch="HEAD\n")) is None)
     evt = prompt_event(monkeypatch, tmp_path / "prompt", rows, branch="HEAD\n")
-    llm_calls: list[object] = []
-    monkeypatch.setattr(evt.ctx, "call_llm", lambda *a, **k: llm_calls.append(a) or PromptAnswerPick(id="auth001aaaa"))
+    asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"answer": label("auth001")}, asked))
     stage_prompt_answers(evt)
-    check("detached: the pick never runs", llm_calls == [], repr(llm_calls))
+    check("detached: the pick never runs", asked == [], repr(asked))
     check("detached: nothing floats", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "prompt", rows, branch="HEAD\n")) is None)
 
 
@@ -5255,7 +5287,7 @@ def test_stage_prompt_answers_floats_on_the_next_prompt(monkeypatch, tmp_path) -
     """A prompt's background pick floats on the next prompt, once, and never on the prompt that picked it."""
     rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis"), durable_answer("ui00001bbbb", title="Button color?", body="Blue")]
     first = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(first.ctx, "call_llm", stub_llm(PromptAnswerPick(id="auth001aaaa")))
+    monkeypatch.setattr(first.ctx, "decide", stub_decide({"answer": label("auth001")}))
     check("prompt answers: nothing staged yet, so the first prompt floats nothing", float_prompt_answers(first) is None)
     stage_prompt_answers(first)
 
@@ -5267,21 +5299,21 @@ def test_stage_prompt_answers_floats_on_the_next_prompt(monkeypatch, tmp_path) -
     check("prompt answers: a staged pick floats once", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
     again = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(again.ctx, "call_llm", stub_llm(PromptAnswerPick(id="auth001aaaa")))
+    monkeypatch.setattr(again.ctx, "decide", stub_decide({"answer": label("auth001")}))
     stage_prompt_answers(again)
     check("prompt answers: a floated answer never repeats", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
     later = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(later.ctx, "call_llm", stub_llm(PromptAnswerPick(id="ui00001bbbb")))
+    monkeypatch.setattr(later.ctx, "decide", stub_decide({"answer": label("ui00001")}))
     stage_prompt_answers(later)
     result = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows))
     check("prompt answers: a later prompt floats its own pick", result is not None and "auth001" not in (result.message or "") and "ui00001" in (result.message or ""), repr(result))
 
-    llm_calls: list[object] = []
+    asked: list[tuple[object, dict]] = []
     quiet = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(quiet.ctx, "call_llm", lambda *a, **k: llm_calls.append(a))
+    monkeypatch.setattr(quiet.ctx, "decide", stub_decide(PICK_NONE, asked))
     stage_prompt_answers(quiet)
-    check("prompt answers: all seen -> the LLM never runs", llm_calls == [], repr(llm_calls))
+    check("prompt answers: all seen -> the classifier never runs", asked == [], repr(asked))
     check("prompt answers: all seen -> silent", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
 
@@ -5290,7 +5322,7 @@ def test_float_prompt_answers_drops_an_answer_surfaced_meanwhile(monkeypatch, tm
     rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis"), durable_answer("ui00001bbbb", title="Button color?", body="Blue")]
     for pick in ("auth001aaaa", "ui00001bbbb"):
         staged = prompt_event(monkeypatch, tmp_path, rows)
-        monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(PromptAnswerPick(id=pick)))
+        monkeypatch.setattr(staged.ctx, "decide", stub_decide({"answer": label(pick[:7])}))
         stage_prompt_answers(staged)
 
     meanwhile = prompt_event(monkeypatch, tmp_path, rows)
@@ -5299,7 +5331,7 @@ def test_float_prompt_answers_drops_an_answer_surfaced_meanwhile(monkeypatch, tm
     check("prompt answers: the answer surfaced meanwhile is dropped", result is not None and "auth001" not in (result.message or "") and "ui00001" in (result.message or ""), repr(result))
 
     lone = prompt_event(monkeypatch, tmp_path / "lone", rows[:1])
-    monkeypatch.setattr(lone.ctx, "call_llm", stub_llm(PromptAnswerPick(id="auth001aaaa")))
+    monkeypatch.setattr(lone.ctx, "decide", stub_decide({"answer": label("auth001")}))
     stage_prompt_answers(lone)
     common.remember_answers(prompt_event(monkeypatch, tmp_path / "lone", rows[:1]), rows[:1])
     check("prompt answers: a wholly stale pick floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "lone", rows[:1])) is None)
@@ -5309,15 +5341,15 @@ def test_float_prompt_answers_never_calls_out(monkeypatch, tmp_path) -> None:
     """The prompt path reads session state only: no model call, no cc-notes call, staged or not."""
     rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis")]
     staged = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(PromptAnswerPick(id="auth001aaaa")))
+    monkeypatch.setattr(staged.ctx, "decide", stub_decide({"answer": label("auth001")}))
     stage_prompt_answers(staged)
 
-    for label, evt in (("staged", prompt_event(monkeypatch, tmp_path, rows)), ("empty", prompt_event(monkeypatch, tmp_path, rows))):
+    for kind, evt in (("staged", prompt_event(monkeypatch, tmp_path, rows)), ("empty", prompt_event(monkeypatch, tmp_path, rows))):
         cli_calls: list[object] = []
         monkeypatch.setattr(evt.ctx, "call_cli", lambda *a, **k: cli_calls.append(a))
-        monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
+        monkeypatch.setattr(evt.ctx, "decide", _llm_boom)
         float_prompt_answers(evt)
-        check(f"prompt answers: {label} float runs no cc-notes CLI", cli_calls == [], repr(cli_calls))
+        check(f"prompt answers: {kind} float runs no cc-notes CLI", cli_calls == [], repr(cli_calls))
 
 
 def test_float_prompt_answers_fits_the_budget(monkeypatch, tmp_path) -> None:
@@ -5325,7 +5357,7 @@ def test_float_prompt_answers_fits_the_budget(monkeypatch, tmp_path) -> None:
     rows = [durable_answer(f"ans{i:04d}xxxx", title=f"Long durable question number {i}? " + "z" * 60) for i in range(20)]
     for row in rows:
         staged = prompt_event(monkeypatch, tmp_path, rows)
-        monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(PromptAnswerPick(id=row["id"])))
+        monkeypatch.setattr(staged.ctx, "decide", stub_decide({"answer": label(row["id"][:7])}))
         stage_prompt_answers(staged)
     message = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)).message
     shown = [r["id"] for r in rows if r["id"][:7] in message]
@@ -5333,27 +5365,29 @@ def test_float_prompt_answers_fits_the_budget(monkeypatch, tmp_path) -> None:
     check("prompt budget: some but not all floated", 0 < len(shown) < len(rows), repr(shown))
 
     later = prompt_event(monkeypatch, tmp_path, rows)
-    offered: list[str] = []
-    monkeypatch.setattr(later.ctx, "call_llm", lambda prompt, **kw: offered.append(str(prompt)) or PromptAnswerPick())
+    asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(later.ctx, "decide", stub_decide(PICK_NONE, asked))
     stage_prompt_answers(later)
-    check("prompt budget: a floated answer is never offered again", offered and shown[0] not in offered[0], repr(offered))
-    check("prompt budget: an unfit answer stays a candidate", offered and rows[-1]["id"] in offered[0], repr(offered))
+    options = offered(asked, "answer")
+    check("prompt budget: a floated answer is never offered again", options and shown[0][:7] not in options, repr(options))
+    check("prompt budget: an unfit answer stays a candidate", rows[-1]["id"][:7] in options, repr(options))
 
 
-def test_stage_prompt_answers_surfaces_a_broken_backend(monkeypatch, tmp_path) -> None:
-    """A failed pick stages nothing and raises, so captain-hook records the fault instead of swallowing it."""
+def test_stage_prompt_answers_stages_nothing_when_the_classifier_fails(monkeypatch, tmp_path) -> None:
+    """A timed-out or refused pick stages nothing, and the answer stays a candidate for the next prompt."""
     rows = [durable_answer("auth001aaaa")]
     evt = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
-    try:
-        stage_prompt_answers(evt)
-        check("prompt answers: a model failure raises", False, "no exception")
-    except RuntimeError:
-        check("prompt answers: a model failure raises", True)
-    check("prompt answers: a failed pick floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide(None))
+    stage_prompt_answers(evt)
+    check("prompt answers: a timed-out pick floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
+
+    refused = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(refused.ctx, "decide", stub_decide({"answer": Refused()}))
+    stage_prompt_answers(refused)
+    check("prompt answers: a refused pick floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
     retry = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(retry.ctx, "call_llm", stub_llm(PromptAnswerPick(id="auth001aaaa")))
+    monkeypatch.setattr(retry.ctx, "decide", stub_decide({"answer": label("auth001")}))
     stage_prompt_answers(retry)
     check("prompt answers: an unfloated answer stays a candidate", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is not None)
 
@@ -5374,27 +5408,21 @@ def test_surface_pick_accepts_a_bare_list_reply() -> None:
     check("surface pick: the object shape still validates", SurfacePick.model_validate({"ids": ["ui00001bbbb"]}).ids == ["ui00001bbbb"])
 
 
-def test_stage_prompt_answers_accepts_a_bare_id_reply(monkeypatch, tmp_path) -> None:
-    """A small-model reply of a bare JSON string coerces into PromptAnswerPick instead of faulting the pick."""
+def test_stage_prompt_answers_offers_short_ids_with_none_first(monkeypatch, tmp_path) -> None:
+    """The pick offers none first, then each candidate by short id, and a short-id choice floats that answer."""
     rows = [durable_answer("auth001aaaa"), durable_answer("ui00001bbbb")]
-    check("prompt pick: the object shape validates", PromptAnswerPick.model_validate({"id": "ui00001bbbb"}).id == "ui00001bbbb")
-
-    empty = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(empty.ctx, "call_llm", stub_llm_reply(""))
-    stage_prompt_answers(empty)
-    check("prompt pick: a bare empty string stages nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
-
+    asked: list[tuple[object, dict]] = []
     picked = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(picked.ctx, "call_llm", stub_llm_reply("auth001aaaa"))
+    monkeypatch.setattr(picked.ctx, "decide", stub_decide({"answer": label("ui00001")}, asked))
     stage_prompt_answers(picked)
+    check("prompt pick: none leads the options", list(offered(asked, "answer")) == ["none", "auth001", "ui00001"], repr(asked))
     result = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows))
-    check("prompt pick: a bare id picks that id", result is not None and "auth001" in (result.message or "") and "ui00001" not in (result.message or ""), repr(result))
+    check("prompt pick: a short-id choice floats that answer", result is not None and "ui00001" in (result.message or "") and "auth001" not in (result.message or ""), repr(result))
 
-    short = prompt_event(monkeypatch, tmp_path / "short", rows)
-    monkeypatch.setattr(short.ctx, "call_llm", stub_llm(PromptAnswerPick(id="ui00001")))
-    stage_prompt_answers(short)
-    result = float_prompt_answers(prompt_event(monkeypatch, tmp_path / "short", rows))
-    check("prompt pick: a unique short id picks that answer", result is not None and "ui00001" in (result.message or ""), repr(result))
+    empty = prompt_event(monkeypatch, tmp_path / "none", rows)
+    monkeypatch.setattr(empty.ctx, "decide", stub_decide(PICK_NONE))
+    stage_prompt_answers(empty)
+    check("prompt pick: none stages nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "none", rows)) is None)
 
 
 RESTORE_LIST = ("answer", "list", "--json", "--include-superseded")
@@ -5541,11 +5569,12 @@ def test_render_answer_line_multiline_answer(monkeypatch, tmp_path) -> None:
     record = durable_answer("ans0001aaaa", title="Rollout plan?", body="Canary first\nthen 10%\nOptions: A | B\nNotes: slow")
     entry = {"kind": "answer", "answer": record, "reasons": []}
     check("multiline: recall line joins the answer lines", render_note_lines([entry]) == ["ans0001 Rollout plan? → Canary first / then 10%"], repr(render_note_lines([entry])))
-    triage_prompts: list[str] = []
+    asked: list[tuple[object, dict]] = []
     evt, calls = answer_event(monkeypatch, tmp_path, [question("Rollout plan?")], {"answers": {"Rollout plan?": "B"}}, candidates=[record], added=("ans0002bbbb",))
-    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: triage_prompts.append(str(prompt)) or AnswerTriage())
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"durable": binary(0.1)}, asked))
     captured_then_refined(evt, calls)
-    check("multiline: triage candidate carries the whole answer", triage_prompts and "ans0001aaaa\tans0001 Rollout plan? → Canary first / then 10%" in triage_prompts[0], repr(triage_prompts))
+    described = offered(asked, "supersedes").get("ans0001")
+    check("multiline: triage candidate carries the whole answer", described == "Rollout plan? → Canary first / then 10%", repr(described))
 
 
 def test_render_answer_line() -> None:
@@ -5602,10 +5631,10 @@ def test_answer_file_surfacing_bookkeeping(monkeypatch, tmp_path) -> None:
     ledger = on.ctx.s.load(SessionAnswers).lines
     check("file answers: surfaced answers ledgered", list(ledger) == [f"ans{i:04d}xxxx" for i in range(10)], repr(ledger))
     prompt = prompt_event(monkeypatch, tmp_path / "on", [durable_answer("ans0000xxxx", title="Q0?")])
-    llm_calls: list[object] = []
-    monkeypatch.setattr(prompt.ctx, "call_llm", lambda *a, **k: llm_calls.append(a) or PromptAnswerPick())
+    asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(prompt.ctx, "decide", stub_decide(PICK_NONE, asked))
     stage_prompt_answers(prompt)
-    check("file answers: prompt recall never re-offers a file-surfaced answer", llm_calls == [], repr(llm_calls))
+    check("file answers: prompt recall never re-offers a file-surfaced answer", asked == [], repr(asked))
 
 
 class MonkeyPatch:
