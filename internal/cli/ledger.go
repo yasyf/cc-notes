@@ -213,8 +213,8 @@ func newLedgerEditCmd() *cobra.Command {
 				}
 				edit.Title = &title
 			}
-			if flags.Changed("body") {
-				text, err := bodyArg(cmd, body)
+			if textGiven(flags, "body") {
+				text, err := flagText(cmd, "body", body)
 				if err != nil {
 					return err
 				}

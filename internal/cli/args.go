@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"unicode"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // maxTitleBytes caps a title in bytes, mirroring maxAttachmentNameBytes.
@@ -40,14 +42,37 @@ func bodyArg(cmd *cobra.Command, value string) (string, error) {
 	return strings.TrimRight(string(data), "\n"), nil
 }
 
+func textGiven(f *pflag.FlagSet, name string) bool {
+	return f.Changed(name) || f.Changed(name+"-file")
+}
+
+func flagText(cmd *cobra.Command, name, value string) (string, error) {
+	file := cmd.Flags().Lookup(name + "-file")
+	if !file.Changed {
+		return bodyArg(cmd, value)
+	}
+	if cmd.Flags().Changed(name) {
+		return "", &UsageError{Err: fmt.Errorf("%s takes --%s or --%s-file, not both", cmd.CommandPath(), name, name)}
+	}
+	path := file.Value.String()
+	if path == "-" {
+		return bodyArg(cmd, path)
+	}
+	//nolint:gosec // G304: path is the operator-supplied --*-file argument; reading it is the intended behavior.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read --%s-file %s: %w", name, path, err)
+	}
+	return strings.TrimRight(string(data), "\n"), nil
+}
+
 // freeText resolves free-form content from exactly one of: the positional pos
-// (present iff posGiven), the flag flagName (value flagVal), or stdin (either
-// source given as "-"). More than one is a UsageError; zero is too when
-// required, as is a required source that resolves to empty text. Both source
-// errors name all three forms. The chosen value flows through bodyArg, so "-"
-// reads stdin with trailing newlines trimmed.
+// (present iff posGiven), the text flag flagName (value flagVal, or its
+// --flagName-file twin), or stdin (either source given as "-"). More than one is
+// a UsageError; zero is too when required, as is a required source that
+// resolves to empty text. Both source errors name every form.
 func freeText(cmd *cobra.Command, flagName, flagVal, pos string, posGiven, required bool) (string, error) {
-	flagged := cmd.Flags().Changed(flagName)
+	flagged := textGiven(cmd.Flags(), flagName)
 	sources := 0
 	if posGiven {
 		sources++
@@ -58,24 +83,26 @@ func freeText(cmd *cobra.Command, flagName, flagVal, pos string, posGiven, requi
 	switch sources {
 	case 0:
 		if required {
-			return "", &UsageError{Err: fmt.Errorf("%s requires text: a positional argument, --%s, or - for stdin", cmd.CommandPath(), flagName)}
+			return "", &UsageError{Err: fmt.Errorf("%s requires text: a positional argument, --%s, --%s-file, or - for stdin", cmd.CommandPath(), flagName, flagName)}
 		}
 		return "", nil
 	case 1:
-		value := pos
+		var text string
+		var err error
 		if flagged {
-			value = flagVal
+			text, err = flagText(cmd, flagName, flagVal)
+		} else {
+			text, err = bodyArg(cmd, pos)
 		}
-		text, err := bodyArg(cmd, value)
 		if err != nil {
 			return "", err
 		}
 		if required && text == "" {
-			return "", &UsageError{Err: fmt.Errorf("%s requires text: a positional argument, --%s, or - for stdin", cmd.CommandPath(), flagName)}
+			return "", &UsageError{Err: fmt.Errorf("%s requires text: a positional argument, --%s, --%s-file, or - for stdin", cmd.CommandPath(), flagName, flagName)}
 		}
 		return text, nil
 	default:
-		return "", &UsageError{Err: fmt.Errorf("%s takes text from exactly one of a positional argument, --%s, or - for stdin", cmd.CommandPath(), flagName)}
+		return "", &UsageError{Err: fmt.Errorf("%s takes text from exactly one of a positional argument, --%s, --%s-file, or - for stdin", cmd.CommandPath(), flagName, flagName)}
 	}
 }
 

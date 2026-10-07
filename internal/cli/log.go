@@ -89,7 +89,7 @@ func newLogAddCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&entry, "entry", "", "optional first entry; - reads stdin")
+	bindText(flags, "entry", &entry, "optional first entry; - reads stdin")
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
 	bindAddLabels(cmd, &labels)
 	anchors.bind(flags)
@@ -114,13 +114,13 @@ func newLogAppendCmd() *cobra.Command {
 			if posGiven {
 				pos = args[1]
 			}
-			hasEntry := posGiven || cmd.Flags().Changed("entry")
+			hasEntry := posGiven || textGiven(cmd.Flags(), "entry")
 			text, err := freeText(cmd, "entry", entry, pos, posGiven, false)
 			if err != nil {
 				return err
 			}
 			if !hasEntry && len(attach) == 0 {
-				return &UsageError{Err: errors.New("log append requires entry text (a positional TEXT, --entry, or - for stdin) or --attach")}
+				return &UsageError{Err: errors.New("log append requires entry text (a positional TEXT, --entry, --entry-file, or - for stdin) or --attach")}
 			}
 			ctx := cmd.Context()
 			s, c, err := openStoreClient(cmd)
@@ -155,7 +155,7 @@ func newLogAppendCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&entry, "entry", "", "entry text")
+	bindText(flags, "entry", &entry, "entry text; - reads stdin")
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
 	flags.BoolVar(&replace, "replace", false, "allow --attach to overwrite a live attachment with the same name")
 	bindJSON(flags, &jsonOut)

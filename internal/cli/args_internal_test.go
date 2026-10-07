@@ -2,21 +2,33 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
 
-// TestFreeText covers the exactly-one-of resolver: a positional, the named flag,
-// or stdin (either source as "-"), with the required/optional absence paths and
-// the two-source conflict. Trailing newlines from stdin are trimmed via bodyArg.
+// TestFreeText covers the exactly-one-of resolver: a positional, the named flag
+// or its -file twin, or stdin (any source as "-"), with the required/optional
+// absence paths and the two-source conflicts. Trailing newlines from stdin and
+// files are trimmed.
 func TestFreeText(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "body.md")
+	if err := os.WriteFile(file, []byte("from file\n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	empty := filepath.Join(t.TempDir(), "empty.md")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name        string
 		flagName    string
 		flagSet     bool
 		flagVal     string
+		fileVal     string
 		pos         string
 		posGiven    bool
 		required    bool
@@ -30,20 +42,30 @@ func TestFreeText(t *testing.T) {
 		{name: "positional stdin trims newlines", flagName: "entry", pos: "-", posGiven: true, required: true, stdin: "from stdin\n\n", want: "from stdin"},
 		{name: "flag stdin", flagName: "text", flagSet: true, flagVal: "-", required: true, stdin: "flag stdin\n", want: "flag stdin"},
 		{name: "optional absent yields empty", flagName: "body", required: false, want: ""},
-		{name: "required absent errors", flagName: "body", required: true, wantErr: true, errContains: "requires text: a positional argument, --body, or - for stdin"},
-		{name: "required empty positional errors", flagName: "body", posGiven: true, required: true, wantErr: true, errContains: "requires text: a positional argument, --body, or - for stdin"},
-		{name: "required empty flag errors", flagName: "body", flagSet: true, required: true, wantErr: true, errContains: "requires text: a positional argument, --body, or - for stdin"},
-		{name: "required empty stdin errors", flagName: "body", pos: "-", posGiven: true, required: true, wantErr: true, errContains: "requires text: a positional argument, --body, or - for stdin"},
-		{name: "positional and flag conflict", flagName: "entry", flagSet: true, flagVal: "b", pos: "a", posGiven: true, required: true, wantErr: true, errContains: "takes text from exactly one of a positional argument, --entry, or - for stdin"},
+		{name: "required absent errors", flagName: "body", required: true, wantErr: true, errContains: "requires text: a positional argument, --body, --body-file, or - for stdin"},
+		{name: "required empty positional errors", flagName: "body", posGiven: true, required: true, wantErr: true, errContains: "requires text: a positional argument, --body, --body-file, or - for stdin"},
+		{name: "required empty flag errors", flagName: "body", flagSet: true, required: true, wantErr: true, errContains: "requires text: a positional argument, --body, --body-file, or - for stdin"},
+		{name: "required empty stdin errors", flagName: "body", pos: "-", posGiven: true, required: true, wantErr: true, errContains: "requires text: a positional argument, --body, --body-file, or - for stdin"},
+		{name: "positional and flag conflict", flagName: "entry", flagSet: true, flagVal: "b", pos: "a", posGiven: true, required: true, wantErr: true, errContains: "takes text from exactly one of a positional argument, --entry, --entry-file, or - for stdin"},
+		{name: "file trims newlines", flagName: "body", fileVal: file, required: true, want: "from file"},
+		{name: "file stdin", flagName: "text", fileVal: "-", required: true, stdin: "file stdin\n", want: "file stdin"},
+		{name: "required empty file errors", flagName: "body", fileVal: empty, required: true, wantErr: true, errContains: "requires text: a positional argument, --body, --body-file, or - for stdin"},
+		{name: "file and flag conflict", flagName: "body", flagSet: true, flagVal: "b", fileVal: file, required: true, wantErr: true, errContains: "takes --body or --body-file, not both"},
+		{name: "file and positional conflict", flagName: "entry", fileVal: file, pos: "a", posGiven: true, required: true, wantErr: true, errContains: "takes text from exactly one of a positional argument, --entry, --entry-file, or - for stdin"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var flagVal string
 			cmd := &cobra.Command{Use: "x"}
-			cmd.Flags().StringVar(&flagVal, tt.flagName, "", "")
+			bindText(cmd.Flags(), tt.flagName, &flagVal, "")
 			if tt.flagSet {
 				if err := cmd.Flags().Set(tt.flagName, tt.flagVal); err != nil {
 					t.Fatalf("set --%s: %v", tt.flagName, err)
+				}
+			}
+			if tt.fileVal != "" {
+				if err := cmd.Flags().Set(tt.flagName+"-file", tt.fileVal); err != nil {
+					t.Fatalf("set --%s-file: %v", tt.flagName, err)
 				}
 			}
 			cmd.SetIn(strings.NewReader(tt.stdin))

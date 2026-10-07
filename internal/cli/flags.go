@@ -22,7 +22,12 @@ func bindJSON(f *pflag.FlagSet, p *bool) {
 }
 
 func bindBody(f *pflag.FlagSet, p *string, usage string) {
-	f.StringVar(p, "body", "", usage)
+	bindText(f, "body", p, usage)
+}
+
+func bindText(f *pflag.FlagSet, name string, p *string, usage string) {
+	f.StringVar(p, name, "", usage)
+	f.String(name+"-file", "", "read --"+name+" from this file; - reads stdin")
 }
 
 func bindLabels(f *pflag.FlagSet, p *[]string, usage string) {

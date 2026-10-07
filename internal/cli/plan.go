@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -49,7 +48,7 @@ func newPlanCmd() *cobra.Command {
 }
 
 func newPlanAddCmd() *cobra.Command {
-	var body, bodyFile string
+	var body string
 	var labels []string
 	var anchors anchorSets
 	var approved, jsonOut bool
@@ -68,7 +67,7 @@ func newPlanAddCmd() *cobra.Command {
 			if len(args) > 1 {
 				pos = args[1]
 			}
-			text, err := planBody(cmd, body, bodyFile, pos, len(args) > 1)
+			text, err := freeText(cmd, "body", body, pos, len(args) > 1, true)
 			if err != nil {
 				return err
 			}
@@ -105,36 +104,11 @@ func newPlanAddCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	bindBody(flags, &body, "the plan text, verbatim; - reads stdin")
-	flags.StringVar(&bodyFile, "body-file", "", "read the plan text from this file")
 	flags.BoolVar(&approved, "approved", false, "record the plan already approved instead of draft")
 	bindAddLabels(cmd, &labels)
 	anchors.bind(flags)
 	bindJSON(flags, &jsonOut)
-	cmd.MarkFlagsMutuallyExclusive("body", "body-file")
 	return withTitleFlag(cmd)
-}
-
-// planBody resolves a plan's body from exactly one of --body-file, the
-// positional BODY, --body, or stdin, and requires the result to be non-empty —
-// a plan is its body. --body and --body-file are mutually exclusive at the flag
-// layer; the positional collision is caught here, since cobra groups only flags.
-func planBody(cmd *cobra.Command, flagVal, file, pos string, posGiven bool) (string, error) {
-	if file == "" {
-		return freeText(cmd, "body", flagVal, pos, posGiven, true)
-	}
-	if posGiven {
-		return "", &UsageError{Err: fmt.Errorf("%s takes the plan text from exactly one of a positional argument, --body, --body-file, or - for stdin", cmd.CommandPath())}
-	}
-	//nolint:gosec // G304: path is the operator-supplied plan file for this CLI; reading it is the intended behavior.
-	data, err := os.ReadFile(file)
-	if err != nil {
-		return "", fmt.Errorf("read body file %s: %w", file, err)
-	}
-	text := strings.TrimRight(string(data), "\n")
-	if text == "" {
-		return "", &UsageError{Err: fmt.Errorf("%s: body file %s is empty — a plan is its body", cmd.CommandPath(), file)}
-	}
-	return text, nil
 }
 
 func newPlanListCmd() *cobra.Command {
@@ -227,8 +201,8 @@ func newPlanEditCmd() *cobra.Command {
 				}
 				edit.Title = &title
 			}
-			if flags.Changed("body") {
-				text, err := bodyArg(cmd, body)
+			if textGiven(flags, "body") {
+				text, err := flagText(cmd, "body", body)
 				if err != nil {
 					return err
 				}

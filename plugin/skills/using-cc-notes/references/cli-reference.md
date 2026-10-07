@@ -810,6 +810,7 @@ go through `task edit --add-branch`.
 | `--type <type>` | `task` | One of `task`, `bug`, `epic`, `question` |
 | `--label <label>` | none | Label; repeatable |
 | `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--criterion <text>` | none | Acceptance criterion; repeatable, required by default (see below) |
 | `--no-validation-criteria` | off | Create with no criteria; mutually exclusive with `--criterion` |
 | `--parent <id>` | none | Parent task id |
@@ -1015,6 +1016,7 @@ comment refreshes the task's lease.
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--body <text>` | none | Comment text; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--json` | off | Emit JSON |
 
 ### `cc-notes task comment list TASK`
@@ -1082,6 +1084,7 @@ exclusive.
 |------|---------|
 | `--title <text>` | New title |
 | `--body <text>` | New description; `-` reads stdin |
+| `--body-file <file>` | Read `--body` from this file; `-` reads stdin |
 | `--status <status>` | One of `open`, `in_progress`, `done`, `cancelled` |
 | `--priority <0-3>` | New priority |
 | `--type <type>` | One of `task`, `bug`, `epic`, `question` |
@@ -1277,6 +1280,7 @@ Create a project. It is born `active`.
 |------|---------|---------|
 | `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--label <label>` | none | Label; repeatable |
 | `--json` | off | Emit JSON |
 
@@ -1375,6 +1379,7 @@ Edit a project without transition checks — at least one flag is required.
 |------|---------|
 | `--title <text>` | New title |
 | `--body <text>` | New description; `-` reads stdin |
+| `--body-file <file>` | Read `--body` from this file; `-` reads stdin |
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--json` | Emit JSON |
 
@@ -1387,6 +1392,7 @@ Append a comment from the positional `BODY`, `--body`, or `-` (stdin) — exactl
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--body <text>` | none | Comment text; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--json` | off | Emit JSON |
 
 ### JSON project shapes
@@ -1420,6 +1426,7 @@ Create a sprint. It is born `planned`.
 |------|---------|---------|
 | `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--project <id>` | none | Owning project (id prefix) |
 | `--label <label>` | none | Label; repeatable |
 | `--start <YYYY-MM-DD>` | none | Start date |
@@ -1513,6 +1520,7 @@ exclusive.
 |------|---------|
 | `--title <text>` | New title |
 | `--body <text>` | New description; `-` reads stdin |
+| `--body-file <file>` | Read `--body` from this file; `-` reads stdin |
 | `--project <id>` | Set the owning project (id prefix) |
 | `--no-project` | Clear the project |
 | `--start <YYYY-MM-DD>` | Set the start date |
@@ -1531,6 +1539,7 @@ Append a comment from the positional `BODY`, `--body`, or `-` (stdin) — exactl
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--body <text>` | none | Comment text; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--json` | off | Emit JSON |
 
 ### JSON sprint shapes
@@ -1568,6 +1577,7 @@ on, exactly as on `note add`.
 |------|---------|---------|
 | `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--label <label>` | none | Label; repeatable |
 | `--step <text>` | none | Initial step; repeatable, kept in flag order |
 | `--commit <sha>` | none | Commit anchor; repeatable |
@@ -1656,6 +1666,7 @@ Edit title, description, labels, or anchors — at least one flag is required.
 |------|---------|
 | `--title <text>` | New title |
 | `--body <text>` | New description; `-` reads stdin |
+| `--body-file <file>` | Read `--body` from this file; `-` reads stdin |
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
 | `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
@@ -1720,6 +1731,7 @@ carry positions, so an insert never renumbers its neighbors.
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--text <text>` | none | Step text; positional `TEXT` and `-` (stdin) are equivalent |
+| `--text-file <file>` | none | Read `--text` from this file; `-` reads stdin; mutually exclusive with `--text` |
 | `--command <cmd>` | none | Shell command the step canonically runs |
 | `--first` / `--last` | `--last` | Place at the start or end |
 | `--before <step>` / `--after <step>` | none | Place next to a step (id prefix) |
@@ -1870,6 +1882,7 @@ always roots a fresh investigation.
 |------|---------|---------|
 | `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | none | The premise; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--finding <text>` | none | Initial finding, born `open`; repeatable, kept in flag order |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor (the suspect commit, say); repeatable |
@@ -1979,11 +1992,13 @@ written, else the latest closing evidence — above, the confirm proof.
 MCP: investigation_append (id, text, attach)
 
 Append one evidence entry to the timeline — timestamped, authored, immutable. Entry text comes
-from the positional `TEXT` or `-` (stdin); text or at least one `--attach` is required. An
-attach that reuses a live attachment name is refused.
+from exactly one of the positional `TEXT`, `--body`, `--body-file`, or `-` (stdin); text or at
+least one `--attach` is required. An attach that reuses a live attachment name is refused.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--body <text>` | none | Evidence text; positional `TEXT` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--attach <file>` | none | Attach a file's content via git-lfs; repeatable, uploads on sync |
 | `--json` | off | Emit JSON |
 
@@ -2163,6 +2178,7 @@ evolving story belongs in `append` and the transition verbs.
 |------|---------|
 | `--title <text>` | New title (the verdict-free rule still applies) |
 | `--body <text>` | New resolution summary; `-` reads stdin |
+| `--body-file <file>` | Read `--body` from this file; `-` reads stdin |
 | `--add-label` / `--rm-label` | Label edits; repeatable |
 | `--add-commit` / `--rm-commit` | Commit anchor edits; repeatable |
 | `--add-path` / `--rm-path` | Path anchor edits; repeatable |
@@ -2260,7 +2276,7 @@ record is returned with a warning.
 |------|---------|---------|
 | `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | none | The plan text, verbatim; positional `BODY` and `-` (stdin) are equivalent |
-| `--body-file <file>` | none | Read the plan text from this file; mutually exclusive with `--body` |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--approved` | off | Record the plan already approved instead of draft |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable, resolved to a full sha |
@@ -2348,6 +2364,7 @@ error (exit 2): a plan is its body, so there is no way to blank it.
 |------|---------|
 | `--title <text>` | New title |
 | `--body <text>` | New plan text, verbatim; `-` reads stdin |
+| `--body-file <file>` | Read `--body` from this file; `-` reads stdin |
 | `--outcome <text>` | What executing the plan produced; `-` reads stdin |
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--add-commit` / `--rm-commit` | Commit anchor edits; repeatable |
@@ -2502,6 +2519,7 @@ tracks, exactly as on `note add`.
 |------|---------|---------|
 | `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--column <name>` | none | Field name in display order; repeatable |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
@@ -2685,6 +2703,7 @@ belongs in `--body`.
 |------|---------|---------|
 | `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Note body; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
 | `--path <path>` | none | Path anchor; repeatable |
@@ -2718,6 +2737,7 @@ Edit a note. Title and body replace; anchors, labels, and attachments add or rem
 |------|---------|
 | `--title <text>` | New title |
 | `--body <text>` | New body; `-` reads stdin |
+| `--body-file <file>` | Read `--body` from this file; `-` reads stdin |
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
 | `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
@@ -2953,6 +2973,7 @@ create transaction.
 |------|---------|---------|
 | `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | empty | Answer body; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
 | `--path <path>` | none | Path anchor; repeatable |
@@ -2994,6 +3015,7 @@ to correct the record; a changed user choice gets a new answer and a supersessio
 |------|---------|
 | `--title <text>` | New title |
 | `--body <text>` | New body; `-` reads stdin |
+| `--body-file <file>` | Read `--body` from this file; `-` reads stdin |
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
 | `--add-path` / `--rm-path <path>` | Add or remove a path anchor; repeatable |
@@ -3240,6 +3262,7 @@ the same create transaction.
 |------|---------|---------|
 | `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--body <text>` | required unless `--attach` is given | Doc body; positional `BODY` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--when <text>` | empty | Free-text "read this when…" trigger, surfaced verbatim |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
@@ -3284,6 +3307,7 @@ may blank it, leaving an attach-only doc, mirroring a flag-mode `add`.
 |------|---------|
 | `--title <text>` | New title |
 | `--body <text>` | New body; `-` reads stdin |
+| `--body-file <file>` | Read `--body` from this file; `-` reads stdin |
 | `--when <text>` | New "read this when…" trigger |
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |
@@ -3522,6 +3546,7 @@ the entry is recorded as a separate append so its author and timestamp are hones
 |------|---------|---------|
 | `--title <text>` | none | `TITLE` as a flag; a different positional `TITLE` alongside it is a usage error |
 | `--entry <text>` | none | Record a first entry; positional `BODY` and `-` (stdin) are equivalent |
+| `--entry-file <file>` | none | Read `--entry` from this file; `-` reads stdin; mutually exclusive with `--entry` |
 | `--attach <file>` | none | Attach a file (git-lfs); repeatable |
 | `--label <label>` | none | Label; repeatable |
 | `--commit <sha>` | none | Commit anchor; repeatable |
@@ -3546,6 +3571,7 @@ commit, and existing entries stay immutable; this is the only way an entry is ev
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--entry <text>` | none | Entry text; mutually exclusive with the positional and `-` |
+| `--entry-file <file>` | none | Read `--entry` from this file; `-` reads stdin; mutually exclusive with `--entry` |
 | `--attach <file>` | none | Attach a file to the log (git-lfs); repeatable |
 | `--replace` | off | Allow `--attach` to overwrite a live attachment of the same name |
 | `--json` | off | Emit JSON |
@@ -3711,6 +3737,7 @@ journal's Log lean line.
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--body <text>` | none | Complaint text; positional `TEXT` and `-` (stdin) are equivalent |
+| `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
 | `--model <id>` | `CC_NOTES_MODEL` | Model identity recorded on the entry; the flag wins over the environment variable |
 | `--json` | off | Emit the journal's JSON summary |
 
