@@ -5267,7 +5267,7 @@ def test_durable_answers_skip_expired(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(evt.ctx, "decide", stub_decide(PICK_NONE, asked))
     stage_prompt_answers(evt)
     options = offered(asked, "answer")
-    check("expired: prompt filter never sees the expired answer", "live001" in options and "gone001" not in options, repr(options))
+    check("expired: prompt filter never sees the expired answer", "live001aaaa" in options and "gone001bbbb" not in options, repr(options))
 
 
 def test_branch_answers_scope_the_floats_to_the_current_branch(monkeypatch, tmp_path) -> None:
@@ -5280,11 +5280,11 @@ def test_branch_answers_scope_the_floats_to_the_current_branch(monkeypatch, tmp_
 
     evt = prompt_event(monkeypatch, tmp_path / "prompt", rows, prompt="apply the incident fix", foreign=foreign)
     asked: list[tuple[object, dict]] = []
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"answer": label("inc0001")}, asked))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"answer": label("inc0001zzzz")}, asked))
     stage_prompt_answers(evt)
     options = offered(asked, "answer")
-    check("branch scope: the pick sees only the branch answer", list(options) == ["none", "auth001"], repr(options))
-    check("branch scope: the pick sees the chosen answer, not just the question", options.get("auth001") == "Session store? → Redis", repr(options))
+    check("branch scope: the pick sees only the branch answer", list(options) == ["none", "auth001aaaa"], repr(options))
+    check("branch scope: the pick sees the chosen answer, not just the question", options.get("auth001aaaa") == "Session store? → Redis", repr(options))
     check("branch scope: the pick reads the prompt", asked and asked[0][0] == "apply the incident fix", repr(asked))
     check("branch scope: a picked id outside the candidates floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "prompt", rows)) is None)
 
@@ -5295,7 +5295,7 @@ def test_branch_answers_float_nothing_on_a_detached_head(monkeypatch, tmp_path) 
     check("detached: digest silent", float_session_answers(prompt_event(monkeypatch, tmp_path / "digest", rows, branch="HEAD\n")) is None)
     evt = prompt_event(monkeypatch, tmp_path / "prompt", rows, branch="HEAD\n")
     asked: list[tuple[object, dict]] = []
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"answer": label("auth001")}, asked))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"answer": label("auth001aaaa")}, asked))
     stage_prompt_answers(evt)
     check("detached: the pick never runs", asked == [], repr(asked))
     check("detached: nothing floats", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "prompt", rows, branch="HEAD\n")) is None)
@@ -5305,7 +5305,7 @@ def test_stage_prompt_answers_floats_on_the_next_prompt(monkeypatch, tmp_path) -
     """A prompt's background pick floats on the next prompt, once, and never on the prompt that picked it."""
     rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis"), durable_answer("ui00001bbbb", title="Button color?", body="Blue")]
     first = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(first.ctx, "decide", stub_decide({"answer": label("auth001")}))
+    monkeypatch.setattr(first.ctx, "decide", stub_decide({"answer": label("auth001aaaa")}))
     check("prompt answers: nothing staged yet, so the first prompt floats nothing", float_prompt_answers(first) is None)
     stage_prompt_answers(first)
 
@@ -5317,12 +5317,12 @@ def test_stage_prompt_answers_floats_on_the_next_prompt(monkeypatch, tmp_path) -
     check("prompt answers: a staged pick floats once", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
     again = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(again.ctx, "decide", stub_decide({"answer": label("auth001")}))
+    monkeypatch.setattr(again.ctx, "decide", stub_decide({"answer": label("auth001aaaa")}))
     stage_prompt_answers(again)
     check("prompt answers: a floated answer never repeats", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
     later = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(later.ctx, "decide", stub_decide({"answer": label("ui00001")}))
+    monkeypatch.setattr(later.ctx, "decide", stub_decide({"answer": label("ui00001bbbb")}))
     stage_prompt_answers(later)
     result = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows))
     check("prompt answers: a later prompt floats its own pick", result is not None and "auth001" not in (result.message or "") and "ui00001" in (result.message or ""), repr(result))
@@ -5340,7 +5340,7 @@ def test_float_prompt_answers_drops_an_answer_surfaced_meanwhile(monkeypatch, tm
     rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis"), durable_answer("ui00001bbbb", title="Button color?", body="Blue")]
     for pick in ("auth001aaaa", "ui00001bbbb"):
         staged = prompt_event(monkeypatch, tmp_path, rows)
-        monkeypatch.setattr(staged.ctx, "decide", stub_decide({"answer": label(pick[:7])}))
+        monkeypatch.setattr(staged.ctx, "decide", stub_decide({"answer": label(pick)}))
         stage_prompt_answers(staged)
 
     meanwhile = prompt_event(monkeypatch, tmp_path, rows)
@@ -5349,7 +5349,7 @@ def test_float_prompt_answers_drops_an_answer_surfaced_meanwhile(monkeypatch, tm
     check("prompt answers: the answer surfaced meanwhile is dropped", result is not None and "auth001" not in (result.message or "") and "ui00001" in (result.message or ""), repr(result))
 
     lone = prompt_event(monkeypatch, tmp_path / "lone", rows[:1])
-    monkeypatch.setattr(lone.ctx, "decide", stub_decide({"answer": label("auth001")}))
+    monkeypatch.setattr(lone.ctx, "decide", stub_decide({"answer": label("auth001aaaa")}))
     stage_prompt_answers(lone)
     common.remember_answers(prompt_event(monkeypatch, tmp_path / "lone", rows[:1]), rows[:1])
     check("prompt answers: a wholly stale pick floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "lone", rows[:1])) is None)
@@ -5359,7 +5359,7 @@ def test_float_prompt_answers_never_calls_out(monkeypatch, tmp_path) -> None:
     """The prompt path reads session state only: no model call, no cc-notes call, staged or not."""
     rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis")]
     staged = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(staged.ctx, "decide", stub_decide({"answer": label("auth001")}))
+    monkeypatch.setattr(staged.ctx, "decide", stub_decide({"answer": label("auth001aaaa")}))
     stage_prompt_answers(staged)
 
     for kind, evt in (("staged", prompt_event(monkeypatch, tmp_path, rows)), ("empty", prompt_event(monkeypatch, tmp_path, rows))):
@@ -5375,7 +5375,7 @@ def test_float_prompt_answers_fits_the_budget(monkeypatch, tmp_path) -> None:
     rows = [durable_answer(f"ans{i:04d}xxxx", title=f"Long durable question number {i}? " + "z" * 60) for i in range(20)]
     for row in rows:
         staged = prompt_event(monkeypatch, tmp_path, rows)
-        monkeypatch.setattr(staged.ctx, "decide", stub_decide({"answer": label(row["id"][:7])}))
+        monkeypatch.setattr(staged.ctx, "decide", stub_decide({"answer": label(row["id"])}))
         stage_prompt_answers(staged)
     message = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)).message
     shown = [r["id"] for r in rows if r["id"][:7] in message]
@@ -5387,8 +5387,8 @@ def test_float_prompt_answers_fits_the_budget(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(later.ctx, "decide", stub_decide(PICK_NONE, asked))
     stage_prompt_answers(later)
     options = offered(asked, "answer")
-    check("prompt budget: a floated answer is never offered again", options and shown[0][:7] not in options, repr(options))
-    check("prompt budget: an unfit answer stays a candidate", rows[-1]["id"][:7] in options, repr(options))
+    check("prompt budget: a floated answer is never offered again", options and shown[0] not in options, repr(options))
+    check("prompt budget: an unfit answer stays a candidate", rows[-1]["id"] in options, repr(options))
 
 
 def test_stage_prompt_answers_stages_nothing_when_the_classifier_fails(monkeypatch, tmp_path) -> None:
@@ -5405,7 +5405,7 @@ def test_stage_prompt_answers_stages_nothing_when_the_classifier_fails(monkeypat
     check("prompt answers: a refused pick floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
     retry = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(retry.ctx, "decide", stub_decide({"answer": label("auth001")}))
+    monkeypatch.setattr(retry.ctx, "decide", stub_decide({"answer": label("auth001aaaa")}))
     stage_prompt_answers(retry)
     check("prompt answers: an unfloated answer stays a candidate", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is not None)
 
@@ -5426,16 +5426,25 @@ def test_surface_pick_accepts_a_bare_list_reply() -> None:
     check("surface pick: the object shape still validates", SurfacePick.model_validate({"ids": ["ui00001bbbb"]}).ids == ["ui00001bbbb"])
 
 
-def test_stage_prompt_answers_offers_short_ids_with_none_first(monkeypatch, tmp_path) -> None:
-    """The pick offers none first, then each candidate by short id, and a short-id choice floats that answer."""
+def test_stage_prompt_answers_offers_full_ids_with_none_first(monkeypatch, tmp_path) -> None:
+    """The pick offers none first, then each candidate by full id, and a choice floats only that answer."""
     rows = [durable_answer("auth001aaaa"), durable_answer("ui00001bbbb")]
     asked: list[tuple[object, dict]] = []
     picked = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(picked.ctx, "decide", stub_decide({"answer": label("ui00001")}, asked))
+    monkeypatch.setattr(picked.ctx, "decide", stub_decide({"answer": label("ui00001bbbb")}, asked))
     stage_prompt_answers(picked)
-    check("prompt pick: none leads the options", list(offered(asked, "answer")) == ["none", "auth001", "ui00001"], repr(asked))
+    check("prompt pick: none leads the options", list(offered(asked, "answer")) == ["none", "auth001aaaa", "ui00001bbbb"], repr(asked))
     result = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows))
-    check("prompt pick: a short-id choice floats that answer", result is not None and "ui00001" in (result.message or "") and "auth001" not in (result.message or ""), repr(result))
+    check("prompt pick: a choice floats that answer", result is not None and "ui00001" in (result.message or "") and "auth001" not in (result.message or ""), repr(result))
+
+    twins = [durable_answer("abc1234aaaa", title="Tabs?"), durable_answer("abc1234bbbb", title="Spaces?")]
+    asked = []
+    shared = prompt_event(monkeypatch, tmp_path / "twins", twins)
+    monkeypatch.setattr(shared.ctx, "decide", stub_decide({"answer": label("abc1234bbbb")}, asked))
+    stage_prompt_answers(shared)
+    check("prompt pick: a shared short id stays two options", list(offered(asked, "answer")) == ["none", "abc1234aaaa", "abc1234bbbb"], repr(asked))
+    message = (float_prompt_answers(prompt_event(monkeypatch, tmp_path / "twins", twins)) or SimpleNamespace(message="")).message or ""
+    check("prompt pick: a shared short id floats only the chosen answer", "Spaces?" in message and "Tabs?" not in message, message)
 
     empty = prompt_event(monkeypatch, tmp_path / "none", rows)
     monkeypatch.setattr(empty.ctx, "decide", stub_decide(PICK_NONE))

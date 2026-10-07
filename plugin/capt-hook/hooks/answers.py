@@ -200,7 +200,7 @@ def option_text(text: str) -> str:
 
 
 def answer_options(answers: list[dict[str, Any]], none: str) -> dict[str, str | None]:
-    return {NO_ANSWER: none, **{short_id(a["id"]): option_text(f"{answer_question(a)} → {answer_text(a)}") for a in answers}}
+    return {NO_ANSWER: none, **{a["id"]: option_text(f"{answer_question(a)} → {answer_text(a)}") for a in answers}}
 
 
 def answered_state(pair: AnsweredQuestion) -> str:
@@ -379,7 +379,7 @@ def pick_prompt_answer(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) 
     asked = {"answer": Label(PROMPT_ANSWER_INSTRUCTIONS, answer_options(fresh, "The prompt bears on none of these answers."))}
     match (decision := evt.decide((evt.user_prompt or "")[:LLM_INPUT_CAP], asked)) and decision.answers["answer"]:
         case LabelAnswer(choice=choice) if choice != NO_ANSWER:
-            return {a["id"]: title_line(a) for a in fresh if short_id(a["id"]) == choice}
+            return {a["id"]: title_line(a) for a in fresh if a["id"] == choice}
     return {}
 
 
