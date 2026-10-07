@@ -43,6 +43,8 @@ from hooks.answers import (
     RECENT_ANSWER_LIMIT,
     AnsweredQuestion,
     CapturedAnswers,
+    SupersedeTriage,
+    SupersedeVerdict,
     float_prompt_answers,
     heuristic_scope,
     record_user_answers,
@@ -4946,7 +4948,7 @@ def touched_transcript(*paths: str):
 
 def answer_event(
     monkeypatch, tmp_path, questions: list[dict], response, *,
-    candidates: list[dict] | None = None, recent: list[dict] | None = None, triage=None,
+    candidates: list[dict] | None = None, recent: list[dict] | None = None, triage=None, supersedes: str = "",
     added: tuple[str, ...] = ("ans0001aaaa",), paths: tuple[str, ...] = (),
 ):
     """An AskUserQuestion PostToolUse with the answer CLI, git, and triage stubbed; returns (evt, calls)."""
@@ -4974,7 +4976,12 @@ def answer_event(
     monkeypatch.setattr(evt.ctx, "call_cli", _call)
     monkeypatch.setattr(evt.ctx, "git", stub_git(ANSWER_GIT))
     monkeypatch.setattr(evt.ctx, "decide", stub_decide(triage))
+    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(supersede_triage(supersedes)))
     return evt, calls
+
+
+def supersede_triage(named: str = "") -> SupersedeTriage:
+    return SupersedeTriage(verdicts=[SupersedeVerdict(index=0, supersedes=named)] if named else [])
 
 
 def answer_adds(calls: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
@@ -5116,11 +5123,23 @@ def test_refine_user_answers_agreeing_triage_without_paths_edits_nothing(monkeyp
     check("refine agree: no edit", answer_edits(calls) == [], repr(calls))
 
 
+def test_refine_user_answers_durable_floor_and_unjudged_scope(monkeypatch, tmp_path) -> None:
+    """p_yes at 0.4 relabels durable, below it stays ephemeral, and a timed-out scope decision edits nothing."""
+    relabel = ("--rm-label", "scope:ephemeral", "--add-label", "scope:durable")
+    for p_yes, want in ((0.4, True), (0.39, False)):
+        evt, calls = answer_event(monkeypatch, tmp_path / str(p_yes), [question("Q?")], {"answers": {"Q?": "A"}}, triage={"durable": binary(p_yes)})
+        captured_then_refined(evt, calls)
+        check(f"refine floor: p_yes {p_yes} relabels durable is {want}", bool(answer_edits(calls)) is want and (not want or answer_edits(calls)[0][4:] == relabel), repr(calls))
+    evt, calls = answer_event(monkeypatch, tmp_path / "timeout", [question("Q?")], {"answers": {"Q?": "A"}})
+    captured_then_refined(evt, calls)
+    check("refine timeout: an unjudged scope edits nothing", answer_edits(calls) == [], repr(calls))
+
+
 def test_refine_user_answers_skips_uncaptured(monkeypatch, tmp_path) -> None:
     """A deduped answer was never captured, so the background pass makes no calls."""
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}}, recent=[recent_answer("Q?", 1)],
-        triage={"durable": binary(0.1), "supersedes": label("old0001")},
+        triage={"durable": binary(0.1)}, supersedes="old0001",
     )
     captured_then_refined(evt, calls)
     check("refine uncaptured: no calls", calls == [], repr(calls))
@@ -5135,11 +5154,11 @@ def test_refine_user_answers_supersedes(monkeypatch, tmp_path) -> None:
         candidates=[old, durable_answer("ans0001aaaa", title="Which language?", body="Go")],
     )
     evt.ctx.s[SessionAnswers].set(SessionAnswers(lines={"old0001cccc": "old0001 Which language? → Rust"}))
-    asked: list[tuple[object, dict]] = []
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"durable": binary(0.1), "supersedes": label("old0001")}, asked))
+    prompts: list[str] = []
+    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: prompts.append(str(prompt)) or supersede_triage("old0001"))
     captured_then_refined(evt, calls)
     check("refine supersede: supersede argv", ("answer", "supersede", "old0001cccc", "--by", "ans0001aaaa", "--json") in calls, repr(calls))
-    check("refine supersede: the fresh record is never its own candidate", list(offered(asked, "supersedes")) == ["none", "old0001"], repr(asked))
+    check("refine supersede: the fresh record is never its own candidate", prompts and "ans0001aaaa\t" not in prompts[0], repr(prompts))
     lines = evt.ctx.s.load(SessionAnswers).lines
     check("refine supersede: ledger keeps both ids", list(lines) == ["old0001cccc", "ans0001aaaa"], repr(lines))
 
@@ -5158,14 +5177,13 @@ def test_record_user_answers_long_question(monkeypatch, tmp_path) -> None:
     record = durable_answer("ans0001aaaa", title=clamp_title(long_q), body=f"Backoff\nQuestion: {long_q}\nOptions: Backoff | Fail")
     check("answer long: render_note_lines uses the full question", render_note_lines([{"kind": "answer", "answer": record}]) == [f"ans0001 {long_q} → Backoff"])
 
-    asked: list[tuple[object, dict]] = []
+    triage_prompts: list[str] = []
     later, later_calls = answer_event(
         monkeypatch, tmp_path / "later", [question(long_q)], {"answers": {long_q: "Fail"}}, candidates=[record], added=("ans0002bbbb",),
     )
-    monkeypatch.setattr(later.ctx, "decide", stub_decide({"durable": binary(0.1)}, asked))
+    monkeypatch.setattr(later.ctx, "call_llm", lambda prompt, **kw: triage_prompts.append(str(prompt)) or supersede_triage())
     captured_then_refined(later, later_calls)
-    described = offered(asked, "supersedes").get("ans0001") or ""
-    check("answer long: triage candidates carry the full question", described == f"{' '.join(long_q.split())} → Backoff", repr(described))
+    check("answer long: triage candidates carry the full question", triage_prompts and f"ans0001aaaa\tans0001 {long_q} → Backoff" in triage_prompts[0], repr(triage_prompts))
 
 
 def test_refine_user_answers_reused_id_never_self_supersedes(monkeypatch, tmp_path) -> None:
@@ -5175,7 +5193,7 @@ def test_refine_user_answers_reused_id_never_self_supersedes(monkeypatch, tmp_pa
         monkeypatch, tmp_path, [question("Which language?", labels=("Go", "Rust"))],
         {"answers": {"Which language?": "Go"}},
         candidates=[same], added=("old0001cccc",),
-        triage={"durable": binary(0.1), "supersedes": label("old0001")},
+        triage={"durable": binary(0.1)}, supersedes="old0001",
     )
     captured_then_refined(evt, calls)
     check("refine reuse: no supersede call", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
@@ -5187,7 +5205,7 @@ def test_refine_user_answers_supersede_needs_unique_prefix(monkeypatch, tmp_path
     for named, want in (("old0001", None), ("old0002eeeeffff", None), ("old0001dddd", "old0001dddd"), ("old0002", "old0002eeee")):
         evt, calls = answer_event(
             monkeypatch, tmp_path / named, [question("Q?")], {"answers": {"Q?": "A"}},
-            candidates=candidates, triage={"durable": binary(0.1), "supersedes": label(named)},
+            candidates=candidates, triage={"durable": binary(0.1)}, supersedes=named,
         )
         captured_then_refined(evt, calls)
         supersedes = [c[2] for c in calls if c[:2] == ("answer", "supersede")]
@@ -5197,7 +5215,7 @@ def test_refine_user_answers_supersede_needs_unique_prefix(monkeypatch, tmp_path
 def test_refine_user_answers_unknown_supersede_ignored(monkeypatch, tmp_path) -> None:
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}},
-        triage={"durable": binary(0.1), "supersedes": label("nope123")},
+        triage={"durable": binary(0.1)}, supersedes="nope123",
     )
     captured_then_refined(evt, calls)
     check("refine supersede: a non-candidate id never supersedes", not any(c[:2] == ("answer", "supersede") for c in calls), repr(calls))
@@ -5569,12 +5587,11 @@ def test_render_answer_line_multiline_answer(monkeypatch, tmp_path) -> None:
     record = durable_answer("ans0001aaaa", title="Rollout plan?", body="Canary first\nthen 10%\nOptions: A | B\nNotes: slow")
     entry = {"kind": "answer", "answer": record, "reasons": []}
     check("multiline: recall line joins the answer lines", render_note_lines([entry]) == ["ans0001 Rollout plan? → Canary first / then 10%"], repr(render_note_lines([entry])))
-    asked: list[tuple[object, dict]] = []
+    triage_prompts: list[str] = []
     evt, calls = answer_event(monkeypatch, tmp_path, [question("Rollout plan?")], {"answers": {"Rollout plan?": "B"}}, candidates=[record], added=("ans0002bbbb",))
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"durable": binary(0.1)}, asked))
+    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: triage_prompts.append(str(prompt)) or supersede_triage())
     captured_then_refined(evt, calls)
-    described = offered(asked, "supersedes").get("ans0001")
-    check("multiline: triage candidate carries the whole answer", described == "Rollout plan? → Canary first / then 10%", repr(described))
+    check("multiline: triage candidate carries the whole answer", triage_prompts and "ans0001aaaa\tans0001 Rollout plan? → Canary first / then 10%" in triage_prompts[0], repr(triage_prompts))
 
 
 def test_render_answer_line() -> None:

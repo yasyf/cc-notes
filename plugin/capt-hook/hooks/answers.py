@@ -13,6 +13,7 @@ from captain_hook import (
     HookResult,
     Input,
     PostToolUseEvent,
+    Prompt,
     SessionStartEvent,
     Tool,
     UserPromptSubmitEvent,
@@ -28,6 +29,7 @@ from .common import (
     CcNotesAvailable,
     SessionAnswers,
     agent_key,
+    answer_line,
     answer_question,
     answer_text,
     branch_answers,
@@ -68,16 +70,16 @@ SECRET_RE = re.compile(
 
 NO_ANSWER = "none"
 OPTION_DESCRIPTION_CAP = 400
-DURABLE_FLOOR = 0.5
-SUPERSEDE_FLOOR = 0.9
+DURABLE_FLOOR = 0.4
 ANSWER_SCOPE_QUESTION = Binary(
     "Does the user's answer set a preference, convention, or decision that should hold beyond the task at hand?",
     yes="A standing preference, convention, rule, or design decision later work must respect.",
     no="A one-off pick that only steers the current task, such as which item to do first or whether to proceed now.",
 )
-SUPERSEDE_INSTRUCTIONS = (
-    "Each option other than none is an earlier recorded answer. Pick the one this answer replaces because both "
-    "answer the same question; pick none when no earlier answer asks the same question."
+ANSWER_SUPERSEDE_SYSTEM = (
+    "A user just answered questions a coding agent asked. Earlier durable answers are listed as candidates. "
+    "When an answer replaces a candidate that asks the same question, name that candidate's id in supersedes; "
+    "otherwise leave supersedes empty. Return one verdict per answer, keyed by its index."
 )
 PROMPT_ANSWER_INSTRUCTIONS = (
     "The state is a prompt a user just sent a coding agent. Each option other than none is a durable answer the "
@@ -99,10 +101,23 @@ class AnsweredQuestion(NamedTuple):
 
 
 class AnswerVerdict(NamedTuple):
-    """The triage verdict for one answer: its scope, and the short id of the candidate it replaces."""
+    """The triage verdict for one answer: its scope, None when unjudged, and the candidate id it replaces."""
 
-    scope: Literal["durable", "ephemeral"]
+    scope: Literal["durable", "ephemeral"] | None
     supersedes: str
+
+
+class SupersedeVerdict(BaseModel):
+    """The supersede verdict for the answer at ``index``: the candidate id it replaces, or empty."""
+
+    index: int
+    supersedes: str = ""
+
+
+class SupersedeTriage(BaseModel):
+    """The supersede pass's verdicts; an answer with no verdict supersedes nothing."""
+
+    verdicts: list[SupersedeVerdict] = []
 
 
 class AnswerCaptureLock(BaseModel):
@@ -200,25 +215,31 @@ def answered_state(pair: AnsweredQuestion) -> str:
     return "\n".join(lines)[:LLM_INPUT_CAP]
 
 
-def answer_verdict(evt: PostToolUseEvent, pair: AnsweredQuestion, candidates: list[dict[str, Any]]) -> AnswerVerdict | None:
-    asked: dict[str, Binary | Label] = {"durable": ANSWER_SCOPE_QUESTION}
-    if candidates:
-        asked["supersedes"] = Label(SUPERSEDE_INSTRUCTIONS, answer_options(candidates, "It replaces none of them."))
-    if (decision := evt.decide(answered_state(pair), asked)) is None:
-        return None
-    match decision.answers["durable"]:
+def answer_scope(evt: PostToolUseEvent, pair: AnsweredQuestion) -> Literal["durable", "ephemeral"] | None:
+    match (decision := evt.decide(answered_state(pair), {"durable": ANSWER_SCOPE_QUESTION})) and decision.answers["durable"]:
         case BinaryAnswer(p_yes=p_yes):
-            scope: Literal["durable", "ephemeral"] = "durable" if p_yes >= DURABLE_FLOOR else "ephemeral"
-        case _:
-            return None
-    match decision.answers.get("supersedes"):
-        case LabelAnswer(choice=choice, probabilities=probabilities) if choice != NO_ANSWER and probabilities[choice] >= SUPERSEDE_FLOOR:
-            return AnswerVerdict(scope, choice)
-    return AnswerVerdict(scope, "")
+            return "durable" if p_yes >= DURABLE_FLOOR else "ephemeral"
+    return None
+
+
+def supersede_triage(evt: PostToolUseEvent, pairs: list[AnsweredQuestion], candidates: list[dict[str, Any]]) -> dict[int, str]:
+    if not candidates:
+        return {}
+    prompt = (
+        Prompt()
+        .system(ANSWER_SUPERSEDE_SYSTEM)
+        .context("answers", "\n".join(f"{i}\t{p.question} → {p.answer}" for i, p in enumerate(pairs))[:LLM_INPUT_CAP])
+        .context("candidates", "\n".join(f"{a['id']}\t{answer_line(a)}" for a in candidates)[:LLM_INPUT_CAP])
+        .ask("For each answer index: which candidate id, if any, does it supersede?")
+    )
+    triage = evt.ctx.call_llm(prompt, response_model=SupersedeTriage, model="small", agent=False, transcript=False)
+    return {v.index: v.supersedes for v in triage.verdicts if v.supersedes}
 
 
 def triage_answers(evt: PostToolUseEvent, pairs: list[AnsweredQuestion], candidates: list[dict[str, Any]]) -> dict[int, AnswerVerdict]:
-    return {i: verdict for i, pair in enumerate(pairs) if (verdict := answer_verdict(evt, pair, candidates)) is not None}
+    supersedes = supersede_triage(evt, pairs, candidates)
+    scopes = {i: answer_scope(evt, pair) for i, pair in enumerate(pairs)}
+    return {i: AnswerVerdict(scope, supersedes.get(i, "")) for i, scope in scopes.items() if scope or i in supersedes}
 
 
 def candidate_id(named: str, candidates: list[dict[str, Any]]) -> str:
@@ -310,7 +331,7 @@ def record_user_answers(evt: PostToolUseEvent) -> HookResult | None:
 
 
 def scope_edit(scope: str, verdict: AnswerVerdict | None) -> list[str]:
-    if verdict is None or verdict.scope == scope:
+    if verdict is None or verdict.scope in (None, scope):
         return []
     return ["--rm-label", f"scope:{scope}", "--add-label", f"scope:{verdict.scope}"]
 
