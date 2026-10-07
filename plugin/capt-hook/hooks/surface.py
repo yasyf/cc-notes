@@ -28,7 +28,6 @@ from .common import (
     render_note_lines,
     repo_root,
     run_cc_notes,
-    short_id,
 )
 from .deferred import defer
 
@@ -85,10 +84,10 @@ def remember_surfaced_answers(evt: PostToolUseEvent, entries: list[dict[str, Any
 def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, path: str, touched: str) -> list[dict[str, Any]]:
     if len(fresh) <= 1:
         return fresh
-    asked = {short_id(entry_payload(e)["id"]): unrelated_question(line) for e, line in zip(fresh, render_note_lines(fresh), strict=True)}
+    asked = {entry_payload(e)["id"]: unrelated_question(line) for e, line in zip(fresh, render_note_lines(fresh), strict=True)}
     if (decision := evt.decide(f"The agent just {touched} the file {path}.", asked)) is None:
         return fresh
-    return [e for e in fresh if not plainly_unrelated(decision.answers[short_id(entry_payload(e)["id"])])]
+    return [e for e in fresh if not plainly_unrelated(decision.answers[entry_payload(e)["id"]])]
 
 
 def recall_note_context(evt: PostToolUseEvent) -> HookResult | None:

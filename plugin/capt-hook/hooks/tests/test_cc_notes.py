@@ -1741,9 +1741,9 @@ def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
     asked: list[tuple[object, dict]] = []
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"drf0001": binary(0.1), "drf0002": binary(0.95), "drf0003": binary(0.2)}, asked))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"drf0001aaa": binary(0.1), "drf0002bbb": binary(0.95), "drf0003ccc": binary(0.2)}, asked))
     result = floated(check_note_staleness, evt)
-    check("staleness multi: the edit path asks one decision about every record", len(asked) == 1 and list(asked[0][1]) == ["drf0001", "drf0002", "drf0003"], repr(asked))
+    check("staleness multi: the edit path asks one decision about every record", len(asked) == 1 and list(asked[0][1]) == ["drf0001aaa", "drf0002bbb", "drf0003ccc"], repr(asked))
     check("staleness multi: the state names the repo-relative file", asked and asked[0][0] == "The agent just edited the file internal/store/store.go.", repr(asked))
     check("staleness multi: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
@@ -2297,16 +2297,25 @@ def test_surface_filter_drops_only_the_plainly_unrelated(monkeypatch, tmp_path) 
     """With 2+ candidates a record drops only at p >= 0.7 that it is plainly unrelated, preserving order."""
     evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
     fresh = [note_entry("aaa0001xxx"), note_entry("bbb0002xxx"), note_entry("ccc0003xxx")]
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"aaa0001": binary(0.69), "bbb0002": binary(0.7), "ccc0003": binary(0.1)}))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"aaa0001xxx": binary(0.69), "bbb0002xxx": binary(0.7), "ccc0003xxx": binary(0.1)}))
     kept = surface_filter(evt, fresh, path="x.go", touched="read")
     check("surface filter: drops at the floor, keeps below it", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx", "ccc0003xxx"], repr(kept))
+
+
+def test_surface_filter_asks_records_sharing_a_short_id_apart(monkeypatch, tmp_path) -> None:
+    """Two records sharing a seven-character prefix each get their own question and verdict."""
+    evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
+    fresh = [note_entry("abc1234aaaa"), note_entry("abc1234bbbb")]
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"abc1234aaaa": binary(0.1), "abc1234bbbb": binary(0.9)}))
+    kept = surface_filter(evt, fresh, path="x.go", touched="read")
+    check("surface filter: a shared prefix never merges two verdicts", [entry_payload(e)["id"] for e in kept] == ["abc1234aaaa"], repr(kept))
 
 
 def test_surface_filter_keeps_on_a_refusal_or_a_failed_call(monkeypatch, tmp_path) -> None:
     """A refused question keeps its record, and a failed decision keeps every record."""
     evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
     fresh = [note_entry("aaa0001xxx"), note_entry("bbb0002xxx")]
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"aaa0001": Refused(), "bbb0002": binary(0.9)}))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"aaa0001xxx": Refused(), "bbb0002xxx": binary(0.9)}))
     kept = surface_filter(evt, fresh, path="x.go", touched="read")
     check("surface filter: a refusal keeps the record", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx"], repr(kept))
     monkeypatch.setattr(evt.ctx, "decide", stub_decide(None))
