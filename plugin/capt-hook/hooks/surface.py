@@ -10,11 +10,10 @@ from captain_hook import (
     HookResult,
     Input,
     PostToolUseEvent,
-    Prompt,
     Tool,
     on,
 )
-from pydantic import BaseModel, model_validator
+from spawnllm import Binary, BinaryAnswer
 
 from .common import (
     AnswerFileSurfacing,
@@ -22,41 +21,36 @@ from .common import (
     entry_kind,
     entry_payload,
     filter_drifted,
+    flat_clip,
     git_relative,
     parse_relevant,
     remember_answers,
     render_note_lines,
     repo_root,
     run_cc_notes,
+    short_id,
 )
 from .deferred import defer
 
 RELEVANT_LIMIT = 10
 
-SURFACE_FILTER_SYSTEM = (
-    "You are a precision filter on the recall side. A cheap ranker has surfaced durable cc-notes "
-    "records (notes, docs, logs, runbooks, investigations, plans, answers) anchored to a file the agent just touched. The ranker over-selects "
-    "on purpose; your job is to keep the ones worth putting in front of the agent right now and drop "
-    "only the clearly irrelevant.\n"
-    "\n"
-    "Bias hard toward surfacing: a missing piece of durable context costs far more than one extra "
-    "line the agent skims past. Drop a record only when its title and match reasons make it plainly "
-    "unrelated to this file. When in doubt, keep it.\n"
-    "\n"
-    "Return an object with one field, ids: the candidate ids to surface, as a subset of those given. "
-    "When none qualify, ids is an empty array."
-)
+UNRELATED_FLOOR = 0.7
+RECORD_LINE_CAP = 500
 
 
-class SurfacePick(BaseModel):
-    """The surface filter's verdict: which candidate record ids are worth surfacing now."""
+def unrelated_question(line: str) -> Binary:
+    return Binary(
+        f'A cc-notes record anchored to this file reads: "{flat_clip(line, RECORD_LINE_CAP)}". Is it plainly unrelated to the file?',
+        yes="Its title and match reasons make it plainly unrelated to this file.",
+        no="It is related to this file, or might be.",
+    )
 
-    ids: list[str] = []
 
-    @model_validator(mode="before")
-    @classmethod
-    def wrap_bare_list(cls, value: object) -> object:
-        return {"ids": value} if isinstance(value, list) else value
+def plainly_unrelated(answer: object) -> bool:
+    match answer:
+        case BinaryAnswer(p_yes=p_yes):
+            return p_yes >= UNRELATED_FLOOR
+    return False
 
 
 def repo_path(evt: PostToolUseEvent) -> str | None:
@@ -88,21 +82,13 @@ def remember_surfaced_answers(evt: PostToolUseEvent, entries: list[dict[str, Any
         remember_answers(evt, answers)
 
 
-def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, touched: str) -> list[dict[str, Any]]:
+def surface_filter(evt: PostToolUseEvent, fresh: list[dict[str, Any]], *, path: str, touched: str) -> list[dict[str, Any]]:
     if len(fresh) <= 1:
         return fresh
-    lines = {entry_payload(e)["id"]: render_note_lines([e])[0] for e in fresh}
-    prompt = (
-        Prompt()
-        .system(SURFACE_FILTER_SYSTEM)
-        .context("touched-file", str(evt.file))
-        .context("how-touched", touched)
-        .context("candidates", "\n".join(f"{eid}\t{line}" for eid, line in lines.items()))
-        .ask("Which candidate ids are worth surfacing now? Keep all but the clearly irrelevant.")
-    )
-    pick = evt.ctx.call_llm(prompt, response_model=SurfacePick, model="small", agent=False, transcript=False)
-    chosen = set(pick.ids) & set(lines)
-    return [e for e in fresh if entry_payload(e)["id"] in chosen]
+    asked = {short_id(entry_payload(e)["id"]): unrelated_question(line) for e, line in zip(fresh, render_note_lines(fresh), strict=True)}
+    if (decision := evt.decide(f"The agent just {touched} the file {path}.", asked)) is None:
+        return fresh
+    return [e for e in fresh if not plainly_unrelated(decision.answers[short_id(entry_payload(e)["id"])])]
 
 
 def recall_note_context(evt: PostToolUseEvent) -> HookResult | None:
@@ -139,7 +125,7 @@ def recall_stale_notes(evt: PostToolUseEvent) -> HookResult | None:
     fresh = unseen_entries(evt, drifted, scope="stale")
     if not fresh:
         return None
-    picked = surface_filter(evt, fresh, touched="edited")
+    picked = surface_filter(evt, fresh, path=path, touched="edited")
     if not picked:
         return None
     remember_surfaced_answers(evt, picked)

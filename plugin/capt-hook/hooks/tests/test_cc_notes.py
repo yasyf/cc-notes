@@ -135,7 +135,6 @@ from hooks.surface import (
     float_note_context,
     RELEVANT_LIMIT,
     surface_filter,
-    SurfacePick,
 )
 from hooks.workflow import (
     cc_notes_refs_dirty,
@@ -1077,8 +1076,8 @@ def stub_llm(verdict: object):
 
     Mirrors stub_cli: the test monkeypatches it onto ``evt.ctx.call_llm``. Each handler
     passes ``response_model=<Model>`` and the real backend parses the reply into that
-    model, so the stub just returns an already-built instance — a RecordVerdict for the
-    record routers, a SurfacePick for the filter.
+    model, so the stub just returns an already-built instance, a RecordVerdict for the
+    record routers.
     """
 
     def _call(template, *args, **kwargs):
@@ -1542,7 +1541,7 @@ def test_surface_hooks_run_nothing_on_the_synchronous_path(monkeypatch, tmp_path
         evt = mock_event("PostToolUse", tool="Bash", command="git status", session_dir=tmp_path)
         cli_calls: list[object] = []
         monkeypatch.setattr(evt.ctx, "call_cli", lambda *a, **k: cli_calls.append(a))
-        monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
+        monkeypatch.setattr(evt.ctx, "decide", _llm_boom)
         float_deferred_notices(evt)
         check(f"deferred: the {label} drain runs no cc-notes CLI", cli_calls == [], repr(cli_calls))
 
@@ -1723,12 +1722,12 @@ def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
 
 
 def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path) -> None:
-    """With 2+ drifted records the filter surfaces only the LLM's pick, yet marks ALL drifted judged once/session.
+    """With 2+ drifted records the filter drops the plainly unrelated one, yet marks ALL drifted judged once/session.
 
-    check_note_staleness marks every drifted record judged before the filter picks, so it
-    needs its own multi-candidate litmus. The re-edit fires a fail-OPEN LLM stub: if the unpicked
-    drf0002bbb were not marked judged on the first pass, it would resurface here, so the
-    silent second call is the behavioral proof that ALL drifted ids were marked.
+    check_note_staleness marks every drifted record judged before the filter decides, so it
+    needs its own multi-candidate litmus. The re-edit fires a failing decision stub, which keeps
+    every record: if the dropped drf0002bbb were not marked judged on the first pass, it would
+    resurface here, so the silent second call is the behavioral proof that ALL drifted ids were marked.
     """
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     payload = json.dumps(
@@ -1741,23 +1740,19 @@ def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path
     mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload}
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    llm_calls: list[object] = []
-
-    def pick(*a, **k):
-        llm_calls.append(a)
-        return SurfacePick(ids=["drf0001aaa", "drf0003ccc"])
-
-    monkeypatch.setattr(evt.ctx, "call_llm", pick)
+    asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"drf0001": binary(0.1), "drf0002": binary(0.95), "drf0003": binary(0.2)}, asked))
     result = floated(check_note_staleness, evt)
-    check("staleness multi: the edit path still calls the model filter once", len(llm_calls) == 1, repr(llm_calls))
+    check("staleness multi: the edit path asks one decision about every record", len(asked) == 1 and list(asked[0][1]) == ["drf0001", "drf0002", "drf0003"], repr(asked))
+    check("staleness multi: the state names the repo-relative file", asked and asked[0][0] == "The agent just edited the file internal/store/store.go.", repr(asked))
     check("staleness multi: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("staleness multi: surfaces picked", "drf0001" in result.message and "drf0003" in result.message, result.message)
         check("staleness multi: drops unpicked", "drf0002" not in result.message, result.message)
     evt2 = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
     monkeypatch.setattr(evt2.ctx, "call_cli", stub_cli(mapping))
-    monkeypatch.setattr(evt2.ctx, "call_llm", _llm_boom)
-    check("staleness multi: re-edit fully deduped to silence (unpicked drf0002 was marked)", floated(check_note_staleness, evt2) is None)
+    monkeypatch.setattr(evt2.ctx, "decide", stub_decide(None))
+    check("staleness multi: re-edit fully deduped to silence (dropped drf0002 was marked)", floated(check_note_staleness, evt2) is None)
 
 
 def test_float_and_staleness_scopes_are_isolated(monkeypatch, tmp_path) -> None:
@@ -2290,30 +2285,33 @@ def test_float_note_context_floats_log(monkeypatch, tmp_path) -> None:
     check("log float: re-read deduped by log id -> None", floated(float_note_context, evt2) is None)
 
 
-def test_surface_filter_single_skips_llm(monkeypatch, tmp_path) -> None:
-    """A lone candidate surfaces directly — no model call is paid (a boom stub proves it)."""
+def test_surface_filter_single_skips_the_classifier(monkeypatch, tmp_path) -> None:
+    """A lone candidate surfaces directly, with no decision paid for (a boom stub proves it)."""
     evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
-    kept = surface_filter(evt, [note_entry("only0001aaa", title="Sole")], touched="read")
-    check("surface filter: single candidate bypasses LLM", [entry_payload(e)["id"] for e in kept] == ["only0001aaa"], repr(kept))
+    monkeypatch.setattr(evt.ctx, "decide", _llm_boom)
+    kept = surface_filter(evt, [note_entry("only0001aaa", title="Sole")], path="x.go", touched="read")
+    check("surface filter: single candidate bypasses the classifier", [entry_payload(e)["id"] for e in kept] == ["only0001aaa"], repr(kept))
 
 
-def test_surface_filter_trims_to_subset(monkeypatch, tmp_path) -> None:
-    """With 2+ candidates the small LLM keeps only the ids it picks, preserving order."""
+def test_surface_filter_drops_only_the_plainly_unrelated(monkeypatch, tmp_path) -> None:
+    """With 2+ candidates a record drops only at p >= 0.7 that it is plainly unrelated, preserving order."""
     evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
     fresh = [note_entry("aaa0001xxx"), note_entry("bbb0002xxx"), note_entry("ccc0003xxx")]
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["aaa0001xxx", "ccc0003xxx"])))
-    kept = surface_filter(evt, fresh, touched="read")
-    check("surface filter: keeps only picked subset", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx", "ccc0003xxx"], repr(kept))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"aaa0001": binary(0.69), "bbb0002": binary(0.7), "ccc0003": binary(0.1)}))
+    kept = surface_filter(evt, fresh, path="x.go", touched="read")
+    check("surface filter: drops at the floor, keeps below it", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx", "ccc0003xxx"], repr(kept))
 
 
-def test_surface_filter_ignores_unknown_ids(monkeypatch, tmp_path) -> None:
-    """An id the model returns that was never a candidate is ignored (intersection only)."""
+def test_surface_filter_keeps_on_a_refusal_or_a_failed_call(monkeypatch, tmp_path) -> None:
+    """A refused question keeps its record, and a failed decision keeps every record."""
     evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
     fresh = [note_entry("aaa0001xxx"), note_entry("bbb0002xxx")]
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(SurfacePick(ids=["aaa0001xxx", "zzz9999zzz"])))
-    kept = surface_filter(evt, fresh, touched="read")
-    check("surface filter: drops ids not in the candidate set", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx"], repr(kept))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"aaa0001": Refused(), "bbb0002": binary(0.9)}))
+    kept = surface_filter(evt, fresh, path="x.go", touched="read")
+    check("surface filter: a refusal keeps the record", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx"], repr(kept))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide(None))
+    kept = surface_filter(evt, fresh, path="x.go", touched="read")
+    check("surface filter: a timed-out decision keeps every record", [entry_payload(e)["id"] for e in kept] == ["aaa0001xxx", "bbb0002xxx"], repr(kept))
 
 
 def test_float_note_context_surfaces_top_ranked_without_a_model(monkeypatch, tmp_path) -> None:
@@ -2322,12 +2320,12 @@ def test_float_note_context_surfaces_top_ranked_without_a_model(monkeypatch, tmp
     ids = [f"r{i:02d}0000xxx" for i in range(RELEVANT_LIMIT + 3)]
     payload = json.dumps([note_entry(nid, title=f"Rank {i}") for i, nid in enumerate(ids)])
     mapping = {("relevant", "x.go", "--limit", "0", "--json"): payload}
-    llm_calls: list[object] = []
+    asked: list[tuple[object, dict]] = []
     evt = mock_event("PostToolUse", tool="Read", file="x.go", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(mapping))
-    monkeypatch.setattr(evt.ctx, "call_llm", lambda *a, **k: llm_calls.append(a))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({}, asked))
     result = floated(float_note_context, evt)
-    check("top-ranked float: no model call", llm_calls == [], repr(llm_calls))
+    check("top-ranked float: no classifier call", asked == [], repr(asked))
     check("top-ranked float: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         shown = [nid[:7] for nid in ids if nid[:7] in result.message]
@@ -5410,22 +5408,6 @@ def test_stage_prompt_answers_stages_nothing_when_the_classifier_fails(monkeypat
     check("prompt answers: an unfloated answer stays a candidate", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is not None)
 
 
-def stub_llm_reply(value: object):
-    """Build a call_llm stub that validates a raw model reply through ``response_model``, as spawnllm's backends do."""
-
-    def _call(template, *args, response_model, **kwargs):
-        return response_model.model_validate(value)
-
-    return _call
-
-
-def test_surface_pick_accepts_a_bare_list_reply() -> None:
-    """A small-model reply of a bare JSON array coerces into SurfacePick instead of faulting the filter."""
-    check("surface pick: a bare empty list validates", SurfacePick.model_validate([]).ids == [])
-    check("surface pick: a bare id list validates", SurfacePick.model_validate(["auth001aaaa"]).ids == ["auth001aaaa"])
-    check("surface pick: the object shape still validates", SurfacePick.model_validate({"ids": ["ui00001bbbb"]}).ids == ["ui00001bbbb"])
-
-
 def test_stage_prompt_answers_offers_full_ids_with_none_first(monkeypatch, tmp_path) -> None:
     """The pick offers none first, then each candidate by full id, and a choice floats only that answer."""
     rows = [durable_answer("auth001aaaa"), durable_answer("ui00001bbbb")]
@@ -5616,7 +5598,7 @@ def test_answer_file_surfacing_toggle(monkeypatch, tmp_path) -> None:
     entries = [{"kind": "answer", "answer": durable_answer("ans0001aaaa", title="Q?", body="Go"), "reasons": ["path"]}, note_entry("note001aaaa")]
     mapping = {("relevant", "src/a.go", "--limit", "0", "--json"): json.dumps(entries)}
     toggle = ("config", "--type=bool", "--get", "cc-notes.answers.fileSurfacing")
-    monkeypatch.setattr(surface_module, "surface_filter", lambda evt, fresh, *, touched: fresh)
+    monkeypatch.setattr(surface_module, "surface_filter", lambda evt, fresh, *, path, touched: fresh)
 
     off = mock_event("PostToolUse", tool="Read", file="src/a.go", session_dir=tmp_path / "off")
     monkeypatch.setattr(off.ctx, "call_cli", stub_cli(mapping))
@@ -5635,7 +5617,7 @@ def test_answer_file_surfacing_toggle(monkeypatch, tmp_path) -> None:
 def test_answer_file_surfacing_bookkeeping(monkeypatch, tmp_path) -> None:
     """File-surfaced answers skip expired records, cap after filtering, and enter the answers seen scope and ledger."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    monkeypatch.setattr(surface_module, "surface_filter", lambda evt, fresh, *, touched: fresh)
+    monkeypatch.setattr(surface_module, "surface_filter", lambda evt, fresh, *, path, touched: fresh)
     toggle = ("config", "--type=bool", "--get", "cc-notes.answers.fileSurfacing")
     answers = [{"kind": "answer", "answer": durable_answer(f"ans{i:04d}xxxx", title=f"Q{i}?"), "reasons": ["path"]} for i in range(12)]
     expired = {"kind": "answer", "answer": durable_answer("exp0001aaaa", title="Old?") | {"drift": "EXPIRED", "stale_at": "2026-09-15T00:00:00Z"}, "reasons": ["path"]}
