@@ -28,6 +28,7 @@ command: cc-notes answer add
     --apply shorthand=none type=bool default="false" usage="create the answer from the checked-out file (add --apply PATH); may carry --attach"
     --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
     --body shorthand=none type=string default="" usage="answer body; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
     --checkout shorthand=none type=bool default="false" usage="write an answer template (prefilled from TITLE and anchor/label flags) to an editable file and print its path"
     --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
@@ -56,6 +57,7 @@ command: cc-notes answer edit
     --apply shorthand=none type=bool default="false" usage="apply edits from the checked-out file"
     --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
     --body shorthand=none type=string default="" usage="new body; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --checkout shorthand=none type=bool default="false" usage="write the answer to an editable file and print its path"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --replace shorthand=none type=bool default="false" usage="allow --attach to overwrite a live attachment with the same name"
@@ -255,6 +257,7 @@ command: cc-notes doc add
     --apply shorthand=none type=bool default="false" usage="create the doc from the checked-out file (add --apply PATH); may carry --attach"
     --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
     --body shorthand=none type=string default="" usage="doc body; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
     --checkout shorthand=none type=bool default="false" usage="write a doc template (prefilled from TITLE and anchor/label flags) to an editable file and print its path"
     --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
@@ -284,6 +287,7 @@ command: cc-notes doc edit
     --apply shorthand=none type=bool default="false" usage="apply edits from the checked-out file"
     --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
     --body shorthand=none type=string default="" usage="new body; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --checkout shorthand=none type=bool default="false" usage="write the doc to an editable file and print its path"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --replace shorthand=none type=bool default="false" usage="allow --attach to overwrite a live attachment with the same name"
@@ -498,6 +502,8 @@ command: cc-notes investigation append
   hidden: false
   flags:
     --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
+    --body shorthand=none type=string default="" usage="evidence text; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -525,6 +531,7 @@ command: cc-notes investigation edit
     --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
     --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
     --body shorthand=none type=string default="" usage="new resolution summary; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
     --rm-commit shorthand=none type=stringArray default="[]" usage="remove commit anchor (repeatable)"
@@ -583,6 +590,7 @@ command: cc-notes investigation finding add
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="finding text; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -616,6 +624,7 @@ command: cc-notes investigation finding edit
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="new finding text; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -700,6 +709,7 @@ command: cc-notes investigation open
   flags:
     --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
     --body shorthand=none type=string default="" usage="investigation premise; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
     --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
     --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
@@ -864,6 +874,7 @@ command: cc-notes ledger add
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="ledger description; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
     --column shorthand=none type=stringArray default="[]" usage="column name, in display order (repeatable)"
     --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
@@ -894,6 +905,7 @@ command: cc-notes ledger comment
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="comment body; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -910,6 +922,7 @@ command: cc-notes ledger edit
     --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
     --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
     --body shorthand=none type=string default="" usage="new description; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --column shorthand=none type=stringArray default="[]" usage="column name, in display order (repeatable)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
@@ -1106,6 +1119,7 @@ command: cc-notes log add
     --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
     --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
     --entry shorthand=none type=string default="" usage="optional first entry; - reads stdin"
+    --entry-file shorthand=none type=string default="" usage="read --entry from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
     --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
@@ -1122,7 +1136,8 @@ command: cc-notes log append
   hidden: false
   flags:
     --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
-    --entry shorthand=none type=string default="" usage="entry text"
+    --entry shorthand=none type=string default="" usage="entry text; - reads stdin"
+    --entry-file shorthand=none type=string default="" usage="read --entry from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --replace shorthand=none type=bool default="false" usage="allow --attach to overwrite a live attachment with the same name"
   inherited:
@@ -1266,6 +1281,7 @@ command: cc-notes note add
     --apply shorthand=none type=bool default="false" usage="create the note from the checked-out file (add --apply PATH); may carry --attach"
     --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
     --body shorthand=none type=string default="" usage="note body; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
     --checkout shorthand=none type=bool default="false" usage="write a note template (prefilled from TITLE and anchor/label flags) to an editable file and print its path"
     --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
@@ -1294,6 +1310,7 @@ command: cc-notes note edit
     --apply shorthand=none type=bool default="false" usage="apply edits from the checked-out file"
     --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
     --body shorthand=none type=string default="" usage="new body; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --checkout shorthand=none type=bool default="false" usage="write the note to an editable file and print its path"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --replace shorthand=none type=bool default="false" usage="allow --attach to overwrite a live attachment with the same name"
@@ -1460,6 +1477,7 @@ command: cc-notes papercut
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="the complaint; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --model shorthand=none type=string default="" usage="model identity to record on the entry (default: CC_NOTES_MODEL)"
   inherited:
@@ -1515,7 +1533,7 @@ command: cc-notes plan add
   flags:
     --approved shorthand=none type=bool default="false" usage="record the plan already approved instead of draft"
     --body shorthand=none type=string default="" usage="the plan text, verbatim; - reads stdin"
-    --body-file shorthand=none type=string default="" usage="read the plan text from this file"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
     --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
     --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
@@ -1545,6 +1563,7 @@ command: cc-notes plan comment
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="comment body; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -1572,6 +1591,7 @@ command: cc-notes plan edit
     --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
     --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
     --body shorthand=none type=string default="" usage="new plan text, verbatim; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --outcome shorthand=none type=string default="" usage="what executing the plan produced; - reads stdin"
     --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
@@ -1709,6 +1729,7 @@ command: cc-notes project add
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="project description; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
     --local shorthand=none type=bool default="false" usage="keep it on this clone: sync and git push never publish it"
@@ -1744,6 +1765,7 @@ command: cc-notes project comment
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="comment text; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -1766,6 +1788,7 @@ command: cc-notes project edit
   flags:
     --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
     --body shorthand=none type=string default="" usage="new description; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --rm-label shorthand=none type=stringArray default="[]" usage="remove label (repeatable)"
     --title shorthand=none type=string default="" usage="new title"
@@ -1862,6 +1885,7 @@ command: cc-notes runbook add
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="runbook description; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --branch shorthand=none type=stringArray default="[]" usage="branch anchor (repeatable)"
     --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
     --dir shorthand=none type=stringArray default="[]" usage="directory anchor (repeatable)"
@@ -1892,6 +1916,7 @@ command: cc-notes runbook comment
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="comment body; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -1908,6 +1933,7 @@ command: cc-notes runbook edit
     --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
     --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
     --body shorthand=none type=string default="" usage="new description; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --rm-branch shorthand=none type=stringArray default="[]" usage="remove branch anchor (repeatable)"
     --rm-commit shorthand=none type=stringArray default="[]" usage="remove commit anchor (repeatable)"
@@ -2097,6 +2123,7 @@ command: cc-notes runbook step add
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --last shorthand=none type=bool default="false" usage="place after all steps (default)"
     --text shorthand=none type=string default="" usage="step text; - reads stdin"
+    --text-file shorthand=none type=string default="" usage="read --text from this file; - reads stdin"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -2110,6 +2137,7 @@ command: cc-notes runbook step edit
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --no-command shorthand=none type=bool default="false" usage="clear the step command"
     --text shorthand=none type=string default="" usage="new step text; - reads stdin"
+    --text-file shorthand=none type=string default="" usage="read --text from this file; - reads stdin"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 
@@ -2250,6 +2278,7 @@ command: cc-notes sprint add
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="sprint description; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --end shorthand=none type=string default="" usage="end date YYYY-MM-DD"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="label (repeatable)"
@@ -2278,6 +2307,7 @@ command: cc-notes sprint comment
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="comment text; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -2300,6 +2330,7 @@ command: cc-notes sprint edit
   flags:
     --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
     --body shorthand=none type=string default="" usage="new description; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --end shorthand=none type=string default="" usage="new end date YYYY-MM-DD"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --no-end shorthand=none type=bool default="false" usage="clear the end date"
@@ -2409,6 +2440,7 @@ command: cc-notes task add
     --backlog shorthand=none type=bool default="false" usage="create on the backlog (no branch)"
     --blocked-by shorthand=none type=stringArray default="[]" usage="blocker task id prefix (repeatable, resolved globally)"
     --body shorthand=none type=string default="" usage="task description; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --branch shorthand=none type=string default="" usage="task branch (default: current branch)"
     --commit shorthand=none type=stringArray default="[]" usage="commit anchor (repeatable)"
     --criterion shorthand=none type=stringArray default="[]" usage="acceptance criterion text (repeatable, required unless --no-validation-criteria)"
@@ -2479,6 +2511,7 @@ command: cc-notes task comment
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="comment body; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
@@ -2510,6 +2543,7 @@ command: cc-notes task criterion add
   hidden: false
   flags:
     --body shorthand=none type=string default="" usage="criterion text; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --script shorthand=none type=string default="" usage="validation script file; its contents become the criterion's check command"
   inherited:
@@ -2613,6 +2647,7 @@ command: cc-notes task edit
     --assignee shorthand=none type=string default="" usage="new assignee"
     --backlog shorthand=none type=bool default="false" usage="put on the shared backlog (no branch)"
     --body shorthand=none type=string default="" usage="new description; - reads stdin"
+    --body-file shorthand=none type=string default="" usage="read --body from this file; - reads stdin"
     --branch shorthand=none type=string default="" usage="task branch (default: current branch)"
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --no-assignee shorthand=none type=bool default="false" usage="clear the assignee"

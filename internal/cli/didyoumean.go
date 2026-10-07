@@ -30,6 +30,7 @@ var flagSynonyms = map[string][]string{
 	"text":          {"body", "entry"},
 	"content":       {"body", "entry"},
 	"body":          {"entry", "text"},
+	"body-file":     {"entry-file", "text-file"},
 	"file":          {"path", "attach"},
 	"evidence":      {"note"},
 	"anchor-path":   {"path"},

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Every free-text flag takes a file.** Each verb that records `--body` (note,
+  doc, answer, task, sprint, project, ledger, runbook, investigation, plan,
+  papercut, and their edit and comment verbs) also accepts `--body-file
+  <path>`; `log add`/`log append` accept `--entry-file`, and `runbook step
+  add`/`edit` accept `--text-file`. `-` reads stdin; the flag and its file twin are
+  mutually exclusive. `investigation append` gains `--body` and `--body-file`
+  beside its positional `TEXT`.
 - **Share records storage across checkouts.** `cc-notes storage bind --source PATH`
   binds a checkout to a local repository's records through `cc-notes.storage` in
   its git configuration. Entities, sync, Git Large File Storage (LFS)

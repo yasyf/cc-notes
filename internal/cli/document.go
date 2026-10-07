@@ -192,8 +192,8 @@ func (spec documentSpec[T]) editVerb() *cobra.Command {
 				}
 				in.title = &title
 			}
-			if cmd.Flags().Changed("body") {
-				text, err := bodyArg(cmd, body)
+			if textGiven(cmd.Flags(), "body") {
+				text, err := flagText(cmd, "body", body)
 				if err != nil {
 					return err
 				}

@@ -170,6 +170,7 @@ func newInvestigationShowCmd() *cobra.Command {
 }
 
 func newInvestigationAppendCmd() *cobra.Command {
+	var body string
 	var attach []string
 	var jsonOut bool
 	cmd := &cobra.Command{
@@ -180,16 +181,18 @@ func newInvestigationAppendCmd() *cobra.Command {
 			if len(args) == 0 {
 				return &UsageError{Err: errors.New("investigation append requires an investigation ID")}
 			}
-			var text string
-			var err error
-			if len(args) > 1 {
-				text, err = bodyArg(cmd, args[1])
-				if err != nil {
-					return err
-				}
+			posGiven := len(args) > 1
+			var pos string
+			if posGiven {
+				pos = args[1]
 			}
-			if len(args) == 1 && len(attach) == 0 {
-				return &UsageError{Err: errors.New("investigation append requires entry text (a positional TEXT or - for stdin) or --attach")}
+			hasText := posGiven || textGiven(cmd.Flags(), "body")
+			text, err := freeText(cmd, "body", body, pos, posGiven, false)
+			if err != nil {
+				return err
+			}
+			if !hasText && len(attach) == 0 {
+				return &UsageError{Err: errors.New("investigation append requires entry text (a positional TEXT, --body, --body-file, or - for stdin) or --attach")}
 			}
 			ctx := cmd.Context()
 			s, c, err := openStoreClient(cmd)
@@ -222,6 +225,7 @@ func newInvestigationAppendCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
+	bindBody(flags, &body, "evidence text; - reads stdin")
 	flags.StringArrayVar(&attach, "attach", nil, "attach a file's content via git-lfs (repeatable; uploads on sync)")
 	bindJSON(flags, &jsonOut)
 	return cmd
@@ -791,8 +795,8 @@ func newInvestigationEditCmd() *cobra.Command {
 				}
 				edit.Title = &title
 			}
-			if flags.Changed("body") {
-				text, err := bodyArg(cmd, body)
+			if textGiven(flags, "body") {
+				text, err := flagText(cmd, "body", body)
 				if err != nil {
 					return err
 				}

@@ -188,8 +188,8 @@ func newRunbookEditCmd() *cobra.Command {
 				}
 				edit.Title = &title
 			}
-			if flags.Changed("body") {
-				text, err := bodyArg(cmd, body)
+			if textGiven(flags, "body") {
+				text, err := flagText(cmd, "body", body)
 				if err != nil {
 					return err
 				}
@@ -377,7 +377,7 @@ func newStepAddCmd() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&command, "command", "", "shell command for the step")
-	flags.StringVar(&text, "text", "", "step text; - reads stdin")
+	bindText(flags, "text", &text, "step text; - reads stdin")
 	place.bind(flags)
 	bindJSON(flags, &jsonOut)
 	cmd.MarkFlagsMutuallyExclusive(placementFlags...)
@@ -423,11 +423,11 @@ func newStepEditCmd() *cobra.Command {
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			flags := cmd.Flags()
-			if !flags.Changed("text") && !flags.Changed("command") && !noCommand {
-				return &UsageError{Err: errors.New("step edit requires --text, --command, or --no-command")}
+			if !textGiven(flags, "text") && !flags.Changed("command") && !noCommand {
+				return &UsageError{Err: errors.New("step edit requires --text, --text-file, --command, or --no-command")}
 			}
 			var edit notes.StepEdit
-			if flags.Changed("text") {
+			if textGiven(flags, "text") {
 				t, err := freeText(cmd, "text", text, "", false, false)
 				if err != nil {
 					return err
@@ -461,7 +461,7 @@ func newStepEditCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&text, "text", "", "new step text; - reads stdin")
+	bindText(flags, "text", &text, "new step text; - reads stdin")
 	flags.StringVar(&command, "command", "", "new step command")
 	flags.BoolVar(&noCommand, "no-command", false, "clear the step command")
 	bindJSON(flags, &jsonOut)

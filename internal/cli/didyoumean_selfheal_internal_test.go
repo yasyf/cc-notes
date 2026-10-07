@@ -29,8 +29,8 @@ func mustFind(t *testing.T, root *cobra.Command, path ...string) *cobra.Command 
 func TestAcceptedFlagsLine(t *testing.T) {
 	root := NewRootCmd()
 	got := acceptedFlagsLine(mustFind(t, root, "runbook", "add"))
-	want := "runbook add takes: --body --branch --commit --dir --json --label --local --path --step --sync\n" +
-		"                   --title"
+	want := "runbook add takes: --body --body-file --branch --commit --dir --json --label --local --path --step\n" +
+		"                   --sync --title"
 	if got != want {
 		t.Fatalf("acceptedFlagsLine(runbook add) = %q, want %q", got, want)
 	}
