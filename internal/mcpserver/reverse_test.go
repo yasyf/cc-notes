@@ -55,15 +55,19 @@ var excludedCommandPaths = map[string]bool{
 // excludedFlags are CLI-only flags with no agent-facing MCP surface, keyed by
 // flag name.
 var excludedFlags = map[string]bool{
-	"json":     true, // MCP always requests JSON; not an agent-facing choice
-	"checkout": true, // CLI-only editable-buffer mode; MCP writes the body inline
-	"apply":    true, // CLI-only editable-buffer mode; MCP writes the body inline
-	"abort":    true, // CLI-only editable-buffer mode; MCP writes the body inline
+	"json":       true, // MCP always requests JSON; not an agent-facing choice
+	"checkout":   true, // CLI-only editable-buffer mode; MCP writes the body inline
+	"apply":      true, // CLI-only editable-buffer mode; MCP writes the body inline
+	"abort":      true, // CLI-only editable-buffer mode; MCP writes the body inline
+	"body-file":  true, // CLI-only file source; MCP writes the body inline
+	"entry-file": true, // CLI-only file source; MCP writes the entry inline
+	"text-file":  true, // CLI-only file source; MCP writes the step text inline
 }
 
 var positionalAliasFlags = map[string]bool{
-	"add --title":  true,
-	"open --title": true,
+	"add --title":   true,
+	"open --title":  true,
+	"append --body": true,
 }
 
 // coverageRecorder accumulates the command paths and Changed flag names the
