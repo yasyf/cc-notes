@@ -19,7 +19,8 @@ from captain_hook import (
     UserPromptSubmitEvent,
     on,
 )
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel
+from spawnllm import Binary, BinaryAnswer, Label, LabelAnswer
 
 from .common import (
     COMPACT_ANSWER_BUDGET,
@@ -67,28 +68,24 @@ SECRET_RE = re.compile(
     r"|(?i:\b(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S{8,})"
 )
 
-ANSWER_TRIAGE_SYSTEM = (
-    "A user just answered questions a coding agent asked. Classify each answer's scope.\n"
-    "\n"
-    "- durable: a preference, convention, or decision that should hold beyond this task — how the "
-    "user wants things done, a design choice later work must respect.\n"
-    "- ephemeral: a one-off pick that only steers the task at hand — which of two files to open "
-    "first, whether to proceed now.\n"
-    "\n"
-    "Earlier durable answers are listed as candidates. When an answer replaces a candidate that asks "
-    "the same question, name that candidate's id in supersedes; otherwise leave supersedes empty. "
-    "Return one verdict per answer, keyed by its index."
+NO_ANSWER = "none"
+OPTION_DESCRIPTION_CAP = 400
+DURABLE_FLOOR = 0.4
+ANSWER_SCOPE_QUESTION = Binary(
+    "Does the user's answer set a preference, convention, or decision that should hold beyond the task at hand?",
+    yes="A standing preference, convention, rule, or design decision later work must respect.",
+    no="A one-off pick that only steers the current task, such as which item to do first or whether to proceed now.",
 )
-
-PROMPT_ANSWERS_SYSTEM = (
-    "You are a precision filter. The user just sent a coding agent a prompt. The candidates are durable "
-    "answers the user gave to earlier questions on this branch, each as its question and the chosen answer.\n"
-    "\n"
-    "Most prompts bear on none of them; status reports, notifications, and progress updates almost never do. "
-    "Pick an answer only when the agent, acting on this prompt, would make the very decision that answer "
-    "settled, or would contradict it. Sharing a word, a system, or a topic is not enough.\n"
-    "\n"
-    "Return an object with one field, id: that candidate's id, or an empty string when no answer clearly applies."
+ANSWER_SUPERSEDE_SYSTEM = (
+    "A user just answered questions a coding agent asked. Earlier durable answers are listed as candidates. "
+    "When an answer replaces a candidate that asks the same question, name that candidate's id in supersedes; "
+    "otherwise leave supersedes empty. Return one verdict per answer, keyed by its index."
+)
+PROMPT_ANSWER_INSTRUCTIONS = (
+    "The state is a prompt a user just sent a coding agent. Each option other than none is a durable answer the "
+    "user gave to an earlier question on this branch. Pick the answer the agent, acting on this prompt, would have "
+    "to honor because it would make the very decision that answer settled, or would contradict it. Sharing a word, "
+    "a system, or a topic is not enough; status reports, notifications, and progress updates almost never bear on one."
 )
 
 
@@ -103,18 +100,24 @@ class AnsweredQuestion(NamedTuple):
     preview: str
 
 
-class AnswerVerdict(BaseModel):
-    """The triage verdict for the answer at ``index``: its scope, and the candidate id it replaces."""
+class AnswerVerdict(NamedTuple):
+    """The triage verdict for one answer: its scope, None when unjudged, and the candidate id it replaces."""
+
+    scope: Literal["durable", "ephemeral"] | None
+    supersedes: str
+
+
+class SupersedeVerdict(BaseModel):
+    """The supersede verdict for the answer at ``index``: the candidate id it replaces, or empty."""
 
     index: int
-    scope: Literal["durable", "ephemeral"] = "durable"
     supersedes: str = ""
 
 
-class AnswerTriage(BaseModel):
-    """The triage's verdicts; an answer with no verdict records as durable with no supersede."""
+class SupersedeTriage(BaseModel):
+    """The supersede pass's verdicts; an answer with no verdict supersedes nothing."""
 
-    verdicts: list[AnswerVerdict] = []
+    verdicts: list[SupersedeVerdict] = []
 
 
 class AnswerCaptureLock(BaseModel):
@@ -130,17 +133,6 @@ class CapturedAnswers(BaseModel):
     """Answer ids the foreground capture recorded, keyed by question, awaiting background refinement."""
 
     ids: dict[str, str] = {}
-
-
-class PromptAnswerPick(BaseModel):
-    """The prompt filter's verdict: the one candidate answer id the prompt bears on, or empty for none."""
-
-    id: str = ""
-
-    @model_validator(mode="before")
-    @classmethod
-    def wrap_bare_id(cls, value: object) -> object:
-        return {"id": value} if isinstance(value, str) else value
 
 
 class PromptAnswerPicks(BaseModel):
@@ -202,16 +194,52 @@ def answer_body(pair: AnsweredQuestion) -> str:
     return "\n".join(lines)
 
 
-def triage_answers(evt: PostToolUseEvent, pairs: list[AnsweredQuestion], candidates: list[dict[str, Any]]) -> dict[int, AnswerVerdict]:
+def option_text(text: str) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= OPTION_DESCRIPTION_CAP else flat[: OPTION_DESCRIPTION_CAP - 1] + "…"
+
+
+def answer_options(answers: list[dict[str, Any]], none: str) -> dict[str, str | None]:
+    return {NO_ANSWER: none, **{a["id"]: option_text(f"{answer_question(a)} → {answer_text(a)}") for a in answers}}
+
+
+def answered_state(pair: AnsweredQuestion) -> str:
+    lines = [f"Question: {pair.question}"]
+    if pair.header:
+        lines.append(f"Header: {pair.header}")
+    if pair.options:
+        lines.append("Options offered: " + " | ".join(pair.options))
+    lines.append(f"User's answer: {pair.answer}")
+    if pair.notes:
+        lines.append(f"User's notes: {pair.notes}")
+    return "\n".join(lines)[:LLM_INPUT_CAP]
+
+
+def answer_scope(evt: PostToolUseEvent, pair: AnsweredQuestion) -> Literal["durable", "ephemeral"] | None:
+    match (decision := evt.decide(answered_state(pair), {"durable": ANSWER_SCOPE_QUESTION})) and decision.answers["durable"]:
+        case BinaryAnswer(p_yes=p_yes):
+            return "durable" if p_yes >= DURABLE_FLOOR else "ephemeral"
+    return None
+
+
+def supersede_triage(evt: PostToolUseEvent, pairs: list[AnsweredQuestion], candidates: list[dict[str, Any]]) -> dict[int, str]:
+    if not candidates:
+        return {}
     prompt = (
         Prompt()
-        .system(ANSWER_TRIAGE_SYSTEM)
+        .system(ANSWER_SUPERSEDE_SYSTEM)
         .context("answers", "\n".join(f"{i}\t{p.question} → {p.answer}" for i, p in enumerate(pairs))[:LLM_INPUT_CAP])
         .context("candidates", "\n".join(f"{a['id']}\t{answer_line(a)}" for a in candidates)[:LLM_INPUT_CAP])
-        .ask("For each answer index: is it durable or ephemeral, and which candidate id, if any, does it supersede?")
+        .ask("For each answer index: which candidate id, if any, does it supersede?")
     )
-    triage = evt.ctx.call_llm(prompt, response_model=AnswerTriage, model="small", agent=False, transcript=False)
-    return {v.index: v for v in triage.verdicts}
+    triage = evt.ctx.call_llm(prompt, response_model=SupersedeTriage, model="small", agent=False, transcript=False)
+    return {v.index: v.supersedes for v in triage.verdicts if v.supersedes}
+
+
+def triage_answers(evt: PostToolUseEvent, pairs: list[AnsweredQuestion], candidates: list[dict[str, Any]]) -> dict[int, AnswerVerdict]:
+    supersedes = supersede_triage(evt, pairs, candidates)
+    scopes = {i: answer_scope(evt, pair) for i, pair in enumerate(pairs)}
+    return {i: AnswerVerdict(scope, supersedes.get(i, "")) for i, scope in scopes.items() if scope or i in supersedes}
 
 
 def candidate_id(named: str, candidates: list[dict[str, Any]]) -> str:
@@ -303,7 +331,7 @@ def record_user_answers(evt: PostToolUseEvent) -> HookResult | None:
 
 
 def scope_edit(scope: str, verdict: AnswerVerdict | None) -> list[str]:
-    if verdict is None or verdict.scope == scope:
+    if verdict is None or verdict.scope in (None, scope):
         return []
     return ["--rm-label", f"scope:{scope}", "--add-label", f"scope:{verdict.scope}"]
 
@@ -348,16 +376,11 @@ def title_line(answer: dict[str, Any]) -> str:
 
 
 def pick_prompt_answer(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> dict[str, str]:
-    prompt = (
-        Prompt()
-        .system(PROMPT_ANSWERS_SYSTEM)
-        .context("prompt", (evt.user_prompt or "")[:LLM_INPUT_CAP])
-        .context("candidates", "\n".join(f"{a['id']}\t{answer_question(a)} → {answer_text(a)}" for a in fresh)[:LLM_INPUT_CAP])
-        .ask("Which one candidate id, if any, does this prompt clearly bear on or would it violate?")
-    )
-    pick = evt.ctx.call_llm(prompt, response_model=PromptAnswerPick, model="small", agent=False, transcript=False)
-    chosen = candidate_id(pick.id, fresh)
-    return {a["id"]: title_line(a) for a in fresh if a["id"] == chosen}
+    asked = {"answer": Label(PROMPT_ANSWER_INSTRUCTIONS, answer_options(fresh, "The prompt bears on none of these answers."))}
+    match (decision := evt.decide((evt.user_prompt or "")[:LLM_INPUT_CAP], asked)) and decision.answers["answer"]:
+        case LabelAnswer(choice=choice) if choice != NO_ANSWER:
+            return {a["id"]: title_line(a) for a in fresh if a["id"] == choice}
+    return {}
 
 
 @on(
