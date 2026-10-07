@@ -382,9 +382,19 @@ def parse_answers(out: str | None) -> list[dict[str, Any]]:
     return [a for a in parse_tasks(out) if isinstance(a.get("id"), str) and a["id"]]
 
 
-def durable_answers(evt: BaseHookEvent) -> list[dict[str, Any]]:
-    out = run_cc_notes(evt, "answer", "list", "--json", "--label", "scope:durable", "--limit", str(ANSWER_CANDIDATE_LIMIT))
+def current_branch(evt: BaseHookEvent) -> str:
+    branch = (evt.ctx.git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
+    return "" if branch == "HEAD" else branch
+
+
+def durable_answers(evt: BaseHookEvent, *anchors: str) -> list[dict[str, Any]]:
+    out = run_cc_notes(evt, "answer", "list", "--json", "--label", "scope:durable", *anchors, "--limit", str(ANSWER_CANDIDATE_LIMIT))
     return [a for a in parse_answers(out) if not a.get("stale_at")]
+
+
+def branch_answers(evt: BaseHookEvent) -> list[dict[str, Any]]:
+    branch = current_branch(evt)
+    return durable_answers(evt, "--branch", branch) if branch else []
 
 
 def seen_answer_ids(evt: BaseHookEvent) -> set[str]:

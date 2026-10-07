@@ -87,8 +87,8 @@ The capt-hook pack recalls answers at five points:
 
 | Hook | Event | What surfaces |
 |---|---|---|
-| `float_session_answers` | First `UserPromptSubmit`, `max_fires=1` | A digest of the 8 most recently updated live `scope:durable` answers |
-| `stage_prompt_answers` | Every `UserPromptSubmit`, in the background | Nothing directly — it filters unseen durable answers against the prompt with a small LLM and stages the pick |
+| `float_session_answers` | First `UserPromptSubmit`, `max_fires=1` | A digest of the 8 most recently updated live `scope:durable` answers anchored to the current branch |
+| `stage_prompt_answers` | Every `UserPromptSubmit`, in the background | Nothing directly — a small LLM picks the one unseen branch-anchored durable answer the prompt clearly bears on or would violate, and stages it |
 | `float_prompt_answers` | Every `UserPromptSubmit` | The pick the previous prompt staged, read from session state with no model call |
 | `restore_answers_after_compact` | `SessionStart` with source `compact` | Answers captured or surfaced this session, capped at 30 |
 | `float_deferred_notices` | Every `PostToolUse`, `PostToolUseFailure`, and `UserPromptSubmit` | Whatever a background hook staged since the last event, including the `record_user_answers` acknowledgement |

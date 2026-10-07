@@ -45,6 +45,7 @@ from hooks.answers import (
     AnswerTriage,
     AnswerVerdict,
     CapturedAnswers,
+    PromptAnswerPick,
     float_prompt_answers,
     heuristic_scope,
     record_user_answers,
@@ -4880,6 +4881,7 @@ def test_compact_tracker_entity_kind_upgrades_on_merge(tmp_path) -> None:
 
 ANSWER_ROOT = "/repo"
 ANSWER_LIST = ("answer", "list", "--json", "--label", "scope:durable", "--limit", str(common.ANSWER_CANDIDATE_LIMIT))
+BRANCH_ANSWER_LIST = ("answer", "list", "--json", "--label", "scope:durable", "--branch", "feat/x", "--limit", str(common.ANSWER_CANDIDATE_LIMIT))
 RECENT_LIST = ("answer", "list", "--json", "--limit", str(RECENT_ANSWER_LIMIT))
 ANSWER_GIT = {("rev-parse", "--show-toplevel"): f"{ANSWER_ROOT}\n", ("rev-parse", "--abbrev-ref", "HEAD"): "feat/x\n"}
 CAPTURE_FLAGS = ("--label", "from:owner", "--label", "source:askuserquestion")
@@ -5179,11 +5181,12 @@ def test_record_user_answers_silent_without_answers(monkeypatch, tmp_path) -> No
     check("answer none: no CLI calls", calls == [], repr(calls))
 
 
-def prompt_event(monkeypatch, tmp_path, candidates: list[dict], prompt: str = "work on auth"):
+def prompt_event(monkeypatch, tmp_path, candidates: list[dict], prompt: str = "work on auth", foreign: list[dict] | None = None, branch: str | None = "feat/x\n"):
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     evt = mock_event("UserPromptSubmit", prompt=prompt, session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli({ANSWER_LIST: json.dumps(candidates)}))
-    monkeypatch.setattr(evt.ctx, "git", lambda *a: None)
+    listings = {BRANCH_ANSWER_LIST: json.dumps(candidates), ANSWER_LIST: json.dumps([*(foreign or []), *candidates])}
+    monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(listings))
+    monkeypatch.setattr(evt.ctx, "git", stub_git({("rev-parse", "--abbrev-ref", "HEAD"): branch}))
     return evt
 
 
@@ -5195,7 +5198,7 @@ def test_float_session_answers_digest(monkeypatch, tmp_path) -> None:
     if result and result.message:
         check("digest: Q → A with the first body line only", "ans0000 Q0? → A0\n" in result.message, result.message)
         check("digest: caps at 8", "ans0007" in result.message and "ans0008" not in result.message, result.message)
-        check("digest: +2 more tail", "+2 more — run `cc-notes answer list --label scope:durable`" in result.message, result.message)
+        check("digest: +2 more tail", "+2 more — run `cc-notes answer list --label scope:durable --branch feat/x`" in result.message, result.message)
     check("digest: a later prompt never refires", float_session_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
 
@@ -5214,16 +5217,45 @@ def test_durable_answers_skip_expired(monkeypatch, tmp_path) -> None:
     check("expired: digest drops the expired answer", digest is not None and "gone001" not in (digest.message or ""), repr(digest))
     evt = prompt_event(monkeypatch, tmp_path / "prompt", rows)
     offered: list[str] = []
-    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: offered.append(str(prompt)) or SurfacePick())
+    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: offered.append(str(prompt)) or PromptAnswerPick())
     stage_prompt_answers(evt)
     check("expired: prompt filter never sees the expired answer", offered and "live001" in offered[0] and "gone001" not in offered[0], repr(offered))
+
+
+def test_branch_answers_scope_the_floats_to_the_current_branch(monkeypatch, tmp_path) -> None:
+    """Both answer floats recall only the current branch's durable answers; another workstream's answer never reaches them."""
+    rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis")]
+    foreign = [durable_answer("inc0001zzzz", title="How should incident updates be presented?", body="A chart on the card")]
+    digest = float_session_answers(prompt_event(monkeypatch, tmp_path / "digest", rows, foreign=foreign))
+    check("branch scope: digest floats the branch answer", digest is not None and "auth001" in (digest.message or ""), repr(digest))
+    check("branch scope: digest never floats another branch's answer", digest is not None and "inc0001" not in (digest.message or ""), repr(digest))
+
+    evt = prompt_event(monkeypatch, tmp_path / "prompt", rows, prompt="apply the incident fix", foreign=foreign)
+    offered: list[str] = []
+    monkeypatch.setattr(evt.ctx, "call_llm", lambda prompt, **kw: offered.append(str(prompt)) or PromptAnswerPick(id="inc0001zzzz"))
+    stage_prompt_answers(evt)
+    check("branch scope: the pick sees only the branch answer", offered and "auth001" in offered[0] and "inc0001" not in offered[0], repr(offered))
+    check("branch scope: the pick sees the chosen answer, not just the question", offered and "Session store? → Redis" in offered[0], repr(offered))
+    check("branch scope: a picked id outside the candidates floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "prompt", rows)) is None)
+
+
+def test_branch_answers_float_nothing_on_a_detached_head(monkeypatch, tmp_path) -> None:
+    """A detached HEAD has no branch to scope to, so neither float lists answers or calls the model."""
+    rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis")]
+    check("detached: digest silent", float_session_answers(prompt_event(monkeypatch, tmp_path / "digest", rows, branch="HEAD\n")) is None)
+    evt = prompt_event(monkeypatch, tmp_path / "prompt", rows, branch="HEAD\n")
+    llm_calls: list[object] = []
+    monkeypatch.setattr(evt.ctx, "call_llm", lambda *a, **k: llm_calls.append(a) or PromptAnswerPick(id="auth001aaaa"))
+    stage_prompt_answers(evt)
+    check("detached: the pick never runs", llm_calls == [], repr(llm_calls))
+    check("detached: nothing floats", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "prompt", rows, branch="HEAD\n")) is None)
 
 
 def test_stage_prompt_answers_floats_on_the_next_prompt(monkeypatch, tmp_path) -> None:
     """A prompt's background pick floats on the next prompt, once, and never on the prompt that picked it."""
     rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis"), durable_answer("ui00001bbbb", title="Button color?", body="Blue")]
     first = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(first.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa", "unknown"])))
+    monkeypatch.setattr(first.ctx, "call_llm", stub_llm(PromptAnswerPick(id="auth001aaaa")))
     check("prompt answers: nothing staged yet, so the first prompt floats nothing", float_prompt_answers(first) is None)
     stage_prompt_answers(first)
 
@@ -5234,11 +5266,16 @@ def test_stage_prompt_answers_floats_on_the_next_prompt(monkeypatch, tmp_path) -
         check("prompt answers: only the picked answer, title only", result.message.split("\n")[1:] == ["auth001 Session store?"], result.message)
     check("prompt answers: a staged pick floats once", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
+    again = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(again.ctx, "call_llm", stub_llm(PromptAnswerPick(id="auth001aaaa")))
+    stage_prompt_answers(again)
+    check("prompt answers: a floated answer never repeats", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
+
     later = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(later.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa", "ui00001bbbb"])))
+    monkeypatch.setattr(later.ctx, "call_llm", stub_llm(PromptAnswerPick(id="ui00001bbbb")))
     stage_prompt_answers(later)
     result = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows))
-    check("prompt answers: a floated answer never repeats", result is not None and "auth001" not in (result.message or "") and "ui00001" in (result.message or ""), repr(result))
+    check("prompt answers: a later prompt floats its own pick", result is not None and "auth001" not in (result.message or "") and "ui00001" in (result.message or ""), repr(result))
 
     llm_calls: list[object] = []
     quiet = prompt_event(monkeypatch, tmp_path, rows)
@@ -5251,9 +5288,10 @@ def test_stage_prompt_answers_floats_on_the_next_prompt(monkeypatch, tmp_path) -
 def test_float_prompt_answers_drops_an_answer_surfaced_meanwhile(monkeypatch, tmp_path) -> None:
     """An answer marked seen between the pick and the float is dropped, not repeated."""
     rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis"), durable_answer("ui00001bbbb", title="Button color?", body="Blue")]
-    staged = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa", "ui00001bbbb"])))
-    stage_prompt_answers(staged)
+    for pick in ("auth001aaaa", "ui00001bbbb"):
+        staged = prompt_event(monkeypatch, tmp_path, rows)
+        monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(PromptAnswerPick(id=pick)))
+        stage_prompt_answers(staged)
 
     meanwhile = prompt_event(monkeypatch, tmp_path, rows)
     common.remember_answers(meanwhile, [rows[0]])
@@ -5261,7 +5299,7 @@ def test_float_prompt_answers_drops_an_answer_surfaced_meanwhile(monkeypatch, tm
     check("prompt answers: the answer surfaced meanwhile is dropped", result is not None and "auth001" not in (result.message or "") and "ui00001" in (result.message or ""), repr(result))
 
     lone = prompt_event(monkeypatch, tmp_path / "lone", rows[:1])
-    monkeypatch.setattr(lone.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa"])))
+    monkeypatch.setattr(lone.ctx, "call_llm", stub_llm(PromptAnswerPick(id="auth001aaaa")))
     stage_prompt_answers(lone)
     common.remember_answers(prompt_event(monkeypatch, tmp_path / "lone", rows[:1]), rows[:1])
     check("prompt answers: a wholly stale pick floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "lone", rows[:1])) is None)
@@ -5271,7 +5309,7 @@ def test_float_prompt_answers_never_calls_out(monkeypatch, tmp_path) -> None:
     """The prompt path reads session state only: no model call, no cc-notes call, staged or not."""
     rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis")]
     staged = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa"])))
+    monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(PromptAnswerPick(id="auth001aaaa")))
     stage_prompt_answers(staged)
 
     for label, evt in (("staged", prompt_event(monkeypatch, tmp_path, rows)), ("empty", prompt_event(monkeypatch, tmp_path, rows))):
@@ -5283,11 +5321,12 @@ def test_float_prompt_answers_never_calls_out(monkeypatch, tmp_path) -> None:
 
 
 def test_float_prompt_answers_fits_the_budget(monkeypatch, tmp_path) -> None:
-    """A large pick floats inside PROMPT_ANSWER_BUDGET; the answers that did not fit stay candidates for a later prompt."""
+    """Many staged picks float inside PROMPT_ANSWER_BUDGET; the answers that did not fit stay candidates for a later prompt."""
     rows = [durable_answer(f"ans{i:04d}xxxx", title=f"Long durable question number {i}? " + "z" * 60) for i in range(20)]
-    staged = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(SurfacePick(ids=[r["id"] for r in rows])))
-    stage_prompt_answers(staged)
+    for row in rows:
+        staged = prompt_event(monkeypatch, tmp_path, rows)
+        monkeypatch.setattr(staged.ctx, "call_llm", stub_llm(PromptAnswerPick(id=row["id"])))
+        stage_prompt_answers(staged)
     message = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)).message
     shown = [r["id"] for r in rows if r["id"][:7] in message]
     check("prompt budget: inside PROMPT_ANSWER_BUDGET", len(message.encode()) <= PROMPT_ANSWER_BUDGET, str(len(message.encode())))
@@ -5295,7 +5334,7 @@ def test_float_prompt_answers_fits_the_budget(monkeypatch, tmp_path) -> None:
 
     later = prompt_event(monkeypatch, tmp_path, rows)
     offered: list[str] = []
-    monkeypatch.setattr(later.ctx, "call_llm", lambda prompt, **kw: offered.append(str(prompt)) or SurfacePick())
+    monkeypatch.setattr(later.ctx, "call_llm", lambda prompt, **kw: offered.append(str(prompt)) or PromptAnswerPick())
     stage_prompt_answers(later)
     check("prompt budget: a floated answer is never offered again", offered and shown[0] not in offered[0], repr(offered))
     check("prompt budget: an unfit answer stays a candidate", offered and rows[-1]["id"] in offered[0], repr(offered))
@@ -5314,7 +5353,7 @@ def test_stage_prompt_answers_surfaces_a_broken_backend(monkeypatch, tmp_path) -
     check("prompt answers: a failed pick floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
     retry = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(retry.ctx, "call_llm", stub_llm(SurfacePick(ids=["auth001aaaa"])))
+    monkeypatch.setattr(retry.ctx, "call_llm", stub_llm(PromptAnswerPick(id="auth001aaaa")))
     stage_prompt_answers(retry)
     check("prompt answers: an unfloated answer stays a candidate", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is not None)
 
@@ -5328,23 +5367,34 @@ def stub_llm_reply(value: object):
     return _call
 
 
-def test_stage_prompt_answers_accepts_a_bare_list_reply(monkeypatch, tmp_path) -> None:
-    """A small-model reply of a bare JSON array coerces into SurfacePick instead of faulting the pick."""
-    rows = [durable_answer("auth001aaaa"), durable_answer("ui00001bbbb")]
+def test_surface_pick_accepts_a_bare_list_reply() -> None:
+    """A small-model reply of a bare JSON array coerces into SurfacePick instead of faulting the filter."""
     check("surface pick: a bare empty list validates", SurfacePick.model_validate([]).ids == [])
     check("surface pick: a bare id list validates", SurfacePick.model_validate(["auth001aaaa"]).ids == ["auth001aaaa"])
     check("surface pick: the object shape still validates", SurfacePick.model_validate({"ids": ["ui00001bbbb"]}).ids == ["ui00001bbbb"])
 
+
+def test_stage_prompt_answers_accepts_a_bare_id_reply(monkeypatch, tmp_path) -> None:
+    """A small-model reply of a bare JSON string coerces into PromptAnswerPick instead of faulting the pick."""
+    rows = [durable_answer("auth001aaaa"), durable_answer("ui00001bbbb")]
+    check("prompt pick: the object shape validates", PromptAnswerPick.model_validate({"id": "ui00001bbbb"}).id == "ui00001bbbb")
+
     empty = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(empty.ctx, "call_llm", stub_llm_reply([]))
+    monkeypatch.setattr(empty.ctx, "call_llm", stub_llm_reply(""))
     stage_prompt_answers(empty)
-    check("surface pick: a bare empty list stages nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
+    check("prompt pick: a bare empty string stages nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows)) is None)
 
     picked = prompt_event(monkeypatch, tmp_path, rows)
-    monkeypatch.setattr(picked.ctx, "call_llm", stub_llm_reply(["auth001aaaa"]))
+    monkeypatch.setattr(picked.ctx, "call_llm", stub_llm_reply("auth001aaaa"))
     stage_prompt_answers(picked)
     result = float_prompt_answers(prompt_event(monkeypatch, tmp_path, rows))
-    check("surface pick: a bare id list picks that id", result is not None and "auth001" in (result.message or "") and "ui00001" not in (result.message or ""), repr(result))
+    check("prompt pick: a bare id picks that id", result is not None and "auth001" in (result.message or "") and "ui00001" not in (result.message or ""), repr(result))
+
+    short = prompt_event(monkeypatch, tmp_path / "short", rows)
+    monkeypatch.setattr(short.ctx, "call_llm", stub_llm(PromptAnswerPick(id="ui00001")))
+    stage_prompt_answers(short)
+    result = float_prompt_answers(prompt_event(monkeypatch, tmp_path / "short", rows))
+    check("prompt pick: a unique short id picks that answer", result is not None and "ui00001" in (result.message or ""), repr(result))
 
 
 RESTORE_LIST = ("answer", "list", "--json", "--include-superseded")
@@ -5553,7 +5603,7 @@ def test_answer_file_surfacing_bookkeeping(monkeypatch, tmp_path) -> None:
     check("file answers: surfaced answers ledgered", list(ledger) == [f"ans{i:04d}xxxx" for i in range(10)], repr(ledger))
     prompt = prompt_event(monkeypatch, tmp_path / "on", [durable_answer("ans0000xxxx", title="Q0?")])
     llm_calls: list[object] = []
-    monkeypatch.setattr(prompt.ctx, "call_llm", lambda *a, **k: llm_calls.append(a) or SurfacePick())
+    monkeypatch.setattr(prompt.ctx, "call_llm", lambda *a, **k: llm_calls.append(a) or PromptAnswerPick())
     stage_prompt_answers(prompt)
     check("file answers: prompt recall never re-offers a file-surfaced answer", llm_calls == [], repr(llm_calls))
 
