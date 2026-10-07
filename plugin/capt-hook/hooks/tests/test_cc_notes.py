@@ -184,7 +184,7 @@ from captain_hook.cmd import Cmd
 from captain_hook.conditions import check_condition
 from captain_hook.testing.helpers import fixture_session, mock_event, mock_session_start_event, mock_tool_event
 from captain_hook.types import Action, Event
-from spawnllm import BinaryAnswer, Decision, LabelAnswer, Refused
+from spawnllm import BinaryAnswer, Decision, LabelAnswer, Provider, Refused
 
 FAILURES: list[str] = []
 
@@ -1077,7 +1077,7 @@ def stub_llm(verdict: object):
     Mirrors stub_cli: the test monkeypatches it onto ``evt.ctx.call_llm``. Each handler
     passes ``response_model=<Model>`` and the real backend parses the reply into that
     model, so the stub just returns an already-built instance, a RecordVerdict for the
-    record routers.
+    commit router.
     """
 
     def _call(template, *args, **kwargs):
@@ -1094,13 +1094,17 @@ def label(choice: str, p: float = 0.95) -> LabelAnswer:
     return LabelAnswer(choice=choice, probabilities={choice: p}, confidence=p)
 
 
-def stub_decide(answers: dict[str, object] | None, asked: list[tuple[object, dict]] | None = None):
+def stub_decide(answers: dict[str, object] | None, asked: list[tuple[object, dict]] | None = None, *, provider: str = "jev"):
     """Build an ``evt.ctx.decide`` stub answering each asked question id from ``answers``; ``None`` times out.
 
-    ``asked`` collects every call's state and questions, so a test reads what reached the provider.
+    ``asked`` collects every call's state and questions, so a test reads what reached the provider. A call
+    to any provider other than ``provider`` fails the test.
     """
 
-    def _decide(state, questions, *, provider, timeout):
+    expected = provider
+
+    def _decide(state, questions, *, provider: Provider, timeout):
+        assert provider.name == expected, f"asked {provider.name}, expected {expected}"
         if asked is not None:
             asked.append((state, dict(questions)))
         if answers is None:
@@ -1862,9 +1866,10 @@ def test_record_router_routes_each_kind(monkeypatch, tmp_path) -> None:
     }
     for kind, verb in verbs.items():
         evt = mock_event("PostToolUse", tool="Write", file="HANDOFF.md", content=HANDOFF_BODY, session_dir=tmp_path)
-        verdict = RecordVerdict(record=True, kind=kind)
-        monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
+        asked: list[tuple[object, dict]] = []
+        monkeypatch.setattr(evt.ctx, "decide", stub_decide({"durable": binary(0.9), "kind": label(kind)}, asked, provider="openai"))
         result = nudge_record_durable(evt)
+        check(f"router {kind}: the state leads with the path", asked and asked[0][0].startswith("Path: HANDOFF.md\n\n"), repr(asked))
         check(f"router {kind}: warns", result is not None and result.action is Action.warn, repr(result))
         if result and result.message:
             m = result.message
@@ -1873,14 +1878,16 @@ def test_record_router_routes_each_kind(monkeypatch, tmp_path) -> None:
 
 
 def test_record_router_silent_when_not_recorded(monkeypatch, tmp_path) -> None:
-    """record=False (a static-gate false positive) stays silent — the LLM is the precision step."""
+    """A static-gate false positive stays silent: durable below 0.5, a refusal, or a failed call records nothing."""
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
-    evt = mock_event("PostToolUse", tool="Write", file="STATUS.md", content=HANDOFF_BODY, session_dir=tmp_path)
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(RecordVerdict(record=False)))
-    check("router: silent on record=False", nudge_record_durable(evt) is None)
-    evt2 = mock_event("PostToolUse", tool="Write", file="STATUS.md", content=HANDOFF_BODY, session_dir=tmp_path)
-    monkeypatch.setattr(evt2.ctx, "call_llm", stub_llm(RecordVerdict(record=True, kind="")))
-    check("router: silent on empty/unknown kind", nudge_record_durable(evt2) is None)
+    for name, answers in (
+        ("durable below the floor", {"durable": binary(0.49), "kind": label("doc")}),
+        ("a refused kind", {"durable": binary(0.9), "kind": Refused()}),
+        ("a failed call", None),
+    ):
+        evt = mock_event("PostToolUse", tool="Write", file="STATUS.md", content=HANDOFF_BODY, session_dir=tmp_path / name)
+        monkeypatch.setattr(evt.ctx, "decide", stub_decide(answers, provider="openai"))
+        check(f"router: silent on {name}", nudge_record_durable(evt) is None)
 
 
 def test_record_router_routes_decision_memo(monkeypatch, tmp_path) -> None:
@@ -1893,8 +1900,7 @@ def test_record_router_routes_decision_memo(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
     evt = mock_event("PostToolUse", tool="Write", file="experiments/e0-gate-memo.md", content=GATE_MEMO_BODY, session_dir=tmp_path)
     check("decision memo: DurableInternalWrite fires", DurableInternalWrite().check(evt), repr(evt.file))
-    verdict = RecordVerdict(record=True, kind="doc")
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"durable": binary(0.5), "kind": label("doc")}, provider="openai"))
     result = nudge_record_durable(evt)
     check("decision memo: warns", result is not None and result.action is Action.warn, repr(result))
     message = result.message if result and result.message else ""

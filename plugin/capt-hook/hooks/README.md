@@ -76,8 +76,9 @@ candidates before either superseded and leave a superseded answer live.
 
 The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
 on purpose; a model is the precision gate in both directions. The prompt-answer pick, the
-answer scope and the stale-record filter ask TypeSafe Jev through `evt.decide`; the record
-routers and the supersede pass ask the small model through `call_llm`. The only deterministic hooks
+answer scope and the stale-record filter ask TypeSafe Jev through `evt.decide`, and the
+durable-write router asks OpenAI Decisions through the same call. The commit router and the
+supersede pass ask the small model through `call_llm`. The only deterministic hooks
 are the ones with no "which" to pick: the memory mirror, where the file already declares
 its type, the evidence-archive router, where the kind is always a log with attachments,
 the plan capture, where an approved plan is always a plan, and the pure workflow reminders,
@@ -431,12 +432,12 @@ inline test each, proving a non-matching tool stays silent; their firing path sh
 out to `cc-notes`, so the inline harness (which stubs `call_llm` and `evt.decide`, never
 the CLI subprocess) cannot assert it deterministically.
 
-The Record routers are LLM-gated, so their inline `tests={...}` cover only the cheap
-static gate: the inline harness stubs `call_llm` to its default verdict, which records
-nothing, so a positive can never fire there. What the gate lets through, what the model
-routes to (note vs doc vs log vs task vs papercut vs runbook vs investigation vs plan), the always-on commit and plan teaches, and the
-per-key dedup are proven in `tests/test_cc_notes.py`, which stubs `evt.ctx.call_llm`
-(and `evt.ctx.git`) directly.
+The Record routers are model-gated, so their inline `tests={...}` mostly cover the cheap
+static gate; a positive fires there only when the test supplies a stubbed verdict through
+`llm=` or `decide=`. What the gate lets through, what the model routes to (note vs doc vs
+log vs task vs papercut vs runbook vs investigation vs plan), the always-on commit and plan
+teaches, and the per-key dedup are proven in `tests/test_cc_notes.py`, which stubs
+`evt.ctx.decide`, `evt.ctx.call_llm` and `evt.ctx.git` directly.
 
 Two handlers carry no inline tests at all: `sync_at_session_end` and
 `announce_cc_notes_available`. This repo self-adopts the pack, so their firing paths run

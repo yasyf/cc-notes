@@ -19,7 +19,6 @@ from captain_hook import (
     Option,
     Or,
     PostToolUseEvent,
-    Prompt,
     Runs,
     StopEvent,
     Tool,
@@ -31,6 +30,7 @@ from cc_transcript.command import Word
 from captain_hook.conditions import check_condition
 from captain_hook.state import fired_this_turn, record_fire
 from pydantic import BaseModel, Field
+from spawnllm import Binary, BinaryAnswer, Label, LabelAnswer
 
 from .common import (
     CC_NOTES_EXECUTABLES,
@@ -39,7 +39,6 @@ from .common import (
     MCP_TOOL_PREFIX,
     NUDGE_MAX_FIRES,
     RECORD_KINDS,
-    RecordVerdict,
     clamp_title,
     ids_match,
     in_cc_pool_memory,
@@ -119,59 +118,36 @@ DURABLE_VERBS = {
     "plan": "cc-notes plan add",
 }
 
-RECORD_ROUTER_SYSTEM = (
-    "You are a precision filter. A cheap static rule has already flagged a file an agent just "
-    "wrote as POSSIBLY durable internal knowledge — content that belongs in cc-notes (git objects "
-    "on refs/cc-notes/*, synced with the repo but never in the working tree) rather than as a loose "
-    "file in the public tree. The static rule over-selects on purpose; your job is to confirm the "
-    "write is genuinely durable internal knowledge and, when it is, route it to the right cc-notes "
-    "record.\n"
-    "\n"
-    "Set record=false when the file is genuinely human-facing or published project documentation "
-    "that belongs in the repo tree — a README, a user guide, a tutorial, API reference, a released "
-    "changelog, a blog post, release notes, or a spec written for people — or when it is throwaway "
-    "scratch with no durable value. Machine-generated evidence preserved for the record (a crash "
-    "log, a panic dump, captured run output) is NOT scratch — it records as a log with the artifact "
-    "attached. When it could plausibly be either, answer record=false. Only a clear case records.\n"
-    "\n"
-    "When record=true, choose exactly one kind:\n"
-    "- note: a single durable fact or decision — one verifiable claim about the code (e.g. 'retry "
-    "backoff caps at 30s because the server drops connections past it').\n"
-    "- doc: living, long-form guidance for the next agent that you keep fresh — a handoff brief, "
-    "design rationale for an in-flight change, an investigation write-up. A doc is "
-    "re-verified, drifts when the code moves, and carries a 'read this when…' trigger.\n"
-    "- log: an immutable, append-only chronology — an incident timeline, a rollout log, a debugging "
-    "session — or an evidence archive: machine-generated artifacts belong on log entries as "
-    "`--attach <file>` attachments, never as files in the tree. Its value is the running record "
-    "itself; entries are never edited and it has no freshness lifecycle.\n"
-    "- task: actionable work still to be done — a TODO or checklist of follow-ups.\n"
-    "- papercut: a one-paragraph complaint about friction hit during the work itself — a dead-end "
-    "tool call, a broken link, a misleading doc — filed to the repo-wide papercuts journal. Not a "
-    "task (there is nothing to do) and not knowledge worth curating; just a logged gripe.\n"
-    "- runbook: a repeatable step-by-step operational procedure meant to be re-executed — deploy "
-    "steps, a release checklist, an incident-response procedure. cc-notes has a first-class "
-    "runbook primitive that tracks each execution's per-step status.\n"
-    "- plan: an approved plan for work about to be done — context, an ordered approach, pitfalls, "
-    "and how it will be verified — recorded verbatim so the next agent can execute it. cc-notes has "
-    "a first-class plan primitive with a draft → approved → executing → done/abandoned lifecycle and "
-    "tasks that point back at it; a plan goes stale through that lifecycle, not through re-verification.\n"
-    "- investigation: a debugging or root-cause arc that reaches a VERDICT — a falsifiable premise "
-    "(the suspected cause or symptom), a bisect/triage timeline, suspects that get cleared or "
-    "confirmed, a true root cause, a fix, and its confirmation (or a falsified premise / an "
-    "abandoned hunt). cc-notes has a first-class investigation primitive: an immutable premise, an "
-    "append-only evidence timeline, per-suspect findings, and verdict transitions (root_caused → "
-    "fixed → confirmed, or exonerated / abandoned).\n"
-    "\n"
-    "doc vs log is the subtle call: choose doc when the content is guidance you would keep current, "
-    "log when it is a dated record of what happened that you would only ever append to. doc vs "
-    "runbook splits on execution: a doc describes and explains; a runbook is an ordered procedure "
-    "an agent re-executes step by step. log vs investigation splits on the verdict: a log is a "
-    "verdict-less chronicle you only append to; an investigation reaches a conclusion (this was the "
-    "root cause; that suspect was cleared) through its findings and status. plan vs runbook splits "
-    "on repetition: a plan is one approved approach to work being done now, executed once; a runbook "
-    "is a standing procedure re-executed on every deploy or incident. plan vs doc splits on shape: a "
-    "plan is work-shaped and closes as done or abandoned; a doc is guidance you keep fresh."
+RECORD_FLOOR = 0.5
+RECORD_DURABLE_QUESTION = Binary(
+    "Is this file durable internal knowledge that future agents on this repository need, so it belongs in the "
+    "repository's records store rather than as a loose file in the working tree?",
+    yes="Clearly durable internal knowledge: a decision, handoff, investigation, plan, procedure, chronology, or open work.",
+    no="Published or human-facing documentation, source code, a PR body or message draft, throwaway scratch, or unclear.",
 )
+RECORD_KIND_QUESTION = Label(
+    "The state is a file an agent just wrote into a repository, path first. Decide which kind of cc-notes record, "
+    "in the repository's git-backed records store, it would be.",
+    {
+        "note": "One durable fact or decision, a single verifiable claim about the code.",
+        "doc": "Living long-form guidance for the next agent that is kept fresh: a handoff brief, design rationale for an in-flight change, an investigation write-up.",
+        "log": "An append-only dated chronology or evidence archive: an incident timeline, a rollout log, a debugging session, captured run output.",
+        "task": "Actionable work still to be done: a TODO or checklist of follow-ups.",
+        "papercut": "A one-paragraph complaint about friction hit during the work: a dead-end tool call, a broken link, a misleading doc.",
+        "runbook": "A repeatable step-by-step operational procedure meant to be re-executed: deploy steps, a release checklist.",
+        "investigation": "A debugging or root-cause arc that reaches a verdict: a premise, suspects cleared or confirmed, a root cause and fix.",
+        "plan": "An approved plan for work about to be done, executed once: context, ordered approach, pitfalls, verification.",
+    },
+)
+
+
+def durable_kind(evt: PostToolUseEvent) -> str | None:
+    state = f"Path: {evt.file}\n\n{(evt.content or '')[:LLM_INPUT_CAP]}"
+    asked = {"durable": RECORD_DURABLE_QUESTION, "kind": RECORD_KIND_QUESTION}
+    match (decision := evt.decide(state, asked, provider="openai")) and (decision.answers["durable"], decision.answers["kind"]):
+        case (BinaryAnswer(p_yes=p_yes), LabelAnswer(choice=kind)) if p_yes >= RECORD_FLOOR:
+            return kind
+    return None
 
 
 @on(
@@ -179,7 +155,12 @@ RECORD_ROUTER_SYSTEM = (
     only_if=[Tool("Write|Edit|MultiEdit"), DurableInternalWrite(), CcNotesAvailable()],
     max_fires=NUDGE_MAX_FIRES,
     tests={
-        Input(tool="Write", file="HANDOFF.md", content="## Status\nHandoff\n## Remaining\n- [ ] x\n"): Allow(),
+        Input(
+            tool="Write",
+            file="HANDOFF.md",
+            content="## Status\nHandoff\n## Remaining\n- [ ] x\n",
+            decide={"durable": BinaryAnswer(p_yes=0.2, confidence=0.6), "kind": LabelAnswer(choice="doc", probabilities={"doc": 0.9}, confidence=0.9)},
+        ): Allow(),
         Input(tool="Write", file="README.md", content="# Readme\nsome prose\n"): Allow(),
         Input(tool="Write", file="src/foo.ts", content="export const x = 1\n"): Allow(),
         Input(tool="Write", file=".env", content="API_KEY=secret\n"): Allow(),
@@ -191,39 +172,31 @@ RECORD_ROUTER_SYSTEM = (
             tool="Write",
             file="STATUS.md",
             content="## Status\nHandoff\n## Remaining\n- [ ] x\n",
-            llm={"record": True, "kind": "doc"},
+            decide={"durable": BinaryAnswer(p_yes=0.9, confidence=0.8), "kind": LabelAnswer(choice="doc", probabilities={"doc": 0.9}, confidence=0.9)},
         ): Warn(pattern="durable doc content"),
         Input(
             tool="Write",
             file="/n/.cc-state/p/memory/when-the-owner-says-it-exists-find-it.md",
             content="---\nname: when the owner says it exists, find it\ndescription: search before denying\nmetadata:\n  type: feedback\n---\nbody\n",
-            llm={"record": True, "kind": "doc"},
+            decide={"durable": BinaryAnswer(p_yes=0.9, confidence=0.8), "kind": LabelAnswer(choice="doc", probabilities={"doc": 0.9}, confidence=0.9)},
         ): Allow(),
         Input(
             tool="Write",
             file="/Users/yasyf/.claude/plans/gateway-plan-memo.md",
             content="## Decision\n## Approach\n1. do it\n",
-            llm={"record": True, "kind": "plan"},
+            decide={"durable": BinaryAnswer(p_yes=0.9, confidence=0.8), "kind": LabelAnswer(choice="plan", probabilities={"plan": 0.9}, confidence=0.9)},
         ): Allow(),
     },
 )
 def nudge_record_durable(evt: PostToolUseEvent) -> HookResult | None:
     if fired_this_turn(evt):
         return None
-    prompt = (
-        Prompt()
-        .system(RECORD_ROUTER_SYSTEM)
-        .context("path", str(evt.file))
-        .context("content", (evt.content or "")[:LLM_INPUT_CAP])
-        .ask("Does this belong in cc-notes, and if so as which record (note/doc/log/task/papercut/runbook/investigation/plan)?")
-    )
-    verdict = evt.ctx.call_llm(prompt, response_model=RecordVerdict, model="small", agent=False, transcript=False)
-    if not verdict.record or verdict.kind not in DURABLE_VERBS:
+    if (kind := durable_kind(evt)) is None:
         return None
     record_fire(evt)
     return evt.warn(
-        f"This file reads like durable {verdict.kind} content, not a loose file in the working tree. "
-        f"Run `{DURABLE_VERBS[verdict.kind]}`, then delete the file."
+        f"This file reads like durable {kind} content, not a loose file in the working tree. "
+        f"Run `{DURABLE_VERBS[kind]}`, then delete the file."
     )
 
 
