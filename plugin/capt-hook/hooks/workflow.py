@@ -20,7 +20,6 @@ from captain_hook import (
     Option,
     Or,
     PostToolUseEvent,
-    Prompt,
     SessionEndEvent,
     Tool,
     Warn,
@@ -30,15 +29,16 @@ from captain_hook import (
 from captain_hook.cmd import Call, Cmd
 from captain_hook.util.paths import resolve_project_dir
 from pydantic import BaseModel, Field
+from spawnllm import Binary, BinaryAnswer, Label, LabelAnswer
 
 from .common import (
     CC_NOTES_EXECUTABLES,
     CcNotesAvailable,
+    LLM_INPUT_CAP,
     ManyNativeTasks,
     MCP_TOOL_PREFIX,
     NATIVE_TASK_MIRROR_THRESHOLD,
     NUDGE_MAX_FIRES,
-    RecordVerdict,
     current_branch,
     ids_match,
     record_command,
@@ -459,32 +459,30 @@ def link_commit(evt: PostToolUseEvent) -> None:
         )
 
 
-COMMIT_DECISION_SYSTEM = (
-    "An agent just landed a git commit. Decide whether the change embodies a durable DECISION worth "
-    "capturing as a cc-notes record — a design choice, a tradeoff, a non-obvious rationale a future "
-    "agent would want explained — as opposed to routine, self-explanatory work (a rename, a "
-    "dependency bump, a formatting pass, a mechanical fix) that the diff and message already cover.\n"
-    "\n"
-    "Set record=false for routine or self-explanatory commits — that is most commits. Only a commit "
-    "that encodes a decision worth preserving records. When record=true choose the kind: note for a "
-    "single durable fact or decision (one verifiable claim), doc for longer living rationale a future "
-    "agent should read before touching this area."
+COMMIT_DECISION_FLOOR = 0.5
+COMMIT_DECISION_QUESTION = Binary(
+    "Does this commit encode a durable decision worth capturing as a cc-notes record: a design choice, a tradeoff, "
+    "or a non-obvious rationale a future agent would want explained?",
+    yes="It encodes a decision the diff and message alone would not explain to a future agent.",
+    no="Routine or self-explanatory work, such as a rename, a dependency bump, a formatting pass, or a mechanical fix.",
+)
+COMMIT_KIND_QUESTION = Label(
+    "The state is a git commit an agent just landed. Pick the cc-notes record that would capture its decision.",
+    {
+        "note": "A single durable fact or decision, one verifiable claim.",
+        "doc": "Longer living rationale a future agent should read before touching this area.",
+    },
 )
 
 
 def commit_decision(evt: PostToolUseEvent) -> str | None:
     if not (diff := evt.ctx.diff(commit="HEAD")):
         return None
-    prompt = (
-        Prompt()
-        .system(COMMIT_DECISION_SYSTEM)
-        .context("commit", diff)
-        .ask("Does this commit encode a durable decision worth a cc-notes note or doc?")
-    )
-    verdict = evt.ctx.call_llm(prompt, response_model=RecordVerdict, model="small", agent=False, transcript=False)
-    if not verdict.record or verdict.kind not in ("note", "doc"):
-        return None
-    return f"This commit encodes a durable decision. Capture it with `{record_command(verdict.kind)}`."
+    asked = {"decision": COMMIT_DECISION_QUESTION, "kind": COMMIT_KIND_QUESTION}
+    match (decision := evt.decide(diff[:LLM_INPUT_CAP], asked)) and (decision.answers["decision"], decision.answers["kind"]):
+        case (BinaryAnswer(p_yes=p_yes), LabelAnswer(choice=kind)) if p_yes >= COMMIT_DECISION_FLOOR:
+            return f"This commit encodes a durable decision. Capture it with `{record_command(kind)}`."
+    return None
 
 
 @on(
