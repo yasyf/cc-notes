@@ -34,13 +34,6 @@ RECORD_KINDS = ("note", "doc", "log", "task", "papercut")
 MCP_TOOL_PREFIX = "mcp__plugin_cc-notes_cc-notes__"
 
 
-class RecordVerdict(BaseModel):
-    """The router's verdict: whether a freshly written file is durable cc-notes content, and of which kind (one of RECORD_KINDS)."""
-
-    record: bool = False
-    kind: str = ""
-
-
 class SessionAnswers(BaseModel):
     lines: dict[str, str] = Field(default_factory=dict)
     owners: dict[str, str] = Field(default_factory=dict)

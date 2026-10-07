@@ -76,7 +76,6 @@ from hooks.common import (
     parse_status,
     parse_tasks,
     record_command,
-    RecordVerdict,
     render_answer_line,
     render_doc_line,
     render_investigation_line,
@@ -1076,8 +1075,8 @@ def stub_llm(verdict: object):
 
     Mirrors stub_cli: the test monkeypatches it onto ``evt.ctx.call_llm``. Each handler
     passes ``response_model=<Model>`` and the real backend parses the reply into that
-    model, so the stub just returns an already-built instance, a RecordVerdict for the
-    commit router.
+    model, so the stub just returns an already-built instance, a SupersedeTriage for the
+    supersede pass.
     """
 
     def _call(template, *args, **kwargs):
@@ -2361,12 +2360,16 @@ COMMIT_DIFF = (
 )
 
 
-def commit_event(tmp_path, monkeypatch, *, sha="deadsha000", verdict=None, diff=COMMIT_DIFF, command="git commit -m x"):
+NOT_A_DECISION = {"decision": binary(0.1), "kind": label("note")}
+A_NOTE = {"decision": binary(0.9), "kind": label("note")}
+
+
+def commit_event(tmp_path, monkeypatch, *, sha="deadsha000", answers=None, asked=None, diff=COMMIT_DIFF, command="git commit -m x"):
     evt = mock_event("PostToolUse", tool="Bash", command=command, session_dir=tmp_path)
     _session_repo(monkeypatch, tmp_path)
     monkeypatch.setattr(evt.ctx, "git", repo_git({("rev-parse", "HEAD"): sha, _CONFIG_KEY: None}))
     monkeypatch.setattr(evt.ctx, "diff", lambda *a, **k: diff)
-    monkeypatch.setattr(evt.ctx, "call_llm", stub_llm(verdict if verdict is not None else RecordVerdict(record=False)))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide(answers if answers is not None else NOT_A_DECISION, asked))
     call, calls = recording_cli({("sync",): "ok"})
     monkeypatch.setattr(evt.ctx, "call_cli", call)
     evt._sync_calls = calls  # type: ignore[attr-defined]
@@ -2376,16 +2379,17 @@ def commit_event(tmp_path, monkeypatch, *, sha="deadsha000", verdict=None, diff=
 def test_commit_decision_silent_without_a_durable_verdict(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
     evt = commit_event(tmp_path, monkeypatch)
-    check("commit: no decision line when record=False", nudge_commit_decision(evt) is None)
+    check("commit: no decision line below the floor", nudge_commit_decision(evt) is None)
     check("commit: the nudge spawns no sync", _calls_of(evt._sync_calls, "sync") == [], repr(evt._sync_calls))
     check("commit: the background hook syncs", sync_after_ref_move(evt) is None and _calls_of(evt._sync_calls, "sync") == [0], repr(evt._sync_calls))
 
 
 def test_commit_routes_decision(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    verdict = RecordVerdict(record=True, kind="note")
-    evt = commit_event(tmp_path, monkeypatch, verdict=verdict)
+    asked: list[tuple[object, dict]] = []
+    evt = commit_event(tmp_path, monkeypatch, answers=A_NOTE, asked=asked)
     result = nudge_commit_decision(evt)
+    check("commit decision: the state is the commit diff", asked and asked[0][0] == COMMIT_DIFF, repr(asked))
     check("commit decision: warns", result is not None and result.action is Action.warn, repr(result))
     if result and result.message:
         check("commit decision: routes a note", "`cc-notes note add`" in result.message, result.message)
@@ -2393,18 +2397,22 @@ def test_commit_routes_decision(monkeypatch, tmp_path) -> None:
     check("commit decision: the nudge spawns no sync", _calls_of(evt._sync_calls, "sync") == [], repr(evt._sync_calls))
 
 
-def test_commit_only_routes_note_or_doc(monkeypatch, tmp_path) -> None:
+def test_commit_decision_routes_a_doc_and_stays_silent_on_a_failure(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    result = nudge_commit_decision(commit_event(tmp_path, monkeypatch, verdict=RecordVerdict(record=True, kind="log")))
-    check("commit: a log verdict is silent", result is None, repr(result))
+    result = nudge_commit_decision(commit_event(tmp_path / "doc", monkeypatch, answers={"decision": binary(0.5), "kind": label("doc")}))
+    check("commit: a doc verdict at the floor routes a doc", result is not None and "`cc-notes doc add`" in (result.message or ""), repr(result))
+    refused = nudge_commit_decision(commit_event(tmp_path / "refused", monkeypatch, answers={"decision": binary(0.9), "kind": Refused()}))
+    check("commit: a refused kind is silent", refused is None, repr(refused))
+    failed = commit_event(tmp_path / "failed", monkeypatch)
+    monkeypatch.setattr(failed.ctx, "decide", stub_decide(None))
+    check("commit: a failed call is silent", nudge_commit_decision(failed) is None)
 
 
 def test_commit_dedup_per_sha(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
-    verdict = RecordVerdict(record=True, kind="note")
-    check("commit dedup: first fire warns", nudge_commit_decision(commit_event(tmp_path, monkeypatch, sha="sha111", verdict=verdict)) is not None)
-    check("commit dedup: same sha silent", nudge_commit_decision(commit_event(tmp_path, monkeypatch, sha="sha111", verdict=verdict)) is None)
-    check("commit dedup: a new sha fires", nudge_commit_decision(commit_event(tmp_path, monkeypatch, sha="sha222", verdict=verdict)) is not None)
+    check("commit dedup: first fire warns", nudge_commit_decision(commit_event(tmp_path, monkeypatch, sha="sha111", answers=A_NOTE)) is not None)
+    check("commit dedup: same sha silent", nudge_commit_decision(commit_event(tmp_path, monkeypatch, sha="sha111", answers=A_NOTE)) is None)
+    check("commit dedup: a new sha fires", nudge_commit_decision(commit_event(tmp_path, monkeypatch, sha="sha222", answers=A_NOTE)) is not None)
 
 
 def test_commit_without_a_diff_is_silent(monkeypatch, tmp_path) -> None:
@@ -2412,7 +2420,7 @@ def test_commit_without_a_diff_is_silent(monkeypatch, tmp_path) -> None:
     evt = mock_event("PostToolUse", tool="Bash", command="git commit -m x", session_dir=tmp_path)
     monkeypatch.setattr(evt.ctx, "git", stub_git({}))
     monkeypatch.setattr(evt.ctx, "diff", lambda *a, **k: None)
-    monkeypatch.setattr(evt.ctx, "call_llm", _llm_boom)
+    monkeypatch.setattr(evt.ctx, "decide", _llm_boom)
     call, _calls = recording_cli({("sync",): "ok"})
     monkeypatch.setattr(evt.ctx, "call_cli", call)
     check("commit without a diff: no classifier call, silent", nudge_commit_decision(evt) is None)

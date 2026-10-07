@@ -77,8 +77,8 @@ candidates before either superseded and leave a superseded answer live.
 The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
 on purpose; a model is the precision gate in both directions. The prompt-answer pick, the
 answer scope and the stale-record filter ask TypeSafe Jev through `evt.decide`, and the
-durable-write router asks OpenAI Decisions through the same call. The commit router and the
-supersede pass ask the small model through `call_llm`. The only deterministic hooks
+durable-write router asks OpenAI Decisions through the same call. The commit router asks Jev
+too. Only the supersede pass still asks the small model through `call_llm`. The only deterministic hooks
 are the ones with no "which" to pick: the memory mirror, where the file already declares
 its type, the evidence-archive router, where the kind is always a log with attachments,
 the plan capture, where an approved plan is always a plan, and the pure workflow reminders,
