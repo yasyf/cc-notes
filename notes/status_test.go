@@ -126,7 +126,7 @@ func TestStatusBacklogReadiness(t *testing.T) {
 		t.Fatalf("ready ids = %v, want %v (a live blocker and an existing hold are both unready)", got, want)
 	}
 
-	if _, err := c.DoneTask(ctx, blocker.ID, true); err != nil {
+	if _, err := c.DoneTask(ctx, blocker.ID, true, ""); err != nil {
 		t.Fatalf("DoneTask blocker: %v", err)
 	}
 	after := mustStatus(t, c)

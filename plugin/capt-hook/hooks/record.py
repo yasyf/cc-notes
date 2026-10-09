@@ -82,7 +82,7 @@ RECORD_SUBCOMMANDS = frozenset((noun, verb) for noun in ("note", "doc", "log", "
 RECORD_BARE_NOUNS: dict[str, frozenset[str]] = {"papercut": frozenset({"list"})}
 MCP_RECORD_WRITE_TOOLS = ("note_add", "doc_add", "answer_add", "log_add", "log_append", "note_edit", "doc_edit", "answer_edit", "papercut")
 MCP_RECORD_WRITE_NAMES = tuple(MCP_TOOL_PREFIX + t for t in MCP_RECORD_WRITE_TOOLS)
-MCP_CONTENT_FIELDS = ("title", "body", "entry")
+MCP_CONTENT_FIELDS = ("title", "body", "text")
 
 
 class DurableInternalWrite(CustomCondition):
@@ -457,7 +457,7 @@ def nudge_mcp_ephemeral_reference(evt: PostToolUseEvent) -> HookResult | None:
     record_fire(evt)
     return evt.warn(
         "This record cites a purge-bound path (`/tmp`, `/var`, or a scratchpad). "
-        "Put the content in the `body` param and store artifacts with the `attach` param of `log_append`."
+        "Put the content in the `body` or `text` param and store artifacts with the `attach` param of `log_append`."
     )
 
 

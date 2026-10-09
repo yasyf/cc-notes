@@ -37,8 +37,8 @@ type planEditArgs struct {
 }
 
 type planCloseArgs struct {
-	ID      string `json:"id" jsonschema:"plan id prefix"`
-	Outcome string `json:"outcome,omitempty" jsonschema:"what executing the plan produced"`
+	ID   string `json:"id" jsonschema:"plan id prefix"`
+	Note string `json:"note,omitempty" jsonschema:"what executing the plan produced, or why it was abandoned"`
 }
 
 type planSupersedeArgs struct {
@@ -156,7 +156,7 @@ func registerPlan(ts *toolset, b *bridge) {
 // planCloseCall runs a terminal plan verb, whose optional outcome lands in the
 // same pack commit as the status.
 func planCloseCall(ctx context.Context, b *bridge, verb string, in planCloseArgs) (*mcp.CallToolResult, any, error) {
-	flags, err := freeTextFlag([]string{"--json"}, "--outcome", in.Outcome)
+	flags, err := freeTextFlag([]string{"--json"}, "--outcome", in.Note)
 	if err != nil {
 		return nil, nil, err
 	}

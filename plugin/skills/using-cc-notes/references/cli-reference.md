@@ -970,7 +970,7 @@ does not look stale.
 
 ### `cc-notes task done ID`
 
-MCP: task_done (id, force)
+MCP: task_done (id, note, force)
 
 Close a task as done and anchor your `HEAD` commit onto it, so `task show` can list the commits
 that implemented it.
@@ -978,10 +978,12 @@ that implemented it.
 `done` is gated on acceptance criteria. While any criterion is `pending` or `failed`, `done`
 lists the unmet ones and refuses to close (exit 2). Mark them `met` (by hand or via
 `task validate`), or pass `--force` to close anyway — a force-close sets the derived
-`closed_forced` flag in the task's `--json` so the override stays visible.
+`closed_forced` flag in the task's `--json` so the override stays visible. `--note` records a
+closing note as a task comment in the same commit as the close.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--note <text>` | none | Closing note, recorded as a task comment |
 | `--force` | off | Close even with unmet criteria |
 | `--json` | off | Emit JSON |
 
@@ -1021,7 +1023,7 @@ comment refreshes the task's lease.
 
 ### `cc-notes task comment list TASK`
 
-MCP: task_comment_list (task)
+MCP: task_comment_list (id)
 
 List every comment on a task, uncapped and oldest-first — the read past `task show --json`'s
 20-comment cap. Comments print as the same `-- <author> <rfc3339>` blocks a show prints.
@@ -1118,19 +1120,19 @@ $ cc-notes task edit 5d3e9c1 --branch main
 
 ### `cc-notes task criterion`
 
-MCP: task_criterion_add (task, text, script)
+MCP: task_criterion_add (id, text, script)
 
-MCP: task_criterion_rm (task, crit)
+MCP: task_criterion_rm (id, criterion)
 
-MCP: task_criterion_met (task, crit, note)
+MCP: task_criterion_met (id, criterion, note)
 
-MCP: task_criterion_failed (task, crit, note)
+MCP: task_criterion_failed (id, criterion, note)
 
-MCP: task_criterion_pending (task, crit)
+MCP: task_criterion_pending (id, criterion)
 
-MCP: task_criterion_script (task, crit, file, clear)
+MCP: task_criterion_script (id, criterion, file, clear)
 
-MCP: task_criterion_list (task)
+MCP: task_criterion_list (id)
 
 The criterion subgroup manages a task's structured acceptance criteria — the `pending` / `met` /
 `failed` checks that gate `task done`. Every verb addresses a criterion by an id prefix (`CRIT`,
@@ -1159,7 +1161,7 @@ f06100e	pending	p99 latency under 200ms
 
 ### `cc-notes task validate ID`
 
-MCP: task_validate (task, yes, timeout)
+MCP: task_validate (id, yes, timeout)
 
 Run a task's criterion validation scripts locally and record each verdict. This is the only
 command that executes stored criterion scripts, and it is explicit and confirmation-gated on
@@ -2034,9 +2036,9 @@ nonces that resolve by prefix within their investigation, like criterion ids.
 
 ### `cc-notes investigation finding clear INVESTIGATION FINDING` · `confirm`
 
-MCP: investigation_finding_clear (id, finding, text)
+MCP: investigation_finding_clear (id, finding, note)
 
-MCP: investigation_finding_confirm (id, finding, text)
+MCP: investigation_finding_confirm (id, finding, note)
 
 Record a finding's disposition: `clear` rules it out (the exoneration move), `confirm` marks it
 as the cause. `--why` is required — the disposition carries its evidence.
@@ -2066,7 +2068,7 @@ with an indented `why:` line where a disposition recorded evidence.
 
 ### `cc-notes investigation root-cause ID TEXT`
 
-MCP: investigation_root_cause (id, text)
+MCP: investigation_root_cause (id, note)
 
 Record the root cause and move to `root_caused`. `TEXT` is a required positional (or `-` for
 stdin) — the cause statement lands as both the `root_cause` field and a timeline entry, in one
@@ -2079,7 +2081,7 @@ a1b2c3d	root_caused	TestPool deadlock on CI
 
 ### `cc-notes investigation fix ID [TEXT]`
 
-MCP: investigation_fix (id, text, commits)
+MCP: investigation_fix (id, note, commits)
 
 Record the fixing commits and move to `fixed`. At least one `--commit` is required; shas
 resolve strictly against the local object database, so fetch first for a commit that only
@@ -2097,13 +2099,13 @@ a1b2c3d	fixed	TestPool deadlock on CI
 
 ### `cc-notes investigation confirm ID TEXT` · `exonerate` · `abandon` · `reopen`
 
-MCP: investigation_confirm (id, text, force)
+MCP: investigation_confirm (id, note, force)
 
-MCP: investigation_exonerate (id, text, force)
+MCP: investigation_exonerate (id, note, force)
 
-MCP: investigation_abandon (id, text)
+MCP: investigation_abandon (id, note)
 
-MCP: investigation_reopen (id, text)
+MCP: investigation_reopen (id, note)
 
 The closing and reversal verbs. `confirm` (from `fixed`) records the proof — CI green, no
 recurrence — and closes the arc. `exonerate` falsifies the premise from `open` or
@@ -2398,9 +2400,9 @@ conflict: illegal status transition: 8d2ed23 cannot go executing→executing
 
 ### `cc-notes plan done ID` · `abandon`
 
-MCP: plan_done (id, outcome)
+MCP: plan_done (id, note)
 
-MCP: plan_abandon (id, outcome)
+MCP: plan_abandon (id, note)
 
 Close a plan. `done` closes an `executing` plan as done; `abandon` closes from any non-terminal
 status — a draft nobody approved, an approved plan overtaken by events, an execution walked away
@@ -2800,7 +2802,7 @@ ebba9fb	2026-06-16	design	Auth tokens expire after 15 minutes
 
 ### `cc-notes note expire ID`
 
-MCP: note_expire (id, reason, clear)
+MCP: note_expire (id, note, clear)
 
 Flag a note out-of-date by hand — an agent-asserted verdict for a note you know is no longer
 accurate but have no replacement for yet. The note surfaces in `note review` as `EXPIRED`, which
@@ -3078,7 +3080,7 @@ $ cc-notes answer supersede 8d2ed23 --by 357f361
 
 ### `cc-notes answer expire ID`
 
-MCP: answer_expire (id, reason, clear)
+MCP: answer_expire (id, note, clear)
 
 Flag an answer out-of-date by hand when its premise fails and no replacement exists.
 The answer surfaces in `answer review` as `EXPIRED`, which takes precedence over every computed
@@ -3372,7 +3374,7 @@ $ cc-notes doc supersede 62208d7 --by 7a3f10c
 
 ### `cc-notes doc expire ID`
 
-MCP: doc_expire (id, reason, clear)
+MCP: doc_expire (id, note, clear)
 
 Flag a doc out-of-date by hand — an agent-asserted verdict for a doc you know is no longer accurate
 but have no replacement for yet. The doc surfaces in `doc review` as `EXPIRED`, which takes
@@ -3536,7 +3538,7 @@ A directory anchor covers a subtree exactly as it does for a note, answer, or do
 
 ### `cc-notes log add TITLE [BODY]`
 
-MCP: log_add (title, entry, labels, commits, paths, dirs, branches, attach)
+MCP: log_add (title, text, labels, commits, paths, dirs, branches, attach)
 
 Create a log. A log has no witness and no drift to track, so it is not born verified the way a note
 or doc is. Seed an optional first entry from the positional `BODY`, `--entry`, or `-` (stdin);
@@ -3562,7 +3564,7 @@ $ cc-notes log add "Auth rollout" --dir internal/auth --label ops --entry "flipp
 
 ### `cc-notes log append ID [TEXT]`
 
-MCP: log_append (id, entry, attach, replace)
+MCP: log_append (id, text, attach, replace)
 
 Append one entry to a log. The text comes from the positional `TEXT`, `--entry`, or `-` (stdin) —
 exactly one source, matching `log add --entry`. The author and timestamp are taken from the
@@ -3779,7 +3781,7 @@ under any `--limit`; `log_id` and `index` together address the complaint for `pa
 
 ### `cc-notes papercut show LOG_ID INDEX`
 
-MCP: papercut_show (log_id, index)
+MCP: papercut_show (id, index)
 
 Read one complaint back in full — the untruncated text a `papercut list` row previews — addressed
 by that row's `log_id` and `index`. A non-numeric index, a log carrying no `papercut` tag, and an

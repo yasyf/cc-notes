@@ -6,7 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **MCP tools name each argument one way.** The record a tool acts on is always
+  `id`, a criterion is `criterion`, and free text explaining an action is `note`.
+  `task_criterion_*`, `task_validate`, and `task_comment_list` take `id` (was
+  `task`) and `criterion` (was `crit`); `papercut_show` takes `id` (was
+  `log_id`); the investigation transitions and finding dispositions take `note`
+  (was `text`); `plan_done`/`plan_abandon` take `note` (was `outcome`); the
+  `_expire` tools take `note` (was `reason`); `log_add`/`log_append` take `text`
+  (was `entry`), like every other entry's content. A rejected old name points at
+  its replacement, and `papercut` given a `title` points at `body`.
+
 ### Added
+- **Close a task with a note.** `task done --note` and `task_done`'s `note`
+  record a closing note as a task comment in the same commit as the close.
 - **Every free-text flag takes a file.** Each verb that records `--body` (note,
   doc, answer, task, sprint, project, ledger, runbook, investigation, plan,
   papercut, and their edit and comment verbs) also accepts `--body-file

@@ -509,6 +509,7 @@ func newTaskRenewCmd() *cobra.Command {
 }
 
 func newTaskDoneCmd() *cobra.Command {
+	var note string
 	var force, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "done ID",
@@ -527,7 +528,7 @@ func newTaskDoneCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			task, err := c.DoneTask(ctx, id, force)
+			task, err := c.DoneTask(ctx, id, force, note)
 			if err != nil {
 				return taskErr(err)
 			}
@@ -535,6 +536,7 @@ func newTaskDoneCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
+	flags.StringVar(&note, "note", "", "closing note, recorded as a task comment")
 	flags.BoolVar(&force, "force", false, "close even with unmet criteria")
 	bindJSON(flags, &jsonOut)
 	return cmd

@@ -111,9 +111,9 @@ type supersedeArgs struct {
 }
 
 type expireArgs struct {
-	ID     string `json:"id" jsonschema:"entity id prefix"`
-	Reason string `json:"reason,omitempty" jsonschema:"why it is out of date"`
-	Clear  bool   `json:"clear,omitempty" jsonschema:"remove the out-of-date flag instead of setting it"`
+	ID    string `json:"id" jsonschema:"entity id prefix"`
+	Note  string `json:"note,omitempty" jsonschema:"why it is out of date"`
+	Clear bool   `json:"clear,omitempty" jsonschema:"remove the out-of-date flag instead of setting it"`
 }
 
 type reviewArgs struct {
@@ -170,7 +170,7 @@ func registerNoteDocShared(ts *toolset, b *bridge, noun, summaries string) {
 	addTool(ts, &mcp.Tool{Name: noun + "_expire", Description: "Flag " + withArticle(noun) + " as out of date (or clear the flag)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in expireArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
-			flags = optStr(flags, "--reason", in.Reason)
+			flags = optStr(flags, "--reason", in.Note)
 			flags = optBool(flags, "--clear", in.Clear)
 			return b.run(ctx, argvFor([]string{noun, "expire"}, flags, in.ID)...)
 		})

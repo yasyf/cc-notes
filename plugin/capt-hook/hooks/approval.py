@@ -117,7 +117,7 @@ approve(
             explicit=True
         ),
         Input(tool="mcp__plugin_cc-notes_cc-notes__sync", tool_input={}): Allow(explicit=True),
-        Input(tool="mcp__cc-notes__log_add", tool_input={"title": "t", "entry": "e"}): Allow(explicit=True),
+        Input(tool="mcp__cc-notes__log_add", tool_input={"title": "t", "text": "e"}): Allow(explicit=True),
         Input(tool="mcp__cc-notes__attachment_path", tool_input={"id": "a1b2", "name": "x"}): Allow(explicit=True),
         Input(tool="mcp__evil__note_add", tool_input={"title": "t"}): Ask(),
         Input(tool="mcp__cc-notes-evil__status", tool_input={}): Ask(),

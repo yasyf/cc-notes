@@ -104,6 +104,42 @@ func TestMCPWrongKeyHints(t *testing.T) {
 			args: map[string]any{"id": "abc", "comment": "hi"},
 			want: `project_comment: unknown property "comment" (did you mean "body"?); accepted: id*, body* (* = required)`,
 		},
+		{
+			name: "papercut title->body",
+			tool: "papercut",
+			args: map[string]any{"title": "dead end", "body": "the tool dead-ended"},
+			want: `papercut: unknown property "title" (did you mean "body"?); accepted: body*, model (* = required)`,
+		},
+		{
+			name: "task_criterion_met task/crit/evidence->id/criterion/note",
+			tool: "task_criterion_met",
+			args: map[string]any{"task": "abc", "crit": "def", "evidence": "green"},
+			want: `task_criterion_met: unknown property "crit" (did you mean "criterion"?); unknown property "evidence" (did you mean "note"?); unknown property "task" (did you mean "id"?); accepted: id*, criterion*, note (* = required)`,
+		},
+		{
+			name: "investigation_confirm text->note",
+			tool: "investigation_confirm",
+			args: map[string]any{"id": "abc", "text": "passes now"},
+			want: `investigation_confirm: unknown property "text" (did you mean "note"?); accepted: id*, note*, force (* = required)`,
+		},
+		{
+			name: "note_expire reason->note",
+			tool: "note_expire",
+			args: map[string]any{"id": "abc", "reason": "superseded"},
+			want: `note_expire: unknown property "reason" (did you mean "note"?); accepted: id*, clear, note (* = required)`,
+		},
+		{
+			name: "plan_done outcome->note",
+			tool: "plan_done",
+			args: map[string]any{"id": "abc", "outcome": "landed"},
+			want: `plan_done: unknown property "outcome" (did you mean "note"?); accepted: id*, note (* = required)`,
+		},
+		{
+			name: "papercut_show log_id->id",
+			tool: "papercut_show",
+			args: map[string]any{"log_id": "abc", "index": 0},
+			want: `papercut_show: unknown property "log_id" (did you mean "id"?); accepted: id*, index* (* = required)`,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -174,8 +210,8 @@ func TestMCPMissingRequiredNamed(t *testing.T) {
 		{
 			name: "investigation_fix without commits",
 			tool: "investigation_fix",
-			args: map[string]any{"id": "abc", "text": "fixed in the open PR"},
-			want: `investigation_fix: missing required property "commits"; accepted: id*, commits*, text (* = required)`,
+			args: map[string]any{"id": "abc", "note": "fixed in the open PR"},
+			want: `investigation_fix: missing required property "commits"; accepted: id*, commits*, note (* = required)`,
 		},
 	}
 	for _, tc := range tests {

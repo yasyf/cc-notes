@@ -439,11 +439,12 @@ func (c *Client) RenewTask(ctx context.Context, id model.EntityID) (model.Task, 
 	return snapshot.(model.Task), nil
 }
 
-// DoneTask marks the task done and links the repository's HEAD commit when one
-// exists. It refuses with a *ConflictError a task already closed, and — unless
-// force is set — with an *UnmetCriteriaError a task whose acceptance criteria
-// have not all been met.
-func (c *Client) DoneTask(ctx context.Context, id model.EntityID, force bool) (model.Task, error) {
+// DoneTask marks the task done, records a non-empty note as a comment in the
+// same commit, and links the repository's HEAD commit when one exists. It
+// refuses with a *ConflictError a task already closed, and — unless force is
+// set — with an *UnmetCriteriaError a task whose acceptance criteria have not
+// all been met.
+func (c *Client) DoneTask(ctx context.Context, id model.EntityID, force bool, note string) (model.Task, error) {
 	task, err := c.Task(ctx, id)
 	if err != nil {
 		return model.Task{}, err
@@ -463,6 +464,9 @@ func (c *Client) DoneTask(ctx context.Context, id model.EntityID, force bool) (m
 		}
 	}
 	ops := []model.Op{model.SetStatus{Status: model.StatusDone}}
+	if note != "" {
+		ops = append(ops, model.AddComment{Body: note})
+	}
 	head, err := c.head(ctx)
 	if err != nil {
 		return model.Task{}, err

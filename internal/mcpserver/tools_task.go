@@ -56,6 +56,7 @@ type taskStartArgs struct {
 
 type taskDoneArgs struct {
 	ID    string `json:"id" jsonschema:"task id prefix"`
+	Note  string `json:"note,omitempty" jsonschema:"closing note, recorded as a task comment"`
 	Force bool   `json:"force,omitempty" jsonschema:"close even with unmet criteria"`
 }
 
@@ -112,41 +113,33 @@ type taskArchivedArgs struct {
 }
 
 type taskValidateArgs struct {
-	Task    string `json:"task" jsonschema:"task id prefix"`
+	ID      string `json:"id" jsonschema:"task id prefix"`
 	Yes     bool   `json:"yes,omitempty" jsonschema:"run the stored validation scripts without a confirmation prompt (executes untrusted content)"`
 	Timeout string `json:"timeout,omitempty" jsonschema:"per-script timeout (Go duration; default 5m)"`
 }
 
 type criterionAddArgs struct {
-	Task   string `json:"task" jsonschema:"task id prefix"`
+	ID     string `json:"id" jsonschema:"task id prefix"`
 	Text   string `json:"text" jsonschema:"acceptance criterion text"`
 	Script string `json:"script,omitempty" jsonschema:"path to a validation script file; its contents become the check command"`
 }
 
 type criterionRefArgs struct {
-	Task string `json:"task" jsonschema:"task id prefix"`
-	Crit string `json:"crit" jsonschema:"criterion id prefix"`
+	ID        string `json:"id" jsonschema:"task id prefix"`
+	Criterion string `json:"criterion" jsonschema:"criterion id prefix"`
 }
 
 type criterionResultArgs struct {
-	Task string `json:"task" jsonschema:"task id prefix"`
-	Crit string `json:"crit" jsonschema:"criterion id prefix"`
-	Note string `json:"note,omitempty" jsonschema:"evidence recorded with the verdict (a later status change clears it)"`
+	ID        string `json:"id" jsonschema:"task id prefix"`
+	Criterion string `json:"criterion" jsonschema:"criterion id prefix"`
+	Note      string `json:"note,omitempty" jsonschema:"evidence recorded with the verdict (a later status change clears it)"`
 }
 
 type criterionScriptArgs struct {
-	Task  string `json:"task" jsonschema:"task id prefix"`
-	Crit  string `json:"crit" jsonschema:"criterion id prefix"`
-	File  string `json:"file,omitempty" jsonschema:"path to a validation script file (omit with clear)"`
-	Clear bool   `json:"clear,omitempty" jsonschema:"clear the criterion's validation script"`
-}
-
-type criterionListArgs struct {
-	Task string `json:"task" jsonschema:"task id prefix"`
-}
-
-type taskCommentListArgs struct {
-	Task string `json:"task" jsonschema:"task id prefix"`
+	ID        string `json:"id" jsonschema:"task id prefix"`
+	Criterion string `json:"criterion" jsonschema:"criterion id prefix"`
+	File      string `json:"file,omitempty" jsonschema:"path to a validation script file (omit with clear)"`
+	Clear     bool   `json:"clear,omitempty" jsonschema:"clear the criterion's validation script"`
 }
 
 func registerTask(ts *toolset, b *bridge) {
@@ -220,9 +213,13 @@ func registerTask(ts *toolset, b *bridge) {
 
 	idTool(ts, b, "task_renew", "Renew the lease on a task you hold.", "task", "renew")
 
-	addTool(ts, &mcp.Tool{Name: "task_done", Description: "Close a task as done (refuses with unmet criteria unless force); links the current commit."},
+	addTool(ts, &mcp.Tool{Name: "task_done", Description: "Close a task as done (refuses with unmet criteria unless force), optionally with a closing note; links the current commit."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskDoneArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
+			flags, err := freeTextFlag(flags, "--note", in.Note)
+			if err != nil {
+				return nil, nil, err
+			}
 			flags = optBool(flags, "--force", in.Force)
 			return b.run(ctx, argvFor([]string{"task", "done"}, flags, in.ID)...)
 		})
@@ -260,10 +257,7 @@ func registerTask(ts *toolset, b *bridge) {
 
 	commentTool(ts, b, "task")
 
-	addTool(ts, &mcp.Tool{Name: "task_comment_list", Description: "Read a task's complete comment thread, uncapped — task_show caps comments at the 20 most recent and reports the rest as comments_omitted."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in taskCommentListArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"task", "comment", "list"}, []string{"--json"}, in.Task)...)
-		})
+	idTool(ts, b, "task_comment_list", "Read a task's complete comment thread, uncapped — task_show caps comments at the 20 most recent and reports the rest as comments_omitted.", "task", "comment", "list")
 
 	addTool(ts, &mcp.Tool{Name: "task_dep", Description: "Add a dependency: ID is blocked by BLOCKER (rejects cycles). The ack is a summary; task_show reads the dependency edges back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskDepArgs) (*mcp.CallToolResult, any, error) {
@@ -304,7 +298,7 @@ func registerTask(ts *toolset, b *bridge) {
 			flags := []string{"--json"}
 			flags = optBool(flags, "--yes", in.Yes)
 			flags = optStr(flags, "--timeout", in.Timeout)
-			return b.run(ctx, argvFor([]string{"task", "validate"}, flags, in.Task)...)
+			return b.run(ctx, argvFor([]string{"task", "validate"}, flags, in.ID)...)
 		})
 
 	registerCriterion(ts, b)
@@ -318,13 +312,13 @@ func registerCriterion(ts *toolset, b *bridge) {
 				return nil, nil, err
 			}
 			flags = optStr(flags, "--script", in.Script)
-			return b.run(ctx, argvFor([]string{"task", "criterion", "add"}, flags, in.Task)...)
+			return b.run(ctx, argvFor([]string{"task", "criterion", "add"}, flags, in.ID)...)
 		})
 
 	for _, verb := range []string{"rm", "pending"} {
 		addTool(ts, &mcp.Tool{Name: "task_criterion_" + verb, Description: criterionVerbDescription(verb)},
 			func(ctx context.Context, _ *mcp.CallToolRequest, in criterionRefArgs) (*mcp.CallToolResult, any, error) {
-				return b.run(ctx, argvFor([]string{"task", "criterion", verb}, []string{"--json"}, in.Task, in.Crit)...)
+				return b.run(ctx, argvFor([]string{"task", "criterion", verb}, []string{"--json"}, in.ID, in.Criterion)...)
 			})
 	}
 
@@ -335,24 +329,21 @@ func registerCriterion(ts *toolset, b *bridge) {
 				if err != nil {
 					return nil, nil, err
 				}
-				return b.run(ctx, argvFor([]string{"task", "criterion", verb}, flags, in.Task, in.Crit)...)
+				return b.run(ctx, argvFor([]string{"task", "criterion", verb}, flags, in.ID, in.Criterion)...)
 			})
 	}
 
 	addTool(ts, &mcp.Tool{Name: "task_criterion_script", Description: "Set or clear a criterion's validation script. The ack is the task summary; task_criterion_list reads the criteria back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in criterionScriptArgs) (*mcp.CallToolResult, any, error) {
 			flags := optBool([]string{"--json"}, "--clear", in.Clear)
-			positionals := []string{in.Task, in.Crit}
+			positionals := []string{in.ID, in.Criterion}
 			if in.File != "" {
 				positionals = append(positionals, in.File)
 			}
 			return b.run(ctx, argvFor([]string{"task", "criterion", "script"}, flags, positionals...)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "task_criterion_list", Description: "List a task's acceptance criteria and their status. Returns summaries reporting whether a script is attached; task_show reads the script bodies back."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in criterionListArgs) (*mcp.CallToolResult, any, error) {
-			return b.run(ctx, argvFor([]string{"task", "criterion", "list"}, []string{"--json"}, in.Task)...)
-		})
+	idTool(ts, b, "task_criterion_list", "List a task's acceptance criteria and their status. Returns summaries reporting whether a script is attached; task_show reads the script bodies back.", "task", "criterion", "list")
 }
 
 func criterionVerbDescription(verb string) string {

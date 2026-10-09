@@ -29,7 +29,7 @@ func TestBlame(t *testing.T) {
 	// A task whose linked commits include the sha (DoneTask links current HEAD).
 	linked := mustTask(t, c, notes.TaskSpec{Title: "linked", Branch: "main"})
 	shaCommits := commit("implement linked")
-	if _, err := c.DoneTask(ctx, linked.ID, true); err != nil {
+	if _, err := c.DoneTask(ctx, linked.ID, true, ""); err != nil {
 		t.Fatalf("DoneTask(linked): %v", err)
 	}
 
@@ -40,7 +40,7 @@ func TestBlame(t *testing.T) {
 	// A task both linked and trailered on one commit: it must appear once.
 	dup := mustTask(t, c, notes.TaskSpec{Title: "dup", Branch: "main"})
 	shaDup := commit("dup work", "cc-task: "+dup.ID.Short())
-	if _, err := c.DoneTask(ctx, dup.ID, true); err != nil {
+	if _, err := c.DoneTask(ctx, dup.ID, true, ""); err != nil {
 		t.Fatalf("DoneTask(dup): %v", err)
 	}
 
@@ -48,10 +48,10 @@ func TestBlame(t *testing.T) {
 	lowPri := mustTask(t, c, notes.TaskSpec{Title: "low", Branch: "main", Priority: 3})
 	highPri := mustTask(t, c, notes.TaskSpec{Title: "high", Branch: "main", Priority: 1})
 	shaSort := commit("sort work")
-	if _, err := c.DoneTask(ctx, lowPri.ID, true); err != nil {
+	if _, err := c.DoneTask(ctx, lowPri.ID, true, ""); err != nil {
 		t.Fatalf("DoneTask(lowPri): %v", err)
 	}
-	if _, err := c.DoneTask(ctx, highPri.ID, true); err != nil {
+	if _, err := c.DoneTask(ctx, highPri.ID, true, ""); err != nil {
 		t.Fatalf("DoneTask(highPri): %v", err)
 	}
 

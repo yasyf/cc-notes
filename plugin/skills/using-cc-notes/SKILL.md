@@ -120,7 +120,7 @@ operates on exactly like a note:
 
 The same shape covers the rest: `doc_add` takes a `when` read-trigger and the full
 markdown in `body`; `answer_add` takes the question as `title` and the reply as `body`, with
-no `when`; `log_append` takes `entry` plus `attach` paths; `search` ranks across
+no `when`; `log_append` takes `text` plus `attach` paths; `search` ranks across
 every kind. `references/cli-reference.md` documents both surfaces for every kind, answers
 included — every command block
 opens with an `MCP:` line naming the tool and its properties. Operator commands (`init`,
@@ -226,8 +226,8 @@ tool call, a broken link, a misleading doc — instead of silently pushing throu
 appends one entry to a single repo-wide journal (a log titled `papercuts`, tagged `papercut`,
 auto-created on first use), so there is nothing to set up and no review lifecycle to run: entries
 are never edited, `papercut_list` skims the chronology newest-first (clipped previews, capped at
-`limit`), `papercut_show` reads one complaint back whole by the listing row's `log_id` and
-`index`, and `model` (or `CC_NOTES_MODEL`, with the parameter winning) records which model hit
+`limit`), `papercut_show` reads one complaint back whole by the listing row's `log_id` (as `id`)
+and `index`, and `model` (or `CC_NOTES_MODEL`, with the parameter winning) records which model hit
 the friction.
 
 The identity that signs writes is `CC_NOTES_ACTOR` (`"Name <email>"`) if set, else your git
@@ -326,7 +326,7 @@ d82c087	done	P1	ada <ada@example.com>	Add retry backoff to the API client
 **7. Chase a suspicion.** The moment work turns into debugging with a falsifiable premise —
 a red CI run, a bug hunt, an anomaly — `investigation_open` records that premise immutably.
 `investigation_append` logs evidence per triage step, `investigation_finding_add` then
-`_clear`/`_confirm` (with `text`) gives each suspect an explicit disposition, and the arc
+`_clear`/`_confirm` (with `note`) gives each suspect an explicit disposition, and the arc
 closes through the transition verbs — `investigation_root_cause`, `investigation_fix`,
 `investigation_confirm`, or `investigation_exonerate` when the premise falls. Those last two
 are gated. A verdict lists the findings still `open` and refuses unless you pass `force`;
@@ -386,38 +386,38 @@ The full surface — every flag, property, default, and output shape — is in
 | Claim + move onto your branch | `task_start` (`id`) | `cc-notes task start <id>` |
 | Reclaim an expired lease | `task_claim` (`id`, `steal`) | `cc-notes task claim <id> --steal` |
 | Refresh a lease you hold | `task_renew` (`id`) | `cc-notes task renew <id>` |
-| Close and link HEAD | `task_done` (`id`) | `cc-notes task done <id>` |
+| Close and link HEAD | `task_done` (`id`, `note`) | `cc-notes task done <id>` |
 | Re-home a task | `task_edit` (`id`, `branch` or `backlog`) | `cc-notes task edit <id> --branch <branch>` |
 | Thread discussion on a task, sprint, project, runbook, or plan | `task_comment` / `sprint_comment` / `project_comment` / `runbook_comment` / `plan_comment` (`id`, `body`) | `cc-notes task comment <id> "<text>"` |
 | Record an approved plan verbatim | `plan_add` (`title`, `body`, `approved`, `paths`) | `cc-notes plan add "<title>" --body-file <plan.md> --approved` |
 | Point a task at the plan it executes | `task_add` / `task_edit` (`plan`) | `cc-notes task add "<title>" --plan <id>` |
-| Walk the plan lifecycle | `plan_approve` / `plan_start` / `plan_done` (`id`, `outcome`) | `cc-notes plan done <id> --outcome "<result>"` |
+| Walk the plan lifecycle | `plan_approve` / `plan_start` / `plan_done` (`id`, `note`) | `cc-notes plan done <id> --outcome "<result>"` |
 | Revise a plan re-approved before work starts | `plan_edit` (`id`, `body`) | `cc-notes plan edit <id> --body -` |
 | Replace a plan after a genuine replan | `plan_supersede` (`id`, `by`) | `cc-notes plan supersede <old> --by <new>` |
 | Record a durable fact | `note_add` (`title`, `body`, `paths`) | `cc-notes note add "<title>" --path <path>` |
 | Record a durable answer given in plain chat | `answer_add` (`title`, `body`, `labels`, `branches`, `paths`) | `cc-notes answer add --label scope:durable --body "<reply>" -- "<question>"` |
 | Recall recent durable answers | `answer_list` (`labels`, `limit`) | `cc-notes answer list --label scope:durable --limit 8` |
 | Replace a user's earlier answer | `answer_supersede` (`id`, `by`) | `cc-notes answer supersede <old> --by <new>` |
-| Flag an answer whose premise stopped holding | `answer_expire` (`id`, `reason`) | `cc-notes answer expire <id> --reason "<reason>"` |
+| Flag an answer whose premise stopped holding | `answer_expire` (`id`, `note`) | `cc-notes answer expire <id> --reason "<reason>"` |
 | Re-confirm a fact | `note_verify` (`id`) | `cc-notes note verify <id>` |
-| Flag a fact out-of-date | `note_expire` (`id`, `reason`) | `cc-notes note expire <id>` |
+| Flag a fact out-of-date | `note_expire` (`id`, `note`) | `cc-notes note expire <id>` |
 | Review drifted/stale/unverified | `note_review` / `doc_review` / `answer_review` | `cc-notes note review` |
 | Search one kind | `note_search` (`query`) | `cc-notes note search "<query>"` |
 | Guidance for the next agent | `doc_add` (`title`, `when`, `body`) | `cc-notes doc add "<title>" --when "<trigger>" --body -` |
 | Revise a doc's body | `doc_edit` (`id`, `body`) | `cc-notes doc edit <id> --checkout` … `--apply` |
-| Start an append-only journal | `log_add` (`title`, `entry`) | `cc-notes log add "<title>"` |
-| Append an entry / artifacts | `log_append` (`id`, `entry`, `attach`) | `cc-notes log append <id> "<text>"` |
+| Start an append-only journal | `log_add` (`title`, `text`) | `cc-notes log add "<title>"` |
+| Append an entry / artifacts | `log_append` (`id`, `text`, `attach`) | `cc-notes log append <id> "<text>"` |
 | Read a journal back | `log_show` (`id`) | `cc-notes log show <id>` |
-| Read a capped history whole | `log_entry_list` / `investigation_entry_list` (`id`) / `task_comment_list` (`task`) | `cc-notes log entry list <id>` |
+| Read a capped history whole | `log_entry_list` / `investigation_entry_list` (`id`) / `task_comment_list` (`id`) | `cc-notes log entry list <id>` |
 | Open an investigation on a suspicion | `investigation_open` (`title`, `premise`, `findings`) | `cc-notes investigation open "<title>" "<premise>"` |
 | Append evidence per triage step | `investigation_append` (`id`, `text`, `attach`) | `cc-notes investigation append <id> "<text>"` |
-| Rule a suspect out / in, which every verdict requires | `investigation_finding_clear` / `_confirm` (`id`, `finding`, `text`) | `cc-notes investigation finding clear <id> <finding> --why "<evidence>"` |
-| Record the root cause | `investigation_root_cause` (`id`, `text`) | `cc-notes investigation root-cause <id> "<cause>"` |
+| Rule a suspect out / in, which every verdict requires | `investigation_finding_clear` / `_confirm` (`id`, `finding`, `note`) | `cc-notes investigation finding clear <id> <finding> --why "<evidence>"` |
+| Record the root cause | `investigation_root_cause` (`id`, `note`) | `cc-notes investigation root-cause <id> "<cause>"` |
 | Record the fixing commits | `investigation_fix` (`id`, `commits`) | `cc-notes investigation fix <id> --commit <sha>` |
-| Close with proof, or reopen on regression | `investigation_confirm` (`id`, `text`, `force`) / `investigation_reopen` (`id`, `text`) | `cc-notes investigation confirm <id> "<proof>"` |
+| Close with proof, or reopen on regression | `investigation_confirm` (`id`, `note`, `force`) / `investigation_reopen` (`id`, `note`) | `cc-notes investigation confirm <id> "<proof>"` |
 | File a friction complaint | `papercut` (`body`) | `cc-notes papercut "<complaint>"` |
 | Skim recent complaints, newest first | `papercut_list` (`limit`) | `cc-notes papercut list` |
-| Read one complaint in full | `papercut_show` (`log_id`, `index`) | `cc-notes papercut show <log-id> <index>` |
+| Read one complaint in full | `papercut_show` (`id`, `index`) | `cc-notes papercut show <log-id> <index>` |
 | Retrieve an attachment | `attachment_get` (`id`, `name`, `output`) | `cc-notes attachment get <id> <name> -o <path>` |
 | Open a tracking register | `ledger_add` (`title`, `columns`) | `cc-notes ledger add "<title>" --column <name>` |
 | Refresh a whole row set | `ledger_sync` (`id`, `rows`, `prune`) | `cc-notes ledger sync <id> --file rows.json --prune` |
@@ -458,7 +458,7 @@ verdict in the entry text, evidence attached to the entity:
 ```json
 {
   "id": "4a81c9e",
-  "entry": "phase 2: forced unmount wedges the mount runtime; panic captured",
+  "text": "phase 2: forced unmount wedges the mount runtime; panic captured",
   "attach": ["results/scenario.log", "results/panics/boot.panic"]
 }
 ```
@@ -567,7 +567,7 @@ accumulate rather than reset. Re-open anything from a pointer with `show` (the
 A **plan** records one approved approach verbatim — context, approach, pitfalls, verification —
 and tracks its execution as typed state: `plan_approve` gates a draft, `plan_start` opens
 execution and stamps `started_at`, `plan_done`/`plan_abandon` close it with an optional
-`outcome` recording what actually happened, and `plan_reopen` resumes a closed plan. Plans are
+`note` recording what actually happened, and `plan_reopen` resumes a closed plan. Plans are
 repo-wide and anchor to commits, paths, dirs, and branches exactly like a note (so `relevant`
 surfaces them), but carry no verify/drift lifecycle: the status machine is the staleness signal.
 The tasks implementing a plan point at it (`plan` on `task_add`/`task_edit`); `plan_show`

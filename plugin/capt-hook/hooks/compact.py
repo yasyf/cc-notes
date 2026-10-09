@@ -100,11 +100,8 @@ def _cli_command(args: Sequence[str]) -> tuple[str, list[str]] | None:
 
 
 def _mcp_id(raw: dict[str, object]) -> str | None:
-    for key in ("id", "task"):
-        value = raw.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
+    value = raw.get("id")
+    return value if isinstance(value, str) and value else None
 
 
 def _resolve_id(
