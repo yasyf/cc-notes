@@ -457,7 +457,7 @@ def nudge_mcp_ephemeral_reference(evt: PostToolUseEvent) -> HookResult | None:
     record_fire(evt)
     return evt.warn(
         "This record cites a purge-bound path (`/tmp`, `/var`, or a scratchpad). "
-        "Put the content in the `body` or `text` param and store artifacts with the `attach` param of `log_append`."
+        "Put the content in the `body` param and store artifacts with the `attach` param of `log_append`."
     )
 
 
