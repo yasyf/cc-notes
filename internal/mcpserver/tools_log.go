@@ -9,7 +9,7 @@ import (
 type logAddArgs struct {
 	localityArgs
 	Title  string   `json:"title" jsonschema:"short handle for the log"`
-	Entry  string   `json:"entry,omitempty" jsonschema:"optional first entry text"`
+	Text   string   `json:"text,omitempty" jsonschema:"optional first entry text"`
 	Labels []string `json:"labels,omitempty" jsonschema:"labels (echoed as 'tags' in the log DTO)"`
 	anchorSetArgs
 	Attach []string `json:"attach,omitempty" jsonschema:"file paths to attach via git-lfs"`
@@ -17,7 +17,7 @@ type logAddArgs struct {
 
 type logAppendArgs struct {
 	ID      string   `json:"id" jsonschema:"log id prefix"`
-	Entry   string   `json:"entry,omitempty" jsonschema:"entry text (required unless attach is given)"`
+	Text    string   `json:"text,omitempty" jsonschema:"entry text (required unless attach is given)"`
 	Attach  []string `json:"attach,omitempty" jsonschema:"file paths to attach via git-lfs"`
 	Replace bool     `json:"replace,omitempty" jsonschema:"allow attach to overwrite a live attachment with the same name"`
 }
@@ -47,7 +47,7 @@ type logListArgs struct {
 func registerLog(ts *toolset, b *bridge) {
 	addTool(ts, &mcp.Tool{Name: "log_add", Description: "Create an append-only log (incident timeline, rollout log, debugging record). The ack is a summary carrying the entry tally; log_show reads the entries back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logAddArgs) (*mcp.CallToolResult, any, error) {
-			flags, err := freeTextFlag([]string{"--json"}, "--entry", in.Entry)
+			flags, err := freeTextFlag([]string{"--json"}, "--entry", in.Text)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -60,7 +60,7 @@ func registerLog(ts *toolset, b *bridge) {
 
 	addTool(ts, &mcp.Tool{Name: "log_append", Description: "Append one entry to a log, and/or attach files. Entries are append-only. The ack is a summary carrying the entry tally; log_show reads the entries back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in logAppendArgs) (*mcp.CallToolResult, any, error) {
-			flags, err := freeTextFlag([]string{"--json"}, "--entry", in.Entry)
+			flags, err := freeTextFlag([]string{"--json"}, "--entry", in.Text)
 			if err != nil {
 				return nil, nil, err
 			}

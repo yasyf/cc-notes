@@ -3423,7 +3423,7 @@ def test_mcp_ephemeral_refs_scans_content_fields() -> None:
     """mcp_ephemeral_refs collects tool_input content-field values that name a purge-bound path."""
     hit = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__note_add", event=Event.PostToolUse, tool_input={"title": "Fact", "body": "detail in /tmp/x.md"})
     check("mcp refs: /tmp in body collected", mcp_ephemeral_refs(hit) == ["detail in /tmp/x.md"], repr(mcp_ephemeral_refs(hit)))
-    entry = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__log_append", event=Event.PostToolUse, tool_input={"entry": "output in /private/var/folders/x/out.log"})
+    entry = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__log_append", event=Event.PostToolUse, tool_input={"text": "output in /private/var/folders/x/out.log"})
     check("mcp refs: /private/var in log_append entry collected", mcp_ephemeral_refs(entry) == ["output in /private/var/folders/x/out.log"], repr(mcp_ephemeral_refs(entry)))
     title = mock_tool_event(tool="mcp__plugin_cc-notes_cc-notes__doc_add", event=Event.PostToolUse, tool_input={"title": "see session scratchpad h.md", "body": "b"})
     check("mcp refs: scratchpad in title collected", mcp_ephemeral_refs(title) == ["see session scratchpad h.md"], repr(mcp_ephemeral_refs(title)))
@@ -3492,7 +3492,7 @@ def test_redirect_mapped_tool() -> None:
 
 def test_redirect_param_hints_by_family() -> None:
     """param_hint keys on the full tool-family prefix, not the trailing verb; each params clause is verified against tools_*.go."""
-    check("hint: task_criterion_met -> task/crit/text/script", param_hint("task_criterion_met") == "key params: task, crit/text, script", param_hint("task_criterion_met"))
+    check("hint: task_criterion_met -> id/criterion/text/script", param_hint("task_criterion_met") == "key params: id, criterion/text, script", param_hint("task_criterion_met"))
     check("hint: task_criterion_add shares the family clause", param_hint("task_criterion_add") == param_hint("task_criterion_met"))
     check("hint: runbook_step_add -> id/text/command/placement", "placement (first/last/before/after)" in param_hint("runbook_step_add"), param_hint("runbook_step_add"))
     check("hint: runbook_run_done -> id/step/note", param_hint("runbook_run_done") == "key params: id, step, note", param_hint("runbook_run_done"))
@@ -3540,7 +3540,7 @@ def test_redirect_fires_on_criterion_arity_error(monkeypatch, tmp_path) -> None:
     err = "Exit code 2\nError: accepts 2 arg(s), received 1 (TASK CRIT)"
     result = redirect_failed_cc_notes(redirect_event(tmp_path, "cc-notes task criterion met abc1234", err))
     check("redirect arity: names task_criterion_met", result is not None and "task_criterion_met" in result.message, result.message if result else "")
-    check("redirect arity: param hint is the criterion family clause", result is not None and "task, crit/text, script" in result.message, result.message if result else "")
+    check("redirect arity: param hint is the criterion family clause", result is not None and "id, criterion/text, script" in result.message, result.message if result else "")
 
 
 
@@ -4891,15 +4891,15 @@ def test_compact_tracker_cli_json_create_uses_regex(tmp_path) -> None:
     check("compact cli-json: mints full id via regex", evt.ctx.s.load(TouchedEntities).entries[0].id == full, repr(evt.ctx.s.load(TouchedEntities)))
 
 
-def test_compact_tracker_mcp_task_validate_uses_task_param(tmp_path) -> None:
-    """MCP task_validate carries its id under the `task` param (like task_criterion_*), so it records rather than dropping."""
+def test_compact_tracker_mcp_task_validate_uses_id_param(tmp_path) -> None:
+    """MCP task_validate carries its task under the `id` param, so it records rather than dropping."""
     evt = mock_tool_event(
         tool="mcp__plugin_cc-notes_cc-notes__task_validate", event=Event.PostToolUse,
-        tool_input={"task": "task9999"}, session_dir=tmp_path,
+        tool_input={"id": "task9999"}, session_dir=tmp_path,
     )
     record_touched_entities(evt)
     e = evt.ctx.s.load(TouchedEntities).entries[0]
-    check("compact task_validate: id from `task` param", e.id == "task9999", e.id)
+    check("compact task_validate: id from `id` param", e.id == "task9999", e.id)
     check("compact task_validate: kind task, edit verb", e.kind == "task" and e.verbs == ["edit"], repr(e))
 
 

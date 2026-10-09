@@ -82,7 +82,7 @@ RECORD_SUBCOMMANDS = frozenset((noun, verb) for noun in ("note", "doc", "log", "
 RECORD_BARE_NOUNS: dict[str, frozenset[str]] = {"papercut": frozenset({"list"})}
 MCP_RECORD_WRITE_TOOLS = ("note_add", "doc_add", "answer_add", "log_add", "log_append", "note_edit", "doc_edit", "answer_edit", "papercut")
 MCP_RECORD_WRITE_NAMES = tuple(MCP_TOOL_PREFIX + t for t in MCP_RECORD_WRITE_TOOLS)
-MCP_CONTENT_FIELDS = ("title", "body", "entry")
+MCP_CONTENT_FIELDS = ("title", "body", "text")
 
 
 class DurableInternalWrite(CustomCondition):

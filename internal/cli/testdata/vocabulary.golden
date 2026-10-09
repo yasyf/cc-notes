@@ -2630,6 +2630,7 @@ command: cc-notes task done
   flags:
     --force shorthand=none type=bool default="false" usage="close even with unmet criteria"
     --json shorthand=none type=bool default="false" usage="emit JSON"
+    --note shorthand=none type=string default="" usage="closing note, recorded as a task comment"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
 

@@ -22,7 +22,7 @@ from .common import (
 
 def param_hint(name: str) -> str:
     if name.startswith("task_criterion_"):
-        return "key params: task, crit/text, script"
+        return "key params: id, criterion/text, script"
     if name.startswith("runbook_step_"):
         return "key params: id, text, command, placement (first/last/before/after)"
     if name.startswith("runbook_run_"):

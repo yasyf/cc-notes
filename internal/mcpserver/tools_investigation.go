@@ -46,7 +46,7 @@ type investigationFindingEditArgs struct {
 type investigationFindingDispositionArgs struct {
 	ID      string `json:"id" jsonschema:"investigation id prefix"`
 	Finding string `json:"finding" jsonschema:"finding id prefix"`
-	Text    string `json:"text" jsonschema:"evidence supporting the finding disposition"`
+	Note    string `json:"note" jsonschema:"evidence supporting the finding disposition"`
 }
 
 type investigationFindingRefArgs struct {
@@ -64,24 +64,24 @@ type investigationEntryListArgs struct {
 
 type investigationTransitionArgs struct {
 	ID   string `json:"id" jsonschema:"investigation id prefix"`
-	Text string `json:"text" jsonschema:"evidence or reason for the transition"`
+	Note string `json:"note" jsonschema:"evidence or reason for the transition"`
 }
 
 type investigationVerdictArgs struct {
 	ID    string `json:"id" jsonschema:"investigation id prefix"`
-	Text  string `json:"text" jsonschema:"evidence supporting the verdict"`
+	Note  string `json:"note" jsonschema:"evidence supporting the verdict"`
 	Force bool   `json:"force,omitempty" jsonschema:"record the verdict even with open findings"`
 }
 
 type investigationFixArgs struct {
 	ID      string   `json:"id" jsonschema:"investigation id prefix"`
-	Text    string   `json:"text,omitempty" jsonschema:"fix summary"`
+	Note    string   `json:"note,omitempty" jsonschema:"fix summary"`
 	Commits []string `json:"commits" jsonschema:"fixing commit shas (at least one); an unmerged PR's head sha counts"`
 }
 
 type investigationAbandonArgs struct {
 	ID   string `json:"id" jsonschema:"investigation id prefix"`
-	Text string `json:"text,omitempty" jsonschema:"reason for abandoning the investigation"`
+	Note string `json:"note,omitempty" jsonschema:"reason for abandoning the investigation"`
 }
 
 type investigationEditArgs struct {
@@ -192,13 +192,13 @@ func registerInvestigation(ts *toolset, b *bridge) {
 
 	addTool(ts, &mcp.Tool{Name: "investigation_finding_clear", Description: "Clear a finding with supporting evidence. The ack is a summary carrying the finding tally; investigation_finding_list reads the findings back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationFindingDispositionArgs) (*mcp.CallToolResult, any, error) {
-			flags := optStr([]string{"--json"}, "--why", in.Text)
+			flags := optStr([]string{"--json"}, "--why", in.Note)
 			return b.run(ctx, argvFor([]string{"investigation", "finding", "clear"}, flags, in.ID, in.Finding)...)
 		})
 
 	addTool(ts, &mcp.Tool{Name: "investigation_finding_confirm", Description: "Confirm a finding with supporting evidence. The ack is a summary carrying the finding tally; investigation_finding_list reads the findings back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationFindingDispositionArgs) (*mcp.CallToolResult, any, error) {
-			flags := optStr([]string{"--json"}, "--why", in.Text)
+			flags := optStr([]string{"--json"}, "--why", in.Note)
 			return b.run(ctx, argvFor([]string{"investigation", "finding", "confirm"}, flags, in.ID, in.Finding)...)
 		})
 
@@ -214,7 +214,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 
 	addTool(ts, &mcp.Tool{Name: "investigation_root_cause", Description: "Record the root cause with supporting evidence and mark an investigation root_caused — the step an open investigation takes before investigation_fix."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationTransitionArgs) (*mcp.CallToolResult, any, error) {
-			positionals, err := investigationTextPositionals(in.ID, in.Text, true)
+			positionals, err := investigationTextPositionals(in.ID, in.Note, true)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -223,7 +223,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 
 	addTool(ts, &mcp.Tool{Name: "investigation_fix", Description: "Record at least one fixing commit and mark an investigation fixed."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationFixArgs) (*mcp.CallToolResult, any, error) {
-			positionals, err := investigationTextPositionals(in.ID, in.Text, false)
+			positionals, err := investigationTextPositionals(in.ID, in.Note, false)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -233,7 +233,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 
 	addTool(ts, &mcp.Tool{Name: "investigation_confirm", Description: "Confirm an investigation's fix with proof (refuses with open findings unless force)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationVerdictArgs) (*mcp.CallToolResult, any, error) {
-			positionals, err := investigationTextPositionals(in.ID, in.Text, true)
+			positionals, err := investigationTextPositionals(in.ID, in.Note, true)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -243,7 +243,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 
 	addTool(ts, &mcp.Tool{Name: "investigation_exonerate", Description: "Falsify the investigation premise with evidence (refuses with open findings unless force)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationVerdictArgs) (*mcp.CallToolResult, any, error) {
-			positionals, err := investigationTextPositionals(in.ID, in.Text, true)
+			positionals, err := investigationTextPositionals(in.ID, in.Note, true)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -253,7 +253,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 
 	addTool(ts, &mcp.Tool{Name: "investigation_reopen", Description: "Reopen an investigation with a reason."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationTransitionArgs) (*mcp.CallToolResult, any, error) {
-			positionals, err := investigationTextPositionals(in.ID, in.Text, true)
+			positionals, err := investigationTextPositionals(in.ID, in.Note, true)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -262,7 +262,7 @@ func registerInvestigation(ts *toolset, b *bridge) {
 
 	addTool(ts, &mcp.Tool{Name: "investigation_abandon", Description: "Abandon an investigation without a verdict."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in investigationAbandonArgs) (*mcp.CallToolResult, any, error) {
-			positionals, err := investigationTextPositionals(in.ID, in.Text, false)
+			positionals, err := investigationTextPositionals(in.ID, in.Note, false)
 			if err != nil {
 				return nil, nil, err
 			}

@@ -25,7 +25,7 @@ func TestFreeTextDashRejected(t *testing.T) {
 	}{
 		{"runbook_edit body", "runbook_edit", "body", map[string]any{"id": rb.ID}},
 		{"runbook_comment body", "runbook_comment", "body", map[string]any{"id": rb.ID}},
-		{"task_criterion_add text", "task_criterion_add", "text", map[string]any{"task": task.ID}},
+		{"task_criterion_add text", "task_criterion_add", "text", map[string]any{"id": task.ID}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

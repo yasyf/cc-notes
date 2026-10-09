@@ -157,7 +157,7 @@ func TestAssessGates(t *testing.T) {
 			name: "a done task gates",
 			setup: func(t *testing.T, c *notes.Client, _ string) model.EntityID {
 				id := task(t, c, "wire the rotor", "main")
-				if _, err := c.DoneTask(t.Context(), id, true); err != nil {
+				if _, err := c.DoneTask(t.Context(), id, true, ""); err != nil {
 					t.Fatalf("DoneTask: %v", err)
 				}
 				return id

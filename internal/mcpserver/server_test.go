@@ -379,6 +379,31 @@ func TestTaskLifecycle(t *testing.T) {
 	if withCrit.Status != "open" {
 		t.Fatalf("with-criteria add = %+v, want open", withCrit)
 	}
+
+	criteria := decode[[]struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+		Note   string `json:"note"`
+	}](t, call(t, cs, "task_criterion_list", map[string]any{"id": withCrit.ID}))
+	call(t, cs, "task_criterion_met", map[string]any{"id": withCrit.ID, "criterion": criteria[0].ID, "note": "go vet is clean"})
+	met := decode[[]struct {
+		Status string `json:"status"`
+		Note   string `json:"note"`
+	}](t, call(t, cs, "task_criterion_list", map[string]any{"id": withCrit.ID}))
+	if met[0].Status != "met" || met[0].Note != "go vet is clean" {
+		t.Fatalf("criterion = %+v, want met with its note", met[0])
+	}
+
+	closed := decode[taskOut](t, call(t, cs, "task_done", map[string]any{"id": withCrit.ID, "note": "shipped in the first pass"}))
+	if closed.Status != "done" {
+		t.Fatalf("closed = %+v, want done", closed)
+	}
+	comments := decode[[]struct {
+		Body string `json:"body"`
+	}](t, call(t, cs, "task_comment_list", map[string]any{"id": withCrit.ID}))
+	if len(comments) != 1 || comments[0].Body != "shipped in the first pass" {
+		t.Fatalf("comments = %+v, want the closing note", comments)
+	}
 }
 
 // TestRunbookRunLoop drives create → run start → done/skip → finish → show
@@ -475,7 +500,7 @@ func TestInvestigationLifecycle(t *testing.T) {
 	call(t, cs, "investigation_finding_clear", map[string]any{
 		"id":      id,
 		"finding": opened.Findings[0].ID,
-		"text":    "the fixture was malformed",
+		"note":    "the fixture was malformed",
 	})
 	cleared := show[investigationOut](t, cs, "investigation_show", id)
 	if cleared.Findings[0].Status != "cleared" || cleared.Findings[0].Note != "the fixture was malformed" {
@@ -484,7 +509,7 @@ func TestInvestigationLifecycle(t *testing.T) {
 
 	if ack := decode[investigationSummaryOut](t, call(t, cs, "investigation_root_cause", map[string]any{
 		"id":   id,
-		"text": "the fixture escaped the delimiter twice",
+		"note": "the fixture escaped the delimiter twice",
 	})); ack.Status != "root_caused" || ack.RootCause != "" {
 		t.Fatalf("root-cause ack = %+v, want root_caused with no root_cause text", ack)
 	}
@@ -495,7 +520,7 @@ func TestInvestigationLifecycle(t *testing.T) {
 
 	if ack := decode[investigationSummaryOut](t, call(t, cs, "investigation_fix", map[string]any{
 		"id":      id,
-		"text":    "corrected fixture escaping",
+		"note":    "corrected fixture escaping",
 		"commits": []string{fixCommit},
 	})); ack.Status != "fixed" {
 		t.Fatalf("fix ack = %+v, want fixed", ack)
@@ -507,7 +532,7 @@ func TestInvestigationLifecycle(t *testing.T) {
 
 	if ack := decode[investigationSummaryOut](t, call(t, cs, "investigation_confirm", map[string]any{
 		"id":   id,
-		"text": "the quoted fixture now passes",
+		"note": "the quoted fixture now passes",
 	})); ack.Status != "confirmed" {
 		t.Fatalf("confirm ack = %+v, want confirmed", ack)
 	}
@@ -532,7 +557,7 @@ func TestInvestigationVerdictForceOverMCP(t *testing.T) {
 	}))
 	finding := show[investigationOut](t, cs, "investigation_show", id).Findings[0]
 
-	args := map[string]any{"id": id, "text": "the fixture was malformed"}
+	args := map[string]any{"id": id, "note": "the fixture was malformed"}
 	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "investigation_exonerate", Arguments: args})
 	if err != nil {
 		t.Fatalf("call investigation_exonerate: %v", err)
@@ -631,8 +656,8 @@ func TestPlanLifecycle(t *testing.T) {
 	}
 
 	if ack := decode[planSummaryOut](t, call(t, cs, "plan_done", map[string]any{
-		"id":      id,
-		"outcome": "landed as nine kinds",
+		"id":   id,
+		"note": "landed as nine kinds",
 	})); ack.Status != "done" || ack.Outcome != "" {
 		t.Fatalf("done ack = %+v, want done with no outcome text", ack)
 	}

@@ -58,7 +58,7 @@ func TestDoneGate(t *testing.T) {
 	task := mustTask(t, c, notes.TaskSpec{Title: "gated", Branch: "main", Criteria: []string{"tests pass"}})
 
 	// The gate refuses close while a criterion is unmet.
-	_, err := c.DoneTask(ctx, task.ID, false)
+	_, err := c.DoneTask(ctx, task.ID, false, "")
 	var unmet *notes.UnmetCriteriaError
 	if !errors.As(err, &unmet) {
 		t.Fatalf("DoneTask with unmet criterion = %v, want *UnmetCriteriaError", err)
@@ -69,7 +69,7 @@ func TestDoneGate(t *testing.T) {
 
 	// force closes despite the unmet criterion.
 	forced := mustTask(t, c, notes.TaskSpec{Title: "forced", Branch: "main", Criteria: []string{"skip"}})
-	done, err := c.DoneTask(ctx, forced.ID, true)
+	done, err := c.DoneTask(ctx, forced.ID, true, "")
 	if err != nil {
 		t.Fatalf("DoneTask force: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestDoneGate(t *testing.T) {
 	if _, err := c.SetCriterionStatus(ctx, task.ID, crit.ID[:7], model.CriterionMet, ""); err != nil {
 		t.Fatalf("SetCriterionStatus: %v", err)
 	}
-	if done, err := c.DoneTask(ctx, task.ID, false); err != nil || done.Status != model.StatusDone {
+	if done, err := c.DoneTask(ctx, task.ID, false, ""); err != nil || done.Status != model.StatusDone {
 		t.Fatalf("DoneTask after met = %q/%v, want done/nil", done.Status, err)
 	}
 }
@@ -190,7 +190,7 @@ func TestReadyTasks(t *testing.T) {
 	if _, err := c.ClaimTask(ctx, blocker.ID); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
-	if _, err := c.DoneTask(ctx, blocker.ID, false); err != nil {
+	if _, err := c.DoneTask(ctx, blocker.ID, false, ""); err != nil {
 		t.Fatalf("DoneTask: %v", err)
 	}
 	ready, err = c.ReadyTasks(ctx, notes.ScopeNamed, "main")
@@ -652,7 +652,7 @@ func TestDoneTaskLinkDedupes(t *testing.T) {
 	if _, err := c.LinkCommit(ctx, task.ID, "HEAD"); err != nil {
 		t.Fatalf("LinkCommit: %v", err)
 	}
-	done, err := c.DoneTask(ctx, task.ID, false)
+	done, err := c.DoneTask(ctx, task.ID, false, "")
 	if err != nil {
 		t.Fatalf("DoneTask: %v", err)
 	}

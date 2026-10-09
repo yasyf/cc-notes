@@ -11,17 +11,22 @@ import (
 )
 
 var argSynonyms = map[string][]string{
-	"text":      {"body"},
+	"text":      {"body", "note"},
 	"comment":   {"body"},
 	"complaint": {"body"},
+	"title":     {"body"},
 	"evidence":  {"note"},
+	"reason":    {"note"},
+	"outcome":   {"note"},
+	"crit":      {"criterion"},
+	"task":      {"id"},
+	"log_id":    {"id"},
 	"tags":      {"labels"},
 }
 
 var argAliases = map[string][]string{
-	"body":  {"description", "entry", "text"},
-	"entry": {"body", "description", "text"},
-	"text":  {"body", "description", "entry"},
+	"body": {"description", "entry", "text"},
+	"text": {"body", "description", "entry"},
 }
 
 func didYouMeanMiddleware(props map[string]toolProps) mcp.Middleware {

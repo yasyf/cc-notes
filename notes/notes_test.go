@@ -261,7 +261,7 @@ func TestTaskLifecycle(t *testing.T) {
 		t.Errorf("RenewTask after claim: %v", err)
 	}
 
-	done, err := c.DoneTask(ctx, task.ID, false)
+	done, err := c.DoneTask(ctx, task.ID, false, "")
 	if err != nil {
 		t.Fatalf("DoneTask: %v", err)
 	}
