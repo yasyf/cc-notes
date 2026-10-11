@@ -40,6 +40,7 @@ var flagSynonyms = map[string][]string{
 	"to":            {"branch"},
 	"unassign":      {"no-assignee"},
 	"remove":        {"clear"},
+	"C":             {"repo"},
 }
 
 // flagError wraps a pflag parse error as a UsageError (exit 2). When the failing

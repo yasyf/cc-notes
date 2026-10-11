@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`-C` points at `--repo`.** A git-style `-C <dir>` on any verb, such as
+  `ccn -C <dir> papercut`, now answers `did you mean --repo?` alongside the
+  verb's accepted flags, instead of listing those flags with no remedy.
+
 ### Changed
 - **`task done` links no foreign `HEAD`.** Run with `--repo` from a working
   directory outside that checkout, `task done` links no commit unless

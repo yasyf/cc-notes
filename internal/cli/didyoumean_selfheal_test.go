@@ -69,6 +69,11 @@ func TestSelfHealingErrors(t *testing.T) {
 			absent:   []string{"exists on:"},
 		},
 		{
+			name:     "git-style -C before the verb points at the global --repo",
+			args:     []string{"-C", dir, "papercut", "--body", "x"},
+			contains: []string{"unknown shorthand flag: 'C' in -C", "papercut takes: ", "did you mean --repo?"},
+		},
+		{
 			name:     "grep is a command hint",
 			args:     []string{"note", "list", "--grep", "x"},
 			contains: []string{"unknown flag: --grep", `use "note search QUERY" or top-level "search QUERY"`},
