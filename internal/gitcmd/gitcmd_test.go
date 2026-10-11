@@ -1048,6 +1048,16 @@ func TestRoot(t *testing.T) {
 	if _, err := (gitcmd.Git{Dir: t.TempDir()}).Root(ctx); err == nil {
 		t.Fatal("root outside a repo: want error")
 	}
+
+	spaced := filepath.Join(t.TempDir(), "repo ")
+	gittest.Git(t, filepath.Dir(spaced), "init", "-q", spaced)
+	wantSpaced, err := filepath.EvalSymlinks(spaced)
+	if err != nil {
+		t.Fatalf("eval symlinks: %v", err)
+	}
+	if got, err := (gitcmd.Git{Dir: spaced}).Root(ctx); err != nil || got != wantSpaced {
+		t.Fatalf("root with a trailing space: got %q, %v; want %q", got, err, wantSpaced)
+	}
 }
 
 func TestMergeBase(t *testing.T) {
