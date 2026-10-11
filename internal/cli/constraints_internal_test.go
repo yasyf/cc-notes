@@ -58,6 +58,7 @@ func TestConvertedCommandExclusions(t *testing.T) {
 			"--branch, --backlog are mutually exclusive",
 		}},
 		{[]string{"task", "claim"}, []string{"--steal, --sync are mutually exclusive"}},
+		{[]string{"task", "done"}, []string{"--commit, --no-commit are mutually exclusive"}},
 		{[]string{"note", "expire"}, []string{"--reason, --clear are mutually exclusive"}},
 		{[]string{"doc", "expire"}, []string{"--reason, --clear are mutually exclusive"}},
 		{[]string{"sprint", "edit"}, []string{

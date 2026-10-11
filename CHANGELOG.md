@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`task done` links no foreign `HEAD`.** Run with `--repo` from a working
+  directory outside that checkout, `task done` links no commit unless
+  `--commit` names one, instead of anchoring that checkout's unrelated `HEAD`.
 - **MCP tools name each argument one way.** The record a tool acts on is always
   `id`, a criterion is `criterion`, and free text explaining an action is `note`.
   `task_criterion_*`, `task_validate`, and `task_comment_list` take `id` (was
@@ -18,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its replacement, and `papercut` given a `title` points at `body`.
 
 ### Added
+- **Name the commit a task closes on.** `task done --commit <rev>` (repeatable)
+  links the named commits instead of `HEAD`, and `--no-commit` links none, for
+  work that landed in another repository. `task_done` takes `commits` and
+  `no_commit`.
 - **Close a task with a note.** `task done --note` and `task_done`'s `note`
   record a closing note as a task comment in the same commit as the close.
 - **Every free-text flag takes a file.** Each verb that records `--body` (note,

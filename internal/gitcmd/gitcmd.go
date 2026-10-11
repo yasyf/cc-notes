@@ -835,7 +835,7 @@ func (g Git) Root(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("worktree root: %w", err)
 	}
-	return strings.TrimSpace(out), nil
+	return strings.TrimSuffix(out, "\n"), nil
 }
 
 // CommonDir returns the physical shared git directory, the main repository's

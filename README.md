@@ -153,7 +153,7 @@ An invalid binding or an unavailable or replaced source produces an error instea
 | `cc-notes storage bind --source PATH` | Share a local repository's records while keeping the current checkout's context |
 | `cc-notes status` | Read-only board: backlog, your branch's tasks, in-progress claims, notes needing review |
 | `cc-notes task add` | Create a task (`--backlog` for the shared queue, `--criterion` for a validation gate) |
-| `cc-notes task start` / `done` | Claim a task onto your branch; close it and anchor your HEAD commit |
+| `cc-notes task start` / `done` | Claim a task onto your branch; close it and link the commit that implemented it |
 | `cc-notes task validate` | Run a task's stored criterion scripts and record each as met or failed; `task done` gates on the criteria |
 | `cc-notes note add` | Add a note, optionally anchored to a path, directory, commit, or branch |
 | `cc-notes note review` | Report freshness verdicts, including `HISTORY-UNAVAILABLE` when shallow history prevents a commit reachability decision |

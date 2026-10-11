@@ -55,9 +55,11 @@ type taskStartArgs struct {
 }
 
 type taskDoneArgs struct {
-	ID    string `json:"id" jsonschema:"task id prefix"`
-	Note  string `json:"note,omitempty" jsonschema:"closing note, recorded as a task comment"`
-	Force bool   `json:"force,omitempty" jsonschema:"close even with unmet criteria"`
+	ID       string   `json:"id" jsonschema:"task id prefix"`
+	Note     string   `json:"note,omitempty" jsonschema:"closing note, recorded as a task comment"`
+	Force    bool     `json:"force,omitempty" jsonschema:"close even with unmet criteria"`
+	Commits  []string `json:"commits,omitempty" jsonschema:"commits that implement the task (sha or revision; default HEAD)"`
+	NoCommit bool     `json:"no_commit,omitempty" jsonschema:"link no commit, for work that landed in another repository"`
 }
 
 type taskEditArgs struct {
@@ -213,7 +215,7 @@ func registerTask(ts *toolset, b *bridge) {
 
 	idTool(ts, b, "task_renew", "Renew the lease on a task you hold.", "task", "renew")
 
-	addTool(ts, &mcp.Tool{Name: "task_done", Description: "Close a task as done (refuses with unmet criteria unless force), optionally with a closing note; links the current commit."},
+	addTool(ts, &mcp.Tool{Name: "task_done", Description: "Close a task as done (refuses with unmet criteria unless force), optionally with a closing note; links commits, else the current commit, or none with no_commit."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskDoneArgs) (*mcp.CallToolResult, any, error) {
 			flags := []string{"--json"}
 			flags, err := freeTextFlag(flags, "--note", in.Note)
@@ -221,6 +223,8 @@ func registerTask(ts *toolset, b *bridge) {
 				return nil, nil, err
 			}
 			flags = optBool(flags, "--force", in.Force)
+			flags = optRepeated(flags, "--commit", in.Commits)
+			flags = optBool(flags, "--no-commit", in.NoCommit)
 			return b.run(ctx, argvFor([]string{"task", "done"}, flags, in.ID)...)
 		})
 

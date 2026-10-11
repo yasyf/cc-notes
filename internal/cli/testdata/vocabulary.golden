@@ -2625,11 +2625,13 @@ command: cc-notes task dep
 command: cc-notes task done
   use: done ID
   aliases: -
-  short: Mark a task done and anchor your HEAD commit onto it
+  short: Mark a task done and link the commit that implements it
   hidden: false
   flags:
+    --commit shorthand=none type=stringArray default="[]" usage="commit that implements the task (repeatable; default: HEAD, when the working directory is in the --repo checkout)"
     --force shorthand=none type=bool default="false" usage="close even with unmet criteria"
     --json shorthand=none type=bool default="false" usage="emit JSON"
+    --no-commit shorthand=none type=bool default="false" usage="link no commit"
     --note shorthand=none type=string default="" usage="closing note, recorded as a task comment"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory"
