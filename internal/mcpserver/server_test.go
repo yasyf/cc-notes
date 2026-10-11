@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -403,6 +404,35 @@ func TestTaskLifecycle(t *testing.T) {
 	}](t, call(t, cs, "task_comment_list", map[string]any{"id": withCrit.ID}))
 	if len(comments) != 1 || comments[0].Body != "shipped in the first pass" {
 		t.Fatalf("comments = %+v, want the closing note", comments)
+	}
+}
+
+// TestTaskDoneCommitLinks pins task_done's commit selection: commits links the
+// named commit in place of HEAD, and no_commit links none.
+func TestTaskDoneCommitLinks(t *testing.T) {
+	dir := initRepo(t)
+	seed := gittest.Git(t, dir, "rev-parse", "HEAD")
+	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "later")
+	cs := connect(t)
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want []string
+	}{
+		{"commits", map[string]any{"commits": []string{seed[:7]}}, []string{seed}},
+		{"no_commit", map[string]any{"no_commit": true}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			added := decode[taskOut](t, call(t, cs, "task_add", map[string]any{"title": "Close by " + tc.name, "no_validation_criteria": true}))
+			tc.args["id"] = added.ID
+			call(t, cs, "task_done", tc.args)
+			shown := show[struct {
+				Commits []string `json:"commits"`
+			}](t, cs, "task_show", added.ID)
+			if !slices.Equal(shown.Commits, tc.want) {
+				t.Fatalf("commits = %v, want %v", shown.Commits, tc.want)
+			}
+		})
 	}
 }
 

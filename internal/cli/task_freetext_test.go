@@ -210,6 +210,7 @@ func TestTaskFlagExclusionsExit2(t *testing.T) {
 		args []string
 	}{
 		{"claim steal/sync", []string{"task", "claim", "deadbeef", "--steal", "--sync"}},
+		{"done commit/no-commit", []string{"task", "done", "deadbeef", "--commit", "HEAD", "--no-commit"}},
 		{"edit assignee", []string{"task", "edit", "x", "--assignee", "a", "--no-assignee"}},
 		{"edit parent", []string{"task", "edit", "x", "--parent", "p", "--no-parent"}},
 		{"edit sprint", []string{"task", "edit", "x", "--sprint", "s", "--no-sprint"}},

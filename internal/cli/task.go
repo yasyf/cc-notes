@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -510,10 +512,11 @@ func newTaskRenewCmd() *cobra.Command {
 
 func newTaskDoneCmd() *cobra.Command {
 	var note string
-	var force, jsonOut bool
+	var commits []string
+	var force, noCommit, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "done ID",
-		Short: "Mark a task done and anchor your HEAD commit onto it",
+		Short: "Mark a task done and link the commit that implements it",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -528,7 +531,13 @@ func newTaskDoneCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			task, err := c.DoneTask(ctx, id, force, note)
+			link := notes.DoneLink{Revs: commits}
+			if len(commits) == 0 && !noCommit {
+				if link.Head, err = workingInContext(ctx, s); err != nil {
+					return err
+				}
+			}
+			task, err := c.DoneTask(ctx, id, force, note, link)
 			if err != nil {
 				return taskErr(err)
 			}
@@ -538,8 +547,34 @@ func newTaskDoneCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&note, "note", "", "closing note, recorded as a task comment")
 	flags.BoolVar(&force, "force", false, "close even with unmet criteria")
+	flags.StringArrayVar(&commits, "commit", nil, "commit that implements the task (repeatable; default: HEAD, when the working directory is in the --repo checkout)")
+	flags.BoolVar(&noCommit, "no-commit", false, "link no commit")
 	bindJSON(flags, &jsonOut)
+	cmd.MarkFlagsMutuallyExclusive("commit", "no-commit")
 	return cmd
+}
+
+// workingInContext reports whether the working directory is in the checkout
+// the store reads HEAD from, so that HEAD is where the caller's work lives. A
+// bare repository, or a working directory outside every git worktree, is in
+// none.
+func workingInContext(ctx context.Context, s *store.Store) (bool, error) {
+	if s.Bare() {
+		return false, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return false, fmt.Errorf("working directory: %w", err)
+	}
+	here, err := gitcmd.Git{Dir: cwd}.Root(ctx)
+	if err != nil {
+		return false, nil
+	}
+	there, err := s.Root(ctx)
+	if err != nil {
+		return false, err
+	}
+	return here == there, nil
 }
 
 func newTaskCancelCmd() *cobra.Command {

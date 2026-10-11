@@ -312,8 +312,9 @@ reclaims one. CLI: `cc-notes task stale`, `cc-notes task claim 7c1e3f0 --steal`.
 
 **6. Work and link.** Commit code with plain git, adding a `cc-task: <id>` trailer so the
 commit links to the task (queryable with `git log --grep` and `blame`). `task_done` closes
-the task and anchors your HEAD commit onto it; `task_show` then lists the commits that
-implemented it.
+the task and links your HEAD commit, or the `commits` you name; `task_show` then lists the
+commits that implemented it. Work that landed in another repository takes `no_commit` and a
+`note` naming where it landed.
 
 ```console
 $ git commit -m "Clamp API retry backoff at 30s
@@ -386,7 +387,7 @@ The full surface — every flag, property, default, and output shape — is in
 | Claim + move onto your branch | `task_start` (`id`) | `cc-notes task start <id>` |
 | Reclaim an expired lease | `task_claim` (`id`, `steal`) | `cc-notes task claim <id> --steal` |
 | Refresh a lease you hold | `task_renew` (`id`) | `cc-notes task renew <id>` |
-| Close and link HEAD | `task_done` (`id`, `note`) | `cc-notes task done <id>` |
+| Close and link HEAD | `task_done` (`id`, `note`, `commits` or `no_commit`) | `cc-notes task done <id> [--commit <rev> \| --no-commit]` |
 | Re-home a task | `task_edit` (`id`, `branch` or `backlog`) | `cc-notes task edit <id> --branch <branch>` |
 | Thread discussion on a task, sprint, project, runbook, or plan | `task_comment` / `sprint_comment` / `project_comment` / `runbook_comment` / `plan_comment` (`id`, `body`) | `cc-notes task comment <id> "<text>"` |
 | Record an approved plan verbatim | `plan_add` (`title`, `body`, `approved`, `paths`) | `cc-notes plan add "<title>" --body-file <plan.md> --approved` |

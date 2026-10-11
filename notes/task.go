@@ -439,12 +439,18 @@ func (c *Client) RenewTask(ctx context.Context, id model.EntityID) (model.Task, 
 	return snapshot.(model.Task), nil
 }
 
+// DoneLink names the commits DoneTask links: each of Revs resolved to a full
+// sha, and the context checkout's HEAD when Head is set and HEAD is born.
+type DoneLink struct {
+	Head bool
+	Revs []string
+}
+
 // DoneTask marks the task done, records a non-empty note as a comment in the
-// same commit, and links the repository's HEAD commit when one exists. It
-// refuses with a *ConflictError a task already closed, and — unless force is
-// set — with an *UnmetCriteriaError a task whose acceptance criteria have not
-// all been met.
-func (c *Client) DoneTask(ctx context.Context, id model.EntityID, force bool, note string) (model.Task, error) {
+// same commit, and links the commits link names. It refuses with a
+// *ConflictError a task already closed, and — unless force is set — with an
+// *UnmetCriteriaError a task whose acceptance criteria have not all been met.
+func (c *Client) DoneTask(ctx context.Context, id model.EntityID, force bool, note string, link DoneLink) (model.Task, error) {
 	task, err := c.Task(ctx, id)
 	if err != nil {
 		return model.Task{}, err
@@ -467,12 +473,21 @@ func (c *Client) DoneTask(ctx context.Context, id model.EntityID, force bool, no
 	if note != "" {
 		ops = append(ops, model.AddComment{Body: note})
 	}
-	head, err := c.head(ctx)
-	if err != nil {
-		return model.Task{}, err
+	for _, rev := range link.Revs {
+		sha, err := c.resolveCommit(ctx, rev)
+		if err != nil {
+			return model.Task{}, err
+		}
+		ops = append(ops, model.LinkCommit{SHA: sha})
 	}
-	if head != "" {
-		ops = append(ops, model.LinkCommit{SHA: head})
+	if link.Head {
+		head, err := c.head(ctx)
+		if err != nil {
+			return model.Task{}, err
+		}
+		if head != "" {
+			ops = append(ops, model.LinkCommit{SHA: head})
+		}
 	}
 	snapshot, err := c.s.Append(ctx, refs.For(model.KindTask, id), ops)
 	if err != nil {

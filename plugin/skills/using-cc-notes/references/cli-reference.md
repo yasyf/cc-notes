@@ -970,10 +970,14 @@ does not look stale.
 
 ### `cc-notes task done ID`
 
-MCP: task_done (id, note, force)
+MCP: task_done (id, note, force, commits, no_commit)
 
-Close a task as done and anchor your `HEAD` commit onto it, so `task show` can list the commits
-that implemented it.
+Close a task as done and link the commit that implemented it, so `task show` can list the
+commits that implemented it. Each `--commit` names one; without any, `done` links the `HEAD` of
+the checkout the working directory is in. When `--repo` names a checkout the working directory
+is outside, that checkout's `HEAD` is not where the work lives, so `done` links nothing unless
+`--commit` says what to link. `--no-commit` links nothing, for work that landed in another
+repository; name it in `--note`.
 
 `done` is gated on acceptance criteria. While any criterion is `pending` or `failed`, `done`
 lists the unmet ones and refuses to close (exit 2). Mark them `met` (by hand or via
@@ -985,6 +989,8 @@ closing note as a task comment in the same commit as the close.
 |------|---------|---------|
 | `--note <text>` | none | Closing note, recorded as a task comment |
 | `--force` | off | Close even with unmet criteria |
+| `--commit <rev>` | `HEAD` of the working directory's checkout | Commit that implements the task (repeatable) |
+| `--no-commit` | off | Link no commit; exclusive with `--commit` |
 | `--json` | off | Emit JSON |
 
 ```console

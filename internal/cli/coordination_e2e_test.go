@@ -6,6 +6,7 @@ package cli_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -343,6 +344,38 @@ func TestTaskDoneLinksCommit(t *testing.T) {
 	text := mustBin(t, dir, actorA, "task", "show", task.ID)
 	if !strings.Contains(text, "commits: "+head[:7]) {
 		t.Fatalf("task show = %q, want commits header listing %s", text, head[:7])
+	}
+}
+
+// TestTaskDoneCommitSelection pins which commits task done links: each
+// --commit in place of HEAD, none under --no-commit, and no HEAD when --repo
+// names a checkout the working directory is outside.
+func TestTaskDoneCommitSelection(t *testing.T) {
+	dir := initRepo(t)
+	first := commitFile(t, dir, "a.go", "package a")
+	head := commitFile(t, dir, "sub/b.go", "package b")
+	other := gittest.InitRepo(t)
+	gittest.Git(t, other, "commit", "-q", "--allow-empty", "-m", "elsewhere")
+	for _, tc := range []struct {
+		name string
+		cwd  string
+		args []string
+		want []string
+	}{
+		{"named commit replaces HEAD", dir, []string{"--commit", first[:7]}, []string{first}},
+		{"no commit", dir, []string{"--no-commit"}, nil},
+		{"repo from another checkout", other, []string{"-R", dir}, nil},
+		{"repo from outside any checkout", t.TempDir(), []string{"-R", dir}, nil},
+		{"repo from another checkout with a commit", other, []string{"-R", dir, "--commit", "HEAD"}, []string{head}},
+		{"repo from inside the checkout", filepath.Join(dir, "sub"), []string{"-R", dir}, []string{head}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := addTaskBin(t, dir, "Implement "+tc.name)
+			mustBin(t, tc.cwd, actorA, append([]string{"task", "done", task.ID}, tc.args...)...)
+			if got := showTaskBin(t, dir, actorA, task.ID).Commits; !slices.Equal(got, tc.want) {
+				t.Fatalf("done commits = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
