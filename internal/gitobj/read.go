@@ -16,8 +16,21 @@ import (
 
 // ReadChain walks every commit reachable from tip breadth-first, deduplicated,
 // and decodes each one's ops.json into a model.PackCommit. A missing object
-// fails with ErrIncompleteChain; a commit with no ops.json with ErrCorruptCommit.
+// is fetched through the BackfillWith hook and the walk retried once; one
+// still missing fails with ErrIncompleteChain, and a commit with no ops.json
+// with ErrCorruptCommit.
 func (r *Repo) ReadChain(ctx context.Context, tip model.SHA) ([]model.PackCommit, error) {
+	chain, err := r.readChain(ctx, tip)
+	if r.backfill == nil || !errors.Is(err, ErrIncompleteChain) {
+		return chain, err
+	}
+	if backfillErr := r.backfill(ctx, tip); backfillErr != nil {
+		return nil, fmt.Errorf("%w: backfill: %w", err, backfillErr)
+	}
+	return r.readChain(ctx, tip)
+}
+
+func (r *Repo) readChain(ctx context.Context, tip model.SHA) ([]model.PackCommit, error) {
 	if !plumbing.IsHash(string(tip)) {
 		return nil, fmt.Errorf("invalid tip sha %q", tip)
 	}

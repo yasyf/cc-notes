@@ -82,6 +82,7 @@ type Repo struct {
 	subtrees   map[plumbing.Hash]*treeIndex
 	shallow    map[plumbing.Hash]bool
 	graftAt    graftStamp
+	backfill   func(context.Context, model.SHA) error
 }
 
 // graftStamp identifies one version of the shallow file. Its zero value is the
@@ -113,6 +114,13 @@ func Open(gitDir, commonDir string) (*Repo, error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+// BackfillWith sets the hook ReadChain calls with a chain's tip when an object
+// under it is absent: go-git never fetches what a partial clone's filter left
+// at the promisor remote. Call it before the handle is shared.
+func (r *Repo) BackfillWith(backfill func(ctx context.Context, tip model.SHA) error) {
+	r.backfill = backfill
 }
 
 // refreshGraft re-reads the shallow file when a stat shows it changed — git

@@ -40,7 +40,7 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 	if snap, ok := s.cache.get(tip); ok {
 		return snap, nil
 	}
-	chain, err := s.readChain(ctx, tip)
+	chain, err := s.Repo.ReadChain(ctx, tip)
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
@@ -64,7 +64,7 @@ func (s *Store) LoadAt(ctx context.Context, head model.SHA) (model.Snapshot, err
 	if snap, ok := s.cache.get(head); ok {
 		return snap, nil
 	}
-	chain, err := s.readChain(ctx, head)
+	chain, err := s.Repo.ReadChain(ctx, head)
 	if err != nil {
 		return nil, fmt.Errorf("load at %s: %w", head, err)
 	}
@@ -82,7 +82,7 @@ func (s *Store) LoadRootedAt(ctx context.Context, head model.SHA) (RootedSnapsho
 	if err := s.CheckRecords(); err != nil {
 		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
 	}
-	chain, err := s.readChain(ctx, head)
+	chain, err := s.Repo.ReadChain(ctx, head)
 	if err != nil {
 		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
 	}
@@ -182,7 +182,7 @@ func (s *Store) ListRootedSnapshots(ctx context.Context, kind model.Kind, opts L
 	g.SetLimit(listConcurrency)
 	for i, entry := range entries {
 		g.Go(func() error {
-			chain, err := s.readChain(gctx, entry.tip)
+			chain, err := s.Repo.ReadChain(gctx, entry.tip)
 			if err != nil {
 				return fmt.Errorf("load %s: %w", entry.ref, err)
 			}
@@ -248,7 +248,7 @@ func (s *Store) HasSession(ctx context.Context, ref, sessionID string) (bool, er
 	if err != nil {
 		return false, err
 	}
-	chain, err := s.readChain(ctx, tip)
+	chain, err := s.Repo.ReadChain(ctx, tip)
 	if err != nil {
 		return false, err
 	}
@@ -387,7 +387,7 @@ func foldAll[T model.Snapshot](ctx context.Context, s *Store, entries []tipEntry
 					return nil
 				}
 			}
-			chain, err := s.readChain(gctx, e.tip)
+			chain, err := s.Repo.ReadChain(gctx, e.tip)
 			if err != nil {
 				return fmt.Errorf("load %s: %w", e.ref, err)
 			}
