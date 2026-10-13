@@ -1107,3 +1107,66 @@ func TestContextCancelled(t *testing.T) {
 		t.Errorf("ReadChain with cancelled ctx = %v, want context.Canceled", err)
 	}
 }
+
+func hideLooseObject(t *testing.T, dir string, sha model.SHA) (restore func() error) {
+	t.Helper()
+	loose := filepath.Join(dir, ".git", "objects", string(sha)[:2], string(sha)[2:])
+	hidden := filepath.Join(t.TempDir(), string(sha))
+	if err := os.Rename(loose, hidden); err != nil {
+		t.Fatalf("hide %s: %v", loose, err)
+	}
+	return func() error { return os.Rename(hidden, loose) }
+}
+
+func TestReadChainBackfillsAbsentObject(t *testing.T) {
+	dir := initRepo(t)
+	c1 := write(t, open(t, dir), nil, t0, createPack)
+	restore := hideLooseObject(t, dir, c1)
+	repo := open(t, dir)
+	var asked []model.SHA
+	repo.BackfillWith(func(_ context.Context, tip model.SHA) error {
+		asked = append(asked, tip)
+		return restore()
+	})
+
+	got, err := repo.ReadChain(t.Context(), c1)
+	if err != nil {
+		t.Fatalf("ReadChain: %v", err)
+	}
+
+	if len(got) != 1 || got[0].SHA != c1 {
+		t.Errorf("ReadChain = %+v, want the one commit %s", got, c1)
+	}
+	if !slices.Equal(asked, []model.SHA{c1}) {
+		t.Errorf("backfill asked for %v, want [%s]", asked, c1)
+	}
+}
+
+func TestReadChainStaysIncompleteWhenBackfillFails(t *testing.T) {
+	dir := initRepo(t)
+	c1 := write(t, open(t, dir), nil, t0, createPack)
+	hideLooseObject(t, dir, c1)
+	repo := open(t, dir)
+	offline := errors.New("promisor remote unreachable")
+	repo.BackfillWith(func(context.Context, model.SHA) error { return offline })
+
+	_, err := repo.ReadChain(t.Context(), c1)
+
+	if !errors.Is(err, gitobj.ErrIncompleteChain) || !errors.Is(err, offline) {
+		t.Fatalf("ReadChain = %v, want ErrIncompleteChain wrapping the backfill failure", err)
+	}
+}
+
+func TestReadChainStaysIncompleteWhenBackfillFindsNothing(t *testing.T) {
+	dir := initRepo(t)
+	c1 := write(t, open(t, dir), nil, t0, createPack)
+	hideLooseObject(t, dir, c1)
+	repo := open(t, dir)
+	repo.BackfillWith(func(context.Context, model.SHA) error { return nil })
+
+	_, err := repo.ReadChain(t.Context(), c1)
+
+	if !errors.Is(err, gitobj.ErrIncompleteChain) {
+		t.Fatalf("ReadChain = %v, want ErrIncompleteChain", err)
+	}
+}

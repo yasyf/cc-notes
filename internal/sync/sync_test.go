@@ -1109,3 +1109,26 @@ func TestSetBranchConvergesAcrossClones(t *testing.T) {
 		t.Fatalf("converged Branch = %q, want one of the two set_branch destinations", taskA.Branch)
 	}
 }
+
+func TestSyncHydratesABloblessRefItAlreadyFolded(t *testing.T) {
+	b, note := bloblessClone(t, oldCCFetchRefspec)
+	advanceTracking(t, b)
+
+	sync(t, b)
+
+	if _, err := b.Load(t.Context(), refs.For(model.KindNote, note.ID)); err != nil {
+		t.Fatalf("Load after sync: %v", err)
+	}
+}
+
+func TestHistoryHydratesABloblessCanonicalRef(t *testing.T) {
+	b, note := bloblessClone(t, oldCCFetchRefspec)
+
+	steps, err := b.History(t.Context(), refs.For(model.KindNote, note.ID))
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(steps) != 1 || steps[0].Snapshot.EntityID() != note.ID {
+		t.Fatalf("History = %v, want the one step of note %s", steps, note.ID.Short())
+	}
+}
