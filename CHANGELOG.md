@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A partial clone's blobless fetch no longer breaks every read.** In a
+  `blob:none` clone, a plain `git fetch` staged other agents' records without
+  their `ops.json` blobs, `sync` published those refs, and one incomplete
+  chain failed every `list` and `search` of that kind. `sync` now fetches the
+  objects its refs lack before folding them, and a read that meets an
+  incomplete chain fetches it from the promisor remote and retries.
 - **`-C` points at `--repo`.** A git-style `-C <dir>` on any verb, such as
   `ccn -C <dir> papercut`, now answers `did you mean --repo?` alongside the
   verb's accepted flags, instead of listing those flags with no remedy.

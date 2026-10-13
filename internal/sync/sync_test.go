@@ -960,6 +960,56 @@ func TestSyncScopedHealsBehindAfterInterruptedSync(t *testing.T) {
 	}
 }
 
+// bloblessClone publishes a note, then fetches it into a blob:none partial
+// clone through refspec, leaving its commits there without their ops blobs.
+func bloblessClone(t *testing.T, refspec string) (*store.Store, model.Note) {
+	t.Helper()
+	bare := gittest.InitBare(t)
+	gittest.Git(t, bare, "config", "uploadpack.allowFilter", "true")
+	a := clone(t, bare, "Alice", "alice@example.com")
+	gittest.Git(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+	gittest.Git(t, a.Git.Dir, "push", "-q", "origin", "main")
+	note := createNote(t, a, "shared note")
+	sync(t, a)
+
+	thin := t.TempDir()
+	gittest.Git(t, filepath.Dir(thin), "clone", "-q", "--filter=blob:none", "file://"+bare, thin)
+	gittest.Git(t, thin, "config", "user.name", "Bob")
+	gittest.Git(t, thin, "config", "user.email", "bob@example.com")
+	gittest.Git(t, thin, "fetch", "-q", "origin", refspec)
+	tip := gittest.Git(t, bare, "rev-parse", refs.For(model.KindNote, note.ID))
+	if missing := gittest.Git(t, thin, "rev-list", "--objects", "--missing=print", tip); !strings.Contains(missing, "?") {
+		t.Fatal("the partial clone fetched the ops blob; the blobless path is not under test")
+	}
+	b, err := store.Open(thin)
+	if err != nil {
+		t.Fatalf("Open(%s): %v", thin, err)
+	}
+	return b, note
+}
+
+func TestSyncHydratesABloblessPartialCloneFetch(t *testing.T) {
+	b, note := bloblessClone(t, ccFetchRefspec)
+
+	sync(t, b)
+
+	if _, err := b.Load(t.Context(), refs.For(model.KindNote, note.ID)); err != nil {
+		t.Fatalf("Load after sync: %v", err)
+	}
+}
+
+func TestListHydratesABloblessCanonicalRef(t *testing.T) {
+	b, note := bloblessClone(t, oldCCFetchRefspec)
+
+	notes, err := b.ListSnapshots(t.Context(), model.KindNote, store.ListOpts{})
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	if len(notes) != 1 || notes[0].EntityID() != note.ID {
+		t.Fatalf("ListSnapshots = %v, want the one note %s", notes, note.ID.Short())
+	}
+}
+
 // TestSyncScopedHealsDivergedAfterInterruptedSync is the data-loss case of the
 // same skip: tracking advanced past a local ref that itself diverged with
 // unpushed ops. Skipping it would strand those ops and loop ErrSyncContended;

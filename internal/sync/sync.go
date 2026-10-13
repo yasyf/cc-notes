@@ -162,6 +162,9 @@ func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report
 				return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 			}
 		}
+		if err := s.Hydrate(ctx, remote, slices.Collect(maps.Values(scope))); err != nil {
+			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
+		}
 		if err := e.reconcile(ctx, scope); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}

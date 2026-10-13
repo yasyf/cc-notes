@@ -558,6 +558,43 @@ func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error
 	return nil
 }
 
+// MissingObjects lists the objects reachable from tips that the object
+// database lacks, without fetching any from a promisor remote.
+func (g Git) MissingObjects(ctx context.Context, tips []model.SHA) ([]model.SHA, error) {
+	if len(tips) == 0 {
+		return nil, nil
+	}
+	out, err := g.probe(ctx, joinSHAs(tips), "rev-list", "--objects", "--no-object-names", "--missing=print", "--stdin")
+	if err != nil {
+		return nil, fmt.Errorf("list missing objects: %w", err)
+	}
+	var missing []model.SHA
+	for line := range strings.Lines(out) {
+		if oid, ok := strings.CutPrefix(strings.TrimSpace(line), "?"); ok {
+			missing = append(missing, model.SHA(oid))
+		}
+	}
+	return missing, nil
+}
+
+// FetchObjects downloads the named objects from remote, past any partial
+// clone filter, reading the ids from stdin.
+func (g Git) FetchObjects(ctx context.Context, remote string, oids []model.SHA) error {
+	if _, err := g.run(ctx, joinSHAs(oids), "fetch", "--refmap=", "--no-write-fetch-head", "--stdin", remote); err != nil {
+		return fmt.Errorf("fetch %d objects from %s: %w", len(oids), remote, err)
+	}
+	return nil
+}
+
+func joinSHAs(shas []model.SHA) string {
+	var b strings.Builder
+	for _, sha := range shas {
+		b.WriteString(string(sha))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // Push uploads to remote using the given refspecs, never forced and without
 // the pre-push hook: Sync has already uploaded attachment content itself, and
 // a repo hook such as git-lfs's rescans every pushed ref. A rejected update
