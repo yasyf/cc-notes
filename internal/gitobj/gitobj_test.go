@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
@@ -645,6 +646,36 @@ func TestMissingIndexReloadsOnceItsSymlinkTargetIsRestored(t *testing.T) {
 	}
 	if got, err := repo.Ancestry(t.Context(), c1, c1); err != nil || got != gitobj.Ancestor {
 		t.Fatalf("Ancestry(c1, c1) once the symlinked index is back = %v, %v; want Ancestor", got, err)
+	}
+}
+
+func TestSourceManifestReadReloadsAfterItsTreeFailedTheIndexLoad(t *testing.T) {
+	dir := initRepo(t)
+	repo := open(t, dir)
+	entity := write(t, repo, nil, t0, createPack)
+	manifest, err := gitobj.NewSourceManifest(map[string]model.SHA{"refs/cc-notes/notes/" + string(entity): entity})
+	if err != nil {
+		t.Fatalf("NewSourceManifest: %v", err)
+	}
+	sha, err := repo.WriteSourceManifestCommit(t.Context(), "", manifest)
+	if err != nil {
+		t.Fatalf("WriteSourceManifestCommit: %v", err)
+	}
+	packObjects(t, dir, git(t, dir, "rev-parse", string(sha)+"^{tree}"), git(t, dir, "rev-parse", string(sha)+":source-index"))
+	indexes := packIndexes(t, settlePacks(t, dir))
+	if len(indexes) != 1 {
+		t.Fatalf("pack indexes = %v, want exactly one", indexes)
+	}
+	restore := breakIndexInPlace(t, indexes[0])
+	reader := open(t, dir)
+
+	if _, _, err := reader.ReadSourceManifestCommit(t.Context(), sha); err == nil || errors.Is(err, plumbing.ErrObjectNotFound) {
+		t.Fatalf("ReadSourceManifestCommit over a truncated index = %v, want the decode failure, not a miss", err)
+	}
+	restore()
+	got, _, err := reader.ReadSourceManifestCommit(t.Context(), sha)
+	if err != nil || !got.Equal(manifest) {
+		t.Fatalf("ReadSourceManifestCommit after restoring the index in place = %v, %v; want %v", got, err, manifest)
 	}
 }
 

@@ -92,8 +92,6 @@ type Repo struct {
 	backfill     func(context.Context, model.SHA) error
 }
 
-// pathStamp identifies one version of a file or directory. Its zero value is
-// the absent path, which for the shallow file is also the un-grafted repository.
 type pathStamp struct {
 	exists    bool
 	size      int64
