@@ -245,12 +245,13 @@ func staleIndex(err error) bool {
 }
 
 // retry repeats a lookup that missed after reloading go-git's pack indexes,
-// but only when the pack directory moved since they were listed. Packs are
-// immutable, so a miss against a settled, unchanged pack set is stable, and
-// reloading would decode every index again only to miss again.
+// but only when the pack directory moved or a lookup failed since they were
+// listed. Packs are immutable, so any other miss is stable, and reloading would
+// decode every index again only to miss again.
 func retry[T any](r *Repo, lookup func() (T, error)) (T, error) {
 	v, err := lookup()
 	if !staleIndex(err) {
+		r.distrustFailedLoad(err)
 		return v, err
 	}
 	moved, statErr := r.restampPacks()
@@ -261,7 +262,18 @@ func retry[T any](r *Repo, lookup func() (T, error)) (T, error) {
 		return v, err
 	}
 	r.storage.Reindex()
-	return lookup()
+	v, err = lookup()
+	r.distrustFailedLoad(err)
+	return v, err
+}
+
+// distrustFailedLoad unsettles the pack stamp after a lookup fails with
+// anything but a miss: a failed index load leaves go-git a partial index it
+// never reloads on its own, so the next miss must reindex.
+func (r *Repo) distrustFailedLoad(err error) {
+	if err != nil && !staleIndex(err) {
+		r.packsSettled = false
+	}
 }
 
 const (

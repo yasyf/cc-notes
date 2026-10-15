@@ -542,33 +542,108 @@ func settlePacks(t *testing.T, dir string) string {
 	return packs
 }
 
-func TestStableMissKeepsTheLoadedPackIndexes(t *testing.T) {
-	dir := initRepo(t)
-	c1 := write(t, open(t, dir), nil, t0, createPack)
+func packIndexes(t *testing.T, packs string) []string {
+	t.Helper()
+	indexes, err := filepath.Glob(filepath.Join(packs, "*.idx"))
+	if err != nil {
+		t.Fatalf("glob pack indexes: %v", err)
+	}
+	return indexes
+}
+
+func breakIndexInPlace(t *testing.T, index string) (restore func()) {
+	t.Helper()
+	raw, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatalf("read %s: %v", index, err)
+	}
+	if err := os.Chmod(index, 0o600); err != nil {
+		t.Fatalf("chmod %s: %v", index, err)
+	}
+	if err := os.Truncate(index, 0); err != nil {
+		t.Fatalf("truncate %s: %v", index, err)
+	}
+	return func() {
+		if err := os.WriteFile(index, raw, 0o600); err != nil {
+			t.Fatalf("restore %s: %v", index, err)
+		}
+	}
+}
+
+func packedRepo(t *testing.T) (dir string, c1 model.SHA) {
+	t.Helper()
+	dir = initRepo(t)
+	c1 = write(t, open(t, dir), nil, t0, createPack)
 	git(t, dir, "update-ref", "refs/cc-notes/notes/n1", string(c1))
 	git(t, dir, "repack", "-a", "-d", "-q")
+	return dir, c1
+}
+
+func TestStableMissKeepsTheLoadedPackIndexes(t *testing.T) {
+	dir, c1 := packedRepo(t)
 	packs := settlePacks(t, dir)
 	repo := open(t, dir)
 	if got, err := repo.Ancestry(t.Context(), c1, c1); err != nil || got != gitobj.Ancestor {
 		t.Fatalf("seed Ancestry(c1, c1) = %v, %v; want Ancestor", got, err)
 	}
 
-	indexes, err := filepath.Glob(filepath.Join(packs, "*.idx"))
-	if err != nil || len(indexes) != 1 {
-		t.Fatalf("pack indexes = %v (%v), want exactly one", indexes, err)
+	indexes := packIndexes(t, packs)
+	if len(indexes) != 1 {
+		t.Fatalf("pack indexes = %v, want exactly one", indexes)
 	}
-	if err := os.Chmod(indexes[0], 0o600); err != nil {
-		t.Fatalf("chmod %s: %v", indexes[0], err)
-	}
-	if err := os.Truncate(indexes[0], 0); err != nil {
-		t.Fatalf("truncate %s: %v", indexes[0], err)
-	}
+	breakIndexInPlace(t, indexes[0])
 
 	absent := model.SHA("0123456789abcdef0123456789abcdef01234567")
 	for attempt := 1; attempt <= 2; attempt++ {
 		if _, err := repo.Ancestry(t.Context(), absent, c1); !errors.Is(err, gitobj.ErrCommitNotFound) {
 			t.Fatalf("Ancestry(absent, c1) attempt %d = %v, want ErrCommitNotFound from the loaded indexes, not a reload of the truncated one", attempt, err)
 		}
+	}
+}
+
+func TestFailedFirstIndexLoadReloadsOnceTheIndexIsRestoredInPlace(t *testing.T) {
+	dir, c1 := packedRepo(t)
+	indexes := packIndexes(t, settlePacks(t, dir))
+	if len(indexes) != 1 {
+		t.Fatalf("pack indexes = %v, want exactly one", indexes)
+	}
+	restore := breakIndexInPlace(t, indexes[0])
+	repo := open(t, dir)
+
+	if _, err := repo.Ancestry(t.Context(), c1, c1); err == nil || errors.Is(err, gitobj.ErrCommitNotFound) {
+		t.Fatalf("Ancestry(c1, c1) over a truncated index = %v, want the decode failure, not a miss", err)
+	}
+	restore()
+	if got, err := repo.Ancestry(t.Context(), c1, c1); err != nil || got != gitobj.Ancestor {
+		t.Fatalf("Ancestry(c1, c1) after restoring the index in place = %v, %v; want Ancestor", got, err)
+	}
+}
+
+func TestFailedReindexReloadsOnceTheIndexIsRestoredInPlace(t *testing.T) {
+	dir, c1 := packedRepo(t)
+	packs := settlePacks(t, dir)
+	repo := open(t, dir)
+	if got, err := repo.Ancestry(t.Context(), c1, c1); err != nil || got != gitobj.Ancestor {
+		t.Fatalf("seed Ancestry(c1, c1) = %v, %v; want Ancestor", got, err)
+	}
+
+	before := packIndexes(t, packs)
+	c2 := write(t, open(t, dir), []model.SHA{c1}, t1, retitlePack)
+	git(t, dir, "update-ref", "refs/cc-notes/notes/n1", string(c2))
+	git(t, dir, "repack", "-d", "-q")
+	landed := slices.DeleteFunc(packIndexes(t, packs), func(index string) bool { return slices.Contains(before, index) })
+	if len(landed) != 1 {
+		t.Fatalf("pack indexes after an incremental repack = %v beside %v, want exactly one new", landed, before)
+	}
+	restore := breakIndexInPlace(t, landed[0])
+	settlePacks(t, dir)
+
+	if _, err := repo.Ancestry(t.Context(), c1, c2); err == nil || errors.Is(err, gitobj.ErrCommitNotFound) {
+		t.Fatalf("Ancestry(c1, c2) reloading over a truncated index = %v, want the decode failure, not a miss", err)
+	}
+	restore()
+	if got, err := repo.Ancestry(t.Context(), c1, c2); err != nil || got != gitobj.Ancestor {
+		t.Fatalf("Ancestry(c1, c2) after restoring the index in place = %v, %v; want Ancestor", got, err)
 	}
 }
 

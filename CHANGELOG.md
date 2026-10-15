@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit anchors, so every record anchored to a commit the clone never fetched
   paid a full reload, which on a 758-pack clone meant re-hashing every index
   each time. A miss now reloads the indexes only when the pack directory
-  changed since they were listed.
+  changed since they were listed, or when a read failed partway through
+  loading them.
 - **Reading an object no longer costs millions of syscalls in a many-pack
   clone.** go-git decodes every pack's `.idx` the first time a command reads
   an object, one read per fanout entry and per bucket of each table. On a
