@@ -116,7 +116,9 @@ func (r *Repo) ReadSourceManifestCommit(ctx context.Context, sha model.SHA) (Sou
 	if len(commit.ParentHashes) > 1 {
 		return nil, "", fmt.Errorf("%w: source revision %s has %d parents", ErrCorruptSourceManifest, sha, len(commit.ParentHashes))
 	}
-	file, err := commit.File(sourceManifestFile)
+	file, err := retry(r, func() (*object.File, error) {
+		return commit.File(sourceManifestFile)
+	})
 	if err != nil {
 		return nil, "", fmt.Errorf("%w: source revision %s: %w", ErrCorruptSourceManifest, sha, err)
 	}

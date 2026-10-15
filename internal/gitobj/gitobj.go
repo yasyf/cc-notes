@@ -35,13 +35,18 @@ const (
 	// reads. KeepDescriptors is the alternative and is unusable here: it never
 	// closes, and no cc-notes type owns a lifecycle that could call Close.
 	openPacks = 8
+	// packsRacyWindow bounds the timestamp granularity of the pack directory's
+	// filesystem: a stamp taken within it of the directory's last write could
+	// match the stamp a second write in the same tick leaves.
+	packsRacyWindow = 2 * time.Second
 )
 
 var (
 	// ErrRefNotFound reports a ref that does not exist in the repository.
 	ErrRefNotFound = errors.New("ref not found")
 	// ErrIncompleteChain reports a chain commit, tree, or ops blob absent from
-	// the object database even after a reindex.
+	// the object database, packs that landed since the last index load
+	// included.
 	ErrIncompleteChain = errors.New("incomplete chain")
 	// ErrCorruptCommit reports a chain commit whose tree has no ops.json entry.
 	ErrCorruptCommit = errors.New("corrupt commit")
@@ -72,23 +77,22 @@ type Repo struct {
 	// boundary moves under a live handle, so refreshGraft re-reads it whenever
 	// graftAt shows the shallow file changed, and every entry point that
 	// consults shallow calls refreshGraft first.
-	mu         sync.Mutex
-	storage    *filesystem.Storage
-	fs         *dotgit.RepositoryFilesystem
-	reaches    map[plumbing.Hash]*reach
-	reachOrder []plumbing.Hash
-	treeRev    model.SHA
-	treeVal    *treeIndex
-	subtrees   map[plumbing.Hash]*treeIndex
-	shallow    map[plumbing.Hash]bool
-	graftAt    graftStamp
-	backfill   func(context.Context, model.SHA) error
+	mu           sync.Mutex
+	storage      *filesystem.Storage
+	fs           *dotgit.RepositoryFilesystem
+	reaches      map[plumbing.Hash]*reach
+	reachOrder   []plumbing.Hash
+	treeRev      model.SHA
+	treeVal      *treeIndex
+	subtrees     map[plumbing.Hash]*treeIndex
+	shallow      map[plumbing.Hash]bool
+	graftAt      pathStamp
+	packsAt      pathStamp
+	packsSettled bool
+	backfill     func(context.Context, model.SHA) error
 }
 
-// graftStamp identifies one version of the shallow file. Its zero value is the
-// absent file, which is also the un-grafted repository, so a handle opened
-// against one reads the file only once something writes it.
-type graftStamp struct {
+type pathStamp struct {
 	exists    bool
 	size      int64
 	modNano   int64
@@ -113,6 +117,9 @@ func Open(gitDir, commonDir string) (*Repo, error) {
 	if err := r.refreshGraft(); err != nil {
 		return nil, err
 	}
+	if _, err := r.restampPacks(); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
@@ -128,9 +135,9 @@ func (r *Repo) BackfillWith(backfill func(ctx context.Context, tip model.SHA) er
 // frontiers reachable expanded under the old boundary, which would otherwise
 // keep serving verdicts that boundary alone justified. Callers hold mu.
 func (r *Repo) refreshGraft() error {
-	stamp, err := r.statGraft()
+	stamp, err := r.statPath(shallowFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("stat shallow boundary: %w", err)
 	}
 	if stamp == r.graftAt {
 		return nil
@@ -149,16 +156,33 @@ func (r *Repo) refreshGraft() error {
 	return nil
 }
 
-func (r *Repo) statGraft() (graftStamp, error) {
-	info, err := r.fs.Stat(shallowFile)
+func (r *Repo) statPath(path string) (pathStamp, error) {
+	info, err := r.fs.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return graftStamp{}, nil
+		return pathStamp{}, nil
 	}
 	if err != nil {
-		return graftStamp{}, fmt.Errorf("stat shallow boundary: %w", err)
+		return pathStamp{}, err
 	}
 	ctime, inode := StatIdentity(info)
-	return graftStamp{exists: true, size: info.Size(), modNano: info.ModTime().UnixNano(), ctimeNano: ctime, inode: inode}, nil
+	return pathStamp{exists: true, size: info.Size(), modNano: info.ModTime().UnixNano(), ctimeNano: ctime, inode: inode}, nil
+}
+
+// restampPacks reports whether the pack directory may have changed since
+// packsAt, recording the new stamp when it has. The caller reindexes next, so
+// packsAt always predates the listing go-git's index came from. Only a stamp
+// whose mtime is packsRacyWindow older than the stat is settled. Callers hold mu.
+func (r *Repo) restampPacks() (bool, error) {
+	taken := time.Now()
+	packs, err := r.statPath(packDir)
+	if err != nil {
+		return false, fmt.Errorf("stat pack directory: %w", err)
+	}
+	if r.packsSettled && packs == r.packsAt {
+		return false, nil
+	}
+	r.packsAt, r.packsSettled = packs, taken.Sub(time.Unix(0, packs.modNano)) >= packsRacyWindow
+	return true, nil
 }
 
 // RefreshShallow re-reads the shallow boundary when its file changed and
@@ -218,13 +242,36 @@ func staleIndex(err error) bool {
 	return errors.Is(err, plumbing.ErrObjectNotFound) || errors.Is(err, dotgit.ErrPackfileNotFound)
 }
 
+// retry repeats a lookup that missed after reloading go-git's pack indexes,
+// but only when the pack directory moved or a lookup failed since they were
+// listed. Packs are immutable, so any other miss is stable, and reloading would
+// decode every index again only to miss again.
 func retry[T any](r *Repo, lookup func() (T, error)) (T, error) {
 	v, err := lookup()
+	r.distrustFailedLoad(err)
 	if !staleIndex(err) {
 		return v, err
 	}
+	moved, statErr := r.restampPacks()
+	if statErr != nil {
+		return v, statErr
+	}
+	if !moved {
+		return v, err
+	}
 	r.storage.Reindex()
-	return lookup()
+	v, err = lookup()
+	r.distrustFailedLoad(err)
+	return v, err
+}
+
+// distrustFailedLoad unsettles the pack stamp after a lookup fails with
+// anything but a miss: a failed index load leaves go-git a partial index it
+// never reloads on its own, so the next miss must reindex.
+func (r *Repo) distrustFailedLoad(err error) {
+	if err != nil && !errors.Is(err, plumbing.ErrObjectNotFound) {
+		r.packsSettled = false
+	}
 }
 
 const (

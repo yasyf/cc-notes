@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
@@ -527,6 +528,242 @@ func TestReindexOnStalePack(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, c1, c2, c3 := stalePack(t)
 			tc.run(t, repo, c1, c2, c3)
+		})
+	}
+}
+
+func settlePacks(t *testing.T, dir string) string {
+	t.Helper()
+	_, commonDir := gittest.Dirs(t, dir)
+	packs := filepath.Join(commonDir, "objects", "pack")
+	settled := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(packs, settled, settled); err != nil {
+		t.Fatalf("settle %s: %v", packs, err)
+	}
+	return packs
+}
+
+func packIndexes(t *testing.T, packs string) []string {
+	t.Helper()
+	indexes, err := filepath.Glob(filepath.Join(packs, "*.idx"))
+	if err != nil {
+		t.Fatalf("glob pack indexes: %v", err)
+	}
+	return indexes
+}
+
+func breakIndexInPlace(t *testing.T, index string) (restore func()) {
+	t.Helper()
+	raw, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatalf("read %s: %v", index, err)
+	}
+	if err := os.Chmod(index, 0o600); err != nil {
+		t.Fatalf("chmod %s: %v", index, err)
+	}
+	if err := os.Truncate(index, 0); err != nil {
+		t.Fatalf("truncate %s: %v", index, err)
+	}
+	return func() {
+		if err := os.WriteFile(index, raw, 0o600); err != nil {
+			t.Fatalf("restore %s: %v", index, err)
+		}
+	}
+}
+
+func packedRepo(t *testing.T) (dir string, c1 model.SHA) {
+	t.Helper()
+	dir = initRepo(t)
+	c1 = write(t, open(t, dir), nil, t0, createPack)
+	git(t, dir, "update-ref", "refs/cc-notes/notes/n1", string(c1))
+	git(t, dir, "repack", "-a", "-d", "-q")
+	return dir, c1
+}
+
+func TestStableMissKeepsTheLoadedPackIndexes(t *testing.T) {
+	dir, c1 := packedRepo(t)
+	packs := settlePacks(t, dir)
+	repo := open(t, dir)
+	if got, err := repo.Ancestry(t.Context(), c1, c1); err != nil || got != gitobj.Ancestor {
+		t.Fatalf("seed Ancestry(c1, c1) = %v, %v; want Ancestor", got, err)
+	}
+
+	indexes := packIndexes(t, packs)
+	if len(indexes) != 1 {
+		t.Fatalf("pack indexes = %v, want exactly one", indexes)
+	}
+	breakIndexInPlace(t, indexes[0])
+
+	absent := model.SHA("0123456789abcdef0123456789abcdef01234567")
+	for attempt := 1; attempt <= 2; attempt++ {
+		if _, err := repo.Ancestry(t.Context(), absent, c1); !errors.Is(err, gitobj.ErrCommitNotFound) {
+			t.Fatalf("Ancestry(absent, c1) attempt %d = %v, want ErrCommitNotFound from the loaded indexes, not a reload of the truncated one", attempt, err)
+		}
+	}
+}
+
+func TestFailedFirstIndexLoadReloadsOnceTheIndexIsRestoredInPlace(t *testing.T) {
+	dir, c1 := packedRepo(t)
+	indexes := packIndexes(t, settlePacks(t, dir))
+	if len(indexes) != 1 {
+		t.Fatalf("pack indexes = %v, want exactly one", indexes)
+	}
+	restore := breakIndexInPlace(t, indexes[0])
+	repo := open(t, dir)
+
+	if _, err := repo.Ancestry(t.Context(), c1, c1); err == nil || errors.Is(err, gitobj.ErrCommitNotFound) {
+		t.Fatalf("Ancestry(c1, c1) over a truncated index = %v, want the decode failure, not a miss", err)
+	}
+	restore()
+	if got, err := repo.Ancestry(t.Context(), c1, c1); err != nil || got != gitobj.Ancestor {
+		t.Fatalf("Ancestry(c1, c1) after restoring the index in place = %v, %v; want Ancestor", got, err)
+	}
+}
+
+func TestMissingIndexReloadsOnceItsSymlinkTargetIsRestored(t *testing.T) {
+	dir, c1 := packedRepo(t)
+	_, commonDir := gittest.Dirs(t, dir)
+	indexes := packIndexes(t, filepath.Join(commonDir, "objects", "pack"))
+	if len(indexes) != 1 {
+		t.Fatalf("pack indexes = %v, want exactly one", indexes)
+	}
+	stash := filepath.Join(commonDir, "idx-stash")
+	if err := os.Mkdir(stash, 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", stash, err)
+	}
+	target := filepath.Join(stash, filepath.Base(indexes[0]))
+	hidden := target + ".hidden"
+	if err := os.Rename(indexes[0], hidden); err != nil {
+		t.Fatalf("move %s out of the pack directory: %v", indexes[0], err)
+	}
+	if err := os.Symlink(filepath.Join("..", "..", "idx-stash", filepath.Base(indexes[0])), indexes[0]); err != nil {
+		t.Fatalf("link %s: %v", indexes[0], err)
+	}
+	settlePacks(t, dir)
+	repo := open(t, dir)
+
+	if _, err := repo.Ancestry(t.Context(), c1, c1); !errors.Is(err, dotgit.ErrPackfileNotFound) {
+		t.Fatalf("Ancestry(c1, c1) through a dangling index symlink = %v, want ErrPackfileNotFound", err)
+	}
+	if err := os.Rename(hidden, target); err != nil {
+		t.Fatalf("restore %s: %v", target, err)
+	}
+	if got, err := repo.Ancestry(t.Context(), c1, c1); err != nil || got != gitobj.Ancestor {
+		t.Fatalf("Ancestry(c1, c1) once the symlinked index is back = %v, %v; want Ancestor", got, err)
+	}
+}
+
+func TestSourceManifestReadReloadsAfterItsTreeFailedTheIndexLoad(t *testing.T) {
+	dir := initRepo(t)
+	repo := open(t, dir)
+	entity := write(t, repo, nil, t0, createPack)
+	manifest, err := gitobj.NewSourceManifest(map[string]model.SHA{"refs/cc-notes/notes/" + string(entity): entity})
+	if err != nil {
+		t.Fatalf("NewSourceManifest: %v", err)
+	}
+	sha, err := repo.WriteSourceManifestCommit(t.Context(), "", manifest)
+	if err != nil {
+		t.Fatalf("WriteSourceManifestCommit: %v", err)
+	}
+	packObjects(t, dir, git(t, dir, "rev-parse", string(sha)+"^{tree}"), git(t, dir, "rev-parse", string(sha)+":source-index"))
+	indexes := packIndexes(t, settlePacks(t, dir))
+	if len(indexes) != 1 {
+		t.Fatalf("pack indexes = %v, want exactly one", indexes)
+	}
+	restore := breakIndexInPlace(t, indexes[0])
+	reader := open(t, dir)
+
+	if _, _, err := reader.ReadSourceManifestCommit(t.Context(), sha); err == nil || errors.Is(err, plumbing.ErrObjectNotFound) {
+		t.Fatalf("ReadSourceManifestCommit over a truncated index = %v, want the decode failure, not a miss", err)
+	}
+	restore()
+	got, _, err := reader.ReadSourceManifestCommit(t.Context(), sha)
+	if err != nil || !got.Equal(manifest) {
+		t.Fatalf("ReadSourceManifestCommit after restoring the index in place = %v, %v; want %v", got, err, manifest)
+	}
+}
+
+func TestFailedReindexReloadsOnceTheIndexIsRestoredInPlace(t *testing.T) {
+	dir, c1 := packedRepo(t)
+	packs := settlePacks(t, dir)
+	repo := open(t, dir)
+	if got, err := repo.Ancestry(t.Context(), c1, c1); err != nil || got != gitobj.Ancestor {
+		t.Fatalf("seed Ancestry(c1, c1) = %v, %v; want Ancestor", got, err)
+	}
+
+	before := packIndexes(t, packs)
+	c2 := write(t, open(t, dir), []model.SHA{c1}, t1, retitlePack)
+	git(t, dir, "update-ref", "refs/cc-notes/notes/n1", string(c2))
+	git(t, dir, "repack", "-d", "-q")
+	landed := slices.DeleteFunc(packIndexes(t, packs), func(index string) bool { return slices.Contains(before, index) })
+	if len(landed) != 1 {
+		t.Fatalf("pack indexes after an incremental repack = %v beside %v, want exactly one new", landed, before)
+	}
+	restore := breakIndexInPlace(t, landed[0])
+	settlePacks(t, dir)
+
+	if _, err := repo.Ancestry(t.Context(), c1, c2); err == nil || errors.Is(err, gitobj.ErrCommitNotFound) {
+		t.Fatalf("Ancestry(c1, c2) reloading over a truncated index = %v, want the decode failure, not a miss", err)
+	}
+	restore()
+	if got, err := repo.Ancestry(t.Context(), c1, c2); err != nil || got != gitobj.Ancestor {
+		t.Fatalf("Ancestry(c1, c2) after restoring the index in place = %v, %v; want Ancestor", got, err)
+	}
+}
+
+func TestPackLandingAfterAStableMissIsFound(t *testing.T) {
+	const ref = "refs/cc-notes/notes/n1"
+	cases := []struct {
+		name string
+		run  func(t *testing.T, repo *gitobj.Repo, c1, c3 model.SHA, fetch func())
+	}{
+		{"Ancestry", func(t *testing.T, repo *gitobj.Repo, c1, c3 model.SHA, fetch func()) {
+			if _, err := repo.Ancestry(t.Context(), c1, c3); !errors.Is(err, gitobj.ErrCommitNotFound) {
+				t.Fatalf("Ancestry(c1, c3) before the fetch = %v, want ErrCommitNotFound", err)
+			}
+			fetch()
+			if got, err := repo.Ancestry(t.Context(), c1, c3); err != nil || got != gitobj.Ancestor {
+				t.Fatalf("Ancestry(c1, c3) after the fetch = %v, %v; want Ancestor", got, err)
+			}
+		}},
+		{"ReadChain backfill", func(t *testing.T, repo *gitobj.Repo, c1, c3 model.SHA, fetch func()) {
+			var asked []model.SHA
+			repo.BackfillWith(func(_ context.Context, tip model.SHA) error {
+				asked = append(asked, tip)
+				fetch()
+				return nil
+			})
+			got, err := repo.ReadChain(t.Context(), c3)
+			if err != nil {
+				t.Fatalf("ReadChain(c3): %v", err)
+			}
+			if len(got) != 3 || got[0].SHA != c3 || got[2].SHA != c1 {
+				t.Errorf("ReadChain(c3) = %+v, want c3 down to c1", got)
+			}
+			if !slices.Equal(asked, []model.SHA{c3}) {
+				t.Errorf("backfill asked for %v, want [%s]", asked, c3)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			origin := initRepo(t)
+			c1 := write(t, open(t, origin), nil, t0, createPack)
+			git(t, origin, "update-ref", ref, string(c1))
+			git(t, origin, "repack", "-a", "-d", "-q")
+
+			peer := initRepo(t)
+			peerRepo := open(t, peer)
+			write(t, peerRepo, nil, t0, createPack)
+			c2 := write(t, peerRepo, []model.SHA{c1}, t1, retitlePack)
+			c3 := write(t, peerRepo, []model.SHA{c2}, t2, bodyPack)
+			git(t, peer, "update-ref", ref, string(c3))
+
+			settlePacks(t, origin)
+			tc.run(t, open(t, origin), c1, c3, func() {
+				git(t, origin, "-c", "transfer.unpackLimit=1", "-c", "protocol.file.allow=always",
+					"fetch", "-q", "file://"+peer, ref+":"+ref)
+			})
 		})
 	}
 }

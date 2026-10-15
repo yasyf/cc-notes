@@ -132,11 +132,13 @@ func (r *Repo) ReadSourceOperationProof(ctx context.Context, sha model.SHA) (Sou
 	if err != nil {
 		return SourceOperationProof{}, fmt.Errorf("read source operation %s: %w", sha, err)
 	}
-	tree, err := commit.Tree()
+	tree, err := retry(r, commit.Tree)
 	if err != nil {
 		return SourceOperationProof{}, fmt.Errorf("read source operation tree: %w", err)
 	}
-	file, err := commit.File(sourceOperationFile)
+	file, err := retry(r, func() (*object.File, error) {
+		return commit.File(sourceOperationFile)
+	})
 	if err != nil {
 		return SourceOperationProof{}, fmt.Errorf("read source operation file: %w", err)
 	}
@@ -195,7 +197,9 @@ func (r *Repo) ReadSourceOperationProof(ctx context.Context, sha model.SHA) (Sou
 		if !found || entry.Mode != filemode.Regular {
 			return SourceOperationProof{}, errors.New("source operation proof tree entry is invalid")
 		}
-		entryFile, err := commit.File(entry.Name)
+		entryFile, err := retry(r, func() (*object.File, error) {
+			return commit.File(entry.Name)
+		})
 		if err != nil {
 			return SourceOperationProof{}, fmt.Errorf("read source operation tree entry %s: %w", entry.Name, err)
 		}
