@@ -627,12 +627,16 @@ func TestMissingIndexReloadsOnceItsSymlinkTargetIsRestored(t *testing.T) {
 	if len(indexes) != 1 {
 		t.Fatalf("pack indexes = %v, want exactly one", indexes)
 	}
-	target := filepath.Join(t.TempDir(), filepath.Base(indexes[0]))
+	stash := filepath.Join(commonDir, "idx-stash")
+	if err := os.Mkdir(stash, 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", stash, err)
+	}
+	target := filepath.Join(stash, filepath.Base(indexes[0]))
 	hidden := target + ".hidden"
 	if err := os.Rename(indexes[0], hidden); err != nil {
 		t.Fatalf("move %s out of the pack directory: %v", indexes[0], err)
 	}
-	if err := os.Symlink(target, indexes[0]); err != nil {
+	if err := os.Symlink(filepath.Join("..", "..", "idx-stash", filepath.Base(indexes[0])), indexes[0]); err != nil {
 		t.Fatalf("link %s: %v", indexes[0], err)
 	}
 	settlePacks(t, dir)
