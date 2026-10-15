@@ -17,10 +17,11 @@ type lruDir struct {
 	capacity int
 	dir      string
 
-	mu     sync.Mutex
-	seeded bool
-	order  *list.List
-	index  map[string]*list.Element
+	seedOnce sync.Once
+	mu       sync.Mutex
+	seeded   bool
+	order    *list.List
+	index    map[string]*list.Element
 }
 
 func (l *lruDir) read(name string) ([]byte, bool) {
@@ -66,39 +67,28 @@ func (l *lruDir) touch(name string) {
 	}
 }
 
-// record marks name as most-recently-used and evicts the oldest entries past
-// the capacity bound. Disk I/O stays outside the lock: the first-use directory
-// scan that seeds the LRU index and the per-eviction os.Remove both run
-// unlocked, so a concurrent fan-out never serializes a write behind a
-// filesystem call. A racing first write may scan the directory redundantly;
-// promote keeps the first seed and discards the rest.
 func (l *lruDir) record(name string) {
-	var seed []string
-	if !l.isSeeded() {
-		seed = seedOrder(l.dir)
-	}
-	for _, oldest := range l.promote(seed, name) {
+	l.seedOnce.Do(l.seed)
+	for _, oldest := range l.promote(name) {
 		_ = os.Remove(filepath.Join(l.dir, oldest))
 	}
 }
 
-func (l *lruDir) isSeeded() bool {
+func (l *lruDir) seed() {
+	order := seedOrder(l.dir)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.seeded
+	l.order = list.New()
+	l.index = make(map[string]*list.Element, len(order))
+	for _, n := range order {
+		l.index[n] = l.order.PushBack(n)
+	}
+	l.seeded = true
 }
 
-func (l *lruDir) promote(seed []string, name string) []string {
+func (l *lruDir) promote(name string) []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !l.seeded {
-		l.order = list.New()
-		l.index = make(map[string]*list.Element, len(seed))
-		for _, n := range seed {
-			l.index[n] = l.order.PushBack(n)
-		}
-		l.seeded = true
-	}
 	if e, ok := l.index[name]; ok {
 		l.order.MoveToBack(e)
 	} else {

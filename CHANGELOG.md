@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Reading an object no longer costs millions of syscalls in a many-pack
+  clone.** go-git decodes every pack's `.idx` the first time a command reads
+  an object, one read per fanout entry and per bucket of each table. On a
+  637-pack clone that was about 2.9 million reads, most of them four bytes,
+  for each command, and `relevant` runs once for every file an agent reads.
+  Pack indexes now decode through a 64 KiB buffer.
+- **The fold cache scans its directory once per process.** Concurrent first
+  writes to the cache each listed and stat'ed every entry, up to 16,384 files
+  apiece. The first write now seeds the cache once and the others wait for it.
 - **A partial clone's blobless fetch no longer breaks every read.** In a
   `blob:none` clone, a plain `git fetch` staged other agents' records without
   their `ops.json` blobs, `sync` published those refs, and one incomplete

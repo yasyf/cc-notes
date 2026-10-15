@@ -1,8 +1,12 @@
 package store
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestLRUDirHitPromotes(t *testing.T) {
@@ -29,5 +33,31 @@ func TestLRUDirHitPromotes(t *testing.T) {
 				t.Fatalf("entries = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestLRUDirRacingFirstRecordsEvictTheOldestSeededEntries(t *testing.T) {
+	dir := t.TempDir()
+	oldest := time.Now().Add(-time.Hour)
+	for i, name := range []string{"a", "b", "c", "d", "w", "x", "y"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		at := oldest.Add(time.Duration(i) * time.Minute)
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatalf("age %s: %v", name, err)
+		}
+	}
+	l := &lruDir{capacity: 4, dir: dir}
+
+	var wg sync.WaitGroup
+	for _, name := range []string{"w", "x", "y"} {
+		wg.Go(func() { l.record(name) })
+	}
+	wg.Wait()
+
+	if got, want := slices.Sorted(slices.Values(l.names())), []string{"d", "w", "x", "y"}; !slices.Equal(got, want) {
+		t.Fatalf("entries = %v, want %v", got, want)
 	}
 }
