@@ -619,6 +619,35 @@ func TestFailedFirstIndexLoadReloadsOnceTheIndexIsRestoredInPlace(t *testing.T) 
 	}
 }
 
+func TestMissingIndexReloadsOnceItsSymlinkTargetIsRestored(t *testing.T) {
+	dir, c1 := packedRepo(t)
+	_, commonDir := gittest.Dirs(t, dir)
+	indexes := packIndexes(t, filepath.Join(commonDir, "objects", "pack"))
+	if len(indexes) != 1 {
+		t.Fatalf("pack indexes = %v, want exactly one", indexes)
+	}
+	target := filepath.Join(t.TempDir(), filepath.Base(indexes[0]))
+	hidden := target + ".hidden"
+	if err := os.Rename(indexes[0], hidden); err != nil {
+		t.Fatalf("move %s out of the pack directory: %v", indexes[0], err)
+	}
+	if err := os.Symlink(target, indexes[0]); err != nil {
+		t.Fatalf("link %s: %v", indexes[0], err)
+	}
+	settlePacks(t, dir)
+	repo := open(t, dir)
+
+	if _, err := repo.Ancestry(t.Context(), c1, c1); !errors.Is(err, dotgit.ErrPackfileNotFound) {
+		t.Fatalf("Ancestry(c1, c1) through a dangling index symlink = %v, want ErrPackfileNotFound", err)
+	}
+	if err := os.Rename(hidden, target); err != nil {
+		t.Fatalf("restore %s: %v", target, err)
+	}
+	if got, err := repo.Ancestry(t.Context(), c1, c1); err != nil || got != gitobj.Ancestor {
+		t.Fatalf("Ancestry(c1, c1) once the symlinked index is back = %v, %v; want Ancestor", got, err)
+	}
+}
+
 func TestFailedReindexReloadsOnceTheIndexIsRestoredInPlace(t *testing.T) {
 	dir, c1 := packedRepo(t)
 	packs := settlePacks(t, dir)

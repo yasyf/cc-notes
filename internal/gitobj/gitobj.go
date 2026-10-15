@@ -250,8 +250,8 @@ func staleIndex(err error) bool {
 // decode every index again only to miss again.
 func retry[T any](r *Repo, lookup func() (T, error)) (T, error) {
 	v, err := lookup()
+	r.distrustFailedLoad(err)
 	if !staleIndex(err) {
-		r.distrustFailedLoad(err)
 		return v, err
 	}
 	moved, statErr := r.restampPacks()
@@ -271,7 +271,7 @@ func retry[T any](r *Repo, lookup func() (T, error)) (T, error) {
 // anything but a miss: a failed index load leaves go-git a partial index it
 // never reloads on its own, so the next miss must reindex.
 func (r *Repo) distrustFailedLoad(err error) {
-	if err != nil && !staleIndex(err) {
+	if err != nil && !errors.Is(err, plumbing.ErrObjectNotFound) {
 		r.packsSettled = false
 	}
 }
