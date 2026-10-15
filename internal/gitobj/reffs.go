@@ -1,7 +1,9 @@
 package gitobj
 
 import (
+	"bufio"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,8 @@ const (
 	packDir         = "objects/pack"
 	packPrefix      = "pack-"
 	loosePackPrefix = "loose-"
+	packIndexExt    = ".idx"
+	packIndexBuffer = 1 << 16
 )
 
 // gitDirFS adapts a git directory to what go-git's filesystem storage reads.
@@ -56,9 +60,40 @@ func (fs gitDirFS) ReadDir(path string) ([]os.FileInfo, error) {
 func (fs gitDirFS) Open(path string) (billy.File, error) {
 	file, err := fs.Filesystem.Open(path)
 	if loose, ok := loosePackPath(path); ok && errors.Is(err, os.ErrNotExist) {
-		return fs.Filesystem.Open(loose)
+		file, err = fs.Filesystem.Open(loose)
 	}
-	return file, err
+	if err != nil || !packIndexPath(path) {
+		return file, err
+	}
+	return &packIndexFile{File: file, reader: bufio.NewReaderSize(file, packIndexBuffer)}, nil
+}
+
+// packIndexFile buffers a pack index: go-git decodes every .idx unbuffered,
+// one read per fanout entry and per bucket of each table, so hundreds of packs
+// cost a handle millions of read syscalls.
+type packIndexFile struct {
+	billy.File
+	reader *bufio.Reader
+}
+
+func (f *packIndexFile) Read(p []byte) (int, error) {
+	return f.reader.Read(p)
+}
+
+func (f *packIndexFile) Seek(offset int64, whence int) (int64, error) {
+	if whence == io.SeekCurrent {
+		offset -= int64(f.reader.Buffered())
+	}
+	pos, err := f.File.Seek(offset, whence)
+	if err == nil {
+		f.reader.Reset(f.File)
+	}
+	return pos, err
+}
+
+func packIndexPath(path string) bool {
+	dir, base := filepath.Split(filepath.Clean(path))
+	return filepath.Clean(dir) == packDir && filepath.Ext(base) == packIndexExt
 }
 
 func (fs gitDirFS) Stat(path string) (os.FileInfo, error) {
