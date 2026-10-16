@@ -22,13 +22,12 @@ const (
 	leaseFD = 3 + iota
 	stdoutFD
 	stderrFD
+	statusFD
 )
 
 const guardFailure = 125
 
-// Runs before main or TestMain in every binary linking gitcmd (CLI, MCP
-// server, test binaries, library hosts): the deliberate exception to
-// STYLEGUIDE's no-os.Exit rule for internal packages.
+// Exits from package init: the internal/gitguard exception in STYLEGUIDE.md.
 func init() {
 	if len(os.Args) > 2 && os.Args[1] == childArg && os.Args[2] == "--" {
 		os.Exit(serve(os.Args[3:]))
@@ -36,11 +35,11 @@ func init() {
 }
 
 // Command returns a guardian that holds lease while it runs git with argv
-// under env, then writes git's output to stdout and stderr. The guardian
-// closes lease only after git exits, then mirrors git's exit status or
-// signal. Cancelling ctx sends it SIGTERM, which it answers by killing git;
-// it writes its own stdout or stderr only when it fails itself, exiting 125.
-func Command(ctx context.Context, lease, stdout, stderr *os.File, env, argv []string) (*exec.Cmd, error) {
+// under env. Once git exits, the guardian writes git's output to stdout and
+// stderr and "exit N" or "signal N" to status, closes lease, and exits with
+// N, or 128+N for a signal. Cancelling ctx sends it SIGTERM, which kills
+// git. The guardian writes its own stderr only on its own failure, exit 125.
+func Command(ctx context.Context, lease, stdout, stderr, status *os.File, env, argv []string) (*exec.Cmd, error) {
 	exe, err := executable()
 	if err != nil {
 		return nil, fmt.Errorf("git guardian executable: %w", err)
@@ -48,25 +47,30 @@ func Command(ctx context.Context, lease, stdout, stderr *os.File, env, argv []st
 	//nolint:gosec // G204: re-executes this binary as the git guardian; argv is an internal git subcommand, not user-shell input.
 	cmd := exec.CommandContext(ctx, exe, append([]string{childArg, "--"}, argv...)...)
 	cmd.Env = env
-	cmd.ExtraFiles = []*os.File{lease, stdout, stderr}
+	cmd.ExtraFiles = []*os.File{lease, stdout, stderr, status}
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	return cmd, nil
 }
 
 func serve(argv []string) int {
-	for fd := leaseFD; fd <= stderrFD; fd++ {
+	for fd := leaseFD; fd <= statusFD; fd++ {
 		syscall.CloseOnExec(fd)
 	}
 	lease := os.NewFile(leaseFD, "lease")
 	stdout := os.NewFile(stdoutFD, "stdout")
 	stderr := os.NewFile(stderrFD, "stderr")
-	for _, f := range []*os.File{lease, stdout, stderr} {
+	status := os.NewFile(statusFD, "status")
+	for _, f := range []*os.File{lease, stdout, stderr, status} {
 		if _, err := f.Stat(); err != nil {
 			return fail(err)
 		}
 	}
 	interrupts := make(chan os.Signal, 1)
-	signal.Notify(interrupts, syscall.SIGINT, syscall.SIGHUP)
+	for _, sig := range []os.Signal{syscall.SIGINT, syscall.SIGHUP} {
+		if !signal.Ignored(sig) {
+			signal.Notify(interrupts, sig)
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
 	defer stop()
 	outRead, outWrite, err := os.Pipe()
@@ -104,18 +108,22 @@ func serve(argv []string) int {
 	if err := writeCapture(stderr, errBuf); err != nil {
 		return fail(err)
 	}
+	code, report := exitReport(git.ProcessState)
+	if err := writeCapture(status, []byte(report)); err != nil {
+		return fail(err)
+	}
 	if err := lease.Close(); err != nil {
 		return fail(err)
 	}
-	status := git.ProcessState.Sys().(syscall.WaitStatus)
-	if !status.Signaled() {
-		return status.ExitStatus()
+	return code
+}
+
+func exitReport(state *os.ProcessState) (int, string) {
+	wait := state.Sys().(syscall.WaitStatus)
+	if wait.Signaled() {
+		return 128 + int(wait.Signal()), fmt.Sprintf("signal %d", wait.Signal())
 	}
-	sig := status.Signal()
-	signal.Reset(sig)
-	_ = syscall.Kill(os.Getpid(), sig)
-	time.Sleep(time.Second)
-	return 128 + int(sig)
+	return wait.ExitStatus(), fmt.Sprintf("exit %d", wait.ExitStatus())
 }
 
 type drained struct {

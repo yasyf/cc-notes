@@ -19,7 +19,9 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/go-git/go-git/v5/plumbing"
 
@@ -188,6 +190,10 @@ func (e *commandError) Error() string {
 
 func (e *commandError) Unwrap() error { return e.err }
 
+type signalError syscall.Signal
+
+func (e signalError) Error() string { return "signal: " + syscall.Signal(e).String() }
+
 func (e *commandError) exitCode() int {
 	var exit *exec.ExitError
 	if errors.As(e.err, &exit) {
@@ -225,23 +231,30 @@ func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...str
 }
 
 func (g Git) runHeld(ctx context.Context, env []string, args ...string) (string, error) {
-	stdoutFile, err := unlinkedTemp()
-	if err != nil {
-		return "", err
+	captures := make([]*os.File, 0, 3)
+	defer func() {
+		for _, f := range captures {
+			_ = f.Close()
+		}
+	}()
+	for range 3 {
+		f, err := unlinkedTemp()
+		if err != nil {
+			return "", err
+		}
+		captures = append(captures, f)
 	}
-	defer func() { _ = stdoutFile.Close() }()
-	stderrFile, err := unlinkedTemp()
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = stderrFile.Close() }()
-	cmd, err := gitguard.Command(ctx, g.held, stdoutFile, stderrFile, g.environ(env), g.argv(args...))
+	stdoutFile, stderrFile, statusFile := captures[0], captures[1], captures[2]
+	cmd, err := gitguard.Command(ctx, g.held, stdoutFile, stderrFile, statusFile, g.environ(env), g.argv(args...))
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
 	var guard bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &guard, &guard
 	runErr := cmd.Run()
+	if cmd.ProcessState == nil {
+		return "", &commandError{args: args, err: runErr}
+	}
 	stdout, err := readCapture(stdoutFile)
 	if err != nil {
 		return "", err
@@ -250,11 +263,28 @@ func (g Git) runHeld(ctx context.Context, env []string, args ...string) (string,
 	if err != nil {
 		return stdout, err
 	}
-	if guard.Len() > 0 {
+	report, err := readCapture(statusFile)
+	if err != nil {
+		return stdout, err
+	}
+	if guard.Len() > 0 || report == "" {
 		return stdout, fmt.Errorf("git %s: guardian: %w: %s", strings.Join(args, " "), runErr, strings.TrimSpace(guard.String()))
 	}
-	if runErr != nil {
-		return stdout, &commandError{args: args, stderr: strings.TrimSpace(stderr), err: runErr}
+	var gitErr error
+	kind, value, _ := strings.Cut(report, " ")
+	code, convErr := strconv.Atoi(value)
+	switch {
+	case convErr != nil:
+		return stdout, fmt.Errorf("git %s: guardian status %q: %w", strings.Join(args, " "), report, convErr)
+	case kind == "signal":
+		gitErr = signalError(code)
+	case kind == "exit":
+		gitErr = runErr
+	default:
+		return stdout, fmt.Errorf("git %s: guardian status %q", strings.Join(args, " "), report)
+	}
+	if gitErr != nil {
+		return stdout, &commandError{args: args, stderr: strings.TrimSpace(stderr), err: gitErr}
 	}
 	return stdout, nil
 }

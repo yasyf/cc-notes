@@ -6,11 +6,13 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -339,20 +341,98 @@ func TestHeldWritersFailExactlyAsUnheld(t *testing.T) {
 	assertHeldFailsAsUnheld(t, heldWriterPairs(t), "does not appear to be a git repository")
 }
 
-func TestHeldWritersDieByGitsSignalExactlyAsUnheld(t *testing.T) {
-	pairs := heldWriterPairs(t)
+func stubGit(t *testing.T, script string) {
+	t.Helper()
 	realGit, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatalf("LookPath(git): %v", err)
 	}
 	dir := t.TempDir()
-	stub := fmt.Sprintf("#!/bin/sh\ncase \" $* \" in *\" push \"*|*\" fetch \"*) kill -TERM $$ ;; esac\nexec %q \"$@\"\n", realGit)
+	stub := fmt.Sprintf("#!/bin/sh\n%s\nexec %q \"$@\"\n", script, realGit)
 	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(stub), 0o755); err != nil {
 		t.Fatalf("write git stub: %v", err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
 
-	assertHeldFailsAsUnheld(t, pairs, "signal: terminated")
+func TestHeldWritersDieByGitsSignalExactlyAsUnheld(t *testing.T) {
+	tests := []struct {
+		signal, want string
+	}{
+		{"TERM", "signal: terminated"},
+		{"KILL", "signal: killed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.signal, func(t *testing.T) {
+			pairs := heldWriterPairs(t)
+			stubGit(t, `case " $* " in *" push "*|*" fetch "*) kill -`+tt.signal+` $$ ;; esac`)
+
+			assertHeldFailsAsUnheld(t, pairs, tt.want)
+		})
+	}
+}
+
+const signalReportEnv = "CC_NOTES_TEST_SIGNAL_REPORT"
+
+func TestReportIgnoredSignals(t *testing.T) {
+	report := os.Getenv(signalReportEnv)
+	if report == "" {
+		t.Skip("runs only as the git stub's report of the signals it inherited as ignored")
+	}
+	line := fmt.Sprintf("SIGHUP=%t SIGINT=%t\n", signal.Ignored(syscall.SIGHUP), signal.Ignored(syscall.SIGINT))
+	f, err := os.OpenFile(report, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open signal report: %v", err)
+	}
+	if _, err := f.WriteString(line); err != nil {
+		t.Fatalf("write signal report: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close signal report: %v", err)
+	}
+}
+
+func TestHeldPushInheritsTheCallersIgnoredSignals(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	tests := []struct {
+		name      string
+		ignoreHUP bool
+	}{
+		{"SIGHUP at default", false},
+		{"SIGHUP ignored", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := initRepo(t)
+			held := g.Holding(leaseFile(t))
+			missing := filepath.Join(t.TempDir(), "missing.git")
+			report := filepath.Join(t.TempDir(), "signals")
+			stubGit(t, fmt.Sprintf("%s=%q %q -test.run='^TestReportIgnoredSignals$' >/dev/null 2>&1", signalReportEnv, report, self))
+			if tt.ignoreHUP {
+				signal.Ignore(syscall.SIGHUP)
+				t.Cleanup(func() { signal.Reset(syscall.SIGHUP) })
+			}
+			if signal.Ignored(syscall.SIGHUP) != tt.ignoreHUP {
+				t.Fatalf("this test process has SIGHUP ignored = %t, want %t before either push", !tt.ignoreHUP, tt.ignoreHUP)
+			}
+
+			_ = g.Push(t.Context(), missing, "refs/cc-notes/*:refs/cc-notes/*")
+			_ = held.Push(t.Context(), missing, "refs/cc-notes/*:refs/cc-notes/*")
+
+			raw, err := os.ReadFile(report)
+			if err != nil {
+				t.Fatalf("read signal report: %v", err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+			want := fmt.Sprintf("SIGHUP=%t SIGINT=%t", tt.ignoreHUP, signal.Ignored(syscall.SIGINT))
+			if len(lines) != 2 || lines[0] != want || lines[1] != want {
+				t.Fatalf("ignored signals seen by unheld then held git = %q, want both %q", lines, want)
+			}
+		})
+	}
 }
 
 func TestHeldFetchAndRejectedPushRoundTrip(t *testing.T) {
