@@ -63,6 +63,14 @@ type Git struct {
 	Dir     string
 	workDir string
 	backend bool
+	held    *os.File
+}
+
+// Holding returns g with f passed to every git child as file descriptor 3, so
+// a lock on f stays held until the last process sharing it exits.
+func (g Git) Holding(f *os.File) Git {
+	g.held = f
+	return g
 }
 
 // Backend returns a handle on the absolute common directory dir, pinned as
@@ -178,6 +186,9 @@ func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...str
 	//nolint:gosec // G204: git is a fixed argv[0]; args are internal git subcommands, not user-shell input, in this CLI's own repo.
 	cmd := exec.CommandContext(ctx, "git", g.argv(args...)...)
 	cmd.Env = g.environ(env)
+	if g.held != nil {
+		cmd.ExtraFiles = []*os.File{g.held}
+	}
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
@@ -551,7 +562,7 @@ func (g Git) CheckRefFormat(ctx context.Context, branch string) error {
 // update — a non-forced refspec that does not fast-forward — wraps
 // ErrNonFastForward.
 func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error {
-	_, err := g.run(ctx, "", append([]string{"fetch", "--refmap=", remote}, refspecs...)...)
+	_, err := g.run(ctx, "", append([]string{"fetch", "--no-auto-maintenance", "--refmap=", remote}, refspecs...)...)
 	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
 		return fmt.Errorf("fetch %s: %w", remote, err)
 	}

@@ -156,7 +156,15 @@ func (s *Store) prune(ctx context.Context, remote, ref string, head model.SHA, t
 	if err := s.CheckRecords(); err != nil {
 		return fmt.Errorf("deleted %s: %w", ref, err)
 	}
-	if err := s.RecordsGit.DeleteRemoteRef(ctx, remote, ref); err != nil {
+	lock, err := s.TrackingLock(ctx, remote)
+	if err != nil {
+		return err
+	}
+	err = s.RecordsGit.Holding(lock).DeleteRemoteRef(ctx, remote, ref)
+	if closeErr := lock.Close(); closeErr != nil {
+		return fmt.Errorf("deleted %s: %w", ref, closeErr)
+	}
+	if err != nil {
 		tally.failed++
 		return nil
 	}
