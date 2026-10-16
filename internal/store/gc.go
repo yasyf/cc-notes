@@ -38,9 +38,10 @@ func (s *Store) GCLocal(ctx context.Context) (int, error) {
 // there is no task tombstone. Pruning is best-effort and non-convergent — a
 // stale clone that never saw the delete re-advertises the ref on its next push —
 // so it continues past per-ref failures, tallying pruned (both deletes
-// succeeded) and failed, and never returns a per-ref error. A binding changed
-// since open is the one exception: it returns naming the ref deleted locally,
-// before that ref's remote copy is touched.
+// succeeded) and failed, and never returns a per-ref error. Two exceptions
+// return naming the ref deleted locally, before that ref's remote copy is
+// touched: a binding changed since open, and a failed wait for the remote's
+// tracking lock.
 func (s *Store) PruneTombstones(ctx context.Context, remote string) (int, int, error) {
 	var tally pruneTally
 	notes, err := s.ListNotes(ctx, true, true)
@@ -146,7 +147,8 @@ type pruneTally struct{ pruned, failed int }
 
 // prune deletes one tombstoned ref locally, rechecks the binding so a context
 // rebound meanwhile fails naming the ref before its remote copy is touched,
-// then deletes it on remote, tallying per-ref git failures.
+// then deletes it on remote under the remote's tracking lock, tallying per-ref
+// git failures.
 func (s *Store) prune(ctx context.Context, remote, ref string, head model.SHA, tally *pruneTally) error {
 	if err := s.RecordsGit.DeleteRef(ctx, ref, head); err != nil {
 		tally.failed++
@@ -158,7 +160,7 @@ func (s *Store) prune(ctx context.Context, remote, ref string, head model.SHA, t
 	}
 	lock, err := s.TrackingLock(ctx, remote)
 	if err != nil {
-		return err
+		return fmt.Errorf("deleted %s: %w", ref, err)
 	}
 	err = s.RecordsGit.Holding(lock).DeleteRemoteRef(ctx, remote, ref)
 	if closeErr := lock.Close(); closeErr != nil {

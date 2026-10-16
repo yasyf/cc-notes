@@ -214,15 +214,15 @@ func (e *engine) report(rounds, pushed int) Report {
 }
 
 func refreshTracking(ctx context.Context, s *store.Store, remote, trackingPrefix, fetchSpec string) (err error) {
+	listed, err := s.RecordsGit.LsRemote(ctx, remote, namespace)
+	if err != nil {
+		return err
+	}
 	lock, err := s.TrackingLock(ctx, remote)
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
-	listed, err := s.RecordsGit.LsRemote(ctx, remote, namespace)
-	if err != nil {
-		return err
-	}
 	tracking, err := s.RecordsGit.Refs(ctx, trackingPrefix)
 	if err != nil {
 		return err

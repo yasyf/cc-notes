@@ -66,11 +66,32 @@ type Git struct {
 	held    *os.File
 }
 
-// Holding returns g with f passed to every git child as file descriptor 3, so
-// a lock on f stays held until the last process sharing it exits.
-func (g Git) Holding(f *os.File) Git {
+// Held runs the git commands that write a remote's tracking refs with a lease
+// file as git's standard input. None of them reads input. A lock on that file
+// stays held until git and every child that inherited its standard input, such
+// as fetch's foreground auto-maintenance, have exited. Git gives its protocol,
+// credential, and hook children pipes instead.
+type Held struct{ git Git }
+
+// Holding returns g's tracking-ref writers holding f.
+func (g Git) Holding(f *os.File) Held {
 	g.held = f
-	return g
+	return Held{git: g}
+}
+
+// Fetch is Git.Fetch holding the lease.
+func (h Held) Fetch(ctx context.Context, remote string, refspecs ...string) error {
+	return h.git.Fetch(ctx, remote, refspecs...)
+}
+
+// Push is Git.Push holding the lease.
+func (h Held) Push(ctx context.Context, remote string, refspecs ...string) error {
+	return h.git.Push(ctx, remote, refspecs...)
+}
+
+// DeleteRemoteRef is Git.DeleteRemoteRef holding the lease.
+func (h Held) DeleteRemoteRef(ctx context.Context, remote, ref string) error {
+	return h.git.DeleteRemoteRef(ctx, remote, ref)
 }
 
 // Backend returns a handle on the absolute common directory dir, pinned as
@@ -186,10 +207,10 @@ func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...str
 	//nolint:gosec // G204: git is a fixed argv[0]; args are internal git subcommands, not user-shell input, in this CLI's own repo.
 	cmd := exec.CommandContext(ctx, "git", g.argv(args...)...)
 	cmd.Env = g.environ(env)
-	if g.held != nil {
-		cmd.ExtraFiles = []*os.File{g.held}
-	}
-	if stdin != "" {
+	switch {
+	case g.held != nil:
+		cmd.Stdin = g.held
+	case stdin != "":
 		cmd.Stdin = strings.NewReader(stdin)
 	}
 	var stdout, stderr bytes.Buffer
@@ -562,7 +583,7 @@ func (g Git) CheckRefFormat(ctx context.Context, branch string) error {
 // update — a non-forced refspec that does not fast-forward — wraps
 // ErrNonFastForward.
 func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error {
-	_, err := g.run(ctx, "", append([]string{"fetch", "--no-auto-maintenance", "--refmap=", remote}, refspecs...)...)
+	_, err := g.run(ctx, "", append([]string{"fetch", "--refmap=", remote}, refspecs...)...)
 	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
 		return fmt.Errorf("fetch %s: %w", remote, err)
 	}
