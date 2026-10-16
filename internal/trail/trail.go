@@ -95,8 +95,6 @@ func (d *Differ) Next(st fold.Step) (e Entry, ok bool, err error) {
 		if err != nil {
 			return Entry{}, false, err
 		}
-		// A create is "from nothing": clear every initial scalar's From so a
-		// caller renders "priority: 2", not "0 → 2".
 		for j := range changes {
 			if changes[j].Scalar {
 				changes[j].From = nil

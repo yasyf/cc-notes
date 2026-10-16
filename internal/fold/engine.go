@@ -137,8 +137,6 @@ func (r *replay[T]) step(c model.PackCommit) error {
 		}
 		switch op.(type) {
 		case model.Checkpoint:
-			// A non-seed checkpoint is a fold no-op: its covered ops replay
-			// through their original commits, which remain in the chain.
 		default:
 			if co, ok := op.(model.CreateOp); ok {
 				return fmt.Errorf("%w: %s", ErrDuplicateCreate, co.OpKind())

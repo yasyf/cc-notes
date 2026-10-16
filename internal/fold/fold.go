@@ -30,10 +30,6 @@ var (
 	ErrKindMismatch = errors.New("entity kind mismatch")
 )
 
-// folders maps each entity kind to its fold: the boxing fold that turns a
-// linearized chain into its snapshot, and the walk over every prefix of one.
-// Fold, Strict, History, and Walk dispatch through it on the create op's kind.
-// Its keys are exactly model.Kinds().
 var folders = map[model.Kind]kindFold{
 	model.KindNote:          kindFoldOf[model.Note](newNoteFolder),
 	model.KindDoc:           kindFoldOf[model.Doc](newDocFolder),
@@ -209,10 +205,6 @@ func Answer(commits []model.PackCommit) (model.Answer, error) {
 	return foldAnswer(ordered, tolerant)
 }
 
-// dispatch returns the kind's fold for an already-linearized chain whose first
-// op is first, keyed by the create op's kind exactly as Fold, History, and Walk
-// need.
-// It fails with ErrNoCreate when first is nil or not a create op.
 func dispatch(first model.Op) (kindFold, error) {
 	co, ok := first.(model.CreateOp)
 	if !ok {
