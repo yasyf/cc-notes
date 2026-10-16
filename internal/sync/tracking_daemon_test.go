@@ -20,6 +20,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
+	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -166,6 +167,34 @@ func TestSyncPushFreesTheTrackingLockWhileADaemonTheReceiverStartedLives(t *test
 	assertTrackingLockFree(t, a, "the receiver's daemon")
 }
 
+func leakSnapshot(pidFile string) string {
+	ps, err := exec.Command("ps", "-axo", "pid,ppid,command").CombinedOutput()
+	snapshot := fmt.Sprintf("ps -axo pid,ppid,command (%v):\n%s", err, ps)
+	recorded, err := os.ReadFile(pidFile)
+	if err != nil {
+		return snapshot + fmt.Sprintf("\nno daemon PID recorded: %v", err)
+	}
+	pid := strings.TrimSpace(string(recorded))
+	//nolint:gosec // G204: lists the open files of this test's own daemon with a fixed argv.
+	lsof, err := exec.Command("lsof", "-p", pid).CombinedOutput()
+	return snapshot + fmt.Sprintf("\nlsof -p %s (%v):\n%s", pid, err, lsof)
+}
+
+func assertDaemonAlive(t *testing.T, pidFile, when string) {
+	t.Helper()
+	recorded, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read daemon PID %s: %v", when, err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(recorded)))
+	if err != nil || pid <= 1 {
+		t.Fatalf("daemon PID = %q, want a live PID", recorded)
+	}
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("kill(%d, 0) %s = %v, want the alternate refs command's daemon still alive", pid, when, err)
+	}
+}
+
 func TestSyncFetchFreesTheTrackingLockWhileADaemonTheAlternateRefsCommandStartedLives(t *testing.T) {
 	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
@@ -181,20 +210,56 @@ func TestSyncFetchFreesTheTrackingLockWhileADaemonTheAlternateRefsCommandStarted
 		t.Fatalf("write objects/info/alternates: %v", err)
 	}
 	scripts := t.TempDir()
-	ran, done := filepath.Join(scripts, "ran"), filepath.Join(scripts, "done")
+	ran, done, daemon := filepath.Join(scripts, "ran"), filepath.Join(scripts, "done"), filepath.Join(scripts, "daemon")
 	command := filepath.Join(scripts, "alternate-refs")
-	script := fmt.Sprintf("#!/bin/sh\n: > '%s'\nexec 9<&0\n(while [ -d '%s' ] && [ ! -e '%s' ]; do sleep 0.05; done) <&9 >/dev/null 2>&1 &\n", ran, scripts, done)
+	script := fmt.Sprintf(`#!/bin/sh
+: > '%s'
+exec 9<&0
+( exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&-; while [ -d '%s' ] && [ ! -e '%s' ]; do sleep 0.05; done ) <&9 9<&- >/dev/null 2>&1 &
+echo $! > '%s'
+`, ran, scripts, done, daemon)
 	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
 		t.Fatalf("write alternate refs command: %v", err)
 	}
 	gittest.Git(t, b.Git.Dir, "config", "core.alternateRefsCommand", command)
 	t.Cleanup(func() { _ = os.WriteFile(done, nil, 0o600) })
 
-	sync(t, b)
+	unheld, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	//nolint:gosec // G204: runs the unheld native fetch this fixture must not block, with a test-controlled argv.
+	fetch := exec.CommandContext(unheld, "git", "-C", b.Git.Dir, "fetch", "--recurse-submodules=no", "--refmap=", "origin", "+refs/cc-notes/*:refs/cc-notes-sync/origin/*")
+	fetch.WaitDelay = time.Second
+	out, err := fetch.CombinedOutput()
+	if unheld.Err() != nil {
+		t.Fatalf("unheld git fetch still running after 30s: the fixture's daemon blocks git itself\n%s", leakSnapshot(daemon))
+	}
+	if err != nil {
+		t.Fatalf("unheld git fetch: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(ran); err != nil {
+		t.Fatalf("the unheld fetch never ran core.alternateRefsCommand: %v", err)
+	}
+	assertDaemonAlive(t, daemon, "after the unheld fetch exited")
+	if err := os.Remove(ran); err != nil {
+		t.Fatalf("reset the alternate refs marker: %v", err)
+	}
+	createNote(t, a, "fetched by the held sync past the same alternate")
+	sync(t, a)
+
+	held, cancelHeld := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancelHeld()
+	_, err = ccsync.Sync(held, b, "origin", false)
+	if held.Err() != nil {
+		t.Fatalf("held Sync still running after 60s\n%s", leakSnapshot(daemon))
+	}
+	if err != nil {
+		t.Fatalf("held Sync(%s): %v", b.Git.Dir, err)
+	}
 
 	if _, err := os.Stat(ran); err != nil {
-		t.Fatalf("the fetch never ran core.alternateRefsCommand: %v", err)
+		t.Fatalf("the held fetch never ran core.alternateRefsCommand: %v", err)
 	}
+	assertDaemonAlive(t, daemon, "after the held Sync returned")
 	assertTrackingLockFree(t, b, "the alternate refs command's daemon")
 }
 
