@@ -55,57 +55,140 @@ const (
 // does apply the op stamps the same UpdatedAt, so the two converge.
 func run[T model.Snapshot](ordered []model.PackCommit, f folder[T], m mode) (T, error) {
 	var zero T
-	base, seedSHA, covered, seeded := selectSeed(ordered)
-	created := false
-	skipped := 0
-	if seeded {
-		if err := f.seed(base.State); err != nil {
-			return zero, err
-		}
-		created = true
-	} else {
-		f.fresh(ordered[0].SHA, ordered[0].AuthorTime)
+	b, seeded := selectSeed(ordered)
+	r, err := startReplay(f, m, ordered[0], b, seeded)
+	if err != nil {
+		return zero, err
 	}
 	for _, c := range ordered {
-		if seeded && (c.SHA == seedSHA || covered[c.SHA]) {
+		if err := r.step(c); err != nil {
+			return zero, err
+		}
+	}
+	return r.snapshot(ordered[len(ordered)-1].SHA)
+}
+
+func walk[T model.Snapshot](ordered []model.PackCommit, newFolder func() folder[T], fn func(Step) error) error {
+	var seeds seedTracker
+	var r *replay[T]
+	for k, c := range ordered {
+		b, seeded, changed := seeds.extend(ordered[:k+1])
+		pending := ordered[k : k+1]
+		if r == nil || changed {
+			var err error
+			if r, err = startReplay(newFolder(), tolerant, ordered[0], b, seeded); err != nil {
+				return err
+			}
+			pending = ordered[:k+1]
+		}
+		for _, p := range pending {
+			if err := r.step(p); err != nil {
+				return err
+			}
+		}
+		snapshot, err := r.snapshot(c.SHA)
+		if err != nil {
+			return err
+		}
+		if err := fn(Step{Commit: c, Snapshot: snapshot}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type replay[T model.Snapshot] struct {
+	f       folder[T]
+	m       mode
+	base    base
+	seeded  bool
+	created bool
+	skipped int
+}
+
+func startReplay[T model.Snapshot](f folder[T], m mode, root model.PackCommit, b base, seeded bool) (*replay[T], error) {
+	r := &replay[T]{f: f, m: m, base: b, seeded: seeded}
+	if !seeded {
+		f.fresh(root.SHA, root.AuthorTime)
+		return r, nil
+	}
+	if err := f.seed(b.checkpoint.State); err != nil {
+		return nil, err
+	}
+	r.created = true
+	return r, nil
+}
+
+func (r *replay[T]) step(c model.PackCommit) error {
+	if r.seeded && r.base.covers(c) {
+		return nil
+	}
+	for _, op := range c.Pack.Ops {
+		if !r.created {
+			co, ok := op.(model.CreateOp)
+			if !ok {
+				return fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
+			}
+			if err := r.f.create(co, c.Author); err != nil {
+				return err
+			}
+			r.created = true
 			continue
 		}
-		for _, op := range c.Pack.Ops {
-			if !created {
-				co, ok := op.(model.CreateOp)
-				if !ok {
-					return zero, fmt.Errorf("%w: got %s", ErrNoCreate, op.OpKind())
-				}
-				if err := f.create(co, c.Author); err != nil {
-					return zero, err
-				}
-				created = true
-				continue
+		switch op.(type) {
+		case model.Checkpoint:
+		default:
+			if co, ok := op.(model.CreateOp); ok {
+				return fmt.Errorf("%w: %s", ErrDuplicateCreate, co.OpKind())
 			}
-			switch op.(type) {
-			case model.Checkpoint:
-				// A non-seed checkpoint is a fold no-op: its covered ops replay
-				// through their original commits, which remain in the chain.
-			default:
-				if co, ok := op.(model.CreateOp); ok {
-					return zero, fmt.Errorf("%w: %s", ErrDuplicateCreate, co.OpKind())
+			if !r.f.apply(op, c) {
+				if r.m == strict {
+					var zero T
+					return fmt.Errorf("%w: %s does not apply to a %s", ErrKindMismatch, op.OpKind(), zero.Meta().Kind)
 				}
-				if !f.apply(op, c) {
-					if m == strict {
-						return zero, fmt.Errorf("%w: %s does not apply to a %s", ErrKindMismatch, op.OpKind(), zero.Meta().Kind)
-					}
-					skipped++
-				}
+				r.skipped++
 			}
-		}
-		if hasNonCheckpointOp(c) {
-			f.touch(c)
 		}
 	}
-	if !created {
+	if hasNonCheckpointOp(c) {
+		r.f.touch(c)
+	}
+	return nil
+}
+
+func (r *replay[T]) snapshot(head model.SHA) (T, error) {
+	if !r.created {
+		var zero T
 		return zero, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
 	}
-	return f.finalize(ordered[len(ordered)-1].SHA, skipped), nil
+	return r.f.finalize(head, r.skipped), nil
+}
+
+type base struct {
+	checkpoint model.Checkpoint
+	sha        model.SHA
+	covered    map[model.SHA]bool
+}
+
+func newBase(cp model.Checkpoint, sha model.SHA) base {
+	covered := make(map[model.SHA]bool, len(cp.CoversShas))
+	for _, s := range cp.CoversShas {
+		covered[s] = true
+	}
+	return base{checkpoint: cp, sha: sha, covered: covered}
+}
+
+func (b base) covers(c model.PackCommit) bool {
+	return c.SHA == b.sha || b.covered[c.SHA]
+}
+
+func (b base) admits(c model.PackCommit) bool {
+	return b.covers(c) || c.Pack.Lamport > b.checkpoint.CoversLamport
+}
+
+func (b base) outranks(cp model.Checkpoint, sha model.SHA) bool {
+	return cp.CoversLamport > b.checkpoint.CoversLamport ||
+		(cp.CoversLamport == b.checkpoint.CoversLamport && sha > b.sha)
 }
 
 // selectSeed chooses the checkpoint a fold may start its snapshot from, plus
@@ -122,34 +205,55 @@ func run[T model.Snapshot](ordered []model.PackCommit, f folder[T], m mode) (T, 
 // every checkpoint is a no-op and the covered ops replay through their original
 // commits. The fallback is always available: compaction never deletes objects,
 // so covered commits remain in the chain.
-func selectSeed(ordered []model.PackCommit) (base model.Checkpoint, seedSHA model.SHA, covered map[model.SHA]bool, ok bool) {
+func selectSeed(ordered []model.PackCommit) (b base, ok bool) {
+	var best base
 	found := false
 	for _, c := range ordered {
 		cp, isCheckpoint := checkpointOf(c)
 		if !isCheckpoint {
 			continue
 		}
-		if !found || cp.CoversLamport > base.CoversLamport ||
-			(cp.CoversLamport == base.CoversLamport && c.SHA > seedSHA) {
-			base, seedSHA, found = cp, c.SHA, true
+		if !found || best.outranks(cp, c.SHA) {
+			best, found = base{checkpoint: cp, sha: c.SHA}, true
 		}
 	}
 	if !found {
-		return model.Checkpoint{}, "", nil, false
+		return base{}, false
 	}
-	covered = make(map[model.SHA]bool, len(base.CoversShas))
-	for _, s := range base.CoversShas {
-		covered[s] = true
-	}
+	b = newBase(best.checkpoint, best.sha)
+	return b, seedSafe(b, ordered)
+}
+
+func seedSafe(b base, ordered []model.PackCommit) bool {
 	for _, c := range ordered {
-		if c.SHA == seedSHA || covered[c.SHA] {
-			continue
-		}
-		if c.Pack.Lamport <= base.CoversLamport {
-			return model.Checkpoint{}, "", nil, false
+		if !b.admits(c) {
+			return false
 		}
 	}
-	return base, seedSHA, covered, true
+	return true
+}
+
+type seedTracker struct {
+	best  base
+	found bool
+	safe  bool
+}
+
+func (t *seedTracker) extend(prefix []model.PackCommit) (b base, seeded, changed bool) {
+	wasSeeded, wasSHA := t.found && t.safe, t.best.sha
+	c := prefix[len(prefix)-1]
+	if cp, ok := checkpointOf(c); ok && (!t.found || t.best.outranks(cp, c.SHA)) {
+		t.best, t.found = newBase(cp, c.SHA), true
+		t.safe = seedSafe(t.best, prefix)
+	} else if t.found && t.safe {
+		t.safe = t.best.admits(c)
+	}
+	seeded = t.found && t.safe
+	changed = seeded != wasSeeded || (seeded && t.best.sha != wasSHA)
+	if !seeded {
+		return base{}, false, changed
+	}
+	return t.best, true, changed
 }
 
 // checkpointOf returns the Checkpoint a checkpoint commit carries. A checkpoint

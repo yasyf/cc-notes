@@ -336,3 +336,76 @@ func TestEntityKind(t *testing.T) {
 		})
 	}
 }
+
+func TestDifferOverWalkMatchesEntries(t *testing.T) {
+	c0 := mk("c0", nil, "alice", 100, 1, model.CreateNote{Nonce: "x", Title: "T0", Body: "B0"})
+	c1 := mk("c1", []string{"c0"}, "bob", 200, 2, model.SetTitle{Title: "T1"})
+	state, err := fold.Note([]model.PackCommit{c0, c1})
+	if err != nil {
+		t.Fatalf("fold.Note: %v", err)
+	}
+	seed := model.Ledger{
+		ID: "l0", Title: "lg", Status: model.LedgerActive, Columns: []string{"state"},
+		Rows:     []model.LedgerRow{{Key: "k", Fields: map[string]string{"state": "seeded"}, Position: "a"}},
+		Labels:   []string{"seeded"},
+		Comments: []model.Comment{}, Author: "alice", CreatedAt: 100, UpdatedAt: 100,
+	}
+	tests := []struct {
+		name  string
+		chain []model.PackCommit
+	}{
+		{"note edits with an idempotent set", []model.PackCommit{
+			mk("n0", nil, "alice", 100, 1, model.CreateNote{Nonce: "x", Title: "T", Body: "B", Tags: []string{"a", "b"}}),
+			mk("n1", []string{"n0"}, "bob", 200, 2, model.SetTitle{Title: "T2"}),
+			mk("n2", []string{"n1"}, "carol", 250, 3, model.SetTitle{Title: "T2"}),
+			mk("n3", []string{"n2"}, "dave", 300, 4, model.AddTag{Tag: "c"}, model.RemoveTag{Tag: "a"}),
+			mk("n4", []string{"n3"}, "erin", 350, 5, model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "x.go"}}),
+		}},
+		{"task lifecycle with a heartbeat", []model.PackCommit{
+			mk("t0", nil, "alice", 100, 1, model.CreateTask{Nonce: "x", Title: "ship", Type: model.TypeTask, Priority: 2, Branch: "main", Labels: []string{"backend"}}),
+			mk("t1", []string{"t0"}, "agent-b", 200, 2, model.Claim{Assignee: "agent-b"}),
+			mk("t2", []string{"t1"}, "agent-b", 250, 3, model.Renew{}),
+			mk("t3", []string{"t2"}, "alice", 300, 4, model.SetPriority{Priority: 3}),
+			mk("t4", []string{"t3"}, "bob", 350, 5, model.AddComment{Body: "ping"}),
+			mk("t5", []string{"t4"}, "bob", 400, 6, model.AddComment{Body: "ping"}),
+		}},
+		{"note checkpoint", []model.PackCommit{c0, c1, cp("cK", "c1", "compactor", 250, 3, state, 2, "c0", "c1"), mk("c2", []string{"cK"}, "carol", 300, 4, model.SetBody{Body: "B2"})}},
+		{"ledger rows around a seed the ops do not rebuild", []model.PackCommit{
+			mk("l0", nil, "alice", 100, 1, model.CreateLedger{Nonce: "x", Title: "lg", Columns: []string{"state"}}),
+			mk("l1", []string{"l0"}, "bob", 200, 2, model.UpsertRow{Key: "a", Fields: map[string]string{"state": "one"}, Position: "b"}),
+			mk("lK", []string{"l1"}, "compactor", 250, 3, model.Checkpoint{EntityID: "l0", State: seed, CoversLamport: 2, CoversShas: []model.SHA{"l0", "l1"}}),
+			mk("l2", []string{"lK"}, "carol", 300, 4, model.UpsertRow{Key: "k", Fields: map[string]string{"state": "two"}}, model.UpsertRow{Key: "z", Position: "0"}),
+			mk("l3", []string{"l2"}, "dave", 350, 5, model.RemoveRow{Key: "k"}, model.SetColumns{Columns: []string{"state", "note"}}),
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want := entriesOf(t, tt.chain)
+			var d trail.Differ
+			n := 0
+			if err := fold.Walk(tt.chain, func(st fold.Step) error {
+				e, ok, err := d.Next(st)
+				if err != nil || !ok {
+					return err
+				}
+				if n >= len(want) {
+					t.Fatalf("streamed entry %d (%s) past Entries' %d", n, e.Commit.SHA, len(want))
+				}
+				w := want[n]
+				if e.Commit.SHA != w.Commit.SHA || e.Kind != w.Kind || e.Covers != w.Covers || !reflect.DeepEqual(e.Changes, w.Changes) {
+					t.Fatalf("entry %d = {%s %s %d %+v}, want {%s %s %d %+v}", n, e.Commit.SHA, e.Kind, e.Covers, e.Changes, w.Commit.SHA, w.Kind, w.Covers, w.Changes)
+				}
+				if !reflect.DeepEqual(e.Snapshot, w.Snapshot) {
+					t.Fatalf("entry %d snapshot = %+v, want %+v", n, e.Snapshot, w.Snapshot)
+				}
+				n++
+				return nil
+			}); err != nil {
+				t.Fatalf("Walk: %v", err)
+			}
+			if n != len(want) {
+				t.Fatalf("streamed %d entries, Entries %d", n, len(want))
+			}
+		})
+	}
+}

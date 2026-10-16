@@ -228,8 +228,7 @@ func TestWatchRunBaselineIsTakenOnEntry(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		cancel()
-		<-done
-		t.Fatal("Run published no event for a change made after entry within 5s")
+		t.Fatalf("Run published no event for a change made after entry within 5s (Run returned %v)", <-done)
 	}
 
 	cancel()
