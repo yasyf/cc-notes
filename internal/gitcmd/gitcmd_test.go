@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -387,6 +390,199 @@ func TestFetchPushRoundTrip(t *testing.T) {
 	}
 	if got := resolve(t, bare, ref); got != c1 {
 		t.Fatalf("rejected push moved remote ref to %s, want %s", got, c1)
+	}
+}
+
+func leaseFile(t *testing.T) *os.File {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "lease")
+	if err != nil {
+		t.Fatalf("create lease: %v", err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
+}
+
+type writerPair struct {
+	name         string
+	unheld, held func() error
+}
+
+func heldWriterPairs(t *testing.T) []writerPair {
+	t.Helper()
+	g := initRepo(t)
+	held := g.Holding(leaseFile(t))
+	ctx := t.Context()
+	missing := filepath.Join(t.TempDir(), "missing.git")
+	ref := "refs/cc-notes/notes/0123"
+	return []writerPair{
+		{
+			"delete remote ref",
+			func() error { return g.DeleteRemoteRef(ctx, missing, ref) },
+			func() error { return held.DeleteRemoteRef(ctx, missing, ref) },
+		},
+		{
+			"push",
+			func() error { return g.Push(ctx, missing, "refs/cc-notes/*:refs/cc-notes/*") },
+			func() error { return held.Push(ctx, missing, "refs/cc-notes/*:refs/cc-notes/*") },
+		},
+		{
+			"fetch",
+			func() error { return g.Fetch(ctx, missing, "refs/cc-notes/*:refs/cc-notes-sync/origin/*") },
+			func() error { return held.Fetch(ctx, missing, "refs/cc-notes/*:refs/cc-notes-sync/origin/*") },
+		},
+	}
+}
+
+func assertHeldFailsAsUnheld(t *testing.T, pairs []writerPair, want string) {
+	t.Helper()
+	for _, pair := range pairs {
+		t.Run(pair.name, func(t *testing.T) {
+			unheld := pair.unheld()
+			if unheld == nil || !strings.Contains(unheld.Error(), want) {
+				t.Fatalf("unheld %s = %v, want an error containing %q", pair.name, unheld, want)
+			}
+			if got := pair.held(); got == nil || got.Error() != unheld.Error() {
+				t.Fatalf("held %s = %v, want the unheld error %q", pair.name, got, unheld)
+			}
+		})
+	}
+}
+
+func TestHeldWritersFailExactlyAsUnheld(t *testing.T) {
+	assertHeldFailsAsUnheld(t, heldWriterPairs(t), "does not appear to be a git repository")
+}
+
+func stubGit(t *testing.T, script string) {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("LookPath(git): %v", err)
+	}
+	dir := t.TempDir()
+	stub := fmt.Sprintf("#!/bin/sh\n%s\nexec %q \"$@\"\n", script, realGit)
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(stub), 0o755); err != nil {
+		t.Fatalf("write git stub: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestHeldWritersDieByGitsSignalExactlyAsUnheld(t *testing.T) {
+	tests := []struct {
+		signal, want string
+	}{
+		{"TERM", "signal: terminated"},
+		{"KILL", "signal: killed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.signal, func(t *testing.T) {
+			pairs := heldWriterPairs(t)
+			stubGit(t, `case " $* " in *" push "*|*" fetch "*) kill -`+tt.signal+` $$ ;; esac`)
+
+			assertHeldFailsAsUnheld(t, pairs, tt.want)
+		})
+	}
+}
+
+const signalReportEnv = "CC_NOTES_TEST_SIGNAL_REPORT"
+
+func TestReportIgnoredSignals(t *testing.T) {
+	report := os.Getenv(signalReportEnv)
+	if report == "" {
+		t.Skip("runs only as the git stub's report of the signals it inherited as ignored")
+	}
+	line := fmt.Sprintf("SIGHUP=%t SIGINT=%t\n", signal.Ignored(syscall.SIGHUP), signal.Ignored(syscall.SIGINT))
+	f, err := os.OpenFile(report, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open signal report: %v", err)
+	}
+	if _, err := f.WriteString(line); err != nil {
+		t.Fatalf("write signal report: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close signal report: %v", err)
+	}
+}
+
+func TestHeldPushInheritsTheCallersIgnoredSignals(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	tests := []struct {
+		name      string
+		ignoreHUP bool
+	}{
+		{"SIGHUP at default", false},
+		{"SIGHUP ignored", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := initRepo(t)
+			held := g.Holding(leaseFile(t))
+			missing := filepath.Join(t.TempDir(), "missing.git")
+			report := filepath.Join(t.TempDir(), "signals")
+			stubGit(t, fmt.Sprintf("%s=%q %q -test.run='^TestReportIgnoredSignals$' >/dev/null 2>&1", signalReportEnv, report, self))
+			if tt.ignoreHUP {
+				signal.Ignore(syscall.SIGHUP)
+				t.Cleanup(func() { signal.Reset(syscall.SIGHUP) })
+			}
+			if signal.Ignored(syscall.SIGHUP) != tt.ignoreHUP {
+				t.Fatalf("this test process has SIGHUP ignored = %t, want %t before either push", !tt.ignoreHUP, tt.ignoreHUP)
+			}
+
+			_ = g.Push(t.Context(), missing, "refs/cc-notes/*:refs/cc-notes/*")
+			_ = held.Push(t.Context(), missing, "refs/cc-notes/*:refs/cc-notes/*")
+
+			raw, err := os.ReadFile(report)
+			if err != nil {
+				t.Fatalf("read signal report: %v", err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+			want := fmt.Sprintf("SIGHUP=%t SIGINT=%t", tt.ignoreHUP, signal.Ignored(syscall.SIGINT))
+			if len(lines) != 2 || lines[0] != want || lines[1] != want {
+				t.Fatalf("ignored signals seen by unheld then held git = %q, want both %q", lines, want)
+			}
+		})
+	}
+}
+
+func TestHeldFetchAndRejectedPushRoundTrip(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := initRepo(t)
+	gittest.Git(t, a.Dir, "remote", "add", "origin", bare)
+	ctx := t.Context()
+	c1 := commitEmpty(t, a, "c1")
+	ref := "refs/cc-notes/notes/" + string(c1)
+	if err := a.UpdateRef(ctx, ref, c1, ""); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := a.Holding(leaseFile(t)).Push(ctx, "origin", "refs/cc-notes/*:refs/cc-notes/*"); err != nil {
+		t.Fatalf("held push: %v", err)
+	}
+
+	b := gitcmd.Git{Dir: t.TempDir()}
+	gittest.Git(t, b.Dir, "init", "-q", "-b", "main")
+	gittest.Git(t, b.Dir, "remote", "add", "origin", bare)
+	gittest.Git(t, b.Dir, "config", "user.name", "Other User")
+	gittest.Git(t, b.Dir, "config", "user.email", "other@example.com")
+	held := b.Holding(leaseFile(t))
+	if err := held.Fetch(ctx, "origin", "refs/cc-notes/*:refs/cc-notes/*"); err != nil {
+		t.Fatalf("held fetch: %v", err)
+	}
+	if got := resolve(t, b.Dir, ref); got != c1 {
+		t.Fatalf("held fetch put ref at %s, want %s", got, c1)
+	}
+
+	divergent := commitEmpty(t, b, "divergent")
+	if err := b.UpdateRef(ctx, ref, divergent, c1); err != nil {
+		t.Fatalf("diverge local ref: %v", err)
+	}
+	if err := held.Push(ctx, "origin", "refs/cc-notes/*:refs/cc-notes/*"); !errors.Is(err, gitcmd.ErrNonFastForward) {
+		t.Fatalf("held diverged push: got %v, want ErrNonFastForward", err)
+	}
+	if got := resolve(t, bare, ref); got != c1 {
+		t.Fatalf("rejected held push moved remote ref to %s, want %s", got, c1)
 	}
 }
 

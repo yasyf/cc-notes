@@ -213,11 +213,16 @@ func (e *engine) report(rounds, pushed int) Report {
 	}
 }
 
-func refreshTracking(ctx context.Context, s *store.Store, remote, trackingPrefix, fetchSpec string) error {
+func refreshTracking(ctx context.Context, s *store.Store, remote, trackingPrefix, fetchSpec string) (err error) {
 	listed, err := s.RecordsGit.LsRemote(ctx, remote, namespace)
 	if err != nil {
 		return err
 	}
+	lock, err := s.TrackingLock(ctx, remote)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, lock.Close()) }()
 	tracking, err := s.RecordsGit.Refs(ctx, trackingPrefix)
 	if err != nil {
 		return err
@@ -225,7 +230,7 @@ func refreshTracking(ctx context.Context, s *store.Store, remote, trackingPrefix
 	if mirrors(listed, tracking, trackingPrefix) {
 		return nil
 	}
-	return s.RecordsGit.Fetch(ctx, remote, fetchSpec)
+	return s.RecordsGit.Holding(lock).Fetch(ctx, remote, fetchSpec)
 }
 
 func mirrors(listed, tracking map[string]model.SHA, trackingPrefix string) bool {
@@ -370,9 +375,18 @@ func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (
 	return pending, secluded, nil
 }
 
-func (e *engine) push(ctx context.Context, pending []string) error {
+func (e *engine) push(ctx context.Context, pending []string) (err error) {
+	if len(pending) == 0 {
+		return nil
+	}
+	lock, err := e.store.TrackingLock(ctx, e.remote)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	git := e.store.RecordsGit.Holding(lock)
 	for _, batch := range pushBatches(pending) {
-		if err := e.store.RecordsGit.Push(ctx, e.remote, batch...); err != nil {
+		if err := git.Push(ctx, e.remote, batch...); err != nil {
 			return err
 		}
 	}

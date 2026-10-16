@@ -14,13 +14,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/go-git/go-git/v5/plumbing"
 
+	"github.com/yasyf/cc-notes/internal/gitguard"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -63,6 +68,35 @@ type Git struct {
 	Dir     string
 	workDir string
 	backend bool
+	held    *os.File
+}
+
+// Held runs the git commands that write a remote's tracking refs, none of
+// which reads input, each under a guardian process holding a lease file. The
+// guardian keeps the lease until its git exits, even past the caller, and git
+// and every process git starts never receive the lease fd.
+type Held struct{ git Git }
+
+// Holding returns g's tracking-ref writers leasing f: a lock on f stays held
+// until each command's git exits, even if this process dies first.
+func (g Git) Holding(f *os.File) Held {
+	g.held = f
+	return Held{git: g}
+}
+
+// Fetch is Git.Fetch holding the lease.
+func (h Held) Fetch(ctx context.Context, remote string, refspecs ...string) error {
+	return h.git.Fetch(ctx, remote, refspecs...)
+}
+
+// Push is Git.Push holding the lease.
+func (h Held) Push(ctx context.Context, remote string, refspecs ...string) error {
+	return h.git.Push(ctx, remote, refspecs...)
+}
+
+// DeleteRemoteRef is Git.DeleteRemoteRef holding the lease.
+func (h Held) DeleteRemoteRef(ctx context.Context, remote, ref string) error {
+	return h.git.DeleteRemoteRef(ctx, remote, ref)
 }
 
 // Backend returns a handle on the absolute common directory dir, pinned as
@@ -156,6 +190,10 @@ func (e *commandError) Error() string {
 
 func (e *commandError) Unwrap() error { return e.err }
 
+type signalError syscall.Signal
+
+func (e signalError) Error() string { return "signal: " + syscall.Signal(e).String() }
+
 func (e *commandError) exitCode() int {
 	var exit *exec.ExitError
 	if errors.As(e.err, &exit) {
@@ -175,6 +213,9 @@ func (g Git) probe(ctx context.Context, stdin string, args ...string) (string, e
 }
 
 func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...string) (string, error) {
+	if g.held != nil {
+		return g.runHeld(ctx, env, args...)
+	}
 	//nolint:gosec // G204: git is a fixed argv[0]; args are internal git subcommands, not user-shell input, in this CLI's own repo.
 	cmd := exec.CommandContext(ctx, "git", g.argv(args...)...)
 	cmd.Env = g.environ(env)
@@ -187,6 +228,84 @@ func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...str
 		return stdout.String(), &commandError{args: args, stderr: strings.TrimSpace(stderr.String()), err: err}
 	}
 	return stdout.String(), nil
+}
+
+func (g Git) runHeld(ctx context.Context, env []string, args ...string) (string, error) {
+	captures := make([]*os.File, 0, 3)
+	defer func() {
+		for _, f := range captures {
+			_ = f.Close()
+		}
+	}()
+	for range 3 {
+		f, err := unlinkedTemp()
+		if err != nil {
+			return "", err
+		}
+		captures = append(captures, f)
+	}
+	stdoutFile, stderrFile, statusFile := captures[0], captures[1], captures[2]
+	cmd, err := gitguard.Command(ctx, g.held, stdoutFile, stderrFile, statusFile, g.environ(env), g.argv(args...))
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	var guard bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &guard, &guard
+	runErr := cmd.Run()
+	if cmd.ProcessState == nil {
+		return "", &commandError{args: args, err: runErr}
+	}
+	stdout, err := readCapture(stdoutFile)
+	if err != nil {
+		return "", err
+	}
+	stderr, err := readCapture(stderrFile)
+	if err != nil {
+		return stdout, err
+	}
+	report, err := readCapture(statusFile)
+	if err != nil {
+		return stdout, err
+	}
+	if guard.Len() > 0 || report == "" {
+		return stdout, fmt.Errorf("git %s: guardian: %w: %s", strings.Join(args, " "), runErr, strings.TrimSpace(guard.String()))
+	}
+	var gitErr error
+	kind, value, _ := strings.Cut(report, " ")
+	code, convErr := strconv.Atoi(value)
+	switch {
+	case convErr != nil:
+		return stdout, fmt.Errorf("git %s: guardian status %q: %w", strings.Join(args, " "), report, convErr)
+	case kind == "signal":
+		gitErr = signalError(code)
+	case kind == "exit":
+		gitErr = runErr
+	default:
+		return stdout, fmt.Errorf("git %s: guardian status %q", strings.Join(args, " "), report)
+	}
+	if gitErr != nil {
+		return stdout, &commandError{args: args, stderr: strings.TrimSpace(stderr), err: gitErr}
+	}
+	return stdout, nil
+}
+
+func unlinkedTemp() (*os.File, error) {
+	f, err := os.CreateTemp("", "cc-notes-git-*")
+	if err != nil {
+		return nil, fmt.Errorf("git output file: %w", err)
+	}
+	if err := os.Remove(f.Name()); err != nil {
+		return nil, errors.Join(fmt.Errorf("git output file: %w", err), f.Close())
+	}
+	return f, nil
+}
+
+func readCapture(f *os.File) (string, error) {
+	out, err := io.ReadAll(io.NewSectionReader(f, 0, math.MaxInt64))
+	if err != nil {
+		return "", fmt.Errorf("read git output: %w", err)
+	}
+	return string(out), nil
 }
 
 // classify wraps err with sentinel when the failed invocation's stderr

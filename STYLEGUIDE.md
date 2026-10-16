@@ -33,6 +33,11 @@ everything below is what `gofmt` can't decide for you.
   for control flow. Never match on error strings.
 - `internal/*` packages return errors; they never `os.Exit` or `log.Fatal`. Only
   `main` maps errors to exit codes and terminates.
+- The one exception is `internal/gitguard`'s package init, the module's only
+  process entry point outside `main`. When `os.Args` carries its versioned
+  sentinel, it runs the git guardian and exits, so every binary that links
+  `gitcmd`, test binaries and hosts embedding the notes package included,
+  serves the guardian with no change to its `main`.
 - Handle errors at the level that has context to act; pass them up otherwise.
   `_ =` discards only for genuinely best-effort cleanup (and say why if
   non-obvious).
