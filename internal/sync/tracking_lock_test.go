@@ -177,14 +177,15 @@ func TestTrackingLockGivesEachRemoteNameOneBoundedFile(t *testing.T) {
 	s := clone(t, bare, "Alice", "alice@example.com")
 	long := strings.Repeat("r", 250)
 	gittest.Git(t, s.Git.Dir, "check-ref-format", "refs/cc-notes-sync/"+long+"/notes/0123")
-	var held []*os.File
+	remotes := []string{"origin", long, "team/upstream", "team%2Fupstream", "team-upstream", "team_upstream"}
+	held := make([]*os.File, 0, len(remotes))
 	t.Cleanup(func() {
 		for _, lock := range held {
 			_ = lock.Close()
 		}
 	})
 	files := map[string]string{}
-	for _, remote := range []string{"origin", long, "team/upstream", "team%2Fupstream", "team-upstream", "team_upstream"} {
+	for _, remote := range remotes {
 		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 		lock, err := s.TrackingLock(ctx, remote)
 		cancel()
