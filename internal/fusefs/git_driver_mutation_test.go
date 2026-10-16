@@ -756,7 +756,10 @@ func TestVerifiedSourceCancellationClosesAndJoinsRead(t *testing.T) {
 		t.Fatalf("Wait cancellation = %v", err)
 	}
 	select {
-	case <-readDone:
+	case err := <-readDone:
+		if !errors.Is(err, io.ErrClosedPipe) {
+			t.Fatalf("joined read error = %v, want io.ErrClosedPipe", err)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("blocked read did not join")
 	}
