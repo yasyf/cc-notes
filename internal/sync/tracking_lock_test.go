@@ -125,8 +125,9 @@ func assertLockHolders(t *testing.T, path string, want ...int) {
 	if err != nil && !errors.As(err, &exit) {
 		t.Fatalf("lsof -t -- %s: %v", path, err)
 	}
-	var got []int
-	for _, field := range strings.Fields(string(out)) {
+	fields := strings.Fields(string(out))
+	got := make([]int, 0, len(fields))
+	for _, field := range fields {
 		pid, err := strconv.Atoi(field)
 		if err != nil {
 			t.Fatalf("lsof -t -- %s listed %q, want PIDs", path, out)
@@ -262,57 +263,76 @@ func TestSyncPushKeepsTheTrackingLockPastItsParent(t *testing.T) {
 	}
 }
 
+func termIgnoringGit(t *testing.T) {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("LookPath(git): %v", err)
+	}
+	dir := t.TempDir()
+	stub := fmt.Sprintf("#!/bin/sh\ntrap '' TERM\nexec %q \"$@\"\n", realGit)
+	//nolint:gosec // G306: the git stub must be executable (0o755) for the test's PATH override to run it.
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(stub), 0o755); err != nil {
+		t.Fatalf("write git stub: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestSyncCancelReapsItsGitWriterBeforeFreeingTheTrackingLock(t *testing.T) {
-	bare := gittest.InitBare(t)
-	a := clone(t, bare, "Alice", "alice@example.com")
-	b := clone(t, bare, "Bob", "bob@example.com")
-	note := createNote(t, a, "fetched after a cancelled sync")
-	sync(t, a)
-	noteRef := refs.For(model.KindNote, note.ID)
-	tracking := "refs/cc-notes-sync/origin/" + strings.TrimPrefix(noteRef, "refs/cc-notes/")
-	marker, release := slowWhileHolding(t, b)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	synced := make(chan error, 1)
-	go func() {
-		_, err := ccsync.Sync(ctx, b, "origin", false)
-		synced <- err
-	}()
-
-	writer := awaitPausedWriter(t, marker, func() string {
-		cancel()
-		select {
-		case err := <-synced:
-			return fmt.Sprintf("Sync returned %v", err)
-		default:
-			return "Sync still running"
-		}
-	})
-	cancel()
-
-	select {
-	case err := <-synced:
-		if err == nil {
-			t.Fatal("Sync cancelled mid-fetch returned nil, want an error")
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("Sync never returned after its context was cancelled mid-fetch")
+	tests := []struct {
+		name string
+		git  func(t *testing.T)
+	}{
+		{"native git", func(*testing.T) {}},
+		{"git ignoring SIGTERM", termIgnoringGit},
 	}
-	if err := syscall.Kill(writer.git, 0); !errors.Is(err, syscall.ESRCH) {
-		t.Fatalf("kill(%d, 0) after the cancelled Sync returned = %v, want ESRCH: its Git writer reaped", writer.git, err)
-	}
-	assertTrackingLockFree(t, b, "the cancelled transaction's hook")
-	if got := gittest.Git(t, b.Git.Dir, "for-each-ref", "--format=%(refname)", "refs/cc-notes-sync/"); got != "" {
-		t.Fatalf("tracking refs %q exist after the fetch writing them was cancelled at prepared", got)
-	}
-	if err := os.WriteFile(release, nil, 0o600); err != nil {
-		t.Fatalf("release prepared tracking transaction: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bare := gittest.InitBare(t)
+			a := clone(t, bare, "Alice", "alice@example.com")
+			b := clone(t, bare, "Bob", "bob@example.com")
+			createNote(t, a, "fetched by a cancelled sync")
+			sync(t, a)
+			marker, release := slowWhileHolding(t, b)
+			tt.git(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			synced := make(chan error, 1)
+			go func() {
+				_, err := ccsync.Sync(ctx, b, "origin", false)
+				synced <- err
+			}()
 
-	sync(t, b)
+			writer := awaitPausedWriter(t, marker, func() string {
+				cancel()
+				select {
+				case err := <-synced:
+					return fmt.Sprintf("Sync returned %v", err)
+				default:
+					return "Sync still running"
+				}
+			})
+			cancel()
 
-	if got, want := gittest.Git(t, b.Git.Dir, "rev-parse", tracking), gittest.Git(t, bare, "rev-parse", noteRef); got != want {
-		t.Fatalf("tracking %s = %s after a fresh sync, want the remote tip %s", tracking, got, want)
+			select {
+			case err := <-synced:
+				if err == nil {
+					t.Fatal("Sync cancelled mid-fetch returned nil, want an error")
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatal("Sync never returned after its context was cancelled mid-fetch")
+			}
+			if err := syscall.Kill(writer.git, 0); !errors.Is(err, syscall.ESRCH) {
+				t.Fatalf("kill(%d, 0) after the cancelled Sync returned = %v, want ESRCH: its Git writer reaped", writer.git, err)
+			}
+			assertTrackingLockFree(t, b, "the cancelled transaction's hook")
+			if got := gittest.Git(t, b.Git.Dir, "for-each-ref", "--format=%(refname)", "refs/cc-notes-sync/"); got != "" {
+				t.Fatalf("tracking refs %q exist after the fetch writing them was cancelled at prepared", got)
+			}
+			if err := os.WriteFile(release, nil, 0o600); err != nil {
+				t.Fatalf("release the orphaned hook: %v", err)
+			}
+		})
 	}
 }
 

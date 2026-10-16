@@ -2,8 +2,10 @@ package gitcmd_test
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -287,16 +289,19 @@ func leaseFile(t *testing.T) *os.File {
 	return f
 }
 
-func TestHeldWritersFailExactlyAsUnheld(t *testing.T) {
+type writerPair struct {
+	name         string
+	unheld, held func() error
+}
+
+func heldWriterPairs(t *testing.T) []writerPair {
+	t.Helper()
 	g := initRepo(t)
 	held := g.Holding(leaseFile(t))
 	ctx := t.Context()
 	missing := filepath.Join(t.TempDir(), "missing.git")
 	ref := "refs/cc-notes/notes/0123"
-	tests := []struct {
-		name         string
-		unheld, held func() error
-	}{
+	return []writerPair{
 		{
 			"delete remote ref",
 			func() error { return g.DeleteRemoteRef(ctx, missing, ref) },
@@ -313,17 +318,41 @@ func TestHeldWritersFailExactlyAsUnheld(t *testing.T) {
 			func() error { return held.Fetch(ctx, missing, "refs/cc-notes/*:refs/cc-notes-sync/origin/*") },
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			want := tt.unheld()
-			if want == nil {
-				t.Fatalf("unheld %s against missing remote %s succeeded", tt.name, missing)
+}
+
+func assertHeldFailsAsUnheld(t *testing.T, pairs []writerPair, want string) {
+	t.Helper()
+	for _, pair := range pairs {
+		t.Run(pair.name, func(t *testing.T) {
+			unheld := pair.unheld()
+			if unheld == nil || !strings.Contains(unheld.Error(), want) {
+				t.Fatalf("unheld %s = %v, want an error containing %q", pair.name, unheld, want)
 			}
-			if got := tt.held(); got == nil || got.Error() != want.Error() {
-				t.Fatalf("held %s = %v, want the unheld error %q", tt.name, got, want)
+			if got := pair.held(); got == nil || got.Error() != unheld.Error() {
+				t.Fatalf("held %s = %v, want the unheld error %q", pair.name, got, unheld)
 			}
 		})
 	}
+}
+
+func TestHeldWritersFailExactlyAsUnheld(t *testing.T) {
+	assertHeldFailsAsUnheld(t, heldWriterPairs(t), "does not appear to be a git repository")
+}
+
+func TestHeldWritersDieByGitsSignalExactlyAsUnheld(t *testing.T) {
+	pairs := heldWriterPairs(t)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("LookPath(git): %v", err)
+	}
+	dir := t.TempDir()
+	stub := fmt.Sprintf("#!/bin/sh\ncase \" $* \" in *\" push \"*|*\" fetch \"*) kill -TERM $$ ;; esac\nexec %q \"$@\"\n", realGit)
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(stub), 0o755); err != nil {
+		t.Fatalf("write git stub: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	assertHeldFailsAsUnheld(t, pairs, "signal: terminated")
 }
 
 func TestHeldFetchAndRejectedPushRoundTrip(t *testing.T) {

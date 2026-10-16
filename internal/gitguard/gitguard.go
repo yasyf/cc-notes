@@ -5,12 +5,15 @@
 package gitguard
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 const childArg = "--cc-notes-gitguard-v1"
@@ -33,10 +36,10 @@ func init() {
 }
 
 // Command returns a guardian that holds lease while it runs git with argv
-// under env, git writing to stdout and stderr and reading no input. The
-// guardian closes lease only after git exits, then mirrors git's exit status
-// or signal. Cancelling ctx sends it SIGTERM, which it forwards to git; it
-// writes its own stdout or stderr only when it fails itself, exiting 125.
+// under env, then writes git's output to stdout and stderr. The guardian
+// closes lease only after git exits, then mirrors git's exit status or
+// signal. Cancelling ctx sends it SIGTERM, which it answers by killing git;
+// it writes its own stdout or stderr only when it fails itself, exiting 125.
 func Command(ctx context.Context, lease, stdout, stderr *os.File, env, argv []string) (*exec.Cmd, error) {
 	exe, err := executable()
 	if err != nil {
@@ -66,16 +69,43 @@ func serve(argv []string) int {
 	signal.Notify(interrupts, syscall.SIGINT, syscall.SIGHUP)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
 	defer stop()
-	//nolint:gosec // G204: git is a fixed argv[0]; argv is the caller's internal git subcommand.
-	git := exec.CommandContext(ctx, "git", argv...)
-	git.Stdout, git.Stderr = stdout, stderr
-	git.Cancel = func() error { return git.Process.Signal(syscall.SIGTERM) }
-	runErr := git.Run()
-	if err := lease.Close(); err != nil {
+	outRead, outWrite, err := os.Pipe()
+	if err != nil {
 		return fail(err)
 	}
-	if git.ProcessState == nil {
-		return fail(runErr)
+	errRead, errWrite, err := os.Pipe()
+	if err != nil {
+		return fail(err)
+	}
+	//nolint:gosec // G204: git is a fixed argv[0]; argv is the caller's internal git subcommand.
+	git := exec.CommandContext(ctx, "git", argv...)
+	git.Stdout, git.Stderr = outWrite, errWrite
+	if err := git.Start(); err != nil {
+		return fail(err)
+	}
+	if err := errors.Join(outWrite.Close(), errWrite.Close()); err != nil {
+		return fail(err)
+	}
+	outDrained, errDrained := drainWhileRunning(outRead), drainWhileRunning(errRead)
+	if err := git.Wait(); git.ProcessState == nil {
+		return fail(err)
+	}
+	outBuf, err := finishDrain(outRead, outDrained)
+	if err != nil {
+		return fail(err)
+	}
+	errBuf, err := finishDrain(errRead, errDrained)
+	if err != nil {
+		return fail(err)
+	}
+	if err := writeCapture(stdout, outBuf); err != nil {
+		return fail(err)
+	}
+	if err := writeCapture(stderr, errBuf); err != nil {
+		return fail(err)
+	}
+	if err := lease.Close(); err != nil {
+		return fail(err)
 	}
 	status := git.ProcessState.Sys().(syscall.WaitStatus)
 	if !status.Signaled() {
@@ -84,7 +114,72 @@ func serve(argv []string) int {
 	sig := status.Signal()
 	signal.Reset(sig)
 	_ = syscall.Kill(os.Getpid(), sig)
+	time.Sleep(time.Second)
 	return 128 + int(sig)
+}
+
+type drained struct {
+	buf *bytes.Buffer
+	err error
+}
+
+func drainWhileRunning(r *os.File) <-chan drained {
+	done := make(chan drained, 1)
+	go func() {
+		var buf bytes.Buffer
+		err := drain(r, &buf, false)
+		done <- drained{&buf, err}
+	}()
+	return done
+}
+
+func finishDrain(r *os.File, running <-chan drained) ([]byte, error) {
+	if err := r.SetReadDeadline(time.Now()); err != nil {
+		return nil, err
+	}
+	d := <-running
+	if d.err != nil && !errors.Is(d.err, os.ErrDeadlineExceeded) {
+		return nil, d.err
+	}
+	if err := r.SetReadDeadline(time.Time{}); err != nil {
+		return nil, err
+	}
+	if err := drain(r, d.buf, true); err != nil {
+		return nil, err
+	}
+	return d.buf.Bytes(), r.Close()
+}
+
+func drain(r *os.File, buf *bytes.Buffer, final bool) error {
+	conn, err := r.SyscallConn()
+	if err != nil {
+		return err
+	}
+	chunk := make([]byte, 32<<10)
+	var readErr error
+	err = conn.Read(func(fd uintptr) bool {
+		for {
+			n, err := syscall.Read(int(fd), chunk)
+			switch {
+			case errors.Is(err, syscall.EINTR):
+				continue
+			case errors.Is(err, syscall.EAGAIN):
+				return final
+			case err != nil:
+				readErr = err
+				return true
+			case n == 0:
+				return true
+			}
+			buf.Write(chunk[:n])
+		}
+	})
+	return errors.Join(err, readErr)
+}
+
+func writeCapture(f *os.File, out []byte) error {
+	_, err := f.Write(out)
+	return errors.Join(err, f.Close())
 }
 
 func fail(err error) int {

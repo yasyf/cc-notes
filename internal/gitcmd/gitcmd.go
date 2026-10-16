@@ -251,7 +251,7 @@ func (g Git) runHeld(ctx context.Context, env []string, args ...string) (string,
 		return stdout, err
 	}
 	if guard.Len() > 0 {
-		return stdout, fmt.Errorf("git %s: guardian %v: %s", strings.Join(args, " "), cmd.ProcessState, strings.TrimSpace(guard.String()))
+		return stdout, fmt.Errorf("git %s: guardian: %w: %s", strings.Join(args, " "), runErr, strings.TrimSpace(guard.String()))
 	}
 	if runErr != nil {
 		return stdout, &commandError{args: args, stderr: strings.TrimSpace(stderr), err: runErr}

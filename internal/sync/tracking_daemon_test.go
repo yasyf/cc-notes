@@ -2,6 +2,7 @@ package sync_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/cgi"
@@ -10,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -228,4 +231,54 @@ done
 		t.Fatalf("the held fetch's reference-transaction hook never started its daemon: %v", err)
 	}
 	assertTrackingLockFree(t, b, "the hook daemon holding git's stderr")
+}
+
+func TestSyncFetchOutputEndsWithGitNotWithAHookLogger(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	createNote(t, a, "fetched under a hook whose logger keeps writing git's stderr")
+	sync(t, a)
+	hooks := t.TempDir()
+	logger := filepath.Join(hooks, "logger")
+	hook := fmt.Sprintf(`#!/bin/sh
+[ "$1" = committed ] || exit 0
+while read -r old new ref; do
+    case "$ref" in
+        refs/cc-notes-sync/origin/*)
+            [ -e '%s' ] && exit 0
+            ( while [ -d '%s' ]; do printf x >&2 || exit 0; sleep 0.05; done ) </dev/null >/dev/null &
+            echo "$!" > '%s'
+            exit 0
+            ;;
+    esac
+done
+`, logger, hooks, logger)
+	if err := os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte(hook), 0o700); err != nil {
+		t.Fatalf("write reference-transaction hook: %v", err)
+	}
+	gittest.Git(t, b.Git.Dir, "config", "core.hooksPath", hooks)
+
+	sync(t, b)
+
+	assertTrackingLockFree(t, b, "the hook's stderr logger")
+	recorded, err := os.ReadFile(logger)
+	if err != nil {
+		t.Fatalf("the held fetch's reference-transaction hook never started its logger: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(recorded)))
+	if err != nil || pid <= 1 {
+		t.Fatalf("logger PID = %q, want a live PID", recorded)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		err := syscall.Kill(pid, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("hook logger %d still alive 10s after Sync returned (kill(pid, 0) = %v), want it gone once git's stderr closed", pid, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
