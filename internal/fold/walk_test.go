@@ -336,7 +336,9 @@ func TestWalkLeavesCheckpointStateUnaliased(t *testing.T) {
 	}
 	var last string
 	if err := fold.Walk(chain, func(st fold.Step) error {
-		last = st.Snapshot.(model.Ledger).Rows[0].Fields["state"]
+		if st.Commit.SHA == "ccc" {
+			last = st.Snapshot.(model.Ledger).Rows[0].Fields["state"]
+		}
 		return nil
 	}); err != nil {
 		t.Fatalf("Walk: %v", err)
