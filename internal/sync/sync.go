@@ -213,9 +213,6 @@ func (e *engine) report(rounds, pushed int) Report {
 	}
 }
 
-// refreshTracking skips the fetch only when remote's listing equals the
-// tracking refs exactly, names and tips: that fetch would move and prune
-// nothing yet still pay git's connectivity walk over every promisor pack.
 func refreshTracking(ctx context.Context, s *store.Store, remote, trackingPrefix, fetchSpec string) error {
 	listed, err := s.RecordsGit.LsRemote(ctx, remote, namespace)
 	if err != nil {
