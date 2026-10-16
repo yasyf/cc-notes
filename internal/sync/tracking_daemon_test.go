@@ -215,7 +215,7 @@ func TestSyncFetchFreesTheTrackingLockWhileADaemonTheAlternateRefsCommandStarted
 	script := fmt.Sprintf(`#!/bin/sh
 : > '%s'
 exec 9<&0
-( exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&-; while [ -d '%s' ] && [ ! -e '%s' ]; do sleep 0.05; done ) <&9 9<&- >/dev/null 2>&1 &
+( exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&-; while [ -d '%s' ] && [ ! -e '%s' ]; do sleep 0.05; done ) <&9 >/dev/null 2>&1 &
 echo $! > '%s'
 `, ran, scripts, done, daemon)
 	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
