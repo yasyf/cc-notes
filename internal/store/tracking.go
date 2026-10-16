@@ -23,6 +23,7 @@ func (s *Store) TrackingLock(ctx context.Context, remote string) (*os.File, erro
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("tracking lock %s: %w", remote, err)
 	}
+	//nolint:gosec // G304: the lock is this records repository's own file under its git common directory; the remote name is path-escaped.
 	lock, err := os.OpenFile(filepath.Join(dir, "tracking-"+url.PathEscape(remote)+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("tracking lock %s: %w", remote, err)
