@@ -174,7 +174,7 @@ func (d *pipeDrain) readQueued() error {
 	}
 	var queued int
 	var ioctlErr error
-	if err := conn.Control(func(fd uintptr) { queued, ioctlErr = unix.IoctlGetInt(int(fd), unix.FIONREAD) }); err != nil {
+	if err := conn.Control(func(fd uintptr) { queued, ioctlErr = unix.IoctlGetInt(int(fd), fionread) }); err != nil {
 		return err
 	}
 	if ioctlErr != nil {
