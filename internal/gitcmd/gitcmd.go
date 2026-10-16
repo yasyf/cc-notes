@@ -543,15 +543,16 @@ func (g Git) CheckRefFormat(ctx context.Context, branch string) error {
 	return nil
 }
 
-// Fetch downloads from remote using exactly the given refspecs, with the
-// user's credential and SSH configuration. --refmap= keeps git from also
-// mapping the fetched refs through the configured remote.<r>.fetch refspecs:
-// that opportunistic update would force-clobber a diverged local entity ref
-// in a repo wired by Install before sync could union-merge it. A rejected
-// update — a non-forced refspec that does not fast-forward — wraps
-// ErrNonFastForward.
+// Fetch downloads cc-notes metadata refs from remote using exactly the given
+// refspecs, with the user's credential and SSH configuration. Submodule
+// recursion is off because the metadata records contain no gitlinks.
+// --refmap= keeps git from also mapping the fetched refs through the
+// configured remote.<r>.fetch refspecs: that opportunistic update would
+// force-clobber a diverged local entity ref in a repo wired by Install before
+// sync could union-merge it. A rejected update — a non-forced refspec that
+// does not fast-forward — wraps ErrNonFastForward.
 func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error {
-	_, err := g.run(ctx, "", append([]string{"fetch", "--refmap=", remote}, refspecs...)...)
+	_, err := g.run(ctx, "", append([]string{"fetch", "--recurse-submodules=no", "--refmap=", remote}, refspecs...)...)
 	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
 		return fmt.Errorf("fetch %s: %w", remote, err)
 	}
@@ -598,9 +599,10 @@ func (g Git) MissingObjects(ctx context.Context, tips []model.SHA) ([]model.SHA,
 }
 
 // FetchObjects downloads the named objects from remote, past any partial
-// clone filter, reading the ids from stdin.
+// clone filter, reading the ids from stdin. Like Fetch, it skips submodule
+// recursion: the records it hydrates contain no gitlinks.
 func (g Git) FetchObjects(ctx context.Context, remote string, oids []model.SHA) error {
-	if _, err := g.run(ctx, joinSHAs(oids), "fetch", "--refmap=", "--no-write-fetch-head", "--stdin", remote); err != nil {
+	if _, err := g.run(ctx, joinSHAs(oids), "fetch", "--recurse-submodules=no", "--refmap=", "--no-write-fetch-head", "--stdin", remote); err != nil {
 		return fmt.Errorf("fetch %d objects from %s: %w", len(oids), remote, err)
 	}
 	return nil

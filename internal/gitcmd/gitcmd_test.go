@@ -1,7 +1,9 @@
 package gitcmd_test
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -233,6 +235,117 @@ func TestUpdateRefConcurrentRace(t *testing.T) {
 	if got := resolve(t, g.Dir, ref); got != winner {
 		t.Fatalf("ref at %s, want winner %s", got, winner)
 	}
+}
+
+func fsmonitoredCheckout(t *testing.T) (source, checkout gitcmd.Git, marker string) {
+	t.Helper()
+	bare := gittest.InitBare(t)
+	source = initRepo(t)
+	gittest.Git(t, source.Dir, "remote", "add", "origin", bare)
+	tip := commitEmpty(t, source, "metadata without gitlinks")
+	ref := "refs/cc-notes/notes/" + string(tip)
+	if err := source.UpdateRef(t.Context(), ref, tip, ""); err != nil {
+		t.Fatalf("create note ref: %v", err)
+	}
+	if err := source.Push(t.Context(), "origin", ref+":"+ref); err != nil {
+		t.Fatalf("push note ref: %v", err)
+	}
+
+	checkout = initRepo(t)
+	gittest.Git(t, checkout.Dir, "remote", "add", "origin", bare)
+	if err := os.WriteFile(filepath.Join(checkout.Dir, "tracked"), []byte("checkout data\n"), 0o600); err != nil {
+		t.Fatalf("write tracked file: %v", err)
+	}
+	gittest.Git(t, checkout.Dir, "add", "tracked")
+	gittest.Git(t, checkout.Dir, "commit", "-q", "-m", "checkout index")
+	hooks := t.TempDir()
+	marker = filepath.Join(hooks, "queried")
+	hook := filepath.Join(hooks, "fsmonitor")
+	script := fmt.Sprintf("#!/bin/sh\n: > '%s'\nprintf 'token\\000'\n", marker)
+	if err := os.WriteFile(hook, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fsmonitor hook: %v", err)
+	}
+	gittest.Git(t, checkout.Dir, "config", "core.fsmonitor", hook)
+	gittest.Git(t, checkout.Dir, "config", "core.fsmonitorHookVersion", "2")
+	gittest.Git(t, checkout.Dir, "status", "--porcelain")
+	if err := os.Remove(marker); err != nil {
+		t.Fatalf("index-reading setup did not invoke fsmonitor: %v", err)
+	}
+	gittest.Git(t, checkout.Dir, "fetch", "--refmap=", "origin", ref+":refs/cc-notes-sync/control/notes/"+string(tip))
+	if err := os.Remove(marker); err != nil {
+		t.Fatalf("native fetch control did not invoke fsmonitor: %v", err)
+	}
+	return source, checkout, marker
+}
+
+func pushFreshNote(t *testing.T, source, checkout gitcmd.Git) (fresh model.SHA, ref string) {
+	t.Helper()
+	fresh = commitEmpty(t, source, "fresh metadata without gitlinks")
+	ref = "refs/cc-notes/notes/" + string(fresh)
+	if err := source.UpdateRef(t.Context(), ref, fresh, ""); err != nil {
+		t.Fatalf("create fresh note ref: %v", err)
+	}
+	if err := source.Push(t.Context(), "origin", ref+":"+ref); err != nil {
+		t.Fatalf("push fresh note ref: %v", err)
+	}
+	if _, err := checkout.CommitSHA(t.Context(), string(fresh)); !errors.Is(err, gitcmd.ErrRevNotFound) {
+		t.Fatalf("fresh metadata before fetch: %v, want ErrRevNotFound", err)
+	}
+	return fresh, ref
+}
+
+func readIndex(t *testing.T, g gitcmd.Git) []byte {
+	t.Helper()
+	gitDir, _ := gittest.Dirs(t, g.Dir)
+	index, err := os.ReadFile(filepath.Join(gitDir, "index"))
+	if err != nil {
+		t.Fatalf("read checkout index: %v", err)
+	}
+	return index
+}
+
+func assertFsmonitorAndIndexUntouched(t *testing.T, checkout gitcmd.Git, marker string, before []byte) {
+	t.Helper()
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("fsmonitor marker after notes fetch: %v, want absent", err)
+	}
+	if !bytes.Equal(before, readIndex(t, checkout)) {
+		t.Fatal("notes fetch changed the checkout index")
+	}
+}
+
+func TestFetchNotesSkipsCheckoutIndexAndFsmonitor(t *testing.T) {
+	source, checkout, marker := fsmonitoredCheckout(t)
+	fresh, ref := pushFreshNote(t, source, checkout)
+	before := readIndex(t, checkout)
+
+	tracking := "refs/cc-notes-sync/origin/notes/" + string(fresh)
+	if err := checkout.Fetch(t.Context(), "origin", ref+":"+tracking); err != nil {
+		t.Fatalf("fetch note metadata: %v", err)
+	}
+
+	if got := resolve(t, checkout.Dir, tracking); got != fresh {
+		t.Fatalf("tracking ref = %s, want %s", got, fresh)
+	}
+	if got := gittest.Git(t, checkout.Dir, "cat-file", "-t", string(fresh)); got != "commit" {
+		t.Fatalf("fetched note object type = %q, want commit", got)
+	}
+	assertFsmonitorAndIndexUntouched(t, checkout, marker, before)
+}
+
+func TestFetchObjectsSkipsCheckoutIndexAndFsmonitor(t *testing.T) {
+	source, checkout, marker := fsmonitoredCheckout(t)
+	fresh, _ := pushFreshNote(t, source, checkout)
+	before := readIndex(t, checkout)
+
+	if err := checkout.FetchObjects(t.Context(), "origin", []model.SHA{fresh}); err != nil {
+		t.Fatalf("fetch note objects: %v", err)
+	}
+
+	if got := gittest.Git(t, checkout.Dir, "cat-file", "-t", string(fresh)); got != "commit" {
+		t.Fatalf("hydrated note object type = %q, want commit", got)
+	}
+	assertFsmonitorAndIndexUntouched(t, checkout, marker, before)
 }
 
 func TestFetchPushRoundTrip(t *testing.T) {
