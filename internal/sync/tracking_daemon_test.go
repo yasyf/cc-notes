@@ -194,3 +194,38 @@ func TestSyncFetchFreesTheTrackingLockWhileADaemonTheAlternateRefsCommandStarted
 	}
 	assertTrackingLockFree(t, b, "the alternate refs command's daemon")
 }
+
+func TestSyncFetchFreesTheTrackingLockWhileAHookDaemonHoldsGitsStderr(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	createNote(t, a, "fetched under a hook whose daemon keeps git's stderr")
+	sync(t, a)
+	hooks := t.TempDir()
+	started, done := filepath.Join(hooks, "started"), filepath.Join(hooks, "done")
+	hook := fmt.Sprintf(`#!/bin/sh
+[ "$1" = committed ] || exit 0
+while read -r old new ref; do
+    case "$ref" in
+        refs/cc-notes-sync/origin/*)
+            : > '%s'
+            exec 9<&0
+            ( while [ -d '%s' ] && [ ! -e '%s' ]; do sleep 0.05; done ) <&9 >/dev/null &
+            exit 0
+            ;;
+    esac
+done
+`, started, hooks, done)
+	if err := os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte(hook), 0o700); err != nil {
+		t.Fatalf("write reference-transaction hook: %v", err)
+	}
+	gittest.Git(t, b.Git.Dir, "config", "core.hooksPath", hooks)
+	t.Cleanup(func() { _ = os.WriteFile(done, nil, 0o600) })
+
+	sync(t, b)
+
+	if _, err := os.Stat(started); err != nil {
+		t.Fatalf("the held fetch's reference-transaction hook never started its daemon: %v", err)
+	}
+	assertTrackingLockFree(t, b, "the hook daemon holding git's stderr")
+}
