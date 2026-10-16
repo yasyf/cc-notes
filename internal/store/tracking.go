@@ -2,16 +2,20 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"syscall"
 	"time"
 )
 
-const trackingLockPoll = 50 * time.Millisecond
+const (
+	trackingLockPoll   = 50 * time.Millisecond
+	trackingLockDomain = "cc-notes.tracking-lock.v1\x00"
+)
 
 // TrackingLock blocks until this process holds the records repository's lock
 // on remote's tracking refs and returns the locked file; closing it releases
@@ -23,8 +27,8 @@ func (s *Store) TrackingLock(ctx context.Context, remote string) (*os.File, erro
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("tracking lock %s: %w", remote, err)
 	}
-	//nolint:gosec // G304: the lock is this records repository's own file under its git common directory; the remote name is path-escaped.
-	lock, err := os.OpenFile(filepath.Join(dir, "tracking-"+url.PathEscape(remote)+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	//nolint:gosec // G304: the lock is this records repository's own file under its git common directory, named by a digest.
+	lock, err := os.OpenFile(filepath.Join(dir, trackingLockName(remote)), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("tracking lock %s: %w", remote, err)
 	}
@@ -43,4 +47,9 @@ func (s *Store) TrackingLock(ctx context.Context, remote string) (*os.File, erro
 		case <-poll.C:
 		}
 	}
+}
+
+func trackingLockName(remote string) string {
+	sum := sha256.Sum256([]byte(trackingLockDomain + remote))
+	return "tracking-" + hex.EncodeToString(sum[:]) + ".lock"
 }

@@ -172,6 +172,45 @@ func TestTrackingLockIsSharedByLinkedWorktrees(t *testing.T) {
 	}
 }
 
+func TestTrackingLockGivesEachRemoteNameOneBoundedFile(t *testing.T) {
+	bare := gittest.InitBare(t)
+	s := clone(t, bare, "Alice", "alice@example.com")
+	long := strings.Repeat("r", 250)
+	gittest.Git(t, s.Git.Dir, "check-ref-format", "refs/cc-notes-sync/"+long+"/notes/0123")
+	var held []*os.File
+	t.Cleanup(func() {
+		for _, lock := range held {
+			_ = lock.Close()
+		}
+	})
+	files := map[string]string{}
+	for _, remote := range []string{"origin", long, "team/upstream", "team%2Fupstream", "team-upstream", "team_upstream"} {
+		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+		lock, err := s.TrackingLock(ctx, remote)
+		cancel()
+		if err != nil {
+			t.Fatalf("TrackingLock(%q) while %d other remotes hold their locks: %v", remote, len(held), err)
+		}
+		held = append(held, lock)
+		name := filepath.Base(lock.Name())
+		if len(name) > 255 {
+			t.Fatalf("TrackingLock(%q) file name is %d bytes, over NAME_MAX 255", remote, len(name))
+		}
+		if other, shared := files[name]; shared {
+			t.Fatalf("remotes %q and %q share lock file %s", other, remote, name)
+		}
+		files[name] = remote
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	if lock, err := s.TrackingLock(ctx, long); !errors.Is(err, context.DeadlineExceeded) {
+		if lock != nil {
+			_ = lock.Close()
+		}
+		t.Fatalf("second TrackingLock for the %d-char remote while held = %v, want context.DeadlineExceeded", len(long), err)
+	}
+}
+
 func TestTrackingLockWaitFailsWhenItsContextEnds(t *testing.T) {
 	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
