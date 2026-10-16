@@ -30,21 +30,38 @@ var (
 	ErrKindMismatch = errors.New("entity kind mismatch")
 )
 
-// folders maps each entity kind to the boxing fold that turns a linearized
-// chain into its snapshot. Fold, Strict, and History dispatch through it on the
-// create op's kind. Its keys are exactly model.Kinds().
-var folders = map[model.Kind]func([]model.PackCommit, mode) (model.Snapshot, error){
-	model.KindNote:          func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldNote(o, m) },
-	model.KindDoc:           func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldDoc(o, m) },
-	model.KindLog:           func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldLog(o, m) },
-	model.KindTask:          func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldTask(o, m) },
-	model.KindSprint:        func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldSprint(o, m) },
-	model.KindProject:       func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldProject(o, m) },
-	model.KindRunbook:       func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldRunbook(o, m) },
-	model.KindInvestigation: func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldInvestigation(o, m) },
-	model.KindPlan:          func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldPlan(o, m) },
-	model.KindAnswer:        func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldAnswer(o, m) },
-	model.KindLedger:        func(o []model.PackCommit, m mode) (model.Snapshot, error) { return foldLedger(o, m) },
+// folders maps each entity kind to its fold: the boxing fold that turns a
+// linearized chain into its snapshot, and the walk over every prefix of one.
+// Fold, Strict, History, and Walk dispatch through it on the create op's kind.
+// Its keys are exactly model.Kinds().
+var folders = map[model.Kind]kindFold{
+	model.KindNote:          kindFoldOf[model.Note](newNoteFolder),
+	model.KindDoc:           kindFoldOf[model.Doc](newDocFolder),
+	model.KindLog:           kindFoldOf[model.Log](newLogFolder),
+	model.KindTask:          kindFoldOf[model.Task](newTaskFolder),
+	model.KindSprint:        kindFoldOf[model.Sprint](newSprintFolder),
+	model.KindProject:       kindFoldOf[model.Project](newProjectFolder),
+	model.KindRunbook:       kindFoldOf[model.Runbook](newRunbookFolder),
+	model.KindInvestigation: kindFoldOf[model.Investigation](newInvestigationFolder),
+	model.KindPlan:          kindFoldOf[model.Plan](newPlanFolder),
+	model.KindAnswer:        kindFoldOf[model.Answer](newAnswerFolder),
+	model.KindLedger:        kindFoldOf[model.Ledger](newLedgerFolder),
+}
+
+type kindFold struct {
+	fold func([]model.PackCommit, mode) (model.Snapshot, error)
+	walk func([]model.PackCommit, func(Step) error) error
+}
+
+func kindFoldOf[T model.Snapshot, F folder[T]](newFolder func() F) kindFold {
+	return kindFold{
+		fold: func(ordered []model.PackCommit, m mode) (model.Snapshot, error) {
+			return run[T](ordered, newFolder(), m)
+		},
+		walk: func(ordered []model.PackCommit, fn func(Step) error) error {
+			return walk(ordered, func() folder[T] { return newFolder() }, fn)
+		},
+	}
 }
 
 // Fold linearizes the chain and replays its operation packs into a snapshot,
@@ -69,11 +86,11 @@ func Fold(commits []model.PackCommit) (model.Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	fold, err := dispatch(firstOp(ordered))
+	kf, err := dispatch(firstOp(ordered))
 	if err != nil {
 		return nil, err
 	}
-	return fold(ordered, tolerant)
+	return kf.fold(ordered, tolerant)
 }
 
 // Strict folds like Fold but refuses history it cannot fully apply: an op that
@@ -85,11 +102,11 @@ func Strict(commits []model.PackCommit) (model.Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	fold, err := dispatch(firstOp(ordered))
+	kf, err := dispatch(firstOp(ordered))
 	if err != nil {
 		return nil, err
 	}
-	return fold(ordered, strict)
+	return kf.fold(ordered, strict)
 }
 
 // Note linearizes the chain and folds it as a note. It fails with
@@ -192,25 +209,26 @@ func Answer(commits []model.PackCommit) (model.Answer, error) {
 	return foldAnswer(ordered, tolerant)
 }
 
-// dispatch returns the boxing fold for an already-linearized chain whose first
-// op is first, keyed by the create op's kind exactly as Fold and History need.
+// dispatch returns the kind's fold for an already-linearized chain whose first
+// op is first, keyed by the create op's kind exactly as Fold, History, and Walk
+// need.
 // It fails with ErrNoCreate when first is nil or not a create op.
-func dispatch(first model.Op) (func([]model.PackCommit, mode) (model.Snapshot, error), error) {
+func dispatch(first model.Op) (kindFold, error) {
 	co, ok := first.(model.CreateOp)
 	if !ok {
 		if first == nil {
-			return nil, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
+			return kindFold{}, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
 		}
-		return nil, fmt.Errorf("%w: got %s", ErrNoCreate, first.OpKind())
+		return kindFold{}, fmt.Errorf("%w: got %s", ErrNoCreate, first.OpKind())
 	}
-	fold, ok := folders[co.CreateKind()]
+	kf, ok := folders[co.CreateKind()]
 	if !ok {
 		// A codec-decoded pack can't reach here — pack.go's kind gate only
 		// admits registered ops — but a hand-built PackCommit can carry a
 		// CreateOp whose kind has no folder; treat it as a non-create root.
-		return nil, fmt.Errorf("%w: got %s", ErrNoCreate, first.OpKind())
+		return kindFold{}, fmt.Errorf("%w: got %s", ErrNoCreate, first.OpKind())
 	}
-	return fold, nil
+	return kf, nil
 }
 
 func firstOp(ordered []model.PackCommit) model.Op {

@@ -30,17 +30,35 @@ func History(commits []model.PackCommit) ([]Step, error) {
 	if err != nil {
 		return nil, err
 	}
-	foldPrefix, err := dispatch(firstOp(ordered))
+	kf, err := dispatch(firstOp(ordered))
 	if err != nil {
 		return nil, err
 	}
 	steps := make([]Step, len(ordered))
 	for k := range ordered {
-		snapshot, err := foldPrefix(ordered[:k+1], tolerant)
+		snapshot, err := kf.fold(ordered[:k+1], tolerant)
 		if err != nil {
 			return nil, err
 		}
 		steps[k] = Step{Commit: ordered[k], Snapshot: snapshot}
 	}
 	return steps, nil
+}
+
+// Walk calls fn with each Step History would return, in the same order,
+// folding incrementally: a commit that keeps its prefix's seed checkpoint
+// advances the previous step's fold by one commit, and one that changes the
+// seed refolds its prefix under the new one. A Snapshot shares state with the
+// next step's fold, so it is valid only until fn returns. fn's error stops the
+// walk and is returned.
+func Walk(commits []model.PackCommit, fn func(Step) error) error {
+	ordered, err := Linearize(commits)
+	if err != nil {
+		return err
+	}
+	kf, err := dispatch(firstOp(ordered))
+	if err != nil {
+		return err
+	}
+	return kf.walk(ordered, fn)
 }

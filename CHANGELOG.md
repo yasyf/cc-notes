@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`history` folds a long chain once, not once per commit.** It refolded
+  every prefix of the chain from the root and kept every step's snapshot, so
+  `ledger history` on an 11,381-commit ledger visited about 65 million commits
+  and held 11,381 ledgers in memory before printing a line. It now carries one
+  fold forward a commit at a time, refolds a prefix only when a checkpoint
+  changes the seed it starts from, and diffs each step against the one before
+  it as it goes, holding two snapshots. The trail it prints is unchanged.
 - **A commit the clone does not hold no longer reloads every pack index.**
   Every lookup that missed made go-git decode every pack's `.idx` again before
   retrying, in case a new pack had landed. `relevant` checks each record's

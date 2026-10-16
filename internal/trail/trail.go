@@ -45,55 +45,76 @@ type Change struct {
 // Entry per commit in linearization order, classifying each as create, edit, or
 // checkpoint and diffing successive snapshots into field changes. A commit whose
 // only effect was bookkeeping (a lease heartbeat) or that was idempotent changes
-// no visible field and stays out of the trail. Each snapshot is encoded once and
-// serves as the after side of its own step and the before side of the next.
+// no visible field and stays out of the trail.
 func Entries(steps []fold.Step) ([]Entry, error) {
 	var entries []Entry
-	var prev *encodedSnapshot
-	for i, st := range steps {
-		cur, err := encodeSnapshot(st.Snapshot)
+	var d Differ
+	for _, st := range steps {
+		e, ok, err := d.Next(st)
 		if err != nil {
 			return nil, err
 		}
-		before := prev
-		prev = cur
-		e := Entry{Commit: st.Commit, Snapshot: st.Snapshot}
-		switch {
-		case IsCheckpoint(st.Commit):
-			e.Kind = "checkpoint"
-			e.Covers = checkpointCovers(st.Commit)
-		case i == 0:
-			e.Kind = "create"
-			zero, err := encodeSnapshot(st.Snapshot.Meta().Kind.Zero())
-			if err != nil {
-				return nil, err
-			}
-			changes, err := diffSnapshots(zero, cur)
-			if err != nil {
-				return nil, err
-			}
-			// A create is "from nothing": clear every initial scalar's From so a
-			// caller renders "priority: 2", not "0 → 2".
-			for j := range changes {
-				if changes[j].Scalar {
-					changes[j].From = nil
-				}
-			}
-			e.Changes = changes
-		default:
-			e.Kind = "edit"
-			changes, err := diffSnapshots(before, cur)
-			if err != nil {
-				return nil, err
-			}
-			if len(changes) == 0 {
-				continue
-			}
-			e.Changes = changes
+		if ok {
+			entries = append(entries, e)
 		}
-		entries = append(entries, e)
 	}
 	return entries, nil
+}
+
+// Differ builds an entity's change trail one step at a time, holding only the
+// previous step's encoding, so a caller streaming fold.Walk never retains more
+// than two snapshots. The zero Differ is ready for an entity's first step.
+type Differ struct {
+	prev *encodedSnapshot
+}
+
+// Next turns the step after the last one Next saw into its trail Entry, exactly
+// as Entries would. ok is false for a commit that stays out of the trail. Each
+// snapshot is encoded once and serves as the after side of its own step and the
+// before side of the next; the Entry's Snapshot is st.Snapshot itself, and its
+// Changes hold decoded values that share nothing with it.
+func (d *Differ) Next(st fold.Step) (e Entry, ok bool, err error) {
+	cur, err := encodeSnapshot(st.Snapshot)
+	if err != nil {
+		return Entry{}, false, err
+	}
+	before := d.prev
+	d.prev = cur
+	e = Entry{Commit: st.Commit, Snapshot: st.Snapshot}
+	switch {
+	case IsCheckpoint(st.Commit):
+		e.Kind = "checkpoint"
+		e.Covers = checkpointCovers(st.Commit)
+	case before == nil:
+		e.Kind = "create"
+		zero, err := encodeSnapshot(st.Snapshot.Meta().Kind.Zero())
+		if err != nil {
+			return Entry{}, false, err
+		}
+		changes, err := diffSnapshots(zero, cur)
+		if err != nil {
+			return Entry{}, false, err
+		}
+		// A create is "from nothing": clear every initial scalar's From so a
+		// caller renders "priority: 2", not "0 → 2".
+		for j := range changes {
+			if changes[j].Scalar {
+				changes[j].From = nil
+			}
+		}
+		e.Changes = changes
+	default:
+		e.Kind = "edit"
+		changes, err := diffSnapshots(before, cur)
+		if err != nil {
+			return Entry{}, false, err
+		}
+		if len(changes) == 0 {
+			return Entry{}, false, nil
+		}
+		e.Changes = changes
+	}
+	return e, true, nil
 }
 
 // encodedSnapshot is a snapshot's canonical JSON split one level deep: each

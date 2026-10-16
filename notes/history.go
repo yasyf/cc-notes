@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/internal/trail"
@@ -59,19 +60,25 @@ func (c *Client) History(ctx context.Context, id model.EntityID) ([]HistoryEntry
 }
 
 // HistoryByKind returns the edit trail for a resolved entity id whose kind is
-// already known.
+// already known. It streams the fold: each step is diffed against the previous
+// one and rendered before the next is folded, so it holds two snapshots at a
+// time however long the chain. Once ctx is done it stops at the next folded
+// step with ctx's error.
 func (c *Client) HistoryByKind(ctx context.Context, kind model.Kind, id model.EntityID) ([]HistoryEntry, error) {
-	steps, err := c.s.History(ctx, refs.For(kind, id))
+	out := []HistoryEntry{}
+	var d trail.Differ
+	err := c.s.Walk(ctx, refs.For(kind, id), func(st fold.Step) error {
+		e, ok, err := d.Next(st)
+		if err != nil {
+			return err
+		}
+		if ok {
+			out = append(out, newHistoryEntry(e))
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	entries, err := trail.Entries(steps)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]HistoryEntry, len(entries))
-	for i, e := range entries {
-		out[i] = newHistoryEntry(e)
 	}
 	return out, nil
 }
