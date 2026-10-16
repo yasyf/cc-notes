@@ -266,19 +266,74 @@ done
 	if err != nil {
 		t.Fatalf("the held fetch's reference-transaction hook never started its logger: %v", err)
 	}
+	assertExitsOnItsOwn(t, recorded, "hook logger")
+}
+
+func assertExitsOnItsOwn(t *testing.T, recorded []byte, what string) {
+	t.Helper()
 	pid, err := strconv.Atoi(strings.TrimSpace(string(recorded)))
 	if err != nil || pid <= 1 {
-		t.Fatalf("logger PID = %q, want a live PID", recorded)
+		t.Fatalf("%s PID = %q, want a live PID", what, recorded)
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		err := syscall.Kill(pid, 0)
 		if errors.Is(err, syscall.ESRCH) {
-			break
+			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("hook logger %d still alive 10s after Sync returned (kill(pid, 0) = %v), want it gone once git's stderr closed", pid, err)
+			t.Fatalf("%s %d still alive 10s after Sync returned (kill(pid, 0) = %v), want it gone once git's stderr closed", what, pid, err)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+func TestSyncFetchOutputStopsAtGitsExitWhileAHookWriterNeverPauses(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	note := createNote(t, a, "fetched under a hook whose writer floods git's stderr")
+	sync(t, a)
+	noteRef := refs.For(model.KindNote, note.ID)
+	tracking := "refs/cc-notes-sync/origin/" + strings.TrimPrefix(noteRef, "refs/cc-notes/")
+	lockPath := trackingLockPath(t, b)
+	hooks := t.TempDir()
+	writer := filepath.Join(hooks, "writer")
+	hook := fmt.Sprintf(`#!/bin/sh
+[ "$1" = committed ] || exit 0
+while read -r old new ref; do
+    case "$ref" in
+        refs/cc-notes-sync/origin/*)
+            [ -e '%s' ] && exit 0
+            sh -c 'while [ -d "%s" ]; do printf x >&2 || exit 0; done' </dev/null >/dev/null &
+            echo "$!" > '%s'
+            exit 0
+            ;;
+    esac
+done
+`, writer, hooks, writer)
+	if err := os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte(hook), 0o700); err != nil {
+		t.Fatalf("write reference-transaction hook: %v", err)
+	}
+	gittest.Git(t, b.Git.Dir, "config", "core.hooksPath", hooks)
+
+	sync(t, b)
+
+	//nolint:gosec // G304: the lock is this test's own records repository file, named by TrackingLock.
+	lock, err := os.OpenFile(lockPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open tracking lock: %v", err)
+	}
+	t.Cleanup(func() { _ = lock.Close() })
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("flock(LOCK_EX|LOCK_NB) on the tracking lock right after Sync returned = %v, want it free", err)
+	}
+	if got, want := gittest.Git(t, b.Git.Dir, "rev-parse", tracking), gittest.Git(t, bare, "rev-parse", noteRef); got != want {
+		t.Fatalf("tracking %s = %s after the fetch, want the remote tip %s", tracking, got, want)
+	}
+	recorded, err := os.ReadFile(writer)
+	if err != nil {
+		t.Fatalf("the held fetch's reference-transaction hook never started its writer: %v", err)
+	}
+	assertExitsOnItsOwn(t, recorded, "hook writer")
 }

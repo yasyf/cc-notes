@@ -9,11 +9,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 const childArg = "--cc-notes-gitguard-v1"
@@ -90,22 +94,32 @@ func serve(argv []string) int {
 	if err := errors.Join(outWrite.Close(), errWrite.Close()); err != nil {
 		return fail(err)
 	}
-	outDrained, errDrained := drainWhileRunning(outRead), drainWhileRunning(errRead)
+	var exited atomic.Bool
+	out, errOut := startDrain(outRead, &exited), startDrain(errRead, &exited)
 	if err := git.Wait(); git.ProcessState == nil {
 		return fail(err)
 	}
-	outBuf, err := finishDrain(outRead, outDrained)
-	if err != nil {
+	exited.Store(true)
+	drains := []*pipeDrain{out, errOut}
+	for _, d := range drains {
+		if err := d.r.SetReadDeadline(time.Now()); err != nil {
+			return fail(err)
+		}
+	}
+	for _, d := range drains {
+		if err := <-d.done; err != nil {
+			return fail(err)
+		}
+	}
+	for _, d := range drains {
+		if err := d.readQueued(); err != nil {
+			return fail(err)
+		}
+	}
+	if err := writeCapture(stdout, out.buf.Bytes()); err != nil {
 		return fail(err)
 	}
-	errBuf, err := finishDrain(errRead, errDrained)
-	if err != nil {
-		return fail(err)
-	}
-	if err := writeCapture(stdout, outBuf); err != nil {
-		return fail(err)
-	}
-	if err := writeCapture(stderr, errBuf); err != nil {
+	if err := writeCapture(stderr, errOut.buf.Bytes()); err != nil {
 		return fail(err)
 	}
 	code, report := exitReport(git.ProcessState)
@@ -126,63 +140,55 @@ func exitReport(state *os.ProcessState) (int, string) {
 	return wait.ExitStatus(), fmt.Sprintf("exit %d", wait.ExitStatus())
 }
 
-type drained struct {
-	buf *bytes.Buffer
-	err error
+type pipeDrain struct {
+	r    *os.File
+	buf  bytes.Buffer
+	done chan error
 }
 
-func drainWhileRunning(r *os.File) <-chan drained {
-	done := make(chan drained, 1)
-	go func() {
-		var buf bytes.Buffer
-		err := drain(r, &buf, false)
-		done <- drained{&buf, err}
-	}()
-	return done
+func startDrain(r *os.File, exited *atomic.Bool) *pipeDrain {
+	d := &pipeDrain{r: r, done: make(chan error, 1)}
+	go func() { d.done <- d.readUntil(exited) }()
+	return d
 }
 
-func finishDrain(r *os.File, running <-chan drained) ([]byte, error) {
-	if err := r.SetReadDeadline(time.Now()); err != nil {
-		return nil, err
+func (d *pipeDrain) readUntil(exited *atomic.Bool) error {
+	chunk := make([]byte, 32<<10)
+	for !exited.Load() {
+		n, err := d.r.Read(chunk)
+		d.buf.Write(chunk[:n])
+		switch {
+		case errors.Is(err, io.EOF), errors.Is(err, os.ErrDeadlineExceeded):
+			return nil
+		case err != nil:
+			return err
+		}
 	}
-	d := <-running
-	if d.err != nil && !errors.Is(d.err, os.ErrDeadlineExceeded) {
-		return nil, d.err
-	}
-	if err := r.SetReadDeadline(time.Time{}); err != nil {
-		return nil, err
-	}
-	if err := drain(r, d.buf, true); err != nil {
-		return nil, err
-	}
-	return d.buf.Bytes(), r.Close()
+	return nil
 }
 
-func drain(r *os.File, buf *bytes.Buffer, final bool) error {
-	conn, err := r.SyscallConn()
+func (d *pipeDrain) readQueued() error {
+	conn, err := d.r.SyscallConn()
 	if err != nil {
 		return err
 	}
-	chunk := make([]byte, 32<<10)
-	var readErr error
-	err = conn.Read(func(fd uintptr) bool {
-		for {
-			n, err := syscall.Read(int(fd), chunk)
-			switch {
-			case errors.Is(err, syscall.EINTR):
-				continue
-			case errors.Is(err, syscall.EAGAIN):
-				return final
-			case err != nil:
-				readErr = err
-				return true
-			case n == 0:
-				return true
-			}
-			buf.Write(chunk[:n])
-		}
-	})
-	return errors.Join(err, readErr)
+	var queued int
+	var ioctlErr error
+	if err := conn.Control(func(fd uintptr) { queued, ioctlErr = unix.IoctlGetInt(int(fd), unix.FIONREAD) }); err != nil {
+		return err
+	}
+	if ioctlErr != nil {
+		return fmt.Errorf("FIONREAD: %w", ioctlErr)
+	}
+	if err := d.r.SetReadDeadline(time.Time{}); err != nil {
+		return err
+	}
+	tail := make([]byte, queued)
+	if _, err := io.ReadFull(d.r, tail); err != nil {
+		return err
+	}
+	d.buf.Write(tail)
+	return d.r.Close()
 }
 
 func writeCapture(f *os.File, out []byte) error {
