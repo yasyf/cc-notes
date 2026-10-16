@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync/atomic"
 
 	"golang.org/x/sync/errgroup"
@@ -148,7 +149,7 @@ func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		if err := s.RecordsGit.Fetch(ctx, remote, fetchSpec); err != nil {
+		if err := refreshTracking(ctx, s, remote, trackingPrefix, fetchSpec); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
 		after, err := trackingView(ctx, s, trackingPrefix)
@@ -210,6 +211,36 @@ func (e *engine) report(rounds, pushed int) Report {
 		Downloaded:    e.downloaded,
 		Withheld:      e.withheld,
 	}
+}
+
+// refreshTracking skips the fetch only when remote's listing equals the
+// tracking refs exactly, names and tips: that fetch would move and prune
+// nothing yet still pay git's connectivity walk over every promisor pack.
+func refreshTracking(ctx context.Context, s *store.Store, remote, trackingPrefix, fetchSpec string) error {
+	listed, err := s.RecordsGit.LsRemote(ctx, remote, namespace)
+	if err != nil {
+		return err
+	}
+	tracking, err := s.RecordsGit.Refs(ctx, trackingPrefix)
+	if err != nil {
+		return err
+	}
+	if mirrors(listed, tracking, trackingPrefix) {
+		return nil
+	}
+	return s.RecordsGit.Fetch(ctx, remote, fetchSpec)
+}
+
+func mirrors(listed, tracking map[string]model.SHA, trackingPrefix string) bool {
+	if len(listed) != len(tracking) {
+		return false
+	}
+	for ref, tip := range listed {
+		if got, ok := tracking[trackingPrefix+strings.TrimPrefix(ref, namespace)]; !ok || got != tip {
+			return false
+		}
+	}
+	return true
 }
 
 // trackingView maps the tracking refs under trackingPrefix back to their

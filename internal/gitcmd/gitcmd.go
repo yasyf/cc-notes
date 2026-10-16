@@ -558,6 +558,26 @@ func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error
 	return nil
 }
 
+// LsRemote maps every ref remote advertises under prefix to its tip, reading
+// the advertisement over the remote's transport and writing nothing locally.
+func (g Git) LsRemote(ctx context.Context, remote, prefix string) (map[string]model.SHA, error) {
+	out, err := g.run(ctx, "", "ls-remote", "--refs", remote, prefix+"*")
+	if err != nil {
+		return nil, fmt.Errorf("ls-remote %s: %w", remote, err)
+	}
+	listed := make(map[string]model.SHA)
+	for _, line := range nonEmptyLines(out) {
+		tip, ref, ok := strings.Cut(line, "\t")
+		if !ok {
+			return nil, fmt.Errorf("ls-remote %s: malformed line %q", remote, line)
+		}
+		if strings.HasPrefix(ref, prefix) {
+			listed[ref] = model.SHA(tip)
+		}
+	}
+	return listed, nil
+}
+
 // MissingObjects lists the objects reachable from tips that the object
 // database lacks, without fetching any from a promisor remote.
 func (g Git) MissingObjects(ctx context.Context, tips []model.SHA) ([]model.SHA, error) {

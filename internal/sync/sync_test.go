@@ -893,6 +893,61 @@ func TestSyncUnchangedReconcilesNothing(t *testing.T) {
 	}
 }
 
+func fetchHead(t *testing.T, s *store.Store) string {
+	t.Helper()
+	return filepath.Join(gittest.Git(t, s.RecordsGit.Dir, "rev-parse", "--absolute-git-dir"), "FETCH_HEAD")
+}
+
+func TestSyncFetchesOnlyWhenTheRemoteListingDiffers(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	task := createTask(t, a, "shared task", "main")
+	taskRef := refs.For(model.KindTask, task.ID)
+	sync(t, a)
+	sync(t, b)
+	if err := os.Remove(fetchHead(t, b)); err != nil {
+		t.Fatalf("remove FETCH_HEAD: %v", err)
+	}
+
+	if got, want := sync(t, b), (ccsync.Report{Rounds: 1}); got != want {
+		t.Fatalf("unchanged sync report = %+v, want %+v", got, want)
+	}
+	if _, err := os.Stat(fetchHead(t, b)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unchanged sync fetched: FETCH_HEAD stat err = %v, want not exist", err)
+	}
+
+	appendOps(t, a, taskRef, model.AddLabel{Label: "urgent"})
+	sync(t, a)
+	if got, want := sync(t, b), (ccsync.Report{FastForwarded: 1, Reconciled: 1, Rounds: 1}); got != want {
+		t.Fatalf("moved-ref sync report = %+v, want %+v", got, want)
+	}
+	if _, err := os.Stat(fetchHead(t, b)); err != nil {
+		t.Fatalf("moved-ref sync never fetched: %v", err)
+	}
+}
+
+func TestSyncFetchPrunesATrackingRefTheRemoteDeleted(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	note := createNote(t, a, "kept note")
+	task := createTask(t, a, "deleted task", "main")
+	sync(t, a)
+	sync(t, b)
+	gittest.Git(t, b.RecordsGit.Dir, "config", "fetch.prune", "true")
+	taskTracking := "refs/cc-notes-sync/origin/" + strings.TrimPrefix(refs.For(model.KindTask, task.ID), "refs/cc-notes/")
+	noteTracking := "refs/cc-notes-sync/origin/" + strings.TrimPrefix(refs.For(model.KindNote, note.ID), "refs/cc-notes/")
+	gittest.Git(t, bare, "update-ref", "-d", refs.For(model.KindTask, task.ID))
+
+	sync(t, b)
+
+	tracking := gittest.Git(t, b.RecordsGit.Dir, "for-each-ref", "--format=%(refname)", "refs/cc-notes-sync/origin/")
+	if got, want := tracking, noteTracking; got != want {
+		t.Fatalf("tracking refs after remote deletion = %q, want only %q (pruned %s)", got, want, taskTracking)
+	}
+}
+
 // TestSyncScopedReconcilesOnlyChanged moves exactly one remote ref and pins
 // that the next sync reconciles only that ref, leaving the unchanged ref out
 // of scope.
