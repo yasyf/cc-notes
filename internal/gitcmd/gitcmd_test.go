@@ -277,6 +277,94 @@ func TestFetchPushRoundTrip(t *testing.T) {
 	}
 }
 
+func leaseFile(t *testing.T) *os.File {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "lease")
+	if err != nil {
+		t.Fatalf("create lease: %v", err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
+}
+
+func TestHeldWritersFailExactlyAsUnheld(t *testing.T) {
+	g := initRepo(t)
+	held := g.Holding(leaseFile(t))
+	ctx := t.Context()
+	missing := filepath.Join(t.TempDir(), "missing.git")
+	ref := "refs/cc-notes/notes/0123"
+	tests := []struct {
+		name         string
+		unheld, held func() error
+	}{
+		{
+			"delete remote ref",
+			func() error { return g.DeleteRemoteRef(ctx, missing, ref) },
+			func() error { return held.DeleteRemoteRef(ctx, missing, ref) },
+		},
+		{
+			"push",
+			func() error { return g.Push(ctx, missing, "refs/cc-notes/*:refs/cc-notes/*") },
+			func() error { return held.Push(ctx, missing, "refs/cc-notes/*:refs/cc-notes/*") },
+		},
+		{
+			"fetch",
+			func() error { return g.Fetch(ctx, missing, "refs/cc-notes/*:refs/cc-notes-sync/origin/*") },
+			func() error { return held.Fetch(ctx, missing, "refs/cc-notes/*:refs/cc-notes-sync/origin/*") },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want := tt.unheld()
+			if want == nil {
+				t.Fatalf("unheld %s against missing remote %s succeeded", tt.name, missing)
+			}
+			if got := tt.held(); got == nil || got.Error() != want.Error() {
+				t.Fatalf("held %s = %v, want the unheld error %q", tt.name, got, want)
+			}
+		})
+	}
+}
+
+func TestHeldFetchAndRejectedPushRoundTrip(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := initRepo(t)
+	gittest.Git(t, a.Dir, "remote", "add", "origin", bare)
+	ctx := t.Context()
+	c1 := commitEmpty(t, a, "c1")
+	ref := "refs/cc-notes/notes/" + string(c1)
+	if err := a.UpdateRef(ctx, ref, c1, ""); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := a.Holding(leaseFile(t)).Push(ctx, "origin", "refs/cc-notes/*:refs/cc-notes/*"); err != nil {
+		t.Fatalf("held push: %v", err)
+	}
+
+	b := gitcmd.Git{Dir: t.TempDir()}
+	gittest.Git(t, b.Dir, "init", "-q", "-b", "main")
+	gittest.Git(t, b.Dir, "remote", "add", "origin", bare)
+	gittest.Git(t, b.Dir, "config", "user.name", "Other User")
+	gittest.Git(t, b.Dir, "config", "user.email", "other@example.com")
+	held := b.Holding(leaseFile(t))
+	if err := held.Fetch(ctx, "origin", "refs/cc-notes/*:refs/cc-notes/*"); err != nil {
+		t.Fatalf("held fetch: %v", err)
+	}
+	if got := resolve(t, b.Dir, ref); got != c1 {
+		t.Fatalf("held fetch put ref at %s, want %s", got, c1)
+	}
+
+	divergent := commitEmpty(t, b, "divergent")
+	if err := b.UpdateRef(ctx, ref, divergent, c1); err != nil {
+		t.Fatalf("diverge local ref: %v", err)
+	}
+	if err := held.Push(ctx, "origin", "refs/cc-notes/*:refs/cc-notes/*"); !errors.Is(err, gitcmd.ErrNonFastForward) {
+		t.Fatalf("held diverged push: got %v, want ErrNonFastForward", err)
+	}
+	if got := resolve(t, bare, ref); got != c1 {
+		t.Fatalf("rejected held push moved remote ref to %s, want %s", got, c1)
+	}
+}
+
 func TestPushSkipsPrePushHook(t *testing.T) {
 	bare := gittest.InitBare(t)
 	a := initRepo(t)

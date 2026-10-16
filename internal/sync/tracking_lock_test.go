@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -44,7 +46,8 @@ func slowWhileHolding(t *testing.T, s *store.Store) (marker, release string) {
 while read -r old new ref; do
     case "$ref" in
         refs/cc-notes-sync/origin/*)
-            printf '%%s %%s\n' "$PPID" "$ref" > '%s.tmp'
+            guardian=$(ps -o ppid= -p "$PPID" | tr -d ' ')
+            printf '%%s %%s %%s %%s\n' "$PPID" "$$" "$guardian" "$ref" > '%s.tmp'
             mv '%s.tmp' '%s'
             while [ ! -e '%s' ]; do sleep 0.02; done
             exit 0
@@ -60,7 +63,84 @@ done
 	return marker, release
 }
 
-func killParentWhileHolding(t *testing.T, s *store.Store, marker string) {
+type pausedWriter struct{ git, hook, guardian int }
+
+func awaitPausedWriter(t *testing.T, marker string, abandon func() string) pausedWriter {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("git child never ran holding the tracking lock; %s", abandon())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	paused, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read paused writer: %v", err)
+	}
+	fields := strings.Fields(string(paused))
+	if len(fields) != 4 || !strings.HasPrefix(fields[3], "refs/cc-notes-sync/origin/") {
+		t.Fatalf("paused transaction = %q, want Git, hook, and guardian PIDs and a source tracking ref", paused)
+	}
+	pids := make([]int, 3)
+	for i, field := range fields[:3] {
+		pid, err := strconv.Atoi(field)
+		if err != nil || pid <= 1 {
+			t.Fatalf("paused transaction = %q, want three live PIDs", paused)
+		}
+		pids[i] = pid
+	}
+	writer := pausedWriter{git: pids[0], hook: pids[1], guardian: pids[2]}
+	if writer.guardian == writer.git || writer.guardian == writer.hook || writer.git == writer.hook {
+		t.Fatalf("paused transaction = %q, want distinct Git, hook, and guardian PIDs", paused)
+	}
+	t.Logf("Git writer %d under guardian %d paused while preparing %s", writer.git, writer.guardian, fields[3])
+	return writer
+}
+
+func trackingLockPath(t *testing.T, s *store.Store) string {
+	t.Helper()
+	lock, err := s.TrackingLock(t.Context(), "origin")
+	if err != nil {
+		t.Fatalf("TrackingLock to name the lock file: %v", err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatalf("close tracking lock: %v", err)
+	}
+	return lock.Name()
+}
+
+func assertLockHolders(t *testing.T, path string, want ...int) {
+	t.Helper()
+	lsof, err := exec.LookPath("lsof")
+	if err != nil {
+		t.Fatalf("lsof lists the tracking lock's holders: %v", err)
+	}
+	//nolint:gosec // G204: lists the processes holding this test's own lock file with a fixed argv.
+	out, err := exec.Command(lsof, "-t", "--", path).Output()
+	var exit *exec.ExitError
+	if err != nil && !errors.As(err, &exit) {
+		t.Fatalf("lsof -t -- %s: %v", path, err)
+	}
+	var got []int
+	for _, field := range strings.Fields(string(out)) {
+		pid, err := strconv.Atoi(field)
+		if err != nil {
+			t.Fatalf("lsof -t -- %s listed %q, want PIDs", path, out)
+		}
+		got = append(got, pid)
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("processes holding %s = %v, want exactly %v", path, got, want)
+	}
+}
+
+func killParentWhileHolding(t *testing.T, s *store.Store, marker, lockPath string) {
 	t.Helper()
 	var output bytes.Buffer
 	//nolint:gosec // G204: re-executes this test binary as the parent process under test.
@@ -76,31 +156,15 @@ func killParentWhileHolding(t *testing.T, s *store.Store, marker string) {
 			_ = parent.Wait()
 		}
 	})
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		if _, err := os.Stat(marker); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			_ = parent.Process.Kill()
-			_ = parent.Wait()
-			t.Fatalf("git child never ran holding the tracking lock; parent output:\n%s", output.String())
-		}
-		time.Sleep(20 * time.Millisecond)
+	writer := awaitPausedWriter(t, marker, func() string {
+		_ = parent.Process.Kill()
+		_ = parent.Wait()
+		return "parent output:\n" + output.String()
+	})
+	if writer.guardian == parent.Process.Pid {
+		t.Fatalf("paused Git %d runs directly under parent %d, want a guardian between them", writer.git, parent.Process.Pid)
 	}
-	paused, err := os.ReadFile(marker)
-	if err != nil {
-		t.Fatalf("read paused writer: %v", err)
-	}
-	writer := strings.Fields(string(paused))
-	if len(writer) != 2 || !strings.HasPrefix(writer[1], "refs/cc-notes-sync/origin/") {
-		t.Fatalf("paused transaction = %q, want Git PID and source tracking ref", paused)
-	}
-	pid, err := strconv.Atoi(writer[0])
-	if err != nil || pid <= 0 || pid == parent.Process.Pid {
-		t.Fatalf("paused writer PID = %q, want a Git child of parent %d", writer[0], parent.Process.Pid)
-	}
-	t.Logf("Git writer %d paused while preparing %s", pid, writer[1])
+	assertLockHolders(t, lockPath, parent.Process.Pid, writer.guardian)
 	if err := parent.Process.Kill(); err != nil {
 		t.Fatalf("kill parent: %v", err)
 	}
@@ -108,6 +172,7 @@ func killParentWhileHolding(t *testing.T, s *store.Store, marker string) {
 	if err := parent.Wait(); !errors.As(err, &exit) || exit.ExitCode() != -1 {
 		t.Fatalf("parent Wait = %v, want death by signal; output:\n%s", err, output.String())
 	}
+	assertLockHolders(t, lockPath, writer.guardian)
 }
 
 func assertOrphanHoldsThenReleases(t *testing.T, s *store.Store, release string) {
@@ -156,9 +221,10 @@ func TestSyncFetchKeepsTheTrackingLockPastItsParent(t *testing.T) {
 			gittest.Git(t, b.Git.Dir, "remote", "set-url", "origin", tr.url(t, bare))
 			noteRef := refs.For(model.KindNote, note.ID)
 			tracking := "refs/cc-notes-sync/origin/" + strings.TrimPrefix(noteRef, "refs/cc-notes/")
+			lockPath := trackingLockPath(t, b)
 			marker, release := slowWhileHolding(t, b)
 
-			killParentWhileHolding(t, b, marker)
+			killParentWhileHolding(t, b, marker, lockPath)
 			assertOrphanHoldsThenReleases(t, b, release)
 
 			if got, want := gittest.Git(t, b.Git.Dir, "rev-parse", tracking), gittest.Git(t, bare, "rev-parse", noteRef); got != want {
@@ -179,9 +245,10 @@ func TestSyncPushKeepsTheTrackingLockPastItsParent(t *testing.T) {
 			if _, err := ccsync.Install(t.Context(), a.Git, "origin"); err != nil {
 				t.Fatalf("Install source tracking refspec: %v", err)
 			}
+			lockPath := trackingLockPath(t, a)
 			marker, release := slowWhileHolding(t, a)
 
-			killParentWhileHolding(t, a, marker)
+			killParentWhileHolding(t, a, marker, lockPath)
 			assertOrphanHoldsThenReleases(t, a, release)
 
 			if got, want := gittest.Git(t, bare, "rev-parse", noteRef), gittest.Git(t, a.Git.Dir, "rev-parse", noteRef); got != want {
@@ -192,6 +259,60 @@ func TestSyncPushKeepsTheTrackingLockPastItsParent(t *testing.T) {
 				t.Fatalf("source tracking %s = %s after the orphaned push, want %s", tracking, got, want)
 			}
 		})
+	}
+}
+
+func TestSyncCancelReapsItsGitWriterBeforeFreeingTheTrackingLock(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	note := createNote(t, a, "fetched after a cancelled sync")
+	sync(t, a)
+	noteRef := refs.For(model.KindNote, note.ID)
+	tracking := "refs/cc-notes-sync/origin/" + strings.TrimPrefix(noteRef, "refs/cc-notes/")
+	marker, release := slowWhileHolding(t, b)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	synced := make(chan error, 1)
+	go func() {
+		_, err := ccsync.Sync(ctx, b, "origin", false)
+		synced <- err
+	}()
+
+	writer := awaitPausedWriter(t, marker, func() string {
+		cancel()
+		select {
+		case err := <-synced:
+			return fmt.Sprintf("Sync returned %v", err)
+		default:
+			return "Sync still running"
+		}
+	})
+	cancel()
+
+	select {
+	case err := <-synced:
+		if err == nil {
+			t.Fatal("Sync cancelled mid-fetch returned nil, want an error")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Sync never returned after its context was cancelled mid-fetch")
+	}
+	if err := syscall.Kill(writer.git, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("kill(%d, 0) after the cancelled Sync returned = %v, want ESRCH: its Git writer reaped", writer.git, err)
+	}
+	assertTrackingLockFree(t, b, "the cancelled transaction's hook")
+	if got := gittest.Git(t, b.Git.Dir, "for-each-ref", "--format=%(refname)", "refs/cc-notes-sync/"); got != "" {
+		t.Fatalf("tracking refs %q exist after the fetch writing them was cancelled at prepared", got)
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatalf("release prepared tracking transaction: %v", err)
+	}
+
+	sync(t, b)
+
+	if got, want := gittest.Git(t, b.Git.Dir, "rev-parse", tracking), gittest.Git(t, bare, "rev-parse", noteRef); got != want {
+		t.Fatalf("tracking %s = %s after a fresh sync, want the remote tip %s", tracking, got, want)
 	}
 }
 

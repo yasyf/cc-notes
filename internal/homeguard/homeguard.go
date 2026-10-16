@@ -19,6 +19,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	// Initializes the git guardian dispatch before this package's HOME redirect, so a guardian child keeps its caller's HOME.
+	_ "github.com/yasyf/cc-notes/internal/gitguard"
 )
 
 const (

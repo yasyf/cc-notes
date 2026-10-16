@@ -14,6 +14,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"os/exec"
 	"slices"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 
+	"github.com/yasyf/cc-notes/internal/gitguard"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -66,14 +69,14 @@ type Git struct {
 	held    *os.File
 }
 
-// Held runs the git commands that write a remote's tracking refs with a lease
-// file as git's standard input. None of them reads input. A lock on that file
-// stays held until git and every child that inherited its standard input, such
-// as fetch's foreground auto-maintenance, have exited. Git gives its protocol,
-// credential, and hook children pipes instead.
+// Held runs the git commands that write a remote's tracking refs, none of
+// which reads input, each under a guardian process holding a lease file. The
+// guardian keeps the lease until its git exits, even past the caller, and git
+// and every process git starts never receive the lease fd.
 type Held struct{ git Git }
 
-// Holding returns g's tracking-ref writers holding f.
+// Holding returns g's tracking-ref writers leasing f: a lock on f stays held
+// until each command's git exits, even if this process dies first.
 func (g Git) Holding(f *os.File) Held {
 	g.held = f
 	return Held{git: g}
@@ -204,13 +207,13 @@ func (g Git) probe(ctx context.Context, stdin string, args ...string) (string, e
 }
 
 func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...string) (string, error) {
+	if g.held != nil {
+		return g.runHeld(ctx, env, args...)
+	}
 	//nolint:gosec // G204: git is a fixed argv[0]; args are internal git subcommands, not user-shell input, in this CLI's own repo.
 	cmd := exec.CommandContext(ctx, "git", g.argv(args...)...)
 	cmd.Env = g.environ(env)
-	switch {
-	case g.held != nil:
-		cmd.Stdin = g.held
-	case stdin != "":
+	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
 	var stdout, stderr bytes.Buffer
@@ -219,6 +222,60 @@ func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...str
 		return stdout.String(), &commandError{args: args, stderr: strings.TrimSpace(stderr.String()), err: err}
 	}
 	return stdout.String(), nil
+}
+
+func (g Git) runHeld(ctx context.Context, env []string, args ...string) (string, error) {
+	stdoutFile, err := unlinkedTemp()
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = stdoutFile.Close() }()
+	stderrFile, err := unlinkedTemp()
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = stderrFile.Close() }()
+	cmd, err := gitguard.Command(ctx, g.held, stdoutFile, stderrFile, g.environ(env), g.argv(args...))
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	var guard bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &guard, &guard
+	runErr := cmd.Run()
+	stdout, err := readCapture(stdoutFile)
+	if err != nil {
+		return "", err
+	}
+	stderr, err := readCapture(stderrFile)
+	if err != nil {
+		return stdout, err
+	}
+	if guard.Len() > 0 {
+		return stdout, fmt.Errorf("git %s: guardian %v: %s", strings.Join(args, " "), cmd.ProcessState, strings.TrimSpace(guard.String()))
+	}
+	if runErr != nil {
+		return stdout, &commandError{args: args, stderr: strings.TrimSpace(stderr), err: runErr}
+	}
+	return stdout, nil
+}
+
+func unlinkedTemp() (*os.File, error) {
+	f, err := os.CreateTemp("", "cc-notes-git-*")
+	if err != nil {
+		return nil, fmt.Errorf("git output file: %w", err)
+	}
+	if err := os.Remove(f.Name()); err != nil {
+		return nil, errors.Join(fmt.Errorf("git output file: %w", err), f.Close())
+	}
+	return f, nil
+}
+
+func readCapture(f *os.File) (string, error) {
+	out, err := io.ReadAll(io.NewSectionReader(f, 0, math.MaxInt64))
+	if err != nil {
+		return "", fmt.Errorf("read git output: %w", err)
+	}
+	return string(out), nil
 }
 
 // classify wraps err with sentinel when the failed invocation's stderr

@@ -146,7 +146,7 @@ func TestSyncPushFreesTheTrackingLockWhileADaemonTheReceiverStartedLives(t *test
 	bare := gittest.InitBare(t)
 	hooks := t.TempDir()
 	started, done := filepath.Join(hooks, "started"), filepath.Join(hooks, "done")
-	hook := fmt.Sprintf("#!/bin/sh\nexec 9<&0\n: > '%s'\n(while [ ! -e '%s' ]; do sleep 0.05; done) <&9 >/dev/null 2>&1 &\n", started, done)
+	hook := fmt.Sprintf("#!/bin/sh\nexec 9<&0\n: > '%s'\n(while [ -d '%s' ] && [ ! -e '%s' ]; do sleep 0.05; done) <&9 >/dev/null 2>&1 &\n", started, hooks, done)
 	if err := os.WriteFile(filepath.Join(hooks, "post-receive"), []byte(hook), 0o700); err != nil {
 		t.Fatalf("write post-receive hook: %v", err)
 	}
@@ -161,4 +161,36 @@ func TestSyncPushFreesTheTrackingLockWhileADaemonTheReceiverStartedLives(t *test
 		t.Fatalf("the receiver's post-receive hook never ran: %v", err)
 	}
 	assertTrackingLockFree(t, a, "the receiver's daemon")
+}
+
+func TestSyncFetchFreesTheTrackingLockWhileADaemonTheAlternateRefsCommandStartedLives(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	createNote(t, a, "fetched past an alternate whose refs command starts a daemon")
+	sync(t, a)
+	alternate := gittest.InitBare(t)
+	info := filepath.Join(b.RecordsCommonDir(), "objects", "info")
+	if err := os.MkdirAll(info, 0o750); err != nil {
+		t.Fatalf("mkdir objects/info: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(info, "alternates"), []byte(filepath.Join(alternate, "objects")+"\n"), 0o600); err != nil {
+		t.Fatalf("write objects/info/alternates: %v", err)
+	}
+	scripts := t.TempDir()
+	ran, done := filepath.Join(scripts, "ran"), filepath.Join(scripts, "done")
+	command := filepath.Join(scripts, "alternate-refs")
+	script := fmt.Sprintf("#!/bin/sh\n: > '%s'\nexec 9<&0\n(while [ -d '%s' ] && [ ! -e '%s' ]; do sleep 0.05; done) <&9 >/dev/null 2>&1 &\n", ran, scripts, done)
+	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
+		t.Fatalf("write alternate refs command: %v", err)
+	}
+	gittest.Git(t, b.Git.Dir, "config", "core.alternateRefsCommand", command)
+	t.Cleanup(func() { _ = os.WriteFile(done, nil, 0o600) })
+
+	sync(t, b)
+
+	if _, err := os.Stat(ran); err != nil {
+		t.Fatalf("the fetch never ran core.alternateRefsCommand: %v", err)
+	}
+	assertTrackingLockFree(t, b, "the alternate refs command's daemon")
 }
