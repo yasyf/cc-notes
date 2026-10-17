@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A ref whose objects the remote withholds waits for the next `sync`,
+  and every other ref still syncs.**
+  In a `blob:none` clone, `sync` fetches the blobs a remote ref's chain is
+  missing before it folds that ref. If the remote refused one of them, the
+  whole run failed before anything was folded or pushed. GitHub refused one
+  that way for about a minute after another clone pushed it, and every local
+  record stayed off the remote until it relented. Now `sync` retries the fetch
+  one ref at a time and skips each ref whose objects are still missing. Every
+  other ref folds and pushes as usual. The run then exits non-zero naming each
+  skipped ref and the fetch error, and prints `deferred (objects unavailable):
+  N`, which `--json` reports as `deferred`. The next `sync` tries those refs
+  again.
 - **`history` folds a long chain once, not once per commit.** It refolded
   every prefix of the chain from the root and kept every step's snapshot, so
   `ledger history` on an 11,381-commit ledger visited about 65 million commits

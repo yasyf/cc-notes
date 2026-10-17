@@ -174,6 +174,7 @@ func newSyncCmd() *cobra.Command {
 					Uploaded:      report.Uploaded,
 					Downloaded:    report.Downloaded,
 					Withheld:      report.Withheld,
+					Deferred:      report.Deferred,
 					Rounds:        report.Rounds,
 				}); perr != nil {
 					return perr
@@ -191,6 +192,7 @@ func newSyncCmd() *cobra.Command {
 				{"uploaded", report.Uploaded},
 				{"downloaded", report.Downloaded},
 				{"withheld (local)", report.Withheld},
+				{"deferred (objects unavailable)", report.Deferred},
 			} {
 				if line.count == 0 {
 					continue
@@ -233,5 +235,6 @@ type syncDTO struct {
 	Uploaded      int `json:"uploaded"`
 	Downloaded    int `json:"downloaded"`
 	Withheld      int `json:"withheld"`
+	Deferred      int `json:"deferred"`
 	Rounds        int `json:"rounds"`
 }
