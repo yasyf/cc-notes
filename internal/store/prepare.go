@@ -19,6 +19,8 @@ type PreparedRef struct {
 	Old      model.SHA
 	New      model.SHA
 	Snapshot model.Snapshot
+	top      model.Lamport
+	floor    model.Lamport
 }
 
 // RefUpdate returns the exact compare-and-swap for an aggregate transaction.
@@ -58,7 +60,7 @@ func (s *Store) PrepareCreateExact(ctx context.Context, ops []model.Op) (Prepare
 		return PreparedRef{}, fmt.Errorf("prepare create %s: %w", kind, err)
 	}
 	return PreparedRef{
-		Ref: refs.For(kind, model.EntityID(sha)), New: sha, Snapshot: snapshot,
+		Ref: refs.For(kind, model.EntityID(sha)), New: sha, Snapshot: snapshot, top: pack.Lamport, floor: fold.ExtendFloor([]model.PackCommit{root}),
 	}, nil
 }
 
@@ -85,7 +87,7 @@ func (s *Store) PrepareAppendAt(ctx context.Context, ref string, expected model.
 	if err != nil {
 		return PreparedRef{}, fmt.Errorf("prepare append to %s: %w", ref, err)
 	}
-	chain, err := s.Repo.ReadChain(ctx, expected)
+	top, extend, err := s.extender(ctx, expected, validated.Ops)
 	if err != nil {
 		return PreparedRef{}, fmt.Errorf("prepare append to %s at %s: %w", ref, expected, err)
 	}
@@ -93,7 +95,7 @@ func (s *Store) PrepareAppendAt(ctx context.Context, ref string, expected model.
 	if err != nil {
 		return PreparedRef{}, fmt.Errorf("prepare append to %s: %w", ref, err)
 	}
-	pack := model.Pack{Lamport: nextLamport(chain), Session: session(), Ops: validated.Ops}
+	pack := model.Pack{Lamport: top + 1, Session: session(), Ops: validated.Ops}
 	sha, err := s.Repo.WriteOpsCommit(ctx, []model.SHA{expected}, sig, "cc-notes: "+strings.Join(kinds, " "), pack)
 	if err != nil {
 		return PreparedRef{}, fmt.Errorf("prepare append to %s: %w", ref, err)
@@ -101,11 +103,11 @@ func (s *Store) PrepareAppendAt(ctx context.Context, ref string, expected model.
 	commit := model.PackCommit{
 		SHA: sha, Parents: []model.SHA{expected}, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack,
 	}
-	snapshot, err := fold.Strict(append(chain, commit))
+	snapshot, floor, err := extend(commit)
 	if err != nil {
 		return PreparedRef{}, fmt.Errorf("prepare append to %s: %w", ref, err)
 	}
-	return PreparedRef{Ref: ref, Old: expected, New: sha, Snapshot: snapshot}, nil
+	return PreparedRef{Ref: ref, Old: expected, New: sha, Snapshot: snapshot, top: max(top, pack.Lamport), floor: floor}, nil
 }
 
 // RememberPrepared admits an already-published prepared snapshot into the
@@ -113,7 +115,7 @@ func (s *Store) PrepareAppendAt(ctx context.Context, ref string, expected model.
 func (s *Store) RememberPrepared(prepared ...PreparedRef) {
 	for _, value := range prepared {
 		if value.New != "" && value.Snapshot != nil {
-			s.cache.put(value.New, value.Snapshot)
+			s.cache.put(value.New, value.Snapshot, value.top, value.floor)
 		}
 	}
 }

@@ -48,7 +48,7 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
-	s.cache.put(tip, snapshot)
+	s.cache.putChain(tip, snapshot, chain)
 	return snapshot, nil
 }
 
@@ -72,7 +72,7 @@ func (s *Store) LoadAt(ctx context.Context, head model.SHA) (model.Snapshot, err
 	if err != nil {
 		return nil, fmt.Errorf("load at %s: %w", head, err)
 	}
-	s.cache.put(head, snapshot)
+	s.cache.putChain(head, snapshot, chain)
 	return snapshot, nil
 }
 
@@ -94,7 +94,7 @@ func (s *Store) LoadRootedAt(ctx context.Context, head model.SHA) (RootedSnapsho
 	if err != nil {
 		return RootedSnapshot{}, fmt.Errorf("root at %s: %w", head, err)
 	}
-	s.cache.put(head, snapshot)
+	s.cache.putChain(head, snapshot, chain)
 	return RootedSnapshot{Snapshot: snapshot, Root: root}, nil
 }
 
@@ -194,7 +194,7 @@ func (s *Store) ListRootedSnapshots(ctx context.Context, kind model.Kind, opts L
 			if err != nil {
 				return fmt.Errorf("root %s: %w", entry.ref, err)
 			}
-			s.cache.put(entry.tip, snapshot)
+			s.cache.putChain(entry.tip, snapshot, chain)
 			all[i] = RootedSnapshot{Snapshot: snapshot, Root: root}
 			return nil
 		})
@@ -395,7 +395,7 @@ func foldAll[T model.Snapshot](ctx context.Context, s *Store, entries []tipEntry
 			if err != nil {
 				return fmt.Errorf("fold %s: %w", e.ref, err)
 			}
-			s.cache.put(e.tip, snapshot)
+			s.cache.putChain(e.tip, snapshot, chain)
 			out[i] = snapshot
 			return nil
 		})

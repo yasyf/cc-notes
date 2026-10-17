@@ -501,6 +501,7 @@ func TestAppendContended(t *testing.T) {
 		RecordsGit:       gitcmd.Git{Dir: blocked},
 		ContextRepo:      s.Repo,
 		now:              time.Now,
+		cache:            s.cache,
 		root:             &rootMemo{},
 		policy:           &policyMemo{},
 		recordsCommonDir: s.CommonDir(),

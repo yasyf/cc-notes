@@ -8,21 +8,23 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/model"
 )
 
 const (
 	// foldCacheVersion is the single hard-cut cache format.
-	foldCacheVersion = 1
+	foldCacheVersion = 2
 	// foldCacheCap bounds the number of on-disk entries; the least-recently
 	// used are evicted past it. Below a repository's live entity count every
 	// full listing evicts what it just wrote and re-folds it on the next call.
 	foldCacheCap = 1 << 14
 	// foldCacheSubdir is the path under the git common dir where entries live;
 	// it is never a ref, so it is never pushed or synced.
-	foldCacheSubdir = "cc-notes/folds-v1"
+	foldCacheSubdir = "cc-notes/folds-v2"
 )
 
 // foldCacheGeneration tags every entry with the op vocabulary of the binary that
@@ -65,35 +67,36 @@ func newFoldCache(dir string, capacity int) *foldCache {
 // entry, an unreadable or corrupt file, a version mismatch, or an entry a
 // binary with a different op vocabulary wrote.
 func (c *foldCache) get(tip model.SHA) (model.Snapshot, bool) {
-	data, ok := c.read(string(tip))
-	if !ok {
-		return nil, false
-	}
-	snap, ok := decodeFoldEntry(data)
-	if !ok {
-		return nil, false
-	}
-	c.touch(string(tip))
-	return snap, true
+	snap, _, _, ok := c.getTop(tip)
+	return snap, ok
 }
 
-// put writes the snapshot for tip, keyed by the resulting chain tip, then
-// enforces the LRU bound. Every error is swallowed: the cache is a pure
-// accelerator.
-//
-// A snapshot whose fold skipped ops is never stored: SkippedOps does not
-// marshal, so a cache hit would report zero where a cold fold reports N. That
-// covers only what this binary writes; foldCacheGeneration covers what another
-// binary wrote.
-func (c *foldCache) put(tip model.SHA, snap model.Snapshot) {
+func (c *foldCache) getTop(tip model.SHA) (model.Snapshot, model.Lamport, model.Lamport, bool) {
+	data, ok := c.read(string(tip))
+	if !ok {
+		return nil, 0, 0, false
+	}
+	snap, top, floor, ok := decodeFoldEntry(data)
+	if !ok {
+		return nil, 0, 0, false
+	}
+	c.touch(string(tip))
+	return snap, top, floor, true
+}
+
+func (c *foldCache) put(tip model.SHA, snap model.Snapshot, top, floor model.Lamport) {
 	if snap.Meta().SkippedOps > 0 {
 		return
 	}
-	data, ok := encodeFoldEntry(snap)
+	data, ok := encodeFoldEntry(snap, top, floor)
 	if !ok {
 		return
 	}
 	c.write(string(tip), data)
+}
+
+func (c *foldCache) putChain(tip model.SHA, snap model.Snapshot, chain []model.PackCommit) {
+	c.put(tip, snap, topLamport(chain), fold.ExtendFloor(chain))
 }
 
 // tips lists the chain tips currently cached on disk, best-effort: an
@@ -115,12 +118,7 @@ func (c *foldCache) delete(tip model.SHA) {
 	c.remove(string(tip))
 }
 
-// encodeFoldEntry serializes a snapshot as a version, fold-generation, and kind
-// header line followed by the snapshot's own JSON. The model types carry Head,
-// so the serialized form self-identifies its tip. The header kind is the
-// snapshot's Meta().Kind, whose wire values are the same tokens the decoder
-// parses.
-func encodeFoldEntry(snap model.Snapshot) ([]byte, bool) {
+func encodeFoldEntry(snap model.Snapshot, top, floor model.Lamport) ([]byte, bool) {
 	body, err := json.Marshal(snap)
 	if err != nil {
 		return nil, false
@@ -129,36 +127,49 @@ func encodeFoldEntry(snap model.Snapshot) ([]byte, bool) {
 	header = append(header, foldCacheGeneration...)
 	header = append(header, ' ')
 	header = append(header, string(snap.Meta().Kind)...)
+	header = append(header, ' ')
+	header = strconv.AppendUint(header, uint64(top), 10)
+	header = append(header, ' ')
+	header = strconv.AppendUint(header, uint64(floor), 10)
 	header = append(header, '\n')
 	return append(header, body...), true
 }
 
-// decodeFoldEntry parses a cache entry, returning ok=false on a missing header,
-// a version mismatch, a fold generation other than this binary's, an unknown
-// kind, or invalid JSON.
-func decodeFoldEntry(data []byte) (model.Snapshot, bool) {
+func decodeFoldEntry(data []byte) (model.Snapshot, model.Lamport, model.Lamport, bool) {
 	nl := slices.Index(data, '\n')
 	if nl < 0 {
-		return nil, false
+		return nil, 0, 0, false
 	}
 	header := data[:nl]
 	body := data[nl+1:]
 	if len(header) < 2 || header[0] != byte('0'+foldCacheVersion) || header[1] != ' ' {
-		return nil, false
+		return nil, 0, 0, false
 	}
 	tail, ours := bytes.CutPrefix(header[2:], []byte(foldCacheGeneration+" "))
 	if !ours {
-		return nil, false
+		return nil, 0, 0, false
 	}
-	kind, err := model.ParseKind(string(tail))
+	fields := strings.Split(string(tail), " ")
+	if len(fields) != 3 {
+		return nil, 0, 0, false
+	}
+	kind, err := model.ParseKind(fields[0])
 	if err != nil {
-		return nil, false
+		return nil, 0, 0, false
+	}
+	top, err := strconv.ParseUint(fields[1], 10, 64)
+	if err != nil {
+		return nil, 0, 0, false
+	}
+	floor, err := strconv.ParseUint(fields[2], 10, 64)
+	if err != nil {
+		return nil, 0, 0, false
 	}
 	snap, err := kind.DecodeSnapshot(body)
 	if err != nil {
-		return nil, false
+		return nil, 0, 0, false
 	}
-	return snap, true
+	return snap, model.Lamport(top), model.Lamport(floor), true
 }
 
 // writeFileAtomic writes data to name within dir via a temp file and rename,

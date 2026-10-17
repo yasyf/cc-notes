@@ -68,6 +68,18 @@ func run[T model.Snapshot](ordered []model.PackCommit, f folder[T], m mode) (T, 
 	return r.snapshot(ordered[len(ordered)-1].SHA)
 }
 
+func extend[T model.Snapshot](base model.Snapshot, c model.PackCommit, f folder[T]) (T, error) {
+	var zero T
+	if err := f.seed(base); err != nil {
+		return zero, err
+	}
+	r := &replay[T]{f: f, m: strict, created: true}
+	if err := r.step(c); err != nil {
+		return zero, err
+	}
+	return r.snapshot(c.SHA)
+}
+
 func walk[T model.Snapshot](ordered []model.PackCommit, newFolder func() folder[T], fn func(Step) error) error {
 	var seeds seedTracker
 	var r *replay[T]
