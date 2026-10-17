@@ -1053,6 +1053,67 @@ func TestSyncHydratesABloblessPartialCloneFetch(t *testing.T) {
 	}
 }
 
+// TestSyncDefersARefWhoseObjectsTheRemoteWithholds pins that an object the
+// remote will not send holds back only the ref whose chain needs it: the other
+// remote ref still folds, the local note still pushes, the error names the
+// deferred ref, and the sync after the object returns folds it.
+func TestSyncDefersARefWhoseObjectsTheRemoteWithholds(t *testing.T) {
+	bare := gittest.InitBare(t)
+	gittest.Git(t, bare, "config", "uploadpack.allowFilter", "true")
+	a := clone(t, bare, "Alice", "alice@example.com")
+	gittest.Git(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+	gittest.Git(t, a.Git.Dir, "push", "-q", "origin", "main")
+	kept := createNote(t, a, "kept note")
+	lost := createNote(t, a, "lost note")
+	sync(t, a)
+
+	lostRef := refs.For(model.KindNote, lost.ID)
+	blob := gittest.Git(t, bare, "rev-parse", lostRef+":ops.json")
+	loose := filepath.Join(bare, "objects", blob[:2], blob[2:])
+	object, err := os.ReadFile(loose)
+	if err != nil {
+		t.Fatalf("the ops blob is not loose on the remote; the withheld path is not under test: %v", err)
+	}
+	if err := os.Remove(loose); err != nil {
+		t.Fatalf("remove %s: %v", loose, err)
+	}
+
+	thin := t.TempDir()
+	gittest.Git(t, filepath.Dir(thin), "clone", "-q", "--filter=blob:none", "file://"+bare, thin)
+	gittest.Git(t, thin, "config", "user.name", "Bob")
+	gittest.Git(t, thin, "config", "user.email", "bob@example.com")
+	b, err := store.Open(thin)
+	if err != nil {
+		t.Fatalf("Open(%s): %v", thin, err)
+	}
+	mine := createNote(t, b, "bob's note")
+
+	report, err := ccsync.Sync(t.Context(), b, "origin", false)
+	if !errors.Is(err, ccsync.ErrObjectsUnavailable) {
+		t.Fatalf("Sync with a withheld blob: got %v, want ErrObjectsUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), lostRef) {
+		t.Errorf("error %q does not name the deferred ref %s", err, lostRef)
+	}
+	if report.Deferred != 1 || report.Created != 1 || report.Pushed != 1 {
+		t.Fatalf("withheld sync report = %+v, want 1 deferred, 1 created, 1 pushed", report)
+	}
+	if _, err := b.Load(t.Context(), refs.For(model.KindNote, kept.ID)); err != nil {
+		t.Fatalf("Load kept note: %v", err)
+	}
+	gittest.Git(t, bare, "rev-parse", "--verify", refs.For(model.KindNote, mine.ID))
+
+	if err := os.WriteFile(loose, object, 0o444); err != nil {
+		t.Fatalf("restore %s: %v", loose, err)
+	}
+	if got := sync(t, b); got.Deferred != 0 || got.Created != 1 {
+		t.Fatalf("recovered sync report = %+v, want the deferred note created", got)
+	}
+	if _, err := b.Load(t.Context(), lostRef); err != nil {
+		t.Fatalf("Load deferred note after recovery: %v", err)
+	}
+}
+
 func TestListHydratesABloblessCanonicalRef(t *testing.T) {
 	b, note := bloblessClone(t, oldCCFetchRefspec)
 

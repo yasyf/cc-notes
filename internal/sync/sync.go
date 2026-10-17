@@ -57,6 +57,9 @@ var (
 	ErrSyncContended = errors.New("sync contended")
 	// ErrRemoteNotFound reports a remote name with no configuration.
 	ErrRemoteNotFound = errors.New("remote not configured")
+	// ErrObjectsUnavailable reports a Sync that deferred refs whose objects
+	// the remote did not send; every other ref still converged and pushed.
+	ErrObjectsUnavailable = errors.New("objects unavailable")
 )
 
 // Report tallies one Sync run.
@@ -84,6 +87,9 @@ type Report struct {
 	// Withheld counts the local entity refs the final round kept off the
 	// remote.
 	Withheld int
+	// Deferred counts the remote refs the final round left unfolded and
+	// unpushed because the remote did not send objects their chains lack.
+	Deferred int
 }
 
 // outcome reports what one advance attempt did to a ref.
@@ -117,6 +123,9 @@ type engine struct {
 	uploaded   int
 	downloaded int
 	withheld   int
+	// deferred maps each ref the current round could not hydrate to the
+	// fetch failure that left it out.
+	deferred map[string]error
 }
 
 // Sync converges the local refs/cc-notes/ namespace with remote and pushes
@@ -134,6 +143,11 @@ type engine struct {
 // Referenced, locally-missing objects download once the push loop
 // converges; a failed download fails the sync while the returned Report
 // still carries everything the run pushed.
+//
+// A remote ref whose chain needs objects the remote will not send stays
+// unfolded and unpushed for the round while every other ref converges; the
+// run then fails wrapping ErrObjectsUnavailable, naming each deferred ref,
+// and the next sync retries it.
 func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report, error) {
 	if err := s.CheckRecords(); err != nil {
 		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
@@ -163,7 +177,7 @@ func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report
 				return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 			}
 		}
-		if err := s.Hydrate(ctx, remote, slices.Collect(maps.Values(scope))); err != nil {
+		if err := e.hydrate(ctx, scope); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
 		if err := e.reconcile(ctx, scope); err != nil {
@@ -196,6 +210,13 @@ func (e *engine) finish(ctx context.Context, round, pushed int) (Report, error) 
 	if err := e.downloadAttachments(ctx); err != nil {
 		return e.report(round, pushed), fmt.Errorf("sync %s: %w", e.remote, err)
 	}
+	if len(e.deferred) > 0 {
+		causes := make([]error, 0, len(e.deferred))
+		for _, ref := range slices.Sorted(maps.Keys(e.deferred)) {
+			causes = append(causes, fmt.Errorf("%s: %w", ref, e.deferred[ref]))
+		}
+		return e.report(round, pushed), fmt.Errorf("sync %s: %w: deferred %d refs to the next sync: %w", e.remote, ErrObjectsUnavailable, len(e.deferred), errors.Join(causes...))
+	}
 	return e.report(round, pushed), nil
 }
 
@@ -210,6 +231,7 @@ func (e *engine) report(rounds, pushed int) Report {
 		Uploaded:      e.uploaded,
 		Downloaded:    e.downloaded,
 		Withheld:      e.withheld,
+		Deferred:      len(e.deferred),
 	}
 }
 
@@ -269,13 +291,52 @@ func trackingView(ctx context.Context, s *store.Store, trackingPrefix string) (m
 	return view, nil
 }
 
-// reconcile converges every ref in scope. Local-only refs need no work here:
-// the push publishes them. Each ref handed to ensure is tallied so the report
-// surfaces exactly what this run folded. Every ref runs to its own verdict and
-// the error joins each failure, so a binding moved mid-run names every ref it
-// hid rather than the first.
+// hydrate fetches the objects the chains in scope lack. When the remote
+// refuses a fetch, it bisects the refs and records each single ref whose fetch
+// still fails in e.deferred, which reconcile and pending skip for the round,
+// so one unavailable object holds back only the ref whose chain needs it.
+func (e *engine) hydrate(ctx context.Context, scope map[string]model.SHA) error {
+	e.deferred = make(map[string]error)
+	return e.hydrateRefs(ctx, scope, slices.Sorted(maps.Keys(scope)))
+}
+
+func (e *engine) hydrateRefs(ctx context.Context, scope map[string]model.SHA, names []string) error {
+	tips := make([]model.SHA, len(names))
+	for i, ref := range names {
+		tips[i] = scope[ref]
+	}
+	git := e.store.RecordsGit
+	missing, err := git.MissingObjects(ctx, tips)
+	if err != nil || len(missing) == 0 {
+		return err
+	}
+	err = git.FetchObjects(ctx, e.remote, missing)
+	switch {
+	case err == nil:
+		return nil
+	case len(names) == 1:
+		e.deferred[names[0]] = err
+		return nil
+	}
+	half := len(names) / 2
+	if err := e.hydrateRefs(ctx, scope, names[:half]); err != nil {
+		return err
+	}
+	return e.hydrateRefs(ctx, scope, names[half:])
+}
+
+// reconcile converges every ref in scope but the deferred ones. Local-only
+// refs need no work here: the push publishes them. Each ref handed to ensure
+// is tallied so the report surfaces exactly what this run folded. Every ref
+// runs to its own verdict and the error joins each failure, so a binding moved
+// mid-run names every ref it hid rather than the first.
 func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) error {
-	ordered := slices.Sorted(maps.Keys(scope))
+	var ordered []string
+	for _, ref := range slices.Sorted(maps.Keys(scope)) {
+		if _, deferred := e.deferred[ref]; !deferred {
+			ordered = append(ordered, ref)
+		}
+	}
 	errs := make([]error, len(ordered))
 	var g errgroup.Group
 	g.SetLimit(refConcurrency)
@@ -334,10 +395,10 @@ func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA
 }
 
 // pending returns the local refs the upcoming push would create or update,
-// sorted and leaving out every local entity, and the full secluded set the
-// push excludes. A pending ref the local policy keeps on this clone joins the
-// set before anything is pushed, so an entity written by a cc-notes predating
-// the policy never leaves on its first sync.
+// sorted and leaving out every local entity and deferred ref, and the full
+// secluded set the push excludes. A pending ref the local policy keeps on this
+// clone joins the set before anything is pushed, so an entity written by a
+// cc-notes predating the policy never leaves on its first sync.
 func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) ([]string, map[string]bool, error) {
 	local, err := e.store.RecordsGit.Refs(ctx, namespace)
 	if err != nil {
@@ -350,6 +411,9 @@ func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (
 	var add, pending []string
 	for ref, tip := range local {
 		if remoteView[ref] == tip || secluded[ref] {
+			continue
+		}
+		if _, deferred := e.deferred[ref]; deferred {
 			continue
 		}
 		reason, err := e.store.LocalReason(ctx, ref)
