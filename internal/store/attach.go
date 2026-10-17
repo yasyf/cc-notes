@@ -242,7 +242,7 @@ func (s *Store) refAttachments(ctx context.Context, e tipEntry) (refAttachments,
 		if err != nil {
 			return refAttachments{}, fmt.Errorf("fold %s: %w", e.ref, err)
 		}
-		s.cache.put(e.tip, snap)
+		s.cache.putChain(e.tip, snap, chain)
 	}
 	atts := slices.Clone(snap.Meta().Attachments)
 	for _, c := range chain {

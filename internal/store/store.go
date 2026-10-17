@@ -354,12 +354,12 @@ func Backoff(ctx context.Context, attempt int) error {
 	}
 }
 
-func nextLamport(chain []model.PackCommit) model.Lamport {
+func topLamport(chain []model.PackCommit) model.Lamport {
 	var top model.Lamport
 	for _, c := range chain {
 		top = max(top, c.Pack.Lamport)
 	}
-	return top + 1
+	return top
 }
 
 // roundTrip re-decodes the pack's wire form, so an op that would fail the

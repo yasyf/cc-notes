@@ -401,7 +401,7 @@ func TestFoldCacheRoundTripStructuralKinds(t *testing.T) {
 		Author:    testActor,
 		CreatedAt: 1, UpdatedAt: 2, StartedAt: 3, Head: sprintTip,
 	}
-	c.put(sprintTip, sprint)
+	c.put(sprintTip, sprint, 1, 0)
 	if got, ok := c.get(sprintTip); !ok || !reflect.DeepEqual(got, sprint) {
 		t.Fatalf("sprint round-trip: ok=%v got=%#v want=%#v", ok, got, sprint)
 	}
@@ -414,7 +414,7 @@ func TestFoldCacheRoundTripStructuralKinds(t *testing.T) {
 		Author:    testActor,
 		CreatedAt: 1, UpdatedAt: 2, Head: projectTip,
 	}
-	c.put(projectTip, project)
+	c.put(projectTip, project, 1, 0)
 	if got, ok := c.get(projectTip); !ok || !reflect.DeepEqual(got, project) {
 		t.Fatalf("project round-trip: ok=%v got=%#v want=%#v", ok, got, project)
 	}
@@ -431,7 +431,7 @@ func TestFoldCacheRoundTripStructuralKinds(t *testing.T) {
 		Labels: []string{"ops"}, Comments: []model.Comment{{Author: testActor, TS: 7, Body: "note"}},
 		Author: testActor, CreatedAt: 1, UpdatedAt: 20, ArchivedAt: 25, Head: runbookTip,
 	}
-	c.put(runbookTip, runbook)
+	c.put(runbookTip, runbook, 1, 0)
 	if got, ok := c.get(runbookTip); !ok || !reflect.DeepEqual(got, runbook) {
 		t.Fatalf("runbook round-trip: ok=%v got=%#v want=%#v", ok, got, runbook)
 	}

@@ -368,7 +368,7 @@ func TestFoldCachePlanRoundTrip(t *testing.T) {
 		CreatedAt:    1, UpdatedAt: 40, StartedAt: 20, ClosedAt: 30, ClosedBy: testActor,
 		Head: tip, Deleted: true,
 	}
-	c.put(tip, plan)
+	c.put(tip, plan, 1, 0)
 	got, ok := c.get(tip)
 	if !ok {
 		t.Fatal("cache miss on the entry just written")

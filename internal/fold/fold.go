@@ -15,6 +15,7 @@ package fold
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/yasyf/cc-notes/model"
 )
@@ -28,6 +29,9 @@ var (
 	// checkpoint state of a foreign kind — or, under Strict only, an op that
 	// does not apply to the chain's entity kind.
 	ErrKindMismatch = errors.New("entity kind mismatch")
+	// ErrExtendCheckpoint reports an Extend by a checkpoint commit, which can
+	// reseed the fold in a way only the whole chain decides.
+	ErrExtendCheckpoint = errors.New("checkpoint commit cannot extend a fold")
 )
 
 var folders = map[model.Kind]kindFold{
@@ -45,8 +49,9 @@ var folders = map[model.Kind]kindFold{
 }
 
 type kindFold struct {
-	fold func([]model.PackCommit, mode) (model.Snapshot, error)
-	walk func([]model.PackCommit, func(Step) error) error
+	fold   func([]model.PackCommit, mode) (model.Snapshot, error)
+	walk   func([]model.PackCommit, func(Step) error) error
+	extend func(model.Snapshot, model.PackCommit) (model.Snapshot, error)
 }
 
 func kindFoldOf[T model.Snapshot, F folder[T]](newFolder func() F) kindFold {
@@ -56,6 +61,9 @@ func kindFoldOf[T model.Snapshot, F folder[T]](newFolder func() F) kindFold {
 		},
 		walk: func(ordered []model.PackCommit, fn func(Step) error) error {
 			return walk(ordered, func() folder[T] { return newFolder() }, fn)
+		},
+		extend: func(base model.Snapshot, c model.PackCommit) (model.Snapshot, error) {
+			return extend[T](base, c, newFolder())
 		},
 	}
 }
@@ -103,6 +111,52 @@ func Strict(commits []model.PackCommit) (model.Snapshot, error) {
 		return nil, err
 	}
 	return kf.fold(ordered, strict)
+}
+
+// Extend folds commit, the sole child of base's head, onto base under Strict's
+// rules. When base is Strict's fold of a chain and commit's lamport exceeds its
+// ExtendFloor, the result equals Strict over the chain plus commit. Refusals:
+// ErrMissingParent (not a sole child), ErrExtendCheckpoint, ErrKindMismatch
+// (base skipped ops), or the error Strict returns for commit's ops.
+func Extend(base model.Snapshot, commit model.PackCommit) (model.Snapshot, error) {
+	meta := base.Meta()
+	if len(commit.Parents) != 1 || commit.Parents[0] != meta.Head {
+		return nil, fmt.Errorf("%w: %s does not extend head %s", ErrMissingParent, commit.SHA, meta.Head)
+	}
+	if _, ok := checkpointOf(commit); ok {
+		return nil, fmt.Errorf("%w: %s", ErrExtendCheckpoint, commit.SHA)
+	}
+	if meta.SkippedOps > 0 {
+		return nil, fmt.Errorf("%w: base %s skipped %d ops", ErrKindMismatch, meta.Head, meta.SkippedOps)
+	}
+	return folders[meta.Kind].extend(base, commit)
+}
+
+// ExtendFloor returns the lamport a sole child of commits' head must exceed for
+// Extend over Strict's fold of commits to equal Strict over commits plus that
+// child: the greatest CoversLamport of any checkpoint, or MaxUint64 when a
+// checkpoint's State is not the kind the chain was created as.
+func ExtendFloor(commits []model.PackCommit) model.Lamport {
+	var created model.Kind
+	for _, c := range commits {
+		if len(c.Parents) == 0 && len(c.Pack.Ops) > 0 {
+			if co, ok := c.Pack.Ops[0].(model.CreateOp); ok {
+				created = co.CreateKind()
+			}
+		}
+	}
+	var floor model.Lamport
+	for _, c := range commits {
+		cp, ok := checkpointOf(c)
+		if !ok {
+			continue
+		}
+		if cp.State.Meta().Kind != created {
+			return math.MaxUint64
+		}
+		floor = max(floor, cp.CoversLamport)
+	}
+	return floor
 }
 
 // Note linearizes the chain and folds it as a note. It fails with

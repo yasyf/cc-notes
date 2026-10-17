@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/yasyf/cc-notes/internal/fold"
@@ -72,7 +73,7 @@ func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (m
 	if err := s.PublishRef(ctx, ref, sha, ""); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
-	s.cache.put(sha, snapshot)
+	s.cache.putChain(sha, snapshot, []model.PackCommit{root})
 	return snapshot, nil
 }
 
@@ -111,18 +112,18 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
-		chain, err := s.Repo.ReadChain(ctx, tip)
+		top, extend, err := s.extender(ctx, tip, validated.Ops)
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
-		pack := model.Pack{Lamport: nextLamport(chain), Session: session(), Ops: validated.Ops}
+		pack := model.Pack{Lamport: top + 1, Session: session(), Ops: validated.Ops}
 		sig := gitobj.Signature{Name: name, Email: email, When: s.now()}
 		sha, err := s.Repo.WriteOpsCommit(ctx, []model.SHA{tip}, sig, message, pack)
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
 		commit := model.PackCommit{SHA: sha, Parents: []model.SHA{tip}, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack}
-		snapshot, err := fold.Strict(append(chain, commit))
+		snapshot, floor, err := extend(commit)
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
@@ -131,7 +132,7 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 		}
 		switch err := s.PublishRef(ctx, ref, sha, tip); {
 		case err == nil:
-			s.cache.put(sha, snapshot)
+			s.cache.put(sha, snapshot, max(top, pack.Lamport), floor)
 			return snapshot, nil
 		case errors.Is(err, gitcmd.ErrCASMismatch):
 			lastErr = err
@@ -180,10 +181,10 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 		checkpoint := model.Checkpoint{
 			EntityID:      snap.EntityID(),
 			State:         snap,
-			CoversLamport: nextLamport(chain) - 1,
+			CoversLamport: topLamport(chain),
 			CoversShas:    coversShas,
 		}
-		pack, err := roundTrip(model.Pack{Lamport: nextLamport(chain), Session: session(), Ops: []model.Op{checkpoint}})
+		pack, err := roundTrip(model.Pack{Lamport: topLamport(chain) + 1, Session: session(), Ops: []model.Op{checkpoint}})
 		if err != nil {
 			return nil, fmt.Errorf("compact %s: %w", ref, err)
 		}
@@ -199,7 +200,7 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 		}
 		switch err := s.PublishRef(ctx, ref, sha, tip); {
 		case err == nil:
-			s.cache.put(sha, snapshot)
+			s.cache.putChain(sha, snapshot, append(chain, commit))
 			return snapshot, nil
 		case errors.Is(err, gitcmd.ErrCASMismatch):
 			lastErr = err
@@ -236,7 +237,7 @@ func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (
 			}
 		}
 	}
-	pack := model.Pack{Lamport: nextLamport(combined), Session: session()}
+	pack := model.Pack{Lamport: topLamport(combined) + 1, Session: session()}
 	sig, actor, err := s.signature(ctx)
 	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
@@ -253,8 +254,33 @@ func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (
 	if err := s.PublishRef(ctx, ref, sha, ours); err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
-	s.cache.put(sha, merged)
+	s.cache.putChain(sha, merged, append(combined, merge))
 	return sha, nil
+}
+
+func (s *Store) extender(ctx context.Context, tip model.SHA, ops []model.Op) (model.Lamport, func(model.PackCommit) (model.Snapshot, model.Lamport, error), error) {
+	if !slices.ContainsFunc(ops, isCheckpoint) {
+		if base, top, floor, ok := s.cache.getTop(tip); ok && top+1 > floor {
+			return top, func(c model.PackCommit) (model.Snapshot, model.Lamport, error) {
+				snapshot, err := fold.Extend(base, c)
+				return snapshot, floor, err
+			}, nil
+		}
+	}
+	chain, err := s.Repo.ReadChain(ctx, tip)
+	if err != nil {
+		return 0, nil, err
+	}
+	return topLamport(chain), func(c model.PackCommit) (model.Snapshot, model.Lamport, error) {
+		extended := append(chain, c)
+		snapshot, err := fold.Strict(extended)
+		return snapshot, fold.ExtendFloor(extended), err
+	}, nil
+}
+
+func isCheckpoint(op model.Op) bool {
+	_, ok := op.(model.Checkpoint)
+	return ok
 }
 
 func addedAttachments(ops []model.Op) []model.Attachment {

@@ -7,28 +7,23 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
 
-// TestFoldEntryByteFormat pins the exact on-disk entry bytes: the version,
-// fold-generation, and kind header line (kind spelled as the Meta().Kind wire
-// value) followed by the snapshot's own JSON. The layout is frozen — a
-// cross-binary entry read must byte-match — so this guards both the
-// Meta().Kind-derived header and the generation field that discriminates the
-// writing binary's op vocabulary.
 func TestFoldEntryByteFormat(t *testing.T) {
 	note := model.Note{ID: "noteid", Title: "t", Head: "abc123"}
 	body, err := json.Marshal(note)
 	if err != nil {
 		t.Fatalf("marshal note: %v", err)
 	}
-	want := append([]byte{byte('0' + foldCacheVersion), ' '}, foldCacheGeneration+" note\n"...)
+	want := append([]byte{byte('0' + foldCacheVersion), ' '}, foldCacheGeneration+" note 7 5\n"...)
 	want = append(want, body...)
 
-	got, ok := encodeFoldEntry(note)
+	got, ok := encodeFoldEntry(note, 7, 5)
 	if !ok {
 		t.Fatal("encodeFoldEntry: ok=false")
 	}
@@ -36,12 +31,18 @@ func TestFoldEntryByteFormat(t *testing.T) {
 		t.Fatalf("encodeFoldEntry bytes =\n%q\nwant\n%q", got, want)
 	}
 
-	back, ok := decodeFoldEntry(want)
+	back, top, floor, ok := decodeFoldEntry(want)
 	if !ok {
 		t.Fatal("decodeFoldEntry of hand-crafted entry: ok=false")
 	}
 	if !reflect.DeepEqual(back, note) {
 		t.Fatalf("decodeFoldEntry = %#v, want %#v", back, note)
+	}
+	if top != 7 {
+		t.Fatalf("decodeFoldEntry top = %d, want 7", top)
+	}
+	if floor != 5 {
+		t.Fatalf("decodeFoldEntry floor = %d, want 5", floor)
 	}
 }
 
@@ -97,7 +98,7 @@ func TestFoldCacheMissesForeignGeneration(t *testing.T) {
 	}
 
 	ours := model.Note{ID: "noteid", Title: "re-folded here", Head: tip}
-	c.put(tip, ours)
+	c.put(tip, ours, 1, 0)
 	got, ok := c.get(tip)
 	if !ok {
 		t.Fatal("this binary's own entry missed after overwriting the foreign one")
@@ -115,7 +116,7 @@ func encodeAsGeneration(t *testing.T, gen string, snap model.Snapshot) []byte {
 	ours := foldCacheGeneration
 	foldCacheGeneration = gen
 	defer func() { foldCacheGeneration = ours }()
-	entry, ok := encodeFoldEntry(snap)
+	entry, ok := encodeFoldEntry(snap, 1, 0)
 	if !ok {
 		t.Fatalf("encodeFoldEntry %T: ok=false", snap)
 	}
@@ -129,14 +130,14 @@ func TestFoldCacheRefusesSkippedOps(t *testing.T) {
 	cache := newFoldCache(t.TempDir(), foldCacheCap)
 	partial := model.Note{ID: "noteid", Title: "t", Head: "abc123", SkippedOps: 1}
 
-	cache.put("abc123", partial)
+	cache.put("abc123", partial, 1, 0)
 	if snap, ok := cache.get("abc123"); ok {
 		t.Fatalf("cached a partial fold: %#v", snap)
 	}
 
 	whole := partial
 	whole.SkippedOps = 0
-	cache.put("abc123", whole)
+	cache.put("abc123", whole, 1, 0)
 	snap, ok := cache.get("abc123")
 	if !ok {
 		t.Fatal("complete fold missed the cache")
@@ -162,7 +163,7 @@ func TestFoldCacheHitMiss(t *testing.T) {
 
 	sentinel := note
 	sentinel.Title = "sentinel"
-	s.cache.put(tip, sentinel)
+	s.cache.put(tip, sentinel, 1, 0)
 
 	loaded, err := s.Load(ctx, ref)
 	if err != nil {
@@ -211,28 +212,47 @@ func TestFoldCacheRebuildAfterDelete(t *testing.T) {
 	}
 }
 
-// TestFoldCacheRejectsForeignHeaders covers the two headers this binary must
-// not read back: a cache format from another epoch, and the ungenerationed v1
-// entry every already-installed binary is writing today — the upgrade path,
-// where a hit would report zero skips over a chain this binary may not fold
-// whole.
 func TestFoldCacheRejectsForeignHeaders(t *testing.T) {
+	tip := model.SHA("aaaa000000000000000000000000000000000000")
+	body, err := json.Marshal(model.Note{ID: "x", Head: tip})
+	if err != nil {
+		t.Fatalf("marshal note: %v", err)
+	}
+	entry := func(header string) []byte { return append([]byte(header+"\n"), body...) }
+	read := func(t *testing.T, data []byte) (model.Snapshot, bool) {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, string(tip)), data, 0o600); err != nil {
+			t.Fatalf("write entry: %v", err)
+		}
+		return newFoldCache(dir, foldCacheCap).get(tip)
+	}
+	current := strconv.Itoa(foldCacheVersion) + " " + foldCacheGeneration + " note"
+	if _, ok := read(t, entry(current+" 1 0")); !ok {
+		t.Fatalf("well-formed entry %q missed", current+" 1 0")
+	}
+
 	cases := []struct {
-		name  string
-		entry []byte
+		name   string
+		header string
 	}{
-		{"a different cache epoch", append([]byte{'9', ' '}, "note\n{\"id\":\"x\"}"...)},
-		{"a v1 entry written before the generation tag", append([]byte{byte('0' + foldCacheVersion), ' '}, "note\n{\"id\":\"x\"}"...)},
+		{"a different cache epoch", "9 " + foldCacheGeneration + " note 1 0"},
+		{"a v1 entry written before the generation tag", "1 note"},
+		{"a v1 entry carrying the generation tag", "1 " + foldCacheGeneration + " note"},
+		{"a current header missing both lamports", current},
+		{"a v2 header from before the extend floor", current + " 1"},
+		{"an empty top lamport", current + "  0"},
+		{"a non-numeric top lamport", current + " seven 0"},
+		{"a negative top lamport", current + " -1 0"},
+		{"a top lamport past uint64", current + " 18446744073709551616 0"},
+		{"an empty extend floor", current + " 1 "},
+		{"a non-numeric extend floor", current + " 1 seven"},
+		{"an extend floor past uint64", current + " 1 18446744073709551616"},
+		{"a trailing header field", current + " 1 0 0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			c := newFoldCache(dir, foldCacheCap)
-			tip := model.SHA("aaaa000000000000000000000000000000000000")
-			if err := os.WriteFile(filepath.Join(dir, string(tip)), tc.entry, 0o600); err != nil {
-				t.Fatalf("write entry: %v", err)
-			}
-			if snap, ok := c.get(tip); ok {
+			if snap, ok := read(t, entry(tc.header)); ok {
 				t.Fatalf("read an entry this binary cannot trust: %#v", snap)
 			}
 		})
@@ -242,16 +262,18 @@ func TestFoldCacheRejectsForeignHeaders(t *testing.T) {
 func TestFoldCacheV1NamespaceRebuildsDerivedEntries(t *testing.T) {
 	common := t.TempDir()
 	tip := model.SHA("abababababababababababababababababababab")
-	entry, ok := encodeFoldEntry(model.Note{ID: "noteid", Title: "old derived entry", Head: tip})
+	entry, ok := encodeFoldEntry(model.Note{ID: "noteid", Title: "old derived entry", Head: tip}, 1, 0)
 	if !ok {
 		t.Fatal("encode old derived entry")
 	}
-	oldDir := filepath.Join(common, "cc-notes", "folds")
-	if err := os.MkdirAll(oldDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(oldDir, string(tip)), entry, 0o600); err != nil {
-		t.Fatal(err)
+	for _, prior := range []string{"folds", "folds-v1"} {
+		oldDir := filepath.Join(common, "cc-notes", prior)
+		if err := os.MkdirAll(oldDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(oldDir, string(tip)), entry, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	cache := newFoldCache(filepath.Join(common, foldCacheSubdir), foldCacheCap)
@@ -259,12 +281,12 @@ func TestFoldCacheV1NamespaceRebuildsDerivedEntries(t *testing.T) {
 		t.Fatal("prior derived-cache namespace was read")
 	}
 	want := model.Note{ID: "noteid", Title: "rebuilt", Head: tip}
-	cache.put(tip, want)
+	cache.put(tip, want, 1, 0)
 	if got, found := cache.get(tip); !found || !reflect.DeepEqual(got, want) {
-		t.Fatalf("rebuilt v1 cache entry = %#v found=%v", got, found)
+		t.Fatalf("rebuilt cache entry = %#v found=%v", got, found)
 	}
 	if _, err := os.Stat(filepath.Join(common, foldCacheSubdir, string(tip))); err != nil {
-		t.Fatalf("rebuilt v1 cache path: %v", err)
+		t.Fatalf("rebuilt cache path: %v", err)
 	}
 }
 
@@ -277,7 +299,7 @@ func TestFoldCacheLRUEviction(t *testing.T) {
 		"3333333333333333333333333333333333333333",
 	}
 	for _, tip := range tips {
-		c.put(tip, model.Note{ID: model.EntityID(tip), Head: tip})
+		c.put(tip, model.Note{ID: model.EntityID(tip), Head: tip}, 1, 0)
 	}
 
 	ents, err := os.ReadDir(dir)
@@ -313,13 +335,16 @@ func TestFoldCacheRoundTripBothKinds(t *testing.T) {
 		UpdatedAt: 200,
 		Head:      noteTip,
 	}
-	c.put(noteTip, note)
-	got, ok := c.get(noteTip)
+	c.put(noteTip, note, 3, 0)
+	got, top, _, ok := c.getTop(noteTip)
 	if !ok {
 		t.Fatal("note round-trip: get miss")
 	}
 	if !reflect.DeepEqual(got, note) {
 		t.Fatalf("note round-trip: got %#v, want %#v", got, note)
+	}
+	if top != 3 {
+		t.Fatalf("note round-trip: top = %d, want 3", top)
 	}
 
 	taskTip := model.SHA("bbbb222222222222222222222222222222222222")
@@ -337,7 +362,7 @@ func TestFoldCacheRoundTripBothKinds(t *testing.T) {
 		StartedAt: 3,
 		Head:      taskTip,
 	}
-	c.put(taskTip, task)
+	c.put(taskTip, task, 1, 0)
 	gotTask, ok := c.get(taskTip)
 	if !ok {
 		t.Fatal("task round-trip: get miss")
@@ -370,7 +395,7 @@ func TestFoldCacheRoundTripDoc(t *testing.T) {
 		VerifiedCommit: "deadbeef",
 		Head:           tip,
 	}
-	c.put(tip, doc)
+	c.put(tip, doc, 1, 0)
 
 	got, ok := c.get(tip)
 	if !ok {
@@ -403,7 +428,7 @@ func TestFoldCacheRoundTripLog(t *testing.T) {
 		UpdatedAt: 250,
 		Head:      tip,
 	}
-	c.put(tip, log)
+	c.put(tip, log, 1, 0)
 
 	got, ok := c.get(tip)
 	if !ok {
@@ -436,7 +461,7 @@ func TestFoldCacheTaskP3FieldsRoundTrip(t *testing.T) {
 		UpdatedAt: 2,
 		Head:      tip,
 	}
-	c.put(tip, task)
+	c.put(tip, task, 1, 0)
 
 	got, ok := c.get(tip)
 	if !ok {
