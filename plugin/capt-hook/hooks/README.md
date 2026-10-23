@@ -45,8 +45,8 @@ to it. On a Read the top-ranked records surface directly without a model call, s
 never waits on a model. On an edit a small LLM keeps the drift worth acting on. The filter
 fails *open* and shows every recalled record if the model call errors.
 
-**Record (push)** takes a write, a copy, or a commit, recalls a candidate
-over a cheap glob or diff, and a small LLM confirms the content is durable and routes it to
+**Record (push)** takes a write or a copy, recalls a candidate
+over a cheap glob, and a small LLM confirms the content is durable and routes it to
 exactly one primitive — note, doc, log, task, papercut, runbook, investigation, or plan — or to nothing. It fails *closed* to
 silence.
 
@@ -74,7 +74,7 @@ writing it needs its own serialization: it holds a session-scoped lock across
 list-triage-supersede, because two background refinements interleaving there would each list
 candidates before either superseded and leave a superseded answer live.
 
-The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
+The cheap layer (a path glob or the `cc-notes relevant` ranker) over-selects
 on purpose; a model is the precision gate in both directions. The prompt-answer pick, the
 answer scope and the stale-record filter ask TypeSafe Jev through `evt.decide`, and the
 durable-write router asks OpenAI Decisions through the same call. Only the supersede pass still asks the small model through `call_llm`. The only deterministic hooks

@@ -60,8 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   investigation at Stop. It also drops the "cc-notes is installed" prompt, the
   commit-decision check (one model call per commit), the `cc-task:` trailer
   reminder on every commit, and the native-task mirror warning. The answer
-  capture, the memory mirror, and the plan capture still record, but say nothing
-  about it, and the plan capture no longer appends the native-tasks advice. The
+  capture and the memory mirror still record, but say nothing about it, and the
+  plan capture no longer appends the native-tasks advice to its confirmation. The
   durable-file, evidence, purge-bound path, commit-link, and lease reminders and
   the stale-record notice now speak at most once per agent. The CLI and MCP
   purge-bound path nudges are now one hook.
