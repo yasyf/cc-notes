@@ -293,6 +293,34 @@ func TestOpenContextBound(t *testing.T) {
 	f.assertNoRecords(t)
 }
 
+func TestOpenContextBoundAcrossDeviceRenumber(t *testing.T) {
+	f := newSharedFixture(t)
+	stale := f.bind(t).Binding
+	stale.Device++
+	setBindingValue(t, f.config(), stale.String())
+
+	s, err := Open(f.worktreeA)
+	if err != nil {
+		t.Fatalf("Open with a stale device: %v", err)
+	}
+	if s.RecordsCommonDir() != f.sourceCommon {
+		t.Fatalf("RecordsCommonDir = %q, want %q", s.RecordsCommonDir(), f.sourceCommon)
+	}
+	if err := s.CheckRecords(); err != nil {
+		t.Fatalf("CheckRecords with a stale device: %v", err)
+	}
+	result, err := Bind(t.Context(), f.thin, f.source)
+	if err != nil {
+		t.Fatalf("rebind with a stale device: %v", err)
+	}
+	if !result.Changed || result.Binding != bindingFor(t, f.sourceCommon) {
+		t.Fatalf("rebind = %+v, want the current binding republished", result)
+	}
+	if err := s.CheckRecords(); err != nil {
+		t.Fatalf("CheckRecords after the republish: %v", err)
+	}
+}
+
 func TestOpenContextBindingFailures(t *testing.T) {
 	rows := []struct {
 		name     string

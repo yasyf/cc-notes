@@ -26,8 +26,8 @@ var (
 	// ErrBackendUnavailable reports a bound backend that is missing, unreadable,
 	// not a git common directory, or of a layout cc-notes cannot read.
 	ErrBackendUnavailable = errors.New("storage backend unavailable")
-	// ErrBackendReplaced reports a backend whose device/inode no longer matches
-	// the identity recorded when it was bound.
+	// ErrBackendReplaced reports a backend whose inode no longer matches the
+	// identity recorded when it was bound.
 	ErrBackendReplaced = errors.New("storage backend identity changed")
 	// ErrBackendRedirects reports a backend that routes records to another
 	// repository: a storage binding of its own (bindings never chain), a
@@ -73,6 +73,13 @@ func (b Binding) String() string {
 }
 
 func (b Binding) id() fileID { return fileID{device: b.Device, inode: b.Inode} }
+
+// sameBackend reports whether b and o name the same backend directory. Device
+// is left out: macOS numbers APFS volumes as they mount, so a reboot can move a
+// directory's st_dev while its path and inode stay put.
+func (b Binding) sameBackend(o Binding) bool {
+	return b.CommonDir == o.CommonDir && b.Inode == o.Inode
+}
 
 // BindingError names the binding (the context config file holding it) and its
 // source (the bound backend's common directory, "" when the value did not
@@ -150,7 +157,7 @@ func readBinding(configPath string) (Binding, bool, error) {
 var backendEntries = [...]string{"objects", "refs", "HEAD"}
 
 // validateBackend proves the bound backend is still the repository that was
-// bound: present, the recorded device/inode, not the context itself, a git
+// bound: present, the recorded inode, not the context itself, a git
 // common directory rather than a linked worktree's git directory, holding its
 // own refs, objects and HEAD rather than symlinks into another repository, and
 // not bound onward. It returns the stamp of the backend config it read the
@@ -164,10 +171,10 @@ func validateBackend(b Binding, context fileID) (configStamp, error) {
 		return configStamp{}, fmt.Errorf("%w: %s is not a directory", ErrBackendUnavailable, b.CommonDir)
 	}
 	device, inode := gitobj.FileID(info)
-	if device != b.Device || inode != b.Inode {
-		return configStamp{}, fmt.Errorf("%w: bound device %d inode %d, found device %d inode %d", ErrBackendReplaced, b.Device, b.Inode, device, inode)
+	if inode != b.Inode {
+		return configStamp{}, fmt.Errorf("%w: bound inode %d, found inode %d", ErrBackendReplaced, b.Inode, inode)
 	}
-	if b.id() == context {
+	if (fileID{device: device, inode: inode}) == context {
 		return configStamp{}, fmt.Errorf("%w: binding points at the context itself", ErrBindingCycle)
 	}
 	if _, err := os.Lstat(filepath.Join(b.CommonDir, "commondir")); err == nil {
@@ -342,8 +349,8 @@ func (w *storageBinding) check() error {
 	if err != nil {
 		return w.fail(fmt.Errorf("%w: %w", ErrBackendUnavailable, err))
 	}
-	if device, inode := gitobj.FileID(info); device != w.binding.Device || inode != w.binding.Inode {
-		return w.fail(fmt.Errorf("%w: bound device %d inode %d, found device %d inode %d", ErrBackendReplaced, w.binding.Device, w.binding.Inode, device, inode))
+	if _, inode := gitobj.FileID(info); inode != w.binding.Inode {
+		return w.fail(fmt.Errorf("%w: bound inode %d, found inode %d", ErrBackendReplaced, w.binding.Inode, inode))
 	}
 	switch _, err := os.Lstat(filepath.Join(backend, "commondir")); {
 	case err == nil:
@@ -396,7 +403,7 @@ func (w *storageBinding) recheckBinding() error {
 		return fmt.Errorf("%w: now bound to %s; reopen the store", ErrBindingChanged, b.CommonDir)
 	case !bound && w.bound:
 		return fmt.Errorf("%w: binding removed; reopen the store", ErrBindingChanged)
-	case bound && b != w.binding:
+	case bound && !b.sameBackend(w.binding):
 		return fmt.Errorf("%w: now bound to %s; reopen the store", ErrBindingChanged, b.CommonDir)
 	}
 	return nil

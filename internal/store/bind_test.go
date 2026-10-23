@@ -71,6 +71,16 @@ func TestBind(t *testing.T) {
 			sentinel: ErrBindingConflict,
 		},
 		{
+			name: "binding left stale by a renumbered device is republished",
+			arrange: func(t *testing.T, f *sharedFixture) (string, string) {
+				stale := f.bind(t).Binding
+				stale.Device++
+				setBindingValue(t, f.config(), stale.String())
+				return f.source, f.sourceCommon
+			},
+			wantChanged: true,
+		},
+		{
 			name:     "source is the context",
 			arrange:  func(_ *testing.T, f *sharedFixture) (string, string) { return f.thin, "" },
 			sentinel: ErrBindingCycle,

@@ -218,6 +218,8 @@ The binding is one `cc-notes.storage` value in the checkout's own git config, at
 `<context-common-dir>/config`. Linked worktrees sharing that common directory share the
 binding. Its JSON fields are `version`, `commonDir`, `device`, and `inode`. Version `1` records
 the backend's canonical absolute common directory and its file system device/inode identity.
+Only the inode is checked: macOS renumbers volume devices across reboots, and rerunning
+`storage bind` with the same source republishes a binding whose device went stale.
 Reads use that exact config file, without includes, global config, or environment overrides.
 
 If the source is already bound, the command validates its backend and stores that direct
@@ -254,7 +256,7 @@ cannot be resolved. Each refusal includes one of these reasons and its details:
 | `context already holds cc-notes records: binding to <backend> was published and stays; it hides <refs>` | Records appeared during publication; the binding stays, and `<refs>` lists every hidden context ref, separated by commas |
 | `storage binding cycle: <backend> is the context repository` | The resolved backend is the checkout's own repository |
 | `storage backend unavailable` | The backend is missing, unreadable, not a git common directory, or uses an unsupported repository layout; the message includes the specific failure |
-| `storage backend identity changed: bound device <n> inode <n>, found device <n> inode <n>` | A source's recorded backend identity no longer matches the directory |
+| `storage backend identity changed: bound inode <n>, found inode <n>` | A source's recorded backend identity no longer matches the directory |
 | `storage backend redirects to another repository: <backend> is bound to <target>` | The resolved backend has another binding |
 | `storage backend redirects to another repository: <backend> carries a cc-notes.storage value that does not parse: <detail>` | The resolved backend has a malformed binding |
 | `storage backend redirects to another repository: <backend> is a linked worktree's git directory, not a git common directory` | The backend carries a `commondir` file; bind and open refuse it |
