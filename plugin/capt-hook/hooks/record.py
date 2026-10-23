@@ -7,9 +7,7 @@ from pathlib import Path, PurePosixPath
 
 from captain_hook import (
     Allow,
-    Arguments,
     BaseHookEvent,
-    CommandMatches,
     CommandSchema,
     CustomCondition,
     Event,
@@ -20,15 +18,12 @@ from captain_hook import (
     Or,
     PostToolUseEvent,
     Runs,
-    StopEvent,
     Tool,
     Warn,
     on,
 )
 from captain_hook.cmd import Call
 from cc_transcript.command import Word
-from captain_hook.conditions import check_condition
-from captain_hook.state import fired_this_turn, record_fire
 from pydantic import BaseModel, Field
 from spawnllm import Binary, BinaryAnswer, Label, LabelAnswer
 
@@ -37,7 +32,6 @@ from .common import (
     CcNotesAvailable,
     LLM_INPUT_CAP,
     MCP_TOOL_PREFIX,
-    NUDGE_MAX_FIRES,
     RECORD_KINDS,
     clamp_title,
     ids_match,
@@ -153,7 +147,7 @@ def durable_kind(evt: PostToolUseEvent) -> str | None:
 @on(
     Event.PostToolUse,
     only_if=[Tool("Write|Edit|MultiEdit"), DurableInternalWrite(), CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
+    max_fires=1,
     tests={
         Input(
             tool="Write",
@@ -189,11 +183,8 @@ def durable_kind(evt: PostToolUseEvent) -> str | None:
     },
 )
 def nudge_record_durable(evt: PostToolUseEvent) -> HookResult | None:
-    if fired_this_turn(evt):
-        return None
     if (kind := durable_kind(evt)) is None:
         return None
-    record_fire(evt)
     return evt.warn(
         f"This file reads like durable {kind} content, not a loose file in the working tree. "
         f"Run `{DURABLE_VERBS[kind]}`, then delete the file."
@@ -307,7 +298,7 @@ class EvidenceArchive(CustomCondition):
 @on(
     Event.PostToolUse,
     only_if=[Tool("Bash|Write|Edit|MultiEdit"), EvidenceArchive(), CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
+    max_fires=1,
     tests={
         Input(
             command="mkdir -p docs/reports/assets/vm-repro && "
@@ -330,10 +321,7 @@ class EvidenceArchive(CustomCondition):
         Input(tool="Write", file="docs/guide.md", content="# Guide\n"): Allow(),
     },
 )
-def nudge_record_evidence(evt: PostToolUseEvent) -> HookResult | None:
-    if fired_this_turn(evt):
-        return None
-    record_fire(evt)
+def nudge_record_evidence(evt: PostToolUseEvent) -> HookResult:
     return evt.warn(
         "Machine-generated evidence belongs on a cc-notes log, not in the tracked tree. "
         "Run `cc-notes log append <id> --attach <file>`, then delete the copy."
@@ -377,16 +365,26 @@ def ephemeral_refs(call: Call) -> list[str]:
     return [text for text in content if any(marker in text for marker in EPHEMERAL_MARKERS)]
 
 
+def mcp_ephemeral_refs(evt: PostToolUseEvent) -> list[str]:
+    return [
+        value
+        for field in MCP_CONTENT_FIELDS
+        if isinstance(value := evt.input.raw.get(field), str) and any(marker in value for marker in EPHEMERAL_MARKERS)
+    ]
+
+
 class EphemeralRecordReference(CustomCondition):
 
     def check(self, evt: BaseHookEvent) -> bool:
+        if evt.tool_name in MCP_RECORD_WRITE_NAMES:
+            return bool(mcp_ephemeral_refs(evt))
         return any(ephemeral_refs(call) for call in evt.cmd.calls() if call.name in CC_NOTES_EXECUTABLES)
 
 
 @on(
     Event.PostToolUse,
-    only_if=[Tool("Bash"), EphemeralRecordReference(), CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
+    only_if=[Tool("Bash", *MCP_RECORD_WRITE_NAMES), EphemeralRecordReference(), CcNotesAvailable()],
+    max_fires=1,
     tests={
         Input(command='cc-notes doc add "Handoff — full detail in session scratchpad steering-handoff.md" --when w'): Warn(pattern="purge-bound"),
         Input(command='cc-notes note add "Fact" --body "see /private/tmp/c-1/scratch.md"'): Warn(),
@@ -402,37 +400,6 @@ class EphemeralRecordReference(CustomCondition):
         Input(command='cc-notes papercut --model=/tmp/local.gguf "clean text"'): Allow(),
         Input(command="cc-notes task list"): Allow(),
         Input(command="cat /tmp/scratch.md"): Allow(),
-    },
-)
-def nudge_ephemeral_record_reference(evt: PostToolUseEvent) -> HookResult | None:
-    if fired_this_turn(evt):
-        return None
-    record_fire(evt)
-    return evt.warn(
-        "This record cites a purge-bound path (`/tmp`, `/var`, or a scratchpad). "
-        "Put the content in the record text and store artifacts with `cc-notes log append <id> --attach <file>`."
-    )
-
-
-def mcp_ephemeral_refs(evt: PostToolUseEvent) -> list[str]:
-    return [
-        value
-        for field in MCP_CONTENT_FIELDS
-        if isinstance(value := evt.input.raw.get(field), str) and any(marker in value for marker in EPHEMERAL_MARKERS)
-    ]
-
-
-class McpEphemeralReference(CustomCondition):
-
-    def check(self, evt: BaseHookEvent) -> bool:
-        return bool(mcp_ephemeral_refs(evt))
-
-
-@on(
-    Event.PostToolUse,
-    only_if=[Tool(*MCP_RECORD_WRITE_NAMES), McpEphemeralReference(), CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
-    tests={
         Input(
             tool="mcp__plugin_cc-notes_cc-notes__doc_add",
             tool_input={"title": "Handoff", "when": "w", "body": "full detail in session scratchpad steering-handoff.md"},
@@ -451,13 +418,11 @@ class McpEphemeralReference(CustomCondition):
         ): Allow(),
     },
 )
-def nudge_mcp_ephemeral_reference(evt: PostToolUseEvent) -> HookResult | None:
-    if fired_this_turn(evt):
-        return None
-    record_fire(evt)
+def nudge_ephemeral_record_reference(evt: PostToolUseEvent) -> HookResult:
     return evt.warn(
         "This record cites a purge-bound path (`/tmp`, `/var`, or a scratchpad). "
-        "Put the content in the `body` param and store artifacts with the `attach` param of `log_append`."
+        "Put the content in the record itself and attach artifacts to a cc-notes log "
+        "(`cc-notes log append <id> --attach <file>`, or the `attach` param of `log_append`)."
     )
 
 
@@ -499,7 +464,6 @@ class CapturedPlan(BaseModel):
 
 class PlanCaptures(BaseModel):
     by_path: dict[str, CapturedPlan] = Field(default_factory=dict)
-    advisories: int = 0
 
 
 def plan_key(evt: PostToolUseEvent) -> str:
@@ -519,20 +483,8 @@ def record_plan(evt: PostToolUseEvent, text: str) -> tuple[str, bool]:
     return plan_id, False
 
 
-def advisory_budget(evt: PostToolUseEvent) -> bool:
-    with evt.ctx.s[PlanCaptures].mutate() as state:
-        if state.advisories >= NUDGE_MAX_FIRES:
-            return False
-        state.advisories += 1
-        return True
-
-
 PLAN_RECORDED = "Plan recorded as a cc-notes plan."
 PLAN_REVISED = "Plan revision written to its cc-notes plan in place."
-PLAN_TASK_RULE = (
-    "Native tasks vanish at session end, so file durable work with `cc-notes task add --criterion "
-    '"<how to verify>"{plan_link}`.'
-)
 
 
 @on(
@@ -540,38 +492,21 @@ PLAN_TASK_RULE = (
     only_if=[Tool("ExitPlanMode"), CcNotesAvailable()],
     max_fires=None,
     tests={
-        Input(tool="ExitPlanMode"): Warn(pattern="Native tasks vanish at session end"),
+        Input(tool="ExitPlanMode"): Allow(),
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
 def nudge_plan_capture(evt: PostToolUseEvent) -> HookResult | None:
-    text = plan_text(evt)
-    digest = hashlib.sha256((text or "").encode()).hexdigest()[:16]
+    if not (text := plan_text(evt)):
+        return None
+    digest = hashlib.sha256(text.encode()).hexdigest()[:16]
     if not evt.ctx.s.once(f"{plan_key(evt)}:{digest}", scope="plan"):
         return None
-    plan_id, revised = record_plan(evt, text) if text else ("", False)
-    lines = [PLAN_REVISED if revised else PLAN_RECORDED] if plan_id else []
-    if advisory_budget(evt):
-        lines.append(PLAN_TASK_RULE.format(plan_link=" --plan <id>" if plan_id else ""))
-    return evt.warn(*lines) if lines else None
+    plan_id, revised = record_plan(evt, text)
+    if not plan_id:
+        return None
+    return evt.warn(PLAN_REVISED if revised else PLAN_RECORDED)
 
-
-CI_TRIAGE_RULE = (
-    'A red CI run needs a cc-notes investigation. Open one with `cc-notes investigation open "<title>" '
-    '"<premise>"` and cite the run as first evidence.'
-)
-SYNTHESIS_RULE = (
-    "Debugging subagents returned a verdict that no cc-notes investigation holds. "
-    'Capture it with `cc-notes investigation open "<title>" "<premise>"`.'
-)
-CLOSE_RULE = (
-    "A verdict belongs on the open investigation, not a loose file. "
-    'Record it with `cc-notes investigation root-cause <id> "<the true cause>"`.'
-)
-STOP_SWEEP_RULE = (
-    "An investigation opened this session has no verdict yet. "
-    'Close it with `cc-notes investigation root-cause <id> "<the true cause>"`.'
-)
 
 INVESTIGATION_MCP_PREFIX = MCP_TOOL_PREFIX + "investigation_"
 INVESTIGATION_READ_VERBS = frozenset({"list", "show", "search", "history", "finding_list"})
@@ -579,45 +514,9 @@ INVESTIGATION_OPEN_VERBS = frozenset({"open", "add"})
 INVESTIGATION_TERMINAL_VERBS = frozenset({"confirm", "exonerate", "abandon"})
 INVESTIGATION_UNRESOLVED_VERBS = INVESTIGATION_OPEN_VERBS | frozenset({"append", "root_cause", "fix", "reopen"})
 
-GH_SCHEMA = CommandSchema(
-    "gh",
-    operands=(Operand("noun"),),
-    options=(Option("repo", ("--repo", "-R")), Option("log_failed", ("--log-failed",), type=bool)),
-)
-
-
-def reads_failed_logs(args: Arguments) -> bool:
-    noun = args.words.get("noun", ())
-    return bool(noun) and noun[0].value == "run" and True in args.values.get("log_failed", ())
-
-
-GH_RUN_LOG_FAILED = CommandMatches(GH_SCHEMA, only_if=(reads_failed_logs,))
-GH_RUN_WATCH = Runs("gh", "run", "watch")
-CCX_VCS_SHIP = Runs("ccx", "vcs", "ship")
-GH_FAILED_CONCLUSION_RE = re.compile(
-    r"(?im)^\s*[X✗✘](?:\s|$)"
-    r"|completed with ['\"]?(?:failure|timed_out|cancelled|startup_failure|action_required)"
-    r"|conclusion['\"]?\s*[:=]\s*['\"]?(?:failure|timed_out|cancelled|startup_failure)"
-)
-
-CI_TRIAGE_AGENT_MARKERS = ("ci-triage",)
-SUBAGENT_INVESTIGATION_MARKERS = ("ci-triage", "debug", "forensic", "bug")
-SUBAGENT_INVESTIGATION_RE = re.compile(
-    r"(?i)\b(?:investigat|root[\s-]?cause|bisect|debug|forensic|triage|repro|suspect|regression)\w*"
-)
-VERDICT_LANGUAGE_RE = re.compile(r"(?i)\b(?:root[\s-]?cause|confirmed|falsified|exonerat)\w*")
-CLOSE_LANGUAGE_RE = re.compile(
-    r"(?im)(?<!not\s)\bRESOLVED\b"
-    r"|\broot[\s-]?cause[\s-]?(?:was|is)\s+(?!still\b|unknown\b|unclear\b|not\b|yet\b|tbd\b|undetermined\b)"
-    r"|(?<!not\s)\bfixed[\s-]?by\b"
-)
-
 
 class InvestigationActivity(BaseModel):
-    written: bool = False
     unresolved: list[str] = Field(default_factory=list)
-    subagents: int = 0
-    subagents_turn: str = ""
 
 
 def cc_notes_words(evt: BaseHookEvent) -> list[tuple[str, ...]]:
@@ -682,24 +581,6 @@ def _load_activity(evt: BaseHookEvent) -> InvestigationActivity:
     return evt.ctx.s.load(InvestigationActivity)
 
 
-def investigation_touched(evt: BaseHookEvent) -> bool:
-    return _load_activity(evt).written
-
-
-def _turn_key(evt: BaseHookEvent) -> str:
-    return str(len(evt.ctx.t) - len(evt.ctx.turn))
-
-
-def _bump_subagents(evt: BaseHookEvent) -> int:
-    turn = _turn_key(evt)
-    with evt.ctx.s[InvestigationActivity].mutate() as act:
-        if act.subagents_turn != turn:
-            act.subagents_turn = turn
-            act.subagents = 0
-        act.subagents += 1
-        return act.subagents
-
-
 class InvestigationCall(CustomCondition):
 
     def check(self, evt: BaseHookEvent) -> bool:
@@ -723,7 +604,6 @@ def record_investigation_activity(evt: PostToolUseEvent) -> HookResult | None:
     if canon in INVESTIGATION_READ_VERBS:
         return None
     with evt.ctx.s[InvestigationActivity].mutate() as act:
-        act.written = True
         if canon in INVESTIGATION_TERMINAL_VERBS:
             _resolve_id(act.unresolved, _investigation_id(evt, canon))
         elif canon in INVESTIGATION_UNRESOLVED_VERBS:
@@ -759,106 +639,3 @@ def link_task_to_investigation(evt: PostToolUseEvent) -> HookResult | None:
     if run_cc_notes(evt, "investigation", "follow-up", unresolved[0], task_id) is None:
         return None
     return evt.warn("Linked the new task to the open investigation as a follow-up.")
-
-
-def _ci_run_reported_failure(evt: BaseHookEvent) -> bool:
-    return bool(GH_FAILED_CONCLUSION_RE.search(f"{tool_output(evt)}\n{_event_error(evt)}"))
-
-
-class CiTriageMoment(CustomCondition):
-
-    def check(self, evt: BaseHookEvent) -> bool:
-        if any(m in (evt.agent_type or "") for m in CI_TRIAGE_AGENT_MARKERS):
-            return True
-        if check_condition(GH_RUN_LOG_FAILED, evt):
-            return True
-        watched = check_condition(GH_RUN_WATCH, evt) or check_condition(CCX_VCS_SHIP, evt)
-        return watched and _ci_run_reported_failure(evt)
-
-
-@on(
-    Event.PostToolUse | Event.PostToolUseFailure,
-    only_if=[Tool("Bash|Task|Agent"), CiTriageMoment(), CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
-    tests={
-        Input(command="gh run view 12 --log-failed", output="FAIL build\nstep failed"): Warn(pattern="investigation"),
-        Input(tool="Task", agent_type="cc-context:ci-triage", prompt="triage the red CI run"): Warn(pattern="investigation"),
-        Input(command="gh run watch 12", output="✓ CI · main completed with 'success'\n✓ failure-handling-tests"): Allow(),
-        Input(command="gh run list", output="completed success"): Allow(),
-        Input(command="gh run watch 12", output="✓ CI · main completed"): Allow(),
-        Input(tool="Task", agent_type="general-purpose", prompt="write the docs"): Allow(),
-    },
-)
-def nudge_ci_triage_investigation(evt: PostToolUseEvent) -> HookResult | None:
-    if investigation_touched(evt) or fired_this_turn(evt):
-        return None
-    record_fire(evt)
-    return evt.warn(CI_TRIAGE_RULE)
-
-
-class InvestigationSubagent(CustomCondition):
-
-    def check(self, evt: BaseHookEvent) -> bool:
-        if any(m in (evt.agent_type or "") for m in SUBAGENT_INVESTIGATION_MARKERS):
-            return True
-        ti = evt.input.raw
-        text = " ".join(str(ti.get(k, "")) for k in ("prompt", "description"))
-        return bool(SUBAGENT_INVESTIGATION_RE.search(text))
-
-
-@on(
-    Event.PostToolUse,
-    only_if=[Tool("Task|Agent"), InvestigationSubagent(), CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
-    tests={
-        Input(tool="Task", agent_type="general-purpose", prompt="bisect the deadlock", output="root cause: unbuffered chan"): Allow(),
-        Input(tool="Task", agent_type="general-purpose", prompt="write the release notes"): Allow(),
-    },
-)
-def nudge_multiagent_synthesis(evt: PostToolUseEvent) -> HookResult | None:
-    n = _bump_subagents(evt)
-    if investigation_touched(evt) or n < 2:
-        return None
-    if not VERDICT_LANGUAGE_RE.search(tool_output(evt)) or fired_this_turn(evt):
-        return None
-    record_fire(evt)
-    return evt.warn(SYNTHESIS_RULE)
-
-
-class InvestigationCloseLanguage(CustomCondition):
-
-    def check(self, evt: BaseHookEvent) -> bool:
-        content = evt.content
-        return bool(content) and bool(CLOSE_LANGUAGE_RE.search(content))
-
-
-@on(
-    Event.PostToolUse,
-    only_if=[Tool("Write|Edit|MultiEdit"), InvestigationCloseLanguage(), CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
-    tests={
-        Input(tool="Write", file="notes.md", content="RESOLVED: the deadlock was the pool rewrite\n"): Allow(),
-        Input(tool="Write", file="notes.md", content="just some ordinary notes\n"): Allow(),
-    },
-)
-def nudge_investigation_close(evt: PostToolUseEvent) -> HookResult | None:
-    activity = _load_activity(evt)
-    if not activity.unresolved or fired_this_turn(evt):
-        return None
-    record_fire(evt)
-    return evt.warn(CLOSE_RULE)
-
-
-@on(
-    Event.Stop,
-    only_if=[CcNotesAvailable()],
-    max_fires=1,
-    tests={
-        Input(): Allow(),
-    },
-)
-def nudge_investigation_stop_sweep(evt: StopEvent) -> HookResult | None:
-    activity = _load_activity(evt)
-    if not activity.unresolved:
-        return None
-    return evt.warn(STOP_SWEEP_RULE)

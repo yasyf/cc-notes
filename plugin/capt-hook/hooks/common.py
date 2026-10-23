@@ -14,8 +14,6 @@ from captain_hook import BaseHookEvent, CommandLine, CustomCondition
 from captain_hook.state import SeenKeys
 from pydantic import BaseModel, Field
 
-NATIVE_TASK_MIRROR_THRESHOLD = 5
-
 SESSION_TASK_CAP = 7
 SESSION_ANSWER_CAP = 8
 ANSWER_CANDIDATE_LIMIT = 12
@@ -517,9 +515,3 @@ class CcNotesMissing(CustomCondition):
 
     def check(self, evt: BaseHookEvent) -> bool:
         return shutil.which("cc-notes") is None
-
-
-class ManyNativeTasks(CustomCondition):
-
-    def check(self, evt: BaseHookEvent) -> bool:
-        return len(evt.tasks.open) >= NATIVE_TASK_MIRROR_THRESHOLD

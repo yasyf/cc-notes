@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-from captain_hook import Event, HookResult, Input, UserPromptSubmitEvent, Warn, on
+from captain_hook import Event, HookResult, UserPromptSubmitEvent, on
 
 from .common import (
     SESSION_ANSWER_CAP,
@@ -56,18 +56,6 @@ def float_session_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
     if (extra := len(fresh) - SESSION_ANSWER_CAP) > 0:
         lines.append(f"+{extra} more — run `cc-notes answer list --label scope:durable --branch {current_branch(evt)}`")
     return evt.warn(lede, *lines)
-
-
-@on(
-    Event.UserPromptSubmit,
-    only_if=[CcNotesAvailable()],
-    max_fires=1,
-    tests={
-        Input(prompt="keep going"): Warn(pattern="cc-notes task add"),
-    },
-)
-def nudge_cc_notes_installed(evt: UserPromptSubmitEvent) -> HookResult:
-    return evt.warn("cc-notes is installed. Record durable work with `cc-notes task add`, `cc-notes note add`, or `cc-notes doc add`.")
 
 
 @on(

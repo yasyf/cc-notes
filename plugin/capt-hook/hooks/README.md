@@ -77,8 +77,7 @@ candidates before either superseded and leave a superseded answer live.
 The cheap layer (a path glob, the `cc-notes relevant` ranker, a commit diff) over-selects
 on purpose; a model is the precision gate in both directions. The prompt-answer pick, the
 answer scope and the stale-record filter ask TypeSafe Jev through `evt.decide`, and the
-durable-write router asks OpenAI Decisions through the same call. The commit router asks Jev
-too. Only the supersede pass still asks the small model through `call_llm`. The only deterministic hooks
+durable-write router asks OpenAI Decisions through the same call. Only the supersede pass still asks the small model through `call_llm`. The only deterministic hooks
 are the ones with no "which" to pick: the memory mirror, where the file already declares
 its type, the evidence-archive router, where the kind is always a log with attachments,
 the plan capture, where an approved plan is always a plan, and the pure workflow reminders,
@@ -97,7 +96,8 @@ where the action is fixed.
 | Compaction (`SessionStart`, source `compact`) | this agent's captured or surfaced `scope:durable` answers, with the capturing or surfacing agent stored in session state | nothing; the hook renders one `<short id> <title>` line per answer, newest first, within 1200 bytes total including the header and one final pointer line naming `cc-notes answer list --label scope:durable`. The pointer starts with `+N more.` when some answers do not fit. Ephemeral answers never restore; an agent with no durable answers restores nothing |
 
 Each record surfaces at most once per session per trigger: a Read floats it as context once,
-an edit asks about its staleness once, tracked in two separate per-session sets. The edit
+an edit asks about its staleness once, tracked in two separate per-session sets. The
+staleness notice itself speaks at most once per agent. The edit
 filter marks every recalled record judged before it picks, so an unpicked one is not
 re-weighed later. The session-start float is deterministic orientation, not a filtered surface.
 
@@ -107,13 +107,11 @@ re-weighed later. The session-start float is deterministic orientation, not a fi
 |---------|-----------|---------------|
 | `Write` / `Edit` / `MultiEdit` of an internal-looking file (PostToolUse) | a status/handoff/notes/runbook/`memory/` file the static `DurableInternalWrite` gate flags | note / doc / log / task / papercut / runbook / investigation / plan — or none; the subtle calls are doc (living guidance) vs log (append-only chronology), doc (describes) vs runbook (a procedure you re-execute, tracked per run), log (a finished chronology) vs investigation (a debugging arc still moving toward a verdict), and plan (one approved approach, executed once and closed) vs runbook (a standing procedure) or doc (guidance kept fresh), while papercut is a one-off friction gripe with nothing to curate or do |
 | Bash `cp`/`mv`/`rsync` landing run output in a durable tree, or a `Write`/`Edit` of an evidence-suffixed file (`.log`, `.panic`, `.dump`, …) anywhere in it, `docs/**` included (PostToolUse) | the transfer the static `EvidenceArchive` gate flags — temp/scratchpad, `testdata/` fixtures, `.git` internals, and relative in-repo bulk copies stay exempt | (static, no model) a log entry carrying the artifacts as `--attach` git-lfs attachments; only `cc-notes sync` uploads their content (plain `git push` moves refs without it), and a >1MB payload strengthens the wording |
-| Bash `cc-notes note`/`doc`/`log` `add`/`edit`/`append` (or `cc-notes papercut`) whose title or body text names a purge-bound path (`/tmp`, `/var`, a session scratchpad) the static `EphemeralRecordReference` gate flags — an `--attach` value is exempt (PostToolUse) | the record command the gate flags | (static, no model) carry the content in the record itself — `--body -` (or `--checkout` file mode) for text, `--attach <file>` for artifacts, whose bytes land in the ODB and sync with the repo |
-| `git commit` / `jj commit` / `jj describe` / `ccx vcs ship` (PostToolUse) | the HEAD commit — message, diffstat, bounded patch | whether the change encodes a durable decision worth a note or doc; the `cc-task:` link reminder always fires regardless, and the sync is an automatic side-effect (see below) |
-| `ExitPlanMode` (PostToolUse) | the approved plan's text (`planFilePath`, else inline) | (the capture is static, no model) the plan text is recorded verbatim as an approved `cc-notes plan`, or edited into the plan this session already holds for that file when the title is unchanged; a model then picks which few plan items are durable work → `cc-notes task add --plan <id>` (`--backlog` if shared), and the native-vs-durable teach rides along until the nudge cap |
-| Many open native tasks after `TaskCreate` | the growing native list | (static, no model) mirror the durable or cross-agent items into `cc-notes task add`; the nudge fires once per agent per session |
+| Bash `cc-notes note`/`doc`/`log` `add`/`edit`/`append` (or `cc-notes papercut`), or the matching MCP record writer, whose title or body text names a purge-bound path (`/tmp`, `/var`, a session scratchpad) the static `EphemeralRecordReference` gate flags — an `--attach` value is exempt (PostToolUse) | the record command the gate flags | (static, no model) carry the content in the record itself — `--body -` (or `--checkout` file mode) for text, `--attach <file>` for artifacts, whose bytes land in the ODB and sync with the repo |
+| `ExitPlanMode` (PostToolUse) | the approved plan's text (`planFilePath`, else inline) | (static, no model) the plan text is recorded verbatim as an approved `cc-notes plan`, or edited into the plan this session already holds for that file when the title is unchanged |
 
-The internal-write and evidence-archive routers share one ask-once-per-turn slot; the commit router judges each HEAD sha once,
-so an amend re-judges while a re-fire on the same commit stays silent; the plan capture fires
+The internal-write, evidence-archive, and purge-bound-path nudges each speak at most once per
+agent; the plan capture fires
 once per distinct plan *text*, so a revised plan lands and re-approving unchanged text
 stays quiet. Every record nudge falls *closed* to silence on any classifier or git
 error, never invents a record on a degenerate parse (`record` and the kind both default
@@ -126,7 +124,8 @@ empty), and only ever suggests — it never blocks.
 | `git merge` / `git pull` / `jj git fetch` (PostToolUse) | the pack runs `cc-notes reconcile --into <current branch>` in the background (carrying the merged branch's still-open tasks onto your branch), then syncs; a failed push surfaces its retry hint on your next event, and a detached HEAD (the colocated-jj norm) or a failed reconcile still syncs, so the fetched refs ship |
 | `git push` / `jj git push` (PostToolUse) | the pack runs `cc-notes sync` so the cc-notes refs follow the branch push — jj's git bridge carries only `refs/heads/*`, so under jj this sync is the only thing that moves them |
 | a cc-notes write — any mutating CLI subcommand or MCP tool (PostToolUse) | the pack syncs the fresh refs to the remote; reads (`list`, `show`, `search`, `status`, …) never trigger |
-| `cc-notes task claim` / `task start` (PostToolUse) | you hold a lease — `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold (sync is automatic now) |
+| `git commit` / `jj commit` / `jj describe` / `ccx vcs ship` (PostToolUse), holding exactly one task | the pack links the commit onto the task you hold; the first time per agent it names the task and the `task unlink` undo |
+| `cc-notes task claim` / `task start` (PostToolUse), once per agent | you hold a lease — `task renew` on long work, `task done` when finished, `task claim --steal` to reclaim a crashed hold (sync is automatic now) |
 | `cc-notes` binary missing, first `UserPromptSubmit` (once) | the pack is enabled but the binary is off `PATH` — name the two install paths (`brew install yasyf/tap/cc-notes` or `curl -fsSL …/install.sh \| sh`) so an opt-in repo isn't left silent |
 
 ### Approvals — cc-notes usage never prompts
@@ -164,12 +163,9 @@ dormant without the captain-hook dispatcher plugin.
 
 ### Firing policy
 
-Every Record router and teach-carrying Workflow reminder is capped at
-`NUDGE_MAX_FIRES` (three) per agent per session, except the "cc-notes is installed",
-missing-binary and native-task mirror nudges, which fire at most once per agent per
-session (`max_fires=1`). Each of the other capped hooks also dedupes by its own
-key — the turn, the HEAD sha, or the plan text's digest — so it speaks once per real event rather
-than on every fire. The sync actions (after a commit, a claim, a merge/pull/fetch, a push, or a
+Every Record nudge and Workflow reminder fires at most once per agent per session
+(`max_fires=1`); the failed-CLI redirect is the one exception, capped at `NUDGE_MAX_FIRES`
+(three) and once per verb. The sync actions (after a commit, a claim, a merge/pull/fetch, a push, or a
 cc-notes write) carry no session cap: they run in the background with no output of their own,
 and the per-turn dedup already bounds them. The auto-sync action deduplicates per target repo per turn across all of
 its triggers — a commit (`git commit` / `jj commit` / `jj describe` / `ccx vcs ship`), a
@@ -284,8 +280,8 @@ title and body are unchanged) or `note add`. It mirrors only `feedback`, `projec
 `reference` memories, never a `user` who-you-are memory or the `MEMORY.md` index. Because it
 runs at `PostToolUse` the memory write has already landed, and every cc-notes call falls
 closed to silence, so a failed mirror never disturbs it. A memory write is *not* an auto-sync
-trigger: the mirror still nudges "Run `cc-notes sync` to share it" rather than syncing for
-you, and the SessionEnd backstop sweeps an unpushed mirror at exit. The cc-pool memory tree
+trigger: the mirror writes silently and leaves the push to the SessionEnd backstop, which
+sweeps an unpushed mirror at exit. The cc-pool memory tree
 is the mirror's alone: the internal-write record router hard-excludes it, so a memory write
 is captured once, by the mirror, never also nudged.
 
@@ -307,12 +303,8 @@ stay in `cc-notes history`), while a changed title is a reused session planning 
 work and mints a plan of its own with no supersede edge joining the two. The write itself is
 uncapped — `max_fires` reserves its slot before the handler runs and only releases it on a
 falsy result, so a cap here would burn the budget on a session's first few plans and drop
-every later one in silence. The nagging half carries the cap instead: the native-vs-durable
-teach and the model-picked durable items, rendered as `cc-notes task add … --plan <id>` lines
-carrying the id the capture just returned (a placeholder to substitute when the capture
-failed, since a warn cannot write), fire at most `NUDGE_MAX_FIRES` times a session. Like every
-other cc-notes call in the pack it fails closed — a failed capture drops the confirmation and
-keeps the teach.
+every later one in silence. Like every other cc-notes call in the pack it fails closed — a
+failed capture stays silent.
 
 **The answer capture.** An answer to `AskUserQuestion` is a decision the next session would
 otherwise ask again, so the pack records every answer itself and the agent never records one by
@@ -327,8 +319,7 @@ label from a visible heuristic. The scope is `scope:durable` when the header or 
 says rule, standing, always, or never. It is also durable when the notes or the typed reply say
 always, never, or going forward. Every other answer is `scope:ephemeral`. A title already recorded in the last 24 hours is skipped.
 
-The record is anchored to the current branch, and the handler's one-line warning gives
-the count and short ids, never the answer bodies.
+The record is anchored to the current branch, and the handler records silently.
 It reads no transcript and calls no model, so a large session's evidence deadline cannot drop
 it.
 
@@ -435,8 +426,7 @@ the CLI subprocess) cannot assert it deterministically.
 The Record routers are model-gated, so their inline `tests={...}` mostly cover the cheap
 static gate; a positive fires there only when the test supplies a stubbed verdict through
 `llm=` or `decide=`. What the gate lets through, what the model routes to (note vs doc vs
-log vs task vs papercut vs runbook vs investigation vs plan), the always-on commit and plan
-teaches, and the per-key dedup are proven in `tests/test_cc_notes.py`, which stubs
+log vs task vs papercut vs runbook vs investigation vs plan), the plan capture, and the per-key dedup are proven in `tests/test_cc_notes.py`, which stubs
 `evt.ctx.decide`, `evt.ctx.call_llm` and `evt.ctx.git` directly.
 
 Two handlers carry no inline tests at all: `sync_at_session_end` and

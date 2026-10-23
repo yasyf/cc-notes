@@ -55,6 +55,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verb's accepted flags, instead of listing those flags with no remedy.
 
 ### Changed
+- **The capt-hook pack nags less.** It no longer nudges on a verbose code
+  comment, a red CI run, debugging subagents, verdict-looking files, or an open
+  investigation at Stop. It also drops the "cc-notes is installed" prompt, the
+  commit-decision check (one model call per commit), the `cc-task:` trailer
+  reminder on every commit, and the native-task mirror warning. The answer
+  capture, the memory mirror, and the plan capture still record, but say nothing
+  about it, and the plan capture no longer appends the native-tasks advice. The
+  durable-file, evidence, purge-bound path, commit-link, and lease reminders and
+  the stale-record notice now speak at most once per agent. The CLI and MCP
+  purge-bound path nudges are now one hook.
 - **`task done` links no foreign `HEAD`.** Run with `--repo` from a working
   directory outside that checkout, `task done` links no commit unless
   `--commit` names one, instead of anchoring that checkout's unrelated `HEAD`.
