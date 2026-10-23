@@ -18,6 +18,7 @@ from spawnllm import Binary, BinaryAnswer
 from .common import (
     AnswerFileSurfacing,
     CcNotesAvailable,
+    agent_key,
     entry_kind,
     entry_payload,
     filter_drifted,
@@ -125,7 +126,7 @@ def recall_stale_notes(evt: PostToolUseEvent) -> HookResult | None:
     if not fresh:
         return None
     picked = surface_filter(evt, fresh, path=path, touched="edited")
-    if not picked:
+    if not picked or not evt.ctx.s.once(agent_key(evt), scope="stale-notice"):
         return None
     remember_surfaced_answers(evt, picked)
     guidance = (

@@ -301,9 +301,9 @@ def add_answer(evt: PostToolUseEvent, pair: AnsweredQuestion, anchors: list[str]
         Input(tool="Edit", file="m.py"): Allow(),
     },
 )
-def record_user_answers(evt: PostToolUseEvent) -> HookResult | None:
+def record_user_answers(evt: PostToolUseEvent) -> None:
     if not (pairs := answered_questions(evt)):
-        return None
+        return
     seen = recent_titles(evt)
     anchors = branch_args(evt)
     recorded: list[dict[str, Any]] = []
@@ -317,13 +317,10 @@ def record_user_answers(evt: PostToolUseEvent) -> HookResult | None:
             captured[pair.question] = answer_id
             recorded.append({"id": answer_id, "title": title, "body": answer_body(pair)})
     if not recorded:
-        return None
+        return
     with evt.ctx.s[CapturedAnswers].mutate() as state:
         state.ids.update(captured)
     remember_answers(evt, recorded)
-    noun = "answer" if len(recorded) == 1 else "answers"
-    ids = ", ".join(short_id(a["id"]) for a in recorded)
-    return evt.warn(f"Recorded {len(recorded)} {noun} in cc-notes ({ids}); never record them again by hand.")
 
 
 def scope_edit(scope: str, verdict: AnswerVerdict | None) -> list[str]:

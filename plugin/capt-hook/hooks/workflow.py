@@ -21,7 +21,6 @@ from captain_hook import (
     Or,
     PostToolUseEvent,
     SessionEndEvent,
-    Tool,
     Warn,
     nudge,
     on,
@@ -29,19 +28,13 @@ from captain_hook import (
 from captain_hook.cmd import Call, Cmd
 from captain_hook.util.paths import resolve_project_dir
 from pydantic import BaseModel, Field
-from spawnllm import Binary, BinaryAnswer, Label, LabelAnswer
 
 from .common import (
     CC_NOTES_EXECUTABLES,
     CcNotesAvailable,
-    LLM_INPUT_CAP,
-    ManyNativeTasks,
     MCP_TOOL_PREFIX,
-    NATIVE_TASK_MIRROR_THRESHOLD,
-    NUDGE_MAX_FIRES,
     current_branch,
     ids_match,
-    record_command,
     repo_root,
     run_cc_notes,
 )
@@ -459,79 +452,19 @@ def link_commit(evt: PostToolUseEvent) -> None:
         )
 
 
-COMMIT_DECISION_FLOOR = 0.5
-COMMIT_DECISION_QUESTION = Binary(
-    "Does this commit encode a durable decision worth capturing as a cc-notes record: a design choice, a tradeoff, "
-    "or a non-obvious rationale a future agent would want explained?",
-    yes="It encodes a decision the diff and message alone would not explain to a future agent.",
-    no="Routine or self-explanatory work, such as a rename, a dependency bump, a formatting pass, or a mechanical fix.",
-)
-COMMIT_KIND_QUESTION = Label(
-    "The state is a git commit an agent just landed. Pick the cc-notes record that would capture its decision.",
-    {
-        "note": "A single durable fact or decision, one verifiable claim.",
-        "doc": "Longer living rationale a future agent should read before touching this area.",
-    },
-)
-
-
-def commit_decision(evt: PostToolUseEvent) -> str | None:
-    if not (diff := evt.ctx.diff(commit="HEAD")):
-        return None
-    asked = {"decision": COMMIT_DECISION_QUESTION, "kind": COMMIT_KIND_QUESTION}
-    match (decision := evt.decide(diff[:LLM_INPUT_CAP], asked)) and (decision.answers["decision"], decision.answers["kind"]):
-        case (BinaryAnswer(p_yes=p_yes), LabelAnswer(choice=kind)) if p_yes >= COMMIT_DECISION_FLOOR:
-            return f"This commit encodes a durable decision. Capture it with `{record_command(kind)}`."
-    return None
-
-
 @on(
     Event.PostToolUse,
     only_if=[COMMIT_COMMANDS, CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
-    tests={
-        Input(command="git status"): Allow(),
-        Input(command="jj diff"): Allow(),
-        Input(command="echo 'jj commit now'"): Allow(),
-        Input(command="git commit --dry-run"): Allow(),
-    },
-)
-def nudge_commit_decision(evt: PostToolUseEvent) -> HookResult | None:
-    sha = (evt.ctx.git("rev-parse", "HEAD") or "").strip()
-    if sha and not evt.ctx.s.once(sha, scope="commit-decision"):
-        return None
-    message = commit_decision(evt)
-    return evt.warn(message) if message else None
-
-
-@on(
-    Event.PostToolUse,
-    only_if=[COMMIT_COMMANDS, CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
+    max_fires=1,
     tests={
         Input(command="git status"): Allow(),
         Input(command="git commit --dry-run"): Allow(),
     },
 )
 def nudge_commit_task_link(evt: PostToolUseEvent) -> HookResult | None:
-    sha = (evt.ctx.git("rev-parse", "HEAD") or "").strip()
-    if sha and not evt.ctx.s.once(sha, scope="commit-task-link"):
-        return None
     if not commits_to_session_repo(evt) or (task := held_task(evt)) is None:
         return None
     return evt.warn(f"This commit is being linked onto the task you hold, `{task}`. Undo with `cc-notes task unlink {task}`.")
-
-
-nudge(
-    "Link each commit to its task with a `cc-task: <id>` trailer. Query the link with `cc-notes history <id>`.",
-    events=Event.PostToolUse,
-    only_if=[COMMIT_COMMANDS, CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
-    tests={
-        Input(command="git commit -m x"): Warn(pattern="cc-task"),
-        Input(command="git commit --dry-run"): Allow(),
-    },
-)
 
 
 @on(
@@ -553,7 +486,7 @@ nudge(
     "You hold a lease now. Run `cc-notes task renew <id>` on long silent stretches and `cc-notes task done <id>` when finished.",
     events=Event.PostToolUse,
     only_if=[CLAIM_COMMANDS, CcNotesAvailable()],
-    max_fires=NUDGE_MAX_FIRES,
+    max_fires=1,
     tests={
         Input(command="cc-notes task claim abc1234"): Warn(pattern="task renew"),
         Input(command="cc-notes task list"): Allow(),
@@ -661,22 +594,3 @@ def sync_at_session_end(evt: SessionEndEvent) -> None:
     records = records_git(evt)
     if cc_notes_refs_dirty(evt, records):
         do_sync(evt, records)
-
-
-@on(
-    Event.PostToolUse,
-    only_if=[Tool("TaskCreate"), ManyNativeTasks(), CcNotesAvailable()],
-    max_fires=1,
-    tests={
-        Input(
-            tool="TaskCreate",
-            tasks=[{"id": str(i), "subject": f"t{i}", "status": "pending"} for i in range(NATIVE_TASK_MIRROR_THRESHOLD)],
-        ): Warn(pattern="Native tasks vanish at session end"),
-        Input(tool="TaskCreate", tasks=[{"id": "1", "subject": "t1", "status": "in_progress"}]): Allow(),
-        Input(tool="Edit", file="m.py"): Allow(),
-    },
-)
-def nudge_mirror_native_tasks(evt: PostToolUseEvent) -> HookResult:
-    return evt.warn(
-        "Native tasks vanish at session end and are private to this agent. Mirror durable or cross-agent ones with `cc-notes task add --criterion <how to verify it is done>`."
-    )

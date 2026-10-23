@@ -10,7 +10,6 @@ from captain_hook import (
     BaseHookEvent,
     CustomCondition,
     Event,
-    HookResult,
     Input,
     PostToolUseEvent,
     Tool,
@@ -87,22 +86,15 @@ class MemoryWrite(CustomCondition):
         Input(tool="Write", file="/n/.cc-pool/p/memory/MEMORY.md", content="# Memory Index\n"): Allow(),
     },
 )
-def mirror_memory_to_note(evt: PostToolUseEvent) -> HookResult | None:
+def mirror_memory_to_note(evt: PostToolUseEvent) -> None:
     parsed = parse_memory_file(Path(str(evt.file)))
     if parsed is None or parsed.type not in MIRRORED_MEMORY_TYPES:
-        return None
+        return
     slug = evt.file.stem
     title = clamp_title(parsed.title or slug.replace("-", " "))
     existing = memory_notes(evt, slug)
-    if existing:
-        note_id = existing[0].get("id", "")
-        if existing[0].get("title", "") == title and note_body(evt, note_id) == parsed.body:
-            return None
-        if run_cc_notes(evt, "note", "edit", note_id, f"--title={title}", f"--body={parsed.body}") is None:
-            return None
-        action = "updated"
-    else:
-        out = run_cc_notes(
+    if not existing:
+        run_cc_notes(
             evt,
             "note",
             "add",
@@ -117,9 +109,8 @@ def mirror_memory_to_note(evt: PostToolUseEvent) -> HookResult | None:
             "--",
             title,
         )
-        if out is None:
-            return None
-        action = "created"
-    return evt.warn(
-        f"Mirrored memory `{slug}` to a durable cc-notes note ({action}). Run `cc-notes sync` to share it.",
-    )
+        return
+    note_id = existing[0].get("id", "")
+    if existing[0].get("title", "") == title and note_body(evt, note_id) == parsed.body:
+        return
+    run_cc_notes(evt, "note", "edit", note_id, f"--title={title}", f"--body={parsed.body}")

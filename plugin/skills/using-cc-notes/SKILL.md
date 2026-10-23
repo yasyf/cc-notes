@@ -168,8 +168,8 @@ in a markdown body, never paraphrased, moving `draft → approved → executing 
 no freshness lifecycle — it goes out of date through its status machine — and a draft re-approved
 under the same title before work starts is that same plan, revised with `plan_edit`;
 `plan_supersede` links a genuine replan once execution has started: an edge, never a status.
-Where the capt-hook pack is enabled, `ExitPlanMode` captures the approved plan for you, revises
-it in place on every later round, and nudges the task links.
+Where the capt-hook pack is enabled, `ExitPlanMode` captures the approved plan for you and
+revises it in place on every later round.
 
 A note records when it was last **verified** true; superseding a note points it at its
 replacement and drops it from default listings.
