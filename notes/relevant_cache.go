@@ -337,16 +337,17 @@ func restamp(s fileStamp) fileStamp {
 	return stampOf(s.Path)
 }
 
-// identStampOf fingerprints a directory by identity alone: the backend common
+// identStampOf fingerprints a directory by inode alone: the backend common
 // directory's mtime and ctime move on every checkout, commit, fetch, and
-// config write there, none of which changes a bound context's relevance.
+// config write there, none of which changes a bound context's relevance, and
+// its device number moves when macOS renumbers volumes across a reboot.
 func identStampOf(path string) fileStamp {
 	info, err := os.Stat(path) //nolint:gosec // G703: stats only the backend directory this process recorded in its own cache entry.
 	if err != nil {
 		return fileStamp{Path: path, Ident: true, Missing: true}
 	}
-	device, inode := gitobj.FileID(info)
-	return fileStamp{Path: path, Ident: true, Dev: device, Inode: inode, Mode: info.Mode().Type()}
+	_, inode := gitobj.FileID(info)
+	return fileStamp{Path: path, Ident: true, Inode: inode, Mode: info.Mode().Type()}
 }
 
 func stampOf(path string) fileStamp {

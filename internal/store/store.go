@@ -253,7 +253,7 @@ func (s *Store) Binding() (Binding, bool) { return s.storage.binding, s.storage.
 
 // CheckRecords re-validates the records backend at an operation boundary. A
 // bound store stats the context config (re-reading the binding only when that
-// stat moved) and the backend directory against the bound device/inode. An
+// stat moved) and the backend directory against the bound inode. An
 // unbound store stats the config alone, so a binding published after open
 // surfaces as ErrBindingChanged instead of a silent write into the context.
 // Every failure is a *BindingError. It never spawns git.

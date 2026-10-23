@@ -422,7 +422,7 @@ func (in *relevantInputs) watchRecords() {
 	in.record("storage %s", b)
 	// The identity stamp carries the validated binding, not a fresh stat: a
 	// backend replaced mid-capture fails close() instead of being persisted.
-	in.keep(fileStamp{Path: b.CommonDir, Ident: true, Dev: b.Device, Inode: b.Inode, Mode: os.ModeDir})
+	in.keep(fileStamp{Path: b.CommonDir, Ident: true, Inode: b.Inode, Mode: os.ModeDir})
 }
 
 func (in *relevantInputs) watchExecutables() error {

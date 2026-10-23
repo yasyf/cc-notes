@@ -30,7 +30,8 @@ type BindResult struct {
 // file, through git's own lockfile protocol, and reads the source without
 // modifying it. A source that is itself bound contributes its own backend, so
 // the published binding is always direct: bindings never chain. The backend
-// is validated before an identical existing binding is accepted. A record that
+// is validated before an identical existing binding is accepted; one naming the
+// same backend under a stale device number is republished. A record that
 // lands in the context while the binding is being published is reported as
 // ErrContextHasRecords naming every ref the binding hides; the binding stays,
 // since nothing rewrites the context config after publication.
@@ -75,6 +76,8 @@ func Bind(ctx context.Context, contextDir, sourceDir string) (BindResult, error)
 			return nil
 		case existing == want:
 			return errBindingPresent
+		case existing.sameBackend(want):
+			return nil
 		default:
 			return &BindingError{Config: config, Source: existing.CommonDir, Err: fmt.Errorf("%w: bound to %s, asked to bind %s", ErrBindingConflict, existing.CommonDir, want.CommonDir)}
 		}
