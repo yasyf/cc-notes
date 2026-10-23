@@ -16,7 +16,7 @@ func TestReleaseUsesPinnedReusableFixedHelperWorkflow(t *testing.T) {
 	workflow := filepath.Join(root, ".github", "workflows", "release.yml")
 	assertFileContains(
 		t, workflow,
-		"uses: yasyf/homebrew-tap/.github/workflows/release-app.yml@41f8de6765b3b833ef333b0b98f5683f0e46685b",
+		"uses: yasyf/homebrew-tap/.github/workflows/release-app.yml@86d5b9db467874c392c9781fb759cfce9641f812",
 		"app_name: CCNotesHelper",
 		"asset_name: cc-notes-helper",
 		"project_dir: helper-app",
