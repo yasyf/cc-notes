@@ -21,12 +21,8 @@ import (
 // before writing.
 const defaultRemote = "origin"
 
-// repoEnv names the environment variable that selects the repository when
-// --repo is not passed.
 const repoEnv = "CCN_REPO"
 
-// namedRepo returns the repository the invocation names and where it came
-// from: the --repo flag, else $CCN_REPO, else "".
 func namedRepo(cmd *cobra.Command) (repo, source string, err error) {
 	repo, err = cmd.Flags().GetString("repo")
 	if err != nil {
