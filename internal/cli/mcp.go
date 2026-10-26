@@ -18,7 +18,7 @@ func newMCPCmd() *cobra.Command {
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if dir == "" {
-				repo, err := cmd.Flags().GetString("repo")
+				repo, _, err := namedRepo(cmd)
 				if err != nil {
 					return err
 				}
@@ -33,6 +33,6 @@ func newMCPCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&dir, "dir", "", "project directory (default: $CLAUDE_PROJECT_DIR or cwd)")
+	cmd.Flags().StringVar(&dir, "dir", "", "project directory (default: --repo, then $CCN_REPO, then $CLAUDE_PROJECT_DIR, then cwd)")
 	return cmd
 }

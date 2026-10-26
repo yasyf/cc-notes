@@ -21,18 +21,35 @@ import (
 // before writing.
 const defaultRemote = "origin"
 
+// repoEnv names the environment variable that selects the repository when
+// --repo is not passed.
+const repoEnv = "CCN_REPO"
+
+// namedRepo returns the repository the invocation names and where it came
+// from: the --repo flag, else $CCN_REPO, else "".
+func namedRepo(cmd *cobra.Command) (repo, source string, err error) {
+	repo, err = cmd.Flags().GetString("repo")
+	if err != nil {
+		return "", "", err
+	}
+	if repo != "" {
+		return repo, "--repo", nil
+	}
+	return os.Getenv(repoEnv), "$" + repoEnv, nil
+}
+
 // repoDir resolves the directory a command operates on: the --repo flag value
-// when set, otherwise the working directory. A set-but-missing --repo is a usage
-// error rather than passing a nonexistent start path to git rev-parse for
-// repository discovery.
+// when set, else $CCN_REPO, otherwise the working directory. A set-but-missing
+// repository is a usage error rather than passing a nonexistent start path to
+// git rev-parse for repository discovery.
 func repoDir(cmd *cobra.Command) (string, error) {
-	repo, err := cmd.Flags().GetString("repo")
+	repo, source, err := namedRepo(cmd)
 	if err != nil {
 		return "", err
 	}
 	if repo != "" {
 		if !dirExists(repo) {
-			return "", &UsageError{Err: fmt.Errorf("--repo %s: not a directory", repo)}
+			return "", &UsageError{Err: fmt.Errorf("%s %s: not a directory", source, repo)}
 		}
 		return repo, nil
 	}
@@ -44,7 +61,7 @@ func repoDir(cmd *cobra.Command) (string, error) {
 }
 
 // openStore opens the store for the repository containing the working
-// directory, or the one named by --repo.
+// directory, or the one named by --repo or $CCN_REPO.
 func openStore(cmd *cobra.Command) (*store.Store, error) {
 	s, retained, err := retainedStore(cmd)
 	if err != nil || retained {
@@ -58,7 +75,7 @@ func openStore(cmd *cobra.Command) (*store.Store, error) {
 }
 
 // openClient opens the notes.Client for the repository containing the working
-// directory, or the one named by --repo — the client-only opener for commands
+// directory, or the one named by --repo or $CCN_REPO — the client-only opener for commands
 // that need no *store.Store.
 func openClient(cmd *cobra.Command) (*notes.Client, error) {
 	s, retained, err := retainedStore(cmd)
@@ -78,7 +95,7 @@ func openClient(cmd *cobra.Command) (*notes.Client, error) {
 // openStoreClient opens both the store — the surface the print/DTO layer and
 // autoInstall still drive — and the notes.Client that owns the task domain
 // logic, over the repository containing the working directory, or the one named
-// by --repo.
+// by --repo or $CCN_REPO.
 func openStoreClient(cmd *cobra.Command) (*store.Store, *notes.Client, error) {
 	s, retained, err := retainedStore(cmd)
 	if err != nil {

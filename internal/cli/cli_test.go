@@ -133,6 +133,7 @@ func initRepo(t *testing.T) string {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(ccnhome.Env, t.TempDir())
 	t.Setenv("CC_NOTES_ACTOR", actorA)
+	t.Setenv("CCN_REPO", "")
 	return dir
 }
 
@@ -289,6 +290,42 @@ func TestRepoFlag(t *testing.T) {
 		shown := mustJSON[taskJSON](t, mustRun(t, repo, "task", "show", task.ID, "--json"))
 		if len(shown.Comments) != 1 || shown.Comments[0].Body != "looks good" {
 			t.Fatalf("task comments = %+v, want one comment %q", shown.Comments, "looks good")
+		}
+	})
+
+	t.Run("CCN_REPO targets repo from non-repo cwd", func(t *testing.T) {
+		repo := initRepo(t)
+		cwd := t.TempDir()
+		t.Setenv("CCN_REPO", repo)
+		mustRun(t, cwd, "note", "add", "Env note")
+		here := mustJSON[[]noteJSON](t, mustRun(t, repo, "note", "list", "--json"))
+		if len(here) != 1 || here[0].Title != "Env note" {
+			t.Fatalf("note list from repo cwd = %+v, want one note titled %q", here, "Env note")
+		}
+	})
+
+	t.Run("--repo wins over CCN_REPO", func(t *testing.T) {
+		flagged := initRepo(t)
+		ambient := initRepo(t)
+		t.Setenv("CCN_REPO", ambient)
+		mustRun(t, t.TempDir(), "note", "add", "Flagged note", "--repo", flagged)
+		if got := mustJSON[[]noteJSON](t, mustRun(t, flagged, "note", "list", "--json")); len(got) != 1 {
+			t.Fatalf("note list in --repo target = %+v, want one note", got)
+		}
+		if got := mustJSON[[]noteJSON](t, mustRun(t, ambient, "note", "list", "--json")); len(got) != 0 {
+			t.Fatalf("note list in $CCN_REPO = %+v, want none", got)
+		}
+	})
+
+	t.Run("missing CCN_REPO path errors naming the variable", func(t *testing.T) {
+		repo := initRepo(t)
+		t.Setenv("CCN_REPO", filepath.Join(repo, "nope"))
+		_, stderr, err := runCLI(t, t.TempDir(), "note", "list")
+		if err == nil {
+			t.Fatal("note list with a missing $CCN_REPO = nil error, want failure")
+		}
+		if msg := err.Error() + stderr; !strings.Contains(msg, "$CCN_REPO") || !strings.Contains(msg, "not a directory") {
+			t.Fatalf("error = %v (stderr %q), want a $CCN_REPO not-a-directory usage error", err, stderr)
 		}
 	})
 
