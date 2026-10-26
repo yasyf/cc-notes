@@ -133,7 +133,6 @@ func initRepo(t *testing.T) string {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(ccnhome.Env, t.TempDir())
 	t.Setenv("CC_NOTES_ACTOR", actorA)
-	t.Setenv("CCN_REPO", "")
 	return dir
 }
 

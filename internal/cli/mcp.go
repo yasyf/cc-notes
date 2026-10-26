@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/mcpserver"
@@ -23,6 +26,16 @@ func newMCPCmd() *cobra.Command {
 					return err
 				}
 				dir = repo
+			}
+			if dir != "" {
+				abs, err := filepath.Abs(dir)
+				if err != nil {
+					return err
+				}
+				if err := os.Setenv(repoEnv, abs); err != nil {
+					return err
+				}
+				dir = abs
 			}
 			return mcpserver.Serve(cmd.Context(), dir, mcpserver.Config{
 				Version: version.String(),
