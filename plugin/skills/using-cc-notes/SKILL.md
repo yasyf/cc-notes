@@ -442,7 +442,8 @@ timeline or thread, and `investigation_finding_list` and `runbook_run_list` were
 uncapped.
 
 `--repo PATH` (`-R`) targets another repository's store from any cwd — pass any path inside it;
-file-path arguments (e.g. `--attach`) still resolve against the invocation cwd.
+file-path arguments (e.g. `--attach`) still resolve against the invocation cwd. Without the flag,
+`$CCN_REPO` names the repository, so a scratch directory outside any checkout can export it once.
 
 ## Artifacts & evidence
 

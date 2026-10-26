@@ -292,6 +292,43 @@ func TestRepoFlag(t *testing.T) {
 		}
 	})
 
+	t.Run("CCN_REPO targets repo from non-repo cwd", func(t *testing.T) {
+		repo := initRepo(t)
+		cwd := t.TempDir()
+		t.Setenv("CCN_REPO", repo)
+		mustRun(t, cwd, "note", "add", "Env note")
+		t.Setenv("CCN_REPO", "")
+		here := mustJSON[[]noteJSON](t, mustRun(t, repo, "note", "list", "--json"))
+		if len(here) != 1 || here[0].Title != "Env note" {
+			t.Fatalf("note list from repo cwd = %+v, want one note titled %q", here, "Env note")
+		}
+	})
+
+	t.Run("--repo wins over CCN_REPO", func(t *testing.T) {
+		flagged := initRepo(t)
+		ambient := initRepo(t)
+		t.Setenv("CCN_REPO", ambient)
+		mustRun(t, t.TempDir(), "note", "add", "Flagged note", "--repo", flagged)
+		if got := mustJSON[[]noteJSON](t, mustRun(t, t.TempDir(), "note", "list", "--json", "--repo", flagged)); len(got) != 1 {
+			t.Fatalf("note list in --repo target = %+v, want one note", got)
+		}
+		if got := mustJSON[[]noteJSON](t, mustRun(t, t.TempDir(), "note", "list", "--json", "--repo", ambient)); len(got) != 0 {
+			t.Fatalf("note list in $CCN_REPO = %+v, want none", got)
+		}
+	})
+
+	t.Run("missing CCN_REPO path errors naming the variable", func(t *testing.T) {
+		repo := initRepo(t)
+		t.Setenv("CCN_REPO", filepath.Join(repo, "nope"))
+		_, stderr, err := runCLI(t, t.TempDir(), "note", "list")
+		if err == nil {
+			t.Fatal("note list with a missing $CCN_REPO = nil error, want failure")
+		}
+		if msg := err.Error() + stderr; !strings.Contains(msg, "$CCN_REPO") || !strings.Contains(msg, "not a directory") {
+			t.Fatalf("error = %v (stderr %q), want a $CCN_REPO not-a-directory usage error", err, stderr)
+		}
+	})
+
 	// An existing directory that is not a repository fails loudly when git
 	// rev-parse cannot discover repository paths.
 	t.Run("non-repo target errors", func(t *testing.T) {

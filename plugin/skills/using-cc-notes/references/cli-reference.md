@@ -3,7 +3,8 @@
 The command surface, grouped by noun: package, service, storage, repo, task, sprint, project, runbook, investigation, plan,
 note, answer, doc, log, papercut, kg. Every command takes `-h`/`--help`. Commands outside the `service` group also accept
 a global `--repo PATH` (`-R`) that selects the context checkout from any cwd — pass any path
-inside it, while file-path arguments still resolve against the invocation cwd. Cobra displays the
+inside it, while file-path arguments still resolve against the invocation cwd. Without the flag,
+`$CCN_REPO` selects the checkout the same way; the flag wins when both are set. Cobra displays the
 inherited repository flag in package and service help, but those machine operations reject it before doing work.
 Every note, answer, doc, log, papercut, task, sprint, project,
 runbook, investigation, plan, sync, and reconcile command takes `--json` for a machine-readable record; without it,
@@ -723,7 +724,7 @@ README's MCP-server section); run it by hand only to drive cc-notes from another
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--dir <path>` | `$CLAUDE_PROJECT_DIR`, else cwd | Repository the server operates on |
+| `--dir <path>` | `--repo`, else `$CCN_REPO`, else `$CLAUDE_PROJECT_DIR`, else cwd | Repository the server operates on |
 
 Two tools depart from their lean CLI shape: `attachment_get` requires an `output` file path and
 writes the bytes there (never inline), and `task_validate` takes a `yes` boolean in place of the

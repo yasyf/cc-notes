@@ -79,6 +79,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its replacement, and `papercut` given a `title` points at `body`.
 
 ### Added
+- **`$CCN_REPO` names the repository when `--repo` is absent.** A
+  command run from a directory outside any checkout, such as an agent's
+  scratch directory, failed with `not a git repository` unless every call
+  carried `--repo`. Export `CCN_REPO=<path>` once and every command, and
+  `cc-notes mcp`, writes to that repository's `refs/cc-notes/*`. An explicit
+  `--repo` still wins, and a `$CCN_REPO` that is not a directory fails naming
+  the variable.
 - **Name the commit a task closes on.** `task done --commit <rev>` (repeatable)
   links the named commits instead of `HEAD`, and `--no-commit` links none, for
   work that landed in another repository. `task_done` takes `commits` and

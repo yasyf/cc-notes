@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/mcpserver"
@@ -18,11 +21,21 @@ func newMCPCmd() *cobra.Command {
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if dir == "" {
-				repo, err := cmd.Flags().GetString("repo")
+				repo, _, err := namedRepo(cmd)
 				if err != nil {
 					return err
 				}
 				dir = repo
+			}
+			if dir != "" {
+				abs, err := filepath.Abs(dir)
+				if err != nil {
+					return err
+				}
+				if err := os.Setenv(repoEnv, abs); err != nil {
+					return err
+				}
+				dir = abs
 			}
 			return mcpserver.Serve(cmd.Context(), dir, mcpserver.Config{
 				Version: version.String(),
@@ -33,6 +46,6 @@ func newMCPCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&dir, "dir", "", "project directory (default: $CLAUDE_PROJECT_DIR or cwd)")
+	cmd.Flags().StringVar(&dir, "dir", "", "project directory (default: --repo, then $CCN_REPO, then $CLAUDE_PROJECT_DIR, then cwd)")
 	return cmd
 }
