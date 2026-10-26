@@ -190,6 +190,7 @@ func TestDocEditBlankBodyWithAttach(t *testing.T) {
 func TestDocEditAppend(t *testing.T) {
 	dir := initRepo(t)
 	doc := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "Progress", "--body", "first\n", "--json"))
+	before := len(mustJSON[[]histEntryJSON](t, mustRun(t, dir, "history", doc.ID, "--json")))
 
 	mustRun(t, dir, "doc", "edit", doc.ID, "--append", "second")
 	stdout, stderr, err := runCLIIn(t, dir, "third\n", "doc", "edit", doc.ID, "--append", "-", "--json")
@@ -201,8 +202,8 @@ func TestDocEditAppend(t *testing.T) {
 	}
 
 	entries := mustJSON[[]histEntryJSON](t, mustRun(t, dir, "history", doc.ID, "--json"))
-	if len(entries) != 3 {
-		t.Fatalf("history entries = %d, want create plus one edit per append", len(entries))
+	if len(entries) != before+2 {
+		t.Fatalf("history entries = %d, want %d plus one edit per append", len(entries), before)
 	}
 	if c, ok := changeByField(entries[0], "body"); !ok || c.To == nil || *c.To != "first\n\nsecond\n\nthird" {
 		t.Fatalf("newest history entry body change = %+v, want the appended body", c)
