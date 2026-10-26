@@ -16,6 +16,11 @@ var (
 	// ErrEmptyEdit reports an edit whose field mask sets nothing — no observable
 	// change to apply.
 	ErrEmptyEdit = errors.New("empty edit")
+	// ErrBodyAndAppend reports a doc edit that both replaces the body and
+	// appends to it.
+	ErrBodyAndAppend = errors.New("body and append are exclusive")
+	// ErrEmptyAppend reports a doc edit that appends empty text.
+	ErrEmptyAppend = errors.New("append text required")
 	// ErrCycle reports a dependency edge that would close a cycle in the task
 	// blocked-by graph.
 	ErrCycle = errors.New("dependency cycle")

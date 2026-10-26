@@ -284,6 +284,8 @@ command: cc-notes doc edit
     --add-dir shorthand=none type=stringArray default="[]" usage="add directory anchor (repeatable)"
     --add-label shorthand=none type=stringArray default="[]" usage="add label (repeatable)"
     --add-path shorthand=none type=stringArray default="[]" usage="add path anchor (repeatable)"
+    --append shorthand=none type=string default="" usage="add a paragraph to the end of the body; - reads stdin"
+    --append-file shorthand=none type=string default="" usage="read --append from this file; - reads stdin"
     --apply shorthand=none type=bool default="false" usage="apply edits from the checked-out file"
     --attach shorthand=none type=stringArray default="[]" usage="attach a file's content via git-lfs (repeatable; uploads on sync)"
     --body shorthand=none type=string default="" usage="new body; - reads stdin"

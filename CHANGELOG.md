@@ -79,6 +79,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its replacement, and `papercut` given a `title` points at `body`.
 
 ### Added
+- **`doc edit --append` adds a paragraph to a doc.** Extending a doc
+  meant rewriting its whole body with `--body` or a checkout, so agents
+  recorded addenda as separate notes instead. `doc edit <id> --append <text>`
+  (`-` reads stdin, `--append-file` reads a file) adds the text as a new
+  paragraph, and `doc_edit` takes `append`. The paragraph is added to the body
+  as it stands when the edit lands: a concurrent edit that wins the race is
+  re-read and kept, never overwritten. It records an ordinary body edit in
+  `history`, and it excludes `--body`.
 - **`$CCN_REPO` names the repository when `--repo` is absent.** A
   command run from a directory outside any checkout, such as an agent's
   scratch directory, failed with `not a git repository` unless every call

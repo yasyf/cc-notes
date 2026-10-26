@@ -406,6 +406,7 @@ The full surface — every flag, property, default, and output shape — is in
 | Search one kind | `note_search` (`query`) | `cc-notes note search "<query>"` |
 | Guidance for the next agent | `doc_add` (`title`, `when`, `body`) | `cc-notes doc add "<title>" --when "<trigger>" --body -` |
 | Revise a doc's body | `doc_edit` (`id`, `body`) | `cc-notes doc edit <id> --checkout` … `--apply` |
+| Add a paragraph to a doc | `doc_edit` (`id`, `append`) | `cc-notes doc edit <id> --append -` |
 | Start an append-only journal | `log_add` (`title`, `text`) | `cc-notes log add "<title>"` |
 | Append an entry / artifacts | `log_append` (`id`, `text`, `attach`) | `cc-notes log append <id> "<text>"` |
 | Read a journal back | `log_show` (`id`) | `cc-notes log show <id>` |

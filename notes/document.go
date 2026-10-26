@@ -82,10 +82,12 @@ type NoteEdit struct {
 }
 
 // DocEdit is the field mask for EditDoc. It mirrors NoteEdit plus When, the
-// doc's read-this-when trigger.
+// doc's read-this-when trigger, and Append, a paragraph added to the body as it
+// stands when the edit lands; Append and Body are exclusive.
 type DocEdit struct {
 	Title              *string
 	Body               *string
+	Append             *string
 	When               *string
 	AddTags            []string
 	RemoveTags         []string
@@ -106,7 +108,7 @@ func (e NoteEdit) empty() bool {
 
 // empty reports whether the mask sets nothing.
 func (e DocEdit) empty() bool {
-	return e.Title == nil && e.Body == nil && e.When == nil &&
+	return e.Title == nil && e.Body == nil && e.Append == nil && e.When == nil &&
 		len(e.AddTags) == 0 && len(e.RemoveTags) == 0 &&
 		e.AddAnchors.isEmpty() && e.RemoveAnchors.isEmpty() &&
 		len(e.Attachments) == 0 && len(e.ReplaceAttachments) == 0 && len(e.RemoveAttachments) == 0
@@ -282,6 +284,14 @@ func (c *Client) EditDoc(ctx context.Context, id model.EntityID, edit DocEdit) (
 	if edit.empty() {
 		return model.Doc{}, ErrEmptyEdit
 	}
+	if edit.Append != nil {
+		if edit.Body != nil {
+			return model.Doc{}, ErrBodyAndAppend
+		}
+		if *edit.Append == "" {
+			return model.Doc{}, ErrEmptyAppend
+		}
+	}
 	addAnchors, err := c.resolveAnchors(ctx, edit.AddAnchors)
 	if err != nil {
 		return model.Doc{}, err
@@ -293,22 +303,34 @@ func (c *Client) EditDoc(ctx context.Context, id model.EntityID, edit DocEdit) (
 	if err := checkAttachmentCollisions(doc.Attachments, edit.Attachments); err != nil {
 		return model.Doc{}, err
 	}
-	var ops []model.Op
-	if edit.Title != nil {
-		ops = append(ops, model.SetTitle{Title: *edit.Title})
-	}
-	if edit.Body != nil {
-		ops = append(ops, model.SetBody{Body: *edit.Body})
-	}
-	if edit.When != nil {
-		ops = append(ops, model.SetWhen{When: *edit.When})
-	}
-	ops = appendEditOps(ops, edit.AddTags, edit.RemoveTags, addAnchors, edit.RemoveAnchors, edit.RemoveAttachments, edit.Attachments, edit.ReplaceAttachments)
-	snap, err := c.s.Append(ctx, refs.For(model.KindDoc, id), ops)
+	snap, err := c.s.AppendFrom(ctx, refs.For(model.KindDoc, id), func(current model.Snapshot) ([]model.Op, error) {
+		var ops []model.Op
+		if edit.Title != nil {
+			ops = append(ops, model.SetTitle{Title: *edit.Title})
+		}
+		if edit.Body != nil {
+			ops = append(ops, model.SetBody{Body: *edit.Body})
+		}
+		if edit.Append != nil {
+			ops = append(ops, model.SetBody{Body: appendParagraph(current.(model.Doc).Body, *edit.Append)})
+		}
+		if edit.When != nil {
+			ops = append(ops, model.SetWhen{When: *edit.When})
+		}
+		return appendEditOps(ops, edit.AddTags, edit.RemoveTags, addAnchors, edit.RemoveAnchors, edit.RemoveAttachments, edit.Attachments, edit.ReplaceAttachments), nil
+	})
 	if err != nil {
 		return model.Doc{}, err
 	}
 	return snap.(model.Doc), nil
+}
+
+func appendParagraph(body, text string) string {
+	body = strings.TrimRight(body, "\n")
+	if body == "" {
+		return text
+	}
+	return body + "\n\n" + text
 }
 
 // appendEditOps appends the tag, anchor, and attachment ops an edit shares, in

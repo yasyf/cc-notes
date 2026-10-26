@@ -26,6 +26,7 @@ type documentSpec[T model.Snapshot] struct {
 	kind          kindSpec[T]
 	noun          string
 	hasWhen       bool
+	appendable    bool
 	bodyRequired  bool
 	searchShort   string
 	addLong       string
@@ -46,10 +47,11 @@ type documentSpec[T model.Snapshot] struct {
 }
 
 // documentEdit is the parsed note or doc edit, projected onto notes.NoteEdit or
-// notes.DocEdit by the per-kind binding. A nil title/body/when pointer leaves the
-// field untouched; attachments and replaceAttachments split by the --replace flag.
+// notes.DocEdit by the per-kind binding. A nil title/body/appendText/when pointer
+// leaves the field untouched; attachments and replaceAttachments split by the
+// --replace flag.
 type documentEdit struct {
-	title, body, when               *string
+	title, body, appendText, when   *string
 	addTags, rmTags                 []string
 	addAnchors, rmAnchors           notes.AnchorSpec
 	attachments, replaceAttachments []model.Attachment
@@ -60,7 +62,7 @@ type documentEdit struct {
 // the caller counts separately), matching the pre-migration "at least one flag"
 // guard.
 func (e documentEdit) isEmpty() bool {
-	return e.title == nil && e.body == nil && e.when == nil &&
+	return e.title == nil && e.body == nil && e.appendText == nil && e.when == nil &&
 		len(e.addTags) == 0 && len(e.rmTags) == 0 &&
 		anchorSpecEmpty(e.addAnchors) && anchorSpecEmpty(e.rmAnchors) &&
 		len(e.rmAttachments) == 0
@@ -167,7 +169,7 @@ func (spec documentSpec[T]) addVerb() *cobra.Command {
 // editVerb builds "edit ID": mutate the entity by flags via notes.Client, or as a
 // checked-out file. At least one mutation is required.
 func (spec documentSpec[T]) editVerb() *cobra.Command {
-	var title, body, when string
+	var title, body, appendText, when string
 	var rmAttachments, attach []string
 	var labels labelEdits
 	var anchors anchorEdits
@@ -201,6 +203,19 @@ func (spec documentSpec[T]) editVerb() *cobra.Command {
 					return errEmptyDocBody(docBodyHintAdd)
 				}
 				in.body = &text
+			}
+			if spec.appendable && textGiven(cmd.Flags(), "append") {
+				if in.body != nil {
+					return &UsageError{Err: errors.New("--append and --body are exclusive")}
+				}
+				text, err := flagText(cmd, "append", appendText)
+				if err != nil {
+					return err
+				}
+				if text == "" {
+					return &UsageError{Err: errors.New("--append needs text")}
+				}
+				in.appendText = &text
 			}
 			if spec.hasWhen && cmd.Flags().Changed("when") {
 				in.when = &when
@@ -242,6 +257,9 @@ func (spec documentSpec[T]) editVerb() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&title, "title", "", "new title")
 	bindBody(flags, &body, "new body; - reads stdin")
+	if spec.appendable {
+		bindText(flags, "append", &appendText, "add a paragraph to the end of the body; - reads stdin")
+	}
 	if spec.hasWhen {
 		flags.StringVar(&when, "when", "", "new read-this-when trigger")
 	}
@@ -584,6 +602,7 @@ var docDocument = documentSpec[model.Doc]{
 	kind:         docSpec,
 	noun:         "doc",
 	hasWhen:      true,
+	appendable:   true,
 	bodyRequired: true,
 	searchShort:  "Ranked search across doc titles, labels, and bodies",
 	adapter:      docAdapter,
@@ -594,7 +613,9 @@ var docDocument = documentSpec[model.Doc]{
 		"must carry a body, so attach-only docs use flag-mode --attach.",
 	editLong: "Edit a doc by flags, or as a file: --checkout writes the doc to an editable\n" +
 		"Markdown file and prints its path; edit that file with your normal tools, then\n" +
-		"--apply to commit the change (or --abort to discard).",
+		"--apply to commit the change (or --abort to discard). --append adds a\n" +
+		"paragraph to the body as it stands when the edit lands, so concurrent appends\n" +
+		"all survive.",
 	newSummaryDTO: func(d model.Doc, drift string) any { return newDocSummaryDTO(d, drift) },
 	lean:          leanDocLine,
 	resolve: func(ctx context.Context, c *notes.Client, prefix string) (model.EntityID, error) {
@@ -605,7 +626,7 @@ var docDocument = documentSpec[model.Doc]{
 	},
 	edit: func(ctx context.Context, c *notes.Client, id model.EntityID, in documentEdit) (model.Doc, error) {
 		return c.EditDoc(ctx, id, notes.DocEdit{
-			Title: in.title, Body: in.body, When: in.when,
+			Title: in.title, Body: in.body, Append: in.appendText, When: in.when,
 			AddTags: in.addTags, RemoveTags: in.rmTags,
 			AddAnchors: in.addAnchors, RemoveAnchors: in.rmAnchors,
 			Attachments: in.attachments, ReplaceAttachments: in.replaceAttachments, RemoveAttachments: in.rmAttachments,
