@@ -298,6 +298,7 @@ func TestRepoFlag(t *testing.T) {
 		cwd := t.TempDir()
 		t.Setenv("CCN_REPO", repo)
 		mustRun(t, cwd, "note", "add", "Env note")
+		t.Setenv("CCN_REPO", "")
 		here := mustJSON[[]noteJSON](t, mustRun(t, repo, "note", "list", "--json"))
 		if len(here) != 1 || here[0].Title != "Env note" {
 			t.Fatalf("note list from repo cwd = %+v, want one note titled %q", here, "Env note")
@@ -309,10 +310,10 @@ func TestRepoFlag(t *testing.T) {
 		ambient := initRepo(t)
 		t.Setenv("CCN_REPO", ambient)
 		mustRun(t, t.TempDir(), "note", "add", "Flagged note", "--repo", flagged)
-		if got := mustJSON[[]noteJSON](t, mustRun(t, flagged, "note", "list", "--json")); len(got) != 1 {
+		if got := mustJSON[[]noteJSON](t, mustRun(t, t.TempDir(), "note", "list", "--json", "--repo", flagged)); len(got) != 1 {
 			t.Fatalf("note list in --repo target = %+v, want one note", got)
 		}
-		if got := mustJSON[[]noteJSON](t, mustRun(t, ambient, "note", "list", "--json")); len(got) != 0 {
+		if got := mustJSON[[]noteJSON](t, mustRun(t, t.TempDir(), "note", "list", "--json", "--repo", ambient)); len(got) != 0 {
 			t.Fatalf("note list in $CCN_REPO = %+v, want none", got)
 		}
 	})
