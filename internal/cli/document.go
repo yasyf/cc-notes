@@ -187,6 +187,9 @@ func (spec documentSpec[T]) editVerb() *cobra.Command {
 			if replace && len(attach) == 0 {
 				return &UsageError{Err: errors.New("--replace requires --attach")}
 			}
+			if spec.appendable && textGiven(cmd.Flags(), "append") && textGiven(cmd.Flags(), "body") {
+				return &UsageError{Err: errors.New("--append and --body are exclusive")}
+			}
 			var in documentEdit
 			if cmd.Flags().Changed("title") {
 				if err := validateTitle(title, titleHintBody); err != nil {
@@ -205,9 +208,6 @@ func (spec documentSpec[T]) editVerb() *cobra.Command {
 				in.body = &text
 			}
 			if spec.appendable && textGiven(cmd.Flags(), "append") {
-				if in.body != nil {
-					return &UsageError{Err: errors.New("--append and --body are exclusive")}
-				}
 				text, err := flagText(cmd, "append", appendText)
 				if err != nil {
 					return err
