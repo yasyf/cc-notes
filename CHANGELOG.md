@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`answer list` result cache rewrites entries in place instead of leaving
+  stale files behind.** In 0.73.4, the cache named each entry after the exact
+  set of answer ref tips, so every answer change left the previous entry
+  behind and eventually evicted entries from the shared 2,048-entry relevance
+  cache. Each query (filter, binary, records repository) now keeps one entry
+  that records the answer ref tips it was computed from, is served only while
+  they match, and is rewritten in place when they change.
 - **`sync` still pushes every other ref when one attachment fails to
   upload.** `sync` uploads attachments before it pushes refs, and any
   upload failure used to fail the whole run with nothing pushed. GitHub

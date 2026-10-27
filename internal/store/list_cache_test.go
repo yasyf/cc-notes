@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -83,36 +84,49 @@ func appendOps(t *testing.T, s *Store, ref string, ops ...model.Op) {
 	}
 }
 
+func listEntries(t *testing.T, s *Store) int {
+	t.Helper()
+	entries, err := os.ReadDir(s.relevant.dir)
+	if err != nil {
+		t.Fatalf("read cache dir: %v", err)
+	}
+	return len(slices.DeleteFunc(entries, func(e os.DirEntry) bool { return !strings.HasPrefix(e.Name(), "list-") }))
+}
+
 func TestCachedListFollowsEveryTipChange(t *testing.T) {
 	s := initStore(t)
 	p := &listProbe{s: s}
-	p.expect(t, "all", 1)
-	p.expect(t, "all", 1)
+	step := func(calls int, want ...model.EntityID) {
+		t.Helper()
+		p.expect(t, "all", calls, want...)
+		p.expect(t, "all", calls, want...)
+		if n := listEntries(t, s); n != 1 {
+			t.Fatalf("cache holds %d list entries for one variant, want the one entry rewritten in place", n)
+		}
+	}
+	step(1)
 
 	a := create(t, s, answerOps("a")).(model.Answer)
 	b := create(t, s, answerOps("b")).(model.Answer)
-	p.expect(t, "all", 2, a.ID, b.ID)
-	p.expect(t, "all", 2, a.ID, b.ID)
+	step(2, a.ID, b.ID)
 
 	appendOps(t, s, answerRef(a.ID), model.SetBody{Body: "Memcached"})
-	p.expect(t, "all", 3, a.ID, b.ID)
+	step(3, a.ID, b.ID)
 	if got := p.list(t, "all"); p.calls != 3 || !slices.ContainsFunc(got, func(x model.Answer) bool { return x.ID == a.ID && x.Body == "Memcached" }) {
 		t.Fatalf("warm listing after an edit = %+v (compute ran %d times), want the edited body served without a refold", got, p.calls)
 	}
 
 	c := create(t, s, answerOps("c")).(model.Answer)
-	p.expect(t, "all", 4, a.ID, b.ID, c.ID)
+	step(4, a.ID, b.ID, c.ID)
 
 	appendOps(t, s, answerRef(b.ID), model.DeleteNote{})
-	p.expect(t, "all", 5, a.ID, c.ID)
+	step(5, a.ID, c.ID)
 
 	appendOps(t, s, answerRef(c.ID), model.AddSupersededBy{ID: a.ID})
-	p.expect(t, "all", 6, a.ID)
-	p.expect(t, "all", 6, a.ID)
+	step(6, a.ID)
 
 	removeRef(t, s, answerRef(a.ID))
-	p.expect(t, "all", 7)
-	p.expect(t, "all", 7)
+	step(7)
 	if got := p.list(t, "all"); got == nil {
 		t.Fatal("warm empty listing decoded to nil, want an empty slice")
 	}
@@ -126,6 +140,9 @@ func TestCachedListKeysEveryVariant(t *testing.T) {
 	p.expect(t, `{"Labels":["y"]}`, 2, a.ID)
 	p.expect(t, `{"Labels":["x"]}`, 2, a.ID)
 	p.expect(t, `{"Labels":["y"]}`, 2, a.ID)
+	if n := listEntries(t, s); n != 2 {
+		t.Fatalf("cache holds %d list entries for two variants, want 2", n)
+	}
 }
 
 func TestCachedListServesOnlyItsOwnKey(t *testing.T) {
@@ -143,7 +160,8 @@ func TestCachedListServesOnlyItsOwnKey(t *testing.T) {
 	elsewhere := pinned.Pinned(pinned.pins)
 	elsewhere.recordsCommonDir = t.TempDir()
 	variant := []byte("all")
-	planted := mustJSON(t, []model.Answer{{ID: "planted", Title: "planted"}})
+	tips := pinned.listTips(model.KindAnswer)
+	planted := []byte(tips + "\n" + mustJSON(t, []model.Answer{{ID: "planted", Title: "planted"}}))
 	own := pinned.listCacheName(model.KindAnswer, variant, foldCacheGeneration, identity)
 	foreign := map[string]string{
 		"fold generation":    pinned.listCacheName(model.KindAnswer, variant, foldGeneration([]string{"older_op"}), identity),
@@ -156,18 +174,24 @@ func TestCachedListServesOnlyItsOwnKey(t *testing.T) {
 		if name == own {
 			t.Fatalf("a different %s produced the same key %s", why, name)
 		}
-		s.relevant.write(name, []byte(planted))
+		s.relevant.write(name, planted)
 	}
 	p := &listProbe{s: s}
 	p.expect(t, "all", 1, a.ID)
 
-	s.relevant.write(own, []byte(planted))
+	s.relevant.write(own, planted)
 	if got := p.list(t, "all"); p.calls != 1 || len(got) != 1 || got[0].ID != "planted" {
-		t.Fatalf("listing under its own key = %+v (compute ran %d times), want the stored entry served", got, p.calls)
+		t.Fatalf("listing under its own key and tips = %+v (compute ran %d times), want the stored entry served", got, p.calls)
 	}
 
-	s.relevant.write(own, []byte("[{"))
+	s.relevant.write(own, []byte(strings.Repeat("0", len(tips))+"\n"+mustJSON(t, []model.Answer{{ID: "planted"}})))
 	p.expect(t, "all", 2, a.ID)
+
+	s.relevant.write(own, []byte(tips+"\n[{"))
+	p.expect(t, "all", 3, a.ID)
+
+	s.relevant.write(own, []byte(mustJSON(t, []model.Answer{{ID: "planted"}})))
+	p.expect(t, "all", 4, a.ID)
 }
 
 func TestCachedListNeverStoresPartialFolds(t *testing.T) {
