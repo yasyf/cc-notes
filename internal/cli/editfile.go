@@ -438,7 +438,7 @@ func changedContentFlags(cmd *cobra.Command, allowed ...string) []string {
 		case "checkout", "apply", "abort", "json":
 			return
 		}
-		if slices.Contains(allowed, f.Name) {
+		if cmd.InheritedFlags().Lookup(f.Name) != nil || slices.Contains(allowed, f.Name) {
 			return
 		}
 		names = append(names, f.Name)

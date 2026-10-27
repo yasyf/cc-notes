@@ -368,23 +368,45 @@ func TestFileModeUsageErrors(t *testing.T) {
 	dir := initRepo(t)
 	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
 	for _, args := range [][]string{
-		{"doc", "edit", added.ID, "--checkout", "--apply"},       // mutually exclusive
-		{"doc", "edit", added.ID, "--checkout", "--title", "Y"},  // file mode + content flag
-		{"note", "edit", added.ID, "--apply", "--abort"},         // mutually exclusive
-		{"doc", "add", "--checkout", "one", "two"},               // checkout takes at most one (the optional TITLE)
-		{"doc", "add", "--apply"},                                // apply needs the buffer path
-		{"doc", "add", "--checkout", "--attach", "x"},            // --attach is not a checkout flag
-		{"doc", "add", "--checkout", "--body", "x"},              // --body is not a checkout flag
-		{"doc", "add", "--apply", "P", "--when", "w"},            // --when is not an apply flag
-		{"doc", "edit", added.ID, "--checkout", "--attach", "x"}, // edit checkout takes no content flag
-		{"note", "edit", added.ID, "--apply", "--attach", "x"},   // edit apply has no --attach
-		{"doc", "edit", added.ID, "--replace"},                   // --replace requires --attach
+		{"doc", "edit", added.ID, "--checkout", "--apply"},                 // mutually exclusive
+		{"doc", "edit", added.ID, "--checkout", "--title", "Y"},            // file mode + content flag
+		{"note", "edit", added.ID, "--apply", "--abort"},                   // mutually exclusive
+		{"doc", "add", "--checkout", "one", "two"},                         // checkout takes at most one (the optional TITLE)
+		{"doc", "add", "--apply"},                                          // apply needs the buffer path
+		{"doc", "add", "--checkout", "--attach", "x"},                      // --attach is not a checkout flag
+		{"doc", "add", "--checkout", "--body", "x"},                        // --body is not a checkout flag
+		{"doc", "add", "--apply", "P", "--when", "w"},                      // --when is not an apply flag
+		{"doc", "edit", added.ID, "--checkout", "--attach", "x"},           // edit checkout takes no content flag
+		{"note", "edit", added.ID, "--apply", "--attach", "x"},             // edit apply has no --attach
+		{"doc", "edit", added.ID, "--replace"},                             // --replace requires --attach
+		{"-R", dir, "doc", "edit", added.ID, "--checkout", "--title", "Y"}, // -R does not excuse a content flag
 	} {
 		_, _, err := runCLI(t, dir, args...)
 		var usage *cli.UsageError
 		if !errors.As(err, &usage) || cli.ExitCode(err) != 2 {
 			t.Errorf("cc-notes %s err = %v (exit %d), want UsageError exit 2", strings.Join(args, " "), err, cli.ExitCode(err))
 		}
+	}
+}
+
+// TestFileModeAcceptsRepoFlag proves -R selects the repository without
+// counting as a content flag: checkout and apply run from outside the repo.
+func TestFileModeAcceptsRepoFlag(t *testing.T) {
+	dir := initRepo(t)
+	elsewhere := t.TempDir()
+	added := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "X", "--body", "orig", "--json"))
+
+	editPath := mustCheckout(t, elsewhere, "-R", dir, "doc", "edit", added.ID, "--checkout")
+	replaceInBuf(t, editPath, "orig", "via -R")
+	mustRun(t, elsewhere, "-R", dir, "doc", "edit", added.ID, "--apply")
+	if shown := mustJSON[docJSON](t, mustRun(t, dir, "doc", "show", added.ID, "--json")); shown.Body != "via -R" {
+		t.Fatalf("body = %q, want via -R", shown.Body)
+	}
+
+	addPath := mustCheckout(t, elsewhere, "-R", dir, "doc", "add", "--checkout", "From elsewhere", "--when", "w")
+	mustRun(t, elsewhere, "-R", dir, "doc", "add", "--abort", addPath)
+	if bufExists(addPath) {
+		t.Fatalf("buffer %s present after abort, want removed", addPath)
 	}
 }
 
