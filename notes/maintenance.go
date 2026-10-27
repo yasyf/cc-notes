@@ -22,7 +22,9 @@ type SyncOptions struct {
 // Reconciled counts the refs handed to the fold across every round; Rounds
 // counts fetch-reconcile-push rounds run, 1 being a clean pass; Uploaded and
 // Downloaded count attachment objects moved to and from the remote LFS endpoint;
-// Withheld counts the local entity refs kept off the remote; Deferred counts
+// Withheld counts the local entity refs kept off the remote; Held counts the
+// local refs left unpushed because an attachment they reference failed to
+// upload; Deferred counts
 // the remote refs left unfolded because the remote did not send their objects.
 // When Sync fans out over several remotes, every field is the sum across them.
 type SyncReport struct {
@@ -35,6 +37,7 @@ type SyncReport struct {
 	Uploaded      int
 	Downloaded    int
 	Withheld      int
+	Held          int
 	Deferred      int
 }
 
@@ -67,6 +70,7 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 		report.Uploaded += rep.Uploaded
 		report.Downloaded += rep.Downloaded
 		report.Withheld += rep.Withheld
+		report.Held += rep.Held
 		report.Deferred += rep.Deferred
 		if err != nil && syncErr == nil {
 			syncErr = err

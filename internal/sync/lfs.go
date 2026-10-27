@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/yasyf/cc-notes/internal/lfs"
@@ -38,15 +39,20 @@ func (e *engine) client(ctx context.Context, operation string) (*lfs.Client, err
 }
 
 // uploadAttachments pushes every referenced, locally-present attachment
-// object before the ref push — the objects-before-refs invariant: a ref
-// visible on the remote never references content the server lacks. The
-// batch reply decides what the server already has, so re-upload is a
-// natural no-op, and the referenced-∧-present intersection keeps merged-in
-// remote refs whose content was never downloaded out of the upload set. An
-// object only secluded entities reference never uploads. Any failure —
-// including an LFS-less remote — blocks the push. A repository referencing
-// no attachments makes no LFS request at all.
+// object before the ref push and records in e.blocked the refs the push must
+// hold back and in e.uploadErr why — the objects-before-refs invariant: a ref visible on the remote never
+// references content the server lacks. The batch reply decides what the
+// server already has, so re-upload is a natural no-op, and the
+// referenced-∧-present intersection keeps merged-in remote refs whose content
+// was never downloaded out of the upload set. An object only secluded
+// entities reference never uploads. A failure holds back only the refs
+// referencing an implicated object — exactly the failed oids for per-object
+// errors, every candidate for an endpoint or transport failure such as an
+// LFS-less remote — and every other ref still pushes; e.uploadErr names
+// each implicated reference. Only a failed reference scan returns an error.
+// A repository referencing no attachments makes no LFS request at all.
 func (e *engine) uploadAttachments(ctx context.Context, secluded map[string]bool) error {
+	e.blocked, e.uploadErr = nil, nil
 	referenced, err := e.store.ReferencedAttachments(ctx)
 	if err != nil {
 		return fmt.Errorf("upload attachments: %w", err)
@@ -65,15 +71,35 @@ func (e *engine) uploadAttachments(ctx context.Context, secluded map[string]bool
 		return nil
 	}
 	c, err := e.client(ctx, "upload")
-	if err != nil {
-		return transferError("upload", err, present)
+	if err == nil {
+		var uploaded int
+		uploaded, err = c.Upload(ctx, content, transferObjects(present))
+		e.uploaded += uploaded
 	}
-	uploaded, err := c.Upload(ctx, content, transferObjects(present))
-	e.uploaded += uploaded
 	if err != nil {
-		return transferError("upload", err, present)
+		e.blocked, e.uploadErr = blockedBy(present, err), transferError("upload", err, present)
 	}
 	return nil
+}
+
+// blockedBy returns the refs referencing an object err implicates: the failed
+// oids when err carries per-object errors, else every candidate.
+func blockedBy(candidates []store.ReferencedObject, err error) map[string]bool {
+	implicated := candidates
+	if objErrs := objectErrors(err); len(objErrs) > 0 {
+		failed := make(map[string]bool, len(objErrs))
+		for _, oe := range objErrs {
+			failed[oe.OID] = true
+		}
+		implicated = slices.DeleteFunc(slices.Clone(candidates), func(obj store.ReferencedObject) bool { return !failed[obj.OID] })
+	}
+	blocked := map[string]bool{}
+	for _, obj := range implicated {
+		for _, use := range obj.Uses {
+			blocked[refs.For(use.Kind, use.Entity)] = true
+		}
+	}
+	return blocked
 }
 
 // downloadAttachments fetches every referenced object missing locally, after
@@ -158,6 +184,9 @@ func transferError(operation string, err error, candidates []store.ReferencedObj
 		}
 		if operation == "download" && notFound {
 			b.WriteString("\na plain `git push` publishes refs/cc-notes/* without uploading attachment content — only `cc-notes sync` uploads objects before refs; ask the publisher to run `cc-notes sync`, or remove the attachments as above and run `cc-notes sync`")
+		}
+		if operation == "upload" {
+			b.WriteString("\nthe entities above stay unpushed and every other ref pushed; the next `cc-notes sync` retries them")
 		}
 	}
 	return fmt.Errorf("%s attachments: %w%s", operation, err, b.String())

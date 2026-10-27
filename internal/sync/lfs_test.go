@@ -17,6 +17,7 @@ import (
 	"strings"
 	stdsync "sync"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/lfs"
@@ -36,6 +37,7 @@ type fakeLFS struct {
 	requests    int
 	failBatch   int    // when non-zero, batch answers this status
 	failGet     int    // when non-zero, content GET answers this status
+	failVerify  int    // verifies left to answer 422, as GitHub does right after a PUT
 	requireAuth string // exact batch Authorization demanded when set
 }
 
@@ -55,6 +57,12 @@ func (f *fakeLFS) setFailGet(status int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failGet = status
+}
+
+func (f *fakeLFS) setFailVerify(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failVerify = n
 }
 
 func (f *fakeLFS) remove(oid string) {
@@ -113,7 +121,7 @@ func newFakeLFS(t *testing.T) (*fakeLFS, string) {
 			_, have := f.objects[obj.OID]
 			switch req.Operation {
 			case "upload":
-				if !have {
+				if !f.verified[obj.OID] {
 					res["actions"] = map[string]any{
 						"upload": map[string]any{"href": srv.URL + "/data/" + obj.OID},
 						"verify": map[string]any{"href": srv.URL + "/verify"},
@@ -169,6 +177,13 @@ func newFakeLFS(t *testing.T) (*fakeLFS, string) {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.failVerify > 0 {
+			f.failVerify--
+			w.Header().Set("Content-Type", lfs.MediaType)
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "induced verify failure"})
+			return
+		}
 		if data, ok := f.objects[obj.OID]; !ok || int64(len(data)) != obj.Size {
 			http.Error(w, "verify failed", http.StatusNotFound)
 			return
@@ -337,6 +352,76 @@ func TestSyncUploadFailureBlocksPush(t *testing.T) {
 	}
 	if !f.isVerified(att.OID) {
 		t.Errorf("server never verified %s after the healed upload", att.OID)
+	}
+}
+
+// TestSyncFailedVerifyHoldsOnlyItsRef pins that one unuploadable attachment
+// never blocks the rest of the namespace: the ref referencing it stays off
+// the remote, every other ref pushes, the error names the entity and the
+// server's message, and the next sync publishes the held ref.
+func TestSyncFailedVerifyHoldsOnlyItsRef(t *testing.T) {
+	lfs.VerifyBackoff = []time.Duration{time.Millisecond}
+	t.Cleanup(func() { lfs.VerifyBackoff = []time.Duration{time.Second, 3 * time.Second} })
+	bare := gittest.InitBare(t)
+	f, endpoint := newFakeLFS(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
+
+	held := createNote(t, a, "held")
+	heldRef := refs.For(model.KindNote, held.ID)
+	att := attachFile(t, a, heldRef, "held.bin", []byte("verify refuses this"))
+	plain := createNote(t, a, "plain")
+	plainRef := refs.For(model.KindNote, plain.ID)
+
+	f.setFailVerify(len(lfs.VerifyBackoff) + 1)
+	report, err := ccsync.Sync(t.Context(), a, "origin", false)
+	if err == nil {
+		t.Fatal("sync with a refused verify succeeded, want upload error")
+	}
+	for _, fragment := range []string{att.OID, held.ID.Short(), "422", "induced verify failure"} {
+		if !strings.Contains(err.Error(), fragment) {
+			t.Errorf("error %q missing %q", err, fragment)
+		}
+	}
+	if want := (ccsync.Report{Pushed: 1, Held: 1, Rounds: 1}); report != want {
+		t.Fatalf("report = %+v, want %+v", report, want)
+	}
+	tips := ccRefs(t, bare)
+	if _, ok := tips[plainRef]; !ok {
+		t.Errorf("remote missing %s beside the held ref", plainRef)
+	}
+	if _, ok := tips[heldRef]; ok {
+		t.Errorf("remote carries %s whose attachment never verified", heldRef)
+	}
+
+	if got, want := sync(t, a), (ccsync.Report{Pushed: 1, Uploaded: 1, Reconciled: 1, Rounds: 1}); got != want {
+		t.Fatalf("healed sync report = %+v, want %+v", got, want)
+	}
+	if !f.isVerified(att.OID) {
+		t.Errorf("server never verified %s after the healed upload", att.OID)
+	}
+}
+
+// TestSyncRetriesTransientVerify pins the verify retry: a server that
+// answers 422 to the verify right after the PUT, then accepts it, uploads
+// in one sync with nothing held.
+func TestSyncRetriesTransientVerify(t *testing.T) {
+	lfs.VerifyBackoff = []time.Duration{time.Millisecond}
+	t.Cleanup(func() { lfs.VerifyBackoff = []time.Duration{time.Second, 3 * time.Second} })
+	bare := gittest.InitBare(t)
+	f, endpoint := newFakeLFS(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
+
+	note := createNote(t, a, "transient")
+	att := attachFile(t, a, refs.For(model.KindNote, note.ID), "transient.bin", []byte("verifies on retry"))
+
+	f.setFailVerify(1)
+	if got, want := sync(t, a), (ccsync.Report{Pushed: 1, Uploaded: 1, Rounds: 1}); got != want {
+		t.Fatalf("sync report = %+v, want %+v", got, want)
+	}
+	if !f.isVerified(att.OID) {
+		t.Errorf("server never verified %s after the retry", att.OID)
 	}
 }
 

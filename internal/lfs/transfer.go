@@ -6,15 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
+	"time"
 )
 
 // Upload pushes every object the server lacks: batch("upload"), then a PUT
 // per returned upload action, then a POST of the verify action when present.
 // Objects the server answers without actions are already there and are
-// skipped, which makes re-upload a natural no-op. Per-object server errors
-// aggregate as *ObjectError values via errors.Join; a transfer failure
-// aborts immediately.
+// skipped, which makes re-upload a natural no-op. Per-object failures — a
+// batch error, or a PUT or verify the server answers non-2xx — aggregate as
+// *ObjectError values via errors.Join while the remaining objects still
+// upload; a transport failure aborts immediately.
 func (c *Client) Upload(ctx context.Context, store Store, objects []Object) (uploaded int, err error) {
 	res, err := c.batch(ctx, "upload", objects)
 	if err != nil {
@@ -30,13 +34,16 @@ func (c *Client) Upload(ctx context.Context, store Store, objects []Object) (upl
 		if !ok {
 			continue // no action: the server already has it
 		}
-		if err := c.putObject(ctx, store, obj, act); err != nil {
-			return uploaded, err
+		err := c.putObject(ctx, store, obj, act)
+		if verify, ok := obj.Actions["verify"]; ok && err == nil {
+			err = c.verifyObject(ctx, obj, verify)
 		}
-		if verify, ok := obj.Actions["verify"]; ok {
-			if err := c.verifyObject(ctx, obj, verify); err != nil {
-				return uploaded, err
-			}
+		if oe := (*ObjectError)(nil); errors.As(err, &oe) {
+			objErrs = append(objErrs, err)
+			continue
+		}
+		if err != nil {
+			return uploaded, err
 		}
 		uploaded++
 	}
@@ -96,16 +103,36 @@ func (c *Client) putObject(ctx context.Context, store Store, obj batchObject, ac
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode/100 != 2 {
-		return fmt.Errorf("put %s: status %d", obj.OID, res.StatusCode)
+		return fmt.Errorf("put: %w", statusError(obj.OID, res))
 	}
 	return nil
 }
+
+// VerifyBackoff spaces the verify retries. A server may answer the verify
+// right after a successful PUT with a 4xx or 5xx until its storage sees the
+// object — GitHub answers 422 — so each delay buys one more attempt before
+// the object fails.
+var VerifyBackoff = []time.Duration{time.Second, 3 * time.Second}
 
 func (c *Client) verifyObject(ctx context.Context, obj batchObject, act action) error {
 	body, err := json.Marshal(Object{OID: obj.OID, Size: obj.Size})
 	if err != nil {
 		return err
 	}
+	for attempt := 0; ; attempt++ {
+		err := c.verifyOnce(ctx, obj, act, body)
+		if oe := (*ObjectError)(nil); !errors.As(err, &oe) || attempt == len(VerifyBackoff) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(VerifyBackoff[attempt]):
+		}
+	}
+}
+
+func (c *Client) verifyOnce(ctx context.Context, obj batchObject, act action, body []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, act.Href, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -121,9 +148,22 @@ func (c *Client) verifyObject(ctx context.Context, obj batchObject, act action) 
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode/100 != 2 {
-		return fmt.Errorf("verify %s: status %d", obj.OID, res.StatusCode)
+		return fmt.Errorf("verify: %w", statusError(obj.OID, res))
 	}
 	return nil
+}
+
+// statusError reads a non-2xx content response into an *ObjectError carrying
+// the server's message — the LFS JSON message when the body is one, else the
+// body's first bytes — so the operator sees why the server refused.
+func statusError(oid string, res *http.Response) *ObjectError {
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 4<<10))
+	msg := strings.TrimSpace(string(raw))
+	var api apiError
+	if json.Unmarshal(raw, &api) == nil && api.Message != "" {
+		msg = api.Message
+	}
+	return &ObjectError{OID: oid, Code: res.StatusCode, Message: msg}
 }
 
 func (c *Client) getObject(ctx context.Context, store Store, obj batchObject, act action) error {
