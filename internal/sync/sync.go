@@ -87,6 +87,9 @@ type Report struct {
 	// Withheld counts the local entity refs the final round kept off the
 	// remote.
 	Withheld int
+	// Held counts the local refs the final round left unpushed because an
+	// attachment they reference failed to upload; every other ref pushed.
+	Held int
 	// Deferred counts the remote refs the final round left unfolded and
 	// unpushed because the remote did not send objects their chains lack.
 	Deferred int
@@ -123,6 +126,12 @@ type engine struct {
 	uploaded   int
 	downloaded int
 	withheld   int
+	// blocked holds the refs referencing an attachment the current round
+	// failed to upload, uploadErr that failure, and held how many pending
+	// refs the round's push left out for it.
+	blocked   map[string]bool
+	uploadErr error
+	held      int
 	// deferred maps each ref the current round could not hydrate to the
 	// fetch failure that left it out.
 	deferred map[string]error
@@ -139,7 +148,9 @@ type engine struct {
 // unconfigured remote fails wrapping ErrRemoteNotFound.
 //
 // Referenced, locally-present attachment objects upload each round before
-// the push; a failed upload fails the sync with the refs unpushed.
+// the push; a failed upload holds back only the refs referencing the failed
+// objects, every other ref pushes, and the run then fails naming each held
+// reference.
 // Referenced, locally-missing objects download once the push loop
 // converges; a failed download fails the sync while the returned Report
 // still carries everything the run pushed.
@@ -191,6 +202,9 @@ func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report
 		if err := e.uploadAttachments(ctx, secluded); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
+		unblocked := slices.DeleteFunc(slices.Clone(pending), func(ref string) bool { return e.blocked[ref] })
+		e.held = len(pending) - len(unblocked)
+		pending = unblocked
 		switch err := e.push(ctx, pending); {
 		case err == nil:
 			return e.finish(ctx, round, len(pending))
@@ -203,19 +217,26 @@ func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report
 }
 
 // finish runs the download phase once the push loop has converged and
-// returns the run's final report. A download failure is the run's error
-// while the report still carries the pushes that landed: refs published,
-// content missing, exit non-zero.
+// returns the run's final report. A download failure, a held upload, or a
+// deferred ref is the run's error while the report still carries the pushes
+// that landed: refs published, the rest named, exit non-zero.
 func (e *engine) finish(ctx context.Context, round, pushed int) (Report, error) {
+	var errs []error
+	if e.uploadErr != nil {
+		errs = append(errs, fmt.Errorf("held %d refs to the next sync: %w", e.held, e.uploadErr))
+	}
 	if err := e.downloadAttachments(ctx); err != nil {
-		return e.report(round, pushed), fmt.Errorf("sync %s: %w", e.remote, err)
+		errs = append(errs, err)
 	}
 	if len(e.deferred) > 0 {
 		causes := make([]error, 0, len(e.deferred))
 		for _, ref := range slices.Sorted(maps.Keys(e.deferred)) {
 			causes = append(causes, fmt.Errorf("%s: %w", ref, e.deferred[ref]))
 		}
-		return e.report(round, pushed), fmt.Errorf("sync %s: %w: deferred %d refs to the next sync: %w", e.remote, ErrObjectsUnavailable, len(e.deferred), errors.Join(causes...))
+		errs = append(errs, fmt.Errorf("%w: deferred %d refs to the next sync: %w", ErrObjectsUnavailable, len(e.deferred), errors.Join(causes...)))
+	}
+	if len(errs) > 0 {
+		return e.report(round, pushed), fmt.Errorf("sync %s: %w", e.remote, errors.Join(errs...))
 	}
 	return e.report(round, pushed), nil
 }
@@ -231,6 +252,7 @@ func (e *engine) report(rounds, pushed int) Report {
 		Uploaded:      e.uploaded,
 		Downloaded:    e.downloaded,
 		Withheld:      e.withheld,
+		Held:          e.held,
 		Deferred:      len(e.deferred),
 	}
 }

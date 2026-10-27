@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`sync` still pushes every other ref when one attachment fails to
+  upload.** `sync` uploads attachments before it pushes refs, and any
+  upload failure used to fail the whole run with nothing pushed. GitHub
+  answered one verify with a 422 right after a successful PUT, and every
+  record in that clone stayed local until a later `sync` happened to get
+  through. Now `sync` retries a refused verify twice, one and then three
+  seconds later. An object that still fails holds back only the refs that
+  reference it, and every other ref pushes. The run exits non-zero naming
+  each held entity with the server's status and message, and prints
+  `held (attachment upload failed): N`, which `--json` reports as `held`.
+  The next `sync` retries the held refs.
 - **A ref whose objects the remote withholds waits for the next `sync`,
   and every other ref still syncs.**
   In a `blob:none` clone, `sync` fetches the blobs a remote ref's chain is
