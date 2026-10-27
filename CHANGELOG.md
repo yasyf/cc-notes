@@ -66,6 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verb's accepted flags, instead of listing those flags with no remedy.
 
 ### Changed
+- **`answer list` reuses its stored result when answer refs match.** Previously,
+  it folded every answer with one cache read and JSON decode per ref before
+  labels, anchors, and `--limit`, so in a repository with 4,322 answer refs,
+  capt-hook's `answer list --label scope:durable --branch <branch> --limit 12`
+  did 4,322 reads for at most 12 answers. It reads refs once, reuses its entry
+  in the bounded relevance cache when refs and tips, filter flags, op
+  vocabulary, binary, and records repo match, applies `--limit` after sorting,
+  and recomputes without timers when any change moves or drops a tip. A result
+  with an answer holding ops this binary cannot fold is listed but never stored.
 - **The capt-hook pack nags less.** It no longer nudges on a verbose code
   comment, a red CI run, debugging subagents, verdict-looking files, or an open
   investigation at Stop. It also drops the "cc-notes is installed" prompt, the

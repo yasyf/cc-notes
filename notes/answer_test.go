@@ -103,6 +103,60 @@ func TestAnswerLifecycle(t *testing.T) {
 	}
 }
 
+func TestAnswersTrackEveryFilterAndChange(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+	add := func(title, branch, scope string) model.Answer {
+		t.Helper()
+		a, _, err := c.CreateAnswer(ctx, notes.NoteSpec{Title: title, Body: "yes", Tags: []string{scope}, Anchors: notes.AnchorSpec{Branches: []string{branch}}})
+		if err != nil {
+			t.Fatalf("CreateAnswer %q: %v", title, err)
+		}
+		return a
+	}
+	expect := func(f notes.DocumentFilter, want ...model.EntityID) {
+		t.Helper()
+		got, err := c.Answers(ctx, f)
+		if err != nil {
+			t.Fatalf("Answers(%+v): %v", f, err)
+		}
+		ids := answerIDs(got)
+		slices.Sort(ids)
+		slices.Sort(want)
+		if !slices.Equal(ids, want) {
+			t.Fatalf("Answers(%+v) = %v, want %v", f, ids, want)
+		}
+	}
+	durableMain := notes.DocumentFilter{Labels: []string{"scope:durable"}, Anchor: notes.AnchorFilter{Branch: "main"}}
+	onMain := notes.DocumentFilter{Anchor: notes.AnchorFilter{Branch: "main"}}
+
+	queue := add("Which queue?", "main", "scope:durable")
+	devQueue := add("Which queue on dev?", "dev", "scope:durable")
+	now := add("Run it now?", "main", "scope:ephemeral")
+	for range 2 {
+		expect(durableMain, queue.ID)
+		expect(onMain, queue.ID, now.ID)
+		expect(notes.DocumentFilter{Labels: []string{"scope:durable"}}, queue.ID, devQueue.ID)
+	}
+
+	if _, err := c.EditAnswer(ctx, now.ID, notes.NoteEdit{AddTags: []string{"scope:durable"}}); err != nil {
+		t.Fatalf("EditAnswer: %v", err)
+	}
+	expect(durableMain, queue.ID, now.ID)
+
+	if _, err := c.RemoveAnswer(ctx, queue.ID); err != nil {
+		t.Fatalf("RemoveAnswer: %v", err)
+	}
+	expect(durableMain, now.ID)
+	expect(notes.DocumentFilter{Labels: []string{"scope:durable"}, Anchor: notes.AnchorFilter{Branch: "main"}, IncludeTombstoned: true}, queue.ID, now.ID)
+
+	if _, err := c.SupersedeAnswer(ctx, now.ID, devQueue.ID); err != nil {
+		t.Fatalf("SupersedeAnswer: %v", err)
+	}
+	expect(durableMain)
+	expect(notes.DocumentFilter{Labels: []string{"scope:durable"}, Anchor: notes.AnchorFilter{Branch: "main"}, IncludeSuperseded: true}, now.ID)
+}
+
 func answerIDs(answers []model.Answer) []model.EntityID {
 	out := make([]model.EntityID, len(answers))
 	for i, a := range answers {
