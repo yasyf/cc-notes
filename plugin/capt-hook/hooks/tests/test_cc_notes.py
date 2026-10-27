@@ -1480,7 +1480,7 @@ def test_cc_notes_installed_off_path_resolves_and_runs_from_the_install_dir(monk
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
     monkeypatch.setattr(common, "CC_NOTES_INSTALL_DIRS", (tmp_path,))
-    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    monkeypatch.setattr(os, "environ", os.environ | {"PATH": str(tmp_path / "empty")})
     evt = mock_event("UserPromptSubmit", prompt="start work", session_dir=tmp_path)
 
     check("off PATH: the missing nudge stays closed", not matches_conditions(_spec_for(nudge_cc_notes_missing), evt))
@@ -4251,7 +4251,7 @@ def test_bootstrap_parse_version(monkeypatch) -> None:
 def test_bootstrap_installs_when_absent(monkeypatch, tmp_path) -> None:
     """An absent binary runs the curl installer. Async dispatch ignores the return."""
     state = {"installed": False}
-    monkeypatch.setattr(bootstrap.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes" if state["installed"] else None)
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes" if state["installed"] else None)
     calls: list[tuple] = []
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
@@ -4270,7 +4270,7 @@ def test_bootstrap_installs_when_absent(monkeypatch, tmp_path) -> None:
 
 def test_bootstrap_upgrades_when_stale(monkeypatch, tmp_path) -> None:
     """A present-but-stale binary reinstalls and returns no context line."""
-    monkeypatch.setattr(bootstrap.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     calls: list[tuple] = []
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
@@ -4291,7 +4291,7 @@ def test_bootstrap_upgrades_when_stale(monkeypatch, tmp_path) -> None:
 
 def test_bootstrap_noop_when_current(monkeypatch, tmp_path) -> None:
     """A current binary skips the installer and returns no context line."""
-    monkeypatch.setattr(bootstrap.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     calls: list[tuple] = []
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
