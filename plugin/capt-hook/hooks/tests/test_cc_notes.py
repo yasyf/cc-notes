@@ -815,7 +815,7 @@ def test_evidence_transfers_parsing() -> None:
 
 def test_evidence_router_tool_gate(monkeypatch) -> None:
     """A Read of an evidence file passes the pure condition but the Tool gate keeps the router silent."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     from captain_hook.conditions import matches_conditions
 
     read_evt = mock_event("PostToolUse", tool="Read", file="docs/reports/soak.log")
@@ -826,7 +826,7 @@ def test_evidence_router_tool_gate(monkeypatch) -> None:
 
 def test_evidence_router_fires(monkeypatch, tmp_path) -> None:
     """The Bash firing path warns with the single log-append-attach verb."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt = mock_event(
         "PostToolUse",
         tool="Bash",
@@ -982,7 +982,7 @@ def test_ephemeral_record_refs_parsing() -> None:
 
 def test_ephemeral_record_reference_fires(monkeypatch, tmp_path) -> None:
     """The firing handler warns on the purge-bound path and names the log-append-attach verb."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt = mock_event(
         "PostToolUse",
         tool="Bash",
@@ -1304,7 +1304,7 @@ def _gate_event(ev_type: Event, tool: str | None):
 
 def test_gate_silent_when_cc_notes_absent(monkeypatch) -> None:
     """With cc-notes off PATH, CcNotesAvailable fails closed and every handler is silent."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: None)
 
     from captain_hook.conditions import matches_conditions
 
@@ -1325,7 +1325,7 @@ def test_gate_open_when_cc_notes_present(monkeypatch) -> None:
     cc-notes repo itself carries refs/cc-notes/*, so a restored gate would pass too
     and the test would prove nothing.)
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
 
     from captain_hook.conditions import matches_conditions
 
@@ -1353,7 +1353,7 @@ def _status_evt(monkeypatch, tmp_path, report: dict, prompt: str = "let's start"
     under throw=False, so mapping ONLY the status read is the regression guard: a floater
     that still shells out to `task list` reads None and renders nothing.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     evt = mock_event("UserPromptSubmit", prompt=prompt, session_dir=tmp_path)
     cli, calls = recording_cli({("status", "--json", "--tasks"): json.dumps(report)})
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
@@ -1466,16 +1466,38 @@ def test_missing_binary_nudge_gates_on_the_binary(monkeypatch, tmp_path) -> None
     evt = mock_event("UserPromptSubmit", prompt="start work", session_dir=tmp_path)
     check("missing nudge: fires at most once", spec.max_fires == 1, repr(spec.max_fires))
 
-    monkeypatch.setattr(common.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: None)
     check("missing nudge: opens when the binary is absent", matches_conditions(spec, evt))
 
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     check("missing nudge: stays closed when the binary is present", not matches_conditions(spec, evt))
+
+
+def test_cc_notes_installed_off_path_resolves_and_runs_from_the_install_dir(monkeypatch, tmp_path) -> None:
+    from captain_hook.conditions import matches_conditions
+
+    binary = tmp_path / "cc-notes"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    monkeypatch.setattr(common, "CC_NOTES_INSTALL_DIRS", (tmp_path,))
+    monkeypatch.setattr(os, "environ", os.environ | {"PATH": str(tmp_path / "empty")})
+    evt = mock_event("UserPromptSubmit", prompt="start work", session_dir=tmp_path)
+
+    check("off PATH: the missing nudge stays closed", not matches_conditions(_spec_for(nudge_cc_notes_missing), evt))
+    check("off PATH: the gated handlers open", matches_conditions(_spec_for(float_session_answers), evt))
+
+    seen: list[dict | None] = []
+    monkeypatch.setattr(evt.ctx, "call_cli", lambda args, **kw: seen.append(kw.get("env")) or "")
+    run_cc_notes(evt, "status")
+    check("off PATH: the call searches the install dir", str(tmp_path) in (seen[0] or {}).get("PATH", "").split(os.pathsep), repr(seen))
+
+    monkeypatch.setattr(common, "CC_NOTES_INSTALL_DIRS", (tmp_path / "elsewhere",))
+    check("nowhere: the missing nudge opens", matches_conditions(_spec_for(nudge_cc_notes_missing), evt))
 
 
 def test_deferred_notices_float_on_the_next_event(monkeypatch, tmp_path) -> None:
     """A background hook's advisory floats on the next event, exactly once, and the event that staged it floats nothing."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     payload = json.dumps([note_entry("deadbeef000", drift=None, title="Schema", reasons=["dir"])])
     mapping = {("relevant", "internal/store/store.go", "--limit", "0", "--json"): payload}
 
@@ -1496,7 +1518,7 @@ def test_deferred_notices_float_on_the_next_event(monkeypatch, tmp_path) -> None
 
 def test_deferred_notices_keep_every_staged_advisory(monkeypatch, tmp_path) -> None:
     """Advisories staged about different files before one drain all float, and so does a second advisory about the same file."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
 
     def read(path: str, entries: list[dict]) -> None:
         evt = mock_event("PostToolUse", tool="Read", file=path, session_dir=tmp_path)
@@ -1518,7 +1540,7 @@ def test_deferred_notices_keep_every_staged_advisory(monkeypatch, tmp_path) -> N
 
 def test_surface_hooks_run_nothing_on_the_synchronous_path(monkeypatch, tmp_path) -> None:
     """The drain reads session state only: no cc-notes CLI call and no model call, staged or empty."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     staging = mock_event("PostToolUse", tool="Read", file="m.go", session_dir=tmp_path)
     monkeypatch.setattr(staging.ctx, "call_cli", stub_cli({("relevant", "m.go", "--limit", "0", "--json"): json.dumps([note_entry("ccc0003cccc", drift=None, title="Gamma")])}))
     float_note_context(staging)
@@ -1534,7 +1556,7 @@ def test_surface_hooks_run_nothing_on_the_synchronous_path(monkeypatch, tmp_path
 
 def test_float_note_context_dedup(monkeypatch, tmp_path) -> None:
     """First read floats the note; a second read of the same note is deduped to silence."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     payload = json.dumps([note_entry("deadbeef000", drift=None, title="Schema", reasons=["dir"])])
     mapping = {("relevant", "internal/store/store.go", "--limit", "0", "--json"): payload}
 
@@ -1552,7 +1574,7 @@ def test_float_note_context_dedup(monkeypatch, tmp_path) -> None:
 
 def test_surface_hooks_query_repo_relative_paths(monkeypatch, tmp_path) -> None:
     """Claude Code sends absolute paths; anchors are repo-relative, so both surface hooks relativize before `relevant`."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     root = _repo(tmp_path / "repo")
     (root / "internal" / "store").mkdir(parents=True)
     absolute = str(root / "internal" / "store" / "store.go")
@@ -1587,7 +1609,7 @@ def test_surface_hooks_query_repo_relative_paths(monkeypatch, tmp_path) -> None:
 
 def _read_path(monkeypatch, tmp_path, *, project: Path, file: str) -> list[tuple[str, ...]]:
     """The `relevant` argv a Read of ``file`` spawns with the Claude project dir at ``project``."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     evt = mock_event("PostToolUse", tool="Read", file=file, session_dir=tmp_path / "state")
     monkeypatch.setattr(evt.ctx, "project_root", project)
     cli, calls = recording_cli()
@@ -1627,7 +1649,7 @@ def test_repo_path_keeps_a_dangling_symlinks_own_path(monkeypatch, tmp_path) -> 
 
 def test_surface_hooks_skip_files_outside_the_repo(monkeypatch, tmp_path) -> None:
     """A file outside the repository has no anchors to match, so neither surface hook spawns `relevant`."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     root = _repo(tmp_path / "repo")
     (tmp_path / "elsewhere").mkdir()
     for handler, tool in ((float_note_context, "Read"), (check_note_staleness, "Edit")):
@@ -1641,7 +1663,7 @@ def test_surface_hooks_skip_files_outside_the_repo(monkeypatch, tmp_path) -> Non
 
 def test_check_note_staleness_drift_only(monkeypatch, tmp_path) -> None:
     """Only drifted notes prompt reconciliation; fresh ones are ignored; dedup holds."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     payload = json.dumps(
         [
             note_entry("fresh000aaa", drift=None, title="Fresh", reasons=["path"]),
@@ -1665,7 +1687,7 @@ def test_check_note_staleness_drift_only(monkeypatch, tmp_path) -> None:
 
 
 def test_check_note_staleness_speaks_once_per_agent(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
 
     def edit(path: str, note_id: str, agent: str | None):
         evt = mock_tool_event(tool="Edit", event=Event.PostToolUse, file=path, agent_id=agent, session_dir=tmp_path)
@@ -1680,7 +1702,7 @@ def test_check_note_staleness_speaks_once_per_agent(monkeypatch, tmp_path) -> No
 
 def test_check_note_staleness_all_fresh_silent(monkeypatch, tmp_path) -> None:
     """An edit near only-fresh notes prompts nothing."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     payload = json.dumps([note_entry("fresh000aaa", drift=None)])
     mapping = {("relevant", "internal/store/store.go", "--attached", "--worktree", "--limit", "0", "--json"): payload}
     evt = mock_event("PostToolUse", tool="Edit", file="internal/store/store.go", session_dir=tmp_path)
@@ -1696,7 +1718,7 @@ def test_check_note_staleness_drifted_doc(monkeypatch, tmp_path) -> None:
     keep it, render it through the doc-line path (pointer only), and surface the
     doc reconciliation commands.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     payload = json.dumps(
         [doc_entry("drifteddoc01", when="before touching the parser", drift="DRIFTED", title="Parser handoff", reasons=["path"])]
     )
@@ -1729,7 +1751,7 @@ def test_check_note_staleness_multi_filters_but_judges_all(monkeypatch, tmp_path
     every record: if the dropped drf0002bbb were not marked judged on the first pass, it would
     resurface here, so the silent second call is the behavioral proof that ALL drifted ids were marked.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     payload = json.dumps(
         [
             note_entry("drf0001aaa", drift="STALE", title="Keep"),
@@ -1763,7 +1785,7 @@ def test_float_and_staleness_scopes_are_isolated(monkeypatch, tmp_path) -> None:
     later edit-time drift warning for X would be wrongly swallowed. Both events share one
     session_dir so the scopes coexist; only the scope split keeps them independent.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     note_id = "sharedid0001"
     read_payload = json.dumps([note_entry(note_id, drift=None, title="Shared fact", reasons=["dir"])])
     edit_payload = json.dumps([note_entry(note_id, drift="STALE", title="Shared fact", reasons=["path"])])
@@ -1809,7 +1831,7 @@ def test_run_cc_notes_passes_throw_false(monkeypatch, tmp_path) -> None:
 
 def test_handlers_silent_on_malformed_array(monkeypatch, tmp_path) -> None:
     """A JSON array of ill-shaped entries never crashes a handler — it stays silent."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     junk = '["x", 1, null, {"note": "oops"}, {"note": {"id": ""}}, {"score": 1}]'
 
     read_map = {("relevant", "x.go", "--limit", "0", "--json"): junk}
@@ -1849,7 +1871,7 @@ def test_handlers_silent_on_malformed_array(monkeypatch, tmp_path) -> None:
 
 def test_record_router_routes_each_kind(monkeypatch, tmp_path) -> None:
     """Each routed kind warns with its one cc-notes verb and never echoes the verdict's title, area, or reasoning."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     verbs = {
         "doc": "cc-notes doc add",
         "log": "cc-notes log add",
@@ -1875,7 +1897,7 @@ def test_record_router_routes_each_kind(monkeypatch, tmp_path) -> None:
 
 def test_record_router_silent_when_not_recorded(monkeypatch, tmp_path) -> None:
     """A static-gate false positive stays silent: durable below 0.5, a refusal, or a failed call records nothing."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     for name, answers in (
         ("durable below the floor", {"durable": binary(0.49), "kind": label("doc")}),
         ("a refused kind", {"durable": binary(0.9), "kind": Refused()}),
@@ -1893,7 +1915,7 @@ def test_record_router_routes_decision_memo(monkeypatch, tmp_path) -> None:
     because the path vocabulary carried no memo/decision names. The distilled body trips
     INTERNAL_BODY_RE on "Status"/"Decision", so the WEAK *memo*.md name now qualifies.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     evt = mock_event("PostToolUse", tool="Write", file="experiments/e0-gate-memo.md", content=GATE_MEMO_BODY, session_dir=tmp_path)
     check("decision memo: DurableInternalWrite fires", DurableInternalWrite().check(evt), repr(evt.file))
     monkeypatch.setattr(evt.ctx, "decide", stub_decide({"durable": binary(0.5), "kind": label("doc")}, provider="openai"))
@@ -2010,7 +2032,7 @@ def test_record_investigation_per_id_lifecycle(tmp_path) -> None:
 
 def test_float_note_context_floats_doc(monkeypatch, tmp_path) -> None:
     """A kind=="doc" entry from `relevant` floats its when/verdict pointer and persists by doc id."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     payload = json.dumps(
         [doc_entry("d0cd0c00111", when="before touching the auth flow", drift="DRIFTED", title="Auth handoff", reasons=["dir"])]
     )
@@ -2042,7 +2064,7 @@ def test_float_note_context_floats_log(monkeypatch, tmp_path) -> None:
     it renders only its title and a ``log show`` hint, never the entry chronology,
     and never a drift verdict (a log can't drift).
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     payload = json.dumps([log_entry("105f00ba9c1", title="Auth rollout", reasons=["dir"])])
     mapping = {("relevant", "internal/api/auth.go", "--limit", "0", "--json"): payload}
     evt = mock_event("PostToolUse", tool="Read", file="internal/api/auth.go", session_dir=tmp_path)
@@ -2105,7 +2127,7 @@ def test_surface_filter_keeps_on_a_refusal_or_a_failed_call(monkeypatch, tmp_pat
 
 def test_float_note_context_surfaces_top_ranked_without_a_model(monkeypatch, tmp_path) -> None:
     """A Read with more fresh candidates than RELEVANT_LIMIT surfaces the top-ranked RELEVANT_LIMIT, in rank order, and never calls the model."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     ids = [f"r{i:02d}0000xxx" for i in range(RELEVANT_LIMIT + 3)]
     payload = json.dumps([note_entry(nid, title=f"Rank {i}") for i, nid in enumerate(ids)])
     mapping = {("relevant", "x.go", "--limit", "0", "--json"): payload}
@@ -2204,7 +2226,7 @@ def plan_event(tmp_path, monkeypatch, *, plan_path=None, inline=None, cli=None):
 
 
 def test_plan_without_text_is_silent(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     cli, calls = stub_plan_cli()
     check("plan without text: silent", nudge_plan_capture(plan_event(tmp_path, monkeypatch, cli=cli)) is None)
     check("plan without text: nothing captured", calls == [], repr(calls))
@@ -2212,7 +2234,7 @@ def test_plan_without_text_is_silent(monkeypatch, tmp_path) -> None:
 
 def test_plan_captures_body_verbatim(monkeypatch, tmp_path) -> None:
     """The approved plan is recorded verbatim as an approved cc-notes plan, titled from its H1."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     plan_path = tmp_path / "plan.md"
     plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
     cli, calls = stub_plan_cli()
@@ -2226,7 +2248,7 @@ def test_plan_captures_body_verbatim(monkeypatch, tmp_path) -> None:
 
 
 def test_plan_capture_failure_is_silent(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     plan_path = tmp_path / "plan.md"
     plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
     cli, _ = stub_plan_cli(plan_id="")
@@ -2253,7 +2275,7 @@ def test_plan_dedup_per_content(monkeypatch, tmp_path) -> None:
     rounds, so a path-keyed gate captured the draft the user sent back and never the
     approved text.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     plan_path = tmp_path / "plan.md"
     cli, calls = stub_plan_cli()
 
@@ -2327,7 +2349,7 @@ def test_plan_capture_outlives_the_nudge_budget(monkeypatch, tmp_path) -> None:
     """
     from captain_hook.dispatch import execute_hook
 
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     entry = plan_hook_entry()
     cli, calls = stub_plan_cli()
     session, hook_state = tmp_path / "session", tmp_path / "hook-state"
@@ -2351,7 +2373,7 @@ def test_plan_revision_edits_the_record_in_place(monkeypatch, tmp_path) -> None:
     A revision round is one plan carried through review, not two rival records — the body is
     LWW and every earlier draft stays readable through ``cc-notes history``.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     plan_path = tmp_path / "plan.md"
     cli, calls = stub_plan_cli()
     plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
@@ -2372,7 +2394,7 @@ def test_plan_retitle_mints_an_unrelated_plan(monkeypatch, tmp_path) -> None:
 
     The two plans are unrelated, not successive drafts, so no supersede edge joins them.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     plan_path = tmp_path / "plan.md"
     cli, calls = stub_plan_cli()
     plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
@@ -2387,7 +2409,7 @@ def test_plan_retitle_mints_an_unrelated_plan(monkeypatch, tmp_path) -> None:
 
 def test_plan_identical_body_captures_once(monkeypatch, tmp_path) -> None:
     """Re-approving byte-identical text writes nothing more — the content digest still gates the fire."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     plan_path = tmp_path / "plan.md"
     plan_path.write_text(SAMPLE_PLAN, encoding="utf-8")
     cli, calls = stub_plan_cli()
@@ -2511,7 +2533,7 @@ def test_memory_write_condition() -> None:
 
 def test_mirror_creates_note(monkeypatch, tmp_path) -> None:
     """First write of a feedback memory issues one note add, keyed and typed, no edit."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     mem = write_memory(tmp_path, "retry-ceiling", "feedback", "Retry backoff caps at 30s", "The server drops past 30s.")
     evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
     call, calls = mirror_cli(list_payload="[]")
@@ -2536,7 +2558,7 @@ def test_mirror_updates_note(monkeypatch, tmp_path) -> None:
     The body the comparison sees comes from `note show`, not the bodyless listing, so
     this also pins that the show is issued against the id the listing resolved.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     mem = write_memory(tmp_path, "retry-ceiling", "feedback", "Retry ceiling", "v2 body")
     evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
     existing = json.dumps([memory_summary("abc1234def0", "Retry ceiling", "retry-ceiling")])
@@ -2562,7 +2584,7 @@ def test_mirror_skips_unchanged(monkeypatch, tmp_path) -> None:
     compared against `note list` output would read "" here, miss the match, and edit on
     every single write.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     mem = write_memory(tmp_path, "retry-ceiling", "feedback", "Retry ceiling", "same body")
     evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
     existing = json.dumps([memory_summary("abc1234def0", "Retry ceiling", "retry-ceiling")])
@@ -2578,7 +2600,7 @@ def test_mirror_skips_unchanged(monkeypatch, tmp_path) -> None:
 
 def test_mirror_changed_title_skips_show(monkeypatch, tmp_path) -> None:
     """A changed title settles the comparison off the listing alone — no body fetch, straight to the edit."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     mem = write_memory(tmp_path, "retry-ceiling", "feedback", "Retry ceiling, revised", "same body")
     evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
     existing = json.dumps([memory_summary("abc1234def0", "Retry ceiling", "retry-ceiling")])
@@ -2594,7 +2616,7 @@ def test_mirror_changed_title_skips_show(monkeypatch, tmp_path) -> None:
 
 def test_mirror_skips_user_type(monkeypatch, tmp_path) -> None:
     """A user (who-you-are) memory is repo-irrelevant — no note, and not even a lookup."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     mem = write_memory(tmp_path, "who-i-am", "user", "Yasyf prefers Go", "Some user fact.")
     evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
     call, calls = mirror_cli()
@@ -2626,7 +2648,7 @@ def test_mirror_clamps_long_title(monkeypatch, tmp_path) -> None:
     clamp a long description would silently stop mirroring — this proves the positional title is
     capped and equals clamp_title of the parsed description.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     long_desc = "A durable handoff description long enough to blow past the cap " * 6  # ~372 bytes
     mem = write_memory(tmp_path, "long-fact", "feedback", long_desc, "body text")
     evt = mock_event("PostToolUse", tool="Write", file=str(mem), session_dir=tmp_path)
@@ -2693,7 +2715,7 @@ def test_auto_sync_once_per_turn(monkeypatch, tmp_path) -> None:
     per-turn token, so the second is suppressed. They share one recording call_cli so the assertion is
     a hard count on ``["cc-notes", "sync"]`` invocations across both fires.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     cli, calls = recording_cli({("sync",): "ok"})
 
     commit = commit_event(tmp_path, monkeypatch)
@@ -2708,7 +2730,7 @@ def test_auto_sync_once_per_turn(monkeypatch, tmp_path) -> None:
 
 def test_auto_sync_success_stays_silent(monkeypatch, tmp_path) -> None:
     """A successful background sync queues nothing, so the next event surfaces nothing."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt = claim_event(tmp_path, monkeypatch)
     check("sync success: the background hook returns nothing", sync_after_ref_move(evt) is None)
     check("sync success: a cc-notes sync ran", _calls_of(evt._cli_calls, "sync") == [0], repr(evt._cli_calls))
@@ -2718,7 +2740,7 @@ def test_auto_sync_success_stays_silent(monkeypatch, tmp_path) -> None:
 
 def test_auto_sync_failure_warns_on_next_event_once(monkeypatch, tmp_path) -> None:
     """A genuine push rejection in the background warns on the NEXT event, exactly once."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     cli, _calls = recording_cli(raises={("sync",): _rejected("! [rejected] non-fast-forward\n")})
     evt = claim_event(tmp_path, monkeypatch, cli=cli)
     check("sync failure: the background hook returns nothing", sync_after_ref_move(evt) is None)
@@ -2740,7 +2762,7 @@ def test_auto_sync_failure_warns_on_next_event_once(monkeypatch, tmp_path) -> No
 
 def test_auto_sync_success_clears_a_pending_failure(monkeypatch, tmp_path) -> None:
     """A failure queued but not yet surfaced is cleared by a later successful sync of the same repo."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     monkeypatch.setattr(workflow, "should_autosync", lambda *_a, **_k: True)
     failing, _calls = recording_cli(raises={("sync",): _rejected("! [rejected] non-fast-forward\n")})
     sync_after_ref_move(claim_event(tmp_path, monkeypatch, cli=failing))
@@ -2757,7 +2779,7 @@ def test_auto_sync_success_clears_a_pending_failure(monkeypatch, tmp_path) -> No
 
 def test_identical_sync_failure_surfaces_once_per_session(monkeypatch, tmp_path) -> None:
     """A sync failure that recurs with the same message warns once; a different message still warns."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     monkeypatch.setattr(workflow, "should_autosync", lambda *_a, **_k: True)
     cli, _calls = recording_cli(raises={("sync",): _rejected("! [rejected] non-fast-forward\n")})
     sync_after_ref_move(claim_event(tmp_path, monkeypatch, cli=cli))
@@ -2779,7 +2801,7 @@ def _pending_sync_failures(tmp_path) -> dict[str, str]:
 
 def test_partial_success_keeps_the_other_remotes_pending_failure(monkeypatch, tmp_path) -> None:
     """With two wired remotes, a success on one clears only that remote's warning; the other's failure still surfaces."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     monkeypatch.setattr(workflow, "should_autosync", lambda *_a, **_k: True)
     wired = {_CONFIG_KEY: _wired("origin", "upstream")}
 
@@ -2803,7 +2825,7 @@ def test_partial_success_keeps_the_other_remotes_pending_failure(monkeypatch, tm
 
 def test_auto_sync_benign_outcomes_queue_nothing(monkeypatch, tmp_path) -> None:
     """No remote, a timeout, and a vanished binary are benign: nothing queues and nothing surfaces."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     for name, exc in (
         ("no-remote", _rejected("remote not configured\n")),
         ("timeout", subprocess.TimeoutExpired(cmd="cc-notes sync", timeout=15)),
@@ -2821,7 +2843,7 @@ def test_auto_sync_benign_outcomes_queue_nothing(monkeypatch, tmp_path) -> None:
 
 def test_reconcile_after_merge(monkeypatch, tmp_path) -> None:
     """After a merge, reconcile carries the branch's tasks then sync pushes them — in that order, silently."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt = merge_event(tmp_path, monkeypatch, branch="feature/x")
     check("reconcile: returns nothing", reconcile_after_merge(evt) is None)
     recon = _calls_of(evt._cli_calls, "reconcile", "--into", "feature/x")
@@ -2833,7 +2855,7 @@ def test_reconcile_after_merge(monkeypatch, tmp_path) -> None:
 
 def test_reconcile_surfaces_sync_failure(monkeypatch, tmp_path) -> None:
     """A merge reconciles locally but a genuine push rejection queues its retry for the next event."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     cli, calls = recording_cli(
         {("reconcile", "--into", "feature/x"): "ok"},
         raises={("sync",): _rejected("! [rejected] non-fast-forward\n")},
@@ -2847,7 +2869,7 @@ def test_reconcile_surfaces_sync_failure(monkeypatch, tmp_path) -> None:
 
 def test_jj_fetch_detached_head_falls_back_to_sync(monkeypatch, tmp_path) -> None:
     """A detached HEAD (the colocated-jj norm `jj git fetch` targets) can't reconcile onto a branch, so it only syncs."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt = merge_event(tmp_path, monkeypatch, branch="HEAD")
     reconcile_after_merge(evt)
     check("detached fallback: no reconcile ran", _calls_of(evt._cli_calls, "reconcile", "--into", "HEAD") == [], repr(evt._cli_calls))
@@ -2856,7 +2878,7 @@ def test_jj_fetch_detached_head_falls_back_to_sync(monkeypatch, tmp_path) -> Non
 
 def test_reconcile_failure_falls_back_to_sync(monkeypatch, tmp_path) -> None:
     """A reconcile that fails closed (run_cc_notes -> None) still syncs — the fetched refs ship."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     cli, calls = recording_cli({("sync",): "ok"})
     evt = merge_event(tmp_path, monkeypatch, branch="feature/x", cli=cli)
     reconcile_after_merge(evt)
@@ -2866,7 +2888,7 @@ def test_reconcile_failure_falls_back_to_sync(monkeypatch, tmp_path) -> None:
 
 def test_reconcile_respects_turn_token(monkeypatch, tmp_path) -> None:
     """A commit then a merge in ONE turn sync once: reconcile still runs, but its sync rides the shared per-turn token."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     cli, calls = recording_cli({("reconcile", "--into", "feature/x"): "ok", ("sync",): "ok"})
 
     commit = commit_event(tmp_path, monkeypatch)
@@ -2881,7 +2903,7 @@ def test_reconcile_respects_turn_token(monkeypatch, tmp_path) -> None:
 
 
 def test_claim_spawns_nothing(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt = claim_event(tmp_path, monkeypatch)
     check("claim: the nudge registers no spawn", evt._cli_calls == [], repr(evt._cli_calls))
 
@@ -2926,7 +2948,7 @@ def commit_after_claims(tmp_path, monkeypatch, *calls, cli=None):
 
 
 def test_commit_links_the_single_claimed_task(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     result, calls = commit_after_claims(tmp_path, monkeypatch, "cc-notes task claim abc1234")
     check("link: the task link ran with HEAD", LINKED in calls, repr(calls))
     check("link: the link is written before the sync", LINKED in calls and ("cc-notes", "sync") in calls and calls.index(LINKED) < calls.index(("cc-notes", "sync")), repr(calls))
@@ -2942,7 +2964,7 @@ def test_background_sync_links_the_commit_before_syncing(monkeypatch, tmp_path) 
     The commit nudge and the background sync run as separate dispatches with no order between them, so
     the edge must not depend on the nudge: this drives only ``sync_after_ref_move``.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     record_task_claims(task_call(tmp_path, "cc-notes task claim abc1234"))
     evt = commit_event(tmp_path, monkeypatch)
     cli, calls = recording_cli({("sync",): "ok", LINKED[1:]: "abc1234\tin_progress\tP2\t-\tt"})
@@ -2955,7 +2977,7 @@ def test_background_sync_links_the_commit_before_syncing(monkeypatch, tmp_path) 
 
 def test_commit_writes_no_link_without_exactly_one_claim(monkeypatch, tmp_path) -> None:
     """Zero claims, two claims, and a released claim each leave the commit's task a guess — no edge."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     cases = {
         "no claim at all": ([], ()),
         "two claims held": (["cc-notes task claim abc1234", "cc-notes task claim def5678"], ()),
@@ -2984,7 +3006,7 @@ def test_claim_recorder_ignores_the_lines_that_move_no_lease(tmp_path) -> None:
 
 
 def test_commit_link_failure_never_costs_the_commit(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     cli, calls = recording_cli({("sync",): "ok"})
     result, _ = commit_after_claims(tmp_path, monkeypatch, "cc-notes task claim abc1234", cli=cli)
     check("commit link failure: it really attempted the link", LINKED in calls, repr(calls))
@@ -2996,7 +3018,7 @@ def test_commit_link_failure_never_costs_the_commit(monkeypatch, tmp_path) -> No
 
 def investigation_task_add(tmp_path, monkeypatch, *, unresolved, cli, output="abc1234\topen\tP2\t-\tship the fix"):
     """A `cc-notes task add` PostToolUse in a session holding ``unresolved`` open investigations."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt = task_call(tmp_path, "cc-notes task add 'ship the fix'", output=output)
     evt.ctx.s[InvestigationActivity].set(InvestigationActivity(unresolved=list(unresolved)))
     monkeypatch.setattr(evt.ctx, "call_cli", cli)
@@ -3122,7 +3144,7 @@ def test_mcp_ephemeral_refs_scans_content_fields() -> None:
 
 def test_mcp_ephemeral_gate_scopes_to_write_tools(monkeypatch) -> None:
     """The purge-bound gate matches the MCP write tools with a purge-bound field, never a read tool or clean write."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     from captain_hook.conditions import matches_conditions
 
     spec = _spec_for(nudge_ephemeral_record_reference)
@@ -3136,7 +3158,7 @@ def test_mcp_ephemeral_gate_scopes_to_write_tools(monkeypatch) -> None:
 
 def test_mcp_ephemeral_reference_fires(monkeypatch, tmp_path) -> None:
     """The purge-bound handler warns on an MCP record write and names the attach param."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt = mock_tool_event(
         tool="mcp__plugin_cc-notes_cc-notes__doc_add",
         event=Event.PostToolUse,
@@ -3211,7 +3233,7 @@ def test_redirect_target_basename_and_wrappers(tmp_path) -> None:
 
 def test_redirect_fires_on_runbook_add_usage_error(monkeypatch, tmp_path) -> None:
     """The original failure shape: `runbook add` exits 2 on an unknown flag; it names runbook_add."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     err = "Exit code 2\nError: unknown flag: --branch\nUsage:\n  cc-notes runbook add [flags]"
     result = redirect_failed_cc_notes(redirect_event(tmp_path, 'cc-notes runbook add "Deploy" --attach x', err))
     check("redirect: warns", result is not None and result.action is Action.warn, repr(result))
@@ -3223,7 +3245,7 @@ def test_redirect_fires_on_runbook_add_usage_error(monkeypatch, tmp_path) -> Non
 
 def test_redirect_fires_on_criterion_arity_error(monkeypatch, tmp_path) -> None:
     """A `task criterion met` arity error (exit 2) under MCP redirects to task_criterion_met with the family param hint."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     err = "Exit code 2\nError: accepts 2 arg(s), received 1 (TASK CRIT)"
     result = redirect_failed_cc_notes(redirect_event(tmp_path, "cc-notes task criterion met abc1234", err))
     check("redirect arity: names task_criterion_met", result is not None and "task_criterion_met" in result.message, result.message if result else "")
@@ -3234,7 +3256,7 @@ def test_redirect_fires_on_criterion_arity_error(monkeypatch, tmp_path) -> None:
 
 def test_redirect_silent_on_operator_and_no_exit_header(monkeypatch, tmp_path) -> None:
     """An operator command's exit-2 failure and a failure with no `Exit code` header never redirect, even under MCP."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     gc = redirect_event(tmp_path, "cc-notes gc", "Exit code 2\nunknown flag: --oops")
     check("redirect: operator gc exit-2 stays silent (maps to no tool)", redirect_failed_cc_notes(gc) is None)
     blocked = redirect_event(tmp_path, "cc-notes runbook add x --attach y", "BLOCKED: a guard tripped")
@@ -3243,7 +3265,7 @@ def test_redirect_silent_on_operator_and_no_exit_header(monkeypatch, tmp_path) -
 
 def test_redirect_dedup_per_shape(monkeypatch, tmp_path) -> None:
     """The redirect fires once per tool shape per session; a second failure of the same shape is silent."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     err = "Exit code 2\nunknown flag: --branch"
     first = redirect_failed_cc_notes(redirect_event(tmp_path, 'cc-notes runbook add "Deploy" --attach x', err))
     check("redirect dedup: first fire warns", first is not None and first.action is Action.warn, repr(first))
@@ -3264,7 +3286,7 @@ def test_redirect_fires_through_capt_hook_dispatch(monkeypatch, tmp_path) -> Non
     """DISPATCH-LEVEL proof (finding 11): the original failure shape as a real PostToolUseFailure envelope,
     routed through capt-hook's own dispatch (not a direct handler call), fires the redirect nudge. Reverting
     the PostToolUseFailure registration makes dispatch skip the hook entirely, turning this red."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     from captain_hook.dispatch import dispatch
 
     err = "Exit code 2\nError: unknown flag: --branch\nUsage:\n  cc-notes runbook add [flags]"
@@ -3539,7 +3561,7 @@ def test_mcp_reconcile_dry_run_is_not_a_write(monkeypatch) -> None:
 
 def test_sync_after_push_syncs_silently(monkeypatch, tmp_path) -> None:
     """A jj/git push funnels through auto_sync: exactly one cc-notes sync, and no confirmation."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt = mock_event("PostToolUse", tool="Bash", command="jj git push", session_dir=tmp_path)
     _session_repo(monkeypatch, tmp_path)
     monkeypatch.setattr(evt.ctx, "git", repo_git({_CONFIG_KEY: None}))
@@ -3552,7 +3574,7 @@ def test_sync_after_push_syncs_silently(monkeypatch, tmp_path) -> None:
 
 def test_ledger_writes_sync_and_ledger_reads_do_not(monkeypatch, tmp_path) -> None:
     """A CLI or MCP ledger write runs the background sync; a ledger MCP read never matches the sync hook."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     from captain_hook.conditions import matches_conditions
 
     for i, command in enumerate(("cc-notes ledger sync abc --file rows.json", "cc-notes ledger row set abc --key pr-1 --field state=open")):
@@ -3580,7 +3602,7 @@ def test_mcp_write_triggers_sync(monkeypatch, tmp_path) -> None:
     MCP writes always target the session repo, so the cross-repo reshape must leave this path unchanged.
     The wired-remotes probe is stubbed to zero wired so do_sync stays on the byte-identical bare sync.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt = mock_tool_event(tool=MCP_TOOL_PREFIX + "note_add", event=Event.PostToolUse, tool_input={"title": "x"}, session_dir=tmp_path)
     _session_repo(monkeypatch, tmp_path)
     monkeypatch.setattr(evt.ctx, "git", repo_git({_CONFIG_KEY: None}))
@@ -3591,7 +3613,7 @@ def test_mcp_write_triggers_sync(monkeypatch, tmp_path) -> None:
 
 
 def test_jj_commit_and_describe_trigger_background_sync(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     for i, cmd in enumerate(("jj commit -m x", "jj describe -m x", "ccx vcs ship -m x")):
         sub = tmp_path / f"s{i}"
         sub.mkdir()
@@ -3602,7 +3624,7 @@ def test_jj_commit_and_describe_trigger_background_sync(monkeypatch, tmp_path) -
 
 def test_write_sync_still_once_per_turn(monkeypatch, tmp_path) -> None:
     """A commit and a cc-notes MCP write in the SAME turn issue exactly one cc-notes sync total."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     cli, calls = recording_cli({("sync",): "ok"})
     commit = commit_event(tmp_path, monkeypatch)
     monkeypatch.setattr(commit.ctx, "call_cli", cli)  # share the single recorder across both handlers
@@ -3634,7 +3656,7 @@ def _session_end_event(tmp_path, monkeypatch, *, for_each_ref, wired=("origin",)
 
 def test_session_end_syncs_when_ref_dirty(monkeypatch, tmp_path) -> None:
     """A local ref whose sha differs from its tracking copy is dirty — SessionEnd pushes exactly once."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     out = "refs/cc-notes/notes/abc aaa\nrefs/cc-notes-sync/origin/notes/abc bbb\n"
     evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=out)
     sync_at_session_end(evt)
@@ -3643,7 +3665,7 @@ def test_session_end_syncs_when_ref_dirty(monkeypatch, tmp_path) -> None:
 
 def test_session_end_syncs_when_tracking_missing(monkeypatch, tmp_path) -> None:
     """A local ref with no tracking counterpart (never synced) is dirty — SessionEnd pushes it."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     out = "refs/cc-notes/notes/abc aaa\n"
     evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=out)
     sync_at_session_end(evt)
@@ -3652,7 +3674,7 @@ def test_session_end_syncs_when_tracking_missing(monkeypatch, tmp_path) -> None:
 
 def test_session_end_skips_when_clean(monkeypatch, tmp_path) -> None:
     """Every local ref matches its tracking sha — clean, so SessionEnd never syncs."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     out = "refs/cc-notes/notes/abc aaa\nrefs/cc-notes-sync/origin/notes/abc aaa\n"
     evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=out)
     sync_at_session_end(evt)
@@ -3661,7 +3683,7 @@ def test_session_end_skips_when_clean(monkeypatch, tmp_path) -> None:
 
 def test_session_end_skips_when_no_local_refs(monkeypatch, tmp_path) -> None:
     """A repo with no local cc-notes refs (empty for-each-ref) reads clean — no sync."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref="")
     sync_at_session_end(evt)
     check("session-end no-local: no sync ran", _sync_runs(calls) == [], repr(calls))
@@ -3669,7 +3691,7 @@ def test_session_end_skips_when_no_local_refs(monkeypatch, tmp_path) -> None:
 
 def test_session_end_skips_when_tracking_only(monkeypatch, tmp_path) -> None:
     """A tracking-only ref (remote ahead, no local) is no push moment — clean, no sync."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     out = "refs/cc-notes-sync/origin/notes/abc bbb\n"
     evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=out)
     sync_at_session_end(evt)
@@ -3678,7 +3700,7 @@ def test_session_end_skips_when_tracking_only(monkeypatch, tmp_path) -> None:
 
 def test_session_end_skips_when_git_fails(monkeypatch, tmp_path) -> None:
     """A git failure (for-each-ref returns None) reads clean — SessionEnd stays silent, no sync."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=None)
     sync_at_session_end(evt)
     check("session-end git-fail: no sync ran", _sync_runs(calls) == [], repr(calls))
@@ -3686,7 +3708,7 @@ def test_session_end_skips_when_git_fails(monkeypatch, tmp_path) -> None:
 
 def test_session_end_silent_on_sync_failure(monkeypatch, tmp_path) -> None:
     """A dirty ref whose sync raises (rejected push / timeout / missing binary) returns None and never raises."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     out = "refs/cc-notes/notes/abc aaa\n"
     for exc in (
         subprocess.CalledProcessError(1, ["cc-notes", "sync"], stderr="! [rejected] non-fast-forward\n"),
@@ -3706,7 +3728,7 @@ def test_session_end_silent_on_sync_failure(monkeypatch, tmp_path) -> None:
 
 def test_cc_notes_refs_dirty_maps_suffix_exactly(monkeypatch, tmp_path) -> None:
     """The dirty check keys on the ref suffix, so a same-suffix sha mismatch is dirty while distinct suffixes stay independent."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     # Two suffixes: tasks/main matches (clean), notes/x differs (dirty) -> overall dirty.
     out = (
         "refs/cc-notes/tasks/main aaa\n"
@@ -3778,7 +3800,7 @@ def _do_sync_event(monkeypatch, tmp_path, *, wired, mapping=None, raises=None):
 
 def test_do_sync_syncs_each_wired_remote(monkeypatch, tmp_path) -> None:
     """Two wired remotes each get a `cc-notes sync --remote <r>`, in config order."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt, calls = _do_sync_event(
         monkeypatch, tmp_path, wired=("origin", "upstream"),
         mapping={("sync", "--remote", "origin"): "ok", ("sync", "--remote", "upstream"): "ok"},
@@ -3791,7 +3813,7 @@ def test_do_sync_syncs_each_wired_remote(monkeypatch, tmp_path) -> None:
 
 def test_do_sync_zero_wired_falls_back_bare(monkeypatch, tmp_path) -> None:
     """No wired remote falls back to a bare `cc-notes sync` (no --remote)."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt, calls = _do_sync_event(monkeypatch, tmp_path, wired=(), mapping={("sync",): "ok"})
     outcome = do_sync(evt, records_git(evt))
     check("do_sync: bare sync when zero wired", calls == [("cc-notes", "sync")], repr(calls))
@@ -3800,7 +3822,7 @@ def test_do_sync_zero_wired_falls_back_bare(monkeypatch, tmp_path) -> None:
 
 def test_do_sync_single_wired_uses_remote(monkeypatch, tmp_path) -> None:
     """A single wired remote syncs via --remote, and success yields no line."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt, calls = _do_sync_event(monkeypatch, tmp_path, wired=("origin",), mapping={("sync", "--remote", "origin"): "ok"})
     outcome = do_sync(evt, records_git(evt))
     check("do_sync: single wired uses --remote", calls == [("cc-notes", "sync", "--remote", "origin")], repr(calls))
@@ -3809,7 +3831,7 @@ def test_do_sync_single_wired_uses_remote(monkeypatch, tmp_path) -> None:
 
 def test_do_sync_multi_remote_failure_names_remote(monkeypatch, tmp_path) -> None:
     """A genuine push rejection on one of several remotes names that remote in the failure line."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt, calls = _do_sync_event(
         monkeypatch, tmp_path, wired=("origin", "upstream"),
         mapping={("sync", "--remote", "origin"): "ok"},
@@ -3825,7 +3847,7 @@ def test_do_sync_multi_remote_failure_names_remote(monkeypatch, tmp_path) -> Non
 
 def test_do_sync_partial_failure_warns(monkeypatch, tmp_path) -> None:
     """When one remote succeeds and another genuinely fails, the failure line names the failed remote."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt, calls = _do_sync_event(
         monkeypatch, tmp_path, wired=("origin", "upstream"),
         mapping={("sync", "--remote", "origin"): "ok"},
@@ -3838,7 +3860,7 @@ def test_do_sync_partial_failure_warns(monkeypatch, tmp_path) -> None:
 
 def test_session_end_dirty_when_one_wired_remote_lags(monkeypatch, tmp_path) -> None:
     """Two wired remotes, one lagging: the repo reads dirty and SessionEnd fans the sync over both."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     out = (
         "refs/cc-notes/notes/x aaa\n"
         "refs/cc-notes-sync/origin/notes/x aaa\n"
@@ -3851,7 +3873,7 @@ def test_session_end_dirty_when_one_wired_remote_lags(monkeypatch, tmp_path) -> 
 
 def test_session_end_clean_when_all_wired_remotes_match(monkeypatch, tmp_path) -> None:
     """Two wired remotes both current: clean, so SessionEnd never syncs."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     out = (
         "refs/cc-notes/notes/x aaa\n"
         "refs/cc-notes-sync/origin/notes/x aaa\n"
@@ -3868,7 +3890,7 @@ def test_session_end_non_origin_only_remote_clean(monkeypatch, tmp_path) -> None
     This pins the bug the old hard-coded refs/cc-notes-sync/origin/ prefix caused: an upstream-only repo's
     tracking refs were invisible, so the backstop saw every local ref as untracked and synced every session.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     out = "refs/cc-notes/notes/x aaa\nrefs/cc-notes-sync/upstream/notes/x aaa\n"
     evt, calls = _session_end_event(tmp_path, monkeypatch, for_each_ref=out, wired=("upstream",))
     sync_at_session_end(evt)
@@ -3907,7 +3929,7 @@ def _cross_event(tmp_path, monkeypatch, *, command, base, run_raises=None):
     (``workflow.subprocess.run`` -> ``evt._run_calls`` recording ``(argv, kwargs)``). The wired-remotes
     probe reads zero wired, so the session path stays on the bare `cc-notes sync`.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     evt = mock_event("PostToolUse", tool="Bash", command=command, session_dir=tmp_path)
     monkeypatch.setattr(workflow, "resolve_project_dir", lambda: None if base is None else str(base))
     monkeypatch.setattr(evt.ctx, "git", repo_git({_CONFIG_KEY: None}))
@@ -3935,7 +3957,7 @@ def test_cross_repo_write_syncs_target_dir(monkeypatch, tmp_path) -> None:
         (kw["check"], kw["capture_output"], kw["text"], kw["timeout"]) == (True, True, True, 15),
         repr(kw),
     )
-    check("cross write: env is os.environ", kw["env"] is os.environ, repr(kw["env"]))
+    check("cross write: env is os.environ with the install dirs on PATH", kw["env"] == os.environ | {"PATH": common.cc_notes_search_path()}, repr(kw["env"]))
     check("cross write: the session repo was not synced", _calls_of(evt._cli_calls, "sync") == [], repr(evt._cli_calls))
 
 
@@ -4040,7 +4062,7 @@ def test_cross_repo_and_session_write_same_turn_syncs_both(monkeypatch, tmp_path
 
 def test_cross_repo_once_per_turn_per_target(monkeypatch, tmp_path) -> None:
     """Two writes to the SAME foreign repo in one turn sync it exactly once (its own once slot)."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     base, other = tmp_path / "session", tmp_path / "other"
     _repo(base); _repo(other)
     cli, _cli_calls = recording_cli({("sync",): "ok"})
@@ -4057,7 +4079,7 @@ def test_cross_repo_once_per_turn_per_target(monkeypatch, tmp_path) -> None:
 
 def test_push_in_other_repo_syncs_that_repo(monkeypatch, tmp_path) -> None:
     """A `cd <other> && git push` syncs the repo the push ran in, never the session repo."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     base, other = tmp_path / "session", tmp_path / "other"
     _repo(base); _repo(other)
     evt = mock_event("PostToolUse", tool="Bash", command=f"cd {other} && git push", session_dir=tmp_path)
@@ -4074,7 +4096,7 @@ def test_push_in_other_repo_syncs_that_repo(monkeypatch, tmp_path) -> None:
 
 def test_merge_in_other_repo_reconciles_and_syncs_that_repo(monkeypatch, tmp_path) -> None:
     """A merge behind `cd <other> &&`, `git -C <other>`, or `jj -R <other>` reconciles onto that repo's branch and syncs that repo."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     base, other = tmp_path / "session", tmp_path / "other"
     _repo(base); _repo(other)
     real = str(other.resolve())
@@ -4139,7 +4161,7 @@ def test_bound_checkout_syncs_and_reconciles_through_its_backend(monkeypatch, tm
     The write, merge, and SessionEnd hooks find the record and the origin wiring through the binding,
     from the session repo and from a foreign session alike, and reconcile onto the checkout's branch.
     """
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     checkout = _bound_checkout(tmp_path)
     real = str(checkout.resolve())
     synced = ("cc-notes", "sync", "--remote", "origin")
@@ -4187,7 +4209,7 @@ def test_bound_checkout_syncs_and_reconciles_through_its_backend(monkeypatch, tm
 
 def test_sync_hooks_outside_any_repo_spawn_nothing(monkeypatch, tmp_path) -> None:
     """Outside any git repository nothing spawns at all; in a repo with no cc-notes refs only the refs probe runs."""
-    monkeypatch.setattr(common.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     plain = tmp_path / "plain"
     plain.mkdir()
     cold = _repo(tmp_path / "cold")
@@ -4229,7 +4251,7 @@ def test_bootstrap_parse_version(monkeypatch) -> None:
 def test_bootstrap_installs_when_absent(monkeypatch, tmp_path) -> None:
     """An absent binary runs the curl installer. Async dispatch ignores the return."""
     state = {"installed": False}
-    monkeypatch.setattr(bootstrap.shutil, "which", lambda _n: "/usr/bin/cc-notes" if state["installed"] else None)
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes" if state["installed"] else None)
     calls: list[tuple] = []
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
@@ -4248,7 +4270,7 @@ def test_bootstrap_installs_when_absent(monkeypatch, tmp_path) -> None:
 
 def test_bootstrap_upgrades_when_stale(monkeypatch, tmp_path) -> None:
     """A present-but-stale binary reinstalls and returns no context line."""
-    monkeypatch.setattr(bootstrap.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     calls: list[tuple] = []
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
@@ -4269,7 +4291,7 @@ def test_bootstrap_upgrades_when_stale(monkeypatch, tmp_path) -> None:
 
 def test_bootstrap_noop_when_current(monkeypatch, tmp_path) -> None:
     """A current binary skips the installer and returns no context line."""
-    monkeypatch.setattr(bootstrap.shutil, "which", lambda _n: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _n, **_: "/usr/bin/cc-notes")
     calls: list[tuple] = []
 
     def cli(args, *, input=None, timeout=30, env=None, throw=True):
@@ -4653,7 +4675,7 @@ def answer_event(
     added: tuple[str, ...] = ("ans0001aaaa",), paths: tuple[str, ...] = (),
 ):
     """An AskUserQuestion PostToolUse with the answer CLI, git, and triage stubbed; returns (evt, calls)."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     evt = mock_tool_event(
         tool="AskUserQuestion", event=Event.PostToolUse, tool_input={"questions": questions},
         transcript=touched_transcript(*paths), session_dir=tmp_path,
@@ -4925,7 +4947,7 @@ def test_record_user_answers_silent_without_answers(monkeypatch, tmp_path) -> No
 
 
 def prompt_event(monkeypatch, tmp_path, candidates: list[dict], prompt: str = "work on auth", foreign: list[dict] | None = None, branch: str | None = "feat/x\n"):
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     evt = mock_event("UserPromptSubmit", prompt=prompt, session_dir=tmp_path)
     listings = {BRANCH_ANSWER_LIST: json.dumps(candidates), ANSWER_LIST: json.dumps([*(foreign or []), *candidates])}
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(listings))
@@ -5292,7 +5314,7 @@ def test_render_answer_line() -> None:
 
 def test_answer_file_surfacing_toggle(monkeypatch, tmp_path) -> None:
     """Answers anchored to a read file surface only once `cc-notes.answers.fileSurfacing` is true."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     entries = [{"kind": "answer", "answer": durable_answer("ans0001aaaa", title="Q?", body="Go"), "reasons": ["path"]}, note_entry("note001aaaa")]
     mapping = {("relevant", "src/a.go", "--limit", "0", "--json"): json.dumps(entries)}
     toggle = ("config", "--type=bool", "--get", "cc-notes.answers.fileSurfacing")
@@ -5314,7 +5336,7 @@ def test_answer_file_surfacing_toggle(monkeypatch, tmp_path) -> None:
 
 def test_answer_file_surfacing_bookkeeping(monkeypatch, tmp_path) -> None:
     """File-surfaced answers skip expired records, cap after filtering, and enter the answers seen scope and ledger."""
-    monkeypatch.setattr(common.shutil, "which", lambda _name: "/usr/bin/cc-notes")
+    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
     monkeypatch.setattr(surface_module, "surface_filter", lambda evt, fresh, *, path, touched: fresh)
     toggle = ("config", "--type=bool", "--get", "cc-notes.answers.fileSurfacing")
     answers = [{"kind": "answer", "answer": durable_answer(f"ans{i:04d}xxxx", title=f"Q{i}?"), "reasons": ["path"]} for i in range(12)]

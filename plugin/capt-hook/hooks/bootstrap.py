@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import re
-import shutil
 
 from captain_hook import Event, SessionStartEvent, on
 
-from .common import run_cc_notes
+from .common import cc_notes_installed, run_cc_notes
 
 MIN_VERSION = (0, 55, 0)
 INSTALL_URL = "https://raw.githubusercontent.com/yasyf/cc-notes/main/scripts/install.sh"
@@ -29,5 +28,5 @@ def _install(evt: SessionStartEvent) -> None:
 
 @on(Event.SessionStart, async_=True)
 def ensure_cc_notes_binary(evt: SessionStartEvent) -> None:
-    if evt.source in ("startup", "resume") and (shutil.which("cc-notes") is None or _stale(evt)):
+    if evt.source in ("startup", "resume") and (not cc_notes_installed() or _stale(evt)):
         _install(evt)

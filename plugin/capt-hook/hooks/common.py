@@ -46,6 +46,7 @@ def is_single_command(cl: CommandLine) -> bool:
 
 
 CC_NOTES_EXECUTABLES = frozenset({"cc-notes", "ccn"})
+CC_NOTES_INSTALL_DIRS = (Path("/opt/homebrew/bin"), Path("/usr/local/bin"), Path.home() / ".local" / "bin")
 
 
 CC_NOTES_TOOLS = frozenset(
@@ -127,8 +128,16 @@ def mapped_tool(args: Sequence[str]) -> str | None:
     return resolved[0] if resolved else None
 
 
+def cc_notes_search_path() -> str:
+    return os.pathsep.join([os.environ.get("PATH", ""), *map(str, CC_NOTES_INSTALL_DIRS)])
+
+
+def cc_notes_installed() -> bool:
+    return shutil.which("cc-notes", path=cc_notes_search_path()) is not None
+
+
 def run_cc_notes(evt: BaseHookEvent, *args: str) -> str | None:
-    return evt.ctx.call_cli(["cc-notes", *args], timeout=10, throw=False)
+    return evt.ctx.call_cli(["cc-notes", *args], timeout=10, env={"PATH": cc_notes_search_path()}, throw=False)
 
 
 def json_field(out: str | None, key: str) -> str:
@@ -508,10 +517,10 @@ class AnswerFileSurfacing(CustomCondition):
 class CcNotesAvailable(CustomCondition):
 
     def check(self, evt: BaseHookEvent) -> bool:
-        return shutil.which("cc-notes") is not None
+        return cc_notes_installed()
 
 
 class CcNotesMissing(CustomCondition):
 
     def check(self, evt: BaseHookEvent) -> bool:
-        return shutil.which("cc-notes") is None
+        return not cc_notes_installed()
