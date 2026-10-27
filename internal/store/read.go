@@ -364,13 +364,17 @@ func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error)
 			return nil, err
 		}
 	}
+	return directChildren(prefix, tips), nil
+}
+
+func directChildren(prefix string, tips map[string]model.SHA) []tipEntry {
 	entries := make([]tipEntry, 0, len(tips))
 	for ref, tip := range tips {
 		if refs.DirectChild(prefix, ref) {
 			entries = append(entries, tipEntry{ref: ref, tip: tip})
 		}
 	}
-	return entries, nil
+	return entries
 }
 
 // foldAll loads and folds every entry's chain, fanning out through an

@@ -2,10 +2,12 @@ package notes
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -119,17 +121,24 @@ func (c *Client) appendAnswer(ctx context.Context, id model.EntityID, ops []mode
 }
 
 // Answers folds the answer set the filter selects and returns it in
-// UpdatedAt-desc, id-asc order.
+// UpdatedAt-desc, id-asc order. A repeat call over unchanged answer refs and
+// the same filter reads the stored result instead of folding every answer.
 func (c *Client) Answers(ctx context.Context, f DocumentFilter) ([]model.Answer, error) {
-	answers, err := c.s.ListAnswers(ctx, f.IncludeTombstoned, f.IncludeSuperseded)
+	variant, err := json.Marshal(f)
 	if err != nil {
 		return nil, err
 	}
-	answers = slices.DeleteFunc(answers, func(a model.Answer) bool {
-		return !matchesFilter(a.Tags, a.Anchors, f)
+	return store.CachedList(ctx, c.s, model.KindAnswer, variant, func(s *store.Store) ([]model.Answer, error) {
+		answers, err := s.ListAnswers(ctx, f.IncludeTombstoned, f.IncludeSuperseded)
+		if err != nil {
+			return nil, err
+		}
+		answers = slices.DeleteFunc(answers, func(a model.Answer) bool {
+			return !matchesFilter(a.Tags, a.Anchors, f)
+		})
+		sortDocuments(answers)
+		return answers, nil
 	})
-	sortDocuments(answers)
-	return answers, nil
 }
 
 // SearchAnswers ranks the live answer set against query, mirroring SearchNotes:
