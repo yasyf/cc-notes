@@ -3307,18 +3307,22 @@ $ cc-notes doc add "How auth token refresh works" --dir internal/auth --label de
 
 ### `cc-notes doc edit ID`
 
-MCP: doc_edit (id, title, body, when, add_labels, rm_labels, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches, attach, replace, rm_attachments)
+MCP: doc_edit (id, title, body, append, when, add_labels, rm_labels, add_paths, rm_paths, add_dirs, rm_dirs, add_commits, rm_commits, add_branches, rm_branches, attach, replace, rm_attachments)
 
 Edit a doc — at least one flag is required. Title, body, and the `when` trigger replace; anchors,
 labels, and attachments add or remove individually. The 256-byte title cap applies to `--title`. A
 doc is its body, so `--body ""` is rejected on its own — but an edit that also carries `--attach`
-may blank it, leaving an attach-only doc, mirroring a flag-mode `add`.
+may blank it, leaving an attach-only doc, mirroring a flag-mode `add`. `--append` adds a paragraph
+to the end of the body as it stands when the edit lands, so two agents appending at once both keep
+their text; it excludes `--body` and records an ordinary body edit in `history`.
 
 | Flag | Meaning |
 |------|---------|
 | `--title <text>` | New title |
 | `--body <text>` | New body; `-` reads stdin |
 | `--body-file <file>` | Read `--body` from this file; `-` reads stdin |
+| `--append <text>` | Add a paragraph to the end of the body; `-` reads stdin |
+| `--append-file <file>` | Read `--append` from this file; `-` reads stdin |
 | `--when <text>` | New "read this when…" trigger |
 | `--add-label` / `--rm-label <label>` | Add or remove a label; repeatable |
 | `--add-commit` / `--rm-commit <sha>` | Add or remove a commit anchor; repeatable |

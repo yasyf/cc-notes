@@ -14,7 +14,8 @@ type docAddArgs struct {
 
 type docEditArgs struct {
 	noteEditArgs
-	When string `json:"when,omitempty" jsonschema:"new read-this-when trigger"`
+	Append string `json:"append,omitempty" jsonschema:"paragraph added to the end of the body as it stands when the edit lands; excludes body"`
+	When   string `json:"when,omitempty" jsonschema:"new read-this-when trigger"`
 }
 
 func registerDoc(ts *toolset, b *bridge) {
@@ -32,10 +33,13 @@ func registerDoc(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"doc", "add"}, flags, in.Title)...)
 		})
 
-	addTool(ts, &mcp.Tool{Name: "doc_edit", Description: "Edit a doc: title, body, when-trigger, labels, anchors, and attachments. The ack is a summary; doc_show reads the body back."},
+	addTool(ts, &mcp.Tool{Name: "doc_edit", Description: "Edit a doc: title, body or an appended paragraph, when-trigger, labels, anchors, and attachments. The ack is a summary; doc_show reads the body back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in docEditArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := noteDocEditFlags(in.noteEditArgs)
 			if err != nil {
+				return nil, nil, err
+			}
+			if flags, err = freeTextFlag(flags, "--append", in.Append); err != nil {
 				return nil, nil, err
 			}
 			flags = optStr(flags, "--when", in.When)

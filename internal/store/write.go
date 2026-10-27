@@ -81,19 +81,27 @@ func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (m
 // compare-and-swap with bounded retries, returning the new folded snapshot.
 // Exhausting the retries fails wrapping ErrContended.
 func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.Snapshot, error) {
-	if err := s.CheckRecords(); err != nil {
-		return nil, fmt.Errorf("append to %s: %w", ref, err)
-	}
 	if len(ops) == 0 {
 		return nil, fmt.Errorf("append to %s: no ops", ref)
 	}
-	kinds := make([]string, len(ops))
-	for i, op := range ops {
-		kinds[i] = op.OpKind()
-	}
-	message := "cc-notes: " + strings.Join(kinds, " ")
-	validated, err := roundTrip(model.Pack{Lamport: 1, Ops: ops})
-	if err != nil {
+	return s.appendBuilt(ctx, ref, func(context.Context, model.SHA) ([]model.Op, error) { return ops, nil })
+}
+
+// AppendFrom is Append with the ops rebuilt from the snapshot at the tip each
+// attempt extends, so an edit derived from current state, such as text added
+// to a body, keeps a concurrent writer's change instead of overwriting it.
+func (s *Store) AppendFrom(ctx context.Context, ref string, build func(model.Snapshot) ([]model.Op, error)) (model.Snapshot, error) {
+	return s.appendBuilt(ctx, ref, func(ctx context.Context, tip model.SHA) ([]model.Op, error) {
+		snapshot, err := s.LoadAt(ctx, tip)
+		if err != nil {
+			return nil, err
+		}
+		return build(snapshot)
+	})
+}
+
+func (s *Store) appendBuilt(ctx context.Context, ref string, build func(context.Context, model.SHA) ([]model.Op, error)) (model.Snapshot, error) {
+	if err := s.CheckRecords(); err != nil {
 		return nil, fmt.Errorf("append to %s: %w", ref, err)
 	}
 	name, email, err := s.actor(ctx)
@@ -112,13 +120,28 @@ func (s *Store) Append(ctx context.Context, ref string, ops []model.Op) (model.S
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
+		ops, err := build(ctx, tip)
+		if err != nil {
+			return nil, fmt.Errorf("append to %s: %w", ref, err)
+		}
+		if len(ops) == 0 {
+			return nil, fmt.Errorf("append to %s: no ops", ref)
+		}
+		validated, err := roundTrip(model.Pack{Lamport: 1, Ops: ops})
+		if err != nil {
+			return nil, fmt.Errorf("append to %s: %w", ref, err)
+		}
+		kinds := make([]string, len(ops))
+		for i, op := range ops {
+			kinds[i] = op.OpKind()
+		}
 		top, extend, err := s.extender(ctx, tip, validated.Ops)
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
 		pack := model.Pack{Lamport: top + 1, Session: session(), Ops: validated.Ops}
 		sig := gitobj.Signature{Name: name, Email: email, When: s.now()}
-		sha, err := s.Repo.WriteOpsCommit(ctx, []model.SHA{tip}, sig, message, pack)
+		sha, err := s.Repo.WriteOpsCommit(ctx, []model.SHA{tip}, sig, "cc-notes: "+strings.Join(kinds, " "), pack)
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}

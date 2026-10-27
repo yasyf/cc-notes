@@ -187,6 +187,40 @@ func TestDocEditBlankBodyWithAttach(t *testing.T) {
 	}
 }
 
+func TestDocEditAppend(t *testing.T) {
+	dir := initRepo(t)
+	doc := showJSON[docJSON](t, dir, mustRun(t, dir, "doc", "add", "Progress", "--body", "first\n", "--json"))
+	before := len(mustJSON[[]histEntryJSON](t, mustRun(t, dir, "history", doc.ID, "--json")))
+
+	mustRun(t, dir, "doc", "edit", doc.ID, "--append", "second")
+	stdout, stderr, err := runCLIIn(t, dir, "third\n", "doc", "edit", doc.ID, "--append", "-", "--json")
+	if err != nil {
+		t.Fatalf("doc edit --append -: %v (stderr %q)", err, stderr)
+	}
+	if got := showJSON[docJSON](t, dir, stdout).Body; got != "first\n\nsecond\n\nthird" {
+		t.Fatalf("body = %q, want each append as its own paragraph", got)
+	}
+
+	entries := mustJSON[[]histEntryJSON](t, mustRun(t, dir, "history", doc.ID, "--json"))
+	if len(entries) != before+2 {
+		t.Fatalf("history entries = %d, want %d plus one edit per append", len(entries), before)
+	}
+	if c, ok := changeByField(entries[0], "body"); !ok || c.To == nil || *c.To != "first\n\nsecond\n\nthird" {
+		t.Fatalf("newest history entry body change = %+v, want the appended body", c)
+	}
+
+	for _, args := range [][]string{
+		{"--append", ""},
+		{"--append", "x", "--body", "y"},
+		{"--append", "x", "--checkout"},
+	} {
+		_, _, err := runCLI(t, dir, append([]string{"doc", "edit", doc.ID}, args...)...)
+		if cli.ExitCode(err) != 2 {
+			t.Errorf("doc edit %q = %v (exit %d), want a usage error", args, err, cli.ExitCode(err))
+		}
+	}
+}
+
 func TestDocAddLeanLine(t *testing.T) {
 	dir := initRepo(t)
 	added := mustRun(t, dir, "doc", "add", "Handoff", "--body", "x", "--when", "resuming the cutover", "--label", "b", "--label", "a")
