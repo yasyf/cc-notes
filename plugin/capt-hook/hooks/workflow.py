@@ -33,6 +33,7 @@ from .common import (
     CC_NOTES_EXECUTABLES,
     CcNotesAvailable,
     MCP_TOOL_PREFIX,
+    cc_notes_search_path,
     current_branch,
     ids_match,
     repo_root,
@@ -245,9 +246,9 @@ def run_sync(evt: BaseHookEvent, *, remote: str | None = None, cwd: str | None =
     args = ["cc-notes", "sync", *(("--remote", remote) if remote is not None else ())]
     try:
         if cwd is None:
-            evt.ctx.call_cli(args, timeout=15)
+            evt.ctx.call_cli(args, timeout=15, env={"PATH": cc_notes_search_path()})
         else:
-            subprocess.run(args, cwd=cwd, env=os.environ, check=True, capture_output=True, text=True, timeout=15)
+            subprocess.run(args, cwd=cwd, env=os.environ | {"PATH": cc_notes_search_path()}, check=True, capture_output=True, text=True, timeout=15)
     except subprocess.CalledProcessError as e:
         return None if "remote not configured" in (e.stderr or "") else False
     except (OSError, subprocess.SubprocessError):
