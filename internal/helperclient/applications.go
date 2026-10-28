@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 )
 
-// The deployment verbs the signed helper answers, and the ordinary CLI
-// forwards to it because daemonkit admits it on neither lane.
 const (
 	VerbVersion          = "version"
 	VerbPackageInstall   = "package-install"

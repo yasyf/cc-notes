@@ -176,11 +176,15 @@ func startSessionDaemon(t *testing.T) *sessionDaemon {
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("DAEMONKIT_HOME", home)
 
+	program, err := daemonkit.Stable("test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	sessions := &sessionDaemon{
 		daemon: daemonkit.Daemon{
 			Label:     "ccn-fusefs-policy",
+			Program:   program,
 			Schemas:   []daemonkit.Schema{"cc-notes-policy-test"},
-			Trust:     daemonkit.Trust{Serving: daemonkit.ServingSameUser()},
 			Shutdown:  daemonkit.Grace(10 * time.Second),
 			Handshake: daemonkit.Grace(10 * time.Second),
 		},

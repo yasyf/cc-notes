@@ -47,9 +47,6 @@ func budgeted(ctx context.Context, budget time.Duration) (context.Context, conte
 	return context.WithTimeout(ctx, budget)
 }
 
-// helperDaemon mirrors what holder.New serves from the same plan: the label,
-// schema, and trust the launcher opens against must be the ones the runtime
-// answers with, or neither half finds the other.
 func helperDaemon(appPath string) (daemonkit.Daemon, error) {
 	program, err := daemonkit.InBundle(
 		appPath, filepath.Join("Contents", "MacOS", helperclient.ExecutableName),
@@ -66,15 +63,9 @@ func helperDaemon(appPath string) (daemonkit.Daemon, error) {
 // Stop's executable-scoped inventory gate, which meets a live pre-v0.21 runtime
 // and refuses the whole removal instead of taking its LaunchAgent down.
 func stopDaemon() daemonkit.Daemon {
-	requirement := helperclient.Requirement()
 	return daemonkit.Daemon{
-		Label:   DeploymentServiceLabel,
-		Schemas: []daemonkit.Schema{daemonkit.Schema(transportproto.WireBuild)},
-		Trust: daemonkit.Trust{
-			Control:  &requirement,
-			Business: daemonkit.Requirements{requirement},
-			Serving:  daemonkit.ServingSigned(requirement),
-		},
+		Label:    DeploymentServiceLabel,
+		Schemas:  []daemonkit.Schema{daemonkit.Schema(transportproto.WireBuild)},
 		Restart:  daemonkit.RestartAlways,
 		Shutdown: daemonkit.Grace(helpercontract.RuntimeShutdownTimeout),
 	}
@@ -90,7 +81,7 @@ func deploymentPlan(appPath string) (holder.DeploymentPlan, error) {
 		return holder.DeploymentPlan{}, err
 	}
 	return holder.NewDeploymentPlan(DeploymentPlanSpec(
-		appPath, runtimeDirectory, presentationRoot, version.String(), runtimePolicyDigest(),
+		appPath, runtimeDirectory, presentationRoot, version.String(),
 	))
 }
 
@@ -117,7 +108,7 @@ func candidateAgents(appPath, source string) ([]launchd.Agent, error) {
 		return nil, err
 	}
 	plan, err := holder.NewCandidatePlan(DeploymentPlanSpec(
-		appPath, runtimeDirectory, presentationRoot, version.String(), runtimePolicyDigest(),
+		appPath, runtimeDirectory, presentationRoot, version.String(),
 	), source)
 	if err != nil {
 		return nil, fmt.Errorf("cc-notes helper: derive candidate plan: %w", err)
@@ -230,13 +221,14 @@ func ActivateService(ctx context.Context) error {
 }
 
 // DeactivateService drains the installed helper runtime and removes its agent.
-func DeactivateService(ctx context.Context) error {
+func DeactivateService(ctx context.Context) (resultErr error) {
 	ctx, cancel := budgeted(ctx, deactivateServiceBudget)
 	defer cancel()
 	client, err := daemonkit.Open(stopDaemon())
 	if err != nil {
 		return fmt.Errorf("cc-notes helper: open signed helper: %w", err)
 	}
+	defer func() { resultErr = errors.Join(resultErr, client.Close(ctx)) }()
 	if err := client.Stop(ctx); err != nil {
 		return fmt.Errorf("cc-notes helper: stop installed helper: %w", err)
 	}
@@ -277,23 +269,14 @@ func validateActivation(activation deploy.Activation, appPath, marketingVersion 
 }
 
 func validateReadiness(build string, generation uint64, digest deploy.SHA256, appPath string) error {
-	want, err := executableDigest(appPath)
+	want, err := bundle.ShortVersion(appPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("cc-notes helper: read installed bundle version: %w", err)
 	}
 	if build != want || generation == 0 || digest == (deploy.SHA256{}) {
-		return fmt.Errorf("cc-notes helper: daemonkit returned an inexact readiness proof (build %q, want executable digest %q)", build, want)
+		return fmt.Errorf("cc-notes helper: daemonkit returned an inexact readiness proof (build %q, want bundle version %q)", build, want)
 	}
 	return nil
-}
-
-func executableDigest(appPath string) (string, error) {
-	data, err := os.ReadFile(bundle.ExePath(appPath, helperclient.ExecutableName))
-	if err != nil {
-		return "", fmt.Errorf("cc-notes helper: read installed executable: %w", err)
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
 }
 
 func validateGeneration(generation deploy.Generation, appPath, marketingVersion string) error {

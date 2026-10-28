@@ -13,15 +13,14 @@ import (
 	"strings"
 
 	"github.com/yasyf/cc-notes/internal/version"
-	"github.com/yasyf/daemonkit"
 	"github.com/yasyf/daemonkit/bundle"
+	"github.com/yasyf/daemonkit/deploy"
 )
 
 var releaseVersionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
 
-// Requirement returns the only accepted signed helper identity.
-func Requirement() daemonkit.Requirement {
-	return daemonkit.Requirement{TeamID: TeamID, SigningIdentifier: BundleID}
+func Requirement() deploy.Requirement {
+	return deploy.Requirement{TeamID: TeamID, SigningIdentifier: BundleID}
 }
 
 // CanonicalExecutable returns the running executable's exact absolute link-free path.

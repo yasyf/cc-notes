@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os"
 	"sync"
 	"time"
 
@@ -26,7 +25,6 @@ const helperOwner tenant.OwnerID = "cc-notes"
 type HelperRuntimeConfig struct {
 	Plan                    holder.RuntimePlan
 	Drivers                 holder.DriverFactories
-	Trust                   holder.RuntimeTrust
 	WorkerLimit             int
 	NativeOptions           []string
 	NativeReadinessTimeout  time.Duration
@@ -49,7 +47,6 @@ func newHolderConfig(config HelperRuntimeConfig) holder.Config {
 	return holder.Config{
 		Plan: config.Plan, RuntimeBuild: config.Plan.BuildID(),
 		Owner: catalog.SourceAuthorityFleetOwnerID(helperOwner), Drivers: config.Drivers,
-		Trust:             config.Trust,
 		CatalogAuthorizer: catalogAuthorizer{policy}, Authorizer: mountAuthorizer{policy},
 		WorkerLimit: config.WorkerLimit, NativeOptions: config.NativeOptions,
 		NativeReadinessTimeout: config.NativeReadinessTimeout,
@@ -72,15 +69,12 @@ type helperSessionBinding struct {
 }
 
 type helperPolicy struct {
-	uid uint32
-
 	mu       sync.Mutex
 	bindings map[daemonkit.Session]helperSessionBinding
 }
 
 func newHelperPolicy() *helperPolicy {
 	return &helperPolicy{
-		uid:      uint32(os.Getuid()), //nolint:gosec // kernel UIDs are non-negative
 		bindings: make(map[daemonkit.Session]helperSessionBinding),
 	}
 }
@@ -107,7 +101,7 @@ func (p *helperPolicy) authorizeNative(
 	if !nativeOperation(operation) {
 		return mountservice.ErrUnauthorized
 	}
-	return p.bind(identity.Caller, identity.Session, helperSessionBinding{role: helperSessionNative})
+	return p.bind(identity.Session, helperSessionBinding{role: helperSessionNative})
 }
 
 func (p *helperPolicy) authorizeCatalog(
@@ -115,7 +109,7 @@ func (p *helperPolicy) authorizeCatalog(
 	operation catalogproto.Operation,
 	route catalogservice.Route,
 ) (catalogservice.Authorization, error) {
-	binding, err := p.bound(identity.Caller, identity.Session)
+	binding, err := p.bound(identity.Session)
 	if err != nil {
 		return catalogservice.Authorization{}, err
 	}
@@ -163,9 +157,9 @@ func (a catalogAuthorizer) Authorize(
 	return a.policy.authorizeCatalog(identity, operation, route)
 }
 
-func (p *helperPolicy) bind(caller daemonkit.Caller, session daemonkit.Session, binding helperSessionBinding) error {
-	if session == (daemonkit.Session{}) || caller.UID != p.uid {
-		return errors.New("FuseKit runtime: unauthenticated session")
+func (p *helperPolicy) bind(session daemonkit.Session, binding helperSessionBinding) error {
+	if session == (daemonkit.Session{}) {
+		return errors.New("FuseKit runtime: missing session")
 	}
 	p.mu.Lock()
 	existing, exists := p.bindings[session]
@@ -182,9 +176,9 @@ func (p *helperPolicy) bind(caller daemonkit.Caller, session daemonkit.Session, 
 	return nil
 }
 
-func (p *helperPolicy) bound(caller daemonkit.Caller, session daemonkit.Session) (helperSessionBinding, error) {
-	if session == (daemonkit.Session{}) || caller.UID != p.uid {
-		return helperSessionBinding{}, errors.New("FuseKit runtime: unauthenticated session")
+func (p *helperPolicy) bound(session daemonkit.Session) (helperSessionBinding, error) {
+	if session == (daemonkit.Session{}) {
+		return helperSessionBinding{}, errors.New("FuseKit runtime: missing session")
 	}
 	p.mu.Lock()
 	binding, ok := p.bindings[session]

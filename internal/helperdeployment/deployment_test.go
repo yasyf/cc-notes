@@ -4,8 +4,6 @@ package helperdeployment
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,9 +11,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
 	"github.com/yasyf/cc-notes/internal/helpercontract"
-	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/daemonkit"
-	"github.com/yasyf/daemonkit/bundle"
 	"github.com/yasyf/daemonkit/deploy"
 )
 
@@ -32,20 +28,10 @@ func TestStopDaemonNamesNoProgram(t *testing.T) {
 	}
 }
 
-func TestHelperDaemonRestartsAlwaysAndTrustsOnlyTheSignedHelper(t *testing.T) {
+func TestHelperDaemonRestartsAlways(t *testing.T) {
 	daemon := stopDaemon()
 	if daemon.Restart != daemonkit.RestartAlways {
 		t.Fatalf("restart = %v, want RestartAlways", daemon.Restart)
-	}
-	want := daemonkit.Requirement{
-		TeamID: helperclient.TeamID, SigningIdentifier: helperclient.BundleID,
-	}.Digest()
-	if daemon.Trust.Control == nil || daemon.Trust.Control.Digest() != want ||
-		len(daemon.Trust.Business) != 1 || daemon.Trust.Business[0].Digest() != want {
-		t.Fatalf("trust = %#v, want control and business pinned to the signed helper", daemon.Trust)
-	}
-	if daemon.Trust.Serving == (daemonkit.Serving{}) {
-		t.Fatal("serving posture is unstated; Open would refuse the daemon")
 	}
 }
 
@@ -78,25 +64,23 @@ func TestHelperDaemonFrameCarriesTheProvisionPayload(t *testing.T) {
 	}
 }
 
-func TestReadinessBuildIsTheInstalledExecutableDigest(t *testing.T) {
+func TestReadinessBuildIsTheInstalledBundleVersion(t *testing.T) {
 	appPath := filepath.Join(t.TempDir(), helperclient.ExecutableName+".app")
-	executable := bundle.ExePath(appPath, helperclient.ExecutableName)
-	if err := os.MkdirAll(filepath.Dir(executable), 0o755); err != nil {
+	contents := filepath.Join(appPath, "Contents")
+	if err := os.MkdirAll(contents, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	contents := []byte("signed helper bytes")
-	if err := os.WriteFile(executable, contents, 0o755); err != nil {
+	const build = "0.73.4"
+	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), []byte(`<plist><dict><key>CFBundleShortVersionString</key><string>`+build+`</string></dict></plist>`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(contents)
-	build := hex.EncodeToString(sum[:])
 	digest := deploy.SHA256{1}
 
 	if err := validateReadiness(build, 1, digest, appPath); err != nil {
-		t.Fatalf("readiness proving the installed executable's digest was refused: %v", err)
+		t.Fatalf("readiness naming the installed bundle version was refused: %v", err)
 	}
-	if err := validateReadiness(version.String(), 1, digest, appPath); err == nil {
-		t.Fatal("readiness naming the product version string was accepted; daemonkit reports the executable digest")
+	if err := validateReadiness("0.73.3", 1, digest, appPath); err == nil {
+		t.Fatal("readiness naming a different bundle version was accepted")
 	}
 	if err := validateReadiness(build, 0, digest, appPath); err == nil {
 		t.Fatal("readiness with no generation was accepted")

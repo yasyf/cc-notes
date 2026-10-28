@@ -213,7 +213,6 @@ func TestHelperDeploymentUsesDaemonkitSchemaOneState(t *testing.T) {
 	assertFileContains(
 		t, filepath.Join(root, "cmd", "cc-notes-helper", "main.go"),
 		"holder.RunChild",
-		"Trust:                   helperapp.RuntimeTrust()",
 		"NativeReadinessTimeout:  helpercontract.RuntimeNativeReadinessTimeout",
 		"CatalogReadinessTimeout: helpercontract.RuntimeCatalogReadinessTimeout",
 		"CatalogOperationTimeout: helpercontract.RuntimeCatalogOperationTimeout",
