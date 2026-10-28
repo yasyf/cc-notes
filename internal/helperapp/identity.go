@@ -25,11 +25,6 @@ const (
 	ExecutableName = helperclient.ExecutableName
 )
 
-// RuntimeTrust pins the protected control lane to the sole fixed signed helper.
-func RuntimeTrust() holder.RuntimeTrust {
-	return holder.RuntimeTrust{Controller: helperclient.Requirement()}
-}
-
 // Application returns cc-notes' fixed signed helper identity.
 func Application(appPath string) holder.SignedApplication {
 	return helperdeployment.Application(appPath)

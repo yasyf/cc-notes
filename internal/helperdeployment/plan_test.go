@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
-	"github.com/yasyf/daemonkit"
 	"github.com/yasyf/fusekit/holder"
 )
 
@@ -16,25 +15,15 @@ func TestRuntimeAndDeploymentSpecsShareOneFixedContract(t *testing.T) {
 	runtime := RuntimePlanSpec(
 		filepath.Join("/Users/example", "Applications", "CCNotesHelper.app"), "/runtime", "/presentation", "v0.45.0", verifier,
 	)
-	digest := daemonkit.PolicyDigest("01")
 	deployment := DeploymentPlanSpec(
-		runtime.Application.AppPath, runtime.RuntimeDirectory, runtime.Native.PresentationRoot, runtime.BuildID, digest,
+		runtime.Application.AppPath, runtime.RuntimeDirectory, runtime.Native.PresentationRoot, runtime.BuildID,
 	)
 	if runtime.Application != deployment.Application || runtime.Application.BundleID != helperclient.BundleID ||
 		runtime.Application.TeamID != helperclient.TeamID ||
 		runtime.Application.Runtime.ExecutableName != helperclient.ExecutableName ||
 		deployment.Native == nil || deployment.Native.PresentationRoot != runtime.Native.PresentationRoot ||
 		deployment.BuildID != runtime.BuildID || deployment.Readiness != runtime.Readiness ||
-		!deployment.SourceCapable || deployment.RuntimePolicyDigest != digest {
+		!deployment.SourceCapable {
 		t.Fatalf("runtime/deployment specs = %#v / %#v", runtime, deployment)
-	}
-}
-
-func TestRuntimePolicyDigestMatchesSignedHelperRequirement(t *testing.T) {
-	want := daemonkit.Requirement{
-		TeamID: helperclient.TeamID, SigningIdentifier: helperclient.BundleID,
-	}.Digest()
-	if got := runtimePolicyDigest(); got != want {
-		t.Fatalf("runtime policy digest = %q, want %q", got, want)
 	}
 }

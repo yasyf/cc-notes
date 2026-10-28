@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
-	"github.com/yasyf/daemonkit"
 	"github.com/yasyf/fusekit/holder"
 )
 
@@ -61,9 +60,8 @@ func TestRuntimePlanSpecPinsNativeContract(t *testing.T) {
 		spec.Readiness != holder.StandardReadinessContract() || !spec.SourceCapable {
 		t.Fatalf("runtime plan spec = %#v", spec)
 	}
-	if spec.Application.Broker != (holder.SignedExecutable{}) || spec.BrokerPolicy.RequiredAppGroup != "" ||
-		len(spec.BrokerPolicy.RequiredEntitlements) != 0 {
-		t.Fatalf("mount-only runtime carried broker policy: %#v", spec)
+	if spec.Application.Broker != (holder.SignedExecutable{}) {
+		t.Fatalf("mount-only runtime carried a broker: %#v", spec)
 	}
 }
 
@@ -94,7 +92,6 @@ func TestDeploymentPlanRejectsHiddenHelper(t *testing.T) {
 			PresentationRoot: filepath.Join(account.HomeDir, ".cc-notes", "plan-presentation"),
 		},
 		BuildID: "v0.41.0", Readiness: holder.StandardReadinessContract(),
-		RuntimePolicyDigest: daemonkit.PolicyDigest("01"),
 	}
 	_, err = holder.NewDeploymentPlan(spec)
 	if err == nil || !strings.Contains(err.Error(), "not a fixed user application") {

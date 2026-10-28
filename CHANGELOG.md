@@ -73,6 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verb's accepted flags, instead of listing those flags with no remedy.
 
 ### Changed
+- **Any process running as the same user can now connect to the helper daemon.**
+  Runtime peer and child signature checks and trust configuration are removed
+  through `daemonkit` and `fusekit`, while installation still verifies the helper
+  app signature and activation readiness compares the installed app bundle
+  version instead of hashing the executable.
+  Builds against daemonkit 0.35.2 and fusekit 1.21.0 with Go 1.26.10.
 - **`answer list` reuses its stored result when answer refs match.** Previously,
   it folded every answer with one cache read and JSON decode per ref before
   labels, anchors, and `--limit`, so in a repository with 4,322 answer refs,

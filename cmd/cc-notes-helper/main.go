@@ -29,8 +29,6 @@ func run(ctx context.Context, arguments []string) error {
 	if recognized {
 		return err
 	}
-	// Deployment verbs answer here because the ad-hoc signed CLI is admitted
-	// on neither daemonkit lane.
 	if recognized, err := helperapp.RunVerb(ctx, arguments); recognized {
 		return err
 	}
@@ -43,7 +41,6 @@ func run(ctx context.Context, arguments []string) error {
 	}
 	runtime, err := fusefs.NewHelperRuntime(ctx, fusefs.HelperRuntimeConfig{
 		Plan: plan, Drivers: drivers,
-		Trust:                   helperapp.RuntimeTrust(),
 		NativeReadinessTimeout:  helpercontract.RuntimeNativeReadinessTimeout,
 		CatalogReadinessTimeout: helpercontract.RuntimeCatalogReadinessTimeout,
 		CatalogOperationTimeout: helpercontract.RuntimeCatalogOperationTimeout,

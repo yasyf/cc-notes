@@ -9,7 +9,6 @@ import (
 	"fmt"
 
 	"github.com/yasyf/cc-notes/internal/helperclient"
-	"github.com/yasyf/daemonkit"
 	"github.com/yasyf/daemonkit/deploy"
 	"github.com/yasyf/fusekit/holder"
 )
@@ -49,13 +48,11 @@ func RuntimePlanSpec(
 // DeploymentPlanSpec returns the daemon-facing contract for one exact app generation.
 func DeploymentPlanSpec(
 	appPath, runtimeDirectory, presentationRoot, buildID string,
-	runtimePolicyDigest daemonkit.PolicyDigest,
 ) holder.DeploymentPlanSpec {
 	return holder.DeploymentPlanSpec{
 		Application: Application(appPath), RuntimeDirectory: runtimeDirectory,
 		Native:  &holder.NativeDeploymentSpec{PresentationRoot: presentationRoot},
 		BuildID: buildID, Readiness: holder.StandardReadinessContract(), SourceCapable: true,
-		RuntimePolicyDigest: runtimePolicyDigest,
 	}
 }
 
@@ -115,8 +112,4 @@ func verifyPackagedFUSE(
 		return errors.New("cc-notes helper: FuseKit outer entitlements differ from daemonkit attestation")
 	}
 	return nil
-}
-
-func runtimePolicyDigest() daemonkit.PolicyDigest {
-	return helperclient.Requirement().Digest()
 }

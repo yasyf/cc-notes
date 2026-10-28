@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/helpercontract"
@@ -32,8 +31,8 @@ func BusinessHandlers(plan holder.RuntimePlan) []holder.BusinessHandlerSpec {
 			request daemonkit.Request,
 			controller *holder.LocalTenantController,
 		) (any, error) {
-			if request.Session == (daemonkit.Session{}) || request.Caller.UID != uint32(os.Getuid()) { //nolint:gosec // kernel UIDs are non-negative
-				return nil, errors.New("cc-notes helper: repository provision peer is not exact")
+			if request.Session == (daemonkit.Session{}) {
+				return nil, errors.New("cc-notes helper: repository provision session is missing")
 			}
 			var payload helpercontract.ProvisionRepositoryRequest
 			if err := decodeBusinessPayload(request.Body, &payload); err != nil {
@@ -71,7 +70,6 @@ func helperDaemon(plan holder.RuntimePlan) daemonkit.Daemon {
 	return daemonkit.Daemon{
 		Label:   daemonkit.Label(plan.Deployment().Agent().Label),
 		Schemas: []daemonkit.Schema{daemonkit.Schema(transportproto.WireBuild)},
-		Trust:   daemonkit.Trust{Serving: daemonkit.ServingSigned(plan.RuntimeRequirement())},
 	}
 }
 
