@@ -33,6 +33,7 @@ type documentSpec[T model.Snapshot] struct {
 	editLong      string
 	adapter       func() editAdapter
 	newSummaryDTO func(T, string) any
+	newRecordDTO  func(T) any
 	lean          func(T) string
 
 	resolve   func(ctx context.Context, c *notes.Client, prefix string) (model.EntityID, error)
@@ -420,19 +421,19 @@ func (spec documentSpec[T]) reviewVerb() *cobra.Command {
 	return cmd
 }
 
-// listVerb builds "list": filter by labels and anchors, order by UpdatedAt, keep
-// the --limit most recently updated, and print. Every document kind is
-// supersedable, so --include-superseded is always bound.
 func (spec documentSpec[T]) listVerb() *cobra.Command {
 	var labels []string
 	var filters anchorFilters
 	var limit int
-	var all, includeSuperseded, jsonOut bool
+	var all, includeSuperseded, full, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List " + spec.noun + "s",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if full && !jsonOut {
+				return &UsageError{Err: fmt.Errorf("%s --full requires --json", cmd.CommandPath())}
+			}
 			c, err := openClient(cmd)
 			if err != nil {
 				return err
@@ -449,7 +450,11 @@ func (spec documentSpec[T]) listVerb() *cobra.Command {
 			if limit > 0 && len(items) > limit {
 				items = items[:limit]
 			}
-			return printEntityList(cmd, items, jsonOut, spec.listDTO, spec.lean)
+			newDTO := spec.listDTO
+			if full {
+				newDTO = spec.newRecordDTO
+			}
+			return printEntityList(cmd, items, jsonOut, newDTO, spec.lean)
 		},
 	}
 	flags := cmd.Flags()
@@ -458,6 +463,7 @@ func (spec documentSpec[T]) listVerb() *cobra.Command {
 	filters.bind(flags)
 	flags.BoolVar(&all, "all", false, "include tombstoned "+spec.noun+"s")
 	flags.BoolVar(&includeSuperseded, "include-superseded", false, "include superseded "+spec.noun+"s")
+	flags.BoolVar(&full, "full", false, "with --json, emit each stored "+spec.noun+" (body, timestamps, superseded_by) instead of its summary")
 	bindJSON(flags, &jsonOut)
 	return cmd
 }
@@ -549,6 +555,7 @@ var noteDocument = documentSpec[model.Note]{
 		"Markdown file and prints its path; edit that file with your normal tools, then\n" +
 		"--apply to commit the change (or --abort to discard).",
 	newSummaryDTO: func(n model.Note, drift string) any { return newNoteSummaryDTO(n, drift) },
+	newRecordDTO:  func(n model.Note) any { return newNoteDTO(n, "", nil, nil, nil) },
 	lean:          leanNoteLine,
 	resolve: func(ctx context.Context, c *notes.Client, prefix string) (model.EntityID, error) {
 		return c.ResolveNote(ctx, prefix)
@@ -617,6 +624,7 @@ var docDocument = documentSpec[model.Doc]{
 		"paragraph to the body as it stands when the edit lands, so concurrent appends\n" +
 		"all survive.",
 	newSummaryDTO: func(d model.Doc, drift string) any { return newDocSummaryDTO(d, drift) },
+	newRecordDTO:  func(d model.Doc) any { return newDocDTO(d, "", nil, nil, nil) },
 	lean:          leanDocLine,
 	resolve: func(ctx context.Context, c *notes.Client, prefix string) (model.EntityID, error) {
 		return c.ResolveDoc(ctx, prefix)

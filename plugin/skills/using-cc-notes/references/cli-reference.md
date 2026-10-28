@@ -2855,7 +2855,7 @@ ebba9fb	2026-06-12	design	Auth tokens expire after 15 minutes	DRIFTED
 
 ### `cc-notes note list`
 
-MCP: note_list (labels, path, commit, dir, branch, all, include_superseded, limit)
+MCP: note_list (labels, path, commit, dir, branch, all, include_superseded, full, limit)
 
 List notes, most recently updated first. Default drops superseded and tombstoned notes.
 
@@ -2868,6 +2868,7 @@ List notes, most recently updated first. Default drops superseded and tombstoned
 | `--branch <branch>` | none | Require branch anchor |
 | `--all` | off | Include tombstoned notes |
 | `--include-superseded` | off | Include superseded notes |
+| `--full` | off | Emit each stored note (body, `created_at`, forward `superseded_by`) instead of its summary, from the same single listing; requires `--json`. Omits the reverse `supersedes`, `live_head`, `drift`, and attachments that `show` derives |
 | `--limit N` | `0` (all) | Keep the N most recently updated matches |
 | `--json` | off | Emit JSON |
 
@@ -3132,7 +3133,7 @@ $ cc-notes answer review
 
 ### `cc-notes answer list`
 
-MCP: answer_list (labels, path, commit, dir, branch, all, include_superseded, limit)
+MCP: answer_list (labels, path, commit, dir, branch, all, include_superseded, full, limit)
 
 List answers, most recently updated first. Default drops superseded and tombstoned answers.
 
@@ -3145,6 +3146,7 @@ List answers, most recently updated first. Default drops superseded and tombston
 | `--branch <branch>` | none | Require branch anchor |
 | `--all` | off | Include tombstoned answers |
 | `--include-superseded` | off | Include superseded answers |
+| `--full` | off | Emit each stored answer (body, `created_at`, forward `superseded_by`) instead of its summary, from the same single listing; requires `--json`. Omits the reverse `supersedes`, `live_head`, `drift`, and attachments that `show` derives |
 | `--limit N` | `0` (all) | Keep the N most recently updated matches |
 | `--json` | off | Emit JSON |
 
@@ -3430,7 +3432,7 @@ $ cc-notes doc review
 
 ### `cc-notes doc list`
 
-MCP: doc_list (labels, path, commit, dir, branch, all, include_superseded, limit)
+MCP: doc_list (labels, path, commit, dir, branch, all, include_superseded, full, limit)
 
 List docs, most recently updated first. Default drops superseded and tombstoned docs.
 
@@ -3443,6 +3445,7 @@ List docs, most recently updated first. Default drops superseded and tombstoned 
 | `--branch <branch>` | none | Require branch anchor |
 | `--all` | off | Include tombstoned docs |
 | `--include-superseded` | off | Include superseded docs |
+| `--full` | off | Emit each stored doc (body, `created_at`, forward `superseded_by`) instead of its summary, from the same single listing; requires `--json`. Omits the reverse `supersedes`, `live_head`, `drift`, and attachments that `show` derives |
 | `--limit N` | `0` (all) | Keep the N most recently updated matches |
 | `--json` | off | Emit JSON |
 
