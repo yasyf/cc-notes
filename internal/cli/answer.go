@@ -70,6 +70,7 @@ var answerDocument = documentSpec[model.Answer]{
 		"editable Markdown file and prints its path; edit that file with your normal\n" +
 		"tools, then --apply to commit the change (or --abort to discard).",
 	newSummaryDTO: func(a model.Answer, drift string) any { return newAnswerSummaryDTO(a, drift) },
+	newRecordDTO:  func(a model.Answer) any { return newAnswerDTO(a, "", nil, nil, nil) },
 	lean:          leanAnswerLine,
 	resolve: func(ctx context.Context, c *notes.Client, prefix string) (model.EntityID, error) {
 		return c.ResolveAnswer(ctx, prefix)

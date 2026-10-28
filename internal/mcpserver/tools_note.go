@@ -91,6 +91,7 @@ type entityListArgs struct {
 	Limit             *int     `json:"limit,omitempty" jsonschema:"keep the N most recently updated (0 = all)"`
 	All               bool     `json:"all,omitempty" jsonschema:"include tombstoned entities"`
 	IncludeSuperseded bool     `json:"include_superseded,omitempty" jsonschema:"include superseded entities"`
+	Full              bool     `json:"full,omitempty" jsonschema:"emit each stored record (body, timestamps, superseded_by) instead of its summary"`
 }
 
 type entitySearchArgs struct {
@@ -140,6 +141,7 @@ func registerNoteDocShared(ts *toolset, b *bridge, noun, summaries string) {
 			flags = optInt(flags, "--limit", in.Limit)
 			flags = optBool(flags, "--all", in.All)
 			flags = optBool(flags, "--include-superseded", in.IncludeSuperseded)
+			flags = optBool(flags, "--full", in.Full)
 			return b.run(ctx, argvFor([]string{noun, "list"}, flags)...)
 		})
 

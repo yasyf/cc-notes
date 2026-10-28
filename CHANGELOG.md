@@ -112,6 +112,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its replacement, and `papercut` given a `title` points at `body`.
 
 ### Added
+- **`list --full --json` returns whole records from one listing.** A
+  caller that needed bodies, creation times, or supersede edges for a set of
+  docs ran `doc show` once per id, and each `show` re-read the docs namespace
+  twice to derive its reverse `supersedes` and `live_head`. `note list`,
+  `doc list`, and `answer list` now take `--full`, which emits each stored
+  record (body, `created_at`, forward `superseded_by`, anchors, verify and
+  expiry fields) from the same single listing the summary uses, with the same
+  filters and order. The fields `show` derives per record (`supersedes`,
+  `live_head`, `drift`, attachments) are left out. `--full` requires `--json`,
+  and the `*_list` MCP tools take `full`.
 - **`doc edit --append` adds a paragraph to a doc.** Extending a doc
   meant rewriting its whole body with `--body` or a checkout, so agents
   recorded addenda as separate notes instead. `doc edit <id> --append <text>`
