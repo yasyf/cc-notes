@@ -19,6 +19,7 @@ import (
 
 var releaseVersionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
 
+// Requirement returns the signed helper identity installation verifies.
 func Requirement() deploy.Requirement {
 	return deploy.Requirement{TeamID: TeamID, SigningIdentifier: BundleID}
 }

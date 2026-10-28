@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 )
 
+// The deployment verbs the signed helper answers, which the ordinary CLI
+// forwards to it.
 const (
 	VerbVersion          = "version"
 	VerbPackageInstall   = "package-install"
