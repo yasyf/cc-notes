@@ -400,7 +400,7 @@ func TestTaskStatusMatchesStatusBuckets(t *testing.T) {
 	}
 }
 
-func TestStatusReadsEachViewFromOneScopedRefQuery(t *testing.T) {
+func TestStatusReadsEachViewFromScopedRefs(t *testing.T) {
 	recordRoots := []string{
 		"refs/cc-notes/tasks/", "refs/cc-notes/runbooks/", "refs/cc-notes/notes/", "refs/cc-notes/docs/",
 		"refs/cc-notes/answers/", "refs/cc-notes/logs/", "refs/cc-notes/investigations/",
@@ -412,7 +412,7 @@ func TestStatusReadsEachViewFromOneScopedRefQuery(t *testing.T) {
 		roots []string
 	}{
 		{"status", (*notes.Client).Status, recordRoots},
-		{"task status", (*notes.Client).TaskStatus, []string{"refs/cc-notes/tasks/"}},
+		{"task status", (*notes.Client).TaskStatus, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, dir := newClient(t)
@@ -428,7 +428,12 @@ func TestStatusReadsEachViewFromOneScopedRefQuery(t *testing.T) {
 			if len(rep.Backlog) != 1 {
 				t.Fatalf("Backlog = %+v, want the one backlog task", rep.Backlog)
 			}
-			if queries := refQueries(t, g); len(queries) != 1 || !slices.Equal(queries[0], tc.roots) {
+			queries := refQueries(t, g)
+			if tc.roots == nil {
+				if len(queries) != 0 {
+					t.Fatalf("for-each-ref patterns = %q, want native ref reads", queries)
+				}
+			} else if len(queries) != 1 || !slices.Equal(queries[0], tc.roots) {
 				t.Fatalf("for-each-ref patterns = %q, want one query over exactly %q", queries, tc.roots)
 			}
 		})
