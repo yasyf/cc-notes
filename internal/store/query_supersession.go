@@ -51,9 +51,14 @@ func indexedSupersessionQuery[T any](ctx context.Context, s *Store, kind model.K
 	if err != nil {
 		return value, false, err
 	}
-	return readQueryMetadataIndex(ctx, source, func(tx *bolt.Tx) (T, error) {
+	value, hit, err = readQueryMetadataIndex(ctx, source, func(tx *bolt.Tx) (T, error) {
 		return read(tx, source)
 	})
+	if err != nil {
+		var empty T
+		return empty, false, err
+	}
+	return value, hit, nil
 }
 
 func querySuperseders(ctx context.Context, tx *bolt.Tx, source queryMetadataSource, id model.EntityID) ([]model.EntityID, error) {
