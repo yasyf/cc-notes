@@ -99,8 +99,8 @@ type SummaryCount struct {
 	NeedsReview int
 }
 
-// Status aggregates the orientation view in one fold per entity kind, every
-// kind read from one ref query so the counts describe a single moment. The
+// Status aggregates the orientation view from one captured ref universe, using
+// compact metadata for classifiers and full values for exposed tasks and runs. The
 // current branch degrades to empty on a detached HEAD. Sprints and projects
 // feed nothing but SkippedOps, which states its verdict over the whole
 // repository and so cannot scan only the kinds the view itself needs.
@@ -114,11 +114,18 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	if err != nil {
 		return StatusReport{}, err
 	}
-	pinned, err := c.s.PinnedKinds(ctx, statusKinds...)
+	metadata, hit, err := c.s.StatusMetadata(ctx, statusKinds...)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	v := &Client{s: pinned}
+	v := &Client{s: metadata.Captured}
+	if hit {
+		return v.statusFromMetadata(ctx, metadata.Records, branch, now, ttl)
+	}
+	return v.statusFromSnapshots(ctx, branch, now, ttl)
+}
+
+func (v *Client) statusFromSnapshots(ctx context.Context, branch model.Branch, now time.Time, ttl time.Duration) (StatusReport, error) {
 	tasks, err := v.s.ListTasks(ctx)
 	if err != nil {
 		return StatusReport{}, err

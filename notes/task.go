@@ -809,12 +809,16 @@ func claimable(t model.Task) error {
 // done or cancelled. A blocker id matching no live task does not count as
 // resolved.
 func unblocked(live map[model.EntityID]model.Task, t model.Task) bool {
-	for _, dep := range t.BlockedBy {
-		blocker, ok := live[dep]
-		if !ok {
-			return false
-		}
-		if blocker.Status != model.StatusDone && blocker.Status != model.StatusCancelled {
+	return blockersResolved(t.BlockedBy, func(id model.EntityID) (model.Status, bool) {
+		blocker, ok := live[id]
+		return blocker.Status, ok
+	})
+}
+
+func blockersResolved(blockedBy []model.EntityID, status func(model.EntityID) (model.Status, bool)) bool {
+	for _, dep := range blockedBy {
+		state, ok := status(dep)
+		if !ok || state != model.StatusDone && state != model.StatusCancelled {
 			return false
 		}
 	}
