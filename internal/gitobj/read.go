@@ -29,12 +29,14 @@ func (r *Repo) ReadChain(ctx context.Context, tip model.SHA) ([]model.PackCommit
 	return r.readChain(ctx, tip)
 }
 
-func (r *Repo) readChain(ctx context.Context, tip model.SHA) ([]model.PackCommit, error) {
+func (r *Repo) readChain(ctx context.Context, tip model.SHA) (_ []model.PackCommit, resultErr error) {
 	if !plumbing.IsHash(string(tip)) {
 		return nil, fmt.Errorf("invalid tip sha %q", tip)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.beginRead(ctx)
+	defer r.endRead(&resultErr)
 	if err := r.refreshGraft(); err != nil {
 		return nil, err
 	}

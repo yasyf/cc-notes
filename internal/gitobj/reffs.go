@@ -68,9 +68,6 @@ func (fs gitDirFS) Open(path string) (billy.File, error) {
 	return &packIndexFile{File: file, reader: bufio.NewReaderSize(file, packIndexBuffer)}, nil
 }
 
-// packIndexFile buffers a pack index: go-git decodes every .idx unbuffered,
-// one read per fanout entry and per bucket of each table, so hundreds of packs
-// cost a handle millions of read syscalls.
 type packIndexFile struct {
 	billy.File
 	reader *bufio.Reader

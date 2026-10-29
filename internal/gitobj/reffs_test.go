@@ -2,10 +2,13 @@ package gitobj
 
 import (
 	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-git/go-billy/v5"
@@ -140,6 +143,91 @@ func TestPackDataIsNotBuffered(t *testing.T) {
 	}
 }
 
+func TestIndexInputSizeTracksOpenedFileAfterPathReplacement(t *testing.T) {
+	gitDir, index := packedIndex(t)
+	path := filepath.Join(gitDir, index)
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	fs := indexReadFS{
+		Filesystem: gitDirFS{countingFS{Filesystem: osfs.New(gitDir), reads: &reads}},
+		reads:      make(map[string]int64),
+	}
+	file, err := fs.Open(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+	replacement := path + ".replacement"
+	if err := os.WriteFile(replacement, []byte{0}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+	input, err := newIndexInput(contextFile{File: file, ctx: t.Context()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := input.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.Size() != before.Size() {
+		t.Fatalf("opened index size = %d, want original opened length %d", opened.Size(), before.Size())
+	}
+	if err := idxfile.NewDecoder(input).Decode(idxfile.NewMemoryIndex()); err != nil {
+		t.Fatalf("decode original opened index after path replacement: %v", err)
+	}
+}
+
+func TestIndexInputPreservesBufferedLogicalPosition(t *testing.T) {
+	raw, file := openedIndex(t)
+	readExactly(t, file, 8)
+	input, err := newIndexInput(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := input.Stat()
+	if err != nil || info.Size() != int64(len(raw)) {
+		t.Fatalf("opened length = %v, %v; want %d", info, err, len(raw))
+	}
+	if got := readExactly(t, input, 4); !bytes.Equal(got, raw[8:12]) {
+		t.Fatalf("read after sizing = %x, want %x", got, raw[8:12])
+	}
+}
+
+func TestIndexInputRejectsFanoutBeyondOpenedLength(t *testing.T) {
+	gitDir, index := packedIndex(t)
+	path := filepath.Join(gitDir, index)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary.BigEndian.PutUint32(raw[8+(fanoutEntries-1)*4:], ^uint32(0))
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := gitDirFS{osfs.New(gitDir)}.Open(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+	input, err := newIndexInput(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = idxfile.NewDecoder(input).Decode(idxfile.NewMemoryIndex())
+	if !errors.Is(err, idxfile.ErrMalformedIdxFile) || !strings.Contains(err.Error(), "file size") {
+		t.Fatalf("decode oversized fanout = %v, want malformed file-size refusal", err)
+	}
+}
+
 type countingFS struct {
 	billy.Filesystem
 	reads *int
@@ -205,7 +293,11 @@ func decodeIndex(t *testing.T, fs billy.Filesystem, index string) int64 {
 	}
 	t.Cleanup(func() { _ = file.Close() })
 	decoded := idxfile.NewMemoryIndex()
-	if err := idxfile.NewDecoder(file).Decode(decoded); err != nil {
+	input, err := newIndexInput(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idxfile.NewDecoder(input).Decode(decoded); err != nil {
 		t.Fatalf("decode %s: %v", index, err)
 	}
 	count, err := decoded.Count()
