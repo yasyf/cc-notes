@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -358,34 +359,71 @@ func (r *Repo) openPackedRefs() (*packedReferences, io.Closer, error) {
 	return p, f, nil
 }
 
-func (r *Repo) packedPrefix(ctx context.Context, prefix string) (map[string]*plumbing.Reference, error) {
-	p, file, err := r.openPackedRefs()
-	if errors.Is(err, os.ErrNotExist) {
-		return make(map[string]*plumbing.Reference), nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = file.Close() }()
-	return p.prefix(ctx, prefix)
+func (r *Repo) referencePrefix(ctx context.Context, prefix string) (map[string]*plumbing.Reference, error) {
+	return r.referencePrefixes(ctx, []string{prefix})
 }
 
-func (r *Repo) referencePrefix(ctx context.Context, prefix string) (map[string]*plumbing.Reference, error) {
-	out, err := r.packedPrefix(ctx, prefix)
-	if err != nil {
+func (r *Repo) referencePrefixes(ctx context.Context, prefixes []string) (map[string]*plumbing.Reference, error) {
+	prefixes = slices.Sorted(slices.Values(prefixes))
+	if len(prefixes) == 0 {
+		prefixes = []string{"refs/"}
+	}
+	selected := prefixes[:0]
+	for _, prefix := range prefixes {
+		if len(selected) == 0 || !strings.HasPrefix(prefix, selected[len(selected)-1]) {
+			selected = append(selected, prefix)
+		}
+	}
+	packed, file, err := r.openPackedRefs()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	if file != nil {
+		defer func() { _ = file.Close() }()
+	}
+	out := make(map[string]*plumbing.Reference)
+	if packed != nil && !packed.sorted {
+		if err := packed.scan(ctx, packed.start, func(entry packedReference) bool {
+			for _, prefix := range selected {
+				if strings.HasPrefix(entry.name, prefix) {
+					out[entry.name] = plumbing.NewHashReference(plumbing.ReferenceName(entry.name), entry.hash)
+					break
+				}
+			}
+			return true
+		}); err != nil {
+			return nil, err
+		}
+	}
+	for _, prefix := range selected {
+		if packed != nil && packed.sorted {
+			refs, err := packed.prefix(ctx, prefix)
+			if err != nil {
+				return nil, err
+			}
+			for name, ref := range refs {
+				out[name] = ref
+			}
+		}
+		if err := r.loosePrefix(ctx, prefix, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (r *Repo) loosePrefix(ctx context.Context, prefix string, out map[string]*plumbing.Reference) error {
 	if strings.HasPrefix("HEAD", prefix) {
 		head, err := r.reference(ctx, plumbing.HEAD)
 		if err != nil && !errors.Is(err, plumbing.ErrReferenceNotFound) {
-			return nil, err
+			return err
 		}
 		if head != nil {
 			out["HEAD"] = head
 		}
 	}
 	if prefix != "" && !strings.HasPrefix(prefix, "refs/") && !strings.HasPrefix("refs/", prefix) {
-		return out, nil
+		return nil
 	}
 	dir := path.Dir(prefix)
 	if strings.HasSuffix(prefix, "/") {
@@ -430,7 +468,7 @@ func (r *Repo) referencePrefix(ctx context.Context, prefix string) (map[string]*
 		return nil
 	}
 	if err := walk(dir); err != nil {
-		return nil, err
+		return err
 	}
-	return out, nil
+	return nil
 }

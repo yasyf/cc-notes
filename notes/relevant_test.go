@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
@@ -632,5 +634,204 @@ func TestRelevantKeepsADanglingSymlinksOwnPath(t *testing.T) {
 	e := findEntry(t, mustRelevant(t, c, dir, filepath.Join(dir, "broken.go"), notes.RelevantFilter{}), id)
 	if !slices.Contains(e.Reasons, "path") {
 		t.Fatalf("reasons = %v, want path: a symlink's own tracked path, never its target's", e.Reasons)
+	}
+}
+
+func unverifiedRelevant(t *testing.T, dir string, create model.CreateOp, appended ...model.Op) model.EntityID {
+	t.Helper()
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	snapshot, err := s.Create(t.Context(), []model.Op{create})
+	if err != nil {
+		t.Fatalf("create %s: %v", create.CreateKind(), err)
+	}
+	if len(appended) > 0 {
+		if _, err := s.Append(t.Context(), refs.For(create.CreateKind(), snapshot.EntityID()), appended); err != nil {
+			t.Fatalf("append %s: %v", create.CreateKind(), err)
+		}
+	}
+	return snapshot.EntityID()
+}
+
+func TestRelevantDetachedHead(t *testing.T) {
+	c, dir := newClient(t)
+	commitFileAs(t, dir, relevantMe, "x.go", "v1\n")
+	commitFileAs(t, dir, relevantMe, "y.go", "v2\n")
+	gittest.Git(t, dir, "checkout", "-q", "--detach", "HEAD")
+
+	pathNote := unverifiedRelevant(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "path", Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "x.go"}}})
+	branchNote := unverifiedRelevant(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "branch only", Anchors: []model.Anchor{{Kind: model.AnchorBranch, Value: "main"}}})
+
+	scored, err := c.Relevant(t.Context(), "x.go", notes.RelevantFilter{})
+	if err != nil {
+		t.Fatalf("detached HEAD must not error: %v", err)
+	}
+	wantIDs := []model.EntityID{pathNote, branchNote}
+	if !slices.Equal(scoredIDs(scored), wantIDs) {
+		t.Fatalf("detached HEAD ids = %v, want %v", scoredIDs(scored), wantIDs)
+	}
+	pm := findEntry(t, scored, pathNote)
+	if pm.Score != 100 || len(pm.Reasons) != 1 || pm.Reasons[0] != "path" {
+		t.Fatalf("detached path note = score %d reasons %v, want 100 [path]", pm.Score, pm.Reasons)
+	}
+	bm := findEntry(t, scored, branchNote)
+	if bm.Score != 40 || len(bm.Reasons) != 1 || bm.Reasons[0] != "branch" {
+		t.Fatalf("detached branch note = score %d reasons %v, want 40 [branch] (main resolves on a detached-at-tip HEAD)", bm.Score, bm.Reasons)
+	}
+}
+
+func TestRelevantAmbiguousHead(t *testing.T) {
+	c, dir := newClient(t)
+	gittest.Git(t, dir, "checkout", "-q", "-b", "wip")
+	commitFileAs(t, dir, relevantMe, "x.go", "v1\n")
+	gittest.Git(t, dir, "checkout", "-q", "--detach", "HEAD")
+	commitFileAs(t, dir, relevantMe, "y.go", "v2\n")
+
+	pathNote := unverifiedRelevant(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "path", Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "x.go"}}})
+	branchNote := unverifiedRelevant(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "branch only", Anchors: []model.Anchor{{Kind: model.AnchorBranch, Value: "wip"}}})
+
+	scored, err := c.Relevant(t.Context(), "x.go", notes.RelevantFilter{Base: "wip"})
+	if err != nil {
+		t.Fatalf("ambiguous HEAD must not error: %v", err)
+	}
+	wantIDs := []model.EntityID{pathNote, branchNote}
+	if !slices.Equal(scoredIDs(scored), wantIDs) {
+		t.Fatalf("ambiguous HEAD ids = %v, want %v", scoredIDs(scored), wantIDs)
+	}
+	pm := findEntry(t, scored, pathNote)
+	if pm.Score != 100 || len(pm.Reasons) != 1 || pm.Reasons[0] != "path" {
+		t.Fatalf("ambiguous path note = score %d reasons %v, want 100 [path]", pm.Score, pm.Reasons)
+	}
+	bm := findEntry(t, scored, branchNote)
+	if bm.Score != 20 || len(bm.Reasons) != 1 || bm.Reasons[0] != "merged-branch" {
+		t.Fatalf("ambiguous branch note = score %d reasons %v, want 20 [merged-branch] (no plain branch on an unresolvable HEAD)", bm.Score, bm.Reasons)
+	}
+}
+
+func TestRelevantUnbornHead(t *testing.T) {
+	c, dir := newClient(t)
+	pathNote := unverifiedRelevant(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "path", Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "x.go"}}})
+	branchNote := unverifiedRelevant(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "branch", Anchors: []model.Anchor{{Kind: model.AnchorBranch, Value: "main"}}})
+
+	scored, err := c.Relevant(t.Context(), "x.go", notes.RelevantFilter{})
+	if err != nil {
+		t.Fatalf("unborn HEAD must not error: %v", err)
+	}
+	wantIDs := []model.EntityID{pathNote, branchNote}
+	if !slices.Equal(scoredIDs(scored), wantIDs) {
+		t.Fatalf("unborn HEAD ids = %v, want %v", scoredIDs(scored), wantIDs)
+	}
+	pm := findEntry(t, scored, pathNote)
+	if pm.Score != 100 || len(pm.Reasons) != 1 || pm.Reasons[0] != "path" {
+		t.Fatalf("unborn path note = score %d reasons %v, want 100 [path]", pm.Score, pm.Reasons)
+	}
+	bm := findEntry(t, scored, branchNote)
+	if bm.Score != 40 || len(bm.Reasons) != 1 || bm.Reasons[0] != "branch" {
+		t.Fatalf("unborn branch note = score %d reasons %v, want 40 [branch]", bm.Score, bm.Reasons)
+	}
+}
+
+func TestRelevantMergedBranchRefDeleted(t *testing.T) {
+	c, dir := newClient(t)
+	commitFileAs(t, dir, relevantMe, "core/x.go", "v1\n")
+	gittest.Git(t, dir, "branch", "feature")
+	gittest.Git(t, dir, "checkout", "-q", "feature")
+	commitFileAs(t, dir, relevantMe, "core/y.go", "v1\n")
+	gittest.Git(t, dir, "checkout", "-q", "main")
+	gittest.Git(t, dir, "merge", "-q", "--no-ff", "-m", "merge", "feature")
+	gittest.Git(t, dir, "branch", "-D", "feature")
+
+	unverifiedRelevant(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "merged branch gone", Anchors: []model.Anchor{{Kind: model.AnchorBranch, Value: "feature"}}})
+	scored, err := c.Relevant(t.Context(), "unrelated.go", notes.RelevantFilter{})
+	if err != nil {
+		t.Fatalf("deleted branch ref must skip, not error: %v", err)
+	}
+	if len(scored) != 0 {
+		t.Fatalf("deleted branch ref surfaced %v, want none", scoredIDs(scored))
+	}
+}
+
+func TestRelevantCrossAuthorExcludesSharedPath(t *testing.T) {
+	c, dir := newClient(t)
+	commitFileAs(t, dir, relevantMe, "base.go", "v1\n")
+	gittest.Git(t, dir, "branch", "feat-base")
+	commitFileAs(t, dir, relevantOther, "pkg/shared.go", "theirs\n")
+	commitFileAs(t, dir, relevantMe, "pkg/shared.go", "mine too\n")
+
+	sharedSib := unverifiedRelevant(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "shared sibling", Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "pkg/shared.go"}}})
+	scored, err := c.Relevant(t.Context(), "pkg/target.go", notes.RelevantFilter{Base: "feat-base"})
+	if err != nil {
+		t.Fatalf("Relevant: %v", err)
+	}
+	m := findEntry(t, scored, sharedSib)
+	if m.Score != 15 {
+		t.Fatalf("shared-path sibling score = %d, want 15 (no cross-author boost)", m.Score)
+	}
+	if len(m.Reasons) != 1 || m.Reasons[0] != "sibling" {
+		t.Fatalf("shared-path sibling reasons = %v, want [sibling]", m.Reasons)
+	}
+}
+
+func TestRelevantRanksDocs(t *testing.T) {
+	c, dir := newClient(t)
+	commitFileAs(t, dir, relevantMe, "internal/auth/login.go", "v1\n")
+
+	pathNote := unverifiedRelevant(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "exact path", Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "internal/auth/login.go"}}})
+	dirDoc := unverifiedRelevant(t, dir, model.CreateDoc{Nonce: model.NewNonce(), Title: "auth handoff", When: "resuming the auth cutover", Anchors: []model.Anchor{{Kind: model.AnchorDir, Value: "internal/auth"}}})
+
+	scored := mustRelevant(t, c, dir, "internal/auth/login.go", notes.RelevantFilter{})
+	wantIDs := []model.EntityID{pathNote, dirDoc}
+	if !slices.Equal(scoredIDs(scored), wantIDs) {
+		t.Fatalf("ranked ids = %v, want %v (path note outranks dir doc)", scoredIDs(scored), wantIDs)
+	}
+
+	note := findEntry(t, scored, pathNote)
+	if note.Kind != model.KindNote {
+		t.Fatalf("note entry kind = %q, want %q", note.Kind, model.KindNote)
+	}
+
+	doc := findEntry(t, scored, dirDoc)
+	if doc.Kind != model.KindDoc {
+		t.Fatalf("doc entry kind = %q, want %q", doc.Kind, model.KindDoc)
+	}
+	if doc.Doc.When != "resuming the auth cutover" {
+		t.Fatalf("doc when = %q, want the verbatim trigger", doc.Doc.When)
+	}
+	if doc.Score != 60 || len(doc.Reasons) != 1 || doc.Reasons[0] != "dir" {
+		t.Fatalf("doc = score %d reasons %v, want 60 [dir]", doc.Score, doc.Reasons)
+	}
+}
+
+func TestRelevantRanksLogs(t *testing.T) {
+	c, dir := newClient(t)
+	commitFileAs(t, dir, relevantMe, "internal/auth/login.go", "v1\n")
+
+	pathNote := unverifiedRelevant(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "exact path", Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "internal/auth/login.go"}}})
+	dirDoc := unverifiedRelevant(t, dir, model.CreateDoc{Nonce: model.NewNonce(), Title: "auth handoff", When: "resuming the auth cutover", Anchors: []model.Anchor{{Kind: model.AnchorDir, Value: "internal/auth"}}})
+	dirLog := unverifiedRelevant(t, dir, model.CreateLog{Nonce: model.NewNonce(), Title: "auth rollout", Anchors: []model.Anchor{{Kind: model.AnchorDir, Value: "internal/auth"}}}, model.AppendEntry{Text: "flipped to 5%"})
+
+	scored, err := c.Relevant(t.Context(), "internal/auth/login.go", notes.RelevantFilter{})
+	if err != nil {
+		t.Fatalf("Relevant: %v", err)
+	}
+
+	if got := scoredIDs(scored); len(got) != 3 || got[0] != pathNote {
+		t.Fatalf("ranked ids = %v, want path note first then doc+log", got)
+	}
+
+	log := findEntry(t, scored, dirLog)
+	if log.Kind != model.KindLog {
+		t.Fatalf("log entry kind = %q, want %q", log.Kind, model.KindLog)
+	}
+	if log.Score != 60 || len(log.Reasons) != 1 || log.Reasons[0] != "dir" {
+		t.Fatalf("log = score %d reasons %v, want 60 [dir]", log.Score, log.Reasons)
+	}
+	if v := findEntry(t, scored, dirLog).Verdict; v != "" {
+		t.Fatalf("log verdict = %q, want empty (logs never drift)", v)
+	}
+	if v := findEntry(t, scored, dirDoc).Verdict; v != notes.VerdictUnverified {
+		t.Fatalf("doc verdict = %q, want %q", v, notes.VerdictUnverified)
 	}
 }

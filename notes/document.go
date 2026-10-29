@@ -787,6 +787,9 @@ func (c *Client) DocVerdict(ctx context.Context, d model.Doc, staleAfter time.Du
 // NoteSuperseders returns the ids of notes that supersede id, sorted: the
 // reverse of the supersede edge, computed at read.
 func (c *Client) NoteSuperseders(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
+	if incoming, hit, err := c.s.IndexedSuperseders(ctx, model.KindNote, id); err != nil || hit {
+		return incoming, err
+	}
 	all, err := c.s.ListNotes(ctx, false, true)
 	if err != nil {
 		return nil, err
@@ -796,6 +799,9 @@ func (c *Client) NoteSuperseders(ctx context.Context, id model.EntityID) ([]mode
 
 // DocSuperseders returns the ids of docs that supersede id, sorted.
 func (c *Client) DocSuperseders(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
+	if incoming, hit, err := c.s.IndexedSuperseders(ctx, model.KindDoc, id); err != nil || hit {
+		return incoming, err
+	}
 	all, err := c.s.ListDocs(ctx, false, true)
 	if err != nil {
 		return nil, err
@@ -806,6 +812,9 @@ func (c *Client) DocSuperseders(ctx context.Context, id model.EntityID) ([]model
 // DocSupersession returns the sorted incoming superseders and terminal
 // supersede targets from one capture of the live and superseded docs.
 func (c *Client) DocSupersession(ctx context.Context, id model.EntityID) ([]model.EntityID, []model.EntityID, error) {
+	if incoming, heads, hit, err := c.s.IndexedSupersession(ctx, model.KindDoc, id); err != nil || hit {
+		return incoming, heads, err
+	}
 	all, err := c.s.ListDocs(ctx, false, true)
 	if err != nil {
 		return nil, nil, err
@@ -818,6 +827,9 @@ func (c *Client) DocSupersession(ctx context.Context, id model.EntityID) ([]mode
 // of a superseded note should read instead. The listing includes superseded
 // notes, so the walk can cross a chain of any depth.
 func (c *Client) NoteSupersedeHeads(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
+	if heads, hit, err := c.s.IndexedSupersedeHeads(ctx, model.KindNote, id); err != nil || hit {
+		return heads, err
+	}
 	all, err := c.s.ListNotes(ctx, false, true)
 	if err != nil {
 		return nil, err
@@ -828,6 +840,9 @@ func (c *Client) NoteSupersedeHeads(ctx context.Context, id model.EntityID) ([]m
 // DocSupersedeHeads walks the doc supersede edge transitively from id, mirroring
 // NoteSupersedeHeads.
 func (c *Client) DocSupersedeHeads(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
+	if heads, hit, err := c.s.IndexedSupersedeHeads(ctx, model.KindDoc, id); err != nil || hit {
+		return heads, err
+	}
 	all, err := c.s.ListDocs(ctx, false, true)
 	if err != nil {
 		return nil, err

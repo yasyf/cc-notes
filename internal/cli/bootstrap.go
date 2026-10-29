@@ -74,18 +74,11 @@ func openStore(cmd *cobra.Command) (*store.Store, error) {
 // directory, or the one named by --repo or $CCN_REPO — the client-only opener for commands
 // that need no *store.Store.
 func openClient(cmd *cobra.Command) (*notes.Client, error) {
-	s, retained, err := retainedStore(cmd)
+	s, err := openStore(cmd)
 	if err != nil {
 		return nil, err
 	}
-	if retained {
-		return notes.FromStore(s), nil
-	}
-	dir, err := repoDir(cmd)
-	if err != nil {
-		return nil, err
-	}
-	return notes.Open(dir)
+	return notes.FromStore(s), nil
 }
 
 // openStoreClient opens both the store — the surface the print/DTO layer and
@@ -93,18 +86,7 @@ func openClient(cmd *cobra.Command) (*notes.Client, error) {
 // logic, over the repository containing the working directory, or the one named
 // by --repo or $CCN_REPO.
 func openStoreClient(cmd *cobra.Command) (*store.Store, *notes.Client, error) {
-	s, retained, err := retainedStore(cmd)
-	if err != nil {
-		return nil, nil, err
-	}
-	if retained {
-		return s, notes.FromStore(s), nil
-	}
-	dir, err := repoDir(cmd)
-	if err != nil {
-		return nil, nil, err
-	}
-	s, err = store.OpenContext(cmd.Context(), dir)
+	s, err := openStore(cmd)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -170,7 +170,7 @@ func docEnumerations(lines []string) int {
 	return n
 }
 
-func TestDocListFullReadsOneListing(t *testing.T) {
+func TestDocListFullUsesNativeRefs(t *testing.T) {
 	dir := initRepo(t)
 	chain := extendChain(t, dir, "progress:x", nil, 2)
 	trace := traceGit(t)
@@ -179,8 +179,8 @@ func TestDocListFullReadsOneListing(t *testing.T) {
 	mustRun(t, dir, summary...)
 
 	short := trace.of(t, dir, full...)
-	if n := docEnumerations(short); n != 1 {
-		t.Fatalf("doc list --full enumerated the docs namespace %d times, want 1: %q", n, short)
+	if n := docEnumerations(short); n != 0 {
+		t.Fatalf("doc list --full enumerated the docs namespace %d times, want 0 Git queries: %q", n, short)
 	}
 	if got := trace.of(t, dir, summary...); !slices.Equal(short, got) {
 		t.Fatalf("--full git calls %q differ from the summary listing's %q", short, got)
@@ -190,8 +190,8 @@ func TestDocListFullReadsOneListing(t *testing.T) {
 	if long := trace.of(t, dir, full...); !slices.Equal(long, short) {
 		t.Fatalf("git calls grew with the chain: 2 docs %q, 6 docs %q", short, long)
 	}
-	if show := trace.of(t, dir, "doc", "show", chain[1], "--json"); docEnumerations(show) <= 1 {
-		t.Fatalf("doc show enumerated the docs namespace %d times, want the per-record reverse walk this listing replaces", docEnumerations(show))
+	if show := trace.of(t, dir, "doc", "show", chain[1], "--json"); docEnumerations(show) != 0 {
+		t.Fatalf("doc show enumerated the docs namespace %d times, want native ref reads", docEnumerations(show))
 	}
 }
 
@@ -204,8 +204,8 @@ func TestDocShowReadsOneCorpusAndOpensOneStore(t *testing.T) {
 		for _, suffix := range [][]string{nil, {"--json"}} {
 			args := slices.Concat([]string{"doc", "show", chain[0]}, suffix)
 			calls := trace.of(t, dir, args...)
-			if got := docEnumerations(calls); got != 2 {
-				t.Fatalf("%v over %d docs enumerated the namespace %d times, want one resolve and one corpus read: %q", args, size, got, calls)
+			if got := docEnumerations(calls); got != 0 {
+				t.Fatalf("%v over %d docs enumerated the namespace %d times, want 0 Git queries: %q", args, size, got, calls)
 			}
 			opens := 0
 			for _, call := range calls {
