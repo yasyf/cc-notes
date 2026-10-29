@@ -65,8 +65,8 @@ func TestIndexedAnswersWarmReadsAvoidUnrelatedCorpus(t *testing.T) {
 			s := initStore(t)
 			selected := create(t, s, append(answerOps("selected"), model.AddTag{Tag: "target"})).EntityID()
 			var unrelated model.EntityID
-			for range count {
-				unrelated = create(t, s, answerOps("unrelated")).EntityID()
+			for i := range count {
+				unrelated = create(t, s, answerOps(fmt.Sprintf("unrelated %d", i))).EntityID()
 			}
 			time.Sleep(2100 * time.Millisecond)
 			if _, hit, err := s.IndexedAnswers(t.Context(), []string{"target"}, ListOpts{}); err != nil || !hit {
