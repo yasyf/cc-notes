@@ -61,7 +61,7 @@ func TestSupersessionCacheMissRetainsAuthoritativeAndPinnedViews(t *testing.T) {
 				pins[refs.For(kind, id)] = tip
 			}
 			pinned := FromStore(c.s.Pinned(pins))
-			if err := os.WriteFile(filepath.Join(c.s.CommonDir(), "cc-notes-query"), []byte("unavailable cache"), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(c.s.CommonDir(), "cc-notes-query"), []byte("unavailable cache"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := c.s.Append(t.Context(), refs.For(kind, a), []model.Op{model.DeleteNote{}}); err != nil {
@@ -83,7 +83,7 @@ func TestSupersessionCacheMissRetainsAuthoritativeAndPinnedViews(t *testing.T) {
 
 func createSupersessionPair(t *testing.T, s *store.Store, kind model.Kind) (model.EntityID, model.EntityID) {
 	t.Helper()
-	ids := []model.EntityID{}
+	ids := make([]model.EntityID, 0, 2)
 	for _, title := range []string{"a", "b"} {
 		var op model.Op = model.CreateNote{Nonce: model.NewNonce(), Title: title}
 		if kind == model.KindDoc {

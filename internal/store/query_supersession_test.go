@@ -81,7 +81,7 @@ func TestIndexedSupersessionAvoidsUnchangedCorpusBodies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			db, err := bolt.Open(source.indexPath(), 0600, nil)
+			db, err := bolt.Open(source.indexPath(), 0o600, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

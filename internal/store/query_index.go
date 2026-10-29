@@ -83,10 +83,11 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 				if err != nil {
 					return err
 				}
-				if len(diff.Changed) != 0 || len(diff.Removed) != 0 || (lazy && q.generation != "" && string(binding.Get(queryMetadataGenerationKey)) != q.generation) {
+				if len(diff.Changed) != 0 || len(diff.Removed) != 0 {
 					refresh = !q.pinned
 					return nil
 				}
+				refresh = lazy && q.generation != "" && string(binding.Get(queryMetadataGenerationKey)) != q.generation
 			}
 		} else {
 			if err := capture(); err != nil {
@@ -189,10 +190,10 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 	}
 	if !q.pinned && ((!available && errors.Is(cacheOpenErr, os.ErrNotExist)) || refresh) {
 		if err := os.MkdirAll(filepath.Dir(q.indexPath()), 0o750); err != nil {
-			return value, false, nil
+			return value, hit, nil
 		}
 		if !access(false) {
-			return value, false, nil
+			return value, hit, nil
 		}
 	}
 

@@ -148,6 +148,31 @@ func TestQueryGenerationRecentUpdatesAndPackRefs(t *testing.T) {
 	}
 }
 
+func TestQueryGenerationPromotionPreservesReadOnlyHit(t *testing.T) {
+	s := initStore(t)
+	a := create(t, s, docOps("a")).EntityID()
+	b := create(t, s, docOps("b")).EntityID()
+	appendOps(t, s, refs.For(model.KindDoc, a), model.AddSupersededBy{ID: b})
+	if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit {
+		t.Fatalf("prime = %v %v", hit, err)
+	}
+	q, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generation, _ := queryIndexGeneration(t, q); generation != "" {
+		t.Fatalf("recent source unexpectedly qualified %q", generation)
+	}
+	time.Sleep(2100 * time.Millisecond)
+	if err := os.Chmod(q.indexPath(), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(q.indexPath(), 0o600) })
+	if _, heads, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit || !slices.Equal(heads, []model.EntityID{b}) {
+		t.Fatalf("readonly promotion = %v %v %v", heads, hit, err)
+	}
+}
+
 func TestQueryGenerationRechecksAfterRead(t *testing.T) {
 	s := initStore(t)
 	a := create(t, s, docOps("a")).EntityID()
