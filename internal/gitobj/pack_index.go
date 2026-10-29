@@ -40,9 +40,10 @@ type packIndex struct {
 
 const packIndexSchema = `CREATE TABLE IF NOT EXISTS packs (hash BLOB PRIMARY KEY, stamp BLOB NOT NULL, count INTEGER NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS objects (pack BLOB NOT NULL REFERENCES packs(hash) ON DELETE CASCADE, hash BLOB NOT NULL, offset INTEGER NOT NULL, crc INTEGER NOT NULL, PRIMARY KEY(pack, hash)) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS objects_by_hash ON objects(hash, pack);
-CREATE INDEX IF NOT EXISTS objects_by_offset ON objects(pack, offset);
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;`
+
+const packIndexLookupSchema = `CREATE INDEX IF NOT EXISTS objects_by_hash ON objects(hash, pack);
+CREATE INDEX IF NOT EXISTS objects_by_offset ON objects(pack, offset);`
 
 func newPackIndex(dir *dotgit.DotGit, commonDir string) (*packIndex, error) {
 	repo, err := ccnhome.ForRepo(commonDir)
@@ -50,7 +51,7 @@ func newPackIndex(dir *dotgit.DotGit, commonDir string) (*packIndex, error) {
 		return nil, err
 	}
 	dir = dotgit.NewWithOptions(dir.Fs(), dotgit.Options{AlternatesFS: osfs.New(string(filepath.Separator))})
-	return &packIndex{dir: dir, path: filepath.Join(repo.Dir, "objects-v1.sqlite")}, nil
+	return &packIndex{dir: dir, path: filepath.Join(repo.Dir, "objects-v2.sqlite")}, nil
 }
 
 func (p *packIndex) identities(ctx context.Context) ([]packIdentity, error) {
@@ -75,7 +76,7 @@ func (p *packIndex) identities(ctx context.Context) ([]packIdentity, error) {
 }
 
 func (p *packIndex) identity(hash plumbing.Hash) ([]byte, error) {
-	stamp := make([]byte, 0, 80)
+	stamp := make([]byte, 0, 64)
 	for _, ext := range []string{"idx", "pack"} {
 		info, err := p.dir.Fs().Stat(filepath.Join(packDir, "pack-"+hash.String()+"."+ext))
 		if errors.Is(err, os.ErrNotExist) {
@@ -85,13 +86,21 @@ func (p *packIndex) identity(hash plumbing.Hash) ([]byte, error) {
 			return nil, err
 		}
 		device, inode := FileID(info)
-		ctime, _ := StatIdentity(info)
 		stamp, err = binary.Append(stamp, binary.BigEndian, struct {
-			Device, Inode           uint64
-			Size, Modified, Changed int64
-		}{device, inode, info.Size(), info.ModTime().UnixNano(), ctime})
+			Device, Inode uint64
+			Size          int64
+		}{device, inode, info.Size()})
 		if err != nil {
 			return nil, err
+		}
+		if ext == "idx" {
+			ctime, _ := StatIdentity(info)
+			stamp, err = binary.Append(stamp, binary.BigEndian, struct {
+				Modified, Changed int64
+			}{info.ModTime().UnixNano(), ctime})
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return stamp, nil
@@ -274,6 +283,9 @@ func (p *packIndex) reconcile(ctx context.Context, db *sql.DB) (resultErr error)
 		if err := p.add(ctx, tx, identity); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.ExecContext(ctx, packIndexLookupSchema); err != nil {
+		return err
 	}
 	for _, identity := range identities {
 		if err := ctx.Err(); err != nil {
