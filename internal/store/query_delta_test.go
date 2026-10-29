@@ -357,7 +357,7 @@ func TestQueryMetadataDeltaAddsNewCapturedRows(t *testing.T) {
 
 func TestQueryMetadataDeltaRejectsMalformedCompactSummary(t *testing.T) {
 	for _, malformed := range [][]byte{{}, {2, 't'}} {
-		t.Run(fmt.Sprint(malformed), func(t *testing.T) {
+		t.Run(string(malformed), func(t *testing.T) {
 			db := newQueryMetadataDB(t)
 			if err := db.Update(func(tx *bolt.Tx) error {
 				if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", model.Doc{ID: "id"})); err != nil {
