@@ -46,12 +46,14 @@ type reach struct {
 // shallow-clone graft bounds the walk at its boundary commits, so the verdict
 // matches git merge-base --is-ancestor rather than treating the grafted
 // parents as reachable.
-func (r *Repo) IsAncestor(ctx context.Context, a, b model.SHA) (bool, error) {
+func (r *Repo) IsAncestor(ctx context.Context, a, b model.SHA) (_ bool, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.beginRead(ctx)
+	defer r.endRead(&resultErr)
 	if err := r.refreshGraft(); err != nil {
 		return false, err
 	}
@@ -78,12 +80,14 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b model.SHA) (bool, error) {
 // so its verdict never depends on whether its object happens to be present.
 // An a absent from a complete repository, and any absent b, wrap
 // ErrCommitNotFound.
-func (r *Repo) Ancestry(ctx context.Context, a, b model.SHA) (Ancestry, error) {
+func (r *Repo) Ancestry(ctx context.Context, a, b model.SHA) (_ Ancestry, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return NotAncestor, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.beginRead(ctx)
+	defer r.endRead(&resultErr)
 	if err := r.refreshGraft(); err != nil {
 		return NotAncestor, err
 	}
@@ -112,12 +116,14 @@ func (r *Repo) Ancestry(ctx context.Context, a, b model.SHA) (Ancestry, error) {
 // parents is AncestryUnknown. The drained frontier is memoized like Ancestry's,
 // and a complete repository answers NotAncestor without walking. An absent b
 // wraps ErrCommitNotFound.
-func (r *Repo) AbsentAncestry(ctx context.Context, b model.SHA) (Ancestry, error) {
+func (r *Repo) AbsentAncestry(ctx context.Context, b model.SHA) (_ Ancestry, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return NotAncestor, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.beginRead(ctx)
+	defer r.endRead(&resultErr)
 	if err := r.refreshGraft(); err != nil {
 		return NotAncestor, err
 	}

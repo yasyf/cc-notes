@@ -31,10 +31,7 @@ const (
 	// the one go-git's ShallowStorage reads. go-git keeps its own spelling
 	// unexported.
 	shallowFile = "shallow"
-	// openPacks bounds the packfile descriptors go-git keeps open across
-	// reads. KeepDescriptors is the alternative and is unusable here: it never
-	// closes, and no cc-notes type owns a lifecycle that could call Close.
-	openPacks = 8
+	openPacks   = 8
 	// packsRacyWindow bounds the timestamp granularity of the pack directory's
 	// filesystem: a stamp taken within it of the directory's last write could
 	// match the stamp a second write in the same tick leaves.
@@ -78,7 +75,7 @@ type Repo struct {
 	// graftAt shows the shallow file changed, and every entry point that
 	// consults shallow calls refreshGraft first.
 	mu           sync.Mutex
-	storage      *filesystem.Storage
+	storage      *objectStorage
 	fs           *dotgit.RepositoryFilesystem
 	reaches      map[plumbing.Hash]*reach
 	reachOrder   []plumbing.Hash
@@ -104,12 +101,17 @@ type pathStamp struct {
 // directories.
 func Open(gitDir, commonDir string) (*Repo, error) {
 	fs := dotgit.NewRepositoryFilesystem(gitDirFS{osfs.New(gitDir)}, gitDirFS{osfs.New(commonDir)})
-	storage := filesystem.NewStorageWithOptions(fs, cache.NewObjectLRUDefault(), filesystem.Options{MaxOpenDescriptors: openPacks})
+	objects := cache.NewObjectLRUDefault()
+	storage := filesystem.NewStorageWithOptions(fs, objects, filesystem.Options{MaxOpenDescriptors: openPacks})
 	if err := verifyLayout(storage); err != nil {
 		return nil, err
 	}
+	index, err := newPackIndex(dotgit.New(fs), commonDir)
+	if err != nil {
+		return nil, err
+	}
 	r := &Repo{
-		storage:  storage,
+		storage:  &objectStorage{Storage: storage, index: index, objects: objects},
 		fs:       fs,
 		reaches:  make(map[plumbing.Hash]*reach, reachCap),
 		subtrees: make(map[plumbing.Hash]*treeIndex),

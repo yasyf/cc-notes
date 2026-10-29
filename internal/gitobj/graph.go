@@ -24,12 +24,14 @@ type CodeCommit struct {
 }
 
 // WalkCommits walks the commit DAG from tips, newest-first by commit time, stopping at limit commits (limit <= 0 means unbounded) or at commits older than since (unix seconds, 0 = unbounded). A shallow-clone graft boundary, or a parent object missing from the ODB, truncates the walk at that edge rather than failing.
-func (r *Repo) WalkCommits(ctx context.Context, tips []model.SHA, limit int, since int64) ([]CodeCommit, bool, error) {
+func (r *Repo) WalkCommits(ctx context.Context, tips []model.SHA, limit int, since int64) (_ []CodeCommit, _ bool, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.beginRead(ctx)
+	defer r.endRead(&resultErr)
 	if err := r.refreshGraft(); err != nil {
 		return nil, false, err
 	}
@@ -105,7 +107,7 @@ const sinceSlop = 100
 // or after since (unix seconds, 0 = unbounded) are collected, and the walk
 // stops once sinceSlop consecutive commits predate since, at a shallow-clone
 // graft boundary, or at a parent missing from the ODB.
-func (r *Repo) FirstParentMerges(ctx context.Context, tip model.SHA, limit int, since int64) ([]CodeCommit, error) {
+func (r *Repo) FirstParentMerges(ctx context.Context, tip model.SHA, limit int, since int64) (_ []CodeCommit, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -114,6 +116,8 @@ func (r *Repo) FirstParentMerges(ctx context.Context, tip model.SHA, limit int, 
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.beginRead(ctx)
+	defer r.endRead(&resultErr)
 	if err := r.refreshGraft(); err != nil {
 		return nil, err
 	}

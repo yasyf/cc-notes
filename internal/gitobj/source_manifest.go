@@ -103,12 +103,14 @@ func (r *Repo) WriteSourceManifestCommit(ctx context.Context, parent model.SHA, 
 
 // ReadSourceManifestCommit reads and strictly validates one derived source
 // revision and returns its single predecessor, if any.
-func (r *Repo) ReadSourceManifestCommit(ctx context.Context, sha model.SHA) (SourceManifest, model.SHA, error) {
+func (r *Repo) ReadSourceManifestCommit(ctx context.Context, sha model.SHA) (_ SourceManifest, _ model.SHA, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.beginRead(ctx)
+	defer r.endRead(&resultErr)
 	commit, err := r.commit(sha)
 	if err != nil {
 		return nil, "", fmt.Errorf("read source manifest commit %s: %w", sha, err)

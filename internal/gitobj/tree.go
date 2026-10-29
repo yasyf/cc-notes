@@ -22,7 +22,7 @@ import (
 // A path with no content at rev wraps model.ErrPathNotFound, an unborn HEAD
 // (an empty rev) included; a ./ or ../ path climbing above the root fails with
 // ErrPathEscapesRoot, which is git's fatal rather than its miss.
-func (r *Repo) PathOID(ctx context.Context, rev model.SHA, path string) (model.SHA, error) {
+func (r *Repo) PathOID(ctx context.Context, rev model.SHA, path string) (_ model.SHA, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -35,6 +35,8 @@ func (r *Repo) PathOID(ctx context.Context, rev model.SHA, path string) (model.S
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.beginRead(ctx)
+	defer r.endRead(&resultErr)
 	tree, err := r.rootTree(rev)
 	if err != nil {
 		return "", err

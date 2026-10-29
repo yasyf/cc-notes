@@ -122,12 +122,14 @@ func (r *Repo) WriteSourceOperationProof(ctx context.Context, proof SourceOperat
 }
 
 // ReadSourceOperationProof reads and strictly validates one operation proof.
-func (r *Repo) ReadSourceOperationProof(ctx context.Context, sha model.SHA) (SourceOperationProof, error) {
+func (r *Repo) ReadSourceOperationProof(ctx context.Context, sha model.SHA) (_ SourceOperationProof, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return SourceOperationProof{}, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.beginRead(ctx)
+	defer r.endRead(&resultErr)
 	commit, err := r.commit(sha)
 	if err != nil {
 		return SourceOperationProof{}, fmt.Errorf("read source operation %s: %w", sha, err)
