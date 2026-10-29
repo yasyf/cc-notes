@@ -15,6 +15,7 @@ type queryMetadataSource struct {
 	kind    model.Kind
 	binding string
 	tips    map[model.EntityID]model.SHA
+	pinned  bool
 }
 
 func captureQueryMetadata(ctx context.Context, s *Store, kind model.Kind) (queryMetadataSource, error) {
@@ -40,6 +41,7 @@ func captureQueryMetadata(ctx context.Context, s *Store, kind model.Kind) (query
 	}
 	source := queryMetadataSource{
 		store:   pinned,
+		pinned:  s.pins != nil,
 		kind:    kind,
 		binding: pinned.listCacheName(kind, fmt.Appendf(nil, "metadata %d", queryMetadataVersion), foldCacheGeneration, identity),
 		tips:    make(map[model.EntityID]model.SHA),

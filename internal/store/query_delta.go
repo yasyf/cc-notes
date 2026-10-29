@@ -38,7 +38,11 @@ func putQueryMetadataTip(binding *bolt.Bucket, row queryMetadata) error {
 }
 
 func deleteQueryMetadataTip(binding *bolt.Bucket, row queryMetadata) error {
-	return binding.Bucket(queryMetadataTipsBucket).Bucket(queryMetadataAtom(string(row.Kind))).Delete([]byte(row.ID))
+	kind := binding.Bucket(queryMetadataTipsBucket).Bucket(queryMetadataAtom(string(row.Kind)))
+	if kind == nil {
+		return fmt.Errorf("missing metadata tip summaries for %s", row.Kind)
+	}
+	return kind.Delete([]byte(row.ID))
 }
 
 func queryMetadataKindTips(tx *bolt.Tx, binding string, kind model.Kind) *bolt.Bucket {
