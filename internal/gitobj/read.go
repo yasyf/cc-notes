@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -79,7 +78,7 @@ func (r *Repo) Tip(ctx context.Context, ref string) (model.SHA, error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	resolved, err := storer.ResolveReference(r.storage, plumbing.ReferenceName(ref))
+	resolved, err := storer.ResolveReference(referenceLookup{ReferenceStorer: r.storage, repo: r, ctx: ctx}, plumbing.ReferenceName(ref))
 	if errors.Is(err, plumbing.ErrReferenceNotFound) {
 		return "", fmt.Errorf("%w: %s", ErrRefNotFound, ref)
 	}
@@ -97,19 +96,17 @@ func (r *Repo) ListSymbolic(ctx context.Context, prefix string) (map[string]stri
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	iter, err := retryEmptyRef(ctx, r.storage.IterReferences)
+	refs, err := retryEmptyRef(ctx, func() (map[string]*plumbing.Reference, error) {
+		return r.referencePrefix(ctx, prefix)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list refs: %w", err)
 	}
 	targets := make(map[string]string)
-	err = iter.ForEach(func(ref *plumbing.Reference) error {
-		if ref.Type() == plumbing.SymbolicReference && strings.HasPrefix(string(ref.Name()), prefix) {
+	for _, ref := range refs {
+		if ref.Type() == plumbing.SymbolicReference {
 			targets[string(ref.Name())] = string(ref.Target())
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list symbolic refs with prefix %s: %w", prefix, err)
 	}
 	return targets, nil
 }
@@ -122,26 +119,22 @@ func (r *Repo) ListPrefix(ctx context.Context, prefix string) (map[string]model.
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	iter, err := retryEmptyRef(ctx, r.storage.IterReferences)
+	refs, err := retryEmptyRef(ctx, func() (map[string]*plumbing.Reference, error) {
+		return r.referencePrefix(ctx, prefix)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list refs: %w", err)
 	}
 	tips := make(map[string]model.SHA)
-	err = iter.ForEach(func(ref *plumbing.Reference) error {
+	for _, ref := range refs {
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
 		if ref.Type() != plumbing.HashReference {
-			return nil
+			continue
 		}
 		name := string(ref.Name())
-		if strings.HasPrefix(name, prefix) {
-			tips[name] = model.SHA(ref.Hash().String())
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list refs with prefix %s: %w", prefix, err)
+		tips[name] = model.SHA(ref.Hash().String())
 	}
 	return tips, nil
 }
