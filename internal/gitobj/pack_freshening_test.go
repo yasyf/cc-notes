@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,4 +90,72 @@ func TestPackFresheningReusesValidatedIndex(t *testing.T) {
 	if got := indexedDataVersion(t, observer); got != version {
 		t.Fatalf("freshened generation data version = %d, want %d", got, version)
 	}
+}
+
+func TestPackIndexRejectsPackRoutingMutation(t *testing.T) {
+	for _, mutation := range []string{"remove", "replace", "truncate"} {
+		t.Run(mutation, func(t *testing.T) {
+			_, commonDir, _ := indexedCommitFixture(t)
+			index, _ := testPackIndex(t, commonDir)
+			index.dir = dotgit.New(packIndexOpenFS{Filesystem: index.dir.Fs(), indexOpen: func(path string) {
+				path = filepath.Join(commonDir, strings.TrimSuffix(path, ".idx")+".pack")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch mutation {
+				case "remove":
+					err = os.Remove(path)
+				case "replace":
+					if err := os.WriteFile(path+".replacement", raw, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					err = os.Rename(path+".replacement", path)
+				case "truncate":
+					if err := os.Chmod(path, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					err = os.Truncate(path, int64(len(raw)-1))
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}})
+			if err := index.prepare(t.Context()); err == nil || index.ready {
+				t.Fatalf("mutated pack prepare = %v, ready = %v; want failure and unpublished generation", err, index.ready)
+			}
+		})
+	}
+}
+
+func TestPackIndexRecoversUnpublishedWAL(t *testing.T) {
+	_, commonDir, hash := indexedCommitFixture(t)
+	index, _ := testPackIndex(t, commonDir)
+	if err := os.MkdirAll(filepath.Dir(index.path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	db, err := index.open(t.Context(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enterIndexWAL(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := beginIndexWrite(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(t.Context(), packIndexSchema); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := index.prepare(t.Context()); err != nil {
+		t.Fatalf("prepare rolled-back initial generation: %v", err)
+	}
+	assertIndexedCommit(t, index, hash)
 }

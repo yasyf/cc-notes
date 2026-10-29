@@ -75,7 +75,7 @@ func (p *packIndex) identities(ctx context.Context) ([]packIdentity, error) {
 }
 
 func (p *packIndex) identity(hash plumbing.Hash) ([]byte, error) {
-	stamp := make([]byte, 0, 80)
+	stamp := make([]byte, 0, 64)
 	for _, ext := range []string{"idx", "pack"} {
 		info, err := p.dir.Fs().Stat(filepath.Join(packDir, "pack-"+hash.String()+"."+ext))
 		if errors.Is(err, os.ErrNotExist) {
@@ -85,13 +85,21 @@ func (p *packIndex) identity(hash plumbing.Hash) ([]byte, error) {
 			return nil, err
 		}
 		device, inode := FileID(info)
-		ctime, _ := StatIdentity(info)
 		stamp, err = binary.Append(stamp, binary.BigEndian, struct {
-			Device, Inode           uint64
-			Size, Modified, Changed int64
-		}{device, inode, info.Size(), info.ModTime().UnixNano(), ctime})
+			Device, Inode uint64
+			Size          int64
+		}{device, inode, info.Size()})
 		if err != nil {
 			return nil, err
+		}
+		if ext == "idx" {
+			ctime, _ := StatIdentity(info)
+			stamp, err = binary.Append(stamp, binary.BigEndian, struct {
+				Modified, Changed int64
+			}{info.ModTime().UnixNano(), ctime})
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return stamp, nil
