@@ -19,7 +19,7 @@ type indexedSupersession struct {
 // IndexedSuperseders uses the derived incoming-edge postings. A cache miss leaves
 // the caller's authoritative listing responsible for the result.
 func (s *Store) IndexedSuperseders(ctx context.Context, kind model.Kind, id model.EntityID) ([]model.EntityID, bool, error) {
-	return indexedSupersessionQuery(ctx, s, kind, func(tx *bolt.Tx, source queryMetadataSource) ([]model.EntityID, error) {
+	return indexedMetadataQuery(ctx, s, kind, func(tx *bolt.Tx, source queryMetadataSource) ([]model.EntityID, error) {
 		return querySuperseders(ctx, tx, source, id)
 	})
 }
@@ -27,7 +27,7 @@ func (s *Store) IndexedSuperseders(ctx context.Context, kind model.Kind, id mode
 // IndexedSupersedeHeads follows only reachable metadata rows. A cache miss leaves
 // the caller's authoritative listing responsible for the result.
 func (s *Store) IndexedSupersedeHeads(ctx context.Context, kind model.Kind, id model.EntityID) ([]model.EntityID, bool, error) {
-	return indexedSupersessionQuery(ctx, s, kind, func(tx *bolt.Tx, source queryMetadataSource) ([]model.EntityID, error) {
+	return indexedMetadataQuery(ctx, s, kind, func(tx *bolt.Tx, source queryMetadataSource) ([]model.EntityID, error) {
 		return querySupersedeHeads(ctx, tx, source, id)
 	})
 }
@@ -35,7 +35,7 @@ func (s *Store) IndexedSupersedeHeads(ctx context.Context, kind model.Kind, id m
 // IndexedSupersession captures incoming and terminal edges from the same metadata
 // view. A cache miss leaves the caller's authoritative listing responsible for both.
 func (s *Store) IndexedSupersession(ctx context.Context, kind model.Kind, id model.EntityID) ([]model.EntityID, []model.EntityID, bool, error) {
-	result, hit, err := indexedSupersessionQuery(ctx, s, kind, func(tx *bolt.Tx, source queryMetadataSource) (indexedSupersession, error) {
+	result, hit, err := indexedMetadataQuery(ctx, s, kind, func(tx *bolt.Tx, source queryMetadataSource) (indexedSupersession, error) {
 		incoming, err := querySuperseders(ctx, tx, source, id)
 		if err != nil {
 			return indexedSupersession{}, err
@@ -46,7 +46,7 @@ func (s *Store) IndexedSupersession(ctx context.Context, kind model.Kind, id mod
 	return result.incoming, result.heads, hit, err
 }
 
-func indexedSupersessionQuery[T any](ctx context.Context, s *Store, kind model.Kind, read func(*bolt.Tx, queryMetadataSource) (T, error)) (value T, hit bool, err error) {
+func indexedMetadataQuery[T any](ctx context.Context, s *Store, kind model.Kind, read func(*bolt.Tx, queryMetadataSource) (T, error)) (value T, hit bool, err error) {
 	source, err := queryMetadataIdentity(ctx, s, kind)
 	if err == nil && source.pinned {
 		source, err = source.capture(ctx)
@@ -70,7 +70,7 @@ func querySuperseders(ctx context.Context, tx *bolt.Tx, source queryMetadataSour
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		row, err := decodeSupersessionMetadata(tx, source, data)
+		row, err := decodeQueryMetadata(tx, source, data)
 		if err != nil {
 			return err
 		}
@@ -117,7 +117,7 @@ func supersessionMetadata(ctx context.Context, tx *bolt.Tx, source queryMetadata
 	if err := ctx.Err(); err != nil {
 		return queryMetadata{}, false, err
 	}
-	tip, err := supersessionTip(tx, source, id)
+	tip, err := queryMetadataTip(tx, source, id)
 	if err != nil {
 		return queryMetadata{}, false, err
 	}
@@ -125,7 +125,7 @@ func supersessionMetadata(ctx context.Context, tx *bolt.Tx, source queryMetadata
 		return queryMetadata{}, false, nil
 	}
 	data := readQueryMetadata(tx, source.binding, id)
-	row, err := decodeSupersessionMetadata(tx, source, data)
+	row, err := decodeQueryMetadata(tx, source, data)
 	if err != nil {
 		return queryMetadata{}, false, err
 	}
@@ -135,12 +135,12 @@ func supersessionMetadata(ctx context.Context, tx *bolt.Tx, source queryMetadata
 	return row, !row.Deleted, nil
 }
 
-func decodeSupersessionMetadata(tx *bolt.Tx, source queryMetadataSource, data []byte) (queryMetadata, error) {
+func decodeQueryMetadata(tx *bolt.Tx, source queryMetadataSource, data []byte) (queryMetadata, error) {
 	var row queryMetadata
 	if err := json.Unmarshal(data, &row); err != nil {
 		return queryMetadata{}, err
 	}
-	tip, err := supersessionTip(tx, source, row.ID)
+	tip, err := queryMetadataTip(tx, source, row.ID)
 	if err != nil {
 		return queryMetadata{}, err
 	}
@@ -150,7 +150,7 @@ func decodeSupersessionMetadata(tx *bolt.Tx, source queryMetadataSource, data []
 	return row, nil
 }
 
-func supersessionTip(tx *bolt.Tx, source queryMetadataSource, id model.EntityID) (model.SHA, error) {
+func queryMetadataTip(tx *bolt.Tx, source queryMetadataSource, id model.EntityID) (model.SHA, error) {
 	if source.tips != nil {
 		return source.tips[id], nil
 	}

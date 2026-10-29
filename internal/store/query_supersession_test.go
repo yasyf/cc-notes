@@ -150,7 +150,7 @@ func TestIndexedSupersessionPinnedAndCancellation(t *testing.T) {
 		t.Fatalf("canceled = %v %v", hit, err)
 	}
 	ctx, cancel = context.WithCancel(t.Context())
-	value, hit, err := indexedSupersessionQuery(ctx, s, model.KindDoc, func(*bolt.Tx, queryMetadataSource) ([]model.EntityID, error) {
+	value, hit, err := indexedMetadataQuery(ctx, s, model.KindDoc, func(*bolt.Tx, queryMetadataSource) ([]model.EntityID, error) {
 		cancel()
 		return []model.EntityID{a}, nil
 	})
