@@ -570,6 +570,48 @@ func TestDocSupersedeHeads(t *testing.T) {
 	}
 }
 
+func TestDocSupersessionMatchesIndividualRelationships(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := t.Context()
+	mk := func(title string) model.EntityID {
+		t.Helper()
+		doc, _, err := c.CreateDoc(ctx, notes.DocSpec{Title: title, Body: "body", When: "always"})
+		if err != nil {
+			t.Fatalf("CreateDoc(%q): %v", title, err)
+		}
+		return doc.ID
+	}
+	a, b, d, e, cycle, gone := mk("a"), mk("b"), mk("d"), mk("e"), mk("cycle"), mk("gone")
+	for _, edge := range [][2]model.EntityID{{a, b}, {a, d}, {b, e}, {d, e}, {gone, e}} {
+		if _, err := c.SupersedeDoc(ctx, edge[0], edge[1]); err != nil {
+			t.Fatalf("SupersedeDoc(%s, %s): %v", edge[0], edge[1], err)
+		}
+	}
+	if _, err := c.SupersedeDoc(ctx, e, cycle); err != nil {
+		t.Fatalf("SupersedeDoc tail: %v", err)
+	}
+	if _, err := c.SupersedeDoc(ctx, cycle, e); err != nil {
+		t.Fatalf("SupersedeDoc cycle: %v", err)
+	}
+	if _, err := c.RemoveDoc(ctx, gone); err != nil {
+		t.Fatalf("RemoveDoc: %v", err)
+	}
+	for _, id := range []model.EntityID{a, b, d, e, cycle, gone, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"} {
+		incoming, err := c.DocSuperseders(ctx, id)
+		if err != nil {
+			t.Fatalf("DocSuperseders(%s): %v", id, err)
+		}
+		heads, err := c.DocSupersedeHeads(ctx, id)
+		if err != nil {
+			t.Fatalf("DocSupersedeHeads(%s): %v", id, err)
+		}
+		gotIncoming, gotHeads, err := c.DocSupersession(ctx, id)
+		if err != nil || !slices.Equal(gotIncoming, incoming) || !slices.Equal(gotHeads, heads) || (gotIncoming == nil) != (incoming == nil) || (gotHeads == nil) != (heads == nil) {
+			t.Fatalf("DocSupersession(%s) = %v, %v, %v; want %v, %v", id, gotIncoming, gotHeads, err, incoming, heads)
+		}
+	}
+}
+
 // TestSearchDocsMatchesWhenTrigger pins the When trigger as searchable body
 // text: the field a reader selects a doc on was invisible to search, so a query
 // naming the moment ("resuming the auth cutover") found nothing.
