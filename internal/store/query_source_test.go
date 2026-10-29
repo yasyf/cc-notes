@@ -23,7 +23,7 @@ func TestQueryMetadataSourceRetainsCapturedTips(t *testing.T) {
 	if len(source.tips) != 1 || oldTip == "" {
 		t.Fatalf("captured = %v, want only answer %s", source.tips, a.ID)
 	}
-	appendOps(t, s, answerRef(a.ID), model.AddLabel{Label: "later"})
+	appendOps(t, s, answerRef(a.ID), model.AddTag{Tag: "later"})
 	b := create(t, s, answerOps("b")).(model.Answer)
 	row, err := source.load(t.Context(), a.ID, oldTip)
 	if err != nil {
@@ -56,7 +56,7 @@ func TestQueryMetadataSourcePreservesPinnedUniverse(t *testing.T) {
 	}
 	pins := map[string]model.SHA{answerRef(a.ID): tip}
 	pinned := s.Pinned(pins)
-	appendOps(t, s, answerRef(a.ID), model.AddLabel{Label: "later"})
+	appendOps(t, s, answerRef(a.ID), model.AddTag{Tag: "later"})
 	create(t, s, answerOps("b"))
 	source, err := captureQueryMetadata(t.Context(), pinned, model.KindAnswer)
 	if err != nil {

@@ -94,8 +94,8 @@ func TestSettledSupersessionSkipsNamespaceAndSummaryWalks(t *testing.T) {
 			b := create(t, s, docOps("b")).EntityID()
 			appendOps(t, s, refs.For(model.KindDoc, a), model.AddSupersededBy{ID: b})
 			var unrelated model.EntityID
-			for range count {
-				unrelated = create(t, s, docOps("unrelated")).EntityID()
+			for i := range count {
+				unrelated = create(t, s, docOps(fmt.Sprintf("unrelated %d", i))).EntityID()
 			}
 			q := settleSupersession(t, s, a)
 			db, err := bolt.Open(q.indexPath(), 0o600, nil)
