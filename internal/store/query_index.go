@@ -14,6 +14,8 @@ import (
 
 const queryMetadataOpenTimeout = 5 * time.Second
 
+var queryMetadataGenerationKey = []byte("generation")
+
 func (q queryMetadataSource) indexPath() string {
 	return filepath.Join(q.store.recordsCommonDir, "cc-notes-query", q.binding+".db")
 }
@@ -36,7 +38,25 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 		}
 	}()
 	var authorityErr error
+	lazy := !q.pinned && q.tips == nil
+	if lazy {
+		q.generation, err = q.currentGeneration(ctx)
+		if err != nil {
+			return value, false, err
+		}
+	}
 	refresh := false
+	capture := func() error {
+		if q.tips != nil {
+			return nil
+		}
+		var err error
+		q, err = q.capture(ctx)
+		if err != nil {
+			authorityErr = err
+		}
+		return err
+	}
 	operation := func(tx *bolt.Tx) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -49,31 +69,58 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 		if binding != nil && !queryMetadataBucketsComplete(binding) {
 			return errors.New("incomplete query metadata buckets")
 		}
+		generationHit := !q.pinned && q.tips == nil && q.generation != "" && binding != nil && string(binding.Get(queryMetadataGenerationKey)) == q.generation
 		if !tx.Writable() {
 			if binding == nil {
 				refresh = !q.pinned
 				return nil
 			}
-			diff, err := diffQueryMetadata(ctx, tx, q.binding, q.kind, q.tips)
+			if !generationHit {
+				if err := capture(); err != nil {
+					return err
+				}
+				diff, err := diffQueryMetadata(ctx, tx, q.binding, q.kind, q.tips)
+				if err != nil {
+					return err
+				}
+				if len(diff.Changed) != 0 || len(diff.Removed) != 0 || (lazy && q.generation != "" && string(binding.Get(queryMetadataGenerationKey)) != q.generation) {
+					refresh = !q.pinned
+					return nil
+				}
+			}
+		} else {
+			if err := capture(); err != nil {
+				return err
+			}
+			binding, err := ensureQueryMetadataBinding(tx, q.binding)
 			if err != nil {
 				return err
 			}
-			if len(diff.Changed) != 0 || len(diff.Removed) != 0 {
-				refresh = !q.pinned
-				return nil
-			}
-		} else {
-			if _, err := ensureQueryMetadataBinding(tx, q.binding); err != nil {
+			if err := binding.Delete(queryMetadataGenerationKey); err != nil {
 				return err
 			}
+			complete := true
 			if err := applyQueryMetadataDelta(ctx, tx, q.binding, q.kind, q.tips, func(ctx context.Context, id model.EntityID, tip model.SHA) (queryMetadata, error) {
 				row, err := q.load(ctx, id, tip)
+				complete = complete && row.SkippedOps == 0
 				if err != nil {
 					authorityErr = err
 				}
 				return row, err
 			}); err != nil {
 				return err
+			}
+			if q.generation != "" && complete {
+				generation, err := q.currentGeneration(ctx)
+				if err != nil {
+					authorityErr = err
+					return err
+				}
+				if generation == q.generation {
+					if err := binding.Put(queryMetadataGenerationKey, []byte(generation)); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		var err error
@@ -87,6 +134,18 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if generationHit {
+			generation, err := q.currentGeneration(ctx)
+			if err != nil {
+				authorityErr = err
+				return err
+			}
+			if generation != q.generation {
+				q.generation = ""
+				refresh = true
+				return nil
+			}
 		}
 		hit = true
 		return nil
