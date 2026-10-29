@@ -1,0 +1,17 @@
+name: Pack freshening proof
+on:
+  push:
+    branches: ["diag/pack-freshening-*"]
+permissions:
+  contents: read
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    env:
+      GOMAXPROCS: "2"
+      GOFLAGS: "-p=2"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Real Git freshening and index publication
+        run: ./scripts/test.sh -count=1 -run 'TestPackFreshening|TestPackIndexRejectsPackRoutingMutation|TestPackIndexRecoversUnpublishedWAL|TestPackIndexFormatKeepsPriorCacheNamespace|TestPackIndexPublishesLookupIndexesWithGeneration' ./internal/gitobj
