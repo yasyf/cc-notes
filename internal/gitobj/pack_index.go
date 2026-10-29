@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/format/idxfile"
@@ -22,6 +23,8 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/ccnhome"
 )
+
+const indexBusyWait = 25 * time.Millisecond
 
 type packIdentity struct {
 	hash  plumbing.Hash
@@ -104,7 +107,7 @@ func (p *packIndex) open(ctx context.Context, readOnly bool) (*sql.DB, error) {
 	query := location.Query()
 	query.Set("mode", mode)
 	query.Set("_txlock", lock)
-	query.Add("_pragma", "busy_timeout(25)")
+	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", indexBusyWait.Milliseconds()))
 	query.Add("_pragma", "foreign_keys(ON)")
 	location.RawQuery = query.Encode()
 	db, err := sql.Open("sqlite", location.String())
@@ -167,7 +170,7 @@ func (p *packIndex) prepare(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx, "PRAGMA journal_mode = WAL")
+	err = enterIndexWAL(ctx, db)
 	if err == nil {
 		err = p.reconcile(ctx, db)
 	}
@@ -176,6 +179,26 @@ func (p *packIndex) prepare(ctx context.Context) error {
 		p.ready = true
 	}
 	return err
+}
+
+func enterIndexWAL(ctx context.Context, db *sql.DB) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		_, err := db.ExecContext(ctx, "PRAGMA journal_mode = WAL")
+		var sqliteErr *sqlite.Error
+		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != sqlite3.SQLITE_BUSY {
+			return err
+		}
+		timer := time.NewTimer(indexBusyWait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func (p *packIndex) reconcile(ctx context.Context, db *sql.DB) (resultErr error) {
