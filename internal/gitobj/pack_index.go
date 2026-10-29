@@ -40,9 +40,10 @@ type packIndex struct {
 
 const packIndexSchema = `CREATE TABLE IF NOT EXISTS packs (hash BLOB PRIMARY KEY, stamp BLOB NOT NULL, count INTEGER NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS objects (pack BLOB NOT NULL REFERENCES packs(hash) ON DELETE CASCADE, hash BLOB NOT NULL, offset INTEGER NOT NULL, crc INTEGER NOT NULL, PRIMARY KEY(pack, hash)) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS objects_by_hash ON objects(hash, pack);
-CREATE INDEX IF NOT EXISTS objects_by_offset ON objects(pack, offset);
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;`
+
+const packIndexLookupSchema = `CREATE INDEX IF NOT EXISTS objects_by_hash ON objects(hash, pack);
+CREATE INDEX IF NOT EXISTS objects_by_offset ON objects(pack, offset);`
 
 func newPackIndex(dir *dotgit.DotGit, commonDir string) (*packIndex, error) {
 	repo, err := ccnhome.ForRepo(commonDir)
@@ -294,6 +295,9 @@ func (p *packIndex) reconcile(ctx context.Context, db *sql.DB) (resultErr error)
 		if !bytes.Equal(stamp, identity.stamp) {
 			return errors.New("pack generation changed while indexing")
 		}
+	}
+	if _, err := tx.ExecContext(ctx, packIndexLookupSchema); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO metadata(key, value) VALUES('generation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", packGeneration(identities)); err != nil {
 		return err

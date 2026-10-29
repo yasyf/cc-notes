@@ -183,3 +183,69 @@ func TestPackIndexFormatKeepsPriorCacheNamespace(t *testing.T) {
 		t.Fatalf("prior cache = %q, %v; want retained bytes", got, err)
 	}
 }
+
+func TestPackIndexPublishesLookupIndexesWithGeneration(t *testing.T) {
+	dir, commonDir, hash := indexedCommitFixture(t)
+	index, _ := testPackIndex(t, commonDir)
+	if err := os.MkdirAll(filepath.Dir(index.path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	db, err := index.open(t.Context(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enterIndexWAL(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(t.Context(), packIndexSchema); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	observer := observeIndexedData(t, index)
+	index.dir = dotgit.New(packIndexOpenFS{Filesystem: index.dir.Fs(), indexOpen: func(string) {
+		var generations, lookups int
+		if err := observer.QueryRowContext(t.Context(), "SELECT count(*) FROM metadata WHERE key = 'generation'").Scan(&generations); err != nil {
+			t.Fatal(err)
+		}
+		if err := observer.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE name IN ('objects_by_hash', 'objects_by_offset')").Scan(&lookups); err != nil {
+			t.Fatal(err)
+		}
+		if generations != 0 || lookups != 0 {
+			t.Fatalf("initial insert exposes %d generations and %d lookup indexes", generations, lookups)
+		}
+	}})
+	if err := index.prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertIndexedCommit(t, index, hash)
+	checkLookups := func() {
+		t.Helper()
+		for _, query := range []struct {
+			sql, lookup string
+			args        []any
+		}{
+			{"EXPLAIN QUERY PLAN SELECT pack FROM objects WHERE hash = ? ORDER BY pack LIMIT 1", "objects_by_hash", []any{hash[:]}},
+			{"EXPLAIN QUERY PLAN SELECT hash FROM objects WHERE pack = ? AND offset = ?", "objects_by_offset", []any{hash[:], int64(0)}},
+		} {
+			var id, parent, unused int
+			var detail string
+			if err := observer.QueryRowContext(t.Context(), query.sql, query.args...).Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(detail, query.lookup) {
+				t.Fatalf("lookup plan = %q, want %s", detail, query.lookup)
+			}
+		}
+	}
+	checkLookups()
+	gittest.Git(t, dir, "commit", "--allow-empty", "-qm", "next")
+	gittest.Git(t, dir, "repack", "-dq")
+	fresh, _ := testPackIndex(t, commonDir)
+	if err := fresh.prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertIndexedCommit(t, fresh, hash)
+	checkLookups()
+}
