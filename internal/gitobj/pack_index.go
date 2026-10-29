@@ -15,6 +15,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/format/idxfile"
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
@@ -48,6 +49,7 @@ func newPackIndex(dir *dotgit.DotGit, commonDir string) (*packIndex, error) {
 	if err != nil {
 		return nil, err
 	}
+	dir = dotgit.NewWithOptions(dir.Fs(), dotgit.Options{AlternatesFS: osfs.New(string(filepath.Separator))})
 	return &packIndex{dir: dir, path: filepath.Join(repo.Dir, "objects-v1.sqlite")}, nil
 }
 
