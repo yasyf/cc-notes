@@ -125,69 +125,69 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	return v.statusFromSnapshots(ctx, branch, now, ttl)
 }
 
-func (v *Client) statusFromSnapshots(ctx context.Context, branch model.Branch, now time.Time, ttl time.Duration) (StatusReport, error) {
-	tasks, err := v.s.ListTasks(ctx)
+func (c *Client) statusFromSnapshots(ctx context.Context, branch model.Branch, now time.Time, ttl time.Duration) (StatusReport, error) {
+	tasks, err := c.s.ListTasks(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	ready, err := v.readyAmong(ctx, tasks, ScopeBacklog, "")
+	ready, err := c.readyAmong(ctx, tasks, ScopeBacklog, "")
 	if err != nil {
 		return StatusReport{}, err
 	}
-	runbooks, err := v.s.ListRunbooks(ctx)
+	runbooks, err := c.s.ListRunbooks(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	noteSet, err := v.s.ListNotes(ctx, false, true)
+	noteSet, err := c.s.ListNotes(ctx, false, true)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	docSet, err := v.s.ListDocs(ctx, false, true)
+	docSet, err := c.s.ListDocs(ctx, false, true)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	answerSet, err := v.s.ListAnswers(ctx, false, true)
+	answerSet, err := c.s.ListAnswers(ctx, false, true)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	logList, err := v.s.ListLogs(ctx, false)
+	logList, err := c.s.ListLogs(ctx, false)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	invList, err := v.s.ListInvestigations(ctx)
+	invList, err := c.s.ListInvestigations(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	sprintList, err := v.s.ListSprints(ctx)
+	sprintList, err := c.s.ListSprints(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	projectList, err := v.s.ListProjects(ctx)
+	projectList, err := c.s.ListProjects(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	planList, err := v.s.ListPlans(ctx)
+	planList, err := c.s.ListPlans(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	staleAfter, err := v.NoteStaleAfter(ctx)
+	staleAfter, err := c.NoteStaleAfter(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	head, err := v.head(ctx)
+	head, err := c.head(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	judge := memoAncestry(v.judgeVia(v.s.Git.ResolveCommit))
-	noteReviews, err := v.reviewNotes(ctx, noteSet, head, staleAfter, judge)
+	judge := memoAncestry(c.judgeVia(c.s.Git.ResolveCommit))
+	noteReviews, err := c.reviewNotes(ctx, noteSet, head, staleAfter, judge)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	docReviews, err := v.reviewDocs(ctx, docSet, head, staleAfter, judge)
+	docReviews, err := c.reviewDocs(ctx, docSet, head, staleAfter, judge)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	answerReviews, err := v.reviewAnswers(ctx, answerSet, head, staleAfter, judge)
+	answerReviews, err := c.reviewAnswers(ctx, answerSet, head, staleAfter, judge)
 	if err != nil {
 		return StatusReport{}, err
 	}
