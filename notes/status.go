@@ -99,8 +99,8 @@ type SummaryCount struct {
 	NeedsReview int
 }
 
-// Status aggregates the orientation view in one fold per entity kind, every
-// kind read from one ref query so the counts describe a single moment. The
+// Status aggregates the orientation view from one captured ref universe, using
+// compact metadata for classifiers and full values for exposed tasks and runs. The
 // current branch degrades to empty on a detached HEAD. Sprints and projects
 // feed nothing but SkippedOps, which states its verdict over the whole
 // repository and so cannot scan only the kinds the view itself needs.
@@ -114,73 +114,80 @@ func (c *Client) Status(ctx context.Context) (StatusReport, error) {
 	if err != nil {
 		return StatusReport{}, err
 	}
-	pinned, err := c.s.PinnedKinds(ctx, statusKinds...)
+	metadata, hit, err := c.s.StatusMetadata(ctx, statusKinds...)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	v := &Client{s: pinned}
-	tasks, err := v.s.ListTasks(ctx)
+	v := &Client{s: metadata.Captured}
+	if hit {
+		return v.statusFromMetadata(ctx, metadata.Records, branch, now, ttl)
+	}
+	return v.statusFromSnapshots(ctx, branch, now, ttl)
+}
+
+func (c *Client) statusFromSnapshots(ctx context.Context, branch model.Branch, now time.Time, ttl time.Duration) (StatusReport, error) {
+	tasks, err := c.s.ListTasks(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	ready, err := v.readyAmong(ctx, tasks, ScopeBacklog, "")
+	ready, err := c.readyAmong(ctx, tasks, ScopeBacklog, "")
 	if err != nil {
 		return StatusReport{}, err
 	}
-	runbooks, err := v.s.ListRunbooks(ctx)
+	runbooks, err := c.s.ListRunbooks(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	noteSet, err := v.s.ListNotes(ctx, false, true)
+	noteSet, err := c.s.ListNotes(ctx, false, true)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	docSet, err := v.s.ListDocs(ctx, false, true)
+	docSet, err := c.s.ListDocs(ctx, false, true)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	answerSet, err := v.s.ListAnswers(ctx, false, true)
+	answerSet, err := c.s.ListAnswers(ctx, false, true)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	logList, err := v.s.ListLogs(ctx, false)
+	logList, err := c.s.ListLogs(ctx, false)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	invList, err := v.s.ListInvestigations(ctx)
+	invList, err := c.s.ListInvestigations(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	sprintList, err := v.s.ListSprints(ctx)
+	sprintList, err := c.s.ListSprints(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	projectList, err := v.s.ListProjects(ctx)
+	projectList, err := c.s.ListProjects(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	planList, err := v.s.ListPlans(ctx)
+	planList, err := c.s.ListPlans(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	staleAfter, err := v.NoteStaleAfter(ctx)
+	staleAfter, err := c.NoteStaleAfter(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	head, err := v.head(ctx)
+	head, err := c.head(ctx)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	judge := memoAncestry(v.judgeVia(v.s.Git.ResolveCommit))
-	noteReviews, err := v.reviewNotes(ctx, noteSet, head, staleAfter, judge)
+	judge := memoAncestry(c.judgeVia(c.s.Git.ResolveCommit))
+	noteReviews, err := c.reviewNotes(ctx, noteSet, head, staleAfter, judge)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	docReviews, err := v.reviewDocs(ctx, docSet, head, staleAfter, judge)
+	docReviews, err := c.reviewDocs(ctx, docSet, head, staleAfter, judge)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	answerReviews, err := v.reviewAnswers(ctx, answerSet, head, staleAfter, judge)
+	answerReviews, err := c.reviewAnswers(ctx, answerSet, head, staleAfter, judge)
 	if err != nil {
 		return StatusReport{}, err
 	}
