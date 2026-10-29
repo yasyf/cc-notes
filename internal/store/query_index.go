@@ -188,6 +188,14 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 	if available && cacheErr != nil {
 		return value, false, nil
 	}
+	if hit && refresh {
+		validated := value
+		defer func() {
+			if err == nil && !hit {
+				value, hit = validated, true
+			}
+		}()
+	}
 	if !q.pinned && ((!available && errors.Is(cacheOpenErr, os.ErrNotExist)) || refresh) {
 		if err := os.MkdirAll(filepath.Dir(q.indexPath()), 0o750); err != nil {
 			return value, hit, nil

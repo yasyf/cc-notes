@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,6 +50,24 @@ func queryIndexGeneration(t *testing.T, q queryMetadataSource) (string, int) {
 		t.Fatal(err)
 	}
 	return generation, id
+}
+
+func unqualifyQueryGeneration(t *testing.T, q queryMetadataSource) {
+	t.Helper()
+	db, err := bolt.Open(q.indexPath(), 0o600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if err := db.Update(func(tx *bolt.Tx) error {
+		return queryMetadataBinding(tx, q.binding).Delete(queryMetadataGenerationKey)
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func settleSupersession(t *testing.T, s *Store, id model.EntityID) queryMetadataSource {
@@ -160,6 +179,7 @@ func TestQueryGenerationPromotionPreservesReadOnlyHit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	unqualifyQueryGeneration(t, q)
 	if generation, _ := queryIndexGeneration(t, q); generation != "" {
 		t.Fatalf("recent source unexpectedly qualified %q", generation)
 	}
@@ -276,5 +296,33 @@ func TestPartialQueryMetadataNeverPublishesGeneration(t *testing.T) {
 		if generation, _ := queryIndexGeneration(t, q); generation != "" {
 			t.Fatalf("partial source published generation %q", generation)
 		}
+	}
+}
+
+func TestQueryGenerationPromotionTransactionFailurePreservesReadOnlyHit(t *testing.T) {
+	s := initStore(t)
+	a := create(t, s, docOps("a")).EntityID()
+	if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit {
+		t.Fatalf("prime = %v %v", hit, err)
+	}
+	q, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unqualifyQueryGeneration(t, q)
+	time.Sleep(2100 * time.Millisecond)
+	calls := 0
+	value, hit, err := readQueryMetadataIndex(t.Context(), q, func(tx *bolt.Tx) ([]model.EntityID, error) {
+		calls++
+		if tx.Writable() {
+			return nil, errors.New("derived transaction failure")
+		}
+		return []model.EntityID{a}, nil
+	})
+	if err != nil || !hit || !slices.Equal(value, []model.EntityID{a}) || calls != 2 {
+		t.Fatalf("failed promotion = %v %v %v calls=%d", value, hit, err, calls)
+	}
+	if generation, _ := queryIndexGeneration(t, q); generation != "" {
+		t.Fatalf("failed promotion committed generation %q", generation)
 	}
 }
