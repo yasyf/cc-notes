@@ -56,7 +56,7 @@ func TestQueryMetadataIndexRefreshAndPinnedViews(t *testing.T) {
 	if _, hit, err := queryIndexedLabels(t.Context(), t, exact, "selected"); err != nil || !hit {
 		t.Fatalf("exact pinned = %v %v", hit, err)
 	}
-	appendOps(t, s, answerRef(a.ID), model.AddLabel{Label: "selected"})
+	appendOps(t, s, answerRef(a.ID), model.AddTag{Tag: "selected"})
 	current := captureAnswerMetadata(t, s)
 	if ids, hit, err := queryIndexedLabels(t.Context(), t, current, "selected"); err != nil || !hit || !reflect.DeepEqual(ids, []model.EntityID{a.ID}) {
 		t.Fatalf("updated = %v %v %v", ids, hit, err)
@@ -151,7 +151,7 @@ func TestQueryMetadataIndexCancellationRollsBack(t *testing.T) {
 	if _, hit, err := queryIndexedLabels(t.Context(), t, source, "none"); err != nil || !hit {
 		t.Fatalf("initial = %v %v", hit, err)
 	}
-	appendOps(t, s, answerRef(a.ID), model.AddLabel{Label: "new"})
+	appendOps(t, s, answerRef(a.ID), model.AddTag{Tag: "new"})
 	current := captureAnswerMetadata(t, s)
 	ctx, cancel := context.WithCancel(t.Context())
 	_, hit, err := readQueryMetadataIndex(ctx, current, func(_ *bolt.Tx) (bool, error) { cancel(); return true, nil })
@@ -173,7 +173,7 @@ func TestQueryMetadataIndexConcurrentCapturedWriters(t *testing.T) {
 	s := initStore(t)
 	a := create(t, s, answerOps("a")).(model.Answer)
 	before := captureAnswerMetadata(t, s)
-	appendOps(t, s, answerRef(a.ID), model.AddLabel{Label: "new"})
+	appendOps(t, s, answerRef(a.ID), model.AddTag{Tag: "new"})
 	after := captureAnswerMetadata(t, s)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -281,8 +281,8 @@ func TestQueryMetadataIndexUnchangedRowsRemainUnread(t *testing.T) {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			s := initStore(t)
 			ids := make([]model.EntityID, 0, count)
-			for range count {
-				ids = append(ids, create(t, s, answerOps("a")).EntityID())
+			for i := range count {
+				ids = append(ids, create(t, s, answerOps(fmt.Sprintf("a %d", i))).EntityID())
 			}
 			source := captureAnswerMetadata(t, s)
 			if _, hit, err := queryIndexedLabels(t.Context(), t, source, "absent"); err != nil || !hit {

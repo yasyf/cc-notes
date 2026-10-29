@@ -111,7 +111,9 @@ func TestIndexedSupersessionAvoidsUnchangedCorpusBodies(t *testing.T) {
 			if _, err := fresh.ListDocs(t.Context(), false, true); err == nil {
 				t.Fatal("authoritative corpus unexpectedly readable after removing its commits")
 			}
-			create(t, fresh, docOps("one new tip"))
+			if _, err := fresh.CreateExact(t.Context(), docOps("one new tip")); err != nil {
+				t.Fatal(err)
+			}
 			if incoming, heads, hit, err := fresh.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit || incoming != nil || !slices.Equal(heads, []model.EntityID{b}) {
 				t.Fatalf("one new tip with unreadable unchanged bodies = %v %v %v %v", incoming, heads, hit, err)
 			}
