@@ -305,8 +305,12 @@ func (p *packIndex) add(ctx context.Context, tx *sql.Tx, identity packIdentity) 
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
+	input, err := newIndexInput(contextFile{File: file, ctx: ctx})
+	if err != nil {
+		return err
+	}
 	index := idxfile.NewMemoryIndex()
-	if err := idxfile.NewDecoder(contextFile{File: file, ctx: ctx}).Decode(index); err != nil {
+	if err := idxfile.NewDecoder(input).Decode(index); err != nil {
 		return err
 	}
 	if !bytes.Equal(index.PackfileChecksum[:], identity.hash[:]) {
@@ -352,4 +356,33 @@ func (p *packIndex) add(ctx context.Context, tx *sql.Tx, identity packIdentity) 
 		return fmt.Errorf("pack index changed while reading %s", identity.hash)
 	}
 	return nil
+}
+
+type indexInput struct {
+	io.Reader
+	size int64
+}
+
+type indexInputInfo struct {
+	os.FileInfo
+	size int64
+}
+
+func (info indexInputInfo) Size() int64 { return info.size }
+
+func (input indexInput) Stat() (os.FileInfo, error) {
+	return indexInputInfo{size: input.size}, nil
+}
+
+func newIndexInput(file io.ReadSeeker) (indexInput, error) {
+	position, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return indexInput{}, err
+	}
+	size, seekErr := file.Seek(0, io.SeekEnd)
+	_, restoreErr := file.Seek(position, io.SeekStart)
+	if err := errors.Join(seekErr, restoreErr); err != nil {
+		return indexInput{}, err
+	}
+	return indexInput{Reader: file, size: size}, nil
 }

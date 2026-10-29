@@ -73,14 +73,6 @@ type packIndexFile struct {
 	reader *bufio.Reader
 }
 
-type fileStater interface {
-	Stat() (os.FileInfo, error)
-}
-
-func (f *packIndexFile) Stat() (os.FileInfo, error) {
-	return f.File.(fileStater).Stat()
-}
-
 func (f *packIndexFile) Read(p []byte) (int, error) {
 	return f.reader.Read(p)
 }

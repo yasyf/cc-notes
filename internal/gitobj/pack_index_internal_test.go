@@ -36,10 +36,6 @@ type indexReadFile struct {
 	reads map[string]int64
 }
 
-func (f *indexReadFile) Stat() (os.FileInfo, error) {
-	return f.File.(fileStater).Stat()
-}
-
 func (f *indexReadFile) Read(data []byte) (int, error) {
 	n, err := f.File.Read(data)
 	f.reads[f.path] += int64(n)

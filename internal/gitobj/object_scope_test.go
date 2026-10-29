@@ -36,10 +36,6 @@ type cancelIndexFile struct {
 	cancel context.CancelFunc
 }
 
-func (f cancelIndexFile) Stat() (os.FileInfo, error) {
-	return f.File.(fileStater).Stat()
-}
-
 func (f cancelIndexFile) Read(data []byte) (int, error) {
 	n, err := f.File.Read(data)
 	if n > 0 {

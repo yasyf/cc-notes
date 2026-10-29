@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"os"
 	"slices"
 
 	"github.com/go-git/go-billy/v5"
@@ -80,13 +79,6 @@ func (s *objectReadScope) close() error {
 type contextFile struct {
 	billy.File
 	ctx context.Context
-}
-
-func (f contextFile) Stat() (os.FileInfo, error) {
-	if err := f.ctx.Err(); err != nil {
-		return nil, err
-	}
-	return f.File.(fileStater).Stat()
 }
 
 type contextFS struct {
