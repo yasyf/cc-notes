@@ -207,6 +207,9 @@ func TestIndexInputRejectsFanoutBeyondOpenedLength(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary.BigEndian.PutUint32(raw[8+(fanoutEntries-1)*4:], ^uint32(0))
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
